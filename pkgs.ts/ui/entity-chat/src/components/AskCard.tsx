@@ -22,7 +22,9 @@ export function AskCard({ roomId, request }: { roomId: string; request: AskReque
     const multiple = request.multiple === true;
     const toggle = (value: string) => {
         if (multiple) {
-            setSelected((current) => (current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value]));
+            setSelected((current) =>
+                current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value],
+            );
         } else {
             setSelected([value]);
         }
@@ -77,7 +79,12 @@ export function AskCard({ roomId, request }: { roomId: string; request: AskReque
                                     {field.type === 'textarea' ? (
                                         <textarea
                                             value={fields[field.name] ?? ''}
-                                            onChange={(event) => setFields((current) => ({ ...current, [field.name]: event.target.value }))}
+                                            onChange={(event) =>
+                                                setFields((current) => ({
+                                                    ...current,
+                                                    [field.name]: event.target.value,
+                                                }))
+                                            }
                                             placeholder={field.placeholder}
                                             rows={2}
                                             className="rounded border bg-background px-2 py-1 text-[12px] outline-none"
@@ -86,7 +93,12 @@ export function AskCard({ roomId, request }: { roomId: string; request: AskReque
                                         <input
                                             type={field.type === 'number' ? 'number' : 'text'}
                                             value={fields[field.name] ?? ''}
-                                            onChange={(event) => setFields((current) => ({ ...current, [field.name]: event.target.value }))}
+                                            onChange={(event) =>
+                                                setFields((current) => ({
+                                                    ...current,
+                                                    [field.name]: event.target.value,
+                                                }))
+                                            }
                                             placeholder={field.placeholder}
                                             className="rounded border bg-background px-2 py-1 text-[12px] outline-none"
                                         />

@@ -59,13 +59,22 @@ export interface ChatClient {
     load(entityId: string): Promise<Snapshot>;
 
     /** 提交命令；事件通过 onEvent 回推。signal 取消只影响本地订阅。 */
-    post(entityId: string, command: Command, onEvent: (event: StreamEvent) => void, signal?: AbortSignal): Promise<void>;
+    post(
+        entityId: string,
+        command: Command,
+        onEvent: (event: StreamEvent) => void,
+        signal?: AbortSignal,
+    ): Promise<void>;
 
     /** 可选：上下文观测（后端支持才有） */
     sessions?(entityId: string): Promise<SessionInfo[]>;
 
     /** 可选：手动压缩某个 bot 的上下文（只影响它自己，不触发运行） */
-    compact?(entityId: string, botId: string, options?: { keepLast?: number; maxChars?: number }): Promise<CompactOutcome>;
+    compact?(
+        entityId: string,
+        botId: string,
+        options?: { keepLast?: number; maxChars?: number },
+    ): Promise<CompactOutcome>;
 
     /**
      * 可选：常驻订阅这个房间的事件（后台 bot 的回复、提问、投递状态都能实时看到）。

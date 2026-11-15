@@ -40,7 +40,9 @@ describe('clipModelMessage', () => {
         const huge = 'x'.repeat(20_000);
         const tool = clipModelMessage({
             role: 'tool',
-            content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'bash', output: { type: 'text', value: huge } }],
+            content: [
+                { type: 'tool-result', toolCallId: 'c1', toolName: 'bash', output: { type: 'text', value: huge } },
+            ],
         } as never);
         expect(JSON.stringify(tool).length).toBeLessThan(huge.length);
 

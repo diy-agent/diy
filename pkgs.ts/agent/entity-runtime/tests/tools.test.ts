@@ -81,7 +81,13 @@ describe('房间工具', () => {
             request: async (input: { question: string; options?: Array<{ value: string; label: string }> }) => {
                 asked.push(input.question);
                 return {
-                    request: { askId: 'ask-1', question: input.question, kind: 'choice', options: input.options, at: 0 },
+                    request: {
+                        askId: 'ask-1',
+                        question: input.question,
+                        kind: 'choice',
+                        options: input.options,
+                        at: 0,
+                    },
                     answer: { values: ['b'] },
                 };
             },

@@ -62,7 +62,9 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (key
             </div>
             <p className="font-mono text-[11px] text-muted-foreground">
                 {formatModelKey(key)}
-                {model?.contextWindow !== undefined && <span className="ml-2">{Math.round(model.contextWindow / 1024)}k 上下文</span>}
+                {model?.contextWindow !== undefined && (
+                    <span className="ml-2">{Math.round(model.contextWindow / 1024)}k 上下文</span>
+                )}
             </p>
         </div>
     );

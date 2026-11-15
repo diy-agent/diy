@@ -11,7 +11,6 @@ import { spawn } from 'node:child_process';
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 
-
 const OUTPUT_MAX = 100_000;
 
 export function bashTool(cwd: string, defaultTimeoutMs = 120_000): ToolSet[string] {
@@ -60,7 +59,11 @@ export function bashTool(cwd: string, defaultTimeoutMs = 120_000): ToolSet[strin
 
                 child.on('close', (code, signal) => {
                     if (timer !== undefined) clearTimeout(timer);
-                    const status = timedOut ? 'timed_out' : signal !== null ? `killed(${signal})` : `exit: ${code ?? '?'}`;
+                    const status = timedOut
+                        ? 'timed_out'
+                        : signal !== null
+                          ? `killed(${signal})`
+                          : `exit: ${code ?? '?'}`;
                     const body = out.length > OUTPUT_MAX ? `${out.slice(0, OUTPUT_MAX)}\n…（输出已截断）` : out;
                     resolveResult(`${status}\n---\n${body.trimEnd()}`);
                 });

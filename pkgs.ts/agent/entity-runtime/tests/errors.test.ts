@@ -6,7 +6,9 @@ import { friendlyError } from '../src/errors';
 
 describe('friendlyError', () => {
     it('连接超时：指出主机，提示检查网络', () => {
-        const error = new Error('Cannot connect to API: Connect Timeout Error (attempted address: opencode.ai:443, timeout: 10000ms)');
+        const error = new Error(
+            'Cannot connect to API: Connect Timeout Error (attempted address: opencode.ai:443, timeout: 10000ms)',
+        );
         expect(friendlyError(error)).toContain('连不上 opencode.ai:443');
         expect(friendlyError(error)).toContain('检查网络');
     });

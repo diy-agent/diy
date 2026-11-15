@@ -24,10 +24,7 @@ export const ToolGroup: FC<{ count: number; children: ReactNode }> = ({ count, c
             </span>
             <ChevronDownIcon className="size-4 shrink-0 -rotate-90 transition-transform group-data-open/trigger:rotate-0 group-data-panel-open/trigger:rotate-0" />
         </CollapsibleTrigger>
-        <CollapsibleContent
-            data-slot="tool-group-content"
-            className="border-muted-foreground/20 ml-2 border-l pl-3"
-        >
+        <CollapsibleContent data-slot="tool-group-content" className="border-muted-foreground/20 ml-2 border-l pl-3">
             {children}
         </CollapsibleContent>
     </Collapsible>

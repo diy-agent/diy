@@ -56,7 +56,10 @@ export function askTool(gate: AskGate | undefined): ToolSet[string] | undefined 
             '选项题传 options（可 multiple），表单题传 fields。回答会作为工具结果返回给你。',
         inputSchema: z.object({
             question: z.string().describe('一句话说清要用户决定什么'),
-            kind: z.enum(['choice', 'form', 'text']).optional().describe('缺省：有 fields 就是 form，有 options 就是 choice，否则 text'),
+            kind: z
+                .enum(['choice', 'form', 'text'])
+                .optional()
+                .describe('缺省：有 fields 就是 form，有 options 就是 choice，否则 text'),
             allowFreeform: z.boolean().optional().describe('选项之外还允许自由输入（"其他"）'),
             options: z.array(OPTION_SCHEMA).optional().describe('选项（choice 用）'),
             fields: z.array(FIELD_SCHEMA).optional().describe('表单字段（form 用）'),

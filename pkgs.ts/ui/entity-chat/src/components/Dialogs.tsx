@@ -7,7 +7,10 @@ import { ModelPicker } from './ModelPicker';
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-            <div className="w-full max-w-md rounded-xl border bg-background p-4" onClick={(event) => event.stopPropagation()}>
+            <div
+                className="w-full max-w-md rounded-xl border bg-background p-4"
+                onClick={(event) => event.stopPropagation()}
+            >
                 <h2 className="mb-3 text-sm font-semibold">{title}</h2>
                 {children}
             </div>
@@ -47,7 +50,11 @@ export function CreateProjectDialog({
                     />
                     <div className="mt-1.5 flex flex-wrap gap-1">
                         {DIR_SUGGESTIONS.map((item) => (
-                            <button key={item} onClick={() => setDir(item)} className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted">
+                            <button
+                                key={item}
+                                onClick={() => setDir(item)}
+                                className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                            >
                                 {item}
                             </button>
                         ))}
@@ -105,7 +112,9 @@ export function AddMemberDialog({
                 <div>
                     <div className="mb-1.5 text-xs text-muted-foreground">从现有成员里选</div>
                     {available.length === 0 ? (
-                        <p className="rounded-lg border border-dashed px-2 py-2 text-xs text-muted-foreground">还没有其他成员，可以在下面新建一个。</p>
+                        <p className="rounded-lg border border-dashed px-2 py-2 text-xs text-muted-foreground">
+                            还没有其他成员，可以在下面新建一个。
+                        </p>
                     ) : (
                         <div className="max-h-48 space-y-1 overflow-y-auto">
                             {available.map((bot) => (
@@ -119,7 +128,9 @@ export function AddMemberDialog({
                                 >
                                     <span className="size-2 shrink-0 rounded-full" style={{ background: bot.color }} />
                                     <span className="font-medium">{bot.name}</span>
-                                    <span className="ml-auto truncate text-[11px] text-muted-foreground">来自 {homeName(bot)}</span>
+                                    <span className="ml-auto truncate text-[11px] text-muted-foreground">
+                                        来自 {homeName(bot)}
+                                    </span>
                                 </button>
                             ))}
                         </div>
@@ -209,7 +220,9 @@ export function SettingsDialog({
 
                 <div className="rounded-lg border border-dashed p-2 text-[11px] leading-relaxed text-muted-foreground">
                     <p className="mb-1 font-medium text-foreground">当前目录（照 diy 的 provider 结构）</p>
-                    <p>provider = 端点 + 账户列表 + 模型目录；key = <code>account@provider/model</code>。</p>
+                    <p>
+                        provider = 端点 + 账户列表 + 模型目录；key = <code>account@provider/model</code>。
+                    </p>
                     <p>每个容器和 bot 都可以在头部单独覆盖模型；这里只改"新建容器"的默认值。</p>
                 </div>
             </div>

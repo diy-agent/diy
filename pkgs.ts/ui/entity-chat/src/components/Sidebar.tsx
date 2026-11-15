@@ -79,11 +79,19 @@ function RoomRow({
             )}
 
             {primary !== undefined && (
-                <span className="size-1.5 shrink-0 rounded-full" style={{ background: primary.color }} title={`默认应答：${primary.name}`} />
+                <span
+                    className="size-1.5 shrink-0 rounded-full"
+                    style={{ background: primary.color }}
+                    title={`默认应答：${primary.name}`}
+                />
             )}
 
             {isProject && onCreateTask !== undefined && (
-                <button onClick={onCreateTask} title="在本项目下新建任务（并直接对话）" className="shrink-0 rounded p-0.5 opacity-0 hover:bg-muted group-hover:opacity-100">
+                <button
+                    onClick={onCreateTask}
+                    title="在本项目下新建任务（并直接对话）"
+                    className="shrink-0 rounded p-0.5 opacity-0 hover:bg-muted group-hover:opacity-100"
+                >
                     <ListPlus className="size-3.5" />
                 </button>
             )}
@@ -135,7 +143,11 @@ export function Sidebar({
                 {open && (
                     <div className="mb-1 flex items-center justify-between px-2 text-[11px] uppercase tracking-wide text-muted-foreground">
                         项目
-                        <button onClick={onCreateProject} title="从本机目录新建项目" className="rounded p-0.5 hover:bg-muted">
+                        <button
+                            onClick={onCreateProject}
+                            title="从本机目录新建项目"
+                            className="rounded p-0.5 hover:bg-muted"
+                        >
                             <Plus className="size-3.5" />
                         </button>
                     </div>
@@ -164,9 +176,7 @@ export function Sidebar({
                     按 projectId 分组的写法会让它们直接消失，数据还在却永远进不去 */}
                 {orphans.length > 0 && (
                     <div className={open ? 'mb-2' : 'mb-1'}>
-                        {open && (
-                            <div className="px-2 pb-1 text-[11px] text-muted-foreground">未归属</div>
-                        )}
+                        {open && <div className="px-2 pb-1 text-[11px] text-muted-foreground">未归属</div>}
                         {orphans.map((room) => (
                             <RoomRow key={room.id} room={room} active={state.selectedId === room.id} compact={!open} />
                         ))}
@@ -175,8 +185,16 @@ export function Sidebar({
             </div>
 
             <div className={`flex items-center border-t py-2 ${open ? 'justify-between px-3' : 'justify-center'}`}>
-                {open && <span className="text-[11px] leading-relaxed text-muted-foreground">容器 = 一条对话；成员在容器内</span>}
-                <button onClick={onOpenSettings} title="模型设置" className="rounded p-1 text-muted-foreground hover:bg-muted">
+                {open && (
+                    <span className="text-[11px] leading-relaxed text-muted-foreground">
+                        容器 = 一条对话；成员在容器内
+                    </span>
+                )}
+                <button
+                    onClick={onOpenSettings}
+                    title="模型设置"
+                    className="rounded p-1 text-muted-foreground hover:bg-muted"
+                >
                     <Settings className="size-4" />
                 </button>
             </div>

@@ -40,7 +40,8 @@ const defaultTools = {
         inputSchema: z.object({ timezone: z.string().optional().describe('IANA 时区，例如 Asia/Shanghai') }),
         execute: async ({ timezone }) => {
             const now = new Date();
-            const text = timezone === undefined ? now.toISOString() : now.toLocaleString('zh-CN', { timeZone: timezone });
+            const text =
+                timezone === undefined ? now.toISOString() : now.toLocaleString('zh-CN', { timeZone: timezone });
             return { now: text, timezone: timezone ?? 'UTC' };
         },
     }),
@@ -89,10 +90,24 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                     yield { seq: ++seq, type: 'reasoning.delta', messageId, delta: part.text };
                     break;
                 case 'tool-call':
-                    yield { seq: ++seq, type: 'tool.started', turnId, toolCallId: part.toolCallId, name: part.toolName, args: part.input };
+                    yield {
+                        seq: ++seq,
+                        type: 'tool.started',
+                        turnId,
+                        toolCallId: part.toolCallId,
+                        name: part.toolName,
+                        args: part.input,
+                    };
                     break;
                 case 'tool-result':
-                    yield { seq: ++seq, type: 'tool.completed', turnId, toolCallId: part.toolCallId, name: part.toolName, result: part.output };
+                    yield {
+                        seq: ++seq,
+                        type: 'tool.completed',
+                        turnId,
+                        toolCallId: part.toolCallId,
+                        name: part.toolName,
+                        result: part.output,
+                    };
                     break;
                 case 'tool-error':
                     yield {
@@ -105,7 +120,12 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                     };
                     break;
                 case 'error':
-                    yield { seq: ++seq, type: 'run.failed', turnId, message: friendlyError((part as { error?: unknown }).error) };
+                    yield {
+                        seq: ++seq,
+                        type: 'run.failed',
+                        turnId,
+                        message: friendlyError((part as { error?: unknown }).error),
+                    };
                     return;
                 default:
                     break;

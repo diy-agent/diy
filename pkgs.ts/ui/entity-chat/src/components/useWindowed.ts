@@ -7,7 +7,10 @@ import * as React from 'react';
 
 export const WINDOW_STEP = 30;
 
-export function useWindowed<T>(list: readonly T[], step = WINDOW_STEP): {
+export function useWindowed<T>(
+    list: readonly T[],
+    step = WINDOW_STEP,
+): {
     visible: readonly T[];
     hidden: number;
     showMore: () => void;

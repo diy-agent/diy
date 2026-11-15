@@ -30,14 +30,7 @@ export function BotAvatar({
     const home = author === undefined ? undefined : shell.bots[author.id]?.homeRoomId;
     const type = room?.type ?? (home === undefined ? undefined : shell.rooms.find((entry) => entry.id === home)?.type);
 
-    const Icon =
-        author?.role === 'human'
-            ? User
-            : type === 'project'
-              ? Folder
-              : type === 'task'
-                ? ListTodo
-                : Bot;
+    const Icon = author?.role === 'human' ? User : type === 'project' ? Folder : type === 'task' ? ListTodo : Bot;
 
     return (
         <span

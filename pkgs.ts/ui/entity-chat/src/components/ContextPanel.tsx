@@ -123,7 +123,8 @@ export function ContextPanel({ room }: { room: Room }) {
                         <div className="flex items-center gap-2 px-3 py-2">
                             <span className="text-[11px] font-medium">上下文</span>
                             <span className="text-[10px] text-muted-foreground">
-                                {windowTokens === undefined ? '窗口未知' : `窗口 ${fmt(windowTokens)} tok`} · 各 bot 独立压缩
+                                {windowTokens === undefined ? '窗口未知' : `窗口 ${fmt(windowTokens)} tok`} · 各 bot
+                                独立压缩
                             </span>
                             <button
                                 onClick={() => void compressAll()}
@@ -156,7 +157,9 @@ export function ContextPanel({ room }: { room: Room }) {
                         </div>
 
                         {sessions.length === 0 ? (
-                            <p className="border-t px-3 py-3 text-[11px] text-muted-foreground">还没有会话（发一条消息再回来看）</p>
+                            <p className="border-t px-3 py-3 text-[11px] text-muted-foreground">
+                                还没有会话（发一条消息再回来看）
+                            </p>
                         ) : (
                             sessions.map((session) => (
                                 <Row
@@ -168,7 +171,9 @@ export function ContextPanel({ room }: { room: Room }) {
                             ))
                         )}
 
-                        {note !== null && <p className="border-t px-3 py-2 text-[10px] text-muted-foreground">{note}</p>}
+                        {note !== null && (
+                            <p className="border-t px-3 py-2 text-[10px] text-muted-foreground">{note}</p>
+                        )}
                     </div>
                 </>
             )}

@@ -155,11 +155,14 @@ export function buildTimeline(
             (ask.toolCallId === undefined
                 ? undefined
                 : entries.find((entry) =>
-                      entry.parts.some((candidate) => candidate.kind === 'tool' && candidate.id === `tool-${ask.toolCallId}`),
+                      entry.parts.some(
+                          (candidate) => candidate.kind === 'tool' && candidate.id === `tool-${ask.toolCallId}`,
+                      ),
                   )) ?? [...entries].reverse().find((entry) => entry.kind === 'assistant');
         if (target === undefined) continue;
         const index = target.parts.findIndex(
-            (candidate) => candidate.kind === 'tool' && ask.toolCallId !== undefined && candidate.id === `tool-${ask.toolCallId}`,
+            (candidate) =>
+                candidate.kind === 'tool' && ask.toolCallId !== undefined && candidate.id === `tool-${ask.toolCallId}`,
         );
         if (index >= 0) target.parts.splice(index + 1, 0, part);
         else target.parts.push(part);

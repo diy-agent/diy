@@ -54,7 +54,14 @@ describe('buildTimeline', () => {
     it('把投递状态挂到用户消息上（失败也要显示）', () => {
         const deliveries: Delivery[] = [
             { entityId: 'proj:x', messageId: 'i1', botId: OWNER.id, state: 'delivered', updatedAt: 1 },
-            { entityId: 'proj:x', messageId: 'i1', botId: HELPER.id, state: 'failed', note: 'AI_APICallError', updatedAt: 1 },
+            {
+                entityId: 'proj:x',
+                messageId: 'i1',
+                botId: HELPER.id,
+                state: 'failed',
+                note: 'AI_APICallError',
+                updatedAt: 1,
+            },
         ];
         const items: Item[] = [item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: 'hi' } })];
 

@@ -22,7 +22,10 @@ export function SpeakingBar({ roomId }: { roomId: string }) {
                 const bot = shell.bots[botId];
                 return (
                     <span key={botId} className="flex items-center gap-1.5 rounded-full border px-2 py-0.5">
-                        <span className="size-2 animate-pulse rounded-full" style={{ background: bot?.color ?? '#9ca3af' }} />
+                        <span
+                            className="size-2 animate-pulse rounded-full"
+                            style={{ background: bot?.color ?? '#9ca3af' }}
+                        />
                         <span>{bot?.name ?? botId}</span>
                         <span>正在说话…</span>
                         <button
@@ -30,8 +33,7 @@ export function SpeakingBar({ roomId }: { roomId: string }) {
                             title={`只停 ${bot?.name ?? botId}`}
                             className="ml-0.5 flex items-center gap-0.5 rounded px-1 hover:bg-muted"
                         >
-                            <Square className="size-2.5" />
-                            停
+                            <Square className="size-2.5" />停
                         </button>
                     </span>
                 );

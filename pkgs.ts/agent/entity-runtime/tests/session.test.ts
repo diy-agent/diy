@@ -44,7 +44,7 @@ function makeSession(
     const events: SessionEvent[] = [];
     let turn = 0;
 
-    const run = (async function* (input: RunOptions): AsyncIterable<AgentEvent> {
+    const run = async function* (input: RunOptions): AsyncIterable<AgentEvent> {
         const turnId = input.turnId ?? 'turn';
         runs.push(turnId);
         seen.push(input.messages);
@@ -60,7 +60,7 @@ function makeSession(
         input.onStepTranscript?.([{ role: 'assistant', content: [{ type: 'text', text: `reply-${runs.length}` }] }]);
         yield { seq: 3, type: 'message.completed', messageId: `msg-${runs.length}` };
         yield { seq: 4, type: 'run.completed', turnId };
-    }) as (input: RunOptions) => AsyncIterable<AgentEvent>;
+    } as (input: RunOptions) => AsyncIterable<AgentEvent>;
 
     const session = new BotSession({
         bot,
@@ -190,9 +190,34 @@ describe('BotSession', () => {
         const seed = () => ({
             entries: [
                 { message: { role: 'user', content: '麻烦修改 bug 并提交' }, origin: 'public' as const, turn: 1 },
-                { message: { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }] }, origin: 'self' as const, turn: 1 },
-                { message: { role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'read', output: { type: 'text', value: long } }] }, origin: 'self' as const, turn: 1 },
-                { message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复并提交' }] }, origin: 'self' as const, turn: 1 },
+                {
+                    message: {
+                        role: 'assistant',
+                        content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }],
+                    },
+                    origin: 'self' as const,
+                    turn: 1,
+                },
+                {
+                    message: {
+                        role: 'tool',
+                        content: [
+                            {
+                                type: 'tool-result',
+                                toolCallId: 't1',
+                                toolName: 'read',
+                                output: { type: 'text', value: long },
+                            },
+                        ],
+                    },
+                    origin: 'self' as const,
+                    turn: 1,
+                },
+                {
+                    message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复并提交' }] },
+                    origin: 'self' as const,
+                    turn: 1,
+                },
                 { message: { role: 'user', content: '人: 最新一句' }, origin: 'public' as const, turn: 2 },
             ],
         });
@@ -256,9 +281,34 @@ describe('BotSession', () => {
         const seed = () => ({
             entries: [
                 { message: { role: 'user', content: '早期需求' }, origin: 'public' as const, turn: 1 },
-                { message: { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }] }, origin: 'self' as const, turn: 1 },
-                { message: { role: 'tool', content: [{ type: 'tool-result', toolCallId: 't1', toolName: 'read', output: { type: 'text', value: long } }] }, origin: 'self' as const, turn: 1 },
-                { message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复' }] }, origin: 'self' as const, turn: 1 },
+                {
+                    message: {
+                        role: 'assistant',
+                        content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }],
+                    },
+                    origin: 'self' as const,
+                    turn: 1,
+                },
+                {
+                    message: {
+                        role: 'tool',
+                        content: [
+                            {
+                                type: 'tool-result',
+                                toolCallId: 't1',
+                                toolName: 'read',
+                                output: { type: 'text', value: long },
+                            },
+                        ],
+                    },
+                    origin: 'self' as const,
+                    turn: 1,
+                },
+                {
+                    message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复' }] },
+                    origin: 'self' as const,
+                    turn: 1,
+                },
                 { message: { role: 'user', content: '最新一句' }, origin: 'public' as const, turn: 2 },
             ],
         });

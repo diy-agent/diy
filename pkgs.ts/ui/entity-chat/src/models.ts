@@ -43,7 +43,11 @@ export const PROVIDERS: Provider[] = [
         name: 'OpenCode Go',
         api: 'https://opencode.ai/inference/go/openai/v1',
         npm: '@ai-sdk/openai-compatible',
-        accounts: [{ type: 'apiKey', name: 'chen56' }, { type: 'apiKey', name: 'aug' }, { type: 'apiKey', name: 'fatfatjing' }],
+        accounts: [
+            { type: 'apiKey', name: 'chen56' },
+            { type: 'apiKey', name: 'aug' },
+            { type: 'apiKey', name: 'fatfatjing' },
+        ],
         models: {
             'deepseek-v4.1-flash': {
                 id: 'deepseek-v4.1-flash',
@@ -57,7 +61,12 @@ export const PROVIDERS: Provider[] = [
                 contextWindow: 131072,
                 cost: { input: 0.6, output: 2.4, cacheRead: 0.06 },
             },
-            'kimi-k2.7-code': { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code', contextWindow: 262144, cost: { input: 0.3, output: 1.2 } },
+            'kimi-k2.7-code': {
+                id: 'kimi-k2.7-code',
+                name: 'Kimi K2.7 Code',
+                contextWindow: 262144,
+                cost: { input: 0.3, output: 1.2 },
+            },
         },
     },
     {
@@ -67,8 +76,18 @@ export const PROVIDERS: Provider[] = [
         npm: '@ai-sdk/openai-compatible',
         accounts: [{ type: 'apiKey', name: 'chen56' }],
         models: {
-            'deepseek-chat': { id: 'deepseek-chat', name: 'DeepSeek Chat', contextWindow: 65536, cost: { input: 0.27, output: 1.1 } },
-            'deepseek-reasoner': { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', contextWindow: 65536, cost: { input: 0.55, output: 2.19 } },
+            'deepseek-chat': {
+                id: 'deepseek-chat',
+                name: 'DeepSeek Chat',
+                contextWindow: 65536,
+                cost: { input: 0.27, output: 1.1 },
+            },
+            'deepseek-reasoner': {
+                id: 'deepseek-reasoner',
+                name: 'DeepSeek Reasoner',
+                contextWindow: 65536,
+                cost: { input: 0.55, output: 2.19 },
+            },
         },
     },
 ];
@@ -89,7 +108,12 @@ export function formatModelKey(key: ModelKey): string {
 export function parseModelKey(value: string): ModelKey {
     const at = value.indexOf('@');
     const slash = value.indexOf('/', at + 1);
-    if (at < 0 || slash < 0) return { provider: PROVIDERS[0]!.id, account: PROVIDERS[0]!.accounts[0]!.name, model: Object.keys(PROVIDERS[0]!.models)[0]! };
+    if (at < 0 || slash < 0)
+        return {
+            provider: PROVIDERS[0]!.id,
+            account: PROVIDERS[0]!.accounts[0]!.name,
+            model: Object.keys(PROVIDERS[0]!.models)[0]!,
+        };
     return { account: value.slice(0, at), provider: value.slice(at + 1, slash), model: value.slice(slash + 1) };
 }
 

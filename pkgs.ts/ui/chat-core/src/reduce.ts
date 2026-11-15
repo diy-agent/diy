@@ -24,7 +24,8 @@ const STATUS_RANK: Record<Item['status'], number> = { pending: 0, streaming: 1, 
 /** 两条流（post 的 + 常驻的）都往这里送，乱序时别让旧事件把新状态回滚 */
 function isStale(current: Item, next: Item): boolean {
     if (STATUS_RANK[next.status] < STATUS_RANK[current.status]) return true;
-    if (current.type === 'chat' && next.type === 'chat' && next.data.text.length < current.data.text.length) return true;
+    if (current.type === 'chat' && next.type === 'chat' && next.data.text.length < current.data.text.length)
+        return true;
     return false;
 }
 
@@ -40,7 +41,10 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
             if (index >= 0 && isStale(state.items[index]!, item)) {
                 return { ...state, seq: Math.max(state.seq, item.seq) };
             }
-            const items = index < 0 ? [...state.items, item] : state.items.map((existing) => (existing.id === item.id ? item : existing));
+            const items =
+                index < 0
+                    ? [...state.items, item]
+                    : state.items.map((existing) => (existing.id === item.id ? item : existing));
             const next = sortItems(items);
             return {
                 ...state,
@@ -58,7 +62,9 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
                 index < 0
                     ? [...state.deliveries, delivery]
                     : state.deliveries.map((existing) =>
-                          existing.messageId === delivery.messageId && existing.botId === delivery.botId ? delivery : existing,
+                          existing.messageId === delivery.messageId && existing.botId === delivery.botId
+                              ? delivery
+                              : existing,
                       );
             return { ...state, deliveries };
         }

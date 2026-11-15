@@ -29,14 +29,4 @@ export {
     type TurnResult,
 } from './session';
 export { modelOf, parseModelKey } from './providers';
-export type {
-    AgentEvent,
-    Author,
-    Bot,
-    Delivery,
-    Room,
-    RoomMember,
-    RoomEvent,
-    InboxMode,
-    Item,
-} from './types';
+export type { AgentEvent, Author, Bot, Delivery, Room, RoomMember, RoomEvent, InboxMode, Item } from './types';

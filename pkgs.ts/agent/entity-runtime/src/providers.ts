@@ -60,7 +60,8 @@ export function modelOf(modelKey: string): LanguageModel {
     const key = parseModelKey(modelKey);
     const api = PROVIDER_API[key.provider] ?? PROVIDER_API['opencode-go']!;
     const envName = PROVIDER_ENV[key.provider];
-    const apiKey = (envName === undefined ? undefined : process.env[envName]) ?? keyFromDiyConfig(key.provider, key.account);
+    const apiKey =
+        (envName === undefined ? undefined : process.env[envName]) ?? keyFromDiyConfig(key.provider, key.account);
     if (apiKey === undefined) throw new Error(`缺少 ${key.provider}/${key.account} 的 key`);
     const provider = createOpenAICompatible({
         name: key.provider,

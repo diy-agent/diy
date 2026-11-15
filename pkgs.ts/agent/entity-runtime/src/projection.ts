@@ -143,7 +143,12 @@ export class Projector {
                     ...current,
                     seq,
                     status: failed ? 'failed' : 'done',
-                    data: { name: event.name, args: current.data.args, result: event.result, state: failed ? 'error' : 'ok' },
+                    data: {
+                        name: event.name,
+                        args: current.data.args,
+                        result: event.result,
+                        state: failed ? 'error' : 'ok',
+                    },
                 };
                 this.items.set(id, next);
                 return [next];

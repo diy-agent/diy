@@ -76,7 +76,9 @@ function ToolRow({ tool }: { tool: TimelinePart & { kind: 'tool' } }) {
     const status = TOOL_STATUS[tool.state];
     const mark = status === 'running' ? '◌' : status === 'ok' ? '✓' : '✗';
     return (
-        <div className={`flex items-center gap-1.5 py-0.5 text-[12px] ${status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+        <div
+            className={`flex items-center gap-1.5 py-0.5 text-[12px] ${status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}
+        >
             <span>{mark}</span>
             <span className="font-mono">{tool.name}</span>
             {target !== undefined && <span className="truncate font-mono opacity-80">{target}</span>}
@@ -149,7 +151,9 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                     {text}
                 </div>
                 <div className="flex items-center gap-2 pr-1 text-[10px] text-muted-foreground">
-                    {failed.length > 0 && <span className="text-destructive">{failed.map((d) => `${d.name} 未送达`).join('、')}</span>}
+                    {failed.length > 0 && (
+                        <span className="text-destructive">{failed.map((d) => `${d.name} 未送达`).join('、')}</span>
+                    )}
                     <span>{timeOf(entry.at)}</span>
                 </div>
             </div>
@@ -172,7 +176,8 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                 </div>
                 {parts.map((part, index) => {
                     if (part.kind === 'text') return <Markdown key={`t${index}`} text={part.text} />;
-                    if (part.kind === 'ask') return <AskCard key={`a${index}`} roomId={roomId} request={part.request} />;
+                    if (part.kind === 'ask')
+                        return <AskCard key={`a${index}`} roomId={roomId} request={part.request} />;
                     // 连续的 tool 合并成一组
                     const previous = parts[index - 1];
                     if (previous?.kind === 'tool') return null;
@@ -194,13 +199,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
     );
 }
 
-function Composer({
-    conversation,
-    running,
-}: {
-    conversation: ReturnType<typeof conversationOf>;
-    running: boolean;
-}) {
+function Composer({ conversation, running }: { conversation: ReturnType<typeof conversationOf>; running: boolean }) {
     const [draft, setDraft] = React.useState('');
     const send = () => {
         const text = draft.trim();
@@ -300,7 +299,10 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
                 ) : (
                     <>
                         {windowed.visible.map((entry) => (
-                            <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
+                            <div
+                                key={entry.key}
+                                style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
+                            >
                                 <EntryView entry={entry} roomId={targetId} />
                             </div>
                         ))}

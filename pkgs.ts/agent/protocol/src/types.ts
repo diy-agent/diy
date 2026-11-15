@@ -79,7 +79,10 @@ interface ItemBase {
 export type Item =
     | (ItemBase & { type: 'chat'; data: { text: string } })
     | (ItemBase & { type: 'notice'; data: { text: string; kind: string } })
-    | (ItemBase & { type: 'tool'; data: { name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' } })
+    | (ItemBase & {
+          type: 'tool';
+          data: { name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' };
+      })
     | (ItemBase & { type: 'error'; data: { message: string } });
 
 // ── 投递（消息 → bot 的到达状态）────────────────────────────────
@@ -198,7 +201,15 @@ export type AgentEvent =
     | { seq: number; type: 'text.delta'; messageId: string; delta: string }
     | { seq: number; type: 'reasoning.delta'; messageId: string; delta: string }
     | { seq: number; type: 'tool.started'; turnId: string; toolCallId: string; name: string; args?: unknown }
-    | { seq: number; type: 'tool.completed'; turnId: string; toolCallId: string; name: string; result?: unknown; error?: string }
+    | {
+          seq: number;
+          type: 'tool.completed';
+          turnId: string;
+          toolCallId: string;
+          name: string;
+          result?: unknown;
+          error?: string;
+      }
     | { seq: number; type: 'message.completed'; messageId: string }
     | { seq: number; type: 'run.completed'; turnId: string }
     | { seq: number; type: 'run.failed'; turnId: string; message: string };

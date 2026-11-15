@@ -87,6 +87,9 @@ export class MockChatClient implements ChatClient {
     private push(entityId: string, item: Item): void {
         const list = this.items.get(entityId) ?? [];
         const index = list.findIndex((existing) => existing.id === item.id);
-        this.items.set(entityId, index < 0 ? [...list, item] : list.map((existing) => (existing.id === item.id ? item : existing)));
+        this.items.set(
+            entityId,
+            index < 0 ? [...list, item] : list.map((existing) => (existing.id === item.id ? item : existing)),
+        );
     }
 }

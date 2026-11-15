@@ -48,7 +48,8 @@ export function readTool(cwd: string): ToolSet[string] {
                 throw new Error(`[读取失败] ${error instanceof Error ? error.message : String(error)}`);
             });
             if (info.isDirectory()) throw new Error(`[读取失败] ${filePath} 是目录`);
-            if (info.size > READ_MAX_BYTES) throw new Error(`[读取失败] 文件 ${info.size} 字节，超过上限 ${READ_MAX_BYTES}`);
+            if (info.size > READ_MAX_BYTES)
+                throw new Error(`[读取失败] 文件 ${info.size} 字节，超过上限 ${READ_MAX_BYTES}`);
 
             const text = await readFile(abs, 'utf8');
             const lines = text.split('\n');
@@ -74,7 +75,8 @@ export function writeTool(cwd: string): ToolSet[string] {
             content: z.string().describe('完整文件内容'),
         }),
         execute: async ({ path: filePath, content }) => {
-            if (Buffer.byteLength(content, 'utf8') > WRITE_MAX_BYTES) throw new Error(`[写入失败] 内容超过上限 ${WRITE_MAX_BYTES} 字节`);
+            if (Buffer.byteLength(content, 'utf8') > WRITE_MAX_BYTES)
+                throw new Error(`[写入失败] 内容超过上限 ${WRITE_MAX_BYTES} 字节`);
             const abs = inside(cwd, filePath);
             const before = await readFile(abs, 'utf8').catch(() => undefined);
             await mkdir(dirname(abs), { recursive: true });
@@ -118,7 +120,10 @@ export function editTool(cwd: string): ToolSet[string] {
                 if (hits > 1 && edit.replaceAll !== true) {
                     throw new Error(`[编辑失败] 第 ${index + 1} 条 oldText 命中 ${hits} 处；要全改请传 replaceAll`);
                 }
-                text = edit.replaceAll === true ? text.split(edit.oldText).join(edit.newText) : text.replace(edit.oldText, edit.newText);
+                text =
+                    edit.replaceAll === true
+                        ? text.split(edit.oldText).join(edit.newText)
+                        : text.replace(edit.oldText, edit.newText);
                 notes.push(`第 ${index + 1} 条：替换 ${hits} 处`);
             }
             await writeFile(abs, text, 'utf8');

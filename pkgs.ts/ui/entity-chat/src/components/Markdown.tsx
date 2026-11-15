@@ -23,14 +23,23 @@ export const Markdown = React.memo(function Markdown({ text }: { text: string })
                     ol: ({ children }) => <ol className="my-1.5 list-decimal pl-5">{children}</ol>,
                     li: ({ children }) => <li className="my-0.5">{children}</li>,
                     a: ({ children, href }) => (
-                        <a href={href} target="_blank" rel="noreferrer" className="text-sky-400 underline underline-offset-2">
+                        <a
+                            href={href}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-sky-400 underline underline-offset-2"
+                        >
                             {children}
                         </a>
                     ),
                     code: ({ className, children }) => {
                         const language = languageOf(className);
                         if (language === undefined) {
-                            return <code className="rounded bg-muted/70 px-1 py-0.5 font-mono text-[12px]">{children}</code>;
+                            return (
+                                <code className="rounded bg-muted/70 px-1 py-0.5 font-mono text-[12px]">
+                                    {children}
+                                </code>
+                            );
                         }
                         const code = String(children ?? '').replace(/\n$/, '');
                         return (
@@ -55,7 +64,9 @@ export const Markdown = React.memo(function Markdown({ text }: { text: string })
                     },
                     pre: ({ children }) => <>{children}</>,
                     blockquote: ({ children }) => (
-                        <blockquote className="my-1.5 border-l-2 border-border pl-3 text-muted-foreground">{children}</blockquote>
+                        <blockquote className="my-1.5 border-l-2 border-border pl-3 text-muted-foreground">
+                            {children}
+                        </blockquote>
                     ),
                     table: ({ children }) => (
                         <div className="my-2 overflow-x-auto">
@@ -63,7 +74,9 @@ export const Markdown = React.memo(function Markdown({ text }: { text: string })
                         </div>
                     ),
                     th: ({ children }) => (
-                        <th className="border border-border bg-muted/50 px-2 py-1 text-left font-semibold">{children}</th>
+                        <th className="border border-border bg-muted/50 px-2 py-1 text-left font-semibold">
+                            {children}
+                        </th>
                     ),
                     td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>,
                     hr: () => <hr className="my-3 border-border" />,

@@ -55,7 +55,8 @@ describe('RoomActor', () => {
         const second = h.room.say({ text: '第二句', author: HUMAN });
         await Promise.all([first, second]);
 
-        const turns = h.items()
+        const turns = h
+            .items()
             .filter((item) => item.type === 'chat' && item.author?.role === 'human')
             .map((item) => item.turn);
         expect(turns).toHaveLength(2);
@@ -147,7 +148,9 @@ describe('RoomActor', () => {
         const h = makeRoom();
         await h.room.say({ text: '说一句', author: HUMAN });
 
-        const running = h.events.filter((event) => event.kind === 'running').map((event) => (event as { botIds: string[] }).botIds);
+        const running = h.events
+            .filter((event) => event.kind === 'running')
+            .map((event) => (event as { botIds: string[] }).botIds);
         expect(running[0]).toEqual([BOT_A.id]);
         expect(running.at(-1)).toEqual([]);
     });

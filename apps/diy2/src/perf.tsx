@@ -41,7 +41,9 @@ const n = Number(params.get('n') ?? '30');
 
 const shape = params.get('shape') ?? 'full';
 const NO_CODE = SAMPLE.split('```')[0] ?? SAMPLE;
-const PARA = '### 结论\n\n这个方案是可行的，但要注意三点。第一点是并发，第二点是顺序，第三点是回滚。具体来说，runTurn 里必须保证同一 session 串行。\n\n' + '再补一句说明，让段落长度接近真实回答。'.repeat(3);
+const PARA =
+    '### 结论\n\n这个方案是可行的，但要注意三点。第一点是并发，第二点是顺序，第三点是回滚。具体来说，runTurn 里必须保证同一 session 串行。\n\n' +
+    '再补一句说明，让段落长度接近真实回答。'.repeat(3);
 const source = shape === 'nocode' ? NO_CODE : shape === 'para' ? PARA : SAMPLE;
 const items = Array.from({ length: n }, (_, index) => ({ id: index, text: `${source}\n\n第 ${index + 1} 条。` }));
 
@@ -62,7 +64,11 @@ function Body() {
                         {items.map((item) => (
                             <ChatMessage key={item.id} sender="assistant">
                                 <ChatMessageBubble variant="ghost" name="diy">
-                                    {mode === 'astryx-md' ? <Markdown density="compact">{item.text}</Markdown> : <span>{item.text}</span>}
+                                    {mode === 'astryx-md' ? (
+                                        <Markdown density="compact">{item.text}</Markdown>
+                                    ) : (
+                                        <span>{item.text}</span>
+                                    )}
                                 </ChatMessageBubble>
                             </ChatMessage>
                         ))}

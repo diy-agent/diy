@@ -28,7 +28,15 @@ function roomDir(room: Room): string | undefined {
     return typeof dir === 'string' && dir !== '' ? dir : undefined;
 }
 
-function RoomHeader({ room, onAddMember, onPickModel }: { room: Room; onAddMember: () => void; onPickModel: () => void }) {
+function RoomHeader({
+    room,
+    onAddMember,
+    onPickModel,
+}: {
+    room: Room;
+    onAddMember: () => void;
+    onPickModel: () => void;
+}) {
     const state = useStore();
     const bots = botsOf(room, state.bots);
     const primary = primaryBotOf(room, state.bots);
@@ -62,12 +70,18 @@ function RoomHeader({ room, onAddMember, onPickModel }: { room: Room; onAddMembe
                         </span>
                     )}
                     {others.map((bot) => (
-                        <span key={bot.id} className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-muted-foreground">
+                        <span
+                            key={bot.id}
+                            className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-muted-foreground"
+                        >
                             <span className="size-2 rounded-full" style={{ background: bot.color }} />
                             {bot.name}
                         </span>
                     ))}
-                    <button onClick={onAddMember} className="flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted">
+                    <button
+                        onClick={onAddMember}
+                        className="flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted"
+                    >
                         <Plus className="size-3" />
                         成员
                     </button>
@@ -75,7 +89,9 @@ function RoomHeader({ room, onAddMember, onPickModel }: { room: Room; onAddMembe
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                 <span>
-                    {bots.length <= 1 ? '只有默认应答，没有 @ 时它自己回' : `${bots.length} 个成员：@名字叫谁谁回，@all 全回（等于开会，token 按人数涨）`}
+                    {bots.length <= 1
+                        ? '只有默认应答，没有 @ 时它自己回'
+                        : `${bots.length} 个成员：@名字叫谁谁回，@all 全回（等于开会，token 按人数涨）`}
                 </span>
                 <ContextPanel room={room} />
             </div>
@@ -148,21 +164,34 @@ export function App() {
                         )}
                     </div>
                 ) : room === undefined ? (
-                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">左侧选择一个容器</div>
+                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                        左侧选择一个容器
+                    </div>
                 ) : (
                     <>
-                        <RoomHeader room={room} onAddMember={() => setDialog('member')} onPickModel={() => setModelTarget(room.id)} />
+                        <RoomHeader
+                            room={room}
+                            onAddMember={() => setDialog('member')}
+                            onPickModel={() => setModelTarget(room.id)}
+                        />
                         <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
                         <SpeakingBar roomId={room.id} />
                         <SurfaceViews surfaceId={surfaceId} targetId={room.id} />
                     </>
                 )}
                 {state.loaded && state.error !== undefined && (
-                    <div className="border-t border-destructive/40 bg-destructive/10 px-3 py-1 text-[11px]">后端：{state.error}</div>
+                    <div className="border-t border-destructive/40 bg-destructive/10 px-3 py-1 text-[11px]">
+                        后端：{state.error}
+                    </div>
                 )}
             </main>
 
-            {dialog === 'project' && <CreateProjectDialog onClose={() => setDialog(null)} onSubmit={(input) => actions.createProject(input)} />}
+            {dialog === 'project' && (
+                <CreateProjectDialog
+                    onClose={() => setDialog(null)}
+                    onSubmit={(input) => actions.createProject(input)}
+                />
+            )}
             {dialog === 'member' && activeRoom !== undefined && (
                 <AddMemberDialog
                     room={activeRoom}
@@ -172,7 +201,11 @@ export function App() {
                 />
             )}
             {dialog === 'settings' && (
-                <SettingsDialog defaultModelKey={state.defaultModelKey} onChangeDefault={(key) => actions.setDefaultModel(key)} onClose={() => setDialog(null)} />
+                <SettingsDialog
+                    defaultModelKey={state.defaultModelKey}
+                    onChangeDefault={(key) => actions.setDefaultModel(key)}
+                    onClose={() => setDialog(null)}
+                />
             )}
             {modelTarget !== null && (
                 <ModelDialog

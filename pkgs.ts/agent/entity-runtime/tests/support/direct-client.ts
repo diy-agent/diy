@@ -25,7 +25,12 @@ export class DirectRoomClient implements ChatClient {
         });
     }
 
-    async post(_entityId: string, command: Command, onEvent: (event: StreamEvent) => void, signal?: AbortSignal): Promise<void> {
+    async post(
+        _entityId: string,
+        command: Command,
+        onEvent: (event: StreamEvent) => void,
+        signal?: AbortSignal,
+    ): Promise<void> {
         const emit = (event: StreamEvent) => onEvent(this.maybe(event));
         const off = this.harness.subscribe((event) => emit(event as unknown as StreamEvent));
         try {

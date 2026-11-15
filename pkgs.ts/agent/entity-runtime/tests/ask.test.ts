@@ -7,7 +7,8 @@ import type { AskRequest } from '../src/types';
 
 function makeGate(options: { timeoutMs?: number } = {}) {
     const requests: AskRequest[] = [];
-    const settled: Array<{ request: AskRequest; result: { answer?: unknown; cancelled?: boolean; reason?: string } }> = [];
+    const settled: Array<{ request: AskRequest; result: { answer?: unknown; cancelled?: boolean; reason?: string } }> =
+        [];
     const gate = new AskGate({
         request: (request) => requests.push(request),
         settle: (request, result) => settled.push({ request, result }),
