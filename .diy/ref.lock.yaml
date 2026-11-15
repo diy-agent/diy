@@ -1,11 +1,27 @@
-version: 5
-generated: '2026-09-18T09:45:30.304Z'
-ref:
-  node:
-    diy-app:
-      dependencies:
-        '@agentclientprotocol/sdk': ~/.diy/ref/github.com/agentclientprotocol/typescript-sdk/1.4.0
-  source:
-    .:
-      github.com/anomalyco/opencode: ~/.diy/ref/github.com/anomalyco/opencode/latest
-      github.com/deepseek-ai/deepseek-harness: ~/.diy/ref/github.com/deepseek-ai/deepseek-harness/latest
+version: 1
+generated: 2026-11-12T10:24:17.448+0800
+source:
+  github.com/nodeca/js-yaml:
+    key: github.com/nodeca/js-yaml
+    url: https://github.com/nodeca/js-yaml
+    version: 4.1.1
+    dir: ref/github.com/nodeca/js-yaml/4.1.1
+    lastSync: 2026-11-12T10:24:17.448+0800
+  github.com/agentclientprotocol/agent-client-protocol:
+    key: github.com/agentclientprotocol/agent-client-protocol
+    url: https://github.com/agentclientprotocol/agent-client-protocol
+    version: v0.11.3
+    dir: ref/github.com/agentclientprotocol/agent-client-protocol/v0.11.3
+    lastSync: 2026-11-12T10:24:17.448+0800
+  github.com/vitest-dev/docs-cn:
+    key: github.com/vitest-dev/docs-cn
+    url: https://github.com/vitest-dev/docs-cn
+    version: v3
+    dir: ref/github.com/vitest-dev/docs-cn/v3
+    lastSync: 2026-11-12T10:24:17.448+0800
+  github.com/earendil-works/pi:
+    key: github.com/earendil-works/pi
+    url: https://github.com/earendil-works/pi
+    version: null
+    dir: ref/github.com/earendil-works/pi/main
+    lastSync: 2026-11-12T10:24:17.448+0800
