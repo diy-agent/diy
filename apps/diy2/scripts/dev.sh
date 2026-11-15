@@ -6,7 +6,9 @@ set -u
 cd "$(dirname "$0")/.."
 
 for port in 5190 5191; do
-    pid="$(lsof -ti ":$port" 2>/dev/null || true)"
+    # 只看监听者：不加 -sTCP:LISTEN 会把"连着这个端口的客户端"也算进来
+    # （Vite 的 /api 代理、浏览器的 SSE 都长连着 5191，会被误杀）
+    pid="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
     if [ -n "$pid" ]; then
         echo "kill :$port ($pid)"
         # shellcheck disable=SC2086
