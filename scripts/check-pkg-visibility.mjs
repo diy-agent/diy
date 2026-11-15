@@ -45,6 +45,29 @@ function collect() {
     return out;
 }
 
+// 入口/产物目录这类判据必须扫到**两层布局**（##512：pkgs.ts/<组>/<包>）—— 只扫一层的话
+// pkgs.ts/agent/skills 这类包完全逃过护栏（实测：把它的 main 指回 ./lib/index.js 仍报「通过」）。
+function collectAll() {
+    const out = [];
+    const rootPkg = join(ROOT, "package.json");
+    if (existsSync(rootPkg)) out.push({ dir: ".", file: rootPkg });
+    for (const root of PKG_ROOTS) {
+        if (!existsSync(root)) continue;
+        for (const name of readdirSync(root, { withFileTypes: true })) {
+            if (!name.isDirectory() || name.name === "node_modules") continue;
+            const groupDir = join(root, name.name);
+            const direct = join(groupDir, "package.json");
+            if (existsSync(direct)) out.push({ dir: groupDir.slice(ROOT.length + 1), file: direct });
+            for (const sub of readdirSync(groupDir, { withFileTypes: true })) {
+                if (!sub.isDirectory() || sub.name === "node_modules") continue;
+                const nested = join(groupDir, sub.name, "package.json");
+                if (existsSync(nested)) out.push({ dir: join(groupDir, sub.name).slice(ROOT.length + 1), file: nested });
+            }
+        }
+    }
+    return out;
+}
+
 /** 从 package.json 里取全部依赖名（含 dev / peer / optional） */
 function depNames(pkg) {
     const out = new Set();
@@ -107,32 +130,44 @@ if (listOnly) {
     process.exit(0);
 }
 
-// ── ⑤ 包的**类型入口**不许指向 lib/（2026-10-29 事故）────────────────────────
+// ── ⑤ 包的**类型入口**不许指向产物目录（2026-10-29 事故）──────────────────────
 // 事故：#453 把各包 `main` 指向 `./lib/index.js` 时，`types` 也一起指向 `./lib/index.d.ts`。
-// 而 `lib/` 在 `.gitignore` 里（产物不入库）⇒ **任何没跑过 build-pkgs 的仓库**
+// 而产物目录在 `.gitignore` 里（不入库）⇒ **任何没跑过 build-pkgs 的仓库**
 // 类型解析全失败（实测 main 上 52 个 error TS，`Cannot find module '@diy-agent/session'`），
 // 而跑过 build 的 worktree 里 check 是绿的 —— 典型的「验了脏工作区，没验干净态」。
 //
 // 判据：`types` 与 `exports.*.types` 一律指 `./src/…`（tsc 直接读 TS 源，不依赖产物）；
-//       `main` / `exports.*.default` 保持指 `./lib/…`（运行时 Node 加载）。
+//       `main` / `exports.*.default` 指 `./dist/…`（运行时 Node 加载的产物）。
 {
-    const pkgJsons = PKG_ROOTS.filter(existsSync).flatMap((root) =>
-        readdirSync(root).map((d) => join(root, d, "package.json")).filter(existsSync),
-    );
+    const pkgJsons = collectAll().map((entry) => entry.file);
     for (const file of pkgJsons) {
         let pkg;
         try { pkg = JSON.parse(readFileSync(file, "utf8")); } catch { continue; }
         const bad = [];
-        if (String(pkg.types ?? "").startsWith("./lib/")) bad.push(`types: ${pkg.types}`);
+        const isArtifact = (s) => typeof s === "string" && (s.startsWith("./lib/") || s.startsWith("./dist/"));
+        if (isArtifact(pkg.types)) bad.push(`types: ${pkg.types}`);
         for (const [k, v] of Object.entries(pkg.exports ?? {})) {
-            if (v && typeof v === "object" && String(v.types ?? "").startsWith("./lib/")) {
+            if (v && typeof v === "object" && isArtifact(v.types)) {
                 bad.push(`exports["${k}"].types: ${v.types}`);
             }
         }
         if (bad.length) {
             problems.push(
-                `${pkg.name}: 类型入口指向 lib/（${bad.join(" / ")}）—— lib 不入库，干净仓库会 Cannot find module。` +
-                    ` 改成 ./src/…（main 仍指 lib）。`,
+                `${pkg.name}: 类型入口指向产物目录（${bad.join(" / ")}）—— 产物不入库，干净仓库会 Cannot find module。` +
+                    ` 改成 ./src/…（main/exports.default 才指 ./dist/）。`,
+            );
+        }
+        // 产物目录只许 dist/：lib/ 是历史写法，且会和正经源码目录（renderer 的 lib/）混淆
+        const badOut = [];
+        if (typeof pkg.main === "string" && pkg.main.startsWith("./lib/")) badOut.push(`main: ${pkg.main}`);
+        for (const [k, v] of Object.entries(pkg.exports ?? {})) {
+            const spec = typeof v === "string" ? v : (v?.default ?? v?.import);
+            if (typeof spec === "string" && spec.startsWith("./lib/")) badOut.push(`exports["${k}"]: ${spec}`);
+        }
+        if (badOut.length) {
+            problems.push(
+                `${pkg.name}: 编译产物指向 lib/（${badOut.join(" / ")}）—— 产物只许落 build/ 或 dist/。` +
+                    ` 改 tsconfig.build.json 的 outDir 与 main/exports 为 dist/。`,
             );
         }
     }
@@ -181,12 +216,12 @@ console.log(
 // ── ⑤ 包出口不许再指 `.ts`（2026-10-29 追加，##453 薄壳子前置 #1~#2）────────────
 // 事故背景：Electron 要从 `Resources/runtime/node_modules/` **动态加载能力包**，那是
 // Node 直接 `import()` —— Node 加载不了 `.ts`。原先 11 个包的 main 全指 `./src/index.ts`，
-// 「打包时才发现加载不了」。判据：main / exports 的出口必须以 `.js` 结尾（产物是 lib/）。
-// 修法：每包 `tsconfig.build.json`（outDir=lib）→ `./sha.sh build` → main 指 `./lib/index.js`。
+// 「打包时才发现加载不了」。判据：main / exports 的出口必须以 `.js` 结尾（产物是 dist/）。
+// 修法：每包 `tsconfig.build.json`（outDir=dist）→ `./sha.sh build` → main 指 `./dist/index.js`。
 //
 // 例外（判据：**Node 能不能真的加载**）：`@diy-agent/ui-kit` 是 Solid JSX 组件库 —— JSX 必须由
 // 渲染端编译器（vite 的 solid 插件）编译，tsc 只能 `jsx: preserve` 出带 JSX 的 `.js`（Node 解析即炸），
-// 故它没有 lib、只被 vite 打进 renderer，出口保持 `./src/index.ts`。
+// 故它没有产物、只被 vite 打进 renderer，出口保持 `./src/index.ts`。
 const TS_ENTRY_EXEMPT = new Set(["@diy-agent/ui-kit"]);
 {
     for (const { dir, file } of pkgs) {
@@ -207,7 +242,7 @@ const TS_ENTRY_EXEMPT = new Set(["@diy-agent/ui-kit"]);
             problems.push(
                 `${pkg.name}: 出口仍指向 .ts（${bad.join(", ")}）—— Node 加载不了 .ts，` +
                     `Electron 从 node_modules 动态加载时会 ERR_UNKNOWN_FILE_EXTENSION。` +
-                    `应指 ./lib/*.js（先 ./sha.sh build）。`,
+                    `应指 ./dist/*.js（先 ./sha.sh build）。`,
             );
         }
     }

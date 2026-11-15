@@ -55,7 +55,6 @@
   "ignore": [
     "**/build/**",
     "**/dist/**",
-    "**/lib/**",
     "**/node_modules/**",
     "vendor/**",
     "apps/diy-app/tests/types/**"
