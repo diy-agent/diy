@@ -12,18 +12,23 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { createStaticHandler } from './static';
+
 import { RoomActor, openStore } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import type { Author, Bot, Room } from '@diy-agent/protocol';
 
 const PORT = Number(process.env['DIY2_PORT'] ?? 5191);
+// 生产（全局命令 diy2）：同一个进程顺带把 UI 也发出去；开发时为空，前端走 vite dev server
+const WEB_DIR = process.env['DIY2_WEB_DIR'];
+const serveStatic = createStaticHandler(WEB_DIR);
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 const COMPACT_BUDGET = {
     keepLast: Number(process.env['DIY2_COMPACT_KEEP'] ?? 12),
     maxChars: Number(process.env['DIY2_COMPACT_CHARS'] ?? 24000),
 };
 
-const dataDir = join(homedir(), '.diy', 'diy2');
+const dataDir = process.env['DIY2_DATA_DIR'] ?? join(homedir(), '.diy', 'diy2');
 mkdirSync(dataDir, { recursive: true });
 const store = openStore(join(dataDir, 'diy2.db'));
 const HUMAN: Author = { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
@@ -533,6 +538,11 @@ const server = createServer((req, res) => {
             return;
         }
 
+        // 静态资源 / SPA 路由：/api 之外的 GET 交给 UI 产物
+        if (req.method === 'GET' && !url.pathname.startsWith('/api') && serveStatic !== undefined) {
+            if (serveStatic(url.pathname, res)) return;
+        }
+
         json(res, 404, { error: `unknown ${req.method ?? '?'} ${url.pathname}` });
     } catch (error) {
         json(res, 500, { error: error instanceof Error ? error.message : String(error) });
@@ -543,4 +553,5 @@ const server = createServer((req, res) => {
 // 任意命令执行面暴露给整个局域网（而且没有鉴权）。要远程用请走 SSH 隧道。
 server.listen(PORT, '127.0.0.1', () => {
     console.log(`[diy2] http://localhost:${PORT}  db=${join(dataDir, 'diy2.db')}`);
+    if (serveStatic !== undefined) console.log(`[diy2] UI: ${WEB_DIR}`);
 });

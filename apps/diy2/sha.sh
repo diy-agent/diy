@@ -12,7 +12,7 @@ cd "$SCRIPT_DIR"
 source "../../sha.common.sh"
 
 clean() {
-  run rm -rf ./dist ./node_modules/.cache/tsbuildinfo ./tsconfig.tsbuildinfo
+  run rm -rf ./build ./dist ./node_modules/.cache/tsbuildinfo ./tsconfig.tsbuildinfo
 }
 
 sync() { :; }
@@ -25,6 +25,15 @@ fix() {
   fmt-fix
   lint-fix
 }
+
+# build：UI（vite）+ 服务端（vite lib/ssr，含工作区包）→ build/prod/{web,server}
+# 全局命令 bin/diy2 只认这个产物，不再需要 tsx / vite 在运行时
+build() { run npm run build; }
+build-web() { run npm run build:web; }
+build-server() { run npm run build:server; }
+
+# 本地试跑构建产物（等价于 npm link 之后敲 diy2）
+start() { run node bin/diy2 "$@"; }
 
 typecheck() { run npx tsc --noEmit; }
 lint() { run npx oxlint src/ server/; }

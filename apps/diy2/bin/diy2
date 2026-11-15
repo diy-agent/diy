@@ -1,0 +1,98 @@
+#!/usr/bin/env node
+// bin/diy2 —— 全局命令入口（npm link / 发布后都走它）。
+//
+// 做三件事：解析参数 → 启动打包好的服务端（单进程同时提供 UI 与 /api）→ 打开浏览器。
+// 服务端产物在 build/prod/server/index.mjs（esbuild/vite 打好的，含工作区包），
+// UI 产物在 build/prod/web/。没构建过就明确提示，不要让人对着 ERR_MODULE_NOT_FOUND 猜。
+
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8'));
+
+const args = process.argv.slice(2);
+const valueOf = (name, short) => {
+    const eq = args.find((arg) => arg.startsWith(`--${name}=`));
+    if (eq !== undefined) return eq.slice(name.length + 3);
+    const index = args.findIndex((arg) => arg === `--${name}` || (short !== undefined && arg === short));
+    if (index >= 0) {
+        const next = args[index + 1];
+        return next !== undefined && !next.startsWith('-') ? next : undefined;
+    }
+    return undefined;
+};
+
+if (args.includes('--help') || args.includes('-h')) {
+    console.log(`diy2 ${pkg.version} — 容器即对话（Room / Bot）
+
+用法：
+  diy2 [options]
+
+选项：
+  -p, --port <n>     监听端口（默认 5192，也可用 DIY2_PORT）
+      --data-dir <d> 数据目录（默认 ~/.diy/diy2，也可用 DIY2_DATA_DIR）
+      --no-open      不自动打开浏览器
+  -h, --help         显示本帮助
+  -v, --version      显示版本`);
+    process.exit(0);
+}
+if (args.includes('--version') || args.includes('-v')) {
+    console.log(pkg.version);
+    process.exit(0);
+}
+
+const serverEntry = join(pkgRoot, 'build/prod/server/index.mjs');
+const webDir = join(pkgRoot, 'build/prod/web');
+if (!existsSync(serverEntry) || !existsSync(webDir)) {
+    console.error('diy2 还没构建（缺 build/prod/server 或 build/prod/web）。');
+    console.error(`  仓库里：cd ${pkgRoot} && ./sha.sh build`);
+    console.error('  npm 安装的包：重新安装一次（发布产物里应该带 build/prod/）');
+    process.exit(1);
+}
+
+const port = valueOf('port', '-p') ?? process.env['DIY2_PORT'] ?? '5192';
+const dataDir = valueOf('data-dir') ?? process.env['DIY2_DATA_DIR'];
+process.env['DIY2_PORT'] = port;
+process.env['DIY2_WEB_DIR'] = webDir;
+if (dataDir !== undefined) process.env['DIY2_DATA_DIR'] = dataDir;
+
+const url = `http://127.0.0.1:${port}`;
+
+/** 等 /api/rooms 通（服务端 listen 是异步的，直接开浏览器会撞空白页） */
+async function waitHealthy(timeoutMs = 10_000) {
+    const startedAt = Date.now();
+    for (;;) {
+        try {
+            const res = await fetch(`${url}/api/rooms`);
+            if (res.ok) return true;
+        } catch {
+            /* 还没起来 */
+        }
+        if (Date.now() - startedAt > timeoutMs) return false;
+        await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+}
+
+function openBrowser(target) {
+    const command =
+        process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+    const argv = process.platform === 'win32' ? ['/c', 'start', '', target] : [target];
+    try {
+        spawn(command, argv, { detached: true, stdio: 'ignore' }).unref();
+    } catch {
+        /* 打不开浏览器不影响服务本身 */
+    }
+}
+
+// 服务端顶层就 listen（`import` 即启动）
+await import(pathToFileURL(serverEntry).href);
+
+const healthy = await waitHealthy();
+if (!healthy) {
+    console.error(`diy2 启动了但 ${url}/api/rooms 没响应，检查端口 ${port} 是否被占用。`);
+    process.exit(1);
+}
+if (!args.includes('--no-open')) openBrowser(url);

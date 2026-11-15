@@ -2,14 +2,51 @@
 
 diy2 的新客户端：Vite + React 19 + `@diy-agent/entity-chat`（UI）+ `@diy-agent/entity-runtime`（运行时）。
 
+## 开发（两个进程）
+
 ```bash
-# 两个进程（nohup 后台，日志 /tmp/diy2.log、/tmp/diy2-api.log）
+# nohup 后台起 UI + API，日志 /tmp/diy2.log、/tmp/diy2-api.log
 ./scripts/dev.sh
 
 # 或分开起
-npm run dev -w @diy-agent/app-diy2        # UI  http://localhost:5190
+npm run dev -w @diy-agent/app-diy2        # UI  http://localhost:5190（/api 代理到 5191）
 npm run dev:server -w @diy-agent/app-diy2 # API http://localhost:5191
 ```
+
+## 全局命令 `diy2`（一条命令起服务）
+
+```bash
+# 仓库里：构建 → 全局链接 → 任意目录可用
+cd apps/diy2 && ./sha.sh build
+npm link            # 之后 `diy2` 就在 PATH 里
+
+diy2                # 默认 http://127.0.0.1:5192（自动开浏览器）
+diy2 -p 6000        # 换端口
+diy2 --no-open      # 不自动开浏览器
+diy2 --data-dir /tmp/diy2-demo   # 换数据目录（默认 ~/.diy/diy2）
+```
+
+构建产物是两件：`build/prod/web/`（vite build 的 UI）和 `build/prod/server/index.mjs`
+（vite lib/ssr 打的服务端，工作区包都打进去了）。全局命令只依赖这两件，
+不需要在运行时装 vite / tsx。发布时 `files` 只带 `bin/` + `build/prod/`。
+
+一键试跑构建产物（不装全局）：`./sha.sh start`。
+
+### 老机器上的 `diy2` 冲突
+
+如果之前装过旧的 `@diy-agent/app-chat`（##478 已删除），全局会留一条**悬空**软链，
+`npm link` / `npm i -g` 会报 `EEXIST: file already exists`：
+
+```bash
+rm -f "$(npm prefix -g)/bin/diy2"   # 目标已不存在，删掉无副作用
+cd apps/diy2 && npm link
+```
+
+### 发包
+
+`files` 只带 `bin/` + `build/prod/`，`prepublishOnly` 会先构建；服务端产物已经把
+工作区包和第三方依赖都内联了，所以装上就能跑，不需要额外装依赖。发布前记得去掉
+`"private": true`（现在是防手滑）。
 
 UI 有三个可切换的表面（同一份时间线 + 同一个 store，只换渲染器）：
 
