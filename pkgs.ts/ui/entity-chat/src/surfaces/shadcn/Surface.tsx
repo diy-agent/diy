@@ -17,7 +17,6 @@ import { BotAvatar } from '../../components/BotAvatar';
 import { ErrorBar } from '../../components/ErrorBar';
 import { Markdown } from '../../components/Markdown';
 import { RunningIndicator } from '../../components/RunningIndicator';
-import { ShowEarlier } from '../../components/ShowEarlier';
 import { useWindowed } from '../../components/useWindowed';
 import { conversationOf, useStore } from '../../store';
 
@@ -88,10 +87,11 @@ function ToolRow({ tool }: { tool: TimelinePart & { kind: 'tool' } }) {
 function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
     if (entry.kind === 'notice' || entry.kind === 'error') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
+        const label = entry.kind === 'error' && entry.author !== undefined ? `${entry.author.name} 回复失败：${text}` : text;
         return (
-            <div className="my-1 flex items-center gap-3 text-[11px] text-muted-foreground">
+            <div className={`my-1 flex items-center gap-3 text-[11px] ${entry.kind === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
                 <span className="h-px flex-1 bg-border" />
-                <span>{text}</span>
+                <span>{label}</span>
                 <span className="h-px flex-1 bg-border" />
             </div>
         );
@@ -239,6 +239,14 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
                 onScroll={(event) => {
                     const element = event.currentTarget;
                     stickRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+                    // 滑到顶部就补一窗（保持视口位置：把新增内容的高度加回 scrollTop）
+                    if (element.scrollTop < 48 && windowed.hidden > 0) {
+                        const before = element.scrollHeight;
+                        windowed.showMore();
+                        requestAnimationFrame(() => {
+                            element.scrollTop += element.scrollHeight - before;
+                        });
+                    }
                 }}
                 role="log"
                 aria-live="polite"
@@ -251,7 +259,6 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
                     </div>
                 ) : (
                     <>
-                        <ShowEarlier hidden={windowed.hidden} onClick={windowed.showMore} />
                         {windowed.visible.map((entry) => (
                             <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
                                 <EntryView entry={entry} roomId={targetId} />

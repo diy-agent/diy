@@ -24,6 +24,22 @@ export function ChatPanel({ targetId }: { targetId: string }) {
     // 长会话只渲染最近 N 条（600+ 条 markdown 是切换卡顿的主因）
     const windowed = useWindowed(messages);
 
+    // 滑到顶部自动补一窗（官方是无限滚动，不放"显示更早"按钮）
+    React.useEffect(() => {
+        const viewport = document.querySelector('[data-slot="aui_thread-viewport"]');
+        if (viewport === null) return;
+        const onScroll = () => {
+            if (viewport.scrollTop > 48) return;
+            const before = viewport.scrollHeight;
+            windowed.showMore();
+            requestAnimationFrame(() => {
+                viewport.scrollTop += viewport.scrollHeight - before;
+            });
+        };
+        viewport.addEventListener('scroll', onScroll, { passive: true });
+        return () => viewport.removeEventListener('scroll', onScroll);
+    }, [windowed]);
+
     const mentionBots = useMentionCandidates(targetId);
 
     const runtime = useExternalStoreRuntime({

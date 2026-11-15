@@ -169,6 +169,7 @@ export class Projector {
                     turnId: event.turnId,
                     at: now,
                     status: 'failed',
+                    author: this.author,
                     type: 'error',
                     data: { message: event.message },
                 };

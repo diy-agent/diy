@@ -96,6 +96,7 @@ export function buildTimeline(
                 key: item.id,
                 kind: 'error',
                 turnId: item.turnId,
+                ...(item.author === undefined ? {} : { author: item.author }),
                 parts: [{ kind: 'text', text: item.data.message }],
                 streaming: false,
                 deliveries: [],

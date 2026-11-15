@@ -47,7 +47,7 @@ describe.each(transports)('ChatClient 端口 / %s', (_name, makeClient) => {
         expect(texts.some((text) => text.includes('收到'))).toBe(true);
     });
 
-    it('cancel：在跑的会话中止，投递标为 failed', async () => {
+    it('cancel：在跑的会话中止，投递仍算 delivered（失败归 bot 的回复）', async () => {
         const h = makeRoom({ hang: true });
         const client = makeClient(h);
 
@@ -57,7 +57,7 @@ describe.each(transports)('ChatClient 端口 / %s', (_name, makeClient) => {
         await running;
 
         const snapshot = await client.load();
-        expect(snapshot.deliveries[0]?.state).toBe('failed');
+        expect(snapshot.deliveries[0]?.state).toBe('delivered');
     });
 
     it('sessions / compact：通过端口可读、可压（只影响自己）', async () => {

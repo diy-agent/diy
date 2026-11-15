@@ -77,7 +77,7 @@ describe('RoomActor', () => {
         expect(h.room.member(BOT_B.id)?.persona).toBe('产品视角');
     });
 
-    it('cancel：在跑的会话被中止，投递标为失败', async () => {
+    it('cancel：在跑的会话被中止，投递仍算已送达（失败体现在 bot 的回复上）', async () => {
         const h = makeRoom({ hang: true });
         const running = h.room.say({ text: '会被取消', author: HUMAN });
         await sleep(3);
@@ -85,7 +85,8 @@ describe('RoomActor', () => {
         await running;
 
         expect(h.room.busy()).toBe(false);
-        expect(h.room.deliveries()[0]?.state).toBe('failed');
+        // 消息确实送到了 bot 手里；被取消的是"它的回复"，不是投递
+        expect(h.room.deliveries()[0]?.state).toBe('delivered');
     });
 
     it('显式 recipients = 开会：不解析 @', async () => {

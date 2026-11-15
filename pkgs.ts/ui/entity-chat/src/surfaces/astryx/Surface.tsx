@@ -63,9 +63,11 @@ function TimeOf({ at }: { at: number }) {
 function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
     if (entry.kind === 'notice' || entry.kind === 'error') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
+        // 失败以"那个 bot"的名义展示：消息本身已送达，失败的是它的回复
+        const label = entry.kind === 'error' && entry.author !== undefined ? `${entry.author.name} 回复失败：${text}` : text;
         return (
             <ChatSystemMessage key={entry.key} variant={entry.kind === 'notice' ? 'divider' : 'default'}>
-                {text}
+                {label}
             </ChatSystemMessage>
         );
     }

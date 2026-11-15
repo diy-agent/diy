@@ -134,7 +134,8 @@ describe('BotSession', () => {
 
         await Promise.all([running, queued]);
         expect(h.runs).toEqual(['turn-1']);
-        expect(h.deliveries).toContain('m1:failed');
+        expect(h.deliveries).toContain('m1:delivered');
+        expect(h.deliveries).not.toContain('m1:failed');
     });
 
     it('cancel keepQueue：排队的 next-turn 不丢，取消这一轮后继续跑', async () => {

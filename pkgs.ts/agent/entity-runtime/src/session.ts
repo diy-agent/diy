@@ -366,7 +366,9 @@ export class BotSession {
                 });
             }
 
-            for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: failed ? 'failed' : 'delivered' });
+            // 这一轮已经消费了这些消息 ⇒ 投递成功；跑失败是 bot 的问题（会有 error 条目），
+            // 不该在用户消息上标"未送达"（那是传输层的事）。
+            for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'delivered' });
             for (const item of items) item.resolve();
             this.steering = null;
             this.abort = null;
