@@ -6,12 +6,16 @@
     "type": "module",
     "scripts": {
         "dev": "vite --port 5190 --strictPort",
-        "build": "vite build",
-        "preview": "vite preview",
-        "typecheck": "tsc --noEmit",
         "dev:server": "tsx server/index.ts",
         "dev:all": "./scripts/dev.sh",
-        "stop": "./scripts/stop.sh"
+        "build": "vite build && vite build --config vite.server.config.ts",
+        "build:web": "vite build",
+        "build:server": "vite build --config vite.server.config.ts",
+        "start": "node bin/diy2",
+        "preview": "vite preview",
+        "typecheck": "tsc --noEmit",
+        "stop": "./scripts/stop.sh",
+        "prepublishOnly": "npm run build"
     },
     "dependencies": {
         "@astryxdesign/core": "0.7.17-canary.geeb3d7c",
@@ -34,5 +38,16 @@
         "tsx": "^4.20.6",
         "typescript": "^7.0.2",
         "vite": "^8.0.0"
+    },
+    "bin": {
+        "diy2": "bin/diy2"
+    },
+    "main": "build/prod/server/index.mjs",
+    "files": [
+        "bin/",
+        "build/prod/"
+    ],
+    "engines": {
+        "node": ">=22"
     }
 }

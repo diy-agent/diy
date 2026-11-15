@@ -14,4 +14,9 @@ export default defineConfig({
             '/api': 'http://localhost:5191',
         },
     },
+    build: {
+        // 和 server 产物同一个根：build/prod/{web,server}（全局命令 diy2 一起发）
+        outDir: 'build/prod/web',
+        emptyOutDir: true,
+    },
 });
