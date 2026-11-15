@@ -9,6 +9,7 @@ import { Thread } from '../assistant-ui/components/assistant-ui/elements/thread.
 import { ErrorBar } from './ErrorBar';
 import { MentionBotsProvider, useMentionCandidates } from '../mentions';
 import { toThreadMessages } from '../projection';
+import { useWindowed } from './useWindowed';
 import { conversationOf, useStore } from '../store';
 
 export function ChatPanel({ targetId }: { targetId: string }) {
@@ -20,11 +21,13 @@ export function ChatPanel({ targetId }: { targetId: string }) {
         () => toThreadMessages(state.items, state.deliveries, shell.bots, targetId, state.speaking, state.asks),
         [state.items, state.deliveries, shell.bots, targetId, state.speaking, state.asks],
     );
+    // 长会话只渲染最近 N 条（600+ 条 markdown 是切换卡顿的主因）
+    const windowed = useWindowed(messages);
 
     const mentionBots = useMentionCandidates(targetId);
 
     const runtime = useExternalStoreRuntime({
-        messages,
+        messages: [...windowed.visible],
         setMessages: () => undefined,
         onNew: async (message) => {
             const text = message.content

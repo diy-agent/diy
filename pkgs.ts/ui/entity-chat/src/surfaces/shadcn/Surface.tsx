@@ -17,6 +17,8 @@ import { BotAvatar } from '../../components/BotAvatar';
 import { ErrorBar } from '../../components/ErrorBar';
 import { Markdown } from '../../components/Markdown';
 import { RunningIndicator } from '../../components/RunningIndicator';
+import { ShowEarlier } from '../../components/ShowEarlier';
+import { useWindowed } from '../../components/useWindowed';
 import { conversationOf, useStore } from '../../store';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
@@ -216,6 +218,8 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
         [state.items, state.deliveries, shell.bots, state.speaking, state.asks],
     );
 
+    const windowed = useWindowed(entries);
+
     // 贴底跟随：只有"本来就在底部"时才自动滚，用户上翻就不打扰
     const scrollRef = React.useRef<HTMLDivElement | null>(null);
     const stickRef = React.useRef(true);
@@ -246,7 +250,12 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
                         还没有消息。发一句，或 @ 一个 bot。
                     </div>
                 ) : (
-                    entries.map((entry) => <EntryView key={entry.key} entry={entry} roomId={targetId} />)
+                    <>
+                        <ShowEarlier hidden={windowed.hidden} onClick={windowed.showMore} />
+                        {windowed.visible.map((entry) => (
+                            <EntryView key={entry.key} entry={entry} roomId={targetId} />
+                        ))}
+                    </>
                 )}
             </div>
             <Composer conversation={conversation} running={state.running} />

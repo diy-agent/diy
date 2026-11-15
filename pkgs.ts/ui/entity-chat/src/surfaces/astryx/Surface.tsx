@@ -23,6 +23,8 @@ import {
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
 import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
 import { AskCard } from '../../components/AskCard';
+import { ShowEarlier } from '../../components/ShowEarlier';
+import { useWindowed } from '../../components/useWindowed';
 import { BotAvatar } from '../../components/BotAvatar';
 import { deliveryFooterOf, deliveryStatusOf, TOOL_STATUS, toolTargetOf } from './mapping';
 import { RunningIndicator } from '../../components/RunningIndicator';
@@ -211,6 +213,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
         [state.items, state.deliveries, shell.bots, state.speaking, state.asks],
     );
 
+    const windowed = useWindowed(entries);
     const candidates = useMentionCandidates(targetId);
     const triggers = React.useMemo(
         () => [
@@ -272,7 +275,8 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                         isStreaming={state.running}
                         emptyState={<EmptyState title="还没有消息" description="发一句，或 @ 一个 bot。" />}
                     >
-                        <MessageList entries={entries} roomId={targetId} />
+                        <ShowEarlier hidden={windowed.hidden} onClick={windowed.showMore} />
+                        <MessageList entries={[...windowed.visible]} roomId={targetId} />
                     </ChatMessageList>
                 </ChatLayout>
             </div>

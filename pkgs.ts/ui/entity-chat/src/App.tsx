@@ -143,7 +143,7 @@ export function App() {
                         <RoomHeader room={room} onAddMember={() => setDialog('member')} onPickModel={() => setModelTarget(room.id)} />
                         <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
                         <SpeakingBar roomId={room.id} />
-                        <SurfaceView surfaceId={surfaceId} targetId={room.id} />
+                        <SurfaceViews surfaceId={surfaceId} targetId={room.id} />
                     </>
                 )}
                 {state.error !== undefined && (
@@ -200,8 +200,44 @@ function SurfaceTabs({ value, onChange }: { value: string; onChange: (id: string
     );
 }
 
-function SurfaceView({ surfaceId, targetId }: { surfaceId: string; targetId: string }) {
-    const surface = SURFACES.find((entry) => entry.id === surfaceId) ?? SURFACES[0]!;
-    const Component = surface.Component;
-    return <Component key={`${surface.id}:${targetId}`} targetId={targetId} />;
+/**
+ * 三个表面**都挂载**，只把非当前项隐藏。
+ * 之前每次切 tab 都卸载再挂载，长会话要重新渲染几百条 markdown —— 这就是切换卡顿的来源。
+ * 用 `display: contents` 让当前项不额外包一层盒子，布局和其他 flex 子项一致。
+ */
+/** 已挂载的表面用 memo 包住：切 tab 只改显示，不让隐藏的表面跟着重渲染 */
+const SurfaceHost = React.memo(function SurfaceHost({
+    visible,
+    Component,
+    targetId,
+}: {
+    visible: boolean;
+    Component: React.FC<{ targetId: string }>;
+    targetId: string;
+}) {
+    return (
+        <div className={visible ? 'contents' : 'hidden'}>
+            <Component targetId={targetId} />
+        </div>
+    );
+});
+
+function SurfaceViews({ surfaceId, targetId }: { surfaceId: string; targetId: string }) {
+    const [visited, setVisited] = React.useState<ReadonlySet<string>>(() => new Set([surfaceId]));
+    React.useEffect(() => {
+        setVisited((current) => (current.has(surfaceId) ? current : new Set([...current, surfaceId])));
+    }, [surfaceId]);
+
+    return (
+        <>
+            {SURFACES.filter((surface) => visited.has(surface.id)).map((surface) => (
+                <SurfaceHost
+                    key={`${surface.id}:${targetId}`}
+                    visible={surface.id === surfaceId}
+                    Component={surface.Component}
+                    targetId={targetId}
+                />
+            ))}
+        </>
+    );
 }
