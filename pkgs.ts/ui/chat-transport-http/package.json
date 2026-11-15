@@ -12,6 +12,9 @@
             "default": "./src/index.ts"
         }
     },
+    "scripts": {
+        "test": "vitest run"
+    },
     "dependencies": {
         "@diy-agent/chat-core": "*"
     }
