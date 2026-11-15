@@ -82,6 +82,12 @@ export interface ChatClient {
      */
     watch?(entityId: string, onEvent: (event: StreamEvent) => void): () => void;
 
+    /**
+     * 可选：释放这个房间还挂着的请求流（切走房间时用）。
+     * 服务端的运行不受影响：事件仍会从常驻订阅进来。
+     */
+    release?(entityId: string): void;
+
     /** 可选：回答一次挂起的提问（选项 / 表单） */
     answerAsk?(
         entityId: string,

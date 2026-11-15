@@ -7,6 +7,7 @@ const emptySnapshot: Snapshot = { items: [], deliveries: [], asks: [] };
 
 function fakeClient(loads: Array<Snapshot | Error>) {
     const watchers: Array<(event: StreamEvent) => void> = [];
+    const released: string[] = [];
     let calls = 0;
     const client: ChatClient = {
         load: async () => {
@@ -20,8 +21,9 @@ function fakeClient(loads: Array<Snapshot | Error>) {
             watchers.push(onEvent);
             return () => undefined;
         },
+        release: (entityId) => released.push(entityId),
     };
-    return { client, watchers, loads: () => calls };
+    return { client, watchers, loads: () => calls, released };
 }
 
 describe('ConversationStore', () => {
@@ -49,5 +51,12 @@ describe('ConversationStore', () => {
         watchers[0]!({ kind: 'ready' });
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(loads()).toBe(1);
+    });
+
+    it('dispose：常驻订阅和还挂着的 post 流一起释放（切走房间不该留连接）', () => {
+        const { client, released } = fakeClient([emptySnapshot]);
+        const store = new ConversationStore(client, 'proj:x');
+        store.dispose();
+        expect(released).toEqual(['proj:x']);
     });
 });

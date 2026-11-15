@@ -52,6 +52,9 @@ export class ConversationStore implements ConversationModel {
     dispose = (): void => {
         this.detachWatch?.();
         this.detachWatch = undefined;
+        // 还挂着的 post 流一起收掉：否则看过的每个房间各留一条，
+        // 攒到浏览器同源连接上限（6）后整个应用都发不出消息
+        this.client.release?.(this.entityId);
     };
 
     get = (): ConversationState => this.state;

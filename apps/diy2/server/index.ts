@@ -57,6 +57,22 @@ function attach(roomId: string, res: ServerResponse, persistent = false): void {
     res.on('close', () => set?.delete(entry));
 }
 
+/**
+ * 请求流只留最新一条：长会话里每句插话都会开一条 /chat SSE，而它要等整轮结束
+ * （可能十几分钟）才收尾；浏览器同源 HTTP/1.1 只有 6 条连接，攒满后新请求
+ * 连发都发不出去。旧流补一条 done 后关掉，事件仍走常驻订阅。
+ */
+function attachChat(roomId: string, res: ServerResponse): void {
+    const set = subscribers.get(roomId);
+    for (const entry of [...(set ?? [])]) {
+        if (entry.persistent) continue;
+        sse(entry.res, { kind: 'done' });
+        entry.res.end();
+        set?.delete(entry);
+    }
+    attach(roomId, res);
+}
+
 function broadcast(roomId: string, payload: RoomEvent): void {
     for (const entry of subscribers.get(roomId) ?? []) sse(entry.res, payload);
 }
@@ -504,7 +520,7 @@ const server = createServer((req, res) => {
                         'cache-control': 'no-cache',
                         connection: 'keep-alive',
                     });
-                    attach(id, res);
+                    attachChat(id, res);
 
                     try {
                         await actor.say({

@@ -167,7 +167,7 @@ export class HttpChatClient implements ChatClient {
         signal?: AbortSignal,
     ): Promise<void> {
         if (command.kind === 'cancel') {
-            this.controllers.get(entityId)?.abort();
+            this.release(entityId);
             const get = this.fetchImpl;
             await get(`${this.base}/rooms/${encodeURIComponent(entityId)}/cancel`, {
                 method: 'POST',
@@ -181,6 +181,11 @@ export class HttpChatClient implements ChatClient {
             return;
         }
         if (command.kind !== 'send') return;
+
+        // 同一房间只留一条 post 流：插话时上一句的流会一直挂到这轮结束（可能十几分钟）。
+        // 浏览器对同源 HTTP/1.1 只有 6 条连接，攒满后新消息连发都发不出去。
+        // 旧流收掉不影响服务端运行：事件还有常驻订阅这条路。
+        this.release(entityId);
 
         const controller = new AbortController();
         this.controllers.set(entityId, controller);
@@ -213,7 +218,16 @@ export class HttpChatClient implements ChatClient {
             }
         } finally {
             signal?.removeEventListener('abort', abort);
-            this.controllers.delete(entityId);
+            // 只清自己的：旧流 abort 后 finally 可能晚于新流注册，按 key 盲删会把新流弄丢
+            if (this.controllers.get(entityId) === controller) this.controllers.delete(entityId);
         }
+    }
+
+    /** 收掉这个房间挂着的请求流（不影响服务端运行） */
+    release(entityId: string): void {
+        const controller = this.controllers.get(entityId);
+        if (controller === undefined) return;
+        this.controllers.delete(entityId);
+        controller.abort();
     }
 }
