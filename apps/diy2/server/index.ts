@@ -291,6 +291,11 @@ const server = createServer((req, res) => {
                 const name = (body.name ?? '').trim();
                 if (name === '') return json(res, 400, { error: 'name required' });
                 const type = body.type ?? 'project';
+                // 任务必须挂在项目下：侧栏按 projectId 分组，没归属的任务等于隐身
+                const projectId = body.data?.['projectId'];
+                if (type === 'task' && (typeof projectId !== 'string' || roomOf(projectId) === undefined)) {
+                    return json(res, 400, { error: 'task 需要有效的 data.projectId' });
+                }
                 const id = `${type}-${Date.now().toString(36)}`;
                 const bot = newBot(name, id, `${type} bot`);
                 store.upsertBot(bot);
