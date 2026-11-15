@@ -18,12 +18,7 @@
 
 import type { ModelMessage, ToolSet } from 'ai';
 
-import {
-    effectiveModelOf,
-    effectivePersonaOf,
-    mentionsOf,
-    primaryMemberOf,
-} from '@diy-agent/protocol';
+import { effectiveModelOf, effectivePersonaOf, mentionsOf, primaryMemberOf } from '@diy-agent/protocol';
 
 import { AskGate, type AskOutcome } from './ask';
 import type { Compactor } from './compaction';
@@ -182,7 +177,13 @@ export class RoomActor {
         const saved = this.deps.store.appendItem(this.id, item);
         this.deps.emit({ kind: 'item', item: saved });
 
-        const entry = this.appendEntry({ kind: 'say', author: input.author, text, turn: turn.turn, turnId: turn.turnId });
+        const entry = this.appendEntry({
+            kind: 'say',
+            author: input.author,
+            text,
+            turn: turn.turn,
+            turnId: turn.turnId,
+        });
 
         const recipients = this.route(text, participants, input.recipients);
         const recipientIds = new Set(recipients.map((bot) => bot.id));
@@ -244,6 +245,8 @@ export class RoomActor {
                 messageId: delivery.messageId,
                 text,
                 mode: delivery.mode ?? 'next-step',
+                // 这句人话在公共日志里，session 回放时已经读到了；再追加一次会让模型看到两遍
+                alreadyInContext: true,
                 ...(turn === undefined ? {} : { turn }),
             });
         }
@@ -371,7 +374,13 @@ export class RoomActor {
                 }
             }
         }
-        if (patch.modelKey !== undefined) this.deps.spec.modelKey = patch.modelKey;
+        if (patch.modelKey !== undefined) {
+            this.deps.spec.modelKey = patch.modelKey;
+            // 已经建好的 session 记着自己的 modelKey：不推下去，UI 上换模型就是死开关
+            for (const bot of this.members()) {
+                this.sessions.get(bot.id)?.setModelKey(effectiveModelOf(this.deps.spec, bot));
+            }
+        }
         // 改名 / 换模型都要落库，否则重启后回到旧值
         this.deps.store.saveRoom(this.deps.spec);
     }
@@ -397,7 +406,8 @@ export class RoomActor {
         const session = this.sessions.get(botId);
         if (session === undefined) return;
         const snapshot = session.snapshot();
-        this.deps.store.saveSession(this.id, botId, snapshot);
+        // 水位和快照一起存：重启回放只补这之后新增的公共条目
+        this.deps.store.saveSession(this.id, botId, { ...snapshot, logSeq: this.log.lastSeq });
         this.turnSeq = Math.max(this.turnSeq, snapshot.turn);
     }
 
@@ -494,7 +504,11 @@ export class RoomActor {
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));
 
-        for (const entry of this.log.all()) session.ingest(entry);
+        // 回放水位：没有快照（后加入的成员）→ 全量回放；
+        // 老库的快照没有 log_seq（升级前）→ 当作"已全部 ingest 过"，
+        // 否则升级后第一次重启会把整份日志再塞一遍（正是要修的那个 bug）。
+        const from = saved === undefined ? 0 : (saved.logSeq ?? this.log.lastSeq);
+        for (const entry of this.log.since(from)) session.ingest(entry);
         this.sessions.set(bot.id, session);
         return session;
     }
@@ -561,13 +575,20 @@ export class RoomActor {
             turn: result.turn,
             turnId: result.turnId,
         });
-        for (const [botId, session] of this.sessions) {
-            if (botId !== bot.id) session.ingest(entry);
-        }
 
         const name = mentionsOf(result.text).find((value) => value !== 'all');
-        if (name === undefined) return;
-        const target = this.members().find((candidate) => candidate.name === name && candidate.id !== bot.id);
+        const target =
+            name === undefined
+                ? undefined
+                : this.members().find((candidate) => candidate.name === name && candidate.id !== bot.id);
+
+        for (const [botId, session] of this.sessions) {
+            if (botId === bot.id) continue;
+            // 被点名的人走下面的 post（正文只进一次），这里跳过 —— 否则同一段结论读两遍
+            if (botId === target?.id) continue;
+            session.ingest(entry);
+        }
+
         if (target === undefined) return;
 
         const now = this.deps.now?.() ?? Date.now();

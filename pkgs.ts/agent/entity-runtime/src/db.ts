@@ -14,6 +14,12 @@ export interface SessionSnapshot {
     collapsed: number;
     entries: TranscriptEntry[];
     usage?: TokenUsage;
+    /**
+     * 保存这份快照时，房间公共日志的水位（RoomLog.lastSeq）。
+     * 重启回放时只补这之后的部分 —— 否则快照里已有的公共条目会被再塞一遍，
+     * 每重启一次上下文就翻一倍。
+     */
+    logSeq?: number;
 }
 
 /** 投递时的入队信息：崩溃后据此重新投递 */
@@ -86,6 +92,7 @@ export function openStore(file: string): Store {
             collapsed INTEGER NOT NULL,
             entries TEXT NOT NULL,
             usage TEXT,
+            log_seq INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (entity_id, bot_id)
         );
@@ -124,14 +131,19 @@ export function openStore(file: string): Store {
     if (legacy !== undefined) {
         const count = (db.prepare('SELECT COUNT(*) AS n FROM room_members').get() as { n: number }).n;
         if (count === 0) {
-            const rows = db.prepare('SELECT entity_id, bot_id, position FROM entity_bots ORDER BY entity_id, position').all() as Array<
-                Record<string, unknown>
-            >;
+            const rows = db
+                .prepare('SELECT entity_id, bot_id, position FROM entity_bots ORDER BY entity_id, position')
+                .all() as Array<Record<string, unknown>>;
             const insert = db.prepare(
                 'INSERT OR IGNORE INTO room_members (entity_id, bot_id, position, primary_flag) VALUES (?,?,?,?)',
             );
             for (const row of rows) {
-                insert.run(String(row['entity_id']), String(row['bot_id']), Number(row['position']), Number(row['position']) === 0 ? 1 : 0);
+                insert.run(
+                    String(row['entity_id']),
+                    String(row['bot_id']),
+                    Number(row['position']),
+                    Number(row['position']) === 0 ? 1 : 0,
+                );
             }
         }
         db.exec('DROP TABLE entity_bots');
@@ -139,17 +151,28 @@ export function openStore(file: string): Store {
 
     // 老库补列：mode / turn / turn_id
     const columns = new Set(
-        (db.prepare('PRAGMA table_info(deliveries)').all() as Array<Record<string, unknown>>).map((row) => String(row['name'])),
+        (db.prepare('PRAGMA table_info(deliveries)').all() as Array<Record<string, unknown>>).map((row) =>
+            String(row['name']),
+        ),
     );
     for (const column of ['mode', 'turn', 'turn_id']) {
         if (!columns.has(column)) db.exec(`ALTER TABLE deliveries ADD COLUMN ${column}`);
     }
 
+    // 老库补列：session_state.log_seq（回放水位）
+    const sessionColumns = new Set(
+        (db.prepare('PRAGMA table_info(session_state)').all() as Array<Record<string, unknown>>).map((row) =>
+            String(row['name']),
+        ),
+    );
+    if (!sessionColumns.has('log_seq'))
+        db.exec('ALTER TABLE session_state ADD COLUMN log_seq INTEGER NOT NULL DEFAULT 0');
+
     /** room_members → roomId: members[]（members() 与 listRooms() 共用） */
     const readMembers = (): Record<string, RoomMember[]> => {
-        const rows = db
-            .prepare('SELECT * FROM room_members ORDER BY entity_id, position ASC')
-            .all() as Array<Record<string, unknown>>;
+        const rows = db.prepare('SELECT * FROM room_members ORDER BY entity_id, position ASC').all() as Array<
+            Record<string, unknown>
+        >;
         const out: Record<string, RoomMember[]> = {};
         for (const row of rows) {
             const id = String(row['entity_id']);
@@ -227,7 +250,18 @@ export function openStore(file: string): Store {
             db.prepare(
                 'INSERT INTO rooms (id, type, name, data, model_key, created_at) VALUES (?,?,?,?,?,?) ' +
                     'ON CONFLICT(id) DO UPDATE SET type=?, name=?, data=?, model_key=?',
-            ).run(room.id, room.type, room.name, data, room.modelKey, Date.now(), room.type, room.name, data, room.modelKey);
+            ).run(
+                room.id,
+                room.type,
+                room.name,
+                data,
+                room.modelKey,
+                Date.now(),
+                room.type,
+                room.name,
+                data,
+                room.modelKey,
+            );
         },
         listRooms(): Room[] {
             const members = readMembers();
@@ -279,7 +313,9 @@ export function openStore(file: string): Store {
             return { ...delivery, updatedAt };
         },
         listDeliveries(roomId: string): Delivery[] {
-            const rows = db.prepare('SELECT * FROM deliveries WHERE entity_id = ? ORDER BY updated_at ASC').all(roomId) as Record<string, unknown>[];
+            const rows = db
+                .prepare('SELECT * FROM deliveries WHERE entity_id = ? ORDER BY updated_at ASC')
+                .all(roomId) as Record<string, unknown>[];
             return rows.map((row) => ({
                 roomId: String(row['entity_id']),
                 messageId: String(row['message_id']),
@@ -291,7 +327,9 @@ export function openStore(file: string): Store {
         },
         pendingDeliveries(roomId: string): Array<DeliveryInput & { messageId: string }> {
             const rows = db
-                .prepare("SELECT * FROM deliveries WHERE entity_id = ? AND state IN ('queued','delivering') ORDER BY updated_at ASC")
+                .prepare(
+                    "SELECT * FROM deliveries WHERE entity_id = ? AND state IN ('queued','delivering') ORDER BY updated_at ASC",
+                )
                 .all(roomId) as Array<Record<string, unknown>>;
             return rows.map((row) => ({
                 roomId: String(row['entity_id']),
@@ -315,8 +353,8 @@ export function openStore(file: string): Store {
         },
         saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void {
             db.prepare(
-                'INSERT INTO session_state (entity_id, bot_id, turn, collapsed, entries, usage, updated_at) VALUES (?,?,?,?,?,?,?) ' +
-                    'ON CONFLICT(entity_id, bot_id) DO UPDATE SET turn=?, collapsed=?, entries=?, usage=?, updated_at=?',
+                'INSERT INTO session_state (entity_id, bot_id, turn, collapsed, entries, usage, log_seq, updated_at) VALUES (?,?,?,?,?,?,?,?) ' +
+                    'ON CONFLICT(entity_id, bot_id) DO UPDATE SET turn=?, collapsed=?, entries=?, usage=?, log_seq=?, updated_at=?',
             ).run(
                 roomId,
                 botId,
@@ -324,11 +362,13 @@ export function openStore(file: string): Store {
                 snapshot.collapsed,
                 JSON.stringify(snapshot.entries),
                 snapshot.usage === undefined ? null : JSON.stringify(snapshot.usage),
+                snapshot.logSeq ?? 0,
                 Date.now(),
                 snapshot.turn,
                 snapshot.collapsed,
                 JSON.stringify(snapshot.entries),
                 snapshot.usage === undefined ? null : JSON.stringify(snapshot.usage),
+                snapshot.logSeq ?? 0,
                 Date.now(),
             );
         },
@@ -342,6 +382,7 @@ export function openStore(file: string): Store {
                 collapsed: Number(row['collapsed']),
                 entries: JSON.parse(String(row['entries'])) as TranscriptEntry[],
                 ...(row['usage'] === null ? {} : { usage: JSON.parse(String(row['usage'])) as TokenUsage }),
+                ...(row['log_seq'] === null || row['log_seq'] === undefined ? {} : { logSeq: Number(row['log_seq']) }),
             };
         },
         appendRoomEntry(roomId: string, entry: RoomEntry): void {

@@ -113,6 +113,8 @@ interface QueueItem {
     turn?: Turn;
     /** 这条消息在房间日志里的条目：steering 没送到时兜底 ingest，避免丢掉 */
     entry?: RoomEntry;
+    /** 已经在上下文里（崩溃恢复的日志回放）：本轮不再追加一条 user 消息 */
+    alreadyInContext?: boolean;
     resolve: () => void;
 }
 
@@ -136,16 +138,24 @@ export class BotSession {
     private lastUsage: TokenUsage | undefined;
     /** 最近一次运行的轮次号（手动压缩时用它，不额外消耗轮次） */
     private turnNow = 0;
+    /** 当前使用的模型：房间改模型时要能推下来（构造时的 deps.modelKey 只是初值） */
+    private modelKey: string;
 
     constructor(private readonly deps: SessionDeps) {
         const seed = deps.seed?.();
         this.transcript = seed?.entries ?? [];
         this.collapsed = seed?.collapsed ?? 0;
         this.lastUsage = seed?.usage;
+        this.modelKey = deps.modelKey;
     }
 
     get busy(): boolean {
         return this.running;
+    }
+
+    /** 房间换模型：下一轮生效（已建好的 session 不会重建） */
+    setModelKey(modelKey: string): void {
+        this.modelKey = modelKey;
     }
 
     /** 房间订阅 session 的全部输出 */
@@ -220,6 +230,11 @@ export class BotSession {
         mode?: 'next-step' | 'next-turn';
         turn?: Turn;
         entry?: RoomEntry;
+        /**
+         * 这条消息已经在自己的上下文里了（崩溃恢复：公共日志回放时已经带进来）。
+         * 置 true 时不再把它作为本轮 prompt 的 user 消息追加一次。
+         */
+        alreadyInContext?: boolean;
     }): Promise<void> {
         const mode = input.mode ?? 'next-step';
         const { promise, resolve } = withResolve();
@@ -234,7 +249,15 @@ export class BotSession {
                 }
                 if (this.keepOnCancel) {
                     // 被 cancel 打断：降级为下一轮
-                    this.queue.push({ messageId: input.messageId, text: input.text, mode: 'next-turn', turn: input.turn, entry: input.entry, resolve });
+                    this.queue.push({
+                        messageId: input.messageId,
+                        text: input.text,
+                        mode: 'next-turn',
+                        turn: input.turn,
+                        entry: input.entry,
+                        alreadyInContext: input.alreadyInContext,
+                        resolve,
+                    });
                     return;
                 }
                 // 没送进这一轮：至少让公共条目留在自己的上下文里，别静默丢失
@@ -245,7 +268,15 @@ export class BotSession {
             return promise;
         }
 
-        this.queue.push({ messageId: input.messageId, text: input.text, mode, turn: input.turn, entry: input.entry, resolve });
+        this.queue.push({
+            messageId: input.messageId,
+            text: input.text,
+            mode,
+            turn: input.turn,
+            entry: input.entry,
+            alreadyInContext: input.alreadyInContext,
+            resolve,
+        });
         void this.pump();
         return promise;
     }
@@ -308,11 +339,13 @@ export class BotSession {
         await this.compact({ turn: turn.turn, turnId: turn.turnId });
 
         // 本轮要处理的用户消息直接作为 prompt 的一部分（不出现在别处，避免重复记账）
-        const userEntries: TranscriptEntry[] = items.map((item) => ({
-            message: { role: 'user', content: item.text },
-            origin: 'public',
-            ...(item.turn === undefined ? {} : { turn: item.turn.turn }),
-        }));
+        const userEntries: TranscriptEntry[] = items
+            .filter((item) => item.alreadyInContext !== true)
+            .map((item) => ({
+                message: { role: 'user', content: item.text },
+                origin: 'public',
+                ...(item.turn === undefined ? {} : { turn: item.turn.turn }),
+            }));
         const messages: ModelMessage[] = [...this.transcript, ...userEntries].map((entry) => entry.message);
 
         const steering = experimental_createSteering();
@@ -326,7 +359,7 @@ export class BotSession {
             const run = this.deps.run ?? runAgent;
             for await (const event of run({
                 bot: this.deps.bot,
-                modelKey: this.deps.modelKey,
+                modelKey: this.modelKey,
                 messages,
                 turnId: turn.turnId,
                 signal: abort.signal,
@@ -380,7 +413,12 @@ export class BotSession {
      * 调策略压一次并记账。策略自己决定要不要压（返回 null = 不压）。
      * 这里只做：计时、统计前后规模、更新占位说明、发事件。
      */
-    private async compact(options: { turn: number; turnId: string; budget?: CompactionBudget; force?: boolean }): Promise<CompactEvent | null> {
+    private async compact(options: {
+        turn: number;
+        turnId: string;
+        budget?: CompactionBudget;
+        force?: boolean;
+    }): Promise<CompactEvent | null> {
         const budget = options.budget ?? this.budgetWith({});
         const before = { entries: this.transcript.length, chars: estimateChars(this.transcript) };
         const startedAt = Date.now();
