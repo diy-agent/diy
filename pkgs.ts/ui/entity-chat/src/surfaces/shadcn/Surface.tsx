@@ -121,9 +121,21 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
     }
 
     if (entry.kind === 'typing') {
+        // 和正式回复同一套外壳（头像 + 名字），第一段内容到达时原地替换
         return (
-            <div className="my-2">
-                <RunningIndicator name={entry.author?.name} since={entry.at} />
+            <div key={entry.key} className="my-4 flex gap-2.5">
+                <div className="pt-0.5">
+                    <BotAvatar author={entry.author} roomId={roomId} size={26} />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <div className="mb-0.5 flex items-center gap-2 text-[12px]">
+                        <span className="font-medium" style={{ color: entry.author?.color }}>
+                            {entry.author?.name ?? 'bot'}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">{timeOf(entry.at)}</span>
+                    </div>
+                    <RunningIndicator since={entry.at} />
+                </div>
             </div>
         );
     }
@@ -172,6 +184,11 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                     }
                     return <ToolGroup key={`g${index}`} tools={tools} />;
                 })}
+                {entry.waiting === true && (
+                    <div className="mt-1.5">
+                        <RunningIndicator since={entry.at} />
+                    </div>
+                )}
             </div>
         </div>
     );

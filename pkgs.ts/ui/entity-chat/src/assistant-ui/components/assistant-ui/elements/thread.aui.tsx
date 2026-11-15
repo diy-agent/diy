@@ -415,14 +415,24 @@ const AssistantMessage: FC = () => {
   const author = meta?.author;
 
   if (meta?.kind === "typing") {
+    // 和正式回复同一套外壳（头像 + 名字），第一段内容到达时原地替换
     return (
       <MessagePrimitive.Root
         data-slot="aui_assistant-message-root"
         data-role="assistant"
         className="fade-in slide-in-from-bottom-1 animate-in relative"
       >
-        <div className="text-foreground flex justify-center px-2 py-1">
-          <RunningIndicator name={author?.name} since={meta.startedAt} />
+        <div className="text-foreground px-2 leading-relaxed">
+          {author !== undefined && (
+            <div className="mb-1 flex items-center gap-2 text-xs">
+              <BotAvatar author={author} roomId={meta?.roomId} size={18} />
+              <span className="font-medium" style={{ color: author.color }}>
+                {author.name}
+              </span>
+              <span className="text-muted-foreground">{author.role}</span>
+            </div>
+          )}
+          <RunningIndicator since={meta.startedAt} />
         </div>
       </MessagePrimitive.Root>
     );
@@ -538,6 +548,12 @@ const AssistantMessage: FC = () => {
             }
           }}
         </MessagePrimitive.GroupedParts>
+        {/* 还在跑但没有流式内容（工具刚结束 / 等下一段）：挂在本条消息末尾 */}
+        {meta?.waiting === true && (
+          <div className="mt-1.5">
+            <RunningIndicator since={meta.startedAt} />
+          </div>
+        )}
         <AuiIf
           condition={(s) =>
             s.message.status?.type === "running" && s.message.parts.length === 0

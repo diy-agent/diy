@@ -115,15 +115,20 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
     }
 
     if (entry.kind === 'typing') {
-        // 占位不是一条消息：用 ChatSystemMessage（Astryx 的"sender 之外的状态行"），
-        // 没有头像也没有气泡，就不会抢先占掉第一条真正 assistant 消息的位置。
+        // 还没产出任何内容：用和正式回复一样的消息外壳（头像 + 名字），
+        // 第一段内容到达时只是"同一个位置换了内容"，不会跳。
         return (
-            <ChatSystemMessage key={entry.key}>
-                <RunningIndicator
-                    {...(entry.author === undefined ? {} : { name: entry.author.name })}
-                    since={entry.at}
-                />
-            </ChatSystemMessage>
+            <ChatMessage
+                key={entry.key}
+                sender="assistant"
+                avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}
+                {...(entry.author === undefined ? {} : { name: entry.author.name })}
+                metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
+            >
+                <div style={{ paddingBlock: 2 }}>
+                    <RunningIndicator since={entry.at} />
+                </div>
+            </ChatMessage>
         );
     }
 
@@ -163,6 +168,13 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                             })}
                         />
                     ),
+                )}
+                {/* 还在跑但没有流式内容（工具刚结束 / 等待下一段）：挂在正文末尾，
+                    不再单独占列表底部一行 */}
+                {entry.waiting === true && (
+                    <div style={{ paddingTop: 6 }}>
+                        <RunningIndicator since={entry.at} />
+                    </div>
                 )}
             </ChatMessageBubble>
         </ChatMessage>

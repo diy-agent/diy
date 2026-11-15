@@ -23,6 +23,8 @@ export interface CustomMeta {
     roomId?: string;
     /** typing 占位的开始时间（毫秒）：界面据此显示"执行中 Ns" */
     startedAt?: number;
+    /** 本轮还在跑但当前没有流式内容：在消息末尾显示"执行中 Ns" */
+    waiting?: boolean;
 }
 
 const completeStatus: ThreadMessageLike['status'] = { type: 'complete', reason: 'stop' };
@@ -126,6 +128,8 @@ export function toThreadMessages(
                     kind: 'chat',
                     author: entry.author,
                     ...(roomId === undefined ? {} : { roomId }),
+                    ...(entry.waiting === true ? { waiting: true } : {}),
+                    ...(entry.waiting === true ? { startedAt: entry.at } : {}),
                 } satisfies CustomMeta,
             },
         };

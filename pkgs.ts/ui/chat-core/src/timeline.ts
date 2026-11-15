@@ -34,6 +34,12 @@ export interface TimelineEntry {
     parts: TimelinePart[];
     /** 有任一 item 仍在流式 */
     streaming: boolean;
+    /**
+     * 这个 bot 本轮还在跑，但当前没有任何流式内容（工具刚结束、下一段还没开始）。
+     * 表现成这条消息末尾的"执行中 Ns"，而不是列表末尾单独一行 —— 否则工具行的
+     * 转圈和它会在上下两个位置来回闪。
+     */
+    waiting?: boolean;
     /** 仅 user 条目：这条消息投给了谁、到没到 */
     deliveries: TimelineDelivery[];
     at: number;
@@ -172,6 +178,16 @@ export function buildTimeline(
     const startedAt = turnStart?.at ?? lastItem?.at ?? Date.now();
     for (const botId of options.speaking ?? []) {
         if (streamingAuthors.has(botId)) continue;
+        // 本轮已经产出过内容：把"还在跑"挂回它自己那条消息的末尾。
+        // 单独补一条 typing 条目会让它在列表最底部出现，于是"工具行转圈 →
+        // 执行中一行 → 工具行转圈"上下交错（每条 item 到达都会重排一次）。
+        const own = entries.find(
+            (entry) => entry.kind === 'assistant' && entry.turnId === turnId && entry.author?.id === botId,
+        );
+        if (own !== undefined) {
+            own.waiting = true;
+            continue;
+        }
         const bot = bots[botId];
         entries.push({
             key: `typing:${botId}:${turnId}`,
