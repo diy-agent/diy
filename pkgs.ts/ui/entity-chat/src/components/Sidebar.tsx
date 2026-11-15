@@ -104,6 +104,11 @@ export function Sidebar({
 }) {
     const state = useStore();
     const projects = state.rooms.filter((room) => room.type === 'project');
+    const projectIds = new Set(projects.map((project) => project.id));
+    // 非项目、且没有挂在任何已存在的项目下 → "未归属"（老数据 / projectId 丢了的任务）
+    const orphans = state.rooms.filter(
+        (room) => room.type !== 'project' && !projectIds.has(String(room.data['projectId'] ?? '')),
+    );
 
     return (
         <aside
@@ -154,6 +159,19 @@ export function Sidebar({
                         </div>
                     );
                 })}
+
+                {/* 没挂到任何项目下的容器（老数据丢过 projectId / 以后别的类型）也要能点开 ——
+                    按 projectId 分组的写法会让它们直接消失，数据还在却永远进不去 */}
+                {orphans.length > 0 && (
+                    <div className={open ? 'mb-2' : 'mb-1'}>
+                        {open && (
+                            <div className="px-2 pb-1 text-[11px] text-muted-foreground">未归属</div>
+                        )}
+                        {orphans.map((room) => (
+                            <RoomRow key={room.id} room={room} active={state.selectedId === room.id} compact={!open} />
+                        ))}
+                    </div>
+                )}
             </div>
 
             <div className={`flex items-center border-t py-2 ${open ? 'justify-between px-3' : 'justify-center'}`}>

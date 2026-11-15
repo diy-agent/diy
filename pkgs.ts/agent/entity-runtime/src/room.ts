@@ -348,6 +348,7 @@ export class RoomActor {
     setMembers(members: readonly RoomMember[]): void {
         this.deps.spec.members = [...members];
         this.deps.store.setMembers(this.id, this.deps.spec.members);
+        this.deps.store.saveRoom(this.deps.spec);
         // 退出的成员把 session 一并丢掉（再进来会按日志重建）
         const keep = new Set(members.map((member) => member.botId));
         for (const botId of [...this.sessions.keys()]) if (!keep.has(botId)) this.sessions.delete(botId);
@@ -371,6 +372,8 @@ export class RoomActor {
             }
         }
         if (patch.modelKey !== undefined) this.deps.spec.modelKey = patch.modelKey;
+        // 改名 / 换模型都要落库，否则重启后回到旧值
+        this.deps.store.saveRoom(this.deps.spec);
     }
 
     // ── 内部 ───────────────────────────────────────────────────

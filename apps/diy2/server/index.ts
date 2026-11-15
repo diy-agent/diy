@@ -14,7 +14,7 @@ import { join } from 'node:path';
 
 import { RoomActor, openStore } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
-import type { Author, Bot, Room, RoomMember } from '@diy-agent/protocol';
+import type { Author, Bot, Room } from '@diy-agent/protocol';
 
 const PORT = Number(process.env['DIY2_PORT'] ?? 5191);
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
@@ -102,6 +102,8 @@ function actorOf(spec: Room): RoomActor {
             shell: process.env['DIY2_TOOLS'] !== 'files',
         });
         rooms.set(spec.id, actor);
+        // 运行时新建的容器也要落库：不落的话重启后侧栏里就没了（消息还在，只是没入口）
+        store.saveRoom(spec);
     }
     return actor;
 }
@@ -175,10 +177,45 @@ function seed(): void {
 
     // 恢复成员关系（重启后 @ 仍生效）
     const saved = store.members();
+
+    // 1) 落库的容器优先：运行时新建的项目/任务，重启后原样回来
+    for (const room of store.listRooms()) {
+        const index = specs.findIndex((spec) => spec.id === room.id);
+        if (index >= 0) {
+            const seedSpec = specs[index]!;
+            specs[index] = {
+                ...seedSpec,
+                ...room,
+                data: { ...seedSpec.data, ...room.data },
+                members: room.members.length > 0 ? room.members : seedSpec.members,
+            };
+        } else {
+            specs.push(room);
+        }
+    }
+
+    // 2) 老库兼容：rooms 表是后加的，之前只落了成员。成员表里有、房间表里没有的，
+    //    按主 bot 还原一个容器 —— 消息本来就还在磁盘上，别让它们没有入口。
+    const known = new Set(specs.map((spec) => spec.id));
+    for (const [roomId, members] of Object.entries(saved)) {
+        if (known.has(roomId)) continue;
+        const primary = members.find((member) => member.primary === true) ?? members[0];
+        const bot = primary === undefined ? undefined : bots.find((entry) => entry.id === primary.botId);
+        specs.push({
+            id: roomId,
+            type: roomId.startsWith('task') ? 'task' : 'project',
+            name: bot?.name ?? roomId,
+            data: {},
+            members,
+            modelKey: bot?.modelKey ?? DEFAULT_MODEL,
+        });
+    }
+
     for (const spec of specs) {
-        const members: RoomMember[] | undefined = saved[spec.id];
+        const members = saved[spec.id];
         if (members !== undefined && members.length > 0) spec.members = members;
         store.setMembers(spec.id, spec.members);
+        store.saveRoom(spec);
         actorOf(spec).recover();
     }
 }

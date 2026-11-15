@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import type { TranscriptEntry, TokenUsage } from './compaction';
 import type { RoomEntry } from './room-log';
-import type { Bot, Delivery, InboxMode, Item, RoomMember } from './types';
+import type { Bot, Delivery, InboxMode, Item, Room, RoomMember } from './types';
 
 /** 一个 bot 在某个房间里的对话快照（持久化单位） */
 export interface SessionSnapshot {
@@ -27,6 +27,13 @@ export interface Store {
     readonly db: DatabaseSync;
     listBots(): Bot[];
     upsertBot(bot: Bot): void;
+    /**
+     * 容器（项目/任务/…）本身的元数据：名字、类型、data、模型。
+     * 成员在 room_members 里单独存；消息在 entity_items 里。
+     * 不落这张表的话，运行时新建的容器重启后就从侧栏消失了（数据还在，没入口）。
+     */
+    saveRoom(room: Room): void;
+    listRooms(): Room[];
     appendItem(roomId: string, item: Item): Item;
     setMembers(roomId: string, members: readonly RoomMember[]): void;
     /** roomId → 成员（按 position） */
@@ -82,6 +89,14 @@ export function openStore(file: string): Store {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (entity_id, bot_id)
         );
+        CREATE TABLE IF NOT EXISTS rooms (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            data TEXT NOT NULL,
+            model_key TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS room_members (
             entity_id TEXT NOT NULL,
             bot_id TEXT NOT NULL,
@@ -129,6 +144,25 @@ export function openStore(file: string): Store {
     for (const column of ['mode', 'turn', 'turn_id']) {
         if (!columns.has(column)) db.exec(`ALTER TABLE deliveries ADD COLUMN ${column}`);
     }
+
+    /** room_members → roomId: members[]（members() 与 listRooms() 共用） */
+    const readMembers = (): Record<string, RoomMember[]> => {
+        const rows = db
+            .prepare('SELECT * FROM room_members ORDER BY entity_id, position ASC')
+            .all() as Array<Record<string, unknown>>;
+        const out: Record<string, RoomMember[]> = {};
+        for (const row of rows) {
+            const id = String(row['entity_id']);
+            const member: RoomMember = {
+                botId: String(row['bot_id']),
+                ...(row['primary_flag'] === 1 ? { primary: true } : {}),
+                ...(row['model_key'] === null ? {} : { modelKey: String(row['model_key']) }),
+                ...(row['persona'] === null ? {} : { persona: String(row['persona']) }),
+            };
+            (out[id] ??= []).push(member);
+        }
+        return out;
+    };
 
     const toBot = (row: Record<string, unknown>): Bot => ({
         id: String(row['id']),
@@ -186,21 +220,38 @@ export function openStore(file: string): Store {
             });
         },
         members(): Record<string, RoomMember[]> {
-            const rows = db
-                .prepare('SELECT * FROM room_members ORDER BY entity_id, position ASC')
-                .all() as Array<Record<string, unknown>>;
-            const out: Record<string, RoomMember[]> = {};
-            for (const row of rows) {
-                const id = String(row['entity_id']);
-                const member: RoomMember = {
-                    botId: String(row['bot_id']),
-                    ...(row['primary_flag'] === 1 ? { primary: true } : {}),
-                    ...(row['model_key'] === null ? {} : { modelKey: String(row['model_key']) }),
-                    ...(row['persona'] === null ? {} : { persona: String(row['persona']) }),
+            return readMembers();
+        },
+        saveRoom(room: Room): void {
+            const data = JSON.stringify(room.data ?? {});
+            db.prepare(
+                'INSERT INTO rooms (id, type, name, data, model_key, created_at) VALUES (?,?,?,?,?,?) ' +
+                    'ON CONFLICT(id) DO UPDATE SET type=?, name=?, data=?, model_key=?',
+            ).run(room.id, room.type, room.name, data, room.modelKey, Date.now(), room.type, room.name, data, room.modelKey);
+        },
+        listRooms(): Room[] {
+            const members = readMembers();
+            const rows = db.prepare('SELECT * FROM rooms ORDER BY created_at ASC, rowid ASC').all() as Array<
+                Record<string, unknown>
+            >;
+            return rows.map((row) => {
+                const id = String(row['id']);
+                let data: Record<string, unknown> = {};
+                try {
+                    const parsed: unknown = JSON.parse(String(row['data']));
+                    if (typeof parsed === 'object' && parsed !== null) data = parsed as Record<string, unknown>;
+                } catch {
+                    /* 坏数据当空对象，不要让整张列表起不来 */
+                }
+                return {
+                    id,
+                    type: String(row['type']),
+                    name: String(row['name']),
+                    data,
+                    members: members[id] ?? [],
+                    modelKey: String(row['model_key']),
                 };
-                (out[id] ??= []).push(member);
-            }
-            return out;
+            });
         },
         setDelivery(delivery: DeliveryInput): Delivery {
             const updatedAt = Date.now();
