@@ -146,6 +146,7 @@ describe('提问卡片', () => {
             { value: 'b', label: 'B' },
         ],
         toolCallId: 'call-1',
+        owner: OWNER.id,
         at: 0,
     };
 
@@ -197,5 +198,20 @@ describe('提问卡片', () => {
             cancelled: true,
             reason: '提问已失效',
         });
+    });
+
+    it('独立卡片不会被「谁在说话」误挂成执行中（窗口为空时 turnId 同为哨兵）', () => {
+        // items 为空 ⇒ 当前轮 turnId 也是 ''，而独立卡片的 turnId 正是 '' 这个哨兵。
+        // 两者一撞，那张早就有结局的老提问就会被当成这一轮的消息挂上「执行中」——
+        // 用户会以为一个早已答完的问题还在跑。
+        const entries = buildTimeline([], [], BOTS, {
+            answered: [{ request, answer: { values: ['b'] }, at: 1_700_000_000_100 }],
+            speaking: [OWNER.id],
+        });
+        const card = entries.find((entry) => entry.key === 'ask:ask-1');
+        expect(card?.waiting).toBeUndefined();
+        // 该有的「正在输入…」却不能少：没人认领的 speaking 要自己补一条
+        expect(entries.at(-1)?.kind).toBe('typing');
+        expect(entries.at(-1)?.author?.id).toBe(OWNER.id);
     });
 });

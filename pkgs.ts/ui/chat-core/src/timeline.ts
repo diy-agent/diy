@@ -290,9 +290,17 @@ export function buildTimeline(
         // 单独补一条 typing 条目会让它在列表最底部出现，于是"工具行转圈 →
         // 执行中一行 → 工具行转圈"上下交错（每条 item 到达都会重排一次）。
         // 最后一段：被插话切开的 bot 消息，"执行中"要挂在最新那段末尾
-        const own = [...entries]
-            .reverse()
-            .find((entry) => entry.kind === 'assistant' && entry.turnId === turnId && entry.author?.id === botId);
+        // 排除独立卡片：它没有轮次，turnId 是 '' 哨兵。窗口为空时 `turnId` 同样是 ''，
+        // 两者一撞就会把一张「早就有结局的老提问」当成这一轮的消息，挂上「执行中 Ns」。
+        const own =
+            turnId === ''
+                ? undefined
+                : [...entries]
+                      .reverse()
+                      .find(
+                          (entry) =>
+                              entry.kind === 'assistant' && entry.turnId === turnId && entry.author?.id === botId,
+                      );
         if (own !== undefined) {
             own.waiting = true;
             continue;
