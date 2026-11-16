@@ -30,7 +30,7 @@ import {
     type AskDraft,
 } from '../askDraft';
 import { useDraftValue } from '../drafts';
-import { answerAsk, conversationOf } from '../store';
+import { answerAsk, cancelAsk } from '../store';
 
 /** 已有的结局：答过了，或者失效了 */
 export interface ResolvedAsk {
@@ -85,6 +85,18 @@ export function AskCard({
             // 常见原因：这个提问已经过期（容器重开过 / 已答过），卡片是旧的。
             // 草稿不清：这就是失败时把用户打的字还回去的那份兜底
             setError(`${cause instanceof Error ? cause.message : String(cause)}；这个提问可能已经失效，刷新一下再试。`);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const withdraw = async () => {
+        setBusy(true);
+        setError(null);
+        try {
+            await cancelAsk(roomId, request.askId);
+        } catch (cause) {
+            setError(`撤回失败：${cause instanceof Error ? cause.message : String(cause)}`);
         } finally {
             setBusy(false);
         }
@@ -242,11 +254,18 @@ export function AskCard({
                                 >
                                     {busy ? '提交中…' : request.kind === 'choice' ? '就这样' : '提交'}
                                 </button>
+                                {/*
+                                    不是「取消本轮」：那条停的是「正在生成」，而 ask 不阻塞、
+                                    点它时这一轮早就跑完了 —— 拿它当「不要这个提问」用，
+                                    只会什么都不发生（服务器对 ask 也没有单条撤回的能力，以前）。
+                                    现在只做一件事：把这一问作废，卡片收尾，不触发任何运行。
+                                */}
                                 <button
-                                    onClick={() => conversationOf(roomId).cancel()}
-                                    className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                                    onClick={() => void withdraw()}
+                                    disabled={busy}
+                                    className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-50"
                                 >
-                                    取消本轮
+                                    撤掉这一问
                                 </button>
                                 {!ready && error === null && (
                                     <span className="text-[10px] text-muted-foreground">

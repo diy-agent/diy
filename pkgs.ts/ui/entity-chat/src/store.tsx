@@ -27,6 +27,17 @@ export async function answerAsk(
     await client.answerAsk(roomId, askId, answer);
 }
 
+/**
+ * 撤回一问：卡片失效、待回答计数减一，**不触发任何运行**。失败会抛，由界面显示原因。
+ *
+ * 跟 `conversationOf(roomId).cancel()` 是两件事：那条停的是「正在生成」，而 ask 不阻塞，
+ * 点它时那一轮早就跑完了 —— 拿它当「不要这个提问」用，只会什么都不发生。
+ */
+export async function cancelAsk(roomId: string, askId: string): Promise<void> {
+    if (client.cancelAsk === undefined) throw new Error('当前传输不支持撤回提问');
+    await client.cancelAsk(roomId, askId);
+}
+
 export function conversationOf(roomId: string): ConversationStore {
     let store = conversations.get(roomId);
     if (store === undefined) {

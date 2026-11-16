@@ -633,8 +633,32 @@ const server = createServer((req, res) => {
             return;
         }
 
+        // POST /api/rooms/:id/asks/:askId/cancel —— 撤回一问（不想答了，卡片失效）
+        // 必须排在回答路由前面：那条只看 parts[3] === 'asks'，不分段数
+        if (
+            req.method === 'POST' &&
+            parts[0] === 'api' &&
+            parts[1] === 'rooms' &&
+            parts[3] === 'asks' &&
+            parts[5] === 'cancel'
+        ) {
+            const id = decodeURIComponent(parts[2] ?? '');
+            const askId = decodeURIComponent(parts[4] ?? '');
+            const actor = roomOf(id);
+            if (actor === undefined) return json(res, 404, { error: 'room not found' });
+            const hit = actor.cancelAsk(askId);
+            json(res, hit ? 200 : 404, hit ? { ok: true, pending: actor.pendingAsks() } : { error: 'no such pending ask' });
+            return;
+        }
+
         // POST /api/rooms/:id/asks/:askId —— 回答一次提问（选项 values / 表单 fields）
-        if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'asks') {
+        if (
+            req.method === 'POST' &&
+            parts[0] === 'api' &&
+            parts[1] === 'rooms' &&
+            parts[3] === 'asks' &&
+            parts.length === 5
+        ) {
             const id = decodeURIComponent(parts[2] ?? '');
             const askId = decodeURIComponent(parts[4] ?? '');
             const actor = roomOf(id);

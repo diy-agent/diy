@@ -270,11 +270,91 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         // 说的是哪一问：模型得对得上自己问的那条
         expect(notice?.data.text).toContain('Q0');
         expect(notice?.data.text).toContain('已经作废');
-        // 投给提问的成员，而不是全房间（不然别的成员会去接一句不属于它的话题）
-        const delivery = h.room.deliveries().find((entry) => entry.messageId === notice?.id);
-        expect(delivery?.botId).toBe(BOT_A.id);
+
+        // 通知 ≠ 叫醒：不进投递队列。走普通 say 会把空闲成员**真的拉起一轮**，
+        // 只为读一句「不用再等」（费钱 + 多一条无意义回复，还可能让它再提问）。
+        expect(h.room.deliveries().find((entry) => entry.messageId === notice?.id)).toBeUndefined();
+        // 但要进上下文：模型下次真正被叫起来时得看到「那问作废了」
+        expect(JSON.stringify(h.room.contextOf(BOT_A.id) ?? [])).toContain('已经作废');
+
         // 新的那几张照旧挂着（淘汰最旧、不是丢最新）
         expect(h.room.pendingAskRequests().some((request) => request.question === 'Q20')).toBe(true);
+    });
+
+    it('D7. 撤回一问：卡片失效、计数减一，且不触发任何运行', async () => {
+        // 「取消本轮」曾经被当成这个用途，但它停的是「正在生成」—— ask 不阻塞，
+        // 点它时那一轮早就跑完了，服务器对单条提问也没有撤回能力，于是什么都不发生。
+        const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
+        void h.room.say({ text: '动手吧', author: HUMAN });
+        await waitFor(() => h.room.pendingAsks() === 1);
+        await waitFor(() => !h.room.busy());
+        const runsBefore = h.runs.length;
+
+        const askId = h.room.pendingAskRequests()[0]!.askId;
+        expect(h.room.cancelAsk(askId)).toBe(true);
+
+        // 1) 计数减一（待办列表里不能留一条永远做不完的）
+        expect(h.room.pendingAsks()).toBe(0);
+        // 2) 卡片有结局（UI 显示「已失效：提问已被撤回」），而不是凭空消失
+        const settled = h.events.filter((event) => event.kind === 'ask.answered');
+        expect(settled.some((event) => event.kind === 'ask.answered' && event.cancelled === true)).toBe(true);
+        expect(
+            settled.some((event) => event.kind === 'ask.answered' && event.reason === '提问已被撤回'),
+        ).toBe(true);
+        // 3) 什么都没多跑一轮：撤回不是「取消本轮」也不是「叫醒成员」
+        expect(h.runs.length).toBe(runsBefore);
+        // 4) 模型仍会知道（进上下文、不触发运行），否则它永远停在「我问了、等回答」
+        expect(JSON.stringify(h.room.contextOf(BOT_A.id) ?? [])).toContain('提问已被撤回');
+        // 5) 撤回过的不能再答
+        expect(h.room.answerAsk(askId, { values: ['a'] })).toBe(false);
+    });
+
+    it('D8. 跨成员淘汰：被挤掉的那位空闲时不会被叫起来跑一轮', async () => {
+        // B 先问一个→空闲；A 随后连问 21 个，把 B 那条挤出上限。
+        // 通知必须只进 B 的上下文，不能把它拉起一轮（实测旧实现多出 bot:b#2）。
+        const runs: string[] = [];
+        const seen = new Map<string, number>();
+        const script = async function* (input: RunOptions): AsyncIterable<AgentEvent> {
+            const count = (seen.get(input.bot.id) ?? 0) + 1;
+            seen.set(input.bot.id, count);
+            runs.push(`${input.bot.id}#${count}`);
+            const turnId = input.turnId ?? 'turn';
+            const messageId = `msg-${runs.length}`;
+            yield { seq: 1, type: 'run.started', turnId, messageId };
+            const times = count === 1 ? (input.bot.id === BOT_A.id ? 21 : 1) : 0;
+            if (times > 0) {
+                const tools = input.tools as Record<string, ExecutableTool> | undefined;
+                for (let index = 0; index < times; index += 1) {
+                    const toolCallId = `call-${input.bot.id}-${index}`;
+                    yield { seq: index * 2 + 2, type: 'tool.started', turnId, toolCallId, name: 'ask', args: {} };
+                    const out = await tools?.['ask']?.execute?.(
+                        { question: `${input.bot.id}-Q${index}`, kind: 'choice', options: [{ value: 'a', label: 'A' }] },
+                        { toolCallId, messages: [] },
+                    );
+                    yield { seq: index * 2 + 3, type: 'tool.completed', turnId, toolCallId, name: 'ask', result: out };
+                }
+            }
+            yield { seq: 900, type: 'run.finished', turnId, finishReason: 'stop', steps: 1, maxOutputTokens: 0 };
+            yield { seq: 901, type: 'message.completed', messageId };
+            yield { seq: 902, type: 'run.completed', turnId };
+        } as (input: RunOptions) => AsyncIterable<AgentEvent>;
+
+        const h = makeRoom({ cwd: '/tmp', run: script });
+        // B 单独问一个，然后空闲下来
+        void h.room.say({ text: '你先问', author: HUMAN, recipients: [BOT_B.id] });
+        await waitFor(() => h.room.pendingAsks() === 1);
+        await waitFor(() => !h.room.busy());
+
+        // A 连问 21 个，把 B 那条挤掉
+        void h.room.say({ text: '我一口气问完', author: HUMAN, recipients: [BOT_A.id] });
+        await waitFor(() => h.room.pendingAsks() === 20);
+        await waitFor(() => h.items().some((item) => item.type === 'chat' && item.author?.role === 'system'));
+        // 给潜在的「叫醒」一点时间跑出来（旧实现在这里会多出 bot:b#2）
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        expect(runs).toEqual([`${BOT_B.id}#1`, `${BOT_A.id}#1`]);
+        // B 仍被告知（进上下文），只是没被叫醒
+        expect(JSON.stringify(h.room.contextOf(BOT_B.id) ?? [])).toContain('已经作废');
     });
 
     it('D5. 成员被移出房间：他问过、还没答的提问跟着失效（不能回答一张永远送不到的卡片）', async () => {

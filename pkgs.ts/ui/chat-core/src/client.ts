@@ -94,4 +94,7 @@ export interface ChatClient {
         askId: string,
         answer: { values?: string[]; fields?: Record<string, string>; text?: string },
     ): Promise<void>;
+
+    /** 可选：撤回一问（不想答了）—— 卡片失效，不触发任何运行 */
+    cancelAsk?(entityId: string, askId: string): Promise<void>;
 }

@@ -123,6 +123,26 @@ describe('AskGate', () => {
         expect(String((settled[0] as { reason?: string }).reason)).toContain('无法显示提问');
     });
 
+    it('cancel(askId)：撤回一问，只影响那一条，且要告诉提问的成员', () => {
+        // 「撤掉这一问」是用户对活着的一张卡的处置：提问的成员还在原地看（ask 不阻塞、
+        // 没有 tool call 能回填），所以必须 notifyOwner —— 跟超时／容器关闭不一样。
+        const h = makeGate();
+        const first = h.gate.request({ question: '不想回答的这个' }, 'bot:a');
+        const second = h.gate.request({ question: '还想回答的那个' }, 'bot:a');
+
+        expect(h.gate.cancel(first.askId)).toBe(true);
+        expect(h.gate.pendingCount()).toBe(1);
+        expect(h.gate.list().map((request) => request.question)).toEqual(['还想回答的那个']);
+        expect(h.settled).toEqual([
+            { request: first, result: { cancelled: true, reason: '提问已被撤回', notifyOwner: true }, owner: 'bot:a' },
+        ]);
+
+        // 撤回过的不能再答（否则会凭空冒出一条「回答提问」）
+        expect(h.gate.answer(first.askId, { values: ['x'] })).toBe(false);
+        expect(h.gate.answer(second.askId, { values: ['x'] })).toBe(true);
+        expect(h.gate.pendingCount()).toBe(0);
+    });
+
     it('cancelFor：只清这个成员的提问，别人的照常等回答', () => {
         const h = makeGate();
         h.gate.request({ question: '我的' }, 'bot:a');

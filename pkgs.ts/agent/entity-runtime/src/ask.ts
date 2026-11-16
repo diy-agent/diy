@@ -34,8 +34,10 @@ export interface AskResult {
      * 被取消时是否要**告诉提问的成员**这张卡作废了。
      *
      * 默认不告诉：容器关闭 / 成员被移除时，会话本身已经结束，投一条消息没有收件人。
-     * 但「同时待回答太多、最旧的一条被挤掉」必须告诉 —— 那个成员还在原地看着，
-     * 它没有 tool call 能回填（ask 不阻塞），不通知就会永远停在「我以为我问了、等回答」。
+     * 但两种情况下必须告诉 —— 那个成员还在原地看着，它没有 tool call 能回填
+     *（ask 不阻塞），不通知就会永远停在「我以为我问了、等回答」：
+     *   · 「同时待回答太多、最旧的一条被挤掉」；
+     *   · 用户主动「撤回了这一问」。
      */
     notifyOwner?: boolean;
 }
@@ -167,6 +169,21 @@ export class AskGate {
     /** 用户的回答；返回是否命中一个待回答的提问 */
     answer(askId: string, answer: AskAnswer): boolean {
         return this.settle(askId, { answer });
+    }
+
+    /**
+     * 撤回**某一问**：用户不想答了。
+     *
+     * 与 `cancelAll` / `cancelFor` 的区别：那两条是环境让提问失效（容器关了、成员走了），
+     * 收件人已经不在，通知没意义；这一条是用户主动处置一张还活着的卡片，提问的成员
+     * 还在原地看着且没有 tool call 能回填 —— 所以必须 `notifyOwner`，否则它会永远停在
+     * 「我问了、等回答」。
+     *
+     * 也**不是**「停止本轮」：ask 不阻塞，这一轮早就跑完了，停运行跟这张卡无关
+     * （见 `cancelAll` 的注释与 `room.cancel`）。
+     */
+    cancel(askId: string, reason = '提问已被撤回'): boolean {
+        return this.settle(askId, { cancelled: true, reason, notifyOwner: true });
     }
 
     /**

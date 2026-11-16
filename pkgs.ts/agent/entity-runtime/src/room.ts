@@ -168,8 +168,20 @@ export class RoomActor {
 
     // ── 写 ─────────────────────────────────────────────────────
 
-    /** 投一条消息：落库 → 进公共日志 → 按 @ 规则分发 → 等这一轮跑完 */
-    async say(input: { text: string; author: Author; recipients?: string[]; mode?: InboxMode }): Promise<void> {
+    /**
+     * 投一条消息：落库 → 进公共日志 → 按 @ 规则分发 → 等这一轮跑完。
+     *
+     * `quiet`：只留痕 —— 时间线上看得到、所有人的上下文里也有，但**不投给任何人**，
+     * 于是不会叫醒任何成员跑一轮。用于系统通知（「你那问作废了」）：那是给人看的状态，
+     * 不是需要回复的消息；走普通投递会把一个空闲成员叫起来，只为读一句「不用再等」。
+     */
+    async say(input: {
+        text: string;
+        author: Author;
+        recipients?: string[];
+        mode?: InboxMode;
+        quiet?: boolean;
+    }): Promise<void> {
         const text = input.text.trim();
         if (text === '') throw new Error('text required');
 
@@ -205,7 +217,8 @@ export class RoomActor {
             turnId: turn.turnId,
         });
 
-        const recipients = this.route(text, participants, input.recipients);
+        // 空 recipients ＝ 所有人都走 ingest（下面那条循环），谁也不被 post 叫醒
+        const recipients = input.quiet === true ? [] : this.route(text, participants, input.recipients);
         const recipientIds = new Set(recipients.map((bot) => bot.id));
         for (const bot of participants) {
             if (!recipientIds.has(bot.id)) this.sessionOf(bot).ingest(entry);
@@ -308,6 +321,17 @@ export class RoomActor {
         return this.gate.answer(askId, answer);
     }
 
+    /**
+     * 用户撤回某一问（不想答了）：卡片收尾成「已失效」，待回答计数减一。
+     *
+     * 不碰正在跑的运行 —— 那件事是 `cancel()`，与这张卡无关（ask 不阻塞，
+     * 点「停止」时那一轮早就跑完了）。也不叫醒任何人：只给提问的成员留一句系统说明，
+     * 它下次真正被叫起来时才读到（见 `notifyAskDropped`）。
+     */
+    cancelAsk(askId: string, reason = '提问已被撤回'): boolean {
+        return this.gate.cancel(askId, reason);
+    }
+
     /** 还有几个提问在等回答 */
     pendingAsks(): number {
         return this.gate.pendingCount();
@@ -367,7 +391,12 @@ export class RoomActor {
     }
 
     /**
-     * 「你那问被挤掉了」—— 只发给提问的成员，且只在它还在房间里时发。
+     * 「你那问作废了」—— 落一条系统痕迹，进上下文，**不叫醒任何人**。
+     *
+     * 为什么是 `quiet` 而不是普通 `say`：`say` 会 post 给收件人，而 post 一个空闲成员
+     * 就是**真的跑一整轮**（实测：B 先问一个→空闲，A 连问 21 个挤掉它 → 运行列表变成
+     * `[bot:b#1, bot:a#1, bot:b#2]`，多出来的那一轮只为读一句「不用再等」）。
+     * 通知变成叫醒：费钱、多一条无意义回复，还可能让它再提问、再挤掉别人。
      *
      * 作者是系统而不是 this.human：这条不是用户说的话，冒充用户会让模型以为
      * 「我问了、他自己把话题撤了」。transcript 里渲染成 `[系统] …`，跟真回答区分得开。
@@ -380,7 +409,7 @@ export class RoomActor {
         void this.say({
             text: `提问「${request.question}」已经作废${suffix}。不用再等这个回答；还需要的话重新提问。`,
             author: RoomActor.SYSTEM,
-            recipients: [target.id],
+            quiet: true,
         }).catch((error: unknown) => {
             // 同 settleAsk：送不到必须让用户看见，不能静默
             const message = error instanceof Error ? error.message : String(error);

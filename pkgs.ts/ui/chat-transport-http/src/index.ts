@@ -167,6 +167,15 @@ export class HttpChatClient implements ChatClient {
         if (!res.ok) throw new Error(`回答失败：HTTP ${res.status}`);
     }
 
+    async cancelAsk(entityId: string, askId: string): Promise<void> {
+        const post = this.fetchImpl;
+        const res = await post(
+            `${this.base}/rooms/${encodeURIComponent(entityId)}/asks/${encodeURIComponent(askId)}/cancel`,
+            { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+        );
+        if (!res.ok) throw new Error(`撤回失败：HTTP ${res.status}`);
+    }
+
     async post(
         entityId: string,
         command: Command,
