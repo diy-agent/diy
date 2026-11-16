@@ -141,6 +141,11 @@ export interface AskRequest {
     note?: string;
     /** 触发它的工具调用：界面据此把卡片渲染在正文里那个工具行下面 */
     toolCallId?: string;
+    /**
+     * 提问的成员 id。回答据此投递；卡片找不到自己的工具行时也用它显示头像 ——
+     * 否则一张滑出窗口的旧卡片既不知道谁问的，也看不出属于哪一轮。
+     */
+    owner?: string;
     at: number;
 }
 

@@ -199,28 +199,64 @@ export function buildTimeline(
         if (item.status === 'streaming') entry.streaming = true;
     }
 
-    // 提问卡片：待回答的 + 已有结局的（后者只读，带已选状态）。
-    // 两种都挂到触发它的工具行后面（找不到就挂到最后一条 assistant 条目）。
-    const attachAsk = (part: TimelinePart, toolCallId?: string): void => {
-        const target =
-            (toolCallId === undefined
+    // 提问卡片：待回答的 + 已有结局的（后者只读，带已选状态）。都挂到触发它的工具行后面。
+    //
+    // 找不到工具行时两种情况的处理**不能一样**：
+    //  - 待回答：工具行可能还在流式、没落库，挂到最后一条 assistant 条目上是当时唯一的选择；
+    //  - 已有结局：这条提问可能是几百条之前、那条工具行已经滑出窗口的。借用「最后一条
+    //    assistant」会让卡片凭空跑到时间线底部、看不出属于哪一轮，所以挂成**独立卡片**，
+    //    带提问者头像和收尾时刻，按 at 插回时间线。
+    const attachAsk = (
+        part: TimelinePart,
+        request: AskRequest,
+        fallback: 'last-assistant' | 'standalone',
+        at?: number,
+    ): void => {
+        const toolCallId = request.toolCallId;
+        const owner =
+            toolCallId === undefined
                 ? undefined
                 : entries.find((entry) =>
                       entry.parts.some(
                           (candidate) => candidate.kind === 'tool' && candidate.id === `tool-${toolCallId}`,
                       ),
-                  )) ?? [...entries].reverse().find((entry) => entry.kind === 'assistant');
-        if (target === undefined) return;
-        const index = target.parts.findIndex(
-            (candidate) =>
-                candidate.kind === 'tool' && toolCallId !== undefined && candidate.id === `tool-${toolCallId}`,
-        );
-        if (index >= 0) target.parts.splice(index + 1, 0, part);
-        else target.parts.push(part);
+                  );
+        if (owner !== undefined && toolCallId !== undefined) {
+            const index = owner.parts.findIndex(
+                (candidate) => candidate.kind === 'tool' && candidate.id === `tool-${toolCallId}`,
+            );
+            if (index >= 0) {
+                owner.parts.splice(index + 1, 0, part);
+                return;
+            }
+        }
+
+        if (fallback === 'last-assistant') {
+            const target = [...entries].reverse().find((entry) => entry.kind === 'assistant');
+            if (target === undefined) return;
+            target.parts.push(part);
+            return;
+        }
+
+        const bot = request.owner === undefined ? undefined : bots[request.owner];
+        const standalone: TimelineEntry = {
+            key: `ask:${request.askId}`,
+            kind: 'assistant',
+            turnId: '',
+            ...(bot === undefined
+                ? {}
+                : { author: { id: bot.id, name: bot.name, color: bot.color, role: 'bot' as const } }),
+            parts: [part],
+            streaming: false,
+            deliveries: [],
+            at: at ?? request.at,
+        };
+        const position = entries.findIndex((entry) => entry.at > standalone.at);
+        entries.splice(position < 0 ? entries.length : position, 0, standalone);
     };
 
     for (const ask of options.asks ?? []) {
-        attachAsk({ kind: 'ask', request: ask }, ask.toolCallId);
+        attachAsk({ kind: 'ask', request: ask }, ask, 'last-assistant');
     }
     for (const entry of options.answered ?? []) {
         attachAsk(
@@ -231,7 +267,9 @@ export function buildTimeline(
                 ...(entry.cancelled === true ? { cancelled: true } : {}),
                 ...(entry.reason === undefined ? {} : { reason: entry.reason }),
             },
-            entry.request.toolCallId,
+            entry.request,
+            'standalone',
+            entry.at,
         );
     }
 

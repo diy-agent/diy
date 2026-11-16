@@ -94,6 +94,9 @@ export class AskGate {
     /** 已收尾的提问保留条数 */
     private static readonly KEEP = 50;
 
+    /** 同时待回答的上限（见 `request` 里的淘汰逻辑） */
+    private static readonly MAX_PENDING = 20;
+
     constructor(private readonly deps: AskGateDeps) {}
 
     /**
@@ -113,8 +116,22 @@ export class AskGate {
             ...(input.allowFreeform === undefined ? {} : { allowFreeform: input.allowFreeform }),
             ...(input.note === undefined ? {} : { note: input.note }),
             ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
+            ...(owner === undefined ? {} : { owner }),
             at,
         };
+
+        // 同时待回答的上限：全 async 之后模型能连着问，不封顶就是卡片无限堆、
+        // 内存只增不减（以前阻塞时代最多同时挂一个，所以没有这个问题）。
+        // 满了就作废**最旧**的一条并留痕 —— 新的提问仍然要能显示，
+        // 静默丢新的会让模型以为问了、界面却没有。
+        while (this.pending.size >= AskGate.MAX_PENDING) {
+            const oldest = this.pending.keys().next();
+            if (oldest.done === true) break;
+            this.settle(oldest.value, {
+                cancelled: true,
+                reason: `同时待回答的提问太多（上限 ${AskGate.MAX_PENDING}），最旧的一条已作废`,
+            });
+        }
 
         const timeoutMs = this.deps.timeoutMs ?? 0;
         const timer =

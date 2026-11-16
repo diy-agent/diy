@@ -154,18 +154,43 @@ describe('提问卡片', () => {
         expect(entries.at(-1)?.parts.at(-1)).toEqual({ kind: 'ask', request });
     });
 
-    it('已回答：卡片留着，带上答案（选项与选择要对得上）', () => {
-        // toolCallId 对不上任何工具行 → 退回挂到最后一条 assistant 条目
+    it('已回答但工具行不在窗口里：挂成独立卡片，不借用最后一条 assistant', () => {
+        // toolCallId 对不上任何工具行（真实场景：那条工具行已经滑出历史窗口）→
+        // 不能借用「最后一条 assistant」，否则卡片跑到时间线底部、看不出属于哪一轮
         const entries = buildTimeline(items, [], BOTS, {
-            answered: [{ request, answer: { values: ['b'] }, at: 5 }],
+            answered: [{ request, answer: { values: ['b'] }, at: 1_700_000_000_100 }],
         });
+        const card = entries.at(-1);
+        expect(card?.key).toBe('ask:ask-1');
+        expect(card?.kind).toBe('assistant');
+        expect(card?.parts).toEqual([{ kind: 'ask', request, answer: { values: ['b'] } }]);
+        // 原来那条工具消息没被塞进卡片
+        expect(entries.at(-2)?.parts.map((part) => part.kind)).toEqual(['tool']);
+    });
+
+    it('已回答且工具行还在：挂在那个工具行下面（不多造卡片）', () => {
+        const withTool: Item[] = [
+            items[0]!,
+            item(2, {
+                id: 'tool-call-1',
+                type: 'tool',
+                turnId: 't1',
+                author: owner,
+                data: { name: 'ask', state: 'ok' },
+            }),
+        ];
+        const entries = buildTimeline(withTool, [], BOTS, {
+            answered: [{ request, answer: { values: ['b'] }, at: 1_700_000_000_100 }],
+        });
+        expect(entries).toHaveLength(2);
         expect(entries.at(-1)?.parts.at(-1)).toEqual({ kind: 'ask', request, answer: { values: ['b'] } });
     });
 
-    it('已失效：带上 cancelled + 原因', () => {
+    it('已失效：带上 cancelled + 原因（同样独立成卡）', () => {
         const entries = buildTimeline(items, [], BOTS, {
-            answered: [{ request, cancelled: true, reason: '提问已失效', at: 5 }],
+            answered: [{ request, cancelled: true, reason: '提问已失效', at: 1_700_000_000_100 }],
         });
+        expect(entries.at(-1)?.key).toBe('ask:ask-1');
         expect(entries.at(-1)?.parts.at(-1)).toEqual({
             kind: 'ask',
             request,

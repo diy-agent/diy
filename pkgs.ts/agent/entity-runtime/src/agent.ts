@@ -59,7 +59,10 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
 
     yield { seq: ++seq, type: 'run.started', turnId, messageId };
 
-    const maxOutputTokens = maxOutputTokensOf(options.modelKey, options.maxOutputTokens);
+    // 调用方（session）已经算好了（含 env 覆盖）就直接用，别再算一遍：
+    // 两处各算一遍虽然眼下幂等，但 env / provider 上限的规则一改就会漂成两种结果。
+    // 只有直接调 `runAgent` 的调用方（测试、一次性跑）才在这里补算。
+    const maxOutputTokens = options.maxOutputTokens ?? maxOutputTokensOf(options.modelKey);
 
     const result = streamText({
         model: modelOf(options.modelKey),

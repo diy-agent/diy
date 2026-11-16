@@ -133,6 +133,25 @@ describe('AskGate', () => {
         expect(h.settled.map((entry) => entry.owner)).toEqual(['bot:a', 'bot:b']);
     });
 
+    it('待回答有上限：满了就作废最旧的那条（新的仍要能显示）', () => {
+        // 全 async 之后模型可以连着问；不封顶的话卡片和内存只增不减
+        const h = makeGate();
+        const requests = Array.from({ length: 21 }, (_, index) => h.gate.request({ question: `Q${index}` }));
+
+        expect(h.gate.pendingCount()).toBe(20);
+        // 淘汰的是最旧的（Q0），不是刚发出的那条
+        expect(h.gate.list().map((request) => request.question)).not.toContain('Q0');
+        expect(h.gate.list().map((request) => request.question)).toContain('Q20');
+        expect(h.settled[0]).toMatchObject({ request: requests[0], result: { cancelled: true } });
+        expect(String((h.settled[0] as { result: { reason?: string } }).result.reason)).toContain('最旧的一条已作废');
+    });
+
+    it('owner 跟着 request 走（卡片找不到工具行时靠它显示头像）', () => {
+        const h = makeGate();
+        const request = h.gate.request({ question: 'Q' }, 'bot:a');
+        expect(request.owner).toBe('bot:a');
+    });
+
     it('list() 返回挂起中的请求（刷新后恢复卡片用）', () => {
         const h = makeGate();
         h.gate.request({ question: 'Q1', options: [{ value: 'a', label: 'A' }] });
