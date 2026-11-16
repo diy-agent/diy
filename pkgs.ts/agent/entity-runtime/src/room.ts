@@ -20,7 +20,7 @@ import type { ModelMessage, ToolSet } from 'ai';
 
 import { effectiveModelOf, effectivePersonaOf, mentionsOf, primaryMemberOf } from '@diy-agent/protocol';
 
-import { AskGate, type AskOutcome } from './ask';
+import { AskGate, describeAnswer, type AskResult } from './ask';
 import type { Compactor } from './compaction';
 import type { Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
@@ -34,7 +34,19 @@ import {
     type SessionStats,
     type Turn,
 } from './session';
-import type { AskRequest, Author, Bot, Delivery, InboxMode, Item, Room, RoomEvent, RoomMember } from './types';
+import { publishable } from './end-reason';
+import type {
+    AskRequest,
+    Author,
+    Bot,
+    Delivery,
+    InboxMode,
+    Item,
+    Room,
+    RoomEvent,
+    RoomMember,
+    TurnEndReason,
+} from './types';
 
 export interface SessionInfo {
     botId: string;
@@ -64,6 +76,8 @@ export interface RoomActorDeps {
     /** 压缩事件（日志 / 监控） */
     onCompact?: (bot: Bot, event: CompactEvent) => void;
     now?: () => number;
+    /** 「用户」在时间线上的身份（回答提问时以它投递）；缺省就是「我」 */
+    human?: Author;
 }
 
 export class RoomActor {
@@ -79,8 +93,10 @@ export class RoomActor {
     private readonly orderOf = new Map<string, number>();
     /** 已落库的 item id（流式更新会重复发同一条） */
     private readonly persisted = new Set<string>();
-    /** 提问闸门：模型需要用户做决定时在这里停住 */
+    /** 提问闸门：模型需要用户做决定时把卡片推到界面上（不阻塞本轮） */
     private readonly gate: AskGate;
+    /** 用户的身份（回答提问时那条消息的作者） */
+    private readonly human: Author;
     /** 每个成员一份工具集：只有 ask 的归属不同（按成员停止时要能分辨） */
     private readonly toolsByBot = new Map<string, ToolSet | undefined>();
     /** 正在跑一轮的成员（UI 的"谁在说话"用它，不由前端猜） */
@@ -92,9 +108,10 @@ export class RoomActor {
         this.log = new RoomLog(this.deps.store.roomEntries(this.id));
         this.gate = new AskGate({
             request: (request) => this.deps.emit({ kind: 'ask', request }),
-            settle: (request, result) => this.settleAsk(request, result),
+            settle: (request, result, owner) => this.settleAsk(request, result, owner),
             now: () => this.deps.now?.() ?? Date.now(),
         });
+        this.human = this.deps.human ?? { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
         // 成员的 session 一开始就建好：上下文、统计、恢复都不需要等第一条消息
         for (const bot of this.members()) this.sessionOf(bot);
     }
@@ -258,14 +275,23 @@ export class RoomActor {
      * 开会时"谁在说"是分开的，停一个人不该把别人也停掉。
      */
     cancel(options: { botId?: string; keepQueue?: boolean } = {}): void {
+        // 注意：不动待回答的提问。ask 不阻塞，点「停止」时那一轮早就跑完了，
+        // 卡片还得留在界面上等用户作答（回答会另开一轮）。
         if (options.botId === undefined) {
-            this.gate.cancelAll('本轮已取消');
             for (const session of this.sessions.values()) session.cancel(options);
             return;
         }
-        // 只取消这个成员自己的提问：别人正挂在 ask 上等人回答，不该被连坐
-        this.gate.cancelFor(options.botId, '本轮已取消');
         this.sessions.get(options.botId)?.cancel(options);
+    }
+
+    /**
+     * 容器即将被删除：先停掉还在跑的会话和挂着的提问。
+     * 不先停就删行的话，跑到一半的 race 收尾时还会往已删的容器里写条目。
+     */
+    stop(): void {
+        if (this.busy()) this.cancel();
+        // 容器要没了：挂在界面上的提问一并清掉，否则回答还会往已删的容器里投递
+        this.gate.cancelAll('容器已关闭');
     }
 
     /** 当前在说话的成员（按成员顺序） */
@@ -290,8 +316,18 @@ export class RoomActor {
         return this.gate.list();
     }
 
-    /** 提问解决：广播 + 在时间线留一条痕 */
-    private settleAsk(request: AskRequest, result: Omit<AskOutcome, 'request'>): void {
+    /** 已有结局的提问（最近的若干条）：刷新后卡片仍在，并带着已选状态 */
+    answeredAskRequests(): ReturnType<AskGate['answeredList']> {
+        return this.gate.answeredList();
+    }
+
+    /**
+     * 提问解决：卡片收尾 + 留痕 + （关键）把回答变成一条用户消息投给提问的人。
+     *
+     * 为什么必须是消息：ask 不阻塞，模型的 run 早已结束，没有 tool call 能填回答案了。
+     * 他会说话 ⇒ 走 steering 在下一个 step 边界注入；已经说完 ⇒ 这条消息开新的一轮。
+     */
+    private settleAsk(request: AskRequest, result: AskResult, owner?: string): void {
         this.deps.emit({
             kind: 'ask.answered',
             askId: request.askId,
@@ -299,32 +335,24 @@ export class RoomActor {
             ...(result.cancelled === true ? { cancelled: true } : {}),
             ...(result.reason === undefined ? {} : { reason: result.reason }),
         });
-        const now = this.deps.now?.() ?? Date.now();
-        const labels = (result.answer?.values ?? []).map(
-            (value) => request.options?.find((option) => option.value === value)?.label ?? value,
-        );
-        const freeText = result.answer?.text?.trim() ?? '';
-        const summary =
-            result.cancelled === true
-                ? `未回答${result.reason === undefined ? '' : `（${result.reason}）`}`
-                : freeText !== '' && labels.length === 0
-                  ? `已回答：${freeText}`
-                  : result.answer?.fields !== undefined
-                    ? `已填写：${Object.values(result.answer.fields).filter((value) => value.trim() !== '').length} 项`
-                    : `已回答：${labels.join('、')}`;
-        const turnId = this.currentTurn?.turnId;
-        const notice: Item = {
-            id: `askx-${request.askId}`,
-            seq: 0, // appendItem 落库时会用 rowid 覆盖
-            order: this.nextOrder(),
-            ...(this.currentTurn === null ? {} : { turn: this.currentTurn.turn }),
-            turnId: turnId ?? 'turn',
-            at: now,
-            status: 'done',
-            type: 'notice',
-            data: { text: summary, kind: 'ask' },
-        };
-        this.deps.emit({ kind: 'item', item: this.deps.store.appendItem(this.id, notice) });
+        // 取消（容器关闭 / 超时）：卡片消失就够了，不往时间线上写痕
+        if (result.answer === undefined) return;
+
+        // 不再单独落一条 notice：回答本身就是一条消息，时间线上看得到，刷新也不丢。
+        // 内容写成模型一眼能对上的样子：哪一问 + 答了什么
+        // 回答投给提问的成员；他已经不在房间了就退给主成员。
+        // 不退的话 recipients 会被 route() 过滤成空：消息落库了、没任何成员收到、也不报错 ——
+        // 用户看到的是「我答了、时间线上有这条、没人理」。
+        const target = owner !== undefined && this.member(owner) !== undefined ? owner : this.primary()?.id;
+        void this.say({
+            text: message,
+            author: this.human,
+            ...(target === undefined ? {} : { recipients: [target] }),
+        }).catch((error: unknown) => {
+            // 不能再吞：房间里一个成员的 session 都建不起来时 say 会抛，那种情况下用户必须知道答案没送到
+            const reason = error instanceof Error ? error.message : String(error);
+            this.deps.emit({ kind: 'error', message: `回答没有送出去：${reason}` });
+        });
     }
 
     /** 手动压某个成员的上下文（只影响它自己） */
@@ -356,7 +384,13 @@ export class RoomActor {
         this.deps.store.saveRoom(this.deps.spec);
         // 退出的成员把 session 一并丢掉（再进来会按日志重建）
         const keep = new Set(members.map((member) => member.botId));
-        for (const botId of [...this.sessions.keys()]) if (!keep.has(botId)) this.sessions.delete(botId);
+        for (const botId of [...this.sessions.keys()]) {
+            if (keep.has(botId)) continue;
+            this.sessions.delete(botId);
+            // 他问过、还没答的提问跟着失效：否则卡片永久挂在界面上，
+            // 用户答了也没人收（成员已不在房间，投递会被路由成空）
+            this.gate.cancelFor(botId, '提问的成员已离开房间');
+        }
         for (const bot of this.members()) this.sessionOf(bot);
     }
 
@@ -365,7 +399,12 @@ export class RoomActor {
         this.setMembers([...this.deps.spec.members, { botId }]);
     }
 
-    update(patch: { name?: string; modelKey?: string }): void {
+    /**
+     * 改容器元数据：名字 / 默认模型 / data（任务状态、描述…）。
+     * data 是**浅合并**（`null` = 删掉这个键）：任务状态这类字段后端不懂语义，
+     * 只按调用方给的值落库 —— 在这里写枚举就是让新类型（股票/日历）每次都要改 runtime。
+     */
+    update(patch: { name?: string; modelKey?: string; data?: Record<string, unknown> }): void {
         if (patch.name !== undefined && patch.name.trim() !== '') {
             this.deps.spec.name = patch.name.trim();
             const primary = this.primary();
@@ -375,6 +414,8 @@ export class RoomActor {
                     this.deps.store.upsertBot({ ...identity, name: this.deps.spec.name });
                 }
             }
+            // 已建好的 session 自己持有一份 bot 快照：不推下去，改名后它继续说旧名
+            for (const session of this.sessions.values()) session.setBotName(this.deps.spec.name);
         }
         if (patch.modelKey !== undefined) {
             this.deps.spec.modelKey = patch.modelKey;
@@ -383,7 +424,13 @@ export class RoomActor {
                 this.sessions.get(bot.id)?.setModelKey(effectiveModelOf(this.deps.spec, bot));
             }
         }
-        // 改名 / 换模型都要落库，否则重启后回到旧值
+        if (patch.data !== undefined) {
+            for (const [key, value] of Object.entries(patch.data)) {
+                if (value === null) delete this.deps.spec.data[key];
+                else this.deps.spec.data[key] = value;
+            }
+        }
+        // 改名 / 换模型 / 改 data 都要落库，否则重启后回到旧值
         this.deps.store.saveRoom(this.deps.spec);
     }
 
@@ -442,7 +489,8 @@ export class RoomActor {
             `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
             '改文件优先用 edit（不要整份重写）。' +
             '需要用户做决定时**必须**调用 ask（选项 / 表单）：不要在正文里提问，' +
-            '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。'
+            '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。' +
+            'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。'
         );
     }
 
@@ -555,6 +603,14 @@ export class RoomActor {
                 return;
             }
             case 'turn.end':
+                // 「这一轮是怎么停的」广播给客户端（消息页脚用它）。放在落库/发结论之前：
+                // 页脚比快照早到一点没影响，但顺序上它属于这一轮自己的事实。
+                this.deps.emit({
+                    kind: 'turn.end',
+                    botId: bot.id,
+                    turnId: event.result.turnId,
+                    reason: event.result.endReason,
+                });
                 this.persistSession(bot.id);
                 this.publishConclusion(bot, event.result);
                 return;
@@ -572,24 +628,32 @@ export class RoomActor {
      * 结论进公共日志，并复制给其他 session —— 不唤醒任何人。
      * 唯一例外：结论里显式 @ 了某个 bot（单人），那是点名。
      */
-    private publishConclusion(bot: Bot, result: { turn: number; turnId: string; text: string; failed: boolean }): void {
-        if (result.failed || result.text === '') return;
+    private publishConclusion(
+        bot: Bot,
+        result: { turn: number; turnId: string; text: string; failed: boolean; endReason: TurnEndReason },
+    ): void {
+        // 只有真正说完的一轮才算"这个 bot 的公开立场"：半句被截断的、失败的、未知停下的话
+        // 发进公共日志就是在房间里传播错误信息（判据在 end-reason.ts `publishable`）。
+        if (result.failed || result.text === '' || !publishable(result.endReason)) return;
 
+        // 名字取**当前**的（deps.bots 实时读）：传进来的 bot 是 session 建好时的快照，
+        // 改名后它会一直以旧名署名（容器改名 = 专属 bot 改名）。
+        const name = this.member(bot.id)?.name ?? bot.name;
         const entry = this.appendEntry({
             kind: 'conclusion',
             botId: bot.id,
-            name: bot.name,
+            name,
             color: bot.color,
             text: result.text,
             turn: result.turn,
             turnId: result.turnId,
         });
 
-        const name = mentionsOf(result.text).find((value) => value !== 'all');
+        const mention = mentionsOf(result.text).find((value) => value !== 'all');
         const target =
-            name === undefined
+            mention === undefined
                 ? undefined
-                : this.members().find((candidate) => candidate.name === name && candidate.id !== bot.id);
+                : this.members().find((candidate) => candidate.name === mention && candidate.id !== bot.id);
 
         for (const [botId, session] of this.sessions) {
             if (botId === bot.id) continue;
@@ -610,13 +674,13 @@ export class RoomActor {
             at: now,
             status: 'done',
             type: 'notice',
-            data: { text: `${bot.name} 在结论里 @${target.name}，已唤起`, kind: 'mention' },
+            data: { text: `${name} 在结论里 @${target.name}，已唤起`, kind: 'mention' },
         };
         this.deps.emit({ kind: 'item', item: this.deps.store.appendItem(this.id, notice) });
 
         void this.sessionOf(target).post({
             messageId: notice.id,
-            text: `[${bot.name} 的结论] ${result.text}`,
+            text: `[${name} 的结论] ${result.text}`,
             mode: 'next-turn',
             turn: { turn: result.turn, turnId: result.turnId },
         });

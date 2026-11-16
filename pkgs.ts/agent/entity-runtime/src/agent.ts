@@ -7,7 +7,7 @@ import { streamText, tool, type Experimental_Steering, type ModelMessage, type T
 import { z } from 'zod';
 
 import { friendlyError } from './errors';
-import { modelOf } from './providers';
+import { maxOutputTokensOf, modelOf } from './providers';
 import { clipModelMessage } from './tools/clip';
 import type { AgentEvent, Bot } from './types';
 
@@ -32,6 +32,11 @@ export interface RunOptions {
     onStepTranscript?: (messages: ModelMessage[]) => void;
     /** 本轮真实用量（token），用于校准压缩预算 */
     onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+    /**
+     * 本轮输出上限（`max_tokens`）。不传 = 按 modelKey 推（provider 硬上限 / 场景缺省）。
+     * **不要省成 undefined 再指望服务端缺省**：那会让长回答被静默截断（见 `maxOutputTokensOf`）。
+     */
+    maxOutputTokens?: number;
 }
 
 const defaultTools = {
@@ -54,9 +59,12 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
 
     yield { seq: ++seq, type: 'run.started', turnId, messageId };
 
+    const maxOutputTokens = maxOutputTokensOf(options.modelKey, options.maxOutputTokens);
+
     const result = streamText({
         model: modelOf(options.modelKey),
         abortSignal: options.signal,
+        maxOutputTokens,
         instructions: [
             `你是「${options.bot.name}」，这个实体的专属 bot。`,
             options.bot.persona,
@@ -80,9 +88,24 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         },
     });
 
+    /** 收尾事实：截断 / 工具悬空 / 正常说完，全靠这三个值分辨（见 docs 里的 `##429`） */
+    let finishReason = 'unknown';
+    let steps = 0;
+
     try {
         for await (const part of result.stream) {
             switch (part.type) {
+                case 'finish-step':
+                    steps += 1;
+                    break;
+                case 'finish':
+                    // 这是**唯一**能看出「被输出上限砍断」的地方：SDK 在 length 时只是结束循环，
+                    // 不发 error part。以前这里落进 default，于是截断在数据里长得和成功一样。
+                    finishReason = part.finishReason ?? 'unknown';
+                    break;
+                case 'abort':
+                    finishReason = 'aborted';
+                    break;
                 case 'text-delta':
                     yield { seq: ++seq, type: 'text.delta', messageId, delta: part.text };
                     break;
@@ -143,6 +166,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         // 用量拿不到不影响这一轮
     }
 
+    yield { seq: ++seq, type: 'run.finished', turnId, finishReason, steps, maxOutputTokens };
     yield { seq: ++seq, type: 'message.completed', messageId };
     yield { seq: ++seq, type: 'run.completed', turnId };
 }

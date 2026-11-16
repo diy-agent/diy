@@ -4,15 +4,14 @@
 //   正文里的问题会被大段输出淹掉，用户往往没意识到"现在卡在等我决定"。
 //   工具调用能触发置顶卡片（选项 / 表单），回答结构化地回到模型。
 //
-// 回答以文本形式返回给模型（读起来最稳），例如：
-//   用户选择：测试优先（test-first）
-//   用户填写：标题=diy2 发版；优先级=高
+// **不阻塞**：调用后立刻返回回执，本轮照常结束。用户作答时，回答以一条新的用户消息
+// 到来（`回答提问「…」：…`），模型在自己的记录里看到提问 + 答案，接着干。
+// 所以工具结果只负责三件事：确认提问已发出、说清回答会怎么回来、划清"别自己猜"的红线。
 
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 
 import type { AskGate } from '../ask';
-import type { AskAnswer, AskRequest } from '../types';
 
 const OPTION_SCHEMA = z.object({
     value: z.string().describe('选项值（回答时回传这个）'),
@@ -28,32 +27,14 @@ const FIELD_SCHEMA = z.object({
     required: z.boolean().optional(),
 });
 
-function describeAnswer(request: AskRequest, answer: AskAnswer | undefined): string {
-    if (answer === undefined) return '用户没有回答（本轮已取消）。';
-    if (request.kind === 'text') {
-        return `用户回答：${answer.text ?? '（空）'}`;
-    }
-    if (request.kind === 'form') {
-        const fields = request.fields ?? [];
-        const lines = fields.map((field) => `- ${field.label}：${answer.fields?.[field.name] ?? '（未填）'}`);
-        return `用户已填写：\n${lines.join('\n')}`;
-    }
-    const values = answer.values ?? [];
-    if (values.length === 0) return '用户没有选任何选项。';
-    const labels = values.map((value) => {
-        const option = request.options?.find((candidate) => candidate.value === value);
-        return option === undefined ? value : `${option.label}（${value}）`;
-    });
-    const picked = `用户选择：${labels.join('、')}`;
-    return answer.text === undefined || answer.text.trim() === '' ? picked : `${picked}；补充：${answer.text.trim()}`;
-}
-
 export function askTool(gate: AskGate | undefined, owner?: string): ToolSet[string] | undefined {
     if (gate === undefined) return undefined;
     return tool({
         description:
             '需要用户做决定时调用（选方案 / 定范围 / 填参数）。**不要在正文里提问** —— 正文的问题会被淹没。' +
-            '选项题传 options（可 multiple），表单题传 fields。回答会作为工具结果返回给你。',
+            '选项题传 options（可 multiple），表单题传 fields。' +
+            '这个工具**不会停下来等回答**：调用后立刻返回，本轮可以照常结束；' +
+            '用户作答时会以一条新的用户消息到来（形如「回答提问「…」：…」）。',
         inputSchema: z.object({
             question: z.string().describe('一句话说清要用户决定什么'),
             kind: z
@@ -68,14 +49,14 @@ export function askTool(gate: AskGate | undefined, owner?: string): ToolSet[stri
         }),
         execute: async (input, options) => {
             const callId = (options as { toolCallId?: string } | undefined)?.toolCallId;
-            const outcome = await gate.request(
-                { ...input, ...(callId === undefined ? {} : { toolCallId: callId }) },
-                owner,
-            );
-            if (outcome.cancelled === true) {
-                return `用户没有回答（${outcome.reason ?? '已取消'}）。可以换个问法，或先按最保守的方案继续。`;
-            }
-            return describeAnswer(outcome.request, outcome.answer);
+            gate.request({ ...input, ...(callId === undefined ? {} : { toolCallId: callId }) }, owner);
+            return [
+                `提问已展示给用户：「${input.question}」`,
+                '不会阻塞你：本轮可以照常结束。',
+                '用户作答后会以一条新的用户消息到来（形如「回答提问「…」：…」），那时再按答案继续。',
+                '现在可以继续做不依赖这个决定的部分；没有别的事就直接结束本轮，并说清你在等这个回答。',
+                '不要重复问同一个问题，也不要替他猜答案 —— 需要他定的（尤其不可逆的动作）就等他回。',
+            ].join('\n');
         },
     }) as ToolSet[string];
 }

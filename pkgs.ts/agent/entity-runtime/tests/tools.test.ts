@@ -75,23 +75,10 @@ describe('房间工具', () => {
         expect(out).toContain(dir);
     });
 
-    it('ask：选项题的回答格式化后返回给模型', async () => {
-        const asked: string[] = [];
-        const gate = {
-            request: async (input: { question: string; options?: Array<{ value: string; label: string }> }) => {
-                asked.push(input.question);
-                return {
-                    request: {
-                        askId: 'ask-1',
-                        question: input.question,
-                        kind: 'choice',
-                        options: input.options,
-                        at: 0,
-                    },
-                    answer: { values: ['b'] },
-                };
-            },
-        } as unknown as NonNullable<Parameters<typeof buildRoomTools>[0]['ask']>;
+    it('ask 不阻塞：调用后立刻返回回执，提问同时推到界面', async () => {
+        const { AskGate } = await import('../src/ask');
+        const seen: Array<{ question: string; options?: unknown }> = [];
+        const gate = new AskGate({ request: (request) => seen.push(request), settle: () => undefined });
         const tools = buildRoomTools({ cwd: dir, shell: false, ask: gate });
 
         const out = String(
@@ -103,24 +90,24 @@ describe('房间工具', () => {
                 ],
             }),
         );
-        expect(asked).toEqual(['先做哪个？']);
-        expect(out).toContain('用户选择');
-        expect(out).toContain('方案 B');
+
+        expect(seen.map((request) => request.question)).toEqual(['先做哪个？']);
+        // 回执告诉模型"发出去了、别等、别自己猜"
+        expect(out).toContain('提问已展示给用户');
+        expect(out).toContain('不会阻塞你');
+        // 挂起中，答案还没来
+        expect(gate.pendingCount()).toBe(1);
     });
 
-    it('ask 全链路：工具挂起 → 用户回答 → 工具返回可读文本', async () => {
+    it('ask 全链路：工具立即返回 → 用户之后作答 → 回答交给房间投递（带 owner）', async () => {
         const { AskGate } = await import('../src/ask');
-        const seen: string[] = [];
+        const settled: Array<{ askId: string; text?: string; owner?: string }> = [];
         const gate = new AskGate({
-            // 真实链路里这是"推到界面"；这里模拟用户立刻点了第一个选项
-            request: (request) => {
-                seen.push(request.question);
-                gate.answer(request.askId, { values: ['test_first'] });
-            },
-            settle: () => undefined,
-            timeoutMs: 0,
+            request: () => undefined,
+            settle: (request, result, owner) =>
+                settled.push({ askId: request.askId, text: result.answer?.values?.join(','), owner }),
         });
-        const tools = buildRoomTools({ cwd: dir, shell: false, ask: gate });
+        const tools = buildRoomTools({ cwd: dir, shell: false, ask: gate, askOwner: 'bot:a' });
 
         const out = String(
             await toolOf(tools, 'ask').execute({
@@ -131,13 +118,47 @@ describe('房间工具', () => {
                 ],
             }),
         );
+        expect(out).toContain('新的用户消息');
+        expect(settled).toEqual([]);
 
-        expect(seen).toEqual(['先做哪个？']);
-        expect(out).toContain('用户选择：先做测试（test_first）');
+        const askId = gate.list()[0]!.askId;
+        expect(gate.answer(askId, { values: ['test_first'] })).toBe(true);
+        expect(settled).toEqual([{ askId, text: 'test_first', owner: 'bot:a' }]);
         expect(gate.pendingCount()).toBe(0);
     });
 
-    it('bash 非零退出：返回结果而不是抛错（模型靠退出码改命令）', async () => {
+    it('describeAnswer：只填自由输入、什么都没勾，那段文字必须带上（不能变成"没有选任何选项"）', async () => {
+        const { describeAnswer } = await import('../src/ask');
+        const request = {
+            askId: 'ask-1',
+            question: '先做哪个？',
+            kind: 'choice' as const,
+            options: [
+                { value: 'a', label: '方案 A' },
+                { value: 'b', label: '方案 B' },
+            ],
+            at: 0,
+        };
+
+        expect(describeAnswer(request, { values: [], text: '我还是没想明白，先改成异步吧' })).toBe(
+            '我还是没想明白，先改成异步吧',
+        );
+        expect(describeAnswer(request, { values: ['b'], text: '顺便说一句' })).toBe('方案 B（b）；补充：顺便说一句');
+        // 表单里的补充文字同样不能丢
+        expect(
+            describeAnswer(
+                {
+                    ...request,
+                    kind: 'form',
+                    options: undefined,
+                    fields: [{ name: 'title', label: '标题', type: 'text' }],
+                },
+                { fields: { title: '发版' }, text: '别改版本号' },
+            ),
+        ).toBe('- 标题：发版\n补充：别改版本号');
+    });
+
+    it('bash 非零退出：返回结果而不是抛错（靠退出码改命令）', async () => {
         const tools = buildRoomTools({ cwd: dir, shell: true, bashTimeoutMs: 10_000 });
         const out = String(await toolOf(tools, 'bash').execute({ command: 'echo boom >&2; exit 3' }));
         expect(out).toContain('exit: 3');

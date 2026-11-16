@@ -36,6 +36,32 @@ export function parseModelKey(value: string): ParsedModelKey {
     return { account: value.slice(0, at), provider: value.slice(at + 1, slash), model: value.slice(slash + 1) };
 }
 
+/** 对话场景的输出上限缺省（对齐老路径 `local-agent.ts` 的 16384 场景缺省） */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
+
+/** 各家 `max_tokens` 的硬上限：发超了直接被 400，所以按 provider 收窄 */
+const MAX_OUTPUT_BY_PROVIDER: Record<string, number> = {
+    // DeepSeek 官方：deepseek-chat 的 max_tokens 上限 8192
+    deepseek: 8_192,
+};
+
+/**
+ * 本轮要发出去的 `max_tokens`。
+ *
+ * **为什么必须显式发**：不发就是吃服务端缺省（远小于上下文能吃的量）。模型写到一半被砍断时，
+ * 流里只表现为 `finishReason: "length"` —— 不设值又不在收尾处读 finishReason，
+ * 症状就是「执行一半就停下，UI 却显示完成」（`##429` 在老路径修过一次，迁移时丢了）。
+ *
+ * 优先级：env `DIY_LOCAL_MAX_OUTPUT_TOKENS` > 调用方传入 > provider 硬上限 > 场景缺省。
+ */
+export function maxOutputTokensOf(modelKey: string, explicit?: number): number {
+    const fromEnv = Number.parseInt(process.env.DIY_LOCAL_MAX_OUTPUT_TOKENS ?? '', 10);
+    if (Number.isFinite(fromEnv) && fromEnv >= 1) return Math.floor(fromEnv);
+    if (explicit !== undefined && Number.isFinite(explicit) && explicit >= 1) return Math.floor(explicit);
+    const key = parseModelKey(modelKey);
+    return MAX_OUTPUT_BY_PROVIDER[key.provider] ?? DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
 /** 从 ~/.diy/model.yaml 里取某 provider 下指定账户的 key（极简解析） */
 function keyFromDiyConfig(provider: string, account: string): string | undefined {
     try {

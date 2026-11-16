@@ -32,6 +32,41 @@ export class Projector {
         return [...this.items.values()].sort((a, b) => a.seq - b.seq);
     }
 
+    /**
+     * 本轮收尾：把**还在 streaming 的条目**全部关掉。
+     *
+     * 为什么必须有：`run.failed` 只在失败 / 中止时才来。工具跑到一半被打断（用户点
+     * 「取消本轮」、流提前收尾），模型把最后一句说完、这一轮是**正常结束**的 ——
+     * 那条 tool 条目就没人收尾，状态永远停在 streaming：UI 上工具行一直转圈。
+     * 而 streaming 的条目按约定不落库，所以刷新后它又凭空消失，更难查。
+     *
+     * chat 段按 done 收（已经产出的文字就是最终结果），tool 段按 failed 收（它确实没跑完，
+     * 骗成 ok 会让人以为工具执行过）。
+     *
+     * 文案**不写死原因**：收尾可能是「人按停」也可能是「工具结果没回来」（tool-mismatch）。
+     * 说成"被取消"会让 tool-mismatch 那一路骗人 —— 到底为什么停，由 `endItems()` 说。
+     */
+    finalize(now = Date.now()): Item[] {
+        const ops: Item[] = [];
+        for (const [id, open] of this.items) {
+            if (open.status !== 'streaming') continue;
+            const seq = (this.seq += 1);
+            const closed: Item =
+                open.type === 'tool'
+                    ? {
+                          ...open,
+                          seq,
+                          status: 'failed',
+                          data: { ...open.data, result: '未跑完（本轮结束，没有结果）', state: 'error' },
+                      }
+                    : { ...open, seq, status: 'done' };
+            this.items.set(id, closed);
+            ops.push(closed);
+        }
+        this.pending = null;
+        return ops;
+    }
+
     add(item: Item): Item {
         this.items.set(item.id, item);
         this.seq = Math.max(this.seq, item.seq);

@@ -39,6 +39,8 @@ describe.each(transports)('ChatClient 端口 / %s', (_name, makeClient) => {
         const kinds = new Set(events.map((event) => event.kind));
         expect(kinds.has('item')).toBe(true);
         expect(kinds.has('delivery')).toBe(true);
+        // 「这一轮是怎么停的」必须过传输层到 UI（页脚靠它）—— 它是领域事件，不是日志
+        expect(kinds.has('turn.end')).toBe(true);
         expect(events.at(-1)?.kind).toBe('done');
 
         const snapshot = await client.load();

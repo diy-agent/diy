@@ -14,6 +14,7 @@ export {
     type TranscriptEntry,
 } from './compaction';
 export { openStore, type Store } from './db';
+export { adviceOf, endItems, endReasonOf, publishable, type EndFacts, type EndItemContext } from './end-reason';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';
 export { buildRoomTools, type RoomToolsOptions } from './tools/index';
@@ -29,4 +30,5 @@ export {
     type TurnResult,
 } from './session';
 export { modelOf, parseModelKey } from './providers';
+export { factsOf, replay, STOP_SCENARIOS, type StopReplay, type StopScenario } from './stop-scenarios';
 export type { AgentEvent, Author, Bot, Delivery, Room, RoomMember, RoomEvent, InboxMode, Item } from './types';

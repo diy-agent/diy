@@ -152,6 +152,19 @@ export interface AskAnswer {
     text?: string;
 }
 
+/**
+ * 已经有结局的提问（被回答 / 被取消）。
+ * 卡片不消失：留在时间线上把用户选过的项标出来，选项与答案的对应关系一眼可见。
+ */
+export interface AnsweredAsk {
+    request: AskRequest;
+    answer?: AskAnswer;
+    cancelled?: boolean;
+    reason?: string;
+    /** 收尾时刻（毫秒） */
+    at: number;
+}
+
 /** 传输层回推给 UI 的事件流（目前是 SSE，将来可能是 diy-rpc 订阅） */
 export type StreamEvent =
     | { kind: 'item'; item: Item }
@@ -163,6 +176,17 @@ export type StreamEvent =
     | { kind: 'ask.answered'; askId: string; answer?: AskAnswer; cancelled?: boolean; reason?: string }
     /** 当前正在说话的成员（空数组 = 都停了）。谁是"说话中"由房间说了算，不由 UI 猜 */
     | { kind: 'running'; botIds: string[] }
+    /**
+     * 某一轮结束了，以及**为什么**（`completed` / `max-tokens` / `interrupted` …）。
+     *
+     * 这是**事实广播**，不是错误：页面用它显示消息页脚的结局（"这一轮是怎么停的"），
+     * 而"该做什么"由时间线上的 notice / error 条目说。两者分工，不要合并 ——
+     * 页脚是稳定的一行，条目是可能有多条的解释。
+     *
+     * 刷新后不带回来（它不在快照里）：ephemeral 的结局靠条目持久，`completed`
+     * 本来也不需要页脚。
+     */
+    | { kind: 'turn.end'; botId: string; turnId: string; reason: TurnEndReason }
     /** 常驻流刚连上（含重连成功）：客户端据此补拉快照，填平断线期间丢的事件 */
     | { kind: 'ready' }
     | { kind: 'done' };
@@ -175,6 +199,8 @@ export interface Snapshot {
     deliveries: Delivery[];
     /** 还在等用户回答的提问（刷新页面后卡片要能恢复） */
     asks?: AskRequest[];
+    /** 已经有结局的提问（最近的若干条）：刷新后卡片仍在，显示已选状态 */
+    answeredAsks?: AnsweredAsk[];
 }
 
 /** capabilities 决定 UI 显示哪些按钮（不要写 surfaceId 分支） */
@@ -195,6 +221,30 @@ export const DEFAULT_CAPABILITIES: Capabilities = {
 
 // ── 运行时事件（模型 → 投影层）───────────────────────────────────
 
+/**
+ * 一轮为什么结束。**只说事实，不猜原因**（判据在 runtime，文案在 UI）。
+ *
+ * 存在的理由：没有它的时候，「被输出上限截断」和「正常说完」在数据里长得一模一样 ——
+ * 用户看到的是「执行一半就停下、UI 却显示完成」。老路径（`##288`/`##429`）有这套词汇，
+ * entity-runtime 迁移时丢了，这里补回来。
+ */
+export interface TurnEndReason {
+    /**
+     * `unknown` = 我们**不知道**为什么停（没收到收尾信号 / 上游给了不认识的收尾原因 /
+     * 空产出就停）。它按错误处理：不发结论，时间线上一条错误。
+     * 「没有证据」不等于「正常完成」（未知按错误处理，见 end-reason.ts）。
+     */
+    type: 'completed' | 'max-tokens' | 'filtered' | 'tool-mismatch' | 'interrupted' | 'unknown' | 'error';
+    /** 上游的 `finishReason` 原文（`stop` / `length` / `tool-calls` / `error` / …） */
+    finishReason?: string;
+    /** 细因（机器读，`type` 只到类别）：`no-finish` / `empty-output` / `finish=xxx` */
+    note?: string;
+    /** 本轮实际发出去的输出上限（对账用：到底哪一层截的） */
+    maxOutputTokens?: number;
+    /** 本轮的 step 数（多轮工具循环时用于区分「说完了」和「刚到一半」） */
+    steps?: number;
+}
+
 /** 模型运行的原始事件（seq 单调；投影成 Item 后 UI 才消费） */
 export type AgentEvent =
     | { seq: number; type: 'run.started'; turnId: string; messageId: string }
@@ -211,6 +261,16 @@ export type AgentEvent =
           error?: string;
       }
     | { seq: number; type: 'message.completed'; messageId: string }
+    /** 流正常结束时的收尾事实（截断/工具悬空都从这里看出来；`run.failed` 则不给它） */
+    | {
+          seq: number;
+          type: 'run.finished';
+          turnId: string;
+          /** 上游 `finishReason`：`stop` / `length` / `content-filter` / `tool-calls` / `error` … */
+          finishReason: string;
+          steps: number;
+          maxOutputTokens: number;
+      }
     | { seq: number; type: 'run.completed'; turnId: string }
     | { seq: number; type: 'run.failed'; turnId: string; message: string };
 

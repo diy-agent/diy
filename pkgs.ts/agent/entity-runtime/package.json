@@ -10,6 +10,18 @@
         ".": {
             "types": "./src/index.ts",
             "default": "./src/index.ts"
+        },
+        "./end-reason": {
+            "types": "./src/end-reason.ts",
+            "default": "./src/end-reason.ts"
+        },
+        "./stop-scenarios": {
+            "types": "./src/stop-scenarios.ts",
+            "default": "./src/stop-scenarios.ts"
+        },
+        "./room-scenarios": {
+            "types": "./src/room-scenarios.ts",
+            "default": "./src/room-scenarios.ts"
         }
     },
     "dependencies": {

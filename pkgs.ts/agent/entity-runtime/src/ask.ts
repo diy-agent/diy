@@ -1,13 +1,17 @@
-// ask.ts —— 向用户提问：模型需要人做决定时，停下来把选项/表单推到界面上。
+// ask.ts —— 向用户提问：模型需要人做决定时，把选项/表单推到界面上。
 //
-// 为什么不用 AI SDK 的 `needsApproval` 暂停-恢复：那套要把响应重新拼进 messages 再续跑，
-// 和"一轮 SSE 一直开着"的模型不匹配。这里让工具停在 await 上，用户的回答通过一次 HTTP
-// 调回来，同一个 run 继续 —— 简单、可取消。
+// **不阻塞**：工具调用立刻拿到「提问已发出」的回执，本轮照常跑完、流照常关闭。
+// 用户之后作答时，回答变成一条**用户消息**投给提问的成员 —— 有 run 在跑就在下一个
+// step 边界注入，没有就开新轮。所以不需要"恢复执行栈"：run 的状态全在 transcript 里。
+//
+// 为什么不用阻塞式（await 到回答）：那样 run 会一直挂在一个 promise 上，用户在等待期间
+// 想说别的话都发不进去（steering 只在 step 边界生效，而 step 边界要等 ask 返回）。
+// 唯一的硬约束是"每个 tool call 都必须有 result"，立即返回一样满足。
 //
 // 与"审批"的区别：这里问的是**决策**（选哪个方案 / 填几个字段），不是"允许不允许"。
 // 放在正文里问容易被大段输出淹掉，所以必须是置顶的选项 / 表单。
 
-import type { AskAnswer, AskField, AskOption, AskRequest } from './types';
+import type { AnsweredAsk, AskAnswer, AskField, AskOption, AskRequest } from './types';
 
 /** 工具侧的提问入参（不含 askId，由闸门分配） */
 export interface AskInput {
@@ -21,24 +25,52 @@ export interface AskInput {
     toolCallId?: string;
 }
 
+/** 一次提问的结局：被回答，或被取消（容器关闭 / 超时） */
+export interface AskResult {
+    answer?: AskAnswer;
+    cancelled?: boolean;
+    reason?: string;
+}
+
 export interface AskGateDeps {
     /** 新提问：房间把它推到界面 */
     request: (request: AskRequest) => void;
-    /** 已回答 / 取消：房间收尾（更新提示、留痕） */
-    settle: (request: AskRequest, result: { answer?: AskAnswer; cancelled?: boolean; reason?: string }) => void;
-    /** 等待上限（毫秒）；缺省 10 分钟；0 = 一直等 */
+    /** 回答 / 取消：房间收尾（广播、留痕、把回答变成一条消息）。owner = 提问的成员。 */
+    settle: (request: AskRequest, result: AskResult, owner?: string) => void;
+    /** 挂在界面上的上限（毫秒）；缺省 0 = 一直等着（用户随时可以回头答） */
     timeoutMs?: number;
     now?: () => number;
 }
 
-const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
-
-/** 一次提问的结果（带上 request，调用方不用自己再拼一份） */
-export interface AskOutcome {
-    request: AskRequest;
-    answer?: AskAnswer;
-    cancelled?: boolean;
-    reason?: string;
+/**
+ * 把回答整理成模型能直接读懂的一行行文本。
+ * 房间投递回答消息、工具返回回执都用它 —— 两处表述必须一致，否则模型会当成两件事。
+ */
+export function describeAnswer(request: AskRequest, answer: AskAnswer | undefined): string {
+    if (answer === undefined) return '（没有回答）';
+    if (request.kind === 'text') {
+        // 注意不能写 `answer.text?.trim() ?? '（空）'`：空串过不了 ??，会拼出「回答提问「…」：」后面什么都没有
+        const text = answer.text?.trim() ?? '';
+        return text === '' ? '（空）' : text;
+    }
+    if (request.kind === 'form') {
+        const lines = (request.fields ?? []).map(
+            (field) => `- ${field.label}：${answer.fields?.[field.name] ?? '（未填）'}`,
+        );
+        const extra = answer.text?.trim() ?? '';
+        const body = lines.length === 0 ? '（没有字段）' : lines.join('\n');
+        return extra === '' ? body : `${body}\n补充：${extra}`;
+    }
+    const values = answer.values ?? [];
+    const freeText = answer.text?.trim() ?? '';
+    // 只填了自由输入、没勾选项：这段文字是用户唯一的回答，不能丢
+    if (values.length === 0) return freeText === '' ? '（空）' : freeText;
+    const labels = values.map((value) => {
+        const option = request.options?.find((candidate) => candidate.value === value);
+        return option === undefined ? value : `${option.label}（${value}）`;
+    });
+    const picked = labels.join('、');
+    return freeText === '' ? picked : `${picked}；补充：${freeText}`;
 }
 
 export class AskGate {
@@ -46,18 +78,29 @@ export class AskGate {
         string,
         {
             request: AskRequest;
-            resolve: (result: AskOutcome) => void;
             timer?: NodeJS.Timeout;
-            /** 谁问的（成员 id）：按成员停止时只取消他家的提问 */
+            /** 谁问的（成员 id）：回答要投给他 */
             owner?: string;
         }
     >();
+    /**
+     * 已经有结局的提问（新→旧）。为什么要留：卡片要带着「已选」状态留在时间线上，
+     * 否则回答一提交整块选项就消失，用户看不到自己选的是哪一个、其余选项是哪些。
+     * 只留最近的，长房间里没必要把几百张旧卡片都挂在内存里（翻回去就没有卡片，可接受）。
+     */
+    private readonly settled: AnsweredAsk[] = [];
     private counter = 0;
+
+    /** 已收尾的提问保留条数 */
+    private static readonly KEEP = 50;
 
     constructor(private readonly deps: AskGateDeps) {}
 
-    /** 工具一侧调用：挂起直到用户回答。owner = 提问的成员（按成员停止时用）。 */
-    request(input: AskInput, owner?: string): Promise<AskOutcome> {
+    /**
+     * 工具一侧调用：把提问推到界面并立刻返回（不等回答）。
+     * owner = 提问的成员，回答时按它投递。
+     */
+    request(input: AskInput, owner?: string): AskRequest {
         const at = this.deps.now?.() ?? Date.now();
         const askId = `ask-${at.toString(36)}-${++this.counter}`;
         const request: AskRequest = {
@@ -73,28 +116,25 @@ export class AskGate {
             at,
         };
 
-        const promise = new Promise<AskOutcome>((resolve) => {
-            const timeoutMs = this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-            const timer =
-                timeoutMs > 0
-                    ? setTimeout(() => this.settle(askId, { cancelled: true, reason: '等待回答超时' }), timeoutMs)
-                    : undefined;
-            this.pending.set(askId, {
-                request,
-                resolve,
-                ...(timer === undefined ? {} : { timer }),
-                ...(owner === undefined ? {} : { owner }),
-            });
+        const timeoutMs = this.deps.timeoutMs ?? 0;
+        const timer =
+            timeoutMs > 0
+                ? setTimeout(() => this.settle(askId, { cancelled: true, reason: '等待回答超时' }), timeoutMs)
+                : undefined;
+        this.pending.set(askId, {
+            request,
+            ...(timer === undefined ? {} : { timer }),
+            ...(owner === undefined ? {} : { owner }),
         });
 
         try {
             this.deps.request(request);
         } catch (error) {
-            // 推不到界面上就别让它挂成孤儿：直接按取消收尾
+            // 推不到界面上就别留着这张永远等不到的卡片
             const reason = error instanceof Error ? error.message : String(error);
             this.settle(askId, { cancelled: true, reason: `无法显示提问：${reason}` });
         }
-        return promise;
+        return request;
     }
 
     /** 用户的回答；返回是否命中一个待回答的提问 */
@@ -102,19 +142,22 @@ export class AskGate {
         return this.settle(askId, { answer });
     }
 
-    /** 取消这一轮：所有挂起的提问按"取消"收尾，run 才能退出 */
-    cancelAll(reason = '本轮已取消'): void {
-        for (const askId of [...this.pending.keys()]) this.settle(askId, { cancelled: true, reason });
+    /**
+     * 清掉所有待回答的提问（容器关闭 / 成员被移除）。
+     * 用户点「停止」不该走这里：那一轮早就跑完了，提问还得留着等他回答。
+     */
+    cancelAll(reason = '提问已失效'): void {
+        // 边遍历边删：先快照 id，不依赖迭代器的删除语义
+        const ids = Array.from(this.pending.keys());
+        for (const askId of ids) this.settle(askId, { cancelled: true, reason });
     }
 
-    /**
-     * 只取消某个成员的提问（"停这个 bot"不应该把别人正在等的回答也废掉）。
-     * 返回取消了几个。
-     */
-    cancelFor(owner: string, reason = '本轮已取消'): number {
+    /** 只清某个成员的提问；返回清掉了几个 */
+    cancelFor(owner: string, reason = '提问已失效'): number {
         let count = 0;
-        for (const [askId, entry] of [...this.pending]) {
-            if (entry.owner !== owner) continue;
+        const ids = Array.from(this.pending.keys());
+        for (const askId of ids) {
+            if (this.pending.get(askId)?.owner !== owner) continue;
             if (this.settle(askId, { cancelled: true, reason })) count += 1;
         }
         return count;
@@ -128,13 +171,25 @@ export class AskGate {
         return [...this.pending.values()].map((entry) => entry.request);
     }
 
-    private settle(askId: string, result: Omit<AskOutcome, 'request'>): boolean {
+    /** 已收尾的提问（旧→新，与时间线同向） */
+    answeredList(): AnsweredAsk[] {
+        return [...this.settled].reverse();
+    }
+
+    private settle(askId: string, result: AskResult): boolean {
         const entry = this.pending.get(askId);
         if (entry === undefined) return false;
         this.pending.delete(askId);
         if (entry.timer !== undefined) clearTimeout(entry.timer);
-        this.deps.settle(entry.request, result);
-        entry.resolve({ request: entry.request, ...result });
+        this.settled.push({
+            request: entry.request,
+            ...(result.answer === undefined ? {} : { answer: result.answer }),
+            ...(result.cancelled === true ? { cancelled: true } : {}),
+            ...(result.reason === undefined ? {} : { reason: result.reason }),
+            at: this.deps.now?.() ?? Date.now(),
+        });
+        if (this.settled.length > AskGate.KEEP) this.settled.splice(0, this.settled.length - AskGate.KEEP);
+        this.deps.settle(entry.request, result, entry.owner);
         return true;
     }
 }

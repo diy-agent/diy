@@ -30,6 +30,8 @@ function makeSession(
     options: {
         bot?: Bot;
         hangOnAbort?: boolean;
+        /** 第一次开跑就失败（`run.failed` 的原文），用来锁「同一句话不出现两次」 */
+        fail?: string;
         seed?: SessionDeps['seed'];
         budget?: SessionDeps['budget'];
         compactor?: Compactor;
@@ -50,6 +52,10 @@ function makeSession(
         seen.push(input.messages);
         yield { seq: 1, type: 'run.started', turnId, messageId: `msg-${runs.length}` };
         await sleep(5);
+        if (options.fail !== undefined && runs.length === 1) {
+            yield { seq: 2, type: 'run.failed', turnId, message: options.fail };
+            return;
+        }
         if (options.hangOnAbort === true && runs.length === 1) {
             while (!input.signal.aborted) await sleep(2);
             yield { seq: 2, type: 'run.failed', turnId, message: 'aborted' };
@@ -58,8 +64,17 @@ function makeSession(
         yield { seq: 2, type: 'text.delta', messageId: `msg-${runs.length}`, delta: `reply-${runs.length}` };
         // 模拟 SDK：模型产出（assistant）回传给 session 记账
         input.onStepTranscript?.([{ role: 'assistant', content: [{ type: 'text', text: `reply-${runs.length}` }] }]);
-        yield { seq: 3, type: 'message.completed', messageId: `msg-${runs.length}` };
-        yield { seq: 4, type: 'run.completed', turnId };
+        // 收尾事实：与真 agent 对齐（不给的话这一轮会被判成 unknown / no-finish）
+        yield {
+            seq: 3,
+            type: 'run.finished',
+            turnId,
+            finishReason: 'stop',
+            steps: 1,
+            maxOutputTokens: input.maxOutputTokens ?? 0,
+        };
+        yield { seq: 4, type: 'message.completed', messageId: `msg-${runs.length}` };
+        yield { seq: 5, type: 'run.completed', turnId };
     } as (input: RunOptions) => AsyncIterable<AgentEvent>;
 
     const session = new BotSession({
@@ -254,7 +269,30 @@ describe('BotSession', () => {
         const h = makeSession();
         await h.session.post({ messageId: 'm1', text: '你好' });
 
-        expect(h.ends).toEqual([{ turn: 1, turnId: 'turn-1', text: 'reply-1', failed: false }]);
+        // `endReason` 是这一轮**为什么**结束的收尾事实。脚本 run 现在也发 `run.finished`
+        // （与真 agent 一致），所以这里是 completed + 上游原文 stop，不是"猜"出来的。
+        // 没有它，「被截断」和「说完了」在数据里就没区别（见 intent.truncation.test.ts）
+        expect(h.ends).toEqual([
+            {
+                turn: 1,
+                turnId: 'turn-1',
+                text: 'reply-1',
+                failed: false,
+                endReason: { type: 'completed', finishReason: 'stop', steps: 1 },
+            },
+        ]);
+    });
+
+    it('运行失败只落一条错误条目（run.failed 的原文不重复）', async () => {
+        // Projector 收到 `run.failed` 时会自己落一条错误条目；收尾时 `endItems('error')`
+        // 若再补一条，时间线上同一句失败原文会出现两次 —— 用户看到两条一模一样的红条。
+        const h = makeSession({ fail: '401 Invalid API key（检查 DEEPSEEK_API_KEY）' });
+        await h.session.post({ messageId: 'm1', text: '你好' });
+
+        const errors = h.items.filter((item) => item.type === 'error');
+        expect(errors.length).toBe(1);
+        expect(errors[0]?.data).toEqual({ message: '401 Invalid API key（检查 DEEPSEEK_API_KEY）' });
+        expect(h.ends[0]?.endReason.type).toBe('error');
     });
 
     it('压缩策略可替换：换一个 Compactor，session 一行不改', async () => {

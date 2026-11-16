@@ -2,6 +2,7 @@
 
 export type {
     AgentEvent,
+    AnsweredAsk,
     AskAnswer,
     AskField,
     AskOption,
@@ -16,4 +17,5 @@ export type {
     Item,
     ItemStatus,
     InboxMode,
+    TurnEndReason,
 } from '@diy-agent/protocol';

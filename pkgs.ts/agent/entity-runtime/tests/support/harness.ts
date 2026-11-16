@@ -60,6 +60,10 @@ export function makeRoom(
         store?: Store;
         /** 重启场景：用落库的那份 spec（名字/模型都是上次改过的值） */
         spec?: Room;
+        /** 自定义 run（要调工具的场景用：ask 挂起 / 取消） */
+        run?: (input: RunOptions) => AsyncIterable<AgentEvent>;
+        /** 给了才有工具集（ask 工具需要在工具集里） */
+        cwd?: string;
     } = {},
 ): Harness {
     const store = options.store ?? openStore(':memory:');
@@ -81,7 +85,7 @@ export function makeRoom(
     const runs: string[] = [];
     const models: string[] = [];
 
-    const run = async function* (input: RunOptions): AsyncIterable<AgentEvent> {
+    const scripted = async function* (input: RunOptions): AsyncIterable<AgentEvent> {
         runs.push(input.bot.name);
         models.push(input.modelKey);
         const turnId = input.turnId ?? 'turn';
@@ -95,19 +99,33 @@ export function makeRoom(
         const text = options.reply?.(input.bot) ?? `${input.bot.name} 的回复`;
         yield { seq: 2, type: 'text.delta', messageId: `msg-${runs.length}`, delta: text };
         input.onStepTranscript?.([{ role: 'assistant', content: [{ type: 'text', text }] }]);
-        yield { seq: 3, type: 'message.completed', messageId: `msg-${runs.length}` };
-        yield { seq: 4, type: 'run.completed', turnId };
+        // 收尾事实必须发：真 agent 一定会给（`agent.ts` 末尾），脚本 run 不给的话
+        // 这一轮会被判成 `unknown`（没收到收尾信号 = 按失败处理），于是结论发不出去。
+        // 要演截断的测试自己发 `finishReason: 'length'`。
+        yield {
+            seq: 3,
+            type: 'run.finished',
+            turnId,
+            finishReason: 'stop',
+            steps: 1,
+            maxOutputTokens: input.maxOutputTokens ?? 0,
+        };
+        yield { seq: 4, type: 'message.completed', messageId: `msg-${runs.length}` };
+        yield { seq: 5, type: 'run.completed', turnId };
     } as (input: RunOptions) => AsyncIterable<AgentEvent>;
+    const run = options.run ?? scripted;
 
     const room = new RoomActor({
         spec,
         store,
-        bots: () => bots,
+        // 与 server 一致：每次实时读库（改名 / 换模型这类改动才看得见）
+        bots: () => store.listBots(),
         emit: (event) => {
             events.push(event);
             for (const listener of listeners) listener(event);
         },
         run,
+        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     });
 
     return {

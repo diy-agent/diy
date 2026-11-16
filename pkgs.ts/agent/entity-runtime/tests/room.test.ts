@@ -155,6 +155,48 @@ describe('RoomActor', () => {
         expect(running.at(-1)).toEqual([]);
     });
 
+    it('turn.end 事件：把「这一轮为什么结束」广播给客户端（页脚用它）', async () => {
+        const h = makeRoom();
+        await h.room.say({ text: '说一句', author: HUMAN });
+
+        const ends = h.events.filter((event) => event.kind === 'turn.end');
+        expect(ends).toHaveLength(1);
+        const end = ends[0] as { botId: string; turnId: string; reason: { type: string } };
+        expect(end.botId).toBe(BOT_A.id);
+        expect(end.turnId).not.toBe('');
+        expect(end.reason.type).toBe('completed');
+    });
+
+    it('turn.end 也广播"被截断"：页脚与时间线都据此说话', async () => {
+        // 脚本 run 直接给 length：判据要在这里说出真话（不是"完成"）
+        const h = makeRoom({
+            run: async function* (input) {
+                const turnId = input.turnId ?? 'turn';
+                yield { seq: 1, type: 'run.started', turnId, messageId: 'msg-1' };
+                yield { seq: 2, type: 'text.delta', messageId: 'msg-1', delta: '半句话' };
+                yield {
+                    seq: 3,
+                    type: 'run.finished',
+                    turnId,
+                    finishReason: 'length',
+                    steps: 1,
+                    maxOutputTokens: 8192,
+                };
+                yield { seq: 4, type: 'message.completed', messageId: 'msg-1' };
+                yield { seq: 5, type: 'run.completed', turnId };
+            },
+        });
+        await h.room.say({ text: '写长一点', author: HUMAN });
+
+        const end = h.events.find((event) => event.kind === 'turn.end') as
+            | { reason: { type: string; maxOutputTokens?: number } }
+            | undefined;
+        expect(end?.reason.type).toBe('max-tokens');
+        expect(end?.reason.maxOutputTokens).toBe(8192);
+        // 结论不公开：截断的话不能进公共日志
+        expect(h.items().some((item) => item.type === 'notice')).toBe(true);
+    });
+
     it('单会话取消：只停指定的成员，另一个继续', async () => {
         const h = makeRoom({ hang: true });
         const turn = h.room.say({ text: '@all 都说说', author: HUMAN });
@@ -168,6 +210,33 @@ describe('RoomActor', () => {
 
         h.room.cancel();
         await turn;
+        expect(h.room.runningBots()).toEqual([]);
+    });
+
+    it('改 data：浅合并并落库（重启后任务状态还在）', () => {
+        const h = makeRoom();
+        h.room.update({ data: { status: 'doing', desc: '做到能跑' } });
+
+        expect(h.room.spec.data).toMatchObject({ status: 'doing', desc: '做到能跑' });
+        // 重启：用库里那份 spec 重建
+        const again = h.rebuild();
+        expect(again.room.spec.data).toMatchObject({ status: 'doing', desc: '做到能跑' });
+    });
+
+    it('改 data：null = 删掉这个键', () => {
+        const h = makeRoom();
+        h.room.update({ data: { status: 'done' } });
+        h.room.update({ data: { status: null } });
+        expect('status' in h.room.spec.data).toBe(false);
+    });
+
+    it('stop：删容前把还在跑的会话停掉（不往已删的房间里写）', async () => {
+        const h = makeRoom({ hang: true });
+        void h.room.say({ text: '跑一会', author: HUMAN });
+        await waitFor(() => h.room.runningBots().length > 0);
+
+        h.room.stop();
+        await waitFor(() => !h.room.busy());
         expect(h.room.runningBots()).toEqual([]);
     });
 

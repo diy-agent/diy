@@ -1,26 +1,33 @@
-// ask.test.ts —— 提问闸门：挂起 / 回答 / 取消 / 超时。
+// ask.test.ts —— 提问闸门：发出即返回 / 回答 / 取消 / 超时。
+//
+// 核心不变量：request 绝不阻塞（否则整轮 run 挂在 promise 上，用户在等待期间插不进话）；
+// 回答由房间消费（settle 带 owner），没有 promise 可回填。
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AskGate } from '../src/ask';
 import type { AskRequest } from '../src/types';
 
 function makeGate(options: { timeoutMs?: number } = {}) {
     const requests: AskRequest[] = [];
-    const settled: Array<{ request: AskRequest; result: { answer?: unknown; cancelled?: boolean; reason?: string } }> =
-        [];
+    const settled: Array<{
+        request: AskRequest;
+        result: { answer?: unknown; cancelled?: boolean; reason?: string };
+        owner?: string;
+    }> = [];
     const gate = new AskGate({
         request: (request) => requests.push(request),
-        settle: (request, result) => settled.push({ request, result }),
-        timeoutMs: options.timeoutMs ?? 0,
+        settle: (request, result, owner) =>
+            settled.push({ request, result, ...(owner === undefined ? {} : { owner }) }),
+        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     });
     return { gate, requests, settled };
 }
 
 describe('AskGate', () => {
-    it('选项题：挂起直到回答，回答带 values', async () => {
+    it('发出即返回：request 同步拿到 askId，不等回答', () => {
         const h = makeGate();
-        const pending = h.gate.request({
+        const request = h.gate.request({
             question: '先做哪个？',
             options: [
                 { value: 'a', label: '方案 A' },
@@ -28,89 +35,107 @@ describe('AskGate', () => {
             ],
         });
 
-        expect(h.gate.pendingCount()).toBe(1);
+        // 同步返回：工具靠这个立刻结束，run 不挂起
+        expect(request.askId).toMatch(/^ask-/);
+        expect(h.requests).toHaveLength(1);
         expect(h.requests[0]?.kind).toBe('choice');
-
-        expect(h.gate.answer(h.requests[0]!.askId, { values: ['b'] })).toBe(true);
-        const outcome = await pending;
-        expect(outcome.answer).toEqual({ values: ['b'] });
-        expect(outcome.request.question).toBe('先做哪个？');
-        expect(h.settled[0]?.result.answer).toEqual({ values: ['b'] });
+        // 卡片挂着等用户，没有"等待中的 promise"
+        expect(h.gate.pendingCount()).toBe(1);
+        expect(h.settled).toEqual([]);
     });
 
-    it('表单题：fields 原样带回，kind 自动推断成 form', async () => {
+    it('回答：settle 收到 answer 和 owner，之后不再命中', () => {
         const h = makeGate();
-        const pending = h.gate.request({
+        const request = h.gate.request({ question: '选哪个？' }, 'bot:a');
+
+        expect(h.gate.answer(request.askId, { values: ['b'] })).toBe(true);
+        expect(h.settled).toEqual([{ request, result: { answer: { values: ['b'] } }, owner: 'bot:a' }]);
+        expect(h.gate.pendingCount()).toBe(0);
+        // 重复回答不会二次投递
+        expect(h.gate.answer(request.askId, { values: ['a'] })).toBe(false);
+        expect(h.settled).toHaveLength(1);
+    });
+
+    it('表单题：fields 原样带回，kind 自动推断成 form', () => {
+        const h = makeGate();
+        const request = h.gate.request({
             question: '填一下发版信息',
             fields: [{ name: 'title', label: '标题', type: 'text', required: true }],
         });
 
-        expect(h.requests[0]?.kind).toBe('form');
-        h.gate.answer(h.requests[0]!.askId, { fields: { title: 'diy2 发版' } });
-        const outcome = await pending;
-        expect(outcome.answer).toEqual({ fields: { title: 'diy2 发版' } });
+        expect(request.kind).toBe('form');
+        h.gate.answer(request.askId, { fields: { title: 'diy2 发版' } });
+        expect(h.settled[0]?.result.answer).toEqual({ fields: { title: 'diy2 发版' } });
     });
 
     it('未知 askId：返回 false，不影响已有提问', () => {
         const h = makeGate();
-        void h.gate.request({ question: '随便问问' });
+        h.gate.request({ question: '随便问问' });
         expect(h.gate.answer('nope', { values: ['x'] })).toBe(false);
         expect(h.gate.pendingCount()).toBe(1);
     });
 
-    it('cancelAll：挂起的提问按取消收尾（run 才能退出）', async () => {
+    it('cancelAll：清掉挂着的提问（容器关闭），不投递任何回答', () => {
         const h = makeGate();
-        const a = h.gate.request({ question: 'Q1' });
-        const b = h.gate.request({ question: 'Q2' });
+        h.gate.request({ question: 'Q1' }, 'bot:a');
+        h.gate.request({ question: 'Q2' }, 'bot:b');
 
-        h.gate.cancelAll('本轮已取消');
+        h.gate.cancelAll('容器已关闭');
 
-        await expect(a).resolves.toMatchObject({ cancelled: true, reason: '本轮已取消' });
-        await expect(b).resolves.toMatchObject({ cancelled: true });
         expect(h.gate.pendingCount()).toBe(0);
+        expect(h.settled.map((entry) => entry.result)).toEqual([
+            { cancelled: true, reason: '容器已关闭' },
+            { cancelled: true, reason: '容器已关闭' },
+        ]);
     });
 
-    it('timeoutMs: 0 = 一直等；显式给值才超时（缺省 10 分钟）', async () => {
-        const forever = makeGate({ timeoutMs: 0 });
-        void forever.gate.request({ question: '一直等' });
-        expect(forever.gate.pendingCount()).toBe(1);
+    it('缺省一直等（用户随时可以回头答）；显式 timeoutMs 才过期', () => {
+        vi.useFakeTimers();
+        try {
+            const forever = makeGate();
+            forever.gate.request({ question: '一直等' });
+            vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+            expect(forever.gate.pendingCount()).toBe(1);
 
-        const timed = makeGate({ timeoutMs: 10 });
-        const pending = timed.gate.request({ question: '等一下' });
-        await expect(pending).resolves.toMatchObject({ cancelled: true, reason: '等待回答超时' });
+            const timed = makeGate({ timeoutMs: 10 });
+            const request = timed.gate.request({ question: '等一下' });
+            vi.advanceTimersByTime(20);
+            expect(timed.gate.pendingCount()).toBe(0);
+            expect(timed.settled[0]).toMatchObject({ request, result: { cancelled: true, reason: '等待回答超时' } });
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
-    it('推不到界面上（emit 抛错）：按取消收尾，不留孤儿', async () => {
+    it('推不到界面上（emit 抛错）：当场收尾，不留孤儿卡片', () => {
+        const settled: unknown[] = [];
         const gate = new AskGate({
             request: () => {
                 throw new Error('界面已断开');
             },
-            settle: () => undefined,
-            timeoutMs: 0,
+            settle: (_request, result) => settled.push(result),
         });
-        const outcome = await gate.request({ question: 'Q' });
-        expect(outcome.cancelled).toBe(true);
-        expect(outcome.reason).toContain('无法显示提问');
+        gate.request({ question: 'Q' });
         expect(gate.pendingCount()).toBe(0);
+        expect(settled[0]).toMatchObject({ cancelled: true });
+        expect(String((settled[0] as { reason?: string }).reason)).toContain('无法显示提问');
     });
 
-    it('cancelFor：只取消这个成员的提问，别人的照常在等人回答', async () => {
+    it('cancelFor：只清这个成员的提问，别人的照常等回答', () => {
         const h = makeGate();
-        const mine = h.gate.request({ question: '我的' }, 'bot:a');
+        h.gate.request({ question: '我的' }, 'bot:a');
         const other = h.gate.request({ question: '别人的' }, 'bot:b');
 
         expect(h.gate.cancelFor('bot:a')).toBe(1);
-        expect((await mine).cancelled).toBe(true);
-        // 别人的还挂着：停一个 bot 不该把另一个 bot 的提问一起废掉
         expect(h.gate.pendingCount()).toBe(1);
 
-        expect(h.gate.answer(h.gate.list()[0]!.askId, { values: ['x'] })).toBe(true);
-        expect((await other).cancelled).toBeUndefined();
+        expect(h.gate.answer(other.askId, { values: ['x'] })).toBe(true);
+        expect(h.settled.map((entry) => entry.owner)).toEqual(['bot:a', 'bot:b']);
     });
 
     it('list() 返回挂起中的请求（刷新后恢复卡片用）', () => {
         const h = makeGate();
-        void h.gate.request({ question: 'Q1', options: [{ value: 'a', label: 'A' }] });
+        h.gate.request({ question: 'Q1', options: [{ value: 'a', label: 'A' }] });
         expect(h.gate.list().map((request) => request.question)).toEqual(['Q1']);
     });
 });

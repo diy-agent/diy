@@ -15,6 +15,7 @@
 import { experimental_createSteering, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 
 import { runAgent, type RunOptions } from './agent';
+import { endItems, endReasonOf } from './end-reason';
 import { friendlyError } from './errors';
 import {
     DEFAULT_BUDGET,
@@ -26,9 +27,10 @@ import {
     type TokenUsage,
     type TranscriptEntry,
 } from './compaction';
+import { maxOutputTokensOf } from './providers';
 import { Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
-import type { AgentEvent, Author, Bot, DeliveryState, Item } from './types';
+import type { AgentEvent, Author, Bot, DeliveryState, Item, TurnEndReason } from './types';
 
 export interface CompactOptions {
     keepLast?: number;
@@ -49,6 +51,11 @@ export interface TurnResult extends Turn {
     failed: boolean;
     /** 本轮实测用量（真实 token，可用于校准预算） */
     usage?: TokenUsage;
+    /**
+     * 这一轮**为什么**结束。`max-tokens` / `tool-mismatch` / `interrupted` 都要能说出来 ——
+     * 否则「被截断」和「说完了」在数据里没有区别（就是「执行一半停下」那个 bug）。
+     */
+    endReason: TurnEndReason;
 }
 
 /** session 对外的全部输出（房间订阅它） */
@@ -103,6 +110,8 @@ export interface SessionDeps {
     /** 房间装配的工具（不传 = 内置 get_time） */
     tools?: ToolSet;
     toolsHint?: string;
+    /** 本轮输出上限（缺省按 modelKey 推，见 providers.ts `maxOutputTokensOf`） */
+    maxOutputTokens?: number;
 }
 
 interface QueueItem {
@@ -156,6 +165,17 @@ export class BotSession {
     /** 房间换模型：下一轮生效（已建好的 session 不会重建） */
     setModelKey(modelKey: string): void {
         this.modelKey = modelKey;
+    }
+
+    /**
+     * 房间改名：bot 跟着姓容器的名字（专属 bot 与容器 1:1）。
+     *
+     * session 持有的是**构造时的 bot 快照**：不同步的话，改名后它说的话仍署名旧名、
+     * system prompt 里也还在自称旧名（用户报的「任务改名后 bot name 没变」）。
+     * 已在跑的这一轮不改（instructions 已经发出去了），从下一轮 / 下一条 item 生效。
+     */
+    setBotName(name: string): void {
+        this.deps.bot = { ...this.deps.bot, name };
     }
 
     /** 房间订阅 session 的全部输出 */
@@ -368,6 +388,21 @@ export class BotSession {
         const produced: TranscriptEntry[] = [];
         let text = '';
         let failed = false;
+        /** 运行给的失败原文（`run.failed.message`）：错误条目要把它说出来，别把话丢了 */
+        let failureMessage: string | undefined;
+        /** `run.failed` 的原文已经被 Projector 落成错误条目了 —— 收尾时别再抄一遍 */
+        let errorReported = false;
+        /**
+         * 收尾事实：来自 agent 的 `run.finished`。**没收到就不算完成** ——
+         * `finished=false` 会被判成 `unknown` 并按错误处理（见 end-reason.ts）。
+         */
+        let finished = false;
+        let finishReason: string | undefined;
+        let steps = 0;
+        let toolCalls = 0;
+        /** 运行时实际发出去的上限（`run.finished` 带回；没带回就用开跑前算的） */
+        let reportedBudget: number | undefined;
+        const maxOutputTokens = maxOutputTokensOf(this.modelKey, this.deps.maxOutputTokens);
         try {
             const run = this.deps.run ?? runAgent;
             for await (const event of run({
@@ -377,6 +412,7 @@ export class BotSession {
                 turnId: turn.turnId,
                 signal: abort.signal,
                 steering,
+                maxOutputTokens,
                 ...(this.deps.tools === undefined ? {} : { tools: this.deps.tools }),
                 ...(this.deps.toolsHint === undefined ? {} : { toolsHint: this.deps.toolsHint }),
                 onStepTranscript: (added) => {
@@ -386,31 +422,81 @@ export class BotSession {
                     this.lastUsage = usage;
                 },
             })) {
-                if (event.type === 'run.failed') failed = true;
+                if (event.type === 'run.failed') {
+                    failed = true;
+                    failureMessage = event.message;
+                }
+                if (event.type === 'run.finished') {
+                    finished = true;
+                    finishReason = event.finishReason;
+                    steps = event.steps;
+                    // 事实上限以**运行时实际发出去的**为准（`run.finished` 带回来的那个）：
+                    // session 在开跑前算的是"打算发多少"，两者不一致时（换模型 / 网关改写）
+                    // 对账要信实际值，否则页脚会报一个没发生过的数字。
+                    if (typeof event.maxOutputTokens === 'number') reportedBudget = event.maxOutputTokens;
+                }
+                if (event.type === 'tool.started') toolCalls += 1;
                 if (event.type === 'text.delta') text += event.delta;
-                for (const item of projector.apply(event)) this.emit({ type: 'item', item });
+                for (const item of projector.apply(event)) {
+                    // 失败原文已经由 Projector 落成条目了（`run.failed` 那条）：
+                    // 记下来，免得下面 `endItems` 再补一条一模一样的错误
+                    if (item.type === 'error') errorReported = true;
+                    this.emit({ type: 'item', item });
+                }
             }
         } catch (error) {
             failed = true;
-            this.emit({ type: 'error', message: friendlyError(error) });
+            failureMessage = friendlyError(error);
+            this.emit({ type: 'error', message: failureMessage });
         } finally {
             // 本轮真正发生过的内容（含自己的 tool / reasoning）原样入账
             this.transcript.push(...userEntries, ...produced);
             // 跑的过程中到达的公共条目：排在本轮产出之后，下一轮才被读到
             this.drainPending();
 
-            if (!failed) {
-                this.emit({
-                    type: 'turn.end',
-                    result: {
-                        turn: turn.turn,
-                        turnId: turn.turnId,
-                        text: text.trim(),
-                        failed,
-                        ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
-                    },
-                });
+            // 还在 streaming 的条目（典型：ask 挂着时被取消 → 工具拿到「未回答」返回、
+            // 模型正常收尾 → 走不到 run.failed）在这里一次性收尾，否则 UI 一直转圈。
+            for (const item of projector.finalize()) this.emit({ type: 'item', item });
+
+            // 为什么结束：判定只在 end-reason.ts（session / 房间 / 测试 / lab 页共用一份）。
+            const endReason = endReasonOf({
+                failed,
+                aborted: abort.signal.aborted,
+                finished,
+                ...(finishReason === undefined ? {} : { finishReason }),
+                steps,
+                textLength: text.length,
+                toolCalls,
+                maxOutputTokens: reportedBudget ?? maxOutputTokens,
+            });
+
+            // 「怎么停的」必须说出来，否则数据里和正常收尾一模一样：
+            // 截断 / 过滤 / 工具悬空 → notice；未知 / 失败 → 错误条目（未知按错误处理）。
+            for (const item of endItems(
+                endReason,
+                {
+                    turn: turn.turn,
+                    turnId: turn.turnId,
+                    ...(failureMessage === undefined ? {} : { failureMessage }),
+                },
+                { errorAlreadyReported: errorReported },
+            )) {
+                this.emit({ type: 'item', item });
             }
+
+            // 失败 / 未知**也给** turn.end：房间据此落 session 快照（不给的话这一段对话就丢了）。
+            // 「能不能当结论发出去」由 room.publishConclusion 看 publishable() 拦。
+            this.emit({
+                type: 'turn.end',
+                result: {
+                    turn: turn.turn,
+                    turnId: turn.turnId,
+                    text: text.trim(),
+                    failed: endReason.type === 'error' || endReason.type === 'unknown',
+                    endReason,
+                    ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
+                },
+            });
 
             // 这一轮已经消费了这些消息 ⇒ 投递成功；跑失败是 bot 的问题（会有 error 条目），
             // 不该在用户消息上标"未送达"（那是传输层的事）。

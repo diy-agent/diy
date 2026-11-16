@@ -40,6 +40,14 @@ export interface Store {
      */
     saveRoom(room: Room): void;
     listRooms(): Room[];
+    /**
+     * 删除容器及其**全部从属数据**（消息 / 公共日志 / 成员 / 会话快照 / 投递）。
+     * 只删 rooms 一行的话，消息和成员会变成没有入口的孤儿，占着库且再也删不掉。
+     * 只删一个 id：项目下任务的级联由调用方（server）决定，库里不懂项目/任务。
+     */
+    deleteRoom(roomId: string): void;
+    /** 删除 bot 身份（容器被删时清理它自动建的专属 bot） */
+    deleteBot(botId: string): void;
     appendItem(roomId: string, item: Item): Item;
     setMembers(roomId: string, members: readonly RoomMember[]): void;
     /** roomId → 成员（按 position） */
@@ -241,6 +249,18 @@ export function openStore(file: string): Store {
                     member.persona ?? null,
                 );
             });
+        },
+        deleteRoom(roomId: string): void {
+            // 顺序不重要（没有外键），但都按 entity_id 走索引或主键
+            db.prepare('DELETE FROM entity_items WHERE entity_id = ?').run(roomId);
+            db.prepare('DELETE FROM room_entries WHERE entity_id = ?').run(roomId);
+            db.prepare('DELETE FROM session_state WHERE entity_id = ?').run(roomId);
+            db.prepare('DELETE FROM deliveries WHERE entity_id = ?').run(roomId);
+            db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
+            db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+        },
+        deleteBot(botId: string): void {
+            db.prepare('DELETE FROM bots WHERE id = ?').run(botId);
         },
         members(): Record<string, RoomMember[]> {
             return readMembers();
