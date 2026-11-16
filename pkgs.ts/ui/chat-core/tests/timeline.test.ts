@@ -30,7 +30,7 @@ function item(seq: number, patch: Partial<Item> & Pick<Item, 'type' | 'turnId' |
 }
 
 describe('buildTimeline', () => {
-    it('多 agent 同轮交错时按 (turnId, author) 聚合，不切块', () => {
+    it('多 agent 同轮交错：按 order 排，只在相邻时合并（被打断就另起一段）', () => {
         const items: Item[] = [
             item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '问题' } }),
             // 同一轮：owner 工具 → helper 文本 → owner 文本（按 order 交错）
@@ -41,14 +41,44 @@ describe('buildTimeline', () => {
 
         const entries = buildTimeline(items, [], BOTS);
 
-        expect(entries.map((entry) => entry.key)).toEqual(['i1', 't1:bot:owner', 't1:bot:helper']);
+        // 中间夹了 helper 的话，owner 的第二段要另起一条 —— 否则它会显示在小满下面
+        expect(entries.map((entry) => entry.key)).toEqual(['i1', 't1:bot:owner', 't1:bot:helper', 't1:bot:owner#2']);
         expect(entries[0]?.kind).toBe('user');
-        // owner 的 key 只出现一次：工具与文本都在同一条里，且保持先后
         expect(entries[1]?.parts).toEqual([
             { kind: 'tool', id: 'i2', name: 'get_time', args: undefined, result: undefined, state: 'ok' },
-            { kind: 'text', text: 'diy 回复' },
         ]);
         expect(entries[2]?.parts).toEqual([{ kind: 'text', text: '小满回复' }]);
+        expect(entries[3]?.parts).toEqual([{ kind: 'text', text: 'diy 回复' }]);
+        // 续段在数据上仍是独立一条（顺序才正确），但要标记出来：surface 靠它
+        // 决定「不重复头像与名字」，否则一轮被打断后会像连发了三条消息。
+        expect(entries[1]?.continued).toBeUndefined();
+        expect(entries[3]?.continued).toBe(true);
+    });
+
+    it('顺序用 order 而不是 seq：ask 挂起后落库，卡片仍在它引发的回答之前', () => {
+        // 真实会话（task-mwipls4u）的 shape：bot 先发 ask（order 20），
+        // 条目要等回答完才落库（seq 30），期间用户已经插了话、通知也已写入。
+        const items: Item[] = [
+            item(23, { type: 'chat', turnId: 't3', author: HUMAN, order: 19, data: { text: 'ask tool问我问题' } }),
+            item(24, { type: 'chat', turnId: 't3', author: HUMAN, order: 21, data: { text: '说两个字' } }),
+            item(25, { type: 'notice', turnId: 't3', order: 22, data: { text: '已回答：22', kind: 'ask' } }),
+            item(30, {
+                type: 'tool',
+                turnId: 't3',
+                order: 20,
+                author: owner,
+                data: { name: 'ask', state: 'ok', result: '用户回答：22' },
+            }),
+        ];
+
+        const entries = buildTimeline(items, [], BOTS);
+
+        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'user', 'notice']);
+        expect(entries[0]?.parts).toEqual([{ kind: 'text', text: 'ask tool问我问题' }]);
+        expect(entries[1]?.parts).toEqual([
+            { kind: 'tool', id: 'i30', name: 'ask', args: undefined, result: '用户回答：22', state: 'ok' },
+        ]);
+        expect(entries[2]?.parts).toEqual([{ kind: 'text', text: '说两个字' }]);
     });
 
     it('把投递状态挂到用户消息上（失败也要显示）', () => {
@@ -73,7 +103,7 @@ describe('buildTimeline', () => {
         ]);
     });
 
-    it('notice / error 各自独立成条，且不打断后续 bot 消息', () => {
+    it('notice / error 各自独立成条，并且会切断 bot 消息的合并', () => {
         const items: Item[] = [
             item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: 'hi' } }),
             item(2, { type: 'notice', turnId: 't1', data: { text: '@小满 被激活', kind: 'mention' } }),
@@ -84,12 +114,10 @@ describe('buildTimeline', () => {
 
         const entries = buildTimeline(items, [], BOTS);
 
-        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'notice', 'assistant', 'error']);
-        // notice 之后的同类消息仍归进同一条（同一 turn+author）
-        expect(entries[2]?.parts).toEqual([
-            { kind: 'text', text: 'diy' },
-            { kind: 'text', text: '重试成功' },
-        ]);
+        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'notice', 'assistant', 'error', 'assistant']);
+        expect(entries[2]?.parts).toEqual([{ kind: 'text', text: 'diy' }]);
+        expect(entries[4]?.key).toBe('t1:bot:owner#2');
+        expect(entries[4]?.parts).toEqual([{ kind: 'text', text: '重试成功' }]);
     });
 
     it('streaming 只反映在对应条目上', () => {
@@ -101,5 +129,48 @@ describe('buildTimeline', () => {
         const entries = buildTimeline(items, [], BOTS);
 
         expect(entries.map((entry) => entry.streaming)).toEqual([true, false]);
+    });
+});
+
+describe('提问卡片', () => {
+    const items: Item[] = [
+        item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '开始' } }),
+        item(2, { type: 'tool', turnId: 't1', author: owner, data: { name: 'ask', state: 'ok' } }),
+    ];
+    const request = {
+        askId: 'ask-1',
+        question: '用哪个方案？',
+        kind: 'choice' as const,
+        options: [
+            { value: 'a', label: 'A' },
+            { value: 'b', label: 'B' },
+        ],
+        toolCallId: 'call-1',
+        at: 0,
+    };
+
+    it('待回答：挂在工具行下面', () => {
+        const entries = buildTimeline(items, [], BOTS, { asks: [request] });
+        expect(entries.at(-1)?.parts.at(-1)).toEqual({ kind: 'ask', request });
+    });
+
+    it('已回答：卡片留着，带上答案（选项与选择要对得上）', () => {
+        // toolCallId 对不上任何工具行 → 退回挂到最后一条 assistant 条目
+        const entries = buildTimeline(items, [], BOTS, {
+            answered: [{ request, answer: { values: ['b'] }, at: 5 }],
+        });
+        expect(entries.at(-1)?.parts.at(-1)).toEqual({ kind: 'ask', request, answer: { values: ['b'] } });
+    });
+
+    it('已失效：带上 cancelled + 原因', () => {
+        const entries = buildTimeline(items, [], BOTS, {
+            answered: [{ request, cancelled: true, reason: '提问已失效', at: 5 }],
+        });
+        expect(entries.at(-1)?.parts.at(-1)).toEqual({
+            kind: 'ask',
+            request,
+            cancelled: true,
+            reason: '提问已失效',
+        });
     });
 });

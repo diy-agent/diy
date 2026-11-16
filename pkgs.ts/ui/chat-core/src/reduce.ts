@@ -1,22 +1,31 @@
 // reduce.ts —— 纯函数：StreamEvent → 状态。UI 与 surface 都不自己拼消息。
 
-import type { AskRequest, Delivery, Item, StreamEvent } from './types';
+import type { AnsweredAsk, AskRequest, Delivery, Item, StreamEvent, TurnEndReason } from './types';
 
 export interface ConversationState {
     items: Item[];
     deliveries: Delivery[];
     /** 正在等用户回答的提问 */
     asks: AskRequest[];
+    /** 已经有结局的提问（最近若干条）：卡片留在时间线上显示已选状态 */
+    answered: AnsweredAsk[];
     seq: number;
     error?: string;
     /** 有成员正在跑（surface 用它显示停止按钮） */
     running: boolean;
     /** 正在说话的成员 id（房间广播，按成员顺序） */
     speaking: string[];
+    /**
+     * 某一轮**为什么**结束（turnId → 判定）。页脚用它显示结局。
+     *
+     * 只活在这一次连接里（快照里没有它）：`completed` 本来不需要页脚，
+     * 需要解释的那几种在时间线上都有持久条目 —— 刷新后信息不会丢，只是页脚那行会消失。
+     */
+    turnEnds: Record<string, TurnEndReason>;
 }
 
 export function emptyState(): ConversationState {
-    return { items: [], deliveries: [], asks: [], seq: 0, running: false, speaking: [] };
+    return { items: [], deliveries: [], asks: [], answered: [], seq: 0, running: false, speaking: [], turnEnds: {} };
 }
 
 const STATUS_RANK: Record<Item['status'], number> = { pending: 0, streaming: 1, done: 2, failed: 2 };
@@ -72,13 +81,37 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
         }
         case 'running':
             return { ...state, speaking: event.botIds, running: event.botIds.length > 0 };
+        case 'turn.end':
+            // key 必须带 botId：同一轮里多个 bot 各跑各的，只按 turnId 存会互相覆盖 ——
+            // A 被截断、B 正常说完时，A 的页脚会显示成 B 的结局
+            return {
+                ...state,
+                turnEnds: { ...state.turnEnds, [`${event.turnId}\u0000${event.botId}`]: event.reason },
+            };
         case 'ask': {
             const exists = state.asks.some((entry) => entry.askId === event.request.askId);
             const asks = exists ? state.asks : [...state.asks, event.request];
             return { ...state, asks };
         }
         case 'ask.answered': {
-            return { ...state, asks: state.asks.filter((entry) => entry.askId !== event.askId) };
+            // 卡片不消失：搬进 answered，界面把它渲染成「已选」的只读状态。
+            // request 只能从已知的 pending 里找（事件只带 askId）；找不到就只删 ——
+            // 刷新时由快照里的 answeredAsks 补齐，不会永久丢。
+            const request = state.asks.find((entry) => entry.askId === event.askId);
+            const answers =
+                request === undefined
+                    ? state.answered
+                    : [
+                          ...state.answered,
+                          {
+                              request,
+                              ...(event.answer === undefined ? {} : { answer: event.answer }),
+                              ...(event.cancelled === true ? { cancelled: true } : {}),
+                              ...(event.reason === undefined ? {} : { reason: event.reason }),
+                              at: Date.now(),
+                          },
+                      ];
+            return { ...state, asks: state.asks.filter((entry) => entry.askId !== event.askId), answered: answers };
         }
         case 'error':
             return { ...state, error: event.message, running: false };
@@ -94,6 +127,7 @@ export function fromSnapshot(snapshot: {
     items: Item[];
     deliveries: Delivery[];
     asks?: AskRequest[];
+    answeredAsks?: AnsweredAsk[];
 }): ConversationState {
     // 同 id 只留最新一条（append-only 更新：重跑的 item 会以新 seq 再写一遍）
     const latest = new Map<string, Item>();
@@ -110,8 +144,11 @@ export function fromSnapshot(snapshot: {
         items,
         deliveries: snapshot.deliveries,
         asks: snapshot.asks ?? [],
+        answered: snapshot.answeredAsks ?? [],
         seq: Math.max(0, ...snapshot.items.map((item) => item.seq)),
         running: speaking.length > 0,
         speaking,
+        // 快照不带 endReason：它是这一次连接里的事实，不是历史数据。
+        turnEnds: {},
     };
 }

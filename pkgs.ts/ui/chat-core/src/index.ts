@@ -14,9 +14,11 @@ export {
 export { MockChatClient, type MockOptions } from './mock';
 export { applyEvent, emptyState, fromSnapshot, type ConversationState } from './reduce';
 export { ConversationStore, type ConversationModel } from './store';
+export { endFooterOf, type EndFooter } from './end-footer';
 export { buildTimeline, type TimelineDelivery, type TimelineEntry, type TimelinePart } from './timeline';
 export {
     DEFAULT_CAPABILITIES,
+    type AnsweredAsk,
     type AskAnswer,
     type AskField,
     type AskOption,
@@ -31,4 +33,5 @@ export {
     type Item,
     type Snapshot,
     type StreamEvent,
+    type TurnEndReason,
 } from './types';

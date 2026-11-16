@@ -3,6 +3,7 @@
 // 真正的定义在 @diy-agent/protocol：后端 runtime 与前端消费的是同一份类型。
 
 export type {
+    AnsweredAsk,
     AskAnswer,
     AskField,
     AskOption,
@@ -18,5 +19,6 @@ export type {
     ItemStatus,
     Snapshot,
     StreamEvent,
+    TurnEndReason,
 } from '@diy-agent/protocol';
 export { DEFAULT_CAPABILITIES } from '@diy-agent/protocol';
