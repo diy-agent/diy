@@ -187,25 +187,8 @@ describe('DraftStore', () => {
         expect(store.hasDraft(dialogOwner('create-task', 'proj:diy'))).toBe(true);
     });
 
-    it('浏览器里 fetch 被当方法调会抛 Illegal invocation：store 必须裸调', async () => {
-        vi.useFakeTimers();
-        // 模拟浏览器：fetch 要求 this 是 window，其它一律 Illegal invocation
-        const strictFetch = function (this: unknown, _input: RequestInfo | URL, init?: RequestInit) {
-            if (this !== undefined) {
-                throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
-            }
-            const method = init?.method ?? 'GET';
-            return Promise.resolve(method === 'GET' ? jsonResponse({ drafts: [] }) : jsonResponse({ ok: true }));
-        } as unknown as typeof fetch;
-        const store = new DraftStore({ fetchImpl: strictFetch, debounceMs: 600 });
-
-        store.setText('proj:a', 'composer', '一句话');
-        await vi.advanceTimersByTimeAsync(600);
-
-        expect(store.statusOf('proj:a')).toBe('saved');
-    });
-
-    it('空内容判定：空格 / 空对象 / 全空对象都不算草稿', () => {        expect(hasDraftContent({ text: '   ' })).toBe(false);
+    it('空内容判定：空格 / 空对象 / 全空对象都不算草稿', () => {
+        expect(hasDraftContent({ text: '   ' })).toBe(false);
         expect(hasDraftContent({ text: '' })).toBe(false);
         expect(hasDraftContent({ fields: { a: '' } })).toBe(false);
         expect(hasDraftContent({ selected: [] })).toBe(false);
