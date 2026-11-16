@@ -48,9 +48,19 @@ function dayName(date: Date): string {
     return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-const TODAY = new Date(2026, 9, 31, 10, 0, 0);
+/**
+ * 本地的「今天」。**不能钉死日期**：有几条记录（`child(...).info(...)`）的时间就是
+ * `Date.now()`，导出器按**记录时间**的本地日期命名文件 —— 钉死后只要过了那天，
+ * 期望的文件名和真实文件名就对不上，这条测试每过一天红一次。
+ *
+ * 钟点钉在 10:00：让跨天/轮转那几条用例的 `at` 稳定，不跟着跑测试的时刻飘。
+ */
+const NOW = new Date();
+const TODAY = new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate(), 10, 0, 0);
 const DAY = 24 * 60 * 60 * 1000;
 const today = dayName(TODAY);
+/** 相对「今天」的日期键：按天的用例都从这里算，不写死年月日 */
+const dayOffset = (days: number): string => dayName(new Date(TODAY.getTime() + days * DAY));
 
 async function readEntries(file: string): Promise<FileLogEntry[]> {
     const text = await readFile(file, 'utf8');
@@ -270,11 +280,11 @@ describe('@diy-agent/log（OTel + 文件导出器）', () => {
 
     it('T10 按天清理：超过 maxDays 的旧日期组（含 .N）被删，今天与窗口内的留', async () => {
         await mkdir(dir, { recursive: true });
-        const stale = ['2026-10-01.log', '2026-10-01.log.1', '2026-10-03.log.2'];
-        const fresh = ['2026-10-20.log', `${today}.log`];
+        const stale = [`${dayOffset(-30)}.log`, `${dayOffset(-30)}.log.1`, `${dayOffset(-28)}.log.2`];
+        const fresh = [`${dayOffset(-12)}.log`, `${today}.log`];
         for (const name of [...stale, ...fresh]) await writeFile(join(dir, name), '', 'utf8');
 
-        // 今天 2026-10-31，maxDays=14 ⇒ 保留 10-18 起
+        // 今天 = TODAY，maxDays=14 ⇒ 保留 today-13 起（-12 在窗口内，-28/-30 在窗口外）
         const exporter = new FileLogRecordExporter({ dir, rotate: { maxDays: 14, maxBytes: 0 } });
         await exportResult(exporter, [recordAt(TODAY, 'x')]);
 
