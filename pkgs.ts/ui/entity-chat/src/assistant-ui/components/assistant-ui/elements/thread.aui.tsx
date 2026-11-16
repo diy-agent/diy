@@ -43,7 +43,7 @@ import {
     SquareIcon,
     TriangleAlertIcon,
 } from 'lucide-react';
-import { useEffect, useState, type FC } from 'react';
+import { useEffect, useRef, useState, type FC, type RefObject } from 'react';
 import type { CustomMeta } from '../../../../projection';
 import {
     completeMention,
@@ -54,6 +54,7 @@ import {
 } from '@diy-agent/chat-core';
 
 import { useMentionBots } from '../../../../mentions';
+import { useDraft } from '../../../../drafts';
 
 // Startup exposes a loading placeholder thread; treat it as a new chat so
 // the composer mounts centered. Loads after startup keep the docked layout.
@@ -87,7 +88,7 @@ const ThreadHistorySkeleton: FC = () => (
     </div>
 );
 
-export const Thread: FC = () => {
+export const Thread: FC<{ roomId: string; sendingRef: RefObject<boolean> }> = ({ roomId, sendingRef }) => {
     const isEmpty = useAuiState(isNewChatView);
 
     return (
@@ -136,7 +137,7 @@ export const Thread: FC = () => {
                         )}
                     >
                         <ThreadScrollToBottom />
-                        <Composer />
+                        <Composer roomId={roomId} sendingRef={sendingRef} />
                         <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
                             <ThreadSuggestions />
                         </AuiIf>
@@ -212,13 +213,40 @@ const ThreadSuggestionItem: FC = () => {
     );
 };
 
-const Composer: FC = () => {
+const Composer: FC<{ roomId: string; sendingRef: RefObject<boolean> }> = ({ roomId, sendingRef }) => {
     const bots = useMentionBots();
     const aui = useAui();
     const text = useAuiState((s) => s.composer.text);
+    const draft = useDraft(roomId, 'composer');
+    // 只在首次拿到服务端草稿时回填；之后输入框是唯一的编辑源
+    const seeded = useRef(false);
+    const seeding = useRef(false);
     // @ 规则（查询解析/过滤/补全）在 chat-core，与 Astryx 表面共用同一份
     const query = mentionQuery(text);
     const candidates = query === null ? [] : filterMentionCandidates(bots, query);
+
+    useEffect(() => {
+        if (!draft.loaded || seeded.current) return;
+        seeded.current = true;
+        if (text === '' && draft.text !== '') {
+            seeding.current = true;
+            aui.composer.setText(draft.text);
+        }
+    }, [aui, draft.loaded, draft.text, text]);
+
+    useEffect(() => {
+        if (!seeded.current) return;
+        // 首帧回填时别把输入框的旧空串当成"用户清空"写回草稿
+        if (seeding.current) {
+            if (text === draft.text) seeding.current = false;
+            return;
+        }
+        // 发送中（dispatch → 后端受理）输入框会先变空，不能当成清空
+        if (sendingRef.current) return;
+        if (text === draft.text) return;
+        if (text === '') draft.clear();
+        else draft.setText(text);
+    }, [draft, sendingRef, text]);
 
     // 键盘选择：默认选中第一项
     const [active, setActive] = useState(0);
@@ -270,6 +298,11 @@ const Composer: FC = () => {
                     ))}
                 </div>
             )}
+            {draft.status === 'error' && (
+                <div className="text-destructive px-2.5 pb-1 text-[10px]">
+                    草稿未保存：{draft.error ?? '网络错误'}（重试中，内容还在）
+                </div>
+            )}
             <ComposerPrimitive.AttachmentDropzone asChild>
                 <div
                     data-slot="aui_composer-shell"
@@ -278,6 +311,7 @@ const Composer: FC = () => {
                     <ComposerAttachments />
                     <ComposerPrimitive.Input
                         onKeyDown={onKeyDown}
+                        onChange={(event) => draft.setText(event.target.value)}
                         placeholder="Send a message..."
                         className="aui-composer-input placeholder:text-muted-foreground/60 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
                         rows={1}

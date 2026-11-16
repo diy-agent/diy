@@ -2,7 +2,7 @@
 //
 // 只做两件事：把 ConversationModel 投影成 ThreadMessageLike；把 UI 意图转成 model 的 intents。
 
-import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
+import { AssistantRuntimeProvider, MessageNotSentError, useExternalStoreRuntime } from '@assistant-ui/react';
 import * as React from 'react';
 
 import { Thread } from '../assistant-ui/components/assistant-ui/elements/thread.aui';
@@ -10,6 +10,7 @@ import { ErrorBar } from './ErrorBar';
 import { MentionBotsProvider, useMentionCandidates } from '../mentions';
 import { toThreadMessages } from '../projection';
 import { useWindowed } from './useWindowed';
+import { drafts } from '../drafts';
 import { conversationOf, useStore } from '../store';
 
 export function ChatPanel({ targetId }: { targetId: string }) {
@@ -61,6 +62,9 @@ export function ChatPanel({ targetId }: { targetId: string }) {
 
     const mentionBots = useMentionCandidates(targetId);
 
+    // 发送期间不清草稿：assistant-ui 一 dispatch 就把输入框清空，但"发出去了"要等后端受理。
+    // 失败时抛 MessageNotSentError，它会把这句还给输入框，草稿原样还在。
+    const sendingRef = React.useRef(false);
     const runtime = useExternalStoreRuntime({
         messages: [...windowed.visible],
         setMessages: () => undefined,
@@ -69,7 +73,18 @@ export function ChatPanel({ targetId }: { targetId: string }) {
                 .filter((part) => part.type === 'text')
                 .map((part) => part.text)
                 .join('');
-            conversation.send(text);
+            if (text.trim() === '') return;
+            sendingRef.current = true;
+            try {
+                await conversation.send(text);
+                drafts.clearIfMatches(targetId, 'composer', text);
+            } catch (error) {
+                // 抛这个（而不是吞掉）才能让 assistant-ui 把文字放回输入框；
+                // 草稿本来就是失败的兜底，不需要再恢复一次
+                throw new MessageNotSentError(error instanceof Error ? error.message : String(error));
+            } finally {
+                sendingRef.current = false;
+            }
         },
         onCancel: async () => {
             conversation.cancel();
@@ -85,7 +100,7 @@ export function ChatPanel({ targetId }: { targetId: string }) {
             <AssistantRuntimeProvider runtime={runtime}>
                 <ErrorBar error={state.error} onRetry={conversation.reload} />
                 <div className="min-h-0 flex-1">
-                    <Thread />
+                    <Thread roomId={targetId} sendingRef={sendingRef} />
                 </div>
             </AssistantRuntimeProvider>
         </MentionBotsProvider>

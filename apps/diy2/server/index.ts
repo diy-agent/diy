@@ -302,10 +302,12 @@ const server = createServer((req, res) => {
 
     try {
         if (req.method === 'GET' && url.pathname === '/api/rooms') {
+            // hasDraft 是列表页的投影字段（侧栏 ✎），不属于 Room 领域类型
+            const withDraft = new Set(store.draftOwners());
             json(
                 res,
                 200,
-                [...rooms.values()].map((actor) => actor.spec),
+                [...rooms.values()].map((actor) => ({ ...actor.spec, hasDraft: withDraft.has(actor.spec.id) })),
             );
             return;
         }
@@ -429,6 +431,50 @@ const server = createServer((req, res) => {
             onBody<{ botId?: string }>(req, res, (body) => {
                 if (body.botId !== undefined) actor.addMember(body.botId);
                 json(res, 200, actor.spec);
+            });
+            return;
+        }
+
+        // GET /api/rooms/:id/drafts —— 这个容器里所有未提交输入（composer / ask:<id>）
+        if (
+            req.method === 'GET' &&
+            parts[0] === 'api' &&
+            parts[1] === 'rooms' &&
+            parts[3] === 'drafts' &&
+            parts.length === 4
+        ) {
+            const id = decodeURIComponent(parts[2] ?? '');
+            if (roomOf(id) === undefined) return json(res, 404, { error: 'room not found' });
+            json(res, 200, { drafts: store.listDrafts(id) });
+            return;
+        }
+
+        // PUT /api/rooms/:id/drafts/:field —— 写一条草稿；值没有内容 = 删除
+        // DELETE 同义，给"清空"一个不用带 body 的入口
+        if (
+            (req.method === 'PUT' || req.method === 'DELETE') &&
+            parts[0] === 'api' &&
+            parts[1] === 'rooms' &&
+            parts[3] === 'drafts' &&
+            parts.length === 5
+        ) {
+            const id = decodeURIComponent(parts[2] ?? '');
+            const field = decodeURIComponent(parts[4] ?? '');
+            if (roomOf(id) === undefined) return json(res, 404, { error: 'room not found' });
+            if (field === '' || field.length > 128) return json(res, 400, { error: 'invalid draft field' });
+            if (req.method === 'DELETE') {
+                store.deleteDraft(id, field);
+                json(res, 200, { ok: true });
+                return;
+            }
+            onBody<{ value?: unknown }>(req, res, (body) => {
+                if (!('value' in body)) return json(res, 400, { error: 'value required' });
+                const serialized = JSON.stringify(body.value);
+                if (serialized !== undefined && Buffer.byteLength(serialized, 'utf8') > 256 * 1024) {
+                    return json(res, 413, { error: 'draft too large (max 256KB)' });
+                }
+                const saved = store.putDraft(id, field, body.value);
+                json(res, 200, { updatedAt: saved?.updatedAt ?? 0 });
             });
             return;
         }

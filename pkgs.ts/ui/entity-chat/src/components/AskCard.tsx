@@ -8,12 +8,28 @@
 // **答完不消失**：传了 `resolved` 就切成只读，选项照旧列着、用户选过的项标出来。
 // 之前的做法是回答一提交整块就没了，时间线上只剩一条「回答提问…」的文字，
 // 用户回头看不到当时有哪些选项、自己挑的是哪一个。
+//
+// **半填的内容不丢**：勾了一半的选项、填了两个字段的表单都存在草稿设施里
+// （owner = roomId，field = ask:<askId>），切表面 / 切房间 / 刷新都会回填；
+// 提交成功后按值清、提问有了结局（答过 / 失效）也清。逻辑在 askDraft.ts。
 
 import { Check, HelpCircle, MinusCircle } from 'lucide-react';
 import * as React from 'react';
 
 import type { AskAnswer, AskRequest } from '@diy-agent/chat-core';
 
+import {
+    answerOf,
+    askDraftOf,
+    draftFieldOf,
+    isReady,
+    missingFieldsOf,
+    setChoice,
+    setField,
+    setText,
+    type AskDraft,
+} from '../askDraft';
+import { useDraftValue } from '../drafts';
 import { answerAsk, conversationOf } from '../store';
 
 /** 已有的结局：答过了，或者失效了 */
@@ -32,9 +48,11 @@ export function AskCard({
     request: AskRequest;
     resolved?: ResolvedAsk;
 }) {
-    const [selected, setSelected] = React.useState<string[]>([]);
-    const [fields, setFields] = React.useState<Record<string, string>>({});
-    const [text, setText] = React.useState('');
+    // 输入本身不住在 useState 里：真源是草稿（切表面 = 卸载重建，useState 会整块丢）
+    const draftField = draftFieldOf(request.askId);
+    const draft = useDraftValue<AskDraft>(roomId, draftField);
+    const { selected, fields, text } = askDraftOf(draft.value);
+    // 提交中 / 报错是这一屏的瞬时状态，不用持久化
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
 
@@ -44,39 +62,28 @@ export function AskCard({
     const answeredValues = resolved?.answer?.values ?? [];
     const answeredFields = resolved?.answer?.fields ?? {};
     const answeredText = resolved?.answer?.text ?? '';
-    const toggle = (value: string) => {
-        if (multiple) {
-            setSelected((current) =>
-                current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value],
-            );
-        } else {
-            setSelected([value]);
-        }
-    };
+    const toggle = (value: string) =>
+        draft.update((previous) => setChoice(askDraftOf(previous), value, multiple));
 
-    const missingFields = (request.fields ?? []).filter(
-        (field) => field.required === true && (fields[field.name] ?? '').trim() === '',
-    );
-    const ready =
-        request.kind === 'form'
-            ? missingFields.length === 0
-            : request.kind === 'text'
-              ? text.trim() !== ''
-              : selected.length > 0 || text.trim() !== '';
+    // 已经有结局（答过 / 失效）：半填的没用了，别让侧栏 ✎ 为它一直亮着
+    React.useEffect(() => {
+        if (done && draft.value !== undefined) draft.clear();
+    }, [done, draftField, draft.value, draft.clear]);
+
+    const missingFields = missingFieldsOf(request, { selected, fields, text });
+    const ready = isReady(request, { selected, fields, text });
 
     const submit = async () => {
         setBusy(true);
         setError(null);
+        // 快照提交的这一版：提交期间用户还能接着改，成功后只清"还是这版"的草稿
+        const snapshot = { selected, fields, text };
         try {
-            const answer =
-                request.kind === 'form'
-                    ? { fields, ...(text.trim() === '' ? {} : { text: text.trim() }) }
-                    : request.kind === 'text'
-                      ? { text: text.trim() }
-                      : { values: selected, ...(text.trim() === '' ? {} : { text: text.trim() }) };
-            await answerAsk(roomId, request.askId, answer);
+            await answerAsk(roomId, request.askId, answerOf(request, snapshot));
+            draft.clearIfValueMatches(snapshot);
         } catch (cause) {
-            // 常见原因：这个提问已经过期（容器重开过 / 已答过），卡片是旧的
+            // 常见原因：这个提问已经过期（容器重开过 / 已答过），卡片是旧的。
+            // 草稿不清：这就是失败时把用户打的字还回去的那份兜底
             setError(`${cause instanceof Error ? cause.message : String(cause)}；这个提问可能已经失效，刷新一下再试。`);
         } finally {
             setBusy(false);
@@ -115,10 +122,9 @@ export function AskCard({
                                             disabled={done}
                                             value={done ? (answeredFields[field.name] ?? '—') : (fields[field.name] ?? '')}
                                             onChange={(event) =>
-                                                setFields((current) => ({
-                                                    ...current,
-                                                    [field.name]: event.target.value,
-                                                }))
+                                                draft.update((previous) =>
+                                                    setField(askDraftOf(previous), field.name, event.target.value),
+                                                )
                                             }
                                             placeholder={field.placeholder}
                                             rows={2}
@@ -131,10 +137,9 @@ export function AskCard({
                                             disabled={done}
                                             value={done ? (answeredFields[field.name] ?? '—') : (fields[field.name] ?? '')}
                                             onChange={(event) =>
-                                                setFields((current) => ({
-                                                    ...current,
-                                                    [field.name]: event.target.value,
-                                                }))
+                                                draft.update((previous) =>
+                                                    setField(askDraftOf(previous), field.name, event.target.value),
+                                                )
                                             }
                                             placeholder={field.placeholder}
                                             className="rounded border bg-background px-2 py-1 text-[12px] outline-none"
@@ -191,7 +196,9 @@ export function AskCard({
                                 ) : (
                                     <input
                                         value={text}
-                                        onChange={(event) => setText(event.target.value)}
+                                        onChange={(event) =>
+                                            draft.update((previous) => setText(askDraftOf(previous), event.target.value))
+                                        }
                                         placeholder="其他（直接输入）"
                                         className="rounded border bg-background px-2 py-1 text-[12px] outline-none"
                                     />
@@ -207,7 +214,9 @@ export function AskCard({
                         ) : (
                             <textarea
                                 value={text}
-                                onChange={(event) => setText(event.target.value)}
+                                onChange={(event) =>
+                                    draft.update((previous) => setText(askDraftOf(previous), event.target.value))
+                                }
                                 placeholder="输入你的回答…"
                                 rows={2}
                                 className="mt-1.5 w-full rounded border bg-background px-2 py-1 text-[12px] outline-none"

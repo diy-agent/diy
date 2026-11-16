@@ -74,3 +74,50 @@ describe('删除容器', () => {
         expect(store.listBots().map((bot) => bot.id)).toEqual(['b2']);
     });
 });
+
+describe('草稿', () => {
+    it('putDraft → listDrafts 原样读回，重复写是覆盖不是新增', () => {
+        const store = openStore(':memory:');
+        store.putDraft(room.id, 'composer', { text: '打到一半' });
+        store.putDraft(room.id, 'composer', { text: '改了一版' });
+        expect(store.listDrafts(room.id)).toEqual([
+            { field: 'composer', value: { text: '改了一版' }, updatedAt: expect.any(Number) },
+        ]);
+    });
+
+    it('空内容 = 删除；显式 deleteDraft 也删', () => {
+        const store = openStore(':memory:');
+        store.putDraft(room.id, 'composer', { text: 'x' });
+        store.putDraft(room.id, 'composer', { text: '   ' });
+        expect(store.listDrafts(room.id)).toEqual([]);
+
+        store.putDraft(room.id, 'composer', { text: 'y' });
+        store.deleteDraft(room.id, 'composer');
+        expect(store.listDrafts(room.id)).toEqual([]);
+    });
+
+    it('draftOwners 只列真正有内容的容器', () => {
+        const store = openStore(':memory:');
+        store.putDraft('proj:a', 'composer', { text: '没发出去' });
+        store.putDraft('proj:b', 'composer', { text: '' });
+        expect(store.draftOwners()).toEqual(['proj:a']);
+    });
+
+    it('deleteRoom 连带清掉草稿', () => {
+        const store = openStore(':memory:');
+        store.saveRoom(room);
+        store.putDraft(room.id, 'composer', { text: 'x' });
+        store.deleteRoom(room.id);
+        expect(store.listDrafts(room.id)).toEqual([]);
+        expect(store.draftOwners()).toEqual([]);
+    });
+
+    it('坏 JSON 行跳过，不影响同房间其他草稿', () => {
+        const store = openStore(':memory:');
+        store.putDraft(room.id, 'composer', { text: '好行' });
+        store.db
+            .prepare('INSERT INTO drafts (owner_id, field, value, updated_at) VALUES (?,?,?,?)')
+            .run(room.id, 'ask:bad', '{不是 json', Date.now());
+        expect(store.listDrafts(room.id).map((draft) => draft.field)).toEqual(['composer']);
+    });
+});
