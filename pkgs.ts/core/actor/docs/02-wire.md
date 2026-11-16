@@ -128,6 +128,19 @@ data                                                                            
 适配器只用这两个函数 + `frameLink(textLink)`（[06](./06-transport.md)），不需要知道帧长什么样。
 坏帧在链路层丢弃并计数，**不往业务层传** —— 一条坏帧不该让整个连接进入未定义状态。
 
+**`data` 必须显形。** JSON 没有 `undefined`，`JSON.stringify` 会把值为 `undefined` 的键**删掉**；
+于是 `output: z.void()` 的命令回 `done` 时 `data` 消失，对面判「帧结构不符」→ 整帧被丢掉 →
+调用方干等到超时（进程内链路对象直投、不过编解码，永远发现不了这条）。所以：
+
+- `encodeFrame` 对 **`data` 这一位**做归一化：`undefined` → `null`；
+- 其它可选的元字段（`consistency` / `stale` / `meta`）继续「没有这个键」—— 写成 `null` 会让
+  `.optional()` 判它不合法（这条也踩过）；
+- 反向：runtime 解析入参前把 `null` 换回 `undefined`（`runtime.ts` 的 `noData`），
+  这样 `input: z.void()` 的声明仍然成立。
+
+判据：`tests/intent.wire.test.ts`「`data` 是空值的帧不许被丢掉」（把归一化删掉立刻红），
+真链路上的证据在 [09](./09-example.md) 的剧本里。
+
 ## 九、判据
 
 1. `FrameSchema` 的 `type` 枚举里没有 `partial`（有测试守着：`tests/intent.wire.test.ts`）。

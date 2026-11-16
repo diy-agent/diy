@@ -227,8 +227,22 @@ export const RESERVED_NAMES: readonly string[] = [COMMAND_FINISHED, COMMAND_STAT
 // ── 编解码 ──────────────────────────────────────────────────────────────────
 // 传输层只搬字符串：适配器（ws / http / stdio）不用知道帧长什么样。
 
+/**
+ * 编码。**顶层值为 `undefined` 的键一律写成 `null`** —— JSON 没有 `undefined`，
+ * 直接 `JSON.stringify` 会把这个键**删掉**，对面 `decodeFrame` 判「帧结构不符」再把整帧丢掉：
+ * 于是 `output: z.void()` 的命令在真链路上表现为「调用方等 30 秒超时」，而在进程内链路上
+ * （对象直投、不过编解码）永远看不到 —— 这就是这条归一化存在的理由。
+ *
+ * 归一化的范围要**收窄到 `data`**：可选的元字段（`consistency` / `stale` / `meta`…）
+ * 必须继续「没有这个键」，写成 `null` 会让 `.optional()` 判它不合法（这条踩过）。
+ */
 export function encodeFrame(frame: Frame): string {
-    return JSON.stringify(frame);
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(frame)) {
+        if (value !== undefined) out[key] = value;
+        else if (key === 'data') out[key] = null; // `data` 是必填位：没值也得显形
+    }
+    return JSON.stringify(out);
 }
 
 export type DecodeResult =

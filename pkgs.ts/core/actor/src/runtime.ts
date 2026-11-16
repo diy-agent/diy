@@ -234,7 +234,7 @@ export class Actor<K extends Kind> implements ActorRuntime<K> {
             return;
         }
 
-        const parsed = def.input.safeParse(frame.data);
+        const parsed = def.input.safeParse(noData(frame.data));
         if (!parsed.success) {
             this.#reject(
                 link,
@@ -404,7 +404,7 @@ export class Actor<K extends Kind> implements ActorRuntime<K> {
             this.#reject(link, frame.id, undefined, 'E_UNKNOWN_METHOD', `未声明查询：${frame.name}`);
             return;
         }
-        const parsed = def.input.safeParse(frame.data);
+        const parsed = def.input.safeParse(noData(frame.data));
         if (!parsed.success) {
             this.#reject(
                 link,
@@ -541,6 +541,14 @@ export class Actor<K extends Kind> implements ActorRuntime<K> {
     ): void {
         link.send({ type: 'rejected', id, commandId, code, message, issues });
     }
+}
+
+/**
+ * 线上没有 `undefined`：`encodeFrame` 把「没值」写成 `null`（见 wire.ts）。
+ * 解析入参前换回 `undefined`，`input: z.void()` 之类的声明才不会收到一个 `null` 而拒绝。
+ */
+function noData(data: unknown): unknown {
+    return data === null ? undefined : data;
 }
 
 /** 同一个 target 只问一次（成员重绑定时 state 里可能出现重复地址） */

@@ -80,3 +80,29 @@ describe('`$` 前缀是 runtime 保留', () => {
         }
     });
 });
+
+describe('编解码往返：过一趟 JSON 的帧不许变形', () => {
+    it('**`data` 是空值的帧不许被丢掉**（`output: z.void()` 的命令靠这条活着）', () => {
+        // 崩过的写法：`JSON.stringify` 会把 `data` 这个键**删掉**，对面判「帧结构不符」→ 整帧丢弃
+        // → 调用方干等到超时，日志里只有一句「帧结构不符」。
+        // 这条只有真链路能发现（进程内链路对象直投、不过编解码），见 examples/ 的剧本。
+        const frame = { type: 'done' as const, id: newRequestId(), commandId: newCommandId(), seq: CURSOR_ZERO };
+        const decoded = decodeFrame(encodeFrame({ ...frame, data: undefined } as never));
+        expect(decoded.ok).toBe(true);
+        if (!decoded.ok) return;
+        expect(decoded.frame.type).toBe('done');
+        expect((decoded.frame as { data: unknown }).data).toBeNull();
+    });
+
+    it('可选的元字段仍然「没有这个键」，不许被写成 `null`（`.optional()` 不收 null）', () => {
+        const text = encodeFrame({
+            type: 'query',
+            id: newRequestId(),
+            name: 'read',
+            data: {},
+            consistency: undefined,
+        } as never);
+        expect(JSON.parse(text)).toEqual({ type: 'query', id: JSON.parse(text).id, name: 'read', data: {} });
+        expect(decodeFrame(text).ok).toBe(true);
+    });
+});
