@@ -27,6 +27,7 @@
 | [06-transport.md](./06-transport.md) | 链路怎么接；调用方 facade 怎么用；重试与一致性 | 接 ws/http；写 CLI/UI |
 | [07-naming-ledger.md](./07-naming-ledger.md) | 哪些字段名历史上被用歪了，随哪一刀改 | 改到 room / journal 相关代码前**必读** |
 | [08-roadmap.md](./08-roadmap.md) | 还没做什么；下一步顺序 | 排期 / 判断能不能依赖它 |
+| [09-example.md](./09-example.md) | 3 个真进程跑一遍；适配器与落盘 store 长什么样 | 接 ws/http / 写 store 实现 / 想给同事讲这套东西 |
 
 ## 三十秒版
 

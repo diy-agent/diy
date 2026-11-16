@@ -1,13 +1,13 @@
 # 08 · 落地状态与下一步
 
-> 本包当前版本：`0.1.0`（v0，可跑、可测、无 IO）。
+> 本包当前版本：`0.1.0`（内核 v0：可跑、可测、**零 IO**；真链路与落盘在 `examples/`，[09](./09-example.md)）。
 > 排序原则：**先让一个真实 kind 跑通，再补远端**。远端适配器写早了只会把协议里的空洞固化。
 
 ## 一、已经有的（v0）
 
 | 能力 | 位置 | 验收 |
 |---|---|---|
-| 帧口径 + 编解码 | `src/wire.ts` | `tests/intent.wire.test.ts`（8 条） |
+| 帧口径 + 编解码 | `src/wire.ts` | `tests/intent.wire.test.ts`（10 条） |
 | 声明层（链式、零注解） | `src/kinds.ts` | `tests/support/fixtures.ts` 两个 kind |
 | 串行队列 + 提交原子性 | `src/runtime.ts` | 20 并发 == 20 次生效 |
 | 幂等（`commandId`） | `src/runtime.ts` | 同 id 两次 == 一次 |
@@ -15,6 +15,8 @@
 | 事件日志 + `$events` / `watch` | `src/journal.ts` + `src/client.ts` | 补历史 + 实时去重 |
 | 多目标扇出（逐项 + 回执） | `src/fanout.ts` | 3 目标 1 掉线 / 全掉线 / 空目标 |
 | 进程内链路 + 本地端口 | `src/transport.ts` / `src/local.ts` | 全部用例都走它 |
+| **真链路范例**（3 进程 + unix socket + `kill -9`） | `examples/` | `tests/examples.scenario.test.ts`（九步，[09](./09-example.md)） |
+| **落盘 store**（一行一次提交） | `examples/lib/store-jsonl.ts` | `tests/examples.store.test.ts`（5 条，含半行截断） |
 
 ## 二、下一步（按这个顺序）
 
@@ -31,11 +33,16 @@
 - 一个成员所在 target 不可达 → 那一项是 `unknown`，**不是** `null`、**不是**消失；
 - 验收：3 成员 1 掉线的用例（照 `tests/intent.fanout.test.ts` 抄）；UI 头像行能区分「没会话」和「读不到」。
 
-### 刀 3 · 持久化 store（jsonl 先做）
+### 刀 3 · 持久化 store（**范例已跑通**，剩下裁剪与幂等表）
 
-- 实现 `ActorStore`：`append` 追加到 `journal.jsonl`，`save` 写 `state.json`（同目录、同事务语义 = 先 append 再 save）；
-- 启动：`load` → 从 `cursor` 之后 replay；
-- 验收：杀进程再起，`snapshot()` 与崩溃前一致；重放不重复应用（idempotent replay = 按 `seq` 跳过已应用的）。
+`examples/lib/store-jsonl.ts` 已经不是"两个文件"，而是**一行一次提交**（状态 + 游标 + 事件），
+所以不存在「append 与 save 之间崩掉」那个窗口；尾部半行在 open 时截掉（[09](./09-example.md) 六）。
+剩下两件事：
+
+- **日志裁剪 / 快照**：现在每行都带一份完整 state，库会一直长。要按「N 次提交 + 已有快照」折叠；
+- **幂等表落盘**（= 刀7）：现在重启后同一个 `commandId` 会**再写一次** —— 范例第 ⑧ 步把它显形了。
+
+验收：杀进程再起，`snapshot()` 与崩溃前一致；重发同一 `commandId` 拿到上次的回执（⑧ 那一步变绿）。
 
 ### 刀 4 · 跨节点端口（`ws` 适配器 + 一个真实扇出）
 
