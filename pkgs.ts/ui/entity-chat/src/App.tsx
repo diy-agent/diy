@@ -2,13 +2,21 @@ import { Bot as BotIcon, Cpu, Folder, ListTodo, Plus } from 'lucide-react';
 import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
-import { AddMemberDialog, CreateProjectDialog, ModelDialog, SettingsDialog } from './components/Dialogs';
+import {
+    AddMemberDialog,
+    ConfirmDeleteDialog,
+    CreateProjectDialog,
+    CreateTaskDialog,
+    ModelDialog,
+    SettingsDialog,
+} from './components/Dialogs';
+import { EditableName, StatusChip } from './components/RoomName';
 import { SpeakingBar } from './components/SpeakingBar';
 import { ContextPanel } from './components/ContextPanel';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, primaryBotOf, roomTypeLabel, type Room } from './model';
 import { modelLabel } from './models';
-import { actions, roomOf, useStore } from './store';
+import { actions, useStore } from './store';
 
 function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
     return (
@@ -51,7 +59,15 @@ function RoomHeader({
                     <Icon className={`size-3 ${isProject ? 'text-sky-400' : 'text-emerald-400'}`} />
                     {roomTypeLabel(room.type)}
                 </span>
-                <h1 className="text-sm font-semibold">{room.name}</h1>
+                <EditableName
+                    value={room.name}
+                    mode="click"
+                    // 头部大标题：点了就改。侧栏收起来时这是唯一能看见名字的地方
+                    onCommit={(next) => void actions.renameRoom(room.id, next)}
+                    className="max-w-[22rem] truncate rounded px-1 text-left text-sm font-semibold hover:bg-muted/60"
+                    inputClassName="w-56 rounded border bg-background px-1 text-sm font-semibold outline-none"
+                />
+                <StatusChip room={room} />
                 {roomDir(room) !== undefined && (
                     <span className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
                         <Folder className="size-3" />
@@ -101,14 +117,31 @@ function RoomHeader({
 
 export function App() {
     const state = useStore();
-    const room = roomOf(state.selectedId);
-    const [dialog, setDialog] = React.useState<'project' | 'member' | 'settings' | null>(null);
+    // ⚠️ 用内联 find 而不是 `roomOf(state.selectedId)`：React Compiler 会把
+    // 「参数没变的外部函数调用」整个 memo 住，于是 `state.rooms` 变了、`selectedId` 没变时
+    // 拿到的还是旧 room —— 表现是侧栏已改名/改状态，头部标题与状态胶囊一动不动。
+    // 内联箭头函数里的 `state.rooms` 是编译器看得见的依赖，不会被缓存。
+    const room = state.rooms.find((item) => item.id === state.selectedId);
+    // 弹窗状态：新建项目 / 新建任务（记住在哪个项目下）/ 加成员 / 设置 / 删除确认
+    const [dialog, setDialog] = React.useState<
+        | null
+        | { kind: 'project' }
+        | { kind: 'member' }
+        | { kind: 'settings' }
+        | { kind: 'task'; projectId: string }
+        | { kind: 'delete'; roomId: string }
+    >(null);
     // 默认表面：Astryx（虚拟化 + 自带代码高亮，长会话最稳）
     const [surfaceId, setSurfaceId] = React.useState<string>(
         SURFACES.find((surface) => surface.id === 'astryx')?.id ?? SURFACES[0]!.id,
     );
     const [modelTarget, setModelTarget] = React.useState<string | null>(null);
     const activeRoom = room;
+    const taskProject =
+        dialog?.kind === 'task' ? state.rooms.find((item) => item.id === dialog.projectId) : undefined;
+    const deleteTarget =
+        dialog?.kind === 'delete' ? state.rooms.find((item) => item.id === dialog.roomId) : undefined;
+    const modelRoom = modelTarget === null ? undefined : state.rooms.find((item) => item.id === modelTarget);
 
     React.useEffect(() => {
         actions.bootstrap();
@@ -148,8 +181,10 @@ export function App() {
             <Sidebar
                 open={sidebarOpen}
                 onToggle={toggleSidebar}
-                onCreateProject={() => setDialog('project')}
-                onOpenSettings={() => setDialog('settings')}
+                onCreateProject={() => setDialog({ kind: 'project' })}
+                onCreateTask={(projectId) => setDialog({ kind: 'task', projectId })}
+                onRequestDelete={(target) => setDialog({ kind: 'delete', roomId: target.id })}
+                onOpenSettings={() => setDialog({ kind: 'settings' })}
             />
 
             <main className="relative flex min-w-0 flex-1 flex-col">
@@ -171,7 +206,7 @@ export function App() {
                     <>
                         <RoomHeader
                             room={room}
-                            onAddMember={() => setDialog('member')}
+                            onAddMember={() => setDialog({ kind: 'member' })}
                             onPickModel={() => setModelTarget(room.id)}
                         />
                         <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
@@ -186,13 +221,33 @@ export function App() {
                 )}
             </main>
 
-            {dialog === 'project' && (
+            {dialog?.kind === 'project' && (
                 <CreateProjectDialog
                     onClose={() => setDialog(null)}
                     onSubmit={(input) => actions.createProject(input)}
                 />
             )}
-            {dialog === 'member' && activeRoom !== undefined && (
+            {dialog?.kind === 'task' && taskProject !== undefined && (
+                <CreateTaskDialog
+                    project={taskProject}
+                    suggestedName={`新任务 ${
+                        state.rooms.filter((item) => item.data['projectId'] === dialog.projectId).length + 1
+                    }`}
+                    onClose={() => setDialog(null)}
+                    onSubmit={(input) => void actions.createTask(dialog.projectId, input.name, {
+                        ...(input.desc === undefined ? {} : { desc: input.desc }),
+                    })}
+                />
+            )}
+            {dialog?.kind === 'delete' && deleteTarget !== undefined && (
+                <ConfirmDeleteDialog
+                    room={deleteTarget}
+                    taskCount={state.rooms.filter((item) => item.data['projectId'] === dialog.roomId).length}
+                    onClose={() => setDialog(null)}
+                    onConfirm={() => void actions.deleteRoom(dialog.roomId)}
+                />
+            )}
+            {dialog?.kind === 'member' && activeRoom !== undefined && (
                 <AddMemberDialog
                     room={activeRoom}
                     onClose={() => setDialog(null)}
@@ -200,7 +255,7 @@ export function App() {
                     onCreateNew={(name) => actions.addBot(activeRoom.id, name)}
                 />
             )}
-            {dialog === 'settings' && (
+            {dialog?.kind === 'settings' && (
                 <SettingsDialog
                     defaultModelKey={state.defaultModelKey}
                     onChangeDefault={(key) => actions.setDefaultModel(key)}
@@ -209,9 +264,11 @@ export function App() {
             )}
             {modelTarget !== null && (
                 <ModelDialog
-                    title={`「${roomOf(modelTarget)?.name ?? ''}」的模型`}
-                    value={roomOf(modelTarget)?.modelKey ?? state.defaultModelKey}
-                    onChange={(key) => actions.setRoomModel(modelTarget, key)}
+                    title={`「${modelRoom?.name ?? ''}」的模型`}
+                    value={modelRoom?.modelKey ?? state.defaultModelKey}
+                    onChange={(key) => {
+                        if (modelTarget !== null) actions.setRoomModel(modelTarget, key);
+                    }}
                     onClose={() => setModelTarget(null)}
                 />
             )}

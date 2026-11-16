@@ -16,6 +16,7 @@ import { AskCard } from '../../components/AskCard';
 import { BotAvatar } from '../../components/BotAvatar';
 import { ErrorBar } from '../../components/ErrorBar';
 import { Markdown } from '../../components/Markdown';
+import { EndFooterLine } from '../../components/EndFooterLine';
 import { RunningIndicator } from '../../components/RunningIndicator';
 import { useWindowed } from '../../components/useWindowed';
 import { conversationOf, useStore } from '../../store';
@@ -162,22 +163,46 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
 
     // assistant：头像 + 名字一行，内容按 parts 顺序渲染
     const parts = entry.parts;
+    // 同一轮的续段（被打断后继续）：左侧用一条细线代替头像、不重复名字，
+    // 让"一轮"在视觉上是一整块，内部的插话/通知只是中间的一步。
+    const continued = entry.continued === true;
     return (
-        <div className="my-4 flex gap-2.5">
-            <div className="pt-0.5">
-                <BotAvatar author={entry.author} roomId={roomId} size={26} />
+        <div className={`${continued ? 'my-1.5' : 'my-4'} flex gap-2.5`}>
+            <div className={`flex w-[26px] shrink-0 justify-center ${continued ? 'py-1' : 'pt-0.5'}`}>
+                {continued ? (
+                    <span className="w-px self-stretch rounded bg-border" />
+                ) : (
+                    <BotAvatar author={entry.author} roomId={roomId} size={26} />
+                )}
             </div>
             <div className="min-w-0 flex-1">
-                <div className="mb-0.5 flex items-center gap-2 text-[12px]">
-                    <span className="font-medium" style={{ color: entry.author?.color }}>
-                        {entry.author?.name ?? 'bot'}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground">{timeOf(entry.at)}</span>
-                </div>
+                {!continued && (
+                    <div className="mb-0.5 flex items-center gap-2 text-[12px]">
+                        <span className="font-medium" style={{ color: entry.author?.color }}>
+                            {entry.author?.name ?? 'bot'}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">{timeOf(entry.at)}</span>
+                    </div>
+                )}
                 {parts.map((part, index) => {
                     if (part.kind === 'text') return <Markdown key={`t${index}`} text={part.text} />;
                     if (part.kind === 'ask')
-                        return <AskCard key={`a${index}`} roomId={roomId} request={part.request} />;
+                        return (
+                            <AskCard
+                                key={`a${index}`}
+                                roomId={roomId}
+                                request={part.request}
+                                {...(part.answer === undefined && part.cancelled !== true
+                                    ? {}
+                                    : {
+                                          resolved: {
+                                              ...(part.answer === undefined ? {} : { answer: part.answer }),
+                                              ...(part.cancelled === true ? { cancelled: true } : {}),
+                                              ...(part.reason === undefined ? {} : { reason: part.reason }),
+                                          },
+                                      })}
+                            />
+                        );
                     // 连续的 tool 合并成一组
                     const previous = parts[index - 1];
                     if (previous?.kind === 'tool') return null;
@@ -189,6 +214,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                     }
                     return <ToolGroup key={`g${index}`} tools={tools} />;
                 })}
+                <EndFooterLine reason={entry.endReason} />
                 {entry.waiting === true && (
                     <div className="mt-1.5">
                         <RunningIndicator since={entry.at} />
@@ -253,8 +279,14 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
 
     const entries = React.useMemo(
-        () => buildTimeline(state.items, state.deliveries, shell.bots, { speaking: state.speaking, asks: state.asks }),
-        [state.items, state.deliveries, shell.bots, state.speaking, state.asks],
+        () =>
+            buildTimeline(state.items, state.deliveries, shell.bots, {
+                speaking: state.speaking,
+                asks: state.asks,
+                answered: state.answered,
+                endReasons: state.turnEnds,
+            }),
+        [state.items, state.deliveries, shell.bots, state.speaking, state.asks, state.answered],
     );
 
     const windowed = useWindowed(entries);

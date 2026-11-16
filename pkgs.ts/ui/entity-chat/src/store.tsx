@@ -6,6 +6,8 @@ import { ConversationStore, type Bot, type CompactOutcome, type Room, type Sessi
 import { HttpChatClient } from '@diy-agent/chat-transport-http';
 import * as React from 'react';
 
+import type { TaskStatus } from './model';
+
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 
 // ─── 会话（chat-core）─────────────────────────────────────────────
@@ -175,14 +177,54 @@ export const actions = {
         conversationOf(id);
     },
 
-    renameRoom(id: string, name: string): void {
-        if (name.trim() === '') return;
-        void jsonFetch(`/rooms/${encodeURIComponent(id)}`, {
+    /** 改名。空名字 = 不提交（名字是侧栏唯一能认出容器的东西）；失败把原因亮出来，别静默 */
+    renameRoom(id: string, name: string): Promise<void> {
+        const next = name.trim();
+        if (next === '') return Promise.resolve();
+        return jsonFetch(`/rooms/${encodeURIComponent(id)}`, {
             method: 'PATCH',
-            body: JSON.stringify({ name: name.trim() }),
+            body: JSON.stringify({ name: next }),
         })
-            .then(refresh)
-            .catch(() => undefined);
+            .then(() => refresh())
+            .catch((error: unknown) => {
+                emit({ ...state, error: `改名失败：${messageOf(error)}` });
+            });
+    },
+
+    /** 任务状态（room.data.status）：只改这一个键，别的 data 不动 */
+    setRoomStatus(id: string, status: TaskStatus): Promise<void> {
+        return jsonFetch(`/rooms/${encodeURIComponent(id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ data: { status } }),
+        })
+            .then(() => refresh())
+            .catch((error: unknown) => {
+                emit({ ...state, error: `改状态失败：${messageOf(error)}` });
+            });
+    },
+
+    /**
+     * 删容器（服务端是硬删，项目会连带它的任务）。
+     * 删完要把选中项和会话池一起收拾：留着指向已删房间的 selectedId，界面会停在
+     * 「左侧选择一个容器」还找不到原因（那个 id 已经不存在了）。
+     */
+    deleteRoom(id: string): Promise<void> {
+        return jsonFetch<{ deleted?: string[] }>(`/rooms/${encodeURIComponent(id)}`, { method: 'DELETE' })
+            .then((result) => {
+                const gone = new Set(result.deleted ?? [id]);
+                for (const roomId of gone) {
+                    conversations.get(roomId)?.dispose();
+                    conversations.delete(roomId);
+                }
+                const selectedId = gone.has(state.selectedId) ? '' : state.selectedId;
+                const sessions = { ...state.sessions };
+                for (const roomId of gone) delete sessions[roomId];
+                emit({ ...state, selectedId, sessions });
+                return refresh();
+            })
+            .catch((error: unknown) => {
+                emit({ ...state, error: `删除失败：${messageOf(error)}` });
+            });
     },
 
     setRoomModel(id: string, modelKey: string): void {
@@ -215,20 +257,24 @@ export const actions = {
             .catch(() => undefined);
     },
 
-    createTask(projectId: string): void {
+    /** 新建任务：名字由调用方给（对话框），缺省「新任务 N」由 UI 算 */
+    createTask(projectId: string, name: string, extra: Record<string, unknown> = {}): Promise<void> {
         const project = roomOf(projectId);
-        const count = state.rooms.filter((room) => room.data['projectId'] === projectId).length + 1;
-        void jsonFetch<Room>('/rooms', {
+        const trimmed = name.trim();
+        if (trimmed === '') return Promise.resolve();
+        return jsonFetch<Room>('/rooms', {
             method: 'POST',
             body: JSON.stringify({
                 type: 'task',
-                name: `新任务 ${count}`,
+                name: trimmed,
                 modelKey: state.defaultModelKey,
-                data: { projectId, dir: project?.data['dir'] },
+                data: { projectId, dir: project?.data['dir'], ...extra },
             }),
         })
             .then((room) => refresh().then(() => emit({ ...state, selectedId: room.id })))
-            .catch(() => undefined);
+            .catch((error: unknown) => {
+                emit({ ...state, error: `新建任务失败：${messageOf(error)}` });
+            });
     },
 
     addBot(roomId: string, name: string): void {

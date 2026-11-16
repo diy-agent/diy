@@ -2,7 +2,7 @@
 //
 // 分组逻辑在 chat-core 的 buildTimeline（与 Astryx surface 共用），这里只做形状转换。
 
-import { buildTimeline, type AskRequest, type TimelineEntry } from '@diy-agent/chat-core';
+import { buildTimeline, type AnsweredAsk, type AskRequest, type TimelineEntry } from '@diy-agent/chat-core';
 import type { ThreadMessageLike } from '@assistant-ui/react';
 
 import type { Bot, Delivery, Item } from './model';
@@ -25,6 +25,8 @@ export interface CustomMeta {
     startedAt?: number;
     /** 本轮还在跑但当前没有流式内容：在消息末尾显示"执行中 Ns" */
     waiting?: boolean;
+    /** 这一轮的结局（`turn.end` 给的）：页脚那行"怎么停的"，completed 不显示 */
+    endReason?: TimelineEntry['endReason'];
 }
 
 const completeStatus: ThreadMessageLike['status'] = { type: 'complete', reason: 'stop' };
@@ -38,7 +40,23 @@ type Part =
 function partsOf(entry: TimelineEntry): Part[] {
     return entry.parts.map((part) => {
         if (part.kind === 'text') return { type: 'text', text: part.text };
-        if (part.kind === 'ask') return { type: 'data-ask', data: { request: part.request } } as Part;
+        if (part.kind === 'ask')
+            return {
+                type: 'data-ask',
+                data: {
+                    request: part.request,
+                    // 已有结局的卡片要带上答案，界面据此冻结成「已选」状态
+                    ...(part.answer === undefined && part.cancelled !== true
+                        ? {}
+                        : {
+                              resolved: {
+                                  ...(part.answer === undefined ? {} : { answer: part.answer }),
+                                  ...(part.cancelled === true ? { cancelled: true } : {}),
+                                  ...(part.reason === undefined ? {} : { reason: part.reason }),
+                              },
+                          }),
+                },
+            } as Part;
         return {
             type: 'tool-call',
             toolCallId: part.id,
@@ -57,8 +75,10 @@ export function toThreadMessages(
     roomId?: string,
     speaking: readonly string[] = [],
     asks: readonly AskRequest[] = [],
+    answered: readonly AnsweredAsk[] = [],
+    endReasons: Record<string, TimelineEntry['endReason'] & {}> = {},
 ): ThreadMessageLike[] {
-    return buildTimeline(items, deliveries, bots, { speaking, asks }).map((entry) => {
+    return buildTimeline(items, deliveries, bots, { speaking, asks, answered, endReasons }).map((entry) => {
         const createdAt = new Date(entry.at);
         const status = entry.streaming ? runningStatus : completeStatus;
 
@@ -130,6 +150,7 @@ export function toThreadMessages(
                     ...(roomId === undefined ? {} : { roomId }),
                     ...(entry.waiting === true ? { waiting: true } : {}),
                     ...(entry.waiting === true ? { startedAt: entry.at } : {}),
+                    ...(entry.endReason === undefined ? {} : { endReason: entry.endReason }),
                 } satisfies CustomMeta,
             },
         };

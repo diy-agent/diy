@@ -83,6 +83,119 @@ export function CreateProjectDialog({
     );
 }
 
+export function CreateTaskDialog({
+    project,
+    suggestedName,
+    onClose,
+    onSubmit,
+}: {
+    project: Room;
+    suggestedName: string;
+    onClose: () => void;
+    onSubmit: (input: { name: string; desc?: string }) => void;
+}) {
+    const [name, setName] = React.useState(suggestedName);
+    const [desc, setDesc] = React.useState('');
+    const submit = (): void => {
+        if (name.trim() === '') return;
+        const trimmedDesc = desc.trim();
+        onSubmit({ name: name.trim(), ...(trimmedDesc === '' ? {} : { desc: trimmedDesc }) });
+        onClose();
+    };
+
+    return (
+        <Modal title={`在「${project.name}」下新建任务`} onClose={onClose}>
+            <div className="space-y-3 text-sm">
+                <label className="block">
+                    <span className="mb-1 block text-xs text-muted-foreground">任务名</span>
+                    <input
+                        autoFocus
+                        value={name}
+                        onChange={(event) => setName(event.target.value)}
+                        onFocus={(event) => event.currentTarget.select()}
+                        onKeyDown={(event) => {
+                            if (event.key === 'Enter') submit();
+                        }}
+                        className="w-full rounded-lg border bg-card px-2 py-1.5 outline-none"
+                    />
+                </label>
+                <label className="block">
+                    <span className="mb-1 block text-xs text-muted-foreground">描述（可选）</span>
+                    <textarea
+                        value={desc}
+                        onChange={(event) => setDesc(event.target.value)}
+                        rows={3}
+                        placeholder="要做到什么程度算完成…"
+                        className="w-full resize-y rounded-lg border bg-card px-2 py-1.5 text-xs outline-none"
+                    />
+                </label>
+                <p className="rounded-lg border border-dashed px-2 py-1.5 text-[11px] text-muted-foreground">
+                    会自动建一个同名任务 bot；状态默认「未开始」，侧栏/头部点状态胶囊可改。
+                </p>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                    取消
+                </button>
+                <button
+                    disabled={name.trim() === ''}
+                    onClick={submit}
+                    className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-40"
+                >
+                    创建
+                </button>
+            </div>
+        </Modal>
+    );
+}
+
+/** 删除确认（硬删，不可撤销）：项目要报出会连带几个任务 */
+export function ConfirmDeleteDialog({
+    room,
+    taskCount,
+    onClose,
+    onConfirm,
+}: {
+    room: Room;
+    taskCount: number;
+    onClose: () => void;
+    onConfirm: () => void;
+}) {
+    const isProject = room.type === 'project';
+    return (
+        <Modal title={`删除${isProject ? '项目' : '任务'}「${room.name}」`} onClose={onClose}>
+            <div className="space-y-2 text-sm">
+                <p>
+                    会删掉这个{isProject ? '项目' : '任务'}的对话记录、成员关系和会话快照，
+                    <span className="font-medium">不可撤销</span>。
+                </p>
+                {isProject && (
+                    <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs">
+                        它下面的 {taskCount} 个任务会一起删掉。
+                    </p>
+                )}
+                <p className="text-[11px] text-muted-foreground">
+                    专属 bot 一并清掉；被其他容器借用的 bot 不动。仓库里的文件不删。
+                </p>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                    取消
+                </button>
+                <button
+                    onClick={() => {
+                        onConfirm();
+                        onClose();
+                    }}
+                    className="rounded-lg bg-destructive px-3 py-1.5 text-sm text-white"
+                >
+                    删除
+                </button>
+            </div>
+        </Modal>
+    );
+}
+
 export function AddMemberDialog({
     room,
     onClose,

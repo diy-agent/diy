@@ -7,6 +7,7 @@ import { MarkdownText } from '../../../components/assistant-ui/elements/markdown
 import { ToolFallback } from '../../../components/assistant-ui/elements/tool-fallback.aui';
 import { ToolGroup } from '../../../components/assistant-ui/elements/tool-group.aui';
 import { BotAvatar } from '../../../../components/BotAvatar';
+import { EndFooterLine } from '../../../../components/EndFooterLine';
 import { RunningIndicator } from '../../../../components/RunningIndicator';
 import { AskCard } from '../../../../components/AskCard';
 import { TooltipIconButton } from '../../../components/assistant-ui/elements/tooltip-icon-button';
@@ -501,10 +502,17 @@ const AssistantMessage: FC = () => {
                             case 'data': {
                                 // 投影层用 `data-ask` 传入，运行时规范成 { type: "data", name: "ask" }
                                 if (part.name !== 'ask') return null;
-                                const request = (part.data as { request?: import('@diy-agent/chat-core').AskRequest })
-                                    .request;
+                                const data = part.data as {
+                                    request?: import('@diy-agent/chat-core').AskRequest;
+                                    resolved?: import('../../../../components/AskCard').ResolvedAsk;
+                                };
+                                const request = data.request;
                                 return request === undefined ? null : (
-                                    <AskCard roomId={meta?.roomId ?? ''} request={request} />
+                                    <AskCard
+                                        roomId={meta?.roomId ?? ''}
+                                        request={request}
+                                        {...(data.resolved === undefined ? {} : { resolved: data.resolved })}
+                                    />
                                 );
                             }
                             case 'indicator':
@@ -528,6 +536,8 @@ const AssistantMessage: FC = () => {
                         <RunningIndicator since={meta.startedAt} />
                     </div>
                 )}
+                {/* 这一轮是怎么停的（completed 不显示） */}
+                <EndFooterLine reason={meta?.endReason} />
                 <AuiIf condition={(s) => s.message.status?.type === 'running' && s.message.parts.length === 0}>
                     <span
                         data-slot="aui_assistant-message-indicator"

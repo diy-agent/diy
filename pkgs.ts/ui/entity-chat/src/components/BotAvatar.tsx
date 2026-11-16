@@ -9,7 +9,7 @@ import type { CSSProperties } from 'react';
 
 import type { Author } from '@diy-agent/chat-core';
 
-import { roomOf, useStore } from '../store';
+import { useStore } from '../store';
 
 export function BotAvatar({
     author,
@@ -26,7 +26,9 @@ export function BotAvatar({
     const shell = useStore();
     const color = author?.color ?? '#9ca3af';
 
-    const room = roomId === undefined ? undefined : roomOf(roomId);
+    // 同样不走 `roomOf()`：React Compiler 会按参数缓存外部函数调用，
+    // 房间名/类型变了而 roomId 没变时会拿到旧值（见 App.tsx 里的说明）。
+    const room = roomId === undefined ? undefined : shell.rooms.find((entry) => entry.id === roomId);
     const home = author === undefined ? undefined : shell.bots[author.id]?.homeRoomId;
     const type = room?.type ?? (home === undefined ? undefined : shell.rooms.find((entry) => entry.id === home)?.type);
 

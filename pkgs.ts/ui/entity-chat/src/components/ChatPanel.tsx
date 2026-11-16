@@ -18,8 +18,27 @@ export function ChatPanel({ targetId }: { targetId: string }) {
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
 
     const messages = React.useMemo(
-        () => toThreadMessages(state.items, state.deliveries, shell.bots, targetId, state.speaking, state.asks),
-        [state.items, state.deliveries, shell.bots, targetId, state.speaking, state.asks],
+        () =>
+            toThreadMessages(
+                state.items,
+                state.deliveries,
+                shell.bots,
+                targetId,
+                state.speaking,
+                state.asks,
+                state.answered,
+                state.turnEnds,
+            ),
+        [
+            state.items,
+            state.deliveries,
+            shell.bots,
+            targetId,
+            state.speaking,
+            state.asks,
+            state.answered,
+            state.turnEnds,
+        ],
     );
     // 长会话只渲染最近 N 条（600+ 条 markdown 是切换卡顿的主因）
     const windowed = useWindowed(messages);

@@ -65,9 +65,16 @@ export class HttpChatClient implements ChatClient {
         const [history, deliveries, asks] = await Promise.all([
             this.getJson<{ items: Item[] }>(`/rooms/${id}/history`),
             this.getJson<{ deliveries: Delivery[] }>(`/rooms/${id}/deliveries`),
-            this.getJson<{ asks: Snapshot['asks'] }>(`/rooms/${id}/asks`).catch(() => ({ asks: [] })),
+            this.getJson<{ asks: Snapshot['asks']; answered: Snapshot['answeredAsks'] }>(
+                `/rooms/${id}/asks`,
+            ).catch(() => ({ asks: [], answered: [] })),
         ]);
-        return { items: history.items, deliveries: deliveries.deliveries, asks: asks.asks ?? [] };
+        return {
+            items: history.items,
+            deliveries: deliveries.deliveries,
+            asks: asks.asks ?? [],
+            answeredAsks: asks.answered ?? [],
+        };
     }
 
     /**
