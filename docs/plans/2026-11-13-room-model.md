@@ -4,11 +4,11 @@
 
 ## 三个词
 
-| 词 | 是什么 | 有什么 | 没有什么 |
-|---|---|---|---|
-| **Room** | 会话容器。`type` 是**开放字符串**（`project` / `task` / `stock` / 任意），类型特有字段在 `data` 里 | 一条共享时间线、成员列表、默认应答 bot、目录等 type 数据 | 自己的 LLM 历史 |
-| **Bot** | 身份（名字 / 颜色 / persona / 模型） | 可以被多个 room 借用；本身不执行 | 没有历史，不跑 step |
-| **BotSession** | **bot 在某个 room 里的那条原生单线对话**（原 agent） | history / turn / step / 工具调用，自己的 seq | 不跨 room（A：per-room 隔离） |
+| 词             | 是什么                                                                                             | 有什么                                                   | 没有什么                      |
+| -------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------- |
+| **Room**       | 会话容器。`type` 是**开放字符串**（`project` / `task` / `stock` / 任意），类型特有字段在 `data` 里 | 一条共享时间线、成员列表、默认应答 bot、目录等 type 数据 | 自己的 LLM 历史               |
+| **Bot**        | 身份（名字 / 颜色 / persona / 模型）                                                               | 可以被多个 room 借用；本身不执行                         | 没有历史，不跑 step           |
+| **BotSession** | **bot 在某个 room 里的那条原生单线对话**（原 agent）                                               | history / turn / step / 工具调用，自己的 seq             | 不跨 room（A：per-room 隔离） |
 
 一句话：**Room 是房间，Bot 是说话的人，BotSession 是这个人在这个房间里那条对话。**
 
@@ -17,13 +17,13 @@
 
 ## 已删掉的概念
 
-| 删掉 | 原因 |
-|---|---|
-| `agent` 作为名词 | 被 `BotSession` 取代；"会跑 LLM 的东西"就是 bot（可以没有界面） |
-| `Entity.kind` 枚举 | 换成 `Room.type` 开放字符串 + `data` |
-| `dm`（bot 单聊） | 统一为 room，1~m 个成员即可；不再有 bot 一级列表 |
+| 删掉                     | 原因                                                             |
+| ------------------------ | ---------------------------------------------------------------- |
+| `agent` 作为名词         | 被 `BotSession` 取代；"会跑 LLM 的东西"就是 bot（可以没有界面）  |
+| `Entity.kind` 枚举       | 换成 `Room.type` 开放字符串 + `data`                             |
+| `dm`（bot 单聊）         | 统一为 room，1~m 个成员即可；不再有 bot 一级列表                 |
 | `mode: single / meeting` | **由收件人决定**：1 个 = 单聊成本，k 个 = 开会成本；不落房间状态 |
-| `owner` | 换成 `primaryBotId`（UI 文案「默认应答」）：没有 @ 时只有它说 |
+| `owner`                  | 换成 `primaryBotId`（UI 文案「默认应答」）：没有 @ 时只有它说    |
 
 ## 开会怎么表达（没有 mode 字段）
 
@@ -73,10 +73,10 @@ system / job 只往 inbox 投事实，没有自己的 BotSession。
 
 ### 两层，不是一个
 
-| 层 | 内容 | 谁维护 | 压缩 |
-|---|---|---|---|
-| 房间日志 `RoomLog` | 人话 / bot 结论 / 通知，append-only | 房间 | **不压缩、不删除**（真相层） |
-| BotSession 上下文 | 公共条目副本 + 自己的 tool/think/产出 | 每个 bot 自己 | **各压各的** |
+| 层                 | 内容                                  | 谁维护        | 压缩                         |
+| ------------------ | ------------------------------------- | ------------- | ---------------------------- |
+| 房间日志 `RoomLog` | 人话 / bot 结论 / 通知，append-only   | 房间          | **不压缩、不删除**（真相层） |
+| BotSession 上下文  | 公共条目副本 + 自己的 tool/think/产出 | 每个 bot 自己 | **各压各的**                 |
 
 关键更正：**没有"房间级水位"，也没有"共享 digest"**。之前设计里让某个 bot 的预算推进全局水位，
 等于 a 的上下文压力决定 b 的记忆，已废弃。
@@ -95,14 +95,14 @@ system / job 只往 inbox 投事实，没有自己的 BotSession。
 
 ### 唤醒规则（结论不唤醒）
 
-| 条目 | 所有人可见 | 唤醒 |
-|---|---|---|
-| 人话，无 @ | ✅ | primary |
-| 人话，@x | ✅ | x |
-| 人话，@all | ✅ | 全体 |
-| bot 结论 | ✅（复制进其他 session，下一轮读到） | **无人** |
-| bot 结论里 `@x` | ✅ | x（单人，@all 在 bot 侧忽略） |
-| 通知 | ✅ | 无 |
+| 条目            | 所有人可见                           | 唤醒                          |
+| --------------- | ------------------------------------ | ----------------------------- |
+| 人话，无 @      | ✅                                   | primary                       |
+| 人话，@x        | ✅                                   | x                             |
+| 人话，@all      | ✅                                   | 全体                          |
+| bot 结论        | ✅（复制进其他 session，下一轮读到） | **无人**                      |
+| bot 结论里 `@x` | ✅                                   | x（单人，@all 在 bot 侧忽略） |
+| 通知            | ✅                                   | 无                            |
 
 ### 时序
 
@@ -150,9 +150,9 @@ Compactor   只负责：怎么压（输入 entries + budget + usage，输出新 
 
 ```ts
 interface TranscriptEntry {
-    message: ModelMessage;      // 原样保留（tool/reasoning 都在）
-    origin: 'public' | 'self' | 'note';   // 谁能被折叠
-    turn?: number;              // 切点吸附到轮首用
+    message: ModelMessage; // 原样保留（tool/reasoning 都在）
+    origin: 'public' | 'self' | 'note'; // 谁能被折叠
+    turn?: number; // 切点吸附到轮首用
 }
 ```
 
@@ -215,17 +215,17 @@ Room 只是一行配置（7 个字段，0 个方法），它的职责散在 serv
 
 `entity-runtime/src/room.ts` → `RoomActor`（聚合根），独占：
 
-| 职责 | 方法 |
-|---|---|
+| 职责           | 方法                                                                    |
+| -------------- | ----------------------------------------------------------------------- |
 | 成员与默认应答 | `members()` / `member()` / `primary()` / `setMembers()` / `addMember()` |
-| 时间线 | `items()` / `deliveries()` / `entries()` |
-| 发言与投递 | `say()` / `cancel()` |
-| 会话池 | `sessionOf()`（私有）/ `sessionsInfo()` / `contextOf()` |
-| 回合与顺序 | `turnFor()` / `nextOrder()`（私有，唯一分配点） |
-| 路由（@ 规则） | `route()`（私有，唯一实现） |
-| 结论发布 | `publishConclusion()`（私有） |
-| 压缩 | `compact()` |
-| 改名 / 换模型 | `update()` |
+| 时间线         | `items()` / `deliveries()` / `entries()`                                |
+| 发言与投递     | `say()` / `cancel()`                                                    |
+| 会话池         | `sessionOf()`（私有）/ `sessionsInfo()` / `contextOf()`                 |
+| 回合与顺序     | `turnFor()` / `nextOrder()`（私有，唯一分配点）                         |
+| 路由（@ 规则） | `route()`（私有，唯一实现）                                             |
+| 结论发布       | `publishConclusion()`（私有）                                           |
+| 压缩           | `compact()`                                                             |
+| 改名 / 换模型  | `update()`                                                              |
 
 `apps/diy2/server/index.ts` 只剩 HTTP/SSE 适配（约 330 行，领域逻辑 0 行）。
 `kernel.ts` 已删除 —— 被真实实现取代，不再保留第二份契约。
@@ -233,7 +233,12 @@ Room 只是一行配置（7 个字段，0 个方法），它的职责散在 serv
 ### 成员：RoomMember
 
 ```ts
-interface RoomMember { botId; modelKey?; persona?; primary? }
+interface RoomMember {
+    botId;
+    modelKey?;
+    persona?;
+    primary?;
+}
 ```
 
 - `Bot` 是全局身份（名字 / 颜色 / 归属），`RoomMember` 是它在这个房间里的面孔；
@@ -267,9 +272,13 @@ interface RoomMember { botId; modelKey?; persona?; primary? }
 
 ```ts
 interface SessionDeps {
-    bot; modelKey;
-    allocateTurn: () => Turn;      // 唯一必需的房间能力：借一个回合号
-    seed?; run?; compactor?; budget?;   // 注入，测试用
+    bot;
+    modelKey;
+    allocateTurn: () => Turn; // 唯一必需的房间能力：借一个回合号
+    seed?;
+    run?;
+    compactor?;
+    budget?; // 注入，测试用
 }
 ```
 
@@ -277,11 +286,11 @@ session 只通过 `subscribe()` 输出事件：
 
 ```ts
 type SessionEvent =
-  | { type: 'item'; item: Item }                  // order 由房间补
-  | { type: 'delivery'; messageId; state }        // 投递状态
-  | { type: 'turn.end'; result: TurnResult }      // 房间据此写结论
-  | { type: 'compact'; event: CompactEvent }      // 房间据此打日志
-  | { type: 'error'; message }
+    | { type: 'item'; item: Item } // order 由房间补
+    | { type: 'delivery'; messageId; state } // 投递状态
+    | { type: 'turn.end'; result: TurnResult } // 房间据此写结论
+    | { type: 'compact'; event: CompactEvent } // 房间据此打日志
+    | { type: 'error'; message };
 ```
 
 房间侧 `onSessionEvent()` 负责：分配并固定 `order`（同一 item 的流式更新不再换序）、
@@ -306,14 +315,14 @@ protocol  ←  entity-runtime  ←  server
 
 ### 存了什么
 
-| 表 | 内容 | 谁写 |
-|---|---|---|
-| `entity_items` | 展示时间线（done/failed） | Room（收到 item 事件时去重落库） |
-| `deliveries` | 消息 × 成员的投递状态 + 入队信息（mode/turn/turnId） | Room |
-| `room_entries` | 公共日志（人话 / 结论 / 通知，append-only） | Room（`appendEntry` 唯一写入口） |
-| `session_state` | 每个 (room, bot) 的对话快照（turn / collapsed / entries / usage） | Room（每轮结束、每次压缩后） |
-| `room_members` | 成员 + 本房间覆盖 | Room |
-| `bots` | 全局身份 | server |
+| 表              | 内容                                                              | 谁写                             |
+| --------------- | ----------------------------------------------------------------- | -------------------------------- |
+| `entity_items`  | 展示时间线（done/failed）                                         | Room（收到 item 事件时去重落库） |
+| `deliveries`    | 消息 × 成员的投递状态 + 入队信息（mode/turn/turnId）              | Room                             |
+| `room_entries`  | 公共日志（人话 / 结论 / 通知，append-only）                       | Room（`appendEntry` 唯一写入口） |
+| `session_state` | 每个 (room, bot) 的对话快照（turn / collapsed / entries / usage） | Room（每轮结束、每次压缩后）     |
+| `room_members`  | 成员 + 本房间覆盖                                                 | Room                             |
+| `bots`          | 全局身份                                                          | server                           |
 
 关键取舍：
 
@@ -361,12 +370,12 @@ TS2883 声明导出错误）。diy2 是 `tsx` 直跑源码，不能等 dist。
 
 于是把**行为判据**移植过来，实现放在 `entity-runtime/src/tools/`：
 
-| 工具 | 判据（与老包一致） |
-|---|---|
-| `read` | 带行号、offset/limit 续读、单次 200KB/2000 行；路径越界直接抛 |
-| `write` | 整文件写、自动建父目录、返回行数变化；失败抛 |
-| `edit` | 有序 edits、必须唯一命中（除非 `replaceAll`）、未命中抛 |
-| `bash` | cwd = 房间目录；非零退出**返回结果**（退出码是数据）；spawn 失败抛；超时杀进程组并返回已收输出 |
+| 工具    | 判据（与老包一致）                                                                             |
+| ------- | ---------------------------------------------------------------------------------------------- |
+| `read`  | 带行号、offset/limit 续读、单次 200KB/2000 行；路径越界直接抛                                  |
+| `write` | 整文件写、自动建父目录、返回行数变化；失败抛                                                   |
+| `edit`  | 有序 edits、必须唯一命中（除非 `replaceAll`）、未命中抛                                        |
+| `bash`  | cwd = 房间目录；非零退出**返回结果**（退出码是数据）；spawn 失败抛；超时杀进程组并返回已收输出 |
 
 统一约定：**工具失败抛异常**，不返回"失败字符串"——否则 SDK 会记成 done，UI 画 ✓ 且不展开。
 
@@ -488,11 +497,11 @@ POST /rooms/:id/asks/:askId   { values } | { fields }
 
 三层，各答一个问题：
 
-| 层 | 文件 | 回答什么 | 依赖 |
-|---|---|---|---|
-| 领域 | `room.test.ts` / `session.test.ts` | 房间与会话的语义对不对 | 内存 sqlite + 脚本化 run，无网络 |
-| 端口一致性 | `transport-conformance.test.ts` | UI 依赖的 `ChatClient` 契约有没有漂 | 同一套场景跑 N 个实现 |
-| UI | 各 surface 的组件测试（待补） | 渲染与交互 | FakeChatClient，无网络 |
+| 层         | 文件                               | 回答什么                            | 依赖                             |
+| ---------- | ---------------------------------- | ----------------------------------- | -------------------------------- |
+| 领域       | `room.test.ts` / `session.test.ts` | 房间与会话的语义对不对              | 内存 sqlite + 脚本化 run，无网络 |
+| 端口一致性 | `transport-conformance.test.ts`    | UI 依赖的 `ChatClient` 契约有没有漂 | 同一套场景跑 N 个实现            |
+| UI         | 各 surface 的组件测试（待补）      | 渲染与交互                          | FakeChatClient，无网络           |
 
 端口一致性用**参数化**跑同一份场景：
 
@@ -560,11 +569,75 @@ running: [diy] → [diy, 小满] → (停 diy) → [小满]
 
 `@astryxdesign/core` 的 Chat 是**纯展示层**，没有多参与者运行时：
 
-| 概念 | Astryx | diy2 |
-|---|---|---|
-| 谁说的 | `ChatMessage sender: 'user'\|'assistant'\|'system'` + `name` / `avatar` | 一样，`Item.author` |
-| 谁在生成 | 没有；`ChatComposer` 只有 `isStopShown: boolean` + `onStop()` | `running: string[]`（房间广播） |
-| 停止粒度 | 全局一个 | 每个成员一个 + 全局 |
+| 概念     | Astryx                                                                  | diy2                            |
+| -------- | ----------------------------------------------------------------------- | ------------------------------- |
+| 谁说的   | `ChatMessage sender: 'user'\|'assistant'\|'system'` + `name` / `avatar` | 一样，`Item.author`             |
+| 谁在生成 | 没有；`ChatComposer` 只有 `isStopShown: boolean` + `onStop()`           | `running: string[]`（房间广播） |
+| 停止粒度 | 全局一个                                                                | 每个成员一个 + 全局             |
 
 结论：**"sender 是消息的属性，running 是房间的状态"**，两者不能混。
 Astryx 只提供了前者，后者必须由房间提供。
+
+## 结局可见：`turn.end` 广播 + 消息页脚（2026-11-16）
+
+### 之前的问题
+
+「这一轮是怎么停的」只存在于服务端的 `TurnResult.endReason` 里：房间拿它决定
+`publishConclusion` 发不发，然后就丢了。前端看到的只是流结束 ——**被输出上限截断**、
+**流被掐断**、**正常说完**在页面上长得一模一样。用户的原话是"执行一半就停下了"。
+
+### 现在：一条事件 + 一行页脚
+
+```
+session.turn.end(result) → room 广播 { kind:'turn.end', botId, turnId, reason }
+                         → chat-core: state.turnEnds[turnId]
+                         → buildTimeline: 挂到**该轮最后一条 bot 消息**上
+                         → EndFooterLine: 一行短标签（completed 不渲染）
+```
+
+分工（写在 `chat-core/end-footer.ts` 的文件头）：
+
+| 载体                    | 负责                                                             | 生命周期                     |
+| ----------------------- | ---------------------------------------------------------------- | ---------------------------- |
+| 页脚（`endReason`）     | 一句话说清结局：`本轮已停止` / `被输出上限截断` / `不明原因中断` | 只活这一次连接（不在快照里） |
+| `notice` / `error` 条目 | 解释 + 该做什么（`说「继续」可接上` / `建议重试`）               | 落库，刷新后还在             |
+
+三条规矩：
+
+1. **`completed` 不占页脚** —— 每条消息挂一行"完成"是噪声，"没有那行"才是正常的信号；
+2. **只挂该轮最后一段** —— 一轮可能被插话切成 text → tool → text，结局属于整轮，
+   挂到每条上会重复、挂到第一条会出现在半句话下面。这一轮**压根没有说话**时
+   （空产出 / 直接失败）退到该轮最后一条 `notice`/`error` 上 —— 结局不能无处可说；
+3. **页脚只渲染短标签**，细节在 `title` —— `max-tokens` 那几种在时间线上已有 notice
+   解释同样的话，页脚再抄一遍就是同一条信息出现两次。
+
+### 为什么不在快照里带 `endReason`
+
+它是一次连接里的事实，不是历史数据：需要解释的那几种在时间线上都有持久条目，
+而 `completed` 本来不需要页脚。把真相（条目）和提示（页脚）分开，刷新语义才不打架。
+
+### 可见性验证
+
+`apps/diy2/stops.html`（`/stops.html`，dev-only）：11 条单轮 + 6 条房间级脚本化事件流
+→ 真 `Projector` → 真判据 → 真 `buildTimeline`，左栏"修复前"、右栏"现在"，页头带
+**判据自检**与**页脚位置自检**（样本声明的类别 / 位置与结果不一致那张卡会变红）。
+同一批样本被 `stop-scenarios.test.ts` / `room-scenarios.test.ts` 锁住，页面与判据不会各说各话。
+
+### 房间级场景：混在一起才会暴露的问题
+
+单轮样本回答"这一轮为什么停"，但手测几乎复现不了**混在一起**的情形：两只 bot 同时跑到
+不同结局、一轮被工具切成两段、上一轮的结局粘到下一轮、广播丢了前端还知道什么。
+`room-scenarios.ts` 把它们装配成事件流（6 条），每条声明"每轮必须判成什么"与
+"页脚必须挂在哪"，由 `buildTimeline` + `endFooterOf` 自检 —— **挂错位置和挂错内容一样糟**。
+
+装配过程中暴露的两个真问题：
+
+1. **失败原文落了两遍**。`Projector` 收到 `run.failed` 会自己落一条错误条目，
+   收尾时 `endItems('error')` 又补一条 → 时间线上同一句 401 出现两次。
+   修法：`endItems(..., { errorAlreadyReported })`，session 传它。锁在
+   `session.test.ts`「运行失败只落一条错误条目」（去掉选项立刻红：2 ≠ 1）。
+2. **重放必须复刻入账规则**，否则测的不是真行为。`endItems` 的条目自带 `seq: 0`
+   （真 seq 由入库自增补），照搬会让"被截断"的提示排到消息**前面**；一条流被重放两次时
+   `nextId` 又会给两批 id，凭空多一条 notice。所以样本用 `ItemLedger` 复刻
+   `room.ts::onSessionEvent` 的两条语义：**`order` 首次出现时分配、`seq` 落库时才分配**
+   （每个 id 只落一次）。
