@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { DraftStore, hasDraftContent } from '../src/drafts';
+import { DraftStore, dialogOwner, hasDraftContent } from '../src/drafts';
 
 interface Call {
     url: string;
@@ -160,6 +160,31 @@ describe('DraftStore', () => {
         store.setText('proj:b', 'composer', '新输入');
         store.seed([{ id: 'proj:b', hasDraft: false }]);
         expect(store.hasDraft('proj:b')).toBe(true);
+    });
+
+    it('对话框草稿走 /drafts/:owner（synthetic scope），不冒充房间', async () => {
+        vi.useFakeTimers();
+        const { store, calls } = makeStore();
+        const owner = dialogOwner('create-task', 'proj:diy');
+        expect(owner).toBe('dlg:create-task:proj:diy');
+
+        store.setText(owner, 'desc', '要做到什么程度算完成…');
+        await vi.advanceTimersByTimeAsync(600);
+        const put = calls.find((call) => call.method === 'PUT');
+        // 房间草稿是 /rooms/:id/drafts；对话框没有实体 id，不能请求一个不存在的房间
+        expect(put?.url).toBe('/api/drafts/dlg%3Acreate-task%3Aproj%3Adiy/desc');
+
+        store.clear(owner, 'desc');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(calls.at(-1)?.method).toBe('DELETE');
+        expect(calls.at(-1)?.url).toBe('/api/drafts/dlg%3Acreate-task%3Aproj%3Adiy/desc');
+    });
+
+    it('对话框草稿的 ✎ 不落到任何房间上（侧栏说的是"房间里没发出去的东西"）', () => {
+        const { store } = makeStore();
+        store.setText(dialogOwner('create-task', 'proj:diy'), 'desc', '写了一半');
+        expect(store.hasDraft('proj:diy')).toBe(false);
+        expect(store.hasDraft(dialogOwner('create-task', 'proj:diy'))).toBe(true);
     });
 
     it('空内容判定：空格 / 空对象 / 全空对象都不算草稿', () => {

@@ -29,6 +29,10 @@ const COMPACT_BUDGET = {
 };
 
 const dataDir = process.env['DIY2_DATA_DIR'] ?? join(homedir(), '.diy', 'diy2');
+/** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
+const ASK_DRAFT_TTL = 30 * 60 * 1000;
+/** 对话框草稿：synthetic owner 不随房间级联删，超过这么久没人再来就清掉 */
+const DIALOG_DRAFT_TTL = 7 * 24 * 60 * 60 * 1000;
 mkdirSync(dataDir, { recursive: true });
 const store = openStore(join(dataDir, 'diy2.db'));
 const HUMAN: Author = { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
@@ -247,6 +251,11 @@ function seed(): void {
 
 seed();
 
+// 对话框草稿的 owner 是 synthetic scope（`dlg:<用途>:<roomId>`）：删项目时已级联，
+// 剩下的（用户再也不打开那个对话框 / 房间 id 早就换掉）靠 TTL 收，别让库只增不减。
+const prunedDialogs = store.pruneDraftOwners('dlg:', Date.now() - DIALOG_DRAFT_TTL);
+if (prunedDialogs > 0) console.log(`[drafts] 清掉 ${prunedDialogs} 条过期对话框草稿`);
+
 // ─── 工具 ─────────────────────────────────────────────────────────
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -271,6 +280,18 @@ function onBody<T>(req: IncomingMessage, res: ServerResponse, handler: (body: T)
         .catch(() => {
             if (!res.writableEnded) json(res, 400, { error: 'invalid JSON body' });
         });
+}
+
+/**
+ * synthetic scope 的 owner 白名单（`dlg:<用途>:<roomId>`）：`dlg:` 是保留前缀，
+ * 房间 id 是 `<type>-<base36>` / `proj:xxx`，不会撞上。
+ */
+const DIALOG_DRAFT_OWNER = /^dlg:[a-z][a-z0-9-]{0,40}:[A-Za-z0-9:._-]{1,120}$/;
+
+/** 单条草稿上限：超了宁可拒（413）也不静默截断用户打的字 */
+function tooLargeDraft(value: unknown): boolean {
+    const serialized = JSON.stringify(value);
+    return serialized !== undefined && Buffer.byteLength(serialized, 'utf8') > 256 * 1024;
 }
 
 function sse(res: ServerResponse, payload: unknown): void {
@@ -435,6 +456,39 @@ const server = createServer((req, res) => {
             return;
         }
 
+        /**
+         * /api/drafts/:owner[/:field] —— synthetic scope 的未提交输入。
+         *
+         * 对话框（新建任务的描述）在提交之前**没有实体 id**：它既不是某个房间的内容，
+         * 又必须扛住误关 / 切面 / 刷新。owner 就用 `dlg:<用途>:<roomId>` 这种保留前缀，
+         * 和房间草稿共用一张表、一套语义，但不进 `hasDraft`（侧栏 ✎ 说的是"房间里"）。
+         *
+         * 只放行我们自己的前缀：别让这个接口变成任意键值仓库。
+         */
+        if (parts[0] === 'api' && parts[1] === 'drafts' && (parts.length === 3 || parts.length === 4)) {
+            const owner = decodeURIComponent(parts[2] ?? '');
+            if (!DIALOG_DRAFT_OWNER.test(owner)) return json(res, 400, { error: 'invalid draft owner' });
+            const field = parts.length === 4 ? decodeURIComponent(parts[3] ?? '') : '';
+            if (req.method === 'GET' && parts.length === 3) {
+                json(res, 200, { drafts: store.listDrafts(owner) });
+                return;
+            }
+            if (field === '' || field.length > 128) return json(res, 400, { error: 'invalid draft field' });
+            if (req.method === 'DELETE') {
+                store.deleteDraft(owner, field);
+                json(res, 200, { ok: true });
+                return;
+            }
+            if (req.method !== 'PUT') return json(res, 405, { error: 'method not allowed' });
+            onBody<{ value?: unknown }>(req, res, (body) => {
+                if (!('value' in body)) return json(res, 400, { error: 'value required' });
+                if (tooLargeDraft(body.value)) return json(res, 413, { error: 'draft too large (max 256KB)' });
+                const saved = store.putDraft(owner, field, body.value);
+                json(res, 200, { updatedAt: saved?.updatedAt ?? 0 });
+            });
+            return;
+        }
+
         // GET /api/rooms/:id/drafts —— 这个容器里所有未提交输入（composer / ask:<id>）
         if (
             req.method === 'GET' &&
@@ -444,7 +498,15 @@ const server = createServer((req, res) => {
             parts.length === 4
         ) {
             const id = decodeURIComponent(parts[2] ?? '');
-            if (roomOf(id) === undefined) return json(res, 404, { error: 'room not found' });
+            const actor = roomOf(id);
+            if (actor === undefined) return json(res, 404, { error: 'room not found' });
+            // 打开房间顺手自愈：还在等回答的 ask 草稿保留，其余「早已有结局 / 已不在时间线上」
+            // 的旧草稿清掉 —— 否则侧栏 ✎ 会为一个不存在的提问一直亮着
+            store.pruneAskDrafts(
+                id,
+                new Set(actor.pendingAskRequests().map((request) => request.askId)),
+                Date.now() - ASK_DRAFT_TTL,
+            );
             json(res, 200, { drafts: store.listDrafts(id) });
             return;
         }
@@ -469,10 +531,7 @@ const server = createServer((req, res) => {
             }
             onBody<{ value?: unknown }>(req, res, (body) => {
                 if (!('value' in body)) return json(res, 400, { error: 'value required' });
-                const serialized = JSON.stringify(body.value);
-                if (serialized !== undefined && Buffer.byteLength(serialized, 'utf8') > 256 * 1024) {
-                    return json(res, 413, { error: 'draft too large (max 256KB)' });
-                }
+                if (tooLargeDraft(body.value)) return json(res, 413, { error: 'draft too large (max 256KB)' });
                 const saved = store.putDraft(id, field, body.value);
                 json(res, 200, { updatedAt: saved?.updatedAt ?? 0 });
             });

@@ -78,6 +78,26 @@ export interface Store {
     deleteDraft(roomId: string, field: string): void;
     /** 有草稿的容器 id（侧栏 ✎ 用，一次查完避免 N+1） */
     draftOwners(): string[];
+    /**
+     * 清掉「已经没有结局可言」的 ask 草稿：`ask:<id>` 不在 keepAskIds 里（时间线上不再等回答）
+     * 且早于 olderThan。返回清掉的条数。
+     *
+     * 为什么要有它：提问从时间线上彻底消失（房间重开、条目被裁）时没人替它清草稿，
+     * 侧栏 ✎ 会为一个早就不存在的提问一直亮着。
+     */
+    pruneAskDrafts(roomId: string, keepAskIds: ReadonlySet<string>, olderThan: number): number;
+    /** 清掉 owner 前缀匹配、且早于 olderThan 的草稿（synthetic scope 不随房间级联删） */
+    pruneDraftOwners(ownerPrefix: string, olderThan: number): number;
+}
+
+/** LIKE 匹配用：把 % _ \ 转义掉（id 里出现也不能当通配符） */
+function likeEscape(text: string): string {
+    return text.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+/** LIKE 前缀匹配：escape + 结尾 % */
+function likePrefix(prefix: string): string {
+    return `${likeEscape(prefix)}%`;
 }
 
 /** 草稿是否已经"没有内容"：空串 / 空数组 / 全空对象都算，避免 ✎ 永远亮着 */
@@ -288,6 +308,9 @@ export function openStore(file: string): Store {
             db.prepare('DELETE FROM deliveries WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM drafts WHERE owner_id = ?').run(roomId);
+            // 对话框草稿（synthetic scope，见 docs/drafts-design.md）挂在房间后面：
+            // `dlg:<用途>:<roomId>`。删房间时一起清，不等 TTL
+            db.prepare("DELETE FROM drafts WHERE owner_id LIKE ? ESCAPE '\\'").run(`dlg:%:${likeEscape(roomId)}`);
             db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
         },
         deleteBot(botId: string): void {
@@ -508,6 +531,26 @@ export function openStore(file: string): Store {
                 }
             }
             return [...owners];
+        },
+        pruneAskDrafts(roomId: string, keepAskIds: ReadonlySet<string>, olderThan: number): number {
+            const stale = db
+                .prepare("SELECT field FROM drafts WHERE owner_id = ? AND field LIKE 'ask:%' AND updated_at < ?")
+                .all(roomId, olderThan) as Array<Record<string, unknown>>;
+            const remove = db.prepare('DELETE FROM drafts WHERE owner_id = ? AND field = ?');
+            let count = 0;
+            for (const row of stale) {
+                const field = String(row['field']);
+                if (keepAskIds.has(field.slice('ask:'.length))) continue;
+                remove.run(roomId, field);
+                count += 1;
+            }
+            return count;
+        },
+        pruneDraftOwners(ownerPrefix: string, olderThan: number): number {
+            const result = db
+                .prepare("DELETE FROM drafts WHERE owner_id LIKE ? ESCAPE '\\' AND updated_at < ?")
+                .run(likePrefix(ownerPrefix), olderThan);
+            return Number(result.changes);
         },
     };
 }

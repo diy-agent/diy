@@ -9,6 +9,9 @@
 //
 // 一个容器里可以有多条草稿，用 field 区分：`composer`（发言框）、`ask:<askId>`（提问卡）。
 // owner 就是 roomId —— 两种输入同属一个房间，切房间 / 刷新一起回填。
+//
+// 还有第二种 owner：对话框草稿（`dlg:create-task:<roomId>`，见 dialogOwner）。它提交前
+// 还没有实体 id，所以 owner 是 synthetic scope，走 `/api/drafts/:owner`，不进侧栏 ✎。
 
 export type DraftStatus = 'idle' | 'loading' | 'saving' | 'saved' | 'error';
 
@@ -82,6 +85,23 @@ function stableKey(value: unknown): string {
  */
 function persistable(owner: string): boolean {
     return owner.trim() !== '';
+}
+
+/** `dlg:` 是保留前缀：这种 owner 是 synthetic scope，不属于任何房间 */
+const DIALOG_OWNER_PREFIX = 'dlg:';
+
+/**
+ * 对话框草稿的 owner：还没有实体 id，但要挂在某个房间后面（删房间时一起清）。
+ * 例：`dialogOwner('create-task', projectId)` → `dlg:create-task:proj:diy`。
+ */
+export function dialogOwner(kind: string, roomId: string): string {
+    return `${DIALOG_OWNER_PREFIX}${kind}:${roomId}`;
+}
+
+/** 同样的 owner 在服务端有两种路由：房间草稿 / synthetic 草稿 */
+function draftsPath(owner: string): string {
+    const id = encodeURIComponent(owner);
+    return owner.startsWith(DIALOG_OWNER_PREFIX) ? `/drafts/${id}` : `/rooms/${id}/drafts`;
 }
 
 function messageOf(error: unknown): string {
@@ -171,7 +191,7 @@ export class DraftStore {
         try {
             const data = await this.request<{ drafts?: Array<{ field: string; value: unknown; updatedAt: number }> }>(
                 'GET',
-                `/rooms/${encodeURIComponent(owner)}/drafts`,
+                draftsPath(owner),
             );
             for (const draft of data.drafts ?? []) {
                 // 本地正在编辑 / 改过且更新的，不被服务端旧值覆盖
@@ -358,21 +378,8 @@ export class DraftStore {
                 const serialized = JSON.stringify(value);
                 const hasContent = entry !== undefined && hasDraftContent(value);
                 try {
-                    if (hasContent) {
-                        await this.request(
-                            'PUT',
-                            `/rooms/${encodeURIComponent(owner)}/drafts/${encodeURIComponent(field)}`,
-                            { value },
-                            keepalive,
-                        );
-                    } else {
-                        await this.request(
-                            'DELETE',
-                            `/rooms/${encodeURIComponent(owner)}/drafts/${encodeURIComponent(field)}`,
-                            undefined,
-                            keepalive,
-                        );
-                    }
+                    const path = `${draftsPath(owner)}/${encodeURIComponent(field)}`;
+                    await this.request(hasContent ? 'PUT' : 'DELETE', path, hasContent ? { value } : undefined, keepalive);
                     // 写入期间用户又改了同一字段：保留 dirty，下一轮再写
                     const current = state.entries.get(field);
                     if (current === undefined || JSON.stringify(current.value) === serialized) {

@@ -1,6 +1,6 @@
 # 草稿（drafts）设计 —— 未提交输入的统一缓冲
 
-> 状态：提案（2026-10-24）。范围：diy2 / `entity-chat` + `entity-runtime` + `apps/diy2/server`。
+> 状态：P1–P3 已实现（2026-10-24 提案并落地）。范围：diy2 / `entity-chat` + `entity-runtime` + `apps/diy2/server`。
 > 本文先回答「草稿到底是 inbox 的草稿，还是所有输入/选择的草稿」，再给落地方案。
 
 ## 1. 一句话
@@ -34,8 +34,8 @@
 - **P1 只接发言框**（本轮要修的那个丢字问题）。
 - **P2 接 AskCard**：它今天在 astryx/shadcn 的共享 `AskCard` 和 assistant-ui 的
   `tool-fallback` 里各有一份 `useState`，切面/切房间同样丢；接口按多字段草稿设计，接入不用改表。
-- **P3 才考虑对话框表单**（新建任务的描述等长文本）。这类 owner 还没有实体 id，
-  需要 synthetic scope + TTL，不放进 P1。
+- **P3 接对话框表单**（新建任务的描述这种长文本）。这类 owner 还没有实体 id，
+  用 synthetic scope（`dlg:<用途>:<roomId>`）+ TTL，不放进 P1。
 
 这样避免「先给 composer 写死一个 draft，下个月 ask 卡再抄一遍」。
 
@@ -72,6 +72,17 @@ CREATE TABLE IF NOT EXISTS drafts (
 - `DELETE /api/rooms/:id/drafts/:field`（显式清；语义等同 PUT 空值）
 - `GET /api/rooms` 每项附 `hasDraft: boolean`（`drafts` 表按 owner 聚合），供侧栏 ✎。
   这是**响应字段**，不写进 `Room` 领域类型；客户端用 `RoomSummary = Room & { hasDraft?: boolean }` 读。
+
+P3 的 synthetic scope 走另一组路由（不属于任何房间，不能借 `/rooms/:id`）：
+
+- `GET /api/drafts/:owner` → `{ drafts: [...] }`
+- `PUT /api/drafts/:owner/:field`，body `{ value }`；`DELETE` 同义
+- owner 必须是保留前缀 `dlg:<用途>:<roomId>`（正则白名单），否则 400 —— 这个接口不能变成
+  任意键值仓库。房间 id 形如 `project-xxx` / `proj:diy`，撞不上 `dlg:`。
+- 这种草稿**不进 `hasDraft`**：侧栏 ✎ 说的是「这个房间里有没发出去的东西」，
+  而对话框草稿挂在房间后面、却不属于房间内容（点了房间也看不到它）。
+- 清理两条：删房间时按 `dlg:%:<roomId>` 级联删；剩下的（用户再也不打开那个对话框、
+  房间 id 已变）由启动时的 TTL 清掉（7 天）。
 
 多窗口：最后写赢。P1 不做草稿变更推送，切换/刷新时重拉；P4 再考虑 SSE。
 
@@ -134,7 +145,21 @@ CREATE TABLE IF NOT EXISTS drafts (
 - owner 为空（assistant-ui 的 meta 没带 roomId）时降级为纯内存，不发 `/rooms//drafts`。
 - 好处：三个表面共用同一份 `AskCard`，切 surface / 切房间 / 刷新都不再丢半填的选项与字段。
 
-**P3**：对话框表单草稿（synthetic owner + TTL）；房间名仍是短文本，只做内存态，不落盘。
+**P3（已实现）**：对话框表单草稿（synthetic owner + TTL）+ ask 残留清理。
+
+- `CreateTaskDialog`（新建任务的描述）进草稿：owner = `dlg:create-task:<projectId>`、field = `desc`。
+  - **只存描述，不存任务名**：任务名几个字就打完，而且默认值是「新任务 N」这种跟着上下文变的
+    东西 —— 存下来的旧名字反而会盖掉新的建议。
+  - 提交**成功**才清（`createTask` 失败改为 rethrow，对话框据此保留描述并提示）；明确点「取消」清；
+    点外面 / Esc 关掉**保留**（那是误关）。
+  - 打开时确实捞回了内容才显示「已恢复上次没写完的描述」+「丢弃」。
+- `drafts.ts`：`dialogOwner(kind, roomId)` + `draftsPath(owner)` —— `dlg:` 开头走 `/drafts/:owner`，
+  其余走 `/rooms/:id/drafts`。synthetic owner 的 ✎ 不落到任何房间上。
+- ask 残留自愈：`GET /api/rooms/:id/drafts` 先 `pruneAskDrafts(roomId, 还在等回答的 askId, 30 分钟)`——
+  提问从时间线上彻底消失（房间重开、条目被裁）时不再留下永远亮着的 ✎。
+- 启动时 `pruneDraftOwners('dlg:', 7 天)`：synthetic scope 不在房间级联范围内，得有自己的 TTL。
+- 房间名（`RoomName.tsx`）仍是短文本、只做内存态 —— 它是「改一个字」不是「写一段」，
+  不值得为它引入一条草稿。
 
 **P4**：多窗口实时同步（SSE draft 事件）、跨设备（无账号体系，先不做）。
 
@@ -155,11 +180,18 @@ CREATE TABLE IF NOT EXISTS drafts (
 - ✎ 准确（P1 发言框；P2 起含 ask）；
 - `./sha.sh check` + 相关 vitest 通过；
 - `grep -r localStorage pkgs.ts/ui/entity-chat/src/drafts.ts` 无命中。
+- 新建任务：描述写一半，点外面 / Esc 关掉 → 再打开还在；创建成功 / 明确取消 → 再打开是空的；
+  创建失败 → 描述仍在，对话框里有提示（P3）。
+- 删项目后，挂在它下面的 `dlg:create-task:<projectId>` 草稿一起消失（P3）。
 
 ## 12. 开放问题（默认值，可改）
 
-- 草稿 TTL：默认**不自动过期**（老 diy-app 也没有）；随删房间收敛，库不会无限长。
+- 草稿 TTL：房间草稿**不自动过期**（老 diy-app 也没有），随删房间收敛；
+  对话框草稿（synthetic scope）有自己的 7 天 TTL —— 它不随房间级联，没人清就会只增不减。
+  ask 草稿按「有结局 + 30 分钟」清。
 - ask 半填算不算 ✎：默认算（它就是未提交输入）；提问有结局就清掉，所以不会长期亮。
-- 残留：提问从时间线上彻底消失（房间重开、条目被裁）时 `ask:<id>` 会没人清。定论：接受残留（打开房间时那句 `resolved` 已能自愈绝大多数），P3 再加「打开房间时清掉 30 分钟前、时间线上已无对应提问的 ask 草稿」。
+- 残留（P3 已解）：提问从时间线上彻底消失（房间重开、条目被裁）时 `ask:<id>` 没人清 ——
+  现在打开房间就会清掉「30 分钟前、时间线上不再等回答」的 ask 草稿（`pruneAskDrafts`）。
+  只清不pending 的：多窗口下另一个窗口刚刚正在填的那条，30 分钟内不会被碰。
 - 多窗口冲突：最后写赢，P1 不提示、不合并。
 - 输入法组合期：600ms 防抖已覆盖，不做特殊处理。

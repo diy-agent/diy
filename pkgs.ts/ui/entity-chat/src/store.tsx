@@ -265,7 +265,12 @@ export const actions = {
             .catch(() => undefined);
     },
 
-    /** 新建任务：名字由调用方给（对话框），缺省「新任务 N」由 UI 算 */
+    /**
+     * 新建任务：名字由调用方给（对话框），缺省「新任务 N」由 UI 算。
+     *
+     * 失败会 rethrow（同时也写 state.error）：对话框要靠这个信号决定「描述草稿清不清」——
+     * 建任务失败还清掉草稿，等于把用户写的一大段话丢了一次。
+     */
     createTask(projectId: string, name: string, extra: Record<string, unknown> = {}): Promise<void> {
         const project = roomOf(projectId);
         const trimmed = name.trim();
@@ -282,6 +287,7 @@ export const actions = {
             .then((room) => refresh().then(() => emit({ ...state, selectedId: room.id })))
             .catch((error: unknown) => {
                 emit({ ...state, error: `新建任务失败：${messageOf(error)}` });
+                throw error;
             });
     },
 

@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { dialogOwner, useDraft } from '../drafts';
 import { DIR_SUGGESTIONS, roomTypeLabel, type Bot, type Room } from '../model';
 import { useStore } from '../store';
 import { ModelPicker } from './ModelPicker';
@@ -83,6 +84,14 @@ export function CreateProjectDialog({
     );
 }
 
+/**
+ * 新建任务。
+ *
+ * **描述进草稿，任务名不进**：描述是长文本，误关一次就白写；任务名几个字、而且默认值
+ * 是「新任务 N」这种跟着上下文变的东西 —— 存下来的旧名字反而会盖掉新的建议。
+ * 草稿 owner 是 `dlg:create-task:<projectId>`（synthetic scope）：任务还不存在，
+ * 没有实体 id 可挂。提交 / 明确取消才清，点外面或 Esc 关掉保留（那是误关）。
+ */
 export function CreateTaskDialog({
     project,
     suggestedName,
@@ -92,15 +101,31 @@ export function CreateTaskDialog({
     project: Room;
     suggestedName: string;
     onClose: () => void;
-    onSubmit: (input: { name: string; desc?: string }) => void;
+    /** 成功才 resolve：失败时草稿要留着（见 submit） */
+    onSubmit: (input: { name: string; desc?: string }) => void | Promise<void>;
 }) {
     const [name, setName] = React.useState(suggestedName);
-    const [desc, setDesc] = React.useState('');
+    const [busy, setBusy] = React.useState(false);
+    const [error, setError] = React.useState<string | null>(null);
+    const draft = useDraft(dialogOwner('create-task', project.id), 'desc');
+    const desc = draft.text;
+    /** 打开时确实捞回了上次没写完的东西（加载完才有结论，别闪一下提示） */
+    const restored = draft.loaded && desc.trim() !== '';
     const submit = (): void => {
-        if (name.trim() === '') return;
+        if (name.trim() === '' || busy) return;
         const trimmedDesc = desc.trim();
-        onSubmit({ name: name.trim(), ...(trimmedDesc === '' ? {} : { desc: trimmedDesc }) });
-        onClose();
+        setBusy(true);
+        setError(null);
+        void Promise.resolve(onSubmit({ name: name.trim(), ...(trimmedDesc === '' ? {} : { desc: trimmedDesc }) }))
+            // 建成了才清（而且只清"还是我提交那版"）：失败还清 = 把这段话白丢一次
+            .then(() => {
+                draft.clearIfMatches(desc);
+                onClose();
+            })
+            .catch(() => {
+                setError('创建失败，描述已保留');
+                setBusy(false);
+            });
     };
 
     return (
@@ -123,22 +148,45 @@ export function CreateTaskDialog({
                     <span className="mb-1 block text-xs text-muted-foreground">描述（可选）</span>
                     <textarea
                         value={desc}
-                        onChange={(event) => setDesc(event.target.value)}
+                        onChange={(event) => draft.setText(event.target.value)}
                         rows={3}
                         placeholder="要做到什么程度算完成…"
                         className="w-full resize-y rounded-lg border bg-card px-2 py-1.5 text-xs outline-none"
                     />
+                    {restored && (
+                        <span className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                            已恢复上次没写完的描述
+                            <button
+                                onClick={() => draft.clear()}
+                                className="rounded border px-1.5 py-0.5 hover:bg-muted"
+                            >
+                                丢弃
+                            </button>
+                        </span>
+                    )}
                 </label>
+                {error !== null && (
+                    <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px]">
+                        {error}
+                    </p>
+                )}
                 <p className="rounded-lg border border-dashed px-2 py-1.5 text-[11px] text-muted-foreground">
                     会自动建一个同名任务 bot；状态默认「未开始」，侧栏/头部点状态胶囊可改。
                 </p>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <button
+                    // 明确点「取消」= 不要了：草稿一起清（点外面关掉是误关，保留）
+                    onClick={() => {
+                        draft.clear();
+                        onClose();
+                    }}
+                    className="rounded-lg border px-3 py-1.5 text-sm"
+                >
                     取消
                 </button>
                 <button
-                    disabled={name.trim() === ''}
+                    disabled={name.trim() === '' || busy}
                     onClick={submit}
                     className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-40"
                 >
