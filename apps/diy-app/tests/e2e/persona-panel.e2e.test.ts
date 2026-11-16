@@ -74,7 +74,8 @@ beforeAll(async () => {
         electron,
         HOME,
         sh: new ShellTest({
-            cwd: join(__dirname, "..", "..", ".."),
+            // 仓库根（tests/e2e/ → 退四层）；退三层会落到 apps/，`./diy.sh` 就找不到了
+            cwd: join(__dirname, "..", "..", "..", ".."),
             env: { HOME, DIY_HOME: HOME },
         }),
     };
