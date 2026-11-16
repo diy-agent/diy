@@ -196,6 +196,42 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         expect(h.room.pendingAskRequests()[0]?.question).toBe('选哪个？');
     });
 
+    it('D4. 提问的成员已经不在房间：回答退给还在的成员，而不是静默丢掉', async () => {
+        const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
+        void h.room.say({ text: '动手吧', author: HUMAN });
+        await waitFor(() => h.room.pendingAsks() === 1);
+        await waitFor(() => !h.room.busy());
+
+        // A 的身份没了（bot 被删），但 spec 里还留着成员位：路由会把 A 过滤掉
+        h.store.deleteBot(BOT_A.id);
+        const askId = h.room.pendingAskRequests()[0]!.askId;
+        expect(h.room.answerAsk(askId, { values: ['a'] })).toBe(true);
+
+        // 回答得有人收：落库成用户消息 + 真有投递对象（否则用户以为模型没收到）
+        const isAnswer = (item: { type: string; author?: { role?: string }; data: { text?: string } }): boolean =>
+            item.type === 'chat' && item.author?.role === 'human' && (item.data.text ?? '').includes('回答提问');
+        await waitFor(() => h.items().some((item) => isAnswer(item)));
+        const answered = h.items().find((item) => isAnswer(item));
+        const delivery = h.room.deliveries().find((entry) => entry.messageId === answered?.id);
+        expect(delivery?.botId).toBe(BOT_B.id);
+        await waitFor(() => !h.room.busy());
+    });
+
+    it('D5. 成员被移出房间：他问过、还没答的提问跟着失效（不能回答一张永远送不到的卡片）', async () => {
+        const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
+        void h.room.say({ text: '动手吧', author: HUMAN });
+        await waitFor(() => h.room.pendingAsks() === 1);
+        await waitFor(() => !h.room.busy());
+
+        h.room.setMembers([{ botId: BOT_B.id, primary: true }]);
+
+        expect(h.room.pendingAsks()).toBe(0);
+        // 卡片要有结局（UI 显示「已失效」），不能一直挂着等一个已经不存在的成员
+        const settled = h.events.filter((event) => event.kind === 'ask.answered');
+        expect(settled.some((event) => event.kind === 'ask.answered' && event.cancelled === true)).toBe(true);
+        expect(h.room.answerAsk('ask-nope', { values: ['a'] })).toBe(false);
+    });
+
     it('E. 改名后 bot 跟着改：新结论署名新名，session 里的自称也换掉', async () => {
         const h = makeRoom({ reply: () => '收到' });
         h.room.update({ name: '改过的名字' });

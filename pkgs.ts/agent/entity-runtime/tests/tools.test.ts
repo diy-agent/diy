@@ -156,6 +156,12 @@ describe('房间工具', () => {
                 { fields: { title: '发版' }, text: '别改版本号' },
             ),
         ).toBe('- 标题：发版\n补充：别改版本号');
+
+        // 文字题：只有空白（或干脆没有 text）时要说“空”，不能拼出「回答提问「…」：」后面什么都没有
+        const textAsk = { ...request, kind: 'text' as const, options: undefined };
+        expect(describeAnswer(textAsk, { text: '   ' })).toBe('（空）');
+        expect(describeAnswer(textAsk, {})).toBe('（空）');
+        expect(describeAnswer(textAsk, { text: ' 就它了 ' })).toBe('就它了');
     });
 
     it('bash 非零退出：返回结果而不是抛错（靠退出码改命令）', async () => {

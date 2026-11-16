@@ -340,10 +340,14 @@ export class RoomActor {
 
         // 不再单独落一条 notice：回答本身就是一条消息，时间线上看得到，刷新也不丢。
         // 内容写成模型一眼能对上的样子：哪一问 + 答了什么
-        // 回答投给提问的成员；他已经不在房间了就退给主成员。
+        const message = `回答提问「${request.question}」：\n${describeAnswer(request, result.answer)}`;
+        // 回答投给提问的成员；他已经不在房间了就退给主成员，再退给第一个成员。
         // 不退的话 recipients 会被 route() 过滤成空：消息落库了、没任何成员收到、也不报错 ——
         // 用户看到的是「我答了、时间线上有这条、没人理」。
-        const target = owner !== undefined && this.member(owner) !== undefined ? owner : this.primary()?.id;
+        const target =
+            owner !== undefined && this.member(owner) !== undefined
+                ? owner
+                : (this.primary()?.id ?? this.members()[0]?.id);
         void this.say({
             text: message,
             author: this.human,
