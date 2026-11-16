@@ -5,6 +5,9 @@
       "path": "pkgs.ts/core/time"
     },
     {
+      "path": "pkgs.ts/core/actor"
+    },
+    {
       "path": "pkgs.ts/core/log"
     },
     {

@@ -1,0 +1,31 @@
+{
+    "name": "@diy-agent/actor",
+    "version": "0.1.0",
+    "private": true,
+    "description": "actor 协议内核：单实例=单写者（串行队列）+ 声明式 kind + 帧口径（执行轴/业务轴）+ 事件日志 + 多目标扇出。零 IO、不依赖 @diy-agent/rpc，传输层由调用方注入",
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "files": [
+        "src/",
+        "docs/"
+    ],
+    "dependencies": {
+        "zod": "^4.4.3"
+    },
+    "devDependencies": {
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    }
+}

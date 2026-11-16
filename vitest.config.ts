@@ -7,6 +7,7 @@ export default defineConfig({
   test: {
     projects: [
         'pkgs.ts/core/time',
+        'pkgs.ts/core/actor',
         'pkgs.ts/core/log',
         'apps/diy-app',
         'pkgs.ts/core/rpc',

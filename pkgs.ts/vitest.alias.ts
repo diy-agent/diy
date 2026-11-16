@@ -21,6 +21,7 @@ const REPO = resolve(PKGS, "..");
  */
 const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/time": { dir: "pkgs.ts/core/time", entry: "src/index.ts" },
+    "@diy-agent/actor": { dir: "pkgs.ts/core/actor", entry: "src/index.ts" },
     "@diy-agent/log": { dir: "pkgs.ts/core/log", entry: "src/index.ts" },
     "@diy-agent/session": { dir: "pkgs.ts/agent/session", entry: "src/index.ts" },
     "@diy-agent/session-store-jsonl": { dir: "pkgs.ts/agent/store-jsonl", entry: "src/index.ts" },
