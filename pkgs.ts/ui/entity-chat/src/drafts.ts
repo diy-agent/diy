@@ -129,8 +129,11 @@ export class DraftStore {
         this.retryMaxMs = options.retryMaxMs ?? 30_000;
     }
 
+    /**
+     * 返回 fetch 的**裸引用**。调用方必须 `const f = this.fetchImpl; f(...)`——
+     * 写成 `this.fetchImpl(...)` 会把 this 绑成 DraftStore，浏览器抛 Illegal invocation。
+     */
     get fetchImpl(): typeof fetch {
-        // 浏览器里 fetch 不能当方法调用（Illegal invocation）
         return this.injected ?? fetch;
     }
 
@@ -419,7 +422,10 @@ export class DraftStore {
                 : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
             ...(keepalive ? { keepalive: true } : {}),
         };
-        const res = await this.fetchImpl(`${this.base}${path}`, init);
+        // 先把 fetch 取成裸引用再调：浏览器里 `obj.fetch(...)` 的 this 是 obj 而不是 window，
+        // 会抛 `Failed to execute 'fetch' on 'Window': Illegal invocation`（Node 里看不出来）
+        const doFetch = this.fetchImpl;
+        const res = await doFetch(`${this.base}${path}`, init);
         if (!res.ok) throw new Error(`草稿保存失败：HTTP ${res.status}`);
         if (res.status === 204) return undefined as T;
         return (await res.json()) as T;
