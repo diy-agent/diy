@@ -1,12 +1,15 @@
 // end-footer.test.ts —— 「这一轮是怎么停的」在页脚怎么显示（文案 + 挂在哪一段）。
 //
-// 锁两件事：
+// 锁三件事：
 //   · 文案只认 `type`/`note`（三个 surface 共用 `endFooterOf`，不许各写一份）；
-//   · `buildTimeline` 把它挂在**该轮最后一段**上 —— 被插话切成多段时只出现一次。
+//   · `buildTimeline` 把它挂在**该轮最后一段**上 —— 被插话切成多段时只出现一次；
+//   · 结局按「轮 + 成员」取 —— 同一轮里 A 被截断、B 正常说完，两人的页脚不能是同一个
+//     （`reduce` 写的 key 就是 `turnId\0botId`，两边必须是同一个形状）。
 
 import { describe, expect, it } from 'vitest';
 
 import { endFooterOf } from '../src/end-footer';
+import { applyEvent, emptyState } from '../src/reduce';
 import { buildTimeline } from '../src/timeline';
 import type { Item, TurnEndReason } from '../src/types';
 
@@ -129,6 +132,27 @@ describe('buildTimeline 把结局挂在该轮最后一段', () => {
         );
         expect(entries[0]?.kind).toBe('error');
         expect(entries[0]?.endReason?.note).toBe('empty-output');
+    });
+
+    it('同一轮里两个 bot 各停一种：页脚各归各的，不许互相覆盖', () => {
+        // 事件走真 `reduce`（key 形状由它定），时间线只负责按同一个形状取
+        const other = { id: 'bot:b', name: 'cops', color: '#222', role: 'bot' as const };
+        const items = [chat(1, 'A 说到一半'), { ...chat(2, 'B 说完了'), author: other } as Item];
+        let state = emptyState();
+        state = applyEvent(state, {
+            kind: 'turn.end',
+            turnId: 't1',
+            botId: 'bot:a',
+            reason: { type: 'max-tokens', maxOutputTokens: 8192 },
+        });
+        state = applyEvent(state, { kind: 'turn.end', turnId: 't1', botId: 'bot:b', reason: { type: 'completed' } });
+
+        const entries = buildTimeline(items, [], {}, { endReasons: state.turnEnds });
+        const a = entries.find((entry) => entry.kind === 'assistant' && entry.author?.id === 'bot:a');
+        const b = entries.find((entry) => entry.kind === 'assistant' && entry.author?.id === 'bot:b');
+        expect(a?.endReason?.type).toBe('max-tokens');
+        expect(b?.endReason?.type).toBe('completed');
+        expect(endFooterOf(b?.endReason)).toBeUndefined();
     });
 
     it('bot 有话说时只挂在 bot 段上（notice 不重复显示结局）', () => {

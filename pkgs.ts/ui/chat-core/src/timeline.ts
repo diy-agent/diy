@@ -299,9 +299,18 @@ function attachEndReasons(entries: TimelineEntry[], endReasons?: Record<string, 
     });
 
     const explained = new Set<string>();
+    // 结局按「轮 + 成员」精确取：同一轮里 A 被截断、B 正常说完，两人的页脚不能是同一个
+    const reasonOf = (turnId: string, botId?: string): TurnEndReason | undefined => {
+        if (botId !== undefined) {
+            const exact = endReasons[`${turnId}\u0000${botId}`];
+            if (exact !== undefined) return exact;
+        }
+        // 老形状（只按 turnId 存）：兼容快照 / 外部构造的 endReasons
+        return endReasons[turnId];
+    };
     for (const [key, index] of lastBot) {
-        const turnId = key.split('\u0000')[0] ?? '';
-        const reason = endReasons[turnId];
+        const [turnId = '', botId] = key.split('\u0000');
+        const reason = reasonOf(turnId, botId);
         const entry = entries[index];
         if (reason === undefined || entry === undefined) continue;
         entries[index] = { ...entry, endReason: reason };
@@ -310,7 +319,7 @@ function attachEndReasons(entries: TimelineEntry[], endReasons?: Record<string, 
     // 正主没有（这一轮没说话）：退到该轮最后一条条目上，别让结局无处可说
     for (const [turnId, index] of lastOfTurn) {
         if (explained.has(turnId)) continue;
-        const reason = endReasons[turnId];
+        const reason = reasonOf(turnId);
         const entry = entries[index];
         if (reason === undefined || entry === undefined) continue;
         entries[index] = { ...entry, endReason: reason };
