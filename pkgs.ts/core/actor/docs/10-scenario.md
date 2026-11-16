@@ -1,4 +1,6 @@
-# 09 · 范例：三个进程跑一遍
+# 10 · 完整剧本：三个进程跑一遍
+
+> 先读 [09-hello.md](./09-hello.md)（单进程 / 两进程各一个 40 行入门）；这一页是**完整**的那一份。
 
 > 对应源码：`examples/`（`lib/serve.ts` / `lib/net-link.ts` / `lib/store-jsonl.ts` / `demo/*`）
 > 运行：`./sha.sh demo`（约 1.5 秒，起 3 个子进程后自己收拾干净）

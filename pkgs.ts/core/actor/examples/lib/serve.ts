@@ -97,7 +97,7 @@ export async function connectActor<K extends Kind>(opts: {
  * 扇出端口：`target` 形如 `unix:/tmp/x/peer-a.sock`。
  *
  * 摆放（哪个成员在哪台机器）**只在 kind 的 state 里**，这里只负责「按地址拨号」。
- * 每次拨一条新连接（示范够用；生产该做连接池，见 docs/09-example.md「留给你的作业」）。
+ * 每次拨一条新连接（示范够用；生产该做连接池，见 docs/10-scenario.md「留给你的作业」）。
  */
 export function createSocketPort(opts: { timeoutMs?: number } = {}): FanoutPort & { close(): Promise<void> } {
     return {

@@ -1,13 +1,19 @@
-# examples — 真进程范例
+# examples — 三个档次的范例
 
-`docs/09-example.md` 是这一页的正文；这里只放「怎么跑」和「文件在哪」。
+从下往上读；每一档只加一件新东西，读完一档再开下一档。
 
-```bash
-./sha.sh demo        # 起 3 个进程跑九步剧本（约 1.5 秒，自己收拾干净）
-```
+| 档       | 跑                   | 文件                                   | 讲什么                                              | 正文                                  |
+| -------- | -------------------- | -------------------------------------- | --------------------------------------------------- | ------------------------------------- |
+| 入门一   | `./sha.sh hello`     | `hello-counter.ts` + `hello-inproc.ts` | 契约怎么写；三个动词怎么用。**没有网络**            | [09-hello](../docs/09-hello.md)       |
+| 入门二   | `./sha.sh hello-net` | `hello-net.ts`                         | 同样三个动词，对面换成另一个**进程**（unix socket） | [09-hello](../docs/09-hello.md)       |
+| 完整剧本 | `./sha.sh demo`      | `demo/*` + `lib/*`                     | 3 进程 + 扇出 + `kill -9` + 崩溃重启 + 事件补历史   | [10-scenario](../docs/10-scenario.md) |
 
 ```
 examples/
+  hello-counter.ts     入门用的那一个 kind（两个入门范例共用）
+  hello-inproc.ts      入门一：单进程，约 40 行
+  hello-net.ts         入门二：两个进程，约 55 行（自己 spawn 自己当服务端）
+
   lib/net-link.ts      unix socket 链路（换行 JSON）—— 适配器，只搬字符串
   lib/store-jsonl.ts   落盘 store：一行一次提交（状态 + 游标 + 事件）
   lib/serve.ts         serveActor / connectActor / createSocketPort（对应 rpc 的 bind / use）

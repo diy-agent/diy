@@ -139,7 +139,7 @@ data                                                                            
   这样 `input: z.void()` 的声明仍然成立。
 
 判据：`tests/intent.wire.test.ts`「`data` 是空值的帧不许被丢掉」（把归一化删掉立刻红），
-真链路上的证据在 [09](./09-example.md) 的剧本里。
+真链路上的证据在 [10](./10-scenario.md) 的剧本里。
 
 ## 九、判据
 

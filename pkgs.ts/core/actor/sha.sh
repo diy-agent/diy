@@ -50,7 +50,11 @@ test-unit() { run npx vitest run "$@"; }
 ####################################################################################
 
 test-watch() { run npx vitest "$@"; }
-# 真进程剧本：3 个进程 + socket + kill -9（examples/README.md）
+# 入门一：单进程、无网络（examples/hello-inproc.ts）
+hello() { run node --import tsx examples/hello-inproc.ts; }
+# 入门二：两个进程 + socket，就这点（examples/hello-net.ts）
+hello-net() { run node --import tsx examples/hello-net.ts; }
+# 完整剧本：3 个进程 + 扇出 + kill -9 + 重启（examples/demo/scenario.ts）
 demo() { run node --import tsx examples/demo/scenario.ts; }
 # build：把 src/ 编成 lib/（Node 可直接 import 的 ESM + .d.ts，见 tsconfig.build.json）
 # 为什么必须编：Electron 从 node_modules 动态加载能力包时 Node 加载不了 `.ts`（##453 判据①）

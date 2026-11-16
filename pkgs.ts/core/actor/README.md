@@ -26,16 +26,17 @@ await client.cmd('add', { by: 1 });          // { ok: true, accepted: false, dat
 await client.query('get', {});               // { ok: true, data: { n: 1 }, watermark, stale }
 ```
 
-## 范例（真进程）
-
-同进程用例证不了传输与崩溃；`examples/` 用 3 个真进程跑一遍（unix socket + `kill -9` + 重启）：
+## 范例（三档，按顺序看）
 
 ```bash
-./sha.sh demo        # 九步剧本，约 1.5 秒
+./sha.sh hello       # 入门一：单进程、没有网络（40 行）
+./sha.sh hello-net   # 入门二：两个进程 + 一条 socket（40 行）
+./sha.sh demo        # 完整剧本：3 进程 + 扇出 + kill -9 + 重启（九步，约 1.5 秒）
 ```
 
 双端接线就两个函数：`serveActor({ kind, uri, socket, dataDir })` / `connectActor({ kind, socket })`
-（对应 rpc 的 `bind` / `use`）。走读见 [`docs/09-example.md`](./docs/09-example.md)。
+（对应 rpc 的 `bind` / `use`）。走读见 [`docs/09-hello.md`](./docs/09-hello.md)（入门）与
+[`docs/10-scenario.md`](./docs/10-scenario.md)（完整剧本）。
 
 ## 文档（真源）
 

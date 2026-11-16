@@ -1,6 +1,6 @@
 # 08 · 落地状态与下一步
 
-> 本包当前版本：`0.1.0`（内核 v0：可跑、可测、**零 IO**；真链路与落盘在 `examples/`，[09](./09-example.md)）。
+> 本包当前版本：`0.1.0`（内核 v0：可跑、可测、**零 IO**；真链路与落盘在 `examples/`，[10](./10-scenario.md)）。
 > 排序原则：**先让一个真实 kind 跑通，再补远端**。远端适配器写早了只会把协议里的空洞固化。
 
 ## 一、已经有的（v0）
@@ -15,7 +15,8 @@
 | 事件日志 + `$events` / `watch` | `src/journal.ts` + `src/client.ts` | 补历史 + 实时去重 |
 | 多目标扇出（逐项 + 回执） | `src/fanout.ts` | 3 目标 1 掉线 / 全掉线 / 空目标 |
 | 进程内链路 + 本地端口 | `src/transport.ts` / `src/local.ts` | 全部用例都走它 |
-| **真链路范例**（3 进程 + unix socket + `kill -9`） | `examples/` | `tests/examples.scenario.test.ts`（九步，[09](./09-example.md)） |
+| **入门范例**（单进程 40 行 / 两进程 40 行） | `examples/hello-*.ts` | `tests/examples.hello.test.ts`（2 条，[09](./09-hello.md)） |
+| **真链路范例**（3 进程 + unix socket + `kill -9`） | `examples/demo/` | `tests/examples.scenario.test.ts`（九步，[10](./10-scenario.md)） |
 | **落盘 store**（一行一次提交） | `examples/lib/store-jsonl.ts` | `tests/examples.store.test.ts`（5 条，含半行截断） |
 
 ## 二、下一步（按这个顺序）
@@ -36,7 +37,7 @@
 ### 刀 3 · 持久化 store（**范例已跑通**，剩下裁剪与幂等表）
 
 `examples/lib/store-jsonl.ts` 已经不是"两个文件"，而是**一行一次提交**（状态 + 游标 + 事件），
-所以不存在「append 与 save 之间崩掉」那个窗口；尾部半行在 open 时截掉（[09](./09-example.md) 六）。
+所以不存在「append 与 save 之间崩掉」那个窗口；尾部半行在 open 时截掉（[10](./10-scenario.md) 六）。
 剩下两件事：
 
 - **日志裁剪 / 快照**：现在每行都带一份完整 state，库会一直长。要按「N 次提交 + 已有快照」折叠；
