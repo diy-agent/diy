@@ -26,21 +26,26 @@ function runExample(file: string): Promise<{ code: number | null; stdout: string
 }
 
 describe('入门范例', () => {
-    it('入门一：单进程，三个动词都通，结局写死在输出里', async () => {
+    it('入门一：单进程，方法调用即得值，raw 层在它之下', async () => {
         const run = await runExample('hello-inproc.ts');
         expect(run.code, run.stderr).toBe(0);
-        expect(run.stdout).toContain('cmd   → { ok: true, accepted: false, data: { n: 2 }');
-        expect(run.stdout).toContain('watch → added { by: 2, n: 2 }');
+        expect(run.stdout).toContain('event → { by: 2, n: 2 }');
+        // 函数层：拿到的是值本身，不是 `{ ok, data }`
+        expect(run.stdout).toContain('add   → { n: 2 }');
+        expect(run.stdout).toContain('get   → { n: 2 }');
+        // 同一个 client 的 raw 层：这里才是 Outcome
+        expect(run.stdout).toContain("raw   → { ok: true, accepted: false, data: { n: 3 }, seq: 'e2' }");
         expect(run.stdout, '入门一结尾那行没了 = 脚本半路退出').toContain('入门一 ✔');
     }, 60_000);
 
-    it('入门二：两个进程一条 socket，同样的三个动词', async () => {
+    it('入门二：两个进程一条 socket，调用那几行与入门一一致', async () => {
         const run = await runExample('hello-net.ts');
         expect(run.code, run.stderr).toBe(0);
         // 服务端是子进程，它的日志也在 stdout 里 —— 顺带证明了两边都起来了
         expect(run.stdout).toContain('[server] 在听');
-        expect(run.stdout).toContain('cmd   → { ok: true, accepted: false, data: { n: 3 }');
-        expect(run.stdout).toContain('watch → added { by: 3, n: 3 }');
+        expect(run.stdout).toContain('event → { by: 3, n: 3 }');
+        expect(run.stdout).toContain('add   → { n: 3 }');
+        expect(run.stdout).toContain('get   → { n: 3 }');
         expect(run.stdout).toContain('入门二 ✔');
     }, 60_000);
 });

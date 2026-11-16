@@ -77,6 +77,9 @@ const counter = defineKind({
 })
 ```
 
+`mode` 在类型上是**字面量**（不是宽化成 `'sync' | 'deferred'`）：调用方那层据此算返回类型 ——
+`sync` 拿 output，`deferred` 只拿 `{ accepted: true, at }`（真结果在事件里）。见 [06](./06-transport.md) §四。
+
 ⚠️ **不要 `await ctx.defer(...)`**：队列是串行的，在队列内等队列 = 自锁。所以 `defer` 返回 `void`。
 后续单元失败 → 落 `$fault`，`$command.finished` 带 `ok: false`（[04](./04-runtime.md) §六）。
 
@@ -141,3 +144,18 @@ const counter = defineKind({
 3. `ctx.defer` 的调用点没有 `await`（`rg "await ctx.defer"` = 0）。
 4. 所有「可能读不到」的业务状态都在 `output` schema 里有独立取值，**没有**用 `null` 兼职。
 5. `defineKind` 里没有 `$` 开头的名字（构建期会抛）。
+
+## 九、类型是怎么推出来的（两处易碎点）
+
+调用方那层（[06](./06-transport.md) §四 `useKind`）能写 `await counter.add({ by: 2 })` 直接得 `{ n: 2 }`，
+靠的是 `Kind` 上带着**每条方法的 schema 类型**。有两处一改就会悄悄退化成「看着有类型、其实什么都没校验」：
+
+| 易碎点 | 坏掉的症状 | 现在怎么做 |
+|---|---|---|
+| `CommandDef` / `QueryDef` 存的是 **schema 本身**（`In extends z.ZodType`） | 存成 `z.ZodType<O>`（只留输出类型）时，`z.input<...>` 只能给 `unknown` —— 入参怎么写都不报错 | 声明里存 schema，入参/出参各自 `z.input` / `z.output` |
+| `KindBuilder` 的初始类型参数是 **`{}`**，不是 `Record<string, never>` | 后者带字符串索引签名 → `keyof C` 变 `string` → `CmdNames` 退化成 `string`（拼错名字不报错）、`CmdInput` 退化成 `unknown` | 起点 `{}`，链上一层层长成 `{ add: … } & { get: … }` |
+
+两处都是「编译不报错、运行时才炸」的类型退化，所以用 `@ts-expect-error` 钉在
+`tests/api.test.ts`（拼错名字、写错字段，raw 层同样校验）。**判据**：
+`npx tsc --noEmit -p pkgs.ts/core/actor` 若报「Unused '@ts-expect-error' directive」，
+说明那几行又能编译了 —— 也就是类型退化回来了。

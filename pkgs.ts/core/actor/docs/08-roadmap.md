@@ -15,6 +15,7 @@
 | 事件日志 + `$events` / `watch` | `src/journal.ts` + `src/client.ts` | 补历史 + 实时去重 |
 | 多目标扇出（逐项 + 回执） | `src/fanout.ts` | 3 目标 1 掉线 / 全掉线 / 空目标 |
 | 进程内链路 + 本地端口 | `src/transport.ts` / `src/local.ts` | 全部用例都走它 |
+| **调用方函数层**（`useKind`：契约 → 静态类型方法） | `src/api.ts` | `tests/api.test.ts`（6 条，+ 编译期锁） |
 | **入门范例**（单进程 40 行 / 两进程 40 行） | `examples/hello-*.ts` | `tests/examples.hello.test.ts`（2 条，[09](./09-hello.md)） |
 | **真链路范例**（3 进程 + unix socket + `kill -9`） | `examples/demo/` | `tests/examples.scenario.test.ts`（九步，[10](./10-scenario.md)） |
 | **落盘 store**（一行一次提交） | `examples/lib/store-jsonl.ts` | `tests/examples.store.test.ts`（5 条，含半行截断） |

@@ -10,10 +10,21 @@
 //   fanout.ts     多目标扇出：逐项结果 + 执行回执（**没有 partial**）           → docs/05-multi-target.md
 //   journal.ts    存储接口（事件日志 + 快照）+ 内存实现                          → docs/04-runtime.md
 //   transport.ts  链路接口 + 进程内实现（ws/http 适配器在别的包里）             → docs/06-transport.md
-//   client.ts     调用方 facade：Outcome 判别联合，不抛异常                      → docs/06-transport.md
+//   client.ts     调用方 raw 层：三个动词 + Outcome 判别联合，不抛异常            → docs/06-transport.md
+//   api.ts        调用方函数层：契约 → 静态类型方法，得值、失败抛                   → docs/06-transport.md
 //   local.ts      进程内接线（测试 / 文档示例跑的就是这条路径）
 
 export { ActorError, ACTOR_CODES, toActorError, type ActorCode } from './errors.js';
+
+export {
+    useKind,
+    type Accepted,
+    type BoundActor,
+    type CmdMethod,
+    type CmdValue,
+    type EventOf,
+    type QueryMethod,
+} from './api.js';
 
 export {
     ActorCodeSchema,
@@ -71,6 +82,7 @@ export {
     KindBuilder,
     type AggregateArgs,
     type CmdInput,
+    type CmdMode,
     type CmdNames,
     type CmdOutput,
     type CommandContext,
@@ -78,6 +90,7 @@ export {
     type CommandMode,
     type CommandResult,
     type Effects,
+    type EventData,
     type EventNames,
     type EventRecord,
     type FanoutSpec,

@@ -1,6 +1,7 @@
 # 06 · 链路与调用方
 
-> 对应源码：`src/transport.ts`（Link / 进程内 / frameLink）、`src/client.ts`（facade）、`src/local.ts`
+> 对应源码：`src/transport.ts`（Link / 进程内 / frameLink）、`src/client.ts`（raw 层）、
+> `src/api.ts`（函数层）、`src/local.ts`
 
 ## 一、链路只有两个方向
 
@@ -50,7 +51,50 @@ actor.attach(link);
 接 `@diy-agent/rpc` 的正确方向是「rpc 里写一个 actor 桥」，不是 actor 依赖 rpc。
 判据：`rg "@diy-agent/rpc" pkgs.ts/core/actor` = 0。
 
-## 四、调用方 facade
+## 四、调用方：两层
+
+同一份契约，两种调用视图。**业务代码用函数层，网关/转发用 raw 层**；两层共用同一个 client，
+可以混着调。
+
+| 层 | 写法 | 失败 | 典型使用者 |
+|---|---|---|---|
+| 函数层 `useKind(kind, client)` | `await counter.add({ by: 2 })` → `{ n: 2 }` | 抛 `ActorError` | UI、业务逻辑 |
+| raw 层 `client` | `await client.cmd('add', { by: 2 })` → `{ ok, data, seq }` | `ok: false` 返回值 | 网关、转发、要拿 `seq`/`watermark`/`meta` |
+
+### 函数层：调用即得值
+
+```ts
+const hello = useKind(counterKind, client);            // 契约 → 一组有类型的方法
+
+const { n } = await hello.add({ by: 2 });              // 写：直接是 output
+const now = await hello.get({});                       // 读：直接是 output
+const off = hello.$on('added', (e) => e.n);            // 实时事件（不补历史）
+for await (const e of hello.$watch({ after: cursor })) { … }   // 补历史 + 追实时
+await hello.$client.cmd('add', { by: 1 });             // 逃生口：同一个 client 的 raw 层
+```
+
+- **名字/入参/出参全部从 kind 推**：拼错名字、少传字段、把结果当别的形状用，都是编译期红
+  （`tests/api.test.ts` 用 `@ts-expect-error` 钉住这几条，靠 `tsc --noEmit` 验）。
+- **`z.object({})` / `z.void()` 入参可以不写实参**：`await hello.reset()`。
+- **长活（`mode: 'deferred'`）在类型上就拿不到 output**：它回 `{ accepted: true, at }`，
+  真结果只能从 `$command.finished` / 事件里拿 —— 这是 `CommandDef` 的 `mode` 保留字面量的原因
+  （[03](./03-kinds.md) §九）。
+- **协议侧的三样用 `$` 前缀**：`$on` / `$watch` / `$client`。`$` 是 runtime 保留前缀，
+  kind 声明不出这种名字（`assertDeclaredName` 拦着），所以永远不会和业务方法撞。
+
+两层的差别只有一条：**raw 把失败当返回值，函数层把失败当异常**。同一份代码里想两样都要，
+就按上面那样混用 —— 它们操作的是同一个 client，不是两份连接。
+
+与 rpc 的分层一一对应（`pkgs.ts/core/rpc`）：
+
+```
+defineKind(...)        ↔ defineService({ name, api })      契约
+serveActor({ kind })   ↔ service.bind(server, handlers)    服务端（不用逐条绑方法）
+useKind(kind, client)  ↔ service.use(client)               调用方（函数级，得值）
+client.cmd/query/watch ↔ 底层 binding 的原始调用            逃生口
+```
+
+### raw 层：`Outcome` 判别联合，不抛异常
 
 ```ts
 const client = createClient({ link, kind: roomKind, timeoutMs: 30_000 });
@@ -60,7 +104,6 @@ const got  = await client.query('roster', { room });                  // 读
 for await (const e of client.watch({ after: cursor, include: ['posted'] })) { … }
 ```
 
-### 返回值：`Outcome` 判别联合，不抛异常
 
 ```ts
 type QueryOutcome<T> =
@@ -144,4 +187,5 @@ await client.query('room', { room }, { consistency: 'owner' });
 1. `rg "@diy-agent/rpc|from 'node:" pkgs.ts/core/actor/src` = 0（本包不依赖 rpc、不碰 IO）。
 2. 适配器里没有业务词汇（`rg "room|member" pkgs.ts/core/actor/src/transport.ts` = 0）。
 3. 调用方的每个 `client.cmd/query` 都处理了 `ok:false`（`rg "await client\.(cmd|query)" -A3` 逐处看）。
+   业务代码不该出现在这个列表里 —— 它在函数层（`useKind`），失败是异常。
 4. 重试路径复用了 `commandId`；`watch` 的 `after` 来自持久化的 cursor，不是 `CURSOR_ZERO`。

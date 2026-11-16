@@ -3,14 +3,15 @@
 //   ./sha.sh hello-net      （等价于 node --import tsx examples/hello-net.ts）
 //
 // 父进程当调用方，起一个子进程当服务端；问完就收拾干净。
-// 和入门一的差别只在接线那 3 行：createLocalActor 换成 serveActor + connectActor。
+// 和入门一的差别只在接线那 2 行：createLocalActor 换成 serveActor + connectActor。
+// 调用那几行（`hello.add(...)` / `hello.get()` / `$on`）一个字都不用改。
 
 import { spawn } from 'node:child_process';
 import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { expect } from '../src/index.js';
+import { useKind } from '../src/index.js';
 
 import { counter } from './hello-counter.js';
 import { connectActor, serveActor, waitForSocket } from './lib/serve.js';
@@ -36,21 +37,20 @@ if (isServer) {
         await waitForSocket(socket); // 子进程起来要时间：拨通了才算好
         const client = await connectActor({ kind: counter, socket });
 
-        // 三个动词和入门一**一模一样** —— 进程边界对业务代码是透明的。
-        console.log('cmd   →', await client.cmd('add', { by: 3 }));
-        console.log('query →', JSON.stringify(await client.query('get', {})));
+        // 和入门一**一模一样**：函数层只认契约，不认链路 —— 进程边界对业务代码是透明的。
+        const hello = useKind(counter, client);
 
-        for await (const event of client.watch({ include: ['added'] })) {
-            console.log('watch →', event.name, event.data, 'seq =', event.seq);
-            break;
-        }
+        const off = hello.$on('added', (event) => console.log('event →', event));
+        console.log('add   →', await hello.add({ by: 3 }));
+        console.log('get   →', await hello.get({}));
+        off();
 
-        expect(await client.cmd('add', { by: 1 }));
+        console.log('raw   →', await client.cmd('add', { by: 1 }));
         client.close();
     } finally {
         child.kill();
         await rm(socket, { force: true });
     }
 
-    console.log('\n入门二 ✔ 同样的三个动词，这次对面是**另一个进程**');
+    console.log('\n入门二 ✔ 同样几行调用，这次对面是**另一个进程**');
 }

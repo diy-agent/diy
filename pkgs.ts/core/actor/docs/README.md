@@ -24,10 +24,10 @@
 | [03-kinds.md](./03-kinds.md) | 怎么声明一个 actor（state / commands / queries / events） | 写新 kind |
 | [04-runtime.md](./04-runtime.md) | 队列怎么跑；幂等；提交是原子的；崩溃怎么恢复 | 怀疑“状态和事件对不上”时 |
 | [05-multi-target.md](./05-multi-target.md) | 多目标扇出；为什么**没有** `partial` | 要查多个成员/多台机器时 |
-| [06-transport.md](./06-transport.md) | 链路怎么接；调用方 facade 怎么用；重试与一致性 | 接 ws/http；写 CLI/UI |
+| [06-transport.md](./06-transport.md) | 链路怎么接；调用方的两层（函数 / raw）怎么用；重试与一致性 | 接 ws/http；写 CLI/UI |
 | [07-naming-ledger.md](./07-naming-ledger.md) | 哪些字段名历史上被用歪了，随哪一刀改 | 改到 room / journal 相关代码前**必读** |
 | [08-roadmap.md](./08-roadmap.md) | 还没做什么；下一步顺序 | 排期 / 判断能不能依赖它 |
-| [09-hello.md](./09-hello.md) | **入门**：单进程 40 行、两进程 40 行，三个动词怎么用 | 第一次上手；给别人讲这套东西的开头 |
+| [09-hello.md](./09-hello.md) | **入门**：单进程 40 行、两进程 40 行，方法怎么调（函数级得值） | 第一次上手；给别人讲这套东西的开头 |
 | [10-scenario.md](./10-scenario.md) | 3 个真进程跑一遍；适配器与落盘 store 长什么样 | 接 ws/http / 写 store 实现 / 要证据 |
 
 ## 三十秒版
@@ -51,8 +51,14 @@ const counter = defineKind({
 
 const { client } = await createLocalActor({ kind: counter, uri: 'diy://local/counter' });
 
-await client.cmd('add', { by: 1 });                      // → { ok: true, accepted: false, data: { n: 1 }, seq }
-const got = await client.query('get', {});               // → { ok: true, data: { n: 1 }, watermark, stale }
+// 函数层：契约 → 有类型的方法，调用即得值（业务代码用这个）
+const hello = useKind(counter, client);
+await hello.add({ by: 1 });                              // → { n: 1 }
+const got = await hello.get({});                         // → { n: 1 }
+hello.$on('added', (e) => console.log(e.by, e.n));       // 实时事件（要补历史用 $watch）
+
+// raw 层：三个动词 + Outcome（网关 / 转发 / 要 seq·watermark·meta 时用）
+const done = await client.cmd('add', { by: 1 });          // → { ok: true, accepted: false, data: { n: 2 }, seq }
 for await (const e of client.watch({ include: ['added'] })) console.log(e.name, e.data);
 ```
 

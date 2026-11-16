@@ -160,6 +160,19 @@ export class ActorClient<K extends Kind> {
         }
     }
 
+    /**
+     * 只收**实时**事件（不补历史）。`watch` 是「补历史 + 追实时」，这个是裸订阅：
+     * 订阅之前发生的事一条都不会来 —— 要补历史就 `watch({ after })`。
+     *
+     * 上层 `useKind()` 的 `$on` 就是这条（见 api.ts）。
+     */
+    onEvent(sink: (event: EventFrame) => void): () => void {
+        this.#eventSinks.add(sink);
+        return () => {
+            this.#eventSinks.delete(sink);
+        };
+    }
+
     /** 命令状态（重开页面 / 换设备的冷补，配合 `commandId`） */
     async commandStatus(commandId: CommandId): Promise<QueryOutcome<{ status: string }>> {
         return (await this.rawQuery(COMMAND_STATUS, { commandId })) as QueryOutcome<{ status: string }>;
