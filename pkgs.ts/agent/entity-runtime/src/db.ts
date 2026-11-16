@@ -22,6 +22,13 @@ export interface SessionSnapshot {
     logSeq?: number;
 }
 
+/** 一条草稿：某个容器里某个字段尚未提交的输入（value 由消费方解释） */
+export interface Draft {
+    field: string;
+    value: unknown;
+    updatedAt: number;
+}
+
 /** 投递时的入队信息：崩溃后据此重新投递 */
 export interface DeliveryInput extends Omit<Delivery, 'updatedAt'> {
     mode?: InboxMode;
@@ -64,6 +71,42 @@ export interface Store {
     roomEntries(roomId: string): RoomEntry[];
     itemsOf(roomId: string, afterSeq?: number): Item[];
     seqOf(roomId: string): number;
+    /** 某个容器的全部草稿（composer / ask:<id> …） */
+    listDrafts(roomId: string): Draft[];
+    /** 写一条草稿；value 为空内容 = 删除（不存空行） */
+    putDraft(roomId: string, field: string, value: unknown): Draft | undefined;
+    deleteDraft(roomId: string, field: string): void;
+    /** 有草稿的容器 id（侧栏 ✎ 用，一次查完避免 N+1） */
+    draftOwners(): string[];
+    /**
+     * 清掉「已经没有结局可言」的 ask 草稿：`ask:<id>` 不在 keepAskIds 里（时间线上不再等回答）
+     * 且早于 olderThan。返回清掉的条数。
+     *
+     * 为什么要有它：提问从时间线上彻底消失（房间重开、条目被裁）时没人替它清草稿，
+     * 侧栏 ✎ 会为一个早就不存在的提问一直亮着。
+     */
+    pruneAskDrafts(roomId: string, keepAskIds: ReadonlySet<string>, olderThan: number): number;
+    /** 清掉 owner 前缀匹配、且早于 olderThan 的草稿（synthetic scope 不随房间级联删） */
+    pruneDraftOwners(ownerPrefix: string, olderThan: number): number;
+}
+
+/** LIKE 匹配用：把 % _ \ 转义掉（id 里出现也不能当通配符） */
+function likeEscape(text: string): string {
+    return text.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+/** LIKE 前缀匹配：escape + 结尾 % */
+function likePrefix(prefix: string): string {
+    return `${likeEscape(prefix)}%`;
+}
+
+/** 草稿是否已经"没有内容"：空串 / 空数组 / 全空对象都算，避免 ✎ 永远亮着 */
+function isEmptyDraft(value: unknown): boolean {
+    if (value === null || value === undefined) return true;
+    if (typeof value === 'string') return value.trim() === '';
+    if (Array.isArray(value)) return value.every((item) => isEmptyDraft(item));
+    if (typeof value === 'object') return Object.values(value as Record<string, unknown>).every((item) => isEmptyDraft(item));
+    return false;
 }
 
 export function openStore(file: string): Store {
@@ -129,6 +172,13 @@ export function openStore(file: string): Store {
             note TEXT,
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (entity_id, message_id, bot_id)
+        );
+        CREATE TABLE IF NOT EXISTS drafts (
+            owner_id TEXT NOT NULL,
+            field TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (owner_id, field)
         );
     `);
 
@@ -257,6 +307,10 @@ export function openStore(file: string): Store {
             db.prepare('DELETE FROM session_state WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM deliveries WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
+            db.prepare('DELETE FROM drafts WHERE owner_id = ?').run(roomId);
+            // 对话框草稿（synthetic scope，见 docs/drafts-design.md）挂在房间后面：
+            // `dlg:<用途>:<roomId>`。删房间时一起清，不等 TTL
+            db.prepare("DELETE FROM drafts WHERE owner_id LIKE ? ESCAPE '\\'").run(`dlg:%:${likeEscape(roomId)}`);
             db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
         },
         deleteBot(botId: string): void {
@@ -432,6 +486,71 @@ export function openStore(file: string): Store {
                 | { max: number | null }
                 | undefined;
             return row?.max ?? 0;
+        },
+        listDrafts(roomId: string): Draft[] {
+            const rows = db
+                .prepare('SELECT field, value, updated_at FROM drafts WHERE owner_id = ? ORDER BY updated_at ASC')
+                .all(roomId) as Array<Record<string, unknown>>;
+            const drafts: Draft[] = [];
+            for (const row of rows) {
+                let value: unknown;
+                try {
+                    value = JSON.parse(String(row['value']));
+                } catch {
+                    continue; // 坏行不该让整个房间的草稿都读不出来
+                }
+                if (isEmptyDraft(value)) continue;
+                drafts.push({ field: String(row['field']), value, updatedAt: Number(row['updated_at']) });
+            }
+            return drafts;
+        },
+        putDraft(roomId: string, field: string, value: unknown): Draft | undefined {
+            if (isEmptyDraft(value)) {
+                db.prepare('DELETE FROM drafts WHERE owner_id = ? AND field = ?').run(roomId, field);
+                return undefined;
+            }
+            const updatedAt = Date.now();
+            const serialized = JSON.stringify(value);
+            db.prepare(
+                'INSERT INTO drafts (owner_id, field, value, updated_at) VALUES (?,?,?,?) ' +
+                    'ON CONFLICT(owner_id, field) DO UPDATE SET value=?, updated_at=?',
+            ).run(roomId, field, serialized, updatedAt, serialized, updatedAt);
+            return { field, value, updatedAt };
+        },
+        deleteDraft(roomId: string, field: string): void {
+            db.prepare('DELETE FROM drafts WHERE owner_id = ? AND field = ?').run(roomId, field);
+        },
+        draftOwners(): string[] {
+            const rows = db.prepare('SELECT owner_id, value FROM drafts').all() as Array<Record<string, unknown>>;
+            const owners = new Set<string>();
+            for (const row of rows) {
+                try {
+                    if (!isEmptyDraft(JSON.parse(String(row['value'])))) owners.add(String(row['owner_id']));
+                } catch {
+                    /* 坏行不算"有草稿" */
+                }
+            }
+            return [...owners];
+        },
+        pruneAskDrafts(roomId: string, keepAskIds: ReadonlySet<string>, olderThan: number): number {
+            const stale = db
+                .prepare("SELECT field FROM drafts WHERE owner_id = ? AND field LIKE 'ask:%' AND updated_at < ?")
+                .all(roomId, olderThan) as Array<Record<string, unknown>>;
+            const remove = db.prepare('DELETE FROM drafts WHERE owner_id = ? AND field = ?');
+            let count = 0;
+            for (const row of stale) {
+                const field = String(row['field']);
+                if (keepAskIds.has(field.slice('ask:'.length))) continue;
+                remove.run(roomId, field);
+                count += 1;
+            }
+            return count;
+        },
+        pruneDraftOwners(ownerPrefix: string, olderThan: number): number {
+            const result = db
+                .prepare("DELETE FROM drafts WHERE owner_id LIKE ? ESCAPE '\\' AND updated_at < ?")
+                .run(likePrefix(ownerPrefix), olderThan);
+            return Number(result.changes);
         },
     };
 }

@@ -19,6 +19,7 @@ import { Markdown } from '../../components/Markdown';
 import { EndFooterLine } from '../../components/EndFooterLine';
 import { RunningIndicator } from '../../components/RunningIndicator';
 import { useWindowed } from '../../components/useWindowed';
+import { useDraft } from '../../drafts';
 import { conversationOf, useStore } from '../../store';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
@@ -225,20 +226,39 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
     );
 }
 
-function Composer({ conversation, running }: { conversation: ReturnType<typeof conversationOf>; running: boolean }) {
-    const [draft, setDraft] = React.useState('');
+function Composer({
+    conversation,
+    roomId,
+    running,
+}: {
+    conversation: ReturnType<typeof conversationOf>;
+    roomId: string;
+    running: boolean;
+}) {
+    const draft = useDraft(roomId, 'composer');
+    const [submitting, setSubmitting] = React.useState(false);
     const send = () => {
-        const text = draft.trim();
-        if (text === '') return;
-        conversation.send(text);
-        setDraft('');
+        const text = draft.text.trim();
+        if (text === '' || submitting) return;
+        setSubmitting(true);
+        // 发送成功才清草稿；失败保留输入框里的字
+        void conversation
+            .send(text)
+            .then(() => draft.clearIfMatches(text))
+            .catch(() => undefined)
+            .finally(() => setSubmitting(false));
     };
     return (
         <div className="border-t bg-background px-4 py-3">
+            {draft.status === 'error' && (
+                <div className="pb-1 text-[10px] text-destructive">
+                    草稿未保存：{draft.error ?? '网络错误'}（重试中，内容还在）
+                </div>
+            )}
             <div className="flex items-end gap-2 rounded-xl border bg-card px-3 py-2">
                 <textarea
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
+                    value={draft.text}
+                    onChange={(event) => draft.setText(event.target.value)}
                     onKeyDown={(event) => {
                         // IME 组字中的 Enter 是上屏，不是发送
                         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -261,7 +281,7 @@ function Composer({ conversation, running }: { conversation: ReturnType<typeof c
                 ) : (
                     <button
                         onClick={send}
-                        disabled={draft.trim() === ''}
+                        disabled={draft.text.trim() === '' || submitting}
                         title="发送"
                         className="rounded-lg p-1.5 hover:bg-muted disabled:opacity-40"
                     >
@@ -341,7 +361,7 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
                     </>
                 )}
             </div>
-            <Composer conversation={conversation} running={state.running} />
+            <Composer conversation={conversation} roomId={targetId} running={state.running} />
         </div>
     );
 }

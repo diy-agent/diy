@@ -1,6 +1,18 @@
-import { Folder, ListPlus, ListTodo, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
+import {
+    Folder,
+    ListPlus,
+    ListTodo,
+    PanelLeftClose,
+    PanelLeftOpen,
+    Pencil,
+    PenLine,
+    Plus,
+    Settings,
+    Trash2,
+} from 'lucide-react';
 import * as React from 'react';
 
+import { useHasDraft } from '../drafts';
 import { primaryBotOf, type Room } from '../model';
 import { actions, useStore } from '../store';
 import { EditableName, StatusChip } from './RoomName';
@@ -48,6 +60,7 @@ function RoomRow({
     onRequestDelete: (room: Room) => void;
 }) {
     const state = useStore();
+    const hasDraft = useHasDraft(room.id);
     const [renaming, setRenaming] = React.useState(false);
     const primary = primaryBotOf(room, state.bots);
     const isProject = room.type === 'project';
@@ -63,6 +76,13 @@ function RoomRow({
                 }`}
             >
                 <Icon className={`size-4 ${isProject ? 'text-sky-400' : 'text-emerald-400'}`} />
+                {hasDraft && (
+                    <span
+                        title="有未提交的草稿"
+                        aria-label="有未提交的草稿"
+                        className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-400"
+                    />
+                )}
                 {room.type === 'task' && <StatusChip room={room} compact className="absolute bottom-0.5 right-1" />}
             </button>
         );
@@ -84,6 +104,12 @@ function RoomRow({
                 onClick={() => actions.select(room.id)}
                 onCommit={(next) => void actions.renameRoom(room.id, next)}
             />
+
+            {hasDraft && (
+                <span title="有未提交的草稿" aria-label="有未提交的草稿" className="shrink-0 text-amber-500">
+                    <PenLine className="size-3" />
+                </span>
+            )}
 
             <StatusChip room={room} />
 

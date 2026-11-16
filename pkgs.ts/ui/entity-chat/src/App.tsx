@@ -234,9 +234,12 @@ export function App() {
                         state.rooms.filter((item) => item.data['projectId'] === dialog.projectId).length + 1
                     }`}
                     onClose={() => setDialog(null)}
-                    onSubmit={(input) => void actions.createTask(dialog.projectId, input.name, {
-                        ...(input.desc === undefined ? {} : { desc: input.desc }),
-                    })}
+                    // 不 void：对话框要等"建成了"才清描述草稿（失败留在对话框里）
+                    onSubmit={(input) =>
+                        actions.createTask(dialog.projectId, input.name, {
+                            ...(input.desc === undefined ? {} : { desc: input.desc }),
+                        })
+                    }
                 />
             )}
             {dialog?.kind === 'delete' && deleteTarget !== undefined && (

@@ -6,6 +6,7 @@ import { ConversationStore, type Bot, type CompactOutcome, type Room, type Sessi
 import { HttpChatClient } from '@diy-agent/chat-transport-http';
 import * as React from 'react';
 
+import { drafts } from './drafts';
 import type { TaskStatus } from './model';
 
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
@@ -94,7 +95,12 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function refresh(): Promise<void> {
-    const [rooms, bots] = await Promise.all([jsonFetch<Room[]>('/rooms'), jsonFetch<Bot[]>('/bots')]);
+    const [rooms, bots] = await Promise.all([
+        jsonFetch<Array<Room & { hasDraft?: boolean }>>('/rooms'),
+        jsonFetch<Bot[]>('/bots'),
+    ]);
+    // 侧栏 ✎ 的初始值：不用打开过房间；本端改过的 owner 由 drafts 自己说了算
+    drafts.seed(rooms);
     const selectedId = state.selectedId === '' ? (rooms[0]?.id ?? '') : state.selectedId;
     emit({
         ...state,
@@ -169,6 +175,8 @@ export const actions = {
     },
 
     select(id: string): void {
+        // 切走前把输入框里还没写出去的字立即落盘（防抖计时器可能还差几百毫秒）
+        void drafts.flush(state.selectedId === '' ? undefined : state.selectedId);
         // 只让当前房间挂常驻 SSE，其余释放（否则看过的房间各留一条，永远不断）
         for (const [roomId, store] of conversations) {
             if (roomId !== id) store.dispose();
@@ -257,7 +265,12 @@ export const actions = {
             .catch(() => undefined);
     },
 
-    /** 新建任务：名字由调用方给（对话框），缺省「新任务 N」由 UI 算 */
+    /**
+     * 新建任务：名字由调用方给（对话框），缺省「新任务 N」由 UI 算。
+     *
+     * 失败会 rethrow（同时也写 state.error）：对话框要靠这个信号决定「描述草稿清不清」——
+     * 建任务失败还清掉草稿，等于把用户写的一大段话丢了一次。
+     */
     createTask(projectId: string, name: string, extra: Record<string, unknown> = {}): Promise<void> {
         const project = roomOf(projectId);
         const trimmed = name.trim();
@@ -274,6 +287,7 @@ export const actions = {
             .then((room) => refresh().then(() => emit({ ...state, selectedId: room.id })))
             .catch((error: unknown) => {
                 emit({ ...state, error: `新建任务失败：${messageOf(error)}` });
+                throw error;
             });
     },
 

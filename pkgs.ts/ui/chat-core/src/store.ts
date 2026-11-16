@@ -15,7 +15,8 @@ export interface ConversationModel {
     get(): ConversationState;
     subscribe(listener: () => void): () => void;
     readonly capabilities: Capabilities;
-    send(text: string): void;
+    /** 发送一条消息。resolve = 后端已受理（首条事件/建流成功），UI 据此清草稿；reject = 压根没发出去 */
+    send(text: string): Promise<void>;
     cancel(): void;
     /** 只停某个成员（开会时用） */
     stop(botId?: string): void;
@@ -95,33 +96,50 @@ export class ConversationStore implements ConversationModel {
             .catch((error: unknown) => this.emit({ ...this.state, error: messageOf(error) }));
     };
 
-    private post = (command: Command): void => {
-        this.emit({ ...this.state, error: undefined, running: true });
-        void this.client
-            .post(this.entityId, command, (event) => this.apply(event))
-            // 不在这里置 running=false：谁在说话由服务端的 running 事件决定，
-            // 否则多 bot 并行时，先结束的那个会把还在说的那个一起标成空闲
-            .catch((error: unknown) => {
-                const message = messageOf(error);
-                // 用户点"停止"会 abort 本地流，这不是故障，别弹错误条
-                if (/abort/i.test(message)) return;
-                this.emit({ ...this.state, error: message });
-            });
-    };
+    private post = (command: Command): Promise<void> =>
+        new Promise((resolve, reject) => {
+            this.emit({ ...this.state, error: undefined, running: true });
+            let accepted = false;
+            /** 建流成功 / 收到首条事件 / 本地主动 abort（消息多半已到后端）都算受理 */
+            const accept = (): void => {
+                if (accepted) return;
+                accepted = true;
+                resolve();
+            };
+            this.client
+                .post(this.entityId, command, (event) => {
+                    accept();
+                    this.apply(event);
+                })
+                // 不在这里置 running=false：谁在说话由服务端的 running 事件决定，
+                // 否则多 bot 并行时，先结束的那个会把还在说的那个一起标成空闲
+                .catch((error: unknown) => {
+                    const message = messageOf(error);
+                    // 用户点"停止" / 插话时收掉旧流会 abort，这不是故障，别弹错误条，
+                    // 也别让 UI 把已经发出去的那句恢复成草稿
+                    if (/abort/i.test(message)) {
+                        accept();
+                        return;
+                    }
+                    this.emit({ ...this.state, error: message });
+                    if (!accepted) reject(new Error(message));
+                })
+                .then(accept);
+        });
 
     /** 运行中也允许发：后端决定它在哪个边界生效（next-step 默认） */
-    send = (text: string): void => {
+    send = (text: string): Promise<void> => {
         const trimmed = text.trim();
-        if (trimmed === '') return;
-        this.post({ kind: 'send', text: trimmed });
+        if (trimmed === '') return Promise.resolve();
+        return this.post({ kind: 'send', text: trimmed });
     };
 
     cancel = (): void => {
-        this.post({ kind: 'cancel' });
+        void this.post({ kind: 'cancel' }).catch(() => undefined);
     };
 
     /** 只停某个成员（开会时用）；不传 = 停整个房间 */
     stop = (botId?: string): void => {
-        this.post({ kind: 'cancel', ...(botId === undefined ? {} : { botId }) });
+        void this.post({ kind: 'cancel', ...(botId === undefined ? {} : { botId }) }).catch(() => undefined);
     };
 }

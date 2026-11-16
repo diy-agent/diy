@@ -28,6 +28,7 @@ import { RunningIndicator } from '../../components/RunningIndicator';
 import * as React from 'react';
 
 import { useMentionCandidates } from '../../mentions';
+import { useDraft } from '../../drafts';
 import { conversationOf, useStore } from '../../store';
 
 type AskPart = Extract<TimelinePart, { kind: 'ask' }>;
@@ -236,28 +237,45 @@ const MessageList = React.memo(function MessageList({ entries, roomId }: { entri
 /** 输入框独立成组件：draft 状态关在里面，敲字只重渲染输入框本身 */
 function AstryxComposer({
     conversation,
+    roomId,
     triggers,
     placeholder,
 }: {
     conversation: ReturnType<typeof conversationOf>;
+    roomId: string;
     triggers: React.ComponentProps<typeof ChatComposerInput>['triggers'];
     placeholder: string;
 }) {
-    const [draft, setDraft] = React.useState('');
+    const draft = useDraft(roomId, 'composer');
+    const [submitting, setSubmitting] = React.useState(false);
     return (
-        <ChatComposer
-            value={draft}
-            onChange={setDraft}
-            placeholder={placeholder}
-            onSubmit={(value) => {
-                conversation.send(value);
-                setDraft('');
-            }}
-            // 运行中也保持"发送"态：插话是正常操作，停止在 SpeakingBar 上
-            onStop={() => conversation.cancel()}
-            isStopShown={false}
-            input={<ChatComposerInput triggers={triggers} label="Message input" placeholder={placeholder} />}
-        />
+        <>
+            {draft.status === 'error' && (
+                <div style={{ fontSize: 11, opacity: 0.8, paddingBottom: 4 }}>
+                    草稿未保存：{draft.error ?? '网络错误'}（重试中，内容还在）
+                </div>
+            )}
+            <ChatComposer
+                value={draft.text}
+                onChange={draft.setText}
+                placeholder={placeholder}
+                onSubmit={(value) => {
+                    const text = value.trim();
+                    if (text === '' || submitting) return;
+                    setSubmitting(true);
+                    // 发送成功才清草稿；失败保留输入框里的字（错误条由 store 显示）
+                    void conversation
+                        .send(text)
+                        .then(() => draft.clearIfMatches(text))
+                        .catch(() => undefined)
+                        .finally(() => setSubmitting(false));
+                }}
+                // 运行中也保持"发送"态：插话是正常操作，停止在 SpeakingBar 上
+                onStop={() => conversation.cancel()}
+                isStopShown={false}
+                input={<ChatComposerInput triggers={triggers} label="Message input" placeholder={placeholder} />}
+            />
+        </>
     );
 }
 
@@ -369,6 +387,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                     )}
                     <AstryxComposer
                         conversation={conversation}
+                        roomId={targetId}
                         triggers={triggers}
                         placeholder="和这个实体对话…（@ 选 bot）"
                     />

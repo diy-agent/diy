@@ -74,3 +74,91 @@ describe('删除容器', () => {
         expect(store.listBots().map((bot) => bot.id)).toEqual(['b2']);
     });
 });
+
+describe('草稿', () => {
+    it('putDraft → listDrafts 原样读回，重复写是覆盖不是新增', () => {
+        const store = openStore(':memory:');
+        store.putDraft(room.id, 'composer', { text: '打到一半' });
+        store.putDraft(room.id, 'composer', { text: '改了一版' });
+        expect(store.listDrafts(room.id)).toEqual([
+            { field: 'composer', value: { text: '改了一版' }, updatedAt: expect.any(Number) },
+        ]);
+    });
+
+    it('空内容 = 删除；显式 deleteDraft 也删', () => {
+        const store = openStore(':memory:');
+        store.putDraft(room.id, 'composer', { text: 'x' });
+        store.putDraft(room.id, 'composer', { text: '   ' });
+        expect(store.listDrafts(room.id)).toEqual([]);
+
+        store.putDraft(room.id, 'composer', { text: 'y' });
+        store.deleteDraft(room.id, 'composer');
+        expect(store.listDrafts(room.id)).toEqual([]);
+    });
+
+    it('draftOwners 只列真正有内容的容器', () => {
+        const store = openStore(':memory:');
+        store.putDraft('proj:a', 'composer', { text: '没发出去' });
+        store.putDraft('proj:b', 'composer', { text: '' });
+        expect(store.draftOwners()).toEqual(['proj:a']);
+    });
+
+    it('deleteRoom 连带清掉草稿', () => {
+        const store = openStore(':memory:');
+        store.saveRoom(room);
+        store.putDraft(room.id, 'composer', { text: 'x' });
+        store.deleteRoom(room.id);
+        expect(store.listDrafts(room.id)).toEqual([]);
+        expect(store.draftOwners()).toEqual([]);
+    });
+
+    it('pruneAskDrafts 只清「时间线上不再等回答」的旧 ask 草稿', () => {
+        const store = openStore(':memory:');
+        const old = Date.now() - 60 * 60 * 1000;
+        const fresh = Date.now();
+        store.putDraft(room.id, 'ask:gone', { selected: ['a'] });
+        store.putDraft(room.id, 'ask:pending', { selected: ['b'] });
+        store.putDraft(room.id, 'ask:recent', { selected: ['c'] });
+        store.putDraft(room.id, 'composer', { text: '别动我' });
+        // 手动回拨时间：真实场景里是"很久没动过"
+        store.db.prepare('UPDATE drafts SET updated_at = ? WHERE field = ?').run(old, 'ask:gone');
+        store.db.prepare('UPDATE drafts SET updated_at = ? WHERE field = ?').run(old, 'ask:pending');
+
+        // 只保留还在等回答的 ask:pending；ask:recent 太新，这轮不动
+        const removed = store.pruneAskDrafts(room.id, new Set(['pending']), Date.now() - 30 * 60 * 1000);
+        expect(removed).toBe(1);
+        expect(store.listDrafts(room.id).map((draft) => draft.field).sort()).toEqual(['ask:pending', 'ask:recent', 'composer']);
+        expect(fresh).toBeGreaterThan(0);
+    });
+
+    it('pruneDraftOwners 按前缀 + 时间清 synthetic scope（不碰真实房间）', () => {
+        const store = openStore(':memory:');
+        const old = Date.now() - 8 * 24 * 60 * 60 * 1000;
+        store.putDraft('dlg:create-task:proj:diy', 'desc', { text: '忘了关的对话框' });
+        store.putDraft('dlg:create-task:proj:cops', 'desc', { text: '刚写的' });
+        store.putDraft(room.id, 'composer', { text: '房间草稿' });
+        store.db.prepare("UPDATE drafts SET updated_at = ? WHERE owner_id = 'dlg:create-task:proj:diy'").run(old);
+
+        const removed = store.pruneDraftOwners('dlg:', Date.now() - 7 * 24 * 60 * 60 * 1000);
+        expect(removed).toBe(1);
+        expect(store.draftOwners()).toEqual(['dlg:create-task:proj:cops', room.id]);
+    });
+
+    it('deleteRoom 连带清掉挂在这个房间后面的对话框草稿', () => {
+        const store = openStore(':memory:');
+        store.saveRoom(room);
+        store.putDraft('dlg:create-task:' + room.id, 'desc', { text: '写了一半' });
+        store.putDraft('dlg:create-task:proj:other', 'desc', { text: '别人的' });
+        store.deleteRoom(room.id);
+        expect(store.draftOwners()).toEqual(['dlg:create-task:proj:other']);
+    });
+
+    it('坏 JSON 行跳过，不影响同房间其他草稿', () => {
+        const store = openStore(':memory:');
+        store.putDraft(room.id, 'composer', { text: '好行' });
+        store.db
+            .prepare('INSERT INTO drafts (owner_id, field, value, updated_at) VALUES (?,?,?,?)')
+            .run(room.id, 'ask:bad', '{不是 json', Date.now());
+        expect(store.listDrafts(room.id).map((draft) => draft.field)).toEqual(['composer']);
+    });
+});
