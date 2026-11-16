@@ -194,7 +194,7 @@ function seed(): void {
             id: 'task:t-001',
             type: 'task',
             name: '任务树与多会话',
-            data: { dir: '~/git/diy/diy', projectId: 'proj:diy' },
+            data: { dir: '~/git/diy/diy', projectId: 'proj:diy', status: 'doing' },
             members: [{ botId: byName('任务树与多会话')?.id ?? bots[2]!.id, primary: true }],
             modelKey: DEFAULT_MODEL,
         },
@@ -350,7 +350,8 @@ const server = createServer((req, res) => {
                         id,
                         type,
                         name,
-                        data: body.data ?? {},
+                        // 任务默认「未开始」：侧栏/头部要有个能看见、能改的状态，缺省不该是空白
+                        data: type === 'task' ? { status: 'todo', ...body.data } : (body.data ?? {}),
                         members: [{ botId: bot.id, primary: true }],
                         modelKey,
                     };
@@ -362,18 +363,61 @@ const server = createServer((req, res) => {
             return;
         }
 
-        // PATCH /api/rooms/:id —— 改名 / 改房间模型
+        // PATCH /api/rooms/:id —— 改名 / 改房间模型 / 改 data（任务状态、描述…）
         if (req.method === 'PATCH' && parts[0] === 'api' && parts[1] === 'rooms' && parts.length === 3) {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            onBody<{ name?: string; modelKey?: string }>(req, res, (body) => {
+            onBody<{ name?: string; modelKey?: string; data?: Record<string, unknown> }>(req, res, (body) => {
                 actor.update({
                     ...(body.name === undefined ? {} : { name: body.name }),
                     ...(body.modelKey === undefined ? {} : { modelKey: body.modelKey }),
+                    ...(body.data === undefined ? {} : { data: body.data }),
                 });
                 json(res, 200, actor.spec);
             });
+            return;
+        }
+
+        /**
+         * DELETE /api/rooms/:id —— 删容器。
+         *
+         * 项目连带它的任务一起删：侧栏按 projectId 分组，留下任务就是一堆「未归属」孤儿
+         * （数据还在、名字还占着，用户以为自己没删干净）。
+         * 专属 bot（homeRoomId 在这个容器里、删完不再被任何容器引用）一并清掉 ——
+         * 不清的话 AddMemberDialog 里会越积越多出幽灵 bot。
+         */
+        if (req.method === 'DELETE' && parts[0] === 'api' && parts[1] === 'rooms' && parts.length === 3) {
+            const id = decodeURIComponent(parts[2] ?? '');
+            const actor = roomOf(id);
+            if (actor === undefined) return json(res, 404, { error: 'room not found' });
+            const victims =
+                actor.spec.type === 'project'
+                    ? [
+                          id,
+                          ...[...rooms.values()]
+                              .filter((entry) => entry.spec.data['projectId'] === id)
+                              .map((entry) => entry.spec.id),
+                      ]
+                    : [id];
+            for (const roomId of victims) {
+                rooms.get(roomId)?.stop();
+                rooms.delete(roomId);
+                store.deleteRoom(roomId);
+                // 订阅者（UI 常驻 SSE / 正在跑的 chat 流）收尾，不然前端挂着一条已不存在的房间的流
+                const set = subscribers.get(roomId);
+                for (const entry of [...(set ?? [])]) {
+                    sse(entry.res, { kind: 'done' });
+                    entry.res.end();
+                }
+                subscribers.delete(roomId);
+            }
+            const removed = new Set(victims);
+            const referenced = new Set([...rooms.values()].flatMap((entry) => entry.spec.members.map((m) => m.botId)));
+            for (const bot of store.listBots()) {
+                if (removed.has(bot.homeRoomId) && !referenced.has(bot.id)) store.deleteBot(bot.id);
+            }
+            json(res, 200, { id, deleted: victims });
             return;
         }
 
@@ -440,7 +484,7 @@ const server = createServer((req, res) => {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            json(res, 200, { asks: actor.pendingAskRequests() });
+            json(res, 200, { asks: actor.pendingAskRequests(), answered: actor.answeredAskRequests() });
             return;
         }
 
