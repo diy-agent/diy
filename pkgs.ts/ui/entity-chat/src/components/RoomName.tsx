@@ -5,9 +5,10 @@
 //  用户报的就是「项目/任务无法修改名称」）。
 // 行为统一在这里：回车提交、Esc 取消、失焦提交，提交失败由 store 亮错误。
 
+import { CircleCheck, CircleDot } from 'lucide-react';
 import * as React from 'react';
 
-import { nextTaskStatus, statusMeta, taskStatusOf, type Room } from '../model';
+import { statusMeta, taskStatusOf, toggleTaskStatus, type Room } from '../model';
 import { actions } from '../store';
 
 /**
@@ -132,7 +133,69 @@ export function EditableName({
     );
 }
 
-/** 任务状态胶囊：点一下按 未开始 → 进行中 → 已完成 循环 */
+/**
+ * 状态图标：**GitHub issue 的 open / closed 语言**（用户：状态改成一个 title 前的图标）。
+ *
+ * 两态两个形状：空心圆点 = open（还在手上，绿）→ 打勾圆 = closed（收工，紫）。
+ * 颜色 + 形状缺一不可 —— 只靠颜色，色弱用户读不出区别。
+ *
+ * 侧栏行里原来的「彩色圆点 + 文字胶囊 + 默认应答色点」三件套占满了行尾，
+ * 用户报「信息太多」。图标只占 14px，且**放到标题前面**（GitHub 列表的读法：状态在左）。
+ *
+ * 形状与颜色都只在这里定义：侧栏行（StatusIcon）与头部胶囊（StatusChip）共用，
+ * 不会出现「同一个状态两处画法不同」。颜色取值出自 `model.ts` 的 TASK_STATUSES。
+ */
+const STATUS_ICON = {
+    open: CircleDot,
+    closed: CircleCheck,
+} as const;
+
+/** 只画形状（无交互）：收起态 rail 的行本身就是一个 button，里面不能再嵌 button */
+export function StatusGlyph({
+    room,
+    className = '',
+    iconClass = 'size-4',
+}: {
+    room: Room;
+    className?: string;
+    iconClass?: string;
+}) {
+    if (room.type !== 'task') return null;
+    const status = taskStatusOf(room);
+    const meta = statusMeta(status);
+    const Icon = STATUS_ICON[status];
+    return (
+        <span className={`inline-flex shrink-0 ${meta.text} ${className}`} title={`状态：${meta.label}`}>
+            <Icon className={iconClass} strokeWidth={2.4} />
+        </span>
+    );
+}
+
+/** 只画图标（不画文字）：侧栏行展开态用。点一下 open ↔ closed */
+export function StatusIcon({ room, className = '' }: { room: Room; className?: string }) {
+    if (room.type !== 'task') return null;
+    const status = taskStatusOf(room);
+    const meta = statusMeta(status);
+    const next = toggleTaskStatus(status);
+    return (
+        <button
+            onClick={(event) => {
+                event.stopPropagation();
+                void actions.setRoomStatus(room.id, next);
+            }}
+            title={`${meta.label}（点击${next === 'closed' ? '关闭，并从项目树收起' : '重新打开'}）`}
+            aria-label={`状态：${meta.label}（点击切换）`}
+            className={`shrink-0 rounded p-0.5 hover:bg-muted ${className}`}
+        >
+            <StatusGlyph room={room} iconClass="size-3.5" />
+        </button>
+    );
+}
+
+/**
+ * 图标 + 文字胶囊（头部标题用：那里空间够，文字帮得上忙）。
+ * `compact` = 只要图标，与 StatusIcon 同一个形状（收起态 rail 装不下文字）。
+ */
 export function StatusChip({
     room,
     compact = false,
@@ -145,20 +208,22 @@ export function StatusChip({
     if (room.type !== 'task') return null;
     const status = taskStatusOf(room);
     const meta = statusMeta(status);
+    const Icon = STATUS_ICON[status];
     return (
         <button
             onClick={(event) => {
                 event.stopPropagation();
-                void actions.setRoomStatus(room.id, nextTaskStatus(status));
+                void actions.setRoomStatus(room.id, toggleTaskStatus(status));
             }}
-            title={`状态：${meta.label}（点击切换）`}
+            title={`${meta.label}（点击${toggleTaskStatus(status) === 'closed' ? '关闭' : '重新打开'}）`}
+            aria-label={`状态：${meta.label}（点击切换）`}
             className={
                 compact
-                    ? `shrink-0 rounded p-0.5 hover:bg-muted ${className}`
+                    ? `shrink-0 rounded p-0.5 hover:bg-muted ${meta.text} ${className}`
                     : `flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] hover:bg-muted ${className}`
             }
         >
-            <span className={`size-1.5 rounded-full ${meta.dot}`} />
+            <Icon className={compact ? 'size-3.5' : 'size-3'} strokeWidth={2.4} />
             {!compact && <span className={meta.text}>{meta.label}</span>}
         </button>
     );

@@ -198,7 +198,7 @@ function seed(): void {
             id: 'task:t-001',
             type: 'task',
             name: '任务树与多会话',
-            data: { dir: '~/git/diy/diy', projectId: 'proj:diy', status: 'doing' },
+            data: { dir: '~/git/diy/diy', projectId: 'proj:diy', status: 'open' },
             members: [{ botId: byName('任务树与多会话')?.id ?? bots[2]!.id, primary: true }],
             modelKey: DEFAULT_MODEL,
         },
@@ -373,8 +373,8 @@ const server = createServer((req, res) => {
                         id,
                         type,
                         name,
-                        // 任务默认「未开始」：侧栏/头部要有个能看见、能改的状态，缺省不该是空白
-                        data: type === 'task' ? { status: 'todo', ...body.data } : (body.data ?? {}),
+                        // 任务默认 open（GitHub 语义：新开的就是 open，两态）；缺省不该是空白
+                        data: type === 'task' ? { status: 'open', ...body.data } : (body.data ?? {}),
                         members: [{ botId: bot.id, primary: true }],
                         modelKey,
                     };

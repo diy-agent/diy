@@ -210,11 +210,18 @@ export const actions = {
             });
     },
 
-    /** 任务状态（room.data.status）：只改这一个键，别的 data 不动 */
+    /**
+     * 任务状态（room.data.status）：只改这一个键，别的 data 不动。
+     *
+     * 关闭时顺手盖 `closedAt`：「已关闭」表按它倒序。重开时传 `null` ——
+     * `RoomActor.update` 把 null 当删除，老数据里那个时刻也不该留成脏值。
+     * 时刻只在这里盖：CLI / 手改 data 直接改 status 不会带时间（表里显示「—」），
+     * 这是有意的 —— 枚举归 UI，不把任务语义塞进通用的 actor。
+     */
     setRoomStatus(id: string, status: TaskStatus): Promise<void> {
         return jsonFetch(`/rooms/${encodeURIComponent(id)}`, {
             method: 'PATCH',
-            body: JSON.stringify({ data: { status } }),
+            body: JSON.stringify({ data: { status, closedAt: status === 'closed' ? Date.now() : null } }),
         })
             .then(() => refresh())
             .catch((error: unknown) => {

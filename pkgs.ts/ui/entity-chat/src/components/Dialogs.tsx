@@ -5,11 +5,33 @@ import { DIR_SUGGESTIONS, roomTypeLabel, type Bot, type Room } from '../model';
 import { useStore } from '../store';
 import { ModelPicker } from './ModelPicker';
 
-function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+/**
+ * 弹窗外壳：点遮罩 / Esc 关闭（Esc 挂在 document 上 —— 弹窗里的 input 不一定拿得到焦点）。
+ * `size` 默认 md；`wide` 给表格类弹窗（已关闭任务：四列表格塞不进 28rem）。
+ */
+export function Modal({
+    title,
+    children,
+    onClose,
+    size = 'md',
+}: {
+    title: string;
+    children: React.ReactNode;
+    onClose: () => void;
+    size?: 'md' | 'wide';
+}) {
+    React.useEffect(() => {
+        const onKey = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') onClose();
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
             <div
-                className="w-full max-w-md rounded-xl border bg-background p-4"
+                className={`w-full rounded-xl border bg-background p-4 ${size === 'wide' ? 'max-w-3xl' : 'max-w-md'}`}
                 onClick={(event) => event.stopPropagation()}
             >
                 <h2 className="mb-3 text-sm font-semibold">{title}</h2>

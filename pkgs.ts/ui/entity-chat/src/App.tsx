@@ -10,6 +10,7 @@ import {
     ModelDialog,
     SettingsDialog,
 } from './components/Dialogs';
+import { ClosedTasksDialog } from './components/ClosedTasks';
 import { EditableName, StatusChip } from './components/RoomName';
 import { SpeakingBar } from './components/SpeakingBar';
 import { ContextPanel } from './components/ContextPanel';
@@ -129,6 +130,7 @@ export function App() {
         | { kind: 'member' }
         | { kind: 'settings' }
         | { kind: 'task'; projectId: string }
+        | { kind: 'closed' }
         | { kind: 'delete'; roomId: string }
     >(null);
     // 默认表面：Astryx（虚拟化 + 自带代码高亮，长会话最稳）
@@ -184,6 +186,7 @@ export function App() {
                 onCreateProject={() => setDialog({ kind: 'project' })}
                 onCreateTask={(projectId) => setDialog({ kind: 'task', projectId })}
                 onRequestDelete={(target) => setDialog({ kind: 'delete', roomId: target.id })}
+                onOpenClosed={() => setDialog({ kind: 'closed' })}
                 onOpenSettings={() => setDialog({ kind: 'settings' })}
             />
 
@@ -250,6 +253,7 @@ export function App() {
                     onConfirm={() => void actions.deleteRoom(dialog.roomId)}
                 />
             )}
+            {dialog?.kind === 'closed' && <ClosedTasksDialog onClose={() => setDialog(null)} />}
             {dialog?.kind === 'member' && activeRoom !== undefined && (
                 <AddMemberDialog
                     room={activeRoom}
