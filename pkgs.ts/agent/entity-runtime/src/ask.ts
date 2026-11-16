@@ -25,11 +25,19 @@ export interface AskInput {
     toolCallId?: string;
 }
 
-/** 一次提问的结局：被回答，或被取消（容器关闭 / 超时） */
+/** 一次提问的结局：被回答，或被取消（容器关闭 / 超时 / 被新提问挤掉） */
 export interface AskResult {
     answer?: AskAnswer;
     cancelled?: boolean;
     reason?: string;
+    /**
+     * 被取消时是否要**告诉提问的成员**这张卡作废了。
+     *
+     * 默认不告诉：容器关闭 / 成员被移除时，会话本身已经结束，投一条消息没有收件人。
+     * 但「同时待回答太多、最旧的一条被挤掉」必须告诉 —— 那个成员还在原地看着，
+     * 它没有 tool call 能回填（ask 不阻塞），不通知就会永远停在「我以为我问了、等回答」。
+     */
+    notifyOwner?: boolean;
 }
 
 export interface AskGateDeps {
@@ -127,9 +135,11 @@ export class AskGate {
         while (this.pending.size >= AskGate.MAX_PENDING) {
             const oldest = this.pending.keys().next();
             if (oldest.done === true) break;
+            // notifyOwner：淘汰不通知＝模型那边永远留着一个没有下文的提问
             this.settle(oldest.value, {
                 cancelled: true,
                 reason: `同时待回答的提问太多（上限 ${AskGate.MAX_PENDING}），最旧的一条已作废`,
+                notifyOwner: true,
             });
         }
 

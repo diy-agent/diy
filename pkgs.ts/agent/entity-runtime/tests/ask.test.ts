@@ -12,7 +12,7 @@ function makeGate(options: { timeoutMs?: number } = {}) {
     const requests: AskRequest[] = [];
     const settled: Array<{
         request: AskRequest;
-        result: { answer?: unknown; cancelled?: boolean; reason?: string };
+        result: { answer?: unknown; cancelled?: boolean; reason?: string; notifyOwner?: boolean };
         owner?: string;
     }> = [];
     const gate = new AskGate({
@@ -102,6 +102,8 @@ describe('AskGate', () => {
             vi.advanceTimersByTime(20);
             expect(timed.gate.pendingCount()).toBe(0);
             expect(timed.settled[0]).toMatchObject({ request, result: { cancelled: true, reason: '等待回答超时' } });
+            // 超时先不通知（缺省 timeoutMs=0，生产上不走这条路）；要通知也只该走 notifyOwner
+            expect(timed.settled[0]?.result.notifyOwner).toBeUndefined();
         } finally {
             vi.useRealTimers();
         }
@@ -144,6 +146,10 @@ describe('AskGate', () => {
         expect(h.gate.list().map((request) => request.question)).toContain('Q20');
         expect(h.settled[0]).toMatchObject({ request: requests[0], result: { cancelled: true } });
         expect(String((h.settled[0] as { result: { reason?: string } }).result.reason)).toContain('最旧的一条已作废');
+        // 关键：淘汰必须告诉提问的成员（notifyOwner），否则它那边永远留着一个没有下文的提问。
+        // 其他取消（超时 / 容器关闭 / 成员离开）不告诉：收件人已经没了。
+        expect(h.settled[0]?.result.notifyOwner).toBe(true);
+        expect(h.settled.slice(1)).toEqual([]);
     });
 
     it('owner 跟着 request 走（卡片找不到工具行时靠它显示头像）', () => {

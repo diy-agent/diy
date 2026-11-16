@@ -217,6 +217,66 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         await waitFor(() => !h.room.busy());
     });
 
+    /**
+     * 第一轮：连问 times 次（同一成员），并让 ask 真的走闸门；之后各轮：普通回复。
+     * 21 次就会撑出上限，用来演「被新提问挤掉」那条路径。
+     */
+    function askManyThenReply(times: number): (input: RunOptions) => AsyncIterable<AgentEvent> {
+        let calls = 0;
+        return async function* (input: RunOptions): AsyncIterable<AgentEvent> {
+            calls += 1;
+            const turnId = input.turnId ?? 'turn';
+            const messageId = `msg-${calls}`;
+            yield { seq: 1, type: 'run.started', turnId, messageId };
+            if (calls === 1) {
+                const tools = input.tools as Record<string, ExecutableTool> | undefined;
+                for (let index = 0; index < times; index += 1) {
+                    const toolCallId = `call-${index}`;
+                    yield { seq: index * 2 + 2, type: 'tool.started', turnId, toolCallId, name: 'ask', args: {} };
+                    const out = await tools?.['ask']?.execute?.(
+                        { question: `Q${index}`, kind: 'choice', options: [{ value: 'a', label: 'A' }] },
+                        { toolCallId, messages: [] },
+                    );
+                    yield { seq: index * 2 + 3, type: 'tool.completed', turnId, toolCallId, name: 'ask', result: out };
+                }
+            }
+            yield {
+                seq: 900,
+                type: 'run.finished',
+                turnId,
+                finishReason: 'stop',
+                steps: 1,
+                maxOutputTokens: input.maxOutputTokens ?? 0,
+            };
+            yield { seq: 901, type: 'message.completed', messageId };
+            yield { seq: 902, type: 'run.completed', turnId };
+        } as (input: RunOptions) => AsyncIterable<AgentEvent>;
+    }
+
+    it('D6. 被新提问挤掉：提问的成员收到系统通知（不能静默作废）', async () => {
+        // 全 async 之后模型能连着问，撑到上限时最旧那条会被淘汰。
+        // 淘汰对用户是可见的（卡片变成「已失效」），对**模型**却是命门：ask 不阻塞、
+        // 没有 tool call 能回填，不通知它就永远停在「我问了、等回答」。
+        const h = makeRoom({ cwd: '/tmp', run: askManyThenReply(21) });
+        void h.room.say({ text: '一口气问完', author: HUMAN });
+
+        await waitFor(() => h.room.pendingAsks() === 20);
+        // 通知是一条消息（投出去才会进对方的上下文）—— 等它落库
+        const isNotice = (item: { type: string; author?: { role?: string } }): boolean =>
+            item.type === 'chat' && item.author?.role === 'system';
+        await waitFor(() => h.items().some((item) => isNotice(item)));
+
+        const notice = h.items().find((item) => isNotice(item));
+        // 说的是哪一问：模型得对得上自己问的那条
+        expect(notice?.data.text).toContain('Q0');
+        expect(notice?.data.text).toContain('已经作废');
+        // 投给提问的成员，而不是全房间（不然别的成员会去接一句不属于它的话题）
+        const delivery = h.room.deliveries().find((entry) => entry.messageId === notice?.id);
+        expect(delivery?.botId).toBe(BOT_A.id);
+        // 新的那几张照旧挂着（淘汰最旧、不是丢最新）
+        expect(h.room.pendingAskRequests().some((request) => request.question === 'Q20')).toBe(true);
+    });
+
     it('D5. 成员被移出房间：他问过、还没答的提问跟着失效（不能回答一张永远送不到的卡片）', async () => {
         const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
         void h.room.say({ text: '动手吧', author: HUMAN });

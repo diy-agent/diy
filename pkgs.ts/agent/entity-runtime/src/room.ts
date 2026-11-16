@@ -97,6 +97,8 @@ export class RoomActor {
     private readonly gate: AskGate;
     /** 用户的身份（回答提问时那条消息的作者） */
     private readonly human: Author;
+    /** 系统自己的身份：「你的提问被挤掉了」这类通知的作者（不能冒充用户） */
+    private static readonly SYSTEM: Author = { id: 'system:ask', name: '系统', color: '#9ca3af', role: 'system' };
     /** 每个成员一份工具集：只有 ask 的归属不同（按成员停止时要能分辨） */
     private readonly toolsByBot = new Map<string, ToolSet | undefined>();
     /** 正在跑一轮的成员（UI 的"谁在说话"用它，不由前端猜） */
@@ -335,8 +337,13 @@ export class RoomActor {
             ...(result.cancelled === true ? { cancelled: true } : {}),
             ...(result.reason === undefined ? {} : { reason: result.reason }),
         });
-        // 取消（容器关闭 / 超时）：卡片消失就够了，不往时间线上写痕
-        if (result.answer === undefined) return;
+        // 取消（容器关闭 / 成员被移除 / 超时）：卡片消失就够了，不往时间线上写痕
+        if (result.answer === undefined) {
+            // 例外：被新提问挤掉的那条。提问的成员还在原地看着，而 ask 不阻塞、
+            // 没有 tool call 能回填 —— 不告诉它，它会永远停在「我问了、等回答」。
+            if (result.notifyOwner === true) this.notifyAskDropped(request, result.reason, owner);
+            return;
+        }
 
         // 不再单独落一条 notice：回答本身就是一条消息，时间线上看得到，刷新也不丢。
         // 内容写成模型一眼能对上的样子：哪一问 + 答了什么
@@ -356,6 +363,28 @@ export class RoomActor {
             // 不能再吞：房间里一个成员的 session 都建不起来时 say 会抛，那种情况下用户必须知道答案没送到
             const reason = error instanceof Error ? error.message : String(error);
             this.deps.emit({ kind: 'error', message: `回答没有送出去：${reason}` });
+        });
+    }
+
+    /**
+     * 「你那问被挤掉了」—— 只发给提问的成员，且只在它还在房间里时发。
+     *
+     * 作者是系统而不是 this.human：这条不是用户说的话，冒充用户会让模型以为
+     * 「我问了、他自己把话题撤了」。transcript 里渲染成 `[系统] …`，跟真回答区分得开。
+     */
+    private notifyAskDropped(request: AskRequest, reason: string | undefined, owner?: string): void {
+        const target = owner === undefined ? undefined : this.member(owner);
+        // 成员已经不在房间了：没人需要知道（它那一份 pending 在移除时已被 cancelFor 清掉）
+        if (target === undefined) return;
+        const suffix = reason === undefined || reason === '' ? '' : `：${reason}`;
+        void this.say({
+            text: `提问「${request.question}」已经作废${suffix}。不用再等这个回答；还需要的话重新提问。`,
+            author: RoomActor.SYSTEM,
+            recipients: [target.id],
+        }).catch((error: unknown) => {
+            // 同 settleAsk：送不到必须让用户看见，不能静默
+            const message = error instanceof Error ? error.message : String(error);
+            this.deps.emit({ kind: 'error', message: `提问作废的通知没有送出去：${message}` });
         });
     }
 
