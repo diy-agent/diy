@@ -71,15 +71,29 @@ export interface QueryContext<S> {
 
 export type CommandMode = 'sync' | 'deferred';
 
-export interface CommandDef<S, I = unknown, O = unknown> {
-    readonly input: z.ZodType<I>;
-    readonly output: z.ZodType<O>;
+export interface CommandDef<
+    S,
+    In extends z.ZodType = z.ZodType,
+    Out extends z.ZodType = z.ZodType,
+    M extends CommandMode = CommandMode,
+> {
+    // 存的是**schema 本身**，不是它的输出类型：`z.input<...>` 要靠 schema 才算得出来。
+    // （早先存 `z.ZodType<O>` 时输入类型已经丢了 —— `z.input` 只能给 `unknown`，
+    //  于是调用方那层看起来有类型、实际什么都没校验。）
+    readonly input: In;
+    readonly output: Out;
     /**
      * sync（默认）：handler 跑完 → 回 `done`
      * deferred：handler 只负责受理 → 回 `accepted`，长活走 `ctx.defer`，收尾发 `$command.finished`
+     *
+     * `M` 保留字面量（不是宽化成 `CommandMode`）：调用方那层要靠它在**类型上**区分
+     * 「回值」还是「回受理回执」，见 api.ts `CmdValue`。
      */
-    readonly mode: CommandMode;
-    readonly handler: (ctx: CommandContext<S>, input: I) => Promise<CommandResult<S, O>> | CommandResult<S, O>;
+    readonly mode: M;
+    readonly handler: (
+        ctx: CommandContext<S>,
+        input: z.output<In>,
+    ) => Promise<CommandResult<S, z.output<Out>>> | CommandResult<S, z.output<Out>>;
 }
 
 export interface AggregateArgs<S, I> {
@@ -101,13 +115,13 @@ export interface FanoutSpec<S, I, O> {
     readonly timeoutMs?: number;
 }
 
-export interface QueryDef<S, I = unknown, O = unknown> {
-    readonly input: z.ZodType<I>;
-    readonly output: z.ZodType<O>;
+export interface QueryDef<S, In extends z.ZodType = z.ZodType, Out extends z.ZodType = z.ZodType> {
+    readonly input: In;
+    readonly output: Out;
     /** 本地答（projection）：与 `fanout` 二选一 */
-    readonly resolve?: (ctx: QueryContext<S>, input: I) => O | Promise<O>;
+    readonly resolve?: (ctx: QueryContext<S>, input: z.output<In>) => z.output<Out> | Promise<z.output<Out>>;
     /** 多目标扇出：与 `resolve` 二选一 */
-    readonly fanout?: FanoutSpec<S, I, O>;
+    readonly fanout?: FanoutSpec<S, z.output<In>, z.output<Out>>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -138,10 +152,12 @@ export type CmdNames<K extends Kind> = keyof K['commands'] & string;
 export type QueryNames<K extends Kind> = keyof K['queries'] & string;
 export type EventNames<K extends Kind> = keyof K['events'] & string;
 
+export type CmdMode<K extends Kind, N extends CmdNames<K>> = K['commands'][N]['mode'];
 export type CmdInput<K extends Kind, N extends CmdNames<K>> = z.input<K['commands'][N]['input']>;
 export type CmdOutput<K extends Kind, N extends CmdNames<K>> = z.output<K['commands'][N]['output']>;
 export type QueryInput<K extends Kind, N extends QueryNames<K>> = z.input<K['queries'][N]['input']>;
 export type QueryOutput<K extends Kind, N extends QueryNames<K>> = z.output<K['queries'][N]['output']>;
+export type EventData<K extends Kind, N extends EventNames<K>> = z.output<K['events'][N]>;
 
 export interface KindInit<D extends z.ZodType, E extends Record<string, z.ZodType>> {
     readonly name: string;
@@ -157,10 +173,13 @@ export interface KindInit<D extends z.ZodType, E extends Record<string, z.ZodTyp
 export class KindBuilder<
     D extends z.ZodType,
     E extends Record<string, z.ZodType>,
+    // 起点必须是 `{}` 而不是 `Record<string, never>`：后者带**字符串索引签名**，
+    // 连带 `keyof C` 变成 `string` —— 于是 `CmdNames` / `CmdInput` 全退化成 `string` / `unknown`，
+    // 「类型从 schema 推」就成了空话（拼错名字也不报错）。`{}` 的 keyof 是 `never`，链上一层层长。
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    C extends Record<string, AnyCommand> = Record<string, never>,
+    C extends Record<string, AnyCommand> = {},
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    Q extends Record<string, AnyQuery> = Record<string, never>,
+    Q extends Record<string, AnyQuery> = {},
 > {
     readonly #name: string;
     readonly #state: D;
@@ -179,14 +198,14 @@ export class KindBuilder<
     }
 
     /** 命令：写入路径。默认 `sync`（跑完回 `done`），长活用 `mode: 'deferred'` */
-    command<N extends string, I extends z.ZodType, O extends z.ZodType>(
+    command<N extends string, I extends z.ZodType, O extends z.ZodType, M extends CommandMode = 'sync'>(
         name: N,
-        spec: { input: I; output: O; mode?: CommandMode },
+        spec: { input: I; output: O; mode?: M },
         handler: (
             ctx: CommandContext<z.output<D>>,
             input: z.output<I>,
         ) => Promise<CommandResult<z.output<D>, z.output<O>>> | CommandResult<z.output<D>, z.output<O>>,
-    ): KindBuilder<D, E, C & Record<N, CommandDef<z.output<D>, z.output<I>, z.output<O>>>, Q> {
+    ): KindBuilder<D, E, C & Record<N, CommandDef<z.output<D>, I, O, M>>, Q> {
         this.#claim(name, 'command');
         this.#commands.set(name, {
             input: spec.input,
@@ -194,12 +213,7 @@ export class KindBuilder<
             mode: spec.mode ?? 'sync',
             handler,
         } as AnyCommand);
-        return this as unknown as KindBuilder<
-            D,
-            E,
-            C & Record<N, CommandDef<z.output<D>, z.output<I>, z.output<O>>>,
-            Q
-        >;
+        return this as unknown as KindBuilder<D, E, C & Record<N, CommandDef<z.output<D>, I, O, M>>, Q>;
     }
 
     /** 查询（本地答）：读路径，不排队等写，但读的是**当前已提交**的同一份 state */
@@ -207,10 +221,10 @@ export class KindBuilder<
         name: N,
         spec: { input: I; output: O },
         resolve: (ctx: QueryContext<z.output<D>>, input: z.output<I>) => z.output<O> | Promise<z.output<O>>,
-    ): KindBuilder<D, E, C, Q & Record<N, QueryDef<z.output<D>, z.output<I>, z.output<O>>>> {
+    ): KindBuilder<D, E, C, Q & Record<N, QueryDef<z.output<D>, I, O>>> {
         this.#claim(name, 'query');
         this.#queries.set(name, { input: spec.input, output: spec.output, resolve } as AnyQuery);
-        return this as unknown as KindBuilder<D, E, C, Q & Record<N, QueryDef<z.output<D>, z.output<I>, z.output<O>>>>;
+        return this as unknown as KindBuilder<D, E, C, Q & Record<N, QueryDef<z.output<D>, I, O>>>;
     }
 
     /**
@@ -230,7 +244,7 @@ export class KindBuilder<
             aggregate: (args: AggregateArgs<z.output<D>, z.output<I>>) => z.output<O> | Promise<z.output<O>>;
             timeoutMs?: number;
         },
-    ): KindBuilder<D, E, C, Q & Record<N, QueryDef<z.output<D>, z.output<I>, z.output<O>>>> {
+    ): KindBuilder<D, E, C, Q & Record<N, QueryDef<z.output<D>, I, O>>> {
         this.#claim(name, 'query');
         this.#queries.set(name, {
             input: spec.input,
@@ -242,7 +256,7 @@ export class KindBuilder<
                 timeoutMs: spec.timeoutMs,
             },
         } as AnyQuery);
-        return this as unknown as KindBuilder<D, E, C, Q & Record<N, QueryDef<z.output<D>, z.output<I>, z.output<O>>>>;
+        return this as unknown as KindBuilder<D, E, C, Q & Record<N, QueryDef<z.output<D>, I, O>>>;
     }
 
     build(): Kind<D, E, C, Q> {
