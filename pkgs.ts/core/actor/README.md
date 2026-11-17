@@ -1,56 +1,85 @@
 # @diy-agent/actor
 
-actor 协议内核：**一个实例 = 一个 actor**（单写者串行队列）+ 声明式 kind + 帧口径 + 事件日志 + 多目标扇出。
+**一个 actor = 一份私有状态 + 一条串行链 + 一张方法表。`src/index.ts` 128 行，零依赖。**
 
-零 IO、零全局状态，**不依赖 `@diy-agent/rpc`**（传输层只要求一个 `Link`，ws/http 适配器在别的包里写）。
+这里没有：帧协议、幂等表、游标、快照格式、多目标扇出、生命周期树、状态机。
+那些只有「要持久化 / 要跨机器」时才出现，谁需要谁在外面加（`examples/05`、`06` 各加十几行）。
+
+## 跑
+
+```bash
+./sha.sh all        # 七个范例，一次跑完
+./sha.sh e03        # 只跑第三个
+./sha.sh check      # 类型 + lint
+```
+
+## 内核就三件
 
 ```ts
-import { z } from 'zod';
-import { createLocalActor, defineKind } from '@diy-agent/actor';
+import { serial, actor } from '@diy-agent/actor';
 
-const counter = defineKind({
-    name: 'demo.counter',
-    state: z.object({ n: z.number().int() }),
-    initial: () => ({ n: 0 }),
-    events: { added: z.object({ by: z.number().int(), n: z.number().int() }) },
-})
-    .command('add', { input: z.object({ by: z.number().int() }), output: z.object({ n: z.number().int() }) }, (ctx, input) => {
-        const n = ctx.state.n + input.by;
-        return { output: { n }, state: { n }, events: [{ name: 'added', data: { by: input.by, n } }] };
-    })
-    .query('get', { input: z.object({}), output: z.object({ n: z.number().int() }) }, (ctx) => ({ n: ctx.state.n }))
-    .build();
+// 1. 串行链：所有工作单元排在同一条 promise 链尾
+const chain = serial();
+chain.send(() => doSomething());   // 返回的 promise 就是回执
 
-const { client } = await createLocalActor({ kind: counter, uri: 'diy://local/counter' });
-await client.cmd('add', { by: 1 });          // { ok: true, accepted: false, data: { n: 1 }, seq }
-await client.query('get', {});               // { ok: true, data: { n: 1 }, watermark, stale }
+// 2. actor：状态在闭包里，外面只拿到方法
+const room = actor((life) => {
+    const lines: Line[] = [];
+
+    // 内部函数：不排队（它已经在这条链上了）
+    const push = (who: string, text: string) => {
+        const line = { seq: lines.length + 1, who, text };
+        lines.push(line);
+        return line;
+    };
+
+    return {
+        async say(who: string, text: string) {
+            if (life.signal.aborted) return;      // ← 取消的唯一钩子
+            await network();
+            return push(who, text);
+        },
+        log: () => [...lines],
+    };
+});
+
+await room.say('你', '你好');   // 普通函数调用，有类型，有返回值
+await room.close();             // abort + 排空
 ```
 
-## 范例（三档，按顺序看）
+## 七个范例
 
-```bash
-./sha.sh hello       # 入门一：单进程、没有网络（40 行）
-./sha.sh hello-net   # 入门二：两个进程 + 一条 socket（40 行）
-./sha.sh demo        # 完整剧本：3 进程 + 扇出 + kill -9 + 重启（九步，约 1.5 秒）
-```
+| # | 目录 | 讲什么 |
+|---|------|--------|
+| 01 | `examples/01-serial/` | 不排队会丢东西 |
+| 02 | `examples/02-room/` | 调用即得值 |
+| 03 | `examples/03-queue/` | 连点 N 次 = N 个工作单元 |
+| 04 | `examples/04-cancel/` | 取消，保留已产出的 |
+| 05 | `examples/05-persist/` | 崩溃恢复：一次提交 = 一行 |
+| 06 | `examples/06-net/` | 跨进程：调用方不用改 |
+| 07 | `examples/07-aggregate/` | 多个 actor 汇总成一条流 |
 
-双端接线就两个函数：`serveActor({ kind, uri, socket, dataDir })` / `connectActor({ kind, socket })`
-（对应 rpc 的 `bind` / `use`）。走读见 [`docs/09-hello.md`](./docs/09-hello.md)（入门）与
-[`docs/10-scenario.md`](./docs/10-scenario.md)（完整剧本）。
+每个目录一份 README，见 [`examples/README.md`](./examples/README.md)。
 
-## 文档（真源）
+## 已知取舍（不是 bug）
 
-设计、口径、歧义账、路线图都在 [`docs/`](./docs/README.md)（从 `docs/README.md` 开始读）。
-其中三条最容易被改坏：
+| 取舍 | 后果 | 什么时候不能接受 |
+|------|------|------------------|
+| 读也排队 | 长任务跑着时，`log()` 要等它跑完 | 需要看中间态 → 用回调推，别回头查（见 04） |
+| 取消靠任务自己检查 `signal` | 不检查就等它跑完 | 长任务里每个 await 边界都加一行 |
+| `args` 必须可序列化 | 跨进程不能传函数 / class | 只在 06 那种场景才有 |
+| 没有幂等键 | 重发 = 执行两次 | 网络重试 → 在方法里自己记 `commandId` |
+| 状态在闭包里 | 不能从外面读快照做渲染 | 要渲染 → 额外暴露 `log()` / `state()` |
+| 队列在内存里 | 进程死了，排队的活就没了 | 需要「重启后继续排队」→ 队列也要落盘 |
 
-1. `data` 里只装 kind 声明过的东西（[docs/02](./docs/02-wire.md)）；
-2. `type` 只说执行成了没有，业务结果在 `data` —— **帧上没有 `partial`**（[docs/05](./docs/05-multi-target.md)）；
-3. 摆放知识只属于 actor：`targets` 由 kind 从 state 算，调用方不许指定（[docs/05](./docs/05-multi-target.md)）。
+## 为什么不用 xstate
 
-## 开发
+看过 113 个 xstate 范例后的结论：它能省事的是「取消竞态」「长期挂起」「模型测试」，**队列那一块它一行都帮不上** —— 所有官方例子的队列都是 `context.xxx: T[]` 自己维护的。
 
-```bash
-./sha.sh check       # 类型 + lint
-./sha.sh test        # 单测（tests/*.test.ts，全部 intent 测试）
-./sha.sh build       # src/ → dist/（Node 可直接 import 的 ESM + .d.ts）
-```
+详细记录见 [`docs/why-not-xstate.md`](./docs/why-not-xstate.md)。
+
+## 和旧版的关系
+
+这里原来有一个 5400 行的平台版（wire / client / kinds / runtime / 12 篇文档 / 4 个 demo）。已清理，需要时看 git 历史。
+
+清理理由：那 5400 行里，`wire`(264) + `client`(293) + `kinds`(254) + 幂等/effect 那部分，基本都在补「跨机器」才需要的东西。单进程用不上，跨进程又补不完（断线重连、超时、版本协商各要几百行）。

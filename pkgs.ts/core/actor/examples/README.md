@@ -1,30 +1,39 @@
-# examples — 三个档次的范例
+# 范例
 
-从下往上读；每一档只加一件新东西，读完一档再开下一档。
+每个目录只讲一件事，一个 `index.ts` + 一个 `README.md`。**按顺序看，前面的不再重复。**
 
-| 档       | 跑                   | 文件                                   | 讲什么                                              | 正文                                  |
-| -------- | -------------------- | -------------------------------------- | --------------------------------------------------- | ------------------------------------- |
-| 入门一   | `./sha.sh hello`     | `hello-counter.ts` + `hello-inproc.ts` | 契约怎么写；方法怎么调（函数级得值）。**没有网络**  | [09-hello](../docs/09-hello.md)       |
-| 入门二   | `./sha.sh hello-net` | `hello-net.ts`                         | 同样几行调用，对面换成另一个**进程**（unix socket） | [09-hello](../docs/09-hello.md)       |
-| 完整剧本 | `./sha.sh demo`      | `demo/*` + `lib/*`                     | 3 进程 + 扇出 + `kill -9` + 崩溃重启 + 事件补历史   | [10-scenario](../docs/10-scenario.md) |
-
-```
-examples/
-  hello-counter.ts     入门用的那一个 kind（两个入门范例共用）
-  hello-inproc.ts      入门一：单进程，约 40 行（useKind 函数层 + 一行 raw 对照）
-  hello-net.ts         入门二：两个进程，约 55 行（自己 spawn 自己当服务端）
-
-  lib/net-link.ts      unix socket 链路（换行 JSON）—— 适配器，只搬字符串
-  lib/store-jsonl.ts   落盘 store：一行一次提交（状态 + 游标 + 事件）
-  lib/serve.ts         serveActor / connectActor / createSocketPort（对应 rpc 的 bind / use）
-  demo/kinds.ts        两个 kind：demo.room（房间）+ demo.peer（成员会话）
-  demo/peer-node.ts    一个成员节点（独立进程）
-  demo/room-node.ts    房间节点（多一个扇出端口）
-  demo/scenario.ts     剧本：九步、kill -9、重启、补历史
+```bash
+./sha.sh all     # 七个一次跑完
+./sha.sh e03     # 只跑第三个
 ```
 
-> 两个入门范例用的 `useKind`（函数层）**不在 examples 里**，它是内核的一部分：`src/api.ts`。
-> 分层：契约 `defineKind` → 服务端 `serveActor` → 调用方 `useKind`（或 raw 的 `client`）。
+| # | 目录 | 讲什么 | 一句话结论 |
+|---|------|--------|-----------|
+| 01 | [`01-serial/`](./01-serial/) | 不排队会丢东西 | 连点三次 → `1` 而不是 `3` |
+| 02 | [`02-room/`](./02-room/) | 调用即得值 | `await room.say(...)` 拿到这一次的结果，不是消息对象 |
+| 03 | [`03-queue/`](./03-queue/) | 连点 N 次 = N 个工作单元 | 顺序由投递决定，与完成先后无关；UI 不用禁用按钮 |
+| 04 | [`04-cancel/`](./04-cancel/) | 取消 | `close()` abort；已产出的部分**正常返回**，不抛异常 |
+| 05 | [`05-persist/`](./05-persist/) | 崩溃恢复 | 一次提交 = 一行；崩在中间只有「整行有 / 整行没有」 |
+| 06 | [`06-net/`](./06-net/) | 跨进程 | 只改「帧怎么送」，调用方代码不变 |
+| 07 | [`07-aggregate/`](./07-aggregate/) | 多个 actor 汇总 | 整体状态是一个 actor 的 state，不是「问 N 个」 |
 
-**这里的东西不是内核**：`src/` 的判据是零 IO、不 import `node:*`；适配器与 store 实现放这里，
-将来接 ws / sqlite 就照着换一份，`src/` 一行都不用动。
+## 建议的读法
+
+**先读 01、02 就够判断这个东西值不值得用。** 03–07 是四个具体场景，需要哪个看哪个。
+
+## 每篇 README 的结构
+
+1. 这一节只讲一件事（一句话）
+2. 怎么跑
+3. 实际输出（原文贴）
+4. 为什么
+5. 常见误解 / 代价
+
+## 这些范例刻意不做的
+
+它们是**可执行的说明**，不是框架。真正的产品代码要多考虑：
+
+- 错误处理与重试边界
+- 状态快照的 compaction（05 只追加不压缩）
+- 断线重连（06 的 `pending` 表在断线时会漏）
+- 多进程写同一个文件（05 假设单写者）

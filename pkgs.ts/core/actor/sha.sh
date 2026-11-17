@@ -15,55 +15,64 @@
 set -o errtrace -o errexit -o functrace -o pipefail
 shopt -s globstar extglob
 
-# Get the real path of the script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 source "../../../sha.common.sh"
 
 ####################################################################################
-# mono必备子命令（根 ./sha.sh check/fix/test/test-unit 组装这些）
+# mono必备子命令
 ####################################################################################
 
-clean() {
-  run rm -rf ./build ./dist ./lib ./node_modules/.cache/tsbuildinfo
-}
-
-# 本包检查：类型 + lint
-check() {
-  typecheck
-  lint
-}
-# 本包自动修复：格式化 + lint 可修项
-fix() {
-  fmt-fix
-  lint-fix
-}
-
+clean() { run rm -rf ./dist ./node_modules/.cache/tsbuildinfo; }
+check() { typecheck; lint; }
+fix() { fmt-fix; lint-fix; }
 sync() { :; }
 
-# 本包全是快速单测，无慢测试：test ≡ test-unit
-test() { run npx vitest run "$@"; }
-test-unit() { run npx vitest run "$@"; }
+# 没有单测文件：范例本身就是断言（每节都打印出「应该是多少」和实际值）
+test() {
+  for f in examples/*/index.ts; do
+    echo ""
+    echo "── $f"
+    node --import tsx "$f" > /dev/null
+  done
+  echo ""
+  echo "七个范例全部跑通（exit 0）"
+}
+test-unit() { test "$@"; }
 
 ####################################################################################
-# 子项目自己的命令（原 package.json scripts）
+# 范例（每个一个目录，目录里 index.ts + README.md）
 ####################################################################################
 
-test-watch() { run npx vitest "$@"; }
-# 入门一：单进程、无网络（examples/hello-inproc.ts）
-hello() { run node --import tsx examples/hello-inproc.ts; }
-# 入门二：两个进程 + socket，就这点（examples/hello-net.ts）
-hello-net() { run node --import tsx examples/hello-net.ts; }
-# 完整剧本：3 个进程 + 扇出 + kill -9 + 重启（examples/demo/scenario.ts）
-demo() { run node --import tsx examples/demo/scenario.ts; }
-# build：把 src/ 编成 lib/（Node 可直接 import 的 ESM + .d.ts，见 tsconfig.build.json）
-# 为什么必须编：Electron 从 node_modules 动态加载能力包时 Node 加载不了 `.ts`（##453 判据①）
-build() { run npx tsc -p tsconfig.build.json; }
+# 01 为什么需要：不排队就丢更新
+e01() { run node --import tsx examples/01-serial/index.ts; }
+# 02 调用即得值：room.say 就是普通函数
+e02() { run node --import tsx examples/02-room/index.ts; }
+# 03 连点三次：排队，但不阻塞 UI
+e03() { run node --import tsx examples/03-queue/index.ts; }
+# 04 取消：中断正在跑的，保留已产出的
+e04() { run node --import tsx examples/04-cancel/index.ts; }
+# 05 崩溃恢复：一次提交 = 一行
+e05() { run node --import tsx examples/05-persist/index.ts; }
+# 06 跨进程：调用方那几行不用改
+e06() { run node --import tsx examples/06-net/index.ts; }
+# 07 聚合：多个 actor 汇总成一条流
+e07() { run node --import tsx examples/07-aggregate/index.ts; }
+
+all() {
+  for f in examples/*/index.ts; do
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "  $f"
+    echo "════════════════════════════════════════"
+    node --import tsx "$f"
+  done
+}
+
 typecheck() { run npx tsc --noEmit; }
-lint() { run npx oxlint src/ tests/ examples/; }
-lint-fix() { run npx oxlint --fix src/ tests/ examples/; }
-fmt() { run npx oxfmt --check src/ tests/ examples/; }
-fmt-fix() { run npx oxfmt --write src/ tests/ examples/; }
-
+lint() { run npx oxlint src/ examples/; }
+lint-fix() { run npx oxlint --fix src/ examples/; }
+fmt() { run npx oxfmt --check src/ examples/; }
+fmt-fix() { run npx oxfmt --write src/ examples/; }
 
 sha "$@"

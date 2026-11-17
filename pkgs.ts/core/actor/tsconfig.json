@@ -3,8 +3,9 @@
     "compilerOptions": {
         "composite": true,
         // 类型检查不 emit（同其它包）：产物落在源码旁会被 bundler/test 的无扩展名解析优先命中
+        // composite 留着是因为根 tsconfig.all.json 用 references 指向本包（tsc -b 要求）
         "noEmit": true,
         "types": ["node"]
     },
-    "include": ["src/**/*", "tests/**/*", "examples/**/*"]
+    "include": ["src/**/*", "examples/**/*"]
 }
