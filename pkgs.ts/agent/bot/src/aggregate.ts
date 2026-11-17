@@ -1,6 +1,11 @@
 // src/aggregate.ts
 // 🎯 **Agent 聚合**（`docs/plans/2026-11-07-agent-aggregate.md`）：一个类表达完「一个 Agent 是什么」。
 //
+// ⏸ **状态（2026-11-17）：不接线，代码暂不删。** diy2 走的是
+// `pkgs.ts/agent/entity-runtime/session.ts`；这里留作**契约参考**——`Receipt` / `commandId` /
+// `subscribe(afterSeq)` 三个形状值得抄进 session（不需要 actor 内核）。取舍见
+// `docs/plans/2026-11-17-room-as-actor.md` §9。
+//
 // 为什么单独一个文件而不是把现有 BotAgent 改造：先要一个**意图测试能直接对话的对象**——
 // `send / post / cancel / compact(strategy)` 是命令（返回回执），`history / snapshot` 是查询，
 // `subscribe` 是事实流。内部先做**纯内存**实现：不碰 fs、不碰 RPC、不碰投递装配，
