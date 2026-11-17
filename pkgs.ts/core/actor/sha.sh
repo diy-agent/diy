@@ -36,7 +36,7 @@ test() {
     node --import tsx "$f" > /dev/null
   done
   echo ""
-  echo "七个范例全部跑通（exit 0）"
+  echo "范例全部跑通（exit 0）"
 }
 test-unit() { test "$@"; }
 
@@ -54,10 +54,12 @@ e03() { run node --import tsx examples/03-queue/index.ts; }
 e04() { run node --import tsx examples/04-cancel/index.ts; }
 # 05 崩溃恢复：一次提交 = 一行
 e05() { run node --import tsx examples/05-persist/index.ts; }
-# 06 跨进程：调用方那几行不用改
-e06() { run node --import tsx examples/06-net/index.ts; }
+# 06 跨进程：actor 不改一字，rpc 桥进来（取消也穿过边界）
+e06() { run node --import tsx examples/06-rpc-bridge/index.ts; }
 # 07 聚合：多个 actor 汇总成一条流
 e07() { run node --import tsx examples/07-aggregate/index.ts; }
+# 08 声明式：一条 cmd 同时是本地方法 / 契约 / handler / 强类型 client
+e08() { run node --import tsx examples/08-cmd/index.ts; }
 
 all() {
   for f in examples/*/index.ts; do
@@ -72,7 +74,7 @@ all() {
 typecheck() { run npx tsc --noEmit; }
 lint() { run npx oxlint src/ examples/; }
 lint-fix() { run npx oxlint --fix src/ examples/; }
-fmt() { run npx oxfmt --check src/ examples/; }
-fmt-fix() { run npx oxfmt --write src/ examples/; }
+fmt() { run npx oxfmt --check src/*.ts src/**/*.ts examples/*/*.ts examples/*.md examples/README.md; }
+fmt-fix() { run npx oxfmt --write src/*.ts src/**/*.ts examples/*/*.ts examples/*.md examples/README.md; }
 
 sha "$@"

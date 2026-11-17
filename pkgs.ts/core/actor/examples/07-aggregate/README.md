@@ -55,8 +55,8 @@ catalog 方案下，nav 不知道有几个 session，也不需要知道。
 ```ts
 function isNewer(next: Row, prev: Row | undefined): boolean {
     if (!prev) return true;
-    if (next.sessionId !== prev.sessionId) return true;  // 源重启过，整行替换
-    return next.seq > prev.seq;                          // 同一次生命内，只认更大的 seq
+    if (next.sessionId !== prev.sessionId) return true; // 源重启过，整行替换
+    return next.seq > prev.seq; // 同一次生命内，只认更大的 seq
 }
 ```
 

@@ -112,13 +112,19 @@ await Promise.all([t1.idle(), t2.idle(), t3.idle()]);
 // ══ 乱序 / 重放都安全 ═══════════════════════════════════════════════════
 
 console.log('\n乱序投递：');
-console.log(`  投一条 t1 的旧行（seq=1）→ ${JSON.stringify(await catalog.upsert({ uri: 'diy://node-a/session/t1', sessionId: 'boot-1', seq: 1, run: 'running', turns: 0 }))}`);
-console.log(`  投一条 t1 的新行（seq=99）→ ${JSON.stringify(await catalog.upsert({ uri: 'diy://node-a/session/t1', sessionId: 'boot-1', seq: 99, run: 'done', turns: 9 }))}`);
+console.log(
+    `  投一条 t1 的旧行（seq=1）→ ${JSON.stringify(await catalog.upsert({ uri: 'diy://node-a/session/t1', sessionId: 'boot-1', seq: 1, run: 'running', turns: 0 }))}`,
+);
+console.log(
+    `  投一条 t1 的新行（seq=99）→ ${JSON.stringify(await catalog.upsert({ uri: 'diy://node-a/session/t1', sessionId: 'boot-1', seq: 99, run: 'done', turns: 9 }))}`,
+);
 
 // ══ 源重启：sessionId 变了，整行替换 ═══════════════════════════════════
 
 console.log('\n源重启（sessionId 换个值）：');
-console.log(`  → ${JSON.stringify(await catalog.upsert({ uri: 'diy://node-a/session/t1', sessionId: 'boot-2', seq: 1, run: 'running', turns: 0 }))}`);
+console.log(
+    `  → ${JSON.stringify(await catalog.upsert({ uri: 'diy://node-a/session/t1', sessionId: 'boot-2', seq: 1, run: 'running', turns: 0 }))}`,
+);
 
 console.log('\n最终行表：');
 for (const r of await catalog.list()) {

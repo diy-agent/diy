@@ -2,17 +2,22 @@
     "name": "@diy-agent/actor",
     "version": "0.1.0",
     "private": true,
-    "description": "actor 的最小内核：一条串行链（serial）+ 一张方法表（actor）。src/index.ts 约 130 行，零依赖。",
+    "description": "actor 的最小内核：一条串行链（serial）+ 一张方法表（actor）。内核零依赖；声明式外壳（cmd，依赖 zod + rpc）在子路径 @diy-agent/actor/cmd。跨进程由宿主桥进来，见 docs/bridging-rpc.md 与 examples/06、08。",
     "type": "module",
     "main": "./src/index.ts",
     "types": "./src/index.ts",
     "exports": {
-        ".": "./src/index.ts"
+        ".": "./src/index.ts",
+        "./cmd": "./src/cmd.ts"
     },
     "files": [
         "src/",
         "docs/"
     ],
+    "dependencies": {
+        "@diy-agent/rpc": "*",
+        "zod": "^4.4.3"
+    },
     "devDependencies": {
         "oxfmt": "^0.57.0",
         "oxlint": "^1.72.0",

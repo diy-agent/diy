@@ -1,9 +1,21 @@
 # @diy-agent/actor
 
-**一个 actor = 一份私有状态 + 一条串行链 + 一张方法表。`src/index.ts` 128 行，零依赖。**
+**一个 actor = 一份私有状态 + 一条串行链 + 一张方法表。`src/index.ts` 180 行，零依赖，零网络代码。**
 
-这里没有：帧协议、幂等表、游标、快照格式、多目标扇出、生命周期树、状态机。
-那些只有「要持久化 / 要跨机器」时才出现，谁需要谁在外面加（`examples/05`、`06` 各加十几行）。
+这里没有：幂等表、游标、快照格式、多目标扇出、生命周期树、状态机。
+那些只有「要持久化」时才出现，谁需要谁在外面加（`examples/05` 加十几行）。
+
+跨进程也不在这里 —— 而且**不该在这里**。actor 不知道自己在第几个进程里；
+需要让另一头也能操作它，就把调用换成帧，那层是宿主的事：
+
+```ts
+// 业务本体一字不改，用 @diy-agent/rpc 桥进来（examples/06-rpc-bridge）
+mountService(server, { prefix: 'room', api: roomApi, handlers: {
+    slow: ({ input, signal }) => room.$call('slow', [input.args[0]], { signal }),
+}});
+```
+
+关于「为什么不自带网络层」的完整判断，见 [`docs/bridging-rpc.md`](./docs/bridging-rpc.md)。
 
 ## 跑
 
@@ -47,6 +59,12 @@ await room.say('你', '你好');   // 普通函数调用，有类型，有返回
 await room.close();             // abort + 排空
 ```
 
+## 跨进程不属于这个包
+
+`$call(fn, args, { signal })` 是留给桥接层的唯一接缝 —— 外部能把「对面取消了」变成方法内的 `life.signal.aborted`，actor 不需要知道自己在远端。
+
+桥怎么搭、为什么用 rpc 而不自建、什么时候干脆别桥： [`docs/bridging-rpc.md`](./docs/bridging-rpc.md)，可运行版 `examples/06-rpc-bridge/`。
+
 ## 七个范例
 
 | # | 目录 | 讲什么 |
@@ -56,7 +74,7 @@ await room.close();             // abort + 排空
 | 03 | `examples/03-queue/` | 连点 N 次 = N 个工作单元 |
 | 04 | `examples/04-cancel/` | 取消，保留已产出的 |
 | 05 | `examples/05-persist/` | 崩溃恢复：一次提交 = 一行 |
-| 06 | `examples/06-net/` | 跨进程：调用方不用改 |
+| 06 | `examples/06-rpc-bridge/` | 跨进程：actor 不改一字，rpc 桥进来 |
 | 07 | `examples/07-aggregate/` | 多个 actor 汇总成一条流 |
 
 每个目录一份 README，见 [`examples/README.md`](./examples/README.md)。
@@ -67,7 +85,8 @@ await room.close();             // abort + 排空
 |------|------|------------------|
 | 读也排队 | 长任务跑着时，`log()` 要等它跑完 | 需要看中间态 → 用回调推，别回头查（见 04） |
 | 取消靠任务自己检查 `signal` | 不检查就等它跑完 | 长任务里每个 await 边界都加一行 |
-| `args` 必须可序列化 | 跨进程不能传函数 / class | 只在 06 那种场景才有 |
+| 取消是协作式的 | abort 只能把 signal 翻成 aborted | 想硬杀 → 得把活拆成可丢弃的小步（见 04） |
+| 跨进程要声明 shape | 每个方法一行 zod，位置参数包成 `args` | 方法特别多 → 考虑类型生成，别自建协议 |
 | 没有幂等键 | 重发 = 执行两次 | 网络重试 → 在方法里自己记 `commandId` |
 | 状态在闭包里 | 不能从外面读快照做渲染 | 要渲染 → 额外暴露 `log()` / `state()` |
 | 队列在内存里 | 进程死了，排队的活就没了 | 需要「重启后继续排队」→ 队列也要落盘 |

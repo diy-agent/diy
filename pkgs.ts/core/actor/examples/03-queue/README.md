@@ -51,8 +51,8 @@ const [a, b, c] = await Promise.all([room.say('一'), room.say('二'), room.say(
 ## 最后一段在讲什么
 
 ```ts
-const pending = room.say('四');       // 慢
-const snapshot = room.transcript();   // 排在「四」后面
+const pending = room.say('四'); // 慢
+const snapshot = room.transcript(); // 排在「四」后面
 ```
 
 读也排队，所以 `transcript()` 拿到的是「四」跑完后的状态 —— 含刚说完的那条，不含它一半的状态。

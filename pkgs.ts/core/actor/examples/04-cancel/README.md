@@ -53,7 +53,7 @@ const running = room.stream('...');
 await sleep(120);
 await room.close();
 
-const result = await running;   // resolve，不是 reject
+const result = await running; // resolve，不是 reject
 // → { text: '字字字...（12 个）', cancelled: true }
 ```
 
@@ -76,7 +76,7 @@ const result = await running;   // resolve，不是 reject
 办法只有往外推：
 
 ```ts
-if (chunks.length === 12) console.log(`...`);   // 在任务内部
+if (chunks.length === 12) console.log(`...`); // 在任务内部
 // 真实场景：onChunk?.(chunks.join('')) 或者往另一个 actor 的 emit() 投一条
 ```
 
