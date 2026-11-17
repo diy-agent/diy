@@ -47,6 +47,7 @@ interface OwnerState {
 export interface DraftStoreOptions {
     /** API 前缀，默认 '/api' */
     base?: string;
+    /** 注入的 fetch 会被 bind 到 globalThis，调用方不必关心 this 绑定 */
     fetchImpl?: typeof fetch;
     /** 输入停顿多久后写服务端 */
     debounceMs?: number;
@@ -116,22 +117,22 @@ export class DraftStore {
     private readonly touched = new Set<string>();
     private readonly listeners = new Set<() => void>();
     private readonly base: string;
-    private readonly injected?: typeof fetch;
+    /** 已绑定好 this 的 fetch：调用点写 `this.doFetch(...)` 不会踩 Illegal invocation */
+    private readonly doFetch: typeof fetch;
     private readonly debounceMs: number;
     private readonly retryBaseMs: number;
     private readonly retryMaxMs: number;
 
     constructor(options: DraftStoreOptions = {}) {
         this.base = options.base ?? '/api';
-        this.injected = options.fetchImpl;
+        // 浏览器里 `obj.fetch(...)` 的 this 是 obj 而不是 window，会抛
+        // `Failed to execute 'fetch' on 'Window': Illegal invocation`（Node 里看不出来）。
+        // 所以在构造点一次性消化掉 this 绑定：注入的 bind 掉，默认的走成员调用。
+        const injected = options.fetchImpl;
+        this.doFetch = injected === undefined ? (...args) => globalThis.fetch(...args) : injected.bind(globalThis);
         this.debounceMs = options.debounceMs ?? 600;
         this.retryBaseMs = options.retryBaseMs ?? 1_000;
         this.retryMaxMs = options.retryMaxMs ?? 30_000;
-    }
-
-    get fetchImpl(): typeof fetch {
-        // 浏览器里 fetch 不能当方法调用（Illegal invocation）
-        return this.injected ?? fetch;
     }
 
     subscribe = (listener: () => void): (() => void) => {
@@ -419,7 +420,7 @@ export class DraftStore {
                 : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
             ...(keepalive ? { keepalive: true } : {}),
         };
-        const res = await this.fetchImpl(`${this.base}${path}`, init);
+        const res = await this.doFetch(`${this.base}${path}`, init);
         if (!res.ok) throw new Error(`草稿保存失败：HTTP ${res.status}`);
         if (res.status === 204) return undefined as T;
         return (await res.json()) as T;

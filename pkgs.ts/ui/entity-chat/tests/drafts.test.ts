@@ -187,6 +187,26 @@ describe('DraftStore', () => {
         expect(store.hasDraft(dialogOwner('create-task', 'proj:diy'))).toBe(true);
     });
 
+    it('浏览器里 fetch 的 this 必须是 window 或 undefined，否则 Illegal invocation', async () => {
+        vi.useFakeTimers();
+        // 模拟浏览器：fetch 只接受 this === window（这里用 globalThis 代替）或裸调时的 undefined，
+        // 当成别的对象的方法调就抛 Illegal invocation。store 无论是 bind 到 globalThis 还是裸调都过，
+        // 但少了这两下防护（store 直接 `this.doFetch(...)` 且没 bind）就会红。
+        const strictFetch = function (this: unknown, _input: RequestInfo | URL, init?: RequestInit) {
+            if (this !== undefined && this !== globalThis) {
+                throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+            }
+            const method = init?.method ?? 'GET';
+            return Promise.resolve(method === 'GET' ? jsonResponse({ drafts: [] }) : jsonResponse({ ok: true }));
+        } as unknown as typeof fetch;
+        const store = new DraftStore({ fetchImpl: strictFetch, debounceMs: 600 });
+
+        store.setText('proj:a', 'composer', '一句话');
+        await vi.advanceTimersByTimeAsync(600);
+
+        expect(store.statusOf('proj:a')).toBe('saved');
+    });
+
     it('空内容判定：空格 / 空对象 / 全空对象都不算草稿', () => {
         expect(hasDraftContent({ text: '   ' })).toBe(false);
         expect(hasDraftContent({ text: '' })).toBe(false);
