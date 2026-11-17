@@ -7,7 +7,7 @@ import { ModelPicker } from './ModelPicker';
 
 /**
  * 弹窗外壳：点遮罩 / Esc 关闭（Esc 挂在 document 上 —— 弹窗里的 input 不一定拿得到焦点）。
- * `size` 默认 md；`wide` 给表格类弹窗（已关闭任务：四列表格塞不进 28rem）。
+ * `size` 默认 md；`wide` 留给需要多条表格列的弹窗（28rem 塞不下四列）。
  */
 export function Modal({
     title,

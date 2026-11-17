@@ -84,7 +84,7 @@ export function visibleInTree(room: Room): boolean {
 }
 
 /**
- * 「已关闭任务」表的行：所有已关闭的任务，按关闭时刻倒序（最近关的在最上面）。
+ * 导航底部「历史任务」区的行：所有已关闭的任务，按关闭时刻倒序（最近关的在最上面）。
  * 没有 `closedAt` 的老数据垫底（当 0）—— 不给它们抢最近的位置。
  */
 export function closedTasksOf(rooms: Room[]): Room[] {

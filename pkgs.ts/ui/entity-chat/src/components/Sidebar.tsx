@@ -48,6 +48,42 @@ function RowAction({
     );
 }
 
+/**
+ * 历史任务（已关闭）的一行：状态图标 + 名字 + 所属项目 tag。
+ *
+ * 为什么要有项目 tag：这张表是**跨项目**的（历史任务不挂在某个项目下面，否则
+ * 每个项目都得为了“翻旧账”多长一截，而项目树本身是用来干活的）。跨项目列表里
+ * 两个项目下都叫「修个 bug」的任务光看名字分不清，所以项目名必须在行上。
+ *
+ * 状态图标可点 —— 点它就是「重新打开」，任务会回到它所属项目的树里。
+ */
+function HistoryRow({ room, projectName, active }: { room: Room; projectName?: string; active: boolean }) {
+    return (
+        <div
+            className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
+                active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
+            }`}
+        >
+            <StatusIcon room={room} />
+            <button
+                onClick={() => actions.select(room.id)}
+                title={`${projectName === undefined ? '' : `${projectName} / `}${room.name}（点状态图标可重新打开）`}
+                className="min-w-0 flex-1 truncate text-left"
+            >
+                {room.name}
+            </button>
+            {projectName !== undefined && (
+                <span
+                    title={`项目：${projectName}`}
+                    className="max-w-[45%] shrink-0 truncate rounded border px-1.5 text-[10px] text-muted-foreground/80"
+                >
+                    {projectName}
+                </span>
+            )}
+        </div>
+    );
+}
+
 function RoomRow({
     room,
     active,
@@ -188,6 +224,17 @@ const SIDEBAR_RAIL_W = 56;
 // 而且这份名单会自愈 —— 项目删了只是多一个用不到的 id，不用清理。
 const COLLAPSED_KEY = 'entity-chat:collapsed-projects';
 
+/** 历史任务区展开状态：默认展开（用户要的是“方便回头看”，默认收起等于又藏起来了） */
+const HISTORY_OPEN_KEY = 'entity-chat:history-open';
+
+function loadHistoryOpen(): boolean {
+    try {
+        return localStorage.getItem(HISTORY_OPEN_KEY) !== 'closed';
+    } catch {
+        return true;
+    }
+}
+
 function loadCollapsed(): ReadonlySet<string> {
     try {
         const raw: unknown = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]');
@@ -219,7 +266,6 @@ export function Sidebar({
     onCreateProject,
     onCreateTask,
     onRequestDelete,
-    onOpenClosed,
     onOpenSettings,
 }: {
     open: boolean;
@@ -227,15 +273,13 @@ export function Sidebar({
     onCreateProject: () => void;
     onCreateTask: (projectId: string) => void;
     onRequestDelete: (room: Room) => void;
-    /** 已关闭任务表（弹窗在 App 里，因为它是跨项目的） */
-    onOpenClosed: () => void;
     onOpenSettings: () => void;
 }) {
     const state = useStore();
     const projects = state.rooms.filter((room) => room.type === 'project');
     const projectIds = new Set(projects.map((project) => project.id));
     // 非项目、且没有挂在任何已存在的项目下 → "未归属"（老数据 / projectId 丢了的任务）
-    // 已关闭的一律不进树：它们去「已关闭任务」表（用户：closed 的从项目树隐藏掉）
+    // 已关闭的一律不进树：它们去底部的「历史任务」区（用户：closed 的从项目树隐藏掉）
     const orphans = state.rooms.filter(
         (room) =>
             room.type !== 'project' &&
@@ -259,6 +303,20 @@ export function Sidebar({
     }, []);
 
     const [width, setWidth] = React.useState(loadWidth);
+    const [historyOpen, setHistoryOpen] = React.useState(loadHistoryOpen);
+    const toggleHistory = React.useCallback(() => {
+        setHistoryOpen((current) => {
+            const next = !current;
+            try {
+                localStorage.setItem(HISTORY_OPEN_KEY, next ? 'open' : 'closed');
+            } catch {
+                /* 存储不可用：本次运行仍然生效 */
+            }
+            return next;
+        });
+    }, []);
+    // 项目 id → 名字：历史任务是跨项目的（不挂在任何项目下），行上得自己写清楚属于哪个项目
+    const projectNames = new Map(projects.map((project) => [project.id, project.name]));
     /** 拖拽中：宽度跟着指针实时变，这时必须**摘掉 width 过渡**，否则宽度在鼠标后面追 */
     const [resizing, setResizing] = React.useState(false);
     const asideRef = React.useRef<HTMLElement | null>(null);
@@ -389,31 +447,59 @@ export function Sidebar({
                     );
                 })}
 
-                {/* 已关闭任务：树里看不见，但总得有个门能进 —— 它们没有消失，只是收起来了。
-                    点开是一张跨项目的表（见 components/ClosedTasks.tsx），所以入口放在这里而不是某项目下。 */}
-                {closedTasks.length > 0 &&
-                    (open ? (
-                        <button
-                            onClick={onOpenClosed}
-                            title="已关闭的任务（按关闭时间倒序）"
-                            className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted/60"
-                        >
-                            <Archive className="size-3.5 shrink-0" />
-                            已关闭任务
-                            <span className="ml-auto rounded-full border px-1.5 text-[10px] tabular-nums">
-                                {closedTasks.length}
-                            </span>
-                        </button>
-                    ) : (
-                        <button
-                            onClick={onOpenClosed}
-                            title={`已关闭任务（${closedTasks.length}）`}
-                            aria-label={`已关闭任务（${closedTasks.length}）`}
-                            className="flex w-full items-center justify-center rounded-lg py-2 text-muted-foreground hover:bg-muted/60"
-                        >
-                            <Archive className="size-4" />
-                        </button>
-                    ))}
+                {/* 历史任务：已关闭的任务从项目树里收起（用户：closed 的藏起来），但“看不见”不等于“没了”
+                    —— 它们就在这里，按关闭时间倒序，行上带项目 tag。
+                    之前这批任务只能从侧栏底部弹一张表才能看到（一个看不出藏着东西的门），
+                    现在它们和项目树是同一个列表读法：就在导航里。 */}
+                {closedTasks.length > 0 && (
+                    <div className={open ? 'mt-1 border-t pt-2' : 'mt-1'} data-sidebar-history>
+                        {open ? (
+                            <button
+                                onClick={toggleHistory}
+                                title={historyOpen ? '收起历史任务' : `展开历史任务（${closedTasks.length}）`}
+                                aria-expanded={historyOpen}
+                                className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground hover:bg-muted/60"
+                            >
+                                {historyOpen ? (
+                                    <ChevronDown className="size-3 shrink-0" />
+                                ) : (
+                                    <ChevronRight className="size-3 shrink-0" />
+                                )}
+                                <Archive className="size-3.5 shrink-0" />
+                                历史任务
+                                <span className="ml-auto rounded-full border px-1.5 text-[10px] tabular-nums">
+                                    {closedTasks.length}
+                                </span>
+                            </button>
+                        ) : (
+                            <button
+                                onClick={onToggle}
+                                title={`历史任务（${closedTasks.length}）—— 点开展开侧栏`}
+                                aria-label={`历史任务（${closedTasks.length}）`}
+                                className="flex w-full items-center justify-center rounded-lg py-2 text-muted-foreground hover:bg-muted/60"
+                            >
+                                <Archive className="size-4" />
+                            </button>
+                        )}
+                        {open && historyOpen && (
+                            <div className="mt-0.5 max-h-72 overflow-y-auto">
+                                {closedTasks.map((task) => {
+                                    const projectId = task.data['projectId'];
+                                    return (
+                                        <HistoryRow
+                                            key={task.id}
+                                            room={task}
+                                            projectName={
+                                                typeof projectId === 'string' ? projectNames.get(projectId) : undefined
+                                            }
+                                            active={state.selectedId === task.id}
+                                        />
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* 没挂到任何项目下的容器（老数据丢过 projectId / 以后别的类型）也要能点开 ——
                     按 projectId 分组的写法会让它们直接消失，数据还在却永远进不去 */}
