@@ -1,6 +1,6 @@
 # @diy-agent/actor
 
-**一个 actor = 一份私有状态 + 一条串行链 + 一张方法表。`src/index.ts` 180 行，零依赖，零网络代码。**
+**一个 actor = 一份私有状态 + 一条串行链 + 一张方法表。`src/index.ts` 184 行，零依赖，零网络代码。**
 
 这里没有：幂等表、游标、快照格式、多目标扇出、生命周期树、状态机。
 那些只有「要持久化」时才出现，谁需要谁在外面加（`examples/05` 加十几行）。
@@ -17,10 +17,28 @@ mountService(server, { prefix: 'room', api: roomApi, handlers: {
 
 关于「为什么不自带网络层」的完整判断，见 [`docs/bridging-rpc.md`](./docs/bridging-rpc.md)。
 
+## 状态
+
+**开发暂停（2026-11-17）。** 内核 + `cmd` 子路径都已完成、八个范例全绿，但**仓库里还没有使用者**：
+唯一完整的候选（diy2 的实体对话）评估后决定不迁 —— 它要解决的「多写者竞争 + 位置透明」
+在那个功能上都不存在，理由与证据见 [`docs/plans/2026-11-17-room-as-actor.md`](../../../../docs/plans/2026-11-17-room-as-actor.md)。
+
+等真的有第二个进程同时写同一份状态、或者需要按 command log 重放时再来接。
+在那之前，改动只做「修 bug + 补范例」，不再扩设计。
+
+链条外的活不会自己停，这是这个包最容易踩的一条：
+
+| 你以为是 `close()` 管的 | 实际上归谁 |
+|---|---|
+| 一链执行体的 abort | 归链：`actor()` 收尾时 abort `life.signal` |
+| 链外的 LLM 轮次 / 定时器 / 订阅 | **归你**：必须从 `life.signal` 派生（`AbortSignal.any([life.signal, own])`） |
+| 排队排到一半的工作单元 | 归链：`close()` 会排空（见 04） |
+| 已经发出去的帧 | 归宿主：`close()` 不会通知对面 |
+
 ## 跑
 
 ```bash
-./sha.sh all        # 七个范例，一次跑完
+./sha.sh all        # 八个范例，一次跑完
 ./sha.sh e03        # 只跑第三个
 ./sha.sh check      # 类型 + lint
 ```
@@ -65,7 +83,7 @@ await room.close();             // abort + 排空
 
 桥怎么搭、为什么用 rpc 而不自建、什么时候干脆别桥： [`docs/bridging-rpc.md`](./docs/bridging-rpc.md)，可运行版 `examples/06-rpc-bridge/`。
 
-## 七个范例
+## 八个范例
 
 | # | 目录 | 讲什么 |
 |---|------|--------|
@@ -76,6 +94,7 @@ await room.close();             // abort + 排空
 | 05 | `examples/05-persist/` | 崩溃恢复：一次提交 = 一行 |
 | 06 | `examples/06-rpc-bridge/` | 跨进程：actor 不改一字，rpc 桥进来 |
 | 07 | `examples/07-aggregate/` | 多个 actor 汇总成一条流 |
+| 08 | `examples/08-cmd/` | 声明式（`cmd` + `implement`）：契约与实现分居两文件，类型只推一次 |
 
 每个目录一份 README，见 [`examples/README.md`](./examples/README.md)。
 

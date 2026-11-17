@@ -58,7 +58,7 @@ e05() { run node --import tsx examples/05-persist/index.ts; }
 e06() { run node --import tsx examples/06-rpc-bridge/index.ts; }
 # 07 聚合：多个 actor 汇总成一条流
 e07() { run node --import tsx examples/07-aggregate/index.ts; }
-# 08 声明式：一条 cmd 同时是本地方法 / 契约 / handler / 强类型 client
+# 08 声明式：契约（cmd）与实现（implement）分居两文件，类型只推一次
 e08() { run node --import tsx examples/08-cmd/index.ts; }
 
 all() {

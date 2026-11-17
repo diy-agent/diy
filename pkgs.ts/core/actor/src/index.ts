@@ -10,9 +10,9 @@
  * examples/06-rpc-bridge 与 docs/bridging-rpc.md。「状态 + 串行链」在第几个进程
  * 都一样，需要换的只是「帧怎么送」。
  *
- * 嫌手写桥麻烦就用 `@diy-agent/actor/cmd`：`cmd({ input, output }, run)` 声明一次，
- * 同时得到本地方法 / rpc 契约 / 服务端 handler / 强类型 client。那条路径依赖 zod + rpc，
- * 所以放在子路径里 —— `import '@diy-agent/actor'` 仍然是零依赖。
+ * 嫌手写桥麻烦就用 `@diy-agent/actor/cmd`：`cmd()` 声明契约、`implement()` 绑实现，
+ * 参数类型在实现那侧自动推出来。那条路径依赖 zod + rpc，所以放在子路径里 ——
+ * `import '@diy-agent/actor'` 仍然是零依赖。
  *
  * 为此留的唯一接缝是 `$call(fn, args, { signal })` —— 外部桥能把「对面取消了」
  * 变成方法内部的 `life.signal.aborted`，不需要 actor 知道自己在远端。

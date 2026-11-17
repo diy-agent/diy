@@ -1,61 +1,22 @@
-// 08 — 声明式：一条 cmd 同时是本地方法、契约、服务端 handler、强类型 client
+// 08 — 声明式：契约（api.ts）与实现（impl.ts）分居两文件，类型只推一次
 //
 //   node --import tsx pkgs.ts/core/actor/examples/08-cmd/
 //
-// 和 06 做同一个业务，区别只有一处：**契约不再是单独一个文件**。
+// 和 06 做同一个业务。两边都是「契约一个文件、实现一个文件」，差别在实现那侧：
 //
-//   06（手写桥）          api.ts 每个方法一行 + server.ts 每个方法一行转手
-//   08（cmd）             cmd({ input, output }, run) 声明一次，四样东西自动出来
+//   06（手写桥）   server.ts 里每个方法手写一行转手 + 手写类型
+//   08（cmd）      implement(roomApi, setup, handlers)，类型全部从 roomApi 推出
 //
 // 底下仍然是 rpc：mountService / createTypedClient / transport / 取消帧一个没少。
 // 这里换掉的是样板，不是协议 —— 06 里讲过的断线、错误码、超时，这里同样适用。
+//
+// 关键：客户端那侧（下面 createActorClient 之前的部分）只 import 了 ./api.js。
+// ./impl.js 只在服务端出现 —— 所以 impl 里 import 什么都不会进客户端包。
 
 import { ChannelClientBinding, ChannelServerBinding, createMemTransportPair } from '@diy-agent/rpc';
-import { z } from 'zod';
-import { actorOf, apiOf, cmd, createActorClient, serveActor } from '../../src/cmd.js';
-import type { Life } from '../../src/index.js';
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-// ══ 唯一真源：一份声明 ═══════════════════════════════════════════════
-//
-// 注意 keep()：它说明 factory 的闭包初始化会被跑两次（本地一次，apiOf 取契约又一次）。
-// 所以 factory 必须无副作用 —— 和 rpc 的 api.ts 是同一条纪律。
-
-let inits = 0;
-
-const makeRoom = (life: Life) => {
-    inits++;
-    let seq = 0;
-    const lines: string[] = [];
-
-    return {
-        // 入参 shape 顺带起到校验作用：who 传空串会被 rpc 拦在进方法之前
-        say: cmd({ input: { who: z.string().min(1), text: z.string() }, output: z.number() }, ({ who, text }) => {
-            seq++;
-            lines.push(`${seq}. ${who}: ${text}`);
-            return seq;
-        }),
-
-        // 出参 schema 只推类型，没有运行时开销，所以写精确的 shape
-        lines: cmd({ input: {}, output: z.array(z.object({ seq: z.number(), text: z.string() })) }, () =>
-            lines.map((text, i) => ({ seq: i + 1, text })),
-        ),
-
-        // 要感知取消就读闭包里的 life.signal —— 和 04 是同一行
-        slow: cmd({ input: { ms: z.number() }, output: z.string() }, async ({ ms }) => {
-            for (let i = 1; i <= ms / 10; i++) {
-                if (life.signal.aborted) return `第 ${i} 次检查时停下`;
-                await sleep(10);
-            }
-            return '跑完了';
-        }),
-
-        boom: cmd({ input: { msg: z.string() }, output: z.void() }, ({ msg }) => {
-            throw new Error(msg);
-        }),
-    };
-};
+import { actorOf, createActorClient, serveActor } from '../../src/cmd.js';
+import { roomApi } from './api.js';
+import { initCount, makeRoom } from './impl.js';
 
 // ══ 本地：actorOf ═══════════════════════════════════════════════════
 
@@ -65,7 +26,7 @@ console.log('本地 →', await room.say({ who: '你', text: '二' }));
 
 // ══ 远端：三行装配 ══════════════════════════════════════════════════
 //
-// apiOf(makeRoom) 只取 cmd 定义，丢掉状态 —— 客户端不需要 actor 实例，也就没有链。
+// 客户端拿到的就是 roomApi 本身 —— 不需要再执行一次工厂去「取契约」。
 // 换成真跨进程只要把 client 换成 06 的 ipcTransport(childChan(child))，其余不动。
 
 const { serverTx, clientTx } = createMemTransportPair();
@@ -74,7 +35,7 @@ const client = new ChannelClientBinding(clientTx);
 
 const remoteActor = actorOf(makeRoom);
 serveActor(remoteActor, server, 'room');
-const remote = createActorClient({ api: apiOf(makeRoom), client, prefix: 'room' });
+const remote = createActorClient({ api: roomApi, client, prefix: 'room' });
 
 // 类型是从 cmd 声明推出来的，不是 any 蒙的：
 const seq: number = await remote.say({ who: '你', text: '三' });
@@ -114,9 +75,12 @@ try {
     console.log('对面 throw →', (e as Error).message);
 }
 
-// ══ factory 跑了两次 ════════════════════════════════════════════════
+// ══ setup 只跑真正建了实例的地方 ═════════════════════════════════════
+//
+// 旧写法这里是 3 次（本地 actor、远端 actor、apiOf 各一次）—— 因为客户端要「执行
+// 一次工厂去取契约」。现在契约是静态的，客户端不执行任何实现代码，所以是 2 次。
 
-console.log(`\nfactory 被调用 ${inits} 次（本地 1 + 远端 actor 1 + apiOf 1）—— 所以必须无副作用`);
+console.log(`\nsetup 跑了 ${initCount()} 次（本地 actor + 远端 actor，客户端 0 次）`);
 
 await room.close();
 await remoteActor.close();

@@ -70,7 +70,7 @@ export const roomApi = RpcSchema.group({
 
 这是这套桥接最不优雅的地方。如果方法特别多且搔，正确的解法是**类型生成**（从 TS 类型生成 stub），而不是自建一套不声明 schema 的协议 —— 后者会把上面整张对照表都丢掉。
 
-**已经有一个折中做法**：把 input/output schema 和实现写在一起，用 `cmd({ input, output }, run)` 声明 —— 见[最后那节](#更省事的写法cmd子路径)。它消掉的是「第二份声明」和「每个方法一行转手」，消不掉的是「上游必须是 schema」这件事本身。
+**已经有一个折中做法**：用 zod 声明 input/output，实现写在另一个文件里（`cmd()` + `implement()`）—— 见[最后那节](#更省事的写法cmd子路径)。它消掉的是「第二份声明」和「每个方法一行转手」，消不掉的是「上游必须是 schema」这件事本身。
 
 ### 2. 位置参数要包成对象
 
@@ -144,23 +144,43 @@ workbench 已经这么做：`pkgs.ts/ui/workbench/src/index.ts` 里 main 侧 `se
 
 ## 更省事的写法：`cmd` 子路径
 
-上面那张「四个位置」的表里，`api.ts`（契约）和 `server.ts`（转手）其实是纯样板 —— 前者是**第二份真源**，后者每个方法一行。如果愿意让「契约」用 zod 写，这两块可以合成一处：
+上面那张「四个位置」的表里，`api.ts`（契约）和 `server.ts`（转手）其实是纯样板 —— 前者是**第二份真源**，后者每个方法一行。如果愿意让「契约」用 zod 写，这两块都能自动生成。
+
+但**别把契约和实现合成一个文件**：客户端要拿契约，一旦契约里裹着实现，bundler 会顺着 impl 的 import 图（`node:fs`、server-only 依赖）整棵打进客户端包。所以这里分成两个文件，和 rpc 的 api / impl 分法一致：
 
 ```ts
-import { cmd, actorOf, apiOf, serveActor, createActorClient } from '@diy-agent/actor/cmd';
+// room.api.ts —— 客户端只 import 这个
+import { cmd } from '@diy-agent/actor/cmd';
 
-const makeRoom = (life: Life) => ({
-    say: cmd({ input: { who: z.string().min(1) }, output: z.number() }, ({ who }) => {
-        seq++;
-        return seq;
-    }),
-});
+export const roomApi = {
+    say: cmd({ input: { who: z.string().min(1) }, output: z.number() }),
+    slow: cmd({ input: { ms: z.number() }, output: z.string() }),
+};
+
+// room.impl.ts —— 只在服务端
+import { implement } from '@diy-agent/actor/cmd';
+import { roomApi } from './room.api.js';
+
+export const makeRoom = implement(
+    roomApi,
+    () => ({ seq: 0 }), // setup
+    {
+        say: ({ who }, { state }) => ++state.seq, // who: string，类型从 api 推出
+        slow: async ({ ms }, { signal }) => {
+            /* 读 signal 感知取消 */ return '跑完了';
+        },
+    },
+);
+```
+
+```ts
+import { actorOf, serveActor, createActorClient } from '@diy-agent/actor/cmd';
 
 const room = actorOf(makeRoom); // 本地
 serveActor(actorOf(makeRoom), server, 'room'); // 服务端
 const remote = createActorClient({
-    // 客户端
-    api: apiOf(makeRoom),
+    // 客户端：拿到的是 roomApi 本身
+    api: roomApi,
     client: new ChannelClientBinding(ipcTransport(childChan(child))),
     prefix: 'room',
 });
@@ -171,18 +191,22 @@ await remote.slow({ ms: 3000 }, { signal }); // 不用 $call
 
 |              | 手写桥（06）                             | `cmd`（08）                           |
 | ------------ | ---------------------------------------- | ------------------------------------- |
-| 契约         | `api.ts` 36 行，第二份真源               | 0（`apiOf(makeRoom)`）                |
+| 契约         | `api.ts` 36 行，手写类型                 | `cmd()` 声明，类型自动推              |
 | 服务端转手   | `server.ts` 40 行                        | `serveActor` 一行                     |
 | 取消         | `room.$call('slow', [3000], { signal })` | `room.slow({ ms: 3000 }, { signal })` |
-| 用户侧总行数 | 297                                      | 146                                   |
+| 契约+实现+转手 | 127 行                                 | 62 行 + 一行 `serveActor`             |
 
 **没有换协议**：底下仍然是 `mountService` / `createTypedClient` / transport / cancel 帧，或者说它就是用掉 rpc 已有的东西把上面那两块样板自动生成出来。
 
+### 两个文件换来什么
+
+`impl` 里的参数、返回值类型全部从 `roomApi` 推出，**不用重复标注**；少实现一个方法、参数名写错、返回类型错、`state` 上访问不存在的字段，都是编译错误（见 08 目录）。因为实现和契约不在同一个文件里，客户端那条 import 路径碰不到任何实现代码 —— 于是 `impl.ts` 里可以放心 `import fs`。
+
 ### 三个代价
 
-1. **`apiOf()` 会执行 factory**，状态丢掉只取 cmd 定义。所以 factory 的闭包初始化必须无副作用，且不要在 factory 里 `import fs` —— 客户端要 `apiOf`，那个 import 会跟到客户端包里。
+1. **两份文件**（`api.ts` + `impl.ts`）。这是换取「客户端不打包实现」的代价，也是 rpc 本身的形状；合成一份文件会把 `node:fs` 拖进客户端包，不是可选项。
 2. **入参必须是对象**（`{ ms: z.number() }` 而不是 `ms: number`）。这是换 `(input, opts?)` 与 rpc 同形、从而甩掉 `$call` 的代价。
-3. **`serveActor` 里有一处 `as unknown as`**：按字符串键遍历时编译器跟不住键与 handler 的对应。和 06 里 `handlers as never` 同类，只是从范例收进库一次。
+3. **库里有两处 `as unknown as`**（`implement` 绑 handler、`serveActor` 转手）：按字符串键遍历时编译器跟不住键与 handler 的对应。和 06 里 `handlers as never` 同类，只是从范例收进库一次。对使用者没有泄漏。
 
 ### 零依赖还在吗
 
