@@ -97,6 +97,30 @@ describe('compileLayout', () => {
         expect(summarize(layout.grid.root)).toBe('((center[chat]))');
     });
 
+    // 被跳过的区域**不占尺寸份额**：它的那一份如果留着，就成了一个洞，
+    // dockview 的 proportionalLayout 会把活下来的组按比例放大去填 ——
+    // 于是渲染尺寸和模板尺寸永久对不上（记账、min 约束、测试全跟着错）
+    it('被跳过的区域不吃尺寸：活下来的组吃掉整份空间', () => {
+        const sizes = (layout: CompiledLayout): [string, number][] =>
+            leavesOf(layout.grid.root).map((leaf) => [leaf.data.id, leaf.size]);
+
+        // row 里只剩 center → 它吃掉整个宽度（不是 1440-300-320）；根里只剩那行 → 吃掉整个高度
+        expect(sizes(compileLayout({ page, views: [view('chat', 'center')], scope, viewport }))).toEqual([
+            ['center', viewport.width],
+        ]);
+        // 只剩一个写在模板里的数字区也一样：留 300 的话右边会空出 1140 被放大填掉
+        expect(sizes(compileLayout({ page, views: [view('detail', 'left')], scope, viewport }))).toEqual([
+            ['left', viewport.width],
+        ]);
+        // 都在的时候一个像素不动（模板的数字照旧、fr 吃剩下的）
+        expect(sizes(compileLayout({ page, views, scope, viewport }))).toEqual([
+            ['left', 300],
+            ['center', 820],
+            ['right', 320],
+            ['bottom', 240],
+        ]);
+    });
+
     it('页里一个 view 都没有 → 报错（空壳页没有意义）', () => {
         expect(() => compileLayout({ page, views: [view('chat', 'nowhere')], scope, viewport })).toThrow(ModelError);
         expect(() => compileLayout({ page, views: [], scope, viewport })).toThrow(/没有任何区域有 view 落位/);

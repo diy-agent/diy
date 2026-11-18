@@ -195,7 +195,7 @@ summarize(layout.grid.root): string // '(left[detail] ; center[chat])'
 |---|---|
 | 首次进页（storage 空） | `compileLayout`：模板 → 布局 |
 | 用户拖分屏线 / 收起展开 / 关 tab / 切 activeView | dockview 自己记；变化节流后写进 `storage` |
-| 用户拖分屏线 | 记进 `pinnedSizes`（只记模板里写死数字的区域，`1fr` 不记） |
+| 用户拖分屏线 | 按这次拖动的**位移**记进 `pinnedSizes`（只记模板里写死数字的区域，`1fr` 不记） |
 | 窗口变大变小 | 不重建布局：dockview 自己跟着容器重排；`1fr` 下次编译时按新宽度重新分配 |
 | 再次进页 | 读 `storage` → `resolveLayout` |
 | 模板改了（加/删 view、改区域） | `resolveLayout(旧快照 × 新模板)`：保尺寸/展开/tab 顺序（R1），新 view 按 `order` 插进来（R2/R4），模板删掉的区域丢弃（R3） |
@@ -227,7 +227,8 @@ L2（自由 docking）/ L3（页面存成可分享透视图）**不做**。
   dock: SerializedDockview,          // dockview api.toJSON() 原样
   dismissed: string[],               // 用户关掉的 view id
   maximizedArea?: string,            // dockview 快照不含最大化
-  pinnedSizes?: Record<string, number> // 用户拖出来的 px（只记模板写死数字的区域）
+  pinnedSizes?: Record<string, number>, // 用户拖出来的 px（只记模板写死数字的区域）
+  movedViews?: Record<string, string>   // L1 拖过的落点：view id → 区域 id
 }
 ```
 
@@ -241,6 +242,23 @@ L2（自由 docking）/ L3（页面存成可分享透视图）**不做**。
 
 > 代价：一组兄弟**全是** `1fr` 时（没有任何固定参照），用户拖出来的比例无处安放，下次进页回到均分。
 > 要保住比例就给这组里至少一个区域写数字尺寸。
+
+**记账按位移，不按「实测 vs 重编」的差**。两个原因，都是实打实踩过的：
+
+- dockview 渲染出来的宽高**不是**编译给它的 px：每组都被扣掉 `theme.gap` 的一份
+  （`margin × sashCount / visibleCount`，默认主题 gap 10、三组就是每组 −6.7）。
+  拿实测当模板值会记少一点，下次进来再少一批 —— 越拖越窄；
+- 容器缩放、收起/展开、最大化、首次 `fromJSON` 之后**都会**来一条 `geometry` 事件，
+  「实测 ≠ 重编」在这些情况下天然成立，但一条都不是用户的意思。
+  顺带一个坑：`onDidLayoutChange` 是 `AsapEvent`（`queueMicrotask` 合帧），
+  `fromJSON` 期间同步置位的 `applying` 标志根本罩不住它。
+
+所以：只有从分屏线（`.dv-sash`）上 `pointerdown` 到 `pointerup` 之间才有「拖动前的实测」基准，
+记账 = **上次的逻辑尺寸 + 位移**（差值正好把 gap 份额抵消掉）。没在拖 → 这条事件不记账。
+
+**编译出来的 px 必须等于渲染出来的 px**（± gap 份额）。所以 `distribute` 最后一步是**归一**：
+一组兄弟的尺寸一定拉满父容器。留洞的话 dockview 的 `proportionalLayout` 会替我们做，
+于是「模板尺寸」和「屏幕上的尺寸」就是两个数，位移记账、`min` 约束、测试全都跟着错。
 
 **存储读回来先校验**：`version` / `pageType` 对不上，或者 grid 树的形状不是我们写得出来的样子
 （用户手改过 localStorage、旧版本写坏过）→ 一律当没存过，回模板。宁可丢掉用户布局，也不把畸形树喂给 `fromJSON`。
