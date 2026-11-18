@@ -1,4 +1,6 @@
-/* dock-demo.css —— 范例页的外壳 + dockview 暗色变量（只演示用，包本身不带主题） */
+/* 本例子自带的样式。包不带主题：dockview 内置的是浅色，想暗色就覆盖 --dv-* 变量
+ * （最后那一段可以直接抄进宿主）。.wb-* 是 view 内部的样式，业务自己写 —— 注意
+ * 右边那个 vanilla view 用的也是这套类名：样式不归框架管。 */
 
 :root {
     color-scheme: dark;
@@ -18,6 +20,8 @@ body,
         sans-serif;
 }
 
+/* ── 例子外壳 ─────────────────────────────────────────────────────────────── */
+
 .demo-root {
     display: flex;
     flex-direction: column;
@@ -28,42 +32,21 @@ body,
     display: flex;
     gap: 8px;
     align-items: center;
+    flex-wrap: wrap;
     padding: 8px 12px;
     border-bottom: 1px solid #21262d;
     background: #10151c;
-    flex-wrap: wrap;
 }
 
 .demo-title {
     font-weight: 600;
-    margin-right: 4px;
-}
-
-.demo-head button {
-    padding: 3px 10px;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    background: #161b22;
-    color: inherit;
-    cursor: pointer;
-}
-
-.demo-head button.on {
-    border-color: #3b82f6;
-    background: #16233a;
-}
-
-.demo-switch {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    margin-left: 8px;
-    color: #9aa4b2;
+    font-size: 13px;
 }
 
 .demo-note {
-    color: #6e7681;
     margin-left: auto;
+    font-size: 12px;
+    color: #6e7681;
 }
 
 .demo-body {
@@ -71,14 +54,14 @@ body,
     min-height: 0;
 }
 
-/* ── view 内部（业务自己写，这里只为例子好看）──────────────────────────── */
+/* ── view 内部（两种渲染方式共用这些类名）────────────────────────────────── */
 
 .wb-view {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 10px;
     height: 100%;
+    padding: 10px;
     box-sizing: border-box;
     overflow: auto;
 }
@@ -89,16 +72,12 @@ body,
     align-items: center;
 }
 
-.wb-view-body {
-    flex: 1;
-}
-
 .wb-tag {
-    font-size: 11px;
     padding: 1px 6px;
     border-radius: 999px;
     background: #1f6feb33;
     color: #79c0ff;
+    font-size: 11px;
 }
 
 .wb-msg {
@@ -112,48 +91,9 @@ body,
     background: #16233a;
 }
 
-.wb-composer {
-    padding: 8px 10px;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    color: #6e7681;
-}
-
-.wb-fields {
-    display: grid;
-    grid-template-columns: 56px 1fr;
-    gap: 4px 10px;
-    margin: 0;
-}
-
-.wb-fields dt {
-    color: #6e7681;
-}
-
-.wb-fields dd {
-    margin: 0;
-}
-
 .wb-hint {
-    color: #6e7681;
     font-size: 12px;
-}
-
-.wb-list {
-    margin: 0;
-    padding-left: 18px;
-}
-
-.wb-table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-.wb-table th,
-.wb-table td {
-    text-align: left;
-    padding: 4px 6px;
-    border-bottom: 1px solid #21262d;
+    color: #6e7681;
 }
 
 .wb-view button {
@@ -163,10 +103,11 @@ body,
     border-radius: 6px;
     background: #161b22;
     color: inherit;
+    font: inherit;
     cursor: pointer;
 }
 
-/* ── dockview 暗色变量（它的内置主题是浅色）────────────────────────────── */
+/* ── dockview 暗色变量 ───────────────────────────────────────────────────── */
 
 .dv-dockview {
     --dv-background-color: #0d1117;

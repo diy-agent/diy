@@ -1,0 +1,45 @@
+{
+    "name": "film-page",
+    "version": "0.1.0",
+    "private": true,
+    "description": "影片页插件：三列 + 底部时间线（骨架由宿主提供）",
+    "main": "./index.tsx",
+    "contributes": {
+        "pages": [
+            {
+                "type": "film",
+                "title": "影片",
+                "icon": "🎬",
+                "skeleton": "three-pane-bottom"
+            }
+        ],
+        "views": {
+            "film": [
+                {
+                    "id": "film.live",
+                    "title": "实时",
+                    "area": "main",
+                    "primary": true
+                },
+                {
+                    "id": "film.shots",
+                    "title": "分镜",
+                    "area": "sidebar"
+                },
+                {
+                    "id": "film.props",
+                    "title": "道具",
+                    "area": "aside"
+                },
+                {
+                    "id": "film.timeline",
+                    "title": "时间线",
+                    "area": "bottom"
+                }
+            ]
+        }
+    },
+    "diy": {
+        "apiVersion": 1
+    }
+}
