@@ -37,6 +37,11 @@
 10. **`fromJSON` 之前先把快照验一遍**（`resolveLayout` 里的 `isDockNode`）。快照在 localStorage 里，
    用户手改过、旧版本写坏过都是常态：一律当没存过回模板，宁可丢布局也不要白屏。
    外壳那一层还有 try/catch 兜底 → 区域里显示错误 + 「回到模板」。
+11. **快照里的三份用户意图要分开记**：`pinnedSizes`（拖过的尺寸）/ `movedViews`（L1 拖过的落点）/
+   `dismissed`（关掉的 view）。它们都是「优先于模板」的输入，但**都必须先校验再用**：
+   尺寸只认模板里写死数字的区域，落点只认 `area` + `allow` —— 快照是用户数据，脏了就忽略，不要抛。
+12. **存储会拒绝你**：`setItem` 配额满 / 隐私模式 / 后端 KV 拒写都会抛，而它在 rAF 回调里
+   （没人接）—— 一律 try/catch 后报 `onStorageError`。页继续用，但不能假装存上了。
 
 ## 测试
 
@@ -44,7 +49,8 @@
 ./sha.sh check       # typecheck + lint + vitest
 ```
 
-`tests/compile.test.ts` 覆盖：px 换算 / 收起 / primary / order / 轴交替 / placement 越界 / R1–R4 /
+`tests/compile.test.ts` 覆盖：px 换算 / 收起 / primary / order / 轴交替 / placement 越界 /
+`allow` 校验与 L1 落点 / R1–R4 /
 dismissed / pinnedSizes（含「快照里的 size 不采信」）/ 坏快照回落 / 回落模板。
 UI 层不写单测（它只是把纯函数的结果喂给 dockview）：改动 UI 层就在 `examples/` 里手验 ——
 `./sha.sh dev` 起例子的 vite（root = `examples/`），`./sha.sh examples` 验证四个入口都还能构建。

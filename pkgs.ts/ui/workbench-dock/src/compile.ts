@@ -20,6 +20,7 @@ import {
     type AreaNode,
     type Axis,
     type PageDef,
+    type Placement,
     type Scope,
     type Size,
     type ViewDef,
@@ -93,6 +94,13 @@ export interface LayoutInput<S extends Scope = Scope> {
      * 所以不能钉（钉住就等于把某一刻的窗口尺寸烧进布局）。
      */
     pinned?: Record<string, number>;
+    /**
+     * L1 拖出来的落点：view id → 区域 id。
+     *
+     * 只认「这个 view 自己声明过」的区域（`area` 或 `allow`），其余一律当没发生 ——
+     * 这份数据来自快照（用户改过 / 模板改过），不能因为它把一个 view 丢进黑洞。
+     */
+    moved?: Record<string, string>;
 }
 
 /** 用户布局的持久化形态。除了 dockview 快照，只需要多记三样东西 */
@@ -113,6 +121,8 @@ export interface SavedLayout {
      * 用户拖拽、dockview 的钳制、以及上一次窗口尺寸的痕迹，事后分不清哪个是用户要的。
      */
     pinnedSizes?: Record<string, number>;
+    /** L1 拖过的 view：view id → 它此刻待的区域（落点仍受 `placement.area` + `allow` 约束） */
+    movedViews?: Record<string, string>;
 }
 
 /** panel 内容组件名（所有 view 共用一个 React 外壳，靠 params.viewId 分发） */
@@ -122,7 +132,7 @@ export const VIEW_COMPONENT = 'view';
 
 export function compileLayout<S extends Scope>(input: LayoutInput<S>): CompiledLayout {
     const { page, views, scope, viewport } = input;
-    const slots = collectSlots(page, views, scope);
+    const slots = collectSlots(page, views, scope, input.moved);
 
     const skippedAreas: string[] = [];
     const root = compileNode(page.areas, slots, depthAxis(page.areas), viewport, skippedAreas, input.pinned);
@@ -171,6 +181,7 @@ function collectSlots<S extends Scope>(
     page: PageDef<S>,
     views: readonly ViewDef<S>[],
     scope: S,
+    moved?: Record<string, string>,
 ): Map<string, AreaSlot<S>> {
     const known = new Set(areaLeaves(page.areas).map((leaf) => leaf.id));
     const slots = new Map<string, AreaSlot<S>>();
@@ -182,14 +193,23 @@ function collectSlots<S extends Scope>(
                 `view "${view.id}" 的 placement 指向 page "${page.type}" 里不存在的区域 "${placement.area}"`,
             );
         }
-        const slot = slots.get(placement.area) ?? { areaId: placement.area, views: [] };
+        // L1 的落点也在这里验：允许拖进一个不存在的区域，等于让用户拖到一个黑洞里
+        for (const allowed of placement.allow ?? []) {
+            if (!known.has(allowed)) {
+                throw new ModelError(
+                    `view "${view.id}" 的 placement.allow 里有个 page "${page.type}" 不存在的区域 "${allowed}"`,
+                );
+            }
+        }
+        // L1 拖过的 view 落回它自己拖去的地方；没拖过 / 拖到的区域它没声明过 → 回模板位置
+        const areaId = movedArea(placement, moved?.[view.id]);
+        const slot = slots.get(areaId) ?? { areaId, views: [] };
         slot.views.push(view);
         if (placement.primary) {
-            if (slot.activeView)
-                throw new ModelError(`page "${page.type}" 的区域 "${placement.area}" 有多个 primary view`);
+            if (slot.activeView) throw new ModelError(`page "${page.type}" 的区域 "${areaId}" 有多个 primary view`);
             slot.activeView = view.id;
         }
-        slots.set(placement.area, slot);
+        slots.set(areaId, slot);
     }
     for (const slot of slots.values()) {
         slot.views.sort((a, b) => order(a, page.type) - order(b, page.type));
@@ -197,6 +217,12 @@ function collectSlots<S extends Scope>(
     }
     void scope;
     return slots;
+}
+
+/** 拖动后的落点：只认声明过的区域（`area` + `allow`），其余当没拖过 */
+function movedArea(placement: Placement, target: string | undefined): string {
+    if (!target || target === placement.area) return placement.area;
+    return (placement.allow ?? []).includes(target) ? target : placement.area;
 }
 
 function order<S extends Scope>(view: ViewDef<S>, pageType: string): number {
@@ -330,7 +356,12 @@ export interface ResolveInput<S extends Scope = Scope> extends LayoutInput<S> {
 export function resolveLayout<S extends Scope>(input: ResolveInput<S>): CompiledLayout {
     const saved = input.saved;
     const usable = saved && saved.pageType === input.page.type ? savedRoot(saved) : null;
-    const compiled = compileLayout({ ...input, pinned: usable ? saved?.pinnedSizes : undefined });
+    // 快照里的两份用户意图（钉住的尺寸 / 拖动过的落点）都是「优先于模板」的输入
+    const compiled = compileLayout({
+        ...input,
+        pinned: usable ? saved?.pinnedSizes : undefined,
+        moved: usable ? saved?.movedViews : undefined,
+    });
     if (!usable) return compiled;
 
     const dismissed = new Set(Array.isArray(saved?.dismissed) ? saved.dismissed : []);
