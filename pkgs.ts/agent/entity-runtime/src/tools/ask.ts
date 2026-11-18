@@ -57,8 +57,14 @@ export function askTool(gate: AskGate | undefined, owner?: string): ToolSet[stri
             questions: z
                 .array(QUESTION_SCHEMA)
                 .min(1)
+                // 上限不为难模型，是为了卡片还能读、用户还能一次答完：
+                // 一张卡超过 8 题就得翻页翻到手软，用户往往直接关掉。
+                // 真的那么多就分两批问（那也是两次「提问」，各占一格）。
+                .max(8)
                 .optional()
-                .describe('要一起问的多个问题（一张卡、一次提交）。只问一件事就用下面的简写字段'),
+                .describe(
+                    '要一起问的多个问题（一张卡、一次提交，最多 8 题）。只问一件事就用下面的简写字段',
+                ),
             question: z.string().optional().describe('单题简写：只问一件事时用它，配合 kind/options/fields'),
             kind: z
                 .enum(['choice', 'form', 'text'])

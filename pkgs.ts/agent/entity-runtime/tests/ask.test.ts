@@ -265,6 +265,30 @@ describe('AskGate', () => {
         expect(h.gate.pendingCount()).toBe(1);
     });
 
+    it('题 id 撞了：后来的一律改成下一个空号，不跳号（否则模型按 q2 引用会对不上）', () => {
+        const h = makeGate();
+        const request = h.gate.request({
+            questions: [
+                { id: 'q1', question: '第一件', kind: 'text' },
+                { id: 'q1', question: '第二件', kind: 'text' },
+                { question: '第三件', kind: 'text' },
+            ],
+        });
+        expect(request?.questions.map((question) => question.id)).toEqual(['q1', 'q2', 'q3']);
+    });
+
+    it('一批最多 8 题：再多就该分两批问（一张卡翻页翻不完，用户只会关掉）', async () => {
+        const { askTool } = await import('../src/tools/ask');
+        const h = makeGate();
+        const schema = (askTool(h.gate) as unknown as { inputSchema: { safeParse: (v: unknown) => { success: boolean } } })
+            .inputSchema;
+        const many = (n: number) => ({
+            questions: Array.from({ length: n }, (_, i) => ({ question: `第 ${i + 1} 件` })),
+        });
+        expect(schema.safeParse(many(8)).success).toBe(true);
+        expect(schema.safeParse(many(9)).success).toBe(false);
+    });
+
     it('一题都没给：不推卡片（不造空卡片），工具拿到的是没问成', () => {
         const h = makeGate();
         expect(h.gate.request({ questions: [{ question: '   ' }] })).toBeUndefined();
