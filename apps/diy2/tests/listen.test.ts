@@ -1,7 +1,7 @@
 // tests/listen.test.ts —— 端口粘性的落地行为（真 socket，不 mock）。
 //
 // 这里验的三件事就是需求本身：
-//   1. `port.sticky` 记着的端口还在空着 → 下次就用它（不用真起两个进程：记录 + 监听即可）；
+//   1. `app.port` 记着的端口还在空着 → 下次就用它（不用真起两个进程：记录 + 监听即可）；
 //   2. 那个端口被别人占了 → 换一个空闲端口，并**重写**记录（下次粘在新的上）；
 //   3. 显式点名的端口（`DIY2_PORT` / `--port`）被占 → **不漂**，原样报错。
 
@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { readPortFile, resolveConfig, writeStickyPort, type Diy2Config } from '../server/config';
+import { readPortFile, resolveConfig, writePortFile, type Diy2Config } from '../server/config';
 import { listenWithStickyPort } from '../server/listen';
 
 const moduleDir = join(import.meta.dirname, '..');
@@ -48,7 +48,7 @@ function configOf(home: string, extra: Record<string, string> = {}): Diy2Config 
 }
 
 describe('listenWithStickyPort', () => {
-    it('粘性端口还空着 → 用它，并同时落 app.port 与 port.sticky', async () => {
+    it('记录还空着 → 下次就用它（关掉 server 也不删记录）', async () => {
         const home = tmp();
         const config = configOf(home);
         const server = createServer();
@@ -58,24 +58,24 @@ describe('listenWithStickyPort', () => {
         expect(first.driftedFrom).toBeNull();
         expect(first.port).toBeGreaterThan(0);
         expect(readPortFile(config.portFile)).toBe(first.port);
-        expect(readPortFile(config.stickyPortFile)).toBe(first.port);
-        server.close();
+        // 退出（close）不动记录：它不是活体登记，删了下次就换成内核随机端口
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        servers.splice(servers.indexOf(server), 1);
+        expect(readPortFile(config.portFile)).toBe(first.port);
 
-        // 「下次启动」：只剩粘性记录（app.port 是活体登记，优雅退出会删）
-        rmSync(config.portFile, { force: true });
         const next = configOf(home);
         expect(next.port).toBe(first.port);
-        expect(next.portSource).toBe('sticky');
+        expect(next.portSource).toBe('recorded');
     });
 
-    it('粘性端口被占用 → 换一个空闲端口，并重写**两份**记录', async () => {
+    it('记录的端口被占用 → 换一个空闲端口，并重写记录', async () => {
         const home = tmp();
         const taken = await occupy();
-        writeStickyPort(join(home, 'port.sticky'), taken);
+        writePortFile(join(home, 'app.port'), taken);
 
         const config = configOf(home);
         expect(config.port).toBe(taken);
-        expect(config.portSource).toBe('sticky');
+        expect(config.portSource).toBe('recorded');
 
         const server = createServer();
         servers.push(server);
@@ -84,7 +84,6 @@ describe('listenWithStickyPort', () => {
         expect(result.driftedFrom).toBe(taken);
         expect(result.port).not.toBe(taken);
         expect(readPortFile(config.portFile)).toBe(result.port);
-        expect(readPortFile(config.stickyPortFile)).toBe(result.port);
         // 再下一次启动就粘在新端口上
         expect(configOf(home).port).toBe(result.port);
     });
@@ -98,7 +97,7 @@ describe('listenWithStickyPort', () => {
         const server = createServer();
         servers.push(server);
         await expect(listenWithStickyPort(config, server)).rejects.toMatchObject({ code: 'EADDRINUSE' });
-        // 失败不该留下「看起来在跑」的活体登记
+        // 启动失败不写记录：记录只记「监听成功过的端口」，失败没有东西可记
         expect(readPortFile(config.portFile)).toBeNull();
     });
 });

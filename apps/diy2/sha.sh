@@ -103,8 +103,9 @@ build-server() {
 #
 # 与老形态的区别（##dev-app 构建对齐）：
 #   · 端口只有一个，且**不在这里写**（DIY2_PORT / 缺省 0 = 内核分配，落 <home>/app.port）；
-#     端口有**粘性**：首次监听成功写 <home>/port.sticky，之后每次重启（含 exit 75 自动重启）
-#     都还回同一个端口，被占用时回落到内核分配并重写 —— 书签 / 开着的标签页不会失效。
+#     端口有**粘性**：监听成功就把端口写进 <home>/app.port（**退出不删**），之后每次重启
+#     （含 exit 75 自动重启）都还回同一个端口，被占用时回落到内核分配并重写 ——
+#     书签 / 开着的标签页不会失效。注意那文件只是「上次用的端口」，**不表示有人在跑**。
 #   · 同源：没有 /api 代理，SSE 不穿代理；
 #   · 起停不再按端口 kill（会误杀长连接的浏览器）：实例自报注册表，停用 ./sha.sh stop。
 #
@@ -119,7 +120,7 @@ dev() {
   if [[ -n "${DIY2_PORT:-}" ]]; then
     echo "   端口：DIY2_PORT=${DIY2_PORT}（非生产不吃 5192；实际端口看下面打印的 URL）"
   else
-    echo "   端口：沿用上次的端口（<home>/port.sticky）；被占用则自动换一个并重写记录"
+    echo "   端口：沿用上次的端口（<home>/app.port）；被占用则自动换一个并重写记录"
   fi
   echo "   停：Ctrl-C / ./sha.sh stop（不按端口 kill —— 会误杀长连接的浏览器）"
 
@@ -214,18 +215,22 @@ stop() { run node ./bin/diy2 stop --worktree "$REPO_ROOT" "$@"; }
 # 本 worktree × 本变体的数据根 / 端口（脚本用；与 server/config.ts 的缺省一致）
 home() { echo "${DIY2_HOME:-$SCRIPT_DIR/build/$(_dev_variant)/home}"; }
 port() {
-  local file; file="$(home)/app.port"
-  [[ -f "$file" ]] || { echo "（$(home) 上没有在跑的实例：缺 app.port）" >&2; return 1; }
-  cat "$file"
+  # 判据必须是**探活**（/api/info 自报的 home + 注册表 pid），不是 app.port：
+  # 那个文件只是「上次用的端口」，进程死后它还留着，崩死（SIGKILL / 断电）时也不更新。
+  #
+  # 必须显式给 `--home`：`bin/diy2` 是发布形态入口，自己会把环境纠正成 production、
+  # 数据根缺省成 `~/.diy/diy2` —— 不传就是去探生产根上的实例（dev 永远探不到）。
+  run node ./bin/diy2 port --home "$(home)"
 }
 # 一眼看清：本变体的运行空间 + 本机实例表
 status() {
   echo "变体：$(_dev_variant)"
   echo "数据根：$(home)"
-  echo "端口：$(port 2>/dev/null || echo '（无在跑的实例）')"
-  # 粘性记录：不在跑也还在，下次启动就用它（区分「现在连哪」与「下次连哪」）
-  local sticky; sticky="$(home)/port.sticky"
-  [[ -f "$sticky" ]] && echo "下次沿用：$(cat "$sticky")"
+  # 「下次连哪」与「现在连哪」分开说：前者是 app.port 记录（不证明存活），后者靠探活
+  local next=""
+  if [[ -f "$(home)/app.port" ]]; then next="$(cat "$(home)/app.port")"; fi
+  echo "上次用的端口：${next:-（无记录）}"
+  echo "现在在跑：$(port 2>/dev/null || echo '否（没有本数据根的实例应答）')"
   node ./bin/diy2 list
 }
 

@@ -181,7 +181,12 @@ const samePath = (a, b) => {
     return norm(a) === norm(b);
 };
 
-/** 本数据根在跑的实例：`app.port` 只是候选，回包里的 home 才是判据 */
+/**
+ * 本数据根在跑的实例。
+ *
+ * `app.port` 只提供**候选地址**（「上次用过哪个端口」），**不是存活证据** —— 进程死后它还留着，
+ * 崩死时也不会变。判据只有一条：`/api/info` 自报的 `home` 同时还要有 `pid`。
+ */
 async function probeMine() {
     let recorded;
     try {
@@ -301,9 +306,9 @@ switch (command) {
         const records = readRecords().filter((rec) => all || scope(rec));
         const label = all ? '全部' : wantWorktree !== undefined ? `worktree=${wantWorktree}` : `home=${home}`;
         const stopped = await stopRecords(records, label);
-        // 注册表里没有、但 app.port 还在 → 老版本起的无注册表实例，按端口记录补一刀
+        // 注册表没有记录时，拿 app.port 里的端口试一次（可能是老版本起的无注册表实例）：
+        // 记录不证明存活，只是候选地址，身份仍由回包校验。
         if (!all && wantWorktree === undefined && stopped === 0) {
-            // 注册表里没有，但端口记录还在：可能是老版本起的（无注册表）
             const mine = await probeMine();
             if (mine?.pid !== undefined) await stopRecords([{ ...mine }], `home=${home}`);
         }
@@ -365,7 +370,8 @@ if (has('detach')) {
     // 后台起：子进程自己写 app.port / 注册表，父进程只等它健康
     const child = spawn(process.execPath, [serverEntry], { env, detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
     child.unref();
-    // 端口未知（0 = 内核分配）时读 app.port
+    // 端口未知（0 = 内核分配）时读 app.port —— 它可能是**上一次**留下的陈旧值（退出不删），
+    // 所以下面每轮都靠 `waitHealthy` 的 home 校验收口：读错了只是多绕一圈，不会误判就绪
     const startedAt = Date.now();
     let info = null;
     while (info === null && Date.now() - startedAt < 15_000) {
@@ -394,7 +400,8 @@ for (const [key, value] of Object.entries(env)) {
 }
 
 // 服务端产物顶层就 listen（`import` 即启动；装配逻辑在 createDiy2App，见 server/index.ts）。
-// 端口可能由内核分配（-p 0），所以「就绪」的判据是 `<home>/app.port` + 身份回包，不是命令行。
+// 端口可能由内核分配（-p 0），所以「就绪」的判据是 `/api/info` 身份回包；`<home>/app.port`
+// 只用来找到候选端口（它记的是上次的端口，不证明什么）。
 await import(pathToFileURL(serverEntry).href);
 
 const startedAt = Date.now();

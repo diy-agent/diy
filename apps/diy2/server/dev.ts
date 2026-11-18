@@ -17,7 +17,7 @@ import { join } from 'node:path';
 
 import { createServer as createViteServer } from 'vite';
 
-import { describeConfig, isProdHome, modelConfigHint, removePortFile, resolveConfig } from './config';
+import { describeConfig, isProdHome, modelConfigHint, resolveConfig } from './config';
 import { announce, retract } from './registry';
 import { createDiy2App } from './app';
 import { listenWithStickyPort } from './listen';
@@ -73,9 +73,9 @@ httpServer.on('request', (req, res) => {
     });
 });
 
-// 端口粘性（`<home>/port.sticky`）：改服务端代码 → exit 75 → 看护循环重起，这里刻意只删
-// `app.port`（活体登记），留着粘性记录，于是**重启后还是同一个 URL** —— 浏览器那边只是
-// HMR ws 断了重连，不用改书签。被占用时回落到内核分配并重写记录（见 ./listen）。
+// 端口粘性（`<home>/app.port`）：改服务端代码 → exit 75 → 看护循环重起；那边**不删**这个文件，
+// 于是重启后还是同一个 URL —— 浏览器那边只是 HMR ws 断了重连，不用改书签。
+// 被占用时回落到内核分配并重写记录（见 ./listen）；它只是「上次用的端口」，不证明谁在跑。
 let port: number;
 try {
     ({ port } = await listenWithStickyPort(config, httpServer));
@@ -105,7 +105,6 @@ const scheduleRestart = (file: string | null): void => {
     console.log(`[diy2] 服务端代码变了${file === null ? '' : `（${file}）`} → 重启`);
     timer = setTimeout(() => {
         app.close();
-        removePortFile(config.portFile);
         retract();
         void vite.close().finally(() => httpServer.close(() => process.exit(RESTART_CODE)));
         // 长连接（SSE）可能挂住 close 回调：兜底硬退
@@ -124,8 +123,8 @@ for (const root of watchRoots) {
 }
 
 const shutdown = (): void => {
+    // 刻意**不删** app.port：重启（看护循环 / Ctrl-C 再起）要还回同一个 URL。
     app.close();
-    removePortFile(config.portFile);
     retract();
     void vite.close().finally(() => httpServer.close(() => process.exit(0)));
     setTimeout(() => process.exit(0), 1500).unref();
