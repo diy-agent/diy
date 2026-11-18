@@ -96,12 +96,59 @@ export function formatClosedAgo(closedAt: number | undefined, now: number = Date
 }
 
 /** 悬停用的绝对时刻（本地时区，精确到分钟） */
-export function formatClosedAtAbsolute(closedAt: number | undefined): string | undefined {
-    if (closedAt === undefined) return undefined;
-    const date = new Date(closedAt);
+export function formatAtAbsolute(at: number | undefined): string | undefined {
+    if (at === undefined) return undefined;
+    const date = new Date(at);
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
+
+/** 历史行的关闭时刻（与上面同一个实现，名字分开只因为两处含义不同） */
+export function formatClosedAtAbsolute(closedAt: number | undefined): string | undefined {
+    return formatAtAbsolute(closedAt);
+}
+
+/**
+ * 「最后活动」：**压缩**的裤位写法（`刚刚` / `12m` / `3h` / `3d` / `11-17`）。
+ *
+ * 跟关闭时间（`formatClosedAgo`，写「3 小时前」）不是一个写法，故意的：
+ * 关闭时间只在历史区出现一两行，说清楚更值；最后活动要**每一行**都带（项目树里
+ * 所有未关闭任务一起显示），256px 侧栏里写「3 小时前」会把任务名挤成省略号。
+ * 绝对时刻一律放 `title`。
+ *
+ * `now` 可注入：测试不能依赖真实时钟。
+ */
+export function formatActivityAgo(at: number | undefined, now: number = Date.now()): string | undefined {
+    if (at === undefined) return undefined;
+    const diff = now - at;
+    // 将来时间（时钟回拨 / 手工改库）：不说「-3m」
+    if (diff < 60_000) return '刚刚';
+    const minutes = Math.floor(diff / 60_000);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d`;
+    const date = new Date(at);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const month = pad(date.getMonth() + 1);
+    const day = pad(date.getDate());
+    // 跨年才带年份，跟关闭时间一个规则
+    return date.getFullYear() === new Date(now).getFullYear()
+        ? `${month}-${day}`
+        : `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * 「多久以前」的压缩写法（`刚刚` / `12m` / `3h` / `3d` / `11-17`），与 `formatActivityAgo` 同实现。
+ *
+ * 两个名字分开放是因为**用途不同**，不是为了分开实现：
+ *   - 项目树的任务行 = 「最后活动」；
+ *   - 历史任务行 = 「关闭于」（那一列就是历史区的排序键，显示别的字段会看着乱序）。
+ * 压缩写法本身与字段无关，所以在最底下转名一次就好，不要拷一份实现 —— 两份实现
+ * 早晚会有一处改了另一处没改。
+ */
+export { formatActivityAgo as formatCompactAgo };
 
 export function statusMeta(status: TaskStatus): (typeof TASK_STATUSES)[number] {
     return TASK_STATUSES.find((item) => item.value === status) ?? TASK_STATUSES[0];

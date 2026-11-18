@@ -10,6 +10,7 @@ import * as React from 'react';
 
 import { statusMeta, taskStatusOf, toggleTaskStatus, type Room } from '../model';
 import { actions } from '../store';
+import { isPlainLeftClick } from './link';
 
 /**
  * 就地改名的文本。`mode`：
@@ -26,6 +27,7 @@ export function EditableName({
     className,
     inputClassName,
     onClick,
+    href,
     title,
     editing: controlledEditing,
     onEditingChange,
@@ -36,6 +38,12 @@ export function EditableName({
     className?: string;
     inputClassName?: string;
     onClick?: () => void;
+    /**
+     * 给了就渲染成真正的 `<a>`（侧栏导航项）：中键新标签页、右键复制链接、悬停看地址
+     * 这些都是浏览器白给的，用 `<button>` + onClick 得自己写一遍且永远差一截。
+     * 非左键 / 带修饰键的点击**不拦**，交给浏览器。
+     */
+    href?: string;
     title?: string;
     editing?: boolean;
     onEditingChange?: (editing: boolean) => void;
@@ -116,6 +124,32 @@ export function EditableName({
         );
     }
 
+    const label = title ?? (mode === 'click' ? '点击改名' : '双击重命名');
+    const labelClass = className ?? 'min-w-0 flex-1 truncate text-left';
+    const onLinkClick = (event: React.MouseEvent<HTMLAnchorElement>): void => {
+        // 新标签页 / 新窗口 / 下载：留给浏览器，别 preventDefault
+        if (!isPlainLeftClick(event)) return;
+        event.preventDefault();
+        onClick?.();
+        if (mode === 'click') start();
+    };
+
+    if (href !== undefined) {
+        return (
+            <a
+                href={href}
+                onClick={onLinkClick}
+                onDoubleClick={() => {
+                    if (mode === 'double') start();
+                }}
+                title={label}
+                className={labelClass}
+            >
+                {value}
+            </a>
+        );
+    }
+
     return (
         <button
             onClick={() => {
@@ -125,8 +159,8 @@ export function EditableName({
             onDoubleClick={() => {
                 if (mode === 'double') start();
             }}
-            title={title ?? (mode === 'click' ? '点击改名' : '双击重命名')}
-            className={className ?? 'min-w-0 flex-1 truncate text-left'}
+            title={label}
+            className={labelClass}
         >
             {value}
         </button>

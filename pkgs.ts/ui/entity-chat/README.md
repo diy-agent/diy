@@ -12,6 +12,8 @@
 | 目录 | 作用 |
 |---|---|
 | `src/store.tsx` | 壳层：房间列表 / 选择 / 重试连接（挂 `ConversationStore`） |
+| `src/address.ts` | 「现在在看哪儿」：纯函数，`/room/task/t-001` ↔ `{page,id}` |
+| `src/nav.ts` + `src/nav/` | 侧栏插槽：壳只铺注册表，内建三块（项目/历史/未归属）也是注册项 |
 | `src/projection.ts` | 时间线 → assistant-ui 的 `ThreadMessageLike` |
 | `src/surfaces/astryx` | Astryx 表面（默认，`ChatVirtualizer` 虚拟化） |
 | `src/surfaces/shadcn` | 裸 Tailwind 表面（无 chat 库） |
@@ -30,6 +32,24 @@
 import { EntityChatApp } from '@diy-agent/entity-chat';
 import '@diy-agent/entity-chat/styles.css';
 ```
+
+对外还有两类能力（其余内部在实验期不承诺稳定）：
+
+```tsx
+// 1. 导航：视图 / 插件只需要「去某个位置」
+import { formatAddress, navigate, roomAddressOf } from '@diy-agent/entity-chat';
+<a href={formatAddress(roomAddressOf(room))} onClick={...}>…</a>;
+navigate(roomAddressOf(room)); // 代码级跳转（replace: true 时不堆历史）
+
+// 2. 侧栏插槽：贡献一个导航分区
+import { registerNavSource } from '@diy-agent/entity-chat';
+registerNavSource({ id: 'my:stocks', order: 40, render: (ctx) => <StocksBlock open={ctx.open} /> });
+```
+
+地址形状：`/room/<kind>/<local>`（room id `task:t-001` 的冒号换成路径分隔符）。
+刷新直达、可复制、可分享 —— 服务端的 SPA 回退本来就在（dev 的 `appType:'spa'`、
+prod 的 `static.ts`）。两个硬约束：首段不能是 `api`（被 JSON 接口接管）、不能与真实
+静态文件同名（`/perf.html` 会被直接发出）。
 
 ## 语义约定
 
