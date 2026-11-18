@@ -8,13 +8,28 @@
 // 想说别的话都发不进去（steering 只在 step 边界生效，而 step 边界要等 ask 返回）。
 // 唯一的硬约束是"每个 tool call 都必须有 result"，立即返回一样满足。
 //
+// **一批可带多题**：三条相关的事（口径 / 拓扑 / 落地到哪步）以前要连调三次工具，
+// 界面上三张卡、点三次提交、模型收到三条独立消息。现在一次问完、一次提交整批。
+// 与 dsh（questions[]）/ opencode（questions[] → Form fields）/ assistant-ui
+// （display:'questions'）的契约一致。
+//
 // 与"审批"的区别：这里问的是**决策**（选哪个方案 / 填几个字段），不是"允许不允许"。
 // 放在正文里问容易被大段输出淹掉，所以必须是置顶的选项 / 表单。
 
-import type { AnsweredAsk, AskAnswer, AskField, AskOption, AskRequest } from './types';
+import type { AnsweredAsk, AskAnswer, AskField, AskOption, AskQuestion, AskRequest } from './types';
 
-/** 工具侧的提问入参（不含 askId，由闸门分配） */
-export interface AskInput {
+// 答案表述与旧快照归一化搬去了 protocol（前端也要用同一份），这里再导出保持调用方路径不变
+export {
+    answerFor,
+    askAnswerHeading,
+    describeAnswer,
+    describeQuestionAnswer,
+    normalizeAskRequest,
+} from '@diy-agent/protocol';
+
+/** 工具侧的一题（不含 id，缺省由闸门分配 q1/q2…） */
+export interface AskQuestionInput {
+    id?: string;
     question: string;
     kind?: 'choice' | 'form' | 'text';
     options?: AskOption[];
@@ -22,8 +37,22 @@ export interface AskInput {
     multiple?: boolean;
     allowFreeform?: boolean;
     note?: string;
-    toolCallId?: string;
 }
+
+/**
+ * 工具侧的提问入参（不含 askId，由闸门分配）。
+ *
+ * 两种形式都收：批量用 `questions`；只问一件事时可以直接给 `question`（模型少写一层数组，
+ * 测试也不必改一圈）。**协议里只有一种形状**（`AskRequest.questions`），这里只是入口的简写。
+ */
+export type AskInput =
+    | {
+          questions: AskQuestionInput[];
+          /** 整批的背景说明 */
+          note?: string;
+          toolCallId?: string;
+      }
+    | (AskQuestionInput & { toolCallId?: string });
 
 /** 一次提问的结局：被回答，或被取消（容器关闭 / 超时 / 被新提问挤掉） */
 export interface AskResult {
@@ -59,35 +88,68 @@ export interface AskGateDeps {
     now?: () => number;
 }
 
+/** 回答的结局：三种情况给界面的处理完全不同，不能都报成"已失效" */
+export type AnswerOutcome =
+    | { ok: true }
+    | { ok: false; code: 'no-such-ask' }
+    | { ok: false; code: 'bad-answer'; reason: string };
+
 /**
- * 把回答整理成模型能直接读懂的一行行文本。
- * 房间投递回答消息、工具返回回执都用它 —— 两处表述必须一致，否则模型会当成两件事。
+ * 整批回答合不合法；合法返回 undefined，否则返回给人看的原因。
+ *
+ * 只抓"客户端漏题 / 多题 / 题 id 对不上"，**不深究内容**（选题、必填都在界面上拦）：
+ * 在这里二次校验一遍文案，只会在"用户清空了输入"这类良性情形下把人挡在外面。
+ * 跳过是合法的 —— 但必须显式带 `skipped: true`，否则和"漏了"区分不开。
  */
-export function describeAnswer(request: AskRequest, answer: AskAnswer | undefined): string {
-    if (answer === undefined) return '（没有回答）';
-    if (request.kind === 'text') {
-        // 注意不能写 `answer.text?.trim() ?? '（空）'`：空串过不了 ??，会拼出「回答提问「…」：」后面什么都没有
-        const text = answer.text?.trim() ?? '';
-        return text === '' ? '（空）' : text;
-    }
-    if (request.kind === 'form') {
-        const lines = (request.fields ?? []).map(
-            (field) => `- ${field.label}：${answer.fields?.[field.name] ?? '（未填）'}`,
-        );
-        const extra = answer.text?.trim() ?? '';
-        const body = lines.length === 0 ? '（没有字段）' : lines.join('\n');
-        return extra === '' ? body : `${body}\n补充：${extra}`;
-    }
-    const values = answer.values ?? [];
-    const freeText = answer.text?.trim() ?? '';
-    // 只填了自由输入、没勾选项：这段文字是用户唯一的回答，不能丢
-    if (values.length === 0) return freeText === '' ? '（空）' : freeText;
-    const labels = values.map((value) => {
-        const option = request.options?.find((candidate) => candidate.value === value);
-        return option === undefined ? value : `${option.label}（${value}）`;
+function badAnswerOf(request: AskRequest, answer: AskAnswer): string | undefined {
+    if (!Array.isArray(answer.answers)) return '答案格式不对：应为 { answers: [...] }';
+    const expected = request.questions.map((question) => question.id);
+    const got = answer.answers.map((entry) => entry.id);
+    const missing = expected.filter((id) => !got.includes(id));
+    const extra = got.filter((id) => !expected.includes(id));
+    if (missing.length > 0) return `还有 ${missing.length} 题没作答：${missing.join('、')}`;
+    if (extra.length > 0) return `答案里有不存在的题：${extra.join('、')}`;
+    return undefined;
+}
+
+/**
+ * 把一题输入归一成协议里的题目。kind 缺省按"有 fields 就是 form，否则 choice"推断。
+ * 无内容的题（question 空）返回 undefined：拒绝造一张空卡片。
+ */
+function normalizeInput(input: AskQuestionInput, index: number): AskQuestion | undefined {
+    const question = input.question.trim();
+    if (question === '') return undefined;
+    const id = input.id === undefined || input.id.trim() === '' ? `q${index + 1}` : input.id.trim();
+    const kind = input.kind ?? (input.fields === undefined ? 'choice' : 'form');
+    return {
+        id,
+        question,
+        kind,
+        ...(input.options === undefined ? {} : { options: input.options }),
+        ...(input.fields === undefined ? {} : { fields: input.fields }),
+        ...(input.multiple === undefined ? {} : { multiple: input.multiple }),
+        ...(input.allowFreeform === undefined ? {} : { allowFreeform: input.allowFreeform }),
+        ...(input.note === undefined ? {} : { note: input.note }),
+    };
+}
+
+/** 两种入口形式 → 题目数组（丢掉空题；全部为空时就是没问成） */
+export function questionsOfInput(input: AskInput): { questions: AskQuestion[]; note?: string } {
+    const raw = 'questions' in input ? input.questions : [input];
+    const questions: AskQuestion[] = [];
+    const seen = new Set<string>();
+    raw.forEach((entry, index) => {
+        const question = normalizeInput(entry, questions.length);
+        // id 撞了会让回答对不上题：后来的改个名，不丢内容
+        if (question === undefined) return;
+        let id = question.id;
+        let bump = index + 1;
+        while (seen.has(id)) id = `q${++bump}`;
+        seen.add(id);
+        questions.push({ ...question, id });
     });
-    const picked = labels.join('、');
-    return freeText === '' ? picked : `${picked}；补充：${freeText}`;
+    const note = input.note;
+    return { questions, ...(note === undefined ? {} : { note }) };
 }
 
 export class AskGate {
@@ -119,8 +181,12 @@ export class AskGate {
     /**
      * 工具一侧调用：把提问推到界面并立刻返回（不等回答）。
      * owner = 提问的成员，回答时按它投递。
+     *
+     * 一题都凑不出来时不推卡片（返回 undefined）：造一张空卡片只会让用户困惑。
      */
-    request(input: AskInput, owner?: string): AskRequest {
+    request(input: AskInput, owner?: string): AskRequest | undefined {
+        const { questions, note } = questionsOfInput(input);
+        if (questions.length === 0) return undefined;
         const at = this.deps.now?.() ?? Date.now();
         const askId = `ask-${at.toString(36)}-${++this.counter}`;
         // 提在谁的那一轮里：立刻记下来。等卡片回到界面时（可能几万条之后、甚至刷新后）
@@ -128,13 +194,8 @@ export class AskGate {
         const turnId = this.deps.turnOf?.(input.toolCallId);
         const request: AskRequest = {
             askId,
-            question: input.question,
-            kind: input.kind ?? (input.fields === undefined ? 'choice' : 'form'),
-            ...(input.options === undefined ? {} : { options: input.options }),
-            ...(input.fields === undefined ? {} : { fields: input.fields }),
-            ...(input.multiple === undefined ? {} : { multiple: input.multiple }),
-            ...(input.allowFreeform === undefined ? {} : { allowFreeform: input.allowFreeform }),
-            ...(input.note === undefined ? {} : { note: input.note }),
+            questions,
+            ...(note === undefined ? {} : { note }),
             ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
             ...(owner === undefined ? {} : { owner }),
             ...(turnId === undefined ? {} : { turnId }),
@@ -177,9 +238,21 @@ export class AskGate {
         return request;
     }
 
-    /** 用户的回答；返回是否命中一个待回答的提问 */
-    answer(askId: string, answer: AskAnswer): boolean {
-        return this.settle(askId, { answer });
+    /**
+     * 用户的回答（整批一次提交）；返回结局。
+     *
+     * 为什么要三态而不是 boolean：以前 false 只会是"这一问已经失效"（→ 404）；
+     * 现在整批提交还有第二种失败 —— 少一题或多一题（→ 400，例如客户端缓存了旧题集，
+     * 或者用户只填了前两题）。两种情况给界面的话完全不同，不能都报成"已失效"。
+     * dsh 同样用 BAD_ANSWER 区分这件事，并**拒掉整批**而不是收下残缺的一份。
+     */
+    answer(askId: string, answer: AskAnswer): AnswerOutcome {
+        const entry = this.pending.get(askId);
+        if (entry === undefined) return { ok: false, code: 'no-such-ask' };
+        const bad = badAnswerOf(entry.request, answer);
+        if (bad !== undefined) return { ok: false, code: 'bad-answer', reason: bad };
+        this.settle(askId, { answer });
+        return { ok: true };
     }
 
     /**

@@ -1,5 +1,7 @@
 // reduce.ts —— 纯函数：StreamEvent → 状态。UI 与 surface 都不自己拼消息。
 
+import { normalizeAskRequest } from '@diy-agent/protocol';
+
 import type { AnsweredAsk, AskRequest, Delivery, Item, StreamEvent, TurnEndReason } from './types';
 
 export interface ConversationState {
@@ -122,6 +124,10 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
     }
 }
 
+function normalizeRequests(asks: readonly AskRequest[] | undefined): AskRequest[] {
+    return (asks ?? []).flatMap((entry) => normalizeAskRequest(entry) ?? []);
+}
+
 /** 历史快照 → 初始状态（按 seq 去重，刷新/重放同一入口） */
 export function fromSnapshot(snapshot: {
     items: Item[];
@@ -143,8 +149,13 @@ export function fromSnapshot(snapshot: {
     return {
         items,
         deliveries: snapshot.deliveries,
-        asks: snapshot.asks ?? [],
-        answered: snapshot.answeredAsks ?? [],
+        // 快照里的卡片可能是旧形状（一批问题之前是"一个问题"）：不归一则刷新后渲不出来，
+        // 而它们正是用户回头核对"当时我选了哪个"的唯一线索
+        asks: normalizeRequests(snapshot.asks),
+        answered: (snapshot.answeredAsks ?? []).flatMap((entry) => {
+            const request = normalizeAskRequest(entry.request);
+            return request === undefined ? [] : [{ ...entry, request }];
+        }),
         seq: Math.max(0, ...snapshot.items.map((item) => item.seq)),
         running: speaking.length > 0,
         speaking,

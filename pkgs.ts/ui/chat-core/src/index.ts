@@ -22,6 +22,8 @@ export {
     type AskAnswer,
     type AskField,
     type AskOption,
+    type AskQuestion,
+    type AskQuestionAnswer,
     type AskRequest,
     type Author,
     type Bot,

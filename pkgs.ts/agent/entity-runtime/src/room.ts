@@ -20,7 +20,7 @@ import type { ModelMessage, ToolSet } from 'ai';
 
 import { effectiveModelOf, effectivePersonaOf, mentionsOf, primaryMemberOf } from '@diy-agent/protocol';
 
-import { AskGate, describeAnswer, type AskResult } from './ask';
+import { AskGate, askAnswerHeading, describeAnswer, type AnswerOutcome, type AskResult } from './ask';
 import type { Compactor } from './compaction';
 import type { Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
@@ -36,6 +36,7 @@ import {
 } from './session';
 import { publishable } from './end-reason';
 import type {
+    AskAnswer,
     AskRequest,
     Author,
     Bot,
@@ -322,8 +323,8 @@ export class RoomActor {
             .filter((botId) => this.speaking.has(botId));
     }
 
-    /** 用户的回答；返回是否命中一个待回答的提问 */
-    answerAsk(askId: string, answer: { values?: string[]; fields?: Record<string, string> }): boolean {
+    /** 用户的回答（整批一次提交）；返回结局（命中 / 已失效 / 答不全） */
+    answerAsk(askId: string, answer: AskAnswer): AnswerOutcome {
         return this.gate.answer(askId, answer);
     }
 
@@ -377,7 +378,7 @@ export class RoomActor {
 
         // 不再单独落一条 notice：回答本身就是一条消息，时间线上看得到，刷新也不丢。
         // 内容写成模型一眼能对上的样子：哪一问 + 答了什么
-        const message = `回答提问「${request.question}」：\n${describeAnswer(request, result.answer)}`;
+        const message = `${askAnswerHeading(request)}\n${describeAnswer(request, result.answer)}`;
         // 回答投给提问的成员；他已经不在房间了就退给主成员，再退给第一个成员。
         // 不退的话 recipients 会被 route() 过滤成空：消息落库了、没任何成员收到、也不报错 ——
         // 用户看到的是「我答了、时间线上有这条、没人理」。
@@ -412,8 +413,10 @@ export class RoomActor {
         // 成员已经不在房间了：没人需要知道（它那一份 pending 在移除时已被 cancelFor 清掉）
         if (target === undefined) return;
         const suffix = reason === undefined || reason === '' ? '' : `：${reason}`;
+        // 多题时把题目都列出来：只说「提问已作废」，它不知道是哪一批（同一个成员可能问过好几张）
+        const titles = request.questions.map((question) => `「${question.question}」`).join('');
         void this.say({
-            text: `提问「${request.question}」已经作废${suffix}。不用再等这个回答；还需要的话重新提问。`,
+            text: `提问${titles}已经作废${suffix}。不用再等这个回答；还需要的话重新提问。`,
             author: RoomActor.SYSTEM,
             quiet: true,
         }).catch((error: unknown) => {

@@ -7,6 +7,8 @@ export type {
     AskAnswer,
     AskField,
     AskOption,
+    AskQuestion,
+    AskQuestionAnswer,
     AskRequest,
     Author,
     Bot,

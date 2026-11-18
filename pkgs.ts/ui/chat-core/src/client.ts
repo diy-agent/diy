@@ -4,7 +4,7 @@
 //   现在：@diy-agent/chat-transport-http
 //   将来：@diy-agent/chat-transport-rpc（diy-rpc 落地后直接换实现，core 不动）
 
-import type { Command, Snapshot, StreamEvent } from './types';
+import type { AskAnswer, Command, Snapshot, StreamEvent } from './types';
 
 export interface TokenUsage {
     inputTokens: number;
@@ -88,12 +88,11 @@ export interface ChatClient {
      */
     release?(entityId: string): void;
 
-    /** 可选：回答一次挂起的提问（选项 / 表单） */
-    answerAsk?(
-        entityId: string,
-        askId: string,
-        answer: { values?: string[]; fields?: Record<string, string>; text?: string },
-    ): Promise<void>;
+    /**
+     * 可选：回答一次挂起的提问（整批一次提交）。
+     * 服务端会校验题集（少题 / 多题 → 抛错，文案说明差哪几题）。
+     */
+    answerAsk?(entityId: string, askId: string, answer: AskAnswer): Promise<void>;
 
     /** 可选：撤回一问（不想答了）—— 卡片失效，不触发任何运行 */
     cancelAsk?(entityId: string, askId: string): Promise<void>;
