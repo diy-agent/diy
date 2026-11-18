@@ -28,8 +28,15 @@ export class Projector {
         private readonly turn: number,
     ) {}
 
+    /**
+     * 目前没有调用方（UI 读的是落库的那份），留着是给重放/调试用的。
+     *
+     * **不能按 `seq` 排**：`run.started` 之后 `text.delta` 不再逐个占号（见 `agent.ts`），
+     * 同一批产出里的几条会拿到同一个 seq。Map 的插入序就是产出序，直接用它 ——
+     * 不要再引入一个“同号时怎么排”的隐含约定。
+     */
     all(): Item[] {
-        return [...this.items.values()].sort((a, b) => a.seq - b.seq);
+        return [...this.items.values()];
     }
 
     /**

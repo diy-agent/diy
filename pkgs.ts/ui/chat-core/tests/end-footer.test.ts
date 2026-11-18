@@ -2,7 +2,8 @@
 //
 // 锁三件事：
 //   · 文案只认 `type`/`note`（三个 surface 共用 `endFooterOf`，不许各写一份）；
-//   · `buildTimeline` 把它挂在**该轮最后一段**上 —— 被插话切成多段时只出现一次；
+//   · `buildTimeline` 把它挂在**该轮最后一条 bot 回复**上 —— 只出现一次
+//     （一个 bot 一轮只有一条，所以"最后一段"和"这一条"是同一个东西）；
 //   · 结局按「轮 + 成员」取 —— 同一轮里 A 被截断、B 正常说完，两人的页脚不能是同一个
 //     （`reduce` 写的 key 就是 `turnId\0botId`，两边必须是同一个形状）。
 
@@ -77,7 +78,7 @@ describe('endFooterOf', () => {
 });
 
 describe('buildTimeline 把结局挂在该轮最后一段', () => {
-    it('被插话切成两段时，页脚只挂在第二段', () => {
+    it('一轮一条：页脚就是这条的，不会重复', () => {
         const items = [chat(1, '先说一段'), chat(2, '接着说')];
         const entries = buildTimeline(
             items,
@@ -90,7 +91,7 @@ describe('buildTimeline 把结局挂在该轮最后一段', () => {
         expect(entries[0]?.endReason?.type).toBe('max-tokens');
     });
 
-    it('中间插进别人的话 → 分成两条，结局仍只出现在本条作者的最后一段', () => {
+    it('中间插进别人的话也不分段：结局只出现一次', () => {
         const other = { ...bot, id: 'bot:b', name: 'cops' };
         const items: Item[] = [
             chat(1, '我的前半句'),
@@ -100,9 +101,13 @@ describe('buildTimeline 把结局挂在该轮最后一段', () => {
         const entries = buildTimeline(items, [], {}, { endReasons: { t1: { type: 'interrupted' } } });
         const mine = entries.filter((entry) => entry.author?.id === 'bot:a');
 
-        expect(mine).toHaveLength(2);
-        expect(mine[0]?.endReason).toBeUndefined();
-        expect(mine[1]?.endReason?.type).toBe('interrupted');
+        // 一个 bot 一轮只说一条（位置在首次出现处），后来插入的别人的话不会把它切开
+        expect(mine).toHaveLength(1);
+        expect(mine[0]?.parts).toEqual([
+            { kind: 'text', text: '我的前半句' },
+            { kind: 'text', text: '我的后半句' },
+        ]);
+        expect(mine[0]?.endReason?.type).toBe('interrupted');
     });
 
     it('没有 turn.end 事实时不做任何猜测', () => {

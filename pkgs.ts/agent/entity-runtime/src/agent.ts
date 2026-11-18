@@ -53,6 +53,17 @@ const defaultTools = {
 };
 
 export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> {
+    /**
+     * 事件序号：**只有结构性事件才 +1**（开跑 / 工具调用 / 收尾），增量不带新号。
+     *
+     * 为什么：投影层把 `seq` 当作条目的版本号（`Projector` 取 `Math.max`）。以前每个
+     * `text.delta` 都拿一个新号，于是 `Item.seq` 变成了 **token 计数** —— 一轮几千个 delta
+     * 就能把一个本该很小的"第几个事件"推到上万，可读性和可比较性都没了。
+     * 修完之后 `seq` 只数事件；但它仍然**不是**全局版本号：落库时 `db.appendItem` 会把
+     * 它换成行号（同一件事的两个号），所以判新旧仍然不能只看它 —— 那是下一步的事。
+     *
+     * 增量共用一个号不会丢信息：一个条目的文本是**累加**的，不需要一个号来区分哪一片。
+     */
     let seq = 0;
     const turnId = options.turnId ?? `turn-${Date.now().toString(36)}`;
     const messageId = `msg-${Date.now().toString(36)}`;
@@ -110,10 +121,11 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                     finishReason = 'aborted';
                     break;
                 case 'text-delta':
-                    yield { seq: ++seq, type: 'text.delta', messageId, delta: part.text };
+                    // 不占新号：同一个条目的每一次追加都是它的同一个版本（见函数头的 `seq`）
+                    yield { seq, type: 'text.delta', messageId, delta: part.text };
                     break;
                 case 'reasoning-delta':
-                    yield { seq: ++seq, type: 'reasoning.delta', messageId, delta: part.text };
+                    yield { seq, type: 'reasoning.delta', messageId, delta: part.text };
                     break;
                 case 'tool-call':
                     yield {

@@ -23,40 +23,13 @@ import { buildTimeline, type MentionCandidate, type TimelineEntry, type Timeline
 import { AskCard } from '../../components/AskCard';
 import { BotAvatar } from '../../components/BotAvatar';
 import { EndFooterLine } from '../../components/EndFooterLine';
-import { deliveryFooterOf, deliveryStatusOf, TOOL_STATUS, toolTargetOf } from './mapping';
+import { deliveryFooterOf, deliveryStatusOf, runsOf, TOOL_STATUS, toolTargetOf } from './mapping';
 import { RunningIndicator } from '../../components/RunningIndicator';
 import * as React from 'react';
 
 import { useMentionCandidates } from '../../mentions';
 import { useDraft } from '../../drafts';
 import { conversationOf, useStore } from '../../store';
-
-type AskPart = Extract<TimelinePart, { kind: 'ask' }>;
-type Run =
-    | { kind: 'text'; text: string }
-    | { kind: 'tool'; tools: Extract<TimelinePart, { kind: 'tool' }>[] }
-    | { kind: 'ask'; part: AskPart };
-
-/** 把 parts 压成连续同类块：文本一段、工具一组，保持原有先后 */
-function runsOf(parts: TimelinePart[]): Run[] {
-    const runs: Run[] = [];
-    for (const part of parts) {
-        const last = runs.at(-1);
-        if (part.kind === 'ask') {
-            runs.push({ kind: 'ask', part });
-            continue;
-        }
-        if (part.kind === 'text') {
-            if (last?.kind === 'text') last.text += `\n\n${part.text}`;
-            else runs.push({ kind: 'text', text: part.text });
-        } else if (last?.kind === 'tool') {
-            last.tools.push(part);
-        } else {
-            runs.push({ kind: 'tool', tools: [part] });
-        }
-    }
-    return runs;
-}
 
 /** 时间戳（Astryx Timestamp 收秒或 ISO；我们的 at 是毫秒） */
 function TimeOf({ at }: { at: number }) {
@@ -139,37 +112,29 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
     // 拆成「工具行一个兄弟 + 正文一个气泡」会让名字落到第二行，而 Astryx 的头像偏移
     // 是按「消息里有没有 data-chat-name」算的，名字一旦不在首行，头像就开始漂。
     const runs = runsOf(entry.parts);
-    // 同一轮的续段：不重复头像与名字，左侧用一条细线接上，视觉上仍属于这一轮。
-    const continued = entry.continued === true;
     return (
         <ChatMessage
             key={entry.key}
             sender="assistant"
-            avatar={
-                continued ? (
-                    <div
-                        style={{
-                            width: 24,
-                            alignSelf: 'stretch',
-                            display: 'flex',
-                            justifyContent: 'center',
-                            paddingBlock: 4,
-                        }}
-                    >
-                        <div style={{ width: 1, minHeight: 22, background: 'currentColor', opacity: 0.18, borderRadius: 1 }} />
-                    </div>
-                ) : (
-                    <BotAvatar author={entry.author} roomId={roomId} size={24} />
-                )
-            }
+            avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}
         >
             <ChatMessageBubble
                 variant="ghost"
-                {...(continued || entry.author === undefined ? {} : { name: entry.author.name })}
-                {...(continued ? {} : { metadata: <ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} /> })}
+                {...(entry.author === undefined ? {} : { name: entry.author.name })}
+                metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
             >
-                {runs.map((run, index) =>
-                    run.kind === 'ask' ? (
+                {runs.map((run, index) => {
+                    if (run.kind === 'error')
+                        return (
+                            <Banner
+                                key={`e${index}`}
+                                status="error"
+                                container="section"
+                                collapsible={false}
+                                title={run.message}
+                            />
+                        );
+                    return run.kind === 'ask' ? (
                         <AskCard
                             key={`a${index}`}
                             roomId={roomId}
@@ -201,8 +166,8 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                                 };
                             })}
                         />
-                    ),
-                )}
+                    );
+                })}
                 {/* 还在跑但没有流式内容（工具刚结束 / 等待下一段）：挂在正文末尾，
                     不再单独占列表底部一行 */}
                 {entry.waiting === true && (

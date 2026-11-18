@@ -82,4 +82,21 @@ describe('Projector', () => {
 
         expect(items.filter((item) => item.type === 'chat')).toHaveLength(0);
     });
+
+    // all() 零生产调用方，但它是「产出序 ≠ seq 序」这条不变量的唯一可执行处：
+    // 让这段注释有人守，而不是只有一段话。（见 projection.ts 的 all()）
+    it('all() 按产出序返回：同号不能靠 seq 排', () => {
+        const projector = new Projector(AUTHOR, 1);
+        const events: AgentEvent[] = [
+            { seq: 1, type: 'run.started', turnId: 't1', messageId: 'm1' },
+            { seq: 2, type: 'text.delta', messageId: 'm1', delta: '先看下文件' },
+            { seq: 3, type: 'tool.started', turnId: 't1', toolCallId: 'c1', name: 'bash' },
+        ];
+        for (const event of events) projector.apply(event, 1000);
+
+        const items = projector.all();
+        expect(items.map((item) => item.type)).toEqual(['chat', 'tool']);
+        // 前提：这两条真的同号 —— 否则这条测试守的是一个不存在的风险
+        expect(items[0]?.seq).toBe(items[1]?.seq);
+    });
 });

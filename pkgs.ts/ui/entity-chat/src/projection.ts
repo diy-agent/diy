@@ -40,6 +40,9 @@ type Part =
 function partsOf(entry: TimelineEntry): Part[] {
     return entry.parts.map((part) => {
         if (part.kind === 'text') return { type: 'text', text: part.text };
+        // 失败是回复的一部分，assistant-ui 这边没有错误 part 类型：降级成一行文本，
+        // 至少位置是对的（在它发生的地方），不会被推到整条回复之后。
+        if (part.kind === 'error') return { type: 'text', text: `⚠ ${part.message}` };
         if (part.kind === 'ask')
             return {
                 type: 'data-ask',

@@ -44,6 +44,48 @@ function rawTargetOf(args: unknown): string | undefined {
     }
 }
 
+/** 一段正文 / 一组工具 / 一个提问 / 一次失败：气泡内部按「连续同类」压成的块 */
+export type Run =
+    | { kind: 'text'; text: string }
+    | { kind: 'tool'; tools: (TimelinePart & { kind: 'tool' })[] }
+    | { kind: 'ask'; part: TimelinePart & { kind: 'ask' } }
+    | { kind: 'error'; message: string };
+
+/**
+ * 把 parts 压成连续同类块：文本一段、工具一组，保持原有先后。
+ *
+ * 两个不合并是**有意的**，它们有各自的理由：
+ *   · `error` 自成一个块 —— 失败必须停在时间上真正发生的位置。并进相邻文本的话，
+ *     「说一段 → 失败 → 再说一段」会渲染成一段连续的话，错误被排版吃掉。
+ *   · `ask` 自成一个块 —— 它是需要用户动手的卡片，不能跟文本混在一个 Markdown 里。
+ *
+ * 放在这里（而不是 Surface.tsx）是因为它是纯函数：混在组件里就测不了，
+ * 而「错误不会被排版吃掉」只能靠测试守。
+ */
+export function runsOf(parts: readonly TimelinePart[]): Run[] {
+    const runs: Run[] = [];
+    for (const part of parts) {
+        const last = runs.at(-1);
+        if (part.kind === 'ask') {
+            runs.push({ kind: 'ask', part });
+            continue;
+        }
+        if (part.kind === 'error') {
+            runs.push({ kind: 'error', message: part.message });
+            continue;
+        }
+        if (part.kind === 'text') {
+            if (last?.kind === 'text') last.text += `\n\n${part.text}`;
+            else runs.push({ kind: 'text', text: part.text });
+        } else if (last?.kind === 'tool') {
+            last.tools.push(part);
+        } else {
+            runs.push({ kind: 'tool', tools: [part] });
+        }
+    }
+    return runs;
+}
+
 /** 工具行的 target：命令取首段、路径取文件名、其余退化成单行 JSON，统一 60 字符截断 */
 export function toolTargetOf(tool: TimelinePart & { kind: 'tool' }): string | undefined {
     const args = tool.args;
