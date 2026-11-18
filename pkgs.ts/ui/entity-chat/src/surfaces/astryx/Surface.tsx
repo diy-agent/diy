@@ -84,7 +84,9 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                         />
                     }
                 >
-                    {text}
+                    {/* 用户自己发的多行消息（多行文本、贴的代码、ask 的整批回答）：
+                        不 pre-wrap 的话换行会被折叠成空格，一屏列表挤成一行 */}
+                    <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</span>
                 </ChatMessageBubble>
             </ChatMessage>
         );
