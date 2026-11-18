@@ -659,7 +659,8 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
         }
 
         // POST /api/rooms/:id/asks/:askId/cancel —— 撤回一问（不想答了，卡片失效）
-        // 必须排在回答路由前面：那条只看 parts[3] === 'asks'，不分段数
+        // 与回答路由靠段数区分（这条 6 段、那条 5 段），先后无关；但两条都认 parts[3] === 'asks'，
+        // 新加 asks 子路由时记得把段数写进条件，别只判 parts[3]。
         if (
             req.method === 'POST' &&
             parts[0] === 'api' &&
