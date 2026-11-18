@@ -22,7 +22,7 @@ import { APP_ID, type Diy2Config } from './config';
 
 import { RoomActor, openStore } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
-import type { Author, Bot, Room } from '@diy-agent/protocol';
+import type { AskQuestionAnswer, Author, Bot, Room } from '@diy-agent/protocol';
 
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 /** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
@@ -680,7 +680,12 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
             return;
         }
 
-        // POST /api/rooms/:id/asks/:askId —— 回答一次提问（选项 values / 表单 fields）
+        // POST /api/rooms/:id/asks/:askId —— 回答一次提问（整批一次提交）
+        // body: { answers: [{ id, values?, fields?, text?, skipped? }] }
+        //
+        // 三态返回：200 收下 / 404 这一问已失效 / 400 题对不上（少一题、多一题、旧题集）。
+        // 400 必须与 404 分开：前者该提示“刷新一下重答”，后者是“这张卡已经没了”，
+        // 混成一个只会让用户对着旧卡片反复重试。
         if (
             req.method === 'POST' &&
             parts[0] === 'api' &&
@@ -692,14 +697,11 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
             const askId = decodeURIComponent(parts[4] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            onBody<{ values?: string[]; fields?: Record<string, string>; text?: string }>(req, res, (body) => {
-                const hit = actor.answerAsk(askId, {
-                    ...(body.values === undefined ? {} : { values: body.values }),
-                    ...(body.fields === undefined ? {} : { fields: body.fields }),
-                    // 自由输入：之前漏传输，导致 kind=text 的回答永远是空
-                    ...(body.text === undefined ? {} : { text: body.text }),
-                });
-                json(res, hit ? 200 : 404, hit ? { ok: true } : { error: 'no such pending ask' });
+            onBody<{ answers?: AskQuestionAnswer[] }>(req, res, (body) => {
+                const outcome = actor.answerAsk(askId, { answers: body.answers ?? [] });
+                if (outcome.ok) return json(res, 200, { ok: true });
+                if (outcome.code === 'bad-answer') return json(res, 400, { error: outcome.reason });
+                return json(res, 404, { error: 'no such pending ask' });
             });
             return;
         }

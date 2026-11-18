@@ -165,7 +165,7 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         expect(request.turnId).toBe(tool?.turnId);
 
         // 回答之后卡片仍在（只读），turnId 也得跟着走 —— 它那时才是真的没工具行可搜了
-        h.room.answerAsk(request.askId, { values: ['a'] });
+        h.room.answerAsk(request.askId, { answers: [{ id: 'q1', values: ['a'] }] });
         await waitFor(() => !h.room.busy());
         expect(h.room.answeredAskRequests()[0]?.request.turnId).toBe(tool?.turnId);
     });
@@ -176,7 +176,7 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         await waitFor(() => h.room.pendingAsks() === 1);
 
         const askId = h.room.pendingAskRequests()[0]!.askId;
-        expect(h.room.answerAsk(askId, { values: ['a'], text: '就 A' })).toBe(true);
+        expect(h.room.answerAsk(askId, { answers: [{ id: 'q1', values: ['a'], text: '就 A' }] })).toEqual({ ok: true });
 
         // 房间空闲 → 回答开新的一轮；等它跑完
         await waitFor(() => h.room.pendingAsks() === 0);
@@ -210,7 +210,7 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
 
         // 没被回答的提问依旧在，不会因为插话被默默废掉
         expect(h.room.pendingAsks()).toBe(1);
-        expect(h.room.pendingAskRequests()[0]?.question).toBe('选哪个？');
+        expect(h.room.pendingAskRequests()[0]?.questions[0]?.question).toBe('选哪个？');
     });
 
     it('D4. 提问的成员已经不在房间：回答退给还在的成员，而不是静默丢掉', async () => {
@@ -222,7 +222,7 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         // A 的身份没了（bot 被删），但 spec 里还留着成员位：路由会把 A 过滤掉
         h.store.deleteBot(BOT_A.id);
         const askId = h.room.pendingAskRequests()[0]!.askId;
-        expect(h.room.answerAsk(askId, { values: ['a'] })).toBe(true);
+        expect(h.room.answerAsk(askId, { answers: [{ id: 'q1', values: ['a'] }] })).toEqual({ ok: true });
 
         // 回答得有人收：落库成用户消息 + 真有投递对象（否则用户以为模型没收到）
         const isAnswer = (item: { type: string; author?: { role?: string }; data: { text?: string } }): boolean =>
@@ -295,7 +295,7 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         expect(JSON.stringify(h.room.contextOf(BOT_A.id) ?? [])).toContain('已经作废');
 
         // 新的那几张照旧挂着（淘汰最旧、不是丢最新）
-        expect(h.room.pendingAskRequests().some((request) => request.question === 'Q20')).toBe(true);
+        expect(h.room.pendingAskRequests().some((request) => request.questions[0]?.question === 'Q20')).toBe(true);
     });
 
     it('D7. 撤回一问：卡片失效、计数减一，且不触发任何运行', async () => {
@@ -321,7 +321,7 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         // 4) 模型仍会知道（进上下文、不触发运行），否则它永远停在「我问了、等回答」
         expect(JSON.stringify(h.room.contextOf(BOT_A.id) ?? [])).toContain('提问已被撤回');
         // 5) 撤回过的不能再答
-        expect(h.room.answerAsk(askId, { values: ['a'] })).toBe(false);
+        expect(h.room.answerAsk(askId, { answers: [{ id: 'q1', values: ['a'] }] }).ok).toBe(false);
     });
 
     it('D8. 跨成员淘汰：被挤掉的那位空闲时不会被叫起来跑一轮', async () => {
@@ -388,7 +388,7 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         // 卡片要有结局（UI 显示「已失效」），不能一直挂着等一个已经不存在的成员
         const settled = h.events.filter((event) => event.kind === 'ask.answered');
         expect(settled.some((event) => event.kind === 'ask.answered' && event.cancelled === true)).toBe(true);
-        expect(h.room.answerAsk('ask-nope', { values: ['a'] })).toBe(false);
+        expect(h.room.answerAsk('ask-nope', { answers: [{ id: 'q1', values: ['a'] }] }).ok).toBe(false);
     });
 
     it('E. 改名后 bot 跟着改：新结论署名新名，session 里的自称也换掉', async () => {

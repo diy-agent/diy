@@ -77,7 +77,7 @@ describe('房间工具', () => {
 
     it('ask 不阻塞：调用后立刻返回回执，提问同时推到界面', async () => {
         const { AskGate } = await import('../src/ask');
-        const seen: Array<{ question: string; options?: unknown }> = [];
+        const seen: Array<{ questions: Array<{ question: string; options?: unknown }> }> = [];
         const gate = new AskGate({ request: (request) => seen.push(request), settle: () => undefined });
         const tools = buildRoomTools({ cwd: dir, shell: false, ask: gate });
 
@@ -91,7 +91,7 @@ describe('房间工具', () => {
             }),
         );
 
-        expect(seen.map((request) => request.question)).toEqual(['先做哪个？']);
+        expect(seen.map((request) => request.questions[0]?.question)).toEqual(['先做哪个？']);
         // 回执告诉模型"发出去了、别等、别自己猜"
         expect(out).toContain('提问已展示给用户');
         expect(out).toContain('不会阻塞你');
@@ -105,7 +105,7 @@ describe('房间工具', () => {
         const gate = new AskGate({
             request: () => undefined,
             settle: (request, result, owner) =>
-                settled.push({ askId: request.askId, text: result.answer?.values?.join(','), owner }),
+                settled.push({ askId: request.askId, text: result.answer?.answers[0]?.values?.join(','), owner }),
         });
         const tools = buildRoomTools({ cwd: dir, shell: false, ask: gate, askOwner: 'bot:a' });
 
@@ -122,7 +122,7 @@ describe('房间工具', () => {
         expect(settled).toEqual([]);
 
         const askId = gate.list()[0]!.askId;
-        expect(gate.answer(askId, { values: ['test_first'] })).toBe(true);
+        expect(gate.answer(askId, { answers: [{ id: 'q1', values: ['test_first'] }] })).toEqual({ ok: true });
         expect(settled).toEqual([{ askId, text: 'test_first', owner: 'bot:a' }]);
         expect(gate.pendingCount()).toBe(0);
     });
@@ -131,37 +131,53 @@ describe('房间工具', () => {
         const { describeAnswer } = await import('../src/ask');
         const request = {
             askId: 'ask-1',
-            question: '先做哪个？',
-            kind: 'choice' as const,
-            options: [
-                { value: 'a', label: '方案 A' },
-                { value: 'b', label: '方案 B' },
+            questions: [
+                {
+                    id: 'q1',
+                    question: '先做哪个？',
+                    kind: 'choice' as const,
+                    options: [
+                        { value: 'a', label: '方案 A' },
+                        { value: 'b', label: '方案 B' },
+                    ],
+                },
             ],
             at: 0,
         };
+        const only = (answer: { values?: string[]; text?: string }) => ({ answers: [{ id: 'q1', ...answer }] });
 
-        expect(describeAnswer(request, { values: [], text: '我还是没想明白，先改成异步吧' })).toBe(
+        expect(describeAnswer(request, only({ values: [], text: '我还是没想明白，先改成异步吧' }))).toBe(
             '我还是没想明白，先改成异步吧',
         );
-        expect(describeAnswer(request, { values: ['b'], text: '顺便说一句' })).toBe('方案 B（b）；补充：顺便说一句');
+        expect(describeAnswer(request, only({ values: ['b'], text: '顺便说一句' }))).toBe(
+            '方案 B（b）；补充：顺便说一句',
+        );
         // 表单里的补充文字同样不能丢
         expect(
             describeAnswer(
                 {
                     ...request,
-                    kind: 'form',
-                    options: undefined,
-                    fields: [{ name: 'title', label: '标题', type: 'text' }],
+                    questions: [
+                        {
+                            id: 'q1',
+                            question: '填一下发版信息',
+                            kind: 'form' as const,
+                            fields: [{ name: 'title', label: '标题', type: 'text' }],
+                        },
+                    ],
                 },
-                { fields: { title: '发版' }, text: '别改版本号' },
+                only({ fields: { title: '发版' }, text: '别改版本号' }),
             ),
         ).toBe('- 标题：发版\n补充：别改版本号');
 
         // 文字题：只有空白（或干脆没有 text）时要说“空”，不能拼出「回答提问「…」：」后面什么都没有
-        const textAsk = { ...request, kind: 'text' as const, options: undefined };
-        expect(describeAnswer(textAsk, { text: '   ' })).toBe('（空）');
-        expect(describeAnswer(textAsk, {})).toBe('（空）');
-        expect(describeAnswer(textAsk, { text: ' 就它了 ' })).toBe('就它了');
+        const textAsk = {
+            ...request,
+            questions: [{ id: 'q1', question: '随便说说', kind: 'text' as const }],
+        };
+        expect(describeAnswer(textAsk, only({ text: '   ' }))).toBe('（空）');
+        expect(describeAnswer(textAsk, { answers: [{ id: 'q1' }] })).toBe('（空）');
+        expect(describeAnswer(textAsk, only({ text: ' 就它了 ' }))).toBe('就它了');
     });
 
     it('bash 非零退出：返回结果而不是抛错（靠退出码改命令）', async () => {

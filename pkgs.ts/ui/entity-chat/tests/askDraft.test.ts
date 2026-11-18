@@ -1,21 +1,44 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AskRequest } from '@diy-agent/chat-core';
+import type { AskQuestion, AskRequest } from '@diy-agent/chat-core';
 
 import {
     askDraftOf,
     answerOf,
     draftFieldOf,
     EMPTY_ASK_DRAFT,
+    EMPTY_QUESTION_DRAFT,
+    questionDraftFor,
+    isQuestionReady,
     isReady,
     missingFieldsOf,
     setChoice,
     setField,
+    setSkipped,
     setText,
+    unansweredOf,
 } from '../src/askDraft';
 
-function ask(patch: Partial<AskRequest>): AskRequest {
-    return { askId: 'a1', question: '选一个', kind: 'choice', at: 0, ...patch };
+/** 单题提问（旧形状的等价物：一批只有一题，id 固定 q1） */
+function ask(question: Partial<AskQuestion>): AskRequest {
+    return {
+        askId: 'a1',
+        questions: [{ id: 'q1', question: '选一个', kind: 'choice', ...question }],
+        at: 0,
+    };
+}
+
+/** 三题一批（就是"dev app 构建对齐"那次的形状） */
+function batch(): AskRequest {
+    return {
+        askId: 'a2',
+        questions: [
+            { id: 'env', question: '环境变量口径怎么定？', kind: 'choice', options: [{ value: 'keep', label: 'B' }] },
+            { id: 'topo', question: 'dev 的进程拓扑怎么改？', kind: 'choice', options: [{ value: 'single', label: 'A' }] },
+            { id: 'scope', question: '本轮落地到哪一步？', kind: 'text' },
+        ],
+        at: 0,
+    };
 }
 
 describe('askDraftOf', () => {
@@ -26,32 +49,64 @@ describe('askDraftOf', () => {
         expect(askDraftOf([1, 2])).toEqual(EMPTY_ASK_DRAFT);
     });
 
-    it('旧版本 / 别的 kind 留下的行：缺项补默认，类型不对的丢掉', () => {
+    it('旧草稿（单题，字段在顶层）读成 q1 那一桶：刷新不丢半填内容', () => {
         const draft = askDraftOf({ selected: ['a', 3, null], fields: { k: 'v', n: 1 }, text: 42 });
-        expect(draft).toEqual({ selected: ['a'], fields: { k: 'v' }, text: '' });
+        expect(draft).toEqual({ answers: { q1: { selected: ['a'], fields: { k: 'v' }, text: '', skipped: false } } });
+    });
+
+    it('新草稿按题分桶，互不干扰', () => {
+        const draft = askDraftOf({
+            answers: {
+                env: { selected: ['keep'] },
+                scope: { text: '全量' },
+                bad: '不是对象',
+            },
+        });
+        expect(questionDraftFor(draft, 'env').selected).toEqual(['keep']);
+        expect(questionDraftFor(draft, 'scope').text).toEqual('全量');
+        expect(questionDraftFor(draft, 'bad')).toEqual({ selected: [], fields: {}, text: '', skipped: false });
     });
 });
 
 describe('编辑', () => {
     it('单选替换、多选切换', () => {
-        let draft = setChoice(EMPTY_ASK_DRAFT, 'a', false);
-        expect(draft.selected).toEqual(['a']);
-        draft = setChoice(draft, 'b', false);
-        expect(draft.selected).toEqual(['b']);
+        let draft = setChoice(EMPTY_ASK_DRAFT, 'q1', 'a', false);
+        expect(questionDraftFor(draft, 'q1').selected).toEqual(['a']);
+        draft = setChoice(draft, 'q1', 'b', false);
+        expect(questionDraftFor(draft, 'q1').selected).toEqual(['b']);
 
-        let multi = setChoice(EMPTY_ASK_DRAFT, 'a', true);
-        multi = setChoice(multi, 'b', true);
-        expect(multi.selected).toEqual(['a', 'b']);
-        multi = setChoice(multi, 'a', true);
-        expect(multi.selected).toEqual(['b']);
+        let multi = setChoice(EMPTY_ASK_DRAFT, 'q1', 'a', true);
+        multi = setChoice(multi, 'q1', 'b', true);
+        expect(questionDraftFor(multi, 'q1').selected).toEqual(['a', 'b']);
+        multi = setChoice(multi, 'q1', 'a', true);
+        expect(questionDraftFor(multi, 'q1').selected).toEqual(['b']);
     });
 
     it('setField / setText 不改别的字段（并存）', () => {
-        const draft = setText(setField(EMPTY_ASK_DRAFT, 'title', '标题'), '其他内容');
-        expect(draft).toEqual({ selected: [], fields: { title: '标题' }, text: '其他内容' });
+        const draft = setText(setField(EMPTY_ASK_DRAFT, 'q1', 'title', '标题'), 'q1', '其他内容');
+        expect(questionDraftFor(draft, 'q1')).toEqual({
+            selected: [],
+            fields: { title: '标题' },
+            text: '其他内容',
+            skipped: false,
+        });
     });
 
-    it('字段名就是一个房间里一条草稿', () => {
+    it('改第 2 题不会冲掉第 1 题（分桶的意义）', () => {
+        const draft = setText(setChoice(EMPTY_ASK_DRAFT, 'env', 'keep', false), 'scope', '全量');
+        expect(questionDraftFor(draft, 'env').selected).toEqual(['keep']);
+        expect(questionDraftFor(draft, 'scope').text).toEqual('全量');
+    });
+
+    it('跳过 / 撤销跳过；重新回答会自动撤销跳过', () => {
+        const skipped = setSkipped(EMPTY_ASK_DRAFT, 'q1', true);
+        expect(questionDraftFor(skipped, 'q1').skipped).toBe(true);
+        expect(questionDraftFor(setSkipped(skipped, 'q1', false), 'q1').skipped).toBe(false);
+        expect(questionDraftFor(setChoice(skipped, 'q1', 'a', false), 'q1').skipped).toBe(false);
+        expect(questionDraftFor(setText(skipped, 'q1', '哦'), 'q1').skipped).toBe(false);
+    });
+
+    it('字段名就是一个房间里一条草稿（批量提问也只占一条）', () => {
         expect(draftFieldOf('ask_42')).toBe('ask:ask_42');
     });
 });
@@ -60,8 +115,8 @@ describe('能否提交', () => {
     it('choice：勾一个或写了自由输入都能交', () => {
         const request = ask({});
         expect(isReady(request, EMPTY_ASK_DRAFT)).toBe(false);
-        expect(isReady(request, setChoice(EMPTY_ASK_DRAFT, 'a', false))).toBe(true);
-        expect(isReady(request, setText(EMPTY_ASK_DRAFT, '都不是'))).toBe(true);
+        expect(isReady(request, setChoice(EMPTY_ASK_DRAFT, 'q1', 'a', false))).toBe(true);
+        expect(isReady(request, setText(EMPTY_ASK_DRAFT, 'q1', '都不是'))).toBe(true);
     });
 
     it('form：必填项没填就不让交；只有空格的也不算填了', () => {
@@ -72,37 +127,85 @@ describe('能否提交', () => {
                 { name: 'desc', label: '描述', type: 'textarea' },
             ],
         });
-        expect(missingFieldsOf(request, EMPTY_ASK_DRAFT)).toEqual(['title']);
-        expect(isReady(request, setField(EMPTY_ASK_DRAFT, 'title', '   '))).toBe(false);
-        expect(isReady(request, setField(EMPTY_ASK_DRAFT, 'desc', '随便写'))).toBe(false);
-        expect(isReady(request, setField(EMPTY_ASK_DRAFT, 'title', '定稿'))).toBe(true);
+        expect(missingFieldsOf(request.questions[0]!, EMPTY_QUESTION_DRAFT)).toEqual(['title']);
+        expect(isReady(request, setField(EMPTY_ASK_DRAFT, 'q1', 'title', '   '))).toBe(false);
+        expect(isReady(request, setField(EMPTY_ASK_DRAFT, 'q1', 'desc', '随便写'))).toBe(false);
+        expect(isReady(request, setField(EMPTY_ASK_DRAFT, 'q1', 'title', '定稿'))).toBe(true);
     });
 
     it('text：空 / 空格不算答了', () => {
         const request = ask({ kind: 'text' });
-        expect(isReady(request, setText(EMPTY_ASK_DRAFT, '  '))).toBe(false);
-        expect(isReady(request, setText(EMPTY_ASK_DRAFT, '答案'))).toBe(true);
+        expect(isReady(request, setText(EMPTY_ASK_DRAFT, 'q1', '  '))).toBe(false);
+        expect(isReady(request, setText(EMPTY_ASK_DRAFT, 'q1', '答案'))).toBe(true);
+    });
+
+    it('多题：答完一部分不算答完，全部答完才能提交', () => {
+        const request = batch();
+        expect(unansweredOf(request, EMPTY_ASK_DRAFT).map((question) => question.id)).toEqual([
+            'env',
+            'topo',
+            'scope',
+        ]);
+        let draft = setChoice(EMPTY_ASK_DRAFT, 'env', 'keep', false);
+        expect(isReady(request, draft)).toBe(false);
+        draft = setChoice(draft, 'topo', 'single', false);
+        expect(isReady(request, draft)).toBe(false);
+        draft = setText(draft, 'scope', '全量');
+        expect(isReady(request, draft)).toBe(true);
+        expect(unansweredOf(request, draft)).toEqual([]);
+    });
+
+    it('多题：显式跳过算答完（"不想定"不能把整批卡死）', () => {
+        const request = batch();
+        const draft = setText(
+            setChoice(setSkipped(setChoice(EMPTY_ASK_DRAFT, 'env', 'keep', false), 'topo', true), 'scope', '全量'),
+            'scope',
+            '全量',
+        );
+        expect(isQuestionReady(request.questions[1]!, questionDraftFor(draft, 'topo'))).toBe(true);
+        expect(isReady(request, draft)).toBe(true);
     });
 });
 
 describe('装配 answer', () => {
     it('choice：values + 可选 text（空白不带）', () => {
         const request = ask({ allowFreeform: true });
-        expect(answerOf(request, setChoice(EMPTY_ASK_DRAFT, 'a', true))).toEqual({ values: ['a'] });
-        expect(answerOf(request, setText(setChoice(EMPTY_ASK_DRAFT, 'a', true), '其他'))).toEqual({
-            values: ['a'],
-            text: '其他',
+        expect(answerOf(request, setChoice(EMPTY_ASK_DRAFT, 'q1', 'a', true))).toEqual({
+            answers: [{ id: 'q1', values: ['a'] }],
+        });
+        expect(answerOf(request, setText(setChoice(EMPTY_ASK_DRAFT, 'q1', 'a', true), 'q1', '其他'))).toEqual({
+            answers: [{ id: 'q1', values: ['a'], text: '其他' }],
         });
     });
 
     it('form：fields 全带上，text 只在非空时带', () => {
         const request = ask({ kind: 'form' });
-        const draft = setField(EMPTY_ASK_DRAFT, 'title', '定稿');
-        expect(answerOf(request, draft)).toEqual({ fields: { title: '定稿' } });
-        expect(answerOf(request, setText(draft, '补充'))).toEqual({ fields: { title: '定稿' }, text: '补充' });
+        const draft = setField(EMPTY_ASK_DRAFT, 'q1', 'title', '定稿');
+        expect(answerOf(request, draft)).toEqual({ answers: [{ id: 'q1', fields: { title: '定稿' } }] });
+        expect(answerOf(request, setText(draft, 'q1', '补充'))).toEqual({
+            answers: [{ id: 'q1', fields: { title: '定稿' }, text: '补充' }],
+        });
     });
 
     it('text：只带 text', () => {
-        expect(answerOf(ask({ kind: 'text' }), setText(EMPTY_ASK_DRAFT, '好'))).toEqual({ text: '好' });
+        expect(answerOf(ask({ kind: 'text' }), setText(EMPTY_ASK_DRAFT, 'q1', '好'))).toEqual({
+            answers: [{ id: 'q1', text: '好' }],
+        });
+    });
+
+    it('多题：一次装配整批，每题按 id 回传；跳过的题带 skipped', () => {
+        const request = batch();
+        const draft = setText(
+            setSkipped(setChoice(EMPTY_ASK_DRAFT, 'env', 'keep', false), 'topo', true),
+            'scope',
+            '全量',
+        );
+        expect(answerOf(request, draft)).toEqual({
+            answers: [
+                { id: 'env', values: ['keep'] },
+                { id: 'topo', skipped: true },
+                { id: 'scope', text: '全量' },
+            ],
+        });
     });
 });

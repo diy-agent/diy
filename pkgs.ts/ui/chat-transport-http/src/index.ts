@@ -4,6 +4,7 @@
 // 换成 diy-rpc 时新增 @diy-agent/chat-transport-rpc 即可，chat-core / surface 不用改。
 
 import type {
+    AskAnswer,
     ChatClient,
     Command,
     CompactOutcome,
@@ -153,18 +154,28 @@ export class HttpChatClient implements ChatClient {
         return (await res.json()) as CompactOutcome;
     }
 
-    async answerAsk(
-        entityId: string,
-        askId: string,
-        answer: { values?: string[]; fields?: Record<string, string>; text?: string },
-    ): Promise<void> {
+    async answerAsk(entityId: string, askId: string, answer: AskAnswer): Promise<void> {
         const post = this.fetchImpl;
         const res = await post(`${this.base}/rooms/${encodeURIComponent(entityId)}/asks/${encodeURIComponent(askId)}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(answer),
         });
-        if (!res.ok) throw new Error(`回答失败：HTTP ${res.status}`);
+        if (!res.ok) {
+            /*
+             * 带上服务端的 error 文案：400（题对不上，比如缓存了旧题集）与 404（这一问已失效）
+             * 对用户要做的事完全不同 —— 前者是「刷新重答」，后者是「这张卡没用了」。
+             * 只报 HTTP 状态码，界面只能说一句含糊的「可能失效了」，把前者也引向重试。
+             */
+            const reason = await res
+                .json()
+                .then((body: unknown) => {
+                    const error = (body as { error?: unknown } | undefined)?.error;
+                    return typeof error === 'string' ? error : undefined;
+                })
+                .catch(() => undefined);
+            throw new Error(reason ?? `回答失败：HTTP ${res.status}`);
+        }
     }
 
     async cancelAsk(entityId: string, askId: string): Promise<void> {
@@ -173,7 +184,16 @@ export class HttpChatClient implements ChatClient {
             `${this.base}/rooms/${encodeURIComponent(entityId)}/asks/${encodeURIComponent(askId)}/cancel`,
             { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
         );
-        if (!res.ok) throw new Error(`撤回失败：HTTP ${res.status}`);
+        if (!res.ok) {
+            const reason = await res
+                .json()
+                .then((body: unknown) => {
+                    const error = (body as { error?: unknown } | undefined)?.error;
+                    return typeof error === 'string' ? error : undefined;
+                })
+                .catch(() => undefined);
+            throw new Error(reason ?? `撤回失败：HTTP ${res.status}`);
+        }
     }
 
     async post(

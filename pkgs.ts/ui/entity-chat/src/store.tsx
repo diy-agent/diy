@@ -2,7 +2,14 @@
 //
 // 词表：Room = 容器（项目/任务/股票…），Bot = 身份，BotSession = bot 在某个 room 里的对话（后端概念）。
 
-import { ConversationStore, type Bot, type CompactOutcome, type Room, type SessionInfo } from '@diy-agent/chat-core';
+import {
+    ConversationStore,
+    type AskAnswer,
+    type Bot,
+    type CompactOutcome,
+    type Room,
+    type SessionInfo,
+} from '@diy-agent/chat-core';
 import { HttpChatClient } from '@diy-agent/chat-transport-http';
 import * as React from 'react';
 
@@ -29,12 +36,8 @@ const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 const client = new HttpChatClient({ base: '/api' });
 const conversations = new Map<string, ConversationStore>();
 
-/** 回答一次挂起的提问（选项 / 表单）。失败会抛，由界面显示原因。 */
-export async function answerAsk(
-    roomId: string,
-    askId: string,
-    answer: { values?: string[]; fields?: Record<string, string>; text?: string },
-): Promise<void> {
+/** 回答一次挂起的提问（整批一次提交）。失败会抛，由界面显示原因（含服务端说的差哪几题）。 */
+export async function answerAsk(roomId: string, askId: string, answer: AskAnswer): Promise<void> {
     if (client.answerAsk === undefined) throw new Error('当前传输不支持回答提问');
     await client.answerAsk(roomId, askId, answer);
 }

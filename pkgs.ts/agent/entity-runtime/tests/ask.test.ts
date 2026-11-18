@@ -38,7 +38,7 @@ describe('AskGate', () => {
         // 同步返回：工具靠这个立刻结束，run 不挂起
         expect(request.askId).toMatch(/^ask-/);
         expect(h.requests).toHaveLength(1);
-        expect(h.requests[0]?.kind).toBe('choice');
+        expect(h.requests[0]?.questions[0]?.kind).toBe('choice');
         // 卡片挂着等用户，没有"等待中的 promise"
         expect(h.gate.pendingCount()).toBe(1);
         expect(h.settled).toEqual([]);
@@ -48,11 +48,11 @@ describe('AskGate', () => {
         const h = makeGate();
         const request = h.gate.request({ question: '选哪个？' }, 'bot:a');
 
-        expect(h.gate.answer(request.askId, { values: ['b'] })).toBe(true);
-        expect(h.settled).toEqual([{ request, result: { answer: { values: ['b'] } }, owner: 'bot:a' }]);
+        expect(h.gate.answer(request.askId, { answers: [{ id: 'q1', values: ['b'] }] })).toEqual({ ok: true });
+        expect(h.settled).toEqual([{ request, result: { answer: { answers: [{ id: 'q1', values: ['b'] }] } }, owner: 'bot:a' }]);
         expect(h.gate.pendingCount()).toBe(0);
         // 重复回答不会二次投递
-        expect(h.gate.answer(request.askId, { values: ['a'] })).toBe(false);
+        expect(h.gate.answer(request.askId, { answers: [{ id: 'q1', values: ['a'] }] })).toEqual({ ok: false, code: 'no-such-ask' });
         expect(h.settled).toHaveLength(1);
     });
 
@@ -63,15 +63,15 @@ describe('AskGate', () => {
             fields: [{ name: 'title', label: '标题', type: 'text', required: true }],
         });
 
-        expect(request.kind).toBe('form');
-        h.gate.answer(request.askId, { fields: { title: 'diy2 发版' } });
-        expect(h.settled[0]?.result.answer).toEqual({ fields: { title: 'diy2 发版' } });
+        expect(request.questions[0]?.kind).toBe('form');
+        h.gate.answer(request.askId, { answers: [{ id: 'q1', fields: { title: 'diy2 发版' } }] });
+        expect(h.settled[0]?.result.answer).toEqual({ answers: [{ id: 'q1', fields: { title: 'diy2 发版' } }] });
     });
 
     it('未知 askId：返回 false，不影响已有提问', () => {
         const h = makeGate();
         h.gate.request({ question: '随便问问' });
-        expect(h.gate.answer('nope', { values: ['x'] })).toBe(false);
+        expect(h.gate.answer('nope', { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({ ok: false, code: 'no-such-ask' });
         expect(h.gate.pendingCount()).toBe(1);
     });
 
@@ -132,14 +132,14 @@ describe('AskGate', () => {
 
         expect(h.gate.cancel(first.askId)).toBe(true);
         expect(h.gate.pendingCount()).toBe(1);
-        expect(h.gate.list().map((request) => request.question)).toEqual(['还想回答的那个']);
+        expect(h.gate.list().map((request) => request.questions[0]?.question)).toEqual(['还想回答的那个']);
         expect(h.settled).toEqual([
             { request: first, result: { cancelled: true, reason: '提问已被撤回', notifyOwner: true }, owner: 'bot:a' },
         ]);
 
         // 撤回过的不能再答（否则会凭空冒出一条「回答提问」）
-        expect(h.gate.answer(first.askId, { values: ['x'] })).toBe(false);
-        expect(h.gate.answer(second.askId, { values: ['x'] })).toBe(true);
+        expect(h.gate.answer(first.askId, { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({ ok: false, code: 'no-such-ask' });
+        expect(h.gate.answer(second.askId, { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({ ok: true });
         expect(h.gate.pendingCount()).toBe(0);
     });
 
@@ -151,7 +151,7 @@ describe('AskGate', () => {
         expect(h.gate.cancelFor('bot:a')).toBe(1);
         expect(h.gate.pendingCount()).toBe(1);
 
-        expect(h.gate.answer(other.askId, { values: ['x'] })).toBe(true);
+        expect(h.gate.answer(other.askId, { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({ ok: true });
         expect(h.settled.map((entry) => entry.owner)).toEqual(['bot:a', 'bot:b']);
     });
 
@@ -162,8 +162,8 @@ describe('AskGate', () => {
 
         expect(h.gate.pendingCount()).toBe(20);
         // 淘汰的是最旧的（Q0），不是刚发出的那条
-        expect(h.gate.list().map((request) => request.question)).not.toContain('Q0');
-        expect(h.gate.list().map((request) => request.question)).toContain('Q20');
+        expect(h.gate.list().map((request) => request.questions[0]?.question)).not.toContain('Q0');
+        expect(h.gate.list().map((request) => request.questions[0]?.question)).toContain('Q20');
         expect(h.settled[0]).toMatchObject({ request: requests[0], result: { cancelled: true } });
         expect(String((h.settled[0] as { result: { reason?: string } }).result.reason)).toContain('最旧的一条已作废');
         // 关键：淘汰必须告诉提问的成员（notifyOwner），否则它那边永远留着一个没有下文的提问。
@@ -178,9 +178,119 @@ describe('AskGate', () => {
         expect(request.owner).toBe('bot:a');
     });
 
+    it('一批多题：一次 request 带三题，一次 answer 整批回传（这就是"点三次"的根治）', () => {
+        const h = makeGate();
+        const request = h.gate.request({
+            questions: [
+                {
+                    id: 'env',
+                    question: '环境变量口径怎么定？',
+                    options: [{ value: 'keep', label: 'B. 全套 DIY2_* 前缀' }],
+                },
+                {
+                    id: 'topo',
+                    question: 'dev 的进程拓扑怎么改？',
+                    options: [{ value: 'single', label: 'A. 单端口' }],
+                },
+                { id: 'scope', question: '本轮落地到哪一步？', kind: 'text' },
+            ],
+        });
+
+        // 一批就是一次 request / 一张卡：题数与 id 都保留（回答按 id 回传）
+        expect(request.questions.map((question) => question.id)).toEqual(['env', 'topo', 'scope']);
+        expect(h.gate.pendingCount()).toBe(1);
+
+        const answer = {
+            answers: [
+                { id: 'env', values: ['keep'] },
+                { id: 'topo', values: ['single'] },
+                { id: 'scope', text: '全量' },
+            ],
+        };
+        expect(h.gate.answer(request.askId, answer)).toEqual({ ok: true });
+        expect(h.settled).toHaveLength(1);
+        expect(h.settled[0]?.result.answer).toEqual(answer);
+        expect(h.gate.pendingCount()).toBe(0);
+    });
+
+    it('少答一题：拒掉整批（bad-answer），卡片还在等 —— 不能收下残缺的一份', () => {
+        const h = makeGate();
+        const request = h.gate.request({
+            questions: [
+                { id: 'a', question: 'A？', options: [{ value: 'x', label: 'X' }] },
+                { id: 'b', question: 'B？', options: [{ value: 'y', label: 'Y' }] },
+            ],
+        });
+
+        expect(h.gate.answer(request.askId, { answers: [{ id: 'a', values: ['x'] }] })).toEqual({
+            ok: false,
+            code: 'bad-answer',
+            reason: '还有 1 题没作答：b',
+        });
+        // 整批被拒：这一问仍然挂着，不是半答半丢
+        expect(h.gate.pendingCount()).toBe(1);
+        expect(h.settled).toEqual([]);
+        // 补上就能过
+        expect(
+            h.gate.answer(request.askId, {
+                answers: [
+                    { id: 'a', values: ['x'] },
+                    { id: 'b', values: ['y'] },
+                ],
+            }),
+        ).toEqual({ ok: true });
+    });
+
+    it('题 id 对不上（客户端缓存了旧题集）：也是 bad-answer，不是"已失效"', () => {
+        const h = makeGate();
+        const request = h.gate.request({ questions: [{ id: 'a', question: 'A？' }] });
+        expect(h.gate.answer(request.askId, { answers: [{ id: 'old', values: ['x'] }] })).toEqual({
+            ok: false,
+            code: 'bad-answer',
+            reason: '还有 1 题没作答：a',
+        });
+        expect(h.gate.pendingCount()).toBe(1);
+    });
+
+    it('一题都没给：不推卡片（不造空卡片），工具拿到的是没问成', () => {
+        const h = makeGate();
+        expect(h.gate.request({ questions: [{ question: '   ' }] })).toBeUndefined();
+        expect(h.gate.pendingCount()).toBe(0);
+        expect(h.requests).toEqual([]);
+    });
+
+    it('旧快照（一批问题之前落库的单问题卡片）：归一回 questions[]，刷新后还渲得出来', async () => {
+        const { normalizeAskRequest } = await import('../src/ask');
+        const legacy = {
+            askId: 'ask-old',
+            question: '先做哪个？',
+            kind: 'choice',
+            options: [{ value: 'a', label: 'A' }],
+            note: '背景',
+            at: 1,
+        };
+        expect(normalizeAskRequest(legacy)).toEqual({
+            askId: 'ask-old',
+            questions: [
+                {
+                    id: 'q1',
+                    question: '先做哪个？',
+                    kind: 'choice',
+                    options: [{ value: 'a', label: 'A' }],
+                    note: '背景',
+                },
+            ],
+            note: '背景',
+            at: 1,
+        });
+        // 认不出来的丢掉，不造空卡片
+        expect(normalizeAskRequest({ askId: 'x' })).toBeUndefined();
+        expect(normalizeAskRequest(null)).toBeUndefined();
+    });
+
     it('list() 返回挂起中的请求（刷新后恢复卡片用）', () => {
         const h = makeGate();
         h.gate.request({ question: 'Q1', options: [{ value: 'a', label: 'A' }] });
-        expect(h.gate.list().map((request) => request.question)).toEqual(['Q1']);
+        expect(h.gate.list().map((request) => request.questions[0]?.question)).toEqual(['Q1']);
     });
 });

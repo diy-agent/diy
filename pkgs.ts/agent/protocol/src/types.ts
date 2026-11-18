@@ -122,12 +122,17 @@ export interface AskField {
 }
 
 /**
- * 一次待回答的提问。
- * 为什么要走工具而不是让模型在正文里问：正文里的问题会被大段输出淹掉，
- * 用户看不到"现在需要你决定"；这里渲染成置顶的选项/表单。
+ * 一批里的一个问题。
+ *
+ * 为什么一个提问能带多题：模型经常需要连着定几件相关的事（口径 / 拓扑 / 落地到哪步）。
+ * 以前一次 ask 只能问一个，模型只能连调三次工具 ⇒ 界面上三张卡、用户点三次提交、
+ * 模型收到三条独立的用户消息。现在一批一次问完、一次提交，用户一屏看全、能对比着答。
+ * 这与 dsh（questions[]）、opencode（questions[] → Form fields）、assistant-ui
+ * （display:'questions'）的批量契约一致。
  */
-export interface AskRequest {
-    askId: string;
+export interface AskQuestion {
+    /** 批次内唯一：回答按它回传。缺省由闸门分配 q1 / q2 … */
+    id: string;
     question: string;
     /** choice = 选项；form = 表单；text = 只有一个自由输入框 */
     kind: 'choice' | 'form' | 'text';
@@ -137,7 +142,20 @@ export interface AskRequest {
     multiple?: boolean;
     /** 选项之外还允许自由输入（"其他：____"） */
     allowFreeform?: boolean;
-    /** 补充说明（背景、影响） */
+    /** 这一问的补充说明（背景、影响） */
+    note?: string;
+}
+
+/**
+ * 一次待回答的提问 = 一批问题（至少 1 个），一次提交。
+ * 为什么要走工具而不是让模型在正文里问：正文里的问题会被大段输出淹掉，
+ * 用户看不到"现在需要你决定"；这里渲染成置顶的选项/表单。
+ */
+export interface AskRequest {
+    askId: string;
+    /** 这一批问题（至少 1 个）。顺序即界面顺序 */
+    questions: AskQuestion[];
+    /** 整批的背景说明（每题还有自己的 note） */
     note?: string;
     /** 触发它的工具调用：界面据此把卡片渲染在正文里那个工具行下面 */
     toolCallId?: string;
@@ -157,12 +175,26 @@ export interface AskRequest {
     at: number;
 }
 
-/** 用户的回答：choice 用 values，form 用 fields */
-export interface AskAnswer {
+/**
+ * 其中一题的回答：choice 用 values，form 用 fields，text 用 text。
+ * `skipped` 与"没答"是两件事 —— 用户明确跳过时记 true，模型据此区分
+ * 「他不想定」和「他漏了」（dsh 用 `{selected:[]}` 占位、shadcn 用 status:'skipped'
+ * 表达同一件事，两家独立收敛）。
+ */
+export interface AskQuestionAnswer {
+    /** 对应 AskQuestion.id */
+    id: string;
     values?: string[];
     fields?: Record<string, string>;
     /** 自由输入（allowFreeform / kind='text'） */
     text?: string;
+    /** 用户明确跳过了这一题 */
+    skipped?: boolean;
+}
+
+/** 用户的回答：按题回传，一次提交整批 */
+export interface AskAnswer {
+    answers: AskQuestionAnswer[];
 }
 
 /**
