@@ -37,6 +37,8 @@ export interface AskQuestionInput {
     multiple?: boolean;
     allowFreeform?: boolean;
     note?: string;
+    /** 这题是否必须作答，缺省 true */
+    required?: boolean;
 }
 
 /**
@@ -105,7 +107,11 @@ function badAnswerOf(request: AskRequest, answer: AskAnswer): string | undefined
     if (!Array.isArray(answer.answers)) return '答案格式不对：应为 { answers: [...] }';
     const expected = request.questions.map((question) => question.id);
     const got = answer.answers.map((entry) => entry.id);
-    const missing = expected.filter((id) => !got.includes(id));
+    // 只要求必答题都在：`required: false` 的题可以整条不出现（界面会直接跳过它）
+    const missing = request.questions
+        .filter((question) => question.required !== false)
+        .map((question) => question.id)
+        .filter((id) => !got.includes(id));
     const extra = got.filter((id) => !expected.includes(id));
     if (missing.length > 0) return `还有 ${missing.length} 题没作答：${missing.join('、')}`;
     if (extra.length > 0) return `答案里有不存在的题：${extra.join('、')}`;
@@ -130,6 +136,7 @@ function normalizeInput(input: AskQuestionInput, index: number): AskQuestion | u
         ...(input.multiple === undefined ? {} : { multiple: input.multiple }),
         ...(input.allowFreeform === undefined ? {} : { allowFreeform: input.allowFreeform }),
         ...(input.note === undefined ? {} : { note: input.note }),
+        ...(input.required === undefined ? {} : { required: input.required }),
     };
 }
 

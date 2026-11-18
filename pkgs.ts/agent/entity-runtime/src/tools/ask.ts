@@ -37,6 +37,10 @@ const QUESTION_SCHEMA = z.object({
     multiple: z.boolean().optional().describe('选项是否多选'),
     allowFreeform: z.boolean().optional().describe('选项之外还允许自由输入（"其他"）'),
     note: z.string().optional().describe('这一题的补充说明'),
+    required: z
+        .boolean()
+        .optional()
+        .describe('这题是否必须作答（缺省 true）。次要的顺带确认可以标 false，用户能直接跳过去'),
 });
 
 export function askTool(gate: AskGate | undefined, owner?: string): ToolSet[string] | undefined {
@@ -64,6 +68,10 @@ export function askTool(gate: AskGate | undefined, owner?: string): ToolSet[stri
             options: z.array(OPTION_SCHEMA).optional().describe('选项（choice 用）'),
             fields: z.array(FIELD_SCHEMA).optional().describe('表单字段（form 用）'),
             multiple: z.boolean().optional().describe('选项是否多选'),
+            required: z
+                .boolean()
+                .optional()
+                .describe('单题简写：这题是否必须作答（缺省 true）'),
             note: z.string().optional().describe('补充说明：背景 / 影响 / 默认建议（批量时作为整批的背景）'),
         }),
         execute: async (input, options) => {
@@ -80,6 +88,7 @@ export function askTool(gate: AskGate | undefined, owner?: string): ToolSet[stri
                               ...(input.fields === undefined ? {} : { fields: input.fields }),
                               ...(input.multiple === undefined ? {} : { multiple: input.multiple }),
                               ...(input.allowFreeform === undefined ? {} : { allowFreeform: input.allowFreeform }),
+                              ...(input.required === undefined ? {} : { required: input.required }),
                           }),
                     ...(input.note === undefined ? {} : { note: input.note }),
                     ...(callId === undefined ? {} : { toolCallId: callId }),

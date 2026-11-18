@@ -144,6 +144,14 @@ export interface AskQuestion {
     allowFreeform?: boolean;
     /** 这一问的补充说明（背景、影响） */
     note?: string;
+    /**
+     * 这题是否必须作答，缺省 true。
+     *
+     * 为什么要它：一批里常有「主决策 + 顺带确认」（比如「要不要顺手改文档」）——
+     * 全都强制会逼着用户在明显无关的题上点一下，全都不强制又会让主决策漏答。
+     * false 的题在界面上标「（可选）」、可以直接翻过去，提交时不拦。
+     */
+    required?: boolean;
 }
 
 /**

@@ -133,7 +133,7 @@ export function missingFieldsOf(question: AskQuestion, draft: QuestionDraft): st
         .map((field) => field.name);
 }
 
-/** 这一题答完了没有：跳过算答完；form 看必填，text 看非空，choice 看"选了或写了" */
+/** 这一题填了没有：跳过算填了；form 看必填，text 看非空，choice 看"选了或写了" */
 export function isQuestionReady(question: AskQuestion, draft: QuestionDraft): boolean {
     if (draft.skipped) return true;
     if (question.kind === 'form') return missingFieldsOf(question, draft).length === 0;
@@ -141,14 +141,24 @@ export function isQuestionReady(question: AskQuestion, draft: QuestionDraft): bo
     return draft.selected.length > 0 || draft.text.trim() !== '';
 }
 
-/** 整批能不能提交 */
-export function isReady(request: AskRequest, draft: AskDraft): boolean {
-    return request.questions.every((question) => isQuestionReady(question, questionDraftFor(draft, question.id)));
+/**
+ * 这题还挡不挡提交：`required: false` 的题永远不挡（没填也能提交）。
+ *
+ * 与 `isQuestionReady` 分开：后者是"填了没有"（界面拿它显示「已答」），
+ * 前者是"还差它吗"。可选题没填时，「已答」不能亮，但也不该拦着提交。
+ */
+export function isQuestionSatisfied(question: AskQuestion, draft: QuestionDraft): boolean {
+    return question.required === false || isQuestionReady(question, draft);
 }
 
-/** 还没答的题（按顺序）：界面用来显示"还有 N 题没答" */
+/** 整批能不能提交 */
+export function isReady(request: AskRequest, draft: AskDraft): boolean {
+    return request.questions.every((question) => isQuestionSatisfied(question, questionDraftFor(draft, question.id)));
+}
+
+/** 还没答的必答题（按顺序）：界面用来显示"还有 N 题没答"，也是提交时跳转的目标 */
 export function unansweredOf(request: AskRequest, draft: AskDraft): AskQuestion[] {
-    return request.questions.filter((question) => !isQuestionReady(question, questionDraftFor(draft, question.id)));
+    return request.questions.filter((question) => !isQuestionSatisfied(question, questionDraftFor(draft, question.id)));
 }
 
 /** 这一题提交过什么（已答的只读展示用） */
