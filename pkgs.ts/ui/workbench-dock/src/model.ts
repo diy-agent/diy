@@ -119,6 +119,33 @@ export interface ViewProps<S extends Scope = Scope> {
     api: PageApi;
 }
 
+/**
+ * 非 React view 的命令式契约。
+ *
+ * 宿主只做三件事：`create` 一次、props 变了调 `update`、销毁时调 `dispose`。
+ * element 归 view 所有（自己的 DOM、自己的样式、自己的事件），宿主只负责把它塞进区域。
+ */
+export interface VanillaView<S extends Scope = Scope> {
+    /** view 自己拥有的根元素；挂载时宿主 appendChild，卸载时移除 */
+    readonly element: HTMLElement;
+    /** props 变了。宿主每次重渲染都可能调，要不要真动 DOM 由 view 自己 diff */
+    update?(props: ViewProps<S>): void;
+    /** 即将销毁（卸监听 / 关连接）。**必须幂等**：StrictMode 会双挂载，dockview 也可能移动 DOM */
+    dispose?(): void;
+}
+
+/**
+ * view 的渲染方式。判别字段是 `kind`，两条支路都拿到完整 ViewProps（含 `api`）。
+ *
+ *   react    宿主自带。`component` 是 `ComponentType` —— 包名/导出名写错 tsc 当场报错
+ *   vanilla  框架无关。`create(props)` 自己造 DOM —— 代价是放弃 tsc 对组件身份的保护
+ *
+ * 选 vanilla 是**显式**写在定义里的一次取舍，不是静默降级。
+ */
+export type ViewRender<S extends Scope = Scope> =
+    | { kind: 'react'; component: ComponentType<ViewProps<S>> }
+    | { kind: 'vanilla'; create(props: ViewProps<S>): VanillaView<S> };
+
 /** view 的静态定义 */
 export interface ViewDef<S extends Scope = Scope> {
     /** 全局唯一的 view id（也是 dockview 的 panel id） */
@@ -127,7 +154,8 @@ export interface ViewDef<S extends Scope = Scope> {
     icon?: string;
     /** 能进哪些页的哪个区域（一个 view 可以同时挂多个 pageType） */
     placement: Record<string, Placement>;
-    component: ComponentType<ViewProps<S>>;
+    /** 怎么渲染：`kind: 'react'` 走组件，`kind: 'vanilla'` 走命令式契约（见 ViewRender） */
+    render: ViewRender<S>;
 }
 
 export interface PageInfo {
@@ -149,6 +177,13 @@ export interface PageApi {
     isAreaMaximized(): boolean;
     /** 关掉某个 view（从它所在区域移除，并记进 dismissed，模板重编译时不会自己回来） */
     closeView(viewId: string): void;
+    /**
+     * 把某个 view 开回来（它是 `closeView` 的逆操作）。返回是否真的开了。
+     *
+     * 三种情况：已经在布局里 → 只激活它；被关掉过 → 从 dismissed 里掸掉再插回它声明的区域；
+     * 这个 view 不属于本页 / 它声明的区域不在布局里 → 不动，返回 `false`。
+     */
+    openView(viewId: string): boolean;
     /** 丢掉用户布局，回到模板（尺寸 / 展开 / 关掉的 view 全部复位） */
     resetLayout(): void;
 }
@@ -160,9 +195,15 @@ export function definePage<S extends Scope = Scope>(def: PageDef<S>): PageDef<S>
     return { ...def, areas: normalizeAreas(def.areas) };
 }
 
+const RENDER_KINDS: readonly string[] = ['react', 'vanilla']; // 供运行期校验；类型上只有这两种
+
 export function defineView<S extends Scope = Scope>(def: ViewDef<S>): ViewDef<S> {
     if (!def.id) throw new ModelError('view.id 不能为空');
     if (Object.keys(def.placement).length === 0) throw new ModelError(`view "${def.id}" 没有任何 placement`);
+    const kind = (def.render as { kind?: unknown } | undefined)?.kind;
+    if (typeof kind !== 'string' || !RENDER_KINDS.includes(kind)) {
+        throw new ModelError(`view "${def.id}": render.kind 必须是 ${RENDER_KINDS.join(' / ')}`);
+    }
     return def;
 }
 
@@ -192,6 +233,21 @@ export function placementOf<S extends Scope>(view: ViewDef<S>, pageType: string)
 export function areaLeaves(node: AreaNode): AreaLeaf[] {
     if (node.type === 'region') return [node];
     return node.data.children.flatMap(areaLeaves);
+}
+
+/**
+ * 模板里写死 px 的叶子 → 它沿哪根轴被拉长（`x` = 宽度，`y` = 高度）。
+ *
+ * 只有这些区域会被用户拖拽改尺寸并记住：`'1fr'` 的叶子不在里面，它吃的是「剩下的空间」，
+ * 钉住它等于把某一刻的窗口尺寸烧进布局。根叶子没有父轴，也就不存在可拖的分屏线。
+ */
+export function pinnedAreas(root: AreaNode, parentAxis?: Axis, out = new Map<string, Axis>()): Map<string, Axis> {
+    if (root.type === 'region') {
+        if (parentAxis && typeof root.size === 'number') out.set(root.id, parentAxis);
+        return out;
+    }
+    for (const child of root.data.children) pinnedAreas(child, root.data.axis, out);
+    return out;
 }
 
 /**

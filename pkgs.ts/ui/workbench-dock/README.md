@@ -3,7 +3,7 @@
 **页（page）为一级概念的工作台布局引擎**：一个页围绕一个领域主概念展开，view 落进页里的各个区域。
 布局交给 [dockview]（分屏 / tab / 拖拽 / 序列化），本包只负责「模板 → 布局」和「布局 × 模板 → 新布局」。
 
-> 状态：实验包（worktree `exp/workbench-dock`）。范例页在 `apps/diy2/src/dock-demo.tsx`（`/dock.html`）。
+> 状态：实验包（worktree `exp/workbench-dock`）。**范例在 [`examples/`](./examples/)**（自带 vite 工程，不依赖任何 app）。
 
 ## 30 秒
 
@@ -34,14 +34,17 @@ const chatView = defineView<TaskScope>({
     id: 'chat',
     title: '对话',
     placement: { 'task-run': { area: 'center', primary: true } },
-    component: function Chat({ scope }) {
-        const api = usePageApi();
-        return (
-            <div>
-                <b>{scope.title}</b>
-                <button onClick={() => api.toggleArea('right')}>成员</button>
-            </div>
-        );
+    render: {
+        kind: 'react',
+        component: function Chat({ scope }) {
+            const api = usePageApi();
+            return (
+                <div>
+                    <b>{scope.title}</b>
+                    <button onClick={() => api.toggleArea('right')}>成员</button>
+                </div>
+            );
+        },
     },
 });
 
@@ -82,8 +85,13 @@ interface ViewDef<S extends Scope> {
     title: string | ((scope: S) => string);
     icon?: string;
     placement: Record<string, Placement>; // pageType → { area, primary?, order? }
-    component: ComponentType<ViewProps<S>>;
+    render: ViewRender<S>; // 怎么画：React 组件，或框架无关的 create 函数
 }
+
+/** 判别字段是 kind；两条支路都拿到完整 ViewProps（含 api） */
+type ViewRender<S extends Scope> =
+    | { kind: 'react'; component: ComponentType<ViewProps<S>> } // 写错包名 tsc 报错
+    | { kind: 'vanilla'; create(props: ViewProps<S>): VanillaView<S> };
 
 interface ViewProps<S extends Scope> {
     scope: S; // 本页的核心对象
@@ -96,9 +104,15 @@ interface ViewProps<S extends Scope> {
 `definePage` 在**定义时**就把能查的错查掉（运行期不再校验）：
 
 - 区域 id 唯一；
-- 区域树的轴必须交替（dockview 的 grid 按嵌套深度换方向，两层 `row` 表达不出来）；
-- `placement.area` 必须存在；
+- 区域树的轴必须交替（dockview 的 grid 按嵌套深度换方向，两层 `row` 表达不出来）。
+
+还有两条要**两边对上**才查得出来（`defineView` 不知道页的模板，`definePage` 不知道有哪些 view），
+所以放在编译期：
+
+- `placement.area` 必须是该 pageType 里真实存在的区域；
 - 同一区域至多一个 `primary`。
+
+写错了不会白屏：`<PageWorkbench>` 会拦下来，在区域里显示这句错误 + 一个「回到模板」按钮。
 
 ### 区域：`row([...])` / `col([...])` / `area(id, opts)`
 
@@ -146,8 +160,17 @@ interface PageApi {
     maximizeArea(areaId: string | null): void; // null = 退出最大化
     isAreaMaximized(): boolean;
     closeView(viewId: string): void; // 关掉某 view（记进 dismissed，不会自己回来）
+    openView(viewId: string): boolean; // closeView 的逆操作；返回有没有真开出来
     resetLayout(): void; // 丢掉用户布局，回到模板
 }
+```
+
+`openView` 三种情况：已经在布局里 → 只激活它；被关掉过 → 从 `dismissed` 里去掉再插回它声明的区域；
+这个 view 不属于本页 / 它声明的区域没落进布局 → 返回 `false`。
+
+```ts
+// 宿主侧的一个按钮：「把成员列表开回来」
+<button onClick={() => api.openView('members')}>成员</button>
 ```
 
 ### 纯函数（单测/工具用，无 React）
@@ -166,6 +189,8 @@ summarize(layout.grid.root): string // '(left[detail] ; center[chat])'
 |---|---|
 | 首次进页（storage 空） | `compileLayout`：模板 → 布局 |
 | 用户拖分屏线 / 收起展开 / 关 tab / 切 activeView | dockview 自己记；变化节流后写进 `storage` |
+| 用户拖分屏线 | 记进 `pinnedSizes`（只记模板里写死数字的区域，`1fr` 不记） |
+| 窗口变大变小 | 不重建布局：dockview 自己跟着容器重排；`1fr` 下次编译时按新宽度重新分配 |
 | 再次进页 | 读 `storage` → `resolveLayout` |
 | 模板改了（加/删 view、改区域） | `resolveLayout(旧快照 × 新模板)`：保尺寸/展开/tab 顺序（R1），新 view 按 `order` 插进来（R2/R4），模板删掉的区域丢弃（R3） |
 | 用户关掉的 view | 记在 `dismissed[]`，模板重编译时**不会自动加回来**（否则「我关的」和「新加的」分不清） |
@@ -187,36 +212,61 @@ L2（自由 docking）/ L3（页面存成可分享透视图）**不做**。
   version: 1,
   pageType: 'task-run',
   scopeKey: 'task:t-1',
-  dock: SerializedDockview,   // dockview api.toJSON() 原样
-  dismissed: string[],        // 用户关掉的 view id
-  maximizedArea?: string,     // dockview 快照不含最大化
+  dock: SerializedDockview,          // dockview api.toJSON() 原样
+  dismissed: string[],               // 用户关掉的 view id
+  maximizedArea?: string,            // dockview 快照不含最大化
+  pinnedSizes?: Record<string, number> // 用户拖出来的 px（只记模板写死数字的区域）
 }
 ```
+
+**为什么尺寸要单独记一份 `pinnedSizes`，而不是直接读快照里的 `size`**：快照里的 `size` 是「上一次那次编译」
+的产物，混着用户拖拽、dockview 的钳制、以及当时那个窗口的尺寸 —— 事后分不清哪个是用户的意思。
+所以规则简化成两条：
+
+- **模板里写死数字的区域**：用户拖过就按用户拖的 px（`pinnedSizes`），没拖过就按模板；
+- **模板里写 `'1fr'` 的区域**：永远按「当前 viewport − 兄弟们占掉的」算。`1fr` 表达的就是「我不决定这块多宽」，
+  钉住它等于把某一刻的窗口尺寸烧进布局。
+
+> 代价：一组兄弟**全是** `1fr` 时（没有任何固定参照），用户拖出来的比例无处安放，下次进页回到均分。
+> 要保住比例就给这组里至少一个区域写数字尺寸。
+
+**存储读回来先校验**：`version` / `pageType` 对不上，或者 grid 树的形状不是我们写得出来的样子
+（用户手改过 localStorage、旧版本写坏过）→ 一律当没存过，回模板。宁可丢掉用户布局，也不把畸形树喂给 `fromJSON`。
 
 ## 跑范例
 
 ```bash
-# worktree 里
-./sha.sh sync
-./apps/diy2/sha.sh lab        # 单端口 dev
-# 浏览器打开打印出的 URL + /dock.html
+cd pkgs.ts/ui/workbench-dock
+./sha.sh dev        # 例子的 vite（root = examples/），打开打印出的地址
+./sha.sh examples   # 只做生产构建（CI / 提交前验证例子没烂）
 ```
 
-范例页演示：四个 view（详情 / 对话 / 成员 / 作业）、两个任务页实例（各自的布局）、L0↔L1 开关、
-「展开成员区」调 `api.showArea`、「收起本区域」调 `api.hideArea`。
+四个例子，按顺序看（索引页 `/index.html`，细节见 [`examples/README.md`](./examples/README.md)）：
 
-已验证（headless Chrome，1440×900）：
+| #   | 目录                                                    | 讲什么                                                                                  |
+| --- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 01  | [`examples/01-basic/`](./examples/01-basic/)            | 一个页实例：区域树 + 三个 view + 布局持久化 + L0/L1                                     |
+| 02  | [`examples/02-pages/`](./examples/02-pages/)            | 多页实例：**导航条不属于本包**，页实例身份 = `pageId()`，`key` 决定是不是同一份布局     |
+| 03  | [`examples/03-plugin/`](./examples/03-plugin/)          | page 插件化：插件 = 包（`package.json` 的 `contributes`）+ 宿主骨架（`skeletons.ts`） |
+| 04  | [`examples/04-vanilla/`](./examples/04-vanilla/)        | 非 React view：`render.kind: 'vanilla'` 的 `create` / `update` / `dispose`              |
 
-- 首次进入：成员 / 作业收起（宽 0 / 高 0）；
-- 点「展开成员区」→ 成员 280px，对话 1092→812；刷新仍在；
-- 拖左/中分屏线 348→458，刷新仍在；
-- 关掉作业 tab → `dismissed:["job.runs"]`，刷新不回来；
-- 切到任务 B = 另一个 page 实例，布局独立；控制台零报错。
+四个例子互不 import（一个目录里就 `index.html` + `main.tsx` + `style.css`），任何一段都能
+单独抄走；重复的那几十行定义是故意的。
+
+例子是**唯一**的手验场所：改了 UI 层（`src/react/`）就在 `01-basic` 里点一遍，`./sha.sh examples`
+验证构建，单测只覆盖纯模型（`tests/`）。
 
 ## 不做 / 边界
 
-- **不碰**路由与侧栏（页怎么被打开、tab 条上的页列表，都在宿主）。
-- **不带主题**：dockview 是浅色内置主题，暗色由宿主用 `--dv-*` 变量覆盖（见 `apps/diy2/src/dock-demo.css`）。
+- **不碰**路由与侧栏（页怎么被打开、导航条、页列表，都在宿主）。多页 = 宿主自己拿一个数组渲染
+  若干 `<PageWorkbench>`，例子在 [`examples/02-pages/`](./examples/02-pages/main.tsx)（约 130 行，含两个 view）。
+- **不管插件加载**：包只接受 `PageDef` / `ViewDef`；「插件清单 → 这两个东西」是宿主的组装活儿，
+  形状见 [`examples/03-plugin/registry.ts`](./examples/03-plugin/registry.ts)。
+  清单里**只写「插在哪」**（页类型 + 骨架名 + 槽位名），区域树/尺寸归宿主的骨架 ——
+  和 theia 的 `viewsContainers` / `views` 是同一个划分，对照见
+  [`examples/README.md` 第二节](./examples/README.md)。
+- **不带主题**：dockview 是浅色内置主题，暗色由宿主用 `--dv-*` 变量覆盖（可直接抄
+  [`examples/01-basic/style.css`](./examples/01-basic/style.css) 最后一段）。
 - **一份快照只属于一个页实例**，不做跨页共享的「工作区」。
 - 想同时显示两个页 = 两个 `<PageWorkbench>` 并排（本包的模型里没有「跨页的 dock」）。
 
