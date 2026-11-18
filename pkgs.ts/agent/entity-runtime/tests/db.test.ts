@@ -162,3 +162,43 @@ describe('草稿', () => {
         expect(store.listDrafts(room.id).map((draft) => draft.field)).toEqual(['composer']);
     });
 });
+
+// 侧栏「最后活动」的数据源：一次聚合查出每个容器的最后一条 item，避免逐房间 N+1。
+// 语义边界（刻意如此）：改名字 / 改状态 / 加成员**不**产生 item，也就不算活动。
+describe('lastItemAtByRoom —— 每个容器的最后活动', () => {
+    function msg(id: string, at: number) {
+        return {
+            id,
+            seq: 0,
+            turnId: 't1',
+            type: 'chat' as const,
+            at,
+            status: 'done' as const,
+            author: { id: 'human:我', name: '我', color: '#000', role: 'human' as const },
+            data: { text: id },
+        };
+    }
+
+    it('取每个容器最大的 at；没聊过的容器不出现在结果里', () => {
+        const store = openStore(':memory:');
+        store.appendItem('task-a', msg('a1', 1_000));
+        store.appendItem('task-a', msg('a2', 3_000));
+        store.appendItem('task-b', msg('b1', 2_000));
+        expect(store.lastItemAtByRoom()).toEqual({ 'task-a': 3_000, 'task-b': 2_000 });
+    });
+
+    it('后写的 item 时刻更早也不影响（取 MAX 而不是最后一行）', () => {
+        const store = openStore(':memory:');
+        store.appendItem('task-a', msg('a1', 9_000));
+        store.appendItem('task-a', msg('a2', 1_000));
+        expect(store.lastItemAtByRoom()).toEqual({ 'task-a': 9_000 });
+    });
+
+    it('删掉容器后它的活动也跟着消失', () => {
+        const store = openStore(':memory:');
+        store.saveRoom({ ...room, id: 'task-a' });
+        store.appendItem('task-a', msg('a1', 5_000));
+        store.deleteRoom('task-a');
+        expect(store.lastItemAtByRoom()).toEqual({});
+    });
+});

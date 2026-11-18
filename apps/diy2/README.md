@@ -155,6 +155,15 @@ POST   /api/rooms/:id/cancel           { botId? }             # 不传 = 停整�
 GET    /api/rooms/:id/events           # 常驻 SSE（带心跳）：后台 bot 的动静也能收到
 ```
 
+`GET /api/rooms` 的每行除了 `Room` 本身，还带两个**投影**字段（不属于领域类型 —— 它们
+回答的是「侧栏这一行怎么显示」，写不回去）：
+
+- `hasDraft`：有未发送的草稿（侧栏 ✎）
+- `lastActivityAt`：该容器**最后一条 item** 的时刻（毫秒；一次 `GROUP BY` 查完，靠
+  `entity_items(entity_id, at)` 覆盖索引，6409 条实测 0.7ms）。没聊过的容器**没有这个键**
+  —— 侧栏显示「—」，不拿 `created_at` 冒充活动。改名字 / 改状态 / 加成员不产生 item，
+  所以不算活动（要算就得给 `rooms` 加 `last_item_at` 并在多个写点都盖章，目前不做）。
+
 约束：
 
 - `type: 'task'` 必须带有效的 `data.projectId`（侧栏按它分组，孤儿任务等于隐身）

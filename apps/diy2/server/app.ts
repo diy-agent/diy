@@ -335,12 +335,23 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
         }
 
         if (req.method === 'GET' && url.pathname === '/api/rooms') {
-            // hasDraft 是列表页的投影字段（侧栏 ✎），不属于 Room 领域类型
+            // hasDraft / lastActivityAt 都是列表页的投影字段（侧栏 ✎ / 最后活动），不属于 Room 领域类型。
+            // 最后活动 = 该容器最后一条 item 的 at（msg / 工具行 / notice 都算）；没聊过的容器
+            // 不带这个键，UI 显示「—」（不拿 created_at 冒充活动）。
             const withDraft = new Set(store.draftOwners());
+            const lastItemAt = store.lastItemAtByRoom();
             json(
                 res,
                 200,
-                [...rooms.values()].map((actor) => ({ ...actor.spec, hasDraft: withDraft.has(actor.spec.id) })),
+                [...rooms.values()].map((actor) => {
+                    const id = actor.spec.id;
+                    const at = lastItemAt[id];
+                    return {
+                        ...actor.spec,
+                        hasDraft: withDraft.has(id),
+                        ...(at === undefined ? {} : { lastActivityAt: at }),
+                    };
+                }),
             );
             return;
         }

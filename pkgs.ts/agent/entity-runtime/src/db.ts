@@ -79,6 +79,14 @@ export interface Store {
     /** 有草稿的容器 id（侧栏 ✎ 用，一次查完避免 N+1） */
     draftOwners(): string[];
     /**
+     * 容器 id → 最后一条 item 的时刻（毫秒）。侧栏「最后活动」用，一次查完避免 N+1。
+     *
+     * 这是**投影**不是事实：`rooms` 表故意不存 updated_at —— 那条路径要改名 / 改状态 /
+     * 加成员 / 发消息四个写点都记得盖章才不会漂。这里的 smell 就一条：只反映「聊过」，
+     * 改个名字不算活动（见 ## 讨论）。没有 item 的容器不出现在结果里（由调用方显示「—」）。
+     */
+    lastItemAtByRoom(): Record<string, number>;
+    /**
      * 清掉「已经没有结局可言」的 ask 草稿：`ask:<id>` 不在 keepAskIds 里（时间线上不再等回答）
      * 且早于 olderThan。返回清掉的条数。
      *
@@ -128,6 +136,9 @@ export function openStore(file: string): Store {
             at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS items_entity ON entity_items(entity_id, seq);
+        -- 「每个容器最后一条 item 的时间」要 GROUP BY entity_id 取 MAX(at)：
+        -- 没有这条覆盖索引就是全表扫（6409 条实测 15.6ms，随历史线性涨），有了是 0.7ms。
+        CREATE INDEX IF NOT EXISTS items_entity_at ON entity_items(entity_id, at);
         CREATE TABLE IF NOT EXISTS room_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_id TEXT NOT NULL,
@@ -519,6 +530,17 @@ export function openStore(file: string): Store {
         },
         deleteDraft(roomId: string, field: string): void {
             db.prepare('DELETE FROM drafts WHERE owner_id = ? AND field = ?').run(roomId, field);
+        },
+        lastItemAtByRoom(): Record<string, number> {
+            const rows = db
+                .prepare('SELECT entity_id, MAX(at) AS last FROM entity_items GROUP BY entity_id')
+                .all() as Array<Record<string, unknown>>;
+            const out: Record<string, number> = {};
+            for (const row of rows) {
+                const at = Number(row['last']);
+                if (Number.isFinite(at) && at > 0) out[String(row['entity_id'])] = at;
+            }
+            return out;
         },
         draftOwners(): string[] {
             const rows = db.prepare('SELECT owner_id, value FROM drafts').all() as Array<Record<string, unknown>>;
