@@ -40,6 +40,7 @@ import {
     isReady,
     missingFieldsOf,
     questionDraftFor,
+    radioGroupName,
     setChoice,
     setField,
     setSkipped,
@@ -235,7 +236,9 @@ export function AskCard({
                                             onClick={() => setPage(index)}
                                             title={question.question}
                                             aria-label={`第 ${index + 1} 题`}
-                                            className={`h-1 flex-1 rounded-full ${skin}`}
+                                            // 视觉上只有 4px 高，但伪元素把可点区域上下各撑开 6px：
+                                            // 4px 的命中区鼠标根本点不中（尤其是想直接跳题的时候）
+                                            className={`relative h-1 flex-1 rounded-full after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-[''] ${skin}`}
                                         />
                                     );
                                 })}
@@ -249,6 +252,7 @@ export function AskCard({
                             return (
                                 <QuestionBlock
                                     key={question.id}
+                                    askId={request.askId}
                                     index={index}
                                     total={request.questions.length}
                                     question={question}
@@ -368,6 +372,7 @@ export function AskCard({
 
 /** 一题：标题 + 输入（或只读答案）+ 跳过 */
 function QuestionBlock({
+    askId,
     index,
     total,
     question,
@@ -377,6 +382,8 @@ function QuestionBlock({
     answer,
     onChange,
 }: {
+    /** 只用来拼 radio 组名（跨卡片唯一，见 radioGroupName） */
+    askId: string;
     index: number;
     total: number;
     question: AskQuestion;
@@ -500,8 +507,9 @@ function QuestionBlock({
                                             >
                                                 <input
                                                     type={multiple ? 'checkbox' : 'radio'}
-                                                    // 同名 radio 会把整批的题连成一组（只能选一个），必须按题分组
-                                                    name={`${question.id}`}
+                                                    // 同名 radio 会把整批的题连成一组（只能选一个），必须按题分组；
+                                                    // 带上 askId 才是**跨卡片**唯一 —— 单题卡题 id 恒为 q1（见 radioGroupName）
+                                                    name={radioGroupName(askId, question.id)}
                                                     checked={checked}
                                                     disabled={done}
                                                     onChange={() =>

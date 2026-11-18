@@ -9,6 +9,7 @@ import {
     EMPTY_ASK_DRAFT,
     EMPTY_QUESTION_DRAFT,
     questionDraftFor,
+    radioGroupName,
     isQuestionReady,
     isQuestionSatisfied,
     isReady,
@@ -227,6 +228,23 @@ describe('装配 answer', () => {
                 { id: 'topo', skipped: true },
                 { id: 'scope', text: '全量' },
             ],
+        });
+    });
+
+    // 时间线上每张单题卡的题 id 都是 q1（批内唯一，不是全局唯一）。
+    // 只按题 id 分组的话所有卡的 radio 会连成一组：勾一张会把另一张取消，
+    // 方向键还会跨卡跳、静默改掉另一条待答提问的草稿。
+    describe('radioGroupName', () => {
+        it('同一题在不同卡片里组名不同（单题卡题 id 恒为 q1）', () => {
+            expect(radioGroupName('ask-a', 'q1')).not.toBe(radioGroupName('ask-b', 'q1'));
+        });
+
+        it('同一张卡片的不同题组名也不同', () => {
+            expect(radioGroupName('ask-a', 'q1')).not.toBe(radioGroupName('ask-a', 'q2'));
+        });
+
+        it('同一卡片同一题稳定（同一组 radio 才能互斥）', () => {
+            expect(radioGroupName('ask-a', 'q1')).toBe(radioGroupName('ask-a', 'q1'));
         });
     });
 });

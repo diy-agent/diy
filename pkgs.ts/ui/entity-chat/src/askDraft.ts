@@ -37,6 +37,18 @@ export function draftFieldOf(askId: string): string {
     return `ask:${askId}`;
 }
 
+/**
+ * 单选 / 复选组的 DOM name。必须**跨卡片**唯一，所以带上 askId。
+ *
+ * 题 id 只在批内唯一：单题提问的题 id 恒为 `q1`，只写 `name={question.id}` 的话，
+ * 同一时间线上每张单题卡都是 `name="q1"`，浏览器把它们当成一组 ——
+ * 勾一张会把另一张的圆点取消（disabled 的也一样），方向键还会在卡之间跳、
+ * 静默改掉另一条待答提问的草稿。
+ */
+export function radioGroupName(askId: string, questionId: string): string {
+    return `${askId}:${questionId}`;
+}
+
 function stringList(value: unknown): string[] {
     if (!Array.isArray(value)) return [];
     return value.filter((entry): entry is string => typeof entry === 'string');

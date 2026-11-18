@@ -150,7 +150,9 @@ export function questionsOfInput(input: AskInput): { questions: AskQuestion[]; n
         // id 撞了会让回答对不上题：后来的改个名，不丢内容
         if (question === undefined) return;
         let id = question.id;
-        let bump = index + 1;
+        // 从 index 起步、循环到不撞为止：两条都给 `q1` 时第二条该是 q2。
+        // （以前从 index + 1 起步又先 ++ 再取值，第二条会算成 q3，模型按 q2 引用就对不上）
+        let bump = index;
         while (seen.has(id)) id = `q${++bump}`;
         seen.add(id);
         questions.push({ ...question, id });
@@ -306,7 +308,7 @@ export class AskGate {
         return [...this.pending.values()].map((entry) => entry.request);
     }
 
-    /** 已收尾的提问（旧→新，与时间线同向） */
+    /** 已收尾的提问（**新→旧**：reverse 过，最近的在前，列表顶部就是刚答完的那条） */
     answeredList(): AnsweredAsk[] {
         return [...this.settled].reverse();
     }
