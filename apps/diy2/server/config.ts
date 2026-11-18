@@ -11,10 +11,13 @@
 //     开发 / 测试缺省 `<appRoot>/build/<variant>/home`（本 worktree × 变体隔离，仓库惯例）。
 //     非生产**拒绝**继承来的生产根（`DIY2_ALLOW_PROD_HOME=1` 才放行）—— 否则一次
 //     `./sha.sh lab` 就把示例数据与演示房间写进真库。
-//   · 端口：`--port` > `DIY2_PORT` > `<home>/app.port` 记录 > 缺省。
+//   · 端口：`--port` > `DIY2_PORT` > `<home>/app.port` 记录 > `<home>/port.sticky` 粘性 > 缺省。
 //     缺省**只有生产是 5192**；dev / test 缺省 `0` = 让内核分配随机空闲端口。
 //     端口不承载身份（身份 = `GET /api/info` 自报的 home，见 bin/diy2 的探活），
 //     固定端口在 dev 的副作用只有「多 worktree 互踢」与「撞生产」。
+//     但**粘性**是另一回事：dev 跑过一次之后要还回同一个 URL（书签 / 已经开着的标签页 /
+//     重启后的 SSE 重连都认这个端口），详见 `resolvePort` 与 `port.sticky` 的注释。
+//     两个文件的区别很重要：`app.port` 是活体登记（退出即删），`port.sticky` 是意图登记（不删）。
 //   · 环境：`DIY2_ENV` 三态；**无法识别 / 缺省一律按 production**（宁可少开能力，仓库口径）。
 //   · 变体：只决定运行空间（数据根 + 产物目录），不是构建目标（lab / staging 与 prod 同码）。
 //
@@ -37,7 +40,8 @@ export const APP_ID = 'diy2';
 export const PROD_DEFAULT_PORT = 5192;
 
 export type Diy2Env = 'production' | 'development' | 'test';
-export type PortSource = 'cli' | 'env' | 'recorded' | 'default';
+/** 端口从哪来：显式 cli / 显式 env / 活体登记 / 粘性登记 / 缺省 */
+export type PortSource = 'cli' | 'env' | 'recorded' | 'sticky' | 'default';
 
 export interface Diy2Config {
     app: typeof APP_ID;
@@ -50,8 +54,10 @@ export interface Diy2Config {
     /** 首选端口；0 = 让内核分配 */
     port: number;
     portSource: PortSource;
-    /** 端口记录文件（`<home>/app.port`；监听成功后回写实际端口） */
+    /** 端口记录文件（`<home>/app.port`；监听成功后回写实际端口，退出时删） */
     portFile: string;
+    /** 端口粘性文件（`<home>/port.sticky`；监听成功后回写，**退出不删**） */
+    stickyPortFile: string;
     /** sqlite 数据库文件 */
     dbPath: string;
     /** 本包根目录（`apps/diy2`，发布形态是 node_modules 下的包目录） */
@@ -167,16 +173,26 @@ export function resolveHome(opts: {
 }
 
 /**
- * 端口裁决：`--port` > `DIY2_PORT` > `app.port` 记录 > 缺省。
+ * 端口裁决：`--port` > `DIY2_PORT` > `app.port` 记录 > `port.sticky` 粘性 > 缺省。
  *
  * 唯一特殊规则：**非生产不沿用记录里的 5192**（`PROD_DEFAULT_PORT`）。旧版的
  * `app.port` 里留着一堆 5192，dev 照单沿用就把生产门牌占住了 —— 与仓库 ##328 同一现场。
+ *
+ * 两层「记录」的分工（粘性是后加的那层）：
+ *   · `app.port` = **活体登记**：只有正在跑的实例才有这个文件，优雅退出就删。
+ *   · `port.sticky` = **意图登记**：上次监听成功的端口，退出**不删**。
+ * 只有前者的话，「Ctrl-C 再起」与「改 server 代码自动重启（exit 75）」都会换一个
+ * 内核随机端口 → 书签 / 已开的标签页 / HMR 重连全指到旧地址。
+ *
+ * 生产**不吃**粘性：生产的门牌是固定的 5192（沾上就是外部工具 / launchd / 文档的地址）。
+ * 真用过 `--port` 就是每次显式给，不该让一次意外运行把生产的地址钉死。
  */
 export function resolvePort(opts: {
     env: Diy2Env;
     cliPort?: number | undefined;
     envPort?: number | undefined;
     recordedPort?: number | null;
+    stickyPort?: number | null;
 }): { port: number; source: PortSource } {
     if (opts.cliPort !== undefined) return { port: opts.cliPort, source: 'cli' };
     // 非生产**连环境变量里的 5192 也不吃**：外层 shell / agent 常从运行中的生产实例里继承
@@ -189,6 +205,9 @@ export function resolvePort(opts: {
     const recorded = opts.recordedPort ?? null;
     const inherited = opts.env !== 'production' && recorded === PROD_DEFAULT_PORT ? null : recorded;
     if (inherited !== null) return { port: inherited, source: 'recorded' };
+    const sticky = opts.stickyPort ?? null;
+    const stickyInherited = opts.env !== 'production' && sticky === PROD_DEFAULT_PORT ? null : sticky;
+    if (opts.env !== 'production' && stickyInherited !== null) return { port: stickyInherited, source: 'sticky' };
     return { port: opts.env === 'production' ? PROD_DEFAULT_PORT : 0, source: 'default' };
 }
 
@@ -215,6 +234,18 @@ export function removePortFile(file: string): void {
     } catch {
         /* 权限 / 已删：都不影响退出 */
     }
+}
+
+/**
+ * 写端口粘性记录（`<home>/port.sticky`）。读侧直接用 `readPortFile`（同一套信任规则）。
+ *
+ * 为什么不复用 `app.port`：那个文件的语义是「**现在**有人在跑」（`sha.sh port` 拿它当
+ * 活体证据，`bin/diy2 stop` 拿它当目标），退出必须先删。粘性要求恰好相反
+ * （退出必须留），两个相反的生存期塞不进一个文件 —— 硬塞的结果就是“粘性在优雅退出时
+ * 必然失效”，而那正是最常走的那条路（Ctrl-C / 改服务端代码自动重启）。
+ */
+export function writeStickyPort(file: string, port: number): void {
+    writePortFile(file, port);
 }
 
 function intFromEnv(raw: string | undefined): number | undefined {
@@ -251,11 +282,13 @@ export function resolveConfig(opts?: {
     const { home } = resolveHome({ env: mode, variant, appRoot, inherited: env['DIY2_HOME'], allowProdHome });
 
     const portFile = join(home, 'app.port');
+    const stickyPortFile = join(home, 'port.sticky');
     const { port, source } = resolvePort({
         env: mode,
         cliPort: opts?.cliPort,
         envPort: intFromEnv(env['DIY2_PORT']),
         recordedPort: readPortFile(portFile),
+        stickyPort: readPortFile(stickyPortFile),
     });
 
     const rawWebDir = env['DIY2_WEB_DIR']?.trim();
@@ -290,6 +323,7 @@ export function resolveConfig(opts?: {
         port,
         portSource: source,
         portFile,
+        stickyPortFile,
         dbPath: join(home, 'diy2.db'),
         appRoot,
         repoRoot,
@@ -322,10 +356,13 @@ export function modelConfigHint(config: Diy2Config): string | null {
 }
 
 /** 启动时的一行自报（诊断「我连的是谁 / 数据在哪」的唯一线索） */
-export function describeConfig(config: Diy2Config): string {
+export function describeConfig(config: Diy2Config, actualPort?: number): string {
     const where = config.env === 'production' ? '生产' : config.env === 'test' ? '测试' : '开发';
+    // 实际监听端口可能不等于 config.port（0 = 内核分配、粘性端口被占后漂移）：
+    // 自报以**实际**为准，否则这行日志在「到底连哪个端口」这件事上说谎。
+    const shown = actualPort ?? config.port;
     return (
         `[diy2] ${where}/${config.variant} home=${config.home} db=${config.dbPath} ` +
-        `port=${config.port === 0 ? '0(内核分配)' : config.port}(${config.portSource})`
+        `port=${shown === 0 ? '0(内核分配)' : shown}(${config.portSource})`
     );
 }

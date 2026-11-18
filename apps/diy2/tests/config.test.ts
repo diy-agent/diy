@@ -14,6 +14,7 @@ import {
     resolveHome,
     resolvePort,
     writePortFile,
+    writeStickyPort,
 } from '../server/config';
 
 const dirs: string[] = [];
@@ -84,6 +85,33 @@ describe('resolvePort', () => {
     });
 });
 
+describe('resolvePort 的端口粘性', () => {
+    it('活体记录 > 粘性记录 > 缺省', () => {
+        expect(resolvePort({ env: 'development', recordedPort: 5302, stickyPort: 5303 })).toEqual({
+            port: 5302,
+            source: 'recorded',
+        });
+        expect(resolvePort({ env: 'development', stickyPort: 5303 })).toEqual({ port: 5303, source: 'sticky' });
+        expect(resolvePort({ env: 'development' })).toEqual({ port: 0, source: 'default' });
+        // 显式给的永远压过两层记录
+        expect(resolvePort({ env: 'development', cliPort: 5304, stickyPort: 5303 }).source).toBe('cli');
+        expect(resolvePort({ env: 'development', envPort: 5304, stickyPort: 5303 }).source).toBe('env');
+    });
+
+    it('粘性也不吃 5192；生产完全不读粘性（门牌固定）', () => {
+        expect(resolvePort({ env: 'development', stickyPort: PROD_DEFAULT_PORT })).toEqual({
+            port: 0,
+            source: 'default',
+        });
+        expect(resolvePort({ env: 'test', stickyPort: PROD_DEFAULT_PORT }).source).toBe('default');
+        // 生产：`--port` 是一次性的，不该被一次意外运行钉死
+        expect(resolvePort({ env: 'production', stickyPort: 5303 })).toEqual({
+            port: PROD_DEFAULT_PORT,
+            source: 'default',
+        });
+    });
+});
+
 describe('resolveHome', () => {
     it('缺省跟变体走：<appRoot>/build/<variant>/home', () => {
         expect(resolveHome({ env: 'development', variant: 'lab', appRoot: '/w/apps/diy2' }).home).toBe(
@@ -139,6 +167,33 @@ describe('app.port 记录', () => {
         expect(readPortFile(file)).toBeNull();
         writeFileSync(file, '99999');
         expect(readPortFile(file)).toBeNull();
+    });
+});
+
+describe('port.sticky 粘性记录', () => {
+    it('写 → 读（复用 app.port 的信任规则）；**没有删除入口**（退出不删就是它的全部意义）', () => {
+        const dir = tmp();
+        const file = join(dir, 'port.sticky');
+        expect(readPortFile(file)).toBeNull();
+        writeStickyPort(file, 5305);
+        expect(readPortFile(file)).toBe(5305);
+    });
+
+    it('resolveConfig：app.port 不在时吃粘性；两个都在时 app.port（活体）优先', () => {
+        const home = tmp();
+        writeStickyPort(join(home, 'port.sticky'), 5306);
+        const env = { DIY2_ENV: 'development', DIY2_HOME: home };
+        const moduleDir = join(import.meta.dirname, '..');
+
+        const sticky = resolveConfig({ moduleDir, env });
+        expect(sticky.port).toBe(5306);
+        expect(sticky.portSource).toBe('sticky');
+        expect(sticky.stickyPortFile).toBe(join(home, 'port.sticky'));
+
+        writePortFile(join(home, 'app.port'), 5307);
+        const recorded = resolveConfig({ moduleDir, env });
+        expect(recorded.port).toBe(5307);
+        expect(recorded.portSource).toBe('recorded');
     });
 });
 
