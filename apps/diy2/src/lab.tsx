@@ -1,5 +1,5 @@
 // lab.tsx —— 只挂 Astryx 的最小页面（无 Tailwind、无壳）。
-// 排查用：http://localhost:5190/astryx-lab.html
+// 排查用：dev 实例地址 + /astryx-lab.html（端口看 ./sha.sh port 或启动时打印的 URL）
 // 样式和主页面不一致时，先看这里 —— 能确认问题出在"包裹"还是组件本身。
 
 import { LayerProvider } from '@astryxdesign/core/Layer';

@@ -10,6 +10,7 @@ export default defineConfig({
         'pkgs.ts/core/actor',
         'pkgs.ts/core/log',
         'apps/diy-app',
+        'apps/diy2',
         'pkgs.ts/core/rpc',
         'pkgs.ts/remote/link',
         'pkgs.ts/core/template',

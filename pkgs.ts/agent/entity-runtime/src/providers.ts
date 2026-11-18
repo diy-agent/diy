@@ -62,10 +62,28 @@ export function maxOutputTokensOf(modelKey: string, explicit?: number): number {
     return MAX_OUTPUT_BY_PROVIDER[key.provider] ?? DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
-/** 从 ~/.diy/model.yaml 里取某 provider 下指定账户的 key（极简解析） */
+/**
+ * model.yaml 的路径（三档，优先级从高到低）：
+ *   1. `DIY_MODEL_CONFIG` —— 显式文件（diy2 用它把「本实例的数据根」投影进来）；
+ *   2. `DIY_HOME/model.yaml` —— 仓库口径：数据根下的配置（diy-app 的 AppConfig.diyHome 同一口径）；
+ *   3. `~/.diy/model.yaml` —— 老缺省（生产数据根）。
+ *
+ * 为什么必须参数化（##dev-app 构建对齐）：写死 `~/.diy/model.yaml` 时，把数据根换成
+ * `build/lab/home` 只隔离了 sqlite，配置仍读生产真账号 —— 「隔离」是假的：lab 里的实验
+ * 会用生产 key，而任何人以为自己在沙箱里。
+ */
+export function modelConfigPath(env: NodeJS.ProcessEnv = process.env): string {
+    const explicit = env['DIY_MODEL_CONFIG']?.trim();
+    if (explicit !== undefined && explicit !== '') return explicit;
+    const home = env['DIY_HOME']?.trim();
+    if (home !== undefined && home !== '') return join(home, 'model.yaml');
+    return join(homedir(), '.diy', 'model.yaml');
+}
+
+/** 从 model.yaml 里取某 provider 下指定账户的 key（极简解析） */
 function keyFromDiyConfig(provider: string, account: string): string | undefined {
     try {
-        const lines = readFileSync(join(homedir(), '.diy', 'model.yaml'), 'utf8').split('\n');
+        const lines = readFileSync(modelConfigPath(), 'utf8').split('\n');
         const start = lines.findIndex((line) => line.trim() === `${provider}:`);
         if (start < 0) return undefined;
         let current = '';

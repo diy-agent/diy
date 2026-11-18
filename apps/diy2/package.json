@@ -5,17 +5,7 @@
     "description": "diy2：实体即对话的新客户端（实验）—— Vite + React + @diy-agent/entity-chat",
     "type": "module",
     "scripts": {
-        "dev": "vite --port 5190 --strictPort",
-        "dev:server": "tsx server/index.ts",
-        "dev:all": "./scripts/dev.sh",
-        "build": "vite build && vite build --config vite.server.config.ts",
-        "build:web": "vite build",
-        "build:server": "vite build --config vite.server.config.ts",
-        "start": "node bin/diy2",
-        "preview": "vite preview",
-        "typecheck": "tsc --noEmit",
-        "stop": "./scripts/stop.sh",
-        "prepublishOnly": "npm run build"
+        "prepublishOnly": "./sha.sh build"
     },
     "dependencies": {
         "@astryxdesign/core": "0.7.17-canary.geeb3d7c",
@@ -37,7 +27,8 @@
         "tailwindcss": "^4.3.5",
         "tsx": "^4.20.6",
         "typescript": "^7.0.2",
-        "vite": "^8.0.0"
+        "vite": "^8.0.0",
+        "vitest": "^4.1.10"
     },
     "bin": {
         "diy2": "bin/diy2"
