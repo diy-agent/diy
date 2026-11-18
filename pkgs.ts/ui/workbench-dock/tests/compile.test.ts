@@ -20,15 +20,15 @@ import {
     type ViewDef,
 } from '../src/model.js';
 
-// 测试用最小 view：纯模型层不渲染，component 只占位
-const stub = (() => null) as unknown as ViewDef['component'];
+// 测试用最小 view：纯模型层不渲染，render 只占位（kind 合法即可，不图 tsc 之外的东西）
+const stub: ViewDef['render'] = { kind: 'react', component: (() => null) as never };
 
 function view(id: string, areaId: string, extra: { primary?: boolean; order?: number } = {}): ViewDef {
     return defineView({
         id,
         title: id,
         placement: { 'task-run': { area: areaId, ...extra } },
-        component: stub,
+        render: stub,
     });
 }
 
@@ -116,7 +116,7 @@ describe('definePage 校验', () => {
 describe('resolveLayout（旧布局 × 新模板）', () => {
     const base = compileLayout({ page, views, scope, viewport });
 
-    function saved(patch: (root: DockNode) => string[] = () => []): SavedLayout {
+    function saved(patch: (root: DockNode) => string[] = () => [], pinnedSizes?: Record<string, number>): SavedLayout {
         const root = structuredClone(base.grid.root);
         const dismissed = patch(root);
         return {
@@ -129,41 +129,74 @@ describe('resolveLayout（旧布局 × 新模板）', () => {
                 activeGroup: 'center',
             } as unknown as SavedLayout['dock'],
             dismissed,
+            pinnedSizes,
         } as SavedLayout & { dock: SavedLayout['dock'] };
     }
 
-    it('R1 保住用户拖过的尺寸、收起状态、tab 顺序', () => {
-        const savedLayout = saved((root) => {
-            const leaves = leavesOf(root);
-            leaves.find((leaf) => leaf.data.id === 'left')!.size = 420;
-            leaves.find((leaf) => leaf.data.id === 'bottom')!.visible = true; // 用户展开了作业区
-            const right = leaves.find((leaf) => leaf.data.id === 'right')!;
-            right.data.views = ['members'];
-            return [];
-        });
+    const shape = (layout: CompiledLayout) =>
+        leavesOf(layout.grid.root).map((leaf) => [leaf.data.id, leaf.size, leaf.visible ?? true]);
+
+    it('R1 保住用户拖过的尺寸（pinnedSizes）、收起状态、tab 顺序', () => {
+        const savedLayout = saved(
+            (root) => {
+                const leaves = leavesOf(root);
+                leaves.find((leaf) => leaf.data.id === 'bottom')!.visible = true; // 用户展开了作业区
+                leaves.find((leaf) => leaf.data.id === 'right')!.data.views = ['members'];
+                return [];
+            },
+            { left: 420 },
+        );
         const resolved = resolveLayout({ page, views, scope, viewport, saved: savedLayout });
 
-        const leaves = leavesOf(resolved.grid.root);
-        expect(leaves.map((leaf) => [leaf.data.id, leaf.size, leaf.visible ?? true])).toEqual([
+        expect(shape(resolved)).toEqual([
             ['left', 420, true],
-            ['center', 820, true],
+            ['center', 700, true], // 1fr 吃剩下：1440 - 420 - 320
             ['right', 320, true],
             ['bottom', 240, true],
         ]);
         expect(resolved.areas['bottom']?.visible).toBe(true);
     });
 
-    it('R2/R4 新 view 插进它声明的区域，旧 tab 顺序不动', () => {
+    it('快照里的 size 一律不采信：没 pinned 的区域按模板 + 当前 viewport 重算', () => {
+        // 旧快照把 left 记成 500（那是上一次编译的产物，可能混着当时窗口尺寸）
+        const stale = saved((root) => {
+            leavesOf(root).find((leaf) => leaf.data.id === 'left')!.size = 500;
+            return [];
+        });
+        expect(shape(resolveLayout({ page, views, scope, viewport, saved: stale }))).toEqual(shape(base));
+
+        // 同一个钉住值，换个 viewport：固定区不动，1fr 重新分配
+        const wide = saved(() => [], { left: 420 });
+        const narrow = { width: 1000, height: 900 };
+        expect(shape(resolveLayout({ page, views, scope, viewport: narrow, saved: wide }))).toEqual([
+            ['left', 420, true],
+            ['center', 260, true], // 1000 - 420 - 320
+            ['right', 320, true],
+            ['bottom', 240, false],
+        ]);
+    });
+
+    it('pinnedSizes 不作用于 `1fr` 区域（它表达的就是「我不决定宽度」）', () => {
+        const resolved = resolveLayout({ page, views, scope, viewport, saved: saved(() => [], { center: 500 }) });
+        expect(shape(resolved)).toEqual(shape(base));
+    });
+
+    it('R2/R4 新 view 按 order 插进它声明的区域，旧 tab 的相对顺序不动', () => {
         const savedLayout = saved();
         const resolved = resolveLayout({
             page,
-            views: [...views, view('notes', 'right', { order: 5 }), view('detail2', 'left', { order: 5 })],
+            views: [
+                ...views,
+                view('notes', 'right', { order: 5 }), // 比 members（缺省 1000）靠前
+                view('detail2', 'left', { order: 5 }),
+                view('later', 'right', { order: 2000 }), // 比 members 靠后
+            ],
             scope,
             viewport,
             saved: savedLayout,
         });
-        expect(resolved.areas['right']?.views).toEqual(['members', 'notes']);
-        expect(resolved.areas['left']?.views).toEqual(['detail', 'detail2']);
+        expect(resolved.areas['right']?.views).toEqual(['notes', 'members', 'later']);
+        expect(resolved.areas['left']?.views).toEqual(['detail2', 'detail']);
         // 新加的不会抢 activeView
         expect(resolved.areas['left']?.activeView).toBe('detail');
         expect(resolved.panels['notes']?.params?.['areaId']).toBe('right');
@@ -188,7 +221,7 @@ describe('resolveLayout（旧布局 × 新模板）', () => {
         expect(resolved.panels['runs']).toBeUndefined();
     });
 
-    it('activeView 跟着旧布局走', () => {
+    it('activeView 跟着旧布局走（新 view 就算写了 primary 也不抢）', () => {
         const savedLayout = saved((root) => {
             leavesOf(root).find((leaf) => leaf.data.id === 'center')!.data.activeView = 'chat';
             return [];
@@ -200,7 +233,7 @@ describe('resolveLayout（旧布局 × 新模板）', () => {
             viewport,
             saved: savedLayout,
         });
-        expect(resolved.areas['center']?.views).toEqual(['chat', 'notes']);
+        expect(resolved.areas['center']?.views).toEqual(['notes', 'chat']);
         expect(resolved.areas['center']?.activeView).toBe('chat');
     });
 
@@ -217,5 +250,39 @@ describe('resolveLayout（旧布局 × 新模板）', () => {
         const other: SavedLayout = { ...saved(), pageType: 'project' };
         const resolved: CompiledLayout = resolveLayout({ page, views, scope, viewport, saved: other });
         expect(summarize(resolved.grid.root)).toBe(summarize(base.grid.root));
+    });
+
+    // 快照是 localStorage 里的东西：用户手改过、旧版本写坏过、机器上装过别的版本。
+    // 一律「当没存过」回模板，**绝不**把畸形树丢给 fromJSON（那是一条白屏 + 整页不可用的路）
+    it('快照结构坏了 → 当没存过，按模板编译（不抛）', () => {
+        const good = saved();
+        const { grid } = good.dock as unknown as { grid: Record<string, unknown> };
+        const broken: unknown[] = [
+            { ...good, dock: { ...good.dock, grid: { ...grid, root: undefined } } },
+            { ...good, dock: { ...good.dock, grid: { ...grid, root: 'root' } } },
+            {
+                ...good,
+                dock: { ...good.dock, grid: { ...grid, root: { type: 'leaf', size: 1, data: { views: [] } } } },
+            },
+            {
+                ...good,
+                dock: {
+                    ...good.dock,
+                    grid: { ...grid, root: { type: 'leaf', size: 1, data: { id: 'center', views: 'nope' } } },
+                },
+            },
+            { ...good, dock: { ...good.dock, grid: { ...grid, root: { type: 'branch', size: 1, data: [] } } } },
+            { ...good, dock: { ...good.dock, grid: { ...grid, root: { type: 'weird', size: 1, data: null } } } },
+            { ...good, dock: undefined },
+        ];
+        for (const snapshot of broken) {
+            const resolved = resolveLayout({ page, views, scope, viewport, saved: snapshot as SavedLayout });
+            expect(summarize(resolved.grid.root)).toBe(summarize(base.grid.root));
+        }
+        // dismissed 不是数组也不能把整次 resolve 带崩
+        const dirty = { ...good, dismissed: 'oops' } as unknown as SavedLayout;
+        expect(summarize(resolveLayout({ page, views, scope, viewport, saved: dirty }).grid.root)).toBe(
+            '((left[detail] ; center[chat] ; right[members]) ; bottom[runs,hidden])',
+        );
     });
 });
