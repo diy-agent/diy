@@ -110,7 +110,13 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
     const movedRef = useRef<Record<string, string>>({});
     /** 当前吃进 dockview 的编译结果（给 `skippedAreas()` 这类诊断用） */
     const layoutRef = useRef<CompiledLayout | null>(null);
+    /** 布局变化存盘用 */
     const saveFrameRef = useRef(0);
+    /**
+     * 拖动分屏线之前的实测尺寸（pointerdown 时拍一张，见 `recordDraggedSizes`）。
+     * 它存在 = 「用户正在拖尺寸」；不存在 = 这条 geometry 事件不是用户改的。
+     */
+    const dragBeforeRef = useRef<Record<string, { width: number; height: number }> | null>(null);
     const sizeRef = useRef<Viewport | null>(null);
     const [sized, setSized] = useState(false);
     /** dockview 实例就绪（onReady 已拿到 api） */
@@ -233,40 +239,66 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
         }
     }, []);
 
+    /** 此刻每组的实测渲染尺寸（只用来算拖动位移，不当作模板 px） */
+    const measureGroups = useCallback((): Record<string, { width: number; height: number }> => {
+        const out: Record<string, { width: number; height: number }> = {};
+        for (const group of apiRef.current?.groups ?? []) {
+            out[group.id] = { width: group.api.width, height: group.api.height };
+        }
+        return out;
+    }, []);
+
     /**
-     * 用户拖完分屏线之后，把「模板里写死数字、但实际尺寸和模板不符」的区域记成 pinned。
+     * 用户拖完分屏线 → 把「模板里写死数字」的区域按**这一次的位移**重新钉。
      *
-     * 判据是和**当前 viewport 重新编一次**的结果比，不是和上一次编译的结果比：
-     * 窗口变大变小时 dockview 自己会重新分配，那种差异不是用户的意思，记下来就把窗口尺寸烧进布局了。
-     * 容差 2px 吃掉边框和取整。
+     * 为什么记位移，而不是「实测 vs 重编」的差（那个写法有两个坑）：
+     *   · dockview 渲染出来的宽高**不是**编译给它的 px：每组都被扣掉 `theme.gap` 的一份
+     *     （`margin * sashCount / visibleCount`，默认主题 gap 10、三组就是每组 −6.7）。
+     *     拿实测当模板值会记少一点，下次进来再少一批 —— 越拖越窄；
+     *   · 容器缩放 / 收起展开 / 最大化 / 首次 fromJSON 之后都会来一条 geometry 事件，
+     *     「实测 ≠ 重编」在这些情况下天然成立，但一条都不是用户的意思。
+     *
+     * 位移两个问题都没有：它只在 pointerdown（且按在 `.dv-sash` 上）到 pointerup 之间才有基准，
+     * 而「上一次的逻辑尺寸 + Δ」正好把 gap 份额抵消掉。
      */
-    const recordPinned = useCallback(() => {
+    const recordDraggedSizes = useCallback(() => {
+        const before = dragBeforeRef.current;
         const api = apiRef.current;
         const viewport = sizeRef.current;
-        if (!api || !viewport) return;
+        // 没人拖分屏线 → 这条 geometry 不是用户改尺寸（也可能是 fromJSON 的余波）
+        if (!before || !api || !viewport) return;
+
         let reference: CompiledLayout;
         try {
+            // 和「此刻真实布局」用同一套输入（含 pinned / moved），叶子集才对得上
             reference = compileLayout({
                 page: pageRef.current,
                 views: viewsRef.current,
                 scope: scopeRef.current,
                 viewport,
                 pinned: pinnedRef.current,
+                moved: movedRef.current,
             });
         } catch {
             return; // 此刻编不出来（view 还没注册齐）→ 这一次不记账
         }
+
         const axes = pinnedAreasRef.current;
         const next = { ...pinnedRef.current };
         let changed = false;
         for (const leaf of leavesOf(reference.grid.root)) {
             const axis = axes.get(leaf.data.id);
             if (!axis) continue; // 不是数字区（`1fr` 永远自动）/ 不是本页的叶子
+            const was = before[leaf.data.id];
             const group = api.getGroup(leaf.data.id);
-            const actual = axis === 'x' ? group?.api.width : group?.api.height;
-            if (typeof actual !== 'number') continue;
-            if (Math.abs(actual - leaf.size) <= 2) continue;
-            next[leaf.data.id] = Math.round(actual);
+            if (!was || !group) continue;
+            const actual = axis === 'x' ? group.api.width : group.api.height;
+            const delta = Math.round(actual - (axis === 'x' ? was.width : was.height));
+            if (delta === 0) continue; // 这一组没被拖到（同组其他分屏线动了它不算）
+            // `leaf.size` 是这次编译的**逻辑**尺寸（已吃过 pinned），加上位移就是用户要的值
+            const size = Math.max(0, Math.round(leaf.size + delta));
+            if (size === pinnedRef.current[leaf.data.id]) continue;
+            next[leaf.data.id] = size;
             changed = true;
         }
         if (!changed) return;
@@ -287,8 +319,35 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             if (rect.width > 0 && rect.height > 0) setSized(true);
         });
         observer.observe(host);
-        return () => observer.disconnect();
-    }, []);
+
+        // 尺寸记账的锈点：只有从分屏线（`.dv-sash`）上按下的拖动才算用户改尺寸。
+        // 为什么不靠 `applying` 守卫：`onDidLayoutChange` 是 AsapEvent（microtask 合帧投递），
+        // fromJSON 期间 fire 的事件会在同步守卫复位**之后**才送到我们手里 —— 同步标志看不见它。
+        const onPointerDown = (event: PointerEvent) => {
+            const target = event.target as Element | null;
+            const onSash = Boolean(target?.closest?.('.dv-sash'));
+            // 新的一次交互开始：没按在分屏线上就清基准（上一次的 pointerup 可能被系统吞了，
+            // 基准留到下一次拖动就变成一个很旧的幽灵值）
+            dragBeforeRef.current = onSash ? measureGroups() : null;
+        };
+        const onPointerUp = () => {
+            // 让 pointerup 之后那条 geometry 事件（microtask）先读完基准，再清掉
+            requestAnimationFrame(() => {
+                dragBeforeRef.current = null;
+            });
+        };
+        host.addEventListener('pointerdown', onPointerDown, true);
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', onPointerUp);
+        window.addEventListener('blur', onPointerUp);
+        return () => {
+            observer.disconnect();
+            host.removeEventListener('pointerdown', onPointerDown, true);
+            window.removeEventListener('pointerup', onPointerUp);
+            window.removeEventListener('pointercancel', onPointerUp);
+            window.removeEventListener('blur', onPointerUp);
+        };
+    }, [measureGroups]);
 
     // ── 2. 布局：首次用 storage 里的；之后（模板 / view / 页实例变了）用**当前**布局去合并 ──
     // 依赖只有 ready / sized / layoutKey。容器尺寸**不在**里面，对象身份也不在里面。
@@ -353,8 +412,9 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             const api = event.api;
             apiRef.current = api;
             api.onDidLayoutChange((change) => {
-                // geometry = 分屏线动了。fromJSON 期间的那些不归用户，不记
-                if (!applyingRef.current && change.reasons.has('geometry')) recordPinned();
+                // geometry = 分屏线动了（也可能是容器缩放 / 收起展开 / 首帧 fromJSON 的余波，
+                // 所以记账还要再过一道「用户真的在拖」的判断，见 recordDraggedSizes）
+                if (change.reasons.has('geometry')) recordDraggedSizes();
                 queuePersist();
             });
             api.onDidRemovePanel((panel) => {
@@ -402,7 +462,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             // 真正的首次布局在下面那个 effect 里（它要等 size 量到）；这里只翻 ready
             setReady(true);
         },
-        [queuePersist, recordPinned, allowedAreasOf],
+        [queuePersist, recordDraggedSizes, allowedAreasOf],
     );
 
     // ── 4. PageApi：view 手里的区域控制面 ─────────────────────────────────────

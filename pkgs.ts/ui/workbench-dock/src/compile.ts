@@ -279,20 +279,25 @@ function compileNode<S extends Scope>(
         };
     }
 
+    // 先把子节点编出来，**只让活下来的**分尺寸：被跳过的区域（没有 view 落位）不该占一份，
+    // 否则它那一份会变成一个洞，dockview 的 proportionalLayout 会把剩下的组按比例放大去填，
+    // 于是「实测尺寸」永远对不上「模板尺寸」（记账、min 约束、测试都跟着错）
+    const compiled = node.data.children.map((child) => ({
+        child,
+        node: compileNode(child, slots, node.data.axis, viewport, skipped, pinned),
+    }));
+    const survivors = compiled.filter(
+        (entry): entry is { child: AreaNode; node: DockNode } => entry.node !== null,
+    );
+    if (survivors.length === 0) return null;
     const sizes = distribute(
-        node.data.children.map((child) => pinnedSize(child, pinned)),
+        survivors.map((entry) => pinnedSize(entry.child, pinned)),
         inner,
     );
-    const children: DockNode[] = [];
-    node.data.children.forEach((child, index) => {
-        const compiled = compileNode(child, slots, node.data.axis, viewport, skipped, pinned);
-        if (compiled) {
-            compiled.size = sizes[index];
-            children.push(compiled);
-        }
+    survivors.forEach((entry, index) => {
+        entry.node.size = sizes[index];
     });
-    if (children.length === 0) return null;
-    return { type: 'branch', data: children, size: px(node.size, own) };
+    return { type: 'branch', data: survivors.map((entry) => entry.node), size: px(node.size, own) };
 }
 
 /**
@@ -304,7 +309,14 @@ function pinnedSize(node: AreaNode, pinned?: Record<string, number>): Size {
     return pinned[node.id] ?? node.size;
 }
 
-/** 一组兄弟的尺寸：数字是 px，`fr` 分剩余空间 */
+/**
+ * 一组兄弟的尺寸：数字是 px，`fr` 分剩余空间，最后**归一**到父容器。
+ *
+ * 归一不是美化：dockview 的 `proportionalLayout` 会把一组兄弟按比例拉满父容器。
+ * 如果留个洞（比如被跳过的区域、或者全都是数字时剩下的空间），**它会替我们做这件事** ——
+ * 于是编译出来的 px 和渲染出来的 px 不是一回事，拖动记账（逻辑尺寸 + 位移）跟着失真。
+ * 所以该做的事我们自己先做完。
+ */
 function distribute(sizes: Size[], available: number): number[] {
     let fixed = 0;
     let totalFr = 0;
@@ -313,10 +325,21 @@ function distribute(sizes: Size[], available: number): number[] {
         totalFr += frOf(size);
     }
     const rest = Math.max(0, available - fixed);
-    return sizes.map((size) => {
-        const value = asPx(size) ?? (totalFr > 0 ? (rest * frOf(size)) / totalFr : 0);
-        return Math.max(0, Math.round(value));
-    });
+    const raw = sizes.map((size) => asPx(size) ?? (totalFr > 0 ? (rest * frOf(size)) / totalFr : 0));
+    if (raw.length === 0) return raw;
+
+    const sum = raw.reduce((acc, value) => acc + value, 0);
+    if (sum <= 0) return raw.map(() => 0);
+    const scaled = raw.map((value) => Math.max(0, Math.round((value * available) / sum)));
+
+    // 取整误差补给最后一个非零项，让和**正好**等于父容器（否则每层都少几像素，往下累计）
+    const drift = Math.round(available) - scaled.reduce((acc, value) => acc + value, 0);
+    if (drift !== 0) {
+        let last = scaled.length - 1;
+        while (last > 0 && scaled[last] === 0) last -= 1;
+        scaled[last] = Math.max(0, scaled[last] + drift);
+    }
+    return scaled;
 }
 
 // 注：写成 if-return 形式 —— TS 7（tsgo）在 reduce/map 回调里对模板字面量联合类型

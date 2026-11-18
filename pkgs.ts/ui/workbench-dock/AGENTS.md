@@ -42,6 +42,13 @@
    尺寸只认模板里写死数字的区域，落点只认 `area` + `allow` —— 快照是用户数据，脏了就忽略，不要抛。
 12. **存储会拒绝你**：`setItem` 配额满 / 隐私模式 / 后端 KV 拒写都会抛，而它在 rAF 回调里
    （没人接）—— 一律 try/catch 后报 `onStorageError`。页继续用，但不能假装存上了。
+13. **`onDidLayoutChange` 是合帧投递的**（`AsapEvent` = `queueMicrotask`）：`fromJSON` 期间
+   同步开着的 `applying` 标志**罩不住它**。任何拿它当「用户操作」的边都得自己再判一次
+   （尺寸记账靠「此刻是否在拖 `.dv-sash`」）。
+14. **尺寸记账记位移，不记实测绝对值**：dockview 渲染出来的宽高要扣掉 `theme.gap` 的一份
+   （`margin × sashCount / visibleCount`）—— 拿实测当模板 px 会一次比一次窄。
+   另一边 `distribute` 必须**归一**（一组兄弟拉满父容器）：不归一的话 `proportionalLayout`
+   会替你做，于是「编译尺寸 ≡ 渲染尺寸」不成立，位移记账和 `min` 约束一起失灵。
 
 ## 测试
 
@@ -49,7 +56,7 @@
 ./sha.sh check       # typecheck + lint + vitest
 ```
 
-`tests/compile.test.ts` 覆盖：px 换算 / 收起 / primary / order / 轴交替 / placement 越界 /
+`tests/compile.test.ts` 覆盖：px 换算 / 归一（被跳过的区域不占份额）/ 收起 / primary / order / 轴交替 / placement 越界 /
 `allow` 校验与 L1 落点 / R1–R4 /
 dismissed / pinnedSizes（含「快照里的 size 不采信」）/ 坏快照回落 / 回落模板。
 UI 层不写单测（它只是把纯函数的结果喂给 dockview）：改动 UI 层就在 `examples/` 里手验 ——
