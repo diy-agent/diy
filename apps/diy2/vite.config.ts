@@ -22,5 +22,12 @@ export default defineConfig({
         // 和 server 产物同一个根：build/<variant>/{web,server}（全局命令 diy2 一起发）
         outDir: `build/${variant}/web`,
         emptyOutDir: true,
+        rollupOptions: {
+            // 多页面：主应用 + workbench 范例页（/dock.html）
+            input: {
+                main: 'index.html',
+                dock: 'dock.html',
+            },
+        },
     },
 });
