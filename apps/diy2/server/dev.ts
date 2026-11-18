@@ -17,9 +17,10 @@ import { join } from 'node:path';
 
 import { createServer as createViteServer } from 'vite';
 
-import { describeConfig, isProdHome, modelConfigHint, removePortFile, resolveConfig, writePortFile } from './config';
+import { describeConfig, isProdHome, modelConfigHint, removePortFile, resolveConfig } from './config';
 import { announce, retract } from './registry';
 import { createDiy2App } from './app';
+import { listenWithStickyPort } from './listen';
 
 /** 看护循环约定的「请重启」退出码（`sysexits.h` 的 EX_TEMPFAIL） */
 export const RESTART_CODE = 75;
@@ -72,14 +73,24 @@ httpServer.on('request', (req, res) => {
     });
 });
 
-httpServer.listen(config.port, '127.0.0.1', () => {
-    const address = httpServer.address();
-    const port = typeof address === 'object' && address !== null ? address.port : config.port;
-    writePortFile(config.portFile, port);
-    console.log(`${describeConfig(config)} → http://127.0.0.1:${port}`);
-    console.log('[diy2] UI 走 vite（HMR 同端口）；改 server/ 或 entity-runtime 会自动重启，改 UI 不用');
-    announce(config, port);
-});
+// 端口粘性（`<home>/port.sticky`）：改服务端代码 → exit 75 → 看护循环重起，这里刻意只删
+// `app.port`（活体登记），留着粘性记录，于是**重启后还是同一个 URL** —— 浏览器那边只是
+// HMR ws 断了重连，不用改书签。被占用时回落到内核分配并重写记录（见 ./listen）。
+let port: number;
+try {
+    ({ port } = await listenWithStickyPort(config, httpServer));
+} catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+        console.error(`[diy2] 端口 ${config.port} 已被占用（显式指定的端口不会自动漂移）`);
+        console.error('[diy2] 换端口：--port <n> / DIY2_PORT=0；或先 ./sha.sh stop');
+        process.exit(1);
+    }
+    console.error(`[diy2] 启动失败：${(error as Error).message}`);
+    process.exit(1);
+}
+console.log(`${describeConfig(config, port)} → http://127.0.0.1:${port}`);
+console.log('[diy2] UI 走 vite（HMR 同端口）；改 server/ 或 entity-runtime 会自动重启，改 UI 不用');
+announce(config, port);
 
 // ── 服务端代码变更 → 请看护循环重启 ──────────────────────────────
 // vite 的 HMR 只管浏览器侧模块图；`server/**` 与 `pkgs.ts/**`（工作区包源码）在服务端的

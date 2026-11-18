@@ -16,6 +16,11 @@ diy2 的新客户端：Vite + React 19 + `@diy-agent/entity-chat`（UI）+ `@diy
 HTTP server，**dev 与 prod 拓扑一致**（一个进程、一个地址、`/api` 同源、SSE 不穿代理）。
 端口不再写死在任何脚本里，缺省 `0` = 内核分配，实际端口落在 `<数据根>/app.port` 并打印出来。
 
+**端口有粘性**：首次监听成功会把它写进 `<数据根>/port.sticky`，之后每次启动（包括改服务端代码
+触发的自动重启、Ctrl-C 再起）都还回同一个端口 —— 书签与已经开着的标签页不会失效。
+只有那个端口被别人占了才会换一个（内核分配）并重写记录。`app.port` 是活体登记（退出即删），
+`port.sticky` 是意图登记（退出不删），两者不要混用。
+
 改 `server/**` 或 `entity-runtime` 源码 → 自动重启（`sha.sh lab` 的看护循环）；
 改 UI → HMR，不重启。
 
@@ -46,7 +51,8 @@ curl -s "http://127.0.0.1:$PORT/api/rooms"  # 数据面
 
 ```
 数据根  DIY2_HOME  > 变体缺省
-端口    --port / -p > DIY2_PORT > <home>/app.port 记录 > 缺省（生产 5192，其余 0）
+端口    --port / -p > DIY2_PORT > <home>/app.port 记录 > <home>/port.sticky 粘性 > 缺省
+        （生产 5192，其余 0；生产的门牌固定，**不读**粘性记录）
 环境    DIY2_ENV = production|development|test（无法识别按 production）
 变体    DIY2_VARIANT（缺省：产物类命令 prod，开发类命令 lab）
 其它    DIY2_MODEL_CONFIG / DIY2_COMPACT_KEEP / DIY2_COMPACT_CHARS / DIY2_TOOLS=files

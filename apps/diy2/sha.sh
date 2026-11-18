@@ -103,6 +103,8 @@ build-server() {
 #
 # 与老形态的区别（##dev-app 构建对齐）：
 #   · 端口只有一个，且**不在这里写**（DIY2_PORT / 缺省 0 = 内核分配，落 <home>/app.port）；
+#     端口有**粘性**：首次监听成功写 <home>/port.sticky，之后每次重启（含 exit 75 自动重启）
+#     都还回同一个端口，被占用时回落到内核分配并重写 —— 书签 / 开着的标签页不会失效。
 #   · 同源：没有 /api 代理，SSE 不穿代理；
 #   · 起停不再按端口 kill（会误杀长连接的浏览器）：实例自报注册表，停用 ./sha.sh stop。
 #
@@ -117,7 +119,7 @@ dev() {
   if [[ -n "${DIY2_PORT:-}" ]]; then
     echo "   端口：DIY2_PORT=${DIY2_PORT}（非生产不吃 5192；实际端口看下面打印的 URL）"
   else
-    echo "   端口：缺省 0 = 内核分配（实际端口看下面打印的 URL / <home>/app.port）"
+    echo "   端口：沿用上次的端口（<home>/port.sticky）；被占用则自动换一个并重写记录"
   fi
   echo "   停：Ctrl-C / ./sha.sh stop（不按端口 kill —— 会误杀长连接的浏览器）"
 
@@ -220,7 +222,10 @@ port() {
 status() {
   echo "变体：$(_dev_variant)"
   echo "数据根：$(home)"
-  echo "端口：$(port 2>/dev/null || echo '（无）')"
+  echo "端口：$(port 2>/dev/null || echo '（无在跑的实例）')"
+  # 粘性记录：不在跑也还在，下次启动就用它（区分「现在连哪」与「下次连哪」）
+  local sticky; sticky="$(home)/port.sticky"
+  [[ -f "$sticky" ]] && echo "下次沿用：$(cat "$sticky")"
   node ./bin/diy2 list
 }
 

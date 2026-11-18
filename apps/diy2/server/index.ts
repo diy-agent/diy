@@ -1,7 +1,8 @@
 // server/index.ts —— **生产入口**（也是 `bin/diy2` 拉起的那个产物）。
 //
 // 只做编排，不含领域逻辑、不含路由：
-//   读配置（唯一真源 ./config） → 装配（./app） → 监听 127.0.0.1 → 落 app.port + 注册表 → 优雅退出。
+//   读配置（唯一真源 ./config） → 装配（./app） → 监听 127.0.0.1 → 落 app.port + port.sticky
+//   + 注册表 → 优雅退出。
 //
 // 「import 即 listen」在这里是**有意**的：这个文件就是可执行入口（node build/prod/server/index.mjs
 // / bin/diy2 的 import），而装配逻辑已经从模块顶层搬进 createDiy2App —— 想复用 handler 的
@@ -10,9 +11,10 @@
 import { createServer } from 'node:http';
 
 import { createDiy2App } from './app';
-import { describeConfig, modelConfigHint, removePortFile, resolveConfig, writePortFile } from './config';
+import { describeConfig, modelConfigHint, removePortFile, resolveConfig } from './config';
 import { announce, retract } from './registry';
 import { probe } from './probe';
+import { listenWithStickyPort } from './listen';
 
 const config = resolveConfig({ moduleDir: import.meta.dirname });
 // entity-runtime 读 model.yaml 的路径（懒读：只在真发请求时用，所以此处设置即生效）
@@ -51,15 +53,6 @@ const fatal = (error: Error): never => {
     process.exit(1);
 };
 
-server.on('error', (error: NodeJS.ErrnoException) => {
-    if (error.code === 'EADDRINUSE') {
-        console.error(`[diy2] 端口 ${config.port} 已被占用（own home=${config.home}）`);
-        console.error('[diy2] 换端口：DIY2_PORT=0（内核分配）/ --port <n>；或先 diy2 stop');
-        process.exit(1);
-    }
-    fatal(error);
-});
-
 const reused = await alreadyRunning();
 if (reused !== null) {
     console.log(`[diy2] 这个数据根已有实例在监听 http://127.0.0.1:${reused}（home=${config.home}）`);
@@ -67,17 +60,28 @@ if (reused !== null) {
     process.exit(0);
 }
 
-server.listen(config.port, '127.0.0.1', () => {
-    const address = server.address();
-    const port = typeof address === 'object' && address !== null ? address.port : config.port;
-    writePortFile(config.portFile, port);
-    console.log(`${describeConfig(config)} → http://127.0.0.1:${port}`);
-    if (config.webDir !== undefined) console.log(`[diy2] UI: ${config.webDir}`);
-    else console.log('[diy2] 未找到 UI 产物（只提供 /api）—— 开发请用 `./sha.sh dev`');
+// 启动期错误由这里接（而不是 `server.on('error')`）：监听要能**重试**（开发侧端口被占时
+// 回落到内核分配，见 ./listen），而常驻 error 监听器会在第一次 EADDRINUSE 时就把进程抬走。
+function badStartup(error: NodeJS.ErrnoException): never {
+    if (error.code === 'EADDRINUSE') {
+        console.error(`[diy2] 端口 ${config.port} 已被占用（own home=${config.home}）`);
+        console.error('[diy2] 换端口：DIY2_PORT=0（内核分配）/ --port <n>；或先 diy2 stop');
+        process.exit(1);
+    }
+    return fatal(error);
+}
 
-    // 实例自报（dev 启动器 / workbench / remote 靠它看见本实例）
-    announce(config, port);
-});
+const { port } = await listenWithStickyPort(config, server).catch(badStartup);
+
+// 监听成功之后的运行期错误：没有恢复手段，直提失败
+server.on('error', (error: NodeJS.ErrnoException) => fatal(error));
+
+console.log(`${describeConfig(config, port)} → http://127.0.0.1:${port}`);
+if (config.webDir !== undefined) console.log(`[diy2] UI: ${config.webDir}`);
+else console.log('[diy2] 未找到 UI 产物（只提供 /api）—— 开发请用 `./sha.sh dev`');
+
+// 实例自报（dev 启动器 / workbench / remote 靠它看见本实例）
+announce(config, port);
 
 const shutdown = (signal: string): void => {
     console.log(`[diy2] ${signal} → 关闭`);
