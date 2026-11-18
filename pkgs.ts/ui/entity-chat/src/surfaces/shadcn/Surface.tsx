@@ -164,29 +164,31 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
 
     // assistant：头像 + 名字一行，内容按 parts 顺序渲染
     const parts = entry.parts;
-    // 同一轮的续段（被打断后继续）：左侧用一条细线代替头像、不重复名字，
-    // 让"一轮"在视觉上是一整块，内部的插话/通知只是中间的一步。
-    const continued = entry.continued === true;
     return (
-        <div className={`${continued ? 'my-1.5' : 'my-4'} flex gap-2.5`}>
-            <div className={`flex w-[26px] shrink-0 justify-center ${continued ? 'py-1' : 'pt-0.5'}`}>
-                {continued ? (
-                    <span className="w-px self-stretch rounded bg-border" />
-                ) : (
-                    <BotAvatar author={entry.author} roomId={roomId} size={26} />
-                )}
+        <div className="my-4 flex gap-2.5">
+            <div className="flex w-[26px] shrink-0 justify-center pt-0.5">
+                <BotAvatar author={entry.author} roomId={roomId} size={26} />
             </div>
             <div className="min-w-0 flex-1">
-                {!continued && (
-                    <div className="mb-0.5 flex items-center gap-2 text-[12px]">
-                        <span className="font-medium" style={{ color: entry.author?.color }}>
-                            {entry.author?.name ?? 'bot'}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">{timeOf(entry.at)}</span>
-                    </div>
-                )}
+                <div className="mb-0.5 flex items-center gap-2 text-[12px]">
+                    <span className="font-medium" style={{ color: entry.author?.color }}>
+                        {entry.author?.name ?? 'bot'}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">{timeOf(entry.at)}</span>
+                </div>
                 {parts.map((part, index) => {
                     if (part.kind === 'text') return <Markdown key={`t${index}`} text={part.text} />;
+                    // 运行失败属于这条回复的一部分：就地显示，不吃掉后面的内容
+                    if (part.kind === 'error')
+                        return (
+                            <div
+                                key={`e${index}`}
+                                className="my-1.5 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive"
+                            >
+                                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                                <span className="min-w-0 break-words">{part.message}</span>
+                            </div>
+                        );
                     if (part.kind === 'ask')
                         return (
                             <AskCard

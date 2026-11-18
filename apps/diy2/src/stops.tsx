@@ -98,6 +98,14 @@ function Timeline({ items, endReasons }: { items: readonly Item[]; endReasons?: 
                                     </div>
                                 ) : part.kind === 'tool' ? (
                                     <ToolRow key={part.id} part={part} />
+                                ) : part.kind === 'error' ? (
+                                    <div
+                                        className="bubble"
+                                        key={index}
+                                        style={{ borderColor: '#b42318', color: '#b42318' }}
+                                    >
+                                        ⚠ {part.message}
+                                    </div>
                                 ) : null,
                             )}
                             {entry.streaming ? <span className="empty">…（这条还在流式，没被收尾）</span> : null}

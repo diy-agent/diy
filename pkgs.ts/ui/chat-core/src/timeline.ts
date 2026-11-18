@@ -1,13 +1,29 @@
 // timeline.ts —— Item[] → 时间线（唯一分组逻辑，两个 surface 共用）。
 //
 // 为什么要这一层：Item 是**事件级**的（一条文本、一次工具调用各一条），而 UI 需要的是
-// "一条消息"。分组的坑在多 agent 并发时暴露：
-//   - 展示顺序必须用 `order`（条目**出现**的时刻），不能用 `seq`（条目**落库**的时刻）。
-//     两者只在"条目生成即落库"时才一致：`ask` 这类长时间挂起的条目 order 早、seq 晚，
-//     按 seq 排会让提问卡片跑到它引发的那串回答**下面**（插话、通知跟着错位）。
-//   - 同一 bot 的工具与文本要留在同一条里，且保持原有先后（text → tool → text）；
-//     但只在 order **相邻**时合并：中间插进了别人的话（人或通知），就是真的被打断了，
-//     另起一条 —— 否则后来插入的内容会显示在这条消息下面，顺序还是错。
+// "一条回复"。分组规则只有一条：
+//
+//   **一条回复 = 同一 (turnId, author) 的全部条目，合成一个整体。**
+//
+// 位置在**创建时**确定 —— 这个 bot 在这一轮的第一个条目出现的位置 —— 之后只往这个整体
+// 里追加，永不移出、永不重排。所以同一个 bot 在同一轮里最多一条 assistant 条目：别的
+// bot 的话或通知落在它这段回复的时间跨度中间，会显示在它**后面**，不会把它切成两段。
+//
+// 这是有意的取舍：**位置稳定优先于时间精确**。反过来做（允许切段）的话，每条被打断的
+// 回复都要靠"上一条是不是同一个 bot"去重建相邻性；而这条判据一旦在重排 / 分页 /
+// 窗口截断里失手，对话就成为交错的碎片 —— 那个状态没有正确答案，只能靠 #n 编号和
+// "继续段"标志去粘，粘不回去就骗人。
+//
+// 展示顺序必须用 `order`（条目**出现**的时刻），不能用 `seq`（条目**落库**的时刻）：
+// 两者只在"条目生成即落库"时才一致，`ask` 这类长时间挂起的条目 order 早、seq 晚，
+// 按 seq 排会让提问卡片跑到它引发的那串回答**下面**（插话、通知跟着错位）。
+//
+// 由此得出 part / entry 的判据（`error` 和 `notice` 就靠这一条分）：**谁拥有它。**
+// 有 `author` 的事实属于那个 bot 的回复 —— 它是 part，按时间插进回复里面
+// （例如这个 bot 自己的 `run.failed`）；没有 `author` 的事实属于这一轮（`endItems()`
+// 落下来的结局）—— 它是独立条目。`notice` 从不带 author，所以**永远成条**；
+// 不是漏了，是它没有主人。
+//
 // surface 只做「时间线 → 自己的组件」，不再各写一遍分组，语义差异从结构上消失。
 
 import type { AnsweredAsk, AskRequest, Author, Bot, Delivery, DeliveryState, Item, TurnEndReason } from './types';
@@ -15,6 +31,13 @@ import type { AnsweredAsk, AskRequest, Author, Bot, Delivery, DeliveryState, Ite
 export type TimelinePart =
     | { kind: 'text'; text: string }
     | { kind: 'tool'; id: string; name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' }
+    /**
+     * 这个 bot 自己这一轮的运行失败了（`run.failed`）。它是**回复的一部分**，不是一条独立消息：
+     * 失败之后同一个 bot 在同一轮里还可能再跑一次（排队中的投递带着同一个 turnId），
+     * 只有把它当作 part 按时间顺序插进去，才能渲染成「说一段 → 失败 → 再说一段」。
+     * 轮级的结局（`endItems` 那些没有 author 的）仍然单独成条，见 `kind: 'error'`。
+     */
+    | { kind: 'error'; message: string }
     /**
      * 需要用户回答的提问：渲染在触发它的那个工具行下面。
      * 答过（或失效）之后**不删**，只是变成只读：选项还在，用户选过的项标出来，
@@ -63,12 +86,6 @@ export interface TimelineEntry {
      * 文案不在这一层（见 `end-footer.ts`）：这里只放事实。
      */
     endReason?: TurnEndReason;
-    /**
-     * 同一轮里这个 bot 的第 2+ 段（中间被插话/通知打断过）。
-     * 顺序上它必须另起一条（否则后来插入的内容会显示在前一段下面），
-     * 但视觉上不该像一条新消息：surface 据此不重复头像与名字。
-     */
-    continued?: boolean;
 }
 
 function partOf(item: Item): TimelinePart | undefined {
@@ -123,9 +140,9 @@ export function buildTimeline(
     } = {},
 ): TimelineEntry[] {
     const entries: TimelineEntry[] = [];
-    // 同一 (turnId, authorId) 的第 n 段：key 要稳定且唯一（React key / 测试锚点），
-    // 第一段沿用老格式，后续加 #n，免得键变来变去导致整条消息重挂。
-    const segments = new Map<string, number>();
+    // (turnId, authorId) → 那条回复。**这就是回复的地址**：一个 bot 在一轮里只有一条，
+    // 后来的条目一律追加进去，不再有"要不要另起一段"的判断。
+    const replies = new Map<string, TimelineEntry>();
 
     for (const item of orderedByAppearance(items)) {
         if (item.type === 'notice') {
@@ -141,12 +158,14 @@ export function buildTimeline(
             continue;
         }
 
-        if (item.type === 'error') {
+        // 没作者的错误 = **轮级**结局（`endItems`：未知原因 / 上游失败 / 内容过滤……）。
+        // 它本来就是这一轮最后一句，单独成条。
+        // 有作者的错误不在这里处理 —— 它属于那个 bot 的回复，见下面的 part 分支。
+        if (item.type === 'error' && item.author === undefined) {
             entries.push({
                 key: item.id,
                 kind: 'error',
                 turnId: item.turnId,
-                ...(item.author === undefined ? {} : { author: item.author }),
                 parts: [{ kind: 'text', text: item.data.message }],
                 streaming: false,
                 deliveries: [],
@@ -171,41 +190,42 @@ export function buildTimeline(
             continue;
         }
 
-        const base = `${item.turnId}:${author?.id ?? 'unknown'}`;
-        const previous = entries.at(-1);
-        // 紧跟在同一个 bot 的上一条 assistant 条目后面 → 并进去；否则另起一段
-        let entry: TimelineEntry | undefined =
-            previous?.kind === 'assistant' && previous.turnId === item.turnId && previous.author?.id === author?.id
-                ? previous
-                : undefined;
+        const address = `${item.turnId}\u0000${author?.id ?? ''}`;
+        let entry = replies.get(address);
         if (entry === undefined) {
-            const segment = (segments.get(base) ?? 0) + 1;
-            segments.set(base, segment);
             entry = {
-                key: segment === 1 ? base : `${base}#${segment}`,
+                key: `${item.turnId}:${author?.id ?? 'unknown'}`,
                 kind: 'assistant',
                 turnId: item.turnId,
                 author,
                 parts: [],
                 streaming: false,
                 deliveries: [],
+                // 位置 = 首次出现的时刻。之后追加的条目**不改**它：这就是"位置定了就定了"。
                 at: item.at,
-                ...(segment === 1 ? {} : { continued: true }),
             };
+            replies.set(address, entry);
             entries.push(entry);
         }
+        if (item.type === 'error') {
+            // 这个 bot 自己的运行失败（`run.failed`）：属于这条回复，按时间顺序插进去。
+            // 不这么做的话它只能排在整条回复**之后** —— 而失败之后同一轮里还可能再跑一次，
+            // “先失败、后重试成功”就会渲染成“成功的文字，然后调用失败”，因果关系倒挂。
+            entry.parts.push({ kind: 'error', message: item.data.message });
+            continue;
+        }
+
         const part = partOf(item);
         if (part !== undefined) entry.parts.push(part);
         if (item.status === 'streaming') entry.streaming = true;
     }
 
-    // 提问卡片：待回答的 + 已有结局的（后者只读，带已选状态）。都挂到触发它的工具行后面。
+    // 提问卡片：待回答的 + 已有结局的（后者只读，带已选状态）。首选挂在触发它的工具行后面。
     //
-    // 找不到工具行时两种情况的处理**不能一样**：
-    //  - 待回答：工具行可能还在流式、没落库，挂到最后一条 assistant 条目上是当时唯一的选择；
-    //  - 已有结局：这条提问可能是几百条之前、那条工具行已经滑出窗口的。借用「最后一条
-    //    assistant」会让卡片凭空跑到时间线底部、看不出属于哪一轮，所以挂成**独立卡片**，
-    //    带提问者头像和收尾时刻，按 at 插回时间线。
+    // 挂不上工具行时按精度退，不要跳步：
+    //  1. 按 `turnId` + `owner` 找那条回复 —— 那一轮还在窗口里就挂对地方；
+    //  2. 还是不行（老数据没有 `turnId` / 那一轮整个也不在窗口里）：待回答的借最后一条
+    //     assistant（工具行可能还没落库），已结局的造一张独立卡片。
     const attachAsk = (
         part: TimelinePart,
         request: AskRequest,
@@ -231,6 +251,19 @@ export function buildTimeline(
             }
         }
 
+        // 工具行不在窗口里时（滑出去了 / 还没落库），按提问方盖的 `turnId` + `owner` 找那条
+        // 回复（地址即 `(turnId, author)`）：那一轮还在窗口里就能挂对地方，不必借
+        // "最后一条 assistant"去猜。这一招以前做不到 —— `AskRequest` 不知道自己在哪一轮，
+        // 于是只能分两种情况：待回答借最后一条，已结局造独立卡片。
+        const holder =
+            request.turnId === undefined || request.owner === undefined
+                ? undefined
+                : replies.get(`${request.turnId}\u0000${request.owner}`);
+        if (holder !== undefined) {
+            holder.parts.push(part);
+            return;
+        }
+
         if (fallback === 'last-assistant') {
             const target = [...entries].reverse().find((entry) => entry.kind === 'assistant');
             if (target === undefined) return;
@@ -239,10 +272,13 @@ export function buildTimeline(
         }
 
         const bot = request.owner === undefined ? undefined : bots[request.owner];
+        // 这条提问属于哪一轮：由提问方在创建时盖上去（`AskRequest.turnId`）。
+        // 没有它（老数据）只能是 `''` 哨兵 —— 那种卡片既不参加"执行中"的匹配，
+        // 也不会认领这一轮的页脚，因为它在数据上不属于任何一轮。
         const standalone: TimelineEntry = {
             key: `ask:${request.askId}`,
             kind: 'assistant',
-            turnId: '',
+            turnId: request.turnId ?? '',
             ...(bot === undefined
                 ? {}
                 : { author: { id: bot.id, name: bot.name, color: bot.color, role: 'bot' as const } }),
@@ -286,21 +322,12 @@ export function buildTimeline(
     const startedAt = turnStart?.at ?? lastItem?.at ?? Date.now();
     for (const botId of options.speaking ?? []) {
         if (streamingAuthors.has(botId)) continue;
-        // 本轮已经产出过内容：把"还在跑"挂回它自己那条消息的末尾。
+        // 本轮已经产出过内容：把"还在跑"挂回它自己那条回复上。
         // 单独补一条 typing 条目会让它在列表最底部出现，于是"工具行转圈 →
         // 执行中一行 → 工具行转圈"上下交错（每条 item 到达都会重排一次）。
-        // 最后一段：被插话切开的 bot 消息，"执行中"要挂在最新那段末尾
-        // 排除独立卡片：它没有轮次，turnId 是 '' 哨兵。窗口为空时 `turnId` 同样是 ''，
-        // 两者一撞就会把一张「早就有结局的老提问」当成这一轮的消息，挂上「执行中 Ns」。
-        const own =
-            turnId === ''
-                ? undefined
-                : [...entries]
-                      .reverse()
-                      .find(
-                          (entry) =>
-                              entry.kind === 'assistant' && entry.turnId === turnId && entry.author?.id === botId,
-                      );
+        // 按 (turnId, botId) 直取那条回复 —— 不需要排除独立卡片：它有自己的 turnId，
+        // 而 turnId 为 '' 的（无轮次的老卡片）压根进不了这个 if（`turnId === ''` 已经挡掉）。
+        const own = turnId === '' ? undefined : replies.get(`${turnId}\u0000${botId}`);
         if (own !== undefined) {
             own.waiting = true;
             continue;

@@ -146,6 +146,14 @@ export interface AskRequest {
      * 否则一张滑出窗口的旧卡片既不知道谁问的，也看不出属于哪一轮。
      */
     owner?: string;
+    /**
+     * 提问发生在哪一轮。`(turnId, owner)` 就是那张卡片该挂进的那条回复的地址。
+     *
+     * 为什么必须盖在这里、不能由 UI 反推：卡片的归属靠工具行（`toolCallId`）定位，而那条
+     * 工具行可能早滑出窗口了。没有 turnId 时 UI 只能造一张 `turnId: ''` 的独立卡片 ——
+     * 它在数据上不属于任何一轮，既不参加"正在输入"的匹配，也不认领这一轮的页脚。
+     */
+    turnId?: string;
     at: number;
 }
 

@@ -91,6 +91,11 @@ export class RoomActor {
     private initialized = false;
     /** item.id → 展示顺序（同一 id 的流式更新不能换顺序） */
     private readonly orderOf = new Map<string, number>();
+    /**
+     * 工具条目 id → 它属于哪一轮。提问闸门用它给卡片盖 `turnId`（见 `AskGateDeps.turnOf`）。
+     * 生命周期与 `orderOf` 相同（按 item id 累积）：只多了工具条目这一种，量级一样。
+     */
+    private readonly turnOfTool = new Map<string, string>();
     /** 已落库的 item id（流式更新会重复发同一条） */
     private readonly persisted = new Set<string>();
     /** 提问闸门：模型需要用户做决定时把卡片推到界面上（不阻塞本轮） */
@@ -111,6 +116,7 @@ export class RoomActor {
         this.gate = new AskGate({
             request: (request) => this.deps.emit({ kind: 'ask', request }),
             settle: (request, result, owner) => this.settleAsk(request, result, owner),
+            turnOf: (toolCallId) => (toolCallId === undefined ? undefined : this.turnOfTool.get(`tool-${toolCallId}`)),
             now: () => this.deps.now?.() ?? Date.now(),
         });
         this.human = this.deps.human ?? { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
@@ -641,6 +647,13 @@ export class RoomActor {
                 const order = this.orderOf.get(event.item.id) ?? this.nextOrder();
                 this.orderOf.set(event.item.id, order);
                 const item: Item = { ...event.item, order };
+                // 先记账再广播：ask 工具的执行体在同一个工具调用的**后面**才跑，
+                // 那时 `tool-${callId}` → turnId 必须已经在这里了。
+                //
+                // 这张表**不恢复**（`orderOf` / `persisted` 同样）：它只需要活到本次调用结束，
+                // 进程重启后不会有“拿一个上次的工具条目去问 turnId”的路径。
+                // 代价是三张只增不减的 Map —— 长跑房间要清账时一起清。
+                if (item.type === 'tool') this.turnOfTool.set(item.id, item.turnId);
                 this.deps.emit({ kind: 'item', item });
                 if ((item.status === 'done' || item.status === 'failed') && !this.persisted.has(item.id)) {
                     this.persisted.add(item.id);

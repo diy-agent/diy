@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { TimelinePart } from '@diy-agent/chat-core';
-import { deliveryFooterOf, deliveryStatusOf, toolTargetOf } from './mapping';
+import { deliveryFooterOf, deliveryStatusOf, runsOf, toolTargetOf } from './mapping';
 
 const tool = (args: unknown): TimelinePart & { kind: 'tool' } => ({
     kind: 'tool',
@@ -39,5 +39,32 @@ describe('delivery 状态', () => {
         const failed = [{ botId: 'b', name: 'diy', color: '#000', state: 'failed' as const }];
         expect(deliveryStatusOf(failed)).toBe('error');
         expect(deliveryFooterOf(failed)).toBe('diy 未送达');
+    });
+});
+
+describe('runsOf', () => {
+    const text = (value: string): TimelinePart => ({ kind: 'text', text: value });
+    const toolPart = (id: string): TimelinePart => ({ kind: 'tool', id, name: 'bash', state: 'ok' });
+
+    it('相邻文本合并，工具按连续同类归组', () => {
+        const runs = runsOf([text('先说'), text('一句'), toolPart('t1'), toolPart('t2')]);
+        expect(runs.map((run) => run.kind)).toEqual(['text', 'tool']);
+        expect(runs[0]).toEqual({ kind: 'text', text: '先说\n\n一句' });
+        expect(runs[1]?.kind === 'tool' && runs[1].tools.map((tool) => tool.id)).toEqual(['t1', 't2']);
+    });
+
+    // 这条守的是「错误不会被排版吃掉」：失败必须独立成块，否则
+    // 「说一段 → 失败 → 再说一段」会被渲染成一段连续的话，因果读反。
+    it('error 自成一个块，不并进前后文本', () => {
+        const runs = runsOf([text('diy'), { kind: 'error', message: '调用失败' }, text('重试成功')]);
+        expect(runs.map((run) => run.kind)).toEqual(['text', 'error', 'text']);
+    });
+
+    it('连续两个 error 不合并（它们是两次不同的失败）', () => {
+        const runs = runsOf([
+            { kind: 'error', message: '第一次' },
+            { kind: 'error', message: '第二次' },
+        ]);
+        expect(runs).toHaveLength(2);
     });
 });

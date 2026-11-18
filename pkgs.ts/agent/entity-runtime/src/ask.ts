@@ -45,6 +45,13 @@ export interface AskResult {
 export interface AskGateDeps {
     /** 新提问：房间把它推到界面 */
     request: (request: AskRequest) => void;
+    /**
+     * 某个工具调用发生在哪一轮（房间按 toolCallId 记账）。
+     *
+     * 有了它，提问卡片才能在创建时就带上自己的 `turnId`，而不是事后让 UI 靠工具行去反推 ——
+     * 那条工具行可能早就滑出窗口了（见 `AskRequest.turnId`）。
+     */
+    turnOf?: (toolCallId: string | undefined) => string | undefined;
     /** 回答 / 取消：房间收尾（广播、留痕、把回答变成一条消息）。owner = 提问的成员。 */
     settle: (request: AskRequest, result: AskResult, owner?: string) => void;
     /** 挂在界面上的上限（毫秒）；缺省 0 = 一直等着（用户随时可以回头答） */
@@ -116,6 +123,9 @@ export class AskGate {
     request(input: AskInput, owner?: string): AskRequest {
         const at = this.deps.now?.() ?? Date.now();
         const askId = `ask-${at.toString(36)}-${++this.counter}`;
+        // 提在谁的那一轮里：立刻记下来。等卡片回到界面时（可能几万条之后、甚至刷新后）
+        // 那条工具行早就不在窗口里了，那时再想反推已经无处可查。
+        const turnId = this.deps.turnOf?.(input.toolCallId);
         const request: AskRequest = {
             askId,
             question: input.question,
@@ -127,6 +137,7 @@ export class AskGate {
             ...(input.note === undefined ? {} : { note: input.note }),
             ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
             ...(owner === undefined ? {} : { owner }),
+            ...(turnId === undefined ? {} : { turnId }),
             at,
         };
 

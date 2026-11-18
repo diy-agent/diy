@@ -153,6 +153,23 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         expect(tool?.status).toBe('done');
     });
 
+    it('D5. 提问带着自己的 turnId：不在界面上靠搜工具行才知道属于哪一轮', async () => {
+        const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
+        void h.room.say({ text: '动手吧', author: HUMAN });
+        await waitFor(() => h.room.pendingAsks() === 1);
+
+        const tool = h.items().find((item) => item.type === 'tool');
+        const request = h.room.pendingAskRequests()[0]!;
+        expect(tool).toBeDefined();
+        // 盖的必须是**那张工具行所在**的轮（而不是“最近一次分配的轮”之类的近似）
+        expect(request.turnId).toBe(tool?.turnId);
+
+        // 回答之后卡片仍在（只读），turnId 也得跟着走 —— 它那时才是真的没工具行可搜了
+        h.room.answerAsk(request.askId, { values: ['a'] });
+        await waitFor(() => !h.room.busy());
+        expect(h.room.answeredAskRequests()[0]?.request.turnId).toBe(tool?.turnId);
+    });
+
     it('D2. 用户之后作答：回答变成一条用户消息，模型在新一轮里读到它', async () => {
         const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
         void h.room.say({ text: '动手吧', author: HUMAN });
@@ -298,9 +315,7 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         // 2) 卡片有结局（UI 显示「已失效：提问已被撤回」），而不是凭空消失
         const settled = h.events.filter((event) => event.kind === 'ask.answered');
         expect(settled.some((event) => event.kind === 'ask.answered' && event.cancelled === true)).toBe(true);
-        expect(
-            settled.some((event) => event.kind === 'ask.answered' && event.reason === '提问已被撤回'),
-        ).toBe(true);
+        expect(settled.some((event) => event.kind === 'ask.answered' && event.reason === '提问已被撤回')).toBe(true);
         // 3) 什么都没多跑一轮：撤回不是「取消本轮」也不是「叫醒成员」
         expect(h.runs.length).toBe(runsBefore);
         // 4) 模型仍会知道（进上下文、不触发运行），否则它永远停在「我问了、等回答」
@@ -328,7 +343,11 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
                     const toolCallId = `call-${input.bot.id}-${index}`;
                     yield { seq: index * 2 + 2, type: 'tool.started', turnId, toolCallId, name: 'ask', args: {} };
                     const out = await tools?.['ask']?.execute?.(
-                        { question: `${input.bot.id}-Q${index}`, kind: 'choice', options: [{ value: 'a', label: 'A' }] },
+                        {
+                            question: `${input.bot.id}-Q${index}`,
+                            kind: 'choice',
+                            options: [{ value: 'a', label: 'A' }],
+                        },
                         { toolCallId, messages: [] },
                     );
                     yield { seq: index * 2 + 3, type: 'tool.completed', turnId, toolCallId, name: 'ask', result: out };
