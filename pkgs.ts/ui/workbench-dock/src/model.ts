@@ -96,6 +96,13 @@ export interface Placement {
     primary?: boolean;
     /** 同区域内 tab 排序，小的在前；缺省 1000 */
     order?: number;
+    /**
+     * L1（`editable`）时**额外**允许被拖进的区域；`area` 自己永远允许。
+     *
+     * 缺省 = 只能待在 `area`：`editable` 打开的是「能拖」，不是「能拖到任何地方」——
+     * view 只认识自己声明过的区域，拖进别的区域它就再也说不清自己在哪。
+     */
+    allow?: string[];
 }
 
 /** 页的静态定义（模板）。布局模板归 pageType，不归用户 —— 用户只改尺寸 / 展开 / 选中 */
@@ -174,7 +181,15 @@ export interface PageApi {
     isAreaVisible(areaId: string): boolean;
     /** 最大化某区域（`null` = 退出）；最大化状态单独持久化 */
     maximizeArea(areaId: string | null): void;
-    isAreaMaximized(): boolean;
+    /** 这个区域此刻是不是最大化状态（不是「有没有区域最大化」—— 一个区域一个答案） */
+    isAreaMaximized(areaId: string): boolean;
+    /**
+     * 模板里有、但此刻没有任何 view 落位的区域（诊断用）。
+     *
+     * 多半意味着「view 没注册」或「placement 写错了」：这些区域不会出现在布局里，
+     * 而模板本身是合法的 —— 所以它不能是错误，只能是一条可查的账。
+     */
+    skippedAreas(): string[];
     /** 关掉某个 view（从它所在区域移除，并记进 dismissed，模板重编译时不会自己回来） */
     closeView(viewId: string): void;
     /**

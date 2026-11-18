@@ -101,6 +101,41 @@ describe('compileLayout', () => {
         expect(() => compileLayout({ page, views: [view('chat', 'nowhere')], scope, viewport })).toThrow(ModelError);
         expect(() => compileLayout({ page, views: [], scope, viewport })).toThrow(/没有任何区域有 view 落位/);
     });
+
+    it('L1 的落点也验：`allow` 指向不存在的区域 → 报错（否则它是个黑洞）', () => {
+        const drifting = defineView({
+            id: 'chat',
+            title: 'chat',
+            placement: { 'task-run': { area: 'center', allow: ['left', 'nowhere'] } },
+            render: stub,
+        });
+        expect(() => compileLayout({ page, views: [drifting], scope, viewport })).toThrow(/placement\.allow/);
+    });
+
+    it('`allow` 合法时不影响布局（它只回答「能被拖到哪」，不回答「摆在哪」）', () => {
+        const drifting = defineView({
+            id: 'chat',
+            title: 'chat',
+            placement: { 'task-run': { area: 'center', primary: true, allow: ['left'] } },
+            render: stub,
+        });
+        expect(summarize(compileLayout({ page, views: [drifting], scope, viewport }).grid.root)).toBe(
+            '((center[chat]))',
+        );
+    });
+
+    it('L1 拖过的落点：在 `allow` 里就生效，不在就回模板位置（快照数据不可信）', () => {
+        const drifting = defineView({
+            id: 'chat',
+            title: 'chat',
+            placement: { 'task-run': { area: 'center', allow: ['left'] } },
+            render: stub,
+        });
+        const moved = (target: string) =>
+            summarize(compileLayout({ page, views: [drifting], scope, viewport, moved: { chat: target } }).grid.root);
+        expect(moved('left')).toBe('((left[chat]))');
+        expect(moved('right')).toBe('((center[chat]))'); // right 没声明过 → 当没拖过
+    });
 });
 
 describe('definePage 校验', () => {

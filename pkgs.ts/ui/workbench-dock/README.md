@@ -139,6 +139,7 @@ col([area('top'), area('bottom')]); // 上下排
 | `storageKey` | `string` | 缺省 `workbench-dock:<pageType>@<kind>:<id>` |
 | `editable` | `boolean` | `true` = L1（允许拖 view 换区）；缺省 L0（结构锁死） |
 | `onLayoutChange` | `(saved: SavedLayout) => void` | 布局变化（节流到一帧） |
+| `onStorageError` | `(error: unknown) => void` | 布局存不下（配额满 / 隐私模式 / 后端拒写）；页照常用，但下次进来回模板 |
 | `theme` / `className` | | 透传给 dockview / 外层容器 |
 
 **一个 page 实例 = 一个组件实例。** 切页就是换 `key`：
@@ -158,12 +159,17 @@ interface PageApi {
     toggleArea(areaId: string): void;
     isAreaVisible(areaId: string): boolean;
     maximizeArea(areaId: string | null): void; // null = 退出最大化
-    isAreaMaximized(): boolean;
+    isAreaMaximized(areaId: string): boolean; // 这个区域是不是最大化（一个区域一个答案）
+    skippedAreas(): string[]; // 诊断：模板里有、但没有任何 view 落位的区域
     closeView(viewId: string): void; // 关掉某 view（记进 dismissed，不会自己回来）
     openView(viewId: string): boolean; // closeView 的逆操作；返回有没有真开出来
     resetLayout(): void; // 丢掉用户布局，回到模板
 }
 ```
+
+`skippedAreas()` 读的是**上一次灌进 dockview 的那份编译结果**：一个区域没出现在布局里，
+原因只可能是「这个区域声明了，但没有任何 view 落位」（view 没注册 / placement 写错）。
+模板本身合法，所以它不是错误 —— 但它是唯一能让你发现「我声明的区域怎么没出来」的线索。
 
 `openView` 三种情况：已经在布局里 → 只激活它；被关掉过 → 从 `dismissed` 里去掉再插回它声明的区域；
 这个 view 不属于本页 / 它声明的区域没落进布局 → 返回 `false`。
@@ -201,7 +207,13 @@ summarize(layout.grid.root): string // '(left[detail] ; center[chat])'
 | 档 | 能力 | 实现 |
 |---|---|---|
 | **L0** | 拖分屏线、收起/展开区域、关/开 tab | `disableDnd` + `disableFloatingGroups` |
-| **L1** | 再把 view 拖到 `allow` 的区域 | `editable` → `disableDnd: false` |
+| **L1** | 再把 view 拖进它 `allow` 的区域 | `editable` → `disableDnd: false` + `onWillShowOverlay` 拦落点 |
+
+L1 的落点是**有名单**的：`placement.area` 永远允许，额外的写进 `placement.allow`。
+`editable` 打开的是「能拖」，不是「能拖到任何地方」——拖进没声明过的区域，这个 view
+就再也说不清自己在哪（它的 `params.areaId`、它调 `api` 时的区域都成了假的）。
+所以：拖整组、拖到区域边缘（会在模板之外新开一个组）、拖进名单外的区域，一律 `preventDefault`。
+真拖成了，`onDidMovePanel` 会把 `params.areaId` 改过来。
 
 L2（自由 docking）/ L3（页面存成可分享透视图）**不做**。
 

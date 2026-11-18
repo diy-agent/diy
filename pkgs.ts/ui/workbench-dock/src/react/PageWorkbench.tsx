@@ -76,6 +76,12 @@ export interface PageWorkbenchProps<S extends Scope = Scope> {
     className?: string;
     /** 每次布局变化（已节流到一帧） */
     onLayoutChange?(saved: SavedLayout): void;
+    /**
+     * 布局存不下时（localStorage 配额满 / 隐私模式 / 后端 KV 拒绝）。
+     *
+     * 存不下不影响这一页继续用，但**下次进来会回到模板**—— 所以不能静默当成功。
+     */
+    onStorageError?(error: unknown): void;
 }
 
 export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): ReactElement {
@@ -100,6 +106,10 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
     const maximizedRef = useRef<string | null>(null);
     /** 用户拖出来的 px（只记模板里写死数字的区域，见 compile.ts 的 pinnedSizes） */
     const pinnedRef = useRef<Record<string, number>>({});
+    /** L1 拖过的 view：view id → 区域 id（落点仍受 `placement.area` + `allow` 约束） */
+    const movedRef = useRef<Record<string, string>>({});
+    /** 当前吃进 dockview 的编译结果（给 `skippedAreas()` 这类诊断用） */
+    const layoutRef = useRef<CompiledLayout | null>(null);
     const saveFrameRef = useRef(0);
     const sizeRef = useRef<Viewport | null>(null);
     const [sized, setSized] = useState(false);
@@ -141,6 +151,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             dismissed: dismissedRef.current,
             maximizedArea: maximizedRef.current ?? undefined,
             pinnedSizes: pinnedRef.current,
+            movedViews: movedRef.current,
         };
     }, []);
 
@@ -148,10 +159,27 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
         if (applyingRef.current) return;
         const saved = currentSaved();
         if (!saved) return;
-        const { storage: store, onLayoutChange } = propsRef.current;
-        store?.setItem(storageKeyRef.current, JSON.stringify(saved));
+        const { storage: store, onLayoutChange, onStorageError } = propsRef.current;
+        if (store) {
+            try {
+                store.setItem(storageKeyRef.current, JSON.stringify(saved));
+            } catch (error) {
+                // 配额满 / 隐私模式 / 后端拒写：这一页照常用，但不能假装存上了（也会把错误
+                // 从 rAF 回调里抛出去 —— 那个位置的异常没人接）
+                onStorageError?.(error);
+            }
+        }
         onLayoutChange?.(saved);
     }, [currentSaved]);
+
+    /** 删快照（"回到模板" / 快照坏了）。存储本身也可能闹脾气，一律不让它冒泡 */
+    const clearStored = useCallback(() => {
+        try {
+            propsRef.current.storage?.removeItem(storageKeyRef.current);
+        } catch (error) {
+            propsRef.current.onStorageError?.(error);
+        }
+    }, []);
 
     const queuePersist = useCallback(() => {
         if (saveFrameRef.current) return;
@@ -177,6 +205,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             : [];
         maximizedRef.current = typeof saved.maximizedArea === 'string' ? saved.maximizedArea : null;
         pinnedRef.current = isSizeMap(saved.pinnedSizes) ? saved.pinnedSizes : {};
+        movedRef.current = isIdMap(saved.movedViews) ? saved.movedViews : {};
         return saved;
     }, []);
 
@@ -198,6 +227,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                 const panel = group?.panels[0];
                 if (panel) api.maximizeGroup(panel);
             }
+            layoutRef.current = layout;
         } finally {
             applyingRef.current = false;
         }
@@ -287,15 +317,16 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
         let failure = attempt(saved);
         if (failure && saved) {
             // 快照坏了：丢掉它，用模板再来一次。这一页还能用，只是回到模板
-            propsRef.current.storage?.removeItem(storageKeyRef.current);
+            clearStored();
             dismissedRef.current = [];
             maximizedRef.current = null;
             pinnedRef.current = {};
+            movedRef.current = {};
             failure = attempt(null);
         }
         appliedRef.current = true;
         setCrash(failure);
-    }, [ready, sized, layoutKey, applyLayout, currentSaved, loadSaved]);
+    }, [ready, sized, layoutKey, applyLayout, currentSaved, loadSaved, clearStored]);
 
     // 标题变了但布局没变 → 只改 tab 文案（否则标题这种小事会触发整棵树重建）
     useEffect(() => {
@@ -307,6 +338,14 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             panel.api.setTitle(viewTitle(view, scopeRef.current));
         }
     }, [titleKey]);
+
+    /** 这个 view 此刻允许待在哪些区域（`area` 永远在内，`allow` 是额外清单）；不属于本页 → null */
+    const allowedAreasOf = useCallback((viewId: string): Set<string> | null => {
+        const view = viewsRef.current.find((candidate) => candidate.id === viewId);
+        const placement = view && placementOf(view, pageRef.current.type);
+        if (!placement) return null;
+        return new Set([placement.area, ...(placement.allow ?? [])]);
+    }, []);
 
     // ── 3. 记事件：布局变化存盘、关掉的 view、最大化 ──────────────────────────
     const onReady = useCallback(
@@ -328,10 +367,42 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                 maximizedRef.current = change.isMaximized ? change.group.id : null;
                 queuePersist();
             });
+            api.onDidMovePanel(({ panel, to }) => {
+                if (applyingRef.current) return;
+                // L1 把 view 拖到了另一个区域：params 里的 areaId 得跟着走，否则 view 报的
+                // 「我在哪个区域」从拖完那一刻就是假的
+                const allowed = allowedAreasOf(panel.id);
+                if (!allowed || !allowed.has(to.id)) return;
+                panel.api.updateParameters({ areaId: to.id });
+                // 拖出来的落点要进快照：否则下次进页它又回模板位置，L1 就成了「只能拖一次」
+                const view = viewsRef.current.find((candidate) => candidate.id === panel.id);
+                const declared = view && placementOf(view, pageRef.current.type)?.area;
+                const next = { ...movedRef.current };
+                if (declared && to.id === declared) delete next[panel.id];
+                else next[panel.id] = to.id;
+                movedRef.current = next;
+                queuePersist();
+            });
+            api.onWillShowOverlay((event) => {
+                // L1 的落点校验：`editable` 打开的是「能拖」，不是「能拖到任何地方」。
+                // 拦在这里而不是拦在拖拽开始，是因为拖拽起点合法不代表终点合法。
+                if (applyingRef.current || !propsRef.current.editable) return;
+                const viewId = event.getData()?.panelId;
+                if (!viewId) {
+                    event.preventDefault(); // 拖的是整组：组没有 placement，也就没有落点
+                    return;
+                }
+                const allowed = allowedAreasOf(viewId);
+                const target = event.group?.id;
+                // 只认「落在某个允许的区域里、当一个 tab」：top/left/… 会在模板之外新开一个区域
+                if (!allowed || !target || !allowed.has(target) || event.position !== 'center') {
+                    event.preventDefault();
+                }
+            });
             // 真正的首次布局在下面那个 effect 里（它要等 size 量到）；这里只翻 ready
             setReady(true);
         },
-        [queuePersist, recordPinned],
+        [queuePersist, recordPinned, allowedAreasOf],
     );
 
     // ── 4. PageApi：view 手里的区域控制面 ─────────────────────────────────────
@@ -361,7 +432,8 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                 const panel = dock.getGroup(areaId)?.panels[0];
                 if (panel) dock.maximizeGroup(panel);
             },
-            isAreaMaximized: () => apiRef.current?.hasMaximizedGroup() ?? false,
+            isAreaMaximized: (areaId) => apiRef.current?.getGroup(areaId)?.api.isMaximized() ?? false,
+            skippedAreas: () => [...(layoutRef.current?.skippedAreas ?? [])],
             closeView: (viewId) => apiRef.current?.getPanel(viewId)?.api.close(),
             openView: (viewId) => {
                 const dock = apiRef.current;
@@ -376,7 +448,9 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                     return true;
                 }
 
-                const group = dock.getGroup(placement.area);
+                // 拖过的 view 开回来时回到它拖去的地方（拖动落点持久化的另一半）
+                const areaId = movedRef.current[viewId] ?? placement.area;
+                const group = dock.getGroup(areaId);
                 if (!group) return false; // 区域没落进布局（模板里删了 / 这个区域一个 view 都没落位）
                 group.api.setVisible(true);
 
@@ -390,8 +464,8 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                     id: viewId,
                     component: VIEW_COMPONENT,
                     title: viewTitle(view, scopeRef.current),
-                    params: { viewId, areaId: placement.area },
-                    position: { referenceGroup: placement.area, direction: 'within', index },
+                    params: { viewId, areaId },
+                    position: { referenceGroup: areaId, direction: 'within', index },
                 });
                 return true;
             },
@@ -399,7 +473,8 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                 dismissedRef.current = [];
                 maximizedRef.current = null;
                 pinnedRef.current = {};
-                propsRef.current.storage?.removeItem(storageKeyRef.current);
+                movedRef.current = {};
+                clearStored();
                 const viewport = sizeRef.current;
                 if (!apiRef.current || !viewport) return;
                 try {
@@ -533,6 +608,12 @@ function areasSignature(node: AreaNode): string {
 function isSizeMap(value: unknown): value is Record<string, number> {
     if (!value || typeof value !== 'object') return false;
     return Object.entries(value).every(([, size]) => typeof size === 'number' && Number.isFinite(size));
+}
+
+/** `movedViews` 的形状检查：只要 string → string */
+function isIdMap(value: unknown): value is Record<string, string> {
+    if (!value || typeof value !== 'object') return false;
+    return Object.entries(value).every(([, id]) => typeof id === 'string' && id.length > 0);
 }
 
 // ── 非 React view 的宿主 ────────────────────────────────────────────────────
