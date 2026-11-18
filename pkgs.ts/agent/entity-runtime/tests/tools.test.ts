@@ -152,6 +152,23 @@ describe('房间工具', () => {
         expect(describeAnswer(request, only({ values: ['b'], text: '顺便说一句' }))).toBe(
             '方案 B（b）；补充：顺便说一句',
         );
+        // label 和 value 一样时不重复：`json（json）` 只是噪音
+        expect(
+            describeAnswer(
+                {
+                    ...request,
+                    questions: [
+                        {
+                            id: 'q1',
+                            question: '日志格式？',
+                            kind: 'choice' as const,
+                            options: [{ label: 'json', value: 'json' }, { label: '文本', value: 'text' }],
+                        },
+                    ],
+                },
+                only({ values: ['json', 'text'] }),
+            ),
+        ).toBe('json、文本（text）');
         // 表单里的补充文字同样不能丢
         expect(
             describeAnswer(

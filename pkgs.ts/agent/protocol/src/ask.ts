@@ -94,7 +94,10 @@ export function describeQuestionAnswer(question: AskQuestion, answer: AskQuestio
     if (values.length === 0) return freeText === '' ? '（空）' : freeText;
     const labels = values.map((value) => {
         const option = question.options?.find((candidate) => candidate.value === value);
-        return option === undefined ? value : `${option.label}（${value}）`;
+        // label 和 value 一样时不再重复（常见于 `{value:'json'}` 省了 label）：
+        // 「json（json）」只有噪音，模型也不会因此多知道什么
+        if (option === undefined || option.label === value) return value;
+        return `${option.label}（${value}）`;
     });
     const picked = labels.join('、');
     return freeText === '' ? picked : `${picked}；补充：${freeText}`;
