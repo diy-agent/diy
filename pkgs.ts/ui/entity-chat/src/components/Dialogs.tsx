@@ -193,7 +193,7 @@ export function CreateTaskDialog({
                     </p>
                 )}
                 <p className="rounded-lg border border-dashed px-2 py-1.5 text-[11px] text-muted-foreground">
-                    会自动建一个同名任务 bot；状态默认「未开始」，侧栏/头部点状态胶囊可改。
+                    会自动建一个同名任务 bot；状态默认 open，点名字前的状态图标改成 closed，它就从项目树挪进「历史任务」。
                 </p>
             </div>
             <div className="mt-4 flex justify-end gap-2">
