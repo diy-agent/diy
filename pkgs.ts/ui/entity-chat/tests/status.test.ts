@@ -6,7 +6,16 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { closedAtOf, closedTasksOf, isClosed, taskStatusOf, toggleTaskStatus, visibleInTree } from '../src/model';
+import {
+    closedAtOf,
+    closedTasksOf,
+    formatClosedAgo,
+    formatClosedAtAbsolute,
+    isClosed,
+    taskStatusOf,
+    toggleTaskStatus,
+    visibleInTree,
+} from '../src/model';
 import type { Room } from '../src/model';
 
 function room(id: string, type: string, data: Record<string, unknown> = {}): Room {
@@ -81,5 +90,45 @@ describe('isClosed', () => {
         expect(isClosed(room('a', 'task', { status: 'closed' }))).toBe(true);
         expect(isClosed(room('b', 'task', { status: 'open' }))).toBe(false);
         expect(isClosed(room('c', 'project', { status: 'closed' }))).toBe(false);
+    });
+});
+
+describe('formatClosedAgo —— 历史行行尾的关闭时间', () => {
+    // 固定"现在"：测试不能依赖真实时钟，否则跨分钟就会偶发失败
+    const now = new Date(2026, 10, 17, 12, 0, 0).getTime();
+    const minutesAgo = (n: number) => now - n * 60_000;
+
+    it('不到一分钟、以及时钟回拨（将来时间），都说「刚刚」', () => {
+        expect(formatClosedAgo(minutesAgo(0), now)).toBe('刚刚');
+        expect(formatClosedAgo(minutesAgo(0) - 59_000, now)).toBe('刚刚');
+        expect(formatClosedAgo(now + 10 * 60_000, now)).toBe('刚刚');
+    });
+
+    it('分钟 / 小时 / 天，各自只在自己那档里报数', () => {
+        expect(formatClosedAgo(minutesAgo(1), now)).toBe('1 分钟前');
+        expect(formatClosedAgo(minutesAgo(59), now)).toBe('59 分钟前');
+        expect(formatClosedAgo(minutesAgo(60), now)).toBe('1 小时前');
+        expect(formatClosedAgo(minutesAgo(23 * 60 + 59), now)).toBe('23 小时前');
+        expect(formatClosedAgo(minutesAgo(24 * 60), now)).toBe('1 天前');
+        expect(formatClosedAgo(minutesAgo(6 * 24 * 60 + 60), now)).toBe('6 天前');
+    });
+
+    it('超过一周给日期（同年不带年份），跨年才带', () => {
+        // 用 Date 自己算「7 天前」，不手写 epoch —— 夏令时下 epoch 差不是整 7*86400000
+        const old = new Date(2026, 10, 5, 9, 30).getTime();
+        expect(formatClosedAgo(old, now)).toBe('11-05');
+        const lastYear = new Date(2025, 11, 30, 9, 30).getTime();
+        expect(formatClosedAgo(lastYear, now)).toBe('2025-12-30');
+    });
+
+    it('没有 closedAt 的老数据：不显示，而不是显示「刚刚」', () => {
+        expect(formatClosedAgo(undefined, now)).toBeUndefined();
+    });
+});
+
+describe('formatClosedAtAbsolute —— 悬停看的绝对时刻', () => {
+    it('本地时区、补零到分钟', () => {
+        expect(formatClosedAtAbsolute(new Date(2026, 0, 5, 7, 8).getTime())).toBe('2026-01-05 07:08');
+        expect(formatClosedAtAbsolute(undefined)).toBeUndefined();
     });
 });

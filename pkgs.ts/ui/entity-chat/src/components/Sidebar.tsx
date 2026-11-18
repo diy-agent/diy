@@ -15,7 +15,7 @@ import {
 import * as React from 'react';
 
 import { useHasDraft } from '../drafts';
-import { closedTasksOf, visibleInTree, type Room } from '../model';
+import { closedAtOf, closedTasksOf, formatClosedAgo, formatClosedAtAbsolute, visibleInTree, type Room } from '../model';
 import { actions, useStore } from '../store';
 import { EditableName, StatusGlyph, StatusIcon } from './RoomName';
 
@@ -56,8 +56,13 @@ function RowAction({
  * 两个项目下都叫「修个 bug」的任务光看名字分不清，所以项目名必须在行上。
  *
  * 状态图标可点 —— 点它就是「重新打开」，任务会回到它所属项目的树里。
+ *
+ * 行尾是关闭时间：用**相对**说法（「3 小时前」），绝对时刻放悬停。侧栏宽 256px，
+ * 名字 + 项目 tag 已经把一行占满，`2026-11-17 06:14` 会把名字挤成省略号。
  */
 function HistoryRow({ room, projectName, active }: { room: Room; projectName?: string; active: boolean }) {
+    const closedAt = closedAtOf(room);
+    const ago = formatClosedAgo(closedAt);
     return (
         <div
             className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
@@ -78,6 +83,14 @@ function HistoryRow({ room, projectName, active }: { room: Room; projectName?: s
                     className="max-w-[45%] shrink-0 truncate rounded border px-1.5 text-[10px] text-muted-foreground/80"
                 >
                     {projectName}
+                </span>
+            )}
+            {ago !== undefined && (
+                <span
+                    title={`关闭于 ${formatClosedAtAbsolute(closedAt)}`}
+                    className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70"
+                >
+                    {ago}
                 </span>
             )}
         </div>

@@ -66,6 +66,43 @@ export function closedAtOf(room: Room): number | undefined {
     return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : undefined;
 }
 
+/**
+ * 历史行的关闭时间：**相对**说法（「3 小时前」），不是时间戳。
+ *
+ * 侧栏只有 256px，一行里塞着名字 + 项目 tag，再放 `2026-11-17 06:14` 就把名字挤没了；
+ * 而翻历史时关心的是「多久以前」，绝对时刻放 `title`（悬停可见）更合适。
+ * 超过一周就给日期 —— 「23 天前」这种说法没人真的在算。
+ *
+ * `now` 可注入：测试不能依赖真实时钟。
+ */
+export function formatClosedAgo(closedAt: number | undefined, now: number = Date.now()): string | undefined {
+    if (closedAt === undefined) return undefined;
+    const diff = now - closedAt;
+    // 将来时间（时钟回拨 / 手工改库）：别说「-3 分钟前」，退化成「刚刚」
+    if (diff < 60_000) return '刚刚';
+    const minutes = Math.floor(diff / 60_000);
+    if (minutes < 60) return `${minutes} 分钟前`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} 小时前`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days} 天前`;
+    const date = new Date(closedAt);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    // 跨年才带年份：同年的历史行写 `11-17` 就够
+    return date.getFullYear() === new Date(now).getFullYear()
+        ? `${month}-${day}`
+        : `${date.getFullYear()}-${month}-${day}`;
+}
+
+/** 悬停用的绝对时刻（本地时区，精确到分钟） */
+export function formatClosedAtAbsolute(closedAt: number | undefined): string | undefined {
+    if (closedAt === undefined) return undefined;
+    const date = new Date(closedAt);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export function statusMeta(status: TaskStatus): (typeof TASK_STATUSES)[number] {
     return TASK_STATUSES.find((item) => item.value === status) ?? TASK_STATUSES[0];
 }
