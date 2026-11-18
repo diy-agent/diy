@@ -10,6 +10,7 @@ import {
     EMPTY_QUESTION_DRAFT,
     questionDraftFor,
     isQuestionReady,
+    isQuestionSatisfied,
     isReady,
     missingFieldsOf,
     setChoice,
@@ -153,6 +154,26 @@ describe('能否提交', () => {
         draft = setText(draft, 'scope', '全量');
         expect(isReady(request, draft)).toBe(true);
         expect(unansweredOf(request, draft)).toEqual([]);
+    });
+
+    it('可选题（required: false）不拦提交，也不进「还没答」清单', () => {
+        // 「要不要顺手改文档」这类顺带确认标成可选：全强制会逼用户点一下，全不强制又会漏主决策
+        const request: AskRequest = {
+            askId: 'a3',
+            questions: [
+                { id: 'main', question: '主决策', kind: 'choice', options: [{ value: 'a', label: 'A' }] },
+                { id: 'extra', question: '顺手改文档？', kind: 'choice', required: false },
+            ],
+            at: 0,
+        };
+        const onlyMain = setChoice(EMPTY_ASK_DRAFT, 'main', 'a', false);
+        expect(isReady(request, onlyMain)).toBe(true);
+        expect(unansweredOf(request, onlyMain)).toEqual([]);
+        // 但「填了没有」是另一件事：可选题没填时不能亮「已答」
+        expect(isQuestionReady(request.questions[1]!, questionDraftFor(onlyMain, 'extra'))).toBe(false);
+        expect(isQuestionSatisfied(request.questions[1]!, questionDraftFor(onlyMain, 'extra'))).toBe(true);
+        // 主决策没答时仍然拦
+        expect(isReady(request, EMPTY_ASK_DRAFT)).toBe(false);
     });
 
     it('多题：显式跳过算答完（"不想定"不能把整批卡死）', () => {

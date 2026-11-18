@@ -241,6 +241,19 @@ describe('AskGate', () => {
         ).toEqual({ ok: true });
     });
 
+    it('可选题不必出现在答案里（required: false）：拦的只是必答题', () => {
+        const h = makeGate();
+        const request = h.gate.request({
+            questions: [
+                { id: 'a', question: '主决策？', options: [{ value: 'x', label: 'X' }] },
+                { id: 'b', question: '顺手改文档？', options: [{ value: 'y', label: 'Y' }], required: false },
+            ],
+        });
+        // 用户直接跳过了可选题：本体不出现也算完整
+        expect(h.gate.answer(request.askId, { answers: [{ id: 'a', values: ['x'] }] })).toEqual({ ok: true });
+        expect(h.gate.pendingCount()).toBe(0);
+    });
+
     it('题 id 对不上（客户端缓存了旧题集）：也是 bad-answer，不是"已失效"', () => {
         const h = makeGate();
         const request = h.gate.request({ questions: [{ id: 'a', question: 'A？' }] });
