@@ -1,7 +1,7 @@
 // server/index.ts —— **生产入口**（也是 `bin/diy2` 拉起的那个产物）。
 //
 // 只做编排，不含领域逻辑、不含路由：
-//   读配置（唯一真源 ./config） → 装配（./app） → 监听 127.0.0.1 → 落 app.port + port.sticky
+//   读配置（唯一真源 ./config） → 装配（./app） → 监听 127.0.0.1 → 落 app.port（下次沿用的端口）
 //   + 注册表 → 优雅退出。
 //
 // 「import 即 listen」在这里是**有意**的：这个文件就是可执行入口（node build/prod/server/index.mjs
@@ -11,7 +11,7 @@
 import { createServer } from 'node:http';
 
 import { createDiy2App } from './app';
-import { describeConfig, modelConfigHint, removePortFile, resolveConfig } from './config';
+import { describeConfig, modelConfigHint, resolveConfig } from './config';
 import { announce, retract } from './registry';
 import { probe } from './probe';
 import { listenWithStickyPort } from './listen';
@@ -36,14 +36,21 @@ const server = createServer(app.handle);
 
 /** 同一数据根已有实例在跑 → 不再起第二个（同一份 sqlite 双写） */
 async function alreadyRunning(): Promise<number | null> {
-    const recorded = config.port === 0 ? null : config.port;
-    if (recorded === null) return null;
-    const result = await probe(recorded, config.home);
-    if (result.kind === 'mine') return recorded;
-    if (result.kind === 'other') {
-        console.error(`[diy2] 端口 ${recorded} 被**另一个数据根**的实例占着（home=${result.info?.home}）`);
-        console.error('[diy2] 换端口：diy2 -p 0（或 diy2 --port <n>），或先 diy2 stop');
-        process.exit(1);
+    // 候选地址 = `app.port` 记录（上次用的那个）+ 本次裁决的端口。
+    // 记录**不是**存活证据，只决定「先往哪儿看」；身份由 /api/info 自报的 home 判。
+    // 生产尤其靠它：监听端口固定 5192，不从记录里取，但实例可能正跑在 `--port 5300` 上——
+    // 只看 5192 就会当没人，第二个进程起来双写同一份 sqlite。
+    const candidates = [...new Set([config.recordedPort, config.port])].filter(
+        (port): port is number => port !== null && port !== 0,
+    );
+    for (const port of candidates) {
+        const result = await probe(port, config.home);
+        if (result.kind === 'mine') return port;
+        if (result.kind === 'other') {
+            console.error(`[diy2] 端口 ${port} 被**另一个数据根**的实例占着（home=${result.info?.home}）`);
+            console.error('[diy2] 换端口：diy2 -p 0（或 diy2 --port <n>），或先 diy2 stop');
+            process.exit(1);
+        }
     }
     return null;
 }
@@ -85,8 +92,8 @@ announce(config, port);
 
 const shutdown = (signal: string): void => {
     console.log(`[diy2] ${signal} → 关闭`);
+    // 刻意**不删** app.port：它记的是「下次用哪个端口」，删了下次就换成内核随机端口。
     app.close();
-    removePortFile(config.portFile);
     retract();
     server.close(() => process.exit(0));
     // 长连接（SSE）可能挂住 close 回调：兜底硬退

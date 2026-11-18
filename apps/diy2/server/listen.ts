@@ -1,17 +1,20 @@
 // server/listen.ts —— 「监听 + 端口粘性落盘」的唯一实现（dev 与生产入口共用）。
 //
 // 为什么单独一个文件：端口粘性有三件事必须**一起**做，散在两个调用方里一定会漏一件：
-//   1. 先按配置里的端口监听（它可能来自 `port.sticky`，见 config.resolvePort）；
+//   1. 先按配置里的端口监听（它可能来自 `app.port` 记录，见 config.resolvePort）；
 //   2. 被占用时**只在可漂移的来源上**回落到内核分配（0），并把新端口重新落盘 ——
 //      显式 `--port` / `DIY2_PORT` 被占就报错：人点名要的端口被悄悄换掉，比直接失败更难查；
-//   3. 监听成功后同时写 `app.port`（活体登记）与 `port.sticky`（意图登记）。
+//   3. 监听成功后把实际端口写进 `app.port`（**下次启动沿用它**，退出不删）。
+//
+// `app.port` 不是活体登记：“有没有人在跑”只能靠探活（`/api/info` 的 home，见 ./probe）；
+// 所以这里也**不能**加删除 —— 删掉就等于丢掉粘性（dev 每次重启换 URL）。
 //
 // 漂移只发生在开发侧：生产的门牌固定（5192），被占由 index.ts 报错收场，不该自己换地址。
 // 「同一数据根已有实例」的判据不在这里（那要先探活，见 index.ts 的 alreadyRunning）。
 
 import type { Server } from 'node:http';
 
-import { writePortFile, writeStickyPort, type Diy2Config } from './config';
+import { writePortFile, type Diy2Config } from './config';
 
 export interface ListenResult {
     /** 实际监听端口（内核分配 / 漂移后都算准） */
@@ -22,13 +25,13 @@ export interface ListenResult {
 
 /**
  * 这些来源的端口是「上次顺手用的」，被占了换一个不算意外：
- *   · recorded / sticky —— 记的是过去，过去可能已经被别人占了；
+ *   · recorded —— 记的是过去，过去可能已经被别人占了（**记录不证明那个端口现在空着**）；
  *   · default —— dev 的缺省本来就是 0（内核分配），不可能撞；
  *   · **cli / env 不在内**：那是人显式点名的端口，撞了就该报错让人决定。
  */
 function driftable(config: Diy2Config): boolean {
     if (config.env === 'production') return false;
-    return config.portSource === 'recorded' || config.portSource === 'sticky' || config.portSource === 'default';
+    return config.portSource === 'recorded' || config.portSource === 'default';
 }
 
 /** listen 一次，成功/失败各自收口（失败的 server 还能再 listen —— 这是漂移能重试的前提） */
@@ -70,7 +73,6 @@ export async function listenWithStickyPort(config: Diy2Config, server: Server): 
     const address = server.address();
     const port = typeof address === 'object' && address !== null ? address.port : config.port;
     writePortFile(config.portFile, port);
-    writeStickyPort(config.stickyPortFile, port);
     if (driftedFrom !== null) {
         console.log(`[diy2] 端口 ${driftedFrom} 被占用 → 改用 ${port}（下次沿用；想固定就换掉占用者）`);
     }
