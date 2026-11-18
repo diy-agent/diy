@@ -10,5 +10,12 @@ trim_trailing_whitespace = true
 [*.md]
 trim_trailing_whitespace = false
 
+# yaml 一律 2 空格（diy.yaml / .github/workflows 都是这个口径，与 [*] 的 4 冲突）
+[*.{yml,yaml}]
+indent_size = 2
+
 [package.json]
+indent_size = 4
+
+[*.py]
 indent_size = 4
