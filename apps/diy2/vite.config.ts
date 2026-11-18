@@ -23,10 +23,10 @@ export default defineConfig({
         outDir: `build/${variant}/web`,
         emptyOutDir: true,
         rollupOptions: {
-            // 多页面：主应用 + workbench 范例页（/dock.html）
+            // 单页：主应用。workbench 的范例在它自己的包（pkgs.ts/ui/workbench-dock/examples），
+            // 不再挂在这里 —— 框架的例子不该跟业务 app 一起发。
             input: {
                 main: 'index.html',
-                dock: 'dock.html',
             },
         },
     },

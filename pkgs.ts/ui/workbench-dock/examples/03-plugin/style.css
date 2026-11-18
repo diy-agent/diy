@@ -1,0 +1,210 @@
+/* 本例子自带的样式。包不带主题：dockview 内置的是浅色，想暗色就覆盖 --dv-* 变量
+ * （最后那一段可以直接抄进宿主）。.wb-* 是 view 内部的样式，业务自己写。 */
+
+:root {
+    color-scheme: dark;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    margin: 0;
+    background: #0d1117;
+    color: #d7dde5;
+    font:
+        13px/1.5 -apple-system,
+        system-ui,
+        'PingFang SC',
+        sans-serif;
+}
+
+/* ── 例子外壳：顶栏 + 左 rail + 右 page ──────────────────────────────────── */
+
+.demo-root {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.demo-head {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    border-bottom: 1px solid #21262d;
+    background: #10151c;
+}
+
+.demo-title {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.demo-head button {
+    padding: 3px 10px;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    background: #161b22;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.demo-note {
+    margin-left: auto;
+    font-size: 12px;
+    color: #6e7681;
+}
+
+.demo-shell {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+.demo-body {
+    flex: 1;
+    min-height: 0;
+}
+
+/* ── 左导航条（宿主自己的 UI）────────────────────────────────────────────── */
+
+.rail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 0 0 200px;
+    width: 200px;
+    padding: 8px 6px;
+    border-right: 1px solid #21262d;
+    background: #0b0f14;
+    overflow: auto;
+}
+
+.rail-group {
+    padding: 8px 8px 4px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: #6e7681;
+}
+
+.rail-item {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: none;
+    color: #c9d1d9;
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+}
+
+.rail-item:hover {
+    background: #161b22;
+}
+
+.rail-item.on {
+    border-color: #1f6feb;
+    background: #16233a;
+    color: #e6edf3;
+}
+
+.rail-badge {
+    margin-left: auto;
+    font-size: 10px;
+    color: #6e7681;
+}
+
+.rail-foot {
+    margin-top: auto;
+    padding: 8px;
+    font-size: 11px;
+    color: #6e7681;
+}
+
+/* ── view 内部（业务自己写，这里只为例子好看）─────────────────────────────── */
+
+.wb-view {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    height: 100%;
+    padding: 10px;
+    box-sizing: border-box;
+    overflow: auto;
+}
+
+.wb-view-head {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.wb-view-body {
+    flex: 1;
+}
+
+.wb-tag {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #1f6feb33;
+    color: #79c0ff;
+    font-size: 11px;
+}
+
+.wb-msg {
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: #161b22;
+}
+
+.wb-list {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.wb-list li {
+    margin-bottom: 4px;
+}
+
+.wb-hint {
+    font-size: 12px;
+    color: #6e7681;
+}
+
+.wb-view button {
+    align-self: flex-start;
+    padding: 3px 10px;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    background: #161b22;
+    color: inherit;
+    cursor: pointer;
+}
+
+/* ── dockview 暗色变量 ───────────────────────────────────────────────────── */
+
+.dv-dockview {
+    --dv-background-color: #0d1117;
+    --dv-group-view-background-color: #0d1117;
+    --dv-tabs-and-actions-container-background-color: #10151c;
+    --dv-activegroup-visiblepanel-tab-background-color: #161b22;
+    --dv-activegroup-hiddenpanel-tab-background-color: #10151c;
+    --dv-inactivegroup-visiblepanel-tab-background-color: #161b22;
+    --dv-inactivegroup-hiddenpanel-tab-background-color: #10151c;
+    --dv-activegroup-visiblepanel-tab-color: #e6edf3;
+    --dv-activegroup-hiddenpanel-tab-color: #8b949e;
+    --dv-inactivegroup-visiblepanel-tab-color: #8b949e;
+    --dv-inactivegroup-hiddenpanel-tab-color: #6e7681;
+    --dv-separator-border: #21262d;
+    --dv-sash-color: #21262d;
+    --dv-active-sash-color: #3b82f6;
+    --dv-tabs-container-scrollbar-color: #30363d;
+    --dv-icon-hover-background-color: #21262d;
+}

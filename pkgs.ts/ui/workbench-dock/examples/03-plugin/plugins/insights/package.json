@@ -1,0 +1,21 @@
+{
+    "name": "insights-page",
+    "version": "0.1.0",
+    "private": true,
+    "description": "只想往影片页里塞一个场记视图，不贡献任何页",
+    "main": "./index.tsx",
+    "contributes": {
+        "views": {
+            "film": [
+                {
+                    "id": "insights.notes",
+                    "title": "场记",
+                    "area": "main"
+                }
+            ]
+        }
+    },
+    "diy": {
+        "apiVersion": 1
+    }
+}

@@ -1,0 +1,36 @@
+{
+    "name": "notes-page",
+    "version": "0.2.0",
+    "private": true,
+    "description": "笔记页插件：左右两栏（骨架由宿主提供）",
+    "main": "./index.tsx",
+    "contributes": {
+        "pages": [
+            {
+                "type": "notes",
+                "title": "笔记",
+                "icon": "📝",
+                "skeleton": "two-pane"
+            }
+        ],
+        "views": {
+            "notes": [
+                {
+                    "id": "notes.list",
+                    "title": "目录",
+                    "area": "sidebar",
+                    "primary": true
+                },
+                {
+                    "id": "notes.editor",
+                    "title": "正文",
+                    "area": "main",
+                    "primary": true
+                }
+            ]
+        }
+    },
+    "diy": {
+        "apiVersion": 1
+    }
+}
