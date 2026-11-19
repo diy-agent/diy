@@ -13,6 +13,8 @@ export * from "./delivery.js";
 export * from "./provider.js";
 export * from "./changelog.js";
 export * from "./step-delta.js";
+export * from "./session.js";
+export * from "./snapshot.js";
 export * from "./envelope.js";
 export * from "./schema/task-head.js";
 export * from "./schema/schema-doc.js";

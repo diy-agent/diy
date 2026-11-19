@@ -15,6 +15,7 @@ export default defineConfig({
         'pkgs.ts/remote/link',
         'pkgs.ts/core/template',
         'pkgs.ts/agent/talk',
+        'pkgs.ts/agent/context',
         'pkgs.ts/agent/agents-chain',
         'pkgs.ts/agent/skills',
         'pkgs.ts/core/kb',
