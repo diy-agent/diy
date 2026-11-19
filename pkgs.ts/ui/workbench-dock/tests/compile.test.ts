@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     compileLayout,
+    leafGroups,
     leavesOf,
     resolveLayout,
     summarize,
@@ -121,6 +122,78 @@ describe('compileLayout', () => {
         ]);
     });
 
+    // 全 `1fr` 的组没有固定参照：px 钉不住它，但比例能 —— 换个窗口尺寸也成立
+    describe('shares（用户拖出来的比例）', () => {
+        const even = definePage({
+            type: 'task-run',
+            title: 'x',
+            areas: row([area('a', { size: '1fr' }), area('b', { size: '1fr' })]),
+        });
+        const sizes = (layout: CompiledLayout): [string, number][] =>
+            leavesOf(layout.grid.root).map((leaf) => [leaf.data.id, leaf.size]);
+        const both = [view('pa', 'a'), view('pb', 'b')];
+
+        it('按份额分，不按模板的 fr（换窗口尺寸仍然是这个比例）', () => {
+            expect(sizes(compileLayout({ page: even, views: both, scope, viewport, shares: { a: 1, b: 3 } }))).toEqual([
+                ['a', 360],
+                ['b', 1080],
+            ]);
+            // 同一份份额，窄一半的窗口：比例不变，px 重新算
+            expect(
+                sizes(
+                    compileLayout({
+                        page: even,
+                        views: both,
+                        scope,
+                        viewport: { width: 720, height: 900 },
+                        shares: { a: 1, b: 3 },
+                    }),
+                ),
+            ).toEqual([
+                ['a', 180],
+                ['b', 540],
+            ]);
+        });
+
+        it('份额不全就整组回模板（一半份额一半 fr 混不出可预测的结果）', () => {
+            expect(sizes(compileLayout({ page: even, views: both, scope, viewport, shares: { a: 1 } }))).toEqual([
+                ['a', 720],
+                ['b', 720],
+            ]);
+            // 0 / 负数也当没记过
+            expect(sizes(compileLayout({ page: even, views: both, scope, viewport, shares: { a: 0, b: 3 } }))).toEqual([
+                ['a', 720],
+                ['b', 720],
+            ]);
+        });
+
+        it('和 pinned 分工：数字区钉 px，弹性区按份额分剩下的', () => {
+            const mixed = definePage({
+                type: 'task-run',
+                title: 'x',
+                areas: row([area('fixed', { size: 200 }), area('x', { size: '1fr' }), area('y', { size: '1fr' })]),
+            });
+            const three = [view('pf', 'fixed'), view('px', 'x'), view('py', 'y')];
+            // 200 不动，剩下的 1240 按 1:3 分
+            expect(
+                sizes(compileLayout({ page: mixed, views: three, scope, viewport, shares: { x: 1, y: 3 } })),
+            ).toEqual([
+                ['fixed', 200],
+                ['x', 310],
+                ['y', 930],
+            ]);
+        });
+
+        it('只认「整组都是叶子」的组（份额按区域 id 存，分支节点没有 id）', () => {
+            const layout = compileLayout({ page, views, scope, viewport });
+            expect(leafGroups(layout.grid.root)).toEqual([['left', 'center', 'right']]);
+            // 单区域页：根本没有组
+            expect(leafGroups(compileLayout({ page: even, views: [view('pa', 'a')], scope, viewport }).grid.root)).toEqual(
+                [],
+            );
+        });
+    });
+
     it('页里一个 view 都没有 → 报错（空壳页没有意义）', () => {
         expect(() => compileLayout({ page, views: [view('chat', 'nowhere')], scope, viewport })).toThrow(ModelError);
         expect(() => compileLayout({ page, views: [], scope, viewport })).toThrow(/没有任何区域有 view 落位/);
@@ -175,7 +248,11 @@ describe('definePage 校验', () => {
 describe('resolveLayout（旧布局 × 新模板）', () => {
     const base = compileLayout({ page, views, scope, viewport });
 
-    function saved(patch: (root: DockNode) => string[] = () => [], pinnedSizes?: Record<string, number>): SavedLayout {
+    function saved(
+        patch: (root: DockNode) => string[] = () => [],
+        pinnedSizes?: Record<string, number>,
+        shares?: Record<string, number>,
+    ): SavedLayout {
         const root = structuredClone(base.grid.root);
         const dismissed = patch(root);
         return {
@@ -189,6 +266,7 @@ describe('resolveLayout（旧布局 × 新模板）', () => {
             } as unknown as SavedLayout['dock'],
             dismissed,
             pinnedSizes,
+            shares,
         } as SavedLayout & { dock: SavedLayout['dock'] };
     }
 
@@ -238,6 +316,54 @@ describe('resolveLayout（旧布局 × 新模板）', () => {
     it('pinnedSizes 不作用于 `1fr` 区域（它表达的就是「我不决定宽度」）', () => {
         const resolved = resolveLayout({ page, views, scope, viewport, saved: saved(() => [], { center: 500 }) });
         expect(shape(resolved)).toEqual(shape(base));
+    });
+
+    it('快照里的 shares 一样进编译：全弹性组按比例，且不碰数字区', () => {
+        // 数字区只认 pinned：给它们递份额也没用（它们不是弹性的）
+        const mixed = resolveLayout({
+            page,
+            views,
+            scope,
+            viewport,
+            saved: saved(() => [], { left: 420 }, { center: 600, right: 200 }),
+        });
+        expect(shape(mixed)).toEqual([
+            ['left', 420, true],
+            ['center', 700, true],
+            ['right', 320, true],
+            ['bottom', 240, false],
+        ]);
+
+        // 全弹性组：份额决定分法；快照里那份「当时的 px」一律不采信
+        const evenPage = definePage({
+            type: 'task-run',
+            title: 'x',
+            areas: row([area('a', { size: '1fr' }), area('b', { size: '1fr' })]),
+        });
+        const evenViews = [view('pa', 'a'), view('pb', 'b')];
+        const evenBase = compileLayout({ page: evenPage, views: evenViews, scope, viewport });
+        const merged = resolveLayout({
+            page: evenPage,
+            views: evenViews,
+            scope,
+            viewport,
+            saved: {
+                version: 1,
+                pageType: 'task-run',
+                scopeKey: 'task:t-1',
+                dock: {
+                    grid: evenBase.grid,
+                    panels: evenBase.panels,
+                    activeGroup: 'a',
+                } as unknown as SavedLayout['dock'],
+                dismissed: [],
+                shares: { a: 1, b: 3 },
+            },
+        });
+        expect(shape(merged)).toEqual([
+            ['a', 360, true],
+            ['b', 1080, true],
+        ]);
     });
 
     it('R2/R4 新 view 按 order 插进它声明的区域，旧 tab 的相对顺序不动', () => {

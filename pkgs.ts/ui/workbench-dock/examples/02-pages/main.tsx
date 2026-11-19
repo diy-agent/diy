@@ -23,7 +23,8 @@ const taskPage = definePage({
     type: 'task',
     title: (scope) => scope.title ?? '任务',
     icon: '📋',
-    areas: row([area('left', { size: 220, min: 160 }), area('center', { size: '1fr', min: 320 })]),
+    // 两栏都是 `1fr`（没有任何固定参照）：拖出来的只能记**比例**，这正是最容易丢的那种布局
+    areas: row([area('left', { size: '1fr', min: 160 }), area('center', { size: '1fr', min: 320 })]),
 });
 
 // ── 两个 view：左边的负责显示「我在哪个实例」，中间的负责说明怎么试 ──────────
@@ -61,9 +62,13 @@ const chatView = defineView({
                     <span className="wb-tag">{scope.id}</span>
                 </div>
                 <div className="wb-view-body">
-                    <p className="wb-msg wb-msg-user">把左区的「详情」拖宽一点，再切到另一个任务。</p>
+                    <p className="wb-msg wb-msg-user">把这条分屏线拖到 1:2，再切到另一个任务。</p>
                     <p className="wb-msg">
-                        切回来宽度还在 —— 布局是按 <b>页实例</b> 存的，同一个模板开两份就是两份布局。
+                        切回来还是 1:2 —— 布局是按 <b>页实例</b> 存的，同一个模板开两份就是两份布局。
+                    </p>
+                    <p className="wb-msg">
+                        两栏都是 <code>1fr</code>（没有固定参照），所以记的是<b>比例</b>而不是 px：
+                        把窗口拉窄再拖，比例仍然是那个比例。
                     </p>
                 </div>
                 <div className="wb-composer">输入…（示意，不接后端）</div>
