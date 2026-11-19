@@ -79,7 +79,7 @@ curl -s "http://127.0.0.1:$PORT/api/rooms"  # 数据面
 ## 全局命令 `diy2`（一条命令起服务）
 
 ```bash
-cd apps/diy2 && ./sha.sh build     # → build/prod/{web,server}
+cd apps/diy2 && ./sha.sh build     # → build/prod/{web,server,cli}
 npm link                           # 之后 `diy2` 在 PATH 里
 
 diy2                    # 已有同数据根实例 → 复用；否则起服务（前台，Ctrl-C 停）
@@ -88,14 +88,18 @@ diy2 --no-open          # 不自动打开浏览器
 diy2 --restart          # 先停同数据根实例再起
 diy2 --home /tmp/x      # 换数据根（缺省 ~/.diy/diy2；--data-dir 是旧名）
 diy2 --detach           # 起在后台（脚本 / 启动器用）
-diy2 list               # 本机所有 diy2 实例
-diy2 stop [--all]       # 停本数据根（或本机全部）
-diy2 port | diy2 home   # 脚本用：打印端口 / 数据根
+diy2 list               # 本机所有 diy2 实例（`-j` = 单行 JSON）
+diy2 stop [--all]       # 停本数据根（或本机全部；--worktree <dir> 只停那个 worktree）
+diy2 port | diy2 home   # 脚本用：打印端口 / 数据根（裸值）
 ```
 
-构建产物是两件：`build/prod/web/`（vite build 的 UI）和 `build/prod/server/index.mjs`
-（vite lib/ssr 打的服务端单文件，工作区包都打进去了）。全局命令只依赖这两件，
-不需要在运行时装 vite / tsx。发布时 `files` 只带 `bin/` + `build/prod/`。
+`list / stop / port / home` 由 `build/<变体>/cli/index.mjs` 接管：命令树 / help / `--json` /
+退出码由 `@diy-agent/rpc/cli` 从 zod 声明生成，本地命令走 **mem 传输**（进程内，不起服务、不开端口）。
+`start` 仍留在 `bin/diy2` —— 它是进程生命周期（前台跑、Ctrl-C 停），不是一次命令调用。
+
+构建产物是三件：`build/prod/web/`（vite build 的 UI）、`build/prod/server/index.mjs`
+（vite lib/ssr 打的服务端单文件）与 `build/prod/cli/index.mjs`（CLI 单文件），工作区包都打进去了。
+全局命令只依赖这三件，不需要在运行时装 vite / tsx。发布时 `files` 只带 `bin/` + `build/prod/`。
 
 一键试跑构建产物（不装全局）：`./sha.sh start`；沙箱验收：`./sha.sh staging`。
 

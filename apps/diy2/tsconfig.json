@@ -21,6 +21,7 @@
         "bin/**/*",
         "vite.config.ts",
         "vite.server.config.ts",
+        "vite.cli.config.ts",
         "vitest.config.ts"
     ]
 }
