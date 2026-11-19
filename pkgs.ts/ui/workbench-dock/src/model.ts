@@ -10,7 +10,18 @@
 
 import type { ComponentType } from 'react';
 
-/** 尺寸：数字 = px；`'1fr'` = 在同父兄弟之间按比例分剩余空间 */
+/**
+ * 尺寸。同一个数字在两个时刻含义不同，别混（README「数字尺寸到底是什么」）：
+ *
+ *  1. **编译那一刻**：数字 = 沿父轴的像素，`'1fr'` = 同父兄弟之间分剩余空间。
+ *  2. **容器尺寸变化之后**：不再是像素 —— dockview 按比例重排
+ *     （`rescaleViews`：factor = `size / contentSize`，再由 `min` 兜底），
+ *     要等下一次编译（重新进页 / scope 变 / 布局结构变）才回到像素。
+ *
+ * 所以 `size: 300` 的左栏在 1440 宽的窗口里是 300px，同样是这个页、缩到 1000 宽 ≈ 208px；
+ * 重新打开它又是 300px。要「永远 300px」得在容器 resize 时重编，那会连用户拖拽和最大化状态
+ * 一起抹掉（AGENTS #9），不值当 —— 选择 dockview 的原生语义：**像素只是开页种子**。
+ */
 export type Size = number | `${number}fr`;
 
 /** 排列轴：`x` = 左右排，`y` = 上下排（对应 dockview 的 HORIZONTAL / VERTICAL） */
@@ -28,7 +39,11 @@ export interface Scope {
 
 export interface AreaOptions {
     size?: Size;
-    /** 最小 px（传给 dockview 的组约束，拖不到更小） */
+    /**
+     * 最小 px。落成 dockview 的组约束 `minimumWidth` / `minimumHeight`（**同值** —— dockview
+     * 按两轴分别约束，DSL 只给一个数，所以它同时是这个区域的高度下限）。
+     * 拖不到更小，容器按比例缩放时也压不破它。
+     */
     min?: number;
     /** 初始展开状态；缺省 open */
     initial?: 'open' | 'collapsed';
@@ -251,7 +266,7 @@ export function areaLeaves(node: AreaNode): AreaLeaf[] {
 }
 
 /**
- * 模板里写死 px 的叶子 → 它沿哪根轴被拉长（`x` = 宽度，`y` = 高度）。
+ * 模板里写死数字的叶子（`size: 300`）→ 它沿哪根轴被拉长（`x` = 宽度，`y` = 高度）。
  *
  * 只有这些区域会被用户拖拽改尺寸并记住：`'1fr'` 的叶子不在里面，它吃的是「剩下的空间」，
  * 钉住它等于把某一刻的窗口尺寸烧进布局。根叶子没有父轴，也就不存在可拖的分屏线。

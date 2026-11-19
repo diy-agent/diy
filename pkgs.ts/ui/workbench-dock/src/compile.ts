@@ -92,6 +92,9 @@ export interface LayoutInput<S extends Scope = Scope> {
      * 用户钉住的尺寸（px）。只有模板里写死数字的叶子会被记住 ——
      * `'1fr'` 表达的是「我不决定这块多宽」，它的值永远由**当前** viewport 和兄弟算出来，
      * 所以不能钉（钉住就等于把某一刻的窗口尺寸烧进布局）。
+     *
+     * 钉住的是**像素**（用户拖动那一刻屏幕上的 px），不是比例：重编译时原样给回去，弹性区让位。
+     * 同一次会话里容器缩放不重编，所以那时它又跟着 dockview 的比例走（见 `Size`）。
      */
     pinned?: Record<string, number>;
     /**
@@ -271,8 +274,13 @@ interface Sizing {
 }
 
 /**
- * 模板树 → dockview 树。尺寸在这一步落成 px：
- * 数字原样，`fr` 在同父兄弟间分**剩余**空间（与 dockview 对 size 的语义一致）。
+ * 模板树 → dockview 树。尺寸在这一步落成 px：数字原样，`fr` 在同父兄弟间分**剩余**空间。
+ *
+ * 这份 px 就是 dockview 序列化里的 `size`（`deserialize` 之后紧跟着 `layout(width, height)`，
+ * 用的正是它），所以**编译尺寸必须等于渲染尺寸**，否则会先闪一下再被 dockview 按比例纠正。
+ *
+ * 但它只是「开页种子」：容器尺寸一变，dockview 按 factor = size / contentSize 等比重算，
+ * 从此这个数字只剩比例意义，直到下一次编译（见 `Size`）。
  */
 function compileNode<S extends Scope>(
     node: AreaNode,
@@ -339,7 +347,7 @@ function pinnedSize(node: AreaNode, pinned?: Record<string, number>): Size {
 }
 
 /**
- * 一组兄弟的尺寸：数字是 px，`fr` 分剩余空间，最后**归一**到父容器。
+ * 一组兄弟的尺寸：数字是 px 种子（模板值或用户拖出来的值），`fr` 分剩余空间，最后**归一**到父容器。
  *
  * 归一不是美化：dockview 的 `proportionalLayout` 会把一组兄弟按比例拉满父容器。
  * 如果留个洞（比如被跳过的区域、或者全都是数字时剩下的空间），**它会替我们做这件事** ——
