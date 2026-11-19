@@ -880,8 +880,18 @@ describe("缺省库目录 = 调用方 cwd（##437）", () => {
     });
 
     it("③ 调用方 cwd 也没有 ⇒ 退主进程 cwd 向上找（旧行为不变）", () => {
-        // 追一个不存在的位置（走不到 knowledge/subjects.yaml）⇒ 应该与「不带调用方 cwd」同答案
-        expect(store.resolveFactsDir(undefined, "/no/such/dir/for-t437")).toBe(store.resolveFactsDir());
+        // 追一个不存在的位置（走不到 knowledge/subjects.yaml）⇒ 应该与「不带调用方 cwd」同答案。
+        //
+        // 「不带调用方 cwd」那一侧看的是 `process.cwd()`：必须把它摆到本用例造好的主仓上，
+        // 否则这条压的就不是回退顺序，而是「跑测试的这台机器仓库根有没有 knowledge/」——
+        // 没有就抛 FactsStoreError，在任何干净 checkout 上恒红（2026-11 实测）。
+        const prevCwd = process.cwd();
+        process.chdir(mainRepo);
+        try {
+            expect(store.resolveFactsDir(undefined, "/no/such/dir/for-t437")).toBe(store.resolveFactsDir());
+        } finally {
+            process.chdir(prevCwd);
+        }
     });
 
     it("④ 跨仓写入 ⇒ warn 而不是拒，文案是「你在 X，写到了 Y」", () => {
