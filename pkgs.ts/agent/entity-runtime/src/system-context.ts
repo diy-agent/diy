@@ -1,133 +1,163 @@
-// system-context.ts —— 房间 agent 的**规则上下文**：AGENTS.md 链 + 知识库索引。
+// system-context.ts —— 房间 agent 的**规则上下文**：走 @diy-agent/context 的会话门面。
 //
-// 为什么必须有：diy2 的 agent 之前只有「你是 X」+ persona + 工具提示，于是
-// `~/AGENTS.md` / `~/git/AGENTS.md` / 仓库 AGENTS.md 里的规则（worktree、GPG、验证入口…）
-// 一条都进不来 —— 实测表现就是「经常直接在 main 上改」。
+// 为什么不再手拼字符串（2026-11-20）：diy2 之前只有「你是 X」+ persona + 工具提示，
+// 规则（worktree / GPG / 验证入口）一条都进不来。上一版（#503）把 chain + kb 拼成一个
+// system 字符串 —— 能看见规则，但**没有变量树**：任务正文、status 一变只能重建 system
+// （前缀缓存全废），也没法做增量 / diff。
 //
-// 三条判据（与 diy-app 的 chain / bot 的 system-context 同一口径）：
-//   · 链从 cwd 爬到 `$HOME`（不进 `/`、不进 `/Users`）；外层在前，最深处最特化
-//   · `<home>/AGENTS.md`（应用级）在链首；`home` 不传 = 没有应用级规范（测试 / 非 app 宿主）
-//   · 知识库只投**索引**（路径 + desc + 节数），正文按需 `diy2 facts get <路径>#<小节>`
+// 现在：provider 提供**结构化值**，`createContextSession` 负责 system 快照与 user 增量。
+// 这一步是任务接入（body / status / journal / docs）的前置。
 //
-// 为什么只组装一次：这是每轮请求的固定前缀，每次重写会打碎前缀缓存（同 bot 的
-// system-context 注释）。RoomActor 在构造时算一次，session 复用。
-//
-// 失败降级：读不到就缺席，绝不因为上下文构建失败让人发不出消息。
+// 三条判据（与 diy-app / bot 同口径）：
+//   · 链从 cwd 爬到 `$HOME`（不进 `/`、不进 `/Users`）；外层在前、最深处最特化
+//   · `<home>/AGENTS.md`（应用级）在链首；home 不传 = 没有应用级规范
+//   · 知识库只投索引（路径 + desc + 节数），正文按需 `diy2 facts get`
 
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { agentsChain } from '@diy-agent/agents-chain';
+import {
+    AssembleGlobalsSchema,
+    createContextSession,
+    type ContextProvider,
+    type ContextSession,
+} from '@diy-agent/context';
 import { globalKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
+import { skillsOf } from '@diy-agent/skills';
 
-/** 规则上下文的缺省字节上限（diy 仓实测全量 ~15.8 KB：链 + 67 条索引；给一点余量） */
-export const SYSTEM_CONTEXT_MAX_BYTES = 16_384;
+/** 房间上下文需要的 spec 形状（只读；与 `Room` 结构兼容） */
+export interface RoomContextSpec {
+    readonly id: string;
+    readonly name: string;
+    readonly type: string;
+    readonly data: Record<string, unknown>;
+}
 
-export interface RoomSystemContextOptions {
-    /** 工作目录（房间的 `data.dir`）：链从它开始向上爬 */
+export interface RoomContextOptions {
+    readonly spec: RoomContextSpec;
+    /** 房间的工作目录（`data.dir`） */
     readonly cwd: string;
-    /**
-     * 应用数据根（diy2 = `DIY2_HOME`）：`<home>/AGENTS.md` 进链首，且允许读设备级知识库。
-     * 不传 = 没有应用级规范、也不读设备库（测试 / 纯仓库宿主）。
-     */
+    /** 应用数据根（diy2 = `DIY2_HOME`）：应用级 AGENTS.md + 设备级知识库 */
     readonly home?: string;
-    readonly maxBytes?: number;
+    /** 全局 skills 根；缺省 `~/.agents`（测试可指向临时目录） */
+    readonly skillsRoot?: string;
 }
 
-interface KbLine {
-    readonly path: string;
-    readonly desc: string;
-    readonly sections: number;
-    readonly scope: 'project' | 'global';
+/** 知识库索引（项目优先、设备兜底；形状与 `AssembleGlobalsSchema.kb` 一致） */
+function kbProvider(cwd: string, home: string | undefined): ContextProvider {
+    return {
+        key: 'kb',
+        provide: () => {
+            const global = globalKbRoot(process.env['DIY_HOME'], homedir());
+            const project = kbRootOf(cwd);
+            const roots: { dir: string; scope: 'project' | 'global' }[] = [];
+            if (resolve(project) !== resolve(global)) roots.push({ dir: project, scope: 'project' });
+            if (home !== undefined) roots.push({ dir: global, scope: 'global' });
+
+            const byPath = new Map<
+                string,
+                { path: string; desc: string; sections: number; scope: 'project' | 'global' }
+            >();
+            for (const root of roots) {
+                for (const entry of scanKb(root.dir).entries) {
+                    if (root.scope === 'global' && byPath.has(entry.path)) continue;
+                    byPath.set(entry.path, {
+                        path: entry.path,
+                        // 索引只要「这个文件讲什么」；完整 desc 用 `diy2 facts brief` 取
+                        desc: entry.desc.length <= 80 ? entry.desc : `${entry.desc.slice(0, 79)}…`,
+                        sections: entry.sections,
+                        scope: root.scope,
+                    });
+                }
+            }
+            const entries = [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+            return entries.length === 0 ? undefined : { entries };
+        },
+    };
 }
 
-function kbIndexOf(opts: RoomSystemContextOptions): KbLine[] {
-    const global = globalKbRoot(process.env['DIY_HOME'], homedir());
-    const candidate = kbRootOf(opts.cwd);
-    const roots: { dir: string; scope: 'project' | 'global' }[] = [];
-    // kbRootOf 会一路走到 $HOME：cwd 在任何用户目录下都会撞上 ~/.diy/knowledge（那是设备库）
-    if (resolve(candidate) !== resolve(global)) roots.push({ dir: candidate, scope: 'project' });
-    if (opts.home !== undefined) roots.push({ dir: global, scope: 'global' });
-
-    const byPath = new Map<string, KbLine>();
-    for (const root of roots) {
-        for (const entry of scanKb(root.dir).entries) {
-            // 先 project 后 global：同名取项目那份
-            if (root.scope === 'global' && byPath.has(entry.path)) continue;
-            byPath.set(entry.path, {
-                path: entry.path,
-                desc: entry.desc,
-                sections: entry.sections,
-                scope: root.scope,
-            });
-        }
-    }
-    return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+function taskProvider(spec: RoomContextSpec, cwd: string): ContextProvider {
+    return {
+        key: 'task',
+        provide: () => {
+            if (spec.type !== 'task') return undefined;
+            const data = spec.data;
+            const str = (key: string): string => (typeof data[key] === 'string' ? (data[key] as string) : '');
+            const desc = str('desc');
+            const body = str('body');
+            return {
+                uri: spec.id,
+                title: spec.name,
+                state: str('status') || 'open',
+                parent: str('parent'),
+                created: str('created'),
+                updated: str('updated'),
+                change_type: str('changeType'),
+                module: str('module'),
+                priority: str('priority'),
+                persona: str('persona'),
+                // 描述是任务简报；正文是任务本体。两者都有就分行拼，模型读到的是一段完整简报
+                body: [desc, body].filter((part) => part.trim() !== '').join('\n\n'),
+                dir: str('dir') || cwd,
+            };
+        },
+    };
 }
 
-function chainSection(opts: RoomSystemContextOptions): string | null {
+/** 房间 provider 集：diy / cwd / chain / skills / kb / task（task 仅 task 房间） */
+export function roomProviders(opts: RoomContextOptions): ContextProvider[] {
     const appHome = opts.home ?? join(opts.cwd, '__no_app__');
-    const chain = agentsChain({ appHome, cwd: opts.cwd });
-    if (chain.length === 0) return null;
-    const blocks = chain.map(
-        (item) => `<project_instructions path="${item.path}" scope="${item.scope}">\n${item.content}\n</project_instructions>`,
-    );
+    const skillsRoot = opts.skillsRoot ?? join(homedir(), '.agents');
     return [
-        '以下规则按目录 scope 生效（外层在前；处理某个文件时，其所在目录链上最深的一层最特化，冲突时以它为准）：',
-        ...blocks,
-    ].join('\n\n');
+        {
+            key: 'diy',
+            provide: () => ({ cli: 'diy2', home: opts.home ?? '' }),
+        },
+        {
+            key: 'cwd',
+            provide: () => ({
+                path: opts.cwd,
+                note: '',
+                isFallback: false,
+                isTaskDir: opts.spec.type === 'task',
+                isAppDir: false,
+            }),
+        },
+        {
+            key: 'chain',
+            provide: () =>
+                agentsChain({ appHome, cwd: opts.cwd }).map((item) => ({
+                    path: item.path,
+                    scope: item.scope,
+                    content: item.content,
+                })),
+        },
+        {
+            key: 'skills',
+            provide: () =>
+                skillsOf({ cwd: opts.cwd, globalRoot: skillsRoot }).map(({ name, desc }) => ({
+                    name,
+                    // 技能说明动辄几百字；索引只需要「有哪些 + 一句干什么」
+                    desc: desc.length <= 120 ? desc : `${desc.slice(0, 119)}…`,
+                })),
+        },
+        kbProvider(opts.cwd, opts.home),
+        taskProvider(opts.spec, opts.cwd),
+    ];
 }
 
-function kbSection(opts: RoomSystemContextOptions): string | null {
-    const lines = kbIndexOf(opts);
-    if (lines.length === 0) return null;
-    return [
-        '知识库索引（`.diy/knowledge/**/*.md`；要正文用 `diy2 facts get <路径>#<小节>`，' +
-            '不确定展开哪条先 `diy2 facts brief <主题>` 看首句）：',
-        ...lines.map((line) => `- ${line.path} — ${line.desc}（${line.sections} 节 · ${line.scope}）`),
-    ].join('\n');
+/** 一个房间成员的上下文会话（system 快照 + 每轮增量；每个 bot 各一份 cursor） */
+export function createRoomContext(opts: RoomContextOptions): ContextSession {
+    return createContextSession({ providers: roomProviders(opts), schema: AssembleGlobalsSchema });
 }
 
-/**
- * 按 UTF-8 字节裁切（不能按字符数裁：中文一个字符 3 字节，按字符裁会超预算）。
- * 二分找最大可容纳的前缀。
- */
-function cutToBytes(text: string, maxBytes: number): string {
-    if (maxBytes <= 0) return '';
-    if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
-    let low = 0;
-    let high = text.length;
-    while (low < high) {
-        const mid = Math.ceil((low + high) / 2);
-        if (Buffer.byteLength(text.slice(0, mid), 'utf8') <= maxBytes) low = mid;
-        else high = mid - 1;
-    }
-    return text.slice(0, low);
-}
-
-/**
- * 组装一次房间的规则上下文；空串 = 什么都没有（agent 只带 persona）。
- *
- * 预算按**最终文本**的 UTF-8 字节量；超了就截断并标注，不静默丢。
- */
-export function buildRoomSystemContext(opts: RoomSystemContextOptions): string {
-    if (opts.cwd.trim() === '') return '';
-    const parts = [chainSection(opts), kbSection(opts)].filter((part): part is string => part !== null);
-    if (parts.length === 0) return '';
-
-    const max = opts.maxBytes ?? SYSTEM_CONTEXT_MAX_BYTES;
-    const NOTE = '\n（上下文超预算，余下省略）';
-    const noteBytes = Buffer.byteLength(NOTE, 'utf8');
-    let out = '';
-    for (const part of parts) {
-        const next = out === '' ? part : `${out}\n\n${part}`;
-        if (Buffer.byteLength(next, 'utf8') <= max) {
-            out = next;
-            continue;
-        }
-        const room = max - Buffer.byteLength(out, 'utf8') - noteBytes - (out === '' ? 0 : 2);
-        out = room > 100 ? `${out === '' ? '' : `${out}\n\n`}${cutToBytes(part, room)}${NOTE}` : `${out}${NOTE}`;
-        break;
-    }
-    return out;
+/** 兼容入口（#503 的测试与旧调用点）：只按 cwd/home 组装一次 system，不带任务 */
+export function buildRoomSystemContext(opts: { cwd: string; home?: string }): string {
+    const session = createRoomContext({
+        spec: { id: '', name: '', type: 'project', data: {} },
+        cwd: opts.cwd,
+        ...(opts.home === undefined ? {} : { home: opts.home }),
+    });
+    return session.open().system;
 }
