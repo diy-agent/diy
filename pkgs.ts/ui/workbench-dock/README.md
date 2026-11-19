@@ -68,6 +68,41 @@ const chatView = defineView<TaskScope>({
 **依赖方向是 view → page**：view 声明「我能进哪些 pageType 的哪个区域」，page 一个 view id 都不认识。
 加一个 view = 加一个文件；改页的模板不需要知道有哪些 view 存在。
 
+### `Scope` 到底是什么
+
+`Scope` 是**一个页实例的身份**：不是这个页要显示的数据，更不是页面 UI 状态。
+
+| 字段 | 谁在用 | 用途 |
+|---|---|---|
+| `kind` + `id` | `pageId()` / 缺省存储键 / `layoutSignature()` / `SavedLayout.scopeKey` | 页实例身份 —— **换它 = 换一份布局** |
+| `title` | 包**一个字段都不读** | 只是约定给 `PageDef.title` / `ViewDef.title` 的函数用 |
+
+所以这三件事它都不干：
+
+- **不装选中项**。把 `board:all` 改成 `board:t-1` 表达「列表里点了第 1 行」，不是换一行，是换页实例：
+  换 `key`、换存储键、重编译布局 —— 用户拖出来的三栏宽度一起没。页内联动走 `useShared()`（见下文）。
+- **不装业务数据**。view 要的是「我要查的那条数据」，不是 scope；scope 只该有身份字段。
+  每往 scope 里塞一个会变的字段（`selectedRow` / `filter` / `branchId`），就多一条让布局重建的路径。
+- **不装导航**。「有几个页、当前开哪个」是宿主的活儿（[`examples/02-pages`](./examples/02-pages/main.tsx)）。
+
+> `kind` 是 `string` 而不是字面量判别，所以 `{ kind: 'board' }` 传给 `task` 页 tsc 不会拦。
+> 要拦得把 `Scope` 泛型化成 `Scope<Kind extends string = string>`，代价是所有现成签名都要加参数 —— 现在没做。
+
+### 「任务管理器」这类集合页
+
+一个页实例对应**一组**对象（任务管理器 / 文件浏览器 / 项目概览），天然两层，分开就不会把 `Scope` 用歪：
+
+| 层 | 归谁 | 样子 |
+|---|---|---|
+| 导航 / 外壳（页切换、筛选条） | **宿主** | 左侧 rail（例子里的十来行 JSX） |
+| 管理器内部的格子（列表 / 详情 / 属性三栏） | **一个 page** | `{ kind:'board', id:'all' }`，见 [`examples/05-board`](./examples/05-board/main.tsx) |
+| 「当前选中了哪条」 | **`useShared()`**（页内共享状态） | `useShared('selectedTask', TASKS[0].id)` |
+
+关键是中间那行：`scope.id` 是**集合标识**（`all` / `mine` / `project:p-1`，一个集合一份布局），
+不是「当前选中的那条」。选中项一变就换 `scope.id`，等于每点一行就重编译一次布局、把用户拖的尺寸清掉。
+
+两层可以只用一层：外壳和内部格子都归宿主（那就退化成 02 那个形状），或者压根不做内部三栏。
+
 ## API
 
 ### `definePage(def)` / `defineView(def)`
@@ -156,7 +191,8 @@ rescaleViews(size) { const factor = size / contentSize; ... }  // dockview gridv
 | `views` | `ViewDef<S>[]` | 本页用的 view（缺省全部） |
 | `scope` | `S extends Scope` | 页的核心对象 |
 | `storage` | `{ getItem, setItem, removeItem }` | 传了才持久化布局（localStorage / 后端 KV 都行） |
-| `storageKey` | `string` | 缺省 `workbench-dock:<pageType>@<kind>:<id>` |
+| `storageKey` | `string` | 缺省 `workbench-dock:<pageType>@<kind>:<id>`（`shareLayout` 时 `workbench-dock:<pageType>`） |
+| `shareLayout` | `boolean` | `true` = 同一 pageType 的所有页实例共用一份布局（不再校验 `scopeKey`）；缺省按实例各存一份 |
 | `editable` | `boolean` | `true` = L1（允许拖 view 换区）；缺省 L0（结构锁死） |
 | `onLayoutChange` | `(saved: SavedLayout) => void` | 布局变化（节流到一帧） |
 | `onStorageError` | `(error: unknown) => void` | 布局存不下（配额满 / 隐私模式 / 后端拒写）；页照常用，但下次进来回模板 |
@@ -167,6 +203,9 @@ rescaleViews(size) { const factor = size / contentSize; ... }  // dockview gridv
 ```tsx
 <PageWorkbench key={scope.id} page={taskPage} views={views} scope={scope} storage={localStorage} />
 ```
+
+`key` 里**只能放页实例身份**（`pageId`）：放 `selectedId` 那种会变的字段，等于每点一下就是新实例新布局。
+`selectedId` 这类东西走 `useShared()`，它在 `key` 外面。
 
 ### `usePage()` / `usePageApi()`
 
@@ -184,6 +223,13 @@ interface PageApi {
     closeView(viewId: string): void; // 关掉某 view（记进 dismissed，不会自己回来）
     openView(viewId: string): boolean; // closeView 的逆操作；返回有没有真开出来
     resetLayout(): void; // 丢掉用户布局，回到模板
+    shared: SharedState; // 页内共享状态（见 useShared）；不进布局、不落盘
+}
+
+interface SharedState {
+    get<T>(key: string): T | undefined;
+    set<T>(key: string, value: T): void; // 值没变（Object.is）不通知
+    subscribe(key: string, listener: () => void): () => void;
 }
 ```
 
@@ -198,6 +244,33 @@ interface PageApi {
 // 宿主侧的一个按钮：「把成员列表开回来」
 <button onClick={() => api.openView('members')}>成员</button>
 ```
+
+### `useShared(key, initial)` —— view 之间的共享状态
+
+同一页里的 view 之间没有父子关系，`ViewProps` 只有 `scope` / `page` / `areaId` / `api`。
+想让「列表里点一下」让「详情」跟着变，就用这个（`useState` 的手感，作用域是整个页实例）：
+
+```tsx
+// 列表 view
+const [selected, setSelected] = useShared<string>('selectedTask', TASKS[0].id);
+<button onClick={() => setSelected(task.id)}>{task.title}</button>;
+
+// 详情 view（不同区域、不同 panel）—— 同一个 key
+const [selected] = useShared<string>('selectedTask', TASKS[0].id);
+```
+
+三条刻意的约束：
+
+- **不进布局**：不在 `layoutSignature()` 里，写它不会重编译、不会重挂 panel（拖过的尺寸、view 的挂载状态都在）；
+- **不落盘**：生命周期 = 这一个页实例，宿主换 `key` 就没了。要跨页保留就把状态提到宿主；
+- **`initial` 必须是稳定引用**（字面量 / 模块级常量）。传内联对象会让快照每次都变，
+  `useSyncExternalStore` 会警告并可能死循环。
+
+实现只有三十行，纯 TS（`src/shared.ts`）：`get` / `set`（`Object.is` 相等就不通知）/ `subscribe`（按 key 隔离）。
+vanilla view 不经过 hook，直接 `api.shared.get/set/subscribe` —— 同一个槽。
+
+> 边界：它不是状态库。不做选择器、不做批量事务、不做深层比较。要复杂状态就接到宿主的 store 上，
+> 这里只解决「选中项这种量级的一句话」。
 
 ### 纯函数（单测/工具用，无 React）
 
@@ -217,6 +290,7 @@ summarize(layout.grid.root): string // '(left[detail] ; center[chat])'
 | 用户拖分屏线 / 收起展开 / 关 tab / 切 activeView | dockview 自己记；变化节流后写进 `storage` |
 | 用户拖分屏线 | 按这次拖动的**位移**记账：数字区记 px（`pinnedSizes`），`1fr` 区记组内比例（`shares`） |
 | 窗口变大变小 | 不重建布局：dockview 自己跟着容器重排；`1fr` 下次编译时按新宽度重新分配 |
+| 写 `useShared()` 的共享状态 | 只重渲染订阅了那个 key 的 view；不进布局、不落盘 |
 | 再次进页 | 读 `storage` → `resolveLayout` |
 | 模板改了（加/删 view、改区域） | `resolveLayout(旧快照 × 新模板)`：保尺寸/展开/tab 顺序（R1），新 view 按 `order` 插进来（R2/R4），模板删掉的区域丢弃（R3） |
 | 用户关掉的 view | 记在 `dismissed[]`，模板重编译时**不会自动加回来**（否则「我关的」和「新加的」分不清） |
@@ -243,7 +317,7 @@ L2（自由 docking）/ L3（页面存成可分享透视图）**不做**。
 {
   version: 1,
   pageType: 'task-run',
-  scopeKey: 'task:t-1',
+  scopeKey: 'task:t-1',              // 写这份快照的页实例；resolveLayout 对不上就当没存过
   dock: SerializedDockview,          // dockview api.toJSON() 原样
   dismissed: string[],               // 用户关掉的 view id
   maximizedArea?: string,            // dockview 快照不含最大化
@@ -290,8 +364,18 @@ L2（自由 docking）/ L3（页面存成可分享透视图）**不做**。
 一组兄弟的尺寸一定拉满父容器。留洞的话 dockview 的 `proportionalLayout` 会替我们做，
 于是「模板尺寸」和「屏幕上的尺寸」就是两个数，位移记账、`min` 约束、测试全都跟着错。
 
-**存储读回来先校验**：`version` / `pageType` 对不上，或者 grid 树的形状不是我们写得出来的样子
+**存储读回来先校验**：`version` / `pageType` / `scopeKey` 对不上，或者 grid 树的形状不是我们写得出来的样子
 （用户手改过 localStorage、旧版本写坏过）→ 一律当没存过，回模板。宁可丢掉用户布局，也不把畸形树喂给 `fromJSON`。
+
+**一份快照只属于一个页实例**（`scopeKey`）。默认存储键本来就带 `kind:id`，所以这条平时看不出来；
+它防的是宿主自定义 `storageKey` 的那种写法：把键写成模板级的，t-1 的尺寸 / 关掉的 view / 拖过的落点
+会静默套到 t-2 上。要的就是这个行为的话，显式打开 `shareLayout`。
+
+| 场景 | 行为 |
+|---|---|
+| 同一页实例再次进来 | 读快照，按 `pinnedSizes` / `shares` / `movedViews` / `dismissed` 重建 |
+| 另一个实例的快照（`scopeKey` 不同） | 当没存过 → 回模板 |
+| `shareLayout` | 不校 `scopeKey`：同一 pageType 的所有实例共用一份布局 |
 
 ## 跑范例
 
@@ -301,7 +385,7 @@ cd pkgs.ts/ui/workbench-dock
 ./sha.sh examples   # 只做生产构建（CI / 提交前验证例子没烂）
 ```
 
-四个例子，按顺序看（索引页 `/index.html`，细节见 [`examples/README.md`](./examples/README.md)）：
+五个例子，按顺序看（索引页 `/index.html`，细节见 [`examples/README.md`](./examples/README.md)）：
 
 | #   | 目录                                                    | 讲什么                                                                                  |
 | --- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -309,8 +393,9 @@ cd pkgs.ts/ui/workbench-dock
 | 02  | [`examples/02-pages/`](./examples/02-pages/)            | 多页实例：**导航条不属于本包**，页实例身份 = `pageId()`，`key` 决定是不是同一份布局     |
 | 03  | [`examples/03-plugin/`](./examples/03-plugin/)          | page 插件化：插件 = 包（`package.json` 的 `contributes`）+ 宿主骨架（`skeletons.ts`） |
 | 04  | [`examples/04-vanilla/`](./examples/04-vanilla/)        | 非 React view：`render.kind: 'vanilla'` 的 `create` / `update` / `dispose`              |
+| 05  | [`examples/05-board/`](./examples/05-board/)            | 集合页（任务管理器）：`scope.id` = 集合标识；选中项走 `useShared()`，不换页实例不重编译 |
 
-四个例子互不 import（一个目录里就 `index.html` + `main.tsx` + `style.css`），任何一段都能
+五个例子互不 import（一个目录里就 `index.html` + `main.tsx` + `style.css`），任何一段都能
 单独抄走；重复的那几十行定义是故意的。
 
 例子是**唯一**的手验场所：改了 UI 层（`src/react/`）就在 `01-basic` 里点一遍，`./sha.sh examples`
@@ -327,7 +412,10 @@ cd pkgs.ts/ui/workbench-dock
   [`examples/README.md` 第二节](./examples/README.md)。
 - **不带主题**：dockview 是浅色内置主题，暗色由宿主用 `--dv-*` 变量覆盖（可直接抄
   [`examples/01-basic/style.css`](./examples/01-basic/style.css) 最后一段）。
-- **一份快照只属于一个页实例**，不做跨页共享的「工作区」。
+- **一份快照只属于一个页实例**（`scopeKey` 校验），不做跨页共享的「工作区」；
+  确实要「所有实例一种摆法」就开 `shareLayout`（那时共享的也是布局，不是数据）。
+- **不做管理器外壳的导航/筛选**：一个集合页里的三栏归包（`examples/05-board`），
+  外面的页切换 / 列表外壳归宿主。包不知道「导航」这个概念。
 - 想同时显示两个页 = 两个 `<PageWorkbench>` 并排（本包的模型里没有「跨页的 dock」）。
 
 [dockview]: https://dockview.dev

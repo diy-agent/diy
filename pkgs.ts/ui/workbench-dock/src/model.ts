@@ -27,13 +27,26 @@ export type Size = number | `${number}fr`;
 /** 排列轴：`x` = 左右排，`y` = 上下排（对应 dockview 的 HORIZONTAL / VERTICAL） */
 export type Axis = 'x' | 'y';
 
-/** 页的核心对象。`kind` + `id` 决定 page 实例的身份（可寻址、可并排打开两个任务） */
+/**
+ * 页的核心对象 = 一个**页实例的身份**（不是这个页的数据，更不是页面 UI 状态）。
+ *
+ * `kind` + `id` 有三处会用到，都是「身份」的用途：
+ *   · `pageId()`：`'task-run@task:t-1'` —— 可寻址、可并排，也是宿主 `key` 的来源；
+ *   · 缺省存储键 `workbench-dock:<pageId>`；
+ *   · `layoutSignature()` + `SavedLayout.scopeKey` —— **换它 = 换一份布局**。
+ *
+ * `title` 包**一个字段都不读**：它只是约定给 `PageDef.title` / `ViewDef.title` 那些函数用的
+ * （`(scope) => scope.title ?? scope.id`），用不用、怎么拼，全由页自己决定。
+ *
+ * 所以别拿它装「选中项 / 当前筛选 / 展开的文件夹」这类会变的东西 —— 那些一变页实例就换了，
+ * 布局会被重编、用户拖过的尺寸会丢。页内 view 之间要通信走 `PageApi.shared`（见 `SharedState`）。
+ */
 export interface Scope {
-    /** 领域类型：task / project / run … */
+    /** 领域类型：task / project / run / board … */
     kind: string;
     /** 该领域内的稳定 id（任务 id / 项目 id …） */
     id: string;
-    /** 给人看的标题；缺省用 id */
+    /** 给人看的标题（仅由页自己的 title 函数消费） */
     title?: string;
 }
 
@@ -188,6 +201,27 @@ export interface PageInfo {
     icon?: string;
 }
 
+/**
+ * 页内的共享状态 —— 同一页里多个 view 之间的最小通信通道（选中项 / 当前筛选 / 联动高亮）。
+ *
+ * 为什么需要它：view 之间没有父子关系，`ViewProps` 只带 `scope` / `page` / `areaId` / `api`，
+ * 想让「列表里点一下」让「详情」跟着变，除了宿主自己在 `<PageWorkbench>` 外面包一层 Provider
+ * 就没有第二条路 —— 那是每个宿主都要重写一遍的东西，所以收进包里。
+ *
+ * 三条刻意的约束：
+ *   · **不进布局**：不在 `layoutSignature` 里，改它不会重编译、不会重挂 panel（拖过的尺寸也不动）；
+ *   · **不持久化**：生命周期 = 这一个页实例（宿主换 `key` 就没了）。要跨页保留 = 提到宿主去；
+ *   · **不做选择器、不做 reducer**：就一个 key → 值的槽。要结构化就存一个对象，浅比较交给使用方。
+ */
+export interface SharedState {
+    /** 从没写过 / 值是 `undefined` 时返回 `undefined`（所以别往里存 `undefined`） */
+    get<T = unknown>(key: string): T | undefined;
+    /** 写入并通知同 key 的订阅者；值没变（`Object.is`）就不通知 */
+    set<T>(key: string, value: T): void;
+    /** 订阅某个 key；返回退订函数（`useSyncExternalStore` 要的形状）。不同 key 互不打扰 */
+    subscribe(key: string, listener: () => void): () => void;
+}
+
 /** 区域控制面：view 里想"把成员列表展开"就调这里；不直接碰 dockview */
 export interface PageApi {
     showArea(areaId: string): void;
@@ -216,6 +250,13 @@ export interface PageApi {
     openView(viewId: string): boolean;
     /** 丢掉用户布局，回到模板（尺寸 / 展开 / 关掉的 view 全部复位） */
     resetLayout(): void;
+    /**
+     * 本页 view 之间的共享状态（选中项、筛选条件…）。
+     *
+     * 放在 `PageApi` 上是为了不新增一条 props 通道：vanilla view 也拿得到同一个槽。
+     * 它**不是**布局的一部分 —— 写它不会落盘、不会重编译（见 `SharedState`）。
+     */
+    shared: SharedState;
 }
 
 // ── 定义入口（校验都在这里做一次，运行期不再重复检查）────────────────────────────
@@ -241,9 +282,14 @@ export class ModelError extends Error {
     override name = 'ModelError';
 }
 
+/** 页实例的短身份（`task:t-1`）：存储键、`layoutSignature`、`SavedLayout.scopeKey` 都用它 */
+export function scopeKey(scope: Scope): string {
+    return `${scope.kind}:${scope.id}`;
+}
+
 /** 页实例 id（可寻址、可并排：`openPage('task-run', {kind:'task', id:'t1'})`） */
 export function pageId(pageType: string, scope: Scope): string {
-    return `${pageType}@${scope.kind}:${scope.id}`;
+    return `${pageType}@${scopeKey(scope)}`;
 }
 
 export function pageTitle<S extends Scope>(def: PageDef<S>, scope: S): string {

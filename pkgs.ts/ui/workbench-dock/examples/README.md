@@ -1,4 +1,4 @@
-# `examples/` —— 四个例子
+# `examples/` —— 五个例子
 
 例子是本包**唯一**的手验场所：纯模型（`src/model.ts` / `src/compile.ts`）有单测，
 UI 层（`src/react/`）只在浏览器里看得出来。**加能力先加例子，再改 API。**
@@ -10,7 +10,7 @@ page / view 定义一起写，例之间零 import —— 任何一段都能整�
 ```bash
 cd pkgs.ts/ui/workbench-dock
 ./sha.sh dev        # 例子的 vite（root = examples/），打开打印出的地址
-./sha.sh examples   # 只做生产构建（验证四个入口都还能构建）
+./sha.sh examples   # 只做生产构建（验证五个入口都还能构建）
 ```
 
 vite 的 `input`、本文件的表格、`index.html` 的卡片**三处必须同步**：
@@ -21,6 +21,7 @@ vite 的 `input`、本文件的表格、`index.html` 的卡片**三处必须同�
 | 02  | `02-pages`   | 同一模板开两份实例；页实例身份 = `pageId()`；`key` 的作用                  | **导航条不属于包** —— 十几行宿主代码，包只管一个页                  |
 | 03  | `03-plugin`  | 插件 = 一个包（`package.json` 的 `contributes` + `index.tsx`），骨架归宿主 | 插件说「插在哪」，宿主说「长什么样」—— 所以清单里没有一个尺寸       |
 | 04  | `04-vanilla` | `render.kind: 'vanilla'`：`create` / `update` / `dispose`                  | 非 React view 拿到的 props 和 React view **完全一样**，少的只是框架 |
+| 05  | `05-board`   | 集合页（任务管理器）：`scope.id` = 集合标识；选中项走 `useShared()`        | 换选中项不是换页实例 —— 不重编译、不丢用户拖的尺寸                  |
 
 ---
 
@@ -70,6 +71,28 @@ const [current, setCurrent] = useState(scopes[0]);
     storage={localStorage}
 />;
 ```
+
+有一个坑在这四步之外：**`key` 里只能放页实例身份**。放个 `selectedId` 进去，
+「列表里换一行」就会变成「换了一个页实例」—— 布局重编译、用户拖的尺寸清空。
+选中项这类东西走页内共享状态（`useShared()`，见 [`05-board`](./05-board/main.tsx)）。
+
+### 「任务管理器」算哪一层
+
+一个页实例对应**一组**对象（任务管理器 / 文件浏览器），现在有两种摆法，05 里两层都摆上了：
+
+```
+┌────────┬─────────────────────────────┐
+│ rail   │ 一个 board 页实例            │
+│ 管理器 │ ┌──────┬──────────┬───────┐ │
+│ · t-1  │ │ 列表 │ 详情     │ 属性  │ │  ← 这三栏在布局里，能拖、能收
+│ · t-2  │ └──────┴──────────┴───────┘ │
+└────────┴─────────────────────────────┘
+  ↑ 宿主 UI                        ↑ { kind:'board', id:'all' }
+```
+
+- **外壳**（页切换、筛选条）归宿主 —— 包不知道「导航」这个概念；
+- **内部三栏**是一个 page，`scope.id` 是**集合标识**（`all` / `mine` / `project:p-1`，一个集合一份布局）；
+- **当前选中哪条**走 `useShared('selectedTask')`：不换页实例，所以布局不动。
 
 ## 二、page 怎么插件化
 
@@ -176,7 +199,7 @@ theia 的 `sample-plugins/plugin-view-layout` 是最干净的证据：那个插�
 
 两边的 `apiVersion`、清单纯数据、整份拒绝是同一条纪律，将来合并只是补 `contributes.pages`。
 
-## 三、四个例子各自证明什么
+## 三、五个例子各自证明什么
 
 **01-basic** —— 布局这件事本身能成立：中心区是「核心 view」，右区和底栏按需展开，
 拖分屏线 / 收起区域 / 关 tab 刷新后还在；`editable` 一开就从 L0（结构锁死）变 L1（可拖换区）。
@@ -204,3 +227,12 @@ defineView({ id, title, placement, render: { kind: 'vanilla', create(props) { �
 契约只有三件事：`create` 一次、props 变了调 `update`、销毁调 `dispose`（必须幂等）。
 拿到的东西和 React view 完全等价（`scope` / `page` / `areaId` / `api`）。代价也写在那
 example 的抬头：子树里没有 `usePage()`，没有错误边界 / Suspense。
+
+**05-board** —— 「任务管理器」这类**集合页**：`{ kind:'board', id:'all' }` 一个实例管四条任务，
+列表 / 详情 / 属性三栏在自己的布局里（固定 280 / `1fr` / 收起）。验证三件事：
+
+- 点列表换选中：详情立刻跟着变，但**布局一点没动** —— 拖过的栏宽还在，详情 view 的「挂载 #n」也不变；
+- 选中项存在共享状态里（`useShared('selectedTask')`），**不落盘**：刷新 / 切页回来是缺省值，而布局还在 ——
+  这正是「布局」和「页面状态」的分界；
+- rail 上的 t-1 / t-2 是另一个 pageType（单任务页），换过去 = 换 `key` = 换布局。
+  集合页 ↔ 单对象页并存，两者都是页，区别只在 `scope` 指一个集合还是一个对象。

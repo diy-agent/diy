@@ -23,6 +23,7 @@ export default defineConfig({
                 pages: '02-pages/index.html',
                 plugin: '03-plugin/index.html',
                 vanilla: '04-vanilla/index.html',
+                board: '05-board/index.html',
             },
         },
     },

@@ -54,7 +54,19 @@
     另一边 `distribute` 必须**归一**（一组兄弟拉满父容器）：不归一的话 `proportionalLayout`
     会替你做，于是「编译尺寸 ≡ 渲染尺寸」不成立，位移记账和 `min` 约束一起失灵。
 
-15. **固定区钉 px、弹性区钉比例，两者不能混**：`'1fr'` 钉 px 等于把某一刻的窗口尺寸烧进布局。
+15. **`Scope` 是页实例身份，不是页的数据**：`kind` + `id` 进 `pageId()` / 存储键 / `layoutSignature()` /
+    `SavedLayout.scopeKey`，**换它 = 换一份布局**。所以别拿它装选中项 / 筛选条件 / 业务字段；
+    页内 view 要通信用 `PageApi.shared`（`useShared()`）。`Scope.title` 包不读，只是给 title 函数用的约定。
+
+16. **一份快照只属于一个页实例**：`resolveLayout` 会校 `scopeKey`（和 `pageType` 一起），对不上就当没存过；
+    要「同一模板的所有实例共用一份布局」得显式开 `shareLayout`。别把这条校验收窄成一个形式：
+    它防的是宿主自定义 `storageKey` 时把 t-1 的尺寸 / `dismissed` / 落点静默套到 t-2 上。
+
+17. **共享状态不进布局**：`PageApi.shared` 不在 `layoutSignature()` 里，也不落在 `SavedLayout` 里。
+    它一变只重渲订阅了那个 key 的 view（`useSyncExternalStore`），不重编译、不重挂 panel。
+    别给它加持久化 / 选择器 / reducer ——它是「选中项这个量级」的通道，要复杂状态接宿主的 store。
+
+18. **固定区钉 px、弹性区钉比例，两者不能混**：`'1fr'` 钉 px 等于把某一刻的窗口尺寸烧进布局。
     份额存在 `shares`（区域 id → 组内权重），**整组一起采信** —— 有一个弹性成员缺份额就全组回模板 `fr`，
     一半份额一半 `fr` 混算的结果没人能预测。份额只能记在「整组都是叶子」的组上（分支节点没有 id）。
 
@@ -68,12 +80,14 @@
 `allow` 校验与 L1 落点 / R1–R4 /
 dismissed / pinnedSizes（含「快照里的 size 不采信」）/ 坏快照回落 / 回落模板。
 UI 层不写单测（它只是把纯函数的结果喂给 dockview）：改动 UI 层就在 `examples/` 里手验 ——
-`./sha.sh dev` 起例子的 vite（root = `examples/`），`./sha.sh examples` 验证四个入口都还能构建。
+`./sha.sh dev` 起例子的 vite（root = `examples/`），`./sha.sh examples` 验证五个入口都还能构建。
 
 ## examples/
 
 范例是**本包自己的**，不寄生在任何 app（`apps/diy2` 里已没有 dock 入口）。
-`01-basic` / `02-pages` / `03-plugin` / `04-vanilla` 一个比一个多一层宿主责任；新增能力先加例子再改 API。
+`01-basic` / `02-pages` / `03-plugin` / `04-vanilla` / `05-board` 一个比一个多一层宿主责任；
+新增能力先加例子再改 API。`05-board` 是**集合页**的例子（`scope.id` = 集合标识 + `useShared()` 传选中项），
+以后动 `Scope` 的语义或共享状态，先把它跑一遍。
 `vite.config.ts` 的 input 与 `examples/README.md` 的表格**必须同步**（加例子忘登记 = 没人看得到）。
 
 每个例子**自包含**：`index.html` + `main.tsx`（含自己的 page / view 定义）+ `style.css`，例之间
