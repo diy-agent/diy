@@ -94,6 +94,7 @@ interface ShellState {
     /**
      * 容器 id → 还有几个提问在等回答（侧栏 ?）。服务端 `/api/rooms` 的投影字段 `pendingAsks`；
      * 当前房间另由会话流现算 —— 答完那一刻 gate 就结算了，不该等 30 秒轮询才灭。
+     * 只有「正在看」的房间交给流，其余（含看过的）以服务端为准，见 `mergePendingAsks`。
      */
     pendingAsks: Record<string, number>;
     error?: string;
@@ -127,7 +128,13 @@ function subscribeShell(listener: () => void): () => void {
     return () => listeners.delete(listener);
 }
 
-/** 整份快照（壳自己用：它本来就要 rooms / bots / error 全看）。 */
+/**
+ * 整份快照。**这是兜底，不是默认**：它每次 `emit` 都会让调用者重渲，因为快照对象
+ * 每次都是新的。界面里能说清「我要哪个值」的，就用下面那些窄选择器。
+ *
+ * 现在还剩：正文 / 对话框 / 表面（它们本来就跟着会话和错误一起变）。壳和侧栏
+ * 一行都不用这个 —— 一行重渲是由「这一行看到的值变了」决定的。
+ */
 export function useShell(): ShellState {
     return React.useSyncExternalStore(
         subscribeShell,
@@ -149,6 +156,89 @@ export function useAddress(): NavAddress {
         subscribeShell,
         () => state.address,
         () => state.address,
+    );
+}
+
+/**
+ * 只订阅房间列表本身。`emit` 换掉的是 `lastActivity` / `pendingAsks` / `error` 这些
+ * 字段（浅拷贝），`rooms` 引用不变 —— 侧栏三块因此不会因为「某个房间来了条消息」重渲。
+ * 列表真的变了（改名 / 增删 / 改状态）时才会。
+ */
+export function useRooms(): Room[] {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.rooms,
+        () => state.rooms,
+    );
+}
+
+/** 只订阅 bot 表（头部成员胶囊用）。同理：别的字段变了，引用不变。 */
+export function useBots(): Record<string, Bot> {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.bots,
+        () => state.bots,
+    );
+}
+
+/** 只订阅 `loaded`（首屏「连接中」/ 空壳两态）。 */
+export function useLoaded(): boolean {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.loaded,
+        () => state.loaded,
+    );
+}
+
+/** 只订阅当前错误串。没有错误时是 `undefined`（同一个值），错误清了才变。 */
+export function useError(): string | undefined {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.error,
+        () => state.error,
+    );
+}
+
+/**
+ * 只订阅默认模型（对话框与新建时用）。
+ *
+ * 注意它和「当前房间的 modelKey」是两件事：后者在 `Room` 对象上，跟着 `useRooms()` 走。
+ */
+export function useDefaultModelKey(): string {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.defaultModelKey,
+        () => state.defaultModelKey,
+    );
+}
+
+/**
+ * 只订阅「正在看的那个房间」。快照是 `rooms` 数组里的**那个元素**，引用稳定 ——
+ * 列表里别的房间变了（新消息、改了状态）不会把正文头部重渲一遍。
+ *
+ * 用元素而不是 `find(...)` 的结果包一层：包出来的新对象每次都不等，等于整份快照。
+ */
+export function useSelectedRoom(): Room | undefined {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.rooms.find((room) => room.id === state.selectedId),
+        () => state.rooms.find((room) => room.id === state.selectedId),
+    );
+}
+
+/**
+ * 只订阅「这一行是不是当前行」（布尔）。
+ *
+ * 为什么不给每一行 `useAddress()`：地址一变，所有行拿到的快照都是新对象，整张表
+ * 跟着重渲 —— 而实际要变的只有「旧的高亮灭掉、新的亮起来」这两行。这里比完
+ * 只剩一个 true/false，没翻转的行不会被通知。
+ */
+export function useIsCurrentRoom(roomId: string): boolean {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => isCurrentRoom(state.address, { id: roomId }),
+        // 服务端渲染时按已有快照算，而不是一律 false：SSR 出来的第一屏也要有高亮
+        () => isCurrentRoom(state.address, { id: roomId }),
     );
 }
 
@@ -357,11 +447,12 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     // 待答提问：同一次列表请求回来（服务端一次算好，别逐房间问）
     const serverPendingAsks: Record<string, number> = {};
     for (const room of rooms) {
-        if (typeof room.pendingAsks === 'number' && room.pendingAsks > 0) serverPendingAsks[room.id] = room.pendingAsks;
+        if (typeof room.pendingAsks === 'number' && room.pendingAsks > 0) {
+            serverPendingAsks[room.id] = room.pendingAsks;
+        }
     }
-    // 谁说了算：只有在看的那一间、且流已经热了，才交给本地 —— 轮询那份最老 30 秒，
-    // 别把「刚答完」又点亮。看过的房间切走时订阅就摘了，本地那份冻在离开前，必须交回
-    // 服务端，否则提问在别处有了结局，`?` 会一直亮着（规则见 `mergePendingAsks`）。
+    // 只有当前房间（且流已热身）由流说了算；离开过的房间必须交回服务端 —— 那份本地值
+    // 在切走时就跟着订阅一起冻住了，继续本地优先会让 ? 永久亮着。规则见 pendingAsk.ts
     const liveRoomId = activityRoomId !== '' && warmRooms.has(activityRoomId) ? activityRoomId : '';
     const pendingAsks = mergePendingAsks(serverPendingAsks, state.pendingAsks, liveRoomId);
     const address = resolveAddress(rooms);

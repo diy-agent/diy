@@ -15,7 +15,7 @@ import {
     type Room,
 } from '../model';
 import type { NavContext, NavSource } from '../nav';
-import { actions, isCurrentRoom, useAddress, useLastActivityOf, useStore } from '../store';
+import { actions, useIsCurrentRoom, useLastActivityOf, useRooms } from '../store';
 import { projectNamesOf } from './projects';
 
 /** 历史任务区展开状态：默认展开（用户要的是“方便回头看”，默认收起等于又藏起来了） */
@@ -42,9 +42,9 @@ function loadHistoryOpen(): boolean {
  * 显示别的字段会让列表的时间不单调（3h、2d、5h…），看着像没排序。最后活动放悬停 ——
  * 「关了之后又说过话」是个值得知道的例外，但它不该占这一列。
  */
-function HistoryRow({ room, projectName }: { room: Room; projectName?: string }) {
-    const address = useAddress();
-    const active = isCurrentRoom(address, room);
+function HistoryRowView({ room, projectName }: { room: Room; projectName?: string }) {
+    // 跟 `RoomRow` 一样：只拿一个布尔，只有高亮翻转的那两行会重渲
+    const active = useIsCurrentRoom(room.id);
     const closedAt = closedAtOf(room);
     const activityAt = useLastActivityOf(room.id);
     const closedAgo = formatCompactAgo(closedAt);
@@ -95,7 +95,8 @@ function HistoryRow({ room, projectName }: { room: Room; projectName?: string })
 }
 
 function HistoryBlock({ context }: { context: NavContext }) {
-    const state = useStore();
+    // 只订阅列表：某个任务来了消息（`lastActivity` 变了）不该让整张历史表重铺
+    const rooms = useRooms();
     const [historyOpen, setHistoryOpen] = React.useState(loadHistoryOpen);
     const toggleHistory = React.useCallback(() => {
         setHistoryOpen((current) => {
@@ -109,10 +110,10 @@ function HistoryBlock({ context }: { context: NavContext }) {
         });
     }, []);
 
-    const closedTasks = closedTasksOf(state.rooms);
+    const closedTasks = closedTasksOf(rooms);
     if (closedTasks.length === 0) return null;
     const { open } = context;
-    const projectNames = projectNamesOf(state.rooms);
+    const projectNames = projectNamesOf(rooms);
 
     return (
         // 历史任务：已关闭的任务从项目树里收起（用户：closed 的藏起来），但“看不见”不等于“没了”
@@ -163,6 +164,12 @@ function HistoryBlock({ context }: { context: NavContext }) {
         </div>
     );
 }
+
+/**
+ * 行本身 `memo`：传进来的两个 props（房间对象、项目名字符串）都是稳定引用，
+ * 所以父级重渲时这一行不会跟着进 render。
+ */
+const HistoryRow = React.memo(HistoryRowView);
 
 export const historySource: NavSource = {
     id: 'core:history',

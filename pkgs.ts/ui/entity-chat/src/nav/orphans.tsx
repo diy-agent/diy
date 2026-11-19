@@ -6,13 +6,14 @@
 import { RoomRow } from '../components/RoomRow';
 import { visibleInTree } from '../model';
 import type { NavContext, NavSource } from '../nav';
-import { useStore } from '../store';
+import { useRooms } from '../store';
 
 function OrphansBlock({ context }: { context: NavContext }) {
-    const state = useStore();
+    // 只订阅列表本身（见 ProjectsBlock 的同一条理由）
+    const rooms = useRooms();
     const { open, host } = context;
-    const projectIds = new Set(state.rooms.filter((room) => room.type === 'project').map((project) => project.id));
-    const orphans = state.rooms.filter(
+    const projectIds = new Set(rooms.filter((room) => room.type === 'project').map((project) => project.id));
+    const orphans = rooms.filter(
         (room) =>
             room.type !== 'project' && visibleInTree(room) && !projectIds.has(String(room.data['projectId'] ?? '')),
     );

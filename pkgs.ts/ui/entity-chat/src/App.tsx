@@ -16,7 +16,7 @@ import { ContextPanel } from './components/ContextPanel';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, primaryBotOf, roomTypeLabel, type Room } from './model';
 import { modelLabel } from './models';
-import { actions, useStore } from './store';
+import { actions, useBots, useDefaultModelKey, useError, useLoaded, useRooms, useSelectedRoom } from './store';
 
 function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
     return (
@@ -36,7 +36,11 @@ function roomDir(room: Room): string | undefined {
     return typeof dir === 'string' && dir !== '' ? dir : undefined;
 }
 
-function RoomHeader({
+/**
+ * 头部。`memo` 的意义：`App` 因为「侧栏一行的高亮变了」这类原因重渲时，它不该跟着
+ * 整块重画（里面还有成员胶囊、上下文面板）。
+ */
+const RoomHeader = React.memo(function RoomHeader({
     room,
     onAddMember,
     onPickModel,
@@ -45,9 +49,11 @@ function RoomHeader({
     onAddMember: () => void;
     onPickModel: () => void;
 }) {
-    const state = useStore();
-    const bots = botsOf(room, state.bots);
-    const primary = primaryBotOf(room, state.bots);
+    // 两个窄订阅：bot 表、房间列表（后者只用来把项目的 dir 继承下来）
+    const botMap = useBots();
+    const rooms = useRooms();
+    const bots = botsOf(room, botMap);
+    const primary = primaryBotOf(room, botMap);
     const others = bots.filter((bot) => bot.id !== primary?.id);
     const isProject = room.type === 'project';
     const Icon = isProject ? Folder : ListTodo;
@@ -71,7 +77,7 @@ function RoomHeader({
                 {roomDir(room) !== undefined && (
                     <span className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
                         <Folder className="size-3" />
-                        {dirOf(room, state.rooms)}
+                        {dirOf(room, rooms)}
                     </span>
                 )}
                 <ModelChip value={room.modelKey} onClick={onPickModel} />
@@ -113,15 +119,21 @@ function RoomHeader({
             </div>
         </header>
     );
-}
+});
 
 export function App() {
-    const state = useStore();
-    // ⚠️ 用内联 find 而不是 `roomOf(state.selectedId)`：React Compiler 会把
-    // 「参数没变的外部函数调用」整个 memo 住，于是 `state.rooms` 变了、`selectedId` 没变时
-    // 拿到的还是旧 room —— 表现是侧栏已改名/改状态，头部标题与状态胶囊一动不动。
-    // 内联箭头函数里的 `state.rooms` 是编译器看得见的依赖，不会被缓存。
-    const room = state.rooms.find((item) => item.id === state.selectedId);
+    // 四个窄订阅。这层以前是 `useStore()`（整份快照），于是**每一条** `emit` ——
+    // 别的房间来了消息、某个房间多了个待答提问、侧栏换了个高亮 —— 都会把整个 App
+    // 连同侧栏、三个 nav 块一起重渲一遍。
+    //
+    // `useSelectedRoom` 的快照是 `rooms` 数组里的那个元素：rename / 改状态时会换新对象
+    // （`refresh` 整份换新），所以「侧栏已改名、头部不动」那个老毛病不会因为去掉整份
+    // 快照而回来。
+    const rooms = useRooms();
+    const loaded = useLoaded();
+    const error = useError();
+    const defaultModelKey = useDefaultModelKey();
+    const room = useSelectedRoom();
     // 弹窗状态：新建项目 / 新建任务（记住在哪个项目下）/ 加成员 / 设置 / 删除确认
     const [dialog, setDialog] = React.useState<
         | null
@@ -137,11 +149,9 @@ export function App() {
     );
     const [modelTarget, setModelTarget] = React.useState<string | null>(null);
     const activeRoom = room;
-    const taskProject =
-        dialog?.kind === 'task' ? state.rooms.find((item) => item.id === dialog.projectId) : undefined;
-    const deleteTarget =
-        dialog?.kind === 'delete' ? state.rooms.find((item) => item.id === dialog.roomId) : undefined;
-    const modelRoom = modelTarget === null ? undefined : state.rooms.find((item) => item.id === modelTarget);
+    const taskProject = dialog?.kind === 'task' ? rooms.find((item) => item.id === dialog.projectId) : undefined;
+    const deleteTarget = dialog?.kind === 'delete' ? rooms.find((item) => item.id === dialog.roomId) : undefined;
+    const modelRoom = modelTarget === null ? undefined : rooms.find((item) => item.id === modelTarget);
 
     React.useEffect(() => {
         actions.bootstrap();
@@ -154,6 +164,18 @@ export function App() {
             return true;
         }
     });
+    // 传给侧栏的回调必须 stable：`Sidebar` 把它们放进 `useMemo` 的 host，再传给每一行；
+    // 每次渲染新建一个函数，行上的 `React.memo` 就永远拦不住（props 比不等）。
+    const onCreateProject = React.useCallback(() => setDialog({ kind: 'project' }), []);
+    const onCreateTask = React.useCallback((projectId: string) => setDialog({ kind: 'task', projectId }), []);
+    const onRequestDelete = React.useCallback((target: Room) => setDialog({ kind: 'delete', roomId: target.id }), []);
+    const onOpenSettings = React.useCallback(() => setDialog({ kind: 'settings' }), []);
+    const onAddMember = React.useCallback(() => setDialog({ kind: 'member' }), []);
+    const roomId = room?.id;
+    const onPickModel = React.useCallback(() => {
+        if (roomId !== undefined) setModelTarget(roomId);
+    }, [roomId]);
+
     const toggleSidebar = React.useCallback(() => {
         setSidebarOpen((open) => {
             try {
@@ -181,21 +203,21 @@ export function App() {
             <Sidebar
                 open={sidebarOpen}
                 onToggle={toggleSidebar}
-                onCreateProject={() => setDialog({ kind: 'project' })}
-                onCreateTask={(projectId) => setDialog({ kind: 'task', projectId })}
-                onRequestDelete={(target) => setDialog({ kind: 'delete', roomId: target.id })}
-                onOpenSettings={() => setDialog({ kind: 'settings' })}
+                onCreateProject={onCreateProject}
+                onCreateTask={onCreateTask}
+                onRequestDelete={onRequestDelete}
+                onOpenSettings={onOpenSettings}
             />
 
             <main className="relative flex min-w-0 flex-1 flex-col">
-                {!state.loaded ? (
+                {!loaded ? (
                     <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
                         <span className="flex items-center gap-2">
                             <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
                             连接 diy2 后端…
                         </span>
-                        {state.error !== undefined && (
-                            <span className="text-[11px] text-destructive">上次失败：{state.error}（正在重试）</span>
+                        {error !== undefined && (
+                            <span className="text-[11px] text-destructive">上次失败：{error}（正在重试）</span>
                         )}
                     </div>
                 ) : room === undefined ? (
@@ -204,19 +226,15 @@ export function App() {
                     </div>
                 ) : (
                     <>
-                        <RoomHeader
-                            room={room}
-                            onAddMember={() => setDialog({ kind: 'member' })}
-                            onPickModel={() => setModelTarget(room.id)}
-                        />
+                        <RoomHeader room={room} onAddMember={onAddMember} onPickModel={onPickModel} />
                         <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
                         <SpeakingBar roomId={room.id} />
                         <SurfaceViews surfaceId={surfaceId} targetId={room.id} />
                     </>
                 )}
-                {state.loaded && state.error !== undefined && (
+                {loaded && error !== undefined && (
                     <div className="border-t border-destructive/40 bg-destructive/10 px-3 py-1 text-[11px]">
-                        后端：{state.error}
+                        后端：{error}
                     </div>
                 )}
             </main>
@@ -231,7 +249,7 @@ export function App() {
                 <CreateTaskDialog
                     project={taskProject}
                     suggestedName={`新任务 ${
-                        state.rooms.filter((item) => item.data['projectId'] === dialog.projectId).length + 1
+                        rooms.filter((item) => item.data['projectId'] === dialog.projectId).length + 1
                     }`}
                     onClose={() => setDialog(null)}
                     // 不 void：对话框要等"建成了"才清描述草稿（失败留在对话框里）
@@ -245,7 +263,7 @@ export function App() {
             {dialog?.kind === 'delete' && deleteTarget !== undefined && (
                 <ConfirmDeleteDialog
                     room={deleteTarget}
-                    taskCount={state.rooms.filter((item) => item.data['projectId'] === dialog.roomId).length}
+                    taskCount={rooms.filter((item) => item.data['projectId'] === dialog.roomId).length}
                     onClose={() => setDialog(null)}
                     onConfirm={() => void actions.deleteRoom(dialog.roomId)}
                 />
@@ -260,7 +278,7 @@ export function App() {
             )}
             {dialog?.kind === 'settings' && (
                 <SettingsDialog
-                    defaultModelKey={state.defaultModelKey}
+                    defaultModelKey={defaultModelKey}
                     onChangeDefault={(key) => actions.setDefaultModel(key)}
                     onClose={() => setDialog(null)}
                 />
@@ -268,7 +286,7 @@ export function App() {
             {modelTarget !== null && (
                 <ModelDialog
                     title={`「${modelRoom?.name ?? ''}」的模型`}
-                    value={modelRoom?.modelKey ?? state.defaultModelKey}
+                    value={modelRoom?.modelKey ?? defaultModelKey}
                     onChange={(key) => {
                         if (modelTarget !== null) actions.setRoomModel(modelTarget, key);
                     }}
