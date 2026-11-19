@@ -10,7 +10,12 @@
 //   ① 多级目录，**根目录不许散文件**（只有 INDEX.md）；中文目录名 / 文件名欢迎
 //   ② 元数据只留 `desc` + `updated`；`subject` / `id` / `review` / `lifecycle` /
 //      `source` / `evidence` / `scope` / `supersedes` / `verifiedAt` 全部不要
-//   ③ 本包只做**写 + 整理**（write / check / index / move），**不提供查询** —— 模型自己 `rg`
+//   ③ 本包做**写 + 整理 + 只读投影**：write / check / index / move，
+//      以及 brief / get / find（`query.ts`）。
+//      **投影不是第二套数据模型**：仍然直接读 md，不建索引、不引入 claim / evidence；
+//      它省的是 token 与格式，不是「让模型学一套 API」。
+//      （2026-11 口径修订：文件仍是唯一真源，但 rg 的路径拼装与首句截断不稳定，
+//      故允许一个只读命令面；写侧不变。）
 //
 // ── 与 docs 的判据 ──
 //   docs/           「为什么这么设计」—— 改代码**不一定**要改它
@@ -71,7 +76,10 @@ export function readFrontmatter(text: string): Record<string, string> {
     let block: string[] = [];
     const flush = (): void => {
         if (key === null) return;
-        out[key] = block.map((l) => l.trim()).filter((l) => l !== '').join(' ');
+        out[key] = block
+            .map((l) => l.trim())
+            .filter((l) => l !== '')
+            .join(' ');
         key = null;
         block = [];
     };
@@ -272,9 +280,7 @@ export function writeEntry(root: string, relPath: string, content: string): { pa
         throw new Error(`kb: INDEX.md 由工具生成，不要手写（用 \`diy kb index\`）`);
     }
     if (!norm.includes('/')) {
-        throw new Error(
-            `kb: 根目录不许放知识文件（"${norm}"）—— 放进子目录，例如 \`rules/${norm}\`、\`app/${norm}\``,
-        );
+        throw new Error(`kb: 根目录不许放知识文件（"${norm}"）—— 放进子目录，例如 \`rules/${norm}\`、\`app/${norm}\``);
     }
     const rootAbs = resolve(root);
     const abs = join(rootAbs, norm);
@@ -291,7 +297,10 @@ export function writeEntry(root: string, relPath: string, content: string): { pa
  *
  * 有问题的条目**不进 INDEX**（宁可少一条，也不让索引里出现没有说明的行）。
  */
-export function writeIndex(root: string, rootLabel = ''): { entries: number; problems: readonly KbProblem[]; path: string } {
+export function writeIndex(
+    root: string,
+    rootLabel = '',
+): { entries: number; problems: readonly KbProblem[]; path: string } {
     const scan = scanKb(root);
     const abs = join(resolve(root), INDEX_NAME);
     // label 为空的调用（`write` / `move` 写完自动刷索引）不能把原有的抬头冲掉 ——
@@ -359,3 +368,17 @@ export function kbRootOf(from: string): string {
     }
     return join(resolve(from), '.diy', 'knowledge');
 }
+
+// 只读投影（brief / get / find）—— 与写侧同一份真源，不建索引
+export {
+    briefOf,
+    findIn,
+    firstSentence,
+    getSection,
+    globalKbRoot,
+    parseSections,
+    pathsOf,
+    type KbBriefItem,
+    type KbFindHit,
+    type KbSectionRef,
+} from './query.js';
