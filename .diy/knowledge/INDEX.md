@@ -52,9 +52,9 @@
 
 ## facts/
 
-- `cli.md` — 事实库的写入口本身（agent 只经 CLI，不碰 YAML）（1 节 · 2026-10-21）
-- `find.md` — diy-facts 包内定位：哪个文件管什么（事实库内核 @diy-agent/facts）（11 节 · 2026-10-23）
-- `rule.md` — 事实库硬约束：env 轴 / claim 与 id / 相交匹配 / 单一实现 / 生成物式真源 / 任务级库边界（17 节 · 2026-10-26）
+- `cli.md` — 知识库的读入口（diy2 facts）；写侧 diy kb，yaml 事实库已退役（2 节 · 2026-11-19）
+- `find.md` — diy-facts 包内定位：哪个文件管什么（事实库内核 @diy-agent/facts）（12 节 · 2026-10-23）
+- `rule.md` — 事实库硬约束：env 轴 / claim 与 id / 相交匹配 / 单一实现 / 生成物式真源 / 任务级库边界（18 节 · 2026-10-26）
 
 ## find/
 
