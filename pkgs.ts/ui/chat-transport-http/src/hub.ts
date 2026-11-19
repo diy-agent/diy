@@ -10,6 +10,9 @@
 //
 // 与 server 端 `apps/diy2/server/stream.ts` 一一对应：首帧 `$conn` 交身份，
 // 订阅/退订走 POST，事件帧是 `{ topic, event }`。
+//
+// 连接**惰性**：第一次 `watch()` 才拨号。没订阅任何话题的页（只开侧栏、只读列表）
+// 一条都不占 —— 否则「一条」也会被空页白吃，把省下来的额度还回去。
 
 import type { StreamEvent } from '@diy-agent/chat-core';
 
@@ -53,11 +56,12 @@ export class StreamHub {
     private connId: string | undefined;
     private attempt = 0;
     private closed = false;
+    /** 重连循环只跑一次：等第一个话题出现才启动，之后断了就在循环里自愈 */
+    private started = false;
 
     constructor(options: { base: string; fetch: () => typeof fetch }) {
         this.base = options.base;
         this.getFetch = options.fetch;
-        void this.loop();
     }
 
     /**
@@ -74,6 +78,7 @@ export class StreamHub {
             this.topics.set(topic, set);
         }
         set.add(listener);
+        this.start();
         if (this.connId !== undefined) void this.sync(topic);
 
         return () => {
@@ -92,6 +97,7 @@ export class StreamHub {
      * 断着时返回 false，调用方自己决定继续发还是等。
      */
     async ensure(topic: string): Promise<boolean> {
+        this.start();
         if (this.connId === undefined) return false;
         if (this.remote.has(topic)) return true;
         return this.sync(topic);
@@ -104,6 +110,13 @@ export class StreamHub {
         this.remote.clear();
         this.pending.clear();
         this.connId = undefined;
+    }
+
+    /** 启动（幂等）：只在第一个话题出现时拨第一条连接 */
+    private start(): void {
+        if (this.started || this.closed) return;
+        this.started = true;
+        void this.loop();
     }
 
     /** 一条连接的重连循环：断了就退避重连，退避上限 30s */

@@ -82,16 +82,34 @@ describe('HttpChatClient / 一条连接多话题', () => {
         client.close();
     });
 
+    it('没有任何订阅就不建连接：只开侧栏 / 只读列表的页一条也不占', async () => {
+        const { impl, gets, send, posts } = fakeBackend();
+        const client = new HttpChatClient({ fetchImpl: impl });
+
+        // 光造 client（store 模块加载时就会造一个）不算「要事件」，不该拨号
+        await flush();
+        expect(gets).toEqual([]);
+        expect(posts).toEqual([]);
+
+        // 第一个 watch 才把它拉起来，而且只拉一条
+        client.watch('proj:a', () => undefined);
+        client.watch('proj:b', () => undefined);
+        await flush();
+        expect(gets).toEqual(['/api/stream']);
+        send('$conn', { conn: 'c1' });
+        await flush();
+        expect(subscribed(posts)).toEqual(['room:proj:a', 'room:proj:b']);
+        client.close();
+    });
+
     it('post 不再多开连接，也不再等整轮：发完就返回', async () => {
         const { impl, gets, send, posts } = fakeBackend();
         const client = new HttpChatClient({ fetchImpl: impl });
 
-        await flush();
-        send('$conn', { conn: 'c1' });
-        await flush();
-
         const watched: unknown[] = [];
         client.watch('proj:a', (event) => watched.push(event));
+        await flush();
+        send('$conn', { conn: 'c1' });
         await flush();
         posts.length = 0;
 
