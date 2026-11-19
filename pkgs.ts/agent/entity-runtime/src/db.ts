@@ -84,6 +84,9 @@ export interface Store {
      * 这是**投影**不是事实：`rooms` 表故意不存 updated_at —— 那条路径要改名 / 改状态 /
      * 加成员 / 发消息四个写点都记得盖章才不会漂。这里的 smell 就一条：只反映「聊过」，
      * 改个名字不算活动（见 ## 讨论）。没有 item 的容器不出现在结果里（由调用方显示「—」）。
+     *
+     * 实现是一条 `GROUP BY entity_id` 取 `MAX(at)`：靠 `items_entity_at` 覆盖索引才是
+     * 索引扫描而不是全表扫（实测差 20 倍，见建表处）。那条索引是这条查询的一部分，别删。
      */
     lastItemAtByRoom(): Record<string, number>;
     /**
