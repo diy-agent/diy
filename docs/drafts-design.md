@@ -70,8 +70,11 @@ CREATE TABLE IF NOT EXISTS drafts (
 - `PUT /api/rooms/:id/drafts/:field`，body `{ value }`
   空值 = 删除；返回 `{ updatedAt }`。幂等。
 - `DELETE /api/rooms/:id/drafts/:field`（显式清；语义等同 PUT 空值）
-- `GET /api/rooms` 每项附 `hasDraft: boolean`（`drafts` 表按 owner 聚合），供侧栏 ✎。
-  这是**响应字段**，不写进 `Room` 领域类型；客户端用 `RoomSummary = Room & { hasDraft?: boolean }` 读。
+- `GET /api/rooms` 每项附两个投影（**响应字段**，不写进 `Room` 领域类型）：
+  - `hasDraft: boolean` —— **只算输入类草稿**（`field` 不是 `ask:%`：发言框 / 对话框表单），供侧栏 ✎；
+  - `pendingAsks?: number` —— 还有几个提问在等回答（`actor.pendingAsks()`），供侧栏 ?。
+  一次 `draftOwnersByKind()` 扫描把 `input` / `ask` 两类分开，别逐房间查（N+1）。
+  客户端用 `Room & { hasDraft?: boolean; pendingAsks?: number }` 读。
 
 P3 的 synthetic scope 走另一组路由（不属于任何房间，不能借 `/rooms/:id`）：
 
@@ -121,10 +124,17 @@ P3 的 synthetic scope 走另一组路由（不属于任何房间，不能借 `/
 
 ## 8. UI
 
-- 侧栏房间行：有草稿时名字旁一个小 ✎（`aria-label="有未提交的草稿"`），不抢状态胶囊、不新增未读语义。
+- 侧栏房间行**两个**标记，说的不是一件事：
+  - ✎（`PenLine`，琥珀）= 这里有没发出去的字（输入类草稿）；
+  - ?（`HelpCircle`，天蓝，与提问卡同色同形）= 这里有提问在等你答（`pendingAsks`）。
+    ? 不是草稿：提问还没答（哪怕一个字没填）也该亮；答完 / 撤回那一刻 `gate` 就结算了，
+    当前房间用会话流现算（`warmRooms` 保证快照到手前不拿空 asks 盖掉服务端投影），
+    别的房间靠 `/api/rooms` 的 30s 轮询。
+  - 为什么不合成一个：✎ 是「我欠它一句」，? 是「它等我一句」，混在一起说不清是谁的事；
+    ask 半填曾点亮 ✎，而那张卡本来就在时间线上，行上再点一个点只是噪音。
 - 切回房间：输入框回填，光标置尾。
-- 发送成功 / ask 答完：✎ 立刻消失（本地乐观更新，服务端返回后校准）。
-- 空草稿不显示；ask 草稿也算「这个房间有未提交输入」。
+- 发送成功：✎ 立刻消失（本地乐观更新，服务端返回后校准）；ask 答完：? 立刻消失。
+- 空草稿不显示；ask 半填**不算** ✎（它算 ?，见上）。
 
 ## 9. 分期
 
@@ -141,7 +151,8 @@ P3 的 synthetic scope 走另一组路由（不属于任何房间，不能借 `/
 - `askDraft.ts`：纯逻辑（归一化 / 勾选 / 必填判定 / 装配 `AskAnswer`），无 React 依赖，单测直接打。
 - `AskCard`：`field = ask:<askId>`、`owner = roomId`，三处输入都读写草稿；`busy/error` 仍是本地态。
 - 提交成功 `clearIfValueMatches(快照)`：提交期间用户又改过的草稿不清。
-- `resolved`（答过 / 失效）时清掉该 ask 的草稿，避免 ✎ 为历史提问常亮。
+- `resolved`（答过 / 失效）时清掉该 ask 的草稿；服务端 `settleAsk` 也会删（两处都清，
+  客户端那份是为了本地标记立刻灭，服务端那份是真相）。
 - owner 为空（assistant-ui 的 meta 没带 roomId）时降级为纯内存，不发 `/rooms//drafts`。
 - 好处：三个表面共用同一份 `AskCard`，切 surface / 切房间 / 刷新都不再丢半填的选项与字段。
 
@@ -189,9 +200,13 @@ P3 的 synthetic scope 走另一组路由（不属于任何房间，不能借 `/
 - 草稿 TTL：房间草稿**不自动过期**（老 diy-app 也没有），随删房间收敛；
   对话框草稿（synthetic scope）有自己的 7 天 TTL —— 它不随房间级联，没人清就会只增不减。
   ask 草稿按「有结局 + 30 分钟」清。
-- ask 半填算不算 ✎：默认算（它就是未提交输入）；提问有结局就清掉，所以不会长期亮。
+- ask 半填算不算 ✎：**不算**（2026-11 改口径）。它就是未提交输入，但那张提问卡本身
+  就在时间线上，行上点 ✎ 只是噪音 —— 于是侧栏分成两个标记：✎ = 输入类草稿，? = 待答提问。
+  `ask:<id>` 仍是同一张 `drafts` 表里的普通一行（不另开表、不另开接口、不另写一套同步），
+  只是聚合查询按 `field` 前缀分了两类。
 - 残留（P3 已解）：提问从时间线上彻底消失（房间重开、条目被裁）时 `ask:<id>` 没人清 ——
   现在打开房间就会清掉「30 分钟前、时间线上不再等回答」的 ask 草稿（`pruneAskDrafts`）。
   只清不pending 的：多窗口下另一个窗口刚刚正在填的那条，30 分钟内不会被碰。
+  （这已是兜底；正常结局在 `settleAsk` 里直接删。）
 - 多窗口冲突：最后写赢，P1 不提示、不合并。
 - 输入法组合期：600ms 防抖已覆盖，不做特殊处理。

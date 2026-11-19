@@ -76,8 +76,19 @@ export interface Store {
     /** 写一条草稿；value 为空内容 = 删除（不存空行） */
     putDraft(roomId: string, field: string, value: unknown): Draft | undefined;
     deleteDraft(roomId: string, field: string): void;
-    /** 有草稿的容器 id（侧栏 ✎ 用，一次查完避免 N+1） */
-    draftOwners(): string[];
+    /**
+     * 有草稿的容器 id，按种类分开：`input`（发言框 / 对话框表单）与 `ask`（提问卡半填答案）。
+     * 一次扫描查完避免 N+1。
+     *
+     * 目前只有 `input` 有运行时消费者（侧栏 ✎）；`ask` 这一半没人读 —— 侧栏的 `?` 数的是
+     * 提问本身的未决数（`Actor.pendingAsks`），不是「答了一半的草稿」：提问卡已经在时间线上
+     * 摆着，再加个 `?` 只是噪音。留着这一半是为了让分类被测试钉住（见 db.test.ts），
+     * 等真出现第二个消费者再用。
+     *
+     * 为什么不合成一个列表：合起来就分不出「发言框有字」和「提问答了一半」，而这两件事
+     * 在侧栏该不该亮是相反的。
+     */
+    draftOwnersByKind(): { input: string[]; ask: string[] };
     /**
      * 容器 id → 最后一条 item 的时刻（毫秒）。侧栏「最后活动」用，一次查完避免 N+1。
      *
@@ -110,6 +121,9 @@ function likeEscape(text: string): string {
 function likePrefix(prefix: string): string {
     return `${likeEscape(prefix)}%`;
 }
+
+/** ask 草稿的字段前缀：`ask:<askId>`（见 docs/drafts-design.md §5） */
+export const ASK_DRAFT_PREFIX = 'ask:';
 
 /** 草稿是否已经"没有内容"：空串 / 空数组 / 全空对象都算，避免 ✎ 永远亮着 */
 function isEmptyDraft(value: unknown): boolean {
@@ -545,27 +559,33 @@ export function openStore(file: string): Store {
             }
             return out;
         },
-        draftOwners(): string[] {
-            const rows = db.prepare('SELECT owner_id, value FROM drafts').all() as Array<Record<string, unknown>>;
-            const owners = new Set<string>();
+        draftOwnersByKind(): { input: string[]; ask: string[] } {
+            const rows = db.prepare('SELECT owner_id, field, value FROM drafts').all() as Array<
+                Record<string, unknown>
+            >;
+            const input = new Set<string>();
+            const ask = new Set<string>();
             for (const row of rows) {
                 try {
-                    if (!isEmptyDraft(JSON.parse(String(row['value'])))) owners.add(String(row['owner_id']));
+                    if (isEmptyDraft(JSON.parse(String(row['value'])))) continue;
                 } catch {
-                    /* 坏行不算"有草稿" */
+                    continue; // 坏行不算"有草稿"
                 }
+                const owner = String(row['owner_id']);
+                if (String(row['field']).startsWith(ASK_DRAFT_PREFIX)) ask.add(owner);
+                else input.add(owner);
             }
-            return [...owners];
+            return { input: [...input], ask: [...ask] };
         },
         pruneAskDrafts(roomId: string, keepAskIds: ReadonlySet<string>, olderThan: number): number {
             const stale = db
-                .prepare("SELECT field FROM drafts WHERE owner_id = ? AND field LIKE 'ask:%' AND updated_at < ?")
-                .all(roomId, olderThan) as Array<Record<string, unknown>>;
+                .prepare("SELECT field FROM drafts WHERE owner_id = ? AND field LIKE ? || '%' AND updated_at < ?")
+                .all(roomId, ASK_DRAFT_PREFIX, olderThan) as Array<Record<string, unknown>>;
             const remove = db.prepare('DELETE FROM drafts WHERE owner_id = ? AND field = ?');
             let count = 0;
             for (const row of stale) {
                 const field = String(row['field']);
-                if (keepAskIds.has(field.slice('ask:'.length))) continue;
+                if (keepAskIds.has(field.slice(ASK_DRAFT_PREFIX.length))) continue;
                 remove.run(roomId, field);
                 count += 1;
             }

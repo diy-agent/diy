@@ -56,6 +56,18 @@ export interface DraftStoreOptions {
     retryMaxMs?: number;
 }
 
+/**
+ * 提问卡草稿的字段前缀（`ask:<askId>`，见 `askDraftOf`）。
+ *
+ * 它跟发言框草稿同一张表、同一套同步，但**不算侧栏 ✎**：那张卡本来就在时间线上摆着，
+ * 「有没有半填」不值得在行上再点一个点 —— 行上的 ? 说的是「有提问等你答」（见 docs §8）。
+ */
+export const ASK_FIELD_PREFIX = 'ask:';
+
+function isAskField(field: string): boolean {
+    return field.startsWith(ASK_FIELD_PREFIX);
+}
+
 export interface DraftSeed {
     id: string;
     hasDraft?: boolean;
@@ -264,12 +276,13 @@ export class DraftStore {
         return this.owners.get(owner)?.error;
     }
 
-    /** 侧栏用：这个容器有没有未提交输入（含种子值，不必打开过房间） */
+    /** 侧栏 ✎ 用：这个容器有没有未提交的**输入类**草稿（含种子值，不必打开过房间） */
     hasDraft(owner: string): boolean {
         if (this.flags.get(owner) === true) return true;
         const state = this.owners.get(owner);
         if (state === undefined) return false;
-        for (const entry of state.entries.values()) {
+        for (const [field, entry] of state.entries) {
+            if (isAskField(field)) continue;
             if (hasDraftContent(entry.value)) return true;
         }
         return false;
@@ -318,7 +331,8 @@ export class DraftStore {
         const state = this.owners.get(owner);
         if (state === undefined) return;
         let any = false;
-        for (const entry of state.entries.values()) {
+        for (const [field, entry] of state.entries) {
+            if (isAskField(field)) continue;
             if (hasDraftContent(entry.value)) {
                 any = true;
                 break;

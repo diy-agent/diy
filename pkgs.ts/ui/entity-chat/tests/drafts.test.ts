@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { draftFieldOf } from '../src/askDraft';
 import { DraftStore, dialogOwner, hasDraftContent } from '../src/drafts';
 
 interface Call {
@@ -137,10 +138,20 @@ describe('DraftStore', () => {
 
     it('一条草稿值变得没内容时，✎ 跟着灭（不用等 DELETE 回来）', () => {
         const { store } = makeStore();
-        store.setValue('proj:a', 'ask:1', { selected: ['a'], fields: {}, text: '' });
+        store.setValue('proj:a', 'desc', { text: '写了一半' });
         expect(store.hasDraft('proj:a')).toBe(true);
-        store.setValue('proj:a', 'ask:1', { selected: [], fields: {}, text: '' });
+        store.setValue('proj:a', 'desc', { text: '   ' });
         expect(store.hasDraft('proj:a')).toBe(false);
+    });
+
+    it('提问填了一半不算 ✎：那是行上 ? 的事（卡片本来就在时间线上）', () => {
+        const { store } = makeStore();
+        store.setValue('proj:a', draftFieldOf('ask_1'), { selected: ['a'], fields: {}, text: '' });
+        // 打开过这个房间、草稿在内存里也不亮
+        expect(store.hasDraft('proj:a')).toBe(false);
+        // 发言框同时有字时才亮
+        store.setText('proj:a', 'composer', '还没发');
+        expect(store.hasDraft('proj:a')).toBe(true);
     });
 
     it('不知道房间（owner 为空）时只存内存，不请求 /rooms//drafts', async () => {

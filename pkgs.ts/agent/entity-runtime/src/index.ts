@@ -13,7 +13,7 @@ export {
     type TokenUsage,
     type TranscriptEntry,
 } from './compaction';
-export { openStore, type Draft, type Store } from './db';
+export { ASK_DRAFT_PREFIX, openStore, type Draft, type Store } from './db';
 export { adviceOf, endItems, endReasonOf, publishable, type EndFacts, type EndItemContext } from './end-reason';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';
