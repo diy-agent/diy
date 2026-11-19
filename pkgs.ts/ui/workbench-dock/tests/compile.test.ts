@@ -461,6 +461,34 @@ describe('resolveLayout（旧布局 × 新模板）', () => {
         expect(summarize(resolved.grid.root)).toBe(summarize(base.grid.root));
     });
 
+    // 一份快照属于一个页实例：宿主把 storageKey 写成模板级的（或换过 key）时，
+    // 别人的尺寸 / 关掉的 view / 拖过的落点不能静默套过来。
+    it('scopeKey 对不上（另一份页实例的快照）→ 整份不采信（连 pinnedSizes 也不）', () => {
+        const foreign: SavedLayout = {
+            ...saved(() => ['runs'], { left: 420 }, { center: 600, right: 200 }),
+            scopeKey: 'task:t-2',
+        };
+        expect(summarize(resolveLayout({ page, views, scope, viewport, saved: foreign }).grid.root)).toBe(
+            summarize(base.grid.root),
+        );
+        // 没写 scopeKey 的脏快照同样不算本实例的
+        const { scopeKey: _drop, ...noKey } = foreign;
+        expect(summarize(resolveLayout({ page, views, scope, viewport, saved: noKey as SavedLayout }).grid.root)).toBe(
+            summarize(base.grid.root),
+        );
+    });
+
+    it('shared: true 时才接受别的实例的快照（模板级共享布局）', () => {
+        const foreign: SavedLayout = { ...saved(() => [], { left: 420 }), scopeKey: 'task:t-2' };
+        const resolved = resolveLayout({ page, views, scope, viewport, saved: foreign, shared: true });
+        expect(leavesOf(resolved.grid.root).map((leaf) => [leaf.data.id, leaf.size])).toEqual([
+            ['left', 420],
+            ['center', 700],
+            ['right', 320],
+            ['bottom', 240],
+        ]);
+    });
+
     // 快照是 localStorage 里的东西：用户手改过、旧版本写坏过、机器上装过别的版本。
     // 一律「当没存过」回模板，**绝不**把畸形树丢给 fromJSON（那是一条白屏 + 整页不可用的路）
     it('快照结构坏了 → 当没存过，按模板编译（不抛）', () => {

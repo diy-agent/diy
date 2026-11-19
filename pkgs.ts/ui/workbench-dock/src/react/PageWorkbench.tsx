@@ -41,16 +41,19 @@ import {
     pageTitle,
     pinnedAreas,
     placementOf,
+    scopeKey,
     viewTitle,
     type AreaNode,
     type PageApi,
     type PageDef,
     type PageInfo,
     type Scope,
+    type SharedState,
     type VanillaView,
     type ViewDef,
     type ViewProps,
 } from '../model.js';
+import { createSharedState } from '../shared.js';
 import { PageContext, usePage } from './context.js';
 
 /** 布局持久化的最小接口（localStorage / 后端 KV 都满足） */
@@ -68,8 +71,15 @@ export interface PageWorkbenchProps<S extends Scope = Scope> {
     scope: S;
     /** 传了就持久化布局；不传 = 每次进页回到模板 */
     storage?: LayoutStorage;
-    /** 覆盖缺省存的键（缺省 `workbench-dock:<pageType>@<kind>:<id>`） */
+    /** 覆盖缺省存的键（缺省 `workbench-dock:<pageType>@<kind>:<id>`；`shareLayout` 时 `workbench-dock:<pageType>`） */
     storageKey?: string;
+    /**
+     * 模板级共享布局：同一 pageType 的**所有**页实例读同一份快照（缺省按实例各存一份）。
+     *
+     * 关掉严格归属（`SavedLayout.scopeKey` 不再校验），缺省存储键也降成按 pageType。
+     * 想要「所有任务页共用一种摆法」才开：尺寸、关掉的 view、拖过的落点也一并共享。
+     */
+    shareLayout?: boolean;
     /** L1：允许拖 view 换区域（缺省 false = L0，只能拖分屏线 + 收起/展开 + 关/开 tab） */
     editable?: boolean;
     /** dockview 主题（缺省用它的内置浅色；暗色由宿主用 --dv-* 变量调） */
@@ -95,7 +105,8 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
         () => ({ type: page.type, id: pageId(page.type, scope), title: pageTitle(page, scope), icon: page.icon }),
         [page, scope],
     );
-    const storageKey = props.storageKey ?? `workbench-dock:${pageInfo.id}`;
+    const storageKey =
+        props.storageKey ?? (props.shareLayout ? `workbench-dock:${page.type}` : `workbench-dock:${pageInfo.id}`);
 
     const hostRef = useRef<HTMLDivElement>(null);
     const apiRef = useRef<DockviewApi | null>(null);
@@ -113,6 +124,15 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
     const movedRef = useRef<Record<string, string>>({});
     /** 当前吃进 dockview 的编译结果（给 `skippedAreas()` 这类诊断用） */
     const layoutRef = useRef<CompiledLayout | null>(null);
+    /**
+     * 页内共享状态（`PageApi.shared`）：一个页实例一个槽。
+     *
+     * 用 ref 而不是 state：它一变不能让 PageWorkbench 重渲染（那会把新 context 推给所有 panel，
+     * 而「哪个 view 关心哪个 key」是 view 自己的事 —— 订阅在 `useShared` 里）。
+     * 所以 `api` 能永远保持同一个引用，panel 也不会因为选中项变了而重挂。
+     */
+    const sharedRef = useRef<SharedState | null>(null);
+    const shared = sharedRef.current ?? (sharedRef.current = createSharedState());
     /** 布局变化存盘用 */
     const saveFrameRef = useRef(0);
     /**
@@ -155,7 +175,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
         return {
             version: 1,
             pageType: pageRef.current.type,
-            scopeKey: `${current.kind}:${current.id}`,
+            scopeKey: scopeKey(current),
             dock: api.toJSON(),
             dismissed: dismissedRef.current,
             maximizedArea: maximizedRef.current ?? undefined,
@@ -209,6 +229,9 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             return null; // 存坏了 → 当没存过
         }
         if (!saved || saved.version !== 1 || saved.pageType !== pageRef.current.type) return null;
+        // 不是本实例的快照（宿主自定义了 storageKey，或共享键已经换了主人）：整份不采信。
+        // 必须在给 ref 灌值**之前**拦：下面那几行是「用户意图」，灌错了会带到每一次编译
+        if (!propsRef.current.shareLayout && saved.scopeKey !== scopeKey(scopeRef.current)) return null;
         // 快照里的三份记账也各校验一次：畸形值不能污染 ref，否则后面每次编译都带着它
         dismissedRef.current = Array.isArray(saved.dismissed)
             ? saved.dismissed.filter((id) => typeof id === 'string')
@@ -411,6 +434,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                     scope: scopeRef.current,
                     viewport,
                     saved,
+                    shared: propsRef.current.shareLayout,
                 });
                 applyLayout(layout, saved?.maximizedArea ?? null);
                 return null;
@@ -541,6 +565,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                 if (panel) dock.maximizeGroup(panel);
             },
             isAreaMaximized: (areaId) => apiRef.current?.getGroup(areaId)?.api.isMaximized() ?? false,
+            shared,
             skippedAreas: () => [...(layoutRef.current?.skippedAreas ?? [])],
             closeView: (viewId) => apiRef.current?.getPanel(viewId)?.api.close(),
             openView: (viewId) => {
@@ -702,7 +727,7 @@ function layoutSignature<S extends Scope>(page: PageDef<S>, views: readonly View
         .filter((entry): entry is string => entry !== null)
         .sort()
         .join(',');
-    return [`${page.type}`, `${scope.kind}:${scope.id}`, areasSignature(page.areas), placed].join('\u0001');
+    return [`${page.type}`, scopeKey(scope), areasSignature(page.areas), placed].join('\u0001');
 }
 
 function areasSignature(node: AreaNode): string {

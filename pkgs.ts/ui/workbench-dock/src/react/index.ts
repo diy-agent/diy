@@ -2,5 +2,5 @@
 
 export { PageWorkbench } from './PageWorkbench.js';
 export type { LayoutStorage, PageWorkbenchProps } from './PageWorkbench.js';
-export { PageContext, usePage, usePageApi } from './context.js';
+export { PageContext, usePage, usePageApi, useShared } from './context.js';
 export type { PageContextValue } from './context.js';

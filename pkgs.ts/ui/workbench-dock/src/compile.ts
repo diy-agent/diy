@@ -16,6 +16,7 @@ import {
     pageId,
     pageTitle,
     placementOf,
+    scopeKey,
     viewTitle,
     type AreaNode,
     type Axis,
@@ -111,12 +112,28 @@ export interface LayoutInput<S extends Scope = Scope> {
      * 这份数据来自快照（用户改过 / 模板改过），不能因为它把一个 view 丢进黑洞。
      */
     moved?: Record<string, string>;
+    /**
+     * 接受**别的页实例**留下的快照（模板级共享布局）。缺省 `false` = 一份快照只属于一个页实例。
+     *
+     * 缺省严格是有理由的：布局的记账（`pinnedSizes` / `shares` / `movedViews` / `dismissed`）
+     * 全是「这份布局在这个实例上的样子」，套到另一个实例上既可能是想要的（同一模板、同一种用法），
+     * 也可能是事故（宿主自定义 `storageKey` 时串页）。所以**要共享得自己说**（`shareLayout`）。
+     */
+    shared?: boolean;
 }
 
-/** 用户布局的持久化形态。除了 dockview 快照，只需要多记三样东西 */
+/** 用户布局的持久化形态。除了 dockview 快照，只需要多记几样东西 */
 export interface SavedLayout {
     version: 1;
     pageType: string;
+    /**
+     * 写这份快照的页实例（`kind:id`）。
+     *
+     * `resolveLayout` 会拿它和当前 scope 对一遍：**一份快照只属于一个页实例**。
+     * 对不上就当没存过（宿主自定义 `storageKey` 把 t-1 的布局读到 t-2 上时，这是唯一的刹车）。
+     * 真要「同一模板的所有实例共用一份布局」，用 `PageWorkbench` 的 `shareLayout`。
+     * 它也是排查时唯一能回答「这份布局是谁留下的」的字段。
+     */
     scopeKey: string;
     /** dockview `api.toJSON()` 原样存 —— 不解析、不改写 */
     dock: SerializedDockview;
@@ -437,10 +454,13 @@ export interface ResolveInput<S extends Scope = Scope> extends LayoutInput<S> {
  *
  * 快照不可信（用户改过 localStorage / 旧版本写坏了 / 手拼的）→ 当没存过，回模板。
  * 宁可从模板重来，也不要拿着畸形树去 `fromJSON` 把整页掀了。
+ *
+ * 还有一条比上面几条都靠前的判断：**这份快照是谁的**（`ownsSnapshot`）。
+ * 页类型或 scope 对不上 → 整个快照当没存过（不只是丢掉 grid）。
  */
 export function resolveLayout<S extends Scope>(input: ResolveInput<S>): CompiledLayout {
     const saved = input.saved;
-    const usable = saved && saved.pageType === input.page.type ? savedRoot(saved) : null;
+    const usable = saved && ownsSnapshot(saved, input) ? savedRoot(saved) : null;
     // 快照里的三份用户意图（钉住的 px / 拖出来的比例 / 拖动过的落点）都是「优先于模板」的输入
     const compiled = compileLayout({
         ...input,
@@ -472,6 +492,18 @@ export function resolveLayout<S extends Scope>(input: ResolveInput<S>): Compiled
         saved?.dock.activeGroup && areas[saved.dock.activeGroup] ? saved.dock.activeGroup : compiled.activeGroup;
 
     return { ...compiled, grid: { ...compiled.grid, root: merged }, panels, activeGroup, areas };
+}
+
+/**
+ * 这份快照是不是**这个页实例**的：页类型 + scope 都得对上。
+ *
+ * 为什么 scope 也要看：默认存储键确实已经带了 `kind:id`，但 `storageKey` 是宿主可覆盖的 ——
+ * 一旦覆盖成模板级的键，t-1 的快照就会静默套到 t-2 上（尺寸、关掉的 view、拖过的落点一起过去）。
+ * 共享布局是一个**可以要**的行为，但得显式要（`shared`）。
+ */
+function ownsSnapshot<S extends Scope>(saved: SavedLayout, input: ResolveInput<S>): boolean {
+    if (saved.pageType !== input.page.type) return false;
+    return input.shared === true || saved.scopeKey === scopeKey(input.scope);
 }
 
 /** view id → 它在**这个页**里的 order（决定新 tab 插进哪一位） */
