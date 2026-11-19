@@ -80,6 +80,30 @@ describe('compileLayout', () => {
         expect(leavesOf(layout.grid.root)[0]?.data.constraints).toEqual({ minimumWidth: 220, minimumHeight: 220 });
     });
 
+    // 数字尺寸是「开页种子」：编译那一刻它就是模板里的 px，弹性区让位（不是按比例缩数字区）。
+    // 页开着的时候拉窄窗口走的是 dockview 的 rescaleViews（不重编），那一步不归编译管。
+    it('数字尺寸不随 viewport 变：重编时固定区不动，弹性区让位', () => {
+        const sizes = (width: number, height: number): [string, number][] =>
+            leavesOf(compileLayout({ page, views, scope, viewport: { width, height } }).grid.root).map((leaf) => [
+                leaf.data.id,
+                leaf.size,
+            ]);
+
+        expect(sizes(1440, 900)).toEqual([
+            ['left', 300],
+            ['center', 820],
+            ['right', 320],
+            ['bottom', 240],
+        ]);
+        // 1000 宽：300 和 320 一个像素不动，1fr 吃剩下的 380；height 700 同理（240 不动）
+        expect(sizes(1000, 700)).toEqual([
+            ['left', 300],
+            ['center', 380],
+            ['right', 320],
+            ['bottom', 240],
+        ]);
+    });
+
     it('同区域多 view：按 order 排 tab，primary 决定 activeView', () => {
         const layout = compileLayout({
             page,
