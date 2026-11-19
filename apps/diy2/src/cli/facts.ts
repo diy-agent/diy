@@ -11,6 +11,7 @@
 
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { z } from 'zod';
 import { RpcSchema } from '@diy-agent/rpc';
@@ -40,6 +41,16 @@ const KbStats = z.object({
     bytes: z.number(),
     problems: z.array(z.object({ path: z.string(), code: z.string(), message: z.string() })),
 });
+
+/**
+ * 项目库根：`kbRootOf(cwd)` 会一路走到 `$HOME` —— cwd 在任何用户目录下都会撞上
+ * `~/.diy/knowledge`，那是**设备级库**，不是项目库。所以「与 global 同路径」时
+ * 按「没有项目库」处理（给一个不存在的路径，scanKb 自然返回空）。
+ */
+function projectRootOf(global: string): string {
+    const found = kbRootOf(process.cwd());
+    return resolve(found) === resolve(global) ? join(process.cwd(), '.diy', 'knowledge') : found;
+}
 
 function statsOf(root: string) {
     const scan = scanKb(root);
@@ -135,8 +146,8 @@ export function factsHandlers(deps?: FactsDeps): {
         status: () => { project: ReturnType<typeof statsOf>; global: ReturnType<typeof statsOf> };
     };
 } {
-    const project = deps?.projectRoot ?? kbRootOf(process.cwd());
     const global = deps?.globalRoot ?? globalKbRoot(process.env['DIY_HOME'], homedir());
+    const project = deps?.projectRoot ?? projectRootOf(global);
 
     const sectionsOf = (subject: string, maxChars: number) => [
         ...briefOf(project, subject, maxChars).map((item) => ({ ...item, scope: 'project' as const })),
