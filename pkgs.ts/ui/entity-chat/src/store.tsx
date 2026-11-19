@@ -27,6 +27,7 @@ import {
 import type { NavAddress } from './address';
 import { drafts } from './drafts';
 import type { TaskStatus } from './model';
+import { mergePendingAsks } from './pendingAsk';
 
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 
@@ -90,6 +91,11 @@ interface ShellState {
      * 来的」—— 跟 hasDraft 同性质，进领域类型就会有人当它能写。没聊过的容器不在这里。
      */
     lastActivity: Record<string, number>;
+    /**
+     * 容器 id → 还有几个提问在等回答（侧栏 ?）。服务端 `/api/rooms` 的投影字段 `pendingAsks`；
+     * 当前房间另由会话流现算 —— 答完那一刻 gate 就结算了，不该等 30 秒轮询才灭。
+     */
+    pendingAsks: Record<string, number>;
     error?: string;
 }
 
@@ -103,6 +109,7 @@ let state: ShellState = {
     loaded: false,
     sessions: {},
     lastActivity: {},
+    pendingAsks: {},
 };
 const listeners = new Set<() => void>();
 
@@ -154,6 +161,18 @@ export function useLastActivityOf(roomId: string): number | undefined {
         subscribeShell,
         () => state.lastActivity[roomId],
         () => state.lastActivity[roomId],
+    );
+}
+
+/**
+ * 只订阅一个房间的「还有几个提问在等我答」（侧栏 ?）。和 `useLastActivityOf` 同理：
+ * 取到的是单个数字，别的房间加减提问不会重渲这一行。
+ */
+export function usePendingAskOf(roomId: string): number {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.pendingAsks[roomId] ?? 0,
+        () => state.pendingAsks[roomId] ?? 0,
     );
 }
 
@@ -276,27 +295,53 @@ function installAddressHooks(): void {
 
 let activityUnsub: (() => void) | undefined;
 let activityRoomId = '';
+/**
+ * 已经「热」过的房间：**当前这条订阅**至少到过一份快照。
+ *
+ * 刚调 `conversationOf()` 时 asks 还是空的（快照在路上），这时它的计数不能盖住
+ * `/api/rooms` 的投影 —— 否则每切进一个有提问的房间，? 都会先灭一下再亮起来。
+ *
+ * 离开就销号（见 `watchActivity`）：`conversations` 是按房间复用的，切走时只是
+ * `dispose()` 摘流，缓存里还留着离开前那份 asks。留着「热」标记的话，切回去的瞬间
+ * 会先按旧快照报一次数，可能把服务端的 0 又盖回成一个旧的正数。
+ */
+const warmRooms = new Set<string>();
 
-/** 只跟当前房间：切走就退订，别让看过的每个房间各留一个订阅 */
+/**
+ * 只跟当前房间：切走就退订，别让看过的每个房间各留一个订阅。
+ * 一份订阅喂两个标记：最后活动（⌚ 行尾）+ 待答提问（?）。
+ */
 function watchActivity(roomId: string): void {
     if (roomId === activityRoomId) return;
     activityUnsub?.();
     activityUnsub = undefined;
+    // 这条订阅到此为止：它送过的快照从这一刻起不再作数（复用的 store 里还留着旧数）
+    if (activityRoomId !== '') warmRooms.delete(activityRoomId);
     activityRoomId = roomId;
     if (roomId === '') return;
     const store = conversationOf(roomId);
     activityUnsub = store.subscribe(() => {
+        const snapshot = store.get();
+        // 快照到了（有 item / 有 seq / 有提问）才算热：此后以这条流为准
+        if (snapshot.items.length > 0 || snapshot.seq > 0 || snapshot.asks.length > 0) warmRooms.add(roomId);
         // 取最大而不是最后一条：跨 bot 的消息按 order 插入，数组尾巴不是最新的那个时刻
         let at = 0;
-        for (const item of store.get().items) if (item.at > at) at = item.at;
-        if (at === 0 || at <= (state.lastActivity[roomId] ?? 0)) return;
-        emit({ ...state, lastActivity: { ...state.lastActivity, [roomId]: at } });
+        for (const item of snapshot.items) if (item.at > at) at = item.at;
+        const next: Partial<ShellState> = {};
+        if (at > 0 && at > (state.lastActivity[roomId] ?? 0)) {
+            next.lastActivity = { ...state.lastActivity, [roomId]: at };
+        }
+        if (warmRooms.has(roomId) && (state.pendingAsks[roomId] ?? 0) !== snapshot.asks.length) {
+            next.pendingAsks = { ...state.pendingAsks, [roomId]: snapshot.asks.length };
+        }
+        if (next.lastActivity === undefined && next.pendingAsks === undefined) return;
+        emit({ ...state, ...next });
     });
 }
 
 async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     const [rooms, bots] = await Promise.all([
-        jsonFetch<Array<Room & { hasDraft?: boolean; lastActivityAt?: number }>>('/rooms'),
+        jsonFetch<Array<Room & { hasDraft?: boolean; pendingAsks?: number; lastActivityAt?: number }>>('/rooms'),
         jsonFetch<Bot[]>('/bots'),
     ]);
     // 侧栏 ✎ 的初始值：不用打开过房间；本端改过的 owner 由 drafts 自己说了算
@@ -309,11 +354,22 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         const local = state.lastActivity[room.id];
         if (local !== undefined && local > (lastActivity[room.id] ?? 0)) lastActivity[room.id] = local;
     }
+    // 待答提问：同一次列表请求回来（服务端一次算好，别逐房间问）
+    const serverPendingAsks: Record<string, number> = {};
+    for (const room of rooms) {
+        if (typeof room.pendingAsks === 'number' && room.pendingAsks > 0) serverPendingAsks[room.id] = room.pendingAsks;
+    }
+    // 谁说了算：只有在看的那一间、且流已经热了，才交给本地 —— 轮询那份最老 30 秒，
+    // 别把「刚答完」又点亮。看过的房间切走时订阅就摘了，本地那份冻在离开前，必须交回
+    // 服务端，否则提问在别处有了结局，`?` 会一直亮着（规则见 `mergePendingAsks`）。
+    const liveRoomId = activityRoomId !== '' && warmRooms.has(activityRoomId) ? activityRoomId : '';
+    const pendingAsks = mergePendingAsks(serverPendingAsks, state.pendingAsks, liveRoomId);
     const address = resolveAddress(rooms);
     emit({
         ...state,
         rooms,
         lastActivity,
+        pendingAsks,
         bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])),
         loaded: true,
         // 地址没变就沿用旧引用：`useAddress()` 的快照就是它，同值换新对象等于给整张侧栏

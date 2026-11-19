@@ -96,11 +96,13 @@ describe('草稿', () => {
         expect(store.listDrafts(room.id)).toEqual([]);
     });
 
-    it('draftOwners 只列真正有内容的容器', () => {
+    it('draftOwnersByKind 只列真正有内容的容器，且把 ask 与输入分开', () => {
         const store = openStore(':memory:');
         store.putDraft('proj:a', 'composer', { text: '没发出去' });
         store.putDraft('proj:b', 'composer', { text: '' });
-        expect(store.draftOwners()).toEqual(['proj:a']);
+        store.putDraft('proj:a', 'ask:ask-1', { selected: ['x'] });
+        // 提问填了一半：归 ask，不进 input —— 侧栏 ✎ 不为提问亮（卡片本来就在时间线上）
+        expect(store.draftOwnersByKind()).toEqual({ input: ['proj:a'], ask: ['proj:a'] });
     });
 
     it('deleteRoom 连带清掉草稿', () => {
@@ -109,7 +111,7 @@ describe('草稿', () => {
         store.putDraft(room.id, 'composer', { text: 'x' });
         store.deleteRoom(room.id);
         expect(store.listDrafts(room.id)).toEqual([]);
-        expect(store.draftOwners()).toEqual([]);
+        expect(store.draftOwnersByKind()).toEqual({ input: [], ask: [] });
     });
 
     it('pruneAskDrafts 只清「时间线上不再等回答」的旧 ask 草稿', () => {
@@ -141,7 +143,7 @@ describe('草稿', () => {
 
         const removed = store.pruneDraftOwners('dlg:', Date.now() - 7 * 24 * 60 * 60 * 1000);
         expect(removed).toBe(1);
-        expect(store.draftOwners()).toEqual(['dlg:create-task:proj:cops', room.id]);
+        expect(store.draftOwnersByKind().input).toEqual(['dlg:create-task:proj:cops', room.id]);
     });
 
     it('deleteRoom 连带清掉挂在这个房间后面的对话框草稿', () => {
@@ -150,7 +152,7 @@ describe('草稿', () => {
         store.putDraft('dlg:create-task:' + room.id, 'desc', { text: '写了一半' });
         store.putDraft('dlg:create-task:proj:other', 'desc', { text: '别人的' });
         store.deleteRoom(room.id);
-        expect(store.draftOwners()).toEqual(['dlg:create-task:proj:other']);
+        expect(store.draftOwnersByKind().input).toEqual(['dlg:create-task:proj:other']);
     });
 
     it('坏 JSON 行跳过，不影响同房间其他草稿', () => {

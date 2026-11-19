@@ -3,13 +3,13 @@
 // 从 Sidebar.tsx 搬出来是因为它现在被**三个**导航来源共用（项目树 / 历史 / 未归属），
 // 留在壳里会让壳重新认识 room 这个概念；壳只知道「有几个来源、按 order 渲染」。
 
-import { ChevronDown, ChevronRight, Folder, ListPlus, Pencil, PenLine, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, HelpCircle, ListPlus, Pencil, PenLine, Trash2 } from 'lucide-react';
 import * as React from 'react';
 
 import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
 import { formatActivityAgo, formatAtAbsolute, type Room } from '../model';
-import { actions, isCurrentRoom, useAddress, useLastActivityOf } from '../store';
+import { actions, isCurrentRoom, useAddress, useLastActivityOf, usePendingAskOf } from '../store';
 import { isPlainLeftClick } from './link';
 import { EditableName, StatusGlyph, StatusIcon } from './RoomName';
 
@@ -60,11 +60,16 @@ export function RoomRow({
     onCreateTask?: () => void;
     onRequestDelete: (room: Room) => void;
 }) {
-    // 细粒度订阅：这一行只关心「是不是当前那一行」和「自己的最后活动」。
+    // 细粒度订阅：这一行只关心「是不是当前那一行」「自己的草稿 / 待答提问 / 最后活动」。
     // 用 `useStore()` 拿整份快照的话，别的房间来了消息、一条错误冒出来，整张侧栏都重渲。
-    const hasDraft = useHasDraft(room.id);
     const address = useAddress();
     const active = isCurrentRoom(address, room);
+    // 行上两个标记，两件事：
+    //   ✎ = 这里有**没发出去的字**（发言框 / 对话框草稿；提问填了一半不算，那有自己的卡片）
+    //   ? = 这里有**提问在等你答**（服务端投影 + 当前房间的会话流，答完立刻灭）
+    // 别合并成一个：一个是「我欠它一句」，一个是「它等我一句」，混着显示说不清是谁的事。
+    const hasDraft = useHasDraft(room.id);
+    const pendingAsk = usePendingAskOf(room.id);
     // 最后活动（这个容器里最后一条消息的时刻；服务端投影，见 store.tsx 的 lastActivity）。
     // 项目行不显示：项目不是干活的容器，它“活动不活动”是下面那堆任务的事 —— 每行都
     // 挂一个「—」只会多一列噪音。
@@ -99,6 +104,13 @@ export function RoomRow({
                         title="有未提交的草稿"
                         aria-label="有未提交的草稿"
                         className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-400"
+                    />
+                )}
+                {pendingAsk > 0 && (
+                    <span
+                        title={`${pendingAsk} 个提问等你回答`}
+                        aria-label="有提问等你回答"
+                        className="absolute bottom-1 right-1 size-1.5 rounded-full bg-sky-400"
                     />
                 )}
             </a>
@@ -156,6 +168,19 @@ export function RoomRow({
             {hasDraft && (
                 <span title="有未提交的草稿" aria-label="有未提交的草稿" className="shrink-0 text-amber-500">
                     <PenLine className="size-3" />
+                </span>
+            )}
+
+            {/* 提问在等你答：颜色跟提问卡上的 HelpCircle 一致（天蓝），形状也一样 ——
+                看见行上的 ? 就知道房间里那张卡长什么样。数字只在多于一个时显示。 */}
+            {pendingAsk > 0 && (
+                <span
+                    title={`${pendingAsk} 个提问等你回答`}
+                    aria-label="有提问等你回答"
+                    className="flex shrink-0 items-center gap-0.5 text-sky-400"
+                >
+                    <HelpCircle className="size-3" />
+                    {pendingAsk > 1 && <span className="text-[10px] tabular-nums">{pendingAsk}</span>}
                 </span>
             )}
 

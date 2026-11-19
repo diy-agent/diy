@@ -11,6 +11,8 @@
 
 import type { AskAnswer, AskQuestion, AskQuestionAnswer, AskRequest } from '@diy-agent/chat-core';
 
+import { ASK_FIELD_PREFIX } from './drafts';
+
 /** 一题上所有未提交的输入 */
 export interface QuestionDraft {
     /** choice：勾上的选项 value */
@@ -34,7 +36,7 @@ export const EMPTY_ASK_DRAFT: AskDraft = { answers: {} };
 
 /** 草稿字段名：一个房间里的多个提问各占一条（批量提问仍然只占一条，题在里面分桶） */
 export function draftFieldOf(askId: string): string {
-    return `ask:${askId}`;
+    return `${ASK_FIELD_PREFIX}${askId}`;
 }
 
 /**

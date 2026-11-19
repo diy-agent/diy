@@ -22,7 +22,7 @@ import { effectiveModelOf, effectivePersonaOf, mentionsOf, primaryMemberOf } fro
 
 import { AskGate, askAnswerHeading, describeAnswer, type AnswerOutcome, type AskResult } from './ask';
 import type { Compactor } from './compaction';
-import type { Store } from './db';
+import { ASK_DRAFT_PREFIX, type Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
 import { buildRoomTools } from './tools/index';
 import type { CompactEvent } from './compaction';
@@ -361,6 +361,11 @@ export class RoomActor {
      * 他会说话 ⇒ 走 steering 在下一个 step 边界注入；已经说完 ⇒ 这条消息开新的一轮。
      */
     private settleAsk(request: AskRequest, result: AskResult, owner?: string): void {
+        // 提问有结局 ⇒ 半填的答案就该消失（**这个**才是回收条件，不是"过多久没人动"）。
+        // 答上来 / 被撤回 / 被新提问挤掉 / 房间关了，都走这里：卡片从此只读或不再显示，
+        // 留着草稿只会让侧栏的 ? 为一个不存在的提问常亮（docs/drafts-design.md §12）。
+        // 只删自己这一条 field：同一房间的发言框草稿不许受牵连。
+        this.deps.store.deleteDraft(this.id, `${ASK_DRAFT_PREFIX}${request.askId}`);
         this.deps.emit({
             kind: 'ask.answered',
             askId: request.askId,

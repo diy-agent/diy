@@ -361,10 +361,12 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
         }
 
         if (req.method === 'GET' && url.pathname === '/api/rooms') {
-            // hasDraft / lastActivityAt 都是列表页的投影字段（侧栏 ✎ / 最后活动），不属于 Room 领域类型。
-            // 最后活动 = 该容器最后一条 item 的 at（msg / 工具行 / notice 都算）；没聊过的容器
-            // 不带这个键，UI 显示「—」（不拿 created_at 冒充活动）。
-            const withDraft = new Set(store.draftOwners());
+            // hasDraft / pendingAsks / lastActivityAt 都是列表页的投影字段（侧栏 ✎ / ? / 最后活动），
+            // 不属于 Room 领域类型。
+            // 草稿分两类各归各的标记：✎ 只认输入类（发言框 / 对话框表单），? 认提问 ——
+            // 提问填了一半不该点亮 ✎（卡片就在时间线上，行上再点一个 ✎ 是噪音）。
+            const draftOwners = store.draftOwnersByKind();
+            const withInputDraft = new Set(draftOwners.input);
             const lastItemAt = store.lastItemAtByRoom();
             json(
                 res,
@@ -372,9 +374,11 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
                 [...rooms.values()].map((actor) => {
                     const id = actor.spec.id;
                     const at = lastItemAt[id];
+                    const pendingAsks = actor.pendingAsks();
                     return {
                         ...actor.spec,
-                        hasDraft: withDraft.has(id),
+                        hasDraft: withInputDraft.has(id),
+                        ...(pendingAsks === 0 ? {} : { pendingAsks }),
                         ...(at === undefined ? {} : { lastActivityAt: at }),
                     };
                 }),
@@ -547,8 +551,9 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
-            // 打开房间顺手自愈：还在等回答的 ask 草稿保留，其余「早已有结局 / 已不在时间线上」
-            // 的旧草稿清掉 —— 否则侧栏 ✎ 会为一个不存在的提问一直亮着
+            // 打开房间顺手自愈：正常结局由 room 的 `settleAsk` 直接删（那是主路径），
+            // 这里只兜底「提问从时间线上彻底消失了、没人替它清」的残留 ——
+            // 还在等回答的保留，其余旧草稿清掉，避免 ? / ✎ 为一个不存在的提问亮着
             store.pruneAskDrafts(
                 id,
                 new Set(actor.pendingAskRequests().map((request) => request.askId)),

@@ -324,6 +324,33 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         expect(h.room.answerAsk(askId, { answers: [{ id: 'q1', values: ['a'] }] }).ok).toBe(false);
     });
 
+    it('D7b. 提问有结局就删它那份草稿（换掉「过多久没人动」这种猜法）', async () => {
+        // 半填答案 = `ask:<id>` 一条普通草稿。侧栏分别看「输入类草稿」和「待答提问」，
+        // 所以这里要的是：提问一有结局，草稿立刻走；同一房间的发言框草稿不许受牵连。
+        const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
+        void h.room.say({ text: '动手吧', author: HUMAN });
+        await waitFor(() => h.room.pendingAsks() === 1);
+        const askId = h.room.pendingAskRequests()[0]!.askId;
+        h.store.putDraft(h.spec.id, `ask:${askId}`, { selected: ['a'], fields: {}, text: '' });
+        h.store.putDraft(h.spec.id, 'composer', { text: '还没发的一句' });
+
+        expect(h.room.cancelAsk(askId)).toBe(true);
+
+        expect(h.store.listDrafts(h.spec.id).map((draft) => draft.field)).toEqual(['composer']);
+    });
+
+    it('D7c. 答上来同样删草稿（`settleAsk` 是所有结局的唯一出口）', async () => {
+        const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
+        void h.room.say({ text: '动手吧', author: HUMAN });
+        await waitFor(() => h.room.pendingAsks() === 1);
+        const askId = h.room.pendingAskRequests()[0]!.askId;
+        h.store.putDraft(h.spec.id, `ask:${askId}`, { selected: ['a'], fields: {}, text: '' });
+
+        expect(h.room.answerAsk(askId, { answers: [{ id: 'q1', values: ['a'] }] }).ok).toBe(true);
+
+        expect(h.store.listDrafts(h.spec.id)).toEqual([]);
+    });
+
     it('D8. 跨成员淘汰：被挤掉的那位空闲时不会被叫起来跑一轮', async () => {
         // B 先问一个→空闲；A 随后连问 21 个，把 B 那条挤出上限。
         // 通知必须只进 B 的上下文，不能把它拉起一轮（实测旧实现多出 bot:b#2）。
