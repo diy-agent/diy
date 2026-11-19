@@ -68,3 +68,7 @@ updated: 2026-10-23
 写入事务：**`validateFacts` 报任何 issue ⇒ 不进内核、不碰磁盘**（整批退，`problems` 带码可重提）—— 早期把坏事实过滤成空集后照样 submit，于是坏事实落成空集、词表成了唯一落盘物（中间态「6 主题 / 0 条」）；落盘本身两阶段（tmp + rename），一条不过则目标原样、tmp 清空
 
 （见 bfb9eaa0:pkgs.ts/diy-facts/src/node/index.ts:732）
+
+## retired
+
+**yaml 事实库已退役（2026-11）**：本文件讲的是 `@diy-agent/facts` 的 yaml 落盘引擎（代码暂留，无数据消费者）。知识读写入口见 `facts/cli.md`（读 `diy2 facts`，写 `diy kb`）。

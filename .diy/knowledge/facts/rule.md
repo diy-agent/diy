@@ -104,3 +104,7 @@ subject 级 expose 的前提是**单主题体量 ≤ 预算/4**：实测 `rule` 
 @diy-agent/app 新增 workspace 依赖**必须**同步 `apps/diy-app/vite.pkg-deps.ts::WORKSPACE_TS_DEPS`，否则 main 产物留裸 `import "@diy-agent/x"`、运行时加载 `.ts` 源码直接炸（本任务实测踩中一次）
 
 （见 cf38b8ab:pkgs.ts/diy-facts/AGENTS.md:26）
+
+## retired
+
+**yaml 事实库已退役（2026-11）**：`knowledge/facts/*.yaml` 已删除并迁成多级 md；本节描述的是 `@diy-agent/facts` 的 yaml 引擎（代码暂留，无数据消费者）。读知识走 `diy2 facts`（见 `facts/cli.md`）。

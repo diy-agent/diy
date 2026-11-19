@@ -13,7 +13,7 @@ updated: 2026-10-25
 
 ## code
 
-「这功能在哪 / 怎么实现」→ `diy facts brief find`（各包定位）+ `rg`/`fd`（排 `.venv` `node_modules` `dist`）；扫前先 `du -d 1 -h` 看体量。
+「这功能在哪 / 怎么实现」→ `diy2 facts brief find`（各包定位）+ `rg`/`fd`（排 `.venv` `node_modules` `dist`）；扫前先 `du -d 1 -h` 看体量。
 
 ## config
 
@@ -25,7 +25,7 @@ updated: 2026-10-25
 
 ## fact
 
-「X 现在是什么 / 有没有约定」→ `diy facts find <词>`（多词=与）→ `brief <主题>` → `get <主题>#<面>`；已知主题见 `runtime.kb`。**先查库，再 rg**。
+「X 现在是什么 / 有没有约定」→ `diy2 facts find <词>`（多词=与）→ `brief <主题>` → `get <路径>#<小节>`；已知主题见 `runtime.kb`。**先查库，再 rg**。
 
 ## history
 
@@ -37,7 +37,7 @@ updated: 2026-10-25
 
 ## locate-first
 
-问题里的名词不认识 / 「X 在哪」→ 先看本库 full 暴露的 `where#*`（信息地图）**定类**，再用 `diy facts find <词>` 确认它指什么；不许先 rg 猜词乱翻。
+问题里的名词不认识 / 「X 在哪」→ 先看本库 full 暴露的 `where#*`（信息地图）**定类**，再用 `diy2 facts find <词>` 确认它指什么；不许先 rg 猜词乱翻。
 
 ## rule
 
