@@ -732,6 +732,8 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     /** 全局选项表（与线上同一份，见 `CliConfig.globalOptions`） */
     globalOptions?: z.ZodObject<z.ZodRawShape>;
     exitCodeOf?: CliConfig<any>['exitCodeOf'];
+    /** 命令树裁剪：单个/多个子树路径（见 `CliConfig.cliRootPath`） */
+    cliRootPath?: string | string[];
   }): InProcessCli {
     const { serverTx, clientTx } = createMemTransportPair();
     const server = new ChannelServerBinding(serverTx);
@@ -757,6 +759,7 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
       ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
       ...(opts.globalOptions !== undefined ? { globalOptions: opts.globalOptions } : {}),
       ...(opts.exitCodeOf !== undefined ? { exitCodeOf: opts.exitCodeOf } : {}),
+      ...(opts.cliRootPath !== undefined ? { cliRootPath: opts.cliRootPath } : {}),
       out: (l) => void out.push(l),
       err: (l) => void err.push(l),
       exit: (c: number): never => {

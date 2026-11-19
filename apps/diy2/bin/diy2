@@ -17,7 +17,7 @@
 // bin 只负责把命令行参数翻译成 DIY2_* 环境变量，不自己算一遍。
 
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -59,10 +59,10 @@ if (has('help', '-h')) {
 
 用法：
   diy2 [start] [options]   起服务（已有同数据根实例则复用；前台运行）
-  diy2 list                本机所有 diy2 实例（pid / 端口 / 数据根 / 变体 / 入口）
+  diy2 list                本机所有 diy2 实例（-j = 单行 JSON；diy2 list --help 看命令说明）
   diy2 stop [--all]        停本数据根的实例（--worktree <dir> = 那个 worktree 的全部；
                            --all = 本机全部）
-  diy2 port | diy2 home    打印端口 / 数据根（脚本用）
+  diy2 port | diy2 home    打印端口 / 数据根（脚本用；裸值）
   diy2 --restart           先停掉同数据根实例再起
 
 选项：
@@ -110,60 +110,60 @@ if (portArg !== undefined) {
 const nameArg = valueOf('name');
 if (nameArg !== undefined) env['DIY2_NAME'] = nameArg;
 
+// 转调 CLI 产物前先把「参数 → 环境变量」落进 process.env：`src/cli` 里的域直接读环境。
+env['DIY2_CLI_VERSION'] = pkg.version;
+for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined) process.env[key] = value;
+}
+
 const buildDir = join(pkgRoot, 'build', variant);
 const serverEntry = join(buildDir, 'server', 'index.mjs');
+const cliEntry = join(buildDir, 'cli', 'index.mjs');
 const webDir = join(buildDir, 'web');
 const portFile = join(home, 'app.port');
 
-// ── 注册表（与 server/registry.ts 同一口径；bin 是发布形态，不能 import TS 源）──
-const registryDir = (() => {
-    const own = env['DIY2_REGISTRY']?.trim();
-    if (own) return own;
-    const shared = env['DIY_INSTANCE_REGISTRY']?.trim();
-    if (shared) return shared;
-    const devRoot = env['DIY_DEV_HOME']?.trim() || join(realHome, '.diy', 'dev');
-    return join(devRoot, 'apps');
-})();
-
-const isPidAlive = (pid) => {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        return error?.code === 'EPERM';
+/**
+ * list / stop / port / home 由 `build/<variant>/cli/index.mjs` 接管
+ * （`@diy-agent/rpc/cli` + mem 传输，见 apps/diy2/src/cli）。
+ * 没构建就明确说清楚 —— 别退回一份手写实现，两套命令树迟早漂。
+ */
+async function runCli() {
+    if (!existsSync(cliEntry)) {
+        console.error(`diy2: CLI 产物不存在（缺 build/${variant}/cli/index.mjs）。`);
+        console.error(`  仓库里：cd ${pkgRoot} && ./sha.sh build`);
+        process.exit(1);
     }
-};
+    // bin 自己的选项（--home / --variant / --port / --name / --detach / --no-open / --restart）
+    // 已经翻译成 DIY2_* 环境变量，不能再出现在 CLI 的 argv 里（它不认识这些 flag）。
+    process.argv = [process.argv[0], process.argv[1], ...cliArgvOf(argv)];
+    await import(pathToFileURL(cliEntry).href);
+    process.exit(0);
+}
 
-function readRecords() {
-    let names;
-    try {
-        names = readdirSync(registryDir);
-    } catch {
-        return [];
-    }
+/** 从 argv 里摘掉 bin 级选项（含 `--x=y` 与 `-p y` 两种形态），保留命令与域选项 */
+function cliArgvOf(args) {
+    const valueOptions = new Set(['home', 'data-dir', 'variant', 'port', 'p', 'name']);
+    const flags = new Set(['restart', 'detach', 'no-open']);
     const out = [];
-    for (const entry of names) {
-        if (!entry.endsWith('.json')) continue;
-        let rec;
-        try {
-            rec = JSON.parse(readFileSync(join(registryDir, entry), 'utf8'));
-        } catch {
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index];
+        if (arg.startsWith('--') && arg.includes('=')) {
+            const name = arg.slice(2, arg.indexOf('='));
+            if (valueOptions.has(name) || flags.has(name)) continue;
+            out.push(arg);
             continue;
         }
-        if (typeof rec?.pid !== 'number') continue;
-        if (!isPidAlive(rec.pid)) {
-            try {
-                unlinkSync(join(registryDir, entry));
-            } catch {
-                /* 忽略 */
+        if (arg.startsWith('-')) {
+            const name = arg.replace(/^--?/, '');
+            if (valueOptions.has(name)) {
+                index += 1; // 连它的值一起摘掉
+                continue;
             }
-            continue;
+            if (flags.has(name)) continue;
         }
-        // app 字段是判据；老记录没有 app → 从 argv 认（发布形态的 argv 一定带 diy2）
-        const mine = rec.app === 'diy2' || (rec.app == null && Array.isArray(rec.argv) && rec.argv.some((a) => String(a).includes('diy2')));
-        if (mine) out.push(rec);
+        out.push(arg);
     }
-    return out.sort((a, b) => a.pid - b.pid);
+    return out;
 }
 
 // ── 探活 + 身份校验（判据与 server/probe.ts 一致：app + home）──────
@@ -231,32 +231,14 @@ async function waitHealthy(port, timeoutMs = 15_000) {
     }
 }
 
-function printTable(records) {
-    if (records.length === 0) {
-        console.log('（没有在跑的 diy2 实例）');
-        return;
+const isPidAlive = (pid) => {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        return error?.code === 'EPERM';
     }
-    const rows = records.map((rec) => ({
-        pid: String(rec.pid),
-        port: rec.port == null ? '-' : String(rec.port),
-        home: rec.diyHome,
-        variant: rec.variant || '-',
-        launch: rec.launch || '-',
-        name: rec.name || '',
-    }));
-    const columns = [
-        ['pid', 'PID'],
-        ['port', 'PORT'],
-        ['variant', 'VARIANT'],
-        ['launch', 'LAUNCH'],
-        ['name', 'NAME'],
-        ['home', 'HOME'],
-    ];
-    const widths = columns.map(([key, title]) => Math.max(title.length, ...rows.map((row) => row[key].length)));
-    const line = (cells) => cells.map((cell, i) => cell.padEnd(widths[i])).join('  ').trimEnd();
-    console.log(line(columns.map(([, title]) => title)));
-    for (const row of rows) console.log(line(columns.map(([key]) => row[key])));
-}
+};
 
 async function stopRecords(records, label) {
     if (records.length === 0) {
@@ -289,47 +271,16 @@ async function stopRecords(records, label) {
 }
 
 // ── 子命令 ───────────────────────────────────────────────────────
+// 除 `start`（进程生命周期，前台跑 / Ctrl-C 停）外，全部交给 CLI 产物
+// （`@diy-agent/rpc/cli` + mem 传输；域定义在 src/cli/instance.ts）。
 switch (command) {
     case 'list':
-    case 'ps': {
-        printTable(readRecords());
-        process.exit(0);
-        break;
-    }
-    case 'stop': {
-        const all = has('all');
-        const wantWorktree = valueOf('worktree');
-        const scope =
-            wantWorktree !== undefined
-                ? (rec) => samePath(rec.worktree ?? '', wantWorktree)
-                : (rec) => samePath(rec.diyHome, home);
-        const records = readRecords().filter((rec) => all || scope(rec));
-        const label = all ? '全部' : wantWorktree !== undefined ? `worktree=${wantWorktree}` : `home=${home}`;
-        const stopped = await stopRecords(records, label);
-        // 注册表没有记录时，拿 app.port 里的端口试一次（可能是老版本起的无注册表实例）：
-        // 记录不证明存活，只是候选地址，身份仍由回包校验。
-        if (!all && wantWorktree === undefined && stopped === 0) {
-            const mine = await probeMine();
-            if (mine?.pid !== undefined) await stopRecords([{ ...mine }], `home=${home}`);
-        }
-        process.exit(0);
-        break;
-    }
+    case 'ps':
+    case 'stop':
     case 'port':
-    case 'home': {
-        if (command === 'home') {
-            console.log(home);
-            process.exit(0);
-        }
-        const mine = await probeMine();
-        if (mine?.port === undefined || mine?.pid === undefined) {
-            console.error('diy2: 本数据根上没有在跑的实例');
-            process.exit(1);
-        }
-        console.log(mine.port);
-        process.exit(0);
+    case 'home':
+        await runCli();
         break;
-    }
     case 'start':
     case 'run':
     case 'open':
@@ -393,10 +344,6 @@ if (has('detach')) {
     console.log(`diy2 后台已起：${urlOf(info.port)}（pid=${info.pid} home=${info.home}）`);
     if (!has('no-open')) openBrowser(urlOf(info.port));
     process.exit(0);
-}
-
-for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) process.env[key] = value;
 }
 
 // 服务端产物顶层就 listen（`import` 即启动；装配逻辑在 createDiy2App，见 server/index.ts）。

@@ -85,6 +85,7 @@ build() {
   _guard_sync
   build-web
   build-server
+  build-cli
 }
 build-web() {
   _guard_sync
@@ -93,6 +94,11 @@ build-web() {
 build-server() {
   _guard_sync
   run env DIY2_VARIANT="$(_artifact_variant)" npx vite build --config vite.server.config.ts
+}
+# CLI 产物（build/<variant>/cli/index.mjs）：bin/diy2 的 list/stop/port/home 由它接管
+build-cli() {
+  _guard_sync
+  run env DIY2_VARIANT="$(_artifact_variant)" npx vite build --config vite.cli.config.ts
 }
 
 ####################################################################################
