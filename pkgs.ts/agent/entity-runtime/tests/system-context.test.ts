@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { instructionsOf } from '../src/agent';
-import { buildRoomSystemContext } from '../src/system-context';
+import { buildRoomSystemContext, createRoomContext } from '../src/system-context';
 
 const dirs: string[] = [];
 function tmp(): string {
@@ -35,8 +35,10 @@ describe('buildRoomSystemContext', () => {
 
         const text = buildRoomSystemContext({ cwd: repo });
         expect(text).toContain('仓库规则：改代码先开 worktree。');
-        expect(text).toContain('<project_instructions');
-        expect(text).toContain('rule/dev.md — 开发规则（1 节 · project）');
+        expect(text).toContain('AGENTS.md');
+        expect(text).toContain('path: rule/dev.md');
+        expect(text).toContain('开发规则');
+        expect(text).toContain('scope: project');
         // 索引不投正文
         expect(text).not.toContain('KB_BODY_ONLY');
     });
@@ -45,20 +47,55 @@ describe('buildRoomSystemContext', () => {
         const repo = tmp();
         seedKb(repo, 'rule/dev.md', '开发规则', [['a', 'x']]);
         const text = buildRoomSystemContext({ cwd: repo });
-        expect(text).toContain('· project');
-        expect(text).not.toContain('· global');
+        expect(text).toContain('scope: project');
+        expect(text).not.toContain('scope: global');
     });
 
-    it('超预算截断并标注（不静默丢）', () => {
+    it('空目录：没有链/知识库，但 diy / cwd 仍在信封里', () => {
+        const text = buildRoomSystemContext({ cwd: tmp() });
+        expect(text).toContain('vars:');
+        expect(text).not.toContain('AGENTS.md');
+    });
+});
+
+describe('createRoomContext：任务字段是变量单元（改正文不重建 system）', () => {
+    it('任务 body/state 进 system；改一个字段只走 user 增量', () => {
         const repo = tmp();
-        seedAgents(repo, 'x'.repeat(2000));
-        const text = buildRoomSystemContext({ cwd: repo, maxBytes: 200 });
-        expect(Buffer.byteLength(text, 'utf8')).toBeLessThan(400);
-        expect(text).toContain('上下文超预算');
+        seedAgents(repo, '仓库规则：改代码先开 worktree。');
+        const skillsRoot = join(tmp(), 'skills');
+        const spec = {
+            id: 'task:t-1',
+            name: '任务一',
+            type: 'task',
+            data: { status: 'open', body: '第一版正文' } as Record<string, unknown>,
+        };
+        const ctx = createRoomContext({ spec, cwd: repo, skillsRoot });
+
+        const open = ctx.open();
+        expect(open.system).toContain('task:');
+        expect(open.system).toContain('第一版正文');
+        expect(open.system).toContain('state: open');
+
+        // 首轮：没有变化 ⇒ 不产增量（system 里已经是全量）
+        expect(ctx.step().user).toBe('');
+        ctx.commit();
+
+        spec.data['body'] = '第二版正文';
+        const step = ctx.step();
+        expect(step.delta?.paths).toContain('task.body');
+        expect(step.user).toContain('第二版正文');
+        expect(ctx.system).toBe(open.system); // system 逐字不动
+        ctx.commit();
     });
 
-    it('空目录 → 空串（agent 退回只有 persona）', () => {
-        expect(buildRoomSystemContext({ cwd: tmp() })).toBe('');
+    it('非 task 房间不投 task 节（不造空串冒充）', () => {
+        const repo = tmp();
+        const ctx = createRoomContext({
+            spec: { id: 'proj:diy', name: 'diy', type: 'project', data: {} },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+        });
+        expect(ctx.open().system).not.toContain('\ntask:');
     });
 });
 

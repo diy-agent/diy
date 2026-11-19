@@ -19,12 +19,13 @@
 import type { ModelMessage, ToolSet } from 'ai';
 
 import { effectiveModelOf, effectivePersonaOf, mentionsOf, primaryMemberOf } from '@diy-agent/protocol';
+import type { ContextSession } from '@diy-agent/context';
 
 import { AskGate, askAnswerHeading, describeAnswer, type AnswerOutcome, type AskResult } from './ask';
 import type { Compactor } from './compaction';
 import { ASK_DRAFT_PREFIX, type Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
-import { buildRoomSystemContext } from './system-context';
+import { createRoomContext } from './system-context';
 import { buildRoomTools } from './tools/index';
 import type { CompactEvent } from './compaction';
 import {
@@ -110,10 +111,10 @@ export class RoomActor {
     /** 用户的身份（回答提问时那条消息的作者） */
     private readonly human: Author;
     /**
-     * 规则上下文（AGENTS.md 链 + 知识库索引）：每轮请求的固定前缀，构造时算一次。
-     * 不改它就不变（前缀缓存友好）；没有 cwd 的房间为空。
+     * 每个成员一份上下文会话：provider 值共享，但 cursor（模型已经看过哪棵树）各自推进。
+     * 一个成员没被 @ 时只 ingest、不 step；等它下一次跑，增量会一次补齐。
      */
-    private readonly systemContext: string;
+    private readonly contexts = new Map<string, ContextSession>();
     /** 系统自己的身份：「你的提问被挤掉了」这类通知的作者（不能冒充用户） */
     private static readonly SYSTEM: Author = { id: 'system:ask', name: '系统', color: '#9ca3af', role: 'system' };
     /** 每个成员一份工具集：只有 ask 的归属不同（按成员停止时要能分辨） */
@@ -132,13 +133,6 @@ export class RoomActor {
             now: () => this.deps.now?.() ?? Date.now(),
         });
         this.human = this.deps.human ?? { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
-        this.systemContext =
-            this.deps.cwd === undefined
-                ? ''
-                : buildRoomSystemContext({
-                      cwd: this.deps.cwd,
-                      ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
-                  });
         // 成员的 session 一开始就建好：上下文、统计、恢复都不需要等第一条消息
         for (const bot of this.members()) this.sessionOf(bot);
     }
@@ -263,6 +257,18 @@ export class RoomActor {
             this.deps.emit({ kind: 'delivery', delivery });
         }
 
+        // 这一轮的变量增量：每个收件人各自 step/commit（cursor 是每个成员各自的）。
+        // 没被 @ 的成员只 ingest、不推进 —— 它下次跑时会一次补齐。
+        const prefixes = new Map<string, string>();
+        if (this.deps.cwd !== undefined) {
+            for (const bot of recipients) {
+                const ctx = this.contextSessionOf(bot);
+                const step = ctx.step();
+                ctx.commit();
+                if (step.user !== '') prefixes.set(bot.id, step.user);
+            }
+        }
+
         await Promise.all(
             recipients.map((bot) =>
                 this.sessionOf(bot).post({
@@ -271,6 +277,7 @@ export class RoomActor {
                     mode: input.mode ?? 'next-step',
                     turn,
                     entry,
+                    ...(prefixes.get(bot.id) === undefined ? {} : { prefix: prefixes.get(bot.id)! }),
                 }),
             ),
         );
@@ -636,12 +643,29 @@ export class RoomActor {
         }
     }
 
+    /** 某个成员的上下文会话；没有 cwd 的房间不建（与工具同判据） */
+    private contextSessionOf(bot: Bot): ContextSession {
+        const existing = this.contexts.get(bot.id);
+        if (existing !== undefined) return existing;
+        const cwd = this.deps.cwd;
+        if (cwd === undefined) throw new Error('contextOf: 房间没有 cwd');
+        const ctx = createRoomContext({
+            spec: this.deps.spec,
+            cwd,
+            ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
+        });
+        ctx.open();
+        this.contexts.set(bot.id, ctx);
+        return ctx;
+    }
+
     /** 取/建某个成员的 session；新建时回放公共日志（后加入的成员也能读到此前结论） */
     private sessionOf(bot: Bot): BotSession {
         let session = this.sessions.get(bot.id);
         if (session !== undefined) return session;
 
         const saved = this.deps.store.loadSession(this.id, bot.id);
+        const systemContext = this.deps.cwd === undefined ? '' : this.contextSessionOf(bot).system;
         session = new BotSession({
             bot,
             modelKey: bot.modelKey,
@@ -652,7 +676,7 @@ export class RoomActor {
             ...(this.deps.budget === undefined ? {} : { budget: this.deps.budget }),
             ...(this.toolsFor(bot.id) === undefined ? {} : { tools: this.toolsFor(bot.id) }),
             ...(this.hasTools ? { toolsHint: this.toolsHint() } : {}),
-            ...(this.systemContext === '' ? {} : { systemContext: this.systemContext }),
+            ...(systemContext === '' ? {} : { systemContext }),
         });
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));
