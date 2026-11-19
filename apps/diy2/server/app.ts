@@ -18,6 +18,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { createStaticHandler } from './static';
+import { createStreamHub } from './stream';
 import { APP_ID, type Diy2Config } from './config';
 
 import { RoomActor, openStore } from '@diy-agent/entity-runtime';
@@ -47,65 +48,65 @@ let info: () => Diy2AppInfo;
 
 /** roomId → 聚合根（房间的领域对象） */
 let rooms = new Map<string, RoomActor>();
-/** 房间级 SSE 订阅者：请求流的（每次 chat 一个）+ 常驻监听的（UI 打开房间就挂一条） */
-interface Subscriber {
-    res: ServerResponse;
-    /** 常驻订阅不随某次 chat 结束而关闭 */
-    persistent: boolean;
-}
-let subscribers = new Map<string, Set<Subscriber>>();
+/**
+ * 话题上推的帧：房间领域事件 + 传输层的收尾帧。
+ *
+ * `done` 不属于房间（`RoomEvent` 里剔除它），它是「这条话题到头了」的传输层信号 ——
+ * 以前「一条流一个房间」时靠关连接表达，现在连接是共用的，只能靠帧说。
+ */
+type RoomFrame = RoomEvent | { kind: 'done' };
 
-function attach(roomId: string, res: ServerResponse, persistent = false): void {
+/**
+ * 一条房间事件的去向。以前它就是「一个 ServerResponse = 一条连接」，于是
+ * 「谁在看这个房间」和「谁占着一条连接」是同一件事 —— 多页工作台必然撑爆连接数。
+ * 现在它只是个函数：多路复用的那条连接把它写成一帧带话题的 SSE（见 ./stream）。
+ */
+type Sink = (event: RoomFrame) => void;
+let subscribers = new Map<string, Set<Sink>>();
+
+function attach(roomId: string, sink: Sink): () => void {
     let set = subscribers.get(roomId);
     if (set === undefined) {
         set = new Set();
         subscribers.set(roomId, set);
     }
-    const entry: Subscriber = { res, persistent };
-    set.add(entry);
-    res.on('close', () => set?.delete(entry));
+    set.add(sink);
+    return () => {
+        set?.delete(sink);
+        if (set !== undefined && set.size === 0) subscribers.delete(roomId);
+    };
+}
+
+function broadcast(roomId: string, payload: RoomFrame): void {
+    for (const sink of subscribers.get(roomId) ?? []) sink(payload);
 }
 
 /**
- * 请求流只留最新一条：长会话里每句插话都会开一条 /chat SSE，而它要等整轮结束
- * （可能十几分钟）才收尾；浏览器同源 HTTP/1.1 只有 6 条连接，攒满后新请求
- * 连发都发不出去。旧流补一条 done 后关掉，事件仍走常驻订阅。
+ * 话题名 → 房间 id。多路复用的连接上订阅的是话题（`room:<id>`），
+ * 不是路径 —— 一条连接要能同时承载多个房间，就不能让路径决定订阅什么。
  */
-function attachChat(roomId: string, res: ServerResponse): void {
-    const set = subscribers.get(roomId);
-    // 先快照再遍历：循环体里会 `set.delete(entry)`（同栈迭代器会跳过元素）
-    // eslint-disable-next-line unicorn/no-useless-spread -- 删元素时快照是必需的
-    for (const entry of [...(set ?? [])]) {
-        if (entry.persistent) continue;
-        sse(entry.res, { kind: 'done' });
-        entry.res.end();
-        set?.delete(entry);
-    }
-    attach(roomId, res);
+const ROOM_TOPIC = 'room:';
+const roomTopic = (roomId: string): string => `${ROOM_TOPIC}${roomId}`;
+function roomOfTopic(topic: string): string | undefined {
+    return topic.startsWith(ROOM_TOPIC) ? topic.slice(ROOM_TOPIC.length) : undefined;
 }
 
-function broadcast(roomId: string, payload: RoomEvent): void {
-    for (const entry of subscribers.get(roomId) ?? []) sse(entry.res, payload);
-}
-
-/** 收尾：等这个房间所有会话都跑完，再通知并断开订阅 */
-function finish(roomId: string, attempt = 0): void {
-    if ((rooms.get(roomId)?.busy() ?? false) && attempt < 600) {
-        setTimeout(() => finish(roomId, attempt + 1), 100);
-        return;
-    }
-    // 只关"请求流"；常驻监听那条留着，UI 才能继续收到后台 bot 的动静
-    const set = subscribers.get(roomId);
-    // 先快照再遍历：循环体里会 `set.delete(entry)`（同栈迭代器会跳过元素）
-    // eslint-disable-next-line unicorn/no-useless-spread -- 删元素时快照是必需的
-    for (const entry of [...(set ?? [])]) {
-        if (entry.persistent) continue;
-        sse(entry.res, { kind: 'done' });
-        entry.res.end();
-        set?.delete(entry);
-    }
-    if (set !== undefined && set.size === 0) subscribers.delete(roomId);
-}
+/**
+ * 多路复用：一个 app 实例的所有页面、所有房间共用**一条** SSE。
+ *
+ * 一条房间话题只在有人听时接到广播上（`onFirstSubscriber`），最后一个订阅者离开就摘掉：
+ * 没人看的房间不该还占着一条连接的空位 —— 那正是老实现里 6 条攒满的原因。
+ */
+const hub = createStreamHub({
+    onFirstSubscriber(topic, push) {
+        const roomId = roomOfTopic(topic);
+        if (roomId === undefined) return undefined;
+        if (roomOf(roomId) === undefined) return undefined;
+        return attach(roomId, (event) => {
+            push(event);
+        });
+    },
+});
 
 /** 房间的工作目录：自己的 data.dir，任务则继承所属项目 */
 function cwdOf(spec: Room): string | undefined {
@@ -299,16 +300,6 @@ function tooLargeDraft(value: unknown): boolean {
     return serialized !== undefined && Buffer.byteLength(serialized, 'utf8') > 256 * 1024;
 }
 
-function sse(res: ServerResponse, payload: unknown): void {
-    // 客户端可能已经断开（刷新 / abort / 切房间）：别往死 socket 上写
-    if (res.destroyed || res.writableEnded) return;
-    try {
-        res.write(`data: ${JSON.stringify(payload)}\n\n`);
-    } catch {
-        // 写失败说明连接没了，交给 close 事件清理
-    }
-}
-
 function newBot(name: string, homeRoomId: string, persona: string): Bot {
     return {
         id: `bot-${Date.now().toString(36)}`,
@@ -331,6 +322,41 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
         // 「谁在监听这个端口、用哪个数据根」只有监听者自己答得准（仓库 ##328 同一现场）。
         if (req.method === 'GET' && url.pathname === '/api/info') {
             json(res, 200, info());
+            return;
+        }
+
+        // GET /api/stream —— **一个 app 实例一条**事件流（首帧交身份，之后靠订阅说要看什么）
+        //
+        // 为什么不再「一个房间一条流」：浏览器同源 HTTP/1.1 只有 6 条连接且按 profile 算，
+        // 多页工作台里 3 个聊天页就能把配额吃满，之后连 /history 都永久排队。
+        if (req.method === 'GET' && url.pathname === '/api/stream') {
+            hub.handle(req, res);
+            return;
+        }
+
+        // POST /api/stream/subscribe | /unsubscribe —— 在这条连接上增减话题
+        //
+        // SSE 是单工的，订阅只能另开一个请求；身份（conn）由首帧下发，不接受客户端自造 id。
+        if (
+            req.method === 'POST' &&
+            (url.pathname === '/api/stream/subscribe' || url.pathname === '/api/stream/unsubscribe')
+        ) {
+            const subscribing = url.pathname.endsWith('/subscribe');
+            onBody<{ conn?: string; topic?: string }>(req, res, (body) => {
+                const conn = body.conn ?? '';
+                const topic = body.topic ?? '';
+                const roomId = roomOfTopic(topic);
+                if (roomId === undefined) return json(res, 400, { error: 'unknown topic' });
+                if (subscribing && roomOf(roomId) === undefined) return json(res, 404, { error: 'room not found' });
+                if (!subscribing) {
+                    hub.unsubscribe(conn, topic);
+                    json(res, 200, { ok: true });
+                    return;
+                }
+                // 404 = 「这条连接已经不在了」：客户端据此知道等下一次重连再订，不用重试
+                const hit = hub.subscribe(conn, topic);
+                json(res, hit ? 200 : 404, hit ? { ok: true } : { error: 'no such connection' });
+            });
             return;
         }
 
@@ -450,15 +476,11 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
                 rooms.get(roomId)?.stop();
                 rooms.delete(roomId);
                 store.deleteRoom(roomId);
-                // 订阅者（UI 常驻 SSE / 正在跑的 chat 流）收尾，不然前端挂着一条已不存在的房间的流
-                const set = subscribers.get(roomId);
-                // 先快照再遍历：循环体里会 `set.delete(entry)`（同栈迭代器会跳过元素）
-                // eslint-disable-next-line unicorn/no-useless-spread -- 删元素时快照是必需的
-                for (const entry of [...(set ?? [])]) {
-                    sse(entry.res, { kind: 'done' });
-                    entry.res.end();
-                }
-                subscribers.delete(roomId);
+                // 订阅者（多页工作台里正看着这个房间的页）先收一句 done，再把话题从连接上摘掉：
+                // 房间没了，再往这条话题上推事件没有意义
+                broadcast(roomId, { kind: 'done' });
+                // 话题摘掉时订阅者会各自 detach（attach 返回的那个函数）
+                hub.drop(roomTopic(roomId));
             }
             const removed = new Set(victims);
             const referenced = new Set([...rooms.values()].flatMap((entry) => entry.spec.members.map((m) => m.botId)));
@@ -580,28 +602,8 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
             return;
         }
 
-        // GET /api/rooms/:id/events —— 常驻事件流（UI 打开房间时挂一条，后台的 bot 动静也能看到）
-        if (
-            req.method === 'GET' &&
-            parts[0] === 'api' &&
-            parts[1] === 'rooms' &&
-            parts[3] === 'events' &&
-            parts.length === 4
-        ) {
-            const id = decodeURIComponent(parts[2] ?? '');
-            if (roomOf(id) === undefined) return json(res, 404, { error: 'room not found' });
-            res.writeHead(200, {
-                'content-type': 'text/event-stream; charset=utf-8',
-                'cache-control': 'no-cache',
-                connection: 'keep-alive',
-            });
-            attach(id, res, true);
-            sse(res, { kind: 'ready' });
-            // 心跳：代理 / 浏览器会掐掉长时间无数据的连接，20s 一帧注释
-            const timer = setInterval(() => res.write(': ping\n\n'), 20_000);
-            res.on('close', () => clearInterval(timer));
-            return;
-        }
+        // 以前这里是 `GET /api/rooms/:id/events`（一个房间一条常驻 SSE）。现在房间是
+        // `/api/stream` 上的话题（`room:<id>`）：一条连接就能看多个房间，见 ./stream。
 
         // GET /api/rooms/:id/asks —— 还在等用户回答的提问
         if (
@@ -707,39 +709,36 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
             return;
         }
 
-        // POST /api/rooms/:id/chat —— 投一条消息；SSE 订阅这个房间的事件
+        // POST /api/rooms/:id/chat —— 投一条消息；事件走 /api/stream 的 `room:<id>` 话题
+        //
+        // 为什么只回 JSON 不等这一轮：以前这个 POST 本身就是那条 SSE，一直挂到整轮结束（可能
+        // 十几分钟），于是每句插话各占一条连接 —— 多页工作台里几条插话就是几次上限。
+        // 现在「受理」与「说完」分开：受理立刻回，事件一律走那条共用连接，
+        // 所以 `say()` 失败不能再用响应状态表达，改用广播一条 error（UI 已有这条路）。
         if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'chat') {
             const id = decodeURIComponent(parts[2] ?? '');
             const actor = roomOf(id);
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
 
-            onBody<{ text?: string; recipients?: string[]; mode?: 'next-step' | 'next-turn' }>(
-                req,
-                res,
-                async (body) => {
-                    const text = (body.text ?? '').trim();
-                    if (text === '') return json(res, 400, { error: 'text required' });
+            onBody<{ text?: string; recipients?: string[]; mode?: 'next-step' | 'next-turn' }>(req, res, (body) => {
+                const text = (body.text ?? '').trim();
+                if (text === '') return json(res, 400, { error: 'text required' });
 
-                    res.writeHead(200, {
-                        'content-type': 'text/event-stream; charset=utf-8',
-                        'cache-control': 'no-cache',
-                        connection: 'keep-alive',
-                    });
-                    attachChat(id, res);
-
-                    try {
-                        await actor.say({
-                            text,
-                            author: HUMAN,
-                            ...(body.recipients === undefined ? {} : { recipients: body.recipients }),
-                            ...(body.mode === undefined ? {} : { mode: body.mode }),
+                json(res, 200, { ok: true });
+                void actor
+                    .say({
+                        text,
+                        author: HUMAN,
+                        ...(body.recipients === undefined ? {} : { recipients: body.recipients }),
+                        ...(body.mode === undefined ? {} : { mode: body.mode }),
+                    })
+                    .catch((error: unknown) => {
+                        broadcast(id, {
+                            kind: 'error',
+                            message: error instanceof Error ? error.message : String(error),
                         });
-                    } catch (error) {
-                        sse(res, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
-                    }
-                    finish(id);
-                },
-            );
+                    });
+            });
             return;
         }
 
@@ -753,7 +752,6 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
                     keepQueue: body.keepQueue === true,
                     ...(body.botId === undefined ? {} : { botId: body.botId }),
                 });
-                finish(id);
                 json(res, 200, { ok: true });
             });
             return;
@@ -835,11 +833,7 @@ export function createDiy2App(opts: {
     });
 
     const close = (): void => {
-        for (const set of subscribers.values()) {
-            for (const entry of set) {
-                if (!entry.res.writableEnded) entry.res.end();
-            }
-        }
+        hub.close();
         subscribers.clear();
     };
 

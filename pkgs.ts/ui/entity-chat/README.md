@@ -24,7 +24,8 @@
 （`ConversationStore`）。surface 之间**不互相 import**，壳层按注册表切换。
 
 传输：`@diy-agent/chat-transport-http` 的 `HttpChatClient`（HTTP + SSE，断线退避重连），
-不是 mock，也不是 RPC。
+不是 mock，也不是 RPC。**整个应用只有一条 SSE**：房间是这条连接上的话题（见该包的
+`src/hub.ts`），所以开多少页都不涨连接数（浏览器同源 6 条的上限，##stream-mux）。
 
 入口：`EntityChatApp`（页面组件）+ `styles.css`（主题令牌）。
 

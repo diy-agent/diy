@@ -2,6 +2,10 @@
 //
 // 这是**临时传输层**：只负责把命令发出去、把事件流读回来。
 // 换成 diy-rpc 时新增 @diy-agent/chat-transport-rpc 即可，chat-core / surface 不用改。
+//
+// 连接纪律（##stream-mux）：**一个 client 只有一条 SSE**（见 ./hub），房间是这条连接上的话题。
+// 以前是「一个房间一条常驻流 + 每次发送再一条」，浏览器同源 6 条的上限下，多页工作台
+// 3 个聊天页就吃满，之后连 /history 都永久排队。
 
 import type {
     AskAnswer,
@@ -15,6 +19,8 @@ import type {
     StreamEvent,
 } from '@diy-agent/chat-core';
 
+import { StreamHub } from './hub';
+
 export interface HttpChatClientOptions {
     /** API 前缀，默认 '/api' */
     base?: string;
@@ -22,30 +28,28 @@ export interface HttpChatClientOptions {
     fetchImpl?: typeof fetch;
 }
 
-function parseSseChunk(chunk: string, onEvent: (event: StreamEvent) => void): void {
-    for (const line of chunk.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        try {
-            onEvent(JSON.parse(line.slice(6)) as StreamEvent);
-        } catch {
-            /* 忽略坏行 */
-        }
-    }
-}
+/** 房间 → 话题名（与 server 的 `room:<id>` 一一对应） */
+const topicOf = (entityId: string): string => `room:${entityId}`;
 
 export class HttpChatClient implements ChatClient {
-    private readonly controllers = new Map<string, AbortController>();
     private readonly base: string;
     private readonly injected?: typeof fetch;
+    private readonly hub: StreamHub;
 
     constructor(options: HttpChatClientOptions = {}) {
         this.base = options.base ?? '/api';
         this.injected = options.fetchImpl;
+        this.hub = new StreamHub({ base: this.base, fetch: () => this.fetchImpl });
     }
 
     /** 浏览器里 fetch 不能当方法调用（Illegal invocation），必须裸调 */
     private get fetchImpl(): typeof fetch {
         return this.injected ?? fetch;
+    }
+
+    /** 收掉那条共用连接（测试 / 应用卸载时用） */
+    close(): void {
+        this.hub.close();
     }
 
     /** 拉 JSON：HTTP 错误与"不是 JSON"都转成人能读的错误（别把 SyntaxError 抛给用户） */
@@ -66,9 +70,9 @@ export class HttpChatClient implements ChatClient {
         const [history, deliveries, asks] = await Promise.all([
             this.getJson<{ items: Item[] }>(`/rooms/${id}/history`),
             this.getJson<{ deliveries: Delivery[] }>(`/rooms/${id}/deliveries`),
-            this.getJson<{ asks: Snapshot['asks']; answered: Snapshot['answeredAsks'] }>(
-                `/rooms/${id}/asks`,
-            ).catch(() => ({ asks: [], answered: [] })),
+            this.getJson<{ asks: Snapshot['asks']; answered: Snapshot['answeredAsks'] }>(`/rooms/${id}/asks`).catch(
+                () => ({ asks: [], answered: [] }),
+            ),
         ]);
         return {
             items: history.items,
@@ -79,56 +83,13 @@ export class HttpChatClient implements ChatClient {
     }
 
     /**
-     * 常驻订阅。断线后指数退避重连（0.5s → 30s 封顶），每次连上都先发一条 `ready`，
-     * 让上层补拉快照 —— 否则断线期间的提问 / 回复就永久丢了。
+     * 常驻订阅：在这条共用连接上订一个话题。
+     *
+     * 断线重连、退避、`ready`（让上层补拉快照填断线期丢的事件）全在 `StreamHub` 里 ——
+     * 它管的是连接，这里只管「我要看哪个房间」。
      */
     watch(entityId: string, onEvent: (event: StreamEvent) => void): () => void {
-        let closed = false;
-        let attempt = 0;
-        let controller = new AbortController();
-        const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-        const loop = async (): Promise<void> => {
-            while (!closed) {
-                controller = new AbortController();
-                try {
-                    const get = this.fetchImpl;
-                    const res = await get(`${this.base}/rooms/${encodeURIComponent(entityId)}/events`, {
-                        headers: { accept: 'text/event-stream' },
-                        signal: controller.signal,
-                    });
-                    if (!res.ok || res.body === null) throw new Error(`events → ${res.status}`);
-                    attempt = 0;
-                    onEvent({ kind: 'ready' });
-
-                    const reader = res.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
-                    for (;;) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        buffer += decoder.decode(value, { stream: true });
-                        for (;;) {
-                            const index = buffer.indexOf('\n\n');
-                            if (index < 0) break;
-                            parseSseChunk(buffer.slice(0, index), onEvent);
-                            buffer = buffer.slice(index + 2);
-                        }
-                    }
-                } catch {
-                    // 落到下面的重连
-                }
-                if (closed) return;
-                attempt += 1;
-                await sleep(Math.min(30_000, 500 * 2 ** Math.min(attempt, 6)));
-            }
-        };
-        void loop();
-
-        return () => {
-            closed = true;
-            controller.abort();
-        };
+        return this.hub.subscribe(topicOf(entityId), onEvent);
     }
 
     async sessions(entityId: string): Promise<SessionInfo[]> {
@@ -202,10 +163,10 @@ export class HttpChatClient implements ChatClient {
         onEvent: (event: StreamEvent) => void,
         signal?: AbortSignal,
     ): Promise<void> {
+        const topic = topicOf(entityId);
         if (command.kind === 'cancel') {
-            this.release(entityId);
-            const get = this.fetchImpl;
-            await get(`${this.base}/rooms/${encodeURIComponent(entityId)}/cancel`, {
+            const post = this.fetchImpl;
+            await post(`${this.base}/rooms/${encodeURIComponent(entityId)}/cancel`, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({
@@ -218,52 +179,23 @@ export class HttpChatClient implements ChatClient {
         }
         if (command.kind !== 'send') return;
 
-        // 同一房间只留一条 post 流：插话时上一句的流会一直挂到这轮结束（可能十几分钟）。
-        // 浏览器对同源 HTTP/1.1 只有 6 条连接，攒满后新消息连发都发不出去。
-        // 旧流收掉不影响服务端运行：事件还有常驻订阅这条路。
-        this.release(entityId);
-
-        const controller = new AbortController();
-        this.controllers.set(entityId, controller);
-        const abort = () => controller.abort();
-        signal?.addEventListener('abort', abort, { once: true });
-
+        // 先在话题上挂一份**这次命令**的回调，再发：发送与「第一条事件」之间不留等待窗口。
+        // （常驻的那份在 watch 里，长命；这份只管这次命令，发完就摘，不能越积越多。）
+        const off = this.hub.subscribe(topic, onEvent);
         try {
-            const get = this.fetchImpl;
-            const res = await get(`${this.base}/rooms/${encodeURIComponent(entityId)}/chat`, {
+            // 订阅本身是另一次请求（SSE 单工），断着时 ensure 返回 false：
+            // 那就照发 —— 消息本身必须送到，事件由重连后的 ready + 补拉快照兜
+            await this.hub.ensure(topic);
+            const post = this.fetchImpl;
+            const res = await post(`${this.base}/rooms/${encodeURIComponent(entityId)}/chat`, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ text: command.text }),
-                signal: controller.signal,
+                ...(signal === undefined ? {} : { signal }),
             });
-            if (!res.ok || res.body === null) throw new Error(`chat → ${res.status}`);
-
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            for (;;) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                for (;;) {
-                    const index = buffer.indexOf('\n\n');
-                    if (index < 0) break;
-                    parseSseChunk(buffer.slice(0, index), onEvent);
-                    buffer = buffer.slice(index + 2);
-                }
-            }
+            if (!res.ok) throw new Error(`chat → ${res.status}`);
         } finally {
-            signal?.removeEventListener('abort', abort);
-            // 只清自己的：旧流 abort 后 finally 可能晚于新流注册，按 key 盲删会把新流弄丢
-            if (this.controllers.get(entityId) === controller) this.controllers.delete(entityId);
+            off();
         }
-    }
-
-    /** 收掉这个房间挂着的请求流（不影响服务端运行） */
-    release(entityId: string): void {
-        const controller = this.controllers.get(entityId);
-        if (controller === undefined) return;
-        this.controllers.delete(entityId);
-        controller.abort();
     }
 }

@@ -49,13 +49,10 @@ export class ConversationStore implements ConversationModel {
         this.detachWatch = this.client.watch?.(this.entityId, (event) => this.apply(event));
     };
 
-    /** 释放常驻订阅（切走房间 / 卸载时用，避免每个看过的房间各挂一条 SSE） */
+    /** 释放常驻订阅（切走房间 / 卸载时用）。连接是共用的，退订只是从话题上摘掉自己 */
     dispose = (): void => {
         this.detachWatch?.();
         this.detachWatch = undefined;
-        // 还挂着的 post 流一起收掉：否则看过的每个房间各留一条，
-        // 攒到浏览器同源连接上限（6）后整个应用都发不出消息
-        this.client.release?.(this.entityId);
     };
 
     get = (): ConversationState => this.state;
@@ -100,7 +97,10 @@ export class ConversationStore implements ConversationModel {
         new Promise((resolve, reject) => {
             this.emit({ ...this.state, error: undefined, running: true });
             let accepted = false;
-            /** 建流成功 / 收到首条事件 / 本地主动 abort（消息多半已到后端）都算受理 */
+            /**
+             * 「受理」的口径：POST 返回 200（服务端受理即返，不再挂到整轮结束）、
+             * 收到首条事件、或本地主动 abort（那时消息多半已到后端）都算。
+             */
             const accept = (): void => {
                 if (accepted) return;
                 accepted = true;
@@ -115,7 +115,7 @@ export class ConversationStore implements ConversationModel {
                 // 否则多 bot 并行时，先结束的那个会把还在说的那个一起标成空闲
                 .catch((error: unknown) => {
                     const message = messageOf(error);
-                    // 用户点"停止" / 插话时收掉旧流会 abort，这不是故障，别弹错误条，
+                    // abort 不是故障（例如调用方自己取消了这次请求），别弹错误条，
                     // 也别让 UI 把已经发出去的那句恢复成草稿
                     if (/abort/i.test(message)) {
                         accept();

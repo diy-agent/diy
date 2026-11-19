@@ -7,7 +7,7 @@ const emptySnapshot: Snapshot = { items: [], deliveries: [], asks: [] };
 
 function fakeClient(loads: Array<Snapshot | Error>) {
     const watchers: Array<(event: StreamEvent) => void> = [];
-    const released: string[] = [];
+    const unsubscribed: string[] = [];
     let calls = 0;
     const client: ChatClient = {
         load: async () => {
@@ -17,13 +17,12 @@ function fakeClient(loads: Array<Snapshot | Error>) {
             return next;
         },
         post: async () => undefined,
-        watch: (_entityId, onEvent) => {
+        watch: (entityId, onEvent) => {
             watchers.push(onEvent);
-            return () => undefined;
+            return () => unsubscribed.push(entityId);
         },
-        release: (entityId) => released.push(entityId),
     };
-    return { client, watchers, loads: () => calls, released };
+    return { client, watchers, loads: () => calls, unsubscribed };
 }
 
 describe('ConversationStore', () => {
@@ -53,11 +52,11 @@ describe('ConversationStore', () => {
         expect(loads()).toBe(1);
     });
 
-    it('dispose：常驻订阅和还挂着的 post 流一起释放（切走房间不该留连接）', () => {
-        const { client, released } = fakeClient([emptySnapshot]);
+    it('dispose：退掉常驻订阅（连接是共用的，没有「收掉这个房间的连接」这回事）', () => {
+        const { client, unsubscribed } = fakeClient([emptySnapshot]);
         const store = new ConversationStore(client, 'proj:x');
         store.dispose();
-        expect(released).toEqual(['proj:x']);
+        expect(unsubscribed).toEqual(['proj:x']);
     });
 });
 

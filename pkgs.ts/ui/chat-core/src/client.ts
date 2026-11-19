@@ -58,7 +58,12 @@ export interface ChatClient {
     /** 拉历史快照（首屏 / 重载 / 重放） */
     load(entityId: string): Promise<Snapshot>;
 
-    /** 提交命令；事件通过 onEvent 回推。signal 取消只影响本地订阅。 */
+    /**
+     * 提交命令；事件通过 onEvent 回推。signal 取消只影响本地这次请求（不影响服务端的运行）。
+     *
+     * 语义是**受理即返**：返回不等于「这一轮说完了」，事件继续从 `watch()` 那条订阅进来。
+     * 别把它实现成「一条挂到整轮结束的 SSE」—— 多页工作台下那样会吃满同源连接上限。
+     */
     post(
         entityId: string,
         command: Command,
@@ -78,15 +83,13 @@ export interface ChatClient {
 
     /**
      * 可选：常驻订阅这个房间的事件（后台 bot 的回复、提问、投递状态都能实时看到）。
-     * 返回取消订阅。post() 期间的事件仍然走 post 的回调，两条路互不替代。
+     * 返回取消订阅。
+     *
+     * **不要**为每个房间各开一条连接：多上下文（多页 / 多标签页）下会把浏览器同源
+     * 6 条的上限吃满，连 `/history` 都永久排队。HTTP 实现是把房间当成一条共用连接上的
+     * 话题；换成 rpc 时同样应该是一条连接 + 订阅。
      */
     watch?(entityId: string, onEvent: (event: StreamEvent) => void): () => void;
-
-    /**
-     * 可选：释放这个房间还挂着的请求流（切走房间时用）。
-     * 服务端的运行不受影响：事件仍会从常驻订阅进来。
-     */
-    release?(entityId: string): void;
 
     /**
      * 可选：回答一次挂起的提问（整批一次提交）。

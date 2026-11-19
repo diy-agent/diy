@@ -138,6 +138,9 @@ UI 有三个可切换的表面（同一份时间线 + 同一个 store，只换�
 
 ```
 GET    /api/info                       # 实例身份：app / pid / port / home / env / variant
+GET    /api/stream                     # **一个 app 一条** SSE：首帧 {$conn}，之后按话题推
+POST   /api/stream/subscribe           { conn, topic }        # topic = `room:<roomId>`
+POST   /api/stream/unsubscribe         { conn, topic }
 GET    /api/rooms
 POST   /api/rooms                      { type, name, modelKey?, data?: { dir?, projectId? } }
 PATCH  /api/rooms/:id                  { name?, modelKey? }
@@ -150,10 +153,31 @@ GET    /api/rooms/:id/asks
 GET    /api/rooms/:id/sessions
 POST   /api/rooms/:id/sessions/:botId/compact   { keepLast?, maxChars? }
 POST   /api/rooms/:id/asks/:askId      { values?, fields?, text? }
-POST   /api/rooms/:id/chat             { text, recipients? } → SSE { kind:'item'|'delivery'|'running'|'error'|'done' }
+POST   /api/rooms/:id/chat             { text, recipients? } → { ok:true }（受理即返）
 POST   /api/rooms/:id/cancel           { botId? }             # 不传 = 停整个房间
-GET    /api/rooms/:id/events           # 常驻 SSE（带心跳）：后台 bot 的动静也能收到
 ```
+
+### 事件流：一条连接，多话题（##stream-mux）
+
+**为什么要这样**：浏览器同源 HTTP/1.1 只有 6 条并发连接，且**按 profile 共用**。6 条常驻
+SSE 占满后，同 profile 下对这个源的**所有**请求永久排队 —— 连 `/api/rooms/:id/history`、
+点「停止」的 POST 都发不出去（不是慢，是不返回）。
+
+之前的接口是「一个房间一条常驻 SSE（`GET /api/rooms/:id/events`）+ 每次发送再挂一条
+`/chat` SSE 到整轮结束」，所以多页工作台里 **3 个聊天页**就能把 6 条吃满。现在的纪律：
+
+- 连接数 = 打开的标签页数，**与开多少个房间无关**；
+- 房间是连接上的话题（`room:<roomId>`），订阅 / 退订走上面那两条 POST；
+- 帧统一为 `data: {topic, event}`；`$conn` 是首帧，身份**由服务端给**（客户端自造 id 会和
+  上一个进程 / 上一次连接撞车）；
+- `POST /api/rooms/:id/chat` **受理即返**（不再是一条挂到整轮结束的 SSE）。发送失败也走话题
+  上的一条 `{kind:'error'}`，因为那时响应早就发完了；
+- 一条话题只在**第一个**订阅者出现时接上房间广播，最后一个走了就摘掉 —— 没人看的房间不该
+  还占着广播（老实现里它也占着一条连接）。
+
+客户端侧：`chat-transport-http` 的 `StreamHub`（`src/hub.ts`），`watch()` = 订话题、
+`post()` = 在已订话题上挂一份临时回调 + 一次 JSON POST。断线退避重连（0.5s→30s 封顶）
+后按本地话题表重订，并对每个话题补一条 `{kind:'ready'}`，让上层补拉快照。
 
 `GET /api/rooms` 的每行除了 `Room` 本身，还带两个**投影**字段（不属于领域类型 —— 它们
 回答的是「侧栏这一行怎么显示」，写不回去）：

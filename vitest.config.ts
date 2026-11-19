@@ -25,6 +25,7 @@ export default defineConfig({
         'pkgs.ts/agent/store-jsonl',
         'pkgs.ts/room',
         'pkgs.ts/ui/chat-core',
+        'pkgs.ts/ui/chat-transport-http',
         'pkgs.ts/ui/entity-chat',
         'pkgs.ts/agent/entity-runtime',
     ],

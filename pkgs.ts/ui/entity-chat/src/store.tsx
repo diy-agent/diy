@@ -409,7 +409,8 @@ export const actions = {
         const roomId = next.page === DEFAULT_PAGE ? next.id : '';
         // 切走前把输入框里还没写出去的字立即落盘（防抖计时器可能还差几百毫秒）
         void drafts.flush(state.selectedId === '' ? undefined : state.selectedId);
-        // 只让当前房间挂常驻 SSE，其余释放（否则看过的房间各留一条，永远不断）
+        // 只让当前房间订着话题，其余退订。连接是共用的（一条就够），这里省的是**事件**：
+        // 看过的房间不该还在往这条连接上推东西
         for (const [id, store] of conversations) {
             if (id !== roomId) store.dispose();
         }

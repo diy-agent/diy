@@ -257,10 +257,11 @@ resetLayout(pageId)            → 丢 doc.layout，重新 compile
 
 - 实例键去重：`pageType@scopeKey`，同一任务只一个 `task-run` 页；再点只激活。
 - 关 page ≠ 停 bot（会话在 server）：在跑的页关了要标"后台运行"。
-- **前置阻塞项（不变，且更紧）**：`chat-transport-http.watch()` 每 room 一条常驻 SSE，
-  `ConversationStore.dispose` 的注释自己写着"攒到同源 6 条就整个应用发不出消息"。page 一多必然炸。
-  做法：`GET /api/events` 全局单流 + 客户端按 roomId 分发 + `attach/dispose` 改引用计数 +
-  发消息改 202 受理。量：server ~60 行 / client ~120 行。
+- ~~**前置阻塞项**：`chat-transport-http.watch()` 每 room 一条常驻 SSE，page 一多必然炸~~
+  **已解（##stream-mux）**：`GET /api/stream` 一个 app 一条连接 + 话题（`room:<id>`）订阅，
+  帧为 `{topic, event}`；`POST /api/rooms/:id/chat` 改成受理即返，事件一律走那条共用连接。
+  连接数 = 标签页数，与开多少 page / 房间无关。服务端 `apps/diy2/server/stream.ts`、
+  客户端 `pkgs.ts/ui/chat-transport-http/src/hub.ts`，两侧都有用例锁着这条纪律。
 
 ---
 
