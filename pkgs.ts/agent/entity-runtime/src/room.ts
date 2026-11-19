@@ -24,6 +24,7 @@ import { AskGate, askAnswerHeading, describeAnswer, type AnswerOutcome, type Ask
 import type { Compactor } from './compaction';
 import { ASK_DRAFT_PREFIX, type Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
+import { buildRoomSystemContext } from './system-context';
 import { buildRoomTools } from './tools/index';
 import type { CompactEvent } from './compaction';
 import {
@@ -69,6 +70,11 @@ export interface RoomActorDeps {
     budget?: CompactOptions;
     /** 房间的工作目录；不传 = 不给文件/命令工具（只用内置 get_time） */
     cwd?: string;
+    /**
+     * 应用数据根（diy2 = `DIY2_HOME`）：`<home>/AGENTS.md` 进规则链首、并允许读设备级知识库。
+     * 不传 = 没有应用级规范（测试 / 无 app 宿主）。
+     */
+    home?: string;
     /** 是否开放 shell（缺省开放） */
     shell?: boolean;
     /** shell 缺省超时 */
@@ -103,6 +109,11 @@ export class RoomActor {
     private readonly gate: AskGate;
     /** 用户的身份（回答提问时那条消息的作者） */
     private readonly human: Author;
+    /**
+     * 规则上下文（AGENTS.md 链 + 知识库索引）：每轮请求的固定前缀，构造时算一次。
+     * 不改它就不变（前缀缓存友好）；没有 cwd 的房间为空。
+     */
+    private readonly systemContext: string;
     /** 系统自己的身份：「你的提问被挤掉了」这类通知的作者（不能冒充用户） */
     private static readonly SYSTEM: Author = { id: 'system:ask', name: '系统', color: '#9ca3af', role: 'system' };
     /** 每个成员一份工具集：只有 ask 的归属不同（按成员停止时要能分辨） */
@@ -121,6 +132,13 @@ export class RoomActor {
             now: () => this.deps.now?.() ?? Date.now(),
         });
         this.human = this.deps.human ?? { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
+        this.systemContext =
+            this.deps.cwd === undefined
+                ? ''
+                : buildRoomSystemContext({
+                      cwd: this.deps.cwd,
+                      ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
+                  });
         // 成员的 session 一开始就建好：上下文、统计、恢复都不需要等第一条消息
         for (const bot of this.members()) this.sessionOf(bot);
     }
@@ -634,6 +652,7 @@ export class RoomActor {
             ...(this.deps.budget === undefined ? {} : { budget: this.deps.budget }),
             ...(this.toolsFor(bot.id) === undefined ? {} : { tools: this.toolsFor(bot.id) }),
             ...(this.hasTools ? { toolsHint: this.toolsHint() } : {}),
+            ...(this.systemContext === '' ? {} : { systemContext: this.systemContext }),
         });
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));

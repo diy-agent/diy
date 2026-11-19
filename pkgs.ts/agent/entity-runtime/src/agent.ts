@@ -26,6 +26,11 @@ export interface RunOptions {
     /** 系统提示里关于工具的一句话（房间知道自己给了哪些能力） */
     toolsHint?: string;
     /**
+     * 规则上下文（AGENTS.md 链 + 知识库索引）：由房间在构造时组装一次，session 每轮复用。
+     * 不传 = 只有 persona（测试 / 无工作目录的房间）。
+     */
+    systemContext?: string;
+    /**
      * 每一步结束时回传"本步新增的消息"，按 step 顺序拼接就是这一轮的完整增量：
      *   本步被插入的 steering 用户消息 + 模型产出的 assistant / tool 消息。
      */
@@ -51,6 +56,28 @@ const defaultTools = {
         },
     }),
 };
+
+/**
+ * system 的唯一拼装点（纯函数，便于单测）。
+ *
+ * 顺序：身份 → persona → 规则上下文 → 工具提示。空段跳过 —— 没有 `systemContext`
+ * 时输出与旧版逐字一致（现有测试与已缓存前缀都不受影响）。
+ */
+export function instructionsOf(opts: {
+    botName: string;
+    persona: string;
+    systemContext?: string;
+    toolsHint?: string;
+}): string {
+    return [
+        `你是「${opts.botName}」，这个实体的专属 bot。`,
+        opts.persona,
+        opts.systemContext ?? '',
+        opts.toolsHint ?? '回答简洁；需要时间时调用 get_time 工具。',
+    ]
+        .filter((part) => part !== '')
+        .join('\n');
+}
 
 export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> {
     /**
@@ -79,11 +106,12 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         model: modelOf(options.modelKey),
         abortSignal: options.signal,
         maxOutputTokens,
-        instructions: [
-            `你是「${options.bot.name}」，这个实体的专属 bot。`,
-            options.bot.persona,
-            options.toolsHint ?? '回答简洁；需要时间时调用 get_time 工具。',
-        ].join('\n'),
+        instructions: instructionsOf({
+            botName: options.bot.name,
+            persona: options.bot.persona,
+            ...(options.systemContext === undefined ? {} : { systemContext: options.systemContext }),
+            ...(options.toolsHint === undefined ? {} : { toolsHint: options.toolsHint }),
+        }),
         messages: options.messages,
         tools: options.tools ?? defaultTools,
         // 不设步数上限：模型想调多少次工具就调多少次（AI SDK 缺省是 1 步，必须显式覆盖）。
