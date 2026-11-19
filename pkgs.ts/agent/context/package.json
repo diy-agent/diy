@@ -11,6 +11,10 @@
       "types": "./src/index.ts",
       "default": "./dist/index.js"
     },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "default": "./dist/testing/index.js"
+    },
     "./*": {
       "types": "./src/*.ts",
       "default": "./dist/*.js"
@@ -30,6 +34,7 @@
     "vitest": "^4.1.10"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run"
   }
 }

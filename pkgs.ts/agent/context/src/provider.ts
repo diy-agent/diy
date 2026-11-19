@@ -16,6 +16,8 @@
 //   ② 校验 key **全在契约内**（provider 加新键必须先改 schema —— 契约强制，不静默吃）
 //   ③ 用 `AssembleGlobalsSchema` 校验形状（漂移栽在这，不在各 provider）
 
+import type { z } from 'zod';
+
 import { AssembleGlobalsSchema, type AssembleGlobals } from './schema/prompt-schema.js';
 import type { SchemaDoc } from './schema/schema-doc.js';
 
@@ -43,7 +45,9 @@ export interface ContextProvider {
 }
 
 /** 契约允许的顶层键（从 schema 推导，不手抄 —— 加键只需改 schema） */
-const ALLOWED_KEYS: ReadonlySet<string> = new Set(Object.keys(AssembleGlobalsSchema.shape));
+function allowedKeysOf(schema: z.ZodObject<z.ZodRawShape>): ReadonlySet<string> {
+  return new Set(Object.keys(schema.shape));
+}
 
 /**
  * 按 provider 列表拼一棵树并校验。
@@ -57,24 +61,28 @@ const ALLOWED_KEYS: ReadonlySet<string> = new Set(Object.keys(AssembleGlobalsSch
  *
  * 同 key 后注册的覆盖先注册的：允许装配方用「兜底 provider + 覆盖 provider」的模式。
  */
-export function assembleFromProviders(providers: readonly ContextProvider[]): AssembleGlobals {
-    const tree: Record<string, unknown> = {};
-    for (const provider of providers) {
-        if (!ALLOWED_KEYS.has(provider.key)) {
-            throw new Error(
-                `上下文 provider 的 key "${provider.key}" 不在契约里（允许：${[...ALLOWED_KEYS].join(' / ')}）` +
-                    ' —— 加新键请先改 schema/prompt-schema.ts',
-                { cause: { code: "context/unknown-key" } },
-            );
-        }
-        const value = provider.provide();
-        // `undefined` / `null` = 本节缺席（信封渲染时整段不出现）；直接跳过，不往树里塞键。
-        // `null` 也要跳过：可选节的上游常常用 `null` 表达「没有」（`room?: X | null`），
-        // 而 schema 里没有哪个键允许 null —— 塞进去必然 parse 失败，语义上它和 undefined 是一回事。
-        if (value === undefined || value === null) continue;
-        tree[provider.key] = value;
+export function assembleFromProviders<T extends z.ZodObject<z.ZodRawShape> = typeof AssembleGlobalsSchema>(
+  providers: readonly ContextProvider[],
+  schema: T = AssembleGlobalsSchema as unknown as T,
+): z.infer<T> {
+  const allowed = allowedKeysOf(schema);
+  const tree: Record<string, unknown> = {};
+  for (const provider of providers) {
+    if (!allowed.has(provider.key)) {
+      throw new Error(
+        `上下文 provider 的 key "${provider.key}" 不在契约里（允许：${[...allowed].join(' / ')}）` +
+          ' —— 加新键请先改对应的 schema',
+        { cause: { code: 'context/unknown-key' } },
+      );
     }
-    return AssembleGlobalsSchema.parse(tree);
+    const value = provider.provide();
+    // `undefined` / `null` = 本节缺席（信封渲染时整段不出现）；直接跳过，不往树里塞键。
+    // `null` 也要跳过：可选节的上游常常用 `null` 表达「没有」（`room?: X | null`），
+    // 而 schema 里没有哪个键允许 null —— 塞进去必然 parse 失败，语义上它和 undefined 是一回事。
+    if (value === undefined || value === null) continue;
+    tree[provider.key] = value;
+  }
+  return schema.parse(tree) as z.infer<T>;
 }
 
 

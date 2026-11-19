@@ -19,16 +19,7 @@
 // 与 `apps/diy-app/shared/context/segment-snapshot.ts` 同一条铁律，只是 bot 这边更简单
 // （还没有跨轮增量，先不引入）。
 
-import {
-    assembleFromProviders,
-    buildDelivery,
-    helpsOf,
-    stepDeltaOf,
-    treeOfGlobals,
-    valueHashes,
-    type ContextProvider,
-    type DeltaSnapshot,
-} from '@diy-agent/context';
+import { createContextSession, type ContextProvider, type DeltaSnapshot } from '@diy-agent/context';
 import {
     createSession,
     type AgentSession,
@@ -120,13 +111,16 @@ export interface BotAgent {
  * （测试里经常只需要验这一段，不想为此跑一轮 LLM）。
  */
 export function systemOf(opts: Pick<BotAgentOptions, 'providers' | 'instructions'>): string {
-    const globals = assembleFromProviders(opts.providers);
-    const helps = helpsOf(opts.providers);
-    const delivery = buildDelivery(globals, helps);
-    return [opts.instructions.trim(), delivery.text.text].filter((s) => s !== '').join('\n\n');
+    return createContextSession({ providers: opts.providers, instructions: opts.instructions }).open().system;
 }
 
 export function createBotAgent(opts: BotAgentOptions): BotAgent {
+    const ctx = createContextSession({
+        providers: opts.providers,
+        instructions: opts.instructions,
+        initialSnapshot: opts.initialSnapshot,
+    });
+    const hasSystem = (opts.initialMessages ?? []).some((message) => message.role === 'system');
     const session: AgentSession = createSession({
         id: opts.id,
         llm: opts.llm,
@@ -138,31 +132,24 @@ export function createBotAgent(opts: BotAgentOptions): BotAgent {
         // 原来的写法（判断历史长度大于 0）会让**任何有历史的会话永远补不上 system** ——
         // 升级后老会话（system 是旧版本 / 压根没有）看不到新 provider（chain / kb 全丢）。
         // 现在：历史里已有 system 就尊重它（不重复追加），没有就补一条。
-        ...((opts.initialMessages ?? []).some((m) => m.role === "system") ? {} : { system: systemOf(opts) }),
+        ...(hasSystem ? {} : { system: ctx.open().system }),
         model: opts.model,
     });
 
-    /** 上一次给模型看过的树（跨轮增量的基准）；**初值由调用方给**，Agent 只在一轮之内推进 */
-    let prevSnap: DeltaSnapshot | null = opts.initialSnapshot;
-
     async function* run(text: string, turnOptions?: BotAgentTurnOptions): AsyncGenerator<SessionDelta> {
-        // 每轮算全量树（值便宜），然后只把**变化的部分**作为 user 前缀发出去 ——
+        // 每轮算全量树（值便宜），只把**变化的部分**作为 user 前缀发出去 ——
         // 已发出的历史一条不动，这是 `agent-prefix` 测试守的判据。
-        const globals = assembleFromProviders(opts.providers);
-        const tree = treeOfGlobals(globals);
-        const snap: DeltaSnapshot = { tree, valueHashes: valueHashes(tree) };
-        const delta = prevSnap === null ? null : stepDeltaOf(prevSnap, snap);
-        const userPrefix = delta === null || delta.text === '' ? undefined : delta.text;
+        const step = ctx.step();
         try {
             yield* session.send(text, {
                 ...turnOptions,
-                ...(userPrefix === undefined ? {} : { userPrefix }),
+                ...(step.user === '' ? {} : { userPrefix: step.user }),
             });
         } finally {
-            // `prevSnap` **无论成败都前移**：失败的这一轮已经把 user 消息 append 进 store 了，
+            // `commit` **无论成败都前移**：失败的这一轮已经把 user 消息 append 进 store 了，
             // 下一次看到的树就是这一次的树。不前移 ⇒ 下一轮会把同一段增量再发一遍。
             // （必须是 finally —— `session.send` 抛错会直接跳出，放在 yield* 之后根本执行不到。）
-            prevSnap = snap;
+            ctx.commit();
         }
     }
 
@@ -176,7 +163,7 @@ export function createBotAgent(opts: BotAgentOptions): BotAgent {
                 .filter((d): d is { type: 'text'; text: string } => d.type === 'text')
                 .map((d) => d.text)
                 .join('');
-            return { text: combined, request: session.lastRequest, deltas, snapshot: prevSnap };
+            return { text: combined, request: session.lastRequest, deltas, snapshot: ctx.snapshot };
         },
     };
 }
