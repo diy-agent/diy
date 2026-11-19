@@ -95,6 +95,13 @@ export interface LayoutInput<S extends Scope = Scope> {
      */
     pinned?: Record<string, number>;
     /**
+     * 弹性区域（`1fr`）被拖过之后的**相对**份额：区域 id → 组内权重（不必归一，编译时按和归一）。
+     *
+     * 这是 `pinned` 的补充：一组全是 `1fr` 的兄弟没有固定参照，px 钉不住它们，
+     * 但比例可以 —— 组里要么全是弹性成员（那就全用份额），要么就全按模板 fr。
+     */
+    shares?: Record<string, number>;
+    /**
      * L1 拖出来的落点：view id → 区域 id。
      *
      * 只认「这个 view 自己声明过」的区域（`area` 或 `allow`），其余一律当没发生 ——
@@ -121,6 +128,14 @@ export interface SavedLayout {
      * 用户拖拽、dockview 的钳制、以及上一次窗口尺寸的痕迹，事后分不清哪个是用户要的。
      */
     pinnedSizes?: Record<string, number>;
+    /**
+     * 用户拖出来的**比例**：区域 id → 组内权重（只在「整组都是叶子」的组里记）。
+     *
+     * 和 `pinnedSizes` 分工：写死数字的区域钉 px，`1fr` 的区域钉比例。
+     * 全 `1fr` 的组（比如「两栏对半分」）用 px 钉等于把那次窗口宽度烧进布局，
+     * 而比例在任何窗口尺寸下都对。
+     */
+    shares?: Record<string, number>;
     /** L1 拖过的 view：view id → 它此刻待的区域（落点仍受 `placement.area` + `allow` 约束） */
     movedViews?: Record<string, string>;
 }
@@ -135,7 +150,14 @@ export function compileLayout<S extends Scope>(input: LayoutInput<S>): CompiledL
     const slots = collectSlots(page, views, scope, input.moved);
 
     const skippedAreas: string[] = [];
-    const root = compileNode(page.areas, slots, depthAxis(page.areas), viewport, skippedAreas, input.pinned);
+    const root = compileNode(
+        page.areas,
+        slots,
+        depthAxis(page.areas),
+        viewport,
+        skippedAreas,
+        { pinned: input.pinned, shares: input.shares },
+    );
     if (!root) throw new ModelError(`page "${page.type}" 没有任何区域有 view 落位`);
 
     const panels: Record<string, GroupviewPanelState> = {};
@@ -242,6 +264,12 @@ function depthAxis(node: AreaNode): Axis {
     return node.type === 'split' ? node.data.axis : 'y';
 }
 
+/** 用户在快照里留下的两份尺寸意图 */
+interface Sizing {
+    pinned?: Record<string, number> | undefined;
+    shares?: Record<string, number> | undefined;
+}
+
 /**
  * 模板树 → dockview 树。尺寸在这一步落成 px：
  * 数字原样，`fr` 在同父兄弟间分**剩余**空间（与 dockview 对 size 的语义一致）。
@@ -252,7 +280,7 @@ function compileNode<S extends Scope>(
     axis: Axis,
     viewport: Viewport,
     skipped: string[],
-    pinned?: Record<string, number>,
+    sizing: Sizing,
 ): DockNode | null {
     // `axis` = 本节点被拉长的方向（= 父分割的轴）；`node.data.axis` = 本节点切自己子区域的方向。
     // 两者不同：col 里的 row 子节点沿 y 拿高度，它自己的子节点沿 x 分宽度。
@@ -284,15 +312,16 @@ function compileNode<S extends Scope>(
     // 于是「实测尺寸」永远对不上「模板尺寸」（记账、min 约束、测试都跟着错）
     const compiled = node.data.children.map((child) => ({
         child,
-        node: compileNode(child, slots, node.data.axis, viewport, skipped, pinned),
+        node: compileNode(child, slots, node.data.axis, viewport, skipped, sizing),
     }));
     const survivors = compiled.filter(
         (entry): entry is { child: AreaNode; node: DockNode } => entry.node !== null,
     );
     if (survivors.length === 0) return null;
     const sizes = distribute(
-        survivors.map((entry) => pinnedSize(entry.child, pinned)),
+        survivors.map((entry) => pinnedSize(entry.child, sizing.pinned)),
         inner,
+        survivors.map((entry) => (entry.child.type === 'region' ? sizing.shares?.[entry.child.id] : undefined)),
     );
     survivors.forEach((entry, index) => {
         entry.node.size = sizes[index];
@@ -316,16 +345,19 @@ function pinnedSize(node: AreaNode, pinned?: Record<string, number>): Size {
  * 如果留个洞（比如被跳过的区域、或者全都是数字时剩下的空间），**它会替我们做这件事** ——
  * 于是编译出来的 px 和渲染出来的 px 不是一回事，拖动记账（逻辑尺寸 + 位移）跟着失真。
  * 所以该做的事我们自己先做完。
+ *
+ * `shares` = 用户拖出来的组内份额（见 `LayoutInput.shares`），取代模板的 fr 权重。
  */
-function distribute(sizes: Size[], available: number): number[] {
+function distribute(sizes: Size[], available: number, shares?: (number | undefined)[]): number[] {
+    const weights = flexWeights(sizes, shares);
     let fixed = 0;
-    let totalFr = 0;
-    for (const size of sizes) {
-        fixed += asPx(size) ?? 0;
-        totalFr += frOf(size);
+    let totalWeight = 0;
+    for (let index = 0; index < sizes.length; index += 1) {
+        fixed += asPx(sizes[index]) ?? 0;
+        totalWeight += weights[index] ?? 0;
     }
     const rest = Math.max(0, available - fixed);
-    const raw = sizes.map((size) => asPx(size) ?? (totalFr > 0 ? (rest * frOf(size)) / totalFr : 0));
+    const raw = sizes.map((size, index) => asPx(size) ?? (totalWeight > 0 ? (rest * (weights[index] ?? 0)) / totalWeight : 0));
     if (raw.length === 0) return raw;
 
     const sum = raw.reduce((acc, value) => acc + value, 0);
@@ -347,6 +379,28 @@ function distribute(sizes: Size[], available: number): number[] {
 function asPx(size: Size): number | undefined {
     if (typeof size === 'number') return size;
     return undefined;
+}
+
+/**
+ * 每个弹性成员的权重：用户拖出来的份额优先，否则用模板的 fr。固定 px 的成员权重为 0。
+ *
+ * **整组一起采信**：只要有一个弹性成员没记过份额，全组就回到模板 fr。
+ * 一半份额一半 fr 是两套不同的权重，混着算出来的结果谁也无法预测 ——
+ * 宁可按模板（用户看得懂发生了什么）。比如模板给这个组新加了一个 `1fr` 区域，
+ * 旧快照里的份额就缺一份，这时全组回模板。
+ */
+function flexWeights(sizes: Size[], shares?: (number | undefined)[]): number[] {
+    const flex = sizes.map((size) => asPx(size) === undefined);
+    // 只看弹性成员的份额是否齐全（固定 px 的成员本来就不需要份额）
+    const complete = flex.every((isFlex, index) => !isFlex || isPositive(shares?.[index]));
+    return sizes.map((size, index) => {
+        if (!flex[index]) return 0;
+        return complete ? (shares?.[index] as number) : frOf(size);
+    });
+}
+
+function isPositive(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 function frOf(size: Size): number {
@@ -379,10 +433,11 @@ export interface ResolveInput<S extends Scope = Scope> extends LayoutInput<S> {
 export function resolveLayout<S extends Scope>(input: ResolveInput<S>): CompiledLayout {
     const saved = input.saved;
     const usable = saved && saved.pageType === input.page.type ? savedRoot(saved) : null;
-    // 快照里的两份用户意图（钉住的尺寸 / 拖动过的落点）都是「优先于模板」的输入
+    // 快照里的三份用户意图（钉住的 px / 拖出来的比例 / 拖动过的落点）都是「优先于模板」的输入
     const compiled = compileLayout({
         ...input,
         pinned: usable ? saved?.pinnedSizes : undefined,
+        shares: usable ? saved?.shares : undefined,
         moved: usable ? saved?.movedViews : undefined,
     });
     if (!usable) return compiled;
@@ -507,6 +562,20 @@ function mergeViews(templateViews: string[], kept: string[], order: Map<string, 
 export function leavesOf(node: DockNode): AreaLeafNode[] {
     if (node.type === 'leaf') return [node];
     return node.data.flatMap(leavesOf);
+}
+
+/**
+ * 一棵树里「整组都是叶子」的组（≥2 个成员）：份额记账只能记到这种组上。
+ *
+ * 份额是按**区域 id** 存的，而分支节点没有 id（dockview 的 branch 只带子节点数组），
+ * 所以嵌套分割那一层的比例记不下来 —— 那块只能靠 `pinnedSizes` 或模板。
+ */
+export function leafGroups(node: DockNode): string[][] {
+    if (node.type === 'leaf') return [];
+    const mine = node.data.every((child) => child.type === 'leaf') && node.data.length > 1
+        ? [node.data.map((child) => child.data.id)]
+        : [];
+    return [...mine, ...node.data.flatMap(leafGroups)];
 }
 
 function areasOf(node: DockNode): Record<string, CompiledArea> {

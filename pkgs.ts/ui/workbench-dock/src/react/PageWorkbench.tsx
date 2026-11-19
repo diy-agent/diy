@@ -27,6 +27,7 @@ import {
 } from 'react';
 import {
     compileLayout,
+    leafGroups,
     leavesOf,
     resolveLayout,
     toSerialized,
@@ -106,6 +107,8 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
     const maximizedRef = useRef<string | null>(null);
     /** 用户拖出来的 px（只记模板里写死数字的区域，见 compile.ts 的 pinnedSizes） */
     const pinnedRef = useRef<Record<string, number>>({});
+    /** 用户拖出来的比例（整组都是叶子的组，见 compile.ts 的 shares） */
+    const sharesRef = useRef<Record<string, number>>({});
     /** L1 拖过的 view：view id → 区域 id（落点仍受 `placement.area` + `allow` 约束） */
     const movedRef = useRef<Record<string, string>>({});
     /** 当前吃进 dockview 的编译结果（给 `skippedAreas()` 这类诊断用） */
@@ -157,6 +160,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             dismissed: dismissedRef.current,
             maximizedArea: maximizedRef.current ?? undefined,
             pinnedSizes: pinnedRef.current,
+            shares: sharesRef.current,
             movedViews: movedRef.current,
         };
     }, []);
@@ -211,6 +215,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             : [];
         maximizedRef.current = typeof saved.maximizedArea === 'string' ? saved.maximizedArea : null;
         pinnedRef.current = isSizeMap(saved.pinnedSizes) ? saved.pinnedSizes : {};
+        sharesRef.current = isShareMap(saved.shares) ? saved.shares : {};
         movedRef.current = isIdMap(saved.movedViews) ? saved.movedViews : {};
         return saved;
     }, []);
@@ -265,18 +270,20 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
         const before = dragBeforeRef.current;
         const api = apiRef.current;
         const viewport = sizeRef.current;
-        // 没人拖分屏线 → 这条 geometry 不是用户改尺寸（也可能是 fromJSON 的余波）
-        if (!before || !api || !viewport) return;
+        // 没人拖分屏线 → 这条 geometry 不是用户改尺寸（也可能是 fromJSON 的余波）；
+        // 最大化时尺寸全是失真的，一样不记
+        if (!before || !api || !viewport || maximizedRef.current) return;
 
         let reference: CompiledLayout;
         try {
-            // 和「此刻真实布局」用同一套输入（含 pinned / moved），叶子集才对得上
+            // 和「此刻真实布局」用同一套输入（含 pinned / shares / moved），叶子集和逻辑尺寸才对得上
             reference = compileLayout({
                 page: pageRef.current,
                 views: viewsRef.current,
                 scope: scopeRef.current,
                 viewport,
                 pinned: pinnedRef.current,
+                shares: sharesRef.current,
                 moved: movedRef.current,
             });
         } catch {
@@ -284,25 +291,65 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
         }
 
         const axes = pinnedAreasRef.current;
-        const next = { ...pinnedRef.current };
+        const leaves = leavesOf(reference.grid.root);
+        const logical = new Map(leaves.map((leaf) => [leaf.data.id, leaf.size]));
+
+        // 这一组的位移（px），按组自己的轴取：一个已经渲染出来的组才量得到
+        const moveOf = (id: string): { dx: number; dy: number } | null => {
+            const was = before[id];
+            const group = api.getGroup(id);
+            // 收起 / 最大化的组尺寸是失真的（~0 / 满屏），量它得到的"位移"没有意义
+            if (!was || !group || !group.api.isVisible) return null;
+            return {
+                dx: Math.round(group.api.width - was.width),
+                dy: Math.round(group.api.height - was.height),
+            };
+        };
+
+        // ① px：模板里写死数字的区域。`leaf.size` 是这次编译的**逻辑**尺寸（已吃过 pinned），
+        //    加上位移就是用户要的值
+        const nextPinned = { ...pinnedRef.current };
         let changed = false;
-        for (const leaf of leavesOf(reference.grid.root)) {
+        for (const leaf of leaves) {
             const axis = axes.get(leaf.data.id);
-            if (!axis) continue; // 不是数字区（`1fr` 永远自动）/ 不是本页的叶子
-            const was = before[leaf.data.id];
-            const group = api.getGroup(leaf.data.id);
-            if (!was || !group) continue;
-            const actual = axis === 'x' ? group.api.width : group.api.height;
-            const delta = Math.round(actual - (axis === 'x' ? was.width : was.height));
+            if (!axis) continue; // 弹性区（`1fr` 永远是自动的，比例走 ②）/ 不是本页的叶子
+            const moved = moveOf(leaf.data.id);
+            if (!moved) continue;
+            const delta = axis === 'x' ? moved.dx : moved.dy;
             if (delta === 0) continue; // 这一组没被拖到（同组其他分屏线动了它不算）
-            // `leaf.size` 是这次编译的**逻辑**尺寸（已吃过 pinned），加上位移就是用户要的值
             const size = Math.max(0, Math.round(leaf.size + delta));
             if (size === pinnedRef.current[leaf.data.id]) continue;
-            next[leaf.data.id] = size;
+            nextPinned[leaf.data.id] = size;
             changed = true;
         }
+
+        // ② 比例：一组弹性区域（`1fr`）被拖过之后，把它们的**相对**份额重记一遍。
+        //    px 钉不住它们（整组没有固定参照），比例可以 —— 换个窗口尺寸也成立。
+        const nextShares = { ...sharesRef.current };
+        for (const ids of leafGroups(reference.grid.root)) {
+            const flex = ids.filter((id) => !axes.has(id));
+            if (flex.length < 2) continue; // 只剩一个弹性成员时它总是吃剩下的，份额没意义
+            const moves = ids.map((id) => moveOf(id));
+            if (moves.some((moved) => !moved)) continue; // 有成员没渲染出来 → 整组不可靠，不记
+            const dx = moves.reduce((acc, moved) => acc + Math.abs(moved!.dx), 0);
+            const dy = moves.reduce((acc, moved) => acc + Math.abs(moved!.dy), 0);
+            if (dx === 0 && dy === 0) continue; // 这组没被动
+            // 拖的是分屏线，所以只有一个方向会真变；两个方向都变就是布局自己重排的余波，不记
+            if (dx > 0 && dy > 0) continue;
+            const horizontal = dx > 0;
+            ids.forEach((id, index) => {
+                if (axes.has(id)) return; // 数字区走 ①，这里只管弹性成员
+                const moved = moves[index]!;
+                const share = Math.max(1, Math.round((logical.get(id) ?? 0) + (horizontal ? moved.dx : moved.dy)));
+                if (share === sharesRef.current[id]) return;
+                nextShares[id] = share;
+                changed = true;
+            });
+        }
+
         if (!changed) return;
-        pinnedRef.current = next;
+        pinnedRef.current = nextPinned;
+        sharesRef.current = nextShares;
         queuePersist();
     }, [queuePersist]);
 
@@ -372,14 +419,15 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             }
         };
 
-        const saved = appliedRef.current ? currentSaved() : loadSaved();
-        let failure = attempt(saved);
-        if (failure && saved) {
+        const saves = appliedRef.current ? currentSaved() : loadSaved();
+        let failure = attempt(saves);
+        if (failure && saves) {
             // 快照坏了：丢掉它，用模板再来一次。这一页还能用，只是回到模板
             clearStored();
             dismissedRef.current = [];
             maximizedRef.current = null;
             pinnedRef.current = {};
+            sharesRef.current = {};
             movedRef.current = {};
             failure = attempt(null);
         }
@@ -533,6 +581,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                 dismissedRef.current = [];
                 maximizedRef.current = null;
                 pinnedRef.current = {};
+                sharesRef.current = {};
                 movedRef.current = {};
                 clearStored();
                 const viewport = sizeRef.current;
@@ -668,6 +717,12 @@ function areasSignature(node: AreaNode): string {
 function isSizeMap(value: unknown): value is Record<string, number> {
     if (!value || typeof value !== 'object') return false;
     return Object.entries(value).every(([, size]) => typeof size === 'number' && Number.isFinite(size));
+}
+
+/** `shares` 的形状检查：只要 string → 正数（0 / 负数算不出比例，当没存过） */
+function isShareMap(value: unknown): value is Record<string, number> {
+    if (!value || typeof value !== 'object') return false;
+    return Object.entries(value).every(([, share]) => typeof share === 'number' && Number.isFinite(share) && share > 0);
 }
 
 /** `movedViews` 的形状检查：只要 string → string */
