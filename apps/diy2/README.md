@@ -97,6 +97,19 @@ diy2 port | diy2 home   # 脚本用：打印端口 / 数据根（裸值）
 退出码由 `@diy-agent/rpc/cli` 从 zod 声明生成，本地命令走 **mem 传输**（进程内，不起服务、不开端口）。
 `start` 仍留在 `bin/diy2` —— 它是进程生命周期（前台跑、Ctrl-C 停），不是一次命令调用。
 
+### 知识库：`diy2 facts`
+
+真源是 `.diy/knowledge/**/*.md`（项目库优先，`~/.diy/knowledge` 兜底），**不是**新的数据模型：
+
+```bash
+diy2 facts brief rule              # 列目录（或文件 rule/dev、前缀 app*）下每条知识的小节 + 首句
+diy2 facts get rule/dev#worktree   # 取一节正文（路径可省 .md，不带 # 就是整篇）
+diy2 facts find worktree,主仓      # 全文检索；多个关键词用逗号 = 全都要命中
+diy2 facts status                  # 条目 / 小节 / 字节数 + 问题清单（项目库与设备级库分列）
+```
+
+`-j` 对所有命令都是「单行 JSON + `{ok,data}` 包装」；`brief/get/find` 的人类输出是缩进 JSON。
+
 构建产物是三件：`build/prod/web/`（vite build 的 UI）、`build/prod/server/index.mjs`
 （vite lib/ssr 打的服务端单文件）与 `build/prod/cli/index.mjs`（CLI 单文件），工作区包都打进去了。
 全局命令只依赖这三件，不需要在运行时装 vite / tsx。发布时 `files` 只带 `bin/` + `build/prod/`。

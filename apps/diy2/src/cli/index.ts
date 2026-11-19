@@ -14,6 +14,7 @@ import '@diy-agent/rpc'; // .cliOption 的 zod 扩展（副作用补丁）
 import { CliApp } from '@diy-agent/rpc/cli';
 
 import { instanceApi, instanceHandlers } from './instance';
+import { factsApi, factsHandlers } from './facts';
 
 /** 全局选项（只在 CLI 进程里消费；与 diy-app 的 `--json` 同形） */
 const globalOptions = z.object({
@@ -25,9 +26,13 @@ const argv = process.argv.slice(2);
 const cli = CliApp.inProcess({
     name: 'diy2',
     version: process.env['DIY2_CLI_VERSION'] ?? '',
-    scopes: [{ prefix: 'diy2', api: instanceApi, handlers: instanceHandlers() }],
-    // `instance` 只是域层：用户敲 `diy2 list`，不是 `diy2 instance list`
-    cliRootPath: ['instance'],
+    scopes: [
+        { prefix: 'diy2', api: instanceApi, handlers: instanceHandlers() },
+        { prefix: 'diy2', api: factsApi, handlers: factsHandlers() },
+    ],
+    // `instance` 摊平（`diy2 list`）；`facts` 保留域层（`diy2 facts brief`），
+    // 免得 brief/get/find/status 与实例命令抢顶层、也免得和将来的域撞名
+    cliRootPath: ['instance', '!facts'],
     globalOptions,
     cwd: process.cwd(),
 });

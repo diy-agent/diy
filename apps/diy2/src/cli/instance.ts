@@ -130,7 +130,7 @@ export interface InstanceDeps {
 export function instanceHandlers(deps?: Partial<InstanceDeps>): {
     instance: {
         list: () => { instances: ReturnType<typeof rowOf>[] };
-        stop: (input: { all?: boolean; worktree?: string }) => Promise<{
+        stop: (req: { input: { all?: boolean; worktree?: string } }) => Promise<{
             stopped: number;
             instances: ReturnType<typeof rowOf>[];
         }>;
@@ -145,7 +145,7 @@ export function instanceHandlers(deps?: Partial<InstanceDeps>): {
     return {
         instance: {
             list: () => ({ instances: readAppRecords(dir).map(rowOf) }),
-            stop: async (input) => {
+            stop: async ({ input }) => {
                 const records = readAppRecords(dir).filter((rec) => {
                     if (input.all === true) return true;
                     if (input.worktree !== undefined) {

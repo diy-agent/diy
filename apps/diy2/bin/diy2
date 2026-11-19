@@ -63,6 +63,7 @@ if (has('help', '-h')) {
   diy2 stop [--all]        停本数据根的实例（--worktree <dir> = 那个 worktree 的全部；
                            --all = 本机全部）
   diy2 port | diy2 home    打印端口 / 数据根（脚本用；裸值）
+  diy2 facts <cmd>         知识库只读投影（brief / get / find / status；diy2 facts --help）
   diy2 --restart           先停掉同数据根实例再起
 
 选项：
@@ -279,6 +280,7 @@ switch (command) {
     case 'stop':
     case 'port':
     case 'home':
+    case 'facts':
         await runCli();
         break;
     case 'start':
