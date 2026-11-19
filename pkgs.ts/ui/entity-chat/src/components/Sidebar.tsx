@@ -12,7 +12,7 @@ import * as React from 'react';
 import type { Room } from '../model';
 import { useNavSources, type NavContext, type NavHost } from '../nav';
 import { registerBuiltinNav } from '../nav/index';
-import { useStore } from '../store';
+import { useAddress } from '../store';
 
 // 模块加载时注册内建来源（幂等）。放在这里而不是 App：侧栏是它们唯一的宿主，
 // 谁渲染侧栏谁就该保证来源在 —— 少了这一步，侧栏会安静地空白，没有任何报错。
@@ -59,7 +59,9 @@ export function Sidebar({
     onRequestDelete: (room: Room) => void;
     onOpenSettings: () => void;
 }) {
-    const state = useStore();
+    // 壳只关心「当前地址」（来源们拿它判高亮）。rooms / 错误 / 会话这些不归它管：
+    // 整份快照会让每次 emit（包含别的房间来了一条消息）都把整张侧栏重铺一遍。
+    const address = useAddress();
     const sources = useNavSources();
 
     const [width, setWidth] = React.useState(loadWidth);
@@ -111,10 +113,7 @@ export function Sidebar({
         () => ({ onCreateProject, onCreateTask, onRequestDelete, onExpandSidebar: onToggle }),
         [onCreateProject, onCreateTask, onRequestDelete, onToggle],
     );
-    const navContext = React.useMemo<NavContext>(
-        () => ({ open, address: state.address, host }),
-        [open, state.address, host],
-    );
+    const navContext = React.useMemo<NavContext>(() => ({ open, address, host }), [open, address, host]);
 
     return (
         <aside

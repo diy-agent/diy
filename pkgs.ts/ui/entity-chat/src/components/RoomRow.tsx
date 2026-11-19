@@ -9,7 +9,7 @@ import * as React from 'react';
 import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
 import { formatActivityAgo, formatAtAbsolute, type Room } from '../model';
-import { actions, isCurrentRoom, useAddress, useLastActivityOf, usePendingAskOf } from '../store';
+import { actions, useIsCurrentRoom, useLastActivityOf, usePendingAskOf } from '../store';
 import { isPlainLeftClick } from './link';
 import { EditableName, StatusGlyph, StatusIcon } from './RoomName';
 
@@ -42,15 +42,7 @@ function RowAction({
     );
 }
 
-export function RoomRow({
-    room,
-    compact,
-    collapsed = false,
-    openTaskCount,
-    onToggleCollapse,
-    onCreateTask,
-    onRequestDelete,
-}: {
+export interface RoomRowProps {
     room: Room;
     compact: boolean;
     /** 项目行：任务列表是否收起（只有项目有）；收起时行尾显示未关闭任务数 */
@@ -59,11 +51,31 @@ export function RoomRow({
     onToggleCollapse?: () => void;
     onCreateTask?: () => void;
     onRequestDelete: (room: Room) => void;
-}) {
+}
+
+/**
+ * 行的本体（未包 `memo`）。
+ *
+ * 单独导出只是为了能被替换成一个**计数**版本做渲染粒度测试（`tests/rerender.test.tsx`）：
+ * 包装如果再套一层 `memo(RoomRow)`，行的内层渲染就数不到了 —— 量到的永远是“父级穿透”
+ * 那一半，而真正要证的恰恰是「这一行自己该不该进 render」。
+ */
+export function RoomRowView({
+    room,
+    compact,
+    collapsed = false,
+    openTaskCount,
+    onToggleCollapse,
+    onCreateTask,
+    onRequestDelete,
+}: RoomRowProps) {
     // 细粒度订阅：这一行只关心「是不是当前那一行」「自己的草稿 / 待答提问 / 最后活动」。
     // 用 `useStore()` 拿整份快照的话，别的房间来了消息、一条错误冒出来，整张侧栏都重渲。
-    const address = useAddress();
-    const active = isCurrentRoom(address, room);
+    //
+    // 拿到的每个快照都是**单值**（一个布尔 / 一个数字 / 一个毫秒数）：`emit` 之后 React 用
+    // `Object.is` 比，没变就不重渲这一行。再配上外层的 `React.memo`，父级（`App` / `Sidebar`
+    // / 三个 nav 块）重渲的时候，只要 props 和这些值都没变，这一行连 render 都不会进来。
+    const active = useIsCurrentRoom(room.id);
     // 行上两个标记，两件事：
     //   ✎ = 这里有**没发出去的字**（发言框 / 对话框草稿；提问填了一半不算，那有自己的卡片）
     //   ? = 这里有**提问在等你答**（服务端投影 + 当前房间的会话流，答完立刻灭）
@@ -219,3 +231,9 @@ export function RoomRow({
         </div>
     );
 }
+
+/**
+ * 行组件。`memo` 在这里：父级（`App` / `Sidebar` / 三个 nav 块）重渲时，props 没变就
+ * 直接跳到本行 —— 而「本行自己那一格变了」靠的是行内的单值订阅，不靠 props。
+ */
+export const RoomRow = React.memo(RoomRowView);
