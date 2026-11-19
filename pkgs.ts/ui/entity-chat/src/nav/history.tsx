@@ -15,7 +15,7 @@ import {
     type Room,
 } from '../model';
 import type { NavContext, NavSource } from '../nav';
-import { actions, isCurrentRoom, useStore } from '../store';
+import { actions, isCurrentRoom, useAddress, useLastActivityOf, useStore } from '../store';
 import { projectNamesOf } from './projects';
 
 /** 历史任务区展开状态：默认展开（用户要的是“方便回头看”，默认收起等于又藏起来了） */
@@ -43,10 +43,10 @@ function loadHistoryOpen(): boolean {
  * 「关了之后又说过话」是个值得知道的例外，但它不该占这一列。
  */
 function HistoryRow({ room, projectName }: { room: Room; projectName?: string }) {
-    const address = useStore().address;
+    const address = useAddress();
     const active = isCurrentRoom(address, room);
     const closedAt = closedAtOf(room);
-    const activityAt = useStore().lastActivity[room.id];
+    const activityAt = useLastActivityOf(room.id);
     const closedAgo = formatCompactAgo(closedAt);
     const detail: string[] = [];
     if (closedAt !== undefined) {
