@@ -26,6 +26,8 @@
     },
     "dependencies": {
         "@ai-sdk/openai-compatible": "^3.0.92",
+        "@diy-agent/agents-chain": "*",
+        "@diy-agent/kb": "*",
         "@diy-agent/protocol": "*",
         "ai": "^7.0.173",
         "zod": "^4.2.0"

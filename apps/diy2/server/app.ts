@@ -135,6 +135,7 @@ function actorOf(spec: Room): RoomActor {
             budget: config.compact,
             onCompact: (bot, event) => logCompact(spec.id, bot, event),
             ...(cwd === undefined ? {} : { cwd }),
+            home: config.home,
             shell: config.tools !== 'files',
         });
         rooms.set(spec.id, actor);

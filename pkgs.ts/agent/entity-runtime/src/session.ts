@@ -110,6 +110,8 @@ export interface SessionDeps {
     /** 房间装配的工具（不传 = 内置 get_time） */
     tools?: ToolSet;
     toolsHint?: string;
+    /** 规则上下文（AGENTS.md 链 + 知识库索引）；房间构造时组装一次，session 每轮复用 */
+    systemContext?: string;
     /** 本轮输出上限（缺省按 modelKey 推，见 providers.ts `maxOutputTokensOf`） */
     maxOutputTokens?: number;
 }
@@ -415,6 +417,7 @@ export class BotSession {
                 maxOutputTokens,
                 ...(this.deps.tools === undefined ? {} : { tools: this.deps.tools }),
                 ...(this.deps.toolsHint === undefined ? {} : { toolsHint: this.deps.toolsHint }),
+                ...(this.deps.systemContext === undefined ? {} : { systemContext: this.deps.systemContext }),
                 onStepTranscript: (added) => {
                     for (const message of added) produced.push({ message, origin: 'self', turn: turn.turn });
                 },
