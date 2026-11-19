@@ -111,18 +111,47 @@ function emit(next: ShellState): void {
     for (const listener of listeners) listener();
 }
 
+/**
+ * 订阅回调提成模块级常量：每次 render 传一个新函数，`useSyncExternalStore` 会每轮
+ * 退订再订阅一遍（它对 subscribe 的引用做比较）。下面的几个 hook 共用同一个。
+ */
+function subscribeShell(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+}
+
+/** 整份快照（壳自己用：它本来就要 rooms / bots / error 全看）。 */
 export function useShell(): ShellState {
-    return React.useSyncExternalStore(
-        (listener) => {
-            listeners.add(listener);
-            return () => listeners.delete(listener);
-        },
-        () => state,
-        () => state,
-    );
+    return React.useSyncExternalStore(subscribeShell, () => state, () => state);
 }
 
 export const useStore = useShell;
+
+/**
+ * 只订阅「当前地址」。侧栏每一行都要判断自己是不是当前那一行，用 `useShell()` 就是
+ * 整份快照：某个房间的最后活动变了、一条错误来了，整张表跟着重渲。
+ *
+ * 返回的引用只在地址真的换了时才变 —— `pickAddress` 在旧地址还合法时原样返回它。
+ */
+export function useAddress(): NavAddress {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.address,
+        () => state.address,
+    );
+}
+
+/**
+ * 只订阅一个房间的最后活动。`emit` 每次换掉 `lastActivity` 的整份记录（浅拷贝），
+ * 但这里取到的是单个毫秒数：React 用 `Object.is` 比快照，数没变就不重渲这一行。
+ */
+export function useLastActivityOf(roomId: string): number | undefined {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.lastActivity[roomId],
+        () => state.lastActivity[roomId],
+    );
+}
 
 /** 当前快照的只读视图 —— 给测试与调试用（界面里请用 `useShell` 订阅，别读这个） */
 export function shellSnapshot(): ShellState {
@@ -283,7 +312,10 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         lastActivity,
         bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])),
         loaded: true,
-        address,
+        // 地址没变就沿用旧引用：`useAddress()` 的快照就是它，同值换新对象等于给整张侧栏
+        // 发一次「变了」的信号。`pickAddress` 多数分支会给旧对象，但 fallback / 首屏那条
+        // 每次都新建，所以在这里兜住。
+        address: sameAddress(state.address, address) ? state.address : address,
         selectedId: address.page === DEFAULT_PAGE ? address.id : '',
         // 轮询成功不该抹掉用户还没看到的错误（改名失败这类和「服务端在不在」无关）
         error: opts.keepError === true ? state.error : undefined,

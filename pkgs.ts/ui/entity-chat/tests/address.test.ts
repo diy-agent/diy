@@ -201,6 +201,13 @@ describe('pickAddress —— 刷新后落哪儿（三步优先级）', () => {
         ).toEqual(addressOf('room', 'task:t-001'));
     });
 
+    it('1b. 内存里合法 → 返回**同一个对象**（引用不抖）', () => {
+        // 侧栏每一行用 `useAddress()` 判断自己是不是当前那一行，快照就是这个对象：
+        // 同值换新对象 = 每次 refresh 整张表白重渲一遍。引用稳定是这个 hook 的前提。
+        const current = addressOf('room', 'task:t-001');
+        expect(pickAddress({ current, fromUrl: roomAddressOf(rooms[0]!), known, fallback })).toBe(current);
+    });
+
     it('2b. 地址栏里的房间已经没了 → 落到 fallback', () => {
         expect(
             pickAddress({

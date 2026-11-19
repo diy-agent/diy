@@ -9,7 +9,7 @@ import * as React from 'react';
 import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
 import { formatActivityAgo, formatAtAbsolute, type Room } from '../model';
-import { actions, isCurrentRoom, useStore } from '../store';
+import { actions, isCurrentRoom, useAddress, useLastActivityOf } from '../store';
 import { isPlainLeftClick } from './link';
 import { EditableName, StatusGlyph, StatusIcon } from './RoomName';
 
@@ -60,13 +60,15 @@ export function RoomRow({
     onCreateTask?: () => void;
     onRequestDelete: (room: Room) => void;
 }) {
-    const state = useStore();
+    // 细粒度订阅：这一行只关心「是不是当前那一行」和「自己的最后活动」。
+    // 用 `useStore()` 拿整份快照的话，别的房间来了消息、一条错误冒出来，整张侧栏都重渲。
     const hasDraft = useHasDraft(room.id);
-    const active = isCurrentRoom(state.address, room);
+    const address = useAddress();
+    const active = isCurrentRoom(address, room);
     // 最后活动（这个容器里最后一条消息的时刻；服务端投影，见 store.tsx 的 lastActivity）。
     // 项目行不显示：项目不是干活的容器，它“活动不活动”是下面那堆任务的事 —— 每行都
     // 挂一个「—」只会多一列噪音。
-    const activityAt = state.lastActivity[room.id];
+    const activityAt = useLastActivityOf(room.id);
     const activityAgo = formatActivityAgo(activityAt);
     const [renaming, setRenaming] = React.useState(false);
     const isProject = room.type === 'project';
