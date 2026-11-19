@@ -71,6 +71,9 @@
       "path": "pkgs.ts/ui/workbench-plugin"
     },
     {
+      "path": "pkgs.ts/ui/workbench-dock"
+    },
+    {
       "path": "pkgs.ts/model/catalog"
     },
     {
