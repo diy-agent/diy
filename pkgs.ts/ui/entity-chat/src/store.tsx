@@ -122,7 +122,11 @@ function subscribeShell(listener: () => void): () => void {
 
 /** 整份快照（壳自己用：它本来就要 rooms / bots / error 全看）。 */
 export function useShell(): ShellState {
-    return React.useSyncExternalStore(subscribeShell, () => state, () => state);
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state,
+        () => state,
+    );
 }
 
 export const useStore = useShell;
