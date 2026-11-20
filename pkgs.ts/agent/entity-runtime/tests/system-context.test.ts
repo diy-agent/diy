@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { instructionsOf } from '../src/agent';
 import { buildRoomSystemContext, createRoomContext } from '../src/system-context';
+import { clearWatchCache } from '../src/watch-cache';
 
 const dirs: string[] = [];
 function tmp(): string {
@@ -13,6 +14,7 @@ function tmp(): string {
     return dir;
 }
 afterEach(() => {
+    clearWatchCache();
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -105,6 +107,8 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         const text = buildRoomSystemContext({ cwd: repo });
         expect(text).toContain('docs:');
         expect(text).toContain('count: 1');
+        expect(text).toContain('docs/plans/a.md');
+        expect(text).toContain('title: A');
     });
 
     it('journal：最近记录进 vars；追加只走 journal 增量', () => {
