@@ -49,6 +49,8 @@ export interface RoomContextOptions {
     readonly skillsRoot?: string;
     /** 任务日志（append-only）：由宿主给取数函数；不传 = 不投 journal 节 */
     readonly journal?: () => readonly JournalEntry[];
+    /** 房间成员（@ 键 / 是否主人格）：不传 = 不投 room 节 */
+    readonly members?: () => readonly { id: string; name: string; key: string; main: boolean }[];
 }
 
 /** 知识库索引（项目优先、设备兜底；形状与 `AssembleGlobalsSchema.kb` 一致） */
@@ -205,6 +207,29 @@ function journalProvider(get?: () => readonly JournalEntry[]): ContextProvider {
     };
 }
 
+/** 房间成员（低频）：模型要 @ 谁，得先知道房里有什么名字 */
+function roomProvider(opts: RoomContextOptions): ContextProvider {
+    return {
+        key: 'room',
+        provide: () => {
+            const list = opts.members?.() ?? [];
+            if (list.length === 0) return undefined;
+            return {
+                members: {
+                    roomId: opts.spec.id,
+                    name: opts.spec.name,
+                    list: list.map((member) => ({
+                        id: member.id,
+                        name: member.name,
+                        key: member.key,
+                        main: member.main,
+                    })),
+                },
+            };
+        },
+    };
+}
+
 function taskProvider(spec: RoomContextSpec, cwd: string): ContextProvider {
     return {
         key: 'task',
@@ -286,6 +311,7 @@ export function roomProviders(opts: RoomContextOptions): ContextProvider[] {
         },
         kbProvider(opts.cwd, opts.home),
         docsProvider(opts.cwd),
+        roomProvider(opts),
         journalProvider(opts.journal),
         taskProvider(opts.spec, opts.cwd),
     ];

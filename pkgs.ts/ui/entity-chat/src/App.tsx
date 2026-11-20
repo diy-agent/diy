@@ -1,4 +1,4 @@
-import { Bot as BotIcon, Cpu, Folder, ListTodo, Plus } from 'lucide-react';
+import { Bot as BotIcon, Cpu, Folder, ListTodo, PanelRight, Plus } from 'lucide-react';
 import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
@@ -13,6 +13,7 @@ import {
 import { EditableName, StatusChip } from './components/RoomName';
 import { SpeakingBar } from './components/SpeakingBar';
 import { ContextPanel } from './components/ContextPanel';
+import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, primaryBotOf, roomTypeLabel, type Room } from './model';
 import { modelLabel } from './models';
@@ -44,10 +45,14 @@ const RoomHeader = React.memo(function RoomHeader({
     room,
     onAddMember,
     onPickModel,
+    taskPanelOpen,
+    onToggleTaskPanel,
 }: {
     room: Room;
     onAddMember: () => void;
     onPickModel: () => void;
+    taskPanelOpen: boolean;
+    onToggleTaskPanel: () => void;
 }) {
     // 两个窄订阅：bot 表、房间列表（后者只用来把项目的 dir 继承下来）
     const botMap = useBots();
@@ -107,6 +112,17 @@ const RoomHeader = React.memo(function RoomHeader({
                         <Plus className="size-3" />
                         成员
                     </button>
+                    {room.type === 'task' && (
+                        <button
+                            onClick={onToggleTaskPanel}
+                            className={`flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted ${
+                                taskPanelOpen ? 'bg-muted' : ''
+                            }`}
+                        >
+                            <PanelRight className="size-3" />
+                            任务
+                        </button>
+                    )}
                 </span>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
@@ -164,6 +180,8 @@ export function App() {
             return true;
         }
     });
+    /** 右侧「任务」面板（描述 / 正文）：只有 task 房间能开 */
+    const [taskPanelOpen, setTaskPanelOpen] = React.useState(false);
     // 传给侧栏的回调必须 stable：`Sidebar` 把它们放进 `useMemo` 的 host，再传给每一行；
     // 每次渲染新建一个函数，行上的 `React.memo` 就永远拦不住（props 比不等）。
     const onCreateProject = React.useCallback(() => setDialog({ kind: 'project' }), []);
@@ -171,6 +189,8 @@ export function App() {
     const onRequestDelete = React.useCallback((target: Room) => setDialog({ kind: 'delete', roomId: target.id }), []);
     const onOpenSettings = React.useCallback(() => setDialog({ kind: 'settings' }), []);
     const onAddMember = React.useCallback(() => setDialog({ kind: 'member' }), []);
+    const onToggleTaskPanel = React.useCallback(() => setTaskPanelOpen((open) => !open), []);
+    const onCloseTaskPanel = React.useCallback(() => setTaskPanelOpen(false), []);
     const roomId = room?.id;
     const onPickModel = React.useCallback(() => {
         if (roomId !== undefined) setModelTarget(roomId);
@@ -209,33 +229,44 @@ export function App() {
                 onOpenSettings={onOpenSettings}
             />
 
-            <main className="relative flex min-w-0 flex-1 flex-col">
-                {!loaded ? (
-                    <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                        <span className="flex items-center gap-2">
-                            <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                            连接 diy2 后端…
-                        </span>
-                        {error !== undefined && (
-                            <span className="text-[11px] text-destructive">上次失败：{error}（正在重试）</span>
-                        )}
-                    </div>
-                ) : room === undefined ? (
-                    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-                        左侧选择一个容器
-                    </div>
-                ) : (
-                    <>
-                        <RoomHeader room={room} onAddMember={onAddMember} onPickModel={onPickModel} />
-                        <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
-                        <SpeakingBar roomId={room.id} />
-                        <SurfaceViews surfaceId={surfaceId} targetId={room.id} />
-                    </>
-                )}
-                {loaded && error !== undefined && (
-                    <div className="border-t border-destructive/40 bg-destructive/10 px-3 py-1 text-[11px]">
-                        后端：{error}
-                    </div>
+            <main className="relative flex min-w-0 flex-1">
+                <div className="flex min-w-0 flex-1 flex-col">
+                    {!loaded ? (
+                        <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                            <span className="flex items-center gap-2">
+                                <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                                连接 diy2 后端…
+                            </span>
+                            {error !== undefined && (
+                                <span className="text-[11px] text-destructive">上次失败：{error}（正在重试）</span>
+                            )}
+                        </div>
+                    ) : room === undefined ? (
+                        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                            左侧选择一个容器
+                        </div>
+                    ) : (
+                        <>
+                            <RoomHeader
+                                room={room}
+                                onAddMember={onAddMember}
+                                onPickModel={onPickModel}
+                                taskPanelOpen={taskPanelOpen}
+                                onToggleTaskPanel={onToggleTaskPanel}
+                            />
+                            <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
+                            <SpeakingBar roomId={room.id} />
+                            <SurfaceViews surfaceId={surfaceId} targetId={room.id} />
+                        </>
+                    )}
+                    {loaded && error !== undefined && (
+                        <div className="border-t border-destructive/40 bg-destructive/10 px-3 py-1 text-[11px]">
+                            后端：{error}
+                        </div>
+                    )}
+                </div>
+                {taskPanelOpen && room !== undefined && room.type === 'task' && (
+                    <TaskPanel room={room} onClose={onCloseTaskPanel} />
                 )}
             </main>
 
