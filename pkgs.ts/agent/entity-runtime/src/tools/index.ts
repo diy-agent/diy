@@ -10,6 +10,7 @@ import type { ToolSet } from 'ai';
 import type { AskGate } from '../ask';
 import { askTool } from './ask';
 import { editTool, readTool, writeTool } from './files';
+import { journalTool } from './journal';
 import { bashTool } from './shell';
 
 export { clipModelMessage, clipToolOutput, DEFAULT_CLIP, type ClipPolicy } from './clip';
@@ -25,6 +26,8 @@ export interface RoomToolsOptions {
     ask?: AskGate;
     /** 提问的归属成员（按成员停止时只取消他家的提问） */
     askOwner?: string;
+    /** 任务日志写入口；不传 = 没有 journal 工具 */
+    onJournal?: (input: { kind: import('../db').JournalKind; text: string }) => void;
 }
 
 /** 给一个房间装配工具集 */
@@ -37,5 +40,6 @@ export function buildRoomTools(options: RoomToolsOptions): ToolSet {
     if (options.shell !== false) tools['bash'] = bashTool(options.cwd, options.bashTimeoutMs ?? 120_000);
     const ask = askTool(options.ask, options.askOwner);
     if (ask !== undefined) tools['ask'] = ask;
+    if (options.onJournal !== undefined) tools['journal'] = journalTool(options.onJournal);
     return tools;
 }

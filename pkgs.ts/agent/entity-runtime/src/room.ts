@@ -563,6 +563,9 @@ export class RoomActor {
                       ...(this.deps.bashTimeoutMs === undefined ? {} : { bashTimeoutMs: this.deps.bashTimeoutMs }),
                       ask: this.gate,
                       askOwner: botId,
+                      onJournal: (input) => {
+                          this.deps.store.appendJournal(this.id, input);
+                      },
                   });
         this.toolsByBot.set(botId, tools);
         return tools;
@@ -578,6 +581,7 @@ export class RoomActor {
             '可以用 read / write / edit 读写文件、用 bash 执行命令；' +
             `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
             '改文件优先用 edit（不要整份重写）。' +
+            '留下决策 / 踩坑 / 评审结论时用 journal（一句话一条，按 kind 分类）。' +
             '需要用户做决定时**必须**调用 ask（选项 / 表单）：不要在正文里提问，' +
             '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。' +
             'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。'

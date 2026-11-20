@@ -102,6 +102,10 @@
 - `diy.md` — diy 自己的 ref 镜像实现（diy.yaml 注册 → clone/pull → lock）（6 节 · 2026-11-02）
 - `ref.md` — 参考实现：三方 agent 框架源码位置（只读设计取舍，不抄代码）（5 节 · 2026-11-02）
 
+## room/
+
+- `recent.md` — 为什么 diy2 不投 room.recent（会话已经 ingest 房间公共日志）（1 节 · 2026-11-20）
+
 ## rpc/
 
 - `find.md` — diy-rpc 包内定位：核 / 传输 / CLI 桥 / 发布形态（@diy-agent/rpc 协议内核）（5 节 · 2026-10-23）
