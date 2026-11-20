@@ -112,6 +112,10 @@ export interface SessionDeps {
     toolsHint?: string;
     /** 规则上下文（AGENTS.md 链 + 知识库索引）；房间构造时组装一次，session 每轮复用 */
     systemContext?: string;
+    /** 每步的变量增量（由房间的 ContextSession 提供；与触发时机无关） */
+    takeDelta?: () => string;
+    /** 该步成功收尾后推进快照 */
+    commitDelta?: () => void;
     /** 本轮输出上限（缺省按 modelKey 推，见 providers.ts `maxOutputTokensOf`） */
     maxOutputTokens?: number;
 }
@@ -126,8 +130,6 @@ interface QueueItem {
     entry?: RoomEntry;
     /** 已经在上下文里（崩溃恢复的日志回放）：本轮不再追加一条 user 消息 */
     alreadyInContext?: boolean;
-    /** 模型消息的 user 前缀（vars 增量信封）；房间可见正文不含它 */
-    prefix?: string;
     resolve: () => void;
 }
 
@@ -259,13 +261,9 @@ export class BotSession {
          * 置 true 时不再把它作为本轮 prompt 的 user 消息追加一次。
          */
         alreadyInContext?: boolean;
-        /** 模型消息的 user 前缀（vars 增量）；不传 = 只有正文 */
-        prefix?: string;
     }): Promise<void> {
         const mode = input.mode ?? 'next-step';
         const { promise, resolve } = withResolve();
-        const modelText =
-            input.prefix === undefined || input.prefix === '' ? input.text : `${input.prefix}\n\n${input.text}`;
 
         // 正在跑且是 next-step：直接交给 SDK，在下一个 step 边界插入
         if (this.running && mode === 'next-step' && this.steering !== null) {
@@ -283,7 +281,6 @@ export class BotSession {
                         turn: input.turn,
                         entry: input.entry,
                         alreadyInContext: input.alreadyInContext,
-                        ...(input.prefix === undefined ? {} : { prefix: input.prefix }),
                         resolve,
                     });
                     // 这条路径只在 runTurn 退出之后才可能走到，pump 已经停了：
@@ -297,7 +294,7 @@ export class BotSession {
                 resolve();
             };
             void this.steering
-                .steer(modelText, { id: input.messageId })
+                .steer(input.text, { id: input.messageId })
                 .then((outcome) => {
                     if (outcome.type === 'delivered') {
                         this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivered' });
@@ -317,7 +314,6 @@ export class BotSession {
             turn: input.turn,
             entry: input.entry,
             alreadyInContext: input.alreadyInContext,
-            ...(input.prefix === undefined ? {} : { prefix: input.prefix }),
             resolve,
         });
         void this.pump();
@@ -385,11 +381,7 @@ export class BotSession {
         const userEntries: TranscriptEntry[] = items
             .filter((item) => item.alreadyInContext !== true)
             .map((item) => ({
-                message: {
-                    role: 'user',
-                    content:
-                        item.prefix === undefined || item.prefix === '' ? item.text : `${item.prefix}\n\n${item.text}`,
-                },
+                message: { role: 'user', content: item.text },
                 origin: 'public',
                 ...(item.turn === undefined ? {} : { turn: item.turn.turn }),
             }));
@@ -430,6 +422,8 @@ export class BotSession {
                 ...(this.deps.tools === undefined ? {} : { tools: this.deps.tools }),
                 ...(this.deps.toolsHint === undefined ? {} : { toolsHint: this.deps.toolsHint }),
                 ...(this.deps.systemContext === undefined ? {} : { systemContext: this.deps.systemContext }),
+                ...(this.deps.takeDelta === undefined ? {} : { takeDelta: this.deps.takeDelta }),
+                ...(this.deps.commitDelta === undefined ? {} : { commitDelta: this.deps.commitDelta }),
                 onStepTranscript: (added) => {
                     for (const message of added) produced.push({ message, origin: 'self', turn: turn.turn });
                 },

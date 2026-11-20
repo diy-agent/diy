@@ -257,18 +257,8 @@ export class RoomActor {
             this.deps.emit({ kind: 'delivery', delivery });
         }
 
-        // 这一轮的变量增量：每个收件人各自 step/commit（cursor 是每个成员各自的）。
-        // 没被 @ 的成员只 ingest、不推进 —— 它下次跑时会一次补齐。
-        const prefixes = new Map<string, string>();
-        if (this.deps.cwd !== undefined) {
-            for (const bot of recipients) {
-                const ctx = this.contextSessionOf(bot);
-                const step = ctx.step();
-                ctx.commit();
-                if (step.user !== '') prefixes.set(bot.id, step.user);
-            }
-        }
-
+        // 变量增量不在这里算：它属于**模型步**（session 的 prepareStep 每步取一次），
+        // 这样 say / 恢复重投 / agent 间结论走的是同一条路，不会有「时机不同就漏一把」。
         await Promise.all(
             recipients.map((bot) =>
                 this.sessionOf(bot).post({
@@ -277,7 +267,6 @@ export class RoomActor {
                     mode: input.mode ?? 'next-step',
                     turn,
                     entry,
-                    ...(prefixes.get(bot.id) === undefined ? {} : { prefix: prefixes.get(bot.id)! }),
                 }),
             ),
         );
@@ -666,7 +655,8 @@ export class RoomActor {
         if (session !== undefined) return session;
 
         const saved = this.deps.store.loadSession(this.id, bot.id);
-        const systemContext = this.deps.cwd === undefined ? '' : this.contextSessionOf(bot).system;
+        const context = this.deps.cwd === undefined ? null : this.contextSessionOf(bot);
+        const systemContext = context?.system ?? '';
         session = new BotSession({
             bot,
             modelKey: bot.modelKey,
@@ -678,6 +668,7 @@ export class RoomActor {
             ...(this.toolsFor(bot.id) === undefined ? {} : { tools: this.toolsFor(bot.id) }),
             ...(this.hasTools ? { toolsHint: this.toolsHint() } : {}),
             ...(systemContext === '' ? {} : { systemContext }),
+            ...(context === null ? {} : { takeDelta: () => context.step().user, commitDelta: () => context.commit() }),
         });
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));
