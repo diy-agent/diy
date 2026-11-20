@@ -31,6 +31,7 @@
         "@diy-agent/kb": "*",
         "@diy-agent/protocol": "*",
         "@diy-agent/skills": "*",
+        "@diy-agent/time": "*",
         "ai": "^7.0.173",
         "zod": "^4.2.0"
     },

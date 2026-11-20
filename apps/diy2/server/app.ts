@@ -21,7 +21,7 @@ import { createStaticHandler } from './static';
 import { createStreamHub } from './stream';
 import { APP_ID, type Diy2Config } from './config';
 
-import { RoomActor, openStore } from '@diy-agent/entity-runtime';
+import { JOURNAL_KINDS, RoomActor, openStore } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import type { AskQuestionAnswer, Author, Bot, Room } from '@diy-agent/protocol';
 
@@ -598,6 +598,33 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
             if (actor === undefined) return json(res, 404, { error: 'room not found' });
             json(res, 200, { items: actor.items(Number(url.searchParams.get('afterSeq') ?? '0')) });
             return;
+        }
+
+        // ── 任务日志（append-only）────────────────────────────────────
+        // GET  /api/rooms/:id/journal?limit=  → { entries }
+        // POST /api/rooms/:id/journal { kind, text } → { entry }
+        if (parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'journal' && parts.length === 4) {
+            const id = decodeURIComponent(parts[2] ?? '');
+            if (roomOf(id) === undefined) return json(res, 404, { error: 'room not found' });
+            if (req.method === 'GET') {
+                const raw = Number.parseInt(url.searchParams.get('limit') ?? '50', 10);
+                const limit = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 200) : 50;
+                json(res, 200, { entries: store.journalOf(id, limit) });
+                return;
+            }
+            if (req.method === 'POST') {
+                onBody<{ kind?: string; text?: string }>(req, res, (body) => {
+                    const text = (body.text ?? '').trim();
+                    if (text === '') return json(res, 400, { error: 'text required' });
+                    const kind = body.kind ?? 'progress';
+                    if (!(JOURNAL_KINDS as readonly string[]).includes(kind)) {
+                        return json(res, 400, { error: `kind 必须是 ${JOURNAL_KINDS.join(' / ')}` });
+                    }
+                    const entry = store.appendJournal(id, { kind: kind as (typeof JOURNAL_KINDS)[number], text });
+                    json(res, 200, { entry });
+                });
+                return;
+            }
         }
 
         if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'deliveries') {

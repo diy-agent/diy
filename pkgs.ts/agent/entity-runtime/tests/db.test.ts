@@ -129,7 +129,12 @@ describe('草稿', () => {
         // 只保留还在等回答的 ask:pending；ask:recent 太新，这轮不动
         const removed = store.pruneAskDrafts(room.id, new Set(['pending']), Date.now() - 30 * 60 * 1000);
         expect(removed).toBe(1);
-        expect(store.listDrafts(room.id).map((draft) => draft.field).sort()).toEqual(['ask:pending', 'ask:recent', 'composer']);
+        expect(
+            store
+                .listDrafts(room.id)
+                .map((draft) => draft.field)
+                .sort(),
+        ).toEqual(['ask:pending', 'ask:recent', 'composer']);
         expect(fresh).toBeGreaterThan(0);
     });
 
@@ -202,5 +207,29 @@ describe('lastItemAtByRoom —— 每个容器的最后活动', () => {
         store.appendItem('task-a', msg('a1', 5_000));
         store.deleteRoom('task-a');
         expect(store.lastItemAtByRoom()).toEqual({});
+    });
+});
+
+describe('任务日志（journal）', () => {
+    it('append 自增；journalOf 时间正序、limit 取最近 N 条', () => {
+        const store = openStore(':memory:');
+        const a = store.appendJournal(room.id, { kind: 'decision', text: '选了 A' });
+        const b = store.appendJournal(room.id, { kind: 'pitfall', text: 'B 会炸' });
+        expect(b.seq).toBeGreaterThan(a.seq);
+
+        const all = store.journalOf(room.id);
+        expect(all.map((entry) => entry.text)).toEqual(['选了 A', 'B 会炸']);
+
+        const last = store.journalOf(room.id, 1);
+        expect(last).toHaveLength(1);
+        expect(last[0]!.text).toBe('B 会炸');
+    });
+
+    it('删房间连带清掉日志', () => {
+        const store = openStore(':memory:');
+        store.saveRoom(room);
+        store.appendJournal(room.id, { kind: 'progress', text: 'x' });
+        store.deleteRoom(room.id);
+        expect(store.journalOf(room.id)).toEqual([]);
     });
 });
