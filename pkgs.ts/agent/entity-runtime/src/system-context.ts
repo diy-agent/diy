@@ -13,9 +13,9 @@
 //   · `<home>/AGENTS.md`（应用级）在链首；home 不传 = 没有应用级规范
 //   · 知识库只投索引（路径 + desc + 节数），正文按需 `diy2 facts get`
 
-import { readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 
 import { agentsChain } from '@diy-agent/agents-chain';
 import {
@@ -29,6 +29,7 @@ import { skillsOf } from '@diy-agent/skills';
 import { localISOString } from '@diy-agent/time';
 
 import type { JournalEntry } from './db';
+import { watchedValue } from './watch-cache';
 
 /** 房间上下文需要的 spec 形状（只读；与 `Room` 结构兼容） */
 export interface RoomContextSpec {
@@ -52,35 +53,55 @@ export interface RoomContextOptions {
 
 /** 知识库索引（项目优先、设备兜底；形状与 `AssembleGlobalsSchema.kb` 一致） */
 function kbProvider(cwd: string, home: string | undefined): ContextProvider {
-    return {
-        key: 'kb',
-        provide: () => {
-            const global = globalKbRoot(process.env['DIY_HOME'], homedir());
-            const project = kbRootOf(cwd);
-            const roots: { dir: string; scope: 'project' | 'global' }[] = [];
-            if (resolve(project) !== resolve(global)) roots.push({ dir: project, scope: 'project' });
-            if (home !== undefined) roots.push({ dir: global, scope: 'global' });
+    const global = globalKbRoot(process.env['DIY_HOME'], homedir());
+    const project = kbRootOf(cwd);
+    const roots: { dir: string; scope: 'project' | 'global' }[] = [];
+    if (resolve(project) !== resolve(global)) roots.push({ dir: project, scope: 'project' });
+    if (home !== undefined) roots.push({ dir: global, scope: 'global' });
 
-            const byPath = new Map<
-                string,
-                { path: string; desc: string; sections: number; scope: 'project' | 'global' }
-            >();
-            for (const root of roots) {
-                for (const entry of scanKb(root.dir).entries) {
-                    if (root.scope === 'global' && byPath.has(entry.path)) continue;
-                    byPath.set(entry.path, {
-                        path: entry.path,
-                        // 索引只要「这个文件讲什么」；完整 desc 用 `diy2 facts brief` 取
-                        desc: entry.desc.length <= 80 ? entry.desc : `${entry.desc.slice(0, 79)}…`,
-                        sections: entry.sections,
-                        scope: root.scope,
-                    });
-                }
+    const compute = ():
+        | { entries: Array<{ path: string; desc: string; sections: number; scope: 'project' | 'global' }> }
+        | undefined => {
+        const byPath = new Map<string, { path: string; desc: string; sections: number; scope: 'project' | 'global' }>();
+        for (const root of roots) {
+            for (const entry of scanKb(root.dir).entries) {
+                if (root.scope === 'global' && byPath.has(entry.path)) continue;
+                byPath.set(entry.path, {
+                    path: entry.path,
+                    // 索引只要「这个文件讲什么」；完整 desc 用 `diy2 facts brief` 取
+                    desc: entry.desc.length <= 80 ? entry.desc : `${entry.desc.slice(0, 79)}…`,
+                    sections: entry.sections,
+                    scope: root.scope,
+                });
             }
-            const entries = [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
-            return entries.length === 0 ? undefined : { entries };
-        },
+        }
+        const entries = [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+        return entries.length === 0 ? undefined : { entries };
     };
+
+    const cached = watchedValue(
+        `kb:${roots.map((root) => `${root.scope}:${root.dir}`).join('|')}`,
+        roots.map((root) => root.dir),
+        compute,
+        { recursive: true },
+    );
+    return { key: 'kb', provide: () => cached() };
+}
+
+/** 从 cwd 到 `$HOME`（含）的目录；cwd 不在 home 下时只取自己 */
+function ancestorDirs(from: string): string[] {
+    const out: string[] = [];
+    const home = resolve(homedir());
+    let at = resolve(from);
+    const underHome = at === home || at.startsWith(home + sep);
+    for (;;) {
+        out.push(at);
+        if (!underHome || at === home) break;
+        const parent = resolve(at, '..');
+        if (parent === at) break;
+        at = parent;
+    }
+    return out;
 }
 
 /** 递归收集 `*.md`（跳过 `.` 开头的目录；`depth` 限制层数） */
@@ -113,30 +134,57 @@ function mdFiles(dir: string, depth = Number.POSITIVE_INFINITY): string[] {
     return out;
 }
 
-/** 仓库文档索引（摘要）：`docs/plans` 优先；没有则退回 `docs/` 顶层 */
+/** 文档标题：首个 `# ` 行；没有就用文件名 */
+function titleOf(file: string): string {
+    try {
+        const text = readFileSync(file, 'utf-8');
+        const match = /^#\s+(.+)$/m.exec(text);
+        if (match !== null) return match[1]!.trim();
+    } catch {
+        /* 读不到就用文件名 */
+    }
+    return file.split('/').pop()?.replace(/\.md$/, '') ?? file;
+}
+
+/** 仓库文档索引（摘要 + 惰性索引）：`docs/plans` 优先；没有则退回 `docs/` 顶层 */
 function docsProvider(cwd: string): ContextProvider {
-    return {
-        key: 'docs',
-        provide: () => {
-            let roots = ['docs/plans'];
-            let files = mdFiles(join(cwd, 'docs', 'plans'));
-            if (files.length === 0) {
-                roots = ['docs'];
-                files = mdFiles(join(cwd, 'docs'), 1);
+    const plans = join(cwd, 'docs', 'plans');
+    const docs = join(cwd, 'docs');
+    const compute = ():
+        | {
+              roots: string[];
+              count: number;
+              entries: Array<{ path: string; title: string }>;
+              newest?: string;
+          }
+        | undefined => {
+        let roots = ['docs/plans'];
+        let files = mdFiles(plans);
+        if (files.length === 0) {
+            roots = ['docs'];
+            files = mdFiles(docs, 1);
+        }
+        if (files.length === 0) return undefined;
+        let newest = '';
+        for (const file of files) {
+            try {
+                const key = localISOString(new Date(statSync(file).mtimeMs)).slice(2, 10);
+                if (key > newest) newest = key;
+            } catch {
+                /* 读不到就跳过 */
             }
-            if (files.length === 0) return undefined;
-            let newest = '';
-            for (const file of files) {
-                try {
-                    const key = localISOString(new Date(statSync(file).mtimeMs)).slice(2, 10);
-                    if (key > newest) newest = key;
-                } catch {
-                    /* 读不到就跳过 */
-                }
-            }
-            return { roots, count: files.length, ...(newest === '' ? {} : { newest }) };
-        },
+        }
+        const entries = files
+            .map((file) => ({
+                path: relative(cwd, file).split(sep).join('/'),
+                title: titleOf(file),
+            }))
+            .sort((a, b) => a.path.localeCompare(b.path));
+        return { roots, count: files.length, entries, ...(newest === '' ? {} : { newest }) };
     };
+
+    const cached = watchedValue(`docs:${cwd}`, [plans, docs], compute, { recursive: true });
+    return { key: 'docs', provide: () => cached() };
 }
 
 /** 任务日志（append-only）：宿主给取数函数；空 = 整节缺席 */
@@ -189,6 +237,30 @@ function taskProvider(spec: RoomContextSpec, cwd: string): ContextProvider {
 export function roomProviders(opts: RoomContextOptions): ContextProvider[] {
     const appHome = opts.home ?? join(opts.cwd, '__no_app__');
     const skillsRoot = opts.skillsRoot ?? join(homedir(), '.agents');
+    const chainDirs = ancestorDirs(opts.cwd);
+    if (!chainDirs.includes(resolve(appHome))) chainDirs.push(resolve(appHome));
+    const chainValue = watchedValue(
+        `chain:${opts.cwd}:${appHome}`,
+        chainDirs,
+        () =>
+            agentsChain({ appHome, cwd: opts.cwd }).map((item) => ({
+                path: item.path,
+                scope: item.scope,
+                content: item.content,
+            })),
+        { recursive: false },
+    );
+    const skillsValue = watchedValue(
+        `skills:${opts.cwd}:${skillsRoot}`,
+        [join(skillsRoot, 'skills'), join(opts.cwd, '.agents', 'skills')],
+        () =>
+            skillsOf({ cwd: opts.cwd, globalRoot: skillsRoot }).map(({ name, desc }) => ({
+                name,
+                // 技能说明动辄几百字；索引只需要「有哪些 + 一句干什么」
+                desc: desc.length <= 120 ? desc : `${desc.slice(0, 119)}…`,
+            })),
+        { recursive: true },
+    );
     return [
         {
             key: 'diy',
@@ -206,21 +278,11 @@ export function roomProviders(opts: RoomContextOptions): ContextProvider[] {
         },
         {
             key: 'chain',
-            provide: () =>
-                agentsChain({ appHome, cwd: opts.cwd }).map((item) => ({
-                    path: item.path,
-                    scope: item.scope,
-                    content: item.content,
-                })),
+            provide: () => chainValue(),
         },
         {
             key: 'skills',
-            provide: () =>
-                skillsOf({ cwd: opts.cwd, globalRoot: skillsRoot }).map(({ name, desc }) => ({
-                    name,
-                    // 技能说明动辄几百字；索引只需要「有哪些 + 一句干什么」
-                    desc: desc.length <= 120 ? desc : `${desc.slice(0, 119)}…`,
-                })),
+            provide: () => skillsValue(),
         },
         kbProvider(opts.cwd, opts.home),
         docsProvider(opts.cwd),

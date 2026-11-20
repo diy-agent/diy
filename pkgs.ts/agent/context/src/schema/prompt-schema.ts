@@ -260,6 +260,15 @@ export const AssembleGlobalsSchema = z.object({
     .object({
       roots: z.array(z.string()).describe("扫描根（仓库相对）：缺省 `docs/plans`，可 `--roots` 扩到 `docs`"),
       count: z.number().describe("可索引篇数"),
+      entries: z
+        .array(
+          z.object({
+            path: z.string().describe("仓库相对路径"),
+            title: z.string().describe("标题（首个 `#` 行；没有就用文件名）"),
+          }),
+        )
+        .optional()
+        .describe("惰性索引：只给路径 + 标题，不投正文"),
       newest: z.string().optional().describe("全部文档最新的 git 改动日（`YY-MM-DD`）；非 git / 未提交则缺席"),
     })
     .optional()
