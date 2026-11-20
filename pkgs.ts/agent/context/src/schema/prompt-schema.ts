@@ -264,6 +264,20 @@ export const AssembleGlobalsSchema = z.object({
     })
     .optional()
     .describe("仓库文档索引摘要；逐篇索引按需取：`diy docs index`"),
+  journal: z
+    .object({
+      entries: z
+        .array(
+          z.object({
+            at: z.string().describe("发生时刻（本地 ISO，带偏移）"),
+            kind: z.enum(["decision", "pitfall", "review", "progress", "learn"]).describe("日志种类"),
+            text: z.string().describe("一句结论（事件句；不是流水账）"),
+          }),
+        )
+        .describe("最近的任务日志（时间正序；上限 24 条）"),
+    })
+    .optional()
+    .describe("任务日志（append-only 的决策/踩坑/评审）：没有记录时整节缺席"),
   room: z
     .object({
       members: z

@@ -653,6 +653,7 @@ export class RoomActor {
             spec: this.deps.spec,
             cwd,
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
+            journal: () => this.deps.store.journalOf(this.id),
         });
         ctx.open();
         this.contexts.set(bot.id, ctx);

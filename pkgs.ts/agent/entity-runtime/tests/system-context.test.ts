@@ -97,6 +97,37 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         });
         expect(ctx.open().system).not.toContain('\ntask:');
     });
+
+    it('docs 索引：docs/plans 的篇数进 vars', () => {
+        const repo = tmp();
+        mkdirSync(join(repo, 'docs', 'plans'), { recursive: true });
+        writeFileSync(join(repo, 'docs', 'plans', 'a.md'), '# A');
+        const text = buildRoomSystemContext({ cwd: repo });
+        expect(text).toContain('docs:');
+        expect(text).toContain('count: 1');
+    });
+
+    it('journal：最近记录进 vars；追加只走 journal 增量', () => {
+        const repo = tmp();
+        const entries = [{ seq: 1, at: Date.now(), kind: 'decision' as const, text: '选了 A' }];
+        const ctx = createRoomContext({
+            spec: { id: 'task:t-1', name: '任务一', type: 'task', data: {} },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+            journal: () => entries,
+        });
+        const open = ctx.open();
+        expect(open.system).toContain('选了 A');
+        expect(open.system).toContain('kind: decision');
+
+        ctx.step();
+        ctx.commit();
+        entries.push({ seq: 2, at: Date.now(), kind: 'pitfall' as const, text: 'B 会炸' });
+        const step = ctx.step();
+        expect(step.delta?.paths).toContain('journal');
+        expect(step.user).toContain('B 会炸');
+        expect(ctx.system).toBe(open.system);
+    });
 });
 
 describe('instructionsOf', () => {

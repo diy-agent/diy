@@ -29,6 +29,18 @@ export interface Draft {
     updatedAt: number;
 }
 
+/** 任务日志的五种 kind（每种只回答一个问题；写错 kind = 以后查不到） */
+export const JOURNAL_KINDS = ['decision', 'pitfall', 'review', 'progress', 'learn'] as const;
+export type JournalKind = (typeof JOURNAL_KINDS)[number];
+
+/** 一条任务日志（append-only；房间级） */
+export interface JournalEntry {
+    seq: number;
+    at: number;
+    kind: JournalKind;
+    text: string;
+}
+
 /** 投递时的入队信息：崩溃后据此重新投递 */
 export interface DeliveryInput extends Omit<Delivery, 'updatedAt'> {
     mode?: InboxMode;
@@ -56,6 +68,10 @@ export interface Store {
     /** 删除 bot 身份（容器被删时清理它自动建的专属 bot） */
     deleteBot(botId: string): void;
     appendItem(roomId: string, item: Item): Item;
+    /** 追加一条任务日志（append-only；回放用 `journalOf`） */
+    appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number }): JournalEntry;
+    /** 最近 N 条任务日志（时间正序；缺省 24） */
+    journalOf(roomId: string, limit?: number): JournalEntry[];
     setMembers(roomId: string, members: readonly RoomMember[]): void;
     /** roomId → 成员（按 position） */
     members(): Record<string, RoomMember[]>;
@@ -130,7 +146,8 @@ function isEmptyDraft(value: unknown): boolean {
     if (value === null || value === undefined) return true;
     if (typeof value === 'string') return value.trim() === '';
     if (Array.isArray(value)) return value.every((item) => isEmptyDraft(item));
-    if (typeof value === 'object') return Object.values(value as Record<string, unknown>).every((item) => isEmptyDraft(item));
+    if (typeof value === 'object')
+        return Object.values(value as Record<string, unknown>).every((item) => isEmptyDraft(item));
     return false;
 }
 
@@ -208,6 +225,15 @@ export function openStore(file: string): Store {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (owner_id, field)
         );
+        -- 任务日志：append-only（decision / pitfall / review / progress / learn）
+        CREATE TABLE IF NOT EXISTS journal_entries (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_id TEXT NOT NULL,
+            at INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS journal_entity ON journal_entries(entity_id, seq);
     `);
 
     // 迁移：老的 entity_bots（只有 id 列表）→ room_members（第一位为 primary）
@@ -312,6 +338,28 @@ export function openStore(file: string): Store {
                 .run(roomId, JSON.stringify(item), item.at);
             return { ...item, seq: Number(result.lastInsertRowid) };
         },
+        appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number }): JournalEntry {
+            const at = input.at ?? Date.now();
+            const result = db
+                .prepare('INSERT INTO journal_entries (entity_id, at, kind, text) VALUES (?,?,?,?)')
+                .run(roomId, at, input.kind, input.text);
+            return { seq: Number(result.lastInsertRowid), at, kind: input.kind, text: input.text };
+        },
+        journalOf(roomId: string, limit = 24): JournalEntry[] {
+            const rows = db
+                .prepare(
+                    'SELECT seq, at, kind, text FROM journal_entries WHERE entity_id = ? ORDER BY seq DESC LIMIT ?',
+                )
+                .all(roomId, limit) as Array<Record<string, unknown>>;
+            return rows
+                .map((row) => ({
+                    seq: Number(row['seq']),
+                    at: Number(row['at']),
+                    kind: String(row['kind']) as JournalKind,
+                    text: String(row['text']),
+                }))
+                .reverse();
+        },
         setMembers(roomId: string, members: readonly RoomMember[]): void {
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
             const insert = db.prepare(
@@ -335,6 +383,7 @@ export function openStore(file: string): Store {
             db.prepare('DELETE FROM session_state WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM deliveries WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
+            db.prepare('DELETE FROM journal_entries WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM drafts WHERE owner_id = ?').run(roomId);
             // 对话框草稿（synthetic scope，见 docs/drafts-design.md）挂在房间后面：
             // `dlg:<用途>:<roomId>`。删房间时一起清，不等 TTL

@@ -13,6 +13,7 @@
 //   · `<home>/AGENTS.md`（应用级）在链首；home 不传 = 没有应用级规范
 //   · 知识库只投索引（路径 + desc + 节数），正文按需 `diy2 facts get`
 
+import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -25,6 +26,9 @@ import {
 } from '@diy-agent/context';
 import { globalKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
 import { skillsOf } from '@diy-agent/skills';
+import { localISOString } from '@diy-agent/time';
+
+import type { JournalEntry } from './db';
 
 /** 房间上下文需要的 spec 形状（只读；与 `Room` 结构兼容） */
 export interface RoomContextSpec {
@@ -42,6 +46,8 @@ export interface RoomContextOptions {
     readonly home?: string;
     /** 全局 skills 根；缺省 `~/.agents`（测试可指向临时目录） */
     readonly skillsRoot?: string;
+    /** 任务日志（append-only）：由宿主给取数函数；不传 = 不投 journal 节 */
+    readonly journal?: () => readonly JournalEntry[];
 }
 
 /** 知识库索引（项目优先、设备兜底；形状与 `AssembleGlobalsSchema.kb` 一致） */
@@ -73,6 +79,80 @@ function kbProvider(cwd: string, home: string | undefined): ContextProvider {
             }
             const entries = [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
             return entries.length === 0 ? undefined : { entries };
+        },
+    };
+}
+
+/** 递归收集 `*.md`（跳过 `.` 开头的目录；`depth` 限制层数） */
+function mdFiles(dir: string, depth = Number.POSITIVE_INFINITY): string[] {
+    const out: string[] = [];
+    const walk = (at: string, left: number): void => {
+        let names: string[];
+        try {
+            names = readdirSync(at);
+        } catch {
+            return;
+        }
+        for (const name of names) {
+            if (name.startsWith('.')) continue;
+            const full = join(at, name);
+            let stat;
+            try {
+                stat = statSync(full);
+            } catch {
+                continue;
+            }
+            if (stat.isDirectory()) {
+                if (left > 0) walk(full, left - 1);
+                continue;
+            }
+            if (name.endsWith('.md')) out.push(full);
+        }
+    };
+    walk(dir, depth);
+    return out;
+}
+
+/** 仓库文档索引（摘要）：`docs/plans` 优先；没有则退回 `docs/` 顶层 */
+function docsProvider(cwd: string): ContextProvider {
+    return {
+        key: 'docs',
+        provide: () => {
+            let roots = ['docs/plans'];
+            let files = mdFiles(join(cwd, 'docs', 'plans'));
+            if (files.length === 0) {
+                roots = ['docs'];
+                files = mdFiles(join(cwd, 'docs'), 1);
+            }
+            if (files.length === 0) return undefined;
+            let newest = '';
+            for (const file of files) {
+                try {
+                    const key = localISOString(new Date(statSync(file).mtimeMs)).slice(2, 10);
+                    if (key > newest) newest = key;
+                } catch {
+                    /* 读不到就跳过 */
+                }
+            }
+            return { roots, count: files.length, ...(newest === '' ? {} : { newest }) };
+        },
+    };
+}
+
+/** 任务日志（append-only）：宿主给取数函数；空 = 整节缺席 */
+function journalProvider(get?: () => readonly JournalEntry[]): ContextProvider {
+    return {
+        key: 'journal',
+        provide: () => {
+            const entries = get?.() ?? [];
+            if (entries.length === 0) return undefined;
+            return {
+                entries: entries.map((entry) => ({
+                    at: localISOString(new Date(entry.at)),
+                    kind: entry.kind,
+                    text: entry.text,
+                })),
+            };
         },
     };
 }
@@ -143,6 +223,8 @@ export function roomProviders(opts: RoomContextOptions): ContextProvider[] {
                 })),
         },
         kbProvider(opts.cwd, opts.home),
+        docsProvider(opts.cwd),
+        journalProvider(opts.journal),
         taskProvider(opts.spec, opts.cwd),
     ];
 }
