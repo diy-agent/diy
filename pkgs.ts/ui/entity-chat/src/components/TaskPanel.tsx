@@ -14,6 +14,18 @@ function textOf(value: unknown): string {
     return typeof value === 'string' ? value : '';
 }
 
+interface JournalEntry {
+    seq: number;
+    at: number;
+    kind: string;
+    text: string;
+}
+
+function timeOf(at: number): string {
+    const date = new Date(at);
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
 export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }) {
     const rooms = useRooms();
     const project = rooms.find((item) => item.id === room.data['projectId']);
@@ -24,6 +36,7 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
     const [body, setBody] = React.useState(savedBody);
     const [saving, setSaving] = React.useState(false);
     const [note, setNote] = React.useState<string | null>(null);
+    const [entries, setEntries] = React.useState<JournalEntry[]>([]);
     const dirty = desc !== savedDesc || body !== savedBody;
 
     // 切到另一个任务，或保存后 refresh 换了 room 对象：跟随已保存值
@@ -32,6 +45,25 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
         setBody(savedBody);
         setNote(null);
     }, [room.id, savedDesc, savedBody]);
+
+    // 日志：agent 用 journal 工具写，面板只读；轮询（和 ContextPanel 同思路，不新增事件类型）
+    React.useEffect(() => {
+        let alive = true;
+        const load = (): void => {
+            void fetch(`/api/rooms/${encodeURIComponent(room.id)}/journal?limit=30`)
+                .then((response) => (response.ok ? response.json() : Promise.reject(new Error('HTTP'))))
+                .then((body: { entries?: JournalEntry[] }) => {
+                    if (alive) setEntries(body.entries ?? []);
+                })
+                .catch(() => undefined);
+        };
+        load();
+        const timer = setInterval(load, 5000);
+        return () => {
+            alive = false;
+            clearInterval(timer);
+        };
+    }, [room.id]);
 
     const save = async (): Promise<void> => {
         if (!dirty || saving) return;
@@ -100,6 +132,27 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
                     <div>状态：{textOf(room.data['status']) || 'open'}</div>
                     <div>项目：{project?.name ?? '—'}</div>
                     <div className="break-all">目录：{textOf(room.data['dir']) || '—'}</div>
+                </div>
+
+                <div className="border-t pt-2">
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span>日志</span>
+                        <span>{entries.length} 条</span>
+                    </div>
+                    <ul className="mt-1 space-y-1">
+                        {entries.length === 0 && (
+                            <li className="text-[11px] text-muted-foreground">
+                                还没有记录（agent 可用 journal 工具写决策 / 踩坑）
+                            </li>
+                        )}
+                        {entries.map((entry) => (
+                            <li key={entry.seq} className="text-[11px] leading-snug">
+                                <span className="mr-1 text-muted-foreground">{timeOf(entry.at)}</span>
+                                <span className="mr-1 rounded bg-muted px-1 text-[10px]">{entry.kind}</span>
+                                <span>{entry.text}</span>
+                            </li>
+                        ))}
+                    </ul>
                 </div>
             </div>
 

@@ -162,7 +162,10 @@ describe('房间工具', () => {
                             id: 'q1',
                             question: '日志格式？',
                             kind: 'choice' as const,
-                            options: [{ label: 'json', value: 'json' }, { label: '文本', value: 'text' }],
+                            options: [
+                                { label: 'json', value: 'json' },
+                                { label: '文本', value: 'text' },
+                            ],
                         },
                     ],
                 },
@@ -202,5 +205,18 @@ describe('房间工具', () => {
         const out = String(await toolOf(tools, 'bash').execute({ command: 'echo boom >&2; exit 3' }));
         expect(out).toContain('exit: 3');
         expect(out).toContain('boom');
+    });
+
+    it('journal：写一条走回调（不落文件、不进 cwd）', async () => {
+        const seen: Array<{ kind: string; text: string }> = [];
+        const tools = buildRoomTools({
+            cwd: dir,
+            shell: false,
+            onJournal: (input) => {
+                seen.push(input);
+            },
+        });
+        await toolOf(tools, 'journal').execute({ kind: 'decision', text: '选了 A' });
+        expect(seen).toEqual([{ kind: 'decision', text: '选了 A' }]);
     });
 });
