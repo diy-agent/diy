@@ -3,7 +3,7 @@
 // 除了"给 UI 看的事件流"，这里还负责把**这一轮真正喂进模型的完整消息**回传给调用方
 // （assistant 带 tool call / tool result / reasoning 都在里面），session 用它维护自己的原生对话。
 
-import { streamText, tool, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
+import { streamText, tool, type Experimental_Steering, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { z } from 'zod';
 
 import { friendlyError } from './errors';
@@ -30,6 +30,17 @@ export interface RunOptions {
      * 不传 = 只有 persona（测试 / 无工作目录的房间）。
      */
     systemContext?: string;
+    /**
+     * 本步的变量增量（vars 信封）：**每一步都取一次**，与「人说话 / 恢复 /  agent 间结论」
+     * 的时机无关。返回空串 = 这一步什么都没变（不注入）。
+     *
+     * 由房间的 `ContextSession` 提供（`step().user`）；session 只负责在 step 边界调用。
+     */
+    takeDelta?: () => string;
+    /** 该步已经成功收尾 ⇒ 推进快照（`ContextSession.commit()`）；失败 / 重试不推进 */
+    commitDelta?: () => void;
+    /** 测试注入模型（缺省按 modelKey 解析） */
+    model?: LanguageModel;
     /**
      * 每一步结束时回传"本步新增的消息"，按 step 顺序拼接就是这一轮的完整增量：
      *   本步被插入的 steering 用户消息 + 模型产出的 assistant / tool 消息。
@@ -103,7 +114,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     const maxOutputTokens = options.maxOutputTokens ?? maxOutputTokensOf(options.modelKey);
 
     const result = streamText({
-        model: modelOf(options.modelKey),
+        model: options.model ?? modelOf(options.modelKey),
         abortSignal: options.signal,
         maxOutputTokens,
         instructions: instructionsOf({
@@ -117,10 +128,24 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         // 不设步数上限：模型想调多少次工具就调多少次（AI SDK 缺省是 1 步，必须显式覆盖）。
         // 唯一的刹车是用户点停止（abort）。
         stopWhen: () => false,
+        /**
+         * **每一步**取一次变量增量（与谁触发这一轮无关）：有变化就作为一条独立 user 信封
+         * 追加在本步请求的末尾。空串不注入（不加字节、不砸前缀缓存）。
+         *
+         * 重试会再次进 prepareStep（同一步号）：因为还没 commit，取到的是**同一份**增量
+         * （幂等），不会把变化吞掉。
+         */
+        prepareStep: ({ messages }) => {
+            const delta = options.takeDelta?.() ?? '';
+            if (delta === '') return {};
+            return { messages: [...messages, { role: 'user', content: delta }] };
+        },
         // 连接超时这类瞬时错误自动重试；不可重试的错误 SDK 自己会跳过
         maxRetries: 2,
         ...(options.steering === undefined ? {} : { experimental_steering: options.steering }),
         onStepFinish: (step) => {
+            // 这一步成功收尾 ⇒ 快照前移（失败 / 重试不进这里，下一轮会重新算同一份增量）
+            options.commitDelta?.();
             if (options.onStepTranscript === undefined) return;
             // 工具输出只裁"喂给模型"的那份；UI 的 tool-result 事件仍然是完整输出
             options.onStepTranscript([
