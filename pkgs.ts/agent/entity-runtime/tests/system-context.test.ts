@@ -132,6 +132,28 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         expect(step.user).toContain('B 会炸');
         expect(ctx.system).toBe(open.system);
     });
+
+    it('room.members：成员名进 vars；成员变化只走 room.members 增量', () => {
+        const repo = tmp();
+        const members = [{ id: 'bot-1', name: '小满', key: '小满', main: true }];
+        const ctx = createRoomContext({
+            spec: { id: 'task:t-1', name: '任务一', type: 'task', data: {} },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+            members: () => members,
+        });
+        const open = ctx.open();
+        expect(open.system).toContain('members:');
+        expect(open.system).toContain('小满');
+
+        ctx.step();
+        ctx.commit();
+        members.push({ id: 'bot-2', name: 'diy', key: 'diy', main: false });
+        const step = ctx.step();
+        expect(step.delta?.paths).toContain('room.members');
+        expect(step.user).toContain('diy');
+        expect(ctx.system).toBe(open.system);
+    });
 });
 
 describe('instructionsOf', () => {

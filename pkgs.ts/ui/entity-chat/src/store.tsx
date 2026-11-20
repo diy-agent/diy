@@ -667,6 +667,22 @@ export const actions = {
             });
     },
 
+    /**
+     * 改 room.data 的若干键（任务描述 / 正文…）：`null` = 删除该键。
+     * 抛错给调用方（侧面板要保留未保存内容并提示），同时亮全局错误。
+     */
+    updateRoomData(id: string, data: Record<string, unknown>): Promise<void> {
+        return jsonFetch(`/rooms/${encodeURIComponent(id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ data }),
+        })
+            .then(() => refresh())
+            .catch((error: unknown) => {
+                emit({ ...state, error: `保存失败：${messageOf(error)}` });
+                throw error;
+            });
+    },
+
     setRoomModel(id: string, modelKey: string): void {
         void jsonFetch(`/rooms/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ modelKey }) })
             .then(() => refresh())

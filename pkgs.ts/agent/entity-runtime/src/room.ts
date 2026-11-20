@@ -643,6 +643,15 @@ export class RoomActor {
             cwd,
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
             journal: () => this.deps.store.journalOf(this.id),
+            members: () => {
+                const primary = this.primary();
+                return this.members().map((bot) => ({
+                    id: bot.id,
+                    name: bot.name,
+                    key: bot.name,
+                    main: bot.id === primary?.id,
+                }));
+            },
         });
         ctx.open();
         this.contexts.set(bot.id, ctx);
