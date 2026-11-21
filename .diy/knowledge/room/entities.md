@@ -10,7 +10,7 @@ updated: 2026-11-21
 - **`entities`**（id / type / created_at）：身份。一切可被引用的东西一行，**不存业务字段**。
 - **`tasks` / `projects`**：真源。标题、编号、正文、状态、`workspace` 都是真列。
 - **`entity_links` / `events`**：关系与事件流（见下）。两者都靠 `entities` 外键级联删除。
-- **记录表**（`entity_items` / `room_entries` / `session_state` …）：属于实体、无独立身份、不参与引用。
+- **记录表**（`entity_items` / `room_entries` / `session_state` / `asks` …）：属于实体、无独立身份、不参与引用。
 
 插件实体只有 `entities` 一行，payload 在 `~/.diy/plugins/<plugin_id>/` —— 宿主不碰。
 **插件注册表不是 DB 表**：启动时加载 manifest（`package.json` 的 `diy` 段）得到内存模型
@@ -24,6 +24,15 @@ updated: 2026-11-21
 - core kind：`related` / `blocks` / `duplicate`；插件自定义必须 `<plugin_id>/<kind>`。
 - `blocks` 建边前查环（A→B→…→A 会让两边永远等对方）；`related` 不查。
 - 自连、任一端实体不存在 → 拒绝。
+
+## 提问（ask）
+
+`asks(ask_id, entity_id, at, request, state, answer, reason, settled_at)`。
+
+- **待答状态必须落库**：ask 不阻塞，run 早已结束；只在内存里的话进程一重启卡片就消失，
+  而模型那边以为问过了。房间装配时 `AskGate.restore()` 从这张表恢复 pending + 最近 50 条已收尾。
+- 恢复的 pending **不重装超时定时器**（老提问不会因为重启被悄悄作废）。
+- 删房间连带清（`deleteRoom`）。
 
 ## 事件流
 

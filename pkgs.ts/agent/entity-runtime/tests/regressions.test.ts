@@ -170,6 +170,21 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         expect(h.room.answeredAskRequests()[0]?.request.turnId).toBe(tool?.turnId);
     });
 
+    it('D6. 待答的提问落库：房间重新装配后卡片还在（重启不丢）', async () => {
+        const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
+        void h.room.say({ text: '动手吧', author: HUMAN });
+        await waitFor(() => h.room.pendingAsks() === 1);
+        const before = h.room.pendingAskRequests()[0]!;
+
+        // 同一份 store、新建 RoomActor：模拟进程重启
+        const again = h.rebuild();
+        const restored = again.room.pendingAskRequests();
+        expect(restored).toHaveLength(1);
+        expect(restored[0]).toMatchObject({ askId: before.askId, owner: before.owner });
+        expect(restored[0]?.questions).toEqual(before.questions);
+        expect(again.room.pendingAsks()).toBe(1);
+    });
+
     it('D2. 用户之后作答：回答变成一条用户消息，模型在新一轮里读到它', async () => {
         const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
         void h.room.say({ text: '动手吧', author: HUMAN });

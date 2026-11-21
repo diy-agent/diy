@@ -104,7 +104,7 @@
 
 ## room/
 
-- `entities.md` — diy2 的存储分层：entities 身份 / tasks·projects 真源 / 插件数据归插件；编号与 id 规则（7 节 · 2026-11-21）
+- `entities.md` — diy2 的存储分层：entities 身份 / tasks·projects 真源 / 插件数据归插件；编号与 id 规则（8 节 · 2026-11-21）
 - `recent.md` — 为什么 diy2 不投 room.recent（会话已经 ingest 房间公共日志）（1 节 · 2026-11-20）
 
 ## rpc/
