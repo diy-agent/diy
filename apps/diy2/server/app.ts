@@ -21,7 +21,7 @@ import { createStaticHandler } from './static';
 import { createStreamHub } from './stream';
 import { APP_ID, type Diy2Config } from './config';
 
-import { JOURNAL_KINDS, RoomActor, openStore } from '@diy-agent/entity-runtime';
+import { JOURNAL_KINDS, RoomActor, newEntityId, openStore } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import type { AskQuestionAnswer, Author, Bot, Room } from '@diy-agent/protocol';
 
@@ -413,6 +413,10 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
                     const name = (body.name ?? '').trim();
                     if (name === '') return json(res, 400, { error: 'name required' });
                     const type = body.type ?? 'project';
+                    if (type !== 'project' && type !== 'task') {
+                        // core 容器只有两类；插件实体不该走 Room（payload 在插件自己的存储里）
+                        return json(res, 400, { error: `type 只支持 project / task，收到 ${type}` });
+                    }
                     // 任务必须挂在项目下：侧栏按 projectId 分组，没归属的任务等于隐身
                     const projectId = body.data?.['projectId'];
                     if (type === 'task' && (typeof projectId !== 'string' || roomOf(projectId) === undefined)) {
@@ -420,7 +424,7 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
                     }
                     // 默认模型由 UI 传（SettingsDialog 的那份）；没传才用服务端兜底
                     const modelKey = body.modelKey ?? DEFAULT_MODEL;
-                    const id = `${type}-${Date.now().toString(36)}`;
+                    const id = newEntityId();
                     const bot = { ...newBot(name, id, `${type} bot`), modelKey };
                     store.upsertBot(bot);
                     const spec: Room = {

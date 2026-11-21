@@ -1,6 +1,13 @@
-// db.ts —— node:sqlite：bots（持久）+ 每个实体的 Item 时间线（持久）。
+// db.ts —— node:sqlite：实体身份 + 域表 + 记录表。
 //
-// 项目/任务目前放内存（切片阶段），bot 与消息落 sqlite。
+// 三层（设计见 docs/plans/2026-11-21-identity.md）：
+//   entities  身份：一切可被引用的东西一行（id / type / created_at）。不做存储。
+//   tasks     任务域：真源。标题、编号、正文、状态、工作目录都是真列。
+//   projects  项目域：真源。项目只是任务的**字段**，不参与目录层级。
+//   其余（entity_items / room_entries / session_state / journal_entries …）是**记录**：
+//   属于某个实体、没有独立身份、不参与引用。
+//
+// 插件实体只在 entities 里有一行身份，payload 在插件自己的存储里 —— 我们不碰。
 
 import { DatabaseSync } from 'node:sqlite';
 
@@ -41,6 +48,50 @@ export interface JournalEntry {
     text: string;
 }
 
+/** 实体身份（`entities` 一行）：可被引用的最小信息 */
+export interface EntityRecord {
+    id: string;
+    type: string;
+    createdAt: number;
+}
+
+/** 任务域记录（`tasks` 一行）—— 真源。`Room` 只是它的线上投影（给旧 UI 用） */
+export interface TaskRecord {
+    id: string;
+    /** 实例内的显示号：不回收、不重分配（换项目 / 换目录都不变） */
+    number: number;
+    title: string;
+    /** 一句话描述（任务简报） */
+    summary: string;
+    /** 正文（方案 / 边界 / 验收口径） */
+    body: string;
+    /** 所属项目：**只是字段**，不产生目录层级，也不做外键（项目删了任务会成为「孤儿」） */
+    projectId: string | null;
+    /** 工具 cwd；与项目解耦，可指向任意 worktree */
+    workspace: string | null;
+    status: string;
+    closedAt: number | null;
+    modelKey: string;
+    createdAt: number;
+}
+
+/** 写任务：`number` / `createdAt` 缺省由 store 补（number 走 counters，永不回收） */
+export type TaskInput = Omit<TaskRecord, 'number' | 'createdAt'> & {
+    number?: number;
+    createdAt?: number;
+};
+
+export interface ProjectRecord {
+    id: string;
+    name: string;
+    /** 项目的默认工作目录；任务新建时可继承，但不是外键关系 */
+    workspace: string | null;
+    modelKey: string;
+    createdAt: number;
+}
+
+export type ProjectInput = Omit<ProjectRecord, 'createdAt'> & { createdAt?: number };
+
 /** 投递时的入队信息：崩溃后据此重新投递 */
 export interface DeliveryInput extends Omit<Delivery, 'updatedAt'> {
     mode?: InboxMode;
@@ -52,16 +103,31 @@ export interface Store {
     readonly db: DatabaseSync;
     listBots(): Bot[];
     upsertBot(bot: Bot): void;
+
+    // ── 实体身份 ───────────────────────────────────────────────
+    /** 身份行（不含域数据）；插件实体的 payload 不在我们这儿 */
+    entityOf(id: string): EntityRecord | undefined;
+
+    // ── 任务域（真源）─────────────────────────────────────────
+    listTasks(): TaskRecord[];
+    taskOf(id: string): TaskRecord | undefined;
+    /** upsert；新任务分配一个永不回收的 number */
+    saveTask(task: TaskInput): TaskRecord;
+
+    // ── 项目域（真源）─────────────────────────────────────────
+    listProjects(): ProjectRecord[];
+    projectOf(id: string): ProjectRecord | undefined;
+    saveProject(project: ProjectInput): ProjectRecord;
+
     /**
-     * 容器（项目/任务/…）本身的元数据：名字、类型、data、模型。
-     * 成员在 room_members 里单独存；消息在 entity_items 里。
-     * 不落这张表的话，运行时新建的容器重启后就从侧栏消失了（数据还在，没入口）。
+     * 旧容器接口（**兼容层**）：把 `Room` 拆成/拼回 entities + tasks / projects。
+     * 新代码请直接用 `saveTask` / `saveProject`；这里只为 UI 与服务端路由平滑迁移。
+     * core 只有 project / task 两类容器 —— 其它类型走实体会话，不走 Room。
      */
     saveRoom(room: Room): void;
     listRooms(): Room[];
     /**
-     * 删除容器及其**全部从属数据**（消息 / 公共日志 / 成员 / 会话快照 / 投递）。
-     * 只删 rooms 一行的话，消息和成员会变成没有入口的孤儿，占着库且再也删不掉。
+     * 删除容器及其**全部从属数据**（消息 / 公共日志 / 成员 / 会话快照 / 投递 / 域行）。
      * 只删一个 id：项目下任务的级联由调用方（server）决定，库里不懂项目/任务。
      */
     deleteRoom(roomId: string): void;
@@ -151,8 +217,61 @@ function isEmptyDraft(value: unknown): boolean {
     return false;
 }
 
+// ── Room（旧线上形状）↔ 域记录 ─────────────────────────────────────
+//
+// `Room` 曾经就是「一个 data 袋子」；现在它只是域记录给旧 UI / 路由看的投影。
+// 只认下面这些键：其余键**不读也不写** —— 老库里可能残留 diy1 时代的字段，
+// 但绝不能让它们再被存回去（core 不再有开放袋子）。
+
+function dataText(room: Room, key: string): string {
+    const value = room.data[key];
+    return typeof value === 'string' ? value : '';
+}
+
+function roomToTask(room: Room): TaskInput {
+    const closedAt = room.data['closedAt'];
+    return {
+        id: room.id,
+        title: room.name,
+        summary: dataText(room, 'desc'),
+        body: dataText(room, 'body'),
+        projectId: dataText(room, 'projectId') || null,
+        workspace: dataText(room, 'dir') || null,
+        status: dataText(room, 'status') || 'open',
+        closedAt: typeof closedAt === 'number' ? closedAt : null,
+        modelKey: room.modelKey,
+    };
+}
+
+function roomToProject(room: Room): ProjectInput {
+    return {
+        id: room.id,
+        name: room.name,
+        workspace: dataText(room, 'dir') || null,
+        modelKey: room.modelKey,
+    };
+}
+
+function taskToRoom(task: TaskRecord, members: RoomMember[]): Room {
+    const data: Record<string, unknown> = { status: task.status };
+    if (task.projectId !== null) data['projectId'] = task.projectId;
+    if (task.workspace !== null) data['dir'] = task.workspace;
+    if (task.closedAt !== null) data['closedAt'] = task.closedAt;
+    if (task.summary !== '') data['desc'] = task.summary;
+    if (task.body !== '') data['body'] = task.body;
+    return { id: task.id, type: 'task', name: task.title, data, members, modelKey: task.modelKey };
+}
+
+function projectToRoom(project: ProjectRecord, members: RoomMember[]): Room {
+    const data: Record<string, unknown> = {};
+    if (project.workspace !== null) data['dir'] = project.workspace;
+    return { id: project.id, type: 'project', name: project.name, data, members, modelKey: project.modelKey };
+}
+
 export function openStore(file: string): Store {
     const db = new DatabaseSync(file === ':memory:' ? ':memory:' : file);
+    // 域表用 ON DELETE CASCADE 挂在 entities 上；不打开这个 pragma 就只是注释
+    db.exec('PRAGMA foreign_keys = ON');
     db.exec(`
         CREATE TABLE IF NOT EXISTS bots (
             id TEXT PRIMARY KEY,
@@ -192,14 +311,42 @@ export function openStore(file: string): Store {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (entity_id, bot_id)
         );
-        CREATE TABLE IF NOT EXISTS rooms (
+        -- 身份：一切可被引用的东西一行。不做存储，只有「是谁」。
+        CREATE TABLE IF NOT EXISTS entities (
             id TEXT PRIMARY KEY,
             type TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS entities_type ON entities(type);
+        -- 项目域（1:1 挂在 entities 上）
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
-            data TEXT NOT NULL,
+            workspace TEXT,
             model_key TEXT NOT NULL,
             created_at INTEGER NOT NULL
         );
+        -- 任务域（1:1 挂在 entities 上）。项目是**字段**不是父目录，所以不做外键
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+            number INTEGER NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL DEFAULT '',
+            project_id TEXT,
+            workspace TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            closed_at INTEGER,
+            model_key TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, status, id);
+        -- 编号分配：next = 下一个要发的号。独立于任务行，所以删任务不会回收号码
+        CREATE TABLE IF NOT EXISTS counters (
+            scope TEXT PRIMARY KEY,
+            next INTEGER NOT NULL
+        );
+        INSERT OR IGNORE INTO counters (scope, next) VALUES ('task', 1);
         CREATE TABLE IF NOT EXISTS room_members (
             entity_id TEXT NOT NULL,
             bot_id TEXT NOT NULL,
@@ -309,6 +456,180 @@ export function openStore(file: string): Store {
         modelKey: String(row['model_key']),
     });
 
+    // ── 域表读写（saveTask / saveProject 与老库迁移共用）─────────────────
+
+    const writeEntity = (id: string, type: string, createdAt: number): void => {
+        db.prepare('INSERT INTO entities (id, type, created_at) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING').run(
+            id,
+            type,
+            createdAt,
+        );
+    };
+
+    /**
+     * 分配任务号：`next` 是「下一个要发的号」，独立于任务行。
+     * 一条语句原子完成（counters 不存在就种 1，否则 +1 并返回旧值），所以删掉最大号也不会被回收。
+     */
+    const allocateTaskNumber = (): number => {
+        const row = db
+            .prepare(
+                "INSERT INTO counters (scope, next) VALUES ('task', 2) " +
+                    'ON CONFLICT(scope) DO UPDATE SET next = next + 1 RETURNING next - 1 AS n',
+            )
+            .get() as { n: number };
+        return Number(row.n);
+    };
+
+    const readTaskRow = (row: Record<string, unknown>): TaskRecord => ({
+        id: String(row['id']),
+        number: Number(row['number']),
+        title: String(row['title']),
+        summary: String(row['summary']),
+        body: String(row['body']),
+        projectId: row['project_id'] === null ? null : String(row['project_id']),
+        workspace: row['workspace'] === null ? null : String(row['workspace']),
+        status: String(row['status']),
+        closedAt: row['closed_at'] === null ? null : Number(row['closed_at']),
+        modelKey: String(row['model_key']),
+        createdAt: Number(row['created_at']),
+    });
+
+    const readProjectRow = (row: Record<string, unknown>): ProjectRecord => ({
+        id: String(row['id']),
+        name: String(row['name']),
+        workspace: row['workspace'] === null ? null : String(row['workspace']),
+        modelKey: String(row['model_key']),
+        createdAt: Number(row['created_at']),
+    });
+
+    const writeTask = (task: TaskInput): TaskRecord => {
+        const existing = db.prepare('SELECT number, created_at FROM tasks WHERE id = ?').get(task.id) as
+            | { number: number; created_at: number }
+            | undefined;
+        const createdAt = existing?.created_at ?? task.createdAt ?? Date.now();
+        const number = existing?.number ?? task.number ?? allocateTaskNumber();
+
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            writeEntity(task.id, 'task', createdAt);
+            db.prepare(
+                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, model_key, created_at) ' +
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
+                    'title=excluded.title, summary=excluded.summary, body=excluded.body, project_id=excluded.project_id, ' +
+                    'workspace=excluded.workspace, status=excluded.status, closed_at=excluded.closed_at, model_key=excluded.model_key',
+            ).run(
+                task.id,
+                number,
+                task.title,
+                task.summary,
+                task.body,
+                task.projectId ?? null,
+                task.workspace ?? null,
+                task.status,
+                task.closedAt ?? null,
+                task.modelKey,
+                createdAt,
+            );
+            db.exec('COMMIT');
+        } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
+        }
+        return { ...task, number, createdAt };
+    };
+
+    const writeProject = (project: ProjectInput): ProjectRecord => {
+        const existing = db.prepare('SELECT created_at FROM projects WHERE id = ?').get(project.id) as
+            | { created_at: number }
+            | undefined;
+        const createdAt = existing?.created_at ?? project.createdAt ?? Date.now();
+
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            writeEntity(project.id, 'project', createdAt);
+            db.prepare(
+                'INSERT INTO projects (id, name, workspace, model_key, created_at) VALUES (?,?,?,?,?) ' +
+                    'ON CONFLICT(id) DO UPDATE SET name=excluded.name, workspace=excluded.workspace, model_key=excluded.model_key',
+            ).run(project.id, project.name, project.workspace ?? null, project.modelKey, createdAt);
+            db.exec('COMMIT');
+        } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
+        }
+        return { ...project, createdAt };
+    };
+
+    /**
+     * 老库迁移：rooms（一个 data JSON 袋子）→ entities + tasks / projects。
+     *
+     * 幂等：逐行 upsert，编号沿用已有行；全部成功后才把 rooms 改名成备份表。
+     * 中途抛错则 rooms 原样留着，下次启动重试 —— 不会出现「一半搬完、入口全丢」。
+     */
+    const migrateLegacyRooms = (): void => {
+        const rows = db.prepare('SELECT * FROM rooms ORDER BY created_at ASC, rowid ASC').all() as Array<
+            Record<string, unknown>
+        >;
+        for (const row of rows) {
+            const id = String(row['id']);
+            const type = String(row['type']);
+            const createdAt = Number(row['created_at']) || Date.now();
+            let data: Record<string, unknown> = {};
+            try {
+                const parsed: unknown = JSON.parse(String(row['data']));
+                if (typeof parsed === 'object' && parsed !== null) data = parsed as Record<string, unknown>;
+            } catch {
+                /* 坏 data 不该拦住整库迁移：当成空对象，至少保住身份与名字 */
+            }
+            const text = (key: string): string => (typeof data[key] === 'string' ? (data[key] as string) : '');
+            const legacyStatus: Record<string, string> = { todo: 'open', doing: 'open', done: 'closed' };
+            const rawStatus = text('status').trim().toLowerCase();
+
+            if (type === 'task') {
+                writeTask({
+                    id,
+                    title: String(row['name']),
+                    summary: text('desc'),
+                    body: text('body'),
+                    projectId: text('projectId') || null,
+                    workspace: text('dir') || null,
+                    status: legacyStatus[rawStatus] ?? (rawStatus === '' ? 'open' : rawStatus),
+                    closedAt: typeof data['closedAt'] === 'number' ? data['closedAt'] : null,
+                    modelKey: String(row['model_key']),
+                    createdAt,
+                });
+            } else if (type === 'project') {
+                writeProject({
+                    id,
+                    name: String(row['name']),
+                    workspace: text('dir') || null,
+                    modelKey: String(row['model_key']),
+                    createdAt,
+                });
+            } else {
+                // 历史上有过其它类型：保住身份，不进任何域表
+                writeEntity(id, type, createdAt);
+            }
+        }
+
+        const max = db.prepare('SELECT COALESCE(MAX(number), 0) AS n FROM tasks').get() as { n: number };
+        db.prepare("UPDATE counters SET next = ? WHERE scope = 'task'").run(Number(max.n) + 1);
+
+        // 备份表名避开已有：迁移完成过一次就不会再有 rooms
+        let backup = 'rooms_v0';
+        for (let i = 1; ; i += 1) {
+            const taken = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?").get(backup) as
+                | { x: number }
+                | undefined;
+            if (taken === undefined) break;
+            backup = `rooms_v0_${i}`;
+        }
+        db.exec(`ALTER TABLE rooms RENAME TO ${backup}`);
+    };
+
+    const hasLegacyRooms =
+        db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='rooms'").get() !== undefined;
+    if (hasLegacyRooms) migrateLegacyRooms();
+
     return {
         db,
         listBots(): Bot[] {
@@ -388,7 +709,8 @@ export function openStore(file: string): Store {
             // 对话框草稿（synthetic scope，见 docs/drafts-design.md）挂在房间后面：
             // `dlg:<用途>:<roomId>`。删房间时一起清，不等 TTL
             db.prepare("DELETE FROM drafts WHERE owner_id LIKE ? ESCAPE '\\'").run(`dlg:%:${likeEscape(roomId)}`);
-            db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+            // 身份一行 + 域行（tasks / projects 靠 ON DELETE CASCADE 跟着走）
+            db.prepare('DELETE FROM entities WHERE id = ?').run(roomId);
         },
         deleteBot(botId: string): void {
             db.prepare('DELETE FROM bots WHERE id = ?').run(botId);
@@ -396,47 +718,72 @@ export function openStore(file: string): Store {
         members(): Record<string, RoomMember[]> {
             return readMembers();
         },
+        entityOf(id: string): EntityRecord | undefined {
+            const row = db.prepare('SELECT id, type, created_at FROM entities WHERE id = ?').get(id) as
+                | Record<string, unknown>
+                | undefined;
+            if (row === undefined) return undefined;
+            return { id: String(row['id']), type: String(row['type']), createdAt: Number(row['created_at']) };
+        },
+        listTasks(): TaskRecord[] {
+            const rows = db.prepare('SELECT * FROM tasks ORDER BY created_at ASC, rowid ASC').all() as Array<
+                Record<string, unknown>
+            >;
+            return rows.map(readTaskRow);
+        },
+        taskOf(id: string): TaskRecord | undefined {
+            const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+            return row === undefined ? undefined : readTaskRow(row);
+        },
+        saveTask(task: TaskInput): TaskRecord {
+            return writeTask(task);
+        },
+        listProjects(): ProjectRecord[] {
+            const rows = db.prepare('SELECT * FROM projects ORDER BY created_at ASC, rowid ASC').all() as Array<
+                Record<string, unknown>
+            >;
+            return rows.map(readProjectRow);
+        },
+        projectOf(id: string): ProjectRecord | undefined {
+            const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as
+                | Record<string, unknown>
+                | undefined;
+            return row === undefined ? undefined : readProjectRow(row);
+        },
+        saveProject(project: ProjectInput): ProjectRecord {
+            return writeProject(project);
+        },
         saveRoom(room: Room): void {
-            const data = JSON.stringify(room.data ?? {});
-            db.prepare(
-                'INSERT INTO rooms (id, type, name, data, model_key, created_at) VALUES (?,?,?,?,?,?) ' +
-                    'ON CONFLICT(id) DO UPDATE SET type=?, name=?, data=?, model_key=?',
-            ).run(
-                room.id,
-                room.type,
-                room.name,
-                data,
-                room.modelKey,
-                Date.now(),
-                room.type,
-                room.name,
-                data,
-                room.modelKey,
+            if (room.type === 'project') {
+                writeProject(roomToProject(room));
+                return;
+            }
+            if (room.type === 'task') {
+                writeTask(roomToTask(room));
+                return;
+            }
+            throw new Error(
+                `Room 只承载 project / task；${room.type} 是实体类型，payload 应放插件自己的存储（见 docs/plans/2026-11-21-identity.md）`,
             );
         },
         listRooms(): Room[] {
             const members = readMembers();
-            const rows = db.prepare('SELECT * FROM rooms ORDER BY created_at ASC, rowid ASC').all() as Array<
+            const out: Array<{ createdAt: number; room: Room }> = [];
+            const projects = db.prepare('SELECT * FROM projects ORDER BY created_at ASC, rowid ASC').all() as Array<
                 Record<string, unknown>
             >;
-            return rows.map((row) => {
-                const id = String(row['id']);
-                let data: Record<string, unknown> = {};
-                try {
-                    const parsed: unknown = JSON.parse(String(row['data']));
-                    if (typeof parsed === 'object' && parsed !== null) data = parsed as Record<string, unknown>;
-                } catch {
-                    /* 坏数据当空对象，不要让整张列表起不来 */
-                }
-                return {
-                    id,
-                    type: String(row['type']),
-                    name: String(row['name']),
-                    data,
-                    members: members[id] ?? [],
-                    modelKey: String(row['model_key']),
-                };
-            });
+            for (const row of projects) {
+                const project = readProjectRow(row);
+                out.push({ createdAt: project.createdAt, room: projectToRoom(project, members[project.id] ?? []) });
+            }
+            const tasks = db.prepare('SELECT * FROM tasks ORDER BY created_at ASC, rowid ASC').all() as Array<
+                Record<string, unknown>
+            >;
+            for (const row of tasks) {
+                const task = readTaskRow(row);
+                out.push({ createdAt: task.createdAt, room: taskToRoom(task, members[task.id] ?? []) });
+            }
+            return out.sort((a, b) => a.createdAt - b.createdAt).map((entry) => entry.room);
         },
         setDelivery(delivery: DeliveryInput): Delivery {
             const updatedAt = Date.now();

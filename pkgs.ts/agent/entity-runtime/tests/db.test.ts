@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { openStore } from '../src/db';
+import { openStore, type TaskInput } from '../src/db';
 import type { Room } from '../src/types';
 
 const room: Room = {
     id: 'task-abc',
     type: 'task',
     name: '新任务 2',
-    data: { projectId: 'proj:diy', dir: '~/git/diy/diy' },
+    data: { status: 'open', projectId: 'proj:diy', dir: '~/git/diy/diy' },
     members: [{ botId: 'b1', primary: true }, { botId: 'b2' }],
     modelKey: 'm',
 };
@@ -29,11 +29,12 @@ describe('rooms 持久化', () => {
         expect(rooms[0]).toMatchObject({ name: '改名后', modelKey: 'm2' });
     });
 
-    it('data 坏掉不影响列表（当空对象）', () => {
+    it('Room.data 里的未知键不再被存回去（core 已无开放袋子）', () => {
         const store = openStore(':memory:');
-        store.saveRoom(room);
-        store.db.prepare('UPDATE rooms SET data = ? WHERE id = ?').run('{不是 json', room.id);
-        expect(store.listRooms()[0]?.data).toEqual({});
+        store.saveRoom({ ...room, data: { ...room.data, parent: 'task-other', legacy: 'diy1 残留' } });
+        const saved = store.listRooms()[0];
+        expect(saved?.data).not.toHaveProperty('parent');
+        expect(saved?.data).not.toHaveProperty('legacy');
     });
 });
 
@@ -231,5 +232,63 @@ describe('任务日志（journal）', () => {
         store.appendJournal(room.id, { kind: 'progress', text: 'x' });
         store.deleteRoom(room.id);
         expect(store.journalOf(room.id)).toEqual([]);
+    });
+});
+
+describe('实体 + 域表', () => {
+    const taskInput = (id: string, extra: Partial<TaskInput> = {}): TaskInput => ({
+        id,
+        title: id,
+        summary: '',
+        body: '',
+        projectId: null,
+        workspace: null,
+        status: 'open',
+        closedAt: null,
+        modelKey: 'm',
+        ...extra,
+    });
+
+    it('saveTask 分配递增编号；同一 id 再存仍是原号', () => {
+        const store = openStore(':memory:');
+        const a = store.saveTask(taskInput('t-a'));
+        const b = store.saveTask(taskInput('t-b'));
+        expect([a.number, b.number]).toEqual([1, 2]);
+        expect(store.saveTask({ ...taskInput('t-a'), title: '改名' }).number).toBe(1);
+        expect(store.taskOf('t-a')?.title).toBe('改名');
+    });
+
+    it('删掉任务后编号不回收（counters 独立于任务行）', () => {
+        const store = openStore(':memory:');
+        const a = store.saveTask(taskInput('t-a'));
+        store.deleteRoom(a.id);
+        expect(store.saveTask(taskInput('t-b')).number).toBe(2);
+    });
+
+    it('身份行与域行 1:1；删实体带走域行，不碰别的实体', () => {
+        const store = openStore(':memory:');
+        store.saveTask(taskInput('t-a'));
+        store.saveProject({ id: 'p-a', name: 'p', workspace: null, modelKey: 'm' });
+        expect(store.entityOf('t-a')).toMatchObject({ type: 'task' });
+        expect(store.entityOf('p-a')).toMatchObject({ type: 'project' });
+
+        store.deleteRoom('t-a');
+        expect(store.entityOf('t-a')).toBeUndefined();
+        expect(store.taskOf('t-a')).toBeUndefined();
+        expect(store.entityOf('p-a')).toBeDefined();
+    });
+
+    it('Room 只承载 project / task；别的类型要报错（不静默丢数据）', () => {
+        const store = openStore(':memory:');
+        expect(() => store.saveRoom({ ...room, type: 'stock' })).toThrow(/project \/ task/);
+    });
+
+    it('项目只是任务的字段：改项目不动任务的工作目录', () => {
+        const store = openStore(':memory:');
+        store.saveProject({ id: 'p', name: 'p', workspace: '~/a', modelKey: 'm' });
+        store.saveTask(taskInput('t', { projectId: 'p', workspace: '~/worktree' }));
+        store.saveProject({ id: 'p', name: 'p', workspace: '~/b', modelKey: 'm' });
+        expect(store.taskOf('t')?.workspace).toBe('~/worktree');
+        expect(store.projectOf('p')?.workspace).toBe('~/b');
     });
 });
