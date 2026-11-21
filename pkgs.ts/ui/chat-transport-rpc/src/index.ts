@@ -46,8 +46,13 @@ export interface DraftEntry {
     updatedAt: number;
 }
 
-/** 侧栏投影：列表接口比 Room 多这三个字段 */
-export type RoomRow = Room & { hasDraft?: boolean; pendingAsks?: number; lastActivityAt?: number };
+/** 侧栏投影：列表接口比 Room 多这几个字段（pendingAskTitles = 未结提问的题干，给侧栏 ? 的 tooltip） */
+export type RoomRow = Room & {
+    hasDraft?: boolean;
+    pendingAsks?: number;
+    pendingAskTitles?: string[];
+    lastActivityAt?: number;
+};
 
 export class RpcChatClient implements ChatClient {
     private readonly hub: StreamHub;

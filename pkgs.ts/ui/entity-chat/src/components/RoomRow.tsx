@@ -9,7 +9,8 @@ import * as React from 'react';
 import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
 import { formatActivityAgo, formatAtAbsolute, type Room } from '../model';
-import { actions, useIsCurrentRoom, useLastActivityOf, usePendingAskOf } from '../store';
+import { pendingAskHintOf } from '../pendingAsk';
+import { actions, useIsCurrentRoom, useLastActivityOf, usePendingAskOf, usePendingAskTitlesOf } from '../store';
 import { isPlainLeftClick } from './link';
 import { EditableName, StatusGlyph, StatusIcon } from './RoomName';
 
@@ -82,6 +83,9 @@ export function RoomRowView({
     // 别合并成一个：一个是「我欠它一句」，一个是「它等我一句」，混着显示说不清是谁的事。
     const hasDraft = useHasDraft(room.id);
     const pendingAsk = usePendingAskOf(room.id);
+    // `?` 的 tooltip 带上题干：只说「2 个提问等你回答」，进房间还得自己翻（用户报过这条）
+    const askTitles = usePendingAskTitlesOf(room.id);
+    const askHint = pendingAskHintOf(pendingAsk, askTitles);
     // 最后活动（这个容器里最后一条消息的时刻；服务端投影，见 store.tsx 的 lastActivity）。
     // 项目行不显示：项目不是干活的容器，它“活动不活动”是下面那堆任务的事 —— 每行都
     // 挂一个「—」只会多一列噪音。
@@ -105,7 +109,7 @@ export function RoomRowView({
                     event.preventDefault();
                     actions.select(room.id);
                 }}
-                title={`${room.type}：${room.name}`}
+                title={`${room.type}：${room.name}${pendingAsk > 0 ? `（${askHint}）` : ''}`}
                 className={`relative flex w-full items-center justify-center rounded-lg py-2 ${
                     active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
                 }`}
@@ -120,7 +124,7 @@ export function RoomRowView({
                 )}
                 {pendingAsk > 0 && (
                     <span
-                        title={`${pendingAsk} 个提问等你回答`}
+                        title={askHint}
                         aria-label="有提问等你回答"
                         className="absolute bottom-1 right-1 size-1.5 rounded-full bg-sky-400"
                     />
@@ -187,7 +191,7 @@ export function RoomRowView({
                 看见行上的 ? 就知道房间里那张卡长什么样。数字只在多于一个时显示。 */}
             {pendingAsk > 0 && (
                 <span
-                    title={`${pendingAsk} 个提问等你回答`}
+                    title={askHint}
                     aria-label="有提问等你回答"
                     className="flex shrink-0 items-center gap-0.5 text-sky-400"
                 >

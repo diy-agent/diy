@@ -49,12 +49,13 @@ function partsOf(entry: TimelineEntry): Part[] {
                 data: {
                     request: part.request,
                     // 已有结局的卡片要带上答案，界面据此冻结成「已选」状态
-                    ...(part.answer === undefined && part.cancelled !== true
+                    ...(part.answer === undefined && part.cancelled !== true && part.expired !== true
                         ? {}
                         : {
                               resolved: {
                                   ...(part.answer === undefined ? {} : { answer: part.answer }),
                                   ...(part.cancelled === true ? { cancelled: true } : {}),
+                                  ...(part.expired === true ? { expired: true } : {}),
                                   ...(part.reason === undefined ? {} : { reason: part.reason }),
                               },
                           }),

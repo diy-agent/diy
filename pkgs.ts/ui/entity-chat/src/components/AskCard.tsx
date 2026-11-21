@@ -25,7 +25,7 @@
 // （owner = roomId，field = ask:<askId>，题在里面按 id 分桶），切表面 / 切房间 / 刷新
 // 都会回填；提交成功后按值清、提问有了结局（答过 / 失效）也清。逻辑在 askDraft.ts。
 
-import { Check, HelpCircle, MinusCircle } from 'lucide-react';
+import { Check, Clock, HelpCircle, MinusCircle } from 'lucide-react';
 import * as React from 'react';
 
 import type { AskAnswer, AskQuestion, AskRequest } from '@diy-agent/chat-core';
@@ -55,10 +55,15 @@ import { answerAsk, cancelAsk } from '../store';
 /** 自动翻页后的交互冷却（毫秒）：见 AskCard 里 advancedAt 的注释 */
 const COOL_MS = 250;
 
-/** 已有的结局：答过了，或者失效了 */
+/** 已有的结局：答过了，或者失效了（失效里又分「作废」和「过期」） */
 export interface ResolvedAsk {
     answer?: AskAnswer;
     cancelled?: boolean;
+    /**
+     * 过期：不是用户处置，是**提问者已经继续工作了**（它开了新一轮）。
+     * 和「已失效」分开说 —— 前者是"你当时没答，这问过时了"，后者是"这问被撤了"。
+     */
+    expired?: boolean;
     reason?: string;
 }
 
@@ -152,7 +157,11 @@ export function AskCard({
         } catch (cause) {
             // 两种失败要分开说：400 是题对不上（刷新重答），404 是这一问已经没了（卡片作废）
             const reason = cause instanceof Error ? cause.message : String(cause);
-            setError(reason.includes('HTTP 404') || reason.includes('no such pending ask') ? `${reason}；这个提问已经失效，刷新一下。` : reason);
+            setError(
+                reason.includes('HTTP 404') || reason.includes('no such pending ask')
+                    ? `${reason}；这个提问已经失效，刷新一下。`
+                    : reason,
+            );
         } finally {
             setBusy(false);
         }
@@ -173,9 +182,13 @@ export function AskCard({
     const tone = done ? 'border-border bg-muted/30' : 'border-sky-500/25 bg-sky-500/5';
 
     return (
-        <div className={`my-1 rounded-lg border px-3 py-2 ${tone}`}>
+        // data-ask-id：顶部「等你回答」条的跳转锚点（ChatPanel 里 querySelector 找它）。
+        // 卡片在时间线里是**准确**的位置（按 turnId 挂回去），所以不搬进浮层，只补一个入口。
+        <div data-ask-id={request.askId} className={`my-1 rounded-lg border px-3 py-2 ${tone}`}>
             <div className="flex items-start gap-2">
-                {resolved?.cancelled === true ? (
+                {resolved?.expired === true ? (
+                    <Clock className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                ) : resolved?.cancelled === true ? (
                     <MinusCircle className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                 ) : done ? (
                     <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-500" />
@@ -190,7 +203,9 @@ export function AskCard({
                     {multi && (
                         <div className="flex items-baseline gap-2">
                             <div className="text-[12px] font-medium">
-                                {done ? `这一批 ${request.questions.length} 题` : `需要你定 ${request.questions.length} 件事`}
+                                {done
+                                    ? `这一批 ${request.questions.length} 题`
+                                    : `需要你定 ${request.questions.length} 件事`}
                             </div>
                             {!done && optionals > 0 && (
                                 <span className="text-[10px] text-muted-foreground">{optionals} 题可选</span>
@@ -294,11 +309,13 @@ export function AskCard({
                         {done ? (
                             // 已回答：只留一个状态痕迹，不再给按钮（重复提交只会得到 404）
                             <span
-                                className={`text-[11px] ${resolved?.cancelled === true ? 'text-muted-foreground' : 'text-emerald-500'}`}
+                                className={`text-[11px] ${resolved?.cancelled === true || resolved?.expired === true ? 'text-muted-foreground' : 'text-emerald-500'}`}
                             >
-                                {resolved?.cancelled === true
-                                    ? `已失效${resolved.reason === undefined ? '' : `：${resolved.reason}`}`
-                                    : '已回答，模型的下一轮会接着做'}
+                                {resolved?.expired === true
+                                    ? `已过期${resolved.reason === undefined ? '' : `（${resolved.reason}）`}：提问者没等这个答案，已经继续工作了`
+                                    : resolved?.cancelled === true
+                                      ? `已失效${resolved.reason === undefined ? '' : `：${resolved.reason}`}`
+                                      : '已回答，模型的下一轮会接着做'}
                             </span>
                         ) : (
                             <>
@@ -411,7 +428,9 @@ function QuestionBlock({
                     </span>
                 )}
                 <div className="min-w-0 flex-1">
-                    <div className={`text-[12px] ${done && skipped ? 'text-muted-foreground line-through' : 'font-medium'}`}>
+                    <div
+                        className={`text-[12px] ${done && skipped ? 'text-muted-foreground line-through' : 'font-medium'}`}
+                    >
                         {question.question}
                         {question.required === false && (
                             <span className="ml-1 text-[10px] font-normal text-muted-foreground">（可选）</span>
@@ -453,11 +472,18 @@ function QuestionBlock({
                                                     readOnly={done}
                                                     disabled={done}
                                                     value={
-                                                        done ? (answeredFields[field.name] ?? '—') : (draft.fields[field.name] ?? '')
+                                                        done
+                                                            ? (answeredFields[field.name] ?? '—')
+                                                            : (draft.fields[field.name] ?? '')
                                                     }
                                                     onChange={(event) =>
                                                         onChange((previous) =>
-                                                            setField(previous, question.id, field.name, event.target.value),
+                                                            setField(
+                                                                previous,
+                                                                question.id,
+                                                                field.name,
+                                                                event.target.value,
+                                                            ),
                                                         )
                                                     }
                                                     placeholder={field.placeholder}
@@ -470,11 +496,18 @@ function QuestionBlock({
                                                     readOnly={done}
                                                     disabled={done}
                                                     value={
-                                                        done ? (answeredFields[field.name] ?? '—') : (draft.fields[field.name] ?? '')
+                                                        done
+                                                            ? (answeredFields[field.name] ?? '—')
+                                                            : (draft.fields[field.name] ?? '')
                                                     }
                                                     onChange={(event) =>
                                                         onChange((previous) =>
-                                                            setField(previous, question.id, field.name, event.target.value),
+                                                            setField(
+                                                                previous,
+                                                                question.id,
+                                                                field.name,
+                                                                event.target.value,
+                                                            ),
                                                         )
                                                     }
                                                     placeholder={field.placeholder}
@@ -522,7 +555,9 @@ function QuestionBlock({
                                                 <span>
                                                     <span className="font-medium">{option.label}</span>
                                                     {option.description !== undefined && (
-                                                        <span className="ml-2 text-muted-foreground">{option.description}</span>
+                                                        <span className="ml-2 text-muted-foreground">
+                                                            {option.description}
+                                                        </span>
                                                     )}
                                                 </span>
                                             </label>
@@ -539,7 +574,9 @@ function QuestionBlock({
                                             <input
                                                 value={draft.text}
                                                 onChange={(event) =>
-                                                    onChange((previous) => setText(previous, question.id, event.target.value))
+                                                    onChange((previous) =>
+                                                        setText(previous, question.id, event.target.value),
+                                                    )
                                                 }
                                                 placeholder="其他（直接输入）"
                                                 className="rounded border bg-background px-2 py-1 text-[12px] outline-none"

@@ -407,11 +407,20 @@ export function createDiy2App(opts: {
                     return [...rooms.values()].map((actor) => {
                         const id = actor.spec.id;
                         const at = lastItemAt[id];
-                        const pendingAsks = actor.pendingAsks();
+                        const pendingRequests = actor.pendingAskRequests();
+                        const pendingAsks = pendingRequests.length;
                         return {
                             ...actor.spec,
                             hasDraft: withInputDraft.has(id),
                             ...(pendingAsks === 0 ? {} : { pendingAsks }),
+                            // 带题干：侧栏 ? 的 tooltip 要说清「问的是什么」，只说个数进房间还得自己翻
+                            ...(pendingAsks === 0
+                                ? {}
+                                : {
+                                      pendingAskTitles: pendingRequests.map(
+                                          (request) => request.questions[0]?.question ?? '',
+                                      ),
+                                  }),
                             ...(at === undefined ? {} : { lastActivityAt: at }),
                         };
                     });

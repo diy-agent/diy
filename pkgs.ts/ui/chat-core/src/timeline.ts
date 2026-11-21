@@ -48,6 +48,8 @@ export type TimelinePart =
           request: AskRequest;
           answer?: AnsweredAsk['answer'];
           cancelled?: boolean;
+          /** 过期（不是用户处置，是提问者已经继续工作了）：卡片要说出这件事 */
+          expired?: boolean;
           reason?: string;
       };
 
@@ -301,6 +303,7 @@ export function buildTimeline(
                 request: entry.request,
                 ...(entry.answer === undefined ? {} : { answer: entry.answer }),
                 ...(entry.cancelled === true ? { cancelled: true } : {}),
+                ...(entry.expired === true ? { expired: true } : {}),
                 ...(entry.reason === undefined ? {} : { reason: entry.reason }),
             },
             entry.request,

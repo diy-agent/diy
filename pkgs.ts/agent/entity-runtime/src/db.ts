@@ -65,7 +65,12 @@ export interface AskRecord {
     /** 提问时刻 */
     at: number;
     request: AskRequest;
-    state: 'pending' | 'answered' | 'cancelled';
+    /**
+     * `expired` = 过期（`cancelled` 的一种）：不是环境没了，是它依赖的状态翻篇了
+     *（提问者开了新一轮 / 同一个人又提了一次问）。单独存一个值，是为了重启后
+     * 卡片还能说清「为什么没答成」，而不是笼统的「已失效」。
+     */
+    state: 'pending' | 'answered' | 'cancelled' | 'expired';
     answer?: AskAnswer;
     reason?: string;
     settledAt?: number;

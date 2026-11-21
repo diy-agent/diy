@@ -106,6 +106,13 @@ interface ShellState {
      * 只有「正在看」的房间交给流，其余（含看过的）以服务端为准，见 `mergePendingAsks`。
      */
     pendingAsks: Record<string, number>;
+    /**
+     * 容器 id → 那些待答提问的**第一句题干**（侧栏 `?` 的 tooltip：`?` 只说几个，
+     * 这里说问的是什么 —— 用户报的「进会话不知道是哪个」就是这一步缺的）。
+     *
+     * 同样来自 `diy2.rooms.list` 的投影（服务端一次算好，别逐房间问）；当前房间由会话流同步更新。
+     */
+    pendingAskTitles: Record<string, string[]>;
     error?: string;
 }
 
@@ -120,6 +127,7 @@ let state: ShellState = {
     sessions: {},
     lastActivity: {},
     pendingAsks: {},
+    pendingAskTitles: {},
 };
 const listeners = new Set<() => void>();
 
@@ -275,6 +283,18 @@ export function usePendingAskOf(roomId: string): number {
     );
 }
 
+/** 稳定的空数组：每次 `?? []` 都造新对象会让 useSyncExternalStore 每轮都判"变了" */
+const EMPTY_TITLES: readonly string[] = [];
+
+/** 那些待答提问的题干（侧栏 `?` 的 tooltip）。与计数分开订阅：题干变不影响别人的行 */
+export function usePendingAskTitlesOf(roomId: string): readonly string[] {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.pendingAskTitles[roomId] ?? EMPTY_TITLES,
+        () => state.pendingAskTitles[roomId] ?? EMPTY_TITLES,
+    );
+}
+
 /** 当前快照的只读视图 —— 给测试与调试用（界面里请用 `useShell` 订阅，别读这个） */
 export function shellSnapshot(): ShellState {
     return state;
@@ -424,7 +444,16 @@ function watchActivity(roomId: string): void {
         if (warmRooms.has(roomId) && (state.pendingAsks[roomId] ?? 0) !== snapshot.asks.length) {
             next.pendingAsks = { ...state.pendingAsks, [roomId]: snapshot.asks.length };
         }
-        if (next.lastActivity === undefined && next.pendingAsks === undefined) return;
+        // 题干也跟着流走：新提问在服务端投影追上之前（30 秒）也得能看到问的是什么
+        if (warmRooms.has(roomId)) {
+            const titles = snapshot.asks.map((request) => request.questions[0]?.question ?? '');
+            const current = state.pendingAskTitles[roomId] ?? EMPTY_TITLES;
+            if (titles.join('\u0000') !== current.join('\u0000')) {
+                next.pendingAskTitles = { ...state.pendingAskTitles, [roomId]: titles };
+            }
+        }
+        if (next.lastActivity === undefined && next.pendingAsks === undefined && next.pendingAskTitles === undefined)
+            return;
         emit({ ...state, ...next });
     });
 }
@@ -452,12 +481,23 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     // 在切走时就跟着订阅一起冻住了，继续本地优先会让 ? 永久亮着。规则见 pendingAsk.ts
     const liveRoomId = activityRoomId !== '' && warmRooms.has(activityRoomId) ? activityRoomId : '';
     const pendingAsks = mergePendingAsks(serverPendingAsks, state.pendingAsks, liveRoomId);
+    // 题干（侧栏 ? 的 tooltip）：与计数同一次请求回来；没题干的老服务端就不给，tooltip 退回只说个数
+    const serverAskTitles: Record<string, string[]> = {};
+    for (const room of rooms) {
+        const titles = room.pendingAskTitles;
+        if (Array.isArray(titles) && titles.length > 0) serverAskTitles[room.id] = titles;
+    }
+    const pendingAskTitles: Record<string, string[]> = { ...serverAskTitles };
+    // 当前房间的题干以流为准（服务端那份可能落后几十秒）
+    const liveTitles = liveRoomId === '' ? undefined : state.pendingAskTitles[liveRoomId];
+    if (liveRoomId !== '' && liveTitles !== undefined) pendingAskTitles[liveRoomId] = [...liveTitles];
     const address = resolveAddress(rooms);
     emit({
         ...state,
         rooms,
         lastActivity,
         pendingAsks,
+        pendingAskTitles,
         bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])),
         loaded: true,
         // 地址没变就沿用旧引用：`useAddress()` 的快照就是它，同值换新对象等于给整张侧栏
