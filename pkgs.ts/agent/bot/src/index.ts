@@ -48,9 +48,9 @@ export type { BotChatOptions, Serial } from "./chat.js";
 export { SUMMARY_INPUT_MAX_CHARS, applyPriorBoundary, createBotCompactor } from "./compaction.js";
 export type { BotCompactionEvent, BotCompactionState, BotCompactor, BotCompactorOptions } from "./compaction.js";
 
-// ##516：系统上下文（AGENTS.md 链 + facts 摘要）—— 简化版组装器，只在建会话时跑一次。
+// ##516：系统上下文（AGENTS.md 链）—— 简化版组装器，只在建会话时跑一次。
 // 导出是为了让装配器 / 测试能单独验（bot 没装上下文时也能调）。
-export { SYSTEM_CONTEXT_MAX_BYTES, agentsChainOf, buildSystemContext, factsSummaryOf } from "./system-context.js";
+export { SYSTEM_CONTEXT_MAX_BYTES, agentsChainOf, buildSystemContext } from "./system-context.js";
 export type { AgentsFileRef, SystemContextOptions, SystemContextResult } from "./system-context.js";
 
 // ##514 第 3 步：工具**执行**（定义在 @diy-agent/tools，bot 只按名字执行 + 把结果交回 Session）

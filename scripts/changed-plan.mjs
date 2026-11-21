@@ -393,18 +393,6 @@ guards.push({
       : '没碰任何 AGENTS.md、也没删文件（它是按链扫的）',
 });
 
-const facts = fileList.filter((f) => f.startsWith('knowledge/'));
-guards.push({
-  id: 'facts',
-  script: 'npx tsx scripts/facts-index.mts',
-  run: facts.length > 0 || deletedList.length > 0,
-  why: facts.length
-    ? `${facts.length} 个知识库文件改动`
-    : deletedList.length
-      ? `有 ${deletedList.length} 个文件被删（证据指针可能悬空）`
-      : '没碰 knowledge/、也没删文件（事实库真源）',
-});
-
 const full = mode === 'full';
 const plan = {
   base: baseRef,

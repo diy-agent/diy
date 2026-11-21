@@ -228,12 +228,38 @@ class CliExit extends Error {
     }
 }
 
+/**
+ * 已退役的顶层命令 → 退役说明。
+ *
+ * `diy facts *`（yaml 事实库）随 2026-11-19 的知识库迁移退役：真源 `knowledge/facts/*.yaml`
+ * 已被删除，再走 RPC 只会换来一句「找不到事实库真源」。而且**必须在这里拦** —— `ensureAppPort`
+ * 会先把 Electron 守护进程拉起来（实测 `diy facts --help` 就起了一个实例）才走到报错。
+ * 现在读知识用 `diy2 facts brief|get|find|status`，写知识用 `diy kb write|move|index`。
+ */
+const RETIRED_COMMANDS: Record<string, string> = {
+    facts: "diy facts 已退役（yaml 事实库 2026-11-19 停用）：读知识用 `diy2 facts brief|get|find|status`，写知识用 `diy kb write|move|index`。",
+};
+
+/** 取第一个非选项参数（`diy --json facts submit` 也要拦住）→ 退役说明；不是退役命令给 null */
+function retiredCommandOf(argv: readonly string[]): string | null {
+    const head = argv.find((arg) => !arg.startsWith("-"));
+    return head !== undefined && Object.hasOwn(RETIRED_COMMANDS, head) ? RETIRED_COMMANDS[head]! : null;
+}
+
 async function main() {
     const cfg = readRuntimeConfig();
     // CLI 也走同一套诊断：stdout/stderr 断线不再升级成未捕获异常（父进程/终端消失时），
     // 输出镜像到 <DIY_HOME>/log/cli.log，便于事后还原某次调用的真实行为。
     installDiagnostics(cfg.home, "cli");
     const argv = process.argv.slice(2);
+
+    // 退役命令：连 app 之前就退出（见 RETIRED_COMMANDS）
+    const retired = retiredCommandOf(argv);
+    if (retired !== null) {
+        console.error(retired);
+        await flushStreams();
+        process.exit(1);
+    }
 
     const port = await ensureAppPort(cfg);
     const transport = new HttpClientBinding(`http://127.0.0.1:${port}`);

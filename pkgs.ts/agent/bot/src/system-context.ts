@@ -5,9 +5,9 @@
 // 房间 / 模版引擎 —— bot 用不了，也不该被拖进去。`@diy-agent/context` 只是**信封格式**
 // （渲染 / 解析 prompt 里的上下文块），同样不是组装器。
 //
-// 这里只做两件事，且都**只读**：
-//   ① AGENTS.md 链 —— `$DIY_HOME/AGENTS.md` → `$HOME` 逐层 → 工作目录逐层（外 → 内）
-//   ② facts 摘要 —— 主题清单 + 每主题条数（**不塞正文**，那会爆窗口）
+// 这里只做一件事，只读：AGENTS.md 链 —— `$DIY_HOME/AGENTS.md` → `$HOME` 逐层 → 工作目录逐层（外 → 内）。
+// （原先还有「② facts 摘要」：随 2026-11-19 yaml 事实库退役一起删了 —— 它读 `knowledge/facts/`，
+//   那个目录早已不存在，恒返回空串。知识库索引现在由 `@diy-agent/entity-runtime` 的 kbProvider 投。）
 //
 // 三条硬约束（##516 body）：
 //   · 只在**新建会话**时调用一次（`chat.ts` 里与 instructions 同一时机）—— 每轮重写会打碎前缀缓存
@@ -17,8 +17,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import { claimOf, foldKbIndex, KB_FOLD_MIN_GROUP } from "@diy-agent/facts";
-import { loadRepo } from "@diy-agent/facts/node";
 
 /** 系统上下文的缺省字节上限（UTF-8）—— 与 diy-app 的 system 预算同量级 */
 export const SYSTEM_CONTEXT_MAX_BYTES = 8192;
@@ -101,104 +99,21 @@ function readText(file: string): string {
 }
 
 /**
- * facts 摘要：`主题 → 条数`（按 claim 去重），按前缀折叠 —— 口径与 `diy facts` 的 kb 索引一致。
- *
- * 读哪些库：
- *   · 设备级 `$DIY_HOME/knowledge`（跨项目共用的用户规则；生产实例里它本身就是 `~/.diy/knowledge`）
- *   · 仓库级 —— 从工作目录往上找第一个 `knowledge/facts/`（bot 的 workspace 通常不在仓里 ⇒ 没有）
- *
- * 为什么只给主题 + 条数：正文动辄几百 KB。索引是给「知道该查什么」用的，
- * 发现成本由 `diy facts brief <主题>` 按需付一次。
- */
-export function factsSummaryOf(options: { home: string; cwd?: string }): string {
-    const dirs = knowledgeDirsOf(options);
-    if (dirs.length === 0) return "";
-
-    /** `subject` → 该主题下 claim 的集合（跨库去重；同一 claim 的 env 变体只算一条） */
-    const claimsBySubject = new Map<string, Set<string>>();
-    /** `subject` → 描述（后到的 project 覆盖 global） */
-    const descOf = new Map<string, string>();
-    const nsOf = new Map<string, Set<"project" | "global">>();
-
-    for (const { dir, kind } of dirs) {
-        let repo;
-        try {
-            repo = loadRepo(dir, { kind });
-        } catch {
-            continue; // 库坏了就跳过这一份，别把整段上下文拖垮
-        }
-        const ns = kind === "global" ? ("global" as const) : ("project" as const);
-        for (const fact of repo.facts) {
-            const set = claimsBySubject.get(fact.subject) ?? new Set<string>();
-            set.add(claimOf(fact));
-            claimsBySubject.set(fact.subject, set);
-        }
-        for (const subject of repo.subjects) {
-            const desc = (subject.description ?? "").trim();
-            if (desc === "") continue; // 没描述的 subject 不进索引（与 diy-app 同口径）
-            if (ns === "project" || !descOf.has(subject.key)) descOf.set(subject.key, desc);
-            const nsSet = nsOf.get(subject.key) ?? new Set<"project" | "global">();
-            nsSet.add(ns);
-            nsOf.set(subject.key, nsSet);
-        }
-    }
-
-    const entries = [...descOf.entries()].map(([subject, desc]) => ({
-        subject,
-        desc,
-        claims: claimsBySubject.get(subject)?.size ?? 0,
-        ns: [...(nsOf.get(subject) ?? [])],
-    }));
-    if (entries.length === 0) return "";
-    entries.sort((a, b) => a.subject.localeCompare(b.subject));
-    const total = new Set([...claimsBySubject.values()].flatMap((set) => [...set])).size;
-
-    const folded = foldKbIndex(entries, { minGroup: KB_FOLD_MIN_GROUP });
-    const lines = folded.map((entry) => `- ${entry.subject} — ${entry.desc}`);
-    return [`知识库索引（${String(total)} 条 / ${String(entries.length)} 个主题；正文按需 diy facts brief <主题>）`, ...lines].join(
-        "\n",
-    );
-}
-
-/** 该读哪些 `knowledge/` 目录（设备级在前，仓库级在后：同名 subject 由后到的 project 描述覆盖） */
-function knowledgeDirsOf(options: { home: string; cwd?: string }): Array<{ dir: string; kind: "global" | "project" }> {
-    const out: Array<{ dir: string; kind: "global" | "project" }> = [];
-    const globalDir = join(options.home, "knowledge");
-    if (existsSync(join(globalDir, "facts"))) out.push({ dir: globalDir, kind: "global" });
-    const repo = repoKnowledgeOf(resolve(options.cwd ?? options.home));
-    if (repo !== null && !out.some((item) => item.dir === repo)) out.push({ dir: repo, kind: "project" });
-    return out;
-}
-
-/** 从工作目录往上找第一个 `knowledge/facts/`（不越过 `$HOME`） */
-function repoKnowledgeOf(start: string): string | null {
-    const userHome = homedir();
-    const limit = start.startsWith(userHome + sep) || start === userHome ? userHome : start;
-    for (let dir = start; ; dir = dirname(dir)) {
-        const candidate = join(dir, "knowledge");
-        if (existsSync(join(candidate, "facts"))) return candidate;
-        if (dir === limit || dir === dirname(dir)) return null;
-    }
-}
-
-/**
  * 组装系统上下文（**永不抛**）。
  *
- * 顺序即优先级：AGENTS.md 链（外层 → 内层）在前，facts 摘要垫底。
- * 超预算时从**尾部**砍（内层规则 > 索引），并在末尾标注砍掉了什么 ——
+ * 顺序即优先级：AGENTS.md 链外层 → 内层。
+ * 超预算时从**尾部**砍（内层规则 > 外层），并在末尾标注砍掉了什么 ——
  * 静默截断等于让人以为「规则只有这些」。
  */
 export function buildSystemContext(options: SystemContextOptions): SystemContextResult {
     try {
         const budget = options.maxBytes ?? SYSTEM_CONTEXT_MAX_BYTES;
         const chain = agentsChainOf(options);
-        const facts = factsSummaryOf(options);
 
         const parts: Array<{ label: string; text: string }> = chain.map((file) => ({
             label: file.path,
             text: `<!-- AGENTS.md: ${file.path}（作用域 ${file.scope}） -->\n${file.content}`,
         }));
-        if (facts !== "") parts.push({ label: "知识库索引", text: facts });
 
         const kept: string[] = [];
         const omitted: string[] = [];
@@ -212,7 +127,7 @@ export function buildSystemContext(options: SystemContextOptions): SystemContext
                 continue;
             }
             // 装不下就从这里开始整段放弃：靠后的段优先级更低，
-            // 「跳过大的、塞进后面小的」会打乱优先级顺序（外层规则 > 内层 > 索引）。
+            // 「跳过大的、塞进后面小的」会打乱优先级顺序（外层规则 > 内层）。
             omitted.push(...parts.slice(i).map((rest) => rest.label));
             break;
         }
