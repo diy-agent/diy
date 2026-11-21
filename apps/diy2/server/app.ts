@@ -447,7 +447,8 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
                     };
                     store.setMembers(id, spec.members);
                     actorOf(spec);
-                    json(res, 200, spec);
+                    // 返回**落库后的投影**：number / taskDir 由 store 算，新建时的 spec 里还没有
+                    json(res, 200, store.listRooms().find((room) => room.id === id) ?? spec);
                 },
             );
             return;
