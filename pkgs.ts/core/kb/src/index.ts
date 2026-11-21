@@ -369,6 +369,85 @@ export function kbRootOf(from: string): string {
     return join(resolve(from), '.diy', 'knowledge');
 }
 
+/**
+ * 索引条目的**折叠**（纯函数）—— 每轮固定前缀的减负，与 `@diy-agent/facts` 的同名函数同一判据。
+ *
+ * 要治的病：索引按文件逐条列，条数随知识迁入线性涨（≈120 B/条）。2026-11-21 实测项目库
+ * 69 条 ≈ 8.1 KB/轮，而**索引是给「知道该查什么」用的，不是给「知道有什么」用的**。
+ *
+ * 判据：按路径**第一段目录**分组（`app/cli.md` → `app/`），同目录 ≥ `minGroup` 个文件才折叠。
+ * 单文件目录不折（折了反而多一层跳转），根目录下的散文件不折。
+ *
+ * 折叠项的 desc 必须自带**去路**：列组内文件名（最多 `showNames` 个），agent 据此直接
+ * `diy2 facts brief <目录>` 或 `read <路径>`；只写「N 个文件」等于把它推回逐个试。
+ */
+export interface KbIndexEntry {
+    readonly path: string;
+    readonly desc: string;
+    readonly sections: number;
+    readonly scope: 'project' | 'global';
+}
+
+export interface KbFoldIndexOptions {
+    /** 同目录至少几个文件才折叠（缺省 3：两个折起来省不下跳转成本） */
+    readonly minGroup?: number;
+    /** 折叠项里列几个文件名（缺省 6） */
+    readonly showNames?: number;
+}
+
+export const KB_INDEX_FOLD_MIN_GROUP = 3;
+
+/** 路径的首段目录；根目录文件返回 null */
+function dirOf(path: string): string | null {
+    const at = path.indexOf('/');
+    return at > 0 ? path.slice(0, at) : null;
+}
+
+/** 去掉 `.md` 后缀与目录段，留文件名（折叠项里列名字用） */
+function stemOf(path: string): string {
+    const last = path.slice(path.lastIndexOf('/') + 1);
+    return last.endsWith('.md') ? last.slice(0, -3) : last;
+}
+
+/**
+ * 按目录折叠索引条目。返回**按路径排序**的新数组；折叠项 `path` 以 `/` 结尾（`app/`），
+ * `sections` 为组内合计，`scope` 组内混库时取 `project`（与「项目库优先」同判据）。
+ */
+export function foldKbIndex(entries: readonly KbIndexEntry[], opts: KbFoldIndexOptions = {}): KbIndexEntry[] {
+    const min = Math.max(2, opts.minGroup ?? KB_INDEX_FOLD_MIN_GROUP);
+    const show = Math.max(1, opts.showNames ?? 6);
+    const groups = new Map<string, KbIndexEntry[]>();
+    const singles: KbIndexEntry[] = [];
+    for (const entry of entries) {
+        const dir = dirOf(entry.path);
+        if (dir === null) {
+            singles.push(entry);
+            continue;
+        }
+        const list = groups.get(dir);
+        if (list === undefined) groups.set(dir, [entry]);
+        else list.push(entry);
+    }
+    const out: KbIndexEntry[] = [...singles];
+    for (const [dir, list] of groups) {
+        if (list.length < min) {
+            out.push(...list);
+            continue;
+        }
+        const sections = list.reduce((sum, entry) => sum + entry.sections, 0);
+        const names = list.map((entry) => stemOf(entry.path)).sort((a, b) => a.localeCompare(b));
+        const shown = names.length > show ? `${names.slice(0, show).join('、')} …等 ${String(names.length)} 个` : names.join('、');
+        out.push({
+            path: `${dir}/`,
+            desc: `${String(list.length)} 个文件 · ${shown}（brief ${dir}）`,
+            sections,
+            scope: list.some((entry) => entry.scope === 'project') ? 'project' : 'global',
+        });
+    }
+    out.sort((a, b) => a.path.localeCompare(b.path));
+    return out;
+}
+
 // 只读投影（brief / get / find）—— 与写侧同一份真源，不建索引
 export {
     briefOf,

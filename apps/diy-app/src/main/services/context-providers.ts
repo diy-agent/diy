@@ -21,7 +21,7 @@ import { personaForTask } from "../core/persona";
 import { getProjectPath } from "../core/project";
 import { readRuntimeConfig } from "../../runtime";
 import { LOG_DIR_REL, dayFile } from "../core/traffic-log";
-import { kbRootOf, scanKb } from "@diy-agent/kb";
+import { foldKbIndex, kbRootOf, scanKb, type KbIndexEntry } from "@diy-agent/kb";
 import { buildDocsIndex, summarizeDocsIndex } from "./docs-index";
 import { DELIVERED_SECTIONS, chainOf, projectIncludeResolver, renderSystemDsl, taskOf } from "./prompt-registry";
 
@@ -252,7 +252,7 @@ export function kbProvider(home: string, shared: Shared): ContextProvider {
                 { dir: kbRootOf(shared.cwd().cwd), scope: "project" },
                 { dir: join(home, "knowledge"), scope: "global" },
             ];
-            const byPath = new Map<string, { path: string; desc: string; sections: number; scope: string }>();
+            const byPath = new Map<string, KbIndexEntry>();
             // 先 global 后 project：**后写的覆盖**，于是同 path 时项目那份胜出
             for (const { dir, scope } of [...roots].reverse()) {
                 for (const e of scanKb(dir).entries) {
@@ -260,7 +260,8 @@ export function kbProvider(home: string, shared: Shared): ContextProvider {
                 }
             }
             if (byPath.size === 0) return undefined;
-            return { entries: [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)) };
+            // 按目录折叠：索引是每轮固定前缀，逐文件平铺会随知识迁入线性涨（判据见 foldKbIndex）
+            return { entries: foldKbIndex([...byPath.values()]) };
         },
     };
 }

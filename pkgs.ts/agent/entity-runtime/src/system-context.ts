@@ -24,7 +24,7 @@ import {
     type ContextProvider,
     type ContextSession,
 } from '@diy-agent/context';
-import { globalKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
+import { foldKbIndex, globalKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
 import { skillsOf } from '@diy-agent/skills';
 import { localISOString } from '@diy-agent/time';
 
@@ -77,7 +77,8 @@ function kbProvider(cwd: string, home: string | undefined): ContextProvider {
                 });
             }
         }
-        const entries = [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+        // 按目录折叠（##404 减负）：每轮固定前缀按文件平铺会随迁移线性涨，折叠只损失「逐文件 desc」
+        const entries = foldKbIndex([...byPath.values()]);
         return entries.length === 0 ? undefined : { entries };
     };
 

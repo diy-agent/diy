@@ -39,4 +39,3 @@ export {
     type LeveledFact,
     type SubjectWeight,
 } from './expose.js';
-export { foldKbIndex, KB_FOLD_MIN_GROUP, type KbFoldOptions, type KbNs, type KbSubjectEntry } from './kb-index.js';
