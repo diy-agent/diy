@@ -13,6 +13,8 @@ updated: 2026-11-21
 - **记录表**（`entity_items` / `room_entries` / `session_state` …）：属于实体、无独立身份、不参与引用。
 
 插件实体只有 `entities` 一行，payload 在 `~/.diy/plugins/<plugin_id>/` —— 宿主不碰。
+**插件注册表不是 DB 表**：启动时加载 manifest（`package.json` 的 `diy` 段）得到内存模型，
+装了什么来自加载结果；将来记安装来源用 `<数据根>/plugins.json`，仍不是表。
 
 ## 关系（替代父子）
 
@@ -50,6 +52,7 @@ updated: 2026-11-21
 
 服务端与 entity-chat 仍吃 `Room`，store 做单向映射（`title↔name`、`summary↔data.desc`、
 `workspace↔data.dir`、`project_id↔data.projectId`、`status/closed_at↔data.status/closedAt`）。
+另有两个**只读投影**：`data.number`（任务号）与 `data.taskDir`（产物目录）—— 回写时忽略。
 `data` 里其它键**不读也不写**。`saveRoom` 只接受 project / task。UI 迁移完成后删掉这层。
 
 ## 迁移

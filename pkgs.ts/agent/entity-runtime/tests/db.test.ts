@@ -33,7 +33,9 @@ describe('rooms 持久化', () => {
         store.setMembers(room.id, room.members);
         store.saveRoom(room);
         const [saved] = store.listRooms();
-        expect(saved).toEqual(room);
+        // 任务号是 store 分配的，Room 上以只读字段出现
+        expect(saved).toMatchObject(room);
+        expect(saved?.data['number']).toBe(1);
     });
 
     it('改名 / 换模型是 upsert，不会多出一行', () => {

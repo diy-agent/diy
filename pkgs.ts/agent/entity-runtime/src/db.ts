@@ -288,13 +288,15 @@ function roomToProject(room: Room): ProjectInput {
     };
 }
 
-function taskToRoom(task: TaskRecord, members: RoomMember[]): Room {
-    const data: Record<string, unknown> = { status: task.status };
+function taskToRoom(task: TaskRecord, members: RoomMember[], taskDir?: string): Room {
+    const data: Record<string, unknown> = { status: task.status, number: task.number };
     if (task.projectId !== null) data['projectId'] = task.projectId;
     if (task.workspace !== null) data['dir'] = task.workspace;
     if (task.closedAt !== null) data['closedAt'] = task.closedAt;
     if (task.summary !== '') data['desc'] = task.summary;
     if (task.body !== '') data['body'] = task.body;
+    // 只读：产物目录由创建日派生（不落库、不参与保存）
+    if (taskDir !== undefined) data['taskDir'] = taskDir;
     return { id: task.id, type: 'task', name: task.title, data, members, modelKey: task.modelKey };
 }
 
@@ -1032,7 +1034,14 @@ export function openStore(file: string): Store {
             >;
             for (const row of tasks) {
                 const task = readTaskRow(row);
-                out.push({ createdAt: task.createdAt, room: taskToRoom(task, members[task.id] ?? []) });
+                out.push({
+                    createdAt: task.createdAt,
+                    room: taskToRoom(
+                        task,
+                        members[task.id] ?? [],
+                        dataRoot === undefined ? undefined : taskDirAt(dataRoot, task),
+                    ),
+                });
             }
             return out.sort((a, b) => a.createdAt - b.createdAt).map((entry) => entry.room);
         },
