@@ -18,10 +18,26 @@ export {
     JOURNAL_KINDS,
     openStore,
     type Draft,
+    type EntityRecord,
     type JournalEntry,
     type JournalKind,
+    type ProjectInput,
+    type ProjectRecord,
     type Store,
+    type TaskInput,
+    type TaskRecord,
 } from './db';
+export {
+    CORE_TYPES,
+    isCoreType,
+    isEntityId,
+    isEntityType,
+    isPluginType,
+    newEntityId,
+    splitPluginType,
+    type CoreType,
+    type PluginTypeParts,
+} from './id';
 export { adviceOf, endItems, endReasonOf, publishable, type EndFacts, type EndItemContext } from './end-reason';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';

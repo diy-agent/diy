@@ -6,8 +6,20 @@
 import { describe, expect, it } from 'vitest';
 
 import { openStore } from '../src/db';
-import type { Item } from '../src/types';
+import type { Item, Room } from '../src/types';
 import { BOT_A, BOT_B, HUMAN, makeRoom, sleep, waitFor } from './support/harness';
+
+/** 任务房间：`status` / `desc` 是**任务域的真列**（项目没有这两个字段） */
+function taskSpec(): Room {
+    return {
+        id: 'task:data-1',
+        type: 'task',
+        name: '任务',
+        data: { status: 'open' },
+        members: [],
+        modelKey: 'm-room',
+    };
+}
 
 describe('RoomActor', () => {
     it('没有 @：只有默认应答跑', async () => {
@@ -213,21 +225,24 @@ describe('RoomActor', () => {
         expect(h.room.runningBots()).toEqual([]);
     });
 
-    it('改 data：浅合并并落库（重启后任务状态还在）', () => {
-        const h = makeRoom();
+    it('改 data：浅合并并落库（重启后任务状态 / 描述还在）', () => {
+        const h = makeRoom({ spec: taskSpec() });
         h.room.update({ data: { status: 'doing', desc: '做到能跑' } });
 
         expect(h.room.spec.data).toMatchObject({ status: 'doing', desc: '做到能跑' });
-        // 重启：用库里那份 spec 重建
+        // 重启：status / desc 已经是 tasks 的列，拼回 Room 时同名同义
         const again = h.rebuild();
         expect(again.room.spec.data).toMatchObject({ status: 'doing', desc: '做到能跑' });
     });
 
-    it('改 data：null = 删掉这个键', () => {
-        const h = makeRoom();
-        h.room.update({ data: { status: 'done' } });
+    it('改 data：null = 删掉这个键（列有缺省值，重载后回到 open）', () => {
+        const h = makeRoom({ spec: taskSpec() });
+        h.room.update({ data: { status: 'closed' } });
         h.room.update({ data: { status: null } });
         expect('status' in h.room.spec.data).toBe(false);
+        // status 是 NOT NULL 列：删键 = 回到缺省，而不是留个空
+        const again = h.rebuild();
+        expect(again.room.spec.data['status']).toBe('open');
     });
 
     it('stop：删容前把还在跑的会话停掉（不往已删的房间里写）', async () => {
