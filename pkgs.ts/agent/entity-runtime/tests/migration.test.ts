@@ -12,7 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { openStore } from '../src/db';
+import { openStore, type Store } from '../src/db';
 
 let dir = '';
 let file = '';
@@ -142,6 +142,53 @@ describe('rooms → entities + tasks / projects', () => {
             store.db.close();
         }
     });
+
+    it('bots 补身份行；journal_entries 折成 events（<type>.journal）', () => {
+        const db = new DatabaseSync(file);
+        db.exec(`
+            CREATE TABLE rooms (
+                id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL,
+                data TEXT NOT NULL, model_key TEXT NOT NULL, created_at INTEGER NOT NULL
+            );
+            CREATE TABLE bots (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL, persona TEXT NOT NULL,
+                home_entity_id TEXT NOT NULL, home_dir TEXT, model_key TEXT NOT NULL
+            );
+            CREATE TABLE journal_entries (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT NOT NULL,
+                at INTEGER NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL
+            );
+        `);
+        db.prepare('INSERT INTO rooms VALUES (?,?,?,?,?,?)').run(
+            'task-a',
+            'task',
+            'A',
+            JSON.stringify({ status: 'open' }),
+            'm',
+            2_000,
+        );
+        db.prepare('INSERT INTO bots VALUES (?,?,?,?,?,?,?)').run('bot-1', 'diy', '#000', 'p', 'task-a', null, 'm');
+        db.prepare('INSERT INTO journal_entries (entity_id, at, kind, text) VALUES (?,?,?,?)').run(
+            'task-a',
+            3_000,
+            'decision',
+            '选了 A',
+        );
+        db.close();
+
+        const store = openStore(file);
+        try {
+            expect(store.entityOf('bot-1')).toMatchObject({ type: 'bot' });
+            expect(store.journalOf('task-a')).toEqual([
+                { seq: expect.any(Number), at: 3_000, kind: 'decision', text: '选了 A' },
+            ]);
+            const names = tableNames(store);
+            expect(names).toContain('journal_entries_v0');
+            expect(names).not.toContain('journal_entries');
+        } finally {
+            store.db.close();
+        }
+    });
 });
 
 function input(id: string) {
@@ -156,4 +203,12 @@ function input(id: string) {
         closedAt: null,
         modelKey: 'm',
     };
+}
+
+function tableNames(store: Store): string[] {
+    return (
+        store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{
+            name: string;
+        }>
+    ).map((row) => row.name);
 }

@@ -167,7 +167,7 @@ function seed(): void {
     if (bots.length === 0) {
         const create = (name: string, homeRoomId: string, persona: string): Bot => {
             const bot: Bot = {
-                id: `bot-${Date.now().toString(36)}-${bots.length + 1}`,
+                id: newEntityId(),
                 name,
                 color: COLORS[bots.length % COLORS.length]!,
                 persona,
@@ -303,7 +303,7 @@ function tooLargeDraft(value: unknown): boolean {
 
 function newBot(name: string, homeRoomId: string, persona: string): Bot {
     return {
-        id: `bot-${Date.now().toString(36)}`,
+        id: newEntityId(),
         name,
         color: COLORS[store.listBots().length % COLORS.length]!,
         persona,

@@ -12,6 +12,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 import type { TranscriptEntry, TokenUsage } from './compaction';
+import { isLinkKind } from './id';
 import type { RoomEntry } from './room-log';
 import type { Bot, Delivery, InboxMode, Item, Room, RoomMember } from './types';
 
@@ -92,6 +93,19 @@ export interface ProjectRecord {
 
 export type ProjectInput = Omit<ProjectRecord, 'createdAt'> & { createdAt?: number };
 
+/** 一条实体关系（有向）：`from --kind--> to` */
+export interface EntityLink {
+    from: string;
+    to: string;
+    kind: string;
+}
+
+/** 某个实体的关系：出边与入边分开（反向链接由索引算，不要求手写双向） */
+export interface LinkSets {
+    out: EntityLink[];
+    in: EntityLink[];
+}
+
 /** 投递时的入队信息：崩溃后据此重新投递 */
 export interface DeliveryInput extends Omit<Delivery, 'updatedAt'> {
     mode?: InboxMode;
@@ -118,6 +132,17 @@ export interface Store {
     listProjects(): ProjectRecord[];
     projectOf(id: string): ProjectRecord | undefined;
     saveProject(project: ProjectInput): ProjectRecord;
+
+    // ── 关系（替代父子）──────────────────────────────────────
+    /**
+     * 建一条有向关系。校验：kind 合法、两端实体存在、不自连；
+     * `blocks` 额外查环（A→B→…→A 会让任务永远阻塞）。
+     */
+    link(from: string, to: string, kind: string): EntityLink;
+    /** 删一条关系；返回是否真的删掉了（幂等） */
+    unlink(from: string, to: string, kind: string): boolean;
+    /** 出边 + 入边（入边 = 「谁指向我」，不需要调用方写反向） */
+    linksOf(id: string): LinkSets;
 
     /**
      * 旧容器接口（**兼容层**）：把 `Room` 拆成/拼回 entities + tasks / projects。
@@ -372,15 +397,26 @@ export function openStore(file: string): Store {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (owner_id, field)
         );
-        -- 任务日志：append-only（decision / pitfall / review / progress / learn）
-        CREATE TABLE IF NOT EXISTS journal_entries (
-            seq INTEGER PRIMARY KEY AUTOINCREMENT,
-            entity_id TEXT NOT NULL,
-            at INTEGER NOT NULL,
-            kind TEXT NOT NULL,
-            text TEXT NOT NULL
+        -- 实体关系：core kind（related / blocks / duplicate）或插件 kind（<plugin_id>/<kind>）
+        CREATE TABLE IF NOT EXISTS entity_links (
+            from_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+            to_id   TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+            kind    TEXT NOT NULL,
+            PRIMARY KEY (from_id, to_id, kind)
         );
-        CREATE INDEX IF NOT EXISTS journal_entity ON journal_entries(entity_id, seq);
+        CREATE INDEX IF NOT EXISTS entity_links_to ON entity_links(to_id, kind);
+        -- 事件流：subject = 事情发生在谁身上，actor = 谁干的（可空）。
+        -- 任务日志（journal）是它的一个投影：event = <type>.journal，data = {kind, text}
+        CREATE TABLE IF NOT EXISTS events (
+            seq     INTEGER PRIMARY KEY AUTOINCREMENT,
+            at      INTEGER NOT NULL,
+            event   TEXT NOT NULL,
+            subject TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+            actor   TEXT REFERENCES entities(id) ON DELETE SET NULL,
+            data    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS events_subject ON events(subject, seq);
+        CREATE INDEX IF NOT EXISTS events_event ON events(event, seq);
     `);
 
     // 迁移：老的 entity_bots（只有 id 列表）→ room_members（第一位为 primary）
@@ -464,6 +500,50 @@ export function openStore(file: string): Store {
             type,
             createdAt,
         );
+    };
+
+    const readEntity = (id: string): EntityRecord | undefined => {
+        const row = db.prepare('SELECT id, type, created_at FROM entities WHERE id = ?').get(id) as
+            | Record<string, unknown>
+            | undefined;
+        if (row === undefined) return undefined;
+        return { id: String(row['id']), type: String(row['type']), createdAt: Number(row['created_at']) };
+    };
+
+    /** `blocks` 边是否已经从 start 走到 target（建边前用它挡环） */
+    const blocksReaches = (start: string, target: string): boolean => {
+        const seen = new Set<string>();
+        const stack = [start];
+        while (stack.length > 0) {
+            const current = stack.pop()!;
+            if (current === target) return true;
+            if (seen.has(current)) continue;
+            seen.add(current);
+            const rows = db
+                .prepare("SELECT to_id FROM entity_links WHERE from_id = ? AND kind = 'blocks'")
+                .all(current) as Array<Record<string, unknown>>;
+            for (const row of rows) stack.push(String(row['to_id']));
+        }
+        return false;
+    };
+
+    /** 事件名 = `<type>.<verb>`：插件事件因此自动带上自己的命名空间 */
+    const journalEventOf = (id: string): string => `${readEntity(id)?.type ?? 'task'}.journal`;
+
+    /**
+     * 重命名成备份表（`rooms` → `rooms_v0`）。迁移完成后才调，
+     * 目的只是「数据还在磁盘上」而不是继续被读写。
+     */
+    const renameToBackup = (table: string, base: string): void => {
+        let backup = base;
+        for (let i = 1; ; i += 1) {
+            const taken = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?").get(backup) as
+                | { x: number }
+                | undefined;
+            if (taken === undefined) break;
+            backup = `${base}_${i}`;
+        }
+        db.exec(`ALTER TABLE ${table} RENAME TO ${backup}`);
     };
 
     /**
@@ -614,21 +694,64 @@ export function openStore(file: string): Store {
         const max = db.prepare('SELECT COALESCE(MAX(number), 0) AS n FROM tasks').get() as { n: number };
         db.prepare("UPDATE counters SET next = ? WHERE scope = 'task'").run(Number(max.n) + 1);
 
-        // 备份表名避开已有：迁移完成过一次就不会再有 rooms
-        let backup = 'rooms_v0';
-        for (let i = 1; ; i += 1) {
-            const taken = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?").get(backup) as
-                | { x: number }
-                | undefined;
-            if (taken === undefined) break;
-            backup = `rooms_v0_${i}`;
+        renameToBackup('rooms', 'rooms_v0');
+    };
+
+    /**
+     * bots → entities。幂等：新 bot 由 `upsertBot` 自己写身份行，这里只补历史。
+     * 老 `bots` 表没有创建时间，统一盖当前时刻（bot 的 created_at 目前没有消费者）。
+     */
+    const syncBotEntities = (): void => {
+        db.prepare("INSERT OR IGNORE INTO entities (id, type, created_at) SELECT id, 'bot', ? FROM bots").run(
+            Date.now(),
+        );
+    };
+
+    /**
+     * 老库迁移：journal_entries → events（`event = <type>.journal`，`data = {kind, text}`）。
+     *
+     * subject 已经不存在（理论上删房间时就清干净了）的行不硬造身份，留在 `journal_entries_v0` 里。
+     */
+    const migrateJournal = (): void => {
+        const exists = db
+            .prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='journal_entries'")
+            .get();
+        if (exists === undefined) return;
+
+        const rows = db
+            .prepare(
+                'SELECT j.at, j.entity_id, j.kind, j.text, e.type AS type FROM journal_entries j ' +
+                    'LEFT JOIN entities e ON e.id = j.entity_id ORDER BY j.seq ASC',
+            )
+            .all() as Array<Record<string, unknown>>;
+
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            const insert = db.prepare('INSERT INTO events (at, event, subject, data) VALUES (?,?,?,?)');
+            for (const row of rows) {
+                const type = row['type'];
+                if (type === null || type === undefined) continue;
+                insert.run(
+                    Number(row['at']),
+                    `${String(type)}.journal`,
+                    String(row['entity_id']),
+                    JSON.stringify({ kind: String(row['kind']), text: String(row['text']) }),
+                );
+            }
+            renameToBackup('journal_entries', 'journal_entries_v0');
+            db.exec('COMMIT');
+        } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
         }
-        db.exec(`ALTER TABLE rooms RENAME TO ${backup}`);
     };
 
     const hasLegacyRooms =
         db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='rooms'").get() !== undefined;
+    // 顺序有意义：先搬房间（journal 的 subject 要能解析到实体），再补 bot 身份，最后折日志
     if (hasLegacyRooms) migrateLegacyRooms();
+    syncBotEntities();
+    migrateJournal();
 
     return {
         db,
@@ -637,6 +760,8 @@ export function openStore(file: string): Store {
             return rows.map(toBot);
         },
         upsertBot(bot: Bot): void {
+            // bot 也是实体（可被 entity_links 引用）：身份行与 bots 行同步
+            writeEntity(bot.id, 'bot', Date.now());
             db.prepare(
                 'INSERT INTO bots (id, name, color, persona, home_entity_id, home_dir, model_key) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=?, persona=?, home_dir=?, model_key=?',
             ).run(
@@ -662,23 +787,30 @@ export function openStore(file: string): Store {
         appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number }): JournalEntry {
             const at = input.at ?? Date.now();
             const result = db
-                .prepare('INSERT INTO journal_entries (entity_id, at, kind, text) VALUES (?,?,?,?)')
-                .run(roomId, at, input.kind, input.text);
+                .prepare('INSERT INTO events (at, event, subject, data) VALUES (?,?,?,?)')
+                .run(at, journalEventOf(roomId), roomId, JSON.stringify({ kind: input.kind, text: input.text }));
             return { seq: Number(result.lastInsertRowid), at, kind: input.kind, text: input.text };
         },
         journalOf(roomId: string, limit = 24): JournalEntry[] {
             const rows = db
-                .prepare(
-                    'SELECT seq, at, kind, text FROM journal_entries WHERE entity_id = ? ORDER BY seq DESC LIMIT ?',
-                )
-                .all(roomId, limit) as Array<Record<string, unknown>>;
+                .prepare('SELECT seq, at, data FROM events WHERE subject = ? AND event = ? ORDER BY seq DESC LIMIT ?')
+                .all(roomId, journalEventOf(roomId), limit) as Array<Record<string, unknown>>;
             return rows
-                .map((row) => ({
-                    seq: Number(row['seq']),
-                    at: Number(row['at']),
-                    kind: String(row['kind']) as JournalKind,
-                    text: String(row['text']),
-                }))
+                .map((row) => {
+                    let data: { kind?: unknown; text?: unknown } = {};
+                    try {
+                        const parsed: unknown = JSON.parse(String(row['data']));
+                        if (typeof parsed === 'object' && parsed !== null) data = parsed as typeof data;
+                    } catch {
+                        /* 坏 data 不该让整份日志读不出来 */
+                    }
+                    return {
+                        seq: Number(row['seq']),
+                        at: Number(row['at']),
+                        kind: (typeof data.kind === 'string' ? data.kind : 'progress') as JournalKind,
+                        text: typeof data.text === 'string' ? data.text : '',
+                    };
+                })
                 .reverse();
         },
         setMembers(roomId: string, members: readonly RoomMember[]): void {
@@ -704,7 +836,6 @@ export function openStore(file: string): Store {
             db.prepare('DELETE FROM session_state WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM deliveries WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
-            db.prepare('DELETE FROM journal_entries WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM drafts WHERE owner_id = ?').run(roomId);
             // 对话框草稿（synthetic scope，见 docs/drafts-design.md）挂在房间后面：
             // `dlg:<用途>:<roomId>`。删房间时一起清，不等 TTL
@@ -714,16 +845,14 @@ export function openStore(file: string): Store {
         },
         deleteBot(botId: string): void {
             db.prepare('DELETE FROM bots WHERE id = ?').run(botId);
+            // 身份行只在确实属于 bot 时删（防 id 撞到房间）
+            db.prepare("DELETE FROM entities WHERE id = ? AND type = 'bot'").run(botId);
         },
         members(): Record<string, RoomMember[]> {
             return readMembers();
         },
         entityOf(id: string): EntityRecord | undefined {
-            const row = db.prepare('SELECT id, type, created_at FROM entities WHERE id = ?').get(id) as
-                | Record<string, unknown>
-                | undefined;
-            if (row === undefined) return undefined;
-            return { id: String(row['id']), type: String(row['type']), createdAt: Number(row['created_at']) };
+            return readEntity(id);
         },
         listTasks(): TaskRecord[] {
             const rows = db.prepare('SELECT * FROM tasks ORDER BY created_at ASC, rowid ASC').all() as Array<
@@ -752,6 +881,43 @@ export function openStore(file: string): Store {
         },
         saveProject(project: ProjectInput): ProjectRecord {
             return writeProject(project);
+        },
+        link(from: string, to: string, kind: string): EntityLink {
+            if (!isLinkKind(kind)) {
+                throw new Error(
+                    `关系 kind 不合法：${kind}（core 用 related / blocks / duplicate；插件用 <plugin_id>/<kind>）`,
+                );
+            }
+            if (from === to) throw new Error(`实体不能和自己建立关系：${from}`);
+            for (const id of [from, to]) {
+                if (readEntity(id) === undefined) throw new Error(`实体不存在：${id}`);
+            }
+            // blocks 是有向的「先 A 后 B」：再加 A→…→A 会让两边永远等对方
+            if (kind === 'blocks' && blocksReaches(to, from)) {
+                throw new Error(`blocks 会成环：${from} → ${to} → … → ${from}`);
+            }
+            db.prepare('INSERT OR IGNORE INTO entity_links (from_id, to_id, kind) VALUES (?,?,?)').run(from, to, kind);
+            return { from, to, kind };
+        },
+        unlink(from: string, to: string, kind: string): boolean {
+            const result = db
+                .prepare('DELETE FROM entity_links WHERE from_id = ? AND to_id = ? AND kind = ?')
+                .run(from, to, kind);
+            return Number(result.changes) > 0;
+        },
+        linksOf(id: string): LinkSets {
+            const outRows = db
+                .prepare('SELECT from_id, to_id, kind FROM entity_links WHERE from_id = ? ORDER BY rowid ASC')
+                .all(id) as Array<Record<string, unknown>>;
+            const inRows = db
+                .prepare('SELECT from_id, to_id, kind FROM entity_links WHERE to_id = ? ORDER BY rowid ASC')
+                .all(id) as Array<Record<string, unknown>>;
+            const toLink = (row: Record<string, unknown>): EntityLink => ({
+                from: String(row['from_id']),
+                to: String(row['to_id']),
+                kind: String(row['kind']),
+            });
+            return { out: outRows.map(toLink), in: inRows.map(toLink) };
         },
         saveRoom(room: Room): void {
             if (room.type === 'project') {

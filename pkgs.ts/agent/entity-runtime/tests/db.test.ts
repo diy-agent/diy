@@ -11,6 +11,22 @@ const room: Room = {
     modelKey: 'm',
 };
 
+/** 任务输入的最小合法形状（number / createdAt 交给 store 补） */
+function taskInput(id: string, extra: Partial<TaskInput> = {}): TaskInput {
+    return {
+        id,
+        title: id,
+        summary: '',
+        body: '',
+        projectId: null,
+        workspace: null,
+        status: 'open',
+        closedAt: null,
+        modelKey: 'm',
+        ...extra,
+    };
+}
+
 describe('rooms 持久化', () => {
     it('saveRoom → listRooms 回到同样的元数据（含成员）', () => {
         const store = openStore(':memory:');
@@ -214,6 +230,7 @@ describe('lastItemAtByRoom —— 每个容器的最后活动', () => {
 describe('任务日志（journal）', () => {
     it('append 自增；journalOf 时间正序、limit 取最近 N 条', () => {
         const store = openStore(':memory:');
+        store.saveRoom(room);
         const a = store.appendJournal(room.id, { kind: 'decision', text: '选了 A' });
         const b = store.appendJournal(room.id, { kind: 'pitfall', text: 'B 会炸' });
         expect(b.seq).toBeGreaterThan(a.seq);
@@ -226,6 +243,17 @@ describe('任务日志（journal）', () => {
         expect(last[0]!.text).toBe('B 会炸');
     });
 
+    it('journal 是 events 的投影：event = <type>.journal，data = {kind,text}', () => {
+        const store = openStore(':memory:');
+        store.saveRoom(room);
+        store.appendJournal(room.id, { kind: 'decision', text: '选了 A' });
+        const row = store.db.prepare('SELECT event, subject, actor, data FROM events').get() as Record<string, unknown>;
+        expect(row['event']).toBe('task.journal');
+        expect(row['subject']).toBe(room.id);
+        expect(row['actor']).toBeNull();
+        expect(JSON.parse(String(row['data']))).toEqual({ kind: 'decision', text: '选了 A' });
+    });
+
     it('删房间连带清掉日志', () => {
         const store = openStore(':memory:');
         store.saveRoom(room);
@@ -236,19 +264,6 @@ describe('任务日志（journal）', () => {
 });
 
 describe('实体 + 域表', () => {
-    const taskInput = (id: string, extra: Partial<TaskInput> = {}): TaskInput => ({
-        id,
-        title: id,
-        summary: '',
-        body: '',
-        projectId: null,
-        workspace: null,
-        status: 'open',
-        closedAt: null,
-        modelKey: 'm',
-        ...extra,
-    });
-
     it('saveTask 分配递增编号；同一 id 再存仍是原号', () => {
         const store = openStore(':memory:');
         const a = store.saveTask(taskInput('t-a'));
@@ -290,5 +305,68 @@ describe('实体 + 域表', () => {
         store.saveProject({ id: 'p', name: 'p', workspace: '~/b', modelKey: 'm' });
         expect(store.taskOf('t')?.workspace).toBe('~/worktree');
         expect(store.projectOf('p')?.workspace).toBe('~/b');
+    });
+
+    it('bot 也是实体：upsertBot 写身份行，deleteBot 带走', () => {
+        const store = openStore(':memory:');
+        store.upsertBot({ id: 'b1', name: 'a', color: '#000', persona: 'p', homeRoomId: 'r', modelKey: 'm' });
+        expect(store.entityOf('b1')).toMatchObject({ type: 'bot' });
+        store.deleteBot('b1');
+        expect(store.entityOf('b1')).toBeUndefined();
+    });
+});
+
+describe('实体关系（替代父子）', () => {
+    it('link / linksOf：出边入边都算（不要求手写反向）', () => {
+        const store = openStore(':memory:');
+        store.saveTask(taskInput('a'));
+        store.saveTask(taskInput('b'));
+        store.link('a', 'b', 'related');
+
+        expect(store.linksOf('a')).toEqual({ out: [{ from: 'a', to: 'b', kind: 'related' }], in: [] });
+        expect(store.linksOf('b')).toEqual({ out: [], in: [{ from: 'a', to: 'b', kind: 'related' }] });
+    });
+
+    it('重复建边幂等；unlink 返回是否真删了', () => {
+        const store = openStore(':memory:');
+        store.saveTask(taskInput('a'));
+        store.saveTask(taskInput('b'));
+        store.link('a', 'b', 'related');
+        store.link('a', 'b', 'related');
+        expect(store.linksOf('a').out).toHaveLength(1);
+
+        expect(store.unlink('a', 'b', 'related')).toBe(true);
+        expect(store.unlink('a', 'b', 'related')).toBe(false);
+    });
+
+    it('kind：core 三种之外必须带插件命名空间', () => {
+        const store = openStore(':memory:');
+        store.saveTask(taskInput('a'));
+        store.saveTask(taskInput('b'));
+        expect(() => store.link('a', 'b', 'parent')).toThrow(/kind 不合法/);
+        expect(store.link('a', 'b', '@acme/github/implements')).toMatchObject({ kind: '@acme/github/implements' });
+    });
+
+    it('自连 / 实体不存在 / blocks 成环都拒绝', () => {
+        const store = openStore(':memory:');
+        for (const id of ['a', 'b', 'c']) store.saveTask(taskInput(id));
+
+        expect(() => store.link('a', 'a', 'related')).toThrow(/自己/);
+        expect(() => store.link('a', 'ghost', 'related')).toThrow(/不存在/);
+
+        store.link('a', 'b', 'blocks');
+        store.link('b', 'c', 'blocks');
+        expect(() => store.link('c', 'a', 'blocks')).toThrow(/成环/);
+        // related 不查环：纯关联允许互相指
+        store.link('b', 'a', 'related');
+    });
+
+    it('删实体带走它的关系（from / to 两个方向）', () => {
+        const store = openStore(':memory:');
+        store.saveTask(taskInput('a'));
+        store.saveTask(taskInput('b'));
+        store.link('a', 'b', 'related');
+        store.deleteRoom('a');
+        expect(store.linksOf('b')).toEqual({ out: [], in: [] });
     });
 });
