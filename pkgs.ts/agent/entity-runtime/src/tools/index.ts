@@ -5,13 +5,12 @@
 //     bash / pwsh 来自 `@diy-agent/tools::makeShellTool` —— 续读窗口、原子写、unified diff、
 //     字符归一匹配、输出上限、超时杀组、结果头只有一份实现。
 //     （以前这里有两份"精简移植"，头注写着"等 build 图修好再换回去"；理由已过期。）
-//   · **房间策略留在这里**：路径护栏（`inside`）是 diy2 的房间规矩（diy1 的写入护栏已按
-//     用户要求移除，这里保留是为了不放松已有保证），只拦 read / write / edit 的 `path`。
-//     注意 bash 本来就不受它约束 —— 它是"别手滑写到房间外"，不是沙箱。
+//   · **房间不再加路径规矩**（2026-11-21 用户裁，与 diy1 / 内核同口径）：原先这里有个 `inside`，
+//     只拦 read / write / edit 的 `path` —— 但「任务在 git worktree 里」时文件在房间目录之外，
+//     write / edit 一律拒、只能退回 `bash` 写，反而绕开了 diff 摘要与审计；而它本来就不是沙箱
+//     （bash 从来不受它约束）。房间目录只是相对路径基准与命令的 cwd。
 //   · **宿主能力补在这里**：`ask`（提问闸门）、`journal`（任务日志）、`job`（后台作业账本）。
 //     后两者的落点由房间决定（store）；作业表由进程级 RunRegistry 提供。
-
-import { isAbsolute, relative, resolve } from 'node:path';
 
 import type { ToolSet } from 'ai';
 
@@ -42,7 +41,7 @@ export interface RoomJobs {
 }
 
 export interface RoomToolsOptions {
-    /** 房间的工作目录（相对路径的解析基准，也是命令的 cwd） */
+    /** 房间的工作目录（相对路径的解析基准，也是命令的 cwd；**不是**可写范围） */
     cwd: string;
     /** 是否开放 shell；缺省开放 */
     shell?: boolean;
@@ -60,33 +59,6 @@ export interface RoomToolsOptions {
     onAudit?: (event: RoomAuditEvent) => void;
     /** 投递层截断（只改"发给模型的那一份"，execute 的返回值仍是全文） */
     toModelOutput?: (text: string, toolCallId: string) => string;
-}
-
-/** 解析到房间目录内；越界抛错（房间策略，见文件头） */
-function inside(cwd: string, filePath: string): void {
-    const rel = relative(cwd, resolve(cwd, filePath));
-    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return;
-    throw new Error(`[越界] ${filePath} 不在房间目录 ${cwd} 内`);
-}
-
-/**
- * 给文件工具套上房间的路径规矩。
- *
- * 只包 `execute` 的入参检查，工具语义（读窗口 / 原子写 / diff / 抛错口径）一律仍是内核那份 ——
- * 这里不重新实现任何一条判断。`path` 缺省（不该发生）时直接放行给内核去报错。
- */
-function scoped(def: ToolSet[string], cwd: string): ToolSet[string] {
-    const execute = def.execute;
-    if (execute === undefined) return def;
-    const guarded = {
-        ...def,
-        execute: async (input: unknown, options: unknown) => {
-            const filePath = (input as { path?: unknown } | null)?.path;
-            if (typeof filePath === 'string' && filePath !== '') inside(cwd, filePath);
-            return (execute as (i: unknown, o: unknown) => Promise<unknown>)(input, options);
-        },
-    };
-    return guarded as ToolSet[string];
 }
 
 /** shell 能力探测只做一次（`DIY_SHELL` 是启动期环境事实，不是每房间一份） */
@@ -147,15 +119,9 @@ export function buildRoomTools(options: RoomToolsOptions): ToolSet {
     if (ask !== undefined) extra['ask'] = ask;
     if (options.onJournal !== undefined) extra['journal'] = journalTool(options.onJournal);
 
-    const built = buildTools({
+    return buildTools({
         cwd,
         ...(options.onAudit === undefined ? {} : { onAudit: options.onAudit }),
         extraTools: extra,
     });
-    // 房间的路径规矩只加在文件工具上（bash 不受限，见文件头）
-    for (const name of ['read', 'write', 'edit']) {
-        const def = built[name];
-        if (def !== undefined) built[name] = scoped(def, cwd);
-    }
-    return built;
 }

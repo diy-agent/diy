@@ -46,28 +46,30 @@ describe('房间工具', () => {
         expect(await readFile(join(dir, 'notes/a.txt'), 'utf8')).toBe('第一行\n第二行\n第三行');
     });
 
-    it('读 cwd 之外：放行（房间目录只是相对路径基准，不是边界）', async () => {
-        const tools = buildRoomTools({ cwd: dir, shell: false });
-        const outside = join(dir, '..', `outside-${process.pid}.txt`);
-        await writeFile(outside, '外面\n', 'utf8');
+    // 房间目录**不是**可写范围（2026-11-21 用户裁，与内核 / diy1 同口径）：任务在 git worktree 里时
+    // 文件就在房间目录之外，拦了只能退回 bash 写、绕开 diff 摘要与审计。这条是契约变更的正面证据 ——
+    // 防有人把护栏又加回去。
+    it('房间外路径不拦：绝对路径与 ../ 都照常读写（房间目录只是相对路径基准）', async () => {
+        const outside = await mkdtemp(join(tmpdir(), 'diy2-tools-outside-'));
         try {
-            const text = String(await toolOf(tools, 'read').execute({ path: outside }));
-            expect(text).toContain('1\t外面');
-        } finally {
-            await rm(outside, { force: true });
-        }
-    });
+            const tools = buildRoomTools({ cwd: dir, shell: false });
+            const target = join(outside, 'far.txt');
 
-    it('写 / 改 cwd 之外：同样放行', async () => {
-        const tools = buildRoomTools({ cwd: dir, shell: false });
-        const outside = join(dir, '..', `outside-w-${process.pid}.txt`);
-        try {
-            await toolOf(tools, 'write').execute({ path: outside, content: 'a\nb\n' });
-            expect(await readFile(outside, 'utf8')).toBe('a\nb\n');
-            await toolOf(tools, 'edit').execute({ path: outside, edits: [{ oldText: 'b', newText: 'c' }] });
-            expect(await readFile(outside, 'utf8')).toBe('a\nc\n');
+            const written = String(await toolOf(tools, 'write').execute({ path: target, content: '外面' }));
+            expect(written).toContain('新建');
+            expect(String(await toolOf(tools, 'read').execute({ path: target }))).toContain('1: 外面');
+
+            await toolOf(tools, 'edit').execute({
+                path: target,
+                edits: [{ oldText: '外面', newText: '改过' }],
+            });
+            expect(await readFile(target, 'utf8')).toBe('改过');
+
+            // 相对路径的 `../` 同样放行（不再有"越界"这回事）
+            const up = `../${outside.split('/').pop() ?? ''}/far.txt`;
+            expect(String(await toolOf(tools, 'read').execute({ path: up }))).toContain('改过');
         } finally {
-            await rm(outside, { force: true });
+            await rm(outside, { recursive: true, force: true });
         }
     });
 
