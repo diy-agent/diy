@@ -65,6 +65,8 @@ async function createTask(name: string): Promise<string> {
         data: { projectId: 'proj:diy' },
     });
     expect(status).toBe(200);
+    // 新建的响应就是落库后的投影（#编号 立刻可用，不用等下一次 refresh）
+    expect(typeof body.data.number).toBe('number');
     return String(body.id);
 }
 
