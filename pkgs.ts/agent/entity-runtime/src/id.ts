@@ -94,3 +94,17 @@ export function isPluginType(type: string): boolean {
 export function isEntityType(type: string): boolean {
     return isCoreType(type) || isPluginType(type);
 }
+
+/**
+ * 实体关系的三种 core kind（插件自定义的必须写成 `<plugin_id>/<kind>`）。
+ *
+ * - `related`：纯关联（平铺展示，无层级）
+ * - `blocks`：A 没完成，B 别动（唯一会查环的一种）
+ * - `duplicate`：同一件事的另一个入口
+ */
+export const LINK_KINDS = ['related', 'blocks', 'duplicate'] as const;
+export type LinkKind = (typeof LINK_KINDS)[number];
+
+export function isLinkKind(kind: string): boolean {
+    return (LINK_KINDS as readonly string[]).includes(kind) || isPluginType(kind);
+}

@@ -18,9 +18,11 @@ export {
     JOURNAL_KINDS,
     openStore,
     type Draft,
+    type EntityLink,
     type EntityRecord,
     type JournalEntry,
     type JournalKind,
+    type LinkSets,
     type ProjectInput,
     type ProjectRecord,
     type Store,
@@ -29,13 +31,16 @@ export {
 } from './db';
 export {
     CORE_TYPES,
+    LINK_KINDS,
     isCoreType,
     isEntityId,
     isEntityType,
+    isLinkKind,
     isPluginType,
     newEntityId,
     splitPluginType,
     type CoreType,
+    type LinkKind,
     type PluginTypeParts,
 } from './id';
 export { adviceOf, endItems, endReasonOf, publishable, type EndFacts, type EndItemContext } from './end-reason';
