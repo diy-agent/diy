@@ -35,6 +35,17 @@ updated: 2026-11-21
 - 类型：core 闭合 `project|task|bot`；插件 `<npm 包名>/<局部名>`（`@acme/github/issue`、`x/issue`）。
   判据见 `src/id.ts` 的 `splitPluginType`（含 `@` 或 `/` ⇒ 插件）。
 
+## 任务目录
+
+`<数据根>/tasks/2026-11-21/<id>/` —— 日期取**创建日**（本地时区），之后永不移动：
+
+- `task.md`：frontmatter + 正文。**DB 才是真源**，手改会在下次保存时被覆盖。
+- `journal.jsonl`：append-only，一行 `{seq,at,kind,text}`。
+- `artifacts/`：截图 / 日志等产物。
+- 删任务 → 整个目录挪进 `tasks/_trash/<日期>-<id>`，**不删产物**。
+- 路径由 `(createdAt, id)` 推出（不存列）；id 里的 `:` 换成 `-`（Windows 非法）。
+- `tasks.updated_at` 只在内容真变时盖章（启动全量重存不算）。
+
 ## Room 兼容层
 
 服务端与 entity-chat 仍吃 `Room`，store 做单向映射（`title↔name`、`summary↔data.desc`、

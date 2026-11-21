@@ -11,9 +11,12 @@
 
 import { DatabaseSync } from 'node:sqlite';
 
+import { dirname, resolve } from 'node:path';
+
 import type { TranscriptEntry, TokenUsage } from './compaction';
 import { isLinkKind } from './id';
 import type { RoomEntry } from './room-log';
+import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc } from './task-dir';
 import type { Bot, Delivery, InboxMode, Item, Room, RoomMember } from './types';
 
 /** 一个 bot 在某个房间里的对话快照（持久化单位） */
@@ -74,12 +77,15 @@ export interface TaskRecord {
     closedAt: number | null;
     modelKey: string;
     createdAt: number;
+    /** 最后一次**内容变化**的时刻（启动时的重复保存不算） */
+    updatedAt: number;
 }
 
-/** 写任务：`number` / `createdAt` 缺省由 store 补（number 走 counters，永不回收） */
-export type TaskInput = Omit<TaskRecord, 'number' | 'createdAt'> & {
+/** 写任务：`number` / `createdAt` / `updatedAt` 缺省由 store 补（number 走 counters，永不回收） */
+export type TaskInput = Omit<TaskRecord, 'number' | 'createdAt' | 'updatedAt'> & {
     number?: number;
     createdAt?: number;
+    updatedAt?: number;
 };
 
 export interface ProjectRecord {
@@ -127,6 +133,11 @@ export interface Store {
     taskOf(id: string): TaskRecord | undefined;
     /** upsert；新任务分配一个永不回收的 number */
     saveTask(task: TaskInput): TaskRecord;
+    /**
+     * 任务的产物目录（`<数据根>/tasks/2026-11-21/<id>/`）：由创建日派生，**只算路径不创建**。
+     * `:memory:` 库或不是任务时返回 undefined。
+     */
+    taskDirOf(id: string): string | undefined;
 
     // ── 项目域（真源）─────────────────────────────────────────
     listProjects(): ProjectRecord[];
@@ -295,6 +306,19 @@ function projectToRoom(project: ProjectRecord, members: RoomMember[]): Room {
 
 export function openStore(file: string): Store {
     const db = new DatabaseSync(file === ':memory:' ? ':memory:' : file);
+    // 数据根 = 数据库所在目录（`<home>/diy2.db` → `<home>/tasks/...`）；内存库没有磁盘产物
+    const dataRoot = file === ':memory:' ? undefined : dirname(resolve(file));
+    /**
+     * 写导出物是**尽力而为**：磁盘满 / 权限不对只记日志，不该让任务存不下去
+     * （DB 才是真源，文件和它不一致时以 DB 为准）。
+     */
+    const mirror = (fn: () => void): void => {
+        try {
+            fn();
+        } catch (error) {
+            console.error(`[task-dir] ${(error as Error).message}`);
+        }
+    };
     // 域表用 ON DELETE CASCADE 挂在 entities 上；不打开这个 pragma 就只是注释
     db.exec('PRAGMA foreign_keys = ON');
     db.exec(`
@@ -363,7 +387,8 @@ export function openStore(file: string): Store {
             status TEXT NOT NULL DEFAULT 'open',
             closed_at INTEGER,
             model_key TEXT NOT NULL,
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, status, id);
         -- 编号分配：next = 下一个要发的号。独立于任务行，所以删任务不会回收号码
@@ -462,6 +487,17 @@ export function openStore(file: string): Store {
     );
     if (!sessionColumns.has('log_seq'))
         db.exec('ALTER TABLE session_state ADD COLUMN log_seq INTEGER NOT NULL DEFAULT 0');
+
+    // 老库补列：tasks.updated_at（P2 加的）。历史行没有「最后改动」概念，用 created_at 兜
+    const taskColumns = new Set(
+        (db.prepare('PRAGMA table_info(tasks)').all() as Array<Record<string, unknown>>).map((row) =>
+            String(row['name']),
+        ),
+    );
+    if (!taskColumns.has('updated_at')) {
+        db.exec('ALTER TABLE tasks ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
+        db.exec('UPDATE tasks SET updated_at = created_at WHERE updated_at = 0');
+    }
 
     /** room_members → roomId: members[]（members() 与 listRooms() 共用） */
     const readMembers = (): Record<string, RoomMember[]> => {
@@ -572,6 +608,7 @@ export function openStore(file: string): Store {
         closedAt: row['closed_at'] === null ? null : Number(row['closed_at']),
         modelKey: String(row['model_key']),
         createdAt: Number(row['created_at']),
+        updatedAt: Number(row['updated_at'] ?? 0),
     });
 
     const readProjectRow = (row: Record<string, unknown>): ProjectRecord => ({
@@ -582,21 +619,47 @@ export function openStore(file: string): Store {
         createdAt: Number(row['created_at']),
     });
 
+    const readTask = (id: string): TaskRecord | undefined => {
+        const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+        return row === undefined ? undefined : readTaskRow(row);
+    };
+
+    /** 内容是否真的变了（changed 才盖 updated_at、才重写 task.md） */
+    const sameTaskContent = (a: TaskRecord, b: TaskRecord): boolean =>
+        a.title === b.title &&
+        a.summary === b.summary &&
+        a.body === b.body &&
+        a.projectId === b.projectId &&
+        a.workspace === b.workspace &&
+        a.status === b.status &&
+        a.closedAt === b.closedAt &&
+        a.modelKey === b.modelKey;
+
     const writeTask = (task: TaskInput): TaskRecord => {
-        const existing = db.prepare('SELECT number, created_at FROM tasks WHERE id = ?').get(task.id) as
-            | { number: number; created_at: number }
-            | undefined;
-        const createdAt = existing?.created_at ?? task.createdAt ?? Date.now();
-        const number = existing?.number ?? task.number ?? allocateTaskNumber();
+        const previous = readTask(task.id);
+        const createdAt = previous?.createdAt ?? task.createdAt ?? Date.now();
+        const number = previous?.number ?? task.number ?? allocateTaskNumber();
+
+        const draft: TaskRecord = {
+            ...task,
+            number,
+            createdAt,
+            updatedAt: task.updatedAt ?? Date.now(),
+        };
+        // 启动时会把所有任务重存一遍：内容没变就不该盖「最后更新」、也不该重写文件
+        const changed = previous === undefined || !sameTaskContent(previous, draft);
+        const updatedAt = changed ? draft.updatedAt : previous.updatedAt;
+        const record: TaskRecord = { ...draft, updatedAt };
 
         db.exec('BEGIN IMMEDIATE');
         try {
             writeEntity(task.id, 'task', createdAt);
             db.prepare(
-                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, model_key, created_at) ' +
-                    'VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
+                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, model_key, created_at, updated_at) ' +
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
                     'title=excluded.title, summary=excluded.summary, body=excluded.body, project_id=excluded.project_id, ' +
-                    'workspace=excluded.workspace, status=excluded.status, closed_at=excluded.closed_at, model_key=excluded.model_key',
+                    'workspace=excluded.workspace, status=excluded.status, closed_at=excluded.closed_at, ' +
+                    'model_key=excluded.model_key, updated_at=excluded.updated_at',
             ).run(
                 task.id,
                 number,
@@ -609,13 +672,16 @@ export function openStore(file: string): Store {
                 task.closedAt ?? null,
                 task.modelKey,
                 createdAt,
+                updatedAt,
             );
             db.exec('COMMIT');
         } catch (error) {
             db.exec('ROLLBACK');
             throw error;
         }
-        return { ...task, number, createdAt };
+        // 导出物：task.md（DB 仍是真源；文件失败只记日志）
+        if (changed && dataRoot !== undefined) mirror(() => writeTaskDoc(dataRoot, record));
+        return record;
     };
 
     const writeProject = (project: ProjectInput): ProjectRecord => {
@@ -676,6 +742,8 @@ export function openStore(file: string): Store {
                     closedAt: typeof data['closedAt'] === 'number' ? data['closedAt'] : null,
                     modelKey: String(row['model_key']),
                     createdAt,
+                    // 历史任务没有「最后改动」概念：用创建时刻兜，别让迁移当天变成全员更新
+                    updatedAt: createdAt,
                 });
             } else if (type === 'project') {
                 writeProject({
@@ -789,7 +857,16 @@ export function openStore(file: string): Store {
             const result = db
                 .prepare('INSERT INTO events (at, event, subject, data) VALUES (?,?,?,?)')
                 .run(at, journalEventOf(roomId), roomId, JSON.stringify({ kind: input.kind, text: input.text }));
-            return { seq: Number(result.lastInsertRowid), at, kind: input.kind, text: input.text };
+            const entry: JournalEntry = {
+                seq: Number(result.lastInsertRowid),
+                at,
+                kind: input.kind,
+                text: input.text,
+            };
+            // 任务的日志同时追加到 <任务目录>/journal.jsonl（append-only 的天然形状）
+            const task = dataRoot === undefined ? undefined : readTask(roomId);
+            if (dataRoot !== undefined && task !== undefined) mirror(() => appendJournalLine(dataRoot, task, entry));
+            return entry;
         },
         journalOf(roomId: string, limit = 24): JournalEntry[] {
             const rows = db
@@ -830,6 +907,8 @@ export function openStore(file: string): Store {
             });
         },
         deleteRoom(roomId: string): void {
+            // 删之前记下任务（目录要按创建日挪进 _trash），删之后就读不到了
+            const task = dataRoot === undefined ? undefined : readTask(roomId);
             // 顺序不重要（没有外键），但都按 entity_id 走索引或主键
             db.prepare('DELETE FROM entity_items WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM room_entries WHERE entity_id = ?').run(roomId);
@@ -842,6 +921,8 @@ export function openStore(file: string): Store {
             db.prepare("DELETE FROM drafts WHERE owner_id LIKE ? ESCAPE '\\'").run(`dlg:%:${likeEscape(roomId)}`);
             // 身份一行 + 域行（tasks / projects 靠 ON DELETE CASCADE 跟着走）
             db.prepare('DELETE FROM entities WHERE id = ?').run(roomId);
+            // 产物目录不删，挪进 _trash（截图 / 日志是排查材料，删任务通常只是不想再看到它）
+            if (dataRoot !== undefined && task !== undefined) mirror(() => trashTaskDir(dataRoot, task));
         },
         deleteBot(botId: string): void {
             db.prepare('DELETE FROM bots WHERE id = ?').run(botId);
@@ -861,11 +942,15 @@ export function openStore(file: string): Store {
             return rows.map(readTaskRow);
         },
         taskOf(id: string): TaskRecord | undefined {
-            const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined;
-            return row === undefined ? undefined : readTaskRow(row);
+            return readTask(id);
         },
         saveTask(task: TaskInput): TaskRecord {
             return writeTask(task);
+        },
+        taskDirOf(id: string): string | undefined {
+            if (dataRoot === undefined) return undefined;
+            const task = readTask(id);
+            return task === undefined ? undefined : taskDirAt(dataRoot, task);
         },
         listProjects(): ProjectRecord[] {
             const rows = db.prepare('SELECT * FROM projects ORDER BY created_at ASC, rowid ASC').all() as Array<

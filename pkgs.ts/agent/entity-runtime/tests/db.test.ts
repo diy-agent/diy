@@ -314,6 +314,14 @@ describe('实体 + 域表', () => {
         store.deleteBot('b1');
         expect(store.entityOf('b1')).toBeUndefined();
     });
+
+    it('updated_at 只在内容变了才动（启动时的重复保存不算）', () => {
+        const store = openStore(':memory:');
+        expect(store.saveTask(taskInput('t', { updatedAt: 1_000 })).updatedAt).toBe(1_000);
+        // 同样的内容再存一遍（actorOf 每次启动都这么干）：不盖时间
+        expect(store.saveTask(taskInput('t', { updatedAt: 2_000 })).updatedAt).toBe(1_000);
+        expect(store.saveTask(taskInput('t', { updatedAt: 3_000, title: '改名' })).updatedAt).toBe(3_000);
+    });
 });
 
 describe('实体关系（替代父子）', () => {
