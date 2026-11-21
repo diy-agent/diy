@@ -2,7 +2,7 @@
   "name": "@diy-agent/workbench-plugin",
   "version": "0.1.0",
   "private": true,
-  "description": "工作台插件契约：清单（plugin.json）schema + 档 2 面板描述符 + 插件服务端方法契约（definePlugin）",
+  "description": "插件契约：清单（package.json + diy 段）schema、内存注册表模型、面板描述符、插件服务端方法契约",
   "keywords": [
     "contract",
     "diy",
@@ -35,6 +35,10 @@
     "./panel": {
       "types": "./src/panel.ts",
       "default": "./dist/panel.js"
+    },
+    "./registry": {
+      "types": "./src/registry.ts",
+      "default": "./dist/registry.js"
     },
     "./spec": {
       "types": "./src/spec.ts",
