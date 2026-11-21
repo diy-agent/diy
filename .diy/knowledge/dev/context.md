@@ -1,7 +1,12 @@
 ---
-desc: 上下文固定前缀的规模与构成（每轮都付的字节，##404 减负主线）
-updated: 2026-10-25
+desc: 上下文固定前缀的规模与构成（历史档案：##404 减负主线的实测与判据，机制已换代）
+updated: 2026-11-21
 ---
+
+> **历史档案（2026-10-24~25 记录，2026-11-21 标注）**：文中机制是 yaml 事实库 + `assembleSystem` / `buildHelpDoc` 时代。现已换代：facts 摘要 → `.diy/knowledge` 索引；`assembleSystem` → `@diy-agent/context` 的 `AssembleGlobals` / `ContextProvider`。
+>
+> **仍成立的是结论层**：缓存命中 ≈ 18 倍价差（一步的钱由 `cacheHit` 决定）、每步变的自量必须走 `runtimeDiff`、截断必须可见。
+> **已过时的是数字层**：41 主题 / 4 KB / 2.2 KB / 4000 B expose 预算 / `knowledge/facts/*.yaml` 的证据编号 —— 要当前规模看 `diy2 facts status`。
 
 ## cache-economics
 

@@ -1,7 +1,9 @@
 ---
-desc: diy-facts 包内定位：哪个文件管什么（事实库内核 @diy-agent/facts）
-updated: 2026-10-23
+desc: diy-facts 包内定位：哪个文件管什么（内核 @diy-agent/facts；yaml 库已退役，仅维护参考）
+updated: 2026-11-21
 ---
+
+> 内核 `pkgs.ts/core/facts/` 仍在仓里且仍被 `pkgs.ts/agent/bot` 引用摺叠函数，但 **yaml 事实库（`knowledge/facts/*.yaml`）已退役** —— 日常取知识用 `diy2 facts`（真源 `.diy/knowledge/**/*.md`，见 `facts/cli.md`）。本文件只在内核维护时参考。
 
 ## atomic-write
 

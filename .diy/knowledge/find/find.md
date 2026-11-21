@@ -1,6 +1,6 @@
 ---
 desc: 去哪找
-updated: 2026-11-02
+updated: 2026-11-21
 ---
 
 ## app
@@ -17,7 +17,7 @@ updated: 2026-11-02
 
 ## dev
 
-`~/git/diy/_diy/pkgs/dev/` —— 独立仓 `_diy` 里的 `dev` 命令（ref 仓库引用 / vendor 镜像，cwd 即作用域）；细节见其 `AGENTS.md`
+`~/git/diy/dev/` —— 独立仓（`@diy-agent/dev`，main）里的 `dev` 命令：ref 仓库引用 / vendor 镜像，cwd 即作用域；细节见其 `AGENTS.md` 与 `diy2 facts brief diydev`
 
 ## docs
 
@@ -25,7 +25,7 @@ updated: 2026-11-02
 
 ## facts
 
-事实库真源 `knowledge/facts/*.yaml`（subject 词表 `knowledge/subjects.yaml`）· 护栏 `scripts/facts-index.mts`（已并入 `./sha.sh check`）· 内核 `pkgs.ts/core/facts/`
+知识库真源 `.diy/knowledge/**/*.md`（读 `diy2 facts`，写 `diy kb`）· **yaml 事实库已退役**（`knowledge/facts/*.yaml` + `knowledge/subjects.yaml` + `scripts/facts-index.mts` 均不再存在；2026-11-19 迁移）· 内核 `pkgs.ts/core/facts/` 仅作归档保留
 
 ## flow
 
