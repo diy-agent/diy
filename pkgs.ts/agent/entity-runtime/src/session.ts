@@ -14,7 +14,7 @@
 
 import { experimental_createSteering, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 
-import { runAgent, type RunOptions } from './agent';
+import { runAgent, DEFAULT_MAX_STEPS, type RunOptions } from './agent';
 import { endItems, endReasonOf } from './end-reason';
 import { friendlyError } from './errors';
 import {
@@ -125,6 +125,8 @@ export interface SessionDeps {
     commitDelta?: () => void;
     /** 本轮输出上限（缺省按 modelKey 推，见 providers.ts `maxOutputTokensOf`） */
     maxOutputTokens?: number;
+    /** 步数上限（缺省 `DEFAULT_MAX_STEPS`；到顶按 `max-steps` 收尾，不算失败） */
+    maxSteps?: number;
 }
 
 interface QueueItem {
@@ -417,7 +419,10 @@ export class BotSession {
         let toolCalls = 0;
         /** 运行时实际发出去的上限（`run.finished` 带回；没带回就用开跑前算的） */
         let reportedBudget: number | undefined;
+        /** 运行时实际生效的步数上限（同上；对账用） */
+        let reportedStepCap: number | undefined;
         const maxOutputTokens = maxOutputTokensOf(this.modelKey, this.deps.maxOutputTokens);
+        const maxSteps = this.deps.maxSteps ?? DEFAULT_MAX_STEPS;
         try {
             const run = this.deps.run ?? runAgent;
             for await (const event of run({
@@ -428,6 +433,7 @@ export class BotSession {
                 signal: abort.signal,
                 steering,
                 maxOutputTokens,
+                maxSteps,
                 ...(this.deps.tools === undefined ? {} : { tools: this.deps.tools }),
                 ...(this.deps.toolsHint === undefined ? {} : { toolsHint: this.deps.toolsHint }),
                 ...(this.deps.systemContext === undefined ? {} : { systemContext: this.deps.systemContext }),
@@ -452,6 +458,7 @@ export class BotSession {
                     // session 在开跑前算的是"打算发多少"，两者不一致时（换模型 / 网关改写）
                     // 对账要信实际值，否则页脚会报一个没发生过的数字。
                     if (typeof event.maxOutputTokens === 'number') reportedBudget = event.maxOutputTokens;
+                    if (typeof event.maxSteps === 'number') reportedStepCap = event.maxSteps;
                 }
                 if (event.type === 'tool.started') toolCalls += 1;
                 if (event.type === 'text.delta') text += event.delta;
@@ -486,6 +493,7 @@ export class BotSession {
                 textLength: text.length,
                 toolCalls,
                 maxOutputTokens: reportedBudget ?? maxOutputTokens,
+                maxSteps: reportedStepCap ?? maxSteps,
             });
 
             // 「怎么停的」必须说出来，否则数据里和正常收尾一模一样：

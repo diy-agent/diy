@@ -54,6 +54,8 @@ export interface ConfigOverrides {
     launch?: string | undefined;
     /** 工具面：shell = 带 bash；files = 只读文件工具 */
     tools?: 'shell' | 'files' | undefined;
+    /** 一轮的步数上限（`--max-steps`）；缺省 = 内核 200 */
+    maxSteps?: number | undefined;
     compactKeep?: number | undefined;
     compactChars?: number | undefined;
     /** 显式放行生产数据根（只给 dev 入口用；生产入口不需要） */
@@ -99,6 +101,8 @@ export interface Diy2Config {
     tools: 'shell' | 'files';
     /** 裁决过程中的「本该报却没报」的事（被拒的生产根等）：入口负责打出来 */
     notes: string[];
+    /** 一轮的步数上限（`--max-steps`）；undefined = 用内核缺省（200） */
+    maxSteps: number | undefined;
 }
 
 /** 真实家目录（**不读 `$HOME`**：测试 / 隔离实例会改写它，生产根判据不能跟着漂） */
@@ -342,6 +346,8 @@ export function resolveConfig(opts?: {
         },
         tools: overrides.tools === 'files' ? 'files' : 'shell',
         notes,
+        // 没给 = 用内核缺省；正数才覆盖（0 步 = 每轮直接掐停，不是想要的语义，故下限 1）
+        maxSteps: overrides.maxSteps,
     };
 }
 

@@ -308,13 +308,23 @@ export interface TurnEndReason {
      * 空产出就停）。它按错误处理：不发结论，时间线上一条错误。
      * 「没有证据」不等于「正常完成」（未知按错误处理，见 end-reason.ts）。
      */
-    type: 'completed' | 'max-tokens' | 'filtered' | 'tool-mismatch' | 'interrupted' | 'unknown' | 'error';
+    type:
+        | 'completed'
+        | 'max-tokens'
+        | 'max-steps'
+        | 'filtered'
+        | 'tool-mismatch'
+        | 'interrupted'
+        | 'unknown'
+        | 'error';
     /** 上游的 `finishReason` 原文（`stop` / `length` / `tool-calls` / `error` / …） */
     finishReason?: string;
     /** 细因（机器读，`type` 只到类别）：`no-finish` / `empty-output` / `finish=xxx` */
     note?: string;
     /** 本轮实际发出去的输出上限（对账用：到底哪一层截的） */
     maxOutputTokens?: number;
+    /** 本轮的步数上限（`max-steps` 撞的是这个数；对账用） */
+    maxSteps?: number;
     /** 本轮的 step 数（多轮工具循环时用于区分「说完了」和「刚到一半」） */
     steps?: number;
 }
@@ -344,6 +354,8 @@ export type AgentEvent =
           finishReason: string;
           steps: number;
           maxOutputTokens: number;
+          /** 本轮的步数上限（`max-steps` 判据：撞到它且上游还想继续才算掐停） */
+          maxSteps?: number;
       }
     | { seq: number; type: 'run.completed'; turnId: string }
     | { seq: number; type: 'run.failed'; turnId: string; message: string };

@@ -33,6 +33,8 @@ export interface EndFacts {
     toolCalls: number;
     /** 本轮实际发出去的输出上限（对账：到底是哪一层截的） */
     maxOutputTokens: number;
+    /** 本轮的步数上限（撞到它 + 上游还想继续 = `max-steps`） */
+    maxSteps?: number;
 }
 
 /**
@@ -49,7 +51,10 @@ export function endReasonOf(facts: EndFacts): TurnEndReason {
         ...(facts.finishReason === undefined ? {} : { finishReason: facts.finishReason }),
         ...(facts.steps === undefined ? {} : { steps: facts.steps }),
     };
-    const budget = { maxOutputTokens: facts.maxOutputTokens };
+    const budget = {
+        maxOutputTokens: facts.maxOutputTokens,
+        ...(facts.maxSteps === undefined ? {} : { maxSteps: facts.maxSteps }),
+    };
 
     if (facts.failed === true) return { type: 'error', ...base };
     if (facts.aborted === true) return { type: 'interrupted', ...base };
@@ -59,6 +64,11 @@ export function endReasonOf(facts: EndFacts): TurnEndReason {
     switch (facts.finishReason) {
         case 'length':
             return { type: 'max-tokens', ...budget, ...base };
+        // 撞步数上限：**不是失败** —— 活可能刚干到一半，说「继续」能接着干（与 max-tokens 同构）。
+        // 上游把这个 finishReason 改写为 `max-steps` 的前提是「还想继续调工具」
+        // （见 agent.ts 循环后那段）；模型自然说完的第 N 步不会走到这里。
+        case 'max-steps':
+            return { type: 'max-steps', ...budget, ...base };
         case 'content-filter':
             return { type: 'filtered', ...base };
         case 'tool-calls':
@@ -121,6 +131,18 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     data: {
                         text: `这次回复被输出上限截断（max_tokens=${reason.maxOutputTokens ?? '?'}），说「继续」可接上`,
                         kind: 'max-tokens',
+                    },
+                },
+            ];
+        case 'max-steps':
+            return [
+                {
+                    ...base,
+                    id: nextId('notice'),
+                    type: 'notice',
+                    data: {
+                        text: `这一轮撞到步数上限（${reason.maxSteps ?? reason.steps ?? '?'} 步）先停下 —— 说「继续」接着干；反复撞就把它拆小`,
+                        kind: 'max-steps',
                     },
                 },
             ];
@@ -197,6 +219,8 @@ export function adviceOf(reason: TurnEndReason): string {
             return '不需要动作';
         case 'max-tokens':
             return '说「继续」接上；常撞的话提高 maxOutputTokens，或让它分段写';
+        case 'max-steps':
+            return '说「继续」接着干；反复撞上限就拆任务，或调 DIY2_MAX_STEPS';
         case 'filtered':
             return '换个说法再问，或换个模型';
         case 'tool-mismatch':

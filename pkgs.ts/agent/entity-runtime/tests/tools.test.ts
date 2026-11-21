@@ -1,8 +1,10 @@
 // tools.test.ts —— 房间工具（read / write / edit / bash）的边界。
 //
-// 只测我们自己装配与移植的那一层：路径解析（不设边界）、唯一命中、失败抛异常（不是"返回失败字符串"）。
+// 只测 diy2 自己那一层：路径解析（不设边界）、唯一命中、失败抛异常（不是"返回失败字符串"）。
+// 工具语义（读窗口 / 原子写 / diff / 退出码口径）已归 `@diy-agent/tools` 内核 ——
+// 这里断言的是"房间拿到的就是内核那份"，不重复测内核的细节。
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,12 +32,17 @@ afterAll(async () => {
 describe('房间工具', () => {
     it('write → read：内容落盘，读回来带行号', async () => {
         const tools = buildRoomTools({ cwd: dir, shell: false });
-        await toolOf(tools, 'write').execute({ path: 'notes/a.txt', content: '第一行\n第二行\n第三行' });
+        const written = String(
+            await toolOf(tools, 'write').execute({ path: 'notes/a.txt', content: '第一行\n第二行\n第三行' }),
+        );
+        // 内核的写回执：一行摘要 + unified diff（以前那份移植只回一句"已写入"）
+        expect(written).toContain('新建');
+        expect(written).toContain('+第一行');
 
         const text = String(await toolOf(tools, 'read').execute({ path: 'notes/a.txt' }));
         expect(text).toContain('共 3 行');
-        expect(text).toContain('1\t第一行');
-        expect(text).toContain('3\t第三行');
+        expect(text).toContain('1: 第一行');
+        expect(text).toContain('3: 第三行');
         expect(await readFile(join(dir, 'notes/a.txt'), 'utf8')).toBe('第一行\n第二行\n第三行');
     });
 
@@ -70,7 +77,7 @@ describe('房间工具', () => {
 
         await expect(
             toolOf(tools, 'edit').execute({ path: 'b.txt', edits: [{ oldText: 'a', newText: 'x' }] }),
-        ).rejects.toThrow(/命中 2 处/);
+        ).rejects.toThrow(/出现 2 次/);
 
         await toolOf(tools, 'edit').execute({
             path: 'b.txt',
@@ -84,15 +91,16 @@ describe('房间工具', () => {
         await toolOf(tools, 'write').execute({ path: 'c.txt', content: 'hello' });
         await expect(
             toolOf(tools, 'edit').execute({ path: 'c.txt', edits: [{ oldText: 'nope', newText: 'x' }] }),
-        ).rejects.toThrow(/未命中/);
+        ).rejects.toThrow(/找不到/);
     });
 
     it('bash：在房间目录执行，退出码与输出都在结果里', async () => {
         const tools = buildRoomTools({ cwd: dir, shell: true, bashTimeoutMs: 10_000 });
         const out = String(await toolOf(tools, 'bash').execute({ command: 'pwd && echo hi' }));
-        expect(out).toContain('exit: 0');
+        expect(out).toContain('exit_code: 0');
         expect(out).toContain('hi');
-        expect(out).toContain(dir);
+        // cwd 打的是 realpath（macOS 的 /var → /private/var），别拿构造时的字符串硬比
+        expect(out).toContain(await realpath(dir));
     });
 
     it('ask 不阻塞：调用后立刻返回回执，提问同时推到界面', async () => {
@@ -220,11 +228,13 @@ describe('房间工具', () => {
         expect(describeAnswer(textAsk, only({ text: ' 就它了 ' }))).toBe('就它了');
     });
 
-    it('bash 非零退出：返回结果而不是抛错（靠退出码改命令）', async () => {
+    it('bash 非零退出：抛错，但诊断（退出码 + stderr）在 error 里给全', async () => {
+        // 内核口径（##353）：非零退出是**工具失败**，抛而不是 return —— 返回字符串会被 SDK
+        // 当成正常结果画 ✓（"✓ + Command failed" 那种自相矛盾）。模型侧照样看得到诊断。
         const tools = buildRoomTools({ cwd: dir, shell: true, bashTimeoutMs: 10_000 });
-        const out = String(await toolOf(tools, 'bash').execute({ command: 'echo boom >&2; exit 3' }));
-        expect(out).toContain('exit: 3');
-        expect(out).toContain('boom');
+        await expect(toolOf(tools, 'bash').execute({ command: 'echo boom >&2; exit 3' })).rejects.toThrow(
+            /exit_code: 3[\s\S]*boom/,
+        );
     });
 
     it('journal：写一条走回调（不落文件、不进 cwd）', async () => {

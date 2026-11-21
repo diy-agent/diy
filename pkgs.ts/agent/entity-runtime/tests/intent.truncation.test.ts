@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { RunOptions } from '../src/agent';
+import { publishable } from '../src/end-reason';
 import { DEFAULT_MAX_OUTPUT_TOKENS, maxOutputTokensOf } from '../src/providers';
 import { BotSession, type SessionDeps, type Turn, type TurnResult } from '../src/session';
 import type { AgentEvent, Bot, Item, TurnEndReason } from '../src/types';
@@ -77,6 +78,22 @@ describe('收尾事实：截断不能长得像「完成」', () => {
         const notice = items.find((item) => item.type === 'notice');
         expect(notice?.type === 'notice' && notice.data.kind).toBe('max-tokens');
         expect(notice?.type === 'notice' && notice.data.text).toContain('说「继续」可接上'.slice(0, 3));
+    });
+
+    it('finishReason=max-steps → endReason.max-steps（步数撞顶不是失败，也不当完成）', async () => {
+        const { result, items } = await sessionEndingWith('max-steps');
+        const reason: TurnEndReason = result.endReason;
+        expect(reason.type).toBe('max-steps');
+        expect(reason.finishReason).toBe('max-steps');
+
+        // 用户必须看得见「说继续接着干」：否则表现成「干到一半没声了」
+        const notice = items.find((item) => item.type === 'notice');
+        expect(notice?.type === 'notice' && notice.data.kind).toBe('max-steps');
+        expect(notice?.type === 'notice' && notice.data.text).toContain('继续');
+
+        // 半句活不能当这个 bot 的公开立场发进公共日志
+        expect(publishable(reason)).toBe(false);
+        expect(result.failed).toBe(false);
     });
 
     it('finishReason=stop → completed，不产生 notice', async () => {

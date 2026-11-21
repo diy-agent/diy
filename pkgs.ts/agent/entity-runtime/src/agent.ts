@@ -3,7 +3,15 @@
 // 除了"给 UI 看的事件流"，这里还负责把**这一轮真正喂进模型的完整消息**回传给调用方
 // （assistant 带 tool call / tool result / reasoning 都在里面），session 用它维护自己的原生对话。
 
-import { streamText, tool, type Experimental_Steering, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
+import {
+    stepCountIs,
+    streamText,
+    tool,
+    type Experimental_Steering,
+    type LanguageModel,
+    type ModelMessage,
+    type ToolSet,
+} from 'ai';
 import { z } from 'zod';
 
 import { friendlyError } from './errors';
@@ -49,11 +57,22 @@ export interface RunOptions {
     /** 本轮真实用量（token），用于校准压缩预算 */
     onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
     /**
-     * 本轮输出上限（`max_tokens`）。不传 = 按 modelKey 推（provider 硬上限 / 场景缺省）。
+     * 本轮的**输出上限**（`max_tokens`）。不传 = 按 modelKey 推（provider 硬上限 / 场景缺省）。
      * **不要省成 undefined 再指望服务端缺省**：那会让长回答被静默截断（见 `maxOutputTokensOf`）。
      */
     maxOutputTokens?: number;
+    /**
+     * 步数上限（工具循环）。不传 = `DEFAULT_MAX_STEPS`。
+     *
+     * 为什么必须有：`stopWhen` 缺省**不限步数**时，唯一刹车是用户点停止 —— 手动对话没问题，
+     * 一旦接上远程 / 后台 / 多端，一次工具循环就能跑到天亮。diy1 的口径是 200（
+     * `local-agent.ts` 的分层缺省），这里对齐。
+     */
+    maxSteps?: number;
 }
+
+/** 缺省步数上限（与 diy1 缺省同值：200）；到顶不算失败，按 `max-steps` 收尾 */
+export const DEFAULT_MAX_STEPS = 200;
 
 const defaultTools = {
     get_time: tool({
@@ -112,6 +131,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     // 两处各算一遍虽然眼下幂等，但 env / provider 上限的规则一改就会漂成两种结果。
     // 只有直接调 `runAgent` 的调用方（测试、一次性跑）才在这里补算。
     const maxOutputTokens = options.maxOutputTokens ?? maxOutputTokensOf(options.modelKey);
+    const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
 
     const result = streamText({
         model: options.model ?? modelOf(options.modelKey),
@@ -125,9 +145,9 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         }),
         messages: options.messages,
         tools: options.tools ?? defaultTools,
-        // 不设步数上限：模型想调多少次工具就调多少次（AI SDK 缺省是 1 步，必须显式覆盖）。
-        // 唯一的刹车是用户点停止（abort）。
-        stopWhen: () => false,
+        // 步数上限：到顶就停（`stopWhen` 缺省是 1 步，必须显式覆盖；**不能**写成 `() => false`
+        // —— 那样唯一刹车就是用户点停止，见 `RunOptions.maxSteps`）。
+        stopWhen: stepCountIs(maxSteps),
         /**
          * **每一步**取一次变量增量（与谁触发这一轮无关）：有变化就作为一条独立 user 信封
          * 追加在本步请求的末尾。空串不注入（不加字节、不砸前缀缓存）。
@@ -158,12 +178,15 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     /** 收尾事实：截断 / 工具悬空 / 正常说完，全靠这三个值分辨（见 docs 里的 `##429`） */
     let finishReason = 'unknown';
     let steps = 0;
+    /** 是否撞到步数上限（只在「还想继续调工具」时改写收尾原因，见循环后那段） */
+    let hitStepCap = false;
 
     try {
         for await (const part of result.stream) {
             switch (part.type) {
                 case 'finish-step':
                     steps += 1;
+                    if (steps >= maxSteps) hitStepCap = true;
                     break;
                 case 'finish':
                     // 这是**唯一**能看出「被输出上限砍断」的地方：SDK 在 length 时只是结束循环，
@@ -234,7 +257,11 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         // 用量拿不到不影响这一轮
     }
 
-    yield { seq: ++seq, type: 'run.finished', turnId, finishReason, steps, maxOutputTokens };
+    // 撞到步数上限：只有「上游还想继续调工具」（finish=tool-calls）才算"是被上限掐停的"。
+    // 第 200 步刚好自然说完（finish=stop）不改写 —— 那不是掐停，别把正常收尾降级成未完成。
+    if (hitStepCap && finishReason === 'tool-calls') finishReason = 'max-steps';
+
+    yield { seq: ++seq, type: 'run.finished', turnId, finishReason, steps, maxOutputTokens, maxSteps };
     yield { seq: ++seq, type: 'message.completed', messageId };
     yield { seq: ++seq, type: 'run.completed', turnId };
 }

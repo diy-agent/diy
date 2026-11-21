@@ -22,7 +22,7 @@ import { createStaticHandler } from './static';
 import { createRpcSocket, type RpcStreamInfo } from './rpc';
 import { APP_ID, type Diy2Config } from './config';
 
-import { JOURNAL_KINDS, RoomActor, newEntityId, openStore } from '@diy-agent/entity-runtime';
+import { JOURNAL_KINDS, RoomActor, createJobRegistry, newEntityId, openStore } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
 import { diy2Api } from '@diy-agent/protocol';
@@ -51,6 +51,11 @@ let info: () => Diy2AppInfo;
 
 /** roomId → 聚合根（房间的领域对象） */
 let rooms = new Map<string, RoomActor>();
+/**
+ * 后台作业账本：**进程级一张表**（`bash(background)` 起的 run 与 `job` 工具查的是同一份）。
+ * 收口通知按归属串 `<roomId>#<botId>` 回到对应房间 —— 房间不在（已删 / 别的进程起的）就静默。
+ */
+let jobs: ReturnType<typeof createJobRegistry>;
 /**
  * 话题上推的帧：房间领域事件 + 传输层的收尾帧。
  *
@@ -122,6 +127,8 @@ function actorOf(spec: Room): RoomActor {
             ...(cwd === undefined ? {} : { cwd }),
             home: config.home,
             shell: config.tools !== 'files',
+            jobs: { registry: jobs },
+            ...(config.maxSteps === undefined ? {} : { maxSteps: config.maxSteps }),
         });
         rooms.set(spec.id, actor);
         // 运行时新建的容器也要落库：不落的话重启后侧栏里就没了（消息还在，只是没入口）
@@ -377,6 +384,13 @@ export function createDiy2App(opts: {
 
     mkdirSync(config.home, { recursive: true });
     store = openStore(config.dbPath);
+
+    // 作业账本要在 `seed()` / 首个房间之前建好：`actorOf` 装配工具时要用它。
+    // 根目录 `<home>/log/job/runs`：与其余运行产物同根，清 home 就清干净。
+    jobs = createJobRegistry({
+        rootDir: join(config.home, 'log', 'job', 'runs'),
+        onDone: (event, owner) => rooms.get(owner.roomId)?.notifyJobDone(owner, event),
+    });
 
     seed();
 
