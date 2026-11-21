@@ -2,7 +2,11 @@
  * 刻意**不引入 Tailwind 的 preflight**：
  * 它会把 h1-h6 的字号重置成 inherit、把表格边框清成 0、把 body 背景刷白，
  * 而 Astryx 的 Markdown/表格/标题排版正是靠这些默认值。两套设计系统共用一页时
- * 只能留一套 reset —— 这里留 Astryx 的（astryx.css 自带 @layer reset）。
+ * 只能留一套 reset —— 这里留 Astryx 的（它自己那份排版 reset，包在 @layer reset 里）。
+ *
+ * 注意：astryx.css 的 `@layer reset` 装的是 `[data-astryx-theme]` 作用域下的标题/正文
+ * 排版，**不是浏览器 reset**（后者在单独的 @astryxdesign/core/reset.css，本壳刻意不引）。
+ * 所以 UA 默认样式还在：链接请靠下面 base 层与 entity-chat 的 base 规则兜。
  *
  * 我们自己的壳只需要下面这几条中性规则；不要在这里重置 h1-h6 / p / ul / table。
  */
