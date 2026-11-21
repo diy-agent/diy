@@ -13,8 +13,9 @@ updated: 2026-11-21
 - **记录表**（`entity_items` / `room_entries` / `session_state` …）：属于实体、无独立身份、不参与引用。
 
 插件实体只有 `entities` 一行，payload 在 `~/.diy/plugins/<plugin_id>/` —— 宿主不碰。
-**插件注册表不是 DB 表**：启动时加载 manifest（`package.json` 的 `diy` 段）得到内存模型，
-装了什么来自加载结果；将来记安装来源用 `<数据根>/plugins.json`，仍不是表。
+**插件注册表不是 DB 表**：启动时加载 manifest（`package.json` 的 `diy` 段）得到内存模型
+（`@diy-agent/workbench-plugin` 的 `createPluginRegistry`），装了什么来自加载结果；
+将来记安装来源用 `<数据根>/plugins.json`，仍不是表。清单身份 = 包名，实体类型全名 `<包名>/<局部名>`。
 
 ## 关系（替代父子）
 
