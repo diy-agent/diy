@@ -22,6 +22,13 @@ import type {
     StreamEvent,
 } from '@diy-agent/chat-core';
 
+import type {
+    ModelCatalogModel,
+    ModelCatalogProvider,
+    ModelCatalogSnapshot,
+    ModelCostView,
+} from '@diy-agent/protocol';
+
 import { StreamHub } from './hub';
 
 export interface RpcChatClientOptions {
@@ -120,6 +127,11 @@ export class RpcChatClient implements ChatClient {
             this.call('journal.list', { id, ...(limit === undefined ? {} : { limit }) }),
     };
 
+    /** 模型目录（选模型器 / 新建房间的缺省值）；服务端保证不含 key 值 */
+    readonly models = {
+        list: (): Promise<ModelCatalogSnapshot> => this.call('models.list', {}),
+    };
+
     readonly links = {
         list: (id: string): Promise<{ out: unknown[]; in: unknown[] }> => this.call('links.list', { id }),
         add: (id: string, to: string, kind: string): Promise<unknown> => this.call('links.add', { id, to, kind }),
@@ -190,3 +202,5 @@ export class RpcChatClient implements ChatClient {
 }
 
 export { StreamHub, topicOfRoom, type StreamHubOptions } from './hub';
+/** 目录视图形状在 protocol（服务端与界面共用一份），这里顺手透出，界面不用多装一个依赖 */
+export type { ModelCatalogModel, ModelCatalogProvider, ModelCatalogSnapshot, ModelCostView };

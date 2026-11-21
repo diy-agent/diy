@@ -27,9 +27,8 @@ import {
 import type { NavAddress } from './address';
 import { drafts } from './drafts';
 import type { TaskStatus } from './model';
+import { firstUsableModelKey, type ModelCatalogPayload, type Provider } from './models';
 import { mergePendingAsks } from './pendingAsk';
-
-const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 
 // ─── 会话（chat-core）─────────────────────────────────────────────
 
@@ -44,6 +43,9 @@ export function setDiy2Client(next: typeof client): void {
     client = next;
     drafts.configure(next.drafts);
 }
+
+/** 本端缺省模型覆盖的存储键（`localStorage`；与 `model.yaml` 的 `defaultModel` 不是一回事） */
+const DEFAULT_MODEL_OVERRIDE_KEY = 'entity-chat:default-model';
 const conversations = new Map<string, ConversationStore>();
 
 /** 回答一次挂起的提问（整批一次提交）。失败会抛，由界面显示原因（含服务端说的差哪几题）。 */
@@ -89,7 +91,19 @@ interface ShellState {
      */
     address: NavAddress;
     selectedId: string;
+    /**
+     * 缺省模型（新房间继承的那个）。来源三条，优先级从高到低：
+     *   本端 localStorage（用户在这里改过） → 服务端 `diy2.models.list` 的 `defaultModelKey`
+     *   （= `model.yaml` 的 `defaultModel`） → 目录里第一个配了 key 的模型。
+     *
+     * 以前是界面里一个写死的常量 —— 与 `model.yaml` 各自演进，换机器就莫名变了。
+     */
     defaultModelKey: string;
+    /**
+     * 模型目录（`diy2.models.list`；真源 `model.yaml`）。页面不再自带 provider 表：
+     * 选模型器 / 上下文窗口 / 模型名全部从这里取，界面只认形状。
+     */
+    providers: Provider[];
     loaded: boolean;
     /** 各房间的上下文概况（每个 bot 的会话 + 最近压缩事件） */
     sessions: Record<string, SessionInfo[]>;
@@ -122,7 +136,9 @@ let state: ShellState = {
     // id 为空 = 「还没定」，首屏由 resolveAddress 从地址栏或第一个房间补上
     address: addressOf(DEFAULT_PAGE, ''),
     selectedId: '',
-    defaultModelKey: loadDefaultModel(),
+    // 空串 = 「还不知道」：首屏 refresh 会从服务端（model.yaml）补上
+    defaultModelKey: loadDefaultModelOverride() ?? '',
+    providers: [],
     loaded: false,
     sessions: {},
     lastActivity: {},
@@ -221,6 +237,15 @@ export function useError(): string | undefined {
  *
  * 注意它和「当前房间的 modelKey」是两件事：后者在 `Room` 对象上，跟着 `useRooms()` 走。
  */
+/** 模型目录（`diy2.models.list` 的 providers；形状见 `models.ts`） */
+export function useProviders(): Provider[] {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.providers,
+        () => state.providers,
+    );
+}
+
 export function useDefaultModelKey(): string {
     return React.useSyncExternalStore(
         subscribeShell,
@@ -469,7 +494,9 @@ function watchActivity(roomId: string): void {
 }
 
 async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
-    const [rooms, bots] = await Promise.all([client.rooms.list(), client.bots.list()]);
+    // 模型目录跟着同一趟回来（真源 model.yaml；界面不再自带 provider 表）：
+    // 走 `diy2.models.list`，与 rooms / bots 共用同一条 RPC 连接
+    const [rooms, bots, catalog] = await Promise.all([client.rooms.list(), client.bots.list(), client.models.list()]);
     // 侧栏 ✎ 的初始值：不用打开过房间；本端改过的 owner 由 drafts 自己说了算
     drafts.seed(rooms);
     // 「最后活动」跟着同一次列表请求回来，不逐房间查（那会是 N+1）
@@ -502,8 +529,13 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     const liveTitles = liveRoomId === '' ? undefined : state.pendingAskTitles[liveRoomId];
     if (liveRoomId !== '' && liveTitles !== undefined) pendingAskTitles[liveRoomId] = [...liveTitles];
     const address = resolveAddress(rooms);
+    // 缺省模型：本端改过的（localStorage）永远优先 —— 那是人的显式选择
+    const defaultModelKey =
+        loadDefaultModelOverride() ?? (catalog.defaultModelKey || firstUsableModelKey(catalog.providers) || '');
     emit({
         ...state,
+        providers: catalog.providers,
+        ...(defaultModelKey === '' ? {} : { defaultModelKey }),
         rooms,
         lastActivity,
         pendingAsks,
@@ -774,7 +806,7 @@ export const actions = {
 
     setDefaultModel(modelKey: string): void {
         try {
-            localStorage.setItem('entity-chat:default-model', modelKey);
+            localStorage.setItem(DEFAULT_MODEL_OVERRIDE_KEY, modelKey);
         } catch {
             /* 忽略 */
         }
@@ -869,10 +901,17 @@ export function navigate(target: NavAddress, options: { replace?: boolean } = {}
     actions.navigate(target, options);
 }
 
-function loadDefaultModel(): string {
+/**
+ * 本端对缺省模型的**覆盖**（用户在设置里点过）—— 没有覆盖 = undefined，交给服务端说。
+ *
+ * 与「服务端的默认值」分开存：以前两者揉在一个函数里，于是常量既是兜底又被当真相，
+ * 换 `model.yaml` 也不生效。
+ */
+function loadDefaultModelOverride(): string | undefined {
     try {
-        return localStorage.getItem('entity-chat:default-model') ?? DEFAULT_MODEL;
+        const value = localStorage.getItem(DEFAULT_MODEL_OVERRIDE_KEY);
+        return value === null || value === '' ? undefined : value;
     } catch {
-        return DEFAULT_MODEL;
+        return undefined;
     }
 }

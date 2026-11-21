@@ -302,6 +302,49 @@ export const DEFAULT_CAPABILITIES: Capabilities = {
  * 用户看到的是「执行一半就停下、UI 却显示完成」。老路径（`##288`/`##429`）有这套词汇，
  * entity-runtime 迁移时丢了，这里补回来。
  */
+// ── 模型目录的视图（`diy2.models.list` 的回包）────────────────────
+//
+// 为什么放在 protocol：服务端（entity-runtime 从 model.yaml 生成）与客户端（选模型器 /
+// 新建房间的缺省值）必须拿同一个形状 —— 各自定义一遍就会漂移，而这次的问题正是
+// 「界面自带一份表」与真配置对不上。
+
+/** 价目（$/1M tokens，与 `@diy-agent/model-catalog` 同口径） */
+export interface ModelCostView {
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+}
+
+/** 目录里的一个模型 */
+export interface ModelCatalogModel {
+    id: string;
+    /** 人可读名（目录里没有就回落到 id，不编造） */
+    name: string;
+    contextWindow?: number;
+    maxOutputTokens?: number;
+    cost?: ModelCostView;
+}
+
+/** 一个 provider 的视图（**永不含 key 值**：账号只有名字与「填没填」） */
+export interface ModelCatalogProvider {
+    id: string;
+    /** 给人看的名字：目录里没有名字字段 ⇒ 就用 id（不编造） */
+    name: string;
+    /** 上游基址（不含 `/chat/completions`） */
+    api: string;
+    npm?: string;
+    accounts: Array<{ name: string; configured: boolean }>;
+    models: ModelCatalogModel[];
+}
+
+/** `diy2.models.list` 的回包 */
+export interface ModelCatalogSnapshot {
+    providers: ModelCatalogProvider[];
+    /** `model.yaml` 的 `defaultModel`；缺省 = 服务端用兜底常量 */
+    defaultModelKey?: string;
+}
+
 export interface TurnEndReason {
     /**
      * `unknown` = 我们**不知道**为什么停（没收到收尾信号 / 上游给了不认识的收尾原因 /

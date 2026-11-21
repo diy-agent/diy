@@ -60,7 +60,18 @@ export {
     type Turn,
     type TurnResult,
 } from './session';
-export { modelOf, parseModelKey } from './providers';
+export {
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    defaultModelKeyOf,
+    maxOutputTokensOf,
+    modelConfigPath,
+    modelHome,
+    modelOf,
+    modelProviders,
+    parseModelKey,
+    type ModelView,
+    type ProviderView,
+} from './providers';
 export { factsOf, replay, STOP_SCENARIOS, type StopReplay, type StopScenario } from './stop-scenarios';
 export type { AgentEvent, Author, Bot, Delivery, Room, RoomMember, RoomEvent, InboxMode, Item } from './types';
 export { dayOf, renderTaskDoc, taskDirOf } from './task-dir';

@@ -27,6 +27,11 @@ export interface RunOptions {
     signal: AbortSignal;
     /** 由调用方分配（同 turn 的多个 bot 共享 turnId） */
     turnId?: string;
+    /**
+     * 会话 id（provider 的会话路由 / 亲和键；opencode 网关缺了它直接 400 `MissingSessionID`）。
+     * 缺省 = 用本轮 `turnId` —— 与旧版「建 provider 时取一次时间戳」同粒度，只是可复现、可测。
+     */
+    sessionId?: string;
     /** next-step 插入点：SDK 在 step 边界把消息作为独立 user 消息追加 */
     steering?: Experimental_Steering;
     /** 房间装配的工具；不传 = 只用内置的 get_time（测试 / 无目录房间） */
@@ -134,7 +139,9 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
 
     const result = streamText({
-        model: options.model ?? modelOf(options.modelKey),
+        model:
+            options.model ??
+            modelOf(options.modelKey, { sessionId: options.sessionId ?? turnId }),
         abortSignal: options.signal,
         maxOutputTokens,
         instructions: instructionsOf({

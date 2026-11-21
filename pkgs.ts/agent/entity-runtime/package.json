@@ -30,6 +30,8 @@
         "@diy-agent/context": "*",
         "@diy-agent/jobs": "*",
         "@diy-agent/kb": "*",
+        "@diy-agent/llm-provider": "*",
+        "@diy-agent/model-catalog": "*",
         "@diy-agent/protocol": "*",
         "@diy-agent/skills": "*",
         "@diy-agent/time": "*",

@@ -9,7 +9,7 @@
 //   2. 截断必须留一条 `notice`（用户能看见「说继续可接上」），且能落库；
 //   3. `max_tokens` 必须显式算出来（不发 = 吃服务端缺省 = 静默截断）。
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { RunOptions } from '../src/agent';
 import { publishable } from '../src/end-reason';
@@ -17,6 +17,7 @@ import { DEFAULT_MAX_OUTPUT_TOKENS, maxOutputTokensOf } from '../src/providers';
 import { BotSession, type SessionDeps, type Turn, type TurnResult } from '../src/session';
 import type { AgentEvent, Bot, Item, TurnEndReason } from '../src/types';
 import { HUMAN, makeRoom, waitFor } from './support/harness';
+import { useModelHome, type ModelHome } from './support/model-home';
 
 const BOT: Bot = { id: 'bot:a', name: 'diy', color: '#111', persona: '', homeRoomId: 'room:1', modelKey: 'm' };
 
@@ -134,27 +135,50 @@ describe('截断的 notice 要能落库（刷新后还在）', () => {
 });
 
 describe('max_tokens 必须显式算出来', () => {
-    it('deepseek 走 provider 硬上限（发超了会被 400）', () => {
-        expect(maxOutputTokensOf('chen56@deepseek/deepseek-chat')).toBe(8192);
+    // 上限跟着**目录里那个模型**走（models.dev 的 `limit.output`），不再有写死的 provider 表：
+    // 旧表里唯一的条目挂在 `deepseek-chat` 上，而那个模型早就从目录里消失了 —— 于是新模型
+    // 反而被按 8192 截断。这里用隔离的临时目录断言「照目录说话」，不跟开发机配置走。
+    let modelHome: ModelHome;
+    beforeEach(() => {
+        modelHome = useModelHome();
+    });
+    afterEach(() => {
+        modelHome.restore();
+        delete process.env.DIY_LOCAL_MAX_OUTPUT_TOKENS;
     });
 
-    it('其它 provider 用场景缺省（对齐老路径 16384）', () => {
-        expect(maxOutputTokensOf('chen56@opencode-go/deepseek-v4.1-flash')).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
+    it('取目录里该模型的 limit.output', () => {
+        expect(maxOutputTokensOf('main@acme/fast')).toBe(4096);
+    });
+
+    it('provider 也参与匹配（同一个 modelId 挂在两个 provider 上，上限各是各的）', () => {
+        expect(maxOutputTokensOf('main@other/fast')).toBe(512);
+    });
+
+    it('目录里没有这个模型 ⇒ 场景缺省（对齐老路径 16384）', () => {
+        expect(maxOutputTokensOf('main@acme/nope')).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
         expect(DEFAULT_MAX_OUTPUT_TOKENS).toBe(16_384);
     });
 
-    it('调用方显式值优先于缺省；env 又优先于调用方（线上可临时收窄）', () => {
-        expect(maxOutputTokensOf('chen56@opencode-go/x', 4321)).toBe(4321);
+    it('调用方显式值优先于目录；env 又优先于调用方（线上可临时收窄）', () => {
+        expect(maxOutputTokensOf('main@acme/fast', 4321)).toBe(4321);
         process.env.DIY_LOCAL_MAX_OUTPUT_TOKENS = '999';
         try {
-            expect(maxOutputTokensOf('chen56@opencode-go/x', 4321)).toBe(999);
+            expect(maxOutputTokensOf('main@acme/fast', 4321)).toBe(999);
         } finally {
             delete process.env.DIY_LOCAL_MAX_OUTPUT_TOKENS;
         }
     });
 
     it('非法值不往下发（SDK 会直接拒 0 / 负数）', () => {
-        expect(maxOutputTokensOf('chen56@opencode-go/x', 0)).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
-        expect(maxOutputTokensOf('chen56@opencode-go/x', -5)).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
+        // 非法 → 落到目录那一档（不是把 0 / 负数发给上游）
+        expect(maxOutputTokensOf('main@acme/fast', 0)).toBe(4096);
+        expect(maxOutputTokensOf('main@acme/fast', -5)).toBe(4096);
+        expect(maxOutputTokensOf('main@acme/nope', 0)).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
+    });
+
+    it('modelKey 是占位串（测试 / 无目录房间）⇒ 不抛，用场景缺省', () => {
+        expect(maxOutputTokensOf('m')).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
+        expect(maxOutputTokensOf('deepseek-v4.1-flash')).toBe(DEFAULT_MAX_OUTPUT_TOKENS);
     });
 });

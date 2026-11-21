@@ -117,6 +117,19 @@ export const linksApi = RpcSchema.group({
     },
 });
 
+/**
+ * 模型目录：真源是 `model.yaml`（`~/.diy/model.yaml` → `@diy-agent/model-catalog`）。
+ *
+ * 为什么由服务端答、而不是界面自带一张表：界面那份 `PROVIDERS`（端点 / 价目 / 上下文窗口）
+ * 会与真配置各自演进，「界面上能选、服务端发不出去」就是这么来的。key 值永不出服务端 ——
+ * 账号只有名字与「填没填」。
+ */
+export const modelsApi = RpcSchema.group({
+    children: {
+        list: RpcSchema.unary({ input: {}, output: Any }),
+    },
+});
+
 export const diy2Api = RpcSchema.group({
     desc: 'diy2 的全部浏览器 API（命令走 unary，房间事件走 /rpc 的 room 流）',
     children: {
@@ -127,6 +140,7 @@ export const diy2Api = RpcSchema.group({
         asks: asksApi,
         drafts: draftsApi,
         journal: journalApi,
+        models: modelsApi,
         links: linksApi,
     },
 });

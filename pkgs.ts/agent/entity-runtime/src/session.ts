@@ -430,6 +430,9 @@ export class BotSession {
                 modelKey: this.modelKey,
                 messages,
                 turnId: turn.turnId,
+                // provider 的会话亲和键 = **bot**（不是轮次）：同一实体跨轮复用同一会话，
+                // 网关侧的提示词缓存才留得住。opencode 那些网关缺这个 id 直接 400。
+                sessionId: this.deps.bot.id,
                 signal: abort.signal,
                 steering,
                 maxOutputTokens,
