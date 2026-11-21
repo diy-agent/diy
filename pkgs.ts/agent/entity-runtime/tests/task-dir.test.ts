@@ -132,4 +132,17 @@ describe('任务目录', () => {
             memory.db.close();
         }
     });
+
+    it('Room 投影带只读的 number 与 taskDir；回写不会把它们存回 DB', () => {
+        const createdAt = new Date(2026, 10, 21, 10).getTime();
+        store.saveTask(input('t-1', { createdAt, body: '正文' }));
+        const room = store.listRooms().find((item) => item.id === 't-1')!;
+        expect(room.data['number']).toBe(1);
+        expect(room.data['taskDir']).toBe(join(root, 'tasks', '2026-11-21', 't-1'));
+
+        store.saveRoom(room);
+        // 派生字段不落库：再取一次仍然由 store 算（而不是被当成 data 存下来）
+        expect(store.taskOf('t-1')?.title).toBe('t-1');
+        expect(store.listRooms().find((item) => item.id === 't-1')?.data['number']).toBe(1);
+    });
 });

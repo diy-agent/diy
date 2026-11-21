@@ -123,6 +123,15 @@ function expandHome(dir: string): string {
     return dir.startsWith('~/') ? join(homedir(), dir.slice(2)) : dir;
 }
 
+/** 关系里「另一边」怎么显示：任务 `#12 标题`、项目名字、其它实体（未来的插件类型）退回 id */
+function labelOf(id: string): { label: string; type: string } {
+    const task = store.taskOf(id);
+    if (task !== undefined) return { label: `#${task.number} ${task.title}`, type: 'task' };
+    const project = store.projectOf(id);
+    if (project !== undefined) return { label: project.name, type: 'project' };
+    return { label: id, type: store.entityOf(id)?.type ?? 'unknown' };
+}
+
 function actorOf(spec: Room): RoomActor {
     let actor = rooms.get(spec.id);
     if (actor === undefined) {
@@ -498,6 +507,51 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
             }
             json(res, 200, { id, deleted: victims });
             return;
+        }
+
+        /**
+         * /api/rooms/:id/links —— 实体关系（替代父子）。
+         *
+         * GET 一次给「出边 + 入边」并带显示名：任务显示 `#12 标题`、项目显示名字、
+         * 其它实体（未来的插件类型）退回 id。UI 只画平铺列表，不画树。
+         */
+        if (parts[0] === 'api' && parts[1] === 'rooms' && parts[3] === 'links' && parts.length === 4) {
+            const id = decodeURIComponent(parts[2] ?? '');
+            if (roomOf(id) === undefined) return json(res, 404, { error: 'room not found' });
+
+            if (req.method === 'GET') {
+                const links = store.linksOf(id);
+                json(res, 200, {
+                    out: links.out.map((link) => ({ id: link.to, kind: link.kind, ...labelOf(link.to) })),
+                    in: links.in.map((link) => ({ id: link.from, kind: link.kind, ...labelOf(link.from) })),
+                });
+                return;
+            }
+
+            if (req.method === 'POST') {
+                onBody<{ to?: string; kind?: string }>(req, res, (body) => {
+                    const to = body.to ?? '';
+                    if (to === '') return json(res, 400, { error: 'to required' });
+                    if (store.entityOf(to) === undefined) return json(res, 404, { error: 'target not found' });
+                    try {
+                        store.link(id, to, body.kind ?? 'related');
+                    } catch (error) {
+                        return json(res, 400, { error: (error as Error).message });
+                    }
+                    json(res, 200, { ok: true });
+                });
+                return;
+            }
+
+            if (req.method === 'DELETE') {
+                const to = url.searchParams.get('to') ?? '';
+                const kind = url.searchParams.get('kind') ?? '';
+                if (to === '' || kind === '') return json(res, 400, { error: 'to / kind required' });
+                json(res, 200, { removed: store.unlink(id, to, kind) });
+                return;
+            }
+
+            return json(res, 405, { error: 'method not allowed' });
         }
 
         // POST /api/rooms/:id/bots —— 加入已有 bot（借用）

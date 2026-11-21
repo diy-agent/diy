@@ -683,6 +683,33 @@ export const actions = {
             });
     },
 
+    /**
+     * 建一条实体关系（相关性 / 阻塞 / 重复）。失败亮全局错误并抛给调用方，
+     * 面板据此保留选择、不假装成功。
+     */
+    addLink(id: string, to: string, kind: string): Promise<void> {
+        return jsonFetch(`/rooms/${encodeURIComponent(id)}/links`, {
+            method: 'POST',
+            body: JSON.stringify({ to, kind }),
+        })
+            .then(() => undefined)
+            .catch((error: unknown) => {
+                emit({ ...state, error: `建立关系失败：${messageOf(error)}` });
+                throw error;
+            });
+    },
+
+    /** 删一条关系（服务端幂等：删不存在的也返回 ok） */
+    removeLink(id: string, to: string, kind: string): Promise<void> {
+        const query = `to=${encodeURIComponent(to)}&kind=${encodeURIComponent(kind)}`;
+        return jsonFetch(`/rooms/${encodeURIComponent(id)}/links?${query}`, { method: 'DELETE' })
+            .then(() => undefined)
+            .catch((error: unknown) => {
+                emit({ ...state, error: `取消关系失败：${messageOf(error)}` });
+                throw error;
+            });
+    },
+
     setRoomModel(id: string, modelKey: string): void {
         void jsonFetch(`/rooms/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ modelKey }) })
             .then(() => refresh())
