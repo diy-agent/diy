@@ -129,4 +129,14 @@
         @apply bg-background text-foreground;
         font-optical-sizing: auto;
     }
+
+    /*
+     * 链接：宿主不引 preflight 时 <a> 会回到 UA 默认（蓝字 + 下划线）。
+     * 侧栏行自「地址是一等公民」起是真正的 <a href>（中键新窗 / 右键复制地址），
+     * 颜色随所在行的 text-*，装饰随使用处（默认无）。
+     */
+    a {
+        color: inherit;
+        text-decoration: inherit;
+    }
 }
