@@ -73,6 +73,18 @@ export interface AskResult {
     notifyOwner?: boolean;
 }
 
+/** 从持久化恢复的一问：pending 或已有结局（见 AskGate.restore） */
+export interface RestoredAsk {
+    request: AskRequest;
+    state: 'pending' | 'answered' | 'cancelled';
+    answer?: AskAnswer;
+    reason?: string;
+    /** 提问时刻 */
+    at: number;
+    /** 收尾时刻（state 不是 pending 时才有） */
+    settledAt?: number;
+}
+
 export interface AskGateDeps {
     /** 新提问：房间把它推到界面 */
     request: (request: AskRequest) => void;
@@ -306,6 +318,36 @@ export class AskGate {
 
     list(): AskRequest[] {
         return [...this.pending.values()].map((entry) => entry.request);
+    }
+
+    /**
+     * 恢复已落库的提问（进程重启 / 房间重新装配时）。
+     *
+     * 为什么必须恢复：ask 不阻塞，待答状态本来就只在内存里；不恢复的话重启一次卡片就消失，
+     * 而模型那边早以为问过了 —— 用户看到的是一份没有下文的报告。
+     *
+     * 恢复的 pending **不重新装超时定时器**：那是「刚发出还没人理」的兜底，
+     * 对一条已经躺了几小时的老提问再计一次时只会把它悄悄作废。用户可以随时撤回。
+     */
+    restore(entries: readonly RestoredAsk[]): void {
+        for (const entry of entries) {
+            if (entry.state === 'pending') {
+                const owner = entry.request.owner;
+                this.pending.set(entry.request.askId, {
+                    request: entry.request,
+                    ...(owner === undefined ? {} : { owner }),
+                });
+                continue;
+            }
+            this.settled.push({
+                request: entry.request,
+                ...(entry.answer === undefined ? {} : { answer: entry.answer }),
+                ...(entry.state === 'cancelled' ? { cancelled: true } : {}),
+                ...(entry.reason === undefined ? {} : { reason: entry.reason }),
+                at: entry.settledAt ?? entry.at,
+            });
+        }
+        if (this.settled.length > AskGate.KEEP) this.settled.splice(0, this.settled.length - AskGate.KEEP);
     }
 
     /** 已收尾的提问（**新→旧**：reverse 过，最近的在前，列表顶部就是刚答完的那条） */

@@ -49,10 +49,15 @@ describe('AskGate', () => {
         const request = h.gate.request({ question: '选哪个？' }, 'bot:a');
 
         expect(h.gate.answer(request.askId, { answers: [{ id: 'q1', values: ['b'] }] })).toEqual({ ok: true });
-        expect(h.settled).toEqual([{ request, result: { answer: { answers: [{ id: 'q1', values: ['b'] }] } }, owner: 'bot:a' }]);
+        expect(h.settled).toEqual([
+            { request, result: { answer: { answers: [{ id: 'q1', values: ['b'] }] } }, owner: 'bot:a' },
+        ]);
         expect(h.gate.pendingCount()).toBe(0);
         // 重复回答不会二次投递
-        expect(h.gate.answer(request.askId, { answers: [{ id: 'q1', values: ['a'] }] })).toEqual({ ok: false, code: 'no-such-ask' });
+        expect(h.gate.answer(request.askId, { answers: [{ id: 'q1', values: ['a'] }] })).toEqual({
+            ok: false,
+            code: 'no-such-ask',
+        });
         expect(h.settled).toHaveLength(1);
     });
 
@@ -71,7 +76,10 @@ describe('AskGate', () => {
     it('未知 askId：返回 false，不影响已有提问', () => {
         const h = makeGate();
         h.gate.request({ question: '随便问问' });
-        expect(h.gate.answer('nope', { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({ ok: false, code: 'no-such-ask' });
+        expect(h.gate.answer('nope', { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({
+            ok: false,
+            code: 'no-such-ask',
+        });
         expect(h.gate.pendingCount()).toBe(1);
     });
 
@@ -138,7 +146,10 @@ describe('AskGate', () => {
         ]);
 
         // 撤回过的不能再答（否则会凭空冒出一条「回答提问」）
-        expect(h.gate.answer(first.askId, { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({ ok: false, code: 'no-such-ask' });
+        expect(h.gate.answer(first.askId, { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({
+            ok: false,
+            code: 'no-such-ask',
+        });
         expect(h.gate.answer(second.askId, { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({ ok: true });
         expect(h.gate.pendingCount()).toBe(0);
     });
@@ -280,8 +291,9 @@ describe('AskGate', () => {
     it('一批最多 8 题：再多就该分两批问（一张卡翻页翻不完，用户只会关掉）', async () => {
         const { askTool } = await import('../src/tools/ask');
         const h = makeGate();
-        const schema = (askTool(h.gate) as unknown as { inputSchema: { safeParse: (v: unknown) => { success: boolean } } })
-            .inputSchema;
+        const schema = (
+            askTool(h.gate) as unknown as { inputSchema: { safeParse: (v: unknown) => { success: boolean } } }
+        ).inputSchema;
         const many = (n: number) => ({
             questions: Array.from({ length: n }, (_, i) => ({ question: `第 ${i + 1} 件` })),
         });
@@ -329,5 +341,69 @@ describe('AskGate', () => {
         const h = makeGate();
         h.gate.request({ question: 'Q1', options: [{ value: 'a', label: 'A' }] });
         expect(h.gate.list().map((request) => request.questions[0]?.question)).toEqual(['Q1']);
+    });
+
+    it('restore：待答的提问回到队列，回答仍然有效', () => {
+        const h = makeGate();
+        const request: AskRequest = {
+            askId: 'ask-old',
+            questions: [{ id: 'q1', question: '选哪个？', kind: 'choice' }],
+            at: 1000,
+            owner: 'bot:a',
+        };
+        h.gate.restore([{ request, state: 'pending', at: 1000 }]);
+
+        expect(h.gate.pendingCount()).toBe(1);
+        expect(h.gate.list()).toEqual([request]);
+        // 回答落到原来的 owner（投递对象不能丢）
+        expect(h.gate.answer('ask-old', { answers: [{ id: 'q1', values: ['a'] }] })).toEqual({ ok: true });
+        expect(h.settled).toEqual([
+            { request, result: { answer: { answers: [{ id: 'q1', values: ['a'] }] } }, owner: 'bot:a' },
+        ]);
+    });
+
+    it('restore：已答 / 已撤的提问回到 settled，卡片带原状态', () => {
+        const h = makeGate();
+        const answered: AskRequest = {
+            askId: 'ask-1',
+            questions: [{ id: 'q1', question: 'Q1', kind: 'choice' }],
+            at: 1,
+        };
+        const cancelled: AskRequest = {
+            askId: 'ask-2',
+            questions: [{ id: 'q1', question: 'Q2', kind: 'choice' }],
+            at: 2,
+        };
+        h.gate.restore([
+            {
+                request: answered,
+                state: 'answered',
+                answer: { answers: [{ id: 'q1', values: ['a'] }] },
+                at: 1,
+                settledAt: 10,
+            },
+            { request: cancelled, state: 'cancelled', reason: '提问已失效', at: 2, settledAt: 20 },
+        ]);
+
+        expect(h.gate.pendingCount()).toBe(0);
+        const [latest, earliest] = h.gate.answeredList();
+        expect(latest).toMatchObject({ request: cancelled, cancelled: true, reason: '提问已失效', at: 20 });
+        expect(earliest).toMatchObject({
+            request: answered,
+            answer: { answers: [{ id: 'q1', values: ['a'] }] },
+            at: 10,
+        });
+    });
+
+    it('restore 不重新装超时定时器（老提问不会因为重启被悄悄作废）', async () => {
+        const h = makeGate({ timeoutMs: 10 });
+        const request: AskRequest = {
+            askId: 'ask-old',
+            questions: [{ id: 'q1', question: 'Q', kind: 'choice' }],
+            at: 1,
+        };
+        h.gate.restore([{ request, state: 'pending', at: 1 }]);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(h.gate.pendingCount()).toBe(1);
     });
 });

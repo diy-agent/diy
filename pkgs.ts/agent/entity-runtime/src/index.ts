@@ -20,6 +20,7 @@ export {
     type Draft,
     type EntityLink,
     type EntityRecord,
+    type AskRecord,
     type JournalEntry,
     type JournalKind,
     type LinkSets,

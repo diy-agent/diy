@@ -17,7 +17,7 @@ import type { TranscriptEntry, TokenUsage } from './compaction';
 import { isLinkKind } from './id';
 import type { RoomEntry } from './room-log';
 import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc } from './task-dir';
-import type { Bot, Delivery, InboxMode, Item, Room, RoomMember } from './types';
+import type { Bot, AskAnswer, AskRequest, Delivery, InboxMode, Item, Room, RoomMember } from './types';
 
 /** 一个 bot 在某个房间里的对话快照（持久化单位） */
 export interface SessionSnapshot {
@@ -50,6 +50,25 @@ export interface JournalEntry {
     at: number;
     kind: JournalKind;
     text: string;
+}
+
+/**
+ * 一次提问的持久化记录。
+ *
+ * ask 不阻塞（工具立即返回、run 照常结束），所以「还在等回答」这个状态本来只在
+ * `AskGate` 的内存里 —— 进程一重启卡片就消失，而模型那边早以为问过了。
+ * 待答也必须落库。
+ */
+export interface AskRecord {
+    askId: string;
+    entityId: string;
+    /** 提问时刻 */
+    at: number;
+    request: AskRequest;
+    state: 'pending' | 'answered' | 'cancelled';
+    answer?: AskAnswer;
+    reason?: string;
+    settledAt?: number;
 }
 
 /** 实体身份（`entities` 一行）：可被引用的最小信息 */
@@ -123,6 +142,14 @@ export interface Store {
     readonly db: DatabaseSync;
     listBots(): Bot[];
     upsertBot(bot: Bot): void;
+
+    // ── 提问（ask 不阻塞，待答状态必须落库）──────────────────
+    /** 写一条提问：新建 pending / 收尾时改成 answered | cancelled（幂等） */
+    putAsk(record: AskRecord): void;
+    /** 某个容器的提问（旧→新，含 pending 与已收尾） */
+    asksOf(entityId: string): AskRecord[];
+    /** 只留最近 keep 条**已收尾**的（pending 永不剪）；返回删了几条 */
+    pruneAsks(entityId: string, keep: number): number;
 
     // ── 实体身份 ───────────────────────────────────────────────
     /** 身份行（不含域数据）；插件实体的 payload 不在我们这儿 */
@@ -351,6 +378,18 @@ export function openStore(file: string): Store {
             entry TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS room_entries_room ON room_entries(entity_id, seq);
+        -- 提问：ask 不阻塞，待答状态只在内存里的话重启即丢（见 AskRecord）
+        CREATE TABLE IF NOT EXISTS asks (
+            ask_id     TEXT PRIMARY KEY,
+            entity_id  TEXT NOT NULL,
+            at         INTEGER NOT NULL,
+            request    TEXT NOT NULL,
+            state      TEXT NOT NULL,
+            answer     TEXT,
+            reason     TEXT,
+            settled_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS asks_entity ON asks(entity_id, at);
         CREATE TABLE IF NOT EXISTS session_state (
             entity_id TEXT NOT NULL,
             bot_id TEXT NOT NULL,
@@ -892,6 +931,46 @@ export function openStore(file: string): Store {
                 })
                 .reverse();
         },
+        putAsk(record: AskRecord): void {
+            db.prepare(
+                'INSERT INTO asks (ask_id, entity_id, at, request, state, answer, reason, settled_at) VALUES (?,?,?,?,?,?,?,?) ' +
+                    'ON CONFLICT(ask_id) DO UPDATE SET state=excluded.state, answer=excluded.answer, ' +
+                    'reason=excluded.reason, settled_at=excluded.settled_at',
+            ).run(
+                record.askId,
+                record.entityId,
+                record.at,
+                JSON.stringify(record.request),
+                record.state,
+                record.answer === undefined ? null : JSON.stringify(record.answer),
+                record.reason ?? null,
+                record.settledAt ?? null,
+            );
+        },
+        asksOf(entityId: string): AskRecord[] {
+            const rows = db
+                .prepare('SELECT * FROM asks WHERE entity_id = ? ORDER BY at ASC, ask_id ASC')
+                .all(entityId) as Array<Record<string, unknown>>;
+            return rows.map((row) => ({
+                askId: String(row['ask_id']),
+                entityId: String(row['entity_id']),
+                at: Number(row['at']),
+                request: JSON.parse(String(row['request'])) as AskRequest,
+                state: String(row['state']) as AskRecord['state'],
+                ...(row['answer'] === null ? {} : { answer: JSON.parse(String(row['answer'])) as AskAnswer }),
+                ...(row['reason'] === null ? {} : { reason: String(row['reason']) }),
+                ...(row['settled_at'] === null ? {} : { settledAt: Number(row['settled_at']) }),
+            }));
+        },
+        pruneAsks(entityId: string, keep: number): number {
+            const result = db
+                .prepare(
+                    "DELETE FROM asks WHERE entity_id = ? AND state <> 'pending' AND ask_id NOT IN (" +
+                        'SELECT ask_id FROM asks WHERE entity_id = ? AND state <> ? ORDER BY at DESC LIMIT ?)',
+                )
+                .run(entityId, entityId, 'pending', keep);
+            return Number(result.changes);
+        },
         setMembers(roomId: string, members: readonly RoomMember[]): void {
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
             const insert = db.prepare(
@@ -917,6 +996,7 @@ export function openStore(file: string): Store {
             db.prepare('DELETE FROM session_state WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM deliveries WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
+            db.prepare('DELETE FROM asks WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM drafts WHERE owner_id = ?').run(roomId);
             // 对话框草稿（synthetic scope，见 docs/drafts-design.md）挂在房间后面：
             // `dlg:<用途>:<roomId>`。删房间时一起清，不等 TTL

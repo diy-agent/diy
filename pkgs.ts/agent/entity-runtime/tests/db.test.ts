@@ -380,3 +380,58 @@ describe('实体关系（替代父子）', () => {
         expect(store.linksOf('b')).toEqual({ out: [], in: [] });
     });
 });
+
+describe('提问（asks）持久化', () => {
+    const askOf = (askId: string, at: number) => ({
+        askId,
+        questions: [{ id: 'q1', question: '选哪个？', kind: 'choice' as const }],
+        at,
+    });
+
+    it('putAsk → asksOf 原样读回；收尾后状态与答案都在', () => {
+        const store = openStore(':memory:');
+        const request = askOf('ask-1', 100);
+        store.putAsk({ askId: 'ask-1', entityId: room.id, at: 100, request, state: 'pending' });
+        expect(store.asksOf(room.id)).toEqual([
+            { askId: 'ask-1', entityId: room.id, at: 100, request, state: 'pending' },
+        ]);
+
+        const answer = { answers: [{ id: 'q1', values: ['a'] }] };
+        store.putAsk({
+            askId: 'ask-1',
+            entityId: room.id,
+            at: 100,
+            request,
+            state: 'answered',
+            answer,
+            settledAt: 200,
+        });
+        expect(store.asksOf(room.id)[0]).toMatchObject({ state: 'answered', answer, settledAt: 200 });
+    });
+
+    it('pruneAsks 只剪已收尾的，pending 永不剪', () => {
+        const store = openStore(':memory:');
+        for (let index = 0; index < 4; index += 1) {
+            store.putAsk({
+                askId: `done-${index}`,
+                entityId: room.id,
+                at: index,
+                request: askOf(`done-${index}`, index),
+                state: 'answered',
+                settledAt: index,
+            });
+        }
+        store.putAsk({ askId: 'pending', entityId: room.id, at: 9, request: askOf('pending', 9), state: 'pending' });
+
+        expect(store.pruneAsks(room.id, 2)).toBe(2);
+        expect(store.asksOf(room.id).map((ask) => ask.askId)).toEqual(['done-2', 'done-3', 'pending']);
+    });
+
+    it('删房间连带清掉提问', () => {
+        const store = openStore(':memory:');
+        store.saveRoom(room);
+        store.putAsk({ askId: 'ask-1', entityId: room.id, at: 1, request: askOf('ask-1', 1), state: 'pending' });
+        store.deleteRoom(room.id);
+        expect(store.asksOf(room.id)).toEqual([]);
+    });
+});
