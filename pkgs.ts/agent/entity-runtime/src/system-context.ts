@@ -77,8 +77,10 @@ function kbProvider(cwd: string, home: string | undefined): ContextProvider {
                 });
             }
         }
-        // 按目录折叠（##404 减负）：每轮固定前缀按文件平铺会随迁移线性涨，折叠只损失「逐文件 desc」
-        const entries = foldKbIndex([...byPath.values()]);
+        // 按目录折叠（##404 减负）：每轮固定前缀按文件平铺会随迁移线性涨，折叠只损失「逐文件 desc」。
+        // `showNames: 0` = 目录级（只给「N 个文件」，不给名字）：一个任务只碰 1~2 个目录，
+        // 逐目录列名字是白付的；要文件名就 `diy2 facts brief <目录>`。
+        const entries = foldKbIndex([...byPath.values()], { showNames: 0 });
         return entries.length === 0 ? undefined : { entries };
     };
 

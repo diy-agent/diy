@@ -260,8 +260,9 @@ export function kbProvider(home: string, shared: Shared): ContextProvider {
                 }
             }
             if (byPath.size === 0) return undefined;
-            // 按目录折叠：索引是每轮固定前缀，逐文件平铺会随知识迁入线性涨（判据见 foldKbIndex）
-            return { entries: foldKbIndex([...byPath.values()]) };
+            // 按目录折叠：索引是每轮固定前缀，逐文件平铺会随知识迁入线性涨（判据见 foldKbIndex）。
+            // `showNames: 0` = 目录级（只给「N 个文件」）：与 entity-runtime 的注入保持一致。
+            return { entries: foldKbIndex([...byPath.values()], { showNames: 0 }) };
         },
     };
 }
