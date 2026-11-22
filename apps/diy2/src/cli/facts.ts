@@ -9,7 +9,7 @@
 //
 // 语义是 2026-11 修订后的口径：文件仍是唯一真源，不建索引、不引入 claim / evidence。
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -33,6 +33,11 @@ const FindHit = z.object({
     scope: Scope,
 });
 
+const KbOverlap = z.object({
+    same: z.number(),
+    differs: z.array(z.object({ path: z.string(), projectBytes: z.number(), globalBytes: z.number() })),
+});
+
 const KbStats = z.object({
     root: z.string(),
     exists: z.boolean(),
@@ -50,6 +55,28 @@ const KbStats = z.object({
 function projectRootOf(global: string): string {
     const found = kbRootOf(process.cwd());
     return resolve(found) === resolve(global) ? join(process.cwd(), '.diy', 'knowledge') : found;
+}
+
+/**
+ * 两库同名文件的比对：内容逐字节相同 = 镜像（可消除），不同 = 漂移（必须显式）。
+ *
+ * 为什么要这项：取值侧是「项目库优先、设备级库兵库」，同 path 两份内容不同时
+ * **静默取项目那份** —— 知识库改错了也收不到任何信号。镜像副本同理：靠人工保
+ * 持两份一致早晚会分叉，分叉后又没人知道到底用哪份。
+ */
+function overlapOf(project: string, global: string) {
+    const empty = { same: 0, differs: [] as Array<{ path: string; projectBytes: number; globalBytes: number }> };
+    if (!existsSync(project) || !existsSync(global)) return empty;
+    const projectEntries = new Map(scanKb(project).entries.map((entry) => [entry.path, entry]));
+    const differs: Array<{ path: string; projectBytes: number; globalBytes: number }> = [];
+    let same = 0;
+    for (const entry of scanKb(global).entries) {
+        const hit = projectEntries.get(entry.path);
+        if (hit === undefined) continue;
+        if (readFileSync(join(project, entry.path)).equals(readFileSync(join(global, entry.path)))) same += 1;
+        else differs.push({ path: entry.path, projectBytes: hit.bytes, globalBytes: entry.bytes });
+    }
+    return { same, differs: differs.sort((a, b) => a.path.localeCompare(b.path)) };
 }
 
 function statsOf(root: string) {
@@ -116,9 +143,12 @@ export const factsApi = RpcSchema.group({
                     output: z.object({ hits: z.array(FindHit) }),
                 }),
                 status: RpcSchema.unary({
-                    desc: `体检：条目 / 小节 / 字节数 + 问题清单（项目库与设备级库分列）`,
+                    desc:
+                        `体检：条目 / 小节 / 字节数 + 问题清单（项目库与设备级库分列）` +
+                        `\n\n同时比对**两库同名文件**：逐字节相同 = 镜像副本（应消除，否则迟早分叉），` +
+                        `不同 = 漂移（取值时静默取项目那份，漂移不可见）→ 列在 \`overlap.differs\`。`,
                     input: {},
-                    output: z.object({ project: KbStats, global: KbStats }),
+                    output: z.object({ project: KbStats, global: KbStats, overlap: KbOverlap }),
                 }),
             },
         }),
@@ -143,7 +173,11 @@ export function factsHandlers(deps?: FactsDeps): {
         find: (req: { input: { keywords: string; limit?: number } }) => {
             hits: Array<{ path: string; section: string; line: number; snippet: string; scope: 'project' | 'global' }>;
         };
-        status: () => { project: ReturnType<typeof statsOf>; global: ReturnType<typeof statsOf> };
+        status: () => {
+            project: ReturnType<typeof statsOf>;
+            global: ReturnType<typeof statsOf>;
+            overlap: ReturnType<typeof overlapOf>;
+        };
     };
 } {
     const global = deps?.globalRoot ?? globalKbRoot(process.env['DIY_HOME'], homedir());
@@ -160,17 +194,20 @@ export function factsHandlers(deps?: FactsDeps): {
         facts: {
             brief: ({ input }) => {
                 const maxChars = input.maxChars ?? 80;
-                const items = input.subject
-                    .split(',')
-                    .map((subject) => subject.trim())
-                    .filter((subject) => subject !== '')
-                    .flatMap((subject) => {
-                        const projectHits = sectionsOf(subject, maxChars).filter((item) => item.scope === 'project');
-                        // 项目库有这个主题就以项目库为准（与注入器「同名取项目那份」同判据）
-                        if (projectHits.length > 0) return projectHits;
-                        return sectionsOf(subject, maxChars);
-                    });
-                return { items };
+                // 两库按 **path** 合并（项目那份胜出，与 kbProvider / get 同判据）。
+                // 不再按 subject 短路：短路判据是「项目库该主题有没有条目」，项目库只剩
+                // 一个文件也会把设备库同主题的其余文件整块蒙住（`rule/` 只剩 `dev.md`
+                // 时，`rule/rule.md` 这类通用硬约束就查不到了）。
+                //
+                // byPath 跨 subject 共用：`brief rule,rule/dev` 里前者已含 `rule/dev.md`，
+                // 逐个 subject 各自去重会让同一 path 出两次（顺序 = subject 序 + 首次出现序）。
+                const byPath = new Map<string, ReturnType<typeof sectionsOf>[number]>();
+                for (const subject of input.subject.split(',').map((s) => s.trim()).filter((s) => s !== '')) {
+                    for (const item of sectionsOf(subject, maxChars)) {
+                        if (!byPath.has(item.path)) byPath.set(item.path, item);
+                    }
+                }
+                return { items: [...byPath.values()] };
             },
             get: ({ input }) => {
                 const fromProject = getSection(project, input.claim);
@@ -194,7 +231,7 @@ export function factsHandlers(deps?: FactsDeps): {
                     : [];
                 return { hits: [...projectHits, ...globalHits].slice(0, limit) };
             },
-            status: () => ({ project: statsOf(project), global: statsOf(global) }),
+            status: () => ({ project: statsOf(project), global: statsOf(global), overlap: overlapOf(project, global) }),
         },
     };
 }

@@ -1,6 +1,6 @@
 ---
 desc: 项目里的数据文件（依赖源 / 工作区）
-updated: 2026-10-25
+updated: 2026-11-22
 ---
 
 ## aux
@@ -9,7 +9,9 @@ updated: 2026-10-25
 
 ## big-dirs
 
-仓内大目录（`du -d 1 -h` 实测 2026-10-22，主仓 3.0G）：`.venv` 1.5G · `_diy.worktrees` 873M（历史遗留）+ `diy.worktrees`（现行 worktree 位置，属仓内、已在 `.gitignore`）· `node_modules` 386M · `build` 148M（各 worktree 可达 1G）。全部在 `.gitignore` 内 ⇒ `rg` / `fd` 自动跳过；扫仓外或新仓先看 `du` 再 `-g` 排除
+仓内大目录（`du -d 1 -h` 实测 2026-10-22，主仓 3.0G）：`.venv` 1.5G · `_diy.worktrees` 873M（历史遗留）+ `diy.worktrees`（2026-10-29 前的旧 worktree 家，现已停用、只剩存量）· `node_modules` 386M · `build` 148M（各 worktree 可达 1G）。全部在 `.gitignore` 内 ⇒ `rg` / `fd` 自动跳过；扫仓外或新仓先看 `du` 再 `-g` 排除。
+
+**新 worktree 不在这里** —— 放 `<仓库父目录>/<仓库目录名>.worktrees/<标识>`（`~/git/diy/diy.worktrees/`），真源见 `~/git/AGENTS.md#rule.worktree-path`
 
 ## dead
 

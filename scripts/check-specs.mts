@@ -90,7 +90,7 @@ const expand = (p: string) => (p.startsWith('~/') ? path.join(HOME, p.slice(2)) 
 
 /**
  * 主仓所在的**容器目录**（`~/git/diy`）—— worktree 里 ROOT 是
- * `~/git/diy.worktrees/t388-…`，沿路径上溯走不到它，但那一层的 AGENTS.md
+ * `~/git/diy/diy.worktrees/t388-…`，沿路径上溯走不到它，但那一层的 AGENTS.md
  * （`rule.gpg` / `dev.*` 等仓级规范）同样是本仓上下文，不扫 = 漏。
  * 取法是 `git rev-parse --git-common-dir`（worktree 与主仓共享 .git）→ 上溯两级。
  */
@@ -221,8 +221,23 @@ for (const e of entries) {
     const [subj, aspect] = claim.split('#');
     const segs = (subj ?? '').split('.');
     const mdRel = segs.length > 1 ? [...segs.slice(0, -1), `${segs.at(-1)}.md`].join('/') : `${subj}/${subj}.md`;
-    const mdAbs = path.join(ROOT, '.diy', 'knowledge', mdRel);
-    const inKb = existsSync(mdAbs) && new RegExp(`^##\\s+${(aspect ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm').test(read(mdAbs));
+    // 两库都查：项目库优先、设备级库兜底 —— 与 `diy2 facts get` 同一解析面。
+    // 通用硬约束（rule/* tool/tool dev/* ref/ref …）的真源在 ~/.diy/knowledge，
+    // 项目库 2026-11-22 删了逐字节相同的副本，只查项目库会把这些指针全判成悬空。
+    const mdCandidates = [
+      path.join(ROOT, '.diy', 'knowledge', mdRel),
+      path.join(HOME, '.diy', 'knowledge', mdRel),
+    ];
+    // 标题比较按「归一空白」：`##  x`（多个空格）/ 行尾空格都算命中 —— 旧实现用
+    // /^##\s+x\s*$/ 是同一宽容度，退回严格相等会让一个多空格标题变成假悬空。
+    const wantHeading = `## ${aspect ?? ''}`.replace(/\s+/g, ' ').trim();
+    const inKb = mdCandidates.some(
+      (file) =>
+        existsSync(file) &&
+        read(file)
+          .split('\n')
+          .some((line) => line.trim().replace(/\s+/g, ' ') === wantHeading),
+    );
 
     const dir = path.join(ROOT, 'knowledge', 'facts');
     const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.yaml')) : [];
@@ -231,7 +246,7 @@ for (const e of entries) {
     if (!inKb && !files.some((f) => re.test(read(path.join(dir, f))))) {
       errors.push({
         kind: 'G2',
-        msg: `第 ${e.line} 行 \`${e.key}\`：知识库里没有 \`${claim}\`（找过 .diy/knowledge/${mdRel} 与 knowledge/facts/*.yaml）`,
+        msg: `第 ${e.line} 行 \`${e.key}\`：知识库里没有 \`${claim}\`（找过 .diy/knowledge/${mdRel}、~/.diy/knowledge/${mdRel} 与 knowledge/facts/*.yaml）`,
       });
     }
     continue;
