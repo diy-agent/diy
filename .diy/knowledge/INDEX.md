@@ -25,7 +25,7 @@
 
 ## dev/
 
-- `check.md` — 提交前唯一检查入口（1 节 · 2026-10-21）
+- `check.md` — 提交前唯一检查入口（1 节 · 2026-11-22）
 - `commit.md` — 提交的硬性要求（1 节 · 2026-10-21）
 - `context.md` — 上下文固定前缀的规模与构成（历史档案：##404 减负主线的实测与判据，机制已换代）（11 节 · 2026-11-21）
 - `dev.md` — 开发流程的打法（按任务类型分流 / 验证预算 / 长任务 / 喊人）（11 节 · 2026-11-05）
@@ -106,12 +106,12 @@
 
 - `entities.md` — diy2 的存储分层：entities 身份 / tasks·projects 真源 / 插件数据归插件；编号与 id 规则（8 节 · 2026-11-21）
 - `recent.md` — 为什么 diy2 不投 room.recent（会话已经 ingest 房间公共日志）（1 节 · 2026-11-20）
-- `transport.md` — diy2 的事件流传输：命令走 REST、事件走 RPC/WebSocket；旧 SSE 仍在（过渡期）（4 节 · 2026-11-22）
+- `transport.md` — diy2 的传输面：命令与事件都走 /rpc（WebSocket），HTTP 只剩 /api/info 与静态（4 节 · 2026-11-22）
 
 ## rpc/
 
-- `find.md` — diy-rpc 包内定位：核 / 传输 / CLI 桥 / 发布形态（@diy-agent/rpc 协议内核）（5 节 · 2026-10-23）
-- `rule.md` — diy-rpc 硬约束：ESM 扩展名 / 浏览器安全边界 / 发布流程（3 节 · 2026-10-23）
+- `find.md` — diy-rpc 包内定位：核 / 传输（含浏览器）/ CLI 桥 / 发布形态（@diy-agent/rpc 协议内核）（5 节 · 2026-11-22）
+- `rule.md` — diy-rpc 硬约束：ESM 扩展名 / 浏览器安全边界 / 发布流程（3 节 · 2026-11-22）
 
 ## rule/
 
