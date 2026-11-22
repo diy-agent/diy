@@ -39,15 +39,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # 产物根：一个包目录一份产物（多份并存靠 worktree，不靠变体目录）
 BUILD_ROOT="$SCRIPT_DIR/build/prod"
 
-# 依赖没同步（包改名 / 加依赖后 node_modules 落后）时构建会报**远离根因**的 resolve 错。
-# 同步是根级动作（要重装根 node_modules），这里只拦不修。
-_guard_sync() {
-  if [[ -f "$REPO_ROOT/scripts/check-sync.mjs" ]] && ! node "$REPO_ROOT/scripts/check-sync.mjs" --quiet; then
-    echo "${error} ✗ 以上是依赖未同步（不是本包代码问题）→ 根目录跑：./sha.sh sync${reset}"
-    return 1
-  fi
-}
-
 # 某个 launch 的数据根（与 server/config.ts 的缺省一致：<appRoot>/build/<launch>/home）
 _launch_home() { echo "$SCRIPT_DIR/build/${1:-lab}/home"; }
 
@@ -165,23 +156,26 @@ fmt-fix() { run npx oxfmt --write server/ src/ tests/ bin/; }
 # 构建（产物目录固定 build/prod，见 vite.config.ts）
 ####################################################################################
 
+# 构建 / dev 入口先 ensure_sync（sha.common.sh 的共享闸门）：依赖没同步（包改名 / 加依赖后
+# node_modules 落后）时，build 会报**远离根因**的 resolve 错。闸门与根 ./sha.sh 同一份实现
+# （默认自动 sync，DIY_AUTO_SYNC=0 改为报错停）—— 直接进本目录跑也能自修，不靠人记得先回根目录。
 build() {
-  _guard_sync
+  ensure_sync
   build-web
   build-server
   build-cli
 }
 build-web() {
-  _guard_sync
+  ensure_sync
   run npx vite build
 }
 build-server() {
-  _guard_sync
+  ensure_sync
   run npx vite build --config vite.server.config.ts
 }
 # CLI 产物（build/prod/cli/index.mjs）：bin/diy2 直接 import 它，命令树在 src/cli
 build-cli() {
-  _guard_sync
+  ensure_sync
   run npx vite build --config vite.cli.config.ts
 }
 
@@ -206,7 +200,7 @@ dev() {
   local -a REST=()
   sha.parse "$@" || return $?
 
-  _guard_sync
+  ensure_sync
   local -a args=(server/dev.ts --launch "${launch:-lab}")
   [[ -n $home ]] && args+=(--home "$home")
   [[ -n $port ]] && args+=(--port "$port")

@@ -201,5 +201,43 @@ source "$__SHA_COMMON_DIR/vendor/sha/sha_opt.bash"
 # 新 sha 引擎把所有函数名当命令：run 是跨脚本共用的 helper，必须排除注册
 # （_sha_cmd_exclude 在每次 sha 调用时读取，集中改一处，16 个 sha.sh 零改动）。
 # 约定：各脚本私有的 helper 一律 _ 前缀；需要对外暴露的才注册为命令。
-_sha_cmd_exclude+=("run" "npx")
+_sha_cmd_exclude+=("run" "npx" "ensure_sync")
 shopt -s expand_aliases  # bash默认不开启alias 扩展
+
+# ── 依赖同步闸门（**唯一实现**：根 sha.sh 的 ensure-sync 与各包入口共用）──────────
+# 判据 = scripts/check-sync.mjs（只读快检、毫秒级）：workspace 链接缺失/过期（如包改名后
+# 残留的 `node_modules/@diy-agent/rpc`）、sync 印记落后、submodule 未 init；electron 二进制的
+# dist/path.txt 缺失只提示不判定（由 sync-deps 的 ensure-electron 补）。
+#   · 命中 → 默认自动 sync 后继续；`DIY_AUTO_SYNC=0` 改为报错停下
+#   · **sync 自身不挂**（否则递归）；只挂 build/check/test/lab 一类入口
+# 为什么收在一处（##536）：根 ensure-sync 与 apps/{diy-app,diy2}/sha.sh 的包级护栏曾各写一份
+# → 策略不一致（根自动修、包只拦不修），于是「build 入口会自动补」对**直接进包目录**构建的人
+# 是假话，同一件事在不同入口有两种待遇与两套文案。现在谁都不许内联这段判据：要挂闸门就调它。
+# 为什么值得：包改名 / 加依赖后 node_modules 落后，症状是构建报**远离根因**的错，如
+# `Rolldown failed to resolve import "@diy-agent/rpc/electron"`（人只会去翻代码，
+# 不会想到比 package-lock.json 与 node_modules）。
+ensure_sync() {
+  local root="${__SHA_COMMON_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+  local check="$root/scripts/check-sync.mjs"
+  [[ -f "$check" ]] || return 0
+  node "$check" --quiet && return 0
+  case "$(printf '%s' "${DIY_AUTO_SYNC:-1}" | tr '[:upper:]' '[:lower:]')" in
+    0 | false | off | no)
+      echo "${error}✗ node_modules 落后于 package-lock.json / 源树，且 DIY_AUTO_SYNC=0 关闭了自动同步 → 请手动跑：**根目录** ./sha.sh sync（包目录里它是空实现）${reset}" >&2
+      return 1
+      ;;
+  esac
+  # 走根入口而不是本进程调 sync-deps：包级 sha.sh 里没有 sync-deps（它的 sync() 是空实现），
+  # 收口到根脚本能同时覆盖「从包目录起来」与「从根起来」两条路。
+  # 用 `sync-deps` 而不是 `sync`：闸门只为修依赖，`sync` 还会把真配置（含 API key）投影进
+  # build/<variant>/home —— 构建不该顺手写数据根。
+  echo "${warning}↑ 检测到 node_modules 落后 → 自动 sync 后继续（DIY_AUTO_SYNC=0 可关）${reset}" >&2
+  run "$root/sha.sh" sync-deps
+  # 复检：check-sync 的判据比 sync 的 mtime 幂等短路**更严**（内容哈希 / 印记 / 残留链接），
+  # 单靠 sync 的退出码可能「成功但没修好」→ 明确报错，别让人带着一条 warning 去猜。
+  if ! node "$check" --quiet; then
+    echo "${error}✗ 自动 sync 后仍不一致 → 上面列的就是没修掉的项，手动处理后重跑${reset}" >&2
+    return 1
+  fi
+  echo "${info}✅ sync 完成${reset}" >&2
+}
