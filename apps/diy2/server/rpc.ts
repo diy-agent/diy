@@ -53,6 +53,8 @@ export interface RpcSocketOptions {
     attach: Attach;
     /** 房间当前是否存在（删掉的房间不该再被订阅） */
     hasRoom: (roomId: string) => boolean;
+    /** 宿主在这里挂自己的 RPC 面（命令面：rooms / bots / chat / …） */
+    bind?: (server: ChannelServerBinding) => void;
     /** 缺省 `/rpc` */
     path?: string;
 }
@@ -135,6 +137,7 @@ export function createRpcSocket(options: RpcSocketOptions): RpcSocket {
         });
 
         binding._on('streams', eventsApi.streams, async () => streams());
+        options.bind?.(binding);
 
         socket.on('close', () => {
             conns.delete(socket);

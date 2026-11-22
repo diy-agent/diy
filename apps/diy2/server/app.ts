@@ -25,7 +25,9 @@ import { APP_ID, type Diy2Config } from './config';
 
 import { JOURNAL_KINDS, RoomActor, newEntityId, openStore } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
-import type { AskQuestionAnswer, Author, Bot, Room } from '@diy-agent/protocol';
+import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
+import { diy2Api } from '@diy-agent/protocol';
+import type { AskAnswer, AskQuestionAnswer, Author, Bot, Room } from '@diy-agent/protocol';
 
 const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 /** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
@@ -169,6 +171,13 @@ function logCompact(roomId: string, bot: Bot, event: CompactEvent): void {
 
 function roomOf(id: string): RoomActor | undefined {
     return rooms.get(id);
+}
+
+/** RPC 版取房间：不存在就抛（HTTP 路由那边是 json 404，这里是异常） */
+function requireRoom(id: string): RoomActor {
+    const actor = roomOf(id);
+    if (actor === undefined) throw new Error(`房间不存在：${id}`);
+    return actor;
 }
 
 // ─── 种子：bot 落 sqlite；项目/任务先在内存 ────────────────────────
@@ -921,10 +930,220 @@ export function createDiy2App(opts: {
     const prunedDialogs = store.pruneDraftOwners('dlg:', Date.now() - DIALOG_DRAFT_TTL);
     if (prunedDialogs > 0) console.log(`[drafts] 清掉 ${prunedDialogs} 条过期对话框草稿`);
 
-    // RPC 面：事件流（WS）。与 SSE 并存一段时间 —— 客户端切过去、验证稳定后再删 SSE。
+    /**
+     * diy2 的**命令面**（RPC）。与 REST 并存到客户端全部切完（P2a），之后删 REST。
+     *
+     * handler 直接复用路由里的同一套领域操作，不再经过 req/res —— 错误用异常表达，
+     * 由 rpc 传输层转成错误帧（HTTP 那边是 4xx/5xx）。
+     */
+    type Diy2Handlers = HandlersOf<typeof diy2Api>;
+
+    const bindDiy2Api = (server: ChannelServerBinding): void => {
+        const handlers: Diy2Handlers = {
+            info: async () => info(),
+            rooms: {
+                list: async () => {
+                    const draftOwners = store.draftOwnersByKind();
+                    const withInputDraft = new Set(draftOwners.input);
+                    const lastItemAt = store.lastItemAtByRoom();
+                    return [...rooms.values()].map((actor) => {
+                        const id = actor.spec.id;
+                        const at = lastItemAt[id];
+                        const pendingAsks = actor.pendingAsks();
+                        return {
+                            ...actor.spec,
+                            hasDraft: withInputDraft.has(id),
+                            ...(pendingAsks === 0 ? {} : { pendingAsks }),
+                            ...(at === undefined ? {} : { lastActivityAt: at }),
+                        };
+                    });
+                },
+                create: async ({ input }) => {
+                    const type = input.type ?? 'project';
+                    const projectId = input.data?.['projectId'];
+                    if (type === 'task' && (typeof projectId !== 'string' || roomOf(projectId) === undefined)) {
+                        throw new Error('task 需要有效的 data.projectId');
+                    }
+                    const modelKey = input.modelKey ?? DEFAULT_MODEL;
+                    const id = newEntityId();
+                    const bot = { ...newBot(input.name, id, `${type} bot`), modelKey };
+                    store.upsertBot(bot);
+                    const spec: Room = {
+                        id,
+                        type,
+                        name: input.name,
+                        data: type === 'task' ? { status: 'open', ...input.data } : (input.data ?? {}),
+                        members: [{ botId: bot.id, primary: true }],
+                        modelKey,
+                    };
+                    store.setMembers(id, spec.members);
+                    actorOf(spec);
+                    return store.listRooms().find((room) => room.id === id) ?? spec;
+                },
+                update: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    actor.update({
+                        ...(input.name === undefined ? {} : { name: input.name }),
+                        ...(input.modelKey === undefined ? {} : { modelKey: input.modelKey }),
+                        ...(input.data === undefined ? {} : { data: input.data }),
+                    });
+                    return actor.spec;
+                },
+                remove: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    const victims =
+                        actor.spec.type === 'project'
+                            ? [
+                                  input.id,
+                                  ...[...rooms.values()]
+                                      .filter((entry) => entry.spec.data['projectId'] === input.id)
+                                      .map((entry) => entry.spec.id),
+                              ]
+                            : [input.id];
+                    for (const roomId of victims) {
+                        rooms.get(roomId)?.stop();
+                        rooms.delete(roomId);
+                        store.deleteRoom(roomId);
+                        broadcast(roomId, { kind: 'done' });
+                        hub.drop(roomTopic(roomId));
+                    }
+                    const removed = new Set(victims);
+                    const referenced = new Set(
+                        [...rooms.values()].flatMap((entry) => entry.spec.members.map((m) => m.botId)),
+                    );
+                    for (const bot of store.listBots()) {
+                        if (removed.has(bot.homeRoomId) && !referenced.has(bot.id)) store.deleteBot(bot.id);
+                    }
+                    return { id: input.id, deleted: victims };
+                },
+                addMember: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    actor.addMember(input.botId);
+                    return actor.spec;
+                },
+            },
+            bots: {
+                list: async () => store.listBots(),
+                create: async ({ input }) => {
+                    const name = input.name.trim();
+                    if (name === '') throw new Error('name required');
+                    const bot = newBot(name, input.homeRoomId ?? 'proj:diy', 'room 成员 bot');
+                    store.upsertBot({ ...bot, ...(input.modelKey === undefined ? {} : { modelKey: input.modelKey }) });
+                    roomOf(bot.homeRoomId)?.addMember(bot.id);
+                    return bot;
+                },
+                update: async ({ input }) => {
+                    const bot = store.listBots().find((entry) => entry.id === input.id);
+                    if (bot === undefined) throw new Error(`bot 不存在：${input.id}`);
+                    const next = {
+                        ...bot,
+                        ...(input.name === undefined ? {} : { name: input.name }),
+                        ...(input.color === undefined ? {} : { color: input.color }),
+                        ...(input.persona === undefined ? {} : { persona: input.persona }),
+                        ...(input.modelKey === undefined ? {} : { modelKey: input.modelKey }),
+                        ...(input.homeRoomId === undefined ? {} : { homeRoomId: input.homeRoomId }),
+                    };
+                    store.upsertBot(next);
+                    return next;
+                },
+                remove: async ({ input }) => {
+                    store.deleteBot(input.id);
+                    return { ok: true };
+                },
+            },
+            chat: {
+                history: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    return {
+                        items: actor.items(0),
+                        deliveries: actor.deliveries(),
+                        asks: actor.pendingAskRequests(),
+                        answered: actor.answeredAskRequests(),
+                    };
+                },
+                chat: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    const text = input.text.trim();
+                    if (text === '') throw new Error('text required');
+                    void actor.say({ text, author: HUMAN }).catch((error: unknown) => {
+                        broadcast(input.id, {
+                            kind: 'error',
+                            message: error instanceof Error ? error.message : String(error),
+                        });
+                    });
+                    return { ok: true };
+                },
+                cancel: async ({ input }) => {
+                    requireRoom(input.id).cancel({
+                        keepQueue: input.keepQueue === true,
+                        ...(input.botId === undefined ? {} : { botId: input.botId }),
+                    });
+                    return { ok: true };
+                },
+                sessions: async ({ input }) => ({ sessions: requireRoom(input.id).sessionsInfo() }),
+                compact: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    const event = await actor.compact(input.botId, {});
+                    return {
+                        event,
+                        stats: actor.sessionsInfo().find((entry) => entry.botId === input.botId)?.stats,
+                    };
+                },
+            },
+            asks: {
+                list: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    return { asks: actor.pendingAskRequests(), answered: actor.answeredAskRequests() };
+                },
+                answer: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    const outcome = actor.answerAsk(input.askId, input.answer as AskAnswer);
+                    if (outcome.ok) return { ok: true };
+                    throw new Error(outcome.code === 'bad-answer' ? outcome.reason : 'no such pending ask');
+                },
+                cancel: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    if (!actor.cancelAsk(input.askId)) throw new Error('no such pending ask');
+                    return { ok: true, pending: actor.pendingAsks() };
+                },
+            },
+            drafts: {
+                list: async ({ input }) => ({ drafts: store.listDrafts(input.owner) }),
+                put: async ({ input }) => {
+                    if (tooLargeDraft(input.value)) throw new Error('draft too large (max 256KB)');
+                    return { updatedAt: store.putDraft(input.owner, input.field, input.value)?.updatedAt ?? 0 };
+                },
+                remove: async ({ input }) => {
+                    store.deleteDraft(input.owner, input.field);
+                    return { ok: true };
+                },
+            },
+            journal: {
+                list: async ({ input }) => ({ entries: store.journalOf(input.id, input.limit ?? 50) }),
+            },
+            links: {
+                list: async ({ input }) => {
+                    const links = store.linksOf(input.id);
+                    return {
+                        out: links.out.map((link) => ({ id: link.to, kind: link.kind, ...labelOf(link.to) })),
+                        in: links.in.map((link) => ({ id: link.from, kind: link.kind, ...labelOf(link.from) })),
+                    };
+                },
+                add: async ({ input }) => {
+                    store.link(input.id, input.to, input.kind ?? 'related');
+                    return { ok: true };
+                },
+                remove: async ({ input }) => ({ removed: store.unlink(input.id, input.to, input.kind) }),
+            },
+        };
+        server.use({ prefix: 'diy2', api: diy2Api, handlers });
+    };
+
+    // RPC 面：事件流（WS）+ 命令面。与 SSE 并存一段时间 —— 客户端切过去、验证稳定后再删 SSE。
     const rpc = createRpcSocket({
         attach,
         hasRoom: (roomId) => roomOf(roomId) !== undefined,
+        bind: bindDiy2Api,
     });
 
     info = (): Diy2AppInfo => ({
