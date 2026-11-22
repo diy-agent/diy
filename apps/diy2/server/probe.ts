@@ -1,12 +1,14 @@
-// server/probe.ts —— 实例探活 + **身份校验**（服务端侧共用；bin/diy2 是发布形态的纯 JS，
-// 不能 import TS 源，故那里有一份等价实现，判据注释互相指认）。
+// server/probe.ts —— 实例探活 + **身份校验**（服务端 / CLI / dev 启动器共用一份）。
 //
 // 为什么探活必须验身份：`app.port` 只记得「上次监听的端口」，不记得「那次是谁在监听」。
 // 端口释放后可能被**另一个实例**（别的 worktree / 别的数据根）占用，只探「这个端口有 HTTP
 // 响应」就会把别人的实例当自己用（仓库 ##328 的现场：生产与 dev 互相串台）。
 // 唯一可靠的判据是**活体自报**：连上去问 `/api/info`，比它回报的 home。
+//
+// 这里也是 `probeMine`（「本数据根的实例」）的唯一实现：CLI 的 `port` / `stop` / `web`
+// 与删掉的 bin 旧实现共用它 —— 判据只有一份，就不会出现「bin 认为是自己、CLI 认为不是」。
 
-import { APP_ID, samePath } from './config';
+import { APP_ID, readPortFile, samePath, type Diy2Config } from './config';
 import type { Diy2AppInfo } from './app';
 
 export interface ProbeResult {
@@ -37,4 +39,20 @@ export async function probe(port: number, home: string, timeoutMs = 1500): Promi
     } catch {
         return { kind: 'none', port };
     }
+}
+
+/**
+ * 本数据根在跑的实例（`app.port` 只给**候选端口**，身份靠探活回包判）。
+ *
+ * 返回 null = 没找到（文件缺失 / 端口上没人 / 那个端口是别人的）。调用方**不能**把这个
+ * 结果当「端口空闲」用 —— 端口可能被别的实例占着，那是 probe 的 `other`。
+ */
+export async function probeMine(config: Diy2Config): Promise<{ pid: number; port: number; home: string } | null> {
+    const port = readPortFile(config.portFile);
+    if (port === null) return null;
+    const result = await probe(port, config.home);
+    if (result.kind !== 'mine' || result.info === undefined) return null;
+    const info = result.info;
+    if (info.port === null) return null;
+    return { pid: info.pid, port: info.port, home: info.home };
 }

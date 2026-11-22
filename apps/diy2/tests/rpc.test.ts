@@ -26,7 +26,7 @@ let rpcUrl = '';
 beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'diy2-rpc-'));
     app = createDiy2App({
-        config: resolveConfig({ moduleDir, env: { DIY2_ENV: 'development', DIY2_HOME: home } }),
+        config: resolveConfig({ moduleDir, mode: 'development', overrides: { home } }),
         webDir: null,
     });
     server = createServer(app.handle);

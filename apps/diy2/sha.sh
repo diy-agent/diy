@@ -6,20 +6,25 @@
 # 1. 定义函数即为子命令：`foo() { ... }` → `./sha.sh foo`
 # 2. `:` 在 bash 函数名非法，用 `-` 代替（`build-web`）
 # 3. 用 `run` 执行外部命令（带彩色日志）：`run npx vite build`
-# 4. 文件末尾保留 `sha "$@"` 调度入口
+# 4. **参数用 `sha.def` 声明、`sha.parse` 解析**（不手写 while/case）：
+#    usage / help / 类型 / 枚举 / 默认值 / 必填全由声明生成（vendor/sha/sha_opt.bash）
+# 5. 文件末尾保留 `sha "$@"` 调度入口
 #
 # ── 为什么脚本全搬到这里（package.json 不再管脚本）──
 # 老形态是 package.json scripts + scripts/dev.sh + sha.sh 三套并存：端口写死在 npm script 里
 # （`vite --port 5190`），起停写在 shell 脚本里（按端口 kill），而仓库统一入口 `./sha.sh`
 # 连 `dev` / `lab` 都没有 —— 于是 `./sha.sh lab --app diy2` 起不来，人只能记三套命令。
-# 现在：**一切入口 = ./sha.sh**（与 apps/diy-app 同构），端口 / 数据根 / 变体的裁决在
-# `server/config.ts`（唯一真源），本脚本只决定「用哪个变体、什么环境、前台还是后台」。
+# 现在：**一切入口 = ./sha.sh**（与 apps/diy-app 同构）。
 #
-# ── 四个运行面（变体只决定运行空间，不是构建目标）──
-#   ./sha.sh lab       开发：单端口（vite 挂进服务端，HMR），数据根 build/lab/home
-#   ./sha.sh staging   验收：prod 产物 + 沙箱数据根 build/staging/home（改码不波及）
-#   ./sha.sh start     真生产：全局命令语义（~/.diy/diy2、端口 5192）
-#   ./sha.sh build     出产物：build/<variant>/{web,server}
+# ── 三个运行面（同一个包 = 一份产物 build/prod/）──
+#   ./sha.sh dev       开发：单端口（vite 挂进服务端，HMR），数据根 build/lab/home
+#   ./sha.sh staging   验收：build/prod 产物 + 数据根 build/staging/home（改码不波及）
+#   ./sha.sh start     真生产：= `diy2 web`（~/.diy/diy2、端口 5192）
+#   ./sha.sh build     出产物：build/prod/{web,server,cli}
+#
+# ── 参数面 ──
+# 本脚本**只拼 argv，不 export 任何 DIY2_***：数据根 / 端口 / 环境的裁决在 server/config.ts，
+# 输入是显式命令行参数（为什么不用环境变量见那里的文件头：继承 + 看不见 = 串台）。
 #
 # shellcheck disable=SC2329,SC2317,SC2034
 set -o errtrace -o errexit -o functrace -o pipefail
@@ -31,11 +36,8 @@ source "../../sha.common.sh"
 
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# 变体**不是**全局缺省：产物类命令（build / start）缺省 prod，开发类命令（dev / stop / port…）
-# 缺省 lab。写成全局 `export DIY2_VARIANT=${DIY2_VARIANT:-prod}` 会让 `./sha.sh stop` 去找
-# 生产的 home（实测：lab 起的实例停不掉，还提示「没有要停的实例」）。
-_artifact_variant() { echo "${DIY2_VARIANT:-prod}"; }
-_dev_variant() { echo "${DIY2_VARIANT:-lab}"; }
+# 产物根：一个包目录一份产物（多份并存靠 worktree，不靠变体目录）
+BUILD_ROOT="$SCRIPT_DIR/build/prod"
 
 # 依赖没同步（包改名 / 加依赖后 node_modules 落后）时构建会报**远离根因**的 resolve 错。
 # 同步是根级动作（要重装根 node_modules），这里只拦不修。
@@ -45,6 +47,76 @@ _guard_sync() {
     return 1
   fi
 }
+
+# 某个 launch 的数据根（与 server/config.ts 的缺省一致：<appRoot>/build/<launch>/home）
+_launch_home() { echo "$SCRIPT_DIR/build/${1:-lab}/home"; }
+
+# 产物缺失的统一提示（返回 1 = 缺产物）
+_need_build() {
+  if [[ ! -f "$BUILD_ROOT/server/index.mjs" ]]; then
+    echo "${error}✗ 还没构建（缺 ${BUILD_ROOT#$SCRIPT_DIR/}/server/index.mjs）→ ./sha.sh build${reset}" >&2
+    return 1
+  fi
+}
+
+####################################################################################
+# 参数声明（sha.def）：函数体里只 local + 一行 sha.parse
+####################################################################################
+
+# dev / lab 共用的选项（两个名字都保留：`lab` 是根入口 `./sha.sh lab --app diy2` 的老姿势）
+_DEV_OPTS=(
+  --opt "--home:string:数据根（缺省 <appRoot>/build/<launch>/home）"
+  --opt "-p,--port:int:端口；0 = 内核分配（缺省沿用 <home>/app.port）"
+  --opt "--launch:string=lab[lab|dev|staging]:入口名（注册表自报，缺省 lab）"
+  --opt "--name:string:实例名"
+  --opt "--reset:bool:先清空数据根再起（会问一次）"
+  --arg "REST...:透传给 server/dev.ts 的其余参数（写在 -- 之后）"
+)
+sha.def "dev" "${_DEV_OPTS[@]}" --desc "开发：单端口（vite 挂进服务端，HMR），数据根 build/lab/home"
+sha.def "lab" "${_DEV_OPTS[@]}" --desc "同 dev（保留旧名）"
+
+sha.def "staging" \
+  --opt "--home:string:数据根（缺省 build/staging/home）" \
+  --opt "-p,--port:int:端口；0 = 内核分配" \
+  --opt "--build:bool:先构建产物（缺产物时自动构建）" \
+  --arg "REST...:透传给服务端产物的其余参数（写在 -- 之后）" \
+  --desc "验收：build/prod 产物 + 沙箱数据根 build/staging/home（改码不波及）"
+
+sha.def "start" \
+  --opt "--home:string:数据根（缺省 ~/.diy/diy2）" \
+  --opt "-p,--port:int:端口（缺省 5192）" \
+  --opt "--name:string:实例名" \
+  --opt "--detach:bool:起在后台" \
+  --opt "--open:bool:就绪后打开浏览器" \
+  --desc "真生产：= diy2 web（~/.diy/diy2、端口 5192）"
+
+sha.def "stop" \
+  --opt "--home:string:只停这个数据根的实例" \
+  --opt "--all:bool:停本机全部 diy2 实例" \
+  --desc "停实例（缺省 = 本 worktree 起的全部；不按端口 kill，见 dev 的注释）"
+
+_QUERY_OPTS=(
+  --opt "--home:string:数据根（缺省 build/lab/home）"
+  --opt "--launch:string=lab[lab|dev|staging]:入口名（与 dev 缺省一致）"
+  --opt "--json:bool:JSON 输出"
+)
+sha.def "port" "${_QUERY_OPTS[@]}" --desc "本数据根实例的实际端口（给脚本用；没有实例 → 退出码 1）"
+sha.def "home" \
+  --opt "--home:string:显式给数据根（缺省 build/<launch>/home）" \
+  --opt "--launch:string=lab[lab|dev|staging]:入口名（与 dev 缺省一致）" \
+  --desc "本数据根路径（与 server/config.ts 的缺省同一规则）"
+sha.def "status" \
+  --opt "--home:string:数据根（缺省 build/lab/home）" \
+  --opt "--launch:string=lab[lab|dev|staging]:入口名（与 dev 缺省一致）" \
+  --desc "一眼看清：数据根 + 上次用的端口 + 在跑的实例"
+
+sha.def "list" --opt "--json:bool:JSON 输出" --desc "本机所有 diy2 实例（读注册表）"
+
+sha.def "build" --desc "出产物：build/prod/{web,server,cli}"
+sha.def "build-web" --desc "只构建 UI → build/prod/web"
+sha.def "build-server" --desc "只构建服务端 → build/prod/server"
+sha.def "build-cli" --desc "只构建 CLI → build/prod/cli"
+sha.def "clean" --desc "删掉 build/"
 
 ####################################################################################
 # mono 必备子命令（根 ./sha.sh check/fix/test 组装这些）
@@ -66,6 +138,7 @@ fix() {
   lint-fix
 }
 
+# 检查类命令**不** sha.parse：参数原样透传给工具（`./sha.sh test -t xxx`）
 test() { run npx vitest run "$@"; }
 test-unit() { test "$@"; }
 test-watch() { run npx vitest "$@"; }
@@ -77,10 +150,9 @@ fmt() { run npx oxfmt --check server/ src/ tests/ bin/; }
 fmt-fix() { run npx oxfmt --write server/ src/ tests/ bin/; }
 
 ####################################################################################
-# 构建
+# 构建（产物目录固定 build/prod，见 vite.config.ts）
 ####################################################################################
 
-# UI + 服务端两件产物 → build/<variant>/{web,server}
 build() {
   _guard_sync
   build-web
@@ -89,16 +161,16 @@ build() {
 }
 build-web() {
   _guard_sync
-  run env DIY2_VARIANT="$(_artifact_variant)" npx vite build
+  run npx vite build
 }
 build-server() {
   _guard_sync
-  run env DIY2_VARIANT="$(_artifact_variant)" npx vite build --config vite.server.config.ts
+  run npx vite build --config vite.server.config.ts
 }
-# CLI 产物（build/<variant>/cli/index.mjs）：bin/diy2 的 list/stop/port/home 由它接管
+# CLI 产物（build/prod/cli/index.mjs）：bin/diy2 直接 import 它，命令树在 src/cli
 build-cli() {
   _guard_sync
-  run env DIY2_VARIANT="$(_artifact_variant)" npx vite build --config vite.cli.config.ts
+  run npx vite build --config vite.cli.config.ts
 }
 
 ####################################################################################
@@ -108,7 +180,7 @@ build-cli() {
 # 单端口开发：一个进程同时供 UI（vite transform + HMR）与 /api。
 #
 # 与老形态的区别（##dev-app 构建对齐）：
-#   · 端口只有一个，且**不在这里写**（DIY2_PORT / 缺省 0 = 内核分配，落 <home>/app.port）；
+#   · 端口只有一个，且**不在这里写**（缺省 0 = 内核分配，落 <home>/app.port）；
 #     端口有**粘性**：监听成功就把端口写进 <home>/app.port（**退出不删**），之后每次重启
 #     （含 exit 75 自动重启）都还回同一个端口，被占用时回落到内核分配并重写 ——
 #     书签 / 开着的标签页不会失效。注意那文件只是「上次用的端口」，**不表示有人在跑**。
@@ -118,13 +190,29 @@ build-cli() {
 # 重启循环：`server/dev.ts` 在服务端代码（server/** 与 entity-runtime 源码）变化时
 # 以退出码 75 收尾 = 「请重起我」；UI 改动走 HMR，不重启。
 dev() {
+  local home port launch name reset
+  local -a REST=()
+  sha.parse "$@" || return $?
+
   _guard_sync
-  local variant; variant="$(_dev_variant)"
-  _dev_env "$variant"
-  echo "── diy2 dev（单端口，变体 ${DIY2_VARIANT}）"
-  echo "   数据根：${DIY2_HOME}"
-  if [[ -n "${DIY2_PORT:-}" ]]; then
-    echo "   端口：DIY2_PORT=${DIY2_PORT}（非生产不吃 5192；实际端口看下面打印的 URL）"
+  local -a args=(server/dev.ts --launch "${launch:-lab}")
+  [[ -n $home ]] && args+=(--home "$home")
+  [[ -n $port ]] && args+=(--port "$port")
+  [[ -n $name ]] && args+=(--name "$name")
+  args+=("${REST[@]}")
+
+  local data_home="${home:-$(_launch_home "${launch:-lab}")}"
+  if (( reset )); then
+    printf '%s清空 %s？[y/N]%s ' "$warn" "$data_home" "$reset_color"
+    local answer=""
+    read -r answer
+    [[ $answer == [yY] ]] && run rm -rf "$data_home"
+  fi
+
+  echo "── diy2 dev（单端口，launch ${launch:-lab}）"
+  echo "   数据根：${data_home}"
+  if [[ -n $port ]]; then
+    echo "   端口：${port}"
   else
     echo "   端口：沿用上次的端口（<home>/app.port）；被占用则自动换一个并重写记录"
   fi
@@ -136,7 +224,7 @@ dev() {
   trap '[[ -n "$child" ]] && kill -TERM "$child" 2>/dev/null' INT TERM
   while true; do
     code=0
-    run npx tsx server/dev.ts "$@" &
+    run npx tsx "${args[@]}" &
     child=$!
     wait "$child" || code=$?
     child=""
@@ -149,94 +237,122 @@ dev() {
 }
 
 # lab = dev（`./sha.sh lab --app diy2` 从根入口进来时走这里）
-lab() { DIY2_VARIANT=lab dev "$@"; }
-
-_dev_env() {
-  local variant="$1"
-  export DIY2_VARIANT="$variant"
-  # dev 入口声明 development：DIY2_ENV 是 dev 专属能力的唯一判据，缺省按 production。
-  # 外层 shell / agent 常泄漏 production —— server/dev.ts 会因此拒起（那是对的：否则写脏真库）。
-  export DIY2_ENV="${DIY2_ENV:-development}"
-  export DIY2_HOME="${DIY2_HOME:-$SCRIPT_DIR/build/$variant/home}"
-  export DIY2_LAUNCH="${DIY2_LAUNCH:-$variant}"
-  mkdir -p "$DIY2_HOME"
-}
+lab() { dev "$@"; }
 
 ####################################################################################
 # 起产物（staging / 生产）
 ####################################################################################
 
-# 验收沙箱：跑**本变体产物**，数据根在 worktree 内（build/staging/home），环境 development。
+# 验收沙箱：跑**本包产物**，数据根在 worktree 内（build/staging/home），环境 development。
 # 与 start 的区别只有数据根与环境 —— staging 与真生产可以同时跑（端口/数据根都分开）。
 #   ./sha.sh staging                # 产物缺失才编译
 #   ./sha.sh staging --build        # 强制重编
 staging() {
-  local do_build=0
-  while (($#)); do
-    case "$1" in
-      --build) do_build=1; shift ;;
-      *) echo "${error}✗ 未知参数：$1（可用：--build）${reset}" >&2; return 1 ;;
-    esac
-  done
-  export DIY2_VARIANT=staging
-  if ((do_build)) || [[ ! -f "build/staging/server/index.mjs" ]] || [[ ! -d build/staging/web ]]; then
-    build
+  local home port build
+  local -a REST=()
+  sha.parse "$@" || return $?
+
+  if (( build )) || ! _need_build; then
+    if ((${#REST[@]})); then
+      echo "${error}✗ 这次需要构建（--build 或首次），不能带透传参数：${REST[*]}${reset}" >&2
+      return 1
+    fi
+    build || return $?
   fi
-  _run_built staging
+
+  local -a args=("$BUILD_ROOT/server/index.mjs" --mode development --launch staging)
+  [[ -n $home ]] && args+=(--home "$home")
+  [[ -n $port ]] && args+=(--port "$port")
+  args+=("${REST[@]}")
+  run node "${args[@]}"
 }
 
 # 真生产：全局命令语义（`bin/diy2`）—— 数据根 ~/.diy/diy2、端口 5192、生产环境。
 # 要构建产物先 ./sha.sh build。
 start() {
-  local variant; variant="$(_artifact_variant)"
-  if [[ ! -f "build/$variant/server/index.mjs" ]] || [[ ! -d "build/$variant/web" ]]; then
-    echo "${error}✗ 还没构建（缺 build/$variant/{server,web}）→ ./sha.sh build${reset}" >&2
-    return 1
-  fi
-  run env DIY2_VARIANT="$variant" node ./bin/diy2 "$@"
-}
+  local home port name detach open
+  local -a REST=()
+  sha.parse "$@" || return $?
 
-_run_built() {
-  local variant="$1"; shift
-  export DIY2_VARIANT="$variant"
-  export DIY2_ENV="${DIY2_ENV:-development}"
-  export DIY2_HOME="${DIY2_HOME:-$SCRIPT_DIR/build/$variant/home}"
-  export DIY2_WEB_DIR="$SCRIPT_DIR/build/$variant/web"
-  export DIY2_LAUNCH="$variant"
-  mkdir -p "$DIY2_HOME"
-  run node "build/$variant/server/index.mjs" "$@"
+  _need_build || return $?
+
+  local -a args=(web)
+  [[ -n $home ]] && args+=(--home "$home")
+  [[ -n $port ]] && args+=(--port "$port")
+  [[ -n $name ]] && args+=(--name "$name")
+  (( detach )) && args+=(--detach)
+  (( open )) && args+=(--open)
+  run node ./bin/diy2 "${args[@]}" "${REST[@]}"
 }
 
 ####################################################################################
 # 实例控制面（读注册表，不按端口猜）
 ####################################################################################
 
-# 本机 diy2 实例：pid / 端口 / 数据根 / 变体 / 入口
-list() { run node ./bin/diy2 list; }
-# 停**本 worktree** 起的全部 diy2 实例（lab / staging 一起停）；`--all` = 本机全部
+# 本机 diy2 实例：pid / 端口 / 数据根 / 入口
+list() {
+  local json
+  sha.parse "$@" || return $?
+  local -a args=(list)
+  (( json )) && args+=(--json)
+  run node ./bin/diy2 "${args[@]}"
+}
+
+# 停**本 worktree** 起的全部 diy2 实例（lab / staging 一起停）；`--all` = 本机全部。
 #
 # 为什么按 worktree 而不是按端口/数据根：同一个人在这个 worktree 里可能同时开着 lab 与
 # staging，按「我要的都停下」的意图收口；按端口 kill 会误杀连着的浏览器与 SSE。
-stop() { run node ./bin/diy2 stop --worktree "$REPO_ROOT" "$@"; }
-# 本 worktree × 本变体的数据根 / 端口（脚本用；与 server/config.ts 的缺省一致）
-home() { echo "${DIY2_HOME:-$SCRIPT_DIR/build/$(_dev_variant)/home}"; }
+stop() {
+  local home all
+  sha.parse "$@" || return $?
+  local -a args=(stop)
+  if (( all )); then
+    args+=(--all)
+  elif [[ -n $home ]]; then
+    args+=(--home "$home")
+  else
+    args+=(--worktree "$REPO_ROOT")
+  fi
+  run node ./bin/diy2 "${args[@]}"
+}
+
+# 本 worktree × 本 launch 的数据根。
+#
+# 这里**自己算**而不问 `diy2 home`：CLI 是发布形态入口（环境固定 production），它的缺省
+# 数据根是 ~/.diy/diy2；dev 的缺省是 <appRoot>/build/<launch>/home —— 两条缺省规则本来
+# 就在 server/config.ts（resolveHome），这里只是同一规则的一行投影（--launch 决定目录名）。
+home() {
+  local home launch
+  sha.parse "$@" || return $?
+  echo "${home:-$(_launch_home "${launch:-lab}")}"
+}
+
 port() {
   # 判据必须是**探活**（/api/info 自报的 home + 注册表 pid），不是 app.port：
   # 那个文件只是「上次用的端口」，进程死后它还留着，崩死（SIGKILL / 断电）时也不更新。
   #
-  # 必须显式给 `--home`：`bin/diy2` 是发布形态入口，自己会把环境纠正成 production、
-  # 数据根缺省成 `~/.diy/diy2` —— 不传就是去探生产根上的实例（dev 永远探不到）。
-  run node ./bin/diy2 port --home "$(home)"
+  # 必须显式给数据根：`diy2 port` 缺省是生产根（~/.diy/diy2）—— 不给就是去探生产实例。
+  local home launch json
+  sha.parse "$@" || return $?
+  local -a args=(port)
+  (( json )) && args+=(--json)
+  run node ./bin/diy2 "${args[@]}" --launch "${launch:-lab}" --home "${home:-$(_launch_home "${launch:-lab}")}"
 }
-# 一眼看清：本变体的运行空间 + 本机实例表
+
+# 一眼看清：本 launch 的运行空间 + 本机实例表
 status() {
-  echo "变体：$(_dev_variant)"
-  echo "数据根：$(home)"
+  local home launch
+  sha.parse "$@" || return $?
+  local data_home="${home:-$(_launch_home "${launch:-lab}")}"
+  echo "launch：${launch:-lab}"
+  echo "数据根：${data_home}"
   # 「下次连哪」与「现在连哪」分开说：前者是 app.port 记录（不证明存活），后者靠探活
-  local next=""
-  if [[ -f "$(home)/app.port" ]]; then next="$(cat "$(home)/app.port")"; fi
-  echo "上次用的端口：${next:-（无记录）}"
-  echo "现在在跑：$(port 2>/dev/null || echo '否（没有本数据根的实例应答）')"
+  if [[ -f "$data_home/app.port" ]]; then
+    echo "上次用的端口：$(cat "$data_home/app.port")"
+  else
+    echo "上次用的端口：（无记录）"
+  fi
+  echo "现在在跑：$(node ./bin/diy2 port --home "$data_home" 2>/dev/null || echo '否（没有本数据根的实例应答）')"
   node ./bin/diy2 list
 }
 

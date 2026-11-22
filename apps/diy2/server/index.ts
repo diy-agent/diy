@@ -1,12 +1,15 @@
-// server/index.ts —— **生产入口**（也是 `bin/diy2` 拉起的那个产物）。
+// server/index.ts —— **生产入口**（也是 `diy2 web` 拉起的那个产物）。
 //
 // 只做编排，不含领域逻辑、不含路由：
-//   读配置（唯一真源 ./config） → 装配（./app） → 监听 127.0.0.1 → 落 app.port（下次沿用的端口）
-//   + 注册表 → 优雅退出。
+//   读参数（src/cli/options 的声明 + config 的裁决） → 装配（./app） → 监听 127.0.0.1
+//   → 落 app.port（下次沿用的端口）+ 注册表 → 优雅退出。
 //
 // 「import 即 listen」在这里是**有意**的：这个文件就是可执行入口（node build/prod/server/index.mjs
-// / bin/diy2 的 import），而装配逻辑已经从模块顶层搬进 createDiy2App —— 想复用 handler 的
+// / `diy2 web` 的子进程），而装配逻辑已经从模块顶层搬进 createDiy2App —— 想复用 handler 的
 // 调用方（dev）用 ./app，不需要也不应该 import 本文件。
+//
+// 参数面：**argv 是唯一输入**（不读 `DIY2_*` 环境变量，见 ./config 的文件头）。
+//   缺省 mode = production；staging 由 sha.sh 显式 `--mode development --launch staging`。
 
 import { createServer } from 'node:http';
 
@@ -15,9 +18,31 @@ import { describeConfig, modelConfigHint, resolveConfig } from './config';
 import { announce, retract } from './registry';
 import { probe } from './probe';
 import { listenWithStickyPort } from './listen';
+import { parseEntryOptions, serverOptions, toOverrides } from '../src/cli/options';
 
-const config = resolveConfig({ moduleDir: import.meta.dirname });
-// entity-runtime 读 model.yaml 的路径（懒读：只在真发请求时用，所以此处设置即生效）
+const USAGE = `用法：node build/prod/server/index.mjs [options]
+
+options:
+  --mode <production|development|test>  运行环境（缺省 production）
+  --launch <名字>                        入口名（缺省由环境推：prod / lab / test）
+  -p, --port <n>                         端口；0 = 内核分配（缺省：生产 5192）
+      --home <dir>                       数据根（缺省：生产 ~/.diy/diy2，其余 <appRoot>/build/<launch>/home）
+      --name <名字>                       实例名
+      --tools <shell|files>              工具面
+      --allow-prod-home                  显式放行生产数据根
+  -h, --help                             本帮助`;
+
+const options = parseEntryOptions(serverOptions, process.argv.slice(2), USAGE);
+if (options.exit !== null) process.exit(options.exit);
+
+const config = resolveConfig({
+    moduleDir: import.meta.dirname,
+    mode: options.input.mode,
+    overrides: toOverrides(options.input),
+});
+for (const note of config.notes) console.warn(`[diy2] ${note}`);
+// entity-runtime 读 model.yaml 的路径（懒读：只在真发请求时用，所以此处设置即生效）。
+// 这是**出**：给它一个信号，不是我们自己读环境。
 if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
 const hint = modelConfigHint(config);
 if (hint !== null) console.warn(hint);
@@ -52,7 +77,7 @@ async function alreadyRunning(): Promise<number | null> {
         if (result.kind === 'mine') return port;
         if (result.kind === 'other') {
             console.error(`[diy2] 端口 ${port} 被**另一个数据根**的实例占着（home=${result.info?.home}）`);
-            console.error('[diy2] 换端口：diy2 -p 0（或 diy2 --port <n>），或先 diy2 stop');
+            console.error('[diy2] 换端口：--port 0（或 --port <n>），或先 diy2 stop');
             process.exit(1);
         }
     }
@@ -76,7 +101,7 @@ if (reused !== null) {
 function badStartup(error: NodeJS.ErrnoException): never {
     if (error.code === 'EADDRINUSE') {
         console.error(`[diy2] 端口 ${config.port} 已被占用（own home=${config.home}）`);
-        console.error('[diy2] 换端口：DIY2_PORT=0（内核分配）/ --port <n>；或先 diy2 stop');
+        console.error('[diy2] 换端口：--port 0（内核分配）/ --port <n>；或先 diy2 stop');
         process.exit(1);
     }
     return fatal(error);

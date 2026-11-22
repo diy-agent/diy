@@ -7,9 +7,9 @@ import { defineConfig } from 'vite';
 // UI 与 /api 同源。所以不存在「vite 端口」和「/api 代理目标」两处硬编码可写错，
 // 也就不需要 `server.proxy`。端口 / 数据根 / 变体只有 `server/config.ts` 一处真源。
 //
-// 产物目录跟变体走：`build/<DIY2_VARIANT>/web`（缺省 prod）—— 变体只决定运行空间，
-// 不是构建目标（lab / staging 与 prod 同一份代码）。
-const variant = process.env['DIY2_VARIANT']?.trim() || 'prod';
+// 产物目录**固定** `build/prod/web`（一个包目录一份产物）：变体目录已废 ——
+// lab / staging 与生产跑的是同一份代码，差别只有数据根与端口（见 server/config.ts）。
+// 多份并存靠 worktree（每个 worktree 有自己的 build/），不靠 `<variant>/` 子目录。
 
 export default defineConfig({
     plugins: [
@@ -19,8 +19,8 @@ export default defineConfig({
         tailwindcss(),
     ],
     build: {
-        // 和 server 产物同一个根：build/<variant>/{web,server}（全局命令 diy2 一起发）
-        outDir: `build/${variant}/web`,
+        // 和 server / cli 产物同一个根：build/prod/{web,server,cli}（全局命令 diy2 一起发）
+        outDir: 'build/prod/web',
         emptyOutDir: true,
         rollupOptions: {
             // 单页：主应用。workbench 的范例在它自己的包（pkgs.ts/ui/workbench-dock/examples），

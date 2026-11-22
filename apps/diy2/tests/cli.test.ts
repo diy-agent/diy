@@ -30,6 +30,8 @@ const handlers = {
         stop: async () => ({ stopped: 1, instances: [ROW] }),
         port: async () => 5300,
         home: () => '/w/build/lab/home',
+        // `web` 是进程生命周期命令（拉起 / 复用服务端），单测只钉形状
+        web: async () => ({ port: 5300, pid: 4242, home: '/w/build/lab/home', reused: true }),
     },
 };
 
@@ -70,11 +72,11 @@ function makeCli() {
 }
 
 describe('diy2 CLI（@diy-agent/rpc/cli + mem）', () => {
-    it('instance 域摊平到顶层：list / stop / port / home；facts 保留域层', async () => {
+    it('instance 域摊平到顶层：list / stop / port / home / web；facts 保留域层', async () => {
         const result = await makeCli().run(['--help']);
         expect(result.code).toBe(0);
         const text = result.out.join('\n');
-        for (const name of ['list', 'stop', 'port', 'home']) expect(text).toContain(name);
+        for (const name of ['list', 'stop', 'port', 'home', 'web']) expect(text).toContain(name);
         // instance 的域层名不该出现在命令里；facts 是显式保留的域
         expect(text).not.toContain('diy2 instance');
         expect(text).toContain('facts');

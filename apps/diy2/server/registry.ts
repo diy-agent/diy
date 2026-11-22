@@ -277,9 +277,9 @@ export function registryExists(dir: string): boolean {
 export interface AnnounceTarget {
     app: typeof APP_ID;
     home: string;
-    variant: string;
+    /** 入口名（prod / lab / staging）；记录里的 `variant` 字段也写它（老读者还在看） */
+    launch: string;
     env: string;
-    launch: string | null;
     name: string | null;
     repoRoot: string | null;
 }
@@ -300,7 +300,7 @@ export function announce(target: AnnounceTarget, port: number | null): void {
                 worktree: target.repoRoot,
                 mode: target.repoRoot === null ? 'packaged' : 'source',
                 diyHome: target.home,
-                variant: target.variant,
+                variant: target.launch,
                 env: target.env,
             }),
         );

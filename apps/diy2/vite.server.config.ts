@@ -6,12 +6,11 @@ import { defineConfig } from 'vite';
 // 工作区包都是 private，发布时不作为 dependency 存在，留着 import 就装不起来。
 const builtins = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
 
-// 产物目录跟变体走（与 vite.config.ts 同一条规则）：`build/<DIY2_VARIANT>/server`
-const variant = process.env['DIY2_VARIANT']?.trim() || 'prod';
+// 产物目录固定（与 vite.config.ts 同一条规则）：`build/prod/server`
 
 export default defineConfig({
     build: {
-        outDir: `build/${variant}/server`,
+        outDir: 'build/prod/server',
         emptyOutDir: true,
         ssr: true,
         target: 'node22',
@@ -24,7 +23,7 @@ export default defineConfig({
         },
         rollupOptions: {
             external: (id: string) => builtins.has(id) || id.startsWith('node:'),
-            // 单文件产物：bin/diy2 只认 build/<variant>/server/index.mjs。
+            // 单文件产物：`diy2 web` 只认 build/prod/server/index.mjs。
             // 依赖内部有动态 import（token 工具等），不关掉代码分割就会在旁边多出几个 chunk 文件
             // —— 发布形态的 `files` 只带整个 build/prod/，技术上也能跑，但「一个入口文件」更省心。
             output: { entryFileNames: 'index.mjs', codeSplitting: false },
