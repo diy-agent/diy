@@ -1,6 +1,6 @@
 # ask 一次问一批问题（多问题交互对齐）
 
-日期：2026-11-18　分支：`feat/ask-batch-questions`（worktree: `diy.worktrees/ask-batch`）
+日期：2026-11-18　分支：`feat/ask-batch-questions`（worktree: `~/git/diy/diy.worktrees/ask-batch`）
 
 ## 为什么要改
 

@@ -90,7 +90,7 @@ const expand = (p: string) => (p.startsWith('~/') ? path.join(HOME, p.slice(2)) 
 
 /**
  * 主仓所在的**容器目录**（`~/git/diy`）—— worktree 里 ROOT 是
- * `~/git/diy.worktrees/t388-…`，沿路径上溯走不到它，但那一层的 AGENTS.md
+ * `~/git/diy/diy.worktrees/t388-…`，沿路径上溯走不到它，但那一层的 AGENTS.md
  * （`rule.gpg` / `dev.*` 等仓级规范）同样是本仓上下文，不扫 = 漏。
  * 取法是 `git rev-parse --git-common-dir`（worktree 与主仓共享 .git）→ 上溯两级。
  */
