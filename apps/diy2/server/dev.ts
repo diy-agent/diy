@@ -38,6 +38,13 @@ options:
   -p, --port <n>         端口；0 = 内核分配（缺省沿用 <home>/app.port）
       --name <名字>       实例名
       --mode <...>       运行环境（缺省 development；显式 production 需配 --allow-prod-home）
+      --tools <shell|files>
+                         工具面（缺省 shell）
+      --compact-keep <n> 压缩保留最近 n 条消息
+      --compact-chars <n> 压缩预算（字符）
+      --web-dir <dir>    UI 产物目录（dev 不用：页面与 HMR 由挂进同一 server 的 vite 提供）
+      --model-config <file>
+                         model.yaml（缺省：本数据根 > 本 launch 的仓库级数据根）
       --allow-prod-home  显式放行生产数据根
   -h, --help             本帮助`;
 

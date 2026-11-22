@@ -46,6 +46,14 @@ export const configShape = {
     compactKeep: z.number().int().min(1).optional().cliOption({ placeholder: 'n', desc: '压缩保留最近 n 条消息' }),
     compactChars: z.number().int().min(1000).optional().cliOption({ placeholder: 'n', desc: '压缩预算（字符）' }),
     allowProdHome: z.boolean().optional().cliOption({ desc: '显式放行生产数据根（只给 dev 入口用）' }),
+    webDir: z.string().optional().cliOption({
+        placeholder: 'dir',
+        desc: 'UI 产物目录（缺省 <buildRoot>/web；调试用）',
+    }),
+    modelConfig: z.string().optional().cliOption({
+        placeholder: 'file',
+        desc: 'model.yaml 路径（缺省：本数据根 > 本 launch 的仓库级数据根）',
+    }),
 } as const;
 
 /** 完整配置对象（CLI 各命令把它并进自己的 input） */
@@ -79,6 +87,8 @@ export function toOverrides(input: Partial<ConfigOptions>): ConfigOverrides {
         compactKeep: input.compactKeep,
         compactChars: input.compactChars,
         allowProdHome: input.allowProdHome === true ? true : undefined,
+        webDir: input.webDir,
+        modelConfig: input.modelConfig,
     };
 }
 
@@ -101,6 +111,8 @@ export function toArgv(overrides: ConfigOverrides): string[] {
     push('--tools', overrides.tools);
     push('--compact-keep', overrides.compactKeep);
     push('--compact-chars', overrides.compactChars);
+    push('--web-dir', overrides.webDir);
+    push('--model-config', overrides.modelConfig);
     if (overrides.allowProdHome === true) out.push('--allow-prod-home');
     return out;
 }

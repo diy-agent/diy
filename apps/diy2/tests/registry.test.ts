@@ -47,8 +47,10 @@ function record(overrides: Partial<InstanceRecord> = {}): InstanceRecord {
 }
 
 describe('registryDir', () => {
-    it('DIY2_REGISTRY > DIY_INSTANCE_REGISTRY > DIY_DEV_HOME/apps', () => {
-        expect(registryDir({ DIY2_REGISTRY: '/tmp/own' })).toBe('/tmp/own');
+    it('DIY_INSTANCE_REGISTRY > DIY_DEV_HOME/apps；不认 DIY2_*（CLI 会清掉那一族）', () => {
+        const withOwn = registryDir({ DIY2_REGISTRY: '/tmp/own' });
+        expect(withOwn.endsWith(join('dev', 'apps'))).toBe(true);
+        expect(withOwn.startsWith('/tmp/own')).toBe(false);
         expect(registryDir({ DIY_INSTANCE_REGISTRY: '/tmp/shared' })).toBe('/tmp/shared');
         expect(registryDir({ DIY_DEV_HOME: '/tmp/dev' })).toBe('/tmp/dev/apps');
     });

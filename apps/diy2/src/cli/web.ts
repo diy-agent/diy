@@ -144,6 +144,7 @@ export function webHandler(moduleDir: string) {
         }
         const [code] = (await once(child, 'exit')) as [number | null, unknown];
         if (code !== 0 && code !== null) throw new Error(`服务端退出码 ${code}`);
-        return { port: config.port, pid: child.pid ?? 0, home: config.home, reused: false };
+        // 端口可能来自注入了 app.port 的服务端（前台传的是原始 `--port`，可能是 0）
+        return { port: info?.port ?? config.port, pid: child.pid ?? 0, home: config.home, reused: false };
     };
 }

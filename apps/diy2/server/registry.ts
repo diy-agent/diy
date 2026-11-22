@@ -9,7 +9,7 @@
 //   · **不能**放进某个实例的 home（lab 的 build/lab/home）—— 那样别的工具看不见它。
 // 这里不 import 那个包：它的 `main` 指 `dist/`（构建产物），干净 worktree 里没有 →
 // dev 会连带起不来。故本地实现同一份路径口径（方差见 tests/registry.test.ts 的覆盖），
-// 覆盖变量也沿用同一组名字（`DIY2_REGISTRY` > `DIY_INSTANCE_REGISTRY` > `DIY_DEV_HOME`）。
+// 覆盖变量沿用共享那一组名字（`DIY_INSTANCE_REGISTRY` > `DIY_DEV_HOME`），不认 `DIY2_*`（见 registryDir）。
 //
 // 生命周期：启动写 → 就绪回填 port → 退出删。**退出清理不保证执行**（SIGKILL / 崩溃），
 // 故读侧一律按 pid 存活过滤，并顺手删死条目 —— 「关掉就不再出现」靠这条，不靠退出钩子。
@@ -59,10 +59,13 @@ export function devRoot(env: NodeJS.ProcessEnv = process.env): string {
     return join(realHomeDir(), '.diy', 'dev');
 }
 
-/** 注册表目录：`DIY2_REGISTRY` > `DIY_INSTANCE_REGISTRY` > `<devRoot>/apps` */
+/**
+ * 注册表目录：`DIY_INSTANCE_REGISTRY` > `<devRoot>/apps`。
+ *
+ * 故意**不认** `DIY2_*`：那一族是运行配置前缀，`bin/diy2` 会把整族清掉再交给 CLI
+ * （防继承），写在这里等于永远不会生效。注册表是「本机进程目录」，不是运行配置。
+ */
 export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
-    const own = env['DIY2_REGISTRY']?.trim();
-    if (own !== undefined && own !== '') return own;
     const shared = env['DIY_INSTANCE_REGISTRY']?.trim();
     if (shared !== undefined && shared !== '') return shared;
     return join(devRoot(env), 'apps');

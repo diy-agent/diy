@@ -221,7 +221,7 @@ describe('resolveConfig', () => {
         expect(config.notes.join('\n')).toContain('拒绝非生产入口使用生产数据根');
     });
 
-    it('webDir：产物在就有，不在就 undefined；noWeb 强制不要', () => {
+    it('webDir：产物在就有，不在就 undefined；--web-dir 优先', () => {
         const appRoot = tmp();
         // 造一个最小的包目录（findAppRoot 认 package.json 的 name）
         writeFileSync(join(appRoot, 'package.json'), JSON.stringify({ name: '@diy-agent/app-diy2' }));
@@ -232,8 +232,12 @@ describe('resolveConfig', () => {
             join(appRoot, 'build', 'prod', 'web'),
         );
         expect(
-            resolveConfig({ moduleDir: appRoot, mode: 'development', overrides: { noWeb: true } }).webDir,
-        ).toBeUndefined();
+            resolveConfig({
+                moduleDir: appRoot,
+                mode: 'development',
+                overrides: { webDir: join(appRoot, 'elsewhere') },
+            }).webDir,
+        ).toBe(join(appRoot, 'elsewhere'));
     });
 
     it('appRoot 找得到（从 tests/ 向上）、obj 里有 repoRoot', () => {

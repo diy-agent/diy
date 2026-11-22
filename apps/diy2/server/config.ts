@@ -60,8 +60,6 @@ export interface ConfigOverrides {
     allowProdHome?: boolean | undefined;
     /** 显式 UI 产物目录（调试用；缺省 `<buildRoot>/web`，不存在 = 不提供静态） */
     webDir?: string | undefined;
-    /** 不提供静态 UI（dev 入口用：页面来自 vite） */
-    noWeb?: boolean | undefined;
     /** 显式 model.yaml（缺省：本数据根 > 本 launch 的仓库级数据根） */
     modelConfig?: string | undefined;
 }
@@ -300,14 +298,13 @@ export function resolveConfig(opts?: {
 
     const buildRoot = buildRootOf(appRoot);
     const defaultWebDir = join(buildRoot, 'web');
+    const explicitWebDir = overrides.webDir?.trim();
     const webDir =
-        overrides.noWeb === true
-            ? undefined
-            : overrides.webDir !== undefined && overrides.webDir.trim() !== ''
-              ? resolve(overrides.webDir)
-              : existsSync(defaultWebDir)
-                ? defaultWebDir
-                : undefined;
+        explicitWebDir !== undefined && explicitWebDir !== ''
+            ? resolve(explicitWebDir)
+            : existsSync(defaultWebDir)
+              ? defaultWebDir
+              : undefined;
 
     // model.yaml 三档：显式 `--model-config` > 本数据根 > **本 launch 的仓库级数据根**
     // （`<repo>/build/<launch>/home/model.yaml`，根目录 `./sha.sh sync` 把真配置投影到那里）。

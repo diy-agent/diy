@@ -63,15 +63,15 @@ worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目
          （生产 5192，其余 0；生产不拿记录当监听端口，只拿它当**探活候选**）
 环境     --mode          （缺省由入口定：生产入口 production、dev 入口 development、测试 test）
 入口名   --launch        （缺省由环境推：prod / lab / test）
-其它     --name / --tools / --compact-keep / --compact-chars / --model-config
-注册表   DIY_REGISTRY / DIY_DEV_HOME（目录位置，不是运行配置；测试隔离用）
+其它     --name / --tools / --compact-keep / --compact-chars / --web-dir / --model-config
+注册表   DIY_INSTANCE_REGISTRY / DIY_DEV_HOME（目录位置，不是运行配置；测试隔离用）
 ```
 
 两条硬规则：
 
 - **端口不承载身份，也不证明存活**：`app.port` 只是「上次用的端口」，判据是 `GET /api/info`
   自报的 `home`（+ 注册表 `pid`）。
-  所以 `diy2` 第二次敲会**复用**在跑的实例（`--restart` 才先停再起），不会 EADDRINUSE 崩，
+  所以 `diy2 web` 第二次敲会**复用**在跑的实例（`--restart` 才先停再起），不会 EADDRINUSE 崩，
   也不会连到别的数据根/别的 worktree 的实例上。
 - **非生产拒绝生产数据根**：`--home ~/.diy/diy2` 在 dev 入口被拒并回落 `build/<launch>/home`
   （`--allow-prod-home` 才放行，启动时会打一条 note）。非生产也**不吃**记录里的 5192 ——
@@ -87,15 +87,16 @@ worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目
 cd apps/diy2 && ./sha.sh build     # → build/prod/{web,server,cli}
 npm link                           # 之后 `diy2` 在 PATH 里
 
-diy2                    # = diy2 web：已有同数据根实例 → 复用；否则起服务（前台，Ctrl-C 停）
+diy2 web                # 起服务（前台，Ctrl-C 停）；已有同数据根实例 → 复用。别名 `diy2 start`
 diy2 web --open         # 就绪后打开浏览器（缺省不开）
-diy2 -p 6000            # 换端口（0 = 内核分配）
-diy2 --restart          # 先停同数据根实例再起
-diy2 --home /tmp/x      # 换数据根（缺省 ~/.diy/diy2）
-diy2 --detach           # 起在后台（脚本 / 启动器用）
-diy2 list               # 本机所有 diy2 实例（`-j` = 单行 JSON）
+diy2 web -p 6000        # 换端口（0 = 内核分配）
+diy2 web --restart      # 先停同数据根实例再起
+diy2 web --home /tmp/x  # 换数据根（缺省 ~/.diy/diy2）
+diy2 web --detach       # 起在后台（脚本 / 启动器用）
+diy2 list               # 本机所有 diy2 实例（`-j` / `--json` = 单行 JSON）
 diy2 stop [--all]       # 停本数据根（或本机全部；--worktree <dir> 只停那个 worktree）
 diy2 port | diy2 home   # 脚本用：打印端口 / 数据根（裸值）
+diy2 --help             # 命令树。裸 `diy2` 同上 —— **不会**起服务（没有隐式子命令）
 ```
 
 **全部命令**（含 `web` 的进程生命周期）都在 `build/prod/cli/index.mjs` 里：命令树 / help /
@@ -157,7 +158,7 @@ UI 有三个可切换的表面（同一份时间线 + 同一个 store，只换�
 - `deliveries`：每个 (message, bot) 的投递状态（queued → delivering → delivered/failed）
 
 聊天走真实模型（默认 `chen56@opencode-go/deepseek-v4.1-flash`，可在房间头部 / 设置里改），
-工具：`read` / `write` / `edit` / `bash`（`DIY2_TOOLS=files` 可关掉 bash）+ `ask` 提问卡。
+工具：`read` / `write` / `edit` / `bash`（`--tools files` 可关掉 bash）+ `ask` 提问卡。
 
 多 agent（容器一个 primary）：
 - 没有 @：**只有 primary 回复**
@@ -170,7 +171,7 @@ UI 有三个可切换的表面（同一份时间线 + 同一个 store，只换�
 接口（`/api`，与 UI 同源同端口）：
 
 ```
-GET    /api/info                       # 实例身份：app / pid / port / home / env / variant
+GET    /api/info                       # 实例身份：app / pid / port / home / env / launch
 GET    /api/stream                     # **一个 app 一条** SSE：首帧 {$conn}，之后按话题推
 POST   /api/stream/subscribe           { conn, topic }        # topic = `room:<roomId>`
 POST   /api/stream/unsubscribe         { conn, topic }

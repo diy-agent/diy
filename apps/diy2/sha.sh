@@ -51,12 +51,24 @@ _guard_sync() {
 # 某个 launch 的数据根（与 server/config.ts 的缺省一致：<appRoot>/build/<launch>/home）
 _launch_home() { echo "$SCRIPT_DIR/build/${1:-lab}/home"; }
 
-# 产物缺失的统一提示（返回 1 = 缺产物）
+# 产物齐不齐（静默；返回 1 = 缺）：start / stop / port / list / status 都走 bin/diy2 →
+# CLI 产物，staging 走服务端产物 —— 两者都算「已构建」，缺任一个都得先 build。
+_has_build() {
+  local f
+  for f in server/index.mjs cli/index.mjs; do
+    [[ -f "$BUILD_ROOT/$f" ]] || return 1
+  done
+}
+
+# 产物缺失的统一提示（返回 1 + 指出缺哪个）
 _need_build() {
-  if [[ ! -f "$BUILD_ROOT/server/index.mjs" ]]; then
-    echo "${error}✗ 还没构建（缺 ${BUILD_ROOT#$SCRIPT_DIR/}/server/index.mjs）→ ./sha.sh build${reset}" >&2
-    return 1
-  fi
+  local f missing=()
+  for f in server/index.mjs cli/index.mjs; do
+    [[ -f "$BUILD_ROOT/$f" ]] || missing+=("$f")
+  done
+  ((${#missing[@]} == 0)) && return 0
+  echo "${error}✗ 还没构建（缺 ${BUILD_ROOT#$SCRIPT_DIR/}/${missing[*]}）→ ./sha.sh build${reset}" >&2
+  return 1
 }
 
 ####################################################################################
@@ -252,7 +264,7 @@ staging() {
   local -a REST=()
   sha.parse "$@" || return $?
 
-  if (( build )) || ! _need_build; then
+  if (( build )) || ! _has_build; then
     if ((${#REST[@]})); then
       echo "${error}✗ 这次需要构建（--build 或首次），不能带透传参数：${REST[*]}${reset}" >&2
       return 1

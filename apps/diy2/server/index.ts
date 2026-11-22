@@ -29,6 +29,10 @@ options:
       --home <dir>                       数据根（缺省：生产 ~/.diy/diy2，其余 <appRoot>/build/<launch>/home）
       --name <名字>                       实例名
       --tools <shell|files>              工具面
+      --compact-keep <n>                 压缩保留最近 n 条消息
+      --compact-chars <n>                压缩预算（字符）
+      --web-dir <dir>                    UI 产物目录（缺省 <buildRoot>/web）
+      --model-config <file>              model.yaml（缺省：本数据根 > 本 launch 的仓库级数据根）
       --allow-prod-home                  显式放行生产数据根
   -h, --help                             本帮助`;
 
@@ -92,7 +96,7 @@ const fatal = (error: Error): never => {
 const reused = await alreadyRunning();
 if (reused !== null) {
     console.log(`[diy2] 这个数据根已有实例在监听 http://127.0.0.1:${reused}（home=${config.home}）`);
-    console.log('[diy2] 要重启：先 `diy2 stop`（或加 --restart），不要直接起第二个进程');
+    console.log('[diy2] 要重启：先 `diy2 stop`（或 `diy2 web --restart`），不要直接起第二个进程');
     process.exit(0);
 }
 

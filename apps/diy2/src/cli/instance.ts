@@ -73,7 +73,7 @@ export const instanceApi = RpcSchema.group({
                         worktree: z
                             .string()
                             .optional()
-                            .cliOption({ desc: '只停这个 worktree 起的实例（目录前缀匹配）' }),
+                            .cliOption({ desc: '只停这个 worktree 起的实例（按记录里的 worktree 根精确匹配）' }),
                     },
                     output: z.object({ stopped: z.number(), instances: z.array(InstanceRow) }),
                 }),
@@ -177,6 +177,3 @@ export function instanceHandlers(deps?: Partial<InstanceDeps>): {
         },
     };
 }
-
-// 供外部（web.ts 之外的使用方 / 单测）复用同一份判据
-export { probeMine, stopOne };
