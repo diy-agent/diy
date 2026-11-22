@@ -32,14 +32,24 @@ function fixture(): { project: string; global: string } {
 }
 
 describe('facts handlers（md 只读投影）', () => {
-    it('brief：项目库有该主题就只给项目那份（同名取项目）', () => {
+    it('brief：两库按 path 合并——全局独有条目不被项目库同主题遮住', () => {
         const { project, global } = fixture();
+        seed(global, 'rule/code.md', '全局代码规则', [['x', '全局才有。']]);
         const { facts } = factsHandlers({ projectRoot: project, globalRoot: global });
         const items = facts.brief({ input: { subject: 'rule' } }).items;
-        expect(items).toHaveLength(1);
+        // 反例：旧实现按 subject 短路，项目库 rule/ 只有一个文件也会把全局 rule/rule.md
+        // 整块蒙住 —— 删掉扁平副本后（##519）这会让通用硬约束凭空消失
+        expect(items.map((item) => item.path)).toEqual(['rule/dev.md', 'rule/code.md', 'rule/rule.md']);
+        expect(items.map((item) => item.scope)).toEqual(['project', 'global', 'global']);
+    });
+
+    it('brief：同 path 两库都有 → 只出项目那份（不重复列）', () => {
+        const { project, global } = fixture();
+        seed(global, 'rule/dev.md', '全局的开发规则', [['worktree', '全局版本。']]);
+        const { facts } = factsHandlers({ projectRoot: project, globalRoot: global });
+        const items = facts.brief({ input: { subject: 'rule' } }).items;
+        expect(items.map((item) => item.path)).toEqual(['rule/dev.md', 'rule/rule.md']);
         expect(items[0]).toMatchObject({ path: 'rule/dev.md', scope: 'project' });
-        // 全局库同主题被项目库遮住
-        expect(items.some((item) => item.scope === 'global')).toBe(false);
     });
 
     it('brief：项目库没有的主题回落全局库', () => {
@@ -86,5 +96,24 @@ describe('facts handlers（md 只读投影）', () => {
         expect(status.project.sections).toBe(2);
         expect(status.global.entries).toBe(1);
         expect(status.project.problems).toEqual([]);
+    });
+
+    it('status：同名文件逐字节比对——相同记镜像，不同记漂移', () => {
+        const { project, global } = fixture();
+        seed(global, 'rule/dev.md', '开发规则', [['worktree', '改代码先开 worktree。']]); // 与项目那份逐字节相同
+        seed(global, 'find/find.md', '定位', [['app', '设备库版本不同。']]); // 同名异内容
+        const { facts } = factsHandlers({ projectRoot: project, globalRoot: global });
+        const { overlap } = facts.status();
+        expect(overlap.same).toBe(1);
+        expect(overlap.differs.map((item) => item.path)).toEqual(['find/find.md']);
+        expect(overlap.differs[0]?.globalBytes).toBeGreaterThan(0);
+    });
+
+    it('brief：多个 subject 之间同 path 只出一次', () => {
+        const { project, global } = fixture();
+        const { facts } = factsHandlers({ projectRoot: project, globalRoot: global });
+        // `rule` 已含 rule/dev.md，再显式要 rule/dev 不该再列一次
+        const items = facts.brief({ input: { subject: 'rule,rule/dev' } }).items;
+        expect(items.map((item) => item.path)).toEqual(['rule/dev.md', 'rule/rule.md']);
     });
 });
