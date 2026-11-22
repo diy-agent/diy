@@ -10,7 +10,7 @@
 | 位置 | 内容 | 状态 |
 |---|---|---|
 | `~/git/diy-research.worktrees/entity-chat` | `pkgs.ts/entity-chat` 研究原型（Vite 单页，:5180） | **纯 UI + mock**，已提交 |
-| `~/git/diy.worktrees/diy2-entity-chat` | `pkgs.ts/ui/entity-chat`（包）+ `apps/diy2`（:5190） | **纯 UI + mock**，已提交（`7e5f9b6`） |
+| `~/git/diy/diy.worktrees/diy2-entity-chat` | `pkgs.ts/ui/entity-chat`（包）+ `apps/diy2`（:5190） | **纯 UI + mock**，已提交（`7e5f9b6`） |
 | 两侧 `store.tsx` | 假流式（setInterval 逐字追加）+ 内存实体表 | 没有 RPC、没有真模型、没有持久化 |
 
 **已经具备的 UI 形状**：项目/任务/bot 即对话、实体专属 bot、bot 独立对话、模型 chip + 默认模型、可折叠侧栏。
