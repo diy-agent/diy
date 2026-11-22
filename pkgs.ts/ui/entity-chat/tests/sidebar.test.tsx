@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sidebar } from '../src/components/Sidebar';
 import type { Room } from '../src/model';
 import { registerNavSource, unregisterNavSource } from '../src/nav';
-import { actions } from '../src/store';
+import { actions, setDiy2Client } from '../src/store';
 
 const rooms: Room[] = [
     {
@@ -64,11 +64,14 @@ function render(): string {
 }
 
 beforeEach(async () => {
-    // bootstrap 只走一次网络：stub 掉 fetch，喂一份固定的房间列表
-    vi.stubGlobal('fetch', async (input: string) => ({
-        ok: true,
-        json: async () => (String(input).includes('/bots') ? [] : rooms),
-    }));
+    // 命令面走 RPC：注入假客户端，喂一份固定的房间列表
+    setDiy2Client({
+        rooms: { list: async () => rooms },
+        bots: { list: async () => [] },
+        load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+        watch: () => () => undefined,
+        drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+    } as never);
     actions.bootstrap();
     // bootstrap 是 fire-and-forget，等它把 emit 做完（两轮微任务足够）
     await new Promise((resolve) => setTimeout(resolve, 0));

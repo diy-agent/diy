@@ -57,7 +57,7 @@ vi.mock('../src/components/RoomRow', async () => {
 });
 
 const { Sidebar } = await import('../src/components/Sidebar');
-const { actions, useIsCurrentRoom, useRooms } = await import('../src/store');
+const { actions, setDiy2Client, useIsCurrentRoom, useRooms } = await import('../src/store');
 const { registerNavSource } = await import('../src/nav');
 
 const rooms: Room[] = [
@@ -137,14 +137,19 @@ async function renderAll(): Promise<void> {
 }
 
 beforeEach(async () => {
-    // bootstrap 只走一次网络：stub 掉 fetch，喂一份固定的房间列表
-    // 每次都回**新反序列化**的对象（HTTP 就是这样）：返回同一个 `rooms` 数组的话，
+    // 命令面走 RPC：注入假客户端，喂一份固定的房间列表
+    // 每次都回**新对象**（网络反序列化就是这样）：返回同一个 `rooms` 数组的话，
     // `refresh` 之后 `state.rooms` 引用不变，「列表换了一份」这件事根本测不出来。
-    vi.stubGlobal('fetch', async (input: string) => ({
-        ok: true,
-        json: async () =>
-            String(input).includes('/bots') ? [] : rooms.map((room) => ({ ...room, data: { ...room.data } })),
-    }));
+    setDiy2Client({
+        rooms: {
+            list: async () => rooms.map((room) => ({ ...room, data: { ...room.data } })),
+            update: async () => ({}),
+        },
+        bots: { list: async () => [] },
+        load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+        watch: () => () => undefined,
+        drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+    } as never);
     actions.bootstrap();
     // bootstrap 是 fire-and-forget，等它把 emit 做完（两轮微任务足够）
     await new Promise((resolve) => setTimeout(resolve, 0));
