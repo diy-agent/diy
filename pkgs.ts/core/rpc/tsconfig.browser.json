@@ -11,13 +11,8 @@
     "src/core/**/*",
     "src/transport/ws/types.ts",
     "src/transport/ws/transport.ts",
-    "src/transport/ws/browser.ts"
-  ],
-  "exclude": [
-    "test/**/*",
-    "src/cli/**/*",
-    "src/transport/http/**/*",
-    "src/transport/electron/**/*",
+    "src/transport/ws/browser.ts",
     "src/transport/ws/index.ts"
-  ]
+  ],
+  "exclude": ["test/**/*", "src/cli/**/*", "src/transport/http/**/*", "src/transport/electron/**/*"]
 }

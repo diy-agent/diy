@@ -1,13 +1,19 @@
 ---
 desc: diy-rpc 硬约束：ESM 扩展名 / 浏览器安全边界 / 发布流程
-updated: 2026-10-23
+updated: 2026-11-22
 ---
 
 ## browser
 
-**内核必须浏览器安全，传输层不承诺**：`./sha.sh check-browser`（`tsc -p tsconfig.browser.json`）的 `include` 只有 `src/index.ts` + `src/core/**`，`exclude` 掉 `src/cli` 与 `src/transport/**` —— 所以**不要**以为 `./http` / `./electron` 也被这条检查覆盖：`http-client-binding.ts` 真 `import * as http2 from "node:http2"`、`electron/` 真 `import { ipcMain, ipcRenderer } from "electron"`。判据一句话：**Node 特有 API 只准出现在 `src/transport/**` 与 `src/cli/**`，`src/core/**` 一律不许**
+**内核 + ws 传输必须浏览器安全，其余传输层不承诺**：`tsconfig.browser.json`（`./sha.sh check` 里跑）
+的 `include` 是 `src/index.ts` + `src/core/**` + `src/transport/ws/{types,transport,browser,index}.ts`；
+**Node 特有 API 只准出现在 `src/transport/http|electron|cli`**（`http-client-binding.ts` 的
+`node:http2`、electron 的 `ipcMain`），`src/core/**` 与 `src/transport/ws/**` 一律不许。
 
-（见 e05fa9c3:pkgs.ts/diy-rpc/tsconfig.browser.json:9）
+判据一句话：**新增文件想进浏览器构建，就必须在 `types: [] + DOM` 下编译通过**；进不了就放
+Node 专属目录，不要偷偷 import 进 core。
+
+（见 pkgs.ts/core/rpc/tsconfig.browser.json）
 
 ## esm-ext
 
