@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# .githooks/pre-push —— 禁止直推 main。
+#
+# 为什么：#529 那次「本地 merge 进 main」的合法化借口就是「最后反正要 push」。把 push 这条路
+# 也堵上，本地 main 与 origin/main 的同步就只剩 fast-forward 一种形态（pull.ff=only 保证），
+# 新提交一律从 PR 进 main —— 于是「main 上有没有别人不知道的提交」这个问题从根本上消失。
+#
+# 放行：推任何非 main 分支（feature 分支正是 PR 的入口）；删远端 main（local sha 全 0）。
+# 豁免：DIY_ALLOW_MAIN_PUSH=1 git push origin main
+set -uo pipefail
+
+ZERO=0000000000000000000000000000000000000000
+[ -n "${DIY_ALLOW_MAIN_PUSH:-}" ] && exit 0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in refs/heads/main | refs/heads/master) ;; *) continue ;; esac
+  [ "$local_sha" = "$ZERO" ] && continue   # 删远端分支不算直推
+
+  cat >&2 <<EOF
+✗ 禁止直推 main（这次想推 ${local_ref:-?} → ${remote_ref}）。
+
+  push 分支、开 PR，让 main 只由 PR 前进：
+    git push -u origin \$(git branch --show-current)
+    gh pr create --fill
+
+  确需豁免：DIY_ALLOW_MAIN_PUSH=1 git push origin main
+  （钩子见 .githooks/pre-push）
+EOF
+  exit 1
+done
+exit 0

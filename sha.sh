@@ -418,6 +418,9 @@ _check_full_body() {
   run bash scripts/check-no-emit.sh
   # 可执行位护栏：shell 脚本在 git 索引里必须 100755（Windows 提交会静默丢位，实现见 scripts/check-exec-bit.sh，详见 ##304(Windows 提交丢可执行位)）
   run bash scripts/check-exec-bit.sh
+  # 本机 git 状态（##534）：hooksPath 是否还有效（坏路径会让钩子**静默**全部失效）+ local main
+  # vs origin/main 漂移。**只告警不失败** —— 实现见 scripts/check-git-state.sh
+  run bash scripts/check-git-state.sh
   # 原子写护栏：src/main 下整文件覆盖写必须走 core/atomic-write.ts 的 writeFileAtomic（实现见 scripts/check-atomic-write.sh，详见 ##383(整文件覆盖写加固)）
   run bash scripts/check-atomic-write.sh
   # vi.mock 禁令护栏（##402）：test-unit 跑 `--no-isolate`，vi.mock 改全局模块表会**静默失效**

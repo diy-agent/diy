@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# .githooks/pre-merge-commit —— 禁止把本地分支 merge 进 main。
+#
+# 为什么：2026-11-22 的事故形态（##533 之后）：bot 在自己的 worktree 里把两个主题分支
+# `git merge --no-ff` 进本地 main，**不 push**。规则层面它没违规（worktree、签名、提交都对），
+# 但 merge 这条路只走了一半 —— 不爱 PR、远端看不见、期间别人并了 PR，一小时后主仓
+# `git pull` 造出分叉。判据不是「有没有违规」，是「本地 main 与 origin/main 是否可解释地一致」。
+#
+# 拦截点选 pre-merge-commit 而不是 pre-push：本地 merge 不进 PR 也不 push，pre-push 根本不会触发。
+#
+# 豁免（真需要时显式声明，别改钩子）：
+#   DIY_ALLOW_MAIN_MERGE=1 git merge <branch>
+# 正常的 pull 收口：用 `git pull --rebase`（分叉时 ff-only 会直接报错，见 pull.ff=only）。
+set -uo pipefail
+
+branch=$(git symbolic-ref --short -q HEAD) || exit 0   # detached HEAD（rebase 中间态）放行
+case "$branch" in main | master) ;; *) exit 0 ;; esac
+[ -n "${DIY_ALLOW_MAIN_MERGE:-}" ] && exit 0
+
+cat >&2 <<'EOF'
+✗ 禁止在 main 上做本地 merge。
+
+  收尾只有一条路：push 分支 + 开 PR（gh pr create --fill）。
+  本地 merge 不进 PR、别人看不见，等别人并了 PR 就变成 main 分叉。
+
+  确实要收口（pull 出现分叉）时：git pull --rebase
+  或者显式豁免：DIY_ALLOW_MAIN_MERGE=1 git merge <branch>
+
+  ⚠ 注意：被拒之后 git **不清理**（索引已含 merge 结果，MERGE_HEAD 随后落盘）。
+  要退出这个半成品 merge：git merge --abort（别想着 git commit 补完 —— .githooks/pre-commit 会拦）。
+
+  （钩子见 .githooks/pre-merge-commit；本机启用在 .diy/knowledge/dev/setup.md#hooks-path）
+EOF
+exit 1

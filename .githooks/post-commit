@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# .githooks/post-commit —— 原 .git/hooks/post-commit 的 Qoder AI tracker。
+#
+# 2026-11-22：core.hooksPath 从不可用的 /Users/ccc/git/diy/.git/hooks 改成仓库内 .githooks，
+# 本机原来只手写在那里的 post-commit 搬到这里（否则修好 hooksPath 反而把 tracker 弄丢）。
+# 路径判断而非硬编码绝对路径：别的机器/CI 上没有 qodercli 就静默跳过。
+set -uo pipefail
+
+if [ -x "$HOME/.local/bin/qodercli" ]; then
+  "$HOME/.local/bin/qodercli" commit --hook 2>/dev/null || true
+fi
+exit 0
