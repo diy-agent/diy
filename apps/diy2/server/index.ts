@@ -33,6 +33,10 @@ const app = createDiy2App({
 // 只绑本机：这个进程带着 read/write/edit/bash 工具，监听 0.0.0.0 等于把任意命令执行面
 // 暴露给整个局域网（而且没有鉴权）。要远程用请走 SSH 隧道。
 const server = createServer(app.handle);
+// `/rpc` 的 WS 与 HTTP 共用同一个 server；不是它的 path 返回 false，留给别人
+server.on('upgrade', (req, socket, head) => {
+    app.handleUpgrade(req, socket, head);
+});
 
 /** 同一数据根已有实例在跑 → 不再起第二个（同一份 sqlite 双写） */
 async function alreadyRunning(): Promise<number | null> {

@@ -73,6 +73,11 @@ httpServer.on('request', (req, res) => {
     });
 });
 
+// `/rpc` 的 WS：与 vite 的 HMR 共用 upgrade 通道（不是 `/rpc` 的一律不碰，留给 vite）
+httpServer.on('upgrade', (req, socket, head) => {
+    app.handleUpgrade(req, socket, head);
+});
+
 // 端口粘性（`<home>/app.port`）：改服务端代码 → exit 75 → 看护循环重起；那边**不删**这个文件，
 // 于是重启后还是同一个 URL —— 浏览器那边只是 HMR ws 断了重连，不用改书签。
 // 被占用时回落到内核分配并重写记录（见 ./listen）；它只是「上次用的端口」，不证明谁在跑。

@@ -11,16 +11,19 @@
         "@astryxdesign/core": "0.7.17-canary.geeb3d7c",
         "@astryxdesign/lab": "0.7.17-canary.geeb3d7c",
         "@astryxdesign/theme-neutral": "0.7.17-canary.geeb3d7c",
+        "@diy-agent/chat-transport-http": "*",
         "@diy-agent/entity-chat": "*",
         "@diy-agent/entity-runtime": "*",
         "@diy-agent/protocol": "*",
         "@diy-agent/rpc": "*",
         "react": "^19.3.1",
-        "react-dom": "^19.3.1"
+        "react-dom": "^19.3.1",
+        "ws": "^8.21.0"
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4.3.4",
         "@types/node": "^26.1.0",
+        "@types/ws": "^8.18.1",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
         "@vitejs/plugin-react": "^6.0.1",

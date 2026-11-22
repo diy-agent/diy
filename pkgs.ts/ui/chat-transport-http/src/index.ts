@@ -24,6 +24,11 @@ import { StreamHub } from './hub';
 export interface HttpChatClientOptions {
     /** API 前缀，默认 '/api' */
     base?: string;
+    /**
+     * 事件流的 WS 端点；缺省按当前页推导（`ws(s)://<host>/rpc`）。
+     * 非浏览器环境（测试）必须显式给。
+     */
+    rpcUrl?: string;
     /** 便于测试/非浏览器环境注入 */
     fetchImpl?: typeof fetch;
 }
@@ -39,7 +44,9 @@ export class HttpChatClient implements ChatClient {
     constructor(options: HttpChatClientOptions = {}) {
         this.base = options.base ?? '/api';
         this.injected = options.fetchImpl;
-        this.hub = new StreamHub({ base: this.base, fetch: () => this.fetchImpl });
+        this.hub = new StreamHub({
+            ...(options.rpcUrl === undefined ? {} : { rpcUrl: options.rpcUrl }),
+        });
     }
 
     /** 浏览器里 fetch 不能当方法调用（Illegal invocation），必须裸调 */
@@ -199,3 +206,5 @@ export class HttpChatClient implements ChatClient {
         }
     }
 }
+
+export { StreamHub, topicOfRoom, type StreamHubOptions } from './hub';
