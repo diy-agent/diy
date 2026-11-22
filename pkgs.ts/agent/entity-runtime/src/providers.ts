@@ -8,8 +8,8 @@
 // 三件事分家（与两个包各自的边界一致）：
 //   · **数据**（端点 / 模型 id / 上限 / 价目 / 账号名）：`@diy-agent/model-catalog`（不含 key 值）；
 //   · **key 值**：单独一条 `readAccountValue()`，用完不打印；
-//   · **provider 私有约定**（会话 header、缓存保留期）：`@diy-agent/llm-provider/strategies`，
-//     按 **host** 认领，不按 provider 名分支。
+//   · **provider 私有约定**（会话 header、缓存保留期 `prompt_cache_retention`）：
+//     `@diy-agent/llm-provider/strategies`，按 **host** 认领，不按 provider 名分支。
 //
 // 唯一留在本文件里的常量是「场景缺省输出上限」—— 那是**我们的策略**，不是上游的事实。
 
@@ -19,7 +19,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { headersFor } from '@diy-agent/llm-provider/strategies';
+import { bodyTransformFor, headersFor } from '@diy-agent/llm-provider/strategies';
 import {
     effectiveMaxOutputTokens,
     listAccountStates,
@@ -184,11 +184,17 @@ export function modelOf(modelKey: string, options: ModelOptions = {}): LanguageM
     // 这么来的：以前在这里写死成 `'x-opencode-session': \`diy2-${Date.now()}\``，等于把网关
     // 约定抄进应用层，加第二个网关就得再抄一遍）
     const headers = options.sessionId === undefined ? {} : headersFor(entry.baseURL, { sessionId: options.sessionId });
+    // 请求体变换（该端点要补的字段）：opencode 网关的 `prompt_cache_retention` 就是从这里进去的。
+    // 缺了它自动前缀缓存只活 ~5 分钟，跨轮（间隔常 >5min）整段重算 —— 实测 120k prompt
+    // 差 119,936 命中 tokens。`undefined` = 该端点没验证过这些字段 ⇒ 什么都不补
+    // （**不挂恒等函数**，白复制一次 body）。
+    const transformBody = bodyTransformFor(entry.baseURL);
     const provider = createOpenAICompatible({
         name: key.provider,
         baseURL: entry.baseURL,
         apiKey,
         ...(Object.keys(headers).length === 0 ? {} : { headers }),
+        ...(transformBody === undefined ? {} : { transformRequestBody: transformBody }),
     });
     return provider(key.model) as unknown as LanguageModel;
 }

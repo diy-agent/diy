@@ -23,6 +23,14 @@ customProviders:
         name: main
         data:
           value: sk-other-5678
+  # 认领了 provider 私有约定的端点（host 是 opencode.ai ⇒ strategies 会补 retention / 会话头）。
+  # 单测不出网：测试自己替换 globalThis.fetch，这里只需要一个「真会被认领」的 host。
+  gateway:
+    accounts:
+      - type: apiKey
+        name: main
+        data:
+          value: sk-gateway-9012
 `;
 
 const PROVIDERS_CUSTOM_YAML = `acme:
@@ -47,6 +55,17 @@ other:
       limit:
         context: 8000
         output: 512
+gateway:
+  id: gateway
+  npm: '@ai-sdk/openai-compatible'
+  api: https://opencode.ai/zen/v1
+  models:
+    fast:
+      id: fast
+      name: Gateway Fast
+      limit:
+        context: 256000
+        output: 8192
 `;
 
 export interface ModelHome {
