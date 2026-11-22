@@ -46,7 +46,8 @@
 | `AskGate.expireFor(owner, reason)` + `request()` 里的同成员取代 + `expired` 落库（`state='expired'`） | `entity-runtime/src/ask.ts`、`db.ts` |
 | `turn.start` → 过期；`settleAsk` 落 `expired`；通知措辞区分「过期 / 作废」 | `entity-runtime/src/room.ts` |
 | 卡片说「已过期（…）：提问者没等这个答案，已经继续工作了」；根节点带 `data-ask-id` | `entity-chat/components/AskCard.tsx`、`chat-core/timeline.ts`、`projection.ts`、`reduce.ts` |
-| 顶部常驻「等你回答 · N」+ 题目 chip，点了 `reveal` 扩窗 + `scrollIntoView` + 闪一下 | `entity-chat/components/PendingAskBar.tsx`、`ChatPanel.tsx`、`useWindowed.ts` |
+| 顶部常驻「等你回答 · N」+ 题目 chip，点了滚到那张卡 + 闪一下 | `entity-chat/components/PendingAskBar.tsx` |
+| 条挂在**壳层**（一个房间一条，三个表面共用）；跳转按表面注册（`jumpToAsk` / `registerAskJumper`） | `entity-chat/components/PendingAskStrip.tsx`、`askJump.ts`、`App.tsx` |
 | 侧栏 `?` 的 tooltip 带题干（`diy2.rooms.list` 新增投影字段 `pendingAskTitles`） | `apps/diy2/server/app.ts`、`entity-chat/store.tsx`、`RoomRow.tsx` |
 
 ## 刻意不做
@@ -61,9 +62,32 @@
 - 用户「随口插一句」也会让提问过期。所以过期必须**留痕**（卡片 + 时间线一句系统说明）并**通知提问者**
   （`notifyOwner`，quiet：不叫醒）—— 模型据此决定要不要重新问，用户看到的是「它没等我」而不是卡片凭空消失。
 - 过期通知进的是**房间公共日志**：安静通知只是不叫醒人，不是私聊，别的成员也会读到（多 bot 房间的已知噪音）。
+  **2026-11-22 用户裁：暂时接受，记在这里**（真实场景一次过期只有 1 条；噪音只在「模型同 turn 连问」这种
+  病态路径上明显）。要收的话两条路：一次 `expireFor` 合并成一条通知，或给系统痕迹加收件人过滤（要动日志 /
+  ingest 语义，影响所有成员）。
+
+## lab 实机验证（2026-11-22，抓到三个真问题）
+
+`apps/diy2` 起 lab（隔离数据根 + `DIY2_PORT=6271`），RPC 让真模型跑一轮 ask，再用 CDP 读 DOM：
+
+1. **条加错了层**：第一版把待答条挂在 assistant-ui 的 `ChatPanel` 里，而 `App.tsx` 的缺省表面是
+   **astryx** ⇒ 用户实际看的那一屏上根本没有条。改成壳层一条 + 表面注册跳转
+   （assistant-ui/shadcn 窗口化要 `reveal`，astryx 是 `ChatVirtualizer.anchorToKey`）。
+2. **astryx / shadcn 把「过期」说成「失效」**：两处 `AskCard` 的 `resolved` 只带了 `cancelled`，
+   没带 `expired` ⇒ 悬停文案是「已失效：…」而不是「已过期（…）：提问者没等这个答案，已经继续工作了」。
+   顺带把「有没有结局」的判断从 `cancelled` 扩到 `cancelled || expired`。
+3. **三个表面同时挂在 DOM 里**（`SurfaceHost` 用 `hidden` 保留挂载）：同一个 `data-ask-id` 会出现两三份，
+   闪高亮必须挑**可见**那份，否则闪在看不见的表面上（用户零反馈）。
+
+验到的（三表面各一遍）：侧栏 `?` 的 tooltip 带题干 · 待答条出现且说得出问的是什么 · 点 chip 后目标卡进视口
+并闪一下 · 过期后条消失、侧栏 `?` 消失、卡片文案带原因 · 过期通知确实落进房间公共日志（模型据此回了话）。
+
+没验到的：多成员各自一张（要两个模型都 ask，成本不值；单测已钉住）· 真机手指操作（CDP 只到 DOM 层）。
 
 ## 验收
 
 - `AskGate`：同成员取代、`expireFor` 只动目标成员、过期不能再答、`answeredList` 带 `expired`
 - 房间级：插话 → 提问过期（留痕 + 通知 + 不能再答）；21 连问塌成 1 张；跨成员互不挤；重启后过期卡仍在
 - 纯函数：`pendingAskHintOf` / `askChipOf` / `askChipTitleOf`
+- 渲染：`PendingAskBar` 空时不渲染、有一条时说得出「几个 + 哪句」（SSR）
+- 派发：`askJump` 注册 → 派发到注册者；注销后不再派发；无注册者时按 DOM 兜底且不抛

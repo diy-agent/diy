@@ -19,7 +19,9 @@ import {
 } from '@astryxdesign/core';
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
 import { ChatVirtualizer } from '@astryxdesign/lab';
+import type { ChatVirtualizerHandle } from '@astryxdesign/lab';
 import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
+import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
 import { AskCard } from '../../components/AskCard';
 import { BotAvatar } from '../../components/BotAvatar';
 import { EndFooterLine } from '../../components/EndFooterLine';
@@ -141,12 +143,13 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                             key={`a${index}`}
                             roomId={roomId}
                             request={run.part.request}
-                            {...(run.part.answer === undefined && run.part.cancelled !== true
+                            {...(run.part.answer === undefined && run.part.cancelled !== true && run.part.expired !== true
                                 ? {}
                                 : {
                                       resolved: {
                                           ...(run.part.answer === undefined ? {} : { answer: run.part.answer }),
                                           ...(run.part.cancelled === true ? { cancelled: true } : {}),
+                                          ...(run.part.expired === true ? { expired: true } : {}),
                                           ...(run.part.reason === undefined ? {} : { reason: run.part.reason }),
                                       },
                                   })}
@@ -275,6 +278,20 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
         [state.items, state.deliveries, shell.bots, state.speaking, state.asks, state.answered],
     );
 
+    /**
+     * 壳层待答条的跳转入口：astryx 长会话用的是 ChatVirtualizer（只渲染视口附近的行），
+     * 所以「滚过去」= `anchorToKey` 把那一行钉到视口顶 —— 它只认**在当前 data 里的 key**，
+     * 而提问行的 key 就是 chat-core 的 `ask:<askId>`（见 timeline.ts）。
+     */
+    const virtualizer = React.useRef<ChatVirtualizerHandle>(null);
+    React.useEffect(() => {
+        registerAskJumper('astryx', (askId) => {
+            virtualizer.current?.anchorToKey(`ask:${askId}`, 0);
+            flashAskCardWhenRendered(askId);
+        });
+        return () => registerAskJumper('astryx', undefined);
+    }, []);
+
     const candidates = useMentionCandidates(targetId);
     const triggers = React.useMemo(
         () => [
@@ -322,6 +339,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
             {/* 长会话用官方 ChatVirtualizer：只渲染视口附近的条目（1 万条的 story 也是它） */}
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', paddingInline: 24 }}>
                 <ChatVirtualizer
+                    handleRef={virtualizer}
                     data={entries}
                     getRowKey={(entry) => entry.key}
                     getItemType={(entry) => entry.kind}

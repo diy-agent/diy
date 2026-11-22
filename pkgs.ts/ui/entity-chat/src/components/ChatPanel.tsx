@@ -6,8 +6,8 @@ import { AssistantRuntimeProvider, MessageNotSentError, useExternalStoreRuntime 
 import * as React from 'react';
 
 import { Thread } from '../assistant-ui/components/assistant-ui/elements/thread.aui';
+import { registerAskJumper } from '../askJump';
 import { ErrorBar } from './ErrorBar';
-import { PendingAskBar } from './PendingAskBar';
 import { MentionBotsProvider, useMentionCandidates } from '../mentions';
 import { toThreadMessages } from '../projection';
 import { useWindowed } from './useWindowed';
@@ -76,6 +76,12 @@ export function ChatPanel({ targetId }: { targetId: string }) {
         },
         [windowed],
     );
+    // 壳层的待答条点了某问 → 壳层按表面 id 找 jumper，这里提供「怎么把那张卡滚进视口」。
+    // 表面 id 与 surfaces/registry.tsx 的 'assistant-ui' 必须一致（壳层拿 surfaceId 找）。
+    React.useEffect(() => {
+        registerAskJumper('assistant-ui', jumpToAsk);
+        return () => registerAskJumper('assistant-ui', undefined);
+    }, [jumpToAsk]);
     React.useEffect(() => {
         if (jumpTo === null) return;
         const element = document.querySelector<HTMLElement>(`[data-ask-id="${jumpTo}"]`);
@@ -146,8 +152,6 @@ export function ChatPanel({ targetId }: { targetId: string }) {
         <MentionBotsProvider value={mentionBots}>
             <AssistantRuntimeProvider runtime={runtime}>
                 <ErrorBar error={state.error} onRetry={conversation.reload} />
-                {/* 有提问在等回答就常驻一条：侧栏的 ? 只说"有几个"，这里说"问的是什么" */}
-                <PendingAskBar asks={state.asks} onJump={jumpToAsk} />
                 <div className="min-h-0 flex-1">
                     <Thread roomId={targetId} sendingRef={sendingRef} />
                 </div>
