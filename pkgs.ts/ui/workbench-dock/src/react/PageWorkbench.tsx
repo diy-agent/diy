@@ -93,6 +93,15 @@ export interface PageWorkbenchProps<S extends Scope = Scope> {
      * 存不下不影响这一页继续用，但**下次进来会回到模板**—— 所以不能静默当成功。
      */
     onStorageError?(error: unknown): void;
+    /**
+     * 区域控制面就绪（每次挂载一次；换页实例会再调一次）。
+     *
+     * 宿主要包**外面**的入口时靠它：工作台把「区域开/关」画在页外的浮层里 ——
+     * 万一某个区域被收起，那个区域里的按钮也跟着看不见了，恢复入口不能住在布局里。
+     *
+     * 名字带 `Api` 是为了跟 dockview 自己的 `onReady`（内部那个）分开。
+     */
+    onApiReady?(api: PageApi): void;
 }
 
 export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): ReactElement {
@@ -633,6 +642,14 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
     // 传给 view 的 props 走 context，不经过 dockview 的任何缓存：scope / page 一变，
     // 面板就重渲染 —— 但**布局**一点没动（对比：从前去改 deps 让它重建，代价是所有 panel 重挂）
     const pageContext = useMemo(() => ({ scope, page: pageInfo, api }), [scope, pageInfo, api]);
+
+    // 宿主控制面交出去一次：api 引用稳定（deps 只有 applyLayout），所以只在就绪时调一次
+    const onApiReadyRef = useRef(props.onApiReady);
+    onApiReadyRef.current = props.onApiReady;
+    useEffect(() => {
+        if (!ready) return;
+        onApiReadyRef.current?.(api);
+    }, [ready, api]);
 
     // components 的身份必须**永远不变**：变了 dockview 会重挂所有 panel（内容全丢）
     const components = useMemo(() => {

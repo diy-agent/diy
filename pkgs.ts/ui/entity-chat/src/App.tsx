@@ -2,14 +2,6 @@ import { Bot as BotIcon, Cpu, Folder, ListTodo, PanelRight, Plus } from 'lucide-
 import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
-import {
-    AddMemberDialog,
-    ConfirmDeleteDialog,
-    CreateProjectDialog,
-    CreateTaskDialog,
-    ModelDialog,
-    SettingsDialog,
-} from './components/Dialogs';
 import { EditableName, StatusChip } from './components/RoomName';
 import { SpeakingBar } from './components/SpeakingBar';
 import { PendingAskStrip } from './components/PendingAskStrip';
@@ -18,7 +10,8 @@ import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, primaryBotOf, roomTypeLabel, type Room } from './model';
 import { modelLabel } from './models';
-import { actions, useBots, useDefaultModelKey, useError, useLoaded, useRooms, useSelectedRoom } from './store';
+import { actions, useBots, useError, useLoaded, useRooms, useSelectedRoom } from './store';
+import { useRoomDialogs } from './useRoomDialogs';
 
 function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
     return (
@@ -158,29 +151,16 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
     // `useSelectedRoom` 的快照是 `rooms` 数组里的那个元素：rename / 改状态时会换新对象
     // （`refresh` 整份换新），所以「侧栏已改名、头部不动」那个老毛病不会因为去掉整份
     // 快照而回来。
-    const rooms = useRooms();
     const loaded = useLoaded();
     const error = useError();
-    const defaultModelKey = useDefaultModelKey();
     const room = useSelectedRoom();
-    // 弹窗状态：新建项目 / 新建任务（记住在哪个项目下）/ 加成员 / 设置 / 删除确认
-    const [dialog, setDialog] = React.useState<
-        | null
-        | { kind: 'project' }
-        | { kind: 'member' }
-        | { kind: 'settings' }
-        | { kind: 'task'; projectId: string }
-        | { kind: 'delete'; roomId: string }
-    >(null);
+    // 弹窗（新建项目 / 建任务 / 加成员 / 设置 / 删房间 / 换模型）整体在 useRoomDialogs 里：
+    // 工作台要用同一套，状态不能长在这一层。
+    const dialogs = useRoomDialogs();
     // 默认表面：Astryx（虚拟化 + 自带代码高亮，长会话最稳）
     const [surfaceId, setSurfaceId] = React.useState<string>(
         SURFACES.find((surface) => surface.id === 'astryx')?.id ?? SURFACES[0]!.id,
     );
-    const [modelTarget, setModelTarget] = React.useState<string | null>(null);
-    const activeRoom = room;
-    const taskProject = dialog?.kind === 'task' ? rooms.find((item) => item.id === dialog.projectId) : undefined;
-    const deleteTarget = dialog?.kind === 'delete' ? rooms.find((item) => item.id === dialog.roomId) : undefined;
-    const modelRoom = modelTarget === null ? undefined : rooms.find((item) => item.id === modelTarget);
 
     React.useEffect(() => {
         actions.bootstrap();
@@ -197,17 +177,19 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
     const [taskPanelOpen, setTaskPanelOpen] = React.useState(false);
     // 传给侧栏的回调必须 stable：`Sidebar` 把它们放进 `useMemo` 的 host，再传给每一行；
     // 每次渲染新建一个函数，行上的 `React.memo` 就永远拦不住（props 比不等）。
-    const onCreateProject = React.useCallback(() => setDialog({ kind: 'project' }), []);
-    const onCreateTask = React.useCallback((projectId: string) => setDialog({ kind: 'task', projectId }), []);
-    const onRequestDelete = React.useCallback((target: Room) => setDialog({ kind: 'delete', roomId: target.id }), []);
-    const onOpenSettings = React.useCallback(() => setDialog({ kind: 'settings' }), []);
-    const onAddMember = React.useCallback(() => setDialog({ kind: 'member' }), []);
+    // useRoomDialogs 返回的动作本身已经是 useCallback，直接透传即可。
+    const { openProject, openTask, requestDelete, openSettings, openMember, openModel } = dialogs;
+    const onCreateProject = openProject;
+    const onCreateTask = openTask;
+    const onRequestDelete = requestDelete;
+    const onOpenSettings = openSettings;
+    const onAddMember = openMember;
     const onToggleTaskPanel = React.useCallback(() => setTaskPanelOpen((open) => !open), []);
     const onCloseTaskPanel = React.useCallback(() => setTaskPanelOpen(false), []);
     const roomId = room?.id;
     const onPickModel = React.useCallback(() => {
-        if (roomId !== undefined) setModelTarget(roomId);
-    }, [roomId]);
+        if (roomId !== undefined) openModel(roomId);
+    }, [roomId, openModel]);
 
     const toggleSidebar = React.useCallback(() => {
         setSidebarOpen((open) => {
@@ -290,60 +272,7 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
                 )}
             </main>
 
-            {dialog?.kind === 'project' && (
-                <CreateProjectDialog
-                    onClose={() => setDialog(null)}
-                    onSubmit={(input) => actions.createProject(input)}
-                />
-            )}
-            {dialog?.kind === 'task' && taskProject !== undefined && (
-                <CreateTaskDialog
-                    project={taskProject}
-                    suggestedName={`新任务 ${
-                        rooms.filter((item) => item.data['projectId'] === dialog.projectId).length + 1
-                    }`}
-                    onClose={() => setDialog(null)}
-                    // 不 void：对话框要等"建成了"才清描述草稿（失败留在对话框里）
-                    onSubmit={(input) =>
-                        actions.createTask(dialog.projectId, input.name, {
-                            ...(input.desc === undefined ? {} : { desc: input.desc }),
-                        })
-                    }
-                />
-            )}
-            {dialog?.kind === 'delete' && deleteTarget !== undefined && (
-                <ConfirmDeleteDialog
-                    room={deleteTarget}
-                    taskCount={rooms.filter((item) => item.data['projectId'] === dialog.roomId).length}
-                    onClose={() => setDialog(null)}
-                    onConfirm={() => void actions.deleteRoom(dialog.roomId)}
-                />
-            )}
-            {dialog?.kind === 'member' && activeRoom !== undefined && (
-                <AddMemberDialog
-                    room={activeRoom}
-                    onClose={() => setDialog(null)}
-                    onPickExisting={(botId) => actions.addExistingBot(activeRoom.id, botId)}
-                    onCreateNew={(name) => actions.addBot(activeRoom.id, name)}
-                />
-            )}
-            {dialog?.kind === 'settings' && (
-                <SettingsDialog
-                    defaultModelKey={defaultModelKey}
-                    onChangeDefault={(key) => actions.setDefaultModel(key)}
-                    onClose={() => setDialog(null)}
-                />
-            )}
-            {modelTarget !== null && (
-                <ModelDialog
-                    title={`「${modelRoom?.name ?? ''}」的模型`}
-                    value={modelRoom?.modelKey ?? defaultModelKey}
-                    onChange={(key) => {
-                        if (modelTarget !== null) actions.setRoomModel(modelTarget, key);
-                    }}
-                    onClose={() => setModelTarget(null)}
-                />
-            )}
+            {dialogs.element}
 
             <div className="pointer-events-none fixed bottom-2 right-3 flex items-center gap-1 text-[10px] text-muted-foreground">
                 <BotIcon className="size-3" />

@@ -22,50 +22,10 @@
     font-size: 13px;
 }
 
-/* ── 视图共用的排版（视图内是普通 DOM，不依赖 Tailwind 扫描）──────────────── */
-
-.dock-nav {
-    height: 100%;
-    overflow: auto;
-    padding: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.dock-nav-item {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    text-align: left;
-    color: inherit;
-    font-size: 13px;
-}
-
-.dock-nav-item:hover {
-    background: #161b22;
-}
-
-.dock-nav-item.on {
-    background: #1f6feb33;
-    color: #e6edf3;
-}
-
-.dock-nav-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.dock-nav-kind {
-    flex: none;
-    font-size: 10px;
-    color: #8b949e;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
+/* ── 视图共用的排版（视图内是普通 DOM，不依赖 Tailwind 扫描）────────────────
+ *
+ * 原来这里还有一套 `.dock-nav*`（自写的房间列表样式）：左栏换成 entity-chat 的真侧栏
+ * 之后那个名单归侧栏自己管（Tailwind 类 + 包内 styles.css），这一段就没有主了。 */
 
 .dock-empty {
     padding: 8px;
@@ -153,4 +113,77 @@
     --dv-active-sash-color: #3b82f6;
     --dv-tabs-container-scrollbar-color: #30363d;
     --dv-icon-hover-background-color: #21262d;
+}
+
+/* ── 右栏装真 TaskPanel ──────────────────────────────────────────────────────
+ * 它自带 `w-[340px] shrink-0 border-l`（整页 App 里的样子）。放进 area 之后宽度归 dock：
+ * 固定 340px + 可拖的 area 会互相置气 —— 拖窄了它溢出，拖宽了它留白。 */
+
+.dock-aside {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+}
+
+.dock-aside > aside {
+    width: 100%;
+    border-left: 0;
+}
+
+/* ── 页外的区域开关 ──────────────────────────────────────────────────────────
+ * 收起某个区域后，那个区域里的按钮跟着一起看不见 —— 恢复入口只能住在页外。
+ * 右上角一小条，不占布局（fixed），和 dock 的 tab 条同一行高度。 */
+
+.dock-areabar {
+    position: fixed;
+    top: 6px;
+    right: 10px;
+    z-index: 40;
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    background: #161b22cc;
+    backdrop-filter: blur(4px);
+}
+
+.dock-areabar button {
+    padding: 1px 6px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #6e7681;
+    font-size: 10px;
+    line-height: 16px;
+    cursor: pointer;
+}
+
+.dock-areabar button.on {
+    background: #21262d;
+    color: #e6edf3;
+}
+
+/* 工作台诊断里同一件事的页内版（区域没被全部收起时更方便） */
+
+.dock-area-toggles {
+    display: flex;
+    gap: 4px;
+    margin: 0 0 10px;
+}
+
+.dock-area-toggles button {
+    padding: 1px 8px;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    background: transparent;
+    color: #8b949e;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.dock-area-toggles button.on {
+    border-color: #3b82f6;
+    color: #e6edf3;
 }

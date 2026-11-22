@@ -22,6 +22,16 @@ export type { NavAddress } from './address';
 export { registerNavSource, unregisterNavSource, useNavSources } from './nav';
 export type { NavContext, NavHost, NavSource } from './nav';
 
+// ── 宿主装配用的部件 ──────────────────────────────────────
+//
+// 工作台把「外壳」拆给 dock 的 area：左栏是侧栏、右栏是任务面板、中间只留对话。
+// 这些部件自己不知道被装在哪里 —— 宽度 / 收起由外层 area 决定（`widthMode="fill"`），
+// 弹窗由宿主挂一次 `useRoomDialogs()`（App 与 /dock.html 共用同一套状态）。
+export { Sidebar } from './components/Sidebar';
+export { TaskPanel } from './components/TaskPanel';
+export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';
+export type { RoomDialogs } from './useRoomDialogs';
+
 // ── 宿主装配用的只读钩子 ──────────────────────────────────────
 //
 // 为什么必须放出来：宿主要自己画「有哪些房间 / 现在在看哪个 / 连上了没有」这类**导航**

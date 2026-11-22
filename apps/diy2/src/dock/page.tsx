@@ -1,22 +1,22 @@
 // page.tsx —— 「房间」页的模板与视图（**宿主侧装配**，不属于 workbench-dock 包）。
 //
-// P0 的落位（先证明引擎能装真业务，再谈拆包内组件）：
-//   left   房间导航        宿主职责：切页 = 换页实例 = 换一份布局
-//   center <EntityChatApp> 只留**主区**（`sidebar={false}`）——它的侧栏和左栏重复，
-//                          且自带一套宽度拖拽（localStorage `entity-chat:sidebar-width`），
-//                          与 dock 的 area(size/min) 是两套真源
-//   right  房间信息        收起，用来看 view 拿到的 scope / page 是什么
-//   bottom 工作台诊断      收起，自解释这个页怎么拖、布局存在哪
+// 落位（外壳拆给 dock 的 area，一个布局只有一个真源）：
+//   left   真侧栏           entity-chat 的 `<Sidebar widthMode="fill">`：项目 / 历史 / 未归属 + 新建 / 设置
+//   center 对话主区         `<EntityChatApp sidebar={false} taskPanel={false}>`：只剩对话本身
+//   right  任务 / 信息      task 房间 = 真 `<TaskPanel>`（关掉 = 收起本区域），其它房间 = 信息卡
+//   bottom 工作台诊断       页实例是谁 / 区域开关 / 布局存在哪
 //
-// 下一刀（拆分）：把 entity-chat 的侧栏内容（项目 / 历史 / 未归属）与 TaskPanel 导出成 view，
-//   left/right 换成它们，宿主就不再需要自写的 RoomsNav。
+// 两个「不给」很有必要：Sidebar 自带宽度拖拽（localStorage `entity-chat:sidebar-width`）
+// 与 TaskPanel 的固定 `w-[340px]` 都由 dock 的 `area(size/min)` 接管 —— 两边都管就是两个真源。
+//
+// 弹窗（新建项目 / 建任务 / 删房间 / 设置 / 换模型）由宿主挂一次 `useRoomDialogs()`，
+// 经 context 传给左栏（见 main.tsx）—— 和整页 App 同一套状态，不抄第二份。
 
 import {
     EntityChatApp,
-    navigate,
-    roomAddressOf,
-    useAddress,
-    useRooms,
+    Sidebar,
+    TaskPanel,
+    useRoomDialogsContext,
     useSelectedRoom,
     type Room,
 } from '@diy-agent/entity-chat';
@@ -43,31 +43,25 @@ export const roomPage = definePage({
 
 // ── 视图 ──────────────────────────────────────────────────────────────────────
 
-/** 房间导航：dock 里的「切页」由宿主自己画，包不认识「导航」这个概念 */
-function RoomsNav() {
-    const rooms = useRooms();
-    const address = useAddress();
-
-    if (rooms.length === 0) return <div className="dock-empty">还没有房间</div>;
-
+/**
+ * 左栏：entity-chat 的真侧栏（项目 / 历史 / 未归属 + 新建 / 设置）。
+ *
+ * `widthMode="fill"`：宽度归 dock 的 area，它不再自带手柄与 localStorage 宽度。
+ * 收起按钮 = 收起这个区域；展开入口在页外那条「区域」浮层（见 main.tsx）——
+ * 区域里的按钮跟着区域一起消失，恢复入口不能住在布局里。
+ */
+function NavAside({ api }: ViewProps) {
+    const dialogs = useRoomDialogsContext();
     return (
-        <nav className="dock-nav">
-            {rooms.map((room: Room) => {
-                const on = room.id === address.id;
-                return (
-                    <button
-                        key={room.id}
-                        type="button"
-                        className={on ? 'dock-nav-item on' : 'dock-nav-item'}
-                        title={room.id}
-                        onClick={() => navigate(roomAddressOf(room))}
-                    >
-                        <span className="dock-nav-name">{room.name}</span>
-                        <span className="dock-nav-kind">{room.type}</span>
-                    </button>
-                );
-            })}
-        </nav>
+        <Sidebar
+            open
+            widthMode="fill"
+            onToggle={() => api.toggleArea('left')}
+            onCreateProject={dialogs.openProject}
+            onCreateTask={dialogs.openTask}
+            onRequestDelete={dialogs.requestDelete}
+            onOpenSettings={dialogs.openSettings}
+        />
     );
 }
 
@@ -80,10 +74,8 @@ function ChatBody() {
     );
 }
 
-/** 房间信息：看 view 拿到的 scope / 数据，也是「谁在读同一个 store」的验证 */
-function RoomInfo() {
-    const room = useSelectedRoom();
-    if (!room) return <div className="dock-empty">没有选中房间</div>;
+/** 房间信息：scope / 数据长什么样（也是「谁在读同一个 store」的验证） */
+function RoomInfo({ room }: { room: Room }) {
     const data = Object.entries(room.data ?? {});
     return (
         <div className="dock-info">
@@ -112,8 +104,25 @@ function RoomInfo() {
     );
 }
 
-/** 工作台诊断：这个页实例是谁、view 在哪个区域、布局存在哪个键 */
-function LabNotes({ page, areaId }: ViewProps) {
+/**
+ * 右栏：task 房间给真任务面板（关掉 = 收起这个区域），其它房间给一张信息卡。
+ *
+ * TaskPanel 自己带 `w-[340px]`，在 area 里换成 100%（见 dock.css 的 `.dock-aside`）：
+ * 固定宽度 + 可拖的 area 会互相置气 —— 拖窄了它溢出，拖宽了它留白。
+ */
+function RoomAside({ api }: ViewProps) {
+    const room = useSelectedRoom();
+    if (!room) return <div className="dock-empty">没有选中房间</div>;
+    if (room.type !== 'task') return <RoomInfo room={room} />;
+    return (
+        <div className="dock-aside">
+            <TaskPanel room={room} onClose={() => api.hideArea('right')} />
+        </div>
+    );
+}
+
+/** 工作台诊断：页实例是谁、区域能不能开、布局存在哪 */
+function LabNotes({ page, areaId, api }: ViewProps) {
     return (
         <div className="dock-lab">
             <dl>
@@ -122,6 +131,18 @@ function LabNotes({ page, areaId }: ViewProps) {
                 <dt>本 view 区域</dt>
                 <dd>{areaId}</dd>
             </dl>
+            <div className="dock-area-toggles">
+                {['left', 'center', 'right', 'bottom'].map((id) => (
+                    <button
+                        key={id}
+                        type="button"
+                        className={api.isAreaVisible(id) ? 'on' : undefined}
+                        onClick={() => api.toggleArea(id)}
+                    >
+                        {id}
+                    </button>
+                ))}
+            </div>
             <p>
                 拖两根分隔线、收起 / 展开 tab、刷新页面 —— 布局按<b>页实例</b>存在
                 <code>localStorage</code>（键 <code>workbench-dock:&lt;页实例&gt;</code>），
@@ -136,12 +157,12 @@ function LabNotes({ page, areaId }: ViewProps) {
 
 export const roomViews = [
     defineView({
-        id: 'rooms',
-        title: '房间',
+        id: 'nav',
+        title: '导航',
         // 不标 primary：初始激活组 = 第一个**有 primary view** 的区域（workbench-dock
         // 的 primaryArea），左栏标了它就成了打开先看房间列表；打开工作台该先看对话。
         placement: { room: { area: 'left' } },
-        render: { kind: 'react', component: RoomsNav },
+        render: { kind: 'react', component: NavAside },
     }),
     defineView({
         id: 'chat',
@@ -150,10 +171,10 @@ export const roomViews = [
         render: { kind: 'react', component: ChatBody },
     }),
     defineView({
-        id: 'room-info',
-        title: '房间信息',
+        id: 'aside',
+        title: '任务 / 信息',
         placement: { room: { area: 'right', primary: true } },
-        render: { kind: 'react', component: RoomInfo },
+        render: { kind: 'react', component: RoomAside },
     }),
     defineView({
         id: 'lab-notes',
