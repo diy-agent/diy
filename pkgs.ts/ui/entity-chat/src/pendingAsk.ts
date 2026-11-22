@@ -28,3 +28,37 @@ export function mergePendingAsks(
     else delete merged[liveRoomId];
     return merged;
 }
+
+/**
+ * `/rooms` 投影里那句 tooltip：`?` 只说几个，这里还要说**问的是什么**
+ * （用户报的「进房间不知道是哪个提问」就是这一步缺的）。
+ *
+ * 抽成纯函数是为了测得动：题干来自服务端投影 / 会话流两处，文案却必须一致。
+ */
+export function pendingAskHintOf(count: number, titles: readonly string[], limit = 28): string {
+    const head = `${count} 个提问等你回答`;
+    if (titles.length === 0) return head;
+    const shown = titles.map((title) => `「${truncateTitle(title, limit)}」`).join('');
+    return `${head}：${shown}`;
+}
+
+/** tooltip 里一句题干最多这么长：再长就截断（完整题干在房间里的卡片上） */
+export function truncateTitle(title: string, limit = 28): string {
+    const text = title.trim();
+    return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+/**
+ * 待答条上的一枚 chip：一题就报题干，多题报首句 + `+N`（整批的题目放在 title 里）。
+ */
+export function askChipOf(questions: readonly { question: string }[], limit = 24): string {
+    const first = questions[0];
+    const head = truncateTitle(first?.question ?? '提问', limit);
+    const rest = questions.length - 1;
+    return rest > 0 ? `${head} +${rest}` : head;
+}
+
+/** 待答条 chip 的 tooltip：整批题目一行一条 */
+export function askChipTitleOf(questions: readonly { question: string }[]): string {
+    return [`还有 ${questions.length} 题等你回答`, ...questions.map((question) => `· ${question.question}`)].join('\n');
+}

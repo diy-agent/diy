@@ -15,6 +15,14 @@
 //
 // 与"审批"的区别：这里问的是**决策**（选哪个方案 / 填几个字段），不是"允许不允许"。
 // 放在正文里问容易被大段输出淹掉，所以必须是置顶的选项 / 表单。
+//
+// **一张卡能活多久**（2026-11-22）：到期点不是时间，而是**它所依赖的世界状态换代** ——
+// 提问的成员开启新的一轮（`expireFor`，由 session 的 turn.start 触发）。那时它已经读到新
+// 消息、可能已经重新提问，答案迟到只会把它拽回一个不存在的状态（答案走 say → 又开一轮）。
+// 推论：**每个成员同时最多一张未结**（同一轮里再问一次 = 取代上一张），房间层面仍可以有 N 张
+//（N 个成员各一张）—— 多 bot 会议本来就该有几个人在等你回话。
+// 过期不是"环境没了"：卡片要留痕标「已过期」，并 notifyOwner（它还在原地，没有 tool call
+// 能回填，不告诉它就永远停在「我问了、等回答」）。
 
 import type { AnsweredAsk, AskAnswer, AskField, AskOption, AskQuestion, AskRequest } from './types';
 
@@ -56,10 +64,16 @@ export type AskInput =
       }
     | (AskQuestionInput & { toolCallId?: string });
 
-/** 一次提问的结局：被回答，或被取消（容器关闭 / 超时 / 被新提问挤掉） */
+/** 一次提问的结局：被回答，或被取消（容器关闭 / 超时 / 被新提问挤掉 / 过期） */
 export interface AskResult {
     answer?: AskAnswer;
     cancelled?: boolean;
+    /**
+     * 过期（`cancelled` 的一种）：不是环境没了，而是**它依赖的状态翻篇了** ——
+     * 提问者开了新一轮（`expireFor`），或同一个人又提了一次问（`request` 里的取代）。
+     * 界面上要点明（「已过期：它已经继续工作了」），不能混成一句「已失效」。
+     */
+    expired?: boolean;
     reason?: string;
     /**
      * 被取消时是否要**告诉提问的成员**这张卡作废了。
@@ -76,7 +90,7 @@ export interface AskResult {
 /** 从持久化恢复的一问：pending 或已有结局（见 AskGate.restore） */
 export interface RestoredAsk {
     request: AskRequest;
-    state: 'pending' | 'answered' | 'cancelled';
+    state: 'pending' | 'answered' | 'cancelled' | 'expired';
     answer?: AskAnswer;
     reason?: string;
     /** 提问时刻 */
@@ -194,7 +208,13 @@ export class AskGate {
     /** 已收尾的提问保留条数 */
     private static readonly KEEP = 50;
 
-    /** 同时待回答的上限（见 `request` 里的淘汰逻辑） */
+    /**
+     * 同时待回答的**房间级安全网**（见 `request` 里的淘汰逻辑）。
+     *
+     * 真正管住数量的不是它，而是「每个成员一张 + 提问者开新轮就过期」这条寿命规则：
+     * 正常房间里到不了 20。留着是因为 `owner` 可以缺省（直接 new 一个 gate 的调用方、
+     * 将来别的容器），那种卡片没有寿命规则覆盖。
+     */
     private static readonly MAX_PENDING = 20;
 
     constructor(private readonly deps: AskGateDeps) {}
@@ -223,7 +243,21 @@ export class AskGate {
             at,
         };
 
-        // 同时待回答的上限：全 async 之后模型能连着问，不封顶就是卡片无限堆、
+        // 每个成员同时最多一张未结：同一个成员又提了一次问 ⇒ 上一张已被取代。
+        // 这不是"丢新还是丢旧"的取舍：它自己的新提问就说明上一批决策已经不重要了。
+        if (owner !== undefined) {
+            for (const askId of Array.from(this.pending.keys())) {
+                if (this.pending.get(askId)?.owner !== owner) continue;
+                this.settle(askId, {
+                    cancelled: true,
+                    expired: true,
+                    reason: '同一个成员又提了一次问，上一张已过期',
+                    notifyOwner: true,
+                });
+            }
+        }
+
+        // 房间级安全网（见 MAX_PENDING）：全 async 之后模型能连着问，不封顶就是卡片无限堆、
         // 内存只增不减（以前阻塞时代最多同时挂一个，所以没有这个问题）。
         // 满了就作废**最旧**的一条并留痕 —— 新的提问仍然要能显示，
         // 静默丢新的会让模型以为问了、界面却没有。
@@ -301,6 +335,26 @@ export class AskGate {
         for (const askId of ids) this.settle(askId, { cancelled: true, reason });
     }
 
+    /**
+     * 让某个成员的未结提问**过期**：不是"环境没了"，是"它依赖的世界状态翻篇了"。
+     *
+     * 触发点只有一个：**提问者开启新的一轮**（session 的 `turn.start` → 房间调这里）。
+     * 那一刻它已经读到新消息、可能已经重新提问，这张卡的答案迟到只会把它拽回去
+     * —— 答案走 `settleAsk` 的 say，而 say 一个空闲成员就是真的跑一整轮。
+     *
+     * 与 `cancelFor` 的分工：那条是成员走了（收件人已经没了，通知没意义）；
+     * 这条成员还在原地，而且**没有 tool call 能回填**，不通知就永远停在
+     * 「我问了、等回答」—— 所以 notifyOwner + 卡片留痕。
+     */
+    expireFor(owner: string, reason = '提问者已开启新一轮'): number {
+        let count = 0;
+        for (const askId of Array.from(this.pending.keys())) {
+            if (this.pending.get(askId)?.owner !== owner) continue;
+            if (this.settle(askId, { cancelled: true, expired: true, reason, notifyOwner: true })) count += 1;
+        }
+        return count;
+    }
+
     /** 只清某个成员的提问；返回清掉了几个 */
     cancelFor(owner: string, reason = '提问已失效'): number {
         let count = 0;
@@ -343,6 +397,7 @@ export class AskGate {
                 request: entry.request,
                 ...(entry.answer === undefined ? {} : { answer: entry.answer }),
                 ...(entry.state === 'cancelled' ? { cancelled: true } : {}),
+                ...(entry.state === 'expired' ? { cancelled: true, expired: true } : {}),
                 ...(entry.reason === undefined ? {} : { reason: entry.reason }),
                 at: entry.settledAt ?? entry.at,
             });
@@ -364,6 +419,7 @@ export class AskGate {
             request: entry.request,
             ...(result.answer === undefined ? {} : { answer: result.answer }),
             ...(result.cancelled === true ? { cancelled: true } : {}),
+            ...(result.expired === true ? { expired: true } : {}),
             ...(result.reason === undefined ? {} : { reason: result.reason }),
             at: this.deps.now?.() ?? Date.now(),
         });

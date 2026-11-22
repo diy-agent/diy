@@ -219,13 +219,27 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
 
         // 卡片挂着，但房间空闲 → 插话能正常开一轮。say 的 promise 在这一轮跑完后才 resolve。
         const repliesBefore = h.items().filter((item) => item.type === 'chat' && item.author?.role === 'bot').length;
+        const askId = h.room.pendingAskRequests()[0]!.askId;
         await h.room.say({ text: '先聊点别的', author: HUMAN });
         const repliesAfter = h.items().filter((item) => item.type === 'chat' && item.author?.role === 'bot').length;
         expect(repliesAfter).toBeGreaterThan(repliesBefore);
 
-        // 没被回答的提问依旧在，不会因为插话被默默废掉
-        expect(h.room.pendingAsks()).toBe(1);
-        expect(h.room.pendingAskRequests()[0]?.questions[0]?.question).toBe('选哪个？');
+        // 插话让它开了新的一轮 ⇒ 那张提问过期（寿命规则见 ask.ts 头部：到提问者开新轮为止）。
+        // 2026-11-22 裁：以前这里断言「插话不会废掉提问」，但答案迟到会把它拽回一个不存在的状态
+        //（答案走 say，等于又开一轮）。代价是不得不重新问一次，所以必须**点明**：
+        expect(h.room.pendingAsks()).toBe(0);
+        // 卡片留痕（不是无声消失），且说明是"过期"不是"作废"
+        const settled = h.events.filter((event) => event.kind === 'ask.answered' && event.askId === askId);
+        expect(settled[0]).toMatchObject({ cancelled: true, expired: true });
+        expect(String(settled[0]?.reason)).toContain('已开启新一轮');
+        // 它本人也得知道（ask 不阻塞、没有 tool call 能回填，不通知就永远停在「我问了、等回答」）
+        expect(
+            h.items().some(
+                (item) => item.type === 'chat' && item.author?.role === 'system' && item.data.text.includes('已经过期'),
+            ),
+        ).toBe(true);
+        // 过期的卡不能再答（否则会凭空冒出一条「回答提问」，而那一轮已经过去了）
+        expect(h.room.answerAsk(askId, { answers: [{ id: 'q1', values: ['a'] }] }).ok).toBe(false);
     });
 
     it('D4. 提问的成员已经不在房间：回答退给还在的成员，而不是静默丢掉', async () => {
@@ -285,32 +299,54 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         } as (input: RunOptions) => AsyncIterable<AgentEvent>;
     }
 
-    it('D6. 被新提问挤掉：提问的成员收到系统通知（不能静默作废）', async () => {
-        // 全 async 之后模型能连着问，撑到上限时最旧那条会被淘汰。
-        // 淘汰对用户是可见的（卡片变成「已失效」），对**模型**却是命门：ask 不阻塞、
+    it('D6. 同一成员再问一次：上一张过期（每成员只有一张未结），且必须通知本人', async () => {
+        // 2026-11-22 裁：每成员同时最多一张未结 —— 它自己的新提问就说明上一批决策已经不重要了。
+        // 取代对用户是可见的（卡片变成「已过期」），对**模型**却是命门：ask 不阻塞、
         // 没有 tool call 能回填，不通知它就永远停在「我问了、等回答」。
         const h = makeRoom({ cwd: '/tmp', run: askManyThenReply(21) });
         void h.room.say({ text: '一口气问完', author: HUMAN });
 
-        await waitFor(() => h.room.pendingAsks() === 20);
+        await waitFor(() => h.room.pendingAsks() === 1);
         // 通知是一条消息（投出去才会进对方的上下文）—— 等它落库
         const isNotice = (item: { type: string; author?: { role?: string } }): boolean =>
             item.type === 'chat' && item.author?.role === 'system';
         await waitFor(() => h.items().some((item) => isNotice(item)));
 
-        const notice = h.items().find((item) => isNotice(item));
-        // 说的是哪一问：模型得对得上自己问的那条
-        expect(notice?.data.text).toContain('Q0');
-        expect(notice?.data.text).toContain('已经作废');
+        const notices = h.items().filter(isNotice);
+        // 说的是哪一问：模型得对得上自己问的那条（每次取代一张通知一次，19 = 被 Q20 挤掉的最后那张）
+        expect(notices.some((item) => item.data.text.includes('Q19'))).toBe(true);
+        expect(notices.every((item) => item.data.text.includes('已经过期'))).toBe(true);
 
         // 通知 ≠ 叫醒：不进投递队列。走普通 say 会把空闲成员**真的拉起一轮**，
         // 只为读一句「不用再等」（费钱 + 多一条无意义回复，还可能让它再提问）。
-        expect(h.room.deliveries().find((entry) => entry.messageId === notice?.id)).toBeUndefined();
-        // 但要进上下文：模型下次真正被叫起来时得看到「那问作废了」
-        expect(JSON.stringify(h.room.contextOf(BOT_A.id) ?? [])).toContain('已经作废');
+        for (const item of notices) {
+            expect(h.room.deliveries().find((entry) => entry.messageId === item.id)).toBeUndefined();
+        }
+        // 但要进上下文：模型下次真正被叫起来时得看到「那问过期了」
+        expect(JSON.stringify(h.room.contextOf(BOT_A.id) ?? [])).toContain('已经过期');
 
-        // 新的那几张照旧挂着（淘汰最旧、不是丢最新）
-        expect(h.room.pendingAskRequests().some((request) => request.questions[0]?.question === 'Q20')).toBe(true);
+        // 只留最后一张（取代最旧、不是丢最新）
+        expect(h.room.pendingAskRequests().map((request) => request.questions[0]?.question)).toEqual(['Q20']);
+    });
+
+    it('D6b. 过期的提问落库：重启后卡片还在，且说的是「已过期」不是「已失效」', async () => {
+        // 过期不是"这张卡从没存在过"：用户回头要能看到"当时它问了我什么、为什么没答成"。
+        const h = makeRoom({ cwd: '/tmp', run: askOnceThenReply() });
+        void h.room.say({ text: '动手吧', author: HUMAN });
+        await waitFor(() => h.room.pendingAsks() === 1);
+        await waitFor(() => !h.room.busy());
+        const askId = h.room.pendingAskRequests()[0]!.askId;
+
+        // 插一句话让它开新一轮 → 那张提问过期
+        await h.room.say({ text: '先别管那个', author: HUMAN });
+        await waitFor(() => h.room.pendingAsks() === 0);
+        await waitFor(() => !h.room.busy());
+
+        const restarted = h.rebuild();
+        expect(restarted.room.pendingAsks()).toBe(0);
+        const card = restarted.room.answeredAskRequests().find((entry) => entry.request.askId === askId);
+        expect(card).toMatchObject({ cancelled: true, expired: true });
+        expect(String(card?.reason)).toContain('已开启新一轮');
     });
 
     it('D7. 撤回一问：卡片失效、计数减一，且不触发任何运行', async () => {
@@ -366,9 +402,10 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         expect(h.store.listDrafts(h.spec.id)).toEqual([]);
     });
 
-    it('D8. 跨成员淘汰：被挤掉的那位空闲时不会被叫起来跑一轮', async () => {
-        // B 先问一个→空闲；A 随后连问 21 个，把 B 那条挤出上限。
-        // 通知必须只进 B 的上下文，不能把它拉起一轮（实测旧实现多出 bot:b#2）。
+    it('D8. 跨成员不互相挤：A 连问 21 个只塌成一张，B 那张照旧挂着', async () => {
+        // 以前的担心是「A 问到上限会把 B 挤出局，通知它时把它拉起一轮（旧实现多出 bot:b#2）」。
+        // 每成员一张之后这条路走不通了：A 自己塌成一张，B 根本不受影响 —— 这比"通知不叫醒"
+        // 更根治（多 bot 开会时，别人的提问不该被我的数量挤掉）。
         const runs: string[] = [];
         const seen = new Map<string, number>();
         const script = async function* (input: RunOptions): AsyncIterable<AgentEvent> {
@@ -405,17 +442,28 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         void h.room.say({ text: '你先问', author: HUMAN, recipients: [BOT_B.id] });
         await waitFor(() => h.room.pendingAsks() === 1);
         await waitFor(() => !h.room.busy());
+        const bAskId = h.room.pendingAskRequests()[0]!.askId;
 
-        // A 连问 21 个，把 B 那条挤掉
+        // A 连问 21 个：自己塌成一张，B 那张动都不动
         void h.room.say({ text: '我一口气问完', author: HUMAN, recipients: [BOT_A.id] });
-        await waitFor(() => h.room.pendingAsks() === 20);
+        await waitFor(() => h.room.pendingAsks() === 2);
         await waitFor(() => h.items().some((item) => item.type === 'chat' && item.author?.role === 'system'));
         // 给潜在的「叫醒」一点时间跑出来（旧实现在这里会多出 bot:b#2）
         await new Promise((resolve) => setTimeout(resolve, 300));
 
         expect(runs).toEqual([`${BOT_B.id}#1`, `${BOT_A.id}#1`]);
-        // B 仍被告知（进上下文），只是没被叫醒
-        expect(JSON.stringify(h.room.contextOf(BOT_B.id) ?? [])).toContain('已经作废');
+        // 两张各归各的：A 只留最后一张，B 的照旧
+        expect(h.room.pendingAskRequests().map((request) => [request.owner, request.questions[0]?.question])).toEqual([
+            [BOT_B.id, `${BOT_B.id}-Q0`],
+            [BOT_A.id, `${BOT_A.id}-Q20`],
+        ]);
+        // B 那张从头到尾没被动过：过期事件里没有任何一条是它的
+        //（注：过期留痕走的是房间公共日志，所以 B 的上下文里**会**读到 A 那批的通知 ——
+        //  那是本房间发生的事实，安静通知只是不叫醒人，不是私聊）
+        const expiredIds = h.events
+            .filter((event) => event.kind === 'ask.answered' && event.expired === true)
+            .map((event) => (event.kind === 'ask.answered' ? event.askId : ''));
+        expect(expiredIds).not.toContain(bAskId);
     });
 
     it('D5. 成员被移出房间：他问过、还没答的提问跟着失效（不能回答一张永远送不到的卡片）', async () => {

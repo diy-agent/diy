@@ -12,6 +12,7 @@ import {
 } from './components/Dialogs';
 import { EditableName, StatusChip } from './components/RoomName';
 import { SpeakingBar } from './components/SpeakingBar';
+import { PendingAskStrip } from './components/PendingAskStrip';
 import { ContextPanel } from './components/ContextPanel';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
@@ -256,6 +257,8 @@ export function App() {
                             />
                             <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
                             <SpeakingBar roomId={room.id} />
+                            {/* 待答条在壳层：房间的事实，三个表面共用（跳转按 surfaceId 找各自的 jumper） */}
+                            <PendingAskStrip roomId={room.id} surfaceId={surfaceId} />
                             <SurfaceViews surfaceId={surfaceId} targetId={room.id} />
                         </>
                     )}

@@ -134,9 +134,11 @@ describe('AskGate', () => {
     it('cancel(askId)：撤回一问，只影响那一条，且要告诉提问的成员', () => {
         // 「撤掉这一问」是用户对活着的一张卡的处置：提问的成员还在原地看（ask 不阻塞、
         // 没有 tool call 能回填），所以必须 notifyOwner —— 跟超时／容器关闭不一样。
+        //
+        // 第二问换了成员：同一个成员现在同时只能有一张未结（见 expireFor / request 里的取代）。
         const h = makeGate();
         const first = h.gate.request({ question: '不想回答的这个' }, 'bot:a');
-        const second = h.gate.request({ question: '还想回答的那个' }, 'bot:a');
+        const second = h.gate.request({ question: '还想回答的那个' }, 'bot:b');
 
         expect(h.gate.cancel(first.askId)).toBe(true);
         expect(h.gate.pendingCount()).toBe(1);
@@ -164,6 +166,57 @@ describe('AskGate', () => {
 
         expect(h.gate.answer(other.askId, { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({ ok: true });
         expect(h.settled.map((entry) => entry.owner)).toEqual(['bot:a', 'bot:b']);
+    });
+
+    it('同一个成员再提一次问：上一张过期（每成员只有一张未结）', () => {
+        // 它自己的新提问就说明上一批决策已经不重要了 —— 这不是"丢新还是丢旧"的取舍。
+        const h = makeGate();
+        const first = h.gate.request({ question: '先问这个' }, 'bot:a');
+        const second = h.gate.request({ question: '再问那个' }, 'bot:a');
+
+        expect(h.gate.pendingCount()).toBe(1);
+        expect(h.gate.list().map((request) => request.questions[0]?.question)).toEqual(['再问那个']);
+        expect(h.settled).toEqual([
+            {
+                request: first,
+                result: {
+                    cancelled: true,
+                    expired: true,
+                    reason: '同一个成员又提了一次问，上一张已过期',
+                    notifyOwner: true,
+                },
+                owner: 'bot:a',
+            },
+        ]);
+        // 过期的不能答（否则会凭空冒出一条「回答提问」，而它所依赖的那一轮已经过去了）
+        expect(h.gate.answer(first.askId, { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({
+            ok: false,
+            code: 'no-such-ask',
+        });
+        expect(h.gate.answer(second.askId, { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({ ok: true });
+    });
+
+    it('expireFor：提问者开了新一轮 → 它的未结过期（留痕 + 通知），别人的不动', () => {
+        // 寿命规则见 ask.ts 头部：未结提问活到"它所依赖的世界状态换代"为止。
+        const h = makeGate();
+        const mine = h.gate.request({ question: '我的' }, 'bot:a');
+        const other = h.gate.request({ question: '别人的' }, 'bot:b');
+
+        expect(h.gate.expireFor('bot:a', 'diy 已开启新一轮')).toBe(1);
+        expect(h.gate.pendingCount()).toBe(1);
+        expect(h.gate.list().map((request) => request.questions[0]?.question)).toEqual(['别人的']);
+        expect(h.settled).toEqual([
+            {
+                request: mine,
+                result: { cancelled: true, expired: true, reason: 'diy 已开启新一轮', notifyOwner: true },
+                owner: 'bot:a',
+            },
+        ]);
+        // 已收尾的列表带 expired 标记：界面据此说「提问者没等这个答案，已经继续工作了」
+        expect(h.gate.answeredList()[0]).toMatchObject({ cancelled: true, expired: true });
+        // 没有未结的人再过期一次什么都没发生
+        expect(h.gate.expireFor('bot:a')).toBe(0);
+        expect(h.gate.answer(other.askId, { answers: [{ id: 'q1', values: ['x'] }] })).toEqual({ ok: true });
     });
 
     it('待回答有上限：满了就作废最旧的那条（新的仍要能显示）', () => {

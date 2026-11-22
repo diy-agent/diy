@@ -109,6 +109,7 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
                               request,
                               ...(event.answer === undefined ? {} : { answer: event.answer }),
                               ...(event.cancelled === true ? { cancelled: true } : {}),
+                              ...(event.expired === true ? { expired: true } : {}),
                               ...(event.reason === undefined ? {} : { reason: event.reason }),
                               at: Date.now(),
                           },

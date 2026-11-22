@@ -14,6 +14,7 @@ import { buildTimeline, type TimelineEntry, type TimelinePart } from '@diy-agent
 
 import { AskCard } from '../../components/AskCard';
 import { BotAvatar } from '../../components/BotAvatar';
+import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
 import { ErrorBar } from '../../components/ErrorBar';
 import { Markdown } from '../../components/Markdown';
 import { EndFooterLine } from '../../components/EndFooterLine';
@@ -195,12 +196,13 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                                 key={`a${index}`}
                                 roomId={roomId}
                                 request={part.request}
-                                {...(part.answer === undefined && part.cancelled !== true
+                                {...(part.answer === undefined && part.cancelled !== true && part.expired !== true
                                     ? {}
                                     : {
                                           resolved: {
                                               ...(part.answer === undefined ? {} : { answer: part.answer }),
                                               ...(part.cancelled === true ? { cancelled: true } : {}),
+                                              ...(part.expired === true ? { expired: true } : {}),
                                               ...(part.reason === undefined ? {} : { reason: part.reason }),
                                           },
                                       })}
@@ -312,6 +314,18 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
     );
 
     const windowed = useWindowed(entries);
+
+    /**
+     * 壳层待答条的跳转入口：这套表面自己也窗口化（只渲染最近 N 条 + 滑到顶部补一窗），
+     * 所以先 reveal 把那条纳入窗口，再等它真渲染出来闪一下。
+     */
+    React.useEffect(() => {
+        registerAskJumper('shadcn', (askId) => {
+            windowed.reveal((entry) => entry.parts.some((part) => part.kind === 'ask' && part.request.askId === askId));
+            flashAskCardWhenRendered(askId);
+        });
+        return () => registerAskJumper('shadcn', undefined);
+    }, [windowed]);
 
     // 贴底跟随：只有"本来就在底部"时才自动滚，用户上翻就不打扰
     const scrollRef = React.useRef<HTMLDivElement | null>(null);

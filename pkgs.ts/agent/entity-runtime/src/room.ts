@@ -402,7 +402,7 @@ export class RoomActor {
             entityId: this.id,
             at: request.at,
             request,
-            state: result.answer === undefined ? 'cancelled' : 'answered',
+            state: result.answer === undefined ? (result.expired === true ? 'expired' : 'cancelled') : 'answered',
             ...(result.answer === undefined ? {} : { answer: result.answer }),
             ...(result.reason === undefined ? {} : { reason: result.reason }),
             settledAt: Date.now(),
@@ -418,13 +418,14 @@ export class RoomActor {
             askId: request.askId,
             ...(result.answer === undefined ? {} : { answer: result.answer }),
             ...(result.cancelled === true ? { cancelled: true } : {}),
+            ...(result.expired === true ? { expired: true } : {}),
             ...(result.reason === undefined ? {} : { reason: result.reason }),
         });
         // 取消（容器关闭 / 成员被移除 / 超时）：卡片消失就够了，不往时间线上写痕
         if (result.answer === undefined) {
             // 例外：被新提问挤掉的那条。提问的成员还在原地看着，而 ask 不阻塞、
             // 没有 tool call 能回填 —— 不告诉它，它会永远停在「我问了、等回答」。
-            if (result.notifyOwner === true) this.notifyAskDropped(request, result.reason, owner);
+            if (result.notifyOwner === true) this.notifyAskDropped(request, result, owner);
             return;
         }
 
@@ -460,15 +461,19 @@ export class RoomActor {
      * 作者是系统而不是 this.human：这条不是用户说的话，冒充用户会让模型以为
      * 「我问了、他自己把话题撤了」。transcript 里渲染成 `[系统] …`，跟真回答区分得开。
      */
-    private notifyAskDropped(request: AskRequest, reason: string | undefined, owner?: string): void {
+    private notifyAskDropped(request: AskRequest, result: AskResult, owner?: string): void {
         const target = owner === undefined ? undefined : this.member(owner);
         // 成员已经不在房间了：没人需要知道（它那一份 pending 在移除时已被 cancelFor 清掉）
         if (target === undefined) return;
+        const reason = result.reason;
         const suffix = reason === undefined || reason === '' ? '' : `：${reason}`;
+        // 「过期」和「作废」对模型是两件事：作废=这问不算数了；过期=它自己已经往前走，
+        // 需要的话重新提问（模型据此决定要不要再问，别一味重试一张早就过时的卡）。
+        const headline = result.expired === true ? '已经过期' : '已经作废';
         // 多题时把题目都列出来：只说「提问已作废」，它不知道是哪一批（同一个成员可能问过好几张）
         const titles = request.questions.map((question) => `「${question.question}」`).join('');
         void this.say({
-            text: `提问${titles}已经作废${suffix}。不用再等这个回答；还需要的话重新提问。`,
+            text: `提问${titles}${headline}${suffix}。不用再等这个回答；还需要的话重新提问。`,
             author: RoomActor.SYSTEM,
             quiet: true,
         }).catch((error: unknown) => {
@@ -766,6 +771,12 @@ export class RoomActor {
                 this.deps.emit({ kind: 'delivery', delivery });
                 return;
             }
+            case 'turn.start':
+                // 这个成员开启了新的一轮：它已经读到新消息、可能已经重新提问 —— 上一张还没答的
+                // 提问依赖的世界状态没了（寿命规则见 ask.ts 头部）。过期要点明、要通知它本人，
+                // 否则它永远停在「我问了、等回答」（ask 不阻塞，没有 tool call 能回填）。
+                this.gate.expireFor(bot.id, `${bot.name} 已开启新一轮`);
+                return;
             case 'turn.end':
                 // 「这一轮是怎么停的」广播给客户端（消息页脚用它）。放在落库/发结论之前：
                 // 页脚比快照早到一点没影响，但顺序上它属于这一轮自己的事实。

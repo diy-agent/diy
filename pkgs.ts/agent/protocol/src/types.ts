@@ -213,6 +213,12 @@ export interface AnsweredAsk {
     request: AskRequest;
     answer?: AskAnswer;
     cancelled?: boolean;
+    /**
+     * 过期（`cancelled` 的一种）：不是环境没了，而是**它依赖的状态翻篇了** ——
+     * 提问者已经开了新一轮，或同一个人又提了一次问。界面上必须点明这件事
+     *（「已过期：它已经继续工作了」），不能和其它失效混成一句「已失效」。
+     */
+    expired?: boolean;
     reason?: string;
     /** 收尾时刻（毫秒） */
     at: number;
@@ -225,8 +231,15 @@ export type StreamEvent =
     | { kind: 'error'; message: string }
     /** 模型在等用户回答 */
     | { kind: 'ask'; request: AskRequest }
-    /** 已回答（或被取消 / 超时） */
-    | { kind: 'ask.answered'; askId: string; answer?: AskAnswer; cancelled?: boolean; reason?: string }
+    /** 已回答（或被取消 / 超时 / 过期） */
+    | {
+          kind: 'ask.answered';
+          askId: string;
+          answer?: AskAnswer;
+          cancelled?: boolean;
+          expired?: boolean;
+          reason?: string;
+      }
     /** 当前正在说话的成员（空数组 = 都停了）。谁是"说话中"由房间说了算，不由 UI 猜 */
     | { kind: 'running'; botIds: string[] }
     /**

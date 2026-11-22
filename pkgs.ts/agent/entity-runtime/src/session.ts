@@ -64,6 +64,13 @@ export type SessionEvent =
     | { type: 'item'; item: Item }
     /** 投递状态变化 */
     | { type: 'delivery'; messageId: string; state: DeliveryState }
+    /**
+     * 一轮**开始**（房间据此让这个成员的旧提问过期）。
+     *
+     * 为什么不复用 `busy: true`：一次 busy 期间可以连着跑好几轮（队列分几批），
+     * 而"新的一轮"才是世界状态换代的时刻 —— 见 ask.ts 头部的寿命规则。
+     */
+    | { type: 'turn.start'; turn: Turn }
     /** 一轮结束（房间据此写结论） */
     | { type: 'turn.end'; result: TurnResult }
     /** 真压了一次 */
@@ -369,6 +376,8 @@ export class BotSession {
     private async runTurn(items: QueueItem[]): Promise<void> {
         const turn = items[0]?.turn ?? this.deps.allocateTurn();
         this.turnNow = turn.turn;
+        // 先广播"这一轮开始了"：房间据此把上一个回合留下的未答提问判过期（ask.ts 的寿命规则）
+        this.emit({ type: 'turn.start', turn });
         const projector = new Projector(this.authorOf(), turn.turn);
         const abort = new AbortController();
         this.abort = abort;
