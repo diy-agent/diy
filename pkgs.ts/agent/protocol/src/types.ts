@@ -30,8 +30,16 @@ export interface Room {
     id: string;
     /** 开放字符串，不做枚举 */
     type: string;
-    name: string;
-    /** 类型特有数据：project/task → { dir, projectId? }；stock → { symbol } */
+    /**
+     * 类型特有数据，**容器的名字也在这里**（2026-11-22 裁）：
+     *   project → { name, dir }
+     *   task    → { title, number, status, desc, body, dir, projectId? }
+     *   stock   → { symbol }
+     *
+     * 为什么 Room 不再有 `name`：房间是**虚拟概念**，本身没有身份 —— 它的显示名
+     * 来自具体容器（任务标题 / 项目名 / 助手 bot 名）。挂一个通用 `name` 等于把
+     * 同一个名字存两份（容器一份、房间一份），还得随时对齐。谁的名字谁持有。
+     */
     data: Record<string, unknown>;
     /** 成员：身份 + 本房间的覆盖 */
     members: RoomMember[];

@@ -15,6 +15,8 @@ import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import {
     bootstrapStore,
     RoomDialogsProvider,
+    roomTitle,
+    useBots,
     useLoaded,
     useRoomDialogs,
     useSelectedRoom,
@@ -72,6 +74,8 @@ function AreaBar({ api }: { api: PageApi }) {
 function WorkbenchHost() {
     const selected = useSelectedRoom();
     const loaded = useLoaded();
+    /** 页标题要容器名；通用容器的名字只能从主 bot 取，所以这里也要 bots */
+    const bots = useBots();
     // 弹窗与整页 App 共用一套：建项目 / 建任务 / 删房间 / 设置 / 换模型
     const dialogs = useRoomDialogs();
     /** 区域控制面（`onReady` 交出来，给页外的 AreaBar 用） */
@@ -80,8 +84,8 @@ function WorkbenchHost() {
     // 页实例身份 = (页类型, 房间 id)。只放**身份**，不放「展开的文件夹 / 当前筛选」这类会变的东西：
     // 那些一变页实例就换了，用户拖过的尺寸会被重编。
     const scope = useMemo<Scope | undefined>(
-        () => (selected ? { kind: 'room', id: selected.id, title: selected.name } : undefined),
-        [selected?.id, selected?.name],
+        () => (selected ? { kind: 'room', id: selected.id, title: roomTitle(selected, bots) } : undefined),
+        [selected?.id, selected === undefined ? undefined : roomTitle(selected, bots)],
     );
 
     if (!scope) {

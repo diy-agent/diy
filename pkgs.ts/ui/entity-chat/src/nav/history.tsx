@@ -12,6 +12,7 @@ import {
     formatClosedAgo,
     formatClosedAtAbsolute,
     formatCompactAgo,
+    roomTitle,
     type Room,
 } from '../model';
 import type { NavContext, NavSource } from '../nav';
@@ -69,10 +70,10 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
                     event.preventDefault();
                     actions.select(room.id);
                 }}
-                title={`${projectName === undefined ? '' : `${projectName} / `}${room.name}（点状态图标可重新打开）`}
+                title={`${projectName === undefined ? '' : `${projectName} / `}${roomTitle(room)}（点状态图标可重新打开）`}
                 className="min-w-0 flex-1 truncate text-left"
             >
-                {room.name}
+                {roomTitle(room)}
             </a>
             {projectName !== undefined && (
                 <span

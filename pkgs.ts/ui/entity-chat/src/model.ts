@@ -1,6 +1,6 @@
 // model.ts —— 类型从 chat-core 来；这里只留 UI 用的常量与再导出（避免两处定义漂移）。
 
-import type { Room } from '@diy-agent/chat-core';
+import { primaryBotOf, type Bot, type Room } from '@diy-agent/chat-core';
 
 export type { Author, Bot, Delivery, Item, Room, TurnEndReason } from '@diy-agent/chat-core';
 export { botsOf, dirOf, primaryBotOf } from '@diy-agent/chat-core';
@@ -12,6 +12,30 @@ export function roomTypeLabel(type: string): string {
     if (type === 'project') return '项目';
     if (type === 'task') return '任务';
     return type;
+}
+
+/**
+ * 容器的显示名 —— **名字跟着容器走，Room 自己没有 name**（2026-11-22 裁）。
+ *
+ * 房间是虚拟概念（一个 id + 成员 + 模型），本身没有身份；它的显示名来自具体容器：
+ *   · task    → `data.title`（任务标题，编号另显示）
+ *   · project → `data.name`（项目名）
+ *   · 其它    → 主成员 bot 的名字（「助手房间」的名字就是助手名），再退 id
+ *
+ * 传了 `bots` 才能退到 bot 名：通用容器（stock / 日历…）的 data 里没有名字字段，
+ * 那时「这个房间是谁的」就是唯一有意义的称呼。
+ */
+export function roomTitle(room: Room, bots?: Record<string, Bot>): string {
+    const text = (key: string): string => {
+        const value = room.data[key];
+        return typeof value === 'string' ? value.trim() : '';
+    };
+    // title / name 都兜一下：任务用 title、项目用 name，插件容器可能只给了其中一个；
+    // `desc` 是合并前老任务的一句话说描述 —— 老房间没 title 时它就是标题
+    const own = text('title') || text('name') || text('desc');
+    if (own !== '') return own;
+    const primary = bots === undefined ? undefined : primaryBotOf(room, bots);
+    return primary?.name ?? room.id;
 }
 
 /**

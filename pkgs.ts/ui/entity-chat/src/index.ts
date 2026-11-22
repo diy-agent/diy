@@ -11,6 +11,7 @@
 
 export { App as EntityChatApp } from './App';
 export type { Bot, Item, Room } from './model';
+export { roomTitle } from './model';
 export type { ModelInfo, ModelKey, Provider } from './models';
 
 // ── 导航 ──────────────────────────────────────────────────────

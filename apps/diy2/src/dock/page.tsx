@@ -92,8 +92,6 @@ function RoomInfo({ room }: { room: Room }) {
                 <dd>{room.id}</dd>
                 <dt>type</dt>
                 <dd>{room.type}</dd>
-                <dt>name</dt>
-                <dd>{room.name}</dd>
             </dl>
             <div className="dock-info-title">data</div>
             {data.length === 0 ? (
@@ -141,8 +139,8 @@ function AssetsAside() {
             <div className="dock-info-title">会话资产</div>
             <div className="dock-empty">（暂无）</div>
             <p className="dock-hint">
-                这一栏留给<b>会话生成的资产文件</b>：代码片段、报告、截图、导出件…
-                数据源还没接（agent 侧尚无「资产」协议），位置先定。
+                这一栏留给<b>会话生成的资产文件</b>：代码片段、报告、截图、导出件… 数据源还没接（agent
+                侧尚无「资产」协议），位置先定。
             </p>
         </div>
     );

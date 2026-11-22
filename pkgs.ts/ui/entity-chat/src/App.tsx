@@ -8,7 +8,7 @@ import { PendingAskStrip } from './components/PendingAskStrip';
 import { ContextPanel } from './components/ContextPanel';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
-import { botsOf, dirOf, primaryBotOf, roomTypeLabel, type Room } from './model';
+import { botsOf, dirOf, primaryBotOf, roomTitle, roomTypeLabel, type Room } from './model';
 import { modelLabel } from './models';
 import { actions, useBots, useError, useLoaded, useRooms, useSelectedRoom } from './store';
 import { useRoomDialogs } from './useRoomDialogs';
@@ -68,7 +68,7 @@ const RoomHeader = React.memo(function RoomHeader({
                     {roomTypeLabel(room.type)}
                 </span>
                 <EditableName
-                    value={room.name}
+                    value={roomTitle(room)}
                     mode="click"
                     // 头部大标题：点了就改。侧栏收起来时这是唯一能看见名字的地方
                     onCommit={(next) => void actions.renameRoom(room.id, next)}

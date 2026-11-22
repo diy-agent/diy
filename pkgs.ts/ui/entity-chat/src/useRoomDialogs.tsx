@@ -21,7 +21,7 @@ import {
     ModelDialog,
     SettingsDialog,
 } from './components/Dialogs';
-import type { Room } from './model';
+import { roomTitle, type Room } from './model';
 import { actions, useDefaultModelKey, useRooms, useSelectedRoom } from './store';
 
 type Dialog =
@@ -83,12 +83,8 @@ export function useRoomDialogs(): RoomDialogs {
                         rooms.filter((item) => item.data['projectId'] === dialog.projectId).length + 1
                     }`}
                     onClose={() => setDialog(null)}
-                    // 不 void：对话框要等"建成了"才清描述草稿（失败留在对话框里）
-                    onSubmit={(input) =>
-                        actions.createTask(dialog.projectId, input.name, {
-                            ...(input.desc === undefined ? {} : { desc: input.desc }),
-                        })
-                    }
+                    // 不 void：对话框要等"建成了"才关（失败留在对话框里重试）
+                    onSubmit={(input) => actions.createTask(dialog.projectId, input.name)}
                 />
             )}
             {dialog?.kind === 'delete' && deleteTarget !== undefined && (
@@ -116,7 +112,7 @@ export function useRoomDialogs(): RoomDialogs {
             )}
             {modelTarget !== null && (
                 <ModelDialog
-                    title={`「${modelRoom?.name ?? ''}」的模型`}
+                    title={`「${modelRoom === null || modelRoom === undefined ? '' : roomTitle(modelRoom)}」的模型`}
                     value={modelRoom?.modelKey ?? defaultModelKey}
                     onChange={(key) => {
                         if (modelTarget !== null) actions.setRoomModel(modelTarget, key);

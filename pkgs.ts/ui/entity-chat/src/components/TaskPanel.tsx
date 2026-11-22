@@ -7,7 +7,7 @@
 // 相关任务是**平铺列表**（不画树）：关系只有 `related` / `blocks` / `duplicate`，
 // 反向由服务端算（`linksOf` 给出入边），所以这里不需要维护双向。
 
-import type { Room } from '@diy-agent/chat-core';
+import { roomTitle, type Room } from '../model';
 import { X } from 'lucide-react';
 import * as React from 'react';
 
@@ -25,7 +25,7 @@ function numberOf(room: Room): number | undefined {
 /** 任务在列表里的显示名：`#12 标题`（编号是给人用的句柄） */
 function taskLabel(room: Room): string {
     const number = numberOf(room);
-    return number === undefined ? room.name : `#${number} ${room.name}`;
+    return number === undefined ? roomTitle(room) : `#${number} ${roomTitle(room)}`;
 }
 
 interface JournalEntry {
@@ -61,12 +61,14 @@ function timeOf(at: number): string {
 export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }) {
     const rooms = useRooms();
     const project = rooms.find((item) => item.id === room.data['projectId']);
-    const savedDesc = textOf(room.data['desc']);
+    // 标题就是描述（2026-11-22 用户裁）：任务的短文本只有一个字段，不再分成
+    // 「标题 + 一句话描述」两段 —— 列表里看到的那句、展开后改的那句，是同一句。
+    const savedTitle = roomTitle(room);
     const savedBody = textOf(room.data['body']);
     const taskDir = textOf(room.data['taskDir']);
     const number = numberOf(room);
 
-    const [desc, setDesc] = React.useState(savedDesc);
+    const [title, setTitle] = React.useState(savedTitle);
     const [body, setBody] = React.useState(savedBody);
     const [saving, setSaving] = React.useState(false);
     const [note, setNote] = React.useState<string | null>(null);
@@ -75,14 +77,14 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
     const [target, setTarget] = React.useState('');
     const [kind, setKind] = React.useState<string>('related');
     const [linking, setLinking] = React.useState(false);
-    const dirty = desc !== savedDesc || body !== savedBody;
+    const dirty = title !== savedTitle || body !== savedBody;
 
     // 切到另一个任务，或保存后 refresh 换了 room 对象：跟随已保存值
     React.useEffect(() => {
-        setDesc(savedDesc);
+        setTitle(savedTitle);
         setBody(savedBody);
         setNote(null);
-    }, [room.id, savedDesc, savedBody]);
+    }, [room.id, savedTitle, savedBody]);
 
     // 日志：agent 用 journal 工具写，面板只读；轮询（和 ContextPanel 同思路，不新增事件类型）
     React.useEffect(() => {
@@ -119,12 +121,19 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
     }, [room.id, loadLinks]);
 
     const save = async (): Promise<void> => {
+        const nextTitle = title.trim();
+        // 空标题 = 这个容器在列表里认不出来了（房间按 id 认人，人按名字认房间）
+        if (nextTitle === '') {
+            setNote('标题不能为空');
+            return;
+        }
         if (!dirty || saving) return;
         setSaving(true);
         setNote(null);
         try {
             await actions.updateRoomData(room.id, {
-                desc: desc.trim() === '' ? null : desc,
+                // 名字跟着容器走：任务的名字在 data.title（老数据里那份 desc 也抬上来）
+                title: nextTitle,
                 body: body.trim() === '' ? null : body,
             });
             setNote('已保存');
@@ -177,7 +186,7 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
                 {number !== undefined && (
                     <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">#{number}</span>
                 )}
-                <span className="truncate text-[11px] text-muted-foreground">{room.name}</span>
+                <span className="truncate text-[11px] text-muted-foreground">{roomTitle(room)}</span>
                 <button
                     onClick={onClose}
                     title="收起"
@@ -189,14 +198,15 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
 
             <div className="flex-1 space-y-3 overflow-y-auto p-3">
                 <label className="block text-[11px] text-muted-foreground">
-                    描述（一句话：这个任务要做什么）
-                    <textarea
-                        value={desc}
-                        onChange={(event) => setDesc(event.target.value)}
-                        onKeyDown={onKeyDown}
-                        rows={3}
-                        placeholder="任务简报；会作为 task.body 的一部分投给 agent"
-                        className="mt-1 w-full resize-y rounded border bg-transparent p-2 text-[12px] text-foreground outline-none focus:border-ring"
+                    标题（一句话：这个任务要做什么）
+                    <input
+                        value={title}
+                        onChange={(event) => setTitle(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === 'Enter') void save();
+                        }}
+                        placeholder="任务名；侧栏与项目树显示的就是这一句"
+                        className="mt-1 w-full rounded border bg-transparent p-2 text-[12px] text-foreground outline-none focus:border-ring"
                     />
                 </label>
 
@@ -277,7 +287,7 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
 
                 <div className="space-y-1 text-[11px] text-muted-foreground">
                     <div>状态：{textOf(room.data['status']) || 'open'}</div>
-                    <div>项目：{project?.name ?? '—'}</div>
+                    <div>项目：{project === undefined ? '—' : roomTitle(project)}</div>
                     <div className="break-all" title={taskDir}>
                         任务目录：{taskDir || '—'}
                     </div>
