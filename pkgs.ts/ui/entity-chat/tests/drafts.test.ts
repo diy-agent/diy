@@ -20,18 +20,40 @@ function jsonResponse(body: unknown, status = 200): Response {
 /** 默认 GET /drafts 返回空；PUT/DELETE 返回 ok */
 function makeStore(handler?: (call: Call) => Response | Promise<Response>) {
     const calls: Call[] = [];
-    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
-        const call: Call = {
-            url: String(input),
-            method: init?.method ?? 'GET',
-            ...(typeof init?.body === 'string' ? { body: init.body } : {}),
-        };
+    const pathOf = (owner: string): string => {
+        const id = encodeURIComponent(owner);
+        return owner.startsWith('dlg:') ? `/api/drafts/${id}` : `/api/rooms/${id}/drafts`;
+    };
+    const run = async (call: Call): Promise<Response> => {
         calls.push(call);
         if (handler !== undefined) return handler(call);
         if (call.method === 'GET') return jsonResponse({ drafts: [] });
         return jsonResponse({ ok: true, updatedAt: 1 });
-    }) as typeof fetch;
-    const store = new DraftStore({ fetchImpl, debounceMs: 600, retryBaseMs: 1_000 });
+    };
+    const check = async (call: Call): Promise<unknown> => {
+        const response = await run(call);
+        if (!response.ok) throw new Error(`草稿保存失败：HTTP ${response.status}`);
+        return response.json();
+    };
+    const store = new DraftStore({ debounceMs: 600, retryBaseMs: 1_000 });
+    store.configure({
+        list: async (owner) =>
+            (await check({ url: pathOf(owner), method: 'GET' })) as {
+                drafts?: Array<{ field: string; value: unknown; updatedAt: number }>;
+            },
+        put: async (owner, field, value) => {
+            await check({
+                url: `${pathOf(owner)}/${encodeURIComponent(field)}`,
+                method: 'PUT',
+                body: JSON.stringify({ value }),
+            });
+            return { updatedAt: 1 };
+        },
+        remove: async (owner, field) => {
+            await check({ url: `${pathOf(owner)}/${encodeURIComponent(field)}`, method: 'DELETE' });
+            return {};
+        },
+    });
     return { store, calls };
 }
 
@@ -164,7 +186,10 @@ describe('DraftStore', () => {
 
     it('seed 的 hasDraft 给侧栏初始值；本端改过的 owner 不被后续 seed 覆盖', () => {
         const { store } = makeStore();
-        store.seed([{ id: 'proj:a', hasDraft: true }, { id: 'proj:b', hasDraft: false }]);
+        store.seed([
+            { id: 'proj:a', hasDraft: true },
+            { id: 'proj:b', hasDraft: false },
+        ]);
         expect(store.hasDraft('proj:a')).toBe(true);
         expect(store.hasDraft('proj:b')).toBe(false);
 
@@ -196,26 +221,6 @@ describe('DraftStore', () => {
         store.setText(dialogOwner('create-task', 'proj:diy'), 'desc', '写了一半');
         expect(store.hasDraft('proj:diy')).toBe(false);
         expect(store.hasDraft(dialogOwner('create-task', 'proj:diy'))).toBe(true);
-    });
-
-    it('浏览器里 fetch 的 this 必须是 window 或 undefined，否则 Illegal invocation', async () => {
-        vi.useFakeTimers();
-        // 模拟浏览器：fetch 只接受 this === window（这里用 globalThis 代替）或裸调时的 undefined，
-        // 当成别的对象的方法调就抛 Illegal invocation。store 无论是 bind 到 globalThis 还是裸调都过，
-        // 但少了这两下防护（store 直接 `this.doFetch(...)` 且没 bind）就会红。
-        const strictFetch = function (this: unknown, _input: RequestInfo | URL, init?: RequestInit) {
-            if (this !== undefined && this !== globalThis) {
-                throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
-            }
-            const method = init?.method ?? 'GET';
-            return Promise.resolve(method === 'GET' ? jsonResponse({ drafts: [] }) : jsonResponse({ ok: true }));
-        } as unknown as typeof fetch;
-        const store = new DraftStore({ fetchImpl: strictFetch, debounceMs: 600 });
-
-        store.setText('proj:a', 'composer', '一句话');
-        await vi.advanceTimersByTimeAsync(600);
-
-        expect(store.statusOf('proj:a')).toBe('saved');
     });
 
     it('空内容判定：空格 / 空对象 / 全空对象都不算草稿', () => {
