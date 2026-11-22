@@ -202,7 +202,10 @@ export function factsHandlers(deps?: FactsDeps): {
                 // byPath 跨 subject 共用：`brief rule,rule/dev` 里前者已含 `rule/dev.md`，
                 // 逐个 subject 各自去重会让同一 path 出两次（顺序 = subject 序 + 首次出现序）。
                 const byPath = new Map<string, ReturnType<typeof sectionsOf>[number]>();
-                for (const subject of input.subject.split(',').map((s) => s.trim()).filter((s) => s !== '')) {
+                for (const subject of input.subject
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter((s) => s !== '')) {
                     for (const item of sectionsOf(subject, maxChars)) {
                         if (!byPath.has(item.path)) byPath.set(item.path, item);
                     }

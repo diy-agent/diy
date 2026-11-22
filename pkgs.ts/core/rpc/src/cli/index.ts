@@ -842,3 +842,8 @@ export class CliApp<TRouter extends _Router | _AnyProcedureMeta> {
     this._print(lines.join('\n'));
   }
 }
+
+// ── 入口脚本共用的解析面（不进命令树也要同一套写法）──
+// `parseOptions`：裸 zod object 直接解析（服务端 / dev 入口读 argv，见 apps/diy2/src/cli/options.ts）；
+// `CliParseError`：调用方据此区分「用法错」（打 usage、退 2）与真异常。
+export { parseOptions, CliParseError, type ParseArgvOptions, type ParsedInput } from './_parser.js';

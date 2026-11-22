@@ -1,368 +1,45 @@
 #!/usr/bin/env node
 // bin/diy2 —— 全局命令入口（npm link / 发布后都走它）。
 //
-// 语义（##dev-app 构建对齐，与仓库其它 CLI 一致）：**探活 → 验身份 → 复用或拉起**。
-// 老版本不管有没有实例在跑就直接 `import` 服务端产物 —— 同一数据根第二次敲 `diy2` 就是
-// EADDRINUSE 崩溃；而端口上的实例还可能**不是自己的**（别的数据根 / 别的 worktree），
-// 直接连过去就是串台。身份判据只有一条：`GET /api/info` 自报的 `home`（端口只是缓存）。
+// 只做三件事，一行命令语义都不留在这：
+//   1. 找到 **CLI 产物** `build/prod/cli/index.mjs`（固定路径：一个包目录一份产物）；
+//   2. 清掉继承来的 `DIY2_*` 环境变量（本进程与它拉起的子进程都看不见）；
+//   3. 把 argv 原样交过去 —— 子命令 / 选项 / help / 退出码 / `web` 的拉起与复用全在 TS 侧
+//      （src/cli：`@diy-agent/rpc/cli` + 参数声明在 src/cli/options.ts）。
 //
-// 子命令：
-//   diy2 [start]        起服务（已有本数据根实例 → 复用）；前台，Ctrl-C 停
-//   diy2 list           本机所有 diy2 实例（读注册表）
-//   diy2 stop           停本数据根的实例（--all 停全部）
-//   diy2 port|home      打印本数据根的端口 / 数据根（给脚本用）
+// 为什么这里不再解析参数（##dev-app 构建对齐的后续）：以前 bin 有一份自己的
+// `valueOf` / `has` / `command`，还得把「bin 级选项」从 argv 里摘掉再转给 CLI；
+// 服务端入口读另一份 `DIY2_*` 环境变量；CLI 侧第三份 zod 声明 —— 三份描述同一组参数，
+// 改一处漏两处。现在「产物之前的逻辑」只剩下面这一个 existsSync。
 //
-// 服务端产物的位置在 bin 这边的唯一职责：找到 `build/<variant>/{server,web}` 并把它交给
-// 服务端（`DIY2_WEB_DIR`）。端口 / 数据根 / 变体的**裁决**在 `server/config.ts`（唯一真源）——
-// bin 只负责把命令行参数翻译成 DIY2_* 环境变量，不自己算一遍。
+// 为什么清环境而不是读环境：环境变量谁都能改、看不见、还会继承 —— 外层 shell / agent 里
+// 漏出来的 `DIY2_ENV=production` 会让一次实验去写生产数据根（实测现场）。规矩是
+// **参数走 argv，环境变量只出不进**（见 server/config.ts 文件头）。
 
-import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8'));
+const cliEntry = join(pkgRoot, 'build', 'prod', 'cli', 'index.mjs');
 
-// ── 参数 ─────────────────────────────────────────────────────────
-const argv = process.argv.slice(2);
-const flags = new Set(argv.filter((a) => a.startsWith('-') && !a.includes('=')));
-const valueOf = (name, short) => {
-    const eq = argv.find((a) => a.startsWith(`--${name}=`));
-    if (eq !== undefined) return eq.slice(name.length + 3);
-    const index = argv.findIndex((a) => a === `--${name}` || (short !== undefined && a === short));
-    if (index >= 0) {
-        const next = argv[index + 1];
-        return next !== undefined && !next.startsWith('-') ? next : undefined;
-    }
-    return undefined;
-};
-const has = (name, short) => flags.has(`--${name}`) || (short !== undefined && flags.has(short));
-
-// 子命令 = 第一个**不是选项值**的位置参数（`-p 0` 里的 `0` 不是子命令）
-const VALUE_OPTIONS = new Set(['port', 'p', 'home', 'data-dir', 'variant', 'name']);
-const command = (() => {
-    for (let index = 0; index < argv.length; index++) {
-        const arg = argv[index];
-        if (arg.startsWith('-')) {
-            if (!arg.includes('=') && VALUE_OPTIONS.has(arg.replace(/^--?/, ''))) index += 1;
-            continue;
-        }
-        return arg;
-    }
-    return 'start';
-})();
-
-if (has('help', '-h')) {
-    console.log(`diy2 ${pkg.version} — 容器即对话（Room / Bot）
-
-用法：
-  diy2 [start] [options]   起服务（已有同数据根实例则复用；前台运行）
-  diy2 list                本机所有 diy2 实例（-j = 单行 JSON；diy2 list --help 看命令说明）
-  diy2 stop [--all]        停本数据根的实例（--worktree <dir> = 那个 worktree 的全部；
-                           --all = 本机全部）
-  diy2 port | diy2 home    打印端口 / 数据根（脚本用；裸值）
-  diy2 facts <cmd>         知识库只读投影（brief / get / find / status；diy2 facts --help）
-  diy2 --restart           先停掉同数据根实例再起
-
-选项：
-  -p, --port <n>     端口；0 = 内核分配随机端口（缺省生产 5192，也可 DIY2_PORT）
-      --home <dir>   数据根（缺省 ~/.diy/diy2，也可 DIY2_HOME）
-      --data-dir <d> --home 的旧名字（兼容）
-      --variant <v>  产物变体 / 运行空间（缺省 prod，也可 DIY2_VARIANT）
-      --name <名字>  实例名（多实例时人认得出的身份，也可 DIY2_NAME）
-      --detach       起在后台（脚本 / 启动器用）；缺省前台
-      --no-open      不自动打开浏览器
-  -h, --help         显示本帮助
-  -v, --version      显示版本`);
-    process.exit(0);
-}
-if (has('version', '-v')) {
-    console.log(pkg.version);
-    process.exit(0);
+for (const key of Object.keys(process.env)) {
+    if (/^DIY2_/.test(key)) delete process.env[key];
 }
 
-// ── 配置（只做「参数 → 环境变量」，裁决留给 server/config.ts）────────
-const realHome = (() => {
+if (!existsSync(cliEntry)) {
+    let version = '';
     try {
-        return userInfo().homedir;
+        version = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8')).version ?? '';
     } catch {
-        return process.env['HOME'] ?? '';
+        /* 包清单读不到就算了，这行只是提示 */
     }
-})();
-const env = { ...process.env };
-// 发布形态就是生产：外层 shell / agent 泄漏的 DIY2_ENV=development 必须被纠正，
-// 否则全局命令会拿 dev 缺省（随机端口 + 假数据根）跑起来，还看不出来。
-env['DIY2_ENV'] = 'production';
-const variant = valueOf('variant') ?? env['DIY2_VARIANT'] ?? 'prod';
-env['DIY2_VARIANT'] = variant;
-const home = valueOf('home') ?? valueOf('data-dir') ?? env['DIY2_HOME'] ?? join(realHome, '.diy', 'diy2');
-env['DIY2_HOME'] = home;
-const portArg = valueOf('port', '-p');
-if (portArg !== undefined) {
-    const port = Number.parseInt(portArg, 10);
-    if (!Number.isInteger(port) || port < 0 || port > 65535) {
-        console.error(`diy2: 端口不合法：${portArg}`);
-        process.exit(2);
-    }
-    env['DIY2_PORT'] = String(port);
-}
-const nameArg = valueOf('name');
-if (nameArg !== undefined) env['DIY2_NAME'] = nameArg;
-
-// 转调 CLI 产物前先把「参数 → 环境变量」落进 process.env：`src/cli` 里的域直接读环境。
-env['DIY2_CLI_VERSION'] = pkg.version;
-for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) process.env[key] = value;
-}
-
-const buildDir = join(pkgRoot, 'build', variant);
-const serverEntry = join(buildDir, 'server', 'index.mjs');
-const cliEntry = join(buildDir, 'cli', 'index.mjs');
-const webDir = join(buildDir, 'web');
-const portFile = join(home, 'app.port');
-
-/**
- * list / stop / port / home 由 `build/<variant>/cli/index.mjs` 接管
- * （`@diy-agent/rpc/cli` + mem 传输，见 apps/diy2/src/cli）。
- * 没构建就明确说清楚 —— 别退回一份手写实现，两套命令树迟早漂。
- */
-async function runCli() {
-    if (!existsSync(cliEntry)) {
-        console.error(`diy2: CLI 产物不存在（缺 build/${variant}/cli/index.mjs）。`);
-        console.error(`  仓库里：cd ${pkgRoot} && ./sha.sh build`);
-        process.exit(1);
-    }
-    // bin 自己的选项（--home / --variant / --port / --name / --detach / --no-open / --restart）
-    // 已经翻译成 DIY2_* 环境变量，不能再出现在 CLI 的 argv 里（它不认识这些 flag）。
-    process.argv = [process.argv[0], process.argv[1], ...cliArgvOf(argv)];
-    await import(pathToFileURL(cliEntry).href);
-    process.exit(0);
-}
-
-/** 从 argv 里摘掉 bin 级选项（含 `--x=y` 与 `-p y` 两种形态），保留命令与域选项 */
-function cliArgvOf(args) {
-    const valueOptions = new Set(['home', 'data-dir', 'variant', 'port', 'p', 'name']);
-    const flags = new Set(['restart', 'detach', 'no-open']);
-    const out = [];
-    for (let index = 0; index < args.length; index++) {
-        const arg = args[index];
-        if (arg.startsWith('--') && arg.includes('=')) {
-            const name = arg.slice(2, arg.indexOf('='));
-            if (valueOptions.has(name) || flags.has(name)) continue;
-            out.push(arg);
-            continue;
-        }
-        if (arg.startsWith('-')) {
-            const name = arg.replace(/^--?/, '');
-            if (valueOptions.has(name)) {
-                index += 1; // 连它的值一起摘掉
-                continue;
-            }
-            if (flags.has(name)) continue;
-        }
-        out.push(arg);
-    }
-    return out;
-}
-
-// ── 探活 + 身份校验（判据与 server/probe.ts 一致：app + home）──────
-async function fetchInfo(port, timeoutMs = 1200) {
-    const response = await fetch(`http://127.0.0.1:${port}/api/info`, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const body = await response.json();
-    if (body?.app !== 'diy2' || typeof body.home !== 'string') throw new Error('不是 diy2 实例');
-    return body;
-}
-
-const samePath = (a, b) => {
-    // 只归一尾斜杠 / 相对片段（真实路径解析的完整版在 server/config.ts；这里够判身份）
-    const norm = (p) => new URL(p.startsWith('/') ? `file://${p}` : `file://${join(process.cwd(), p)}`).pathname.replace(/\/+$/, '');
-    return norm(a) === norm(b);
-};
-
-/**
- * 本数据根在跑的实例。
- *
- * `app.port` 只提供**候选地址**（「上次用过哪个端口」），**不是存活证据** —— 进程死后它还留着，
- * 崩死时也不会变。判据只有一条：`/api/info` 自报的 `home` 同时还要有 `pid`。
- */
-async function probeMine() {
-    let recorded;
-    try {
-        recorded = Number.parseInt(readFileSync(portFile, 'utf8').trim(), 10);
-    } catch {
-        return null;
-    }
-    if (!Number.isInteger(recorded) || recorded <= 0) return null;
-    try {
-        const info = await fetchInfo(recorded);
-        return samePath(info.home, home) ? info : { other: info, port: recorded };
-    } catch {
-        return null;
-    }
-}
-
-function urlOf(port) {
-    return `http://127.0.0.1:${port}`;
-}
-
-function openBrowser(target) {
-    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
-    const args = process.platform === 'win32' ? ['/c', 'start', '', target] : [target];
-    try {
-        spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
-    } catch {
-        /* 打不开浏览器不影响服务本身 */
-    }
-}
-
-async function waitHealthy(port, timeoutMs = 15_000) {
-    const startedAt = Date.now();
-    for (;;) {
-        try {
-            const info = await fetchInfo(port, 800);
-            if (samePath(info.home, home)) return info;
-        } catch {
-            /* 还没起来 */
-        }
-        if (Date.now() - startedAt > timeoutMs) return null;
-        await new Promise((resolve) => setTimeout(resolve, 120));
-    }
-}
-
-const isPidAlive = (pid) => {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        return error?.code === 'EPERM';
-    }
-};
-
-async function stopRecords(records, label) {
-    if (records.length === 0) {
-        console.log(`（没有要停的实例：${label}）`);
-        return 0;
-    }
-    let stopped = 0;
-    for (const rec of records) {
-        try {
-            process.kill(rec.pid, 'SIGTERM');
-        } catch {
-            continue; // 已经没了
-        }
-        const startedAt = Date.now();
-        while (isPidAlive(rec.pid) && Date.now() - startedAt < 3000) {
-            await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        const alive = isPidAlive(rec.pid);
-        if (alive) {
-            try {
-                process.kill(rec.pid, 'SIGKILL');
-            } catch {
-                /* 忽略 */
-            }
-        }
-        stopped += 1;
-        console.log(`已停 pid=${rec.pid} port=${rec.port ?? '-'} home=${rec.diyHome}${alive ? '（SIGKILL）' : ''}`);
-    }
-    return stopped;
-}
-
-// ── 子命令 ───────────────────────────────────────────────────────
-// 除 `start`（进程生命周期，前台跑 / Ctrl-C 停）外，全部交给 CLI 产物
-// （`@diy-agent/rpc/cli` + mem 传输；域定义在 src/cli/instance.ts）。
-switch (command) {
-    case 'list':
-    case 'ps':
-    case 'stop':
-    case 'port':
-    case 'home':
-    case 'facts':
-        await runCli();
-        break;
-    case 'start':
-    case 'run':
-    case 'open':
-        break;
-    default:
-        console.error(`diy2: 不认识的子命令：${command}（diy2 --help）`);
-        process.exit(2);
-}
-
-// ── start：探活 → 复用 / 拉起 ─────────────────────────────────────
-const existing = await probeMine();
-if (existing?.other !== undefined) {
-    console.error(`diy2: 端口 ${existing.port} 上跑着**别的数据根**的实例（home=${existing.other.home}）`);
-    console.error(`diy2: 本数据根 ${home} 没有实例；换端口：diy2 -p 0，或先 diy2 stop --all`);
-    process.exit(1);
-}
-if (existing?.pid !== undefined && !has('restart')) {
-    console.log(`diy2 已在运行：${urlOf(existing.port)}（pid=${existing.pid} home=${existing.home}）`);
-    if (!has('no-open')) openBrowser(urlOf(existing.port));
-    process.exit(0);
-}
-if (existing?.pid !== undefined && has('restart')) {
-    console.log(`--restart：先停掉 ${urlOf(existing.port)}（pid=${existing.pid}）`);
-    await stopRecords([{ ...existing }], `home=${home}`);
-}
-
-if (!existsSync(serverEntry) || !existsSync(webDir)) {
-    console.error('diy2 还没构建（缺 build/' + variant + '/server 或 build/' + variant + '/web）。');
+    console.error(`${version === '' ? 'diy2' : `diy2 ${version}`}：缺 CLI 产物\n  ${cliEntry}`);
     console.error(`  仓库里：cd ${pkgRoot} && ./sha.sh build`);
     console.error('  npm 安装的包：重新安装一次（发布产物里应该带 build/prod/）');
-    process.exit(1);
+    process.exit(78); // EX_CONFIG
 }
 
-const url = urlOf(portArg ?? env['DIY2_PORT'] ?? 0);
-env['DIY2_WEB_DIR'] = webDir;
-
-if (has('detach')) {
-    // 后台起：子进程自己写 app.port / 注册表，父进程只等它健康
-    const child = spawn(process.execPath, [serverEntry], { env, detached: true, stdio: ['ignore', 'ignore', 'ignore'] });
-    child.unref();
-    // 端口未知（0 = 内核分配）时读 app.port —— 它可能是**上一次**留下的陈旧值（退出不删），
-    // 所以下面每轮都靠 `waitHealthy` 的 home 校验收口：读错了只是多绕一圈，不会误判就绪
-    const startedAt = Date.now();
-    let info = null;
-    while (info === null && Date.now() - startedAt < 15_000) {
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        let recorded = portArg ?? env['DIY2_PORT'];
-        if (recorded === undefined || recorded === '0') {
-            try {
-                recorded = readFileSync(portFile, 'utf8').trim();
-            } catch {
-                continue;
-            }
-        }
-        info = await waitHealthy(Number.parseInt(recorded, 10), 500);
-    }
-    if (info === null) {
-        console.error('diy2: 后台实例没起来（看 ' + join(home, 'log') + ' 或直接前台跑一次）');
-        process.exit(1);
-    }
-    console.log(`diy2 后台已起：${urlOf(info.port)}（pid=${info.pid} home=${info.home}）`);
-    if (!has('no-open')) openBrowser(urlOf(info.port));
-    process.exit(0);
-}
-
-// 服务端产物顶层就 listen（`import` 即启动；装配逻辑在 createDiy2App，见 server/index.ts）。
-// 端口可能由内核分配（-p 0），所以「就绪」的判据是 `/api/info` 身份回包；`<home>/app.port`
-// 只用来找到候选端口（它记的是上次的端口，不证明什么）。
-await import(pathToFileURL(serverEntry).href);
-
-const startedAt = Date.now();
-let info = null;
-while (info === null && Date.now() - startedAt < 15_000) {
-    const mine = await probeMine();
-    if (mine?.pid !== undefined) info = mine;
-    else await new Promise((resolve) => setTimeout(resolve, 120));
-}
-if (info === null) {
-    console.error('diy2: 服务进程起来了但没自报就绪（看上面服务端输出；app.port 在 ' + portFile + '）');
-    process.exit(1);
-}
-void url;
-if (!has('no-open')) openBrowser(urlOf(info.port));
+// CLI 产物顶层自己做 `process.exit(code)`；这里的 exitCode 只是「万一它没退」的兜底
+const loaded = await import(pathToFileURL(cliEntry).href);
+process.exitCode = loaded?.exitCode ?? process.exitCode ?? 0;

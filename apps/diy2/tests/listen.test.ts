@@ -3,7 +3,7 @@
 // 这里验的三件事就是需求本身：
 //   1. `app.port` 记着的端口还在空着 → 下次就用它（不用真起两个进程：记录 + 监听即可）；
 //   2. 那个端口被别人占了 → 换一个空闲端口，并**重写**记录（下次粘在新的上）；
-//   3. 显式点名的端口（`DIY2_PORT` / `--port`）被占 → **不漂**，原样报错。
+//   3. 显式点名的端口（`--port`）被占 → **不漂**，原样报错。
 
 import { createServer, type Server } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -43,8 +43,8 @@ afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function configOf(home: string, extra: Record<string, string> = {}): Diy2Config {
-    return resolveConfig({ moduleDir, env: { DIY2_ENV: 'development', DIY2_HOME: home, ...extra } });
+function configOf(home: string, extra: { port?: number; launch?: string } = {}): Diy2Config {
+    return resolveConfig({ moduleDir, mode: 'development', overrides: { home, ...extra } });
 }
 
 describe('listenWithStickyPort', () => {
@@ -88,11 +88,11 @@ describe('listenWithStickyPort', () => {
         expect(configOf(home).port).toBe(result.port);
     });
 
-    it('显式给的端口（DIY2_PORT）被占 → 不漂，原样抛 EADDRINUSE', async () => {
+    it('显式给的端口（--port）被占 → 不漂，原样抛 EADDRINUSE', async () => {
         const home = tmp();
         const taken = await occupy();
-        const config = configOf(home, { DIY2_PORT: String(taken) });
-        expect(config.portSource).toBe('env');
+        const config = configOf(home, { port: taken });
+        expect(config.portSource).toBe('cli');
 
         const server = createServer();
         servers.push(server);

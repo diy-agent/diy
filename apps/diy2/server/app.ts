@@ -338,6 +338,7 @@ export interface Diy2AppInfo {
     port: number | null;
     home: string;
     env: string;
+    /** 入口名（老字段名 variant 仍然保留给读者，值 = launch） */
     variant: string;
     launch: string | null;
     name: string | null;
@@ -609,7 +610,8 @@ export function createDiy2App(opts: {
         port: opts.port?.() ?? (config.port === 0 ? null : config.port),
         home: config.home,
         env: config.env,
-        variant: config.variant,
+        // `variant` 是老字段（读者还在用它）：现在 = 入口名（launch），两者不再各算一遍
+        variant: config.launch,
         launch: config.launch,
         name: config.name,
         tools: config.tools,

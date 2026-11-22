@@ -561,6 +561,24 @@ export function scanGlobalOptions(
 }
 
 /**
+ * 公开入口：直接解析一个 zod object（不经过过程元数据）。
+ *
+ * 用于「入口脚本自己要读的那几个参数」—— 服务端入口（server/index.ts、server/dev.ts）
+ * 不是一条 CLI 命令，但它与 CLI 必须认同一套写法（kebab 别名 / 短名 / 类型预转 / zod 校验 /
+ * `--help` 预扫）。所以这里**不复制**解析逻辑，只把「光秃秃的 zod object」包成
+ * `parseArgv` 认识的最小形状（它实际只读 `inputSchema`）。
+ */
+export function parseOptions<TSchema extends z.ZodObject<z.ZodRawShape>>(
+  schema: TSchema,
+  argv: string[],
+  opts: ParseArgvOptions = {},
+): { input: z.infer<TSchema>; helpRequested: boolean } {
+  const def = { _type: 'procedure', inputSchema: schema } as unknown as _AnyProcedureMeta;
+  const parsed = parseArgv(def, argv, opts);
+  return { input: parsed.input as z.infer<TSchema>, helpRequested: parsed.helpRequested };
+}
+
+/**
  * 全局选项的 help 行（`[左列, 右列]`）：与解析同源，同一张表渲染 ——
  * 杜绝「解析里有、help 里没有」（`--json` 以前就是这样漏的）。
  */

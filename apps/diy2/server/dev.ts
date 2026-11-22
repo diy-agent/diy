@@ -8,6 +8,10 @@
 // 现在：一个端口、同源、无代理；UI 走 vite transform（HMR 仍由 vite 的 WS 提供，
 // 复用同一个 HTTP server 的 upgrade 通道），/api 走同一个进程内的 handler。
 //
+// 参数面同生产入口（src/cli/options 的 devOptions，缺省 mode = development），
+// **不读** `DIY2_*` 环境变量：dev 入口的环境写死在代码里（development），
+// 于是「外层 shell 漏出 production → 一次实验写脏真库」这条路从根上没了。
+//
 // 退出码：75 = 「服务端代码变了，请重启我」（sha.sh dev 的看护循环据此重起）；
 // 0 / 其他 = 正常退出 / 真失败，由看护循环原样透传。
 
@@ -21,18 +25,44 @@ import { describeConfig, isProdHome, modelConfigHint, resolveConfig } from './co
 import { announce, retract } from './registry';
 import { createDiy2App } from './app';
 import { listenWithStickyPort } from './listen';
+import { devOptions, parseEntryOptions, toOverrides } from '../src/cli/options';
 
 /** 看护循环约定的「请重启」退出码（`sysexits.h` 的 EX_TEMPFAIL） */
 export const RESTART_CODE = 75;
 
-const config = resolveConfig({ moduleDir: import.meta.dirname });
+const USAGE = `用法：npx tsx server/dev.ts [options]
 
-// dev 入口**不碰生产数据根**：DIY2_ENV 泄漏成 production（外层 shell / agent 常这么干）时，
-// 数据根会按生产解析成 ~/.diy/diy2 —— 一次实验就写脏真库。宁可停下来说清楚。
-if (isProdHome(config.home) && process.env['DIY2_ALLOW_PROD_HOME'] !== '1') {
+options:
+  --launch <名字>        入口名（缺省 lab；数据根 <appRoot>/build/<launch>/home）
+  --home <dir>           数据根（缺省 <appRoot>/build/<launch>/home）
+  -p, --port <n>         端口；0 = 内核分配（缺省沿用 <home>/app.port）
+      --name <名字>       实例名
+      --mode <...>       运行环境（缺省 development；显式 production 需配 --allow-prod-home）
+      --tools <shell|files>
+                         工具面（缺省 shell）
+      --compact-keep <n> 压缩保留最近 n 条消息
+      --compact-chars <n> 压缩预算（字符）
+      --web-dir <dir>    UI 产物目录（dev 不用：页面与 HMR 由挂进同一 server 的 vite 提供）
+      --model-config <file>
+                         model.yaml（缺省：本数据根 > 本 launch 的仓库级数据根）
+      --allow-prod-home  显式放行生产数据根
+  -h, --help             本帮助`;
+
+const options = parseEntryOptions(devOptions, process.argv.slice(2), USAGE);
+if (options.exit !== null) process.exit(options.exit);
+
+const config = resolveConfig({
+    moduleDir: import.meta.dirname,
+    mode: options.input.mode,
+    overrides: toOverrides(options.input),
+});
+for (const note of config.notes) console.warn(`[diy2] ${note}`);
+
+// dev 入口**不碰生产数据根**：即使有人显式 `--mode production`（或数据根本身在 `~/.diy` 下），
+// 也必须再加 --allow-prod-home 才放行 —— 一次实验就写脏真库的代价太大。
+if (isProdHome(config.home) && options.input.allowProdHome !== true) {
     console.error(`[diy2] dev 入口拒绝使用生产数据根：${config.home}`);
-    console.error('[diy2] 结构上是对的（DIY2_ENV 泄漏成 production 才会这样）→ 请用 `./sha.sh dev`');
-    console.error('[diy2] 真要用它：DIY2_ALLOW_PROD_HOME=1');
+    console.error('[diy2] 请用 `./sha.sh dev`（数据根 build/lab/home），或加 --allow-prod-home');
     process.exit(1);
 }
 if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
@@ -42,7 +72,7 @@ if (hint !== null) console.warn(hint);
 const httpServer = createServer();
 const app = createDiy2App({
     config,
-    // dev 的页面来自 vite，不来自 build/<variant>/web（null = 明确不要，不是「按配置来」）
+    // dev 的页面来自 vite，不来自 build/prod/web（null = 明确不要，不是「按配置来」）
     webDir: null,
     port: () => {
         const address = httpServer.address();
@@ -87,7 +117,7 @@ try {
 } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
         console.error(`[diy2] 端口 ${config.port} 已被占用（显式指定的端口不会自动漂移）`);
-        console.error('[diy2] 换端口：--port <n> / DIY2_PORT=0；或先 ./sha.sh stop');
+        console.error('[diy2] 换端口：--port <n> / --port 0；或先 ./sha.sh stop');
         process.exit(1);
     }
     console.error(`[diy2] 启动失败：${(error as Error).message}`);
@@ -128,7 +158,7 @@ for (const root of watchRoots) {
 }
 
 const shutdown = (): void => {
-    // 刻意**不删** app.port：重启（看护循环 / Ctrl-C 再起）要还回同一个 URL。
+    // 刻意**不删** app.port：重启（看护循环 / Ctrl-C 再起）都还回同一个 URL。
     app.close();
     retract();
     void vite.close().finally(() => httpServer.close(() => process.exit(0)));

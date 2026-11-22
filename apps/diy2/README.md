@@ -7,8 +7,8 @@ diy2 的新客户端：Vite + React 19 + `@diy-agent/entity-chat`（UI）+ `@diy
 ```bash
 ./sha.sh lab          # 开发实例：一个端口，UI（vite + HMR）与 /api 同源
 ./sha.sh stop         # 停本 worktree 起的实例（--all = 本机全部）
-./sha.sh list         # 本机实例表：pid / 端口 / 数据根 / 变体 / 入口
-./sha.sh port|home    # 本变体的端口 / 数据根（脚本用）
+./sha.sh list         # 本机实例表：pid / 端口 / 数据根 / 入口
+./sha.sh port|home    # 本 launch 的端口 / 数据根（脚本用）
 ./sha.sh status       # 一眼看清
 ```
 
@@ -31,7 +31,7 @@ HTTP server，**dev 与 prod 拓扑一致**（一个进程、一个地址、`/ap
 
 ```bash
 PORT=$(./sha.sh port)                       # 本实例实际端口（探活拿的，不是读 app.port）
-curl -s "http://127.0.0.1:$PORT/api/info"   # 身份：app / pid / port / home / env / variant
+curl -s "http://127.0.0.1:$PORT/api/info"   # 身份：app / pid / port / home / env / launch
 curl -s "http://127.0.0.1:$PORT/api/rooms"  # 数据面
 ./sha.sh test                               # 单测（配置裁决 / 端口裁决 / 注册表解析）
 ./sha.sh check                              # 类型 + lint
@@ -40,37 +40,42 @@ curl -s "http://127.0.0.1:$PORT/api/rooms"  # 数据面
 旧的 `npm run dev` / `scripts/dev.sh` / `scripts/stop.sh` 已删除：全部入口收敛到 `./sha.sh`，
 根目录 `./sha.sh lab --app diy2` 起的就是同一条开发路径。
 
-## 运行空间：变体 / 数据根 / 端口
+## 运行空间：数据根 / 端口 / 入口名
 
-变体只决定**运行空间**，不是构建目标（lab / staging 与 prod 跑同一份代码）：
+「入口名（launch）」只决定**运行空间**，不是构建目标（lab / staging / prod 跑同一份产物、同一份代码）：
 
-| 命令 | 变体 | 数据根 | 环境 | 端口 |
+| 命令 | launch | 数据根 | 环境 | 端口 |
 |---|---|---|---|---|
-| `./sha.sh lab` | lab | `apps/diy2/build/lab/home` | development | 0（内核分配） |
+| `./sha.sh dev` / `lab` | lab | `apps/diy2/build/lab/home` | development | 0（内核分配，落 `<home>/app.port`） |
 | `./sha.sh staging [--build]` | staging | `apps/diy2/build/staging/home` | development | 0 |
-| `./sha.sh start`（= 全局 `diy2`） | prod | `~/.diy/diy2` | production | 5192 |
+| `./sha.sh start`（= `diy2 web`） | prod | `~/.diy/diy2` | production | 5192 |
 
-全部可覆盖，优先级与仓库其它 app 同一套裁决（实现只有一处：`server/config.ts`）：
+产物目录**固定** `apps/diy2/build/prod/{web,server,cli}`（一个包目录一份产物）：多份并存靠
+worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目录。
+
+参数面**只有 argv**（不读 `DIY2_*` 环境变量：谁都能改、看不见、还会继承），裁决只有一处
+（`server/config.ts`），声明只有一处（`src/cli/options.ts`，zod + `.cliOption()`，与 CLI
+同一个解析器 —— 服务端入口 / dev 入口 / 每个 CLI 命令读的是同一份形状）：
 
 ```
-数据根  DIY2_HOME  > 变体缺省
-端口    --port / -p > DIY2_PORT > <home>/app.port 记录（仅非生产） > 缺省
-        （生产 5192，其余 0；生产不拿记录当监听端口，只拿它当**探活候选**）
-环境    DIY2_ENV = production|development|test（无法识别按 production）
-变体    DIY2_VARIANT（缺省：产物类命令 prod，开发类命令 lab）
-其它    DIY2_MODEL_CONFIG / DIY2_COMPACT_KEEP / DIY2_COMPACT_CHARS / DIY2_TOOLS=files
-        DIY2_NAME（多实例的名字）/ DIY2_REGISTRY（注册表目录，测试隔离用）
+数据根   --home          > 缺省（生产 ~/.diy/diy2，其余 <appRoot>/build/<launch>/home）
+端口     --port / -p     > <home>/app.port 记录（仅非生产） > 缺省
+         （生产 5192，其余 0；生产不拿记录当监听端口，只拿它当**探活候选**）
+环境     --mode          （缺省由入口定：生产入口 production、dev 入口 development、测试 test）
+入口名   --launch        （缺省由环境推：prod / lab / test）
+其它     --name / --tools / --compact-keep / --compact-chars / --web-dir / --model-config
+注册表   DIY_INSTANCE_REGISTRY / DIY_DEV_HOME（目录位置，不是运行配置；测试隔离用）
 ```
 
 两条硬规则：
 
 - **端口不承载身份，也不证明存活**：`app.port` 只是「上次用的端口」，判据是 `GET /api/info`
   自报的 `home`（+ 注册表 `pid`）。
-  所以 `diy2` 第二次敲会**复用**在跑的实例（`--restart` 才先停再起），不会 EADDRINUSE 崩，
+  所以 `diy2 web` 第二次敲会**复用**在跑的实例（`--restart` 才先停再起），不会 EADDRINUSE 崩，
   也不会连到别的数据根/别的 worktree 的实例上。
-- **dev / test 拒绝生产数据根**：`DIY2_ENV` 泄漏成 production 时 `./sha.sh lab` 直接拒起
-  （`DIY2_ALLOW_PROD_HOME=1` 才放行）。dev/test 也**不吃** 5192（无论来自 `app.port` 记录
-  还是继承的 `DIY2_PORT`）—— 那会把生产门牌占住。
+- **非生产拒绝生产数据根**：`--home ~/.diy/diy2` 在 dev 入口被拒并回落 `build/<launch>/home`
+  （`--allow-prod-home` 才放行，启动时会打一条 note）。非生产也**不吃**记录里的 5192 ——
+  那会把生产门牌占住。
 
 实例在启动时**自报**到 `~/.diy/dev/apps/<pid>.json`（与 diy-app / workbench 同一张表，
 口径来自 `@diy-agent/dev-paths`）：dev 启动器、remote 发现、`./sha.sh list` 都读它。
@@ -82,20 +87,22 @@ curl -s "http://127.0.0.1:$PORT/api/rooms"  # 数据面
 cd apps/diy2 && ./sha.sh build     # → build/prod/{web,server,cli}
 npm link                           # 之后 `diy2` 在 PATH 里
 
-diy2                    # 已有同数据根实例 → 复用；否则起服务（前台，Ctrl-C 停）
-diy2 -p 6000            # 换端口（0 = 内核分配）
-diy2 --no-open          # 不自动打开浏览器
-diy2 --restart          # 先停同数据根实例再起
-diy2 --home /tmp/x      # 换数据根（缺省 ~/.diy/diy2；--data-dir 是旧名）
-diy2 --detach           # 起在后台（脚本 / 启动器用）
-diy2 list               # 本机所有 diy2 实例（`-j` = 单行 JSON）
+diy2 web                # 起服务（前台，Ctrl-C 停）；已有同数据根实例 → 复用。别名 `diy2 start`
+diy2 web --open         # 就绪后打开浏览器（缺省不开）
+diy2 web -p 6000        # 换端口（0 = 内核分配）
+diy2 web --restart      # 先停同数据根实例再起
+diy2 web --home /tmp/x  # 换数据根（缺省 ~/.diy/diy2）
+diy2 web --detach       # 起在后台（脚本 / 启动器用）
+diy2 list               # 本机所有 diy2 实例（`-j` / `--json` = 单行 JSON）
 diy2 stop [--all]       # 停本数据根（或本机全部；--worktree <dir> 只停那个 worktree）
 diy2 port | diy2 home   # 脚本用：打印端口 / 数据根（裸值）
+diy2 --help             # 命令树。裸 `diy2` 同上 —— **不会**起服务（没有隐式子命令）
 ```
 
-`list / stop / port / home` 由 `build/<变体>/cli/index.mjs` 接管：命令树 / help / `--json` /
-退出码由 `@diy-agent/rpc/cli` 从 zod 声明生成，本地命令走 **mem 传输**（进程内，不起服务、不开端口）。
-`start` 仍留在 `bin/diy2` —— 它是进程生命周期（前台跑、Ctrl-C 停），不是一次命令调用。
+**全部命令**（含 `web` 的进程生命周期）都在 `build/prod/cli/index.mjs` 里：命令树 / help /
+`--json` / 退出码由 `@diy-agent/rpc/cli` 从 zod 声明生成，本地命令走 **mem 传输**（进程内，
+不起服务、不开端口）。`bin/diy2` 只做三件事：找到 CLI 产物、清掉继承来的 `DIY2_*`、把 argv
+原样交过去 —— 它自己不解析一个参数。
 
 ### 知识库：`diy2 facts`
 
@@ -151,7 +158,7 @@ UI 有三个可切换的表面（同一份时间线 + 同一个 store，只换�
 - `deliveries`：每个 (message, bot) 的投递状态（queued → delivering → delivered/failed）
 
 聊天走真实模型（默认 `chen56@opencode-go/deepseek-v4.1-flash`，可在房间头部 / 设置里改），
-工具：`read` / `write` / `edit` / `bash`（`DIY2_TOOLS=files` 可关掉 bash）+ `ask` 提问卡。
+工具：`read` / `write` / `edit` / `bash`（`--tools files` 可关掉 bash）+ `ask` 提问卡。
 
 多 agent（容器一个 primary）：
 - 没有 @：**只有 primary 回复**
@@ -164,7 +171,7 @@ UI 有三个可切换的表面（同一份时间线 + 同一个 store，只换�
 接口（`/api`，与 UI 同源同端口）：
 
 ```
-GET    /api/info                       # 实例身份：app / pid / port / home / env / variant
+GET    /api/info                       # 实例身份：app / pid / port / home / env / launch
 GET    /api/stream                     # **一个 app 一条** SSE：首帧 {$conn}，之后按话题推
 POST   /api/stream/subscribe           { conn, topic }        # topic = `room:<roomId>`
 POST   /api/stream/unsubscribe         { conn, topic }

@@ -3,8 +3,8 @@
 // 为什么不让 UI 另起一个 server：全局命令 `diy2` 要"一条命令开一个地址"，
 // 双进程（vite preview + api）还得处理端口/代理，用户装完 npm 包根本不想配这些。
 //
-// 开发时（tsx server/index.ts）不传 DIY2_WEB_DIR，这里直接返回 undefined，
-// 静态服务关掉 —— 前端仍走 vite dev server + /api 代理。
+// 开发时由 app 显式传 `webDir: null`（页面与 HMR 交给挂进同一个 server 的 vite，同源无代理），
+// 这里拿到 undefined，静态服务关掉。
 
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
