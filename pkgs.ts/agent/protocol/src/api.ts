@@ -28,7 +28,7 @@ export const roomsApi = RpcSchema.group({
             input: {
                 name: z.string().min(1),
                 type: z.enum(['project', 'task']).optional(),
-                modelKey: z.string().optional(),
+                modelKey: z.string().min(1).optional(),
                 data: Data.optional(),
             },
             output: Any,
@@ -37,7 +37,7 @@ export const roomsApi = RpcSchema.group({
             input: {
                 id: Id,
                 name: z.string().optional(),
-                modelKey: z.string().optional(),
+                modelKey: z.string().min(1).optional(),
                 data: Data.optional(),
             },
             output: Any,
@@ -53,7 +53,7 @@ export const botsApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: {}, output: Any }),
         create: RpcSchema.unary({
-            input: { name: z.string().min(1), homeRoomId: z.string().optional(), modelKey: z.string().optional() },
+            input: { name: z.string().min(1), homeRoomId: z.string().optional(), modelKey: z.string().min(1).optional() },
             output: Any,
         }),
         /** 改 bot（名字 / 人格 / 模型 / 归属） */
@@ -63,7 +63,7 @@ export const botsApi = RpcSchema.group({
                 name: z.string().optional(),
                 color: z.string().optional(),
                 persona: z.string().optional(),
-                modelKey: z.string().optional(),
+                modelKey: z.string().min(1).optional(),
                 homeRoomId: z.string().optional(),
             },
             output: Any,

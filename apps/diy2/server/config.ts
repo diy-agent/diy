@@ -56,6 +56,8 @@ export interface ConfigOverrides {
     tools?: 'shell' | 'files' | undefined;
     /** 一轮的步数上限（`--max-steps`）；缺省 = 内核 200 */
     maxSteps?: number | undefined;
+    /** 单条 bash 命令的超时（`--bash-timeout-ms`）；缺省 = 内核 300s */
+    bashTimeoutMs?: number | undefined;
     compactKeep?: number | undefined;
     compactChars?: number | undefined;
     /** 显式放行生产数据根（只给 dev 入口用；生产入口不需要） */
@@ -103,6 +105,8 @@ export interface Diy2Config {
     notes: string[];
     /** 一轮的步数上限（`--max-steps`）；undefined = 用内核缺省（200） */
     maxSteps: number | undefined;
+    /** 单条 bash 命令的超时（`--bash-timeout-ms`）；undefined = 用内核缺省（300s，与 diy1 同值） */
+    bashTimeoutMs: number | undefined;
 }
 
 /** 真实家目录（**不读 `$HOME`**：测试 / 隔离实例会改写它，生产根判据不能跟着漂） */
@@ -348,6 +352,8 @@ export function resolveConfig(opts?: {
         notes,
         // 没给 = 用内核缺省；正数才覆盖（0 步 = 每轮直接掐停，不是想要的语义，故下限 1）
         maxSteps: overrides.maxSteps,
+        // 同上：不写就用内核缺省（300s）；显式正整数才覆盖（0 在这里没有"不限"的语义）
+        bashTimeoutMs: overrides.bashTimeoutMs,
     };
 }
 

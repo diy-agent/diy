@@ -47,6 +47,10 @@ export const configShape = {
         placeholder: 'n',
         desc: '一轮的步数上限（缺省 = 内核 200；防止工具死循环烧钱）',
     }),
+    bashTimeoutMs: z.number().int().min(1).optional().cliOption({
+        placeholder: 'ms',
+        desc: '单条 bash 命令的超时毫秒（缺省 = 内核 300s）',
+    }),
     compactKeep: z.number().int().min(1).optional().cliOption({ placeholder: 'n', desc: '压缩保留最近 n 条消息' }),
     compactChars: z.number().int().min(1000).optional().cliOption({ placeholder: 'n', desc: '压缩预算（字符）' }),
     allowProdHome: z.boolean().optional().cliOption({ desc: '显式放行生产数据根（只给 dev 入口用）' }),
@@ -89,6 +93,7 @@ export function toOverrides(input: Partial<ConfigOptions>): ConfigOverrides {
         launch: input.launch,
         tools: input.tools,
         maxSteps: input.maxSteps,
+        bashTimeoutMs: input.bashTimeoutMs,
         compactKeep: input.compactKeep,
         compactChars: input.compactChars,
         allowProdHome: input.allowProdHome === true ? true : undefined,
@@ -115,6 +120,7 @@ export function toArgv(overrides: ConfigOverrides): string[] {
     push('--launch', overrides.launch);
     push('--tools', overrides.tools);
     push('--max-steps', overrides.maxSteps);
+    push('--bash-timeout-ms', overrides.bashTimeoutMs);
     push('--compact-keep', overrides.compactKeep);
     push('--compact-chars', overrides.compactChars);
     push('--web-dir', overrides.webDir);

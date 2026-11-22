@@ -147,6 +147,7 @@ function actorOf(spec: Room): RoomActor {
             shell: config.tools !== 'files',
             jobs: { registry: jobs },
             ...(config.maxSteps === undefined ? {} : { maxSteps: config.maxSteps }),
+            ...(config.bashTimeoutMs === undefined ? {} : { bashTimeoutMs: config.bashTimeoutMs }),
         });
         rooms.set(spec.id, actor);
         // 运行时新建的容器也要落库：不落的话重启后侧栏里就没了（消息还在，只是没入口）
@@ -460,7 +461,8 @@ export function createDiy2App(opts: {
                     if (type === 'task' && (typeof projectId !== 'string' || roomOf(projectId) === undefined)) {
                         throw new Error('task 需要有效的 data.projectId');
                     }
-                    const modelKey = input.modelKey ?? defaultModelKey();
+                    // `??` 挡不住空串（界面上的"没选"可能就是 ''）：空串按没填处理
+                    const modelKey = input.modelKey || defaultModelKey();
                     const id = newEntityId();
                     const bot = { ...newBot(input.name, id, `${type} bot`), modelKey };
                     store.upsertBot(bot);

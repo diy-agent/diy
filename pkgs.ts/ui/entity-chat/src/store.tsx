@@ -657,6 +657,17 @@ export function bootstrapStore(options?: { syncAddress?: boolean }): void {
     actions.bootstrap();
 }
 
+/**
+ * 新建实体时要不要带模型：**空串一律不发**。
+ *
+ * `defaultModelKey` 在目录为空（新机器 / 没配 provider 账号）时就是 `''`，而 `modelKey`
+ * 一旦落库就没有「等于没填」的语义了 —— 服务端收到空串只会得到一个"模型标识不合法"的实体。
+ * 不传 = 由服务端按它当时的缺省填。
+ */
+function modelArg(modelKey: string): { modelKey?: string } {
+    return modelKey === '' ? {} : { modelKey };
+}
+
 export const actions = {
     bootstrap(): void {
         // 首屏：连不上后端就一直退避重试，直到成功（见 runBootstrap）
@@ -818,7 +829,7 @@ export const actions = {
             .create({
                 type: 'project',
                 name: input.name,
-                modelKey: state.defaultModelKey,
+                ...modelArg(state.defaultModelKey),
                 data: { dir: input.dir },
             })
             .then((room) => refresh().then(() => actions.navigate(roomAddressOf(room))))
@@ -839,7 +850,7 @@ export const actions = {
             .create({
                 type: 'task',
                 name: trimmed,
-                modelKey: state.defaultModelKey,
+                ...modelArg(state.defaultModelKey),
                 data: { projectId, dir: project?.data['dir'], ...extra },
             })
             .then((room) => refresh().then(() => actions.navigate(roomAddressOf(room))))
@@ -852,7 +863,7 @@ export const actions = {
     addBot(roomId: string, name: string): void {
         if (name.trim() === '') return;
         void client.bots
-            .create({ name: name.trim(), homeRoomId: roomId, modelKey: state.defaultModelKey })
+            .create({ name: name.trim(), homeRoomId: roomId, ...modelArg(state.defaultModelKey) })
             .then((bot) => client.rooms.addMember(roomId, bot.id))
             .then(() => refresh())
             .catch(() => undefined);
