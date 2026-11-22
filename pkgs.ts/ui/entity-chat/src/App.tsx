@@ -47,12 +47,15 @@ const RoomHeader = React.memo(function RoomHeader({
     onAddMember,
     onPickModel,
     taskPanelOpen,
+    taskPanelShown,
     onToggleTaskPanel,
 }: {
     room: Room;
     onAddMember: () => void;
     onPickModel: () => void;
     taskPanelOpen: boolean;
+    /** 宿主是否接管了右侧面板（接管后这个按钮不归本层画 —— 点了也没有本层面板可开） */
+    taskPanelShown: boolean;
     onToggleTaskPanel: () => void;
 }) {
     // 两个窄订阅：bot 表、房间列表（后者只用来把项目的 dir 继承下来）
@@ -113,7 +116,7 @@ const RoomHeader = React.memo(function RoomHeader({
                         <Plus className="size-3" />
                         成员
                     </button>
-                    {room.type === 'task' && (
+                    {taskPanelShown && room.type === 'task' && (
                         <button
                             onClick={onToggleTaskPanel}
                             className={`flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted ${
@@ -138,7 +141,16 @@ const RoomHeader = React.memo(function RoomHeader({
     );
 });
 
-export function App() {
+/**
+ * 宿主可裁掉哪些「外壳」。默认全开 = 原来的整页形态。
+ *
+ * `sidebar: false` —— 宿主管导航（工作台把「有哪些房间」画在自己的左栏里，
+ *   再让这一层画一遍就是两条侧栏，还各带一套宽度拖拽）；裁掉的是**壳**，
+ *   不是能力：房间切换、新建、设置这些仍然由宿主通过 store 的钩子做。
+ * `taskPanel: false` —— 宿主管右侧区域（把任务面板放进 dock 的 right area，
+ *   尺寸/收起就是布局的一部分，不该在 view 内部再长一个自绘面板）。
+ */
+export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; taskPanel?: boolean } = {}) {
     // 四个窄订阅。这层以前是 `useStore()`（整份快照），于是**每一条** `emit` ——
     // 别的房间来了消息、某个房间多了个待答提问、侧栏换了个高亮 —— 都会把整个 App
     // 连同侧栏、三个 nav 块一起重渲一遍。
@@ -209,6 +221,8 @@ export function App() {
     }, []);
 
     React.useEffect(() => {
+        // 侧栏不归这一层管时，⌘B 也不该由它接管：宿主自己的收起快捷键会在 window 上撞车
+        if (!sidebar) return;
         const onKey = (event: KeyboardEvent) => {
             if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
                 event.preventDefault();
@@ -217,18 +231,20 @@ export function App() {
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [toggleSidebar]);
+    }, [sidebar, toggleSidebar]);
 
     return (
         <div className="flex h-full">
-            <Sidebar
-                open={sidebarOpen}
-                onToggle={toggleSidebar}
-                onCreateProject={onCreateProject}
-                onCreateTask={onCreateTask}
-                onRequestDelete={onRequestDelete}
-                onOpenSettings={onOpenSettings}
-            />
+            {sidebar && (
+                <Sidebar
+                    open={sidebarOpen}
+                    onToggle={toggleSidebar}
+                    onCreateProject={onCreateProject}
+                    onCreateTask={onCreateTask}
+                    onRequestDelete={onRequestDelete}
+                    onOpenSettings={onOpenSettings}
+                />
+            )}
 
             <main className="relative flex min-w-0 flex-1">
                 <div className="flex min-w-0 flex-1 flex-col">
@@ -253,6 +269,7 @@ export function App() {
                                 onAddMember={onAddMember}
                                 onPickModel={onPickModel}
                                 taskPanelOpen={taskPanelOpen}
+                                taskPanelShown={taskPanel}
                                 onToggleTaskPanel={onToggleTaskPanel}
                             />
                             <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
@@ -268,7 +285,7 @@ export function App() {
                         </div>
                     )}
                 </div>
-                {taskPanelOpen && room !== undefined && room.type === 'task' && (
+                {taskPanel && taskPanelOpen && room !== undefined && room.type === 'task' && (
                     <TaskPanel room={room} onClose={onCloseTaskPanel} />
                 )}
             </main>

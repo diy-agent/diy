@@ -2,13 +2,14 @@
 //
 // P0 的落位（先证明引擎能装真业务，再谈拆包内组件）：
 //   left   房间导航        宿主职责：切页 = 换页实例 = 换一份布局
-//   center <EntityChatApp> 整页塞进来（自带侧栏、header、surface 切换、任务面板）
+//   center <EntityChatApp> 只留**主区**（`sidebar={false}`）——它的侧栏和左栏重复，
+//                          且自带一套宽度拖拽（localStorage `entity-chat:sidebar-width`），
+//                          与 dock 的 area(size/min) 是两套真源
 //   right  房间信息        收起，用来看 view 拿到的 scope / page 是什么
 //   bottom 工作台诊断      收起，自解释这个页怎么拖、布局存在哪
 //
-// 下一刀（拆分）：entity-chat 把 Sidebar / 对话主区 / TaskPanel 导出成 view，
-//   center 只剩对话，left/right 换成它们，Sidebar 自带的宽度拖拽（localStorage
-//   `entity-chat:sidebar-width`）交给 dock 的 area(size/min) 管。
+// 下一刀（拆分）：把 entity-chat 的侧栏内容（项目 / 历史 / 未归属）与 TaskPanel 导出成 view，
+//   left/right 换成它们，宿主就不再需要自写的 RoomsNav。
 
 import {
     EntityChatApp,
@@ -70,11 +71,11 @@ function RoomsNav() {
     );
 }
 
-/** 对话：P0 先整页塞进来 —— 它自带侧栏，和左栏重复；拆分那一刀就消掉这层重复 */
+/** 对话：只留主区。侧栏 / 任务面板交给 dock 的 left、right 区域 —— 一个布局只该有一个真源 */
 function ChatBody() {
     return (
         <div className="dock-chat">
-            <EntityChatApp />
+            <EntityChatApp sidebar={false} taskPanel={false} />
         </div>
     );
 }
