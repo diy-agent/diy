@@ -526,7 +526,9 @@ export function assembleSystem(
   const globals = assembleGlobals(home, projectId, {
     taskUri,
     skills: opts.skills,
-    diyCli,
+    // 空串要转成 undefined：providers 侧用 `??` 兜底「diy（未注入 DIY_CLI，勿照抄）」，
+    // 传 "" 会把兜底键吞掉 → 模版渲染成空入口，而提示词里就少了一句「未注入」（测试守护的就是这条）
+    diyCli: diyCli || undefined,
     // 草稿也要进"节渲染"：模版编辑器里没保存的 identity.md 改动，预览与投递都该立刻反映
     drafts: opts.drafts,
   });
