@@ -561,10 +561,9 @@ export class RoomActor {
      */
     private syncPrimaryName(next: string): void {
         const primary = this.primary();
-        if (primary !== undefined) {
-            const identity = this.deps.bots().find((bot) => bot.id === primary.id);
-            if (identity !== undefined) this.deps.store.upsertBot({ ...identity, name: next });
-        }
+        const identity = primary === undefined ? undefined : this.deps.bots().find((bot) => bot.id === primary.id);
+        // 标题没真变时也会走到这里（保存正文同一笔 data）：名同就不写 bots 表
+        if (identity !== undefined && identity.name !== next) this.deps.store.upsertBot({ ...identity, name: next });
         // 已建好的 session 自己持有一份 bot 快照：不推下去，改名后它继续说旧名
         for (const session of this.sessions.values()) session.setBotName(next);
     }

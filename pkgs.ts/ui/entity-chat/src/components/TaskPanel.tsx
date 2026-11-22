@@ -134,6 +134,9 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
             await actions.updateRoomData(room.id, {
                 // 名字跟着容器走：任务的名字在 data.title（老数据里那份 desc 也抬上来）
                 title: nextTitle,
+                // 标题与描述已合并：那句已落成 title，桌上旧的 desc 一起清掉 ——
+                // 留着就是同一个任务有两句话（`tasks.summary` 会继续存旧的）
+                desc: null,
                 body: body.trim() === '' ? null : body,
             });
             setNote('已保存');

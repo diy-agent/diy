@@ -253,7 +253,9 @@ function taskProvider(spec: RoomContextSpec, cwd: string): ContextProvider {
             const body = str('body');
             return {
                 uri: spec.id,
-                title: str('title'),
+                // 标题与描述合并前的任务只落了 `desc`：标题取不到时用它兜底，
+                // 否则模型看到的任务没有名字（老数据不迁，读的地方兜住）
+                title: str('title') || desc,
                 state: str('status') || 'open',
                 parent: str('parent'),
                 created: str('created'),

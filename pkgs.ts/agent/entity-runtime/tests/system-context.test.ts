@@ -67,9 +67,8 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         const skillsRoot = join(tmp(), 'skills');
         const spec = {
             id: 'task:t-1',
-            name: '任务一',
             type: 'task',
-            data: { status: 'open', body: '第一版正文' } as Record<string, unknown>,
+            data: { title: '任务一', status: 'open', body: '第一版正文' } as Record<string, unknown>,
         };
         const ctx = createRoomContext({ spec, cwd: repo, skillsRoot });
 
@@ -90,10 +89,21 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         ctx.commit();
     });
 
+    it('老任务只有 desc 时标题兜底（标题与描述合并前落的数据）', () => {
+        const repo = tmp();
+        const ctx = createRoomContext({
+            spec: { id: 'task:t-old', type: 'task', data: { status: 'open', desc: '旧的一句话描述' } },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+        });
+        // 合并后名字只住在 data.title；老数据没迁，读的时候用 desc 顶上
+        expect(ctx.open().system).toContain('title: "旧的一句话描述"');
+    });
+
     it('非 task 房间不投 task 节（不造空串冒充）', () => {
         const repo = tmp();
         const ctx = createRoomContext({
-            spec: { id: 'proj:diy', name: 'diy', type: 'project', data: {} },
+            spec: { id: 'proj:diy', type: 'project', data: { name: 'diy' } },
             cwd: repo,
             skillsRoot: join(tmp(), 'skills'),
         });
@@ -115,7 +125,7 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         const repo = tmp();
         const entries = [{ seq: 1, at: Date.now(), kind: 'decision' as const, text: '选了 A' }];
         const ctx = createRoomContext({
-            spec: { id: 'task:t-1', name: '任务一', type: 'task', data: {} },
+            spec: { id: 'task:t-1', type: 'task', data: { title: '任务一' } },
             cwd: repo,
             skillsRoot: join(tmp(), 'skills'),
             journal: () => entries,
@@ -137,7 +147,7 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         const repo = tmp();
         const members = [{ id: 'bot-1', name: '小满', key: '小满', main: true }];
         const ctx = createRoomContext({
-            spec: { id: 'task:t-1', name: '任务一', type: 'task', data: {} },
+            spec: { id: 'task:t-1', type: 'task', data: { title: '任务一' } },
             cwd: repo,
             skillsRoot: join(tmp(), 'skills'),
             members: () => members,
