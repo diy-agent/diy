@@ -1,7 +1,6 @@
 import * as React from 'react';
 
-import { dialogOwner, useDraft } from '../drafts';
-import { DIR_SUGGESTIONS, roomTypeLabel, type Bot, type Room } from '../model';
+import { DIR_SUGGESTIONS, roomTitle, roomTypeLabel, type Bot, type Room } from '../model';
 import { useStore } from '../store';
 import { ModelPicker } from './ModelPicker';
 
@@ -124,37 +123,30 @@ export function CreateTaskDialog({
     suggestedName: string;
     onClose: () => void;
     /** 成功才 resolve：失败时草稿要留着（见 submit） */
-    onSubmit: (input: { name: string; desc?: string }) => void | Promise<void>;
+    onSubmit: (input: { name: string }) => void | Promise<void>;
 }) {
     const [name, setName] = React.useState(suggestedName);
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
-    const draft = useDraft(dialogOwner('create-task', project.id), 'desc');
-    const desc = draft.text;
-    /** 打开时确实捞回了上次没写完的东西（加载完才有结论，别闪一下提示） */
-    const restored = draft.loaded && desc.trim() !== '';
+    // 标题就是描述（2026-11-22）：不再有「任务名 + 可选描述」两栏 —— 建任务时写的那句
+    // 就是它的标题，也是它在侧栏/项目树里显示的那句。长内容留给建成后的正文。
     const submit = (): void => {
         if (name.trim() === '' || busy) return;
-        const trimmedDesc = desc.trim();
         setBusy(true);
         setError(null);
-        void Promise.resolve(onSubmit({ name: name.trim(), ...(trimmedDesc === '' ? {} : { desc: trimmedDesc }) }))
-            // 建成了才清（而且只清"还是我提交那版"）：失败还清 = 把这段话白丢一次
-            .then(() => {
-                draft.clearIfMatches(desc);
-                onClose();
-            })
+        void Promise.resolve(onSubmit({ name: name.trim() }))
+            .then(() => onClose())
             .catch(() => {
-                setError('创建失败，描述已保留');
+                setError('创建失败');
                 setBusy(false);
             });
     };
 
     return (
-        <Modal title={`在「${project.name}」下新建任务`} onClose={onClose}>
+        <Modal title={`在「${roomTitle(project)}」下新建任务`} onClose={onClose}>
             <div className="space-y-3 text-sm">
                 <label className="block">
-                    <span className="mb-1 block text-xs text-muted-foreground">任务名</span>
+                    <span className="mb-1 block text-xs text-muted-foreground">任务名（一句话：这个任务要做什么）</span>
                     <input
                         autoFocus
                         value={name}
@@ -163,29 +155,9 @@ export function CreateTaskDialog({
                         onKeyDown={(event) => {
                             if (event.key === 'Enter') submit();
                         }}
+                        placeholder="要做到什么程度算完成…"
                         className="w-full rounded-lg border bg-card px-2 py-1.5 outline-none"
                     />
-                </label>
-                <label className="block">
-                    <span className="mb-1 block text-xs text-muted-foreground">描述（可选）</span>
-                    <textarea
-                        value={desc}
-                        onChange={(event) => draft.setText(event.target.value)}
-                        rows={3}
-                        placeholder="要做到什么程度算完成…"
-                        className="w-full resize-y rounded-lg border bg-card px-2 py-1.5 text-xs outline-none"
-                    />
-                    {restored && (
-                        <span className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                            已恢复上次没写完的描述
-                            <button
-                                onClick={() => draft.clear()}
-                                className="rounded border px-1.5 py-0.5 hover:bg-muted"
-                            >
-                                丢弃
-                            </button>
-                        </span>
-                    )}
                 </label>
                 {error !== null && (
                     <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px]">
@@ -193,18 +165,12 @@ export function CreateTaskDialog({
                     </p>
                 )}
                 <p className="rounded-lg border border-dashed px-2 py-1.5 text-[11px] text-muted-foreground">
-                    会自动建一个同名任务 bot；状态默认 open，点名字前的状态图标改成 closed，它就从项目树挪进「历史任务」。
+                    会自动建一个同名任务 bot；状态默认 open，点名字前的状态图标改成
+                    closed，它就从项目树挪进「历史任务」。
                 </p>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-                <button
-                    // 明确点「取消」= 不要了：草稿一起清（点外面关掉是误关，保留）
-                    onClick={() => {
-                        draft.clear();
-                        onClose();
-                    }}
-                    className="rounded-lg border px-3 py-1.5 text-sm"
-                >
+                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
                     取消
                 </button>
                 <button
@@ -233,7 +199,7 @@ export function ConfirmDeleteDialog({
 }) {
     const isProject = room.type === 'project';
     return (
-        <Modal title={`删除${isProject ? '项目' : '任务'}「${room.name}」`} onClose={onClose}>
+        <Modal title={`删除${isProject ? '项目' : '任务'}「${roomTitle(room)}」`} onClose={onClose}>
             <div className="space-y-2 text-sm">
                 <p>
                     会删掉这个{isProject ? '项目' : '任务'}的对话记录、成员关系和会话快照，
@@ -286,11 +252,11 @@ export function AddMemberDialog({
     const homeName = (bot: Bot): string => {
         const home = state.rooms.find((item) => item.id === bot.homeRoomId);
         if (home === undefined) return '?';
-        return `${roomTypeLabel(home.type)}「${home.name}」`;
+        return `${roomTypeLabel(home.type)}「${roomTitle(home)}」`;
     };
 
     return (
-        <Modal title={`给「${room.name}」添加成员`} onClose={onClose}>
+        <Modal title={`给「${roomTitle(room)}」添加成员`} onClose={onClose}>
             <div className="space-y-4 text-sm">
                 <div>
                     <div className="mb-1.5 text-xs text-muted-foreground">从现有成员里选</div>

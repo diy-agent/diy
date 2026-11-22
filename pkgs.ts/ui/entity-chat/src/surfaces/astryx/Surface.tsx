@@ -23,6 +23,7 @@ import type { ChatVirtualizerHandle } from '@astryxdesign/lab';
 import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
 import { AskCard } from '../../components/AskCard';
+import { openLinkInNewWindow } from '../../links';
 import { BotAvatar } from '../../components/BotAvatar';
 import { EndFooterLine } from '../../components/EndFooterLine';
 import { deliveryFooterOf, deliveryStatusOf, runsOf, TOOL_STATUS, toolTargetOf } from './mapping';
@@ -155,7 +156,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                                   })}
                         />
                     ) : run.kind === 'text' ? (
-                        <Markdown key={`t${index}`} density="compact">
+                        <Markdown key={`t${index}`} density="compact" onLinkClick={openLinkInNewWindow}>
                             {run.text}
                         </Markdown>
                     ) : (

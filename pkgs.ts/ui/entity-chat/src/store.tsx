@@ -321,6 +321,14 @@ export function isCurrentRoom(address: NavAddress, room: { id: string }): boolea
 //   地址栏 → 内存：`popstate` 监听（用户按前进后退）
 
 /**
+ * 位置同步开关：true = store 读写地址栏（App 的默认形态，URL 就是路由）。
+ *
+ * 宿主自带壳时关掉它（见 bootstrapStore 的 syncAddress）：工作台是 /dock.html 一页多区，
+ * store 一 bootstrap 就 replaceState 成 /room/xxx，刷新那次就落到主应用去了。
+ */
+let addressSync = true;
+
+/**
  * 把地址写进地址栏。
  *
  * `replace` 用严格判定（写法不对就改写）：首屏从 `/` 落到第一个房间、老地址
@@ -331,6 +339,7 @@ export function isCurrentRoom(address: NavAddress, room: { id: string }): boolea
  * `%XX`），字符串直比会把同一个位置误判成变了，多堆一条历史。
  */
 function writeAddress(target: NavAddress, replace: boolean): void {
+    if (!addressSync) return;
     if (typeof window === 'undefined') return;
     if (replace) {
         if (isCanonicalPath(window.location.pathname, target)) return;
@@ -365,7 +374,7 @@ function fallbackAddress(rooms: Room[]): NavAddress {
 function resolveAddress(rooms: Room[]): NavAddress {
     return pickAddress({
         current: state.address,
-        fromUrl: typeof window === 'undefined' ? undefined : parseAddress(window.location.pathname),
+        fromUrl: addressSync && typeof window !== 'undefined' ? parseAddress(window.location.pathname) : undefined,
         known: (candidate) => isKnown(candidate, rooms),
         fallback: fallbackAddress(rooms),
     });
@@ -380,7 +389,7 @@ let addressHooksInstalled = false;
  * 状态本来就是对的。真去监听 hashchange 或轮询 pathname，会让「自己发起的变更」再触发一次导航。
  */
 function installAddressHooks(): void {
-    if (addressHooksInstalled || typeof window === 'undefined') return;
+    if (addressHooksInstalled || typeof window === 'undefined' || !addressSync) return;
     addressHooksInstalled = true;
     window.addEventListener('popstate', () => {
         const target = parseAddress(window.location.pathname);
@@ -598,6 +607,21 @@ function installBootstrapHooks(): void {
         if (state.loaded) refreshQuietly();
         bootstrapIfNeeded();
     });
+}
+
+/**
+ * 宿主装配用：把 store 拉起来（幂等）。
+ *
+ * App 挂载时自己会调一次，但宿主可能要在 App 之外先读房间列表 —— 工作台就是：
+ * 它得先知道「有哪些房间」才知道该开哪一页，而那一刻 App 还没人挂。等 App 触发
+ * 就成了死锁（不 loaded 不渲染页，不渲染页没人 bootstrap）。
+ *
+ * `syncAddress: false` = 别碰地址栏：位置同步是 App 的职责（它的 URL 就是路由），
+ * 宿主的壳自己管地址。
+ */
+export function bootstrapStore(options?: { syncAddress?: boolean }): void {
+    if (options?.syncAddress === false) addressSync = false;
+    actions.bootstrap();
 }
 
 export const actions = {

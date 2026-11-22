@@ -483,7 +483,8 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
 
     it('E. 改名后 bot 跟着改：新结论署名新名，session 里的自称也换掉', async () => {
         const h = makeRoom({ reply: () => '收到' });
-        h.room.update({ name: '改过的名字' });
+        // 容器改名 = 改 data 里的名字键（project → name；bot 显示名跟着走）
+        h.room.update({ data: { name: '改过的名字' } });
         expect(h.store.listBots().find((bot) => bot.id === BOT_A.id)?.name).toBe('改过的名字');
 
         await h.room.say({ text: '说一句', author: HUMAN });

@@ -181,8 +181,7 @@ function seed(): void {
         {
             id: 'proj:diy',
             type: 'project',
-            name: 'diy',
-            data: { dir: '~/git/diy/diy' },
+            data: { name: 'diy', dir: '~/git/diy/diy' },
             members: [
                 { botId: byName('diy')?.id ?? bots[0]!.id, primary: true },
                 { botId: byName('小满')?.id ?? bots[0]!.id },
@@ -192,16 +191,14 @@ function seed(): void {
         {
             id: 'proj:cops',
             type: 'project',
-            name: 'cops',
-            data: { dir: '~/git/cops' },
+            data: { name: 'cops', dir: '~/git/cops' },
             members: [{ botId: byName('cops')?.id ?? bots[1]!.id, primary: true }],
             modelKey: DEFAULT_MODEL,
         },
         {
             id: 'task:t-001',
             type: 'task',
-            name: '任务树与多会话',
-            data: { dir: '~/git/diy/diy', projectId: 'proj:diy', status: 'open' },
+            data: { title: '任务树与多会话', dir: '~/git/diy/diy', projectId: 'proj:diy', status: 'open' },
             members: [{ botId: byName('任务树与多会话')?.id ?? bots[2]!.id, primary: true }],
             modelKey: DEFAULT_MODEL,
         },
@@ -236,8 +233,7 @@ function seed(): void {
         specs.push({
             id: roomId,
             type: roomId.startsWith('task') ? 'task' : 'project',
-            name: bot?.name ?? roomId,
-            data: {},
+            data: roomId.startsWith('task') ? { title: bot?.name ?? roomId } : { name: bot?.name ?? roomId },
             members,
             modelKey: bot?.modelKey ?? DEFAULT_MODEL,
         });
@@ -439,8 +435,11 @@ export function createDiy2App(opts: {
                     const spec: Room = {
                         id,
                         type,
-                        name: input.name,
-                        data: type === 'task' ? { status: 'open', ...input.data } : (input.data ?? {}),
+                        // 容器名跟着容器走：任务的标题 / 项目的名字都在 data 里
+                        data:
+                            type === 'task'
+                                ? { status: 'open', title: input.name, ...input.data }
+                                : { name: input.name, ...input.data },
                         members: [{ botId: bot.id, primary: true }],
                         modelKey,
                     };
@@ -450,10 +449,14 @@ export function createDiy2App(opts: {
                 },
                 update: async ({ input }) => {
                     const actor = requireRoom(input.id);
+                    // 容器的名字落在自己的键上：任务叫 title，项目叫 name
+                    const namePatch =
+                        input.name === undefined ? {} : { [actor.spec.type === 'task' ? 'title' : 'name']: input.name };
                     actor.update({
-                        ...(input.name === undefined ? {} : { name: input.name }),
                         ...(input.modelKey === undefined ? {} : { modelKey: input.modelKey }),
-                        ...(input.data === undefined ? {} : { data: input.data }),
+                        ...(input.name === undefined && input.data === undefined
+                            ? {}
+                            : { data: { ...namePatch, ...input.data } }),
                     });
                     return actor.spec;
                 },

@@ -34,9 +34,18 @@ import { watchedValue } from './watch-cache';
 /** 房间上下文需要的 spec 形状（只读；与 `Room` 结构兼容） */
 export interface RoomContextSpec {
     readonly id: string;
-    readonly name: string;
     readonly type: string;
+    /** 类型特有数据：容器的名字也在这里（task → `title`，project → `name`） */
     readonly data: Record<string, unknown>;
+}
+
+/**
+ * 容器名：房间自己没有名字，名字跟着容器走（2026-11-22 裁，见 protocol 的 Room）。
+ * task 用 `data.title`、project 用 `data.name`；都没有才退 id（插件容器可能不取名）。
+ */
+function containerName(spec: RoomContextSpec): string {
+    const text = (key: string): string => (typeof spec.data[key] === 'string' ? (spec.data[key] as string).trim() : '');
+    return text('title') || text('name') || spec.id;
 }
 
 export interface RoomContextOptions {
@@ -220,7 +229,7 @@ function roomProvider(opts: RoomContextOptions): ContextProvider {
             return {
                 members: {
                     roomId: opts.spec.id,
-                    name: opts.spec.name,
+                    name: containerName(opts.spec),
                     list: list.map((member) => ({
                         id: member.id,
                         name: member.name,
@@ -244,7 +253,9 @@ function taskProvider(spec: RoomContextSpec, cwd: string): ContextProvider {
             const body = str('body');
             return {
                 uri: spec.id,
-                title: spec.name,
+                // 标题与描述合并前的任务只落了 `desc`：标题取不到时用它兜底，
+                // 否则模型看到的任务没有名字（老数据不迁，读的地方兜住）
+                title: str('title') || desc,
                 state: str('status') || 'open',
                 parent: str('parent'),
                 created: str('created'),
@@ -328,7 +339,7 @@ export function createRoomContext(opts: RoomContextOptions): ContextSession {
 /** 兼容入口（#503 的测试与旧调用点）：只按 cwd/home 组装一次 system，不带任务 */
 export function buildRoomSystemContext(opts: { cwd: string; home?: string }): string {
     const session = createRoomContext({
-        spec: { id: '', name: '', type: 'project', data: {} },
+        spec: { id: '', type: 'project', data: {} },
         cwd: opts.cwd,
         ...(opts.home === undefined ? {} : { home: opts.home }),
     });

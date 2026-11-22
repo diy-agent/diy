@@ -11,6 +11,7 @@
 
 export { App as EntityChatApp } from './App';
 export type { Bot, Item, Room } from './model';
+export { roomTitle } from './model';
 export type { ModelInfo, ModelKey, Provider } from './models';
 
 // ── 导航 ──────────────────────────────────────────────────────
@@ -21,3 +22,36 @@ export type { NavAddress } from './address';
 // ── 侧栏插槽 ──────────────────────────────────────────────────
 export { registerNavSource, unregisterNavSource, useNavSources } from './nav';
 export type { NavContext, NavHost, NavSource } from './nav';
+
+// ── 宿主装配用的部件 ──────────────────────────────────────
+//
+// 工作台把「外壳」拆给 dock 的 area：左栏是侧栏、右栏是任务面板、中间只留对话。
+// 这些部件自己不知道被装在哪里 —— 宽度 / 收起由外层 area 决定（`widthMode="fill"`），
+// 弹窗由宿主挂一次 `useRoomDialogs()`（App 与 /dock.html 共用同一套状态）。
+export { Sidebar } from './components/Sidebar';
+export { TaskPanel } from './components/TaskPanel';
+export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';
+export type { RoomDialogs } from './useRoomDialogs';
+
+// ── 宿主装配用的只读钩子 ──────────────────────────────────────
+//
+// 为什么必须放出来：宿主要自己画「有哪些房间 / 现在在看哪个 / 连上了没有」这类**导航**
+// （workbench-dock 的左栏、页实例身份都从这里取），而这些状态只活在 store 里 ——
+// 不导出，宿主就只能猜或者重连一次 API。
+//
+// 只给**读**：`actions`（改名 / 删房 / 压上下文 / 换模型）仍然不露 —— 写路径要一条一条
+// 设计语义（谁审、失败了怎么回滚），不适合顺手放出来当便利 API。
+export {
+    bootstrapStore,
+    roomOf,
+    shellSnapshot,
+    useAddress,
+    useBots,
+    useDefaultModelKey,
+    useIsCurrentRoom,
+    useLastActivityOf,
+    useLoaded,
+    usePendingAskOf,
+    useRooms,
+    useSelectedRoom,
+} from './store';

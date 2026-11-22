@@ -300,7 +300,7 @@ function roomToTask(room: Room): TaskInput {
     const closedAt = room.data['closedAt'];
     return {
         id: room.id,
-        title: room.name,
+        title: dataText(room, 'title'),
         summary: dataText(room, 'desc'),
         body: dataText(room, 'body'),
         projectId: dataText(room, 'projectId') || null,
@@ -314,7 +314,7 @@ function roomToTask(room: Room): TaskInput {
 function roomToProject(room: Room): ProjectInput {
     return {
         id: room.id,
-        name: room.name,
+        name: dataText(room, 'name'),
         workspace: dataText(room, 'dir') || null,
         modelKey: room.modelKey,
     };
@@ -327,15 +327,17 @@ function taskToRoom(task: TaskRecord, members: RoomMember[], taskDir?: string): 
     if (task.closedAt !== null) data['closedAt'] = task.closedAt;
     if (task.summary !== '') data['desc'] = task.summary;
     if (task.body !== '') data['body'] = task.body;
+    // 容器名跟着容器走：任务的标题就在 data.title（Room 本身没有 name）
+    data['title'] = task.title;
     // 只读：产物目录由创建日派生（不落库、不参与保存）
     if (taskDir !== undefined) data['taskDir'] = taskDir;
-    return { id: task.id, type: 'task', name: task.title, data, members, modelKey: task.modelKey };
+    return { id: task.id, type: 'task', data, members, modelKey: task.modelKey };
 }
 
 function projectToRoom(project: ProjectRecord, members: RoomMember[]): Room {
-    const data: Record<string, unknown> = {};
+    const data: Record<string, unknown> = { name: project.name };
     if (project.workspace !== null) data['dir'] = project.workspace;
-    return { id: project.id, type: 'project', name: project.name, data, members, modelKey: project.modelKey };
+    return { id: project.id, type: 'project', data, members, modelKey: project.modelKey };
 }
 
 export function openStore(file: string): Store {

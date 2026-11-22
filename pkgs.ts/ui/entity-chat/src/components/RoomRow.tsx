@@ -8,7 +8,7 @@ import * as React from 'react';
 
 import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
-import { formatActivityAgo, formatAtAbsolute, type Room } from '../model';
+import { formatActivityAgo, formatAtAbsolute, roomTitle, type Room } from '../model';
 import { pendingAskHintOf } from '../pendingAsk';
 import { actions, useIsCurrentRoom, useLastActivityOf, usePendingAskOf, usePendingAskTitlesOf } from '../store';
 import { isPlainLeftClick } from './link';
@@ -109,7 +109,7 @@ export function RoomRowView({
                     event.preventDefault();
                     actions.select(room.id);
                 }}
-                title={`${room.type}：${room.name}${pendingAsk > 0 ? `（${askHint}）` : ''}`}
+                title={`${room.type}：${roomTitle(room)}${pendingAsk > 0 ? `（${askHint}）` : ''}`}
                 className={`relative flex w-full items-center justify-center rounded-lg py-2 ${
                     active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
                 }`}
@@ -163,7 +163,7 @@ export function RoomRowView({
             {isProject ? <Icon className="size-3.5 shrink-0 text-sky-400" /> : <StatusIcon room={room} />}
 
             <EditableName
-                value={room.name}
+                value={roomTitle(room)}
                 mode="double"
                 editing={renaming}
                 onEditingChange={setRenaming}

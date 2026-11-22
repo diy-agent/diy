@@ -5,8 +5,7 @@ import type { Room } from '../src/types';
 const room: Room = {
     id: 'task-abc',
     type: 'task',
-    name: '新任务 2',
-    data: { status: 'open', projectId: 'proj:diy', dir: '~/git/diy/diy' },
+    data: { title: '新任务 2', status: 'open', projectId: 'proj:diy', dir: '~/git/diy/diy' },
     members: [{ botId: 'b1', primary: true }, { botId: 'b2' }],
     modelKey: 'm',
 };
@@ -41,10 +40,10 @@ describe('rooms 持久化', () => {
     it('改名 / 换模型是 upsert，不会多出一行', () => {
         const store = openStore(':memory:');
         store.saveRoom(room);
-        store.saveRoom({ ...room, name: '改名后', modelKey: 'm2' });
+        store.saveRoom({ ...room, data: { ...room.data, title: '改名后' }, modelKey: 'm2' });
         const rooms = store.listRooms();
         expect(rooms).toHaveLength(1);
-        expect(rooms[0]).toMatchObject({ name: '改名后', modelKey: 'm2' });
+        expect(rooms[0]).toMatchObject({ data: { title: '改名后' }, modelKey: 'm2' });
     });
 
     it('Room.data 里的未知键不再被存回去（core 已无开放袋子）', () => {

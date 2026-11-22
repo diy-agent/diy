@@ -51,6 +51,7 @@ export function Sidebar({
     onCreateTask,
     onRequestDelete,
     onOpenSettings,
+    widthMode = 'own',
 }: {
     open: boolean;
     onToggle: () => void;
@@ -58,6 +59,16 @@ export function Sidebar({
     onCreateTask: (projectId: string) => void;
     onRequestDelete: (room: Room) => void;
     onOpenSettings: () => void;
+    /**
+     * 宽度归谁管。
+     *
+     * `own`（缺省）= 侧栏自己带宽度与右缘拖拽手柄，存 `localStorage`——整页 App 的形态。
+     *
+     * `fill` = 宽度交给外层容器（工作台的 dock area）：不写宽度、不渲染手柄。
+     * 两边都管就是两个真源：宿主的 area 拖到 320，下一次挂载又被 localStorage 的 240
+     * 盖回去，而且那根手柄与 area 的分屏线只差几像素、谁都拖不准。
+     */
+    widthMode?: 'own' | 'fill';
 }) {
     // 壳只关心「当前地址」（来源们拿它判高亮）。rooms / 错误 / 会话这些不归它管：
     // 整份快照会让每次 emit（包含别的房间来了一条消息）都把整张侧栏重铺一遍。
@@ -68,6 +79,8 @@ export function Sidebar({
     /** 拖拽中：宽度跟着指针实时变，这时必须**摘掉 width 过渡**，否则宽度在鼠标后面追 */
     const [resizing, setResizing] = React.useState(false);
     const asideRef = React.useRef<HTMLElement | null>(null);
+    /** 宽度与右缘手柄归不归自己管（见 `widthMode`） */
+    const own = widthMode === 'own';
     /** 拖拽结束时落盘（拖的途中每帧都写 localStorage 是白费） */
     const persistWidth = React.useCallback((px: number) => {
         try {
@@ -120,9 +133,9 @@ export function Sidebar({
             ref={asideRef}
             // `relative` 是给右缘手柄的定位锚（absolute inset-y-0 right-0）：
             // 手柄盖在 border 上，视觉上就是「这条线能拖」。
-            className={`relative flex shrink-0 flex-col overflow-hidden border-r ${resizing ? '' : 'transition-[width] duration-200'}`}
-            style={{ width: open ? width : SIDEBAR_RAIL_W }}
-            data-sidebar-width={open ? width : SIDEBAR_RAIL_W}
+            className={`relative flex flex-col overflow-hidden border-r ${own ? 'shrink-0' : 'min-w-0'} ${resizing ? '' : 'transition-[width] duration-200'}`}
+            style={own ? { width: open ? width : SIDEBAR_RAIL_W } : undefined}
+            data-sidebar-width={own ? (open ? width : SIDEBAR_RAIL_W) : undefined}
         >
             <div className={`flex items-center border-b py-3 ${open ? 'gap-2 px-3' : 'justify-center px-1'}`}>
                 {open && (
@@ -164,7 +177,7 @@ export function Sidebar({
             {/* 右缘拖拽手柄（就这样写，不抽组件）：让它在视觉上**盖住那条 border** ——
                 「这条线能拖」比在旁边加一个可拖的小块更直接。双击复位到默认宽。
                 收起态不渲染：那是一个图标列的固定尺寸，拖了也看不见变化。 */}
-            {open && (
+            {open && own && (
                 <div
                     role="separator"
                     aria-orientation="vertical"

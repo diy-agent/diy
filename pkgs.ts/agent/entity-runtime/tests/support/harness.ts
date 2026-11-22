@@ -73,8 +73,7 @@ export function makeRoom(
     const spec: Room = options.spec ?? {
         id: 'room:1',
         type: 'project',
-        name: 'demo',
-        data: {},
+        data: { name: 'demo' },
         members: options.members ?? [{ botId: BOT_A.id, primary: true }, { botId: BOT_B.id }],
         modelKey: 'm-room',
     };

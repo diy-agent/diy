@@ -60,8 +60,10 @@ updated: 2026-11-21
 
 ## Room 兼容层
 
-服务端与 entity-chat 仍吃 `Room`，store 做单向映射（`title↔name`、`summary↔data.desc`、
-`workspace↔data.dir`、`project_id↔data.projectId`、`status/closed_at↔data.status/closedAt`）。
+服务端与 entity-chat 仍吃 `Room`，store 做单向映射（`title↔data.title`、`name↔data.name`、
+`summary↔data.desc`、`workspace↔data.dir`、`project_id↔data.projectId`、`status/closed_at↔data.status/closedAt`）。
+`Room` 本身**没有 `name`**（2026-11-22 裁）：房间是虚拟概念，显示名来自容器 ——
+任务是 `data.title`、项目是 `data.name`，其它容器退主成员 bot 名。
 另有两个**只读投影**：`data.number`（任务号）与 `data.taskDir`（产物目录）—— 回写时忽略。
 `data` 里其它键**不读也不写**。`saveRoom` 只接受 project / task。UI 迁移完成后删掉这层。
 

@@ -61,24 +61,22 @@ const { actions, setDiy2Client, useIsCurrentRoom, useRooms } = await import('../
 const { registerNavSource } = await import('../src/nav');
 
 const rooms: Room[] = [
-    { id: 'proj:diy', type: 'project', name: 'diy', modelKey: 'm', data: { dir: '~/git/diy/diy' }, botIds: [] },
+    { id: 'proj:diy', type: 'project', modelKey: 'm', data: { name: 'diy', dir: '~/git/diy/diy' }, botIds: [] },
     {
         id: 'task:t-open',
         type: 'task',
-        name: '在跑的任务',
         modelKey: 'm',
-        data: { projectId: 'proj:diy', status: 'open' },
+        data: { title: '在跑的任务', projectId: 'proj:diy', status: 'open' },
         botIds: [],
     },
     {
         id: 'task:t-closed',
         type: 'task',
-        name: '收工的任务',
         modelKey: 'm',
-        data: { projectId: 'proj:diy', status: 'closed', closedAt: Date.now() - 3 * 3600_000 },
+        data: { title: '收工的任务', projectId: 'proj:diy', status: 'closed', closedAt: Date.now() - 3 * 3600_000 },
         botIds: [],
     },
-    { id: 'stock-1', type: 'stock', name: '孤儿容器', modelKey: 'm', data: {}, botIds: [] },
+    { id: 'stock-1', type: 'stock', modelKey: 'm', data: { name: '孤儿容器' }, botIds: [] },
 ];
 
 const HOST = {

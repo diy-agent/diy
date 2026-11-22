@@ -528,23 +528,14 @@ export class RoomActor {
     }
 
     /**
-     * 改容器元数据：名字 / 默认模型 / data（任务状态、描述…）。
+     * 改容器元数据：默认模型 / data（名字、任务状态、描述…）。
      * data 是**浅合并**（`null` = 删掉这个键）：任务状态这类字段后端不懂语义，
      * 只按调用方给的值落库 —— 在这里写枚举就是让新类型（股票/日历）每次都要改 runtime。
+     *
+     * 容器的名字也在 data 里（task 的 `title` / project 的 `name`），所以改名不再有
+     * 独立入参；改名后顺手把主 bot 的显示名同步过去（助手名缺省跟随容器名）。
      */
-    update(patch: { name?: string; modelKey?: string; data?: Record<string, unknown> }): void {
-        if (patch.name !== undefined && patch.name.trim() !== '') {
-            this.deps.spec.name = patch.name.trim();
-            const primary = this.primary();
-            if (primary !== undefined) {
-                const identity = this.deps.bots().find((bot) => bot.id === primary.id);
-                if (identity !== undefined) {
-                    this.deps.store.upsertBot({ ...identity, name: this.deps.spec.name });
-                }
-            }
-            // 已建好的 session 自己持有一份 bot 快照：不推下去，改名后它继续说旧名
-            for (const session of this.sessions.values()) session.setBotName(this.deps.spec.name);
-        }
+    update(patch: { modelKey?: string; data?: Record<string, unknown> }): void {
         if (patch.modelKey !== undefined) {
             this.deps.spec.modelKey = patch.modelKey;
             // 已经建好的 session 记着自己的 modelKey：不推下去，UI 上换模型就是死开关
@@ -557,9 +548,24 @@ export class RoomActor {
                 if (value === null) delete this.deps.spec.data[key];
                 else this.deps.spec.data[key] = value;
             }
+            const renamed = patch.data['title'] ?? patch.data['name'];
+            if (typeof renamed === 'string' && renamed.trim() !== '') this.syncPrimaryName(renamed.trim());
         }
         // 改名 / 换模型 / 改 data 都要落库，否则重启后回到旧值
         this.deps.store.saveRoom(this.deps.spec);
+    }
+
+    /**
+     * 容器改名 → 主 bot 跟着叫。bot 的名字是它自己的身份，这里同步的是显示名：
+     * 不同步的话，改完任务标题，助手在消息里还自称旧名。
+     */
+    private syncPrimaryName(next: string): void {
+        const primary = this.primary();
+        const identity = primary === undefined ? undefined : this.deps.bots().find((bot) => bot.id === primary.id);
+        // 标题没真变时也会走到这里（保存正文同一笔 data）：名同就不写 bots 表
+        if (identity !== undefined && identity.name !== next) this.deps.store.upsertBot({ ...identity, name: next });
+        // 已建好的 session 自己持有一份 bot 快照：不推下去，改名后它继续说旧名
+        for (const session of this.sessions.values()) session.setBotName(next);
     }
 
     // ── 内部 ───────────────────────────────────────────────────

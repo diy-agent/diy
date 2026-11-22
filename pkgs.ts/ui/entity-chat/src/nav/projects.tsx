@@ -8,7 +8,7 @@ import { ListPlus, Plus } from 'lucide-react';
 import * as React from 'react';
 
 import { RoomRow } from '../components/RoomRow';
-import { visibleInTree, type Room } from '../model';
+import { roomTitle, visibleInTree, type Room } from '../model';
 import type { NavContext, NavSource } from '../nav';
 import { useRooms } from '../store';
 
@@ -156,5 +156,5 @@ export const projectsSource: NavSource = {
 
 /** 项目 id → 名字：历史任务是跨项目的（不挂在任何项目下），行上得自己写清楚属于哪个项目 */
 export function projectNamesOf(rooms: Room[]): Map<string, string> {
-    return new Map(rooms.filter((room) => room.type === 'project').map((project) => [project.id, project.name]));
+    return new Map(rooms.filter((room) => room.type === 'project').map((project) => [project.id, roomTitle(project)]));
 }
