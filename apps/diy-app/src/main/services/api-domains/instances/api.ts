@@ -5,7 +5,12 @@
  */
 import { z } from "zod";
 import { RpcSchema } from "@diy-agent/rpc";
-import { InstanceRowSchema, InstanceSelfSchema, RevealResultSchema } from "../../../../shared/instance-row";
+import {
+    InstanceRowSchema,
+    InstanceSelfSchema,
+    InstanceStreamSchema,
+    RevealResultSchema,
+} from "../../../../shared/instance-row";
 
 export const instancesRoutes = RpcSchema.group({
     desc: `实例大盘（扫描本机 diy 实例 + 唤起指定实例）`,
@@ -30,6 +35,16 @@ export const instancesRoutes = RpcSchema.group({
             input: {},
             output: RevealResultSchema,
         }),
+        streams: RpcSchema.unary({
+            desc: `读一个实例的事件流订阅（目前只有 diy2 的 /rpc）：连接 → 房间。短命连接，不常驻`,
+            input: {
+                port: z.number().describe("目标实例的 RPC 端口（instances.list 的 port）"),
+            },
+            output: z.object({
+                streams: z.array(InstanceStreamSchema),
+                error: z.string().nullable().describe("连不上时的原因；正常为 null"),
+            }),
+        }),
         focus: RpcSchema.unary({
             desc: `
             唤起指定实例（窗口前置 + 全屏）
@@ -51,7 +66,6 @@ export const instancesRoutes = RpcSchema.group({
         }),
     },
 });
-
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

@@ -6,6 +6,7 @@ import { instancesApi } from "./api";
 import { currentGitBranch, repoDisplayOf } from "../../../core/instance-identity";
 import { revealSelf, windowState } from "../../window-ops";
 import { renderInstanceList, collectInstances, selfReport, focusInstance } from "../../instances";
+import { rpcStreamsOf } from "../../instance-streams";
 
 export function bindInstances(server: ServerBinding): void {
     server.use({
@@ -23,6 +24,7 @@ export function bindInstances(server: ServerBinding): void {
                         repoDisplay: repoDisplayOf(),
                     }),
                 reveal: async () => revealSelf(),
+                streams: async ({ input }) => rpcStreamsOf(input.port),
                 focus: async ({ input }) => {
                     if (input.pid === undefined && input.port === undefined) {
                         throw new Error("必须给 --pid 或 --port（目标实例；先跑 diy instances ls 看当前有哪些）");

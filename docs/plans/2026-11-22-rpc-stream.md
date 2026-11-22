@@ -39,7 +39,7 @@
 | P0 | `@diy-agent/rpc/ws/browser`（浏览器适配） | ✅ #519 |
 | P1 | 事件流走 WS；命令仍 REST；`streams` 观测 | ✅ 本 PR |
 | P2 | 命令面迁 rpc（send/answer/cancel/CRUD），删 SSE + REST 胶水 | 待做 |
-| P3 | dev app 订阅面板（连接 / 话题 / 在飞调用 / 断连次数） | 待做 |
+| P3 | dev app 订阅面板：实例页明细「事件流订阅」（`diy.instances.streams`） | ✅ |
 
 ## 4. 发布顺序（重要）
 

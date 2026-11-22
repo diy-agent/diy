@@ -11,18 +11,29 @@ import { z } from "zod";
 
 /** 本实例正在跑的一轮（来自 session-registry，跨实例由 `instances.self` 自报） */
 export const InstanceTurnSchema = z.object({
-  uri: z.string().describe("任务 URI"),
-  since: z.string().describe("本轮起始时刻（ISO）"),
-  steps: z.number().describe("已跑步数"),
-  model: z.string().optional().describe("本轮模型"),
+    uri: z.string().describe("任务 URI"),
+    since: z.string().describe("本轮起始时刻（ISO）"),
+    steps: z.number().describe("已跑步数"),
+    model: z.string().optional().describe("本轮模型"),
 });
 export type InstanceTurn = z.infer<typeof InstanceTurnSchema>;
 
+/**
+ * 一条 RPC 事件流订阅（目前只有 diy2 的 `/rpc`）：
+ * 一条连接可以订多个房间，`since` = 连接建立时刻（毫秒）。
+ */
+export const InstanceStreamSchema = z.object({
+    conn: z.string().describe("连接 id（服务端分配）"),
+    rooms: z.array(z.string()).describe("这条连接订阅的房间 id"),
+    since: z.number().describe("连接建立时刻（毫秒）"),
+});
+export type InstanceStream = z.infer<typeof InstanceStreamSchema>;
+
 /** 窗口状态（只有自报成功的行才有 —— 无窗口的 serve 实例为 null） */
 export const InstanceWindowSchema = z.object({
-  visible: z.boolean(),
-  fullScreen: z.boolean(),
-  minimized: z.boolean(),
+    visible: z.boolean(),
+    fullScreen: z.boolean(),
+    minimized: z.boolean(),
 });
 
 /**
@@ -34,39 +45,39 @@ export const InstanceWindowSchema = z.object({
  * 故 `diyHome` + `homeSource` 成对出现：自报到了才叫真根，没自报到的只算线索（`hint`）。
  */
 export const InstanceRowSchema = z.object({
-  pid: z.number().describe("实例主进程 pid"),
-  kind: z.string().describe("electron | serve"),
-  /**
-   * **身份第一刀**（##518）：`source` = 从工作区代码起的（dev 能读写 / 能操作）；
-   * `packaged` = 安装包起的（无 source，只能观测）。身份判据只认这个 + worktree + 数据根。
-   */
-  mode: z.string().describe("source（有源码，dev 可操作）| packaged（安装包，无源码）"),
-  /** 启动它的 git worktree 根（源码态才有意义；打包态 / 老记录为空串）。**UI 归组只按它** */
-  worktree: z.string().describe("worktree 根（绝对路径；空串 = 无 source 或不知道）"),
-  worktreeDisplay: z.string().describe("worktree 的展示路径（相对真实家目录缩 ~）"),
-  /** 实例自报名字；没写为空串（展示走 displayName） */
-  name: z.string().describe("实例自报名字（没写为空串）"),
-  /** 展示名：name 优先，否则 `<app>#<pid>`，再不行 `diy#<pid>` —— 任何活着的实例都有人认得出的名字 */
-  displayName: z.string().describe("展示名（name / app#pid / diy#pid）"),
-  variant: z.string().describe("产物变体（从入口路径推：prod|test|lab）"),
-  diyHome: z.string().describe("数据根（自报优先；拿不到时是线索值或空串）"),
-  diyHomeDisplay: z.string().describe("数据根的展示形式（相对真实家目录缩 ~）"),
-  homeSource: z.string().describe("数据根来源：self（实例自报）| hint（继承环境变量）| unknown"),
-  env: z.string().describe("运行环境（production|development|test）"),
-  branch: z.string().describe("当前代码所在 git 分支（拿不到为空串）"),
-  repoDisplay: z.string().describe("代码仓库/worktree 展示路径"),
-  port: z.number().nullable().describe("RPC 端口（未就绪/未注册为 null）"),
-  source: z.string().describe("「谁开的」摘要（启动时自报的父进程链；拿不到写「来源未知」）"),
-  sourceKind: z.string().describe("registry（注册表自报）| unknown（老实例，事后追不出）"),
-  cmdline: z.string().describe("启动命令行摘要（截断）"),
-  cwd: z.string().describe("实例进程 cwd（注册表自报）"),
-  startedAt: z.string().nullable().describe("启动时刻（ISO；注册表自报，老实例为 null）"),
-  status: z.string().describe("ready（探测通）| no-port（无端口）| unreachable（有端口无响应）| unregistered"),
-  note: z.string().describe("补充说明（问题/线索，正常为空串）"),
-  sessions: z.number().describe("本次启动后活跃过的会话数（自报）"),
-  running: z.number().describe("此刻在跑的轮次数（自报）"),
-  activeTurns: z.array(InstanceTurnSchema).describe("在跑的轮次明细（自报）"),
-  window: InstanceWindowSchema.nullable().describe("窗口状态（无窗口/未自报为 null）"),
+    pid: z.number().describe("实例主进程 pid"),
+    kind: z.string().describe("electron | serve"),
+    /**
+     * **身份第一刀**（##518）：`source` = 从工作区代码起的（dev 能读写 / 能操作）；
+     * `packaged` = 安装包起的（无 source，只能观测）。身份判据只认这个 + worktree + 数据根。
+     */
+    mode: z.string().describe("source（有源码，dev 可操作）| packaged（安装包，无源码）"),
+    /** 启动它的 git worktree 根（源码态才有意义；打包态 / 老记录为空串）。**UI 归组只按它** */
+    worktree: z.string().describe("worktree 根（绝对路径；空串 = 无 source 或不知道）"),
+    worktreeDisplay: z.string().describe("worktree 的展示路径（相对真实家目录缩 ~）"),
+    /** 实例自报名字；没写为空串（展示走 displayName） */
+    name: z.string().describe("实例自报名字（没写为空串）"),
+    /** 展示名：name 优先，否则 `<app>#<pid>`，再不行 `diy#<pid>` —— 任何活着的实例都有人认得出的名字 */
+    displayName: z.string().describe("展示名（name / app#pid / diy#pid）"),
+    variant: z.string().describe("产物变体（从入口路径推：prod|test|lab）"),
+    diyHome: z.string().describe("数据根（自报优先；拿不到时是线索值或空串）"),
+    diyHomeDisplay: z.string().describe("数据根的展示形式（相对真实家目录缩 ~）"),
+    homeSource: z.string().describe("数据根来源：self（实例自报）| hint（继承环境变量）| unknown"),
+    env: z.string().describe("运行环境（production|development|test）"),
+    branch: z.string().describe("当前代码所在 git 分支（拿不到为空串）"),
+    repoDisplay: z.string().describe("代码仓库/worktree 展示路径"),
+    port: z.number().nullable().describe("RPC 端口（未就绪/未注册为 null）"),
+    source: z.string().describe("「谁开的」摘要（启动时自报的父进程链；拿不到写「来源未知」）"),
+    sourceKind: z.string().describe("registry（注册表自报）| unknown（老实例，事后追不出）"),
+    cmdline: z.string().describe("启动命令行摘要（截断）"),
+    cwd: z.string().describe("实例进程 cwd（注册表自报）"),
+    startedAt: z.string().nullable().describe("启动时刻（ISO；注册表自报，老实例为 null）"),
+    status: z.string().describe("ready（探测通）| no-port（无端口）| unreachable（有端口无响应）| unregistered"),
+    note: z.string().describe("补充说明（问题/线索，正常为空串）"),
+    sessions: z.number().describe("本次启动后活跃过的会话数（自报）"),
+    running: z.number().describe("此刻在跑的轮次数（自报）"),
+    activeTurns: z.array(InstanceTurnSchema).describe("在跑的轮次明细（自报）"),
+    window: InstanceWindowSchema.nullable().describe("窗口状态（无窗口/未自报为 null）"),
 });
 export type InstanceRow = z.infer<typeof InstanceRowSchema>;
 
@@ -77,28 +88,28 @@ export type InstanceRow = z.infer<typeof InstanceRowSchema>;
  * （`AppConfig.diyHome` 经 dev-home 纠正、端口是实际 listen 的那个），外面只能猜。
  */
 export const InstanceSelfSchema = z.object({
-  pid: z.number(),
-  port: z.number().describe("实际 RPC 端口（0 = 还没就绪）"),
-  diyHome: z.string(),
-  diyHomeDisplay: z.string(),
-  env: z.string(),
-  variant: z.string(),
-  branch: z.string(),
-  repoDisplay: z.string(),
-  startedAt: z.string(),
-  sessions: z.number().describe("本次启动后活跃过的会话数"),
-  running: z.number().describe("此刻在跑的轮次数"),
-  activeTurns: z.array(InstanceTurnSchema),
-  /** 窗口状态；无窗口（serve / 窗口已关）为 null */
-  window: InstanceWindowSchema.nullable(),
+    pid: z.number(),
+    port: z.number().describe("实际 RPC 端口（0 = 还没就绪）"),
+    diyHome: z.string(),
+    diyHomeDisplay: z.string(),
+    env: z.string(),
+    variant: z.string(),
+    branch: z.string(),
+    repoDisplay: z.string(),
+    startedAt: z.string(),
+    sessions: z.number().describe("本次启动后活跃过的会话数"),
+    running: z.number().describe("此刻在跑的轮次数"),
+    activeTurns: z.array(InstanceTurnSchema),
+    /** 窗口状态；无窗口（serve / 窗口已关）为 null */
+    window: InstanceWindowSchema.nullable(),
 });
 export type InstanceSelf = z.infer<typeof InstanceSelfSchema>;
 
 /** `instances.reveal` 的回执：唤起本实例窗口的结果（失败必须带原因，绝不静默成功） */
 export const RevealResultSchema = z.object({
-  ok: z.boolean(),
-  reason: z.string().describe("人话说明（成功也说一句；失败必说为什么）"),
-  fullScreen: z.boolean().describe("唤起后是否处于全屏"),
+    ok: z.boolean(),
+    reason: z.string().describe("人话说明（成功也说一句；失败必说为什么）"),
+    fullScreen: z.boolean().describe("唤起后是否处于全屏"),
 });
 export type RevealResult = z.infer<typeof RevealResultSchema>;
 
@@ -112,8 +123,8 @@ export type RevealResult = z.infer<typeof RevealResultSchema>;
  *   3. 连 app 都不知道（老记录）→ `diy#<pid>`。
  */
 export function displayNameOf(row: { pid: number; name?: string; app?: string }): string {
-  const name = (row.name ?? "").trim();
-  if (name) return name;
-  const app = (row.app ?? "").trim() || "diy";
-  return `${app}#${row.pid}`;
+    const name = (row.name ?? "").trim();
+    if (name) return name;
+    const app = (row.app ?? "").trim() || "diy";
+    return `${app}#${row.pid}`;
 }
