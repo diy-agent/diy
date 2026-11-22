@@ -189,10 +189,30 @@ Service { name, api, bind, use }   模块单元：名字 + 两端入口
 `router()` 里 `_assignNames` 把「树里的路径」写进 `meta.name` —— 所以树必须一次组装完。
 `defineService` 是在它之上加一层名字，不改变这一点。
 
+## 浏览器（WebSocket）
+
+`@diy-agent/rpc/ws` 是 Node 入口（`ws` 的 socket 原生满足 `WsLike`）；浏览器用
+`@diy-agent/rpc/ws/browser`：
+
+```ts
+import { ChannelClientBinding } from '@diy-agent/rpc';
+import { WsTransport, connectWs } from '@diy-agent/rpc/ws/browser';
+
+const transport = new WsTransport(await connectWs('/rpc', { timeoutMs: 5000 }));
+const client = new ChannelClientBinding(transport);
+```
+
+- 浏览器与 Node 只差**形状**：`addEventListener` → `on`、`ArrayBuffer` → 文本；
+  协议、请求 id、流、取消完全共用 `transport/ws/transport.ts`。
+- 适配器强制 `binaryType = 'arraybuffer'`：blob 只能异步读，会打乱相邻帧的顺序。
+- `connectWs` 失败 / 超时**直接 reject**，不藏重连循环（调用方自己退避）。
+- `WsTransport.close()` 主动释放连接：浏览器里切标签页 / 重连前要调 —— 同源连接额度
+  是按 profile 算的，留着一条死连接就是占额度。
+
 ## 测试
 
 ```bash
-cd pkgs.ts/core/rpc && npx vitest run       # 241 条
+cd pkgs.ts/core/rpc && npx vitest run       # 全量
 ```
 
 | 文件 | 覆盖 |
@@ -200,4 +220,5 @@ cd pkgs.ts/core/rpc && npx vitest run       # 241 条
 | `test/service.test.ts` | `bind` / `use` / 前缀 / 越界 / 缺 handler |
 | `test/service-gen.test.ts` | `zodToTs` 各构造 / 三种命名策略 |
 | `test/binding.test.ts` | 四种 stream mode × 各传输 |
-| `test/intent.cancel.test.ts` | 取消传播（102 条）|
+| `test/raw/browser-ws.test.ts` | 浏览器适配 + 真 WebSocket 往返（unary + server-stream） |
+| `test/intent.cancel.test.ts` | 取消传播 |

@@ -6,6 +6,18 @@
     "types": [],
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["src/index.ts", "src/core/**/*"],
-  "exclude": ["test/**/*", "src/cli/**/*", "src/transport/**/*"]
+  "include": [
+    "src/index.ts",
+    "src/core/**/*",
+    "src/transport/ws/types.ts",
+    "src/transport/ws/transport.ts",
+    "src/transport/ws/browser.ts"
+  ],
+  "exclude": [
+    "test/**/*",
+    "src/cli/**/*",
+    "src/transport/http/**/*",
+    "src/transport/electron/**/*",
+    "src/transport/ws/index.ts"
+  ]
 }
