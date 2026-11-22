@@ -51,7 +51,7 @@ npx tsx probes/http-remote-terminal-resources.ts
 精确复现脚本：
 
 ```bash
-cd /Users/ccc/git/diy/_diy.worktrees/rpc-cancel/pkgs.ts/core/rpc
+cd /Users/ccc/git/diy/diy/pkgs.ts/core/rpc
 npx tsx probes/http-drain-terminal-race.ts
 ```
 
@@ -78,7 +78,7 @@ PASS: terminal drain wake-up stops before another upstream.next()
 精确复现脚本：
 
 ```bash
-cd /Users/ccc/git/diy/_diy.worktrees/rpc-cancel/pkgs.ts/core/rpc
+cd /Users/ccc/git/diy/diy/pkgs.ts/core/rpc
 npx tsx probes/http-drain-close-before-response.ts
 ```
 
@@ -101,7 +101,7 @@ FAIL: close/error wake-up started another upstream.next()
 一次性运行（除 `electron-transport-close.ts` 需 esbuild+node，见下）：
 
 ```bash
-cd /Users/ccc/git/diy/_diy.worktrees/rpc-cancel/pkgs.ts/core/rpc
+cd /Users/ccc/git/diy/diy/pkgs.ts/core/rpc
 for p in \
   channel-init-timeout-leak.ts \
   http-upload-source-error.ts \

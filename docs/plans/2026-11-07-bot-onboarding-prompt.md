@@ -22,7 +22,7 @@ diy facts brief tool     # 工具偏好（fd/rg、write/edit、后台任务）
 diy facts brief dev      # 开发流程与验证预算
 ```
 
-`rule#worktree` 那条是硬要求：**改代码前先开 worktree**（`~/git/diy.worktrees/<标识>`），不要在 `/Users/ccc/git/diy/diy` 主仓当前分支上直接改。
+`rule#worktree` 那条是硬要求：**改代码前先开 worktree**（`~/git/diy/diy.worktrees/<标识>`），不要在 `/Users/ccc/git/diy/diy` 主仓当前分支上直接改。
 
 ## 2. 了解已完成的部分
 
