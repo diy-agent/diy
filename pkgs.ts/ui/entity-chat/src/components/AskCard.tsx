@@ -84,7 +84,8 @@ export function AskCard({
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const [page, setPage] = React.useState(0);
-    const [expanded, setExpanded] = React.useState(false);
+    // 默认平铺：一批题摊开、一次答完，省掉逐题翻页；折叠分页仍可手动切回
+    const [expanded, setExpanded] = React.useState(true);
     /** 提交被拦过一次：从那之后没答的必答题才标红（没点过提交就别先报错） */
     const [showMissing, setShowMissing] = React.useState(false);
     /**
