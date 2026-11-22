@@ -157,3 +157,18 @@
 - `docs/plans/2026-11-12-diy2-alignment.md` 是**建 diy2 之前**的差距分析（那时 entity-runtime 还不存在，缺口是 Inbox / Routing / 信封）。
   本文是**diy2 跑起来之后**回头看 diy1：缺口已经换了一批 —— 从"结构缺"变成"硬保障缺 + 内核双份"。
 - `docs/plans/2026-11-13-ui-first-plan.md` 里"先 UI 后能力"的路线已完成；本文 P0/P1 是那条路线之后的"能力对齐"。
+
+---
+
+## 6. 落地进度（滚动更新）
+
+| 批次 | 状态 | 落在哪 |
+|---|---|---|
+| P0-1 工具换回 `@diy-agent/tools` | ✅ | `entity-runtime/src/tools/`（删掉 `files.ts` / `shell.ts` 移植版） |
+| P0-2 接 `@diy-agent/jobs` | ✅ | `job` 工具 + run 账 + 收口唤醒（notify 走房间） |
+| P0-3 回合刹车 | ✅ | `maxSteps`（env > 房间 > 200）+ `stopWhen` 生效 + 打满落 notice |
+| 房间路径护栏（评审外发现） | ✅ 用户裁决**删掉** | 护栏不是沙箱（bash 本就不受限），却把「任务在 worktree 里」逼回 bash 写、绕开 diff 摘要与审计；房间目录今后只是相对路径基准与命令 cwd |
+| P1-4 模型目录单点 | ✅（`diy2.models.list` 走 RPC） | `providers.ts` 只留「场景缺省」；端点 / 账号 / 价目 / 上限全走 `@diy-agent/model-catalog`，provider 私有约定走 `llm-provider/strategies`；界面 `PROVIDERS` 表删除 |
+| P1-4 附：`prompt_cache_retention` | ✅ | `modelOf` 把 `bodyTransformFor(baseURL)` 接成 ai-sdk 的 `transformRequestBody` —— 原先策略层有这个函数、**应用层没接线**（等于死代码，静默丢缓存）；判据落在 `tests/intent.request-body.test.ts`（看真请求体，删掉接线必红） |
+
+**未做（按批次往下走）**：P1-5 用量账本 / P1-6 历史分页与查找 / P1-7 远程 / P1-8 任务域 UI / P2-9 压缩接 `@diy-agent/compaction` / P2-10 traffic。
