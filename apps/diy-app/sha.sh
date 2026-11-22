@@ -66,13 +66,10 @@ sync() { :; }
 build() {
   local d; d="$(_build_dir)"
   # 依赖没同步（包改名 / 加依赖后 node_modules 落后）时构建会报**远离根因**的 resolve 错
-  # （如 `Rolldown failed to resolve import "@diy-agent/rpc/electron"`）—— 先做一个只读快检。
-  # 同步是**根级**动作（要重装根 node_modules），故这里只拦不修：根目录 ./sha.sh sync，
-  # 或根 ./sha.sh build（它的 ensure-sync 会自动补）。判据实现见 scripts/check-sync.mjs。
-  if [[ -f ../../scripts/check-sync.mjs ]] && ! node ../../scripts/check-sync.mjs --quiet; then
-    echo "${error} ✗ 以上是依赖未同步（不是本包代码问题）→ 根目录跑：./sha.sh sync${reset}"
-    return 1
-  fi
+  # （如 `Rolldown failed to resolve import "@diy-agent/rpc/electron"`）。
+  # 闸门 = sha.common.sh::ensure_sync：与根 ./sha.sh 同一份实现（默认自动 sync，
+  # DIY_AUTO_SYNC=0 改为报错停）—— 直接进本目录跑 build 也能自修。
+  ensure_sync
   run npx vite build --config vite.main.config.ts
   # 内置数据三件（models.dev.json + models.dev.diy.json + calendars.json，均 fs 惰性读）
   # 随 main 产物走：build/<V>/main/data/（通配拷贝 —— 加文件不用改这里，但改名要同步）

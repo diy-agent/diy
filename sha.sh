@@ -162,29 +162,11 @@ _sync_uptodate() {
     return 0
 }
 
-# ── 同步闸门：入口前置「没 sync 就先 sync」 ────────────────────────────────────
-# 判据 = scripts/check-sync.mjs（只读快检、毫秒级）：workspace 链接缺失/过期（如包改名后
-# 残留的 `node_modules/@diy-agent/rpc`）、sync 印记落后、submodule 未 init；electron 二进制的
-# dist/path.txt 缺失只提示不判定（它由 `sync-deps` 的 ensure-electron 补，见其末尾）。
-#   · 命中 → 自动 sync-deps 后继续；`DIY_AUTO_SYNC=0` 关掉自动修（改为报错停下）
-#   · 只挂 build/check/test/lab 入口；**sync 自身不挂**（否则递归）
-# 为什么值得：包改名 / 加依赖后 node_modules 落后，症状是构建报**远离根因**的错，如
-# `Rolldown failed to resolve import "@diy-agent/rpc/electron"`（人只会去翻代码，
-# 不会想到比 package-lock.json 与 node_modules）。
-ensure-sync() {
-    if node scripts/check-sync.mjs --quiet; then
-        return 0
-    fi
-    case "$(printf '%s' "${DIY_AUTO_SYNC:-1}" | tr '[:upper:]' '[:lower:]')" in
-        0 | false | off | no)
-            echo "${error}✗ node_modules 落后于 package-lock.json / 源树，且 DIY_AUTO_SYNC=0 关闭了自动同步 → 请手动跑：./sha.sh sync${reset}"
-            return 1
-            ;;
-    esac
-    echo "${warning}↑ 检测到 node_modules 落后 → 自动 sync 后继续（DIY_AUTO_SYNC=0 可关）${reset}"
-    sync-deps
-    echo "${info}✅ sync 完成${reset}"
-}
+# ── 同步闸门：入口前置「没 sync 就先 sync」（公开命令；实现见 sha.common.sh::ensure_sync）──
+# 只挂 build/check/test/lab 入口；**sync 自身不挂**（否则递归）。
+# 判据 / 处置策略**不在这里写** —— 包级 sha.sh（apps/{diy-app,diy2}）也用同一份实现，
+# 否则「包级入口能不能自动补」又会两边各说一套（##536）。
+ensure-sync() { ensure_sync; }
 
 # 只看同步状态（只读、不改任何东西，含 electron 等只提示项）；落后时非零退出
 sync-status() {  node scripts/check-sync.mjs "$@"; }
