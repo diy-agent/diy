@@ -11,7 +11,7 @@ import type { Room } from '@diy-agent/chat-core';
 import { X } from 'lucide-react';
 import * as React from 'react';
 
-import { actions, useRooms } from '../store';
+import { actions, diy2, useRooms } from '../store';
 
 function textOf(value: unknown): string {
     return typeof value === 'string' ? value : '';
@@ -88,10 +88,10 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
     React.useEffect(() => {
         let alive = true;
         const load = (): void => {
-            void fetch(`/api/rooms/${encodeURIComponent(room.id)}/journal?limit=30`)
-                .then((response) => (response.ok ? response.json() : Promise.reject(new Error('HTTP'))))
-                .then((body: { entries?: JournalEntry[] }) => {
-                    if (alive) setEntries(body.entries ?? []);
+            void diy2.journal
+                .list(room.id, 30)
+                .then((body) => {
+                    if (alive) setEntries((body.entries ?? []) as JournalEntry[]);
                 })
                 .catch(() => undefined);
         };
@@ -105,10 +105,10 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
 
     // 关系：只在打开面板 / 自己改动后取一次（目前只有本面板写，没有别人的写入口）
     const loadLinks = React.useCallback((): void => {
-        void fetch(`/api/rooms/${encodeURIComponent(room.id)}/links`)
-            .then((response) => (response.ok ? response.json() : Promise.reject(new Error('HTTP'))))
-            .then((body: { out?: LinkItem[]; in?: LinkItem[] }) => {
-                setLinks({ out: body.out ?? [], in: body.in ?? [] });
+        void diy2.links
+            .list(room.id)
+            .then((body) => {
+                setLinks({ out: (body.out ?? []) as LinkItem[], in: (body.in ?? []) as LinkItem[] });
             })
             .catch(() => undefined);
     }, [room.id]);

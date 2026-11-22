@@ -45,6 +45,11 @@ export class StreamHub {
     private readonly controllers = new Map<string, AbortController>();
     private transport: WsTransport | undefined;
     private binding: ChannelClientBinding | undefined;
+    /** 等连接的命令调用（首次 refresh 可能早于 watch） */
+    private readonly waiters = new Set<{
+        resolve: (binding: ChannelClientBinding) => void;
+        reject: (error: Error) => void;
+    }>();
     private started = false;
     private closed = false;
     private attempt = 0;
@@ -99,6 +104,37 @@ export class StreamHub {
         return run;
     }
 
+    /**
+     * 发一条命令（`diy2.rooms.list` 这类）。没有连接就等（首次 refresh 早于 watch），
+     * 等不到（超时 / 关闭）就抛 —— 命令不能静默丢。
+     */
+    async invoke<T>(method: string, input: unknown): Promise<T> {
+        const binding = await this.connection();
+        return binding.invoke<unknown, T>(method, { input });
+    }
+
+    private connection(): Promise<ChannelClientBinding> {
+        if (this.binding !== undefined) return Promise.resolve(this.binding);
+        if (this.closed) return Promise.reject(new Error('rpc 连接已关闭'));
+        this.start();
+        return new Promise<ChannelClientBinding>((resolve, reject) => {
+            const waiter = { resolve, reject };
+            this.waiters.add(waiter);
+            setTimeout(() => {
+                if (!this.waiters.delete(waiter)) return;
+                reject(new Error(`rpc 连接超时（${this.timeoutMs}ms）`));
+            }, this.timeoutMs);
+        });
+    }
+
+    private settleWaiters(binding?: ChannelClientBinding): void {
+        for (const waiter of this.waiters) {
+            if (binding === undefined) waiter.reject(new Error('rpc 连接断开'));
+            else waiter.resolve(binding);
+        }
+        this.waiters.clear();
+    }
+
     close(): void {
         this.closed = true;
         this.topics.clear();
@@ -106,6 +142,7 @@ export class StreamHub {
         this.transport?.close();
         this.transport = undefined;
         this.binding = undefined;
+        this.settleWaiters();
     }
 
     // ── 连接循环 ────────────────────────────────────────────────
@@ -129,6 +166,7 @@ export class StreamHub {
                 this.transport = transport;
                 this.binding = new ChannelClientBinding(transport);
                 this.attempt = 0;
+                this.settleWaiters(this.binding);
 
                 // 上次连接的流已经死了：清掉登记，重开还活着的那些话题
                 this.controllers.clear();
@@ -145,6 +183,7 @@ export class StreamHub {
             this.binding = undefined;
             this.transport = undefined;
             this.controllers.clear();
+            this.settleWaiters();
 
             const wait = Math.min(RECONNECT.maxMs, RECONNECT.baseMs * 2 ** Math.min(this.attempt, 6));
             this.attempt += 1;

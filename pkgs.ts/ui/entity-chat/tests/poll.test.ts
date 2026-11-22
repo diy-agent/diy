@@ -30,10 +30,6 @@ beforeEach(() => {
     handlers.clear();
     calls = [];
     vi.useFakeTimers();
-    vi.stubGlobal('fetch', async (input: string) => {
-        calls.push(String(input));
-        return { ok: true, json: async () => [] };
-    });
 });
 
 afterEach(() => {
@@ -45,6 +41,23 @@ afterEach(() => {
 /** 每个用例重新 import 一份干净的 store（模块级 pollTimer / state 都要重置） */
 async function bootstrap(): Promise<typeof import('../src/store')> {
     const store = await import('../src/store');
+    // 命令面走 RPC：这里注入假客户端，只数「拉了几次」
+    store.setDiy2Client({
+        rooms: {
+            list: async () => {
+                calls.push('/rooms');
+                return [];
+            },
+            update: async () => ({}),
+        },
+        bots: {
+            list: async () => {
+                calls.push('/bots');
+                return [];
+            },
+        },
+        drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+    } as never);
     store.actions.bootstrap();
     // 把首屏那次 refresh 的微任务跑完（/rooms + /bots 各一次）
     await vi.advanceTimersByTimeAsync(0);
@@ -52,7 +65,7 @@ async function bootstrap(): Promise<typeof import('../src/store')> {
 }
 
 describe('房间列表轮询', () => {
-    it('可见时每 30s 拉一次（/rooms + /bots）', async () => {
+    it('可见时每 30s 拉一次（rooms.list + bots.list）', async () => {
         installFakeEnv('visible');
         await bootstrap();
         expect(calls).toHaveLength(2);
@@ -94,16 +107,25 @@ describe('房间列表轮询', () => {
         installFakeEnv('visible');
         const store = await bootstrap();
 
-        // 制造一条该被用户看到的错误
-        vi.stubGlobal('fetch', async () => ({ ok: false, status: 500, json: async () => ({}) }));
+        // 制造一条该被用户看到的错误（改名走 RPC：让 update 抛）
+        store.setDiy2Client({
+            rooms: {
+                list: async () => [],
+                update: async () => {
+                    throw new Error('boom');
+                },
+            },
+            bots: { list: async () => [] },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
+        } as never);
         await store.actions.renameRoom('proj:diy', '新名字');
         expect(store.shellSnapshot().error).toContain('改名失败');
 
         // 轮询成功后它仍在：轮询只刷列表，不该替用户「点掉」错误条
-        vi.stubGlobal('fetch', async (input: string) => ({
-            ok: true,
-            json: async () => (String(input).includes('/bots') ? [] : []),
-        }));
         await vi.advanceTimersByTimeAsync(30_000);
         expect(store.shellSnapshot().error).toContain('改名失败');
     });

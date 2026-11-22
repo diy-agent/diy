@@ -34,7 +34,16 @@ const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 // ─── 会话（chat-core）─────────────────────────────────────────────
 
 // 传输层唯一注入点：换 diy-rpc 时只改这一行
-const client = new HttpChatClient({ base: '/api' });
+let client = new HttpChatClient();
+/** 命令面出口：TaskPanel / drafts 用它（同一条 RPC 连接） */
+export { client as diy2 };
+drafts.configure(client.drafts);
+
+/** 测试用：替换成假客户端（生产路径永远不调） */
+export function setDiy2Client(next: typeof client): void {
+    client = next;
+    drafts.configure(next.drafts);
+}
 const conversations = new Map<string, ConversationStore>();
 
 /** 回答一次挂起的提问（整批一次提交）。失败会抛，由界面显示原因（含服务端说的差哪几题）。 */
@@ -285,15 +294,6 @@ export function isCurrentRoom(address: NavAddress, room: { id: string }): boolea
     return sameAddress(address, roomAddressOf(room));
 }
 
-async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`/api${path}`, {
-        ...init,
-        headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-    });
-    if (!res.ok) throw new Error(`${path} → ${res.status}`);
-    return (await res.json()) as T;
-}
-
 // ─── 地址栏同步（只在这里碰 window）───────────────────────────────
 //
 // 真相在 `state.address`，地址栏是它的投影。两个方向：
@@ -430,10 +430,7 @@ function watchActivity(roomId: string): void {
 }
 
 async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
-    const [rooms, bots] = await Promise.all([
-        jsonFetch<Array<Room & { hasDraft?: boolean; pendingAsks?: number; lastActivityAt?: number }>>('/rooms'),
-        jsonFetch<Bot[]>('/bots'),
-    ]);
+    const [rooms, bots] = await Promise.all([client.rooms.list(), client.bots.list()]);
     // 侧栏 ✎ 的初始值：不用打开过房间；本端改过的 owner 由 drafts 自己说了算
     drafts.seed(rooms);
     // 「最后活动」跟着同一次列表请求回来，不逐房间查（那会是 N+1）
@@ -610,10 +607,8 @@ export const actions = {
     renameRoom(id: string, name: string): Promise<void> {
         const next = name.trim();
         if (next === '') return Promise.resolve();
-        return jsonFetch(`/rooms/${encodeURIComponent(id)}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ name: next }),
-        })
+        return client.rooms
+            .update({ id, name: next })
             .then(() => refresh())
             .catch((error: unknown) => {
                 emit({ ...state, error: `改名失败：${messageOf(error)}` });
@@ -629,10 +624,8 @@ export const actions = {
      * 这是有意的 —— 枚举归 UI，不把任务语义塞进通用的 actor。
      */
     setRoomStatus(id: string, status: TaskStatus): Promise<void> {
-        return jsonFetch(`/rooms/${encodeURIComponent(id)}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ data: { status, closedAt: status === 'closed' ? Date.now() : null } }),
-        })
+        return client.rooms
+            .update({ id, data: { status, closedAt: status === 'closed' ? Date.now() : null } })
             .then(() => refresh())
             .catch((error: unknown) => {
                 emit({ ...state, error: `改状态失败：${messageOf(error)}` });
@@ -645,7 +638,8 @@ export const actions = {
      * 「左侧选择一个容器」还找不到原因（那个 id 已经不存在了）。
      */
     deleteRoom(id: string): Promise<void> {
-        return jsonFetch<{ deleted?: string[] }>(`/rooms/${encodeURIComponent(id)}`, { method: 'DELETE' })
+        return client.rooms
+            .remove(id)
             .then((result) => {
                 const gone = new Set(result.deleted ?? [id]);
                 for (const roomId of gone) {
@@ -672,10 +666,8 @@ export const actions = {
      * 抛错给调用方（侧面板要保留未保存内容并提示），同时亮全局错误。
      */
     updateRoomData(id: string, data: Record<string, unknown>): Promise<void> {
-        return jsonFetch(`/rooms/${encodeURIComponent(id)}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ data }),
-        })
+        return client.rooms
+            .update({ id, data })
             .then(() => refresh())
             .catch((error: unknown) => {
                 emit({ ...state, error: `保存失败：${messageOf(error)}` });
@@ -688,10 +680,8 @@ export const actions = {
      * 面板据此保留选择、不假装成功。
      */
     addLink(id: string, to: string, kind: string): Promise<void> {
-        return jsonFetch(`/rooms/${encodeURIComponent(id)}/links`, {
-            method: 'POST',
-            body: JSON.stringify({ to, kind }),
-        })
+        return client.links
+            .add(id, to, kind)
             .then(() => undefined)
             .catch((error: unknown) => {
                 emit({ ...state, error: `建立关系失败：${messageOf(error)}` });
@@ -701,8 +691,8 @@ export const actions = {
 
     /** 删一条关系（服务端幂等：删不存在的也返回 ok） */
     removeLink(id: string, to: string, kind: string): Promise<void> {
-        const query = `to=${encodeURIComponent(to)}&kind=${encodeURIComponent(kind)}`;
-        return jsonFetch(`/rooms/${encodeURIComponent(id)}/links?${query}`, { method: 'DELETE' })
+        return client.links
+            .remove(id, to, kind)
             .then(() => undefined)
             .catch((error: unknown) => {
                 emit({ ...state, error: `取消关系失败：${messageOf(error)}` });
@@ -711,7 +701,8 @@ export const actions = {
     },
 
     setRoomModel(id: string, modelKey: string): void {
-        void jsonFetch(`/rooms/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ modelKey }) })
+        void client.rooms
+            .update({ id, modelKey })
             .then(() => refresh())
             .catch(() => undefined);
     },
@@ -726,16 +717,13 @@ export const actions = {
     },
 
     createProject(input: { name: string; dir: string }): void {
-        void jsonFetch<Room>('/rooms', {
-            method: 'POST',
-            // 带上默认模型：SettingsDialog 里"新建的都继承它"才成立
-            body: JSON.stringify({
+        void client.rooms
+            .create({
                 type: 'project',
                 name: input.name,
                 modelKey: state.defaultModelKey,
                 data: { dir: input.dir },
-            }),
-        })
+            })
             .then((room) => refresh().then(() => actions.navigate(roomAddressOf(room))))
             .catch(() => undefined);
     },
@@ -750,15 +738,13 @@ export const actions = {
         const project = roomOf(projectId);
         const trimmed = name.trim();
         if (trimmed === '') return Promise.resolve();
-        return jsonFetch<Room>('/rooms', {
-            method: 'POST',
-            body: JSON.stringify({
+        return client.rooms
+            .create({
                 type: 'task',
                 name: trimmed,
                 modelKey: state.defaultModelKey,
                 data: { projectId, dir: project?.data['dir'], ...extra },
-            }),
-        })
+            })
             .then((room) => refresh().then(() => actions.navigate(roomAddressOf(room))))
             .catch((error: unknown) => {
                 emit({ ...state, error: `新建任务失败：${messageOf(error)}` });
@@ -768,16 +754,9 @@ export const actions = {
 
     addBot(roomId: string, name: string): void {
         if (name.trim() === '') return;
-        void jsonFetch<Bot>('/bots', {
-            method: 'POST',
-            body: JSON.stringify({ name: name.trim(), homeRoomId: roomId, modelKey: state.defaultModelKey }),
-        })
-            .then((bot) =>
-                jsonFetch(`/rooms/${encodeURIComponent(roomId)}/bots`, {
-                    method: 'POST',
-                    body: JSON.stringify({ botId: bot.id }),
-                }),
-            )
+        void client.bots
+            .create({ name: name.trim(), homeRoomId: roomId, modelKey: state.defaultModelKey })
+            .then((bot) => client.rooms.addMember(roomId, bot.id))
             .then(() => refresh())
             .catch(() => undefined);
     },
@@ -808,7 +787,8 @@ export const actions = {
     },
 
     addExistingBot(roomId: string, botId: string): void {
-        void jsonFetch(`/rooms/${encodeURIComponent(roomId)}/bots`, { method: 'POST', body: JSON.stringify({ botId }) })
+        void client.rooms
+            .addMember(roomId, botId)
             .then(() => refresh())
             .catch(() => undefined);
     },

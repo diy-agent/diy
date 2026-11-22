@@ -47,7 +47,7 @@ interface OwnerState {
 export interface DraftStoreOptions {
     /** API 前缀，默认 '/api' */
     base?: string;
-    /** 注入的 fetch 会被 bind 到 globalThis，调用方不必关心 this 绑定 */
+    /** 兼容旧参数：已不使用（草稿改走 RPC） */
     fetchImpl?: typeof fetch;
     /** 输入停顿多久后写服务端 */
     debounceMs?: number;
@@ -79,7 +79,8 @@ export function hasDraftContent(value: unknown): boolean {
     if (typeof value === 'string') return value.trim() !== '';
     if (typeof value === 'number' || typeof value === 'boolean') return true;
     if (Array.isArray(value)) return value.some((item) => hasDraftContent(item));
-    if (typeof value === 'object') return Object.values(value as Record<string, unknown>).some((item) => hasDraftContent(item));
+    if (typeof value === 'object')
+        return Object.values(value as Record<string, unknown>).some((item) => hasDraftContent(item));
     return false;
 }
 
@@ -111,10 +112,17 @@ export function dialogOwner(kind: string, roomId: string): string {
     return `${DIALOG_OWNER_PREFIX}${kind}:${roomId}`;
 }
 
-/** 同样的 owner 在服务端有两种路由：房间草稿 / synthetic 草稿 */
+/** 同样的 owner 在服务端有两种路由：房间草稿 / synthetic 草稿（过渡期 fetch 回落用） */
 function draftsPath(owner: string): string {
     const id = encodeURIComponent(owner);
     return owner.startsWith(DIALOG_OWNER_PREFIX) ? `/drafts/${id}` : `/rooms/${id}/drafts`;
+}
+
+/** 草稿通道（RPC）：由 store 在创建客户端后注入 —— 草稿不该自己再开一条连接 */
+export interface DraftsTransport {
+    list(owner: string): Promise<{ drafts?: Array<{ field: string; value: unknown; updatedAt: number }> }>;
+    put(owner: string, field: string, value: unknown): Promise<{ updatedAt: number }>;
+    remove(owner: string, field: string): Promise<unknown>;
 }
 
 function messageOf(error: unknown): string {
@@ -128,8 +136,10 @@ export class DraftStore {
     /** 本端改过的 owner：服务端快照不覆盖，避免"刚打的字被旧列表抹掉" */
     private readonly touched = new Set<string>();
     private readonly listeners = new Set<() => void>();
+    /** RPC 通道：store 创建客户端后调 configure() 注入 */
+    private transport: DraftsTransport | undefined;
+    /** 过渡期回落（单测仍用 fetch stub）；P2b 删 REST 时一起删 */
     private readonly base: string;
-    /** 已绑定好 this 的 fetch：调用点写 `this.doFetch(...)` 不会踩 Illegal invocation */
     private readonly doFetch: typeof fetch;
     private readonly debounceMs: number;
     private readonly retryBaseMs: number;
@@ -137,9 +147,6 @@ export class DraftStore {
 
     constructor(options: DraftStoreOptions = {}) {
         this.base = options.base ?? '/api';
-        // 浏览器里 `obj.fetch(...)` 的 this 是 obj 而不是 window，会抛
-        // `Failed to execute 'fetch' on 'Window': Illegal invocation`（Node 里看不出来）。
-        // 所以在构造点一次性消化掉 this 绑定：注入的 bind 掉，默认的走成员调用。
         const injected = options.fetchImpl;
         this.doFetch = injected === undefined ? (...args) => globalThis.fetch(...args) : injected.bind(globalThis);
         this.debounceMs = options.debounceMs ?? 600;
@@ -156,6 +163,11 @@ export class DraftStore {
 
     private emit(): void {
         for (const listener of this.listeners) listener();
+    }
+
+    /** store 在创建 RPC 客户端后调用；之后所有草稿读写都走它 */
+    configure(transport: DraftsTransport): void {
+        this.transport = transport;
     }
 
     private stateOf(owner: string): OwnerState {
@@ -202,10 +214,12 @@ export class DraftStore {
         // 这次 GET 发出时已经在本地改过（或清空）的字段，不允许被服务端旧值盖回来
         const dirtyAtLoad = new Set(state.dirty);
         try {
-            const data = await this.request<{ drafts?: Array<{ field: string; value: unknown; updatedAt: number }> }>(
-                'GET',
-                draftsPath(owner),
-            );
+            const data = this.transport
+                ? await this.transport.list(owner)
+                : await this.request<{ drafts?: Array<{ field: string; value: unknown; updatedAt: number }> }>(
+                      'GET',
+                      draftsPath(owner),
+                  );
             for (const draft of data.drafts ?? []) {
                 // 本地正在编辑 / 改过且更新的，不被服务端旧值覆盖
                 if (dirtyAtLoad.has(draft.field) || state.dirty.has(draft.field)) continue;
@@ -229,7 +243,10 @@ export class DraftStore {
     private scheduleLoadRetry(owner: string): void {
         const state = this.stateOf(owner);
         if (state.loadTimer !== undefined) return;
-        const delay = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** Math.min(Math.max(0, state.loadAttempt - 1), 5));
+        const delay = Math.min(
+            this.retryMaxMs,
+            this.retryBaseMs * 2 ** Math.min(Math.max(0, state.loadAttempt - 1), 5),
+        );
         state.loadTimer = setTimeout(() => {
             state.loadTimer = undefined;
             if (!state.loaded) void this.ensure(owner);
@@ -353,7 +370,10 @@ export class DraftStore {
     private scheduleRetry(owner: string): void {
         const state = this.stateOf(owner);
         if (state.retryTimer !== undefined) return;
-        const delay = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** Math.min(Math.max(0, state.retryAttempt - 1), 5));
+        const delay = Math.min(
+            this.retryMaxMs,
+            this.retryBaseMs * 2 ** Math.min(Math.max(0, state.retryAttempt - 1), 5),
+        );
         state.retryTimer = setTimeout(() => {
             state.retryTimer = undefined;
             void this.flush(owner);
@@ -393,8 +413,18 @@ export class DraftStore {
                 const serialized = JSON.stringify(value);
                 const hasContent = entry !== undefined && hasDraftContent(value);
                 try {
-                    const path = `${draftsPath(owner)}/${encodeURIComponent(field)}`;
-                    await this.request(hasContent ? 'PUT' : 'DELETE', path, hasContent ? { value } : undefined, keepalive);
+                    if (this.transport !== undefined) {
+                        if (hasContent) await this.transport.put(owner, field, value);
+                        else await this.transport.remove(owner, field);
+                    } else {
+                        const path = `${draftsPath(owner)}/${encodeURIComponent(field)}`;
+                        await this.request(
+                            hasContent ? 'PUT' : 'DELETE',
+                            path,
+                            hasContent ? { value } : undefined,
+                            keepalive,
+                        );
+                    }
                     // 写入期间用户又改了同一字段：保留 dirty，下一轮再写
                     const current = state.entries.get(field);
                     if (current === undefined || JSON.stringify(current.value) === serialized) {
@@ -439,6 +469,12 @@ export class DraftStore {
         if (res.status === 204) return undefined as T;
         return (await res.json()) as T;
     }
+
+    /** 草稿通道（RPC）由 store 注入；没注入就是配置错误，直接抛 */
+    private requireTransport(): DraftsTransport {
+        if (this.transport === undefined) throw new Error('草稿通道未配置（RPC 客户端还没初始化）');
+        return this.transport;
+    }
 }
 
 /** 全局单例：三个 surface + 侧栏共用同一份镜像 */
@@ -456,7 +492,10 @@ if (typeof window !== 'undefined') {
 
 // ─── React 适配（hook 放这里，避免再拆一个文件）────────────────────
 
-export function useDraft(owner: string, field = 'composer'): {
+export function useDraft(
+    owner: string,
+    field = 'composer',
+): {
     text: string;
     setText: (text: string) => void;
     clear: () => void;
@@ -541,7 +580,8 @@ export function useDraftValue<T>(
     // 回调按 owner+field 稳定：AskCard 的 effect 拿它当依赖不会每帧重跑
     const setValue = React.useCallback((next: T) => drafts.setValue(owner, field, next), [owner, field]);
     const update = React.useCallback(
-        (fn: (previous: T | undefined) => T) => drafts.setValue(owner, field, fn(drafts.valueOf(owner, field) as T | undefined)),
+        (fn: (previous: T | undefined) => T) =>
+            drafts.setValue(owner, field, fn(drafts.valueOf(owner, field) as T | undefined)),
         [owner, field],
     );
     const clear = React.useCallback(() => drafts.clear(owner, field), [owner, field]);
