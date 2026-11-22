@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit —— 拦「在 main 上补完一次 merge 提交」。
+#
+# 为什么必须有这一道：`pre-merge-commit` 拒绝之后 git **不清理现场** —— 索引里已含 merge 结果，
+# MERGE_HEAD 在钩子返回后才落盘，钩子内部 `git merge --abort` 只会得到
+# 「There is no merge to abort (MERGE_HEAD missing)」（实测 2026-11-22，git 2.49）。
+# 于是 `git commit` / `git merge --continue` 能把这次 merge 补完 —— 那就绕过了 pre-merge-commit。
+# 这一道把补完这一步也堵住（判据 = main 上有 MERGE_HEAD）。
+set -uo pipefail
+
+branch=$(git symbolic-ref --short -q HEAD) || exit 0   # detached（rebase/cherry-pick 中间态）放行
+case "$branch" in main | master) ;; *) exit 0 ;; esac
+[ -n "${DIY_ALLOW_MAIN_MERGE:-}" ] && exit 0
+
+merge_head=$(git rev-parse --git-path MERGE_HEAD 2>/dev/null || echo "")
+[ -n "$merge_head" ] && [ -f "$merge_head" ] || exit 0
+
+cat >&2 <<'EOF'
+✗ main 上有一个未完成的 merge（MERGE_HEAD 还在），不许在这里补完它。
+
+  退出这个 merge：git merge --abort
+  再把要合的东西作为分支 push + 开 PR（gh pr create --fill）。
+
+  （钩子见 .githooks/pre-commit；启用在 .diy/knowledge/dev/setup.md#hooks-path）
+EOF
+exit 1
