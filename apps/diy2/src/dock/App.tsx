@@ -23,7 +23,7 @@ import {
 } from '@diy-agent/entity-chat';
 import { pageId, type PageApi, type Scope } from '@diy-agent/workbench-dock';
 import { PageWorkbench } from '@diy-agent/workbench-dock/react';
-import { useMemo, useReducer, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import '../index.css';
 import 'dockview/dist/styles/dockview.css';
@@ -33,6 +33,7 @@ import '@astryxdesign/lab/lab.css';
 import './dock.css';
 
 import { DOCK_AREAS, roomPage, roomViews } from './page';
+import { useAreaStates } from './useAreas';
 
 // store 的首屏加载由**这一层**触发（整页 App 是在它的 useEffect 里）：工作台没有
 // <EntityChatApp /> 负责这件事，所以宿主自己点一次。幂等 —— center 里的 App 再调也只是走同一条路。
@@ -47,10 +48,11 @@ bootstrapStore({ syncAddress: false });
  * 不能住在布局里**，否则收起一次就再也打不开。所以 `PageWorkbench` 用 `onReady` 把
  * 区域控制面交出来，这条浮层画在它外面。
  *
- * `isAreaVisible` 不订阅状态（它只是问一次 dockview），所以点完自己 force 一次。
+ * 可见性状态走 `useAreaStates`（订阅 PageApi）：**不能在 render 里直接调 `isAreaVisible`** ——
+ * React Compiler 会把 render 期的调用当纯函数缓存，指示灯重渲也不变（见 useAreas.ts）。
  */
 function AreaBar({ api }: { api: PageApi }) {
-    const [, force] = useReducer((n: number) => n + 1, 0);
+    const states = useAreaStates(api, DOCK_AREAS);
     return (
         <div className="dock-areabar" role="group" aria-label="区域开关">
             {DOCK_AREAS.map((id) => (
@@ -58,10 +60,9 @@ function AreaBar({ api }: { api: PageApi }) {
                     key={id}
                     type="button"
                     title={`显示 / 收起 ${id}`}
-                    className={api.isAreaVisible(id) ? 'on' : undefined}
+                    className={states[id] === true ? 'on' : undefined}
                     onClick={() => {
                         api.toggleArea(id);
-                        force();
                     }}
                 >
                     {id}

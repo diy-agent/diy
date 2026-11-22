@@ -228,6 +228,14 @@ export interface PageApi {
     hideArea(areaId: string): void;
     toggleArea(areaId: string): void;
     isAreaVisible(areaId: string): boolean;
+    /**
+     * 订阅「区域可见性变了」（show / hide / toggle / 布局落定）。
+     *
+     * 宿主要画「哪些区域开着」就靠它，**别在 render 里调 `isAreaVisible`**：那是读 dockview
+     * 实时状态的函数，React Compiler 会把 render 期的调用当纯函数缓存，重渲也拿不到新值
+     * （表现：指示灯永远停在首次渲染那一刻）。返回取消订阅。
+     */
+    onAreasChange(listener: () => void): () => void;
     /** 最大化某区域（`null` = 退出）；最大化状态单独持久化 */
     maximizeArea(areaId: string | null): void;
     /** 这个区域此刻是不是最大化状态（不是「有没有区域最大化」—— 一个区域一个答案） */

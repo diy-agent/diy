@@ -23,6 +23,8 @@ import {
 } from '@diy-agent/entity-chat';
 import { area, col, definePage, defineView, row, type ViewProps } from '@diy-agent/workbench-dock';
 
+import { useAreaStates } from './useAreas';
+
 // ── 页模板 ────────────────────────────────────────────────────────────────────
 //
 // 两轴都用 col/row 表达（区域是树，不是网格）。left / detail / assets 用 px（有固定参照），
@@ -148,6 +150,9 @@ function AssetsAside() {
 
 /** 工作台诊断：页实例是谁、区域能不能开、布局存在哪 */
 function LabNotes({ page, areaId, api }: ViewProps) {
+    // 同一个陷阱：render 里调 `api.isAreaVisible` 会被 React Compiler 缓存成首次的值，
+    // 所以这里和页外浮层共用 `useAreaStates`（见 useAreas.ts）。
+    const states = useAreaStates(api, DOCK_AREAS);
     return (
         <div className="dock-lab">
             <dl>
@@ -161,7 +166,7 @@ function LabNotes({ page, areaId, api }: ViewProps) {
                     <button
                         key={id}
                         type="button"
-                        className={api.isAreaVisible(id) ? 'on' : undefined}
+                        className={states[id] === true ? 'on' : undefined}
                         onClick={() => api.toggleArea(id)}
                     >
                         {id}
