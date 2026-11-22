@@ -11,7 +11,9 @@
    每处注释都写着"等 build 图修好再换回去"。复核结果 —— `@diy-agent/tools`、`@diy-agent/jobs` 现在能直接 `import`（实测），
    **理由已过期**。同一能力两套口径，是后面每一次"为什么这里行为和 diy1 不一样"的来源。
 2. **缺的是"能无人看着干活"的三件硬保障**：后台作业（`job`）、步数/输出刹车（`maxSteps`）、用量与钱账。
-   diy2 现在一条命令最长 120s 就被杀组、一轮跑到模型自己停为止、花多少只有"上一轮"这一个数。
+   diy2 当时（盘点时）一条命令最长 120s 就被杀组、一轮跑到模型自己停为止、花多少只有"上一轮"这一个数。
+   （120s 那一条后来变过：P0-1 换回内核时 `bashTimeoutMs` 缺省成了 0 = **不限**，比原来更松；
+   已改回与 diy1 同值的 300s，见 §6 的 P0-1 行。）
 3. **Electron 专属的一律不补**（窗口唤起 / 原生选择器 / tab·layout 持久化 / 崩溃 minidump / 实例 focus），
    但**远程访问（remote / hub）必须补** —— diy2 是浏览器客户端，"本机 127.0.0.1"反而比 diy1 更受限。
 
@@ -21,7 +23,7 @@
 
 | | diy1 = `apps/diy-app` | diy2 = `apps/diy2` |
 |---|---|---|
-| 外壳 | Electron 主进程 + renderer（Solid），RPC 27 个域 / 200+ 命令 | 单个 Node HTTP server + 浏览器（React），REST + 一条多路复用 SSE |
+| 外壳 | Electron 主进程 + renderer（Solid），RPC 27 个域 / 200+ 命令 | 单个 Node HTTP server + 浏览器（React），一条多路复用 WS（`@diy-agent/rpc`：房间事件流 + 命令面）；HTTP 只剩静态资源与 `/health` |
 | 真源 | `ops.jsonl` / `llm.jsonl` / `deliveries.jsonl`（按任务目录） | sqlite（`entity_items` / `rooms` / `sessions` / `asks` / `deliveries`） |
 | 会话模型 | task = room = 会话宿主（`room-service.ts`） | 实体 = 房间 = actor（`RoomActor`），每成员一个 `BotSession` |
 | 内核 | 大量能力已抽包在 `pkgs.ts/*` | 只用了 context / kb / skills / agents-chain / protocol 等，**工具与会话自己又写了一份** |
@@ -39,7 +41,7 @@
 |---|---|---|---|
 | read / write / edit 完整语义（行窗口续读、原子写、唯一命中替换、unified diff、越界拒绝） | `pkgs.ts/agent/tools/src/*`（3164 行，已包化） | `entity-runtime/src/tools/files.ts`（135 行精简移植：`READ_MAX_BYTES=200_000`、无续读、无 atomic-write、无 diff） | **补**（换回 `@diy-agent/tools`） |
 | shell 自毁护栏、输出上限、结果头、超时杀组 | `tools/src/shell/{guard,cap-output,result,run}.ts` | `tools/shell.ts`（73 行：无 guard、无审计、输出 100k 截断） | **补** |
-| 后台作业 `job`（list / status / output / kill / wait）+ 结束唤醒 | `pkgs.ts/agent/jobs`（已包化）+ `local-agent.ts:2141` 接线 | 无（`rg -c job entity-runtime/src` = 0）；`bash` 超时 120s 后整组 SIGKILL | **补**（P0） |
+| 后台作业 `job`（list / status / output / kill / wait）+ 结束唤醒 | `pkgs.ts/agent/jobs`（已包化）+ `local-agent.ts:2141` 接线 | 无（`rg -c job entity-runtime/src` = 0）；`bash` 超时 120s 后整组 SIGKILL（移植版的自带预算） | **补**（P0） |
 | 前台命令转后台（detach，不重启不丢输出） | `api-domains/job/api.ts::detach`、`foreground-bash.ts` | 无 | 换形态补（浏览器侧给"转后台"，服务端用 jobs 的 adopt） |
 | 工具调用审计落盘（`agent-bash.jsonl`） | `local-agent.ts:2127` onAudit | 无 | 补（有 jobs/tools 后顺手） |
 | 工具面 hash 漂移监控（启动时报"工具集变了"） | `tools-surface-watch.ts` + `currentToolsSurfaceHash` | 无 | 补（P2，与提示词前缀缓存一起看） |
@@ -164,11 +166,22 @@
 
 | 批次 | 状态 | 落在哪 |
 |---|---|---|
-| P0-1 工具换回 `@diy-agent/tools` | ✅ | `entity-runtime/src/tools/`（删掉 `files.ts` / `shell.ts` 移植版） |
+| P0-1 工具换回 `@diy-agent/tools` | ✅ | `entity-runtime/src/tools/`（删掉 `files.ts` / `shell.ts` 移植版）；**bash 预算**：内核 `makeShellTool` 没有缺省，换回时曾写成「不传 = 不限」——比移植版的 120s 更松，一条卡死的命令能把整轮挂住而步数刹车管不到；现定 `DEFAULT_BASH_TIMEOUT_MS = 300_000`（抄 diy1 `DEFAULT_LIMITS`），diy2 可用 `DIY2_BASH_TIMEOUT_MS` 覆盖 |
 | P0-2 接 `@diy-agent/jobs` | ✅ | `job` 工具 + run 账 + 收口唤醒（notify 走房间） |
 | P0-3 回合刹车 | ✅ | `maxSteps`（env > 房间 > 200）+ `stopWhen` 生效 + 打满落 notice |
-| 房间路径护栏（评审外发现） | ✅ 用户裁决**删掉** | 护栏不是沙箱（bash 本就不受限），却把「任务在 worktree 里」逼回 bash 写、绕开 diff 摘要与审计；房间目录今后只是相对路径基准与命令 cwd |
+| 房间路径护栏（评审外发现） | ✅ 用户裁决**删掉** | 护栏不是沙箱（bash 本就不受限），却把「任务在 worktree 里」逼回 bash 写 —— 文件改动从此没有 diff 摘要、也没走统一的写路径（diy1 那边还多一层 `onAudit` 落盘，diy2 本来就没有审计，不拿它当理由）；房间目录今后只是相对路径基准与命令 cwd。装配里那个没人接的 `onAudit` 参数一并删掉（要审计时再加） |
 | P1-4 模型目录单点 | ✅（`diy2.models.list` 走 RPC） | `providers.ts` 只留「场景缺省」；端点 / 账号 / 价目 / 上限全走 `@diy-agent/model-catalog`，provider 私有约定走 `llm-provider/strategies`；界面 `PROVIDERS` 表删除 |
 | P1-4 附：`prompt_cache_retention` | ✅ | `modelOf` 把 `bodyTransformFor(baseURL)` 接成 ai-sdk 的 `transformRequestBody` —— 原先策略层有这个函数、**应用层没接线**（等于死代码，静默丢缓存）；判据落在 `tests/intent.request-body.test.ts`（看真请求体，删掉接线必红） |
 
 **未做（按批次往下走）**：P1-5 用量账本 / P1-6 历史分页与查找 / P1-7 远程 / P1-8 任务域 UI / P2-9 压缩接 `@diy-agent/compaction` / P2-10 traffic。
+
+---
+
+## 7. 已知未尽（评审时记下，故意不做）
+
+| # | 是什么 | 为什么现在不做 |
+|---|---|---|
+| 1 | provider 显示名退化成 id（界面显示 `opencode-go` 而不是 `OpenCode Go`） | 目录（`model.yaml` / `@diy-agent/model-catalog`）没有「显示名」字段，编一个名字就是第二份真源；等目录真加了这个字段再说 |
+| 2 | 作业跨进程不 adopt | 内核 `RunRegistry` 支持 `adopt`，diy2 没接：重启前起的 run 重启后既不判活也不叫醒。接它要先想清"重启后日志文件归属谁" |
+| 3 | `toolsHint()` 固定说「用 bash」 | pwsh 平台上工具名是 `pwsh`，提示词对不上；改它要顺带过一遍提示词缓存（前缀一变全失效） |
+| 4 | `end-reason.ts` 的 advice 文案写死 `DIY2_MAX_STEPS` | 库层引用 app 专属 env；正解是让宿主传「调参提示」（另一个参数），不是硬编码 |
