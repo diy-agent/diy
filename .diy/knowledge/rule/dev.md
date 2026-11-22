@@ -1,6 +1,6 @@
 ---
-desc: 本地开发环境与验证：worktree 位置与自检 / sha.sh check 唯一入口 / 并发禁令 / 实例起停权限 / 新包检查单
-updated: 2026-10-24
+desc: 本地开发环境与验证：sha.sh check 唯一入口 / 并发禁令 / 实例起停权限 / 新包检查单（worktree 规则的真源在 ~/git/AGENTS.md）
+updated: 2026-11-22
 ---
 
 ## check
@@ -17,7 +17,7 @@ updated: 2026-10-24
 
 ## lab-owner
 
-**lab 一律开在「自己任务的 worktree」里**（`~/git/diy.worktrees/t<号>-*/` 内 `./sha.sh lab`；数据根随之隔离在该 worktree 的 `build/lab/home`）。**根 worktree（`~/git/diy/diy`）的 `build/lab/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree。
+**lab 一律开在「自己任务的 worktree」里**（`~/git/diy/diy.worktrees/t<号>-*/` 内 `./sha.sh lab`；数据根随之隔离在该 worktree 的 `build/lab/home`）。**根 worktree（`~/git/diy/diy`）的 `build/lab/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree。
 
 ## new-pkg
 
@@ -25,13 +25,6 @@ updated: 2026-10-24
 
 ## worktree
 
-**git 项目上修改代码一律先开 git worktree 做**，不在主仓当前分支直接改；除非用户明确许可或确有特殊需要
+**真源 = `~/git/AGENTS.md` 的 `rule.worktree*` 三条**（`worktree` / `worktree-selfcheck` / `worktree-path`）：改代码前一律先开 worktree；路径是 `<仓库父目录>/<仓库目录名>.worktrees/<标识>`（`~/git/diy/diy` → `~/git/diy/diy.worktrees/<标识>`）。
 
-## worktree-path
-
-**worktree 放仓外同级 `~/git/<项目名>.worktrees/<标识>`**（`~/git/diy/diy` → `~/git/diy.worktrees/t323-xxx`）。
-前提：`~/git` 不是 git 仓 ⇒ 无需 `.gitignore`。**仓内 `<repo>/diy.worktrees/` 已停用**（2026-10-29）：会让 AGENTS.md 链加载两份（worktree 自带 + 父目录主仓）。
-
-## worktree-selfcheck
-
-动手改文件前先 `pwd` + `git rev-parse --show-toplevel`：落在主仓工作树（如 `~/git/diy/diy`）就先建 worktree 再动；**判据 = 这次改动会不会进 git**（纯读不用、写要）。反例：##404 连续 6 次直接在 main 上提交 —— 规则不落成动作就等于没有
+真源随 AGENTS.md 链每轮常驻，本处只留锚点（`rule/dev#worktree` 被 `~/AGENTS.md` 等处引用），**不再复制正文** —— 2026-11-22 去重前这里的副本已与真源分叉（停在旧口径 `~/git/<项目名>.worktrees/`，2026-11-21 已停用），而 `diy2 facts` 仍在返回它。
