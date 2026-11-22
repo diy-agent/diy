@@ -395,7 +395,12 @@ export interface KbIndexEntry {
 export interface KbFoldIndexOptions {
     /** 同目录至少几个文件才折叠（缺省 2：实测 2 个也值得折，见上方判据） */
     readonly minGroup?: number;
-    /** 折叠项里列几个文件名（缺省 6） */
+    /**
+     * 折叠项里列几个文件名（缺省 6）。
+     *
+     * **`0` = 目录级索引**：只写「N 个文件」，不给名字 —— 注入器用这一档。名字对
+     * 每轮固定前缀是白付的（一个任务只碰 1~2 个目录），去路已在 desc 里的 `brief <dir>`。
+     */
     readonly showNames?: number;
 }
 
@@ -419,7 +424,7 @@ function stemOf(path: string): string {
  */
 export function foldKbIndex(entries: readonly KbIndexEntry[], opts: KbFoldIndexOptions = {}): KbIndexEntry[] {
     const min = Math.max(2, opts.minGroup ?? KB_INDEX_FOLD_MIN_GROUP);
-    const show = Math.max(1, opts.showNames ?? 6);
+    const show = Math.max(0, opts.showNames ?? 6);
     const groups = new Map<string, KbIndexEntry[]>();
     const singles: KbIndexEntry[] = [];
     for (const entry of entries) {
@@ -440,10 +445,13 @@ export function foldKbIndex(entries: readonly KbIndexEntry[], opts: KbFoldIndexO
         }
         const sections = list.reduce((sum, entry) => sum + entry.sections, 0);
         const names = list.map((entry) => stemOf(entry.path)).sort((a, b) => a.localeCompare(b));
-        const shown = names.length > show ? `${names.slice(0, show).join('、')} …等 ${String(names.length)} 个` : names.join('、');
+        const shown =
+            show === 0
+                ? ''
+                : ` · ${names.length > show ? `${names.slice(0, show).join('、')} …等 ${String(names.length)} 个` : names.join('、')}`;
         out.push({
             path: `${dir}/`,
-            desc: `${String(list.length)} 个文件 · ${shown}（brief ${dir}）`,
+            desc: `${String(list.length)} 个文件${shown}（brief ${dir}）`,
             sections,
             scope: list.some((entry) => entry.scope === 'project') ? 'project' : 'global',
         });

@@ -35,6 +35,13 @@ describe('foldKbIndex', () => {
         expect(out.map((entry) => entry.path)).toEqual(['a/', 'INDEX.md']); // localeCompare：小写 a 排在大写 I 前
     });
 
+    it('showNames: 0 = 目录级：只给文件数 + 去路，不列名字', () => {
+        const out = foldKbIndex([e('app/a.md', 2), e('app/b.md', 3)], { showNames: 0 });
+        expect(out.map((entry) => entry.path)).toEqual(['app/']);
+        expect(out[0]?.desc).toBe('2 个文件（brief app）');
+        expect(out[0]?.sections).toBe(5);
+    });
+
     it('超过 showNames 时截断并给出总数', () => {
         const entries = Array.from({ length: 9 }, (_, i) => e(`g/f${String(i)}.md`));
         const out = foldKbIndex(entries, { showNames: 3 });
