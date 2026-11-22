@@ -378,6 +378,10 @@ export function kbRootOf(from: string): string {
  * 判据：按路径**第一段目录**分组（`app/cli.md` → `app/`），同目录 ≥ `minGroup` 个文件才折叠。
  * 单文件目录不折（折了反而多一层跳转），根目录下的散文件不折。
  *
+ * `minGroup` 取 2 的依据（2026-11-23 实测项目库 69 条）：只折 ≥3 时 33 条 / 2156 B，
+ * 连 2 个文件的目录也折是 25 条 / 1343 B（-38%）；折叠项 desc 仍列出组内文件名，
+ * 丢的只有「各文件分别几节」，换来常驻前缀少 800 B/轮。
+ *
  * 折叠项的 desc 必须自带**去路**：列组内文件名（最多 `showNames` 个），agent 据此直接
  * `diy2 facts brief <目录>` 或 `read <路径>`；只写「N 个文件」等于把它推回逐个试。
  */
@@ -389,13 +393,13 @@ export interface KbIndexEntry {
 }
 
 export interface KbFoldIndexOptions {
-    /** 同目录至少几个文件才折叠（缺省 3：两个折起来省不下跳转成本） */
+    /** 同目录至少几个文件才折叠（缺省 2：实测 2 个也值得折，见上方判据） */
     readonly minGroup?: number;
     /** 折叠项里列几个文件名（缺省 6） */
     readonly showNames?: number;
 }
 
-export const KB_INDEX_FOLD_MIN_GROUP = 3;
+export const KB_INDEX_FOLD_MIN_GROUP = 2;
 
 /** 路径的首段目录；根目录文件返回 null */
 function dirOf(path: string): string | null {

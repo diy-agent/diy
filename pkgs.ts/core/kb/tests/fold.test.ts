@@ -17,10 +17,17 @@ describe('foldKbIndex', () => {
         expect(out[0]?.desc).toContain('brief app');
     });
 
-    it('不足 minGroup 不折（两个主题折起来省不下跳转成本）', () => {
+    it('两个文件也折（desc 仍列名字，丢的只是各自节数）', () => {
         const out = foldKbIndex([e('x/a.md'), e('x/b.md')]);
-        expect(out.map((entry) => entry.path)).toEqual(['x/a.md', 'x/b.md']);
-        expect(KB_INDEX_FOLD_MIN_GROUP).toBe(3);
+        expect(out.map((entry) => entry.path)).toEqual(['x/']);
+        expect(out[0]?.desc).toContain('2 个文件');
+        expect(out[0]?.desc).toContain('a、b');
+        expect(KB_INDEX_FOLD_MIN_GROUP).toBe(2);
+    });
+
+    it('单文件目录不折（折了反而多一层跳转）', () => {
+        const out = foldKbIndex([e('x/a.md')]);
+        expect(out.map((entry) => entry.path)).toEqual(['x/a.md']);
     });
 
     it('根目录文件不折（没有目录段可折）', () => {
