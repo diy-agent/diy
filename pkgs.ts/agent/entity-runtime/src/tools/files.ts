@@ -2,14 +2,15 @@
 //
 // 为什么移植而不是直接依赖：那个包的构建产物（dist/）在本仓的 build 图里有断链，
 // 而 diy2 是 tsx 直跑源码。移植版保留它的三条判据：
-//   1. 路径必须落在房间目录内（越界直接抛）
+//   1. 相对路径按房间目录（cwd）解析、绝对路径原样用 —— **不设目录边界**
+//      （与内核版 @diy-agent/tools 一致：cwd 越界拦截已移除）
 //   2. 失败 **抛异常**（tool-error → UI 画 ✗），不返回"失败字符串"
 //   3. edit 必须唯一命中（除非 replaceAll），改几行不要重写整个文件
 //
 // 等 build 图修好、或 diy2 需要更完整的窗口/diff 语义时，再换回 @diy-agent/tools。
 
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
@@ -19,12 +20,9 @@ const READ_MAX_BYTES = 200_000;
 const WRITE_MAX_BYTES = 400_000;
 const SHELL_OUTPUT_MAX = 100_000;
 
-/** 解析到房间目录内；越界抛错（软链不追，够用） */
-function inside(cwd: string, filePath: string): string {
-    const abs = isAbsolute(filePath) ? resolve(filePath) : resolve(cwd, filePath);
-    const rel = relative(cwd, abs);
-    if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`[越界] ${filePath} 不在房间目录 ${cwd} 内`);
-    return abs;
+/** 相对路径按房间目录解析、绝对路径原样 —— 房间目录只是基准，不是边界 */
+function absPath(cwd: string, filePath: string): string {
+    return isAbsolute(filePath) ? resolve(filePath) : resolve(cwd, filePath);
 }
 
 function clip(text: string, max = SHELL_OUTPUT_MAX): string {
@@ -34,7 +32,7 @@ function clip(text: string, max = SHELL_OUTPUT_MAX): string {
 export function readTool(cwd: string): ToolSet[string] {
     return tool({
         description:
-            '读取文件的文本内容（带行号；相对路径按房间目录解析）。' +
+            '读取文件的文本内容（带行号；相对路径按房间目录解析，绝对路径照用）。' +
             `单次最多 ${READ_MAX_LINES} 行 / ${Math.round(READ_MAX_BYTES / 1024)}KB；` +
             '超限时末尾会给出下一段 offset —— 用 offset 继续读，不要重复读同一段。',
         inputSchema: z.object({
@@ -43,7 +41,7 @@ export function readTool(cwd: string): ToolSet[string] {
             limit: z.number().optional().describe(`最大行数（缺省 ${READ_MAX_LINES}）`),
         }),
         execute: async ({ path: filePath, offset, limit }) => {
-            const abs = inside(cwd, filePath);
+            const abs = absPath(cwd, filePath);
             const info = await stat(abs).catch((error: unknown) => {
                 throw new Error(`[读取失败] ${error instanceof Error ? error.message : String(error)}`);
             });
@@ -68,7 +66,7 @@ export function readTool(cwd: string): ToolSet[string] {
 export function writeTool(cwd: string): ToolSet[string] {
     return tool({
         description:
-            '整文件写入（新建或覆盖；相对路径按房间目录解析；父目录不存在会自动创建）。' +
+            '整文件写入（新建或覆盖；相对路径按房间目录解析，绝对路径照用；父目录不存在会自动创建）。' +
             '改几行不要用本工具重写整个文件 —— 用 edit。',
         inputSchema: z.object({
             path: z.string().describe('文件路径'),
@@ -77,7 +75,7 @@ export function writeTool(cwd: string): ToolSet[string] {
         execute: async ({ path: filePath, content }) => {
             if (Buffer.byteLength(content, 'utf8') > WRITE_MAX_BYTES)
                 throw new Error(`[写入失败] 内容超过上限 ${WRITE_MAX_BYTES} 字节`);
-            const abs = inside(cwd, filePath);
+            const abs = absPath(cwd, filePath);
             const before = await readFile(abs, 'utf8').catch(() => undefined);
             await mkdir(dirname(abs), { recursive: true });
             await writeFile(abs, content, 'utf8');
@@ -108,7 +106,7 @@ export function editTool(cwd: string): ToolSet[string] {
                 .describe('有序的替换列表'),
         }),
         execute: async ({ path: filePath, edits }) => {
-            const abs = inside(cwd, filePath);
+            const abs = absPath(cwd, filePath);
             const original = await readFile(abs, 'utf8').catch((error: unknown) => {
                 throw new Error(`[编辑失败] ${error instanceof Error ? error.message : String(error)}`);
             });

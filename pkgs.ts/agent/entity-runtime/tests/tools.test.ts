@@ -1,8 +1,8 @@
 // tools.test.ts —— 房间工具（read / write / edit / bash）的边界。
 //
-// 只测我们自己装配与移植的那一层：路径护栏、唯一命中、失败抛异常（不是"返回失败字符串"）。
+// 只测我们自己装配与移植的那一层：路径解析（不设边界）、唯一命中、失败抛异常（不是"返回失败字符串"）。
 
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -39,9 +39,29 @@ describe('房间工具', () => {
         expect(await readFile(join(dir, 'notes/a.txt'), 'utf8')).toBe('第一行\n第二行\n第三行');
     });
 
-    it('read 越界：路径不在房间目录内 → 抛错', async () => {
+    it('读 cwd 之外：放行（房间目录只是相对路径基准，不是边界）', async () => {
         const tools = buildRoomTools({ cwd: dir, shell: false });
-        await expect(toolOf(tools, 'read').execute({ path: '../../etc/passwd' })).rejects.toThrow(/越界/);
+        const outside = join(dir, '..', `outside-${process.pid}.txt`);
+        await writeFile(outside, '外面\n', 'utf8');
+        try {
+            const text = String(await toolOf(tools, 'read').execute({ path: outside }));
+            expect(text).toContain('1\t外面');
+        } finally {
+            await rm(outside, { force: true });
+        }
+    });
+
+    it('写 / 改 cwd 之外：同样放行', async () => {
+        const tools = buildRoomTools({ cwd: dir, shell: false });
+        const outside = join(dir, '..', `outside-w-${process.pid}.txt`);
+        try {
+            await toolOf(tools, 'write').execute({ path: outside, content: 'a\nb\n' });
+            expect(await readFile(outside, 'utf8')).toBe('a\nb\n');
+            await toolOf(tools, 'edit').execute({ path: outside, edits: [{ oldText: 'b', newText: 'c' }] });
+            expect(await readFile(outside, 'utf8')).toBe('a\nc\n');
+        } finally {
+            await rm(outside, { force: true });
+        }
     });
 
     it('edit：唯一命中才改，多处命中要 replaceAll', async () => {
