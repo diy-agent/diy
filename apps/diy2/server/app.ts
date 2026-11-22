@@ -16,8 +16,10 @@ import { type IncomingMessage, type ServerResponse } from 'node:http';
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { Duplex } from 'node:stream';
 
 import { createStaticHandler } from './static';
+import { createRpcSocket, type RpcStreamInfo } from './rpc';
 import { createStreamHub } from './stream';
 import { APP_ID, type Diy2Config } from './config';
 
@@ -877,8 +879,15 @@ export interface Diy2AppInfo {
 
 export interface Diy2App {
     handle: (req: IncomingMessage, res: ServerResponse) => void;
+    /**
+     * 处理一条 HTTP upgrade（`/rpc` 归这里，返回 true；其余返回 false 交给别人 ——
+     * dev 里 vite 的 HMR 也走 upgrade 通道，**不要动不是自己的 socket**）。
+     */
+    handleUpgrade: (req: IncomingMessage, socket: Duplex, head: Buffer) => boolean;
+    /** 当前 WS 连接与它们正在订阅的房间（dev app / 排查用） */
+    rpcStreams: () => RpcStreamInfo[];
     info: () => Diy2AppInfo;
-    /** 关闭所有 SSE 订阅（进程退出 / dev 重启前调用；sqlite 由进程退出收尾） */
+    /** 关闭所有 SSE / WS 订阅（进程退出 / dev 重启前调用；sqlite 由进程退出收尾） */
     close: () => void;
 }
 
@@ -912,6 +921,12 @@ export function createDiy2App(opts: {
     const prunedDialogs = store.pruneDraftOwners('dlg:', Date.now() - DIALOG_DRAFT_TTL);
     if (prunedDialogs > 0) console.log(`[drafts] 清掉 ${prunedDialogs} 条过期对话框草稿`);
 
+    // RPC 面：事件流（WS）。与 SSE 并存一段时间 —— 客户端切过去、验证稳定后再删 SSE。
+    const rpc = createRpcSocket({
+        attach,
+        hasRoom: (roomId) => roomOf(roomId) !== undefined,
+    });
+
     info = (): Diy2AppInfo => ({
         app: APP_ID,
         pid: process.pid,
@@ -926,8 +941,9 @@ export function createDiy2App(opts: {
 
     const close = (): void => {
         hub.close();
+        rpc.close();
         subscribers.clear();
     };
 
-    return { handle, info, close };
+    return { handle, handleUpgrade: rpc.handleUpgrade, rpcStreams: rpc.streams, info, close };
 }
