@@ -11,11 +11,11 @@ updated: 2026-10-21
 
 ## hooks-path
 
-钩子真源在仓内 `.githooks/`（进版本控制、各 worktree 跟自己的分支走）。本机**一次性**配置：
+钩子真源在仓内 `.githooks/`（进版本控制）。本机**一次性**配置 —— **用绝对路径指主仓那份**：
 
-    git config core.hooksPath .githooks      # 仓库级；worktree 共享同一份 config，设一次全生效
+    git config core.hooksPath /Users/ccc/git/diy/diy/.githooks
 
-相对路径的基准是**工作树根**（githooks(5)：钩子运行前 git 会 chdir 到非裸仓的工作树根）—— 子目录里跑 git 也一样命中。
+为什么不用相对路径 `.githooks`：相对路径的基准是**各工作树自己的根**（githooks(5)：钩子运行前 git 会 chdir 到非裸仓的工作树根），而 `.githooks/` 只在已 rebase 到 origin/main 的工作树里才存在 —— 未 rebase 的 worktree 上它指向不存在的目录，git **静默跳过**（2026-11-22 实测：15 个 worktree 里有 13 个处于这种无保护状态）。绝对路径指主仓那份，一次配置全 worktree 生效，不要求各自 rebase；代价是钩子内容跟主仓工作树的当前 checkout 走 —— 主仓常驻 main 时可接受（改钩子也只能从 PR 进 main）。
 
 | 钩子 | 拦什么 | 豁免 |
 |---|---|---|
@@ -25,7 +25,9 @@ updated: 2026-10-21
 
 另设 `git config pull.ff only`：pull 出现分叉时**直接报错**，而不是静默造一个 merge commit（那个 merge commit 正是 2026-11-22 分叉的形态）。收口用 `git pull --rebase`。
 
-判据：`git config --get core.hooksPath` 得 `.githooks`，且 `./sha.sh check` 不报「hooksPath 指向不存在的目录」。
+判据：`git config --get core.hooksPath` 得那条绝对路径；任一 worktree 里 `git hook run pre-commit` 返回 0（不是 `cannot find hook`）；`./sha.sh check` 不报「hooksPath 指向不存在的目录」；`git push --dry-run <临时 bare 仓> HEAD:main` 被拒。
+
+验 `pre-push` 别用 `git hook run`：**git 2.49 的 `git hook run` 不转发 stdin**，脚本读不到 refs 就静默放行，看起来像「钩子失效」。要用 `git push --dry-run`（钩子照跑但不传数据），远端可以就地 `git init --bare /tmp/probe.git`。
 
 踩坑：改动前它被设成绝对路径 `/Users/ccc/git/diy/.git/hooks` —— 该目录不存在（`~/git/diy` 根本不是 git 仓），而 git 对坏 hooksPath **静默不回退**：全部 worktree 的所有钩子实际都不触发，连 Qoder 的 `post-commit` 都哑着。改配置前必须先把 `.git/hooks/` 里的手写钩子搬进 `.githooks/`，否则改完就丢。
 
