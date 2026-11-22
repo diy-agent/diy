@@ -46,7 +46,7 @@ export type HandlersOf<R> = {
   // 跳过**元字段**：group 摊平后 `desc` / `title` / `inputSchema` / `children` 都在 meta 上，
   // 不跳的话它们会被要求提供 handler（`desc: string` ⇒ `never`，bind 直接类型报错）。
   [K in keyof R as K extends MetaField ? never : K]: IsGroup<R[K]> extends true
-    ? HandlersOf<R[K]>                      // ← group：继续下钻，**不要求 handler**
+    ? HandlersOf<R[K]> // ← group：继续下钻，**不要求 handler**
     : R[K] extends _Router
       ? HandlersOf<R[K]>
       : R[K] extends _AnyProcedureMeta
@@ -56,9 +56,19 @@ export type HandlersOf<R> = {
 
 /** `ProcedureMeta` / `group` 上的非子节点字段名（不该出现在 handlers 形状里） */
 type MetaField =
-  | '_type' | '_input' | '_output' | '_chunkIn' | '_chunkOut' | '_streamMode'
-  | 'inputSchema' | 'outputSchema' | 'chunkInSchema' | 'chunkOutSchema'
-  | 'desc' | 'title' | 'children';
+  | '_type'
+  | '_input'
+  | '_output'
+  | '_chunkIn'
+  | '_chunkOut'
+  | '_streamMode'
+  | 'inputSchema'
+  | 'outputSchema'
+  | 'chunkInSchema'
+  | 'chunkOutSchema'
+  | 'desc'
+  | 'title'
+  | 'children';
 
 /**
  * 是不是 `RpcSchema.group` 的返回值。
@@ -75,11 +85,61 @@ type IsGroup<T> = T extends { _streamMode: 'group' } ? true : false;
 
 /** `defineService` 的入参 */
 /**
- * 2026-11 删除了 `defineService` / `Service`：
- * 它把「模块」与「部署位置」焊死（`name` 写死在模块里），已由 `scope.ts` 取代 ——
- * 模块自带模块层（api 的 children），app 前缀由宿主给（`server.use` / `createScopedClient`）。
- * 本文件只保留 `HandlersOf`（两侧共用的 handlers 形状推导）。
+ * 一个「模块 + 它的部署名字」。
+ *
+ * @deprecated 新代码用 `server.use({ prefix, api, handlers })` +
+ * `createScopedClient({ api, client, prefix })`（见 `scope.ts`）：前缀归使用方，
+ * 同一个 api 能挂到多个前缀。
  */
+export interface Service<T extends _Router | _AnyProcedureMeta> {
+  readonly name: string;
+  readonly api: T;
+  bind(binding: ServerBinding, handlers: HandlersOf<T>): void;
+  use(client: ClientBinding): TypedClient<T>;
+}
+
+/** 按 `a.b.c` 取嵌套对象里的 handler */
+function pickHandler(handlers: unknown, path: string): unknown {
+  let current: unknown = handlers;
+  for (const segment of path.split('.')) {
+    if (current === null || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+/**
+ * @deprecated 2026-11 起**新代码不要用** —— 它把「模块」与「部署位置」焊死
+ * （`name` 写死在模块里）。等价写法：`server.use({ prefix, api, handlers })` +
+ * `createScopedClient({ api, client, prefix })`。
+ *
+ * 保留原因：`scope.ts` 的契约写的就是「保留」；存量消费方（dev 仓的 dev-ref / dev-fs）
+ * 仍在用。删它是一次跨仓破坏性变更，得单独协调 —— 不能顺手删。
+ */
+export function defineService<T extends _Router | _AnyProcedureMeta>(opts: {
+  name: string;
+  api: T;
+}): Service<T> {
+  const { name, api } = opts;
+  if (!name) throw new Error('defineService: name 不能为空');
+  return {
+    name,
+    api,
+    bind(binding, handlers) {
+      // 与 scope.ts 的 mountService 同一条路径：`<name>.<树内 path>`
+      for (const [path, meta] of Object.entries(_flattenRouter(api))) {
+        const handler = pickHandler(handlers, path);
+        if (typeof handler !== 'function') {
+          throw new Error(`defineService(${name}): 缺少 handler —— ${path}`);
+        }
+        binding._on(`${name}.${path}`, meta, handler as never);
+      }
+    },
+    use(client) {
+      return createTypedClient(client, api, { prefix: name });
+    },
+  };
+}
 
 export function assertFullyBound(
   binding: { listRegistered(): string[] },
@@ -123,6 +183,8 @@ export function assertFullyBound(
     lines.push(`  绑了但 apiDef 里没有（${String(extra.length)} 个）：`);
     for (const p of extra) lines.push(`    · ${p}`);
   }
-  lines.push('  修法：前者补 `bindXxx(binding)`；后者多半是改名漏改（api-def 与 handler 不一致）。');
+  lines.push(
+    '  修法：前者补 `bindXxx(binding)`；后者多半是改名漏改（api-def 与 handler 不一致）。',
+  );
   throw new Error(lines.join('\n'));
 }
