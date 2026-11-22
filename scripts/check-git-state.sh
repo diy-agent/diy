@@ -24,8 +24,12 @@ if [ -n "$hooks" ]; then
     *) dir="$(git rev-parse --show-toplevel 2>/dev/null)/$hooks" ;;
   esac
   if [ ! -d "$dir" ]; then
+    # 相对路径在未 rebase 的 worktree 上就是这样指向虚空的 —— 引导用主仓那份的绝对路径
+    common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    suggest="${common%/.git}/.githooks"
     warn "core.hooksPath 指向不存在的目录：$hooks —— 当前全部 git 钩子都不触发（静默失效）"
-    warn "  处置：git config core.hooksPath .githooks（见 .diy/knowledge/dev/setup.md#hooks-path）"
+    warn "  处置：git config core.hooksPath ${suggest}（绝对路径，全部 worktree 一次生效）"
+    warn "  说明见 .diy/knowledge/dev/setup.md#hooks-path"
   else
     any=0
     for h in pre-commit pre-merge-commit pre-push pre-rebase; do
