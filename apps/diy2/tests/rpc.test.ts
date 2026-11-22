@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 import { ChannelClientBinding } from '@diy-agent/rpc';
 import { WsTransport, connectWs } from '@diy-agent/rpc/ws/browser';
-import { StreamHub } from '@diy-agent/chat-transport-http';
+import { StreamHub } from '@diy-agent/chat-transport-rpc';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createDiy2App, type Diy2App } from '../server/app';

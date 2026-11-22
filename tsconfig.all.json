@@ -86,7 +86,7 @@
       "path": "pkgs.ts/ui/chat-core"
     },
     {
-      "path": "pkgs.ts/ui/chat-transport-http"
+      "path": "pkgs.ts/ui/chat-transport-rpc"
     },
     {
       "path": "pkgs.ts/ui/entity-chat"

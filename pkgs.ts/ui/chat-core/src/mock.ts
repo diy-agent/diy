@@ -1,4 +1,4 @@
-// mock.ts —— 与 HttpChatClient 同契约的内存实现：UI 开发/测试/演示不需要后端。
+// mock.ts —— 与 RpcChatClient 同契约的内存实现：UI 开发/测试/演示不需要后端。
 
 import type { ChatClient } from './client';
 import type { Command, Item, Snapshot, StreamEvent } from './types';

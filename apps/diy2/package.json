@@ -11,7 +11,7 @@
         "@astryxdesign/core": "0.7.17-canary.geeb3d7c",
         "@astryxdesign/lab": "0.7.17-canary.geeb3d7c",
         "@astryxdesign/theme-neutral": "0.7.17-canary.geeb3d7c",
-        "@diy-agent/chat-transport-http": "*",
+        "@diy-agent/chat-transport-rpc": "*",
         "@diy-agent/entity-chat": "*",
         "@diy-agent/entity-runtime": "*",
         "@diy-agent/protocol": "*",
