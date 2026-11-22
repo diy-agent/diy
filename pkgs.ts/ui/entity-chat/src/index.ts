@@ -21,3 +21,26 @@ export type { NavAddress } from './address';
 // ── 侧栏插槽 ──────────────────────────────────────────────────
 export { registerNavSource, unregisterNavSource, useNavSources } from './nav';
 export type { NavContext, NavHost, NavSource } from './nav';
+
+// ── 宿主装配用的只读钩子 ──────────────────────────────────────
+//
+// 为什么必须放出来：宿主要自己画「有哪些房间 / 现在在看哪个 / 连上了没有」这类**导航**
+// （workbench-dock 的左栏、页实例身份都从这里取），而这些状态只活在 store 里 ——
+// 不导出，宿主就只能猜或者重连一次 API。
+//
+// 只给**读**：`actions`（改名 / 删房 / 压上下文 / 换模型）仍然不露 —— 写路径要一条一条
+// 设计语义（谁审、失败了怎么回滚），不适合顺手放出来当便利 API。
+export {
+    bootstrapStore,
+    roomOf,
+    shellSnapshot,
+    useAddress,
+    useBots,
+    useDefaultModelKey,
+    useIsCurrentRoom,
+    useLastActivityOf,
+    useLoaded,
+    usePendingAskOf,
+    useRooms,
+    useSelectedRoom,
+} from './store';
