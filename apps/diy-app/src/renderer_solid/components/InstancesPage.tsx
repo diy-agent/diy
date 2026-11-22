@@ -17,13 +17,13 @@
  * 不管数据行；本页要的是一张数据表。仓内没有可复用的数据表组件（会话总览页也是自己排的
  * `<table class="table table-sm">`），故与它同款，不新造抽象。
  */
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { diyService } from "../lib/rpc";
 import { findNode } from "../lib/task-lineage";
 import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
 import { ConfirmDialog } from "@diy-agent/ui-kit";
-import type { InstanceRow } from "../../shared/instance-row";
+import type { InstanceRow, InstanceStream } from "../../shared/instance-row";
 import {
     INSTANCE_TONE_CLASS,
     DEFAULT_INSTANCE_SORT,
@@ -66,7 +66,9 @@ export function InstancesPage() {
      */
     const [refreshCount, setRefreshCount] = createSignal(0);
     /** 页面是否可见（不可见 = 停轮询；见 shared/instance-view 的 decidePoll） */
-    const [visible, setVisible] = createSignal(typeof document === "undefined" || document.visibilityState === "visible");
+    const [visible, setVisible] = createSignal(
+        typeof document === "undefined" || document.visibilityState === "visible",
+    );
     /** 选中的行（pid，不是行对象也不是下标 —— 每轮刷新都会换一批新对象，见 keepPid） */
     const [selected, setSelected] = createSignal<number | null>(null);
     /** 展开明细的行（同为 pid） */
@@ -76,6 +78,39 @@ export function InstancesPage() {
     const [confirmTarget, setConfirmTarget] = createSignal<InstanceRow | null>(null);
     /** 正在唤起的 pid（按钮转圈 + 防重入） */
     const [focusing, setFocusing] = createSignal<number | null>(null);
+
+    /**
+     * 展开行的「事件流订阅」：pid + 结果。
+     * 只在**展开时**读一次（不跟轮询走）：每次读都会连一条短命 WS，不能每 2s 打一次。
+     */
+    const [streams, setStreams] = createSignal<{
+        pid: number;
+        loading: boolean;
+        data: InstanceStream[];
+        error: string | null;
+    } | null>(null);
+
+    const loadStreams = async (row: InstanceRow): Promise<void> => {
+        if (row.port === null) return;
+        setStreams({ pid: row.pid, loading: true, data: [], error: null });
+        try {
+            const result = await diyService.diy.instances.streams({ port: row.port });
+            if (expanded() !== row.pid) return;
+            setStreams({ pid: row.pid, loading: false, data: result.streams, error: result.error ?? null });
+        } catch (error) {
+            if (expanded() !== row.pid) return;
+            setStreams({ pid: row.pid, loading: false, data: [], error: msgOf(error) });
+        }
+    };
+
+    // on(expanded) + 回调里读 rows()：只跟展开变化，不被每轮刷新的新行对象带着重跑
+    createEffect(
+        on(expanded, (pid) => {
+            if (pid === null) return;
+            const row = rows().find((item) => item.pid === pid);
+            if (row !== undefined) void loadStreams(row);
+        }),
+    );
 
     /** 任务号/标题解析：查得到就用「#367 标题」，查不到（别的数据根上的任务）退回 uri 里的号 */
     const ctx: InstanceViewCtx = {
@@ -180,9 +215,7 @@ export function InstancesPage() {
                             页面不可见 · 已暂停自动刷新
                         </span>
                     </Show>
-                    <span class="opacity-60">
-                        只读：本页不提供杀 / 停实例的操作（生产实例绝不可杀 —— 见 guard）
-                    </span>
+                    <span class="opacity-60">只读：本页不提供杀 / 停实例的操作（生产实例绝不可杀 —— 见 guard）</span>
                 </div>
             </div>
 
@@ -226,7 +259,9 @@ export function InstancesPage() {
                                                     class="cursor-pointer hover:text-primary whitespace-nowrap"
                                                     title={`${col.headTip}（点击排序）`}
                                                     data-instance-sort={col.key}
-                                                    onClick={() => setSort((s) => nextSort(s, col.key as InstanceSortKey))}
+                                                    onClick={() =>
+                                                        setSort((s) => nextSort(s, col.key as InstanceSortKey))
+                                                    }
                                                 >
                                                     {col.title}
                                                     <Show when={sort().key === col.key}>
@@ -297,22 +332,103 @@ export function InstancesPage() {
                                                     <td colSpan={INSTANCE_COLUMNS.length + 1} class="text-body">
                                                         <div class="flex flex-col gap-1 py-1">
                                                             <div>
-                                                                数据根：<span class="font-mono">{row.diyHome || "(未知)"}</span>（
-                                                                {row.homeSource}）
+                                                                数据根：
+                                                                <span class="font-mono">{row.diyHome || "(未知)"}</span>
+                                                                （{row.homeSource}）
                                                             </div>
-                                                            <div>代码：<span class="font-mono">{row.repoDisplay || "(未知)"}</span></div>
-                                                            <div>启动它的 cwd：<span class="font-mono">{row.cwd || "(未知)"}</span></div>
+                                                            <div>
+                                                                代码：
+                                                                <span class="font-mono">
+                                                                    {row.repoDisplay || "(未知)"}
+                                                                </span>
+                                                            </div>
+                                                            <div>
+                                                                启动它的 cwd：
+                                                                <span class="font-mono">{row.cwd || "(未知)"}</span>
+                                                            </div>
                                                             <div>窗口：{windowText(row)}</div>
                                                             <div>
-                                                                在跑：{row.activeTurns.length === 0 ? "无" : row.activeTurns.map((t) => `${t.uri}（${t.steps} 步 · 起于 ${t.since}）`).join("；")}
+                                                                在跑：
+                                                                {row.activeTurns.length === 0
+                                                                    ? "无"
+                                                                    : row.activeTurns
+                                                                          .map(
+                                                                              (t) =>
+                                                                                  `${t.uri}（${t.steps} 步 · 起于 ${t.since}）`,
+                                                                          )
+                                                                          .join("；")}
+                                                            </div>
+                                                            <div>
+                                                                事件流订阅：
+                                                                <Show
+                                                                    when={streams()?.pid === row.pid ? streams() : null}
+                                                                    fallback={
+                                                                        <span class="opacity-60">
+                                                                            {row.port === null
+                                                                                ? "无端口"
+                                                                                : "展开后读取"}
+                                                                        </span>
+                                                                    }
+                                                                >
+                                                                    {(state) => (
+                                                                        <>
+                                                                            <span
+                                                                                class={
+                                                                                    state().error !== null
+                                                                                        ? "text-warning"
+                                                                                        : ""
+                                                                                }
+                                                                            >
+                                                                                {state().loading
+                                                                                    ? "读取中…"
+                                                                                    : state().error !== null
+                                                                                      ? `读取失败：${state().error}`
+                                                                                      : state().data.length === 0
+                                                                                        ? "无（没有页面连着）"
+                                                                                        : `${state().data.length} 条连接`}
+                                                                            </span>
+                                                                            <button
+                                                                                class="btn btn-ghost btn-xs"
+                                                                                onClick={() => void loadStreams(row)}
+                                                                            >
+                                                                                刷新
+                                                                            </button>
+                                                                            <Show when={state().data.length > 0}>
+                                                                                <ul class="ml-4 list-disc">
+                                                                                    <For each={state().data}>
+                                                                                        {(stream) => (
+                                                                                            <li>
+                                                                                                <span class="font-mono">
+                                                                                                    {stream.conn}
+                                                                                                </span>
+                                                                                                {" → "}
+                                                                                                {stream.rooms.join(
+                                                                                                    "、",
+                                                                                                )}
+                                                                                                <span class="opacity-60">
+                                                                                                    （起于{" "}
+                                                                                                    {new Date(
+                                                                                                        stream.since,
+                                                                                                    ).toLocaleTimeString()}
+                                                                                                    ）
+                                                                                                </span>
+                                                                                            </li>
+                                                                                        )}
+                                                                                    </For>
+                                                                                </ul>
+                                                                            </Show>
+                                                                        </>
+                                                                    )}
+                                                                </Show>
                                                             </div>
                                                             <Show when={row.note}>
                                                                 <div class="text-warning">⚠ {row.note}</div>
                                                             </Show>
-                                                            <div class="opacity-70">命令：<span class="font-mono">{row.cmdline || "(未知)"}</span></div>
-                                                            <div class="opacity-60">
-                                                                唤起方式：{ready().reason}
+                                                            <div class="opacity-70">
+                                                                命令：
+                                                                <span class="font-mono">{row.cmdline || "(未知)"}</span>
                                                             </div>
+                                                            <div class="opacity-60">唤起方式：{ready().reason}</div>
                                                         </div>
                                                     </td>
                                                 </tr>
