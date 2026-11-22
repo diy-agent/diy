@@ -112,12 +112,6 @@ export function dialogOwner(kind: string, roomId: string): string {
     return `${DIALOG_OWNER_PREFIX}${kind}:${roomId}`;
 }
 
-/** 同样的 owner 在服务端有两种路由：房间草稿 / synthetic 草稿（过渡期 fetch 回落用） */
-function draftsPath(owner: string): string {
-    const id = encodeURIComponent(owner);
-    return owner.startsWith(DIALOG_OWNER_PREFIX) ? `/drafts/${id}` : `/rooms/${id}/drafts`;
-}
-
 /** 草稿通道（RPC）：由 store 在创建客户端后注入 —— 草稿不该自己再开一条连接 */
 export interface DraftsTransport {
     list(owner: string): Promise<{ drafts?: Array<{ field: string; value: unknown; updatedAt: number }> }>;
@@ -138,17 +132,11 @@ export class DraftStore {
     private readonly listeners = new Set<() => void>();
     /** RPC 通道：store 创建客户端后调 configure() 注入 */
     private transport: DraftsTransport | undefined;
-    /** 过渡期回落（单测仍用 fetch stub）；P2b 删 REST 时一起删 */
-    private readonly base: string;
-    private readonly doFetch: typeof fetch;
     private readonly debounceMs: number;
     private readonly retryBaseMs: number;
     private readonly retryMaxMs: number;
 
     constructor(options: DraftStoreOptions = {}) {
-        this.base = options.base ?? '/api';
-        const injected = options.fetchImpl;
-        this.doFetch = injected === undefined ? (...args) => globalThis.fetch(...args) : injected.bind(globalThis);
         this.debounceMs = options.debounceMs ?? 600;
         this.retryBaseMs = options.retryBaseMs ?? 1_000;
         this.retryMaxMs = options.retryMaxMs ?? 30_000;
@@ -214,12 +202,7 @@ export class DraftStore {
         // 这次 GET 发出时已经在本地改过（或清空）的字段，不允许被服务端旧值盖回来
         const dirtyAtLoad = new Set(state.dirty);
         try {
-            const data = this.transport
-                ? await this.transport.list(owner)
-                : await this.request<{ drafts?: Array<{ field: string; value: unknown; updatedAt: number }> }>(
-                      'GET',
-                      draftsPath(owner),
-                  );
+            const data = await this.requireTransport().list(owner);
             for (const draft of data.drafts ?? []) {
                 // 本地正在编辑 / 改过且更新的，不被服务端旧值覆盖
                 if (dirtyAtLoad.has(draft.field) || state.dirty.has(draft.field)) continue;
@@ -381,12 +364,12 @@ export class DraftStore {
     }
 
     /** 立即写（切房间 / 卸载 / pagehide 时调）；不传 owner = 全部 */
-    flush(owner?: string, keepalive = false): Promise<void> {
+    flush(owner?: string, _keepalive = false): Promise<void> {
         const owners = owner === undefined ? [...this.owners.keys()] : [owner];
-        return Promise.all(owners.map((id) => this.flushOwner(id, keepalive))).then(() => undefined);
+        return Promise.all(owners.map((id) => this.flushOwner(id))).then(() => undefined);
     }
 
-    private async flushOwner(owner: string, keepalive: boolean): Promise<void> {
+    private async flushOwner(owner: string): Promise<void> {
         const state = this.owners.get(owner);
         if (state === undefined) return;
         if (state.timer !== undefined) {
@@ -413,18 +396,8 @@ export class DraftStore {
                 const serialized = JSON.stringify(value);
                 const hasContent = entry !== undefined && hasDraftContent(value);
                 try {
-                    if (this.transport !== undefined) {
-                        if (hasContent) await this.transport.put(owner, field, value);
-                        else await this.transport.remove(owner, field);
-                    } else {
-                        const path = `${draftsPath(owner)}/${encodeURIComponent(field)}`;
-                        await this.request(
-                            hasContent ? 'PUT' : 'DELETE',
-                            path,
-                            hasContent ? { value } : undefined,
-                            keepalive,
-                        );
-                    }
+                    if (hasContent) await this.requireTransport().put(owner, field, value);
+                    else await this.requireTransport().remove(owner, field);
                     // 写入期间用户又改了同一字段：保留 dirty，下一轮再写
                     const current = state.entries.get(field);
                     if (current === undefined || JSON.stringify(current.value) === serialized) {
@@ -451,23 +424,9 @@ export class DraftStore {
             this.emit();
             if (state.flushAgain) {
                 state.flushAgain = false;
-                void this.flushOwner(owner, keepalive);
+                void this.flushOwner(owner);
             }
         }
-    }
-
-    private async request<T>(method: string, path: string, body?: unknown, keepalive = false): Promise<T> {
-        const init: RequestInit = {
-            method,
-            ...(body === undefined
-                ? {}
-                : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-            ...(keepalive ? { keepalive: true } : {}),
-        };
-        const res = await this.doFetch(`${this.base}${path}`, init);
-        if (!res.ok) throw new Error(`草稿保存失败：HTTP ${res.status}`);
-        if (res.status === 204) return undefined as T;
-        return (await res.json()) as T;
     }
 
     /** 草稿通道（RPC）由 store 注入；没注入就是配置错误，直接抛 */

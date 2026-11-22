@@ -73,8 +73,7 @@ describe('/rpc 房间事件流', () => {
             ]);
 
             // 房间事件：删房间会广播 { kind: 'done' }（不跑模型）
-            const removed = await fetch(`${base}/rooms/task%3At-001`, { method: 'DELETE' });
-            expect(removed.status).toBe(200);
+            await binding.invoke('diy2.rooms.remove', { input: { id: 'task:t-001' } });
             const event = await Promise.race([
                 iterator.next(),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('等事件超时')), 2_000)),
@@ -136,14 +135,39 @@ describe('/rpc 房间事件流', () => {
         }
     });
 
+    it('links：RPC 增删，两端都带显示名', async () => {
+        const transport = new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 }));
+        const binding = new ChannelClientBinding(transport);
+        try {
+            const created = await binding.invoke<unknown, { id: string }>('diy2.rooms.create', {
+                input: { type: 'task', name: 'B', data: { projectId: 'proj:diy' } },
+            });
+            await binding.invoke('diy2.links.add', {
+                input: { id: 'task:t-001', to: created.id, kind: 'related' },
+            });
+            const mine = await binding.invoke<unknown, { out: Array<Record<string, unknown>> }>('diy2.links.list', {
+                input: { id: 'task:t-001' },
+            });
+            expect(mine.out[0]).toMatchObject({ id: created.id, kind: 'related', label: '#2 B', type: 'task' });
+
+            const removed = await binding.invoke<unknown, { removed: boolean }>('diy2.links.remove', {
+                input: { id: 'task:t-001', to: created.id, kind: 'related' },
+            });
+            expect(removed.removed).toBe(true);
+        } finally {
+            transport.close();
+        }
+    });
+
     it('客户端 StreamHub：subscribe 能收到 ready 与房间事件，close 后停', async () => {
         const hub = new StreamHub({ rpcUrl, timeoutMs: 2_000 });
         const events: Array<{ kind?: string }> = [];
         const off = hub.subscribe('room:task:t-001', (event) => events.push(event as { kind?: string }));
         try {
             await waitFor(() => events.some((event) => event.kind === 'ready'));
-            const removed = await fetch(`${base}/rooms/task%3At-001`, { method: 'DELETE' });
-            expect(removed.status).toBe(200);
+            // 用另一条连接删房间（广播 done）
+            const admin = new ChannelClientBinding(new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 })));
+            await admin.invoke('diy2.rooms.remove', { input: { id: 'task:t-001' } });
             await waitFor(() => events.some((event) => event.kind === 'done'));
         } finally {
             off();
