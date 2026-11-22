@@ -1,8 +1,8 @@
 {
-    "name": "@diy-agent/chat-transport-http",
+    "name": "@diy-agent/chat-transport-rpc",
     "version": "0.0.1",
     "private": true,
-    "description": "ChatClient 的 HTTP 实现：命令走 REST，事件流走 diy-rpc（WebSocket）",
+    "description": "ChatClient 的 RPC 实现：命令与事件都走 diy-rpc（WebSocket）",
     "type": "module",
     "main": "./src/index.ts",
     "types": "./src/index.ts",

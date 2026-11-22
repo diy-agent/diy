@@ -1,7 +1,7 @@
 // client.ts —— ChatClient 契约（纯接口）。
 //
 // 这一层不认识 HTTP / SSE / WebSocket / ipc：传输实现放在独立的 transport 包里。
-//   现在：@diy-agent/chat-transport-http
+//   现在：@diy-agent/chat-transport-rpc
 //   将来：@diy-agent/chat-transport-rpc（diy-rpc 落地后直接换实现，core 不动）
 
 import type { AskAnswer, Command, Snapshot, StreamEvent } from './types';

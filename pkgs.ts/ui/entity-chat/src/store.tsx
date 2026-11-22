@@ -10,7 +10,7 @@ import {
     type Room,
     type SessionInfo,
 } from '@diy-agent/chat-core';
-import { HttpChatClient } from '@diy-agent/chat-transport-http';
+import { RpcChatClient } from '@diy-agent/chat-transport-rpc';
 import * as React from 'react';
 
 import {
@@ -34,7 +34,7 @@ const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 // ─── 会话（chat-core）─────────────────────────────────────────────
 
 // 传输层唯一注入点：换 diy-rpc 时只改这一行
-let client = new HttpChatClient();
+let client = new RpcChatClient();
 /** 命令面出口：TaskPanel / drafts 用它（同一条 RPC 连接） */
 export { client as diy2 };
 drafts.configure(client.drafts);

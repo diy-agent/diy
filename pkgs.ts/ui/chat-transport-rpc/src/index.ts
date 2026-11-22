@@ -24,7 +24,7 @@ import type {
 
 import { StreamHub } from './hub';
 
-export interface HttpChatClientOptions {
+export interface RpcChatClientOptions {
     /**
      * 事件流 + 命令的 WS 端点；缺省按当前页推导（`ws(s)://<host>/rpc`）。
      * 非浏览器环境（测试）必须显式给。
@@ -49,10 +49,10 @@ export interface DraftEntry {
 /** 侧栏投影：列表接口比 Room 多这三个字段 */
 export type RoomRow = Room & { hasDraft?: boolean; pendingAsks?: number; lastActivityAt?: number };
 
-export class HttpChatClient implements ChatClient {
+export class RpcChatClient implements ChatClient {
     private readonly hub: StreamHub;
 
-    constructor(options: HttpChatClientOptions = {}) {
+    constructor(options: RpcChatClientOptions = {}) {
         this.hub = new StreamHub({
             ...(options.rpcUrl === undefined ? {} : { rpcUrl: options.rpcUrl }),
         });

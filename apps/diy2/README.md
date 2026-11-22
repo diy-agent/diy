@@ -202,7 +202,7 @@ SSE 占满后，同 profile 下对这个源的**所有**请求永久排队 —�
 - 一条话题只在**第一个**订阅者出现时接上房间广播，最后一个走了就摘掉 —— 没人看的房间不该
   还占着广播（老实现里它也占着一条连接）。
 
-客户端侧：`chat-transport-http` 的 `StreamHub`（`src/hub.ts`），`watch()` = 订话题、
+客户端侧：`chat-transport-rpc` 的 `StreamHub`（`src/hub.ts`），`watch()` = 订话题、
 `post()` = 在已订话题上挂一份临时回调 + 一次 JSON POST。断线退避重连（0.5s→30s 封顶）
 后按本地话题表重订，并对每个话题补一条 `{kind:'ready'}`，让上层补拉快照。
 
