@@ -86,6 +86,41 @@ describe('/rpc 房间事件流', () => {
         }
     });
 
+    it('命令面：rooms 列表 / 建任务 / 草稿读写都走 RPC', async () => {
+        const transport = new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 }));
+        const binding = new ChannelClientBinding(transport);
+        try {
+            const rooms = await binding.invoke<unknown, Array<{ id: string; type: string }>>('diy2.rooms.list', {
+                input: {},
+            });
+            expect(rooms.some((room) => room.id === 'task:t-001')).toBe(true);
+
+            const created = await binding.invoke<unknown, { id: string; data: { number?: number } }>(
+                'diy2.rooms.create',
+                { input: { type: 'task', name: 'RPC 任务', data: { projectId: 'proj:diy' } } },
+            );
+            expect(created.id).toMatch(/^[0-9a-f-]{36}$/);
+            expect(created.data.number).toBeGreaterThan(0);
+
+            await binding.invoke('diy2.drafts.put', {
+                input: { owner: created.id, field: 'composer', value: { text: '半句话' } },
+            });
+            const drafts = await binding.invoke<unknown, { drafts: Array<{ field: string }> }>('diy2.drafts.list', {
+                input: { owner: created.id },
+            });
+            expect(drafts.drafts).toEqual([
+                { field: 'composer', value: { text: '半句话' }, updatedAt: expect.any(Number) },
+            ]);
+
+            const removed = await binding.invoke<unknown, { deleted: string[] }>('diy2.rooms.remove', {
+                input: { id: created.id },
+            });
+            expect(removed.deleted).toEqual([created.id]);
+        } finally {
+            transport.close();
+        }
+    });
+
     it('不存在的房间：流以错误结束，不是静默空流', async () => {
         const transport = new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 }));
         const binding = new ChannelClientBinding(transport);
