@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { localISOString } from "@diy-agent/time";
 import { MODELS_DEV_FILE } from "../../src/shared/model-config";
 import { activeSnapshot, refreshModelsOnce } from "../../src/main/core/models-sync";
 
@@ -35,7 +36,10 @@ describe("refreshModelsOnce", () => {
         const r = await refreshModelsOnce({ home: HOME, fetchText: async () => JSON.stringify(upstream()), now: NOW });
         expect(r.ok).toBe(true);
         expect(r.changed).toBe(true);
-        expect(r.checkedAt).toBe("2026-10-22T08:00:00.000Z");
+        // checkedAt 是「记录类时间戳」：按 @diy-agent/time 规范带本地偏移（`+0800` / `-0500`…），
+        // 不是 `toISOString()` 的 UTC `Z`。期望值用同一个函数算 → 与机器时区无关。
+        expect(r.checkedAt).toBe(localISOString(NOW()));
+        expect(r.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{4}$/);
         expect(r.path).toBe(dataFile());
         expect(r.providers).toBe(2);
         expect(r.models).toBe(3);
@@ -56,7 +60,7 @@ describe("refreshModelsOnce", () => {
         });
         expect(r.ok).toBe(true);
         expect(r.changed).toBe(false);
-        expect(r.checkedAt).toBe("2026-10-23T08:00:00.000Z");
+        expect(r.checkedAt).toBe(localISOString(new Date("2026-10-23T08:00:00.000Z")));
         expect(r.previous?.source).toBe("diy-home");
         expect(readFileSync(dataFile(), "utf-8")).toBe(before.body);
         expect(statSync(dataFile()).mtimeMs).toBe(before.mtime);
