@@ -7,21 +7,15 @@
 //     （以前这里有两份"精简移植"，头注写着"等 build 图修好再换回去"；理由已过期。）
 //   · **房间不再加路径规矩**（2026-11-21 用户裁，与 diy1 / 内核同口径）：原先这里有个 `inside`，
 //     只拦 read / write / edit 的 `path` —— 但「任务在 git worktree 里」时文件在房间目录之外，
-//     write / edit 一律拒、只能退回 `bash` 写，反而绕开了 diff 摘要与审计；而它本来就不是沙箱
+//     write / edit 一律拒、只能退回 `bash` 写 —— 文件改动从此没有 diff 摘要、也没走统一的写路径
+//     （diy1 那边还多一层 onAudit 落盘；diy2 本来就没有审计，不拿它当理由），而它本来就不是沙箱
 //     （bash 从来不受它约束）。房间目录只是相对路径基准与命令的 cwd。
 //   · **宿主能力补在这里**：`ask`（提问闸门）、`journal`（任务日志）、`job`（后台作业账本）。
 //     后两者的落点由房间决定（store）；作业表由进程级 RunRegistry 提供。
 
 import type { ToolSet } from 'ai';
 
-import {
-    buildTools,
-    detectPreferredShell,
-    makeShellTool,
-    type ShellAuditEvent,
-    type ShellSpec,
-    type ToolAuditEvent,
-} from '@diy-agent/tools';
+import { buildTools, detectPreferredShell, makeShellTool, type ShellSpec } from '@diy-agent/tools';
 import { makeJobTool, type RunRegistry } from '@diy-agent/jobs/node';
 
 import type { AskGate } from '../ask';
@@ -30,8 +24,14 @@ import { journalTool } from './journal';
 
 export { clipModelMessage, clipToolOutput, DEFAULT_CLIP, type ClipPolicy } from './clip';
 
-/** 审计事件：文件工具一条（`ToolAuditEvent`）、shell 一条（`ShellAuditEvent`），宿主自己分派 */
-export type RoomAuditEvent = ToolAuditEvent | ShellAuditEvent;
+/**
+ * 一条 bash 命令的缺省预算（毫秒）。
+ *
+ * 300_000 抄的是 diy1 `DEFAULT_LIMITS.bashTimeoutMs` —— 这里**必须有缺省**：
+ * 「0 = 不设超时」看着更自由，实际是把「一轮挂住」的坑丢给调用方（步数刹车管不到
+ * 一条卡死的 `npm test`，只会一直挂到人来看）。要放开就显式传 0。
+ */
+export const DEFAULT_BASH_TIMEOUT_MS = 300_000;
 
 /** 房间能看见 / 能动的那部分后台作业（可见性判据 = 归属串） */
 export interface RoomJobs {
@@ -45,7 +45,7 @@ export interface RoomToolsOptions {
     cwd: string;
     /** 是否开放 shell；缺省开放 */
     shell?: boolean;
-    /** bash 的执行预算：缺省超时（毫秒，0 = 不设超时）。缺省 0 —— 与内核 / diy1 同口径 */
+    /** bash 的执行预算：单条命令超时（毫秒；0 = 不设超时）。不传 = `DEFAULT_BASH_TIMEOUT_MS`（300s，与 diy1 同值） */
     bashTimeoutMs?: number;
     /** 提问闸门；不传 = 没有 ask 工具 */
     ask?: AskGate;
@@ -55,8 +55,6 @@ export interface RoomToolsOptions {
     onJournal?: (input: { kind: import('../db').JournalKind; text: string }) => void;
     /** 后台作业；不传 = bash 没有 `background`、也没有 `job` 工具 */
     jobs?: RoomJobs;
-    /** 工具执行审计（宿主决定写去哪；不传 = 不审计）。收的是两者的联合，按 `phase` 分派 */
-    onAudit?: (event: RoomAuditEvent) => void;
     /** 投递层截断（只改"发给模型的那一份"，execute 的返回值仍是全文） */
     toModelOutput?: (text: string, toolCallId: string) => string;
 }
@@ -78,9 +76,9 @@ export function buildRoomTools(options: RoomToolsOptions): ToolSet {
         const jobs = options.jobs;
         extra[spec.kind === 'pwsh' ? 'pwsh' : 'bash'] = makeShellTool(spec, {
             cwd,
-            limits: { bashTimeoutMs: options.bashTimeoutMs ?? 0 },
+            // 不传 ≠ 不限：缺省就带预算（见 DEFAULT_BASH_TIMEOUT_MS）
+            limits: { bashTimeoutMs: options.bashTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS },
             ...(options.toModelOutput === undefined ? {} : { toModelOutput: options.toModelOutput }),
-            ...(options.onAudit === undefined ? {} : { audit: options.onAudit }),
             // 后台模式：**不传就没有 background 参数**（免得告诉模型一个必然失败的选择）
             ...(jobs === undefined
                 ? {}
@@ -119,9 +117,5 @@ export function buildRoomTools(options: RoomToolsOptions): ToolSet {
     if (ask !== undefined) extra['ask'] = ask;
     if (options.onJournal !== undefined) extra['journal'] = journalTool(options.onJournal);
 
-    return buildTools({
-        cwd,
-        ...(options.onAudit === undefined ? {} : { onAudit: options.onAudit }),
-        extraTools: extra,
-    });
+    return buildTools({ cwd, extraTools: extra });
 }

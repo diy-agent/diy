@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { buildRoomTools } from '../src/tools/index';
+import { buildRoomTools, DEFAULT_BASH_TIMEOUT_MS } from '../src/tools/index';
 
 /** ToolSet 里的 execute 签名带 SDK 参数，测试只喂输入 */
 type Executable = { execute: (input: unknown) => Promise<unknown> };
@@ -94,6 +94,12 @@ describe('房间工具', () => {
         await expect(
             toolOf(tools, 'edit').execute({ path: 'c.txt', edits: [{ oldText: 'nope', newText: 'x' }] }),
         ).rejects.toThrow(/找不到/);
+    });
+
+    it('bash 缺省带执行预算（不是"不设超时"）：值抄 diy1 的 300s', () => {
+        // 回归钉子：这里曾经是 `?? 0`（= 不限），一条卡死的命令能把整轮挂到人来看，
+        // 而步数刹车管不到它。要放开只能显式传 0。
+        expect(DEFAULT_BASH_TIMEOUT_MS).toBe(300_000);
     });
 
     it('bash：在房间目录执行，退出码与输出都在结果里', async () => {
