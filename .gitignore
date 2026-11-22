@@ -74,7 +74,8 @@ data/
 
 .worktree/
 _diy.worktrees/
-# **已停用**（2026-10-29 裁决）：worktree 一律放仓外同级 `~/git/diy.worktrees/<标识>`。
+# **已停用**（2026-10-29 裁决）：worktree 一律放仓外、与仓目录同级：`~/git/diy/diy.worktrees/<标识>`。
+# （2026-11-21 裁：上一层的 `~/git/diy.worktrees/` 也停用 —— 能跑但与「同级」说法打架；存量留原地不迁。）
 # 仓内 `<repo>/diy.worktrees/` 会让 AGENTS.md 链加载两份（worktree 自带 + 父目录主仓）。
 # 仍保留此 ignore —— 仓内若有旧 worktree 残留目录，别被 `git add -A` / `rg` / `fd` 收拾进去。
 diy.worktrees/

@@ -50,6 +50,24 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/model-catalog": { dir: "pkgs.ts/model/catalog", entry: "src/index.ts" },
     "@diy-agent/model-config-page": { dir: "pkgs.ts/ui/model-config", entry: "src/index.ts" },
     "@diy-agent/bot-config-page": { dir: "pkgs.ts/ui/bot-config", entry: "src/index.ts" },
+    // 补齐：这些包以前不在单测导入链上，RPC 切换后链路经 agent/protocol 走到它们；不在表里就只能按
+    // package.json 的 exports 解析到 lib/*.js（未构建）→ 加载期 `Failed to resolve entry`。
+    "@diy-agent/os": { dir: "pkgs.ts/core/os", entry: "src/index.ts" },
+    "@diy-agent/traffic": { dir: "pkgs.ts/core/traffic", entry: "src/index.ts" },
+    "@diy-agent/kb": { dir: "pkgs.ts/core/kb", entry: "src/index.ts" },
+    "@diy-agent/serial-queue": { dir: "pkgs.ts/core/serial-queue", entry: "src/index.ts" },
+    "@diy-agent/dev-paths": { dir: "pkgs.ts/core/dev-paths", entry: "src/index.ts" },
+    "@diy-agent/protocol": { dir: "pkgs.ts/agent/protocol", entry: "src/index.ts" },
+    "@diy-agent/entity-runtime": { dir: "pkgs.ts/agent/entity-runtime", entry: "src/index.ts" },
+    "@diy-agent/agents-chain": { dir: "pkgs.ts/agent/agents-chain", entry: "src/index.ts" },
+    "@diy-agent/skills": { dir: "pkgs.ts/agent/skills", entry: "src/index.ts" },
+    "@diy-agent/hub": { dir: "pkgs.ts/remote/hub", entry: "src/index.ts" },
+    "@diy-agent/test-llm": { dir: "pkgs.ts/test/llm", entry: "src/index.ts" },
+    "@diy-agent/chat-core": { dir: "pkgs.ts/ui/chat-core", entry: "src/index.ts" },
+    "@diy-agent/chat-transport-rpc": { dir: "pkgs.ts/ui/chat-transport-rpc", entry: "src/index.ts" },
+    "@diy-agent/entity-chat": { dir: "pkgs.ts/ui/entity-chat", entry: "src/index.ts" },
+    "@diy-agent/devtools-traffic": { dir: "pkgs.ts/ui/devtools-traffic", entry: "src/index.ts" },
+    "@diy-agent/workbench-dock": { dir: "pkgs.ts/ui/workbench-dock", entry: "src/index.ts" },
 };
 
 /**
