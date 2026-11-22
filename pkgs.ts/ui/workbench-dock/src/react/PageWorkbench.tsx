@@ -252,29 +252,47 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
         return saved;
     }, []);
 
-    const applyLayout = useCallback((layout: CompiledLayout, maximizedArea: string | null) => {
-        const api = apiRef.current;
-        if (!api) return;
-        applyingRef.current = true;
-        try {
-            // reuseExistingPanels：模板改了（加/删一个 view）时，没动的 panel 原样留着 ——
-            // 不加的话 dockview 会先 `clear()` 全文重建，聊天流、打开的文件、选中的 tab 全部重来。
-            api.fromJSON(toSerialized(layout), { reuseExistingPanels: true });
-            // 收起/展开显式过一遍：dockview 的 fromJSON 对**组**的 visible 处理不可靠
-            // （叶子上的 visible:false 在反序列化时组还没挂进 grid），这里按编译结果落定
-            for (const state of Object.values(layout.areas)) {
-                api.getGroup(state.id)?.api.setVisible(state.visible);
-            }
-            if (maximizedArea) {
-                const group = api.getGroup(maximizedArea);
-                const panel = group?.panels[0];
-                if (panel) api.maximizeGroup(panel);
-            }
-            layoutRef.current = layout;
-        } finally {
-            applyingRef.current = false;
-        }
+    /**
+     * 「区域可见性变了」的订阅者（见 PageApi.onAreasChange）。
+     *
+     * 为什么要有这条通道（而不是让宿主在 render 里问 `isAreaVisible`）：那是个读 dockview
+     * 实时状态的函数，React Compiler 会把 render 期的调用按「纯函数」缓存 —— 宿主在 render 里
+     * 调它，重渲也拿不到新值（实测恒为首次那个值，于是「哪个区域开着」的高亮永远是灭的）。
+     * 所以别在 render 期读实时状态，改成**变了就通知**，宿主自己落到 state 里。
+     */
+    const areaListeners = useRef(new Set<() => void>());
+    const notifyAreas = useCallback(() => {
+        for (const listener of areaListeners.current) listener();
     }, []);
+
+    const applyLayout = useCallback(
+        (layout: CompiledLayout, maximizedArea: string | null) => {
+            const api = apiRef.current;
+            if (!api) return;
+            applyingRef.current = true;
+            try {
+                // reuseExistingPanels：模板改了（加/删一个 view）时，没动的 panel 原样留着 ——
+                // 不加的话 dockview 会先 `clear()` 全文重建，聊天流、打开的文件、选中的 tab 全部重来。
+                api.fromJSON(toSerialized(layout), { reuseExistingPanels: true });
+                // 收起/展开显式过一遍：dockview 的 fromJSON 对**组**的 visible 处理不可靠
+                // （叶子上的 visible:false 在反序列化时组还没挂进 grid），这里按编译结果落定
+                for (const state of Object.values(layout.areas)) {
+                    api.getGroup(state.id)?.api.setVisible(state.visible);
+                }
+                if (maximizedArea) {
+                    const group = api.getGroup(maximizedArea);
+                    const panel = group?.panels[0];
+                    if (panel) api.maximizeGroup(panel);
+                }
+                layoutRef.current = layout;
+                // 布局落定 = 可见性可能变了（初始收起 / 模板重编译 / 重置回模板），通知一次
+                notifyAreas();
+            } finally {
+                applyingRef.current = false;
+            }
+        },
+        [notifyAreas],
+    );
 
     /** 此刻每组的实测渲染尺寸（只用来算拖动位移，不当作模板 px） */
     const measureGroups = useCallback((): Record<string, { width: number; height: number }> => {
@@ -552,6 +570,11 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             const group = apiRef.current?.getGroup(areaId);
             if (group) fn(group);
         };
+        /** 改完可见性就通知：所有入口（页外浮层 / 区域里的按钮）都经这一层，不漏 */
+        const setVisible = (areaId: string, visible: boolean): void => {
+            withGroup(areaId, (group) => group.api.setVisible(visible));
+            notifyAreas();
+        };
         /** view 在本页的 order（决定新 tab 插到第几位） */
         const orderOf = (viewId: string): number => {
             const view = viewsRef.current.find((candidate) => candidate.id === viewId);
@@ -559,10 +582,20 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
             return placement?.order ?? 1000;
         };
         return {
-            showArea: (areaId) => withGroup(areaId, (group) => group.api.setVisible(true)),
-            hideArea: (areaId) => withGroup(areaId, (group) => group.api.setVisible(false)),
-            toggleArea: (areaId) => withGroup(areaId, (group) => group.api.setVisible(!group.api.isVisible)),
+            showArea: (areaId) => setVisible(areaId, true),
+            hideArea: (areaId) => setVisible(areaId, false),
+            toggleArea: (areaId) => {
+                const group = apiRef.current?.getGroup(areaId);
+                if (!group) return;
+                setVisible(areaId, !group.api.isVisible);
+            },
             isAreaVisible: (areaId) => apiRef.current?.getGroup(areaId)?.api.isVisible ?? false,
+            onAreasChange: (listener) => {
+                areaListeners.current.add(listener);
+                return () => {
+                    areaListeners.current.delete(listener);
+                };
+            },
             maximizeArea: (areaId) => {
                 const dock = apiRef.current;
                 if (!dock) return;
@@ -594,7 +627,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                 const areaId = movedRef.current[viewId] ?? placement.area;
                 const group = dock.getGroup(areaId);
                 if (!group) return false; // 区域没落进布局（模板里删了 / 这个区域一个 view 都没落位）
-                group.api.setVisible(true);
+                setVisible(areaId, true);
 
                 // 关过的 view 再开回来：必须同时从 dismissed 里掸掉，
                 // 否则下一次模板重编译又把它当成「用户关的」藏起来
@@ -637,7 +670,7 @@ export function PageWorkbench<S extends Scope>(props: PageWorkbenchProps<S>): Re
                 }
             },
         };
-    }, [applyLayout]);
+    }, [applyLayout, notifyAreas]);
 
     // 传给 view 的 props 走 context，不经过 dockview 的任何缓存：scope / page 一变，
     // 面板就重渲染 —— 但**布局**一点没动（对比：从前去改 deps 让它重建，代价是所有 panel 重挂）
