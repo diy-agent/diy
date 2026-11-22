@@ -74,6 +74,9 @@
       "path": "pkgs.ts/ui/workbench-dock"
     },
     {
+      "path": "pkgs.ts/ui/devtools-traffic"
+    },
+    {
       "path": "pkgs.ts/model/catalog"
     },
     {
@@ -93,6 +96,6 @@
     },
     {
       "path": "apps/diy2"
-    },
-    ]
+    }
+  ]
 }

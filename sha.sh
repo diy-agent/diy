@@ -642,7 +642,7 @@ build-pkgs() {
 }
 
 sha.def "build" \
-  --desc "全量构建：能力包 dist/ → apps"
+  --desc "全量构建：能力包 dist/ → 各 profile（apps/*）"
 
 build() {
     ensure-sync
@@ -650,8 +650,24 @@ build() {
     #    类型检查（tsc -b）与 diy-app 打包 resolve 它们时都命中 dist/ ⇒ 缺 dist 就红一片
     #    （这正是「开发也读产物目录」的代价，见 ##453 方案 B）。
     build-pkgs
-    # ② 再构建 diy-app（含 cli 产物），细节见 apps/diy-app/sha.sh build
-    run ./apps/diy-app/sha.sh build
+    # ② 再构建各 profile（apps/*）的产物。
+    #    判据：apps/<名>/sha.sh 里**声明了 build()**（= 有产物要建）。
+    #    为什么不显式列：手写清单会漏登记 —— build-order.mjs 的由来正是 `_pkg_order`
+    #    数组两次漏登记新包（#465 model-catalog、#469 bot）；apps 侧 2026-11-22 又重演一次：
+    #    根 build 只建 diy-app、漏了 apps/diy2 ⇒ 改完 pkgs 后 `./sha.sh build && diy2 --restart`
+    #    跑的还是旧 bundle（时间戳停在改动之前），rebuild 后才发现。故改成机器发现。
+    _build_apps
+}
+
+# profile 构建：只挑 apps/* 里声明了 build() 的（= 有产物要建）。
+# apps/chat|minimal|web 是历史残留（git 无跟踪、无 package.json / sha.sh），自然跳过。
+_build_apps() {
+    local a
+    for a in apps/*/; do
+        [[ -f "${a}sha.sh" ]] || continue
+        grep -qE '^build\(\)' "${a}sha.sh" || continue
+        run "${a}sha.sh" build
+    done
 }
 
 ci() {
