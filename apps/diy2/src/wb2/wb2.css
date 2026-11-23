@@ -1,0 +1,504 @@
+/* wb2.css —— 原型壳样式。
+ *
+ * 骨架用 flex 表达，区域之间靠 1px 的 gap 露底色当下划线 —— 这样「分界」是布局自带的，
+ * 不需要每个区域各自画 border，也不会出现「两个相邻区域都画了右边框」的双线。
+ *
+ * 这里**没有一条拖拽相关样式**（无 sash / 无 resize handle / 无 cursor: col-resize）：
+ * 骨架固定是模型的一部分，不是还没做。
+ *
+ * ── 色值：与 dock/dock.css 同源 ─────────────────────────────────────────────
+ *
+ * 这一套（#0d1117 / #161b22 / #21262d …）就是 diy2 当前的壳色 —— dock.css 从
+ * workbench-dock/examples/04-vanilla/style.css 抄来，主入口 `/` 渲染出来也是它。
+ * 工作台必须和主入口同一个底，所以这里继续用同一份色值，不单方面换成 Astryx 的
+ * neutral 灰（#1b1b1b）：那不是「对齐」，那会让工作台和主入口分家。
+ * 真要做的是以后两边一起换主题 token，属于另一个任务。
+ *
+ * ⚠️ 前提：文档要有 `<html class="dark">`（wb2.html / dock.html / index.html）。
+ * 少了它 color-scheme 是 light，Astryx 组件全走浅色分支 —— 壳是暗的、组件是白的，
+ * 看起来就像两套 CSS 打起来了（这个坑踩过一次）。
+ */
+
+:root {
+    --wb-bg: #0d1117;
+    --wb-bg-2: #10151c;
+    --wb-line: #21262d;
+    --wb-line-2: #30363d;
+    --wb-fg: #e6edf3;
+    --wb-fg-2: #adbac7;
+    --wb-dim: #8b949e;
+    --wb-accent: #1f6feb;
+    --wb-accent-fg: #79c0ff;
+    /* 叠色层：hover / 选中 / 遮罩统一走这几个，避免到处散落 #ffffff0a 这类字面量 */
+    --wb-tint: #ffffff0a;
+    --wb-tint-strong: #ffffff14;
+    --wb-accent-soft: #1f6feb26;
+    --wb-accent-line: #1f6feb55;
+}
+
+/* ── 壳 ───────────────────────────────────────────────────────────────────── */
+
+.wb-shell {
+    height: calc(100vh - 32px);
+    display: flex;
+    min-height: 0;
+    background: var(--wb-bg);
+    color: var(--wb-fg);
+}
+
+.wb-splash {
+    display: flex;
+    height: 100vh;
+    align-items: center;
+    justify-content: center;
+    color: var(--wb-dim);
+    font-size: 13px;
+}
+
+.wb-root {
+    flex: 1;
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* ── 骨架：固定，不可拖 ─────────────────────────────────────────────────────── */
+
+.wb-split-x,
+.wb-split-y {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    gap: 1px;
+    background: var(--wb-line);
+    flex: 1 1 0;
+}
+
+.wb-split-x {
+    flex-direction: row;
+}
+
+.wb-split-y {
+    flex-direction: column;
+}
+
+/* 子项默认平分；area 用内联 style 覆盖成自己的 px / fr */
+.wb-split-x > *,
+.wb-split-y > * {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+}
+
+.wb-area {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--wb-bg);
+}
+
+.wb-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
+}
+
+/* 骨架调试：看清哪块是哪块（默认关；页外那条 bar 上的「骨架」按钮） */
+.wb-skeleton .wb-area {
+    outline: 1px dashed var(--wb-accent-line);
+    outline-offset: -1px;
+}
+
+.wb-skeleton .wb-area::before {
+    content: attr(data-area);
+    position: absolute;
+    right: 3px;
+    bottom: 1px;
+    z-index: 5;
+    font:
+        10px ui-monospace,
+        Menlo,
+        monospace;
+    color: var(--wb-accent-fg);
+    pointer-events: none;
+}
+
+/* ── 区域头部 ─────────────────────────────────────────────────────────────── */
+
+.wb-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 6px;
+    background: var(--wb-bg-2);
+    border-bottom: 1px solid var(--wb-line);
+}
+
+.wb-head-title {
+    flex: 1;
+    font-size: 11.5px;
+    color: var(--wb-dim);
+    letter-spacing: 0.02em;
+}
+
+/* tab 形态的头部：左边一排 tab，右边形态按钮 */
+.wb-head-tabs {
+    padding: 0 4px;
+}
+
+.wb-tabs {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.wb-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.wb-tabs button {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--wb-dim);
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.wb-tabs button:hover {
+    color: var(--wb-fg);
+    background: var(--wb-tint);
+}
+
+.wb-tabs button.on {
+    color: var(--wb-fg);
+    background: var(--wb-accent-soft);
+    box-shadow: inset 0 0 0 1px var(--wb-accent-line);
+}
+
+/* 形态切换：三个小图标，只换摆法不动骨架 */
+.wb-modes {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 1px;
+    padding: 1px;
+    background: #0b0f14;
+    border: 1px solid var(--wb-line);
+    border-radius: 6px;
+}
+
+.wb-modes button {
+    width: 22px;
+    height: 19px;
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--wb-dim);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.wb-modes button:hover {
+    color: var(--wb-fg);
+}
+
+.wb-modes button[aria-pressed='true'] {
+    color: var(--wb-accent-fg);
+    background: var(--wb-accent-soft);
+}
+
+/* ── 折叠形态 ─────────────────────────────────────────────────────────────── */
+
+.wb-acc {
+    display: flex;
+    flex-direction: column;
+}
+
+.wb-acc-item {
+    border-bottom: 1px solid var(--wb-line);
+}
+
+.wb-acc-head {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 9px;
+    font-size: 12px;
+    text-align: left;
+    color: var(--wb-fg-2);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+}
+
+.wb-acc-head:hover {
+    background: var(--wb-tint);
+}
+
+.wb-acc-item.on > .wb-acc-head {
+    color: var(--wb-fg);
+    background: var(--wb-tint);
+}
+
+.wb-chev {
+    color: var(--wb-dim);
+    font-size: 10px;
+}
+
+.wb-acc-body {
+    padding: 8px 10px 10px;
+    font-size: 12px;
+    color: var(--wb-fg-2);
+    border-top: 1px dashed var(--wb-line);
+}
+
+/* ── 格子形态 ─────────────────────────────────────────────────────────────── */
+
+.wb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    grid-auto-rows: minmax(120px, auto);
+    gap: 6px;
+    padding: 6px;
+    align-content: start;
+}
+
+.wb-cell {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: #0f141a;
+    border: 1px solid var(--wb-line);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.wb-cell-title {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    font-size: 11px;
+    color: var(--wb-dim);
+    background: var(--wb-bg-2);
+    border-bottom: 1px solid var(--wb-line);
+}
+
+.wb-cell-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 6px 8px;
+}
+
+/* ── 视图里的通用排版 ─────────────────────────────────────────────────────── */
+
+.wb-fill,
+.wb-chat {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* TaskPanel 自带 w-[340px]：宽度归 area，别让两边都管 */
+.wb-fill > * {
+    width: 100% !important;
+    max-width: none !important;
+}
+
+.wb-info {
+    height: 100%;
+    overflow: auto;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--wb-fg-2);
+}
+
+.wb-info-title {
+    margin-bottom: 6px;
+    font-size: 11px;
+    color: var(--wb-dim);
+}
+
+.wb-info dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px 10px;
+    margin: 0;
+}
+
+.wb-info dt {
+    color: var(--wb-dim);
+}
+
+.wb-info dd {
+    margin: 0;
+    word-break: break-all;
+}
+
+.wb-info-row {
+    display: contents;
+}
+
+.wb-empty {
+    padding: 10px;
+    font-size: 12px;
+    color: var(--wb-dim);
+}
+
+.wb-demo {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--wb-fg-2);
+}
+
+.wb-demo-title {
+    margin-bottom: 5px;
+    font-size: 11px;
+    color: var(--wb-accent-fg);
+}
+
+.wb-demo ul {
+    margin: 0;
+    padding-left: 17px;
+}
+
+.wb-demo p {
+    margin: 0 0 6px;
+}
+
+.wb-dim {
+    color: var(--wb-dim);
+    font-size: 11.5px;
+}
+
+.wb-kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px 10px;
+    margin: 0 0 8px;
+    font-size: 11.5px;
+}
+
+.wb-kv dt {
+    color: var(--wb-dim);
+}
+
+.wb-kv dd {
+    margin: 0;
+}
+
+.wb-kv code,
+.wb-demo code {
+    font:
+        11.5px ui-monospace,
+        Menlo,
+        monospace;
+    color: var(--wb-accent-fg);
+}
+
+.wb-log {
+    margin: 0;
+    font:
+        11px/1.6 ui-monospace,
+        Menlo,
+        monospace;
+    color: var(--wb-dim);
+    white-space: pre-wrap;
+}
+
+/* ── 页外控制面 ───────────────────────────────────────────────────────────── */
+
+.wb-bar {
+    position: fixed;
+    right: 12px;
+    bottom: 40px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 7px;
+    background: #161b22f2;
+    border: 1px solid var(--wb-line-2);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px #00000066;
+}
+
+.wb-bar-label {
+    padding: 0 4px 0 2px;
+    font-size: 11px;
+    color: var(--wb-dim);
+}
+
+.wb-bar button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    font-size: 11.5px;
+    color: var(--wb-fg-2);
+    background: var(--wb-tint-strong);
+    border: 1px solid transparent;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.wb-bar button:hover:not(:disabled) {
+    color: var(--wb-fg);
+    border-color: var(--wb-line-2);
+}
+
+.wb-bar button.on {
+    color: #fff;
+    background: var(--wb-accent);
+    border-color: #388bfd;
+}
+
+.wb-bar button:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.wb-badge {
+    padding: 0 4px;
+    font-size: 10px;
+    border-radius: 99px;
+    background: #ffffff2e;
+}
+
+.wb-foot {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 32px;
+    padding: 0 12px;
+    font-size: 11px;
+    color: var(--wb-fg-2);
+    background: #0b0f14f2;
+    border-top: 1px solid var(--wb-line);
+    white-space: nowrap;
+    overflow: hidden;
+}
