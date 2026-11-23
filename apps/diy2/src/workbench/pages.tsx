@@ -5,7 +5,7 @@
 //
 // 两页的差别只有一处：任务页多一个「资产」区（这一轮聊出来的东西）。
 // 这足够说明「骨架按页类型定」—— 同一个区域 id 在别的页里可能根本不存在（assets 在
-// 项目页没有），所以「区域开关」必须按当前页的模板列，不能列一张全集。
+// 项目页没有），所以折叠入口只能长在区域自己身上：不存在的区域没有条可收，也不该有开关。
 
 import { EntityChatApp, TaskPanel, useSelectedRoom, type Room } from '@diy-agent/entity-chat';
 
@@ -20,10 +20,8 @@ import { area, col, definePage, defineView, row, type PageDef } from './model';
 
 const detail = (title: string) => area('detail', { title, size: 320, min: 240 });
 const center = () => area('center', { title: '对话', size: 'fr', min: 420 });
-const assets = () =>
-    area('assets', { title: '资产', size: 320, min: 240, initial: 'collapsed' });
+const assets = () => area('assets', { title: '资产', size: 320, min: 240, initial: 'collapsed' });
 const bottom = () => area('bottom', { title: '诊断', size: 200, min: 120, initial: 'collapsed' });
-
 export const taskPage = definePage({
     type: 'task',
     title: '任务',
@@ -56,17 +54,14 @@ function ChatBody() {
 /**
  * 任务详情。TaskPanel 自带 `w-[340px]`，在区域里换成 100%（见 workbench.css 的 `.wb-fill`）：
  * 固定宽度 + 区域固定宽度是两套真源，窄了溢出、宽了留白。
+ *
+ * **不传 `onClose`**：面板右上角自带一个 X，与区域的折叠按钮位置重叠且动作相同
+ * （都是把这块收起来）。收起归布局管，内容不再自带第二个入口。
  */
 function TaskDetail({ room }: { room: Room }) {
-    const api = useWb();
     return (
         <div className="wb-fill">
-            <TaskPanel
-                room={room}
-                onClose={() => {
-                    api.toggleArea('detail');
-                }}
-            />
+            <TaskPanel room={room} />
         </div>
     );
 }
@@ -124,8 +119,8 @@ function AssetsArea() {
             <div className="wb-info-title">会话资产</div>
             <div className="wb-empty">（暂无）</div>
             <p className="wb-hint">
-                这一栏留给<b>会话生成的资产文件</b>：代码片段、报告、截图、导出件… 数据源还没接
-                （agent 侧尚无「资产」协议），位置先定。
+                这一栏留给<b>会话生成的资产文件</b>：代码片段、报告、截图、导出件… 数据源还没接 （agent
+                侧尚无「资产」协议），位置先定。
             </p>
         </div>
     );
@@ -149,9 +144,7 @@ function DiagArea() {
                 <dt>骨架</dt>
                 <dd>模板写死（见 src/workbench/pages.tsx）</dd>
             </dl>
-            <p className="wb-dim">
-                区域的开合、形态、选中的 tab 存在上面那个键里；尺寸与位置不在里面 —— 它们不可改。
-            </p>
+            <p className="wb-dim">区域的开合、形态、选中的 tab 存在上面那个键里；尺寸与位置不在里面 —— 它们不可改。</p>
         </div>
     );
 }
@@ -169,7 +162,9 @@ function GuideArea() {
                     <b>视图不可关闭、不可搬</b>：它声明自己在哪个区域的哪，就只在那儿。
                 </li>
                 <li>
-                    <b>只有区域能收起</b>：恢复入口在页外（右下那条浮层）—— 区域里的按钮会跟着区域一起消失。
+                    <b>只有区域能收起，而且收成一条</b>：右上角那个 ◂ / ▴ 把区域折成一条，条的 横竖跟着它所在的 row /
+                    column 走，条上写着区域名，点条就展开。 没有「整块消失」这个状态 ——
+                    骨架是固定的，收起来的区域也还占一条位置。
                 </li>
                 <li>
                     <b>区域里多个视图时，摆法可配</b>：标签页 / 折叠 / 格子，只换摊开方式，不动骨架。

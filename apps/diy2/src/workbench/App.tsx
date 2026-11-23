@@ -8,6 +8,8 @@
 //
 // 页外控制面（区域开关）放在布局**外面**：区域收起之后，区域里的按钮跟着一起不见，
 // 恢复入口不能住在布局里。
+// → 2026-11-23 改：折叠不再是「不见」，而是**收成一条**，条上就写着区域名、点它就展开。
+//   恢复入口回到了布局里（而且回到了原地），页外那条浮层于是没有存在的理由，已删。
 
 import { LayerProvider } from '@astryxdesign/core/Layer';
 import { Theme } from '@astryxdesign/core/theme';
@@ -28,8 +30,8 @@ import '@astryxdesign/theme-neutral/theme.css';
 import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
-import { usePageWorkbench, Workbench, type WbApi } from './AreaHost';
-import { areasOf, type PageDef } from './model';
+import { usePageWorkbench, Workbench } from './AreaHost';
+import { type PageDef } from './model';
 import { pageFor, wbViews } from './pages';
 
 // ── 全局层：导航 ───────────────────────────────────────────────────────────────
@@ -77,52 +79,11 @@ function NavRail() {
     );
 }
 
-// ── 页外控制面：区域开关 ───────────────────────────────────────────────────────
-
-/**
- * 只列**当前页模板里**的区域 —— 项目页没有 assets，列它就是个死键。
- * 视图数为 0 的区域不给按（这个页没东西放进去）。
- */
-function AreaBar({ api }: { api: WbApi }) {
-    const defs = areasOf(api.page.layout);
-    return (
-        <div className="wb-bar" role="group" aria-label="区域开关">
-            <span className="wb-bar-label">{api.page.title}</span>
-            {defs.map((def) => {
-                const count = api.viewCountOf(def.id);
-                const open = api.isOpen(def.id);
-                return (
-                    <button
-                        key={def.id}
-                        type="button"
-                        className={open ? 'on' : undefined}
-                        disabled={count === 0}
-                        title={
-                            count === 0
-                                ? `${def.title}：这个页没有内容放进来`
-                                : `${def.title}（${String(count)} 个视图）—— ${open ? '收起' : '展开'}`
-                        }
-                        onClick={() => {
-                            api.toggleArea(def.id);
-                        }}
-                    >
-                        {def.title}
-                        {count > 1 && <span className="wb-badge">{String(count)}</span>}
-                    </button>
-                );
-            })}
-        </div>
-    );
-}
-
 // ── 页实例 ────────────────────────────────────────────────────────────────────
 
 /** 一页 = 固定骨架 + 区域内可配形态。`key` 由外部按 page.type 给 —— 换页类型 = 换一份偏好 */
-function PageShell({ page, onApi }: { page: PageDef; onApi: (api: WbApi) => void }) {
+function PageShell({ page }: { page: PageDef }) {
     const api = usePageWorkbench(page, wbViews);
-    useEffect(() => {
-        onApi(api);
-    }, [api, onApi]);
     return <Workbench api={api} views={wbViews} />;
 }
 
@@ -130,7 +91,6 @@ function Host() {
     const room = useSelectedRoom();
     const loaded = useLoaded();
     const dialogs = useRoomDialogs();
-    const [api, setApi] = useState<WbApi | null>(null);
 
     // 没有房间时**也要**有导航：新建第一个房间的入口就在左栏，把它藏起来等于没法开工
     if (!room) {
@@ -153,9 +113,8 @@ function Host() {
         <RoomDialogsProvider value={dialogs}>
             <div className="wb-shell">
                 <NavRail />
-                <PageShell key={page.type} page={page} onApi={setApi} />
+                <PageShell key={page.type} page={page} />
             </div>
-            {api !== null && <AreaBar api={api} />}
             {dialogs.element}
         </RoomDialogsProvider>
     );

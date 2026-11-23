@@ -6,7 +6,10 @@
 //      → 没有 sash、没有 drag、没有 floating、没有 split。
 //   2. view **不可关闭、不可移动**：它声明自己属于哪个 page 的哪个 area，就只能在那儿。
 //      → 没有 close 动作、没有「拖到别的组」。
-//   3. 唯一可隐藏的是 **area**：隐藏 = 整块不渲染，恢复入口在页外（布局里放不回来）。
+//   3. 唯一能收的是 **area**，而且收法固定：折叠成**一条**（竖条 / 横条随它所在的
+//      row / column 走），条上就写着区域名，点条展开。恢复入口**在布局里、在原地**，
+//      不需要页外浮层，也不可能出现「收起来就找不回来」。
+//      没有「整块消失」这个状态 —— 骨架是固定的，收起来的区域也还占一条位置。
 //   4. area 内有多个 view 时，排列**形态可配**：tab / 折叠 / 格子。单个 view 不显示 tab 条 ——
 //      一个 tab 的 tab 条是纯噪音。
 //
@@ -40,7 +43,7 @@ export interface AreaDef {
     /** 沿父轴的 px，或 `'fr'`（在兄弟之间分剩余空间） */
     size: number | 'fr';
     min?: number;
-    /** 初始是否收起；缺省展开 */
+    /** 初始是否折叠成条；缺省展开 */
     initial?: 'open' | 'collapsed';
     /** 默认形态；缺省 tab。只在 area 里有多个 view 时生效 */
     mode?: Mode;
@@ -122,7 +125,7 @@ export function viewsOfPage(views: readonly ViewDef[], pageType: string): ViewDe
 // 也刻意**不记 view 的开关**：view 不可关闭，没有「关掉了」这个状态要持久化。
 
 export interface PageState {
-    /** 收起的区域 id */
+    /** 折叠成条的区�� id（不是「消失」——条还在原地，点它就展开） */
     collapsed: Record<string, true>;
     /** 覆盖模板默认的形态 */
     modes: Record<string, Mode>;

@@ -137,7 +137,8 @@
     align-items: center;
     gap: 8px;
     height: 30px;
-    padding: 0 6px;
+    /* 右侧 30px 是给折叠按钮的位置（它 absolute 在右上角），否则会压住形态按钮 */
+    padding: 0 30px 0 6px;
     background: var(--wb-bg-2);
     border-bottom: 1px solid var(--wb-line);
 }
@@ -151,7 +152,110 @@
 
 /* tab 形态的头部：左边一排 tab，右边形态按钮 */
 .wb-head-tabs {
-    padding: 0 4px;
+    padding: 0 30px 0 4px;
+}
+
+/* ── 折叠按钮（每个区域右上角）───────────────────────────────────────────────
+ *
+ * 位置是 absolute：不占内容空间，也不会因为内容区滚动而跑掉。
+ * 默认透明 —— 平时不打扰，鼠标进到区域里才浮现（头部的按钮除外，见 `.is-head`）。
+ */
+.wb-fold-btn {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    z-index: 6;
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--wb-dim);
+    background: var(--wb-bg-2);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+.wb-area:hover > .wb-fold-btn,
+.wb-fold-btn:focus-visible {
+    opacity: 1;
+}
+
+.wb-fold-btn:hover {
+    color: var(--wb-fg);
+    background: var(--wb-tint-strong);
+    border-color: var(--wb-line-2);
+}
+
+/* 头部区域的按钮站在 head 的留白里：head 本来就是底色，不需要再补边框 */
+.wb-area[data-mode] > .wb-fold-btn {
+    border-color: var(--wb-line-2);
+}
+
+/* ── 折叠后的条 ────────────────────────────────────────
+ *
+ * 横竖跟着容器走：
+ *   · 在 row 里（左右排）→ `.wb-folded-x`：窄、满高，文字竖排
+ *   · 在 col 里（上下排）→ `.wb-folded-y`：矮、满宽，文字横排
+ * 整条就是按钮 —— 28px 厚的东西里再分命中区没有意义。
+ */
+
+.wb-area.wb-folded {
+    /* 折叠后不再参与弹性分配：就占一条的厚度 */
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+.wb-fold-strip {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    color: var(--wb-dim);
+    background: var(--wb-bg-2);
+    border: 0;
+    cursor: pointer;
+}
+
+.wb-fold-strip:hover {
+    color: var(--wb-fg);
+    background: #182029;
+}
+
+.wb-fold-arrow {
+    font-size: 9px;
+    opacity: 0.8;
+}
+
+/* 竖条：箭头在上、文字竖排（中文字符自己就是竖的，不需要 text-orientation: upright）*/
+.wb-folded-x .wb-fold-strip {
+    flex-direction: column;
+}
+
+.wb-folded-x .wb-fold-name {
+    writing-mode: vertical-rl;
+}
+
+/* 横条：横排、靠左 —— 一条 1400px 宽的字居中会显得漂在半空，
+ * 靠左才跟区域内容的左缘对齐（也跟竖条的居中形成了一个对比：窄的居中、宽的靠左）*/
+.wb-folded-y .wb-fold-strip {
+    justify-content: flex-start;
+    padding-left: 10px;
+}
+
+.wb-folded-y .wb-fold-name {
+    writing-mode: horizontal-tb;
 }
 
 .wb-tabs {
@@ -425,66 +529,6 @@
         monospace;
     color: var(--wb-dim);
     white-space: pre-wrap;
-}
-
-/* ── 页外控制面 ───────────────────────────────────────────────────────────── */
-
-.wb-bar {
-    position: fixed;
-    right: 12px;
-    /* 区域开关浮在右下：不遮内容主体（原来的 40px 是给页脚状态条留的，那条已删） */
-    bottom: 12px;
-    z-index: 50;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 5px 7px;
-    background: #161b22f2;
-    border: 1px solid var(--wb-line-2);
-    border-radius: 8px;
-    box-shadow: 0 6px 20px #00000066;
-}
-
-.wb-bar-label {
-    padding: 0 4px 0 2px;
-    font-size: 11px;
-    color: var(--wb-dim);
-}
-
-.wb-bar button {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 9px;
-    font-size: 11.5px;
-    color: var(--wb-fg-2);
-    background: var(--wb-tint-strong);
-    border: 1px solid transparent;
-    border-radius: 5px;
-    cursor: pointer;
-}
-
-.wb-bar button:hover:not(:disabled) {
-    color: var(--wb-fg);
-    border-color: var(--wb-line-2);
-}
-
-.wb-bar button.on {
-    color: #fff;
-    background: var(--wb-accent);
-    border-color: #388bfd;
-}
-
-.wb-bar button:disabled {
-    opacity: 0.35;
-    cursor: default;
-}
-
-.wb-badge {
-    padding: 0 4px;
-    font-size: 10px;
-    border-radius: 99px;
-    background: #ffffff2e;
 }
 
 /* ── 视图内的说明性排版 ──────────────────────────────────────────────────── */
