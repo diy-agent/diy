@@ -223,17 +223,26 @@ export function stateKey(pageType: string): string {
     return `workbench:${pageType}`;
 }
 
+/**
+ * 读出来的字段必须是普通对象：手改过 / 旧版本残留的坏值（字符串、数组…）要当成没有。
+ * 不检的话，一个 `"collapsed": "oops"` 就能让 `{ ...prev.collapsed }` 展开成字符下标键。
+ */
+function recordOf<T>(value: unknown): Record<string, T> {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+    return value as Record<string, T>;
+}
+
 /** 读不到（从没存过 / 坏数据）返回 null —— 与「存过一个空状态」区分：后者是用户的意图 */
 export function loadState(pageType: string, storage: Storage): PageState | null {
     try {
         const raw = storage.getItem(stateKey(pageType));
         if (raw === null) return null;
-        const parsed = JSON.parse(raw) as Partial<PageState>;
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
         return {
-            collapsed: parsed.collapsed ?? {},
-            modes: parsed.modes ?? {},
-            active: parsed.active ?? {},
-            sizes: parsed.sizes ?? {},
+            collapsed: recordOf<true>(parsed.collapsed),
+            modes: recordOf<Mode>(parsed.modes),
+            active: recordOf<string>(parsed.active),
+            sizes: recordOf<number>(parsed.sizes),
         };
     } catch {
         // 坏数据就当没有：布局偏好不值得为它挡住整页
@@ -261,9 +270,10 @@ export function initialState(page: PageDef): PageState {
     return { collapsed, modes: {}, active: {}, sizes: {} };
 }
 
-/** 区域当前尺寸：用户拖过的优先，其次模板默认 */
+/** 区域当前尺寸：用户拖过的优先，其次模板默认。坏值（非正数 / NaN）当没拖过 */
 export function sizeOf(def: AreaDef, state: PageState): number | 'fr' {
-    return state.sizes[def.id] ?? def.size;
+    const px = state.sizes[def.id];
+    return typeof px === 'number' && Number.isFinite(px) && px > 0 ? px : def.size;
 }
 
 /** 该区域允许的形态；`modes` 缺省 = 三种全允许 */

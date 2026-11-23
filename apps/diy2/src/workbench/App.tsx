@@ -73,7 +73,7 @@ function NavRail({ nav }: { nav: NavState }) {
             open={nav.open}
             onToggle={nav.toggle}
             // 侧栏自己的收起按钮「退休」：标题栏左端那颗做同一件事，
-            // 两个入口挨着、各管一丰，只会让人分不清
+            // 两个入口挨着、却各管一摊（一个管导航宽度、一个管它显不显），只会让人分不清
             showToggle={false}
             onCreateProject={dialogs.openProject}
             onCreateTask={dialogs.openTask}
