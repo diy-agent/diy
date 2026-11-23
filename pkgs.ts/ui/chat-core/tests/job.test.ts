@@ -91,6 +91,19 @@ describe('job status / wait —— runDetail 那套', () => {
         expect(view?.tail).not.toContain('已等');
     });
 
+    it('还在跑（等满上限）：状态 / 时长 / 「未结束」/ 已等说明都在 —— 不能画成「已结束」', () => {
+        const view = jobOf(
+            tool(
+                'job',
+                { action: 'wait', id: 'r-1', timeoutMs: 600000 },
+                'r-1 · 运行中 · 12.0s\n命令：sleep 999\n目录：/w\n输出：/tmp/r-1.log\n（无输出）\n（已等 10m00s，仍未结束；别干等长任务 —— 去做别的，结束会通知你）',
+            ),
+        );
+        expect(view?.state).toBe('running');
+        expect(view?.outcome).toBe('（未结束）');
+        expect(view?.note).toContain('已等 10m00s');
+    });
+
     it('没有输出', () => {
         const view = jobOf(tool('job', { action: 'status', id: 'r-1' }, 'r-1 · 已结束 · 0ms\n命令：true\n结局：退出码 0\n（无输出）'));
         expect(view?.tail).toBe('');

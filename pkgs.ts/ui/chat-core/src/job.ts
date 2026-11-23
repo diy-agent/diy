@@ -237,6 +237,9 @@ export function jobOf(part: TimelinePart & { kind: 'tool' }): JobView | undefine
     view.command = field(raw, '命令');
     view.cwd = field(raw, '目录');
     view.outcome = field(raw, '结局');
+    // 还在跑的那条：`runDetail` 的「结局」行只在收口后才有，而「未结束」正是用户要的判断
+    // （`job wait` 等满上限回来的那一行就是这种：状态 running，没有结局行）
+    if (view.outcome === undefined && view.state === 'running') view.outcome = '（未结束）';
     view.logPath = field(raw, '输出');
     view.origin = field(raw, '来源');
 
@@ -254,6 +257,11 @@ export function jobOf(part: TimelinePart & { kind: 'tool' }): JobView | undefine
         }
     } else if (raw.includes('（无输出）')) {
         view.tail = '';
+    }
+    // `（已等 …，仍未结束…）` 可能出现在尾部之后，也可能没有尾部（`（无输出）`）—— 都得捞出来
+    if (view.note === undefined) {
+        const waitNote = /^（已等 .*$/m.exec(raw);
+        if (waitNote !== null) view.note = waitNote[0];
     }
     return view;
 }
