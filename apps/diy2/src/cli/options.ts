@@ -60,7 +60,7 @@ export const configShape = {
     }),
     modelConfig: z.string().optional().cliOption({
         placeholder: 'file',
-        desc: 'model.yaml 路径（缺省：本数据根 > 本 launch 的仓库级数据根）',
+        desc: 'model.yaml 路径（缺省：<home>/model.yaml；测试实例不读生产那档）',
     }),
 } as const;
 

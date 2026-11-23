@@ -44,7 +44,7 @@ options:
       --compact-chars <n> 压缩预算（字符）
       --web-dir <dir>    UI 产物目录（dev 不用：页面与 HMR 由挂进同一 server 的 vite 提供）
       --model-config <file>
-                         model.yaml（缺省：本数据根；都没有则回落 ~/.diy/model.yaml）
+                         model.yaml（缺省：<home>/model.yaml；只有生产数据根才回落 ~/.diy/model.yaml）
       --allow-prod-home  显式放行生产数据根
   -h, --help             本帮助`;
 

@@ -89,7 +89,7 @@ CLI 复用已运行实例前**必须问对方是谁**：连端口发 `diy.getApp
 
 ## sync-home
 
-**测试实例完整依赖自己的数据根**（2026-11-23 起）：运行时**不**直读 `~/.diy/model.yaml` —— 否则 lab 里改模型/存凭据会写生产文件（假隔离）。查找链 = `--model-config` > `<home>/model.yaml`；`~/.diy/model.yaml` 只剩「home 的父目录就是生产根」这一档（结构性判据，非 mode 标签）。真配置由 `scripts/seed-run-home.sh` 在**准备**阶段填进 `run/<app>/<label>/`（`./sha.sh sync` 顺带跑，幂等；含 key、只落 gitignore 内的 run/）
+**测试实例完整依赖自己的数据根**（2026-11-23 起）：运行时**不**直读 `~/.diy/model.yaml` —— 否则 lab 里改模型/存凭据会写生产文件（假隔离）。查找链 = `--model-config` > `<home>/model.yaml`；`~/.diy/model.yaml` 只剩「home 的父目录就是生产根」这一档（结构性判据，非 mode 标签）。真配置由 `scripts/seed-run-home.sh` 在**准备**阶段填进 `run/<app>/<label>/`（`./sha.sh sync` 顺带跑，幂等；含 key、只落 gitignore 内的 run/）。**新 worktree 只需跑一次 `./sha.sh sync`**：它以 `--defaults` 建出每个 app 的 `run/<app>/lab` 并填配置，之后 `./sha.sh lab` 直接可跑（不必先起一次空实例）。清单只 3 份且**只有 model.yaml 是必需的**：personas 缺 → 内置人物 `persona/1 大副`、providers.custom 缺 → customProviders 为空（没人读）、input-limit 等是运行时写入式有默认值。其它标签（`staging`/`preview`/自定义）不在 `--defaults` 里，按需 `./scripts/seed-run-home.sh run/<app>/<label>` 填
 
 （见 ba99d638:pkgs.ts/diy-app/AGENTS.md:53）
 

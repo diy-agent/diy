@@ -375,13 +375,16 @@ export function resolveConfig(opts?: {
 
 /**
  * 数据根里没有 model.yaml 时的提示。测试实例**不会**回落 `~/.diy/model.yaml`（那是假隔离），
- * 所以这里给出填充命令；生产数据根自带一档（见 resolveConfig）。
+ * 所以这里给出**可复制**的填充命令（只给脚本名没用：无参调用只扫已存在的数据根，
+ * 空目录会被它跳过）；生产数据根自带一档（见 resolveConfig）。
  */
 export function modelConfigHint(config: Diy2Config): string | null {
     if (config.modelConfigPath !== undefined) return null;
+    const file = join(config.home, 'model.yaml');
     return (
-        `[diy2] 数据根里没有 model.yaml（${join(config.home, 'model.yaml')}）` +
-        ' → 模型会报缺 key；测试实例跑 ./scripts/seed-run-home.sh 填充，或 --model-config 显式指定'
+        `[diy2] 数据根里没有 model.yaml（${file}）` +
+        ` → 模型会报缺 key；填充：./scripts/seed-run-home.sh ${config.home}（在仓库根跑），` +
+        '或 --model-config 显式指定'
     );
 }
 
