@@ -6,15 +6,15 @@
  * 这里**没有一条拖拽相关样式**（无 sash / 无 resize handle / 无 cursor: col-resize）：
  * 骨架固定是模型的一部分，不是还没做。
  *
- * ── 色值：与 dock/dock.css 同源 ─────────────────────────────────────────────
+ * ── 色值：与主入口同源 ─────────────────────────────────────────────────────
  *
- * 这一套（#0d1117 / #161b22 / #21262d …）就是 diy2 当前的壳色 —— dock.css 从
- * workbench-dock/examples/04-vanilla/style.css 抄来，主入口 `/` 渲染出来也是它。
+ * 这一套（#0d1117 / #161b22 / #21262d …）就是 diy2 当前的壳色，从
+ * workbench-dock/examples/04-vanilla/style.css 抄来（那个包只作框架范例，diy2 不再依赖）。
  * 工作台必须和主入口同一个底，所以这里继续用同一份色值，不单方面换成 Astryx 的
  * neutral 灰（#1b1b1b）：那不是「对齐」，那会让工作台和主入口分家。
  * 真要做的是以后两边一起换主题 token，属于另一个任务。
  *
- * ⚠️ 前提：文档要有 `<html class="dark">`（index.html / dock.html）。
+ * ⚠️ 前提：文档要有 `<html class="dark">`（index.html）。
  * 少了它 color-scheme 是 light，Astryx 组件全走浅色分支 —— 壳是暗的、组件是白的，
  * 看起来就像两套 CSS 打起来了（这个坑踩过一次）。
  */

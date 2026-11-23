@@ -4,9 +4,6 @@
 // 里那块。导航 / 详情 / 资产各归自己的区域（见 src/workbench/pages.tsx）。
 //
 // CSS 顺序由 src/workbench/App.tsx 一处维护，这里不再引 —— 入口不该各排一份。
-//
-// 并行 lab 页仍在 /dock.html（src/dock/main.tsx，dockview 版）：留着对照，等新模型
-// 稳定后删。
 
 import { bootstrapStore } from '@diy-agent/entity-chat';
 import { StrictMode } from 'react';

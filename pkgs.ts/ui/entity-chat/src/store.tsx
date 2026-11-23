@@ -323,8 +323,9 @@ export function isCurrentRoom(address: NavAddress, room: { id: string }): boolea
 /**
  * 位置同步开关：true = store 读写地址栏（App 的默认形态，URL 就是路由）。
  *
- * 宿主自带壳时关掉它（见 bootstrapStore 的 syncAddress）：工作台是 /dock.html 一页多区，
- * store 一 bootstrap 就 replaceState 成 /room/xxx，刷新那次就落到主应用去了。
+ * 宿主挂在**自己的**路由页上时关掉它（见 bootstrapStore 的 syncAddress）：那种壳的地址
+ * 另有含义，store 一 bootstrap 就 replaceState 成 /room/xxx，会把壳的地址顶掉。
+ * 工作台不关 —— 它的 URL 就是「在看哪个房间」。
  */
 let addressSync = true;
 
