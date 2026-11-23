@@ -31,7 +31,6 @@ options:
       --name <名字>                       实例名
       --tools <shell|files>              工具面
       --web-dir <dir>                    UI 产物目录（缺省 <buildRoot>/web）
-      --model-config <file>              model.yaml（缺省：<home>/model.yaml；只有生产数据根才回落 ~/.diy/model.yaml）
       --allow-prod-home                  显式放行生产数据根
   -h, --help                             本帮助`;
 
