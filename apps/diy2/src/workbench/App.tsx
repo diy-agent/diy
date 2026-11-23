@@ -1,15 +1,16 @@
-// App.tsx —— 工作台壳：**全局层**（导航）+ **页层**（固定骨架）+ 页外控制面。
+// App.tsx —— 工作台壳：**标题栏**（整宽，横跨导航）+ **全局层**（导航）+ **页层**（固定骨架）。
 //
-// 两层模型（2026-11-23 定）：导航是全局的 —— 它不属于任何一页，宽度与收起跨页类型共享。
+// 层级（2026-11-23 定）：标题栏指挥包括导航在内的所有区域，所以它在最外层、整宽；
+// 导航是全局的 —— 它不属于任何一页，宽度与收起跨页类型共享。
 // 页层才是「骨架固定 + area 内形态可配」的区域树。把导航塞进页模板会带来两个问题：
 //   1. 切页类型时它跟着重排（任务页收起了、项目页又展开），用户会以为坏了；
 //   2. Sidebar 自带宽度拖拽与按钮（localStorage `entity-chat:sidebar-width`），
 //      与「区域尺寸写死」是两套真源。
 //
 // 区域收起的两个入口，都不是「长在被收起的那个东西身上」（dockview 版就栽在这里）：
-//   · bar   —— 页底状态栏（`StatusBar`），它不在骨架里，任何区域收起都不影响它；
+//   · bar   —— 页顶标题栏（`TitleBar`），它不在骨架里、还比导航更外层；
 //   · strip —— 区域自己收成一条，条还在原地，点条展开。
-// 两种随时切换（状态栏右端那个按钮），共用同一份开合状态。
+// 两种随时切换（标题栏右端那个按钮），共用同一份开合状态。
 
 import { LayerProvider } from '@astryxdesign/core/Layer';
 import { Theme } from '@astryxdesign/core/theme';
@@ -30,7 +31,7 @@ import '@astryxdesign/theme-neutral/theme.css';
 import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
-import { type NavState, usePageWorkbench, Workbench } from './AreaHost';
+import { type NavState, TitleBar, usePageWorkbench, Workbench } from './AreaHost';
 import { type PageDef } from './model';
 import { pageFor, wbViews } from './pages';
 
@@ -70,10 +71,10 @@ function NavRail({ nav }: { nav: NavState }) {
 
 // ── 页实例 ────────────────────────────────────────────────────────────────────
 
-/** 一页 = 固定骨架 + 区域内可配形态。`key` 由外部按 page.type 给 —— 换页类型 = 换一份偏好 */
+/** 一页 = 标题栏 + 导航 + 固定骨架。`key` 由外部按 page.type 给 —— 换页类型 = 换一份偏好 */
 function PageShell({ page, nav }: { page: PageDef; nav: NavState }) {
     const api = usePageWorkbench(page, wbViews);
-    return <Workbench api={api} views={wbViews} nav={nav} />;
+    return <Workbench api={api} views={wbViews} nav={nav} navRail={<NavRail nav={nav} />} />;
 }
 
 function Host() {
@@ -81,7 +82,7 @@ function Host() {
     const loaded = useLoaded();
     const dialogs = useRoomDialogs();
 
-    // 导航的开关提到了壳这一层：状态栏左端要放它的按钮，而状态栏在页层内部
+    // 导航的开关提到了壳这一层：标题栏左端要放它的按钮，而标题栏是整宽的一条
     const [open, setOpen] = useState(loadNavOpen);
 
     useEffect(() => {
@@ -104,9 +105,12 @@ function Host() {
         return (
             <RoomDialogsProvider value={dialogs}>
                 <div className="wb-shell">
-                    <NavRail nav={nav} />
-                    <div className="wb-splash">
-                        {loaded ? '还没有房间 —— 用左边的「新建」开一个' : '正在连接 diy2 …'}
+                    <TitleBar nav={nav} />
+                    <div className="wb-body">
+                        <NavRail nav={nav} />
+                        <div className="wb-splash">
+                            {loaded ? '还没有房间 —— 用左边的「新建」开一个' : '正在连接 diy2 …'}
+                        </div>
                     </div>
                 </div>
                 {dialogs.element}
@@ -119,7 +123,6 @@ function Host() {
     return (
         <RoomDialogsProvider value={dialogs}>
             <div className="wb-shell">
-                <NavRail nav={nav} />
                 <PageShell key={page.type} page={page} nav={nav} />
             </div>
             {dialogs.element}
@@ -127,7 +130,7 @@ function Host() {
     );
 }
 
-/** 工作台 = 主题壳 + 全局导航 + 一页区域树 + 页外控制面 */
+/** 工作台 = 主题壳 + 标题栏 + 全局导航 + 一页区域树 */
 export function WorkbenchApp() {
     return (
         <Theme theme={neutralTheme} mode="dark">

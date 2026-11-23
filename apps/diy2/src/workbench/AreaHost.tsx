@@ -6,20 +6,20 @@
 //   · 没有浮动 / 最大化 ⇒ 没有 overlay 层与它的 z-index 战场
 //
 // 「收起」有两种表现方式（`chrome`，全局偏好，2026-11-23 两版都做出来对比）：
-//   · `bar`   —— Zed 式：页底一条状态栏，左右各放按钮，按一下显示 / 收起。
-//                收起 = 完全不占位（主区吃掉空间），恢复入口在状态栏里，永远在。
+//   · `bar`   —— 页顶一条标题栏（`TitleBar`）：整宽、**横跨导航**，左右各放按钮，
+//                按一下显示 / 收起。收起 = 完全不占位（主区吃掉空间），恢复入口在标题栏里。
 //   · `strip` —— 折叠成一条：区域自己收成竖条 / 横条（方向随它所在的 row / column），
 //                条上写着区域名，点条就展开，位置还在。
 // 两种共用同一份「谁收起了」，只换表现形式 —— 所以随时可以切换对比，状态不丢。
 //
 // **主区域不参与收起**：每页声明一个 `main`（`PageDef.main`），它是这一页的组织中心，
-// 收起它等于把这一页收没了。状态栏不给它按钮，strip 模式也不给它折叠按钮。
+// 收起它等于把这一页收没了。标题栏不给它按钮，strip 模式也不给它折叠按钮。
 //
 // 渲染永远是「模板 → 区域 → 该区有哪些 view → 按形态摊开」这一条单向链，
 // 宿主只额外记三样用户偏好：区域收起、形态、tab 选中。
 
-import { roomTitle, useSelectedRoom } from '@diy-agent/entity-chat';
-import { createContext, useContext, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { roomTitle, useRoomDialogsContext, useSelectedRoom } from '@diy-agent/entity-chat';
+import { createContext, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 
 import {
     activeOf,
@@ -49,7 +49,7 @@ export interface WbApi {
     readonly page: PageDef;
     /** 主区域 id：永远展开，不参与收起 */
     readonly main: string;
-    /** 每个非主区 area 相对主区的方位（模板推导，状态栏据此分组） */
+    /** 每个非主区 area 相对主区的方位（模板推导，标题栏据此分组） */
     readonly sides: ReadonlyMap<string, Side>;
     /** 收起的表现方式（全局偏好） */
     readonly chrome: Chrome;
@@ -330,12 +330,12 @@ function AreaView({ def, views, parentAxis }: { def: AreaDef; views: readonly Vi
     // 这个页没东西可放 → 不渲染（不是「收起」：连骨架里的位置都没有）
     if (list.length === 0) return null;
 
-    // 主区永远展开：收起它这一页就没了，所以它既不在状态栏里、也没有折叠按钮
+    // 主区永远展开：收起它这一页就没了，所以它既不在标题栏里、也没有折叠按钮
     const isMain = def.id === api.main;
     const bar = api.chrome === 'bar';
 
     if (!open && !isMain) {
-        // bar：整块不占位（空间给主区），恢复入口在状态栏 —— 状态栏永远在，所以不可能找不回来
+        // bar：整块不占位（空间给主区），恢复入口在标题栏 —— 标题栏永远在，所以不可能找不回来
         // strip：收成一条，位置还在，点条展开
         return bar ? null : <FoldedArea def={def} axis={parentAxis} />;
     }
@@ -347,7 +347,7 @@ function AreaView({ def, views, parentAxis }: { def: AreaDef; views: readonly Vi
         else style.minHeight = def.min;
     }
 
-    // 折叠按钮只在 strip 模式下有：bar 模式的收起动作归状态栏，区域自己不再放第二个入口
+    // 折叠按钮只在 strip 模式下有：bar 模式的收起动作归标题栏，区域自己不再放第二个入口
     const foldBtn = !isMain && !bar ? <FoldToggle def={def} axis={parentAxis} /> : null;
     const mark = isMain ? 'true' : undefined;
 
@@ -394,30 +394,28 @@ function NodeView({ node, views, parentAxis }: { node: LayoutNode; views: readon
     return <AreaView def={node} views={views} parentAxis={parentAxis} />;
 }
 
-// ── 状态栏（Zed 式）────────────────────────────────────────────────────────────
+// ── 标题栏 ────────────────────────────────────────────────────────────────────
 //
-// 页面最底一条。**左组** = 导航 + 主区左侧的区域，**右组** = 主区右侧 / 下方的区域 + 表现方式切换。
-// 分组不手写：方位从模板推（`sidesOf`），挪了模板里的区域，按钮自动跟着换组。
-//
-// 它为什么能当「唯一的恢复入口」：它不在骨架里，任何区域的收起都不影响它 ——
-// 这正是 dockview 版栽的地方（入口长在被收起的那个东西身上）。
+// 整页最顶一条。**左组** = 应用名 + 导航 + 主区左侧的区域，**右组** = 主区右侧 / 下方的
+// 区域 + 全局工具 + 表现方式切换。分组不手写：方位从模板推（`sidesOf`），挪了模板里的区域，
+// 按钮自动跟着换组。
 
-/** 导航开关（全局层，由壳持有；状态栏左端放它的按钮） */
+/** 导航开关（全局层，由壳持有；标题栏左端放它的按钮） */
 export interface NavState {
     open: boolean;
     toggle: () => void;
 }
 
-function SbAreaButton({ def, open, onToggle }: { def: AreaDef; open: boolean; onToggle: () => void }) {
+function TbAreaButton({ def, open, onToggle }: { def: AreaDef; open: boolean; onToggle: () => void }) {
     return (
         <button
             type="button"
-            className={open ? 'wb-sb-btn on' : 'wb-sb-btn'}
+            className={open ? 'wb-tb-btn on' : 'wb-tb-btn'}
             aria-pressed={open}
             title={`${open ? '收起' : '展开'}「${def.title}」`}
             onClick={onToggle}
         >
-            <span className="wb-sb-glyph" aria-hidden="true">
+            <span className="wb-tb-glyph" aria-hidden="true">
                 {open ? '▣' : '▢'}
             </span>
             {def.title}
@@ -425,87 +423,146 @@ function SbAreaButton({ def, open, onToggle }: { def: AreaDef; open: boolean; on
     );
 }
 
-export function StatusBar({ nav }: { nav: NavState }) {
-    const api = useWb();
+/**
+ * 标题栏 —— 整页最顶一条，**横跨导航**。
+ *
+ * 名字对齐 VS Code 的 `PART_TITLEBAR` / Theia 的 `ApplicationShell.TOP`：那边放的是
+ * 「不属于任何一个编辑器组、但指挥整个窗口」的东西（菜单、命令中心、窗口控件）。
+ * 这里放：
+ *   左：应用名 + 导航开关 + 主区左侧的区域
+ *   中：页名 · 房间名（面包屑）
+ *   右：主区右侧 / 下方的区域 + 全局工具 + 表现方式切换
+ *
+ * **为什么它横跨导航**：它指挥的包括导航本身（左端就有导航开关），
+ * 一条要管住所有区域的横条不能住在其中一个区域里面。
+ *
+ * **为什么它能当「唯一的恢复入口」**：它不在骨架里，而且比导航更外层 ——
+ * 任何区域（含导航）收起都不影响它。这正是 dockview 版栽的地方
+ * （入口长在被收起的那个东西身上）。
+ */
+export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
+    const dialogs = useRoomDialogsContext();
     const room = useSelectedRoom();
-    const bar = api.chrome === 'bar';
+    const bar = (api?.chrome ?? 'bar') === 'bar';
 
     // 只列「这个页真有内容」的区域：项目页没有 assets，就不该有它的按钮
-    const items = useMemo(
-        () =>
-            areasOf(api.page.layout)
-                .filter((def) => def.id !== api.main && api.viewCountOf(def.id) > 0)
-                .map((def) => ({ def, side: api.sides.get(def.id) ?? 'bottom' })),
-        [api],
-    );
+    const items = useMemo(() => {
+        if (!api) return [];
+        return areasOf(api.page.layout)
+            .filter((def) => def.id !== api.main && api.viewCountOf(def.id) > 0)
+            .map((def) => ({ def, side: api.sides.get(def.id) ?? 'bottom' }));
+    }, [api]);
     const left = items.filter((item) => item.side === 'left' || item.side === 'top');
     const right = items.filter((item) => item.side === 'right' || item.side === 'bottom');
 
     const renderItem = (item: { def: AreaDef }) => (
-        <SbAreaButton
+        <TbAreaButton
             key={item.def.id}
             def={item.def}
-            open={api.isOpen(item.def.id)}
+            open={api?.isOpen(item.def.id) ?? false}
             onToggle={() => {
-                api.toggleArea(item.def.id);
+                api?.toggleArea(item.def.id);
             }}
         />
     );
 
     return (
-        <div className="wb-statusbar">
-            <div className="wb-sb-side">
+        <header className="wb-titlebar">
+            <div className="wb-tb-side">
+                <span className="wb-tb-app">diy2</span>
                 <button
                     type="button"
-                    className={nav.open ? 'wb-sb-btn on' : 'wb-sb-btn'}
+                    className={nav.open ? 'wb-tb-btn on' : 'wb-tb-btn'}
                     aria-pressed={nav.open}
                     title={nav.open ? '收起导航' : '展开导航'}
                     onClick={nav.toggle}
                 >
-                    <span className="wb-sb-glyph" aria-hidden="true">
+                    <span className="wb-tb-glyph" aria-hidden="true">
                         ▤
                     </span>
                     导航
                 </button>
+                {bar && left.length > 0 && <span className="wb-tb-sep" aria-hidden="true" />}
                 {bar && left.map(renderItem)}
             </div>
 
-            <div className="wb-sb-mid">
-                <span className="wb-sb-page">{api.page.title}</span>
-                <span className="wb-sb-dim">{room ? roomTitle(room) : '—'}</span>
+            <div className="wb-tb-mid">
+                {api && <span className="wb-tb-page">{api.page.title}</span>}
+                <span className="wb-tb-dim">{room ? roomTitle(room) : '—'}</span>
             </div>
 
-            <div className="wb-sb-side wb-sb-end">
+            <div className="wb-tb-side wb-tb-end">
                 {bar && right.map(renderItem)}
-                {bar && <span className="wb-sb-sep" aria-hidden="true" />}
-                {/* 表现方式切换：这一轮两种都做出来对比，定了之后这个按钮就可以删 */}
+                {bar && right.length > 0 && <span className="wb-tb-sep" aria-hidden="true" />}
                 <button
                     type="button"
-                    className="wb-sb-btn"
-                    title={bar ? '换一种收起方式：折叠成条' : '换一种收起方式：状态栏'}
+                    className="wb-tb-btn"
+                    title="新建项目"
                     onClick={() => {
-                        api.setChrome(bar ? 'strip' : 'bar');
+                        dialogs.openProject();
                     }}
                 >
-                    <span className="wb-sb-glyph" aria-hidden="true">
-                        {bar ? '▁' : '◂'}
-                    </span>
-                    {bar ? '状态栏' : '折叠条'}
+                    ＋
                 </button>
+                <button
+                    type="button"
+                    className="wb-tb-btn"
+                    title="设置"
+                    onClick={() => {
+                        dialogs.openSettings();
+                    }}
+                >
+                    ⚙
+                </button>
+                {api && (
+                    <>
+                        <span className="wb-tb-sep" aria-hidden="true" />
+                        {/* 表现方式切换：这一轮两种都做出来对比，定了之后这个按钮就可以删 */}
+                        <button
+                            type="button"
+                            className="wb-tb-btn"
+                            title={bar ? '换一种收起方式：折叠成条' : '换一种收起方式：标题栏'}
+                            onClick={() => {
+                                api.setChrome(bar ? 'strip' : 'bar');
+                            }}
+                        >
+                            <span className="wb-tb-glyph" aria-hidden="true">
+                                {bar ? '▁' : '◂'}
+                            </span>
+                            {bar ? '标题栏' : '折叠条'}
+                        </button>
+                    </>
+                )}
             </div>
-        </div>
+        </header>
     );
 }
 
-/** 一页 = 固定骨架 + area 内可配形态 + 底部状态栏 */
-export function Workbench({ api, views, nav }: { api: WbApi; views: readonly ViewDef[]; nav: NavState }) {
+/**
+ * 一页 = 标题栏（整宽）+ 导航 + 固定骨架。
+ *
+ * 标题栏和主体是兄弟，都在页层内，但标题栏占满宽度 —— 它的定位是「管住包括导航在内的
+ * 所有区域」，所以不能缩在导航右边。
+ */
+export function Workbench({
+    api,
+    views,
+    nav,
+    navRail,
+}: {
+    api: WbApi;
+    views: readonly ViewDef[];
+    nav: NavState;
+    navRail: ReactNode;
+}) {
     return (
         <Ctx.Provider value={api}>
-            <div className="wb-root">
+            <TitleBar nav={nav} api={api} />
+            <div className="wb-body">
+                {navRail}
                 <div className="wb-skeleton">
                     <NodeView node={api.page.layout} views={views} parentAxis="x" />
                 </div>
-                <StatusBar nav={nav} />
             </div>
         </Ctx.Provider>
     );

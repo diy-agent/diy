@@ -39,12 +39,21 @@
 /* ── 壳 ───────────────────────────────────────────────────────────────────── */
 
 .wb-shell {
-    /* 整屏：导航（全局层，自带宽度）+ 页层（骨架铺满剩余） */
+    /* 整屏（column）：标题栏横跨整宽，下面才是「导航 + 骨架」 */
     height: 100vh;
     display: flex;
+    flex-direction: column;
     min-height: 0;
     background: var(--wb-bg);
     color: var(--wb-fg);
+}
+
+.wb-body {
+    /* 导航（全局层，自带宽度）+ 页层骨架（铺满剩余） */
+    flex: 1 1 0;
+    display: flex;
+    min-width: 0;
+    min-height: 0;
 }
 
 .wb-splash {
@@ -57,17 +66,8 @@
     font-size: 13px;
 }
 
-.wb-root {
-    /* 页层：上面骨架 + 下面状态栏（column） */
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-}
-
-/* 骨架：状态栏以外的部分。状态栏是「页的」一条，所以它在页层内部、不跨导航 ——
- * 导航是全局层（自己带宽度与收起），两者的真源不混。 */
+/* 骨架：标题栏与导航以外的部分。标题栏不在这里 —— 它横跨整宽、管着导航，
+ * 不能躺在一个 flex 单元格里。 */
 .wb-skeleton {
     flex: 1 1 0;
     display: flex;
@@ -563,22 +563,25 @@
     color: var(--wb-fg);
 }
 
-/* ── 状态栏（Zed 式）───────────────────────────────────────
+/* ── 标题栏 ────────────────────────────────────────────────
  *
- * 页底一条：左组 = 导航 + 主区左侧的区域，右组 = 主区右侧 / 下方的区域 + 表现方式切换。
- * 它**不在骨架里** —— 所以任何区域收起都不影响它，这正是它能当唯一恢复入口的原因。
+ * 整页最顶、**整宽**（左端顶到屏幕左边，也压在导航上面）—— 因为它指揥的是
+ * 包括导航在内的所有区域。左组 = 应用名 + 导航 + 主区左侧的区域，
+ * 右组 = 主区右侧 / 下方的区域 + 全局工具 + 表现方式切换。
+ * 它**不在骨架里** —— 所以任何区域（含导航）收起都不影响它，这正是它能当唯一
+ * 恢复入口的原因。
  *
  * 高度 28px 是「够点、又不抢内容」的折中：和折叠条的厚度同一个数，
  * 两种表现方式切换时页面的高度基准不变。
  */
 
-.wb-statusbar {
+.wb-titlebar {
     flex: 0 0 28px;
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 0 6px;
-    border-top: 1px solid var(--wb-line);
+    border-bottom: 1px solid var(--wb-line);
     background: var(--wb-bg-2);
     font-size: 11px;
     color: var(--wb-dim);
@@ -586,20 +589,31 @@
     overflow: hidden;
 }
 
-.wb-sb-side {
+/* 应用标识：一个只占位的牌子，与后面的按钮用一条竖线隔开 */
+.wb-tb-app {
+    flex: 0 0 auto;
+    padding-right: 8px;
+    margin-right: 2px;
+    border-right: 1px solid var(--wb-line);
+    color: var(--wb-fg-2);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.wb-tb-side {
     display: flex;
     align-items: center;
     gap: 2px;
     min-width: 0;
 }
 
-.wb-sb-end {
+.wb-tb-end {
     margin-left: auto;
     flex: 0 0 auto;
 }
 
 /* 中间是页信息，不是控制区：窄了先挤它，两侧按钮永远够点 */
-.wb-sb-mid {
+.wb-tb-mid {
     flex: 1 1 auto;
     display: flex;
     align-items: center;
@@ -610,17 +624,17 @@
     white-space: nowrap;
 }
 
-.wb-sb-page {
+.wb-tb-page {
     color: var(--wb-fg-2);
     font-weight: 600;
 }
 
-.wb-sb-dim {
+.wb-tb-dim {
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.wb-sb-btn {
+.wb-tb-btn {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -636,24 +650,24 @@
     cursor: pointer;
 }
 
-.wb-sb-btn:hover {
+.wb-tb-btn:hover {
     color: var(--wb-fg);
     background: var(--wb-tint);
 }
 
 /* 展开态 = 亮起；收起态 = 暗着（点它才出现）—— 与「按钮是开关」的直觉一致 */
-.wb-sb-btn.on {
+.wb-tb-btn.on {
     color: var(--wb-fg);
     background: var(--wb-tint-strong);
     border-color: var(--wb-line-2);
 }
 
-.wb-sb-glyph {
+.wb-tb-glyph {
     font-size: 10px;
     opacity: 0.85;
 }
 
-.wb-sb-sep {
+.wb-tb-sep {
     flex: 0 0 auto;
     width: 1px;
     height: 14px;
