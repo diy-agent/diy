@@ -177,6 +177,10 @@ describe('resolveConfig', () => {
 
     it('**不读** DIY2_* 环境变量（回归：外层 shell 漏出来的变量不许改配置）', () => {
         const home = tmp();
+        // 这个 home 里摆一条**记录端口 5402**：它既不同于 DIY2_PORT 的值、也不是生产门牌 5192，
+        // 所以正确结果是走 recorded。断言端口来源而不是「端口不等于 5399」—— 记录里恰好写着
+        // 5399 本来就是合法的 recorded，光比数值分不清「记录」与「被 env 吃掉」。
+        writeFileSync(join(home, 'app.port'), '5402\n');
         const polluted = { DIY2_HOME: home, DIY2_PORT: '5399', DIY2_VARIANT: 'staging', DIY2_ENV: 'production' };
         const saved: Record<string, string | undefined> = {};
         for (const [key, value] of Object.entries(polluted)) {
@@ -187,10 +191,12 @@ describe('resolveConfig', () => {
             const config = resolveConfig({
                 moduleDir: APP_ROOT,
                 mode: 'development',
-                overrides: { launch: 'lab' },
+                overrides: { launch: 'lab', home },
             });
-            expect(config.home).toBe(join(APP_ROOT, 'build', 'lab', 'home'));
-            expect(config.port).toBe(0);
+            expect(config.home).toBe(home);
+            // 记录端口沿用（非生产），且来源是 recorded —— 被 DIY2_PORT 吃掉才会变成 5399。
+            expect(config.port).toBe(5402);
+            expect(config.portSource).toBe('recorded');
             expect(config.env).toBe('development');
         } finally {
             for (const [key, value] of Object.entries(saved)) {

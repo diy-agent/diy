@@ -58,7 +58,7 @@ function timeOf(at: number): string {
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }) {
+export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void }) {
     const rooms = useRooms();
     const project = rooms.find((item) => item.id === room.data['projectId']);
     // 标题就是描述（2026-11-22 用户裁）：任务的短文本只有一个字段，不再分成
@@ -190,13 +190,15 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose: () => void }
                     <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">#{number}</span>
                 )}
                 <span className="truncate text-[11px] text-muted-foreground">{roomTitle(room)}</span>
-                <button
-                    onClick={onClose}
-                    title="收起"
-                    className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted"
-                >
-                    <X className="size-3.5" />
-                </button>
+                {onClose !== undefined && (
+                    <button
+                        onClick={onClose}
+                        title="收起"
+                        className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted"
+                    >
+                        <X className="size-3.5" />
+                    </button>
+                )}
             </header>
 
             <div className="flex-1 space-y-3 overflow-y-auto p-3">
