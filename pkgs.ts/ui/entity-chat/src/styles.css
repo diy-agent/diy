@@ -1,27 +1,9 @@
-@import 'tw-animate-css';
-@import 'tw-shimmer';
-
-@custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
-@custom-variant data-closed (&:where([data-state="closed"], [data-closed]:not([data-closed="false"])));
-
-@theme inline {
-    @keyframes collapsible-down {
-        from {
-            height: 0;
-        }
-        to {
-            height: var(--radix-collapsible-content-height, var(--collapsible-panel-height, auto));
-        }
-    }
-    @keyframes collapsible-up {
-        from {
-            height: var(--radix-collapsible-content-height, var(--collapsible-panel-height, auto));
-        }
-        to {
-            height: 0;
-        }
-    }
-}
+/*
+ * 语义色变量层：shadcn 面的 bg-muted / text-foreground / border 之类全靠它。
+ *
+ * 2026-11-23 清掉 assistant-ui 面带来的 tw-animate-css / tw-shimmer 与
+ * radix-collapsible 的 data-open 变体 —— 那些只有已删的那批组件在用。
+ */
 
 @custom-variant dark (&:is(.dark *));
 

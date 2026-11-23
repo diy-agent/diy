@@ -3,7 +3,7 @@
 // 为什么带秒数：占位消失就等于执行结束，只有三个点时用户分不清"跑完了"
 // 和"卡住了"。秒数一直在涨 = 还在推进。
 // 为什么用 Spinner：Astryx 的官方 loading 件（Feedback & Status 分类）；
-// assistant-ui 没有对应组件，共用它才能让两个 surface 视觉一致。
+// 两面共用它才能视觉一致（shadcn 面没有自己的 loading 件）。
 
 import { Spinner } from '@astryxdesign/core';
 import * as React from 'react';

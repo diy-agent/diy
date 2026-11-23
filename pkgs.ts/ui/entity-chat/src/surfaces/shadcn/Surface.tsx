@@ -1,20 +1,31 @@
-// Surface.tsx —— 第三个表面：**原生 shadcn/Tailwind**，不用任何 chat 库。
+// Surface.tsx —— 第二个表面：**原生 Tailwind**，不引任何 chat 框架的 runtime。
 //
-// 目的：验证"这套时间线 + chat-core 状态，自己拿 Tailwind 拼一遍"能不能达到同样的效果。
-// 只用最普通的 div/button + 我们自己的共享件（BotAvatar / AskCard / RunningIndicator / Markdown），
-// 不引入 assistant-ui 的 runtime，也不用 Astryx 的 Chat 组件。
-//
-// 与另外两面的关系：三面共用 buildTimeline（分组语义唯一）和 ConversationStore（状态唯一），
-// 这里只写"怎么画"。
+// 分组语义在 chat-core.buildTimeline、状态在 ConversationStore；这里只写「怎么画」。
+// 与 astryx 面的关系：两面共用 shared.ts 的纯映射（工具行 target / parts 分组）与
+// components/ 里的业务件（AskCard / BotAvatar / Markdown / RunningIndicator …），
+// 差别只在「用谁的组件拼外壳」——这一面全裸 Tailwind，一个组件库都不依赖。
 
-import { AlertTriangle, ChevronDown, Send, Square } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ChevronDown, Send, Square } from 'lucide-react';
 import * as React from 'react';
 
-import { buildTimeline, jobOf, jobViewOfNotice, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
+import {
+    buildTimeline,
+    completeMention,
+    filterMentionCandidates,
+    jobOf,
+    jobViewOfNotice,
+    mentionQuery,
+    moveActive,
+    type MentionCandidate,
+    type TimelineEntry,
+    type TimelinePart,
+} from '@diy-agent/chat-core';
 
 import { AskCard } from '../../components/AskCard';
+import { CopyButton } from '../../components/CopyButton';
 import { BotAvatar } from '../../components/BotAvatar';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
+import { openLinkInNewWindow } from '../../links';
 import { ErrorBar } from '../../components/ErrorBar';
 import { JobCard } from '../../components/JobCard';
 import { Markdown } from '../../components/Markdown';
@@ -22,27 +33,11 @@ import { EndFooterLine } from '../../components/EndFooterLine';
 import { RunningIndicator } from '../../components/RunningIndicator';
 import { useWindowed } from '../../components/useWindowed';
 import { useDraft } from '../../drafts';
+import { useMentionCandidates } from '../../mentions';
 import { conversationOf, useStore } from '../../store';
+import { plainTextOf, runsOf, toolTargetOf, type Run } from '../shared';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
-
-function toolTargetOf(tool: TimelinePart & { kind: 'tool' }): string | undefined {
-    const args = tool.args;
-    if (args === undefined || args === null) return undefined;
-    if (typeof args === 'object') {
-        const record = args as Record<string, unknown>;
-        for (const key of ['command', 'path', 'question', 'url']) {
-            const value = record[key];
-            if (typeof value === 'string' && value !== '') return value.length > 60 ? `${value.slice(0, 59)}…` : value;
-        }
-    }
-    try {
-        const text = JSON.stringify(args);
-        return text.length > 60 ? `${text.slice(0, 59)}…` : text;
-    } catch {
-        return undefined;
-    }
-}
 
 function timeOf(at: number): string {
     const date = new Date(at);
@@ -94,6 +89,49 @@ function ToolRow({ tool }: { tool: TimelinePart & { kind: 'tool' } }) {
     );
 }
 
+function ErrorBox({ text }: { text: string }) {
+    return (
+        <div className="my-1.5 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span className="min-w-0 break-words">{text}</span>
+        </div>
+    );
+}
+
+/** 一个 assistant 条目内部的块（正文 / 工具组 / 提问卡 / 失败） */
+function RunsView({ runs, roomId }: { runs: Run[]; roomId: string }) {
+    return (
+        <>
+            {runs.map((run, index) => {
+                if (run.kind === 'error') return <ErrorBox key={`e${index}`} text={run.message} />;
+                if (run.kind === 'ask')
+                    return (
+                        <AskCard
+                            key={`a${index}`}
+                            roomId={roomId}
+                            request={run.part.request}
+                            {...(run.part.answer === undefined &&
+                            run.part.cancelled !== true &&
+                            run.part.expired !== true
+                                ? {}
+                                : {
+                                      resolved: {
+                                          ...(run.part.answer === undefined ? {} : { answer: run.part.answer }),
+                                          ...(run.part.cancelled === true ? { cancelled: true } : {}),
+                                          ...(run.part.expired === true ? { expired: true } : {}),
+                                          ...(run.part.reason === undefined ? {} : { reason: run.part.reason }),
+                                      },
+                                  })}
+                        />
+                    );
+                if (run.kind === 'text')
+                    return <Markdown key={`t${index}`} text={run.text} onLinkClick={openLinkInNewWindow} />;
+                return <ToolGroup key={`c${index}`} tools={run.tools} />;
+            })}
+        </>
+    );
+}
+
 function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
     if (entry.kind === 'notice') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
@@ -123,10 +161,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                             <span className="text-muted-foreground">{entry.author.role}</span>
                         </div>
                     )}
-                    <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
-                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                        <span className="min-w-0 break-words">{text}</span>
-                    </div>
+                    <ErrorBox text={text} />
                 </div>
             </div>
         );
@@ -135,7 +170,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
     if (entry.kind === 'typing') {
         // 和正式回复同一套外壳（头像 + 名字），第一段内容到达时原地替换
         return (
-            <div key={entry.key} className="my-4 flex gap-2.5">
+            <div className="my-4 flex gap-2.5">
                 <div className="pt-0.5">
                     <BotAvatar author={entry.author} roomId={roomId} size={26} />
                 </div>
@@ -170,10 +205,11 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
         );
     }
 
-    // assistant：头像 + 名字一行，内容按 parts 顺序渲染
-    const parts = entry.parts;
+    // assistant：头像 + 名字一行，内容按「连续同类块」渲染（与 astryx 面同一份 runsOf）
+    const runs = runsOf(entry.parts);
+    const copyable = plainTextOf(entry.parts);
     return (
-        <div className="my-4 flex gap-2.5">
+        <div className="group my-4 flex gap-2.5">
             <div className="flex w-[26px] shrink-0 justify-center pt-0.5">
                 <BotAvatar author={entry.author} roomId={roomId} size={26} />
             </div>
@@ -183,49 +219,15 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                         {entry.author?.name ?? 'bot'}
                     </span>
                     <span className="text-[10px] text-muted-foreground">{timeOf(entry.at)}</span>
+                    {copyable !== '' && (
+                        // 悬停才浮现：常驻的复制按钮会让每条回复都多一行视觉噪音
+                        <CopyButton
+                            text={copyable}
+                            className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100"
+                        />
+                    )}
                 </div>
-                {parts.map((part, index) => {
-                    if (part.kind === 'text') return <Markdown key={`t${index}`} text={part.text} />;
-                    // 运行失败属于这条回复的一部分：就地显示，不吃掉后面的内容
-                    if (part.kind === 'error')
-                        return (
-                            <div
-                                key={`e${index}`}
-                                className="my-1.5 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive"
-                            >
-                                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                                <span className="min-w-0 break-words">{part.message}</span>
-                            </div>
-                        );
-                    if (part.kind === 'ask')
-                        return (
-                            <AskCard
-                                key={`a${index}`}
-                                roomId={roomId}
-                                request={part.request}
-                                {...(part.answer === undefined && part.cancelled !== true && part.expired !== true
-                                    ? {}
-                                    : {
-                                          resolved: {
-                                              ...(part.answer === undefined ? {} : { answer: part.answer }),
-                                              ...(part.cancelled === true ? { cancelled: true } : {}),
-                                              ...(part.expired === true ? { expired: true } : {}),
-                                              ...(part.reason === undefined ? {} : { reason: part.reason }),
-                                          },
-                                      })}
-                            />
-                        );
-                    // 连续的 tool 合并成一组
-                    const previous = parts[index - 1];
-                    if (previous?.kind === 'tool') return null;
-                    const tools = [] as Array<TimelinePart & { kind: 'tool' }>;
-                    for (let cursor = index; cursor < parts.length; cursor += 1) {
-                        const next = parts[cursor];
-                        if (next?.kind !== 'tool') break;
-                        tools.push(next);
-                    }
-                    return <ToolGroup key={`g${index}`} tools={tools} />;
-                })}
+                <RunsView runs={runs} roomId={roomId} />
                 <EndFooterLine reason={entry.endReason} />
                 {entry.waiting === true && (
                     <div className="mt-1.5">
@@ -234,6 +236,80 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                 )}
             </div>
         </div>
+    );
+}
+
+/**
+ * 消息列表单独 memo：输入框每敲一个字都会让 Surface 重渲染，
+ * 但整棵消息树（含 Markdown 解析）不该跟着重算 —— 不 memo 的话长会话里输入会明显卡。
+ */
+const MessageList = React.memo(function MessageList({
+    entries,
+    roomId,
+}: {
+    entries: readonly TimelineEntry[];
+    roomId: string;
+}) {
+    return (
+        <>
+            {entries.map((entry) => (
+                // content-visibility：离开视口的条目跳过布局/绘制
+                <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
+                    <EntryView entry={entry} roomId={roomId} />
+                </div>
+            ))}
+        </>
+    );
+});
+
+/** @ 候选浮层：键盘可达（上下选、Enter/Tab 确认、Esc 关），鼠标也能点 */
+function MentionMenu({
+    candidates,
+    activeIndex,
+    onPick,
+    onHover,
+}: {
+    candidates: readonly MentionCandidate[];
+    activeIndex: number;
+    onPick: (name: string) => void;
+    onHover: (index: number) => void;
+}) {
+    if (candidates.length === 0) {
+        return (
+            <div className="absolute bottom-full left-0 mb-1 rounded-md border bg-popover px-2.5 py-1.5 text-[11px] text-muted-foreground shadow-md">
+                没有匹配的成员
+            </div>
+        );
+    }
+    return (
+        <ul
+            role="listbox"
+            className="absolute bottom-full left-0 mb-1 max-h-56 w-56 overflow-y-auto rounded-md border bg-popover py-1 shadow-md"
+        >
+            {candidates.map((candidate, index) => (
+                <li key={candidate.id}>
+                    <button
+                        role="option"
+                        aria-selected={index === activeIndex}
+                        onMouseEnter={() => onHover(index)}
+                        // mousedown 而不是 click：click 之前 textarea 会先失焦，光标位置就丢了
+                        onMouseDown={(event) => {
+                            event.preventDefault();
+                            onPick(candidate.name);
+                        }}
+                        className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] ${
+                            index === activeIndex ? 'bg-accent text-foreground' : 'hover:bg-muted/60'
+                        }`}
+                    >
+                        <span className="size-1.5 rounded-full" style={{ background: candidate.color }} />
+                        <span className="truncate">{candidate.name}</span>
+                        {candidate.isOwner && (
+                            <span className="ml-auto text-[10px] text-muted-foreground">owner</span>
+                        )}
+                    </button>
+                </li>
+            ))}
+        </ul>
     );
 }
 
@@ -248,6 +324,42 @@ function Composer({
 }) {
     const draft = useDraft(roomId, 'composer');
     const [submitting, setSubmitting] = React.useState(false);
+    const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+    const candidates = useMentionCandidates(roomId);
+
+    /**
+     * @ 补全的规则全在 chat-core（`mentionQuery` / `filterMentionCandidates` / `completeMention` /
+     * `moveActive`）—— 那里是**单一真源**，因为两面必须给出同样的候选与同样的补全结果。
+     * 这里只留两件 UI 自己的事：高亮第几个、以及「用户按过 Esc 就先别弹了」。
+     */
+    const query = mentionQuery(draft.text);
+    const matches = React.useMemo(
+        () => (query === null ? [] : filterMentionCandidates(candidates, query)),
+        [candidates, query],
+    );
+    const [active, setActive] = React.useState(0);
+    const [dismissed, setDismissed] = React.useState(false);
+    const menuOpen = query !== null && !dismissed;
+
+    // query 一变（继续打字 / 重打一个 @）高亮回到第一个
+    React.useEffect(() => {
+        setActive(0);
+    }, [query]);
+
+    const pick = (name: string) => {
+        const next = completeMention(draft.text, name);
+        draft.setText(next);
+        setDismissed(false);
+        setActive(0);
+        // 补全插在末尾，光标跟过去；命令式的选区要等受控 value 落到 DOM 之后再设
+        requestAnimationFrame(() => {
+            const element = textareaRef.current;
+            if (element === null) return;
+            element.focus();
+            element.setSelectionRange(next.length, next.length);
+        });
+    };
+
     const send = () => {
         const text = draft.text.trim();
         if (text === '' || submitting) return;
@@ -259,6 +371,7 @@ function Composer({
             .catch(() => undefined)
             .finally(() => setSubmitting(false));
     };
+
     return (
         <div className="border-t bg-background px-4 py-3">
             {draft.status === 'error' && (
@@ -266,11 +379,45 @@ function Composer({
                     草稿未保存：{draft.error ?? '网络错误'}（重试中，内容还在）
                 </div>
             )}
-            <div className="flex items-end gap-2 rounded-xl border bg-card px-3 py-2">
+            <div className="relative flex items-end gap-2 rounded-xl border bg-card px-3 py-2">
+                {menuOpen && (
+                    <MentionMenu
+                        candidates={matches}
+                        activeIndex={active}
+                        onPick={pick}
+                        onHover={setActive}
+                    />
+                )}
                 <textarea
+                    ref={textareaRef}
                     value={draft.text}
-                    onChange={(event) => draft.setText(event.target.value)}
+                    onChange={(event) => {
+                        draft.setText(event.target.value);
+                        setDismissed(false);
+                    }}
                     onKeyDown={(event) => {
+                        // 浮层开着时：上下选、Enter/Tab 确认、Esc 关。这几键不能落到「发送」上。
+                        if (menuOpen) {
+                            if (event.key === 'Escape') {
+                                event.preventDefault();
+                                setDismissed(true);
+                                return;
+                            }
+                            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                if (matches.length === 0) return;
+                                event.preventDefault();
+                                setActive((current) => moveActive(current, event.key === 'ArrowDown' ? 1 : -1, matches.length));
+                                return;
+                            }
+                            if (event.key === 'Enter' || event.key === 'Tab') {
+                                const picked = matches[active];
+                                if (picked !== undefined) {
+                                    event.preventDefault();
+                                    pick(picked.name);
+                                    return;
+                                }
+                            }
+                        }
                         // IME 组字中的 Enter 是上屏，不是发送
                         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                             event.preventDefault();
@@ -278,7 +425,7 @@ function Composer({
                         }
                     }}
                     rows={1}
-                    placeholder="和这个实体对话…（Enter 发送，Shift+Enter 换行）"
+                    placeholder="和这个实体对话…（@ 选 bot，Enter 发送，Shift+Enter 换行）"
                     className="max-h-40 min-h-6 flex-1 resize-none bg-transparent text-[13px] outline-none"
                 />
                 {running ? (
@@ -337,51 +484,66 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
     // 贴底跟随：只有"本来就在底部"时才自动滚，用户上翻就不打扰
     const scrollRef = React.useRef<HTMLDivElement | null>(null);
     const stickRef = React.useRef(true);
+    const [atBottom, setAtBottom] = React.useState(true);
     React.useEffect(() => {
         const element = scrollRef.current;
         if (element === null || !stickRef.current) return;
         element.scrollTop = element.scrollHeight;
     }, [entries]);
 
+    const scrollToBottom = React.useCallback(() => {
+        const element = scrollRef.current;
+        if (element === null) return;
+        element.scrollTop = element.scrollHeight;
+        stickRef.current = true;
+        setAtBottom(true);
+    }, []);
+
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             {state.error !== undefined && state.error !== '' && (
                 <ErrorBar error={state.error} onRetry={conversation.reload} />
             )}
-            <div
-                ref={scrollRef}
-                onScroll={(event) => {
-                    const element = event.currentTarget;
-                    stickRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-                    // 滑到顶部就补一窗（保持视口位置：把新增内容的高度加回 scrollTop）
-                    if (element.scrollTop < 48 && windowed.hidden > 0) {
-                        const before = element.scrollHeight;
-                        windowed.showMore();
-                        requestAnimationFrame(() => {
-                            element.scrollTop += element.scrollHeight - before;
-                        });
-                    }
-                }}
-                role="log"
-                aria-live="polite"
-                aria-relevant="additions text"
-                className="min-h-0 flex-1 overflow-y-auto px-6 py-4"
-            >
-                {entries.length === 0 ? (
-                    <div className="mt-16 text-center text-[13px] text-muted-foreground">
-                        还没有消息。发一句，或 @ 一个 bot。
-                    </div>
-                ) : (
-                    <>
-                        {windowed.visible.map((entry) => (
-                            <div
-                                key={entry.key}
-                                style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
-                            >
-                                <EntryView entry={entry} roomId={targetId} />
-                            </div>
-                        ))}
-                    </>
+            <div className="relative min-h-0 flex-1">
+                <div
+                    ref={scrollRef}
+                    onScroll={(event) => {
+                        const element = event.currentTarget;
+                        const stuck = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+                        stickRef.current = stuck;
+                        setAtBottom(stuck);
+                        // 滑到顶部就补一窗（保持视口位置：把新增内容的高度加回 scrollTop）
+                        if (element.scrollTop < 48 && windowed.hidden > 0) {
+                            const before = element.scrollHeight;
+                            windowed.showMore();
+                            requestAnimationFrame(() => {
+                                element.scrollTop += element.scrollHeight - before;
+                            });
+                        }
+                    }}
+                    role="log"
+                    aria-live="polite"
+                    aria-relevant="additions text"
+                    className="h-full overflow-y-auto px-6 py-4"
+                >
+                    {entries.length === 0 ? (
+                        <div className="mt-16 text-center text-[13px] text-muted-foreground">
+                            还没有消息。发一句，或 @ 一个 bot。
+                        </div>
+                    ) : (
+                        <MessageList entries={windowed.visible} roomId={targetId} />
+                    )}
+                </div>
+                {!atBottom && entries.length > 0 && (
+                    // 上翻看历史时「回到底部」：新消息不断到达却没有入口，只能拖滚动条
+                    <button
+                        onClick={scrollToBottom}
+                        title="回到最新"
+                        aria-label="回到最新"
+                        className="absolute right-5 bottom-3 rounded-full border bg-background p-1.5 text-muted-foreground shadow-md hover:text-foreground"
+                    >
+                        <ArrowDown className="size-3.5" />
+                    </button>
                 )}
             </div>
             <Composer conversation={conversation} roomId={targetId} running={state.running} />

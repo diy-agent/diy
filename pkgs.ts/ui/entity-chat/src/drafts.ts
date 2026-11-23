@@ -94,7 +94,7 @@ function stableKey(value: unknown): string {
 }
 
 /**
- * 有 owner 才谈得上落盘。空串是"这个面不知道房间"（assistant-ui 的 meta 可能没带），
+ * 有 owner 才谈得上落盘。空串是"这个调用点没有房间上下文"，
  * 这种输入只留在内存里，别去请求 /rooms//drafts。
  */
 function persistable(owner: string): boolean {
