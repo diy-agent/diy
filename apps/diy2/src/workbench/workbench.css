@@ -67,33 +67,39 @@
 }
 
 /* 骨架：标题栏与导航以外的部分。标题栏不在这里 —— 它横跨整宽、管着导航，
- * 不能躺在一个 flex 单元格里。 */
-.wb-skeleton {
+ * 不能躺在一个 flex 单元格里。
+ *
+ *   .wb-skel  = column：[top][mid][bottom]
+ *   .wb-mid   = row   ：[left][center][right]
+ *
+ * 槽位写死在这两层 CSS 里，模板改不了 —— 模板只能决定「哪个概念的区域落在哪一格」。
+ */
+.wb-skel {
     flex: 1 1 0;
     display: flex;
-    min-width: 0;
-    min-height: 0;
-}
-
-/* ── 骨架：固定，不可拖 ─────────────────────────────────────────────────────── */
-
-.wb-split-x,
-.wb-split-y {
-    display: flex;
+    flex-direction: column;
     min-width: 0;
     min-height: 0;
     /* 分隔线不再是 gap：相邻两项之间插了一个 1px 的 `.wb-resizer`（它同时是拖拽手柄）。
-       没有手柄的位置（如两侧都是 fr）直接用边框兑底 —— 见下面的 `:not(.wb-resizer)` 规则。 */
+       没有手柄的位置（如两侧都是 fr）直接用边框兜底 —— 见下面的 `:not(.wb-resizer)` 规则。 */
     gap: 0;
+}
+
+.wb-mid {
     flex: 1 1 0;
+    display: flex;
+    flex-direction: row;
+    min-width: 0;
+    min-height: 0;
+    gap: 0;
 }
 
 /* 兜底分隔：相邻两项之间没有手柄时，也还有一条线 */
-.wb-split-x > :not(.wb-resizer) + :not(.wb-resizer) {
+.wb-mid > :not(.wb-resizer) + :not(.wb-resizer) {
     border-left: 1px solid var(--wb-line);
 }
 
-.wb-split-y > :not(.wb-resizer) + :not(.wb-resizer) {
+.wb-skel > :not(.wb-resizer) + :not(.wb-resizer) {
     border-top: 1px solid var(--wb-line);
 }
 
@@ -149,17 +155,9 @@ body.wb-resizing-y * {
     cursor: row-resize !important;
 }
 
-.wb-split-x {
-    flex-direction: row;
-}
-
-.wb-split-y {
-    flex-direction: column;
-}
-
 /* 子项默认平分；area 用内联 style 覆盖成自己的 px / fr */
-.wb-split-x > *,
-.wb-split-y > * {
+.wb-skel > *,
+.wb-mid > * {
     flex: 1 1 0;
     min-width: 0;
     min-height: 0;
@@ -175,7 +173,9 @@ body.wb-resizing-y * {
     background: var(--wb-bg);
 }
 
-.wb-body {
+/* 区域的内容体。**不是 `.wb-body`**：那是「导航 + 骨架」整块（window body），
+ * 同名会把 `overflow: auto` 加到整块上，也让人读不懂哪一层在滚。 */
+.wb-area-body {
     flex: 1 1 auto;
     min-height: 0;
     min-width: 0;
@@ -183,12 +183,12 @@ body.wb-resizing-y * {
 }
 
 /* 骨架调试：看清哪块是哪块（默认关；页外那条 bar 上的「骨架」按钮） */
-.wb-skeleton .wb-area {
+.wb-skel .wb-area {
     outline: 1px dashed var(--wb-accent-line);
     outline-offset: -1px;
 }
 
-.wb-skeleton .wb-area::before {
+.wb-skel .wb-area::before {
     content: attr(data-area);
     position: absolute;
     right: 3px;

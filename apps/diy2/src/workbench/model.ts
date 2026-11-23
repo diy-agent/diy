@@ -1,32 +1,42 @@
 // model.ts —— page / area / view 三概念，**不带任何布局引擎依赖**。
 //
-// 与之前那套 workbench-dock（dockview）的区别，全在这几条约束里：
+// 两层结构（2026-11-23 收敛）：
 //
-//   1. 布局**骨架固定**：area 的排列（谁在左、谁在下）由模板写死 —— 不能拖换位置、不能分、不能浮动。
-//      尺寸**可以**沿相邻边界拖（`sizes`），但那只在模板给的这条边上伸缩，改变不了骨架。
-//      → 没有 drag-reorder、没有 floating、没有 split；只有「边界变宽变窄」这一种拖。
-//   2. view **不可关闭、不可移动**：它声明自己属于哪个 page 的哪个 area，就只能在那儿。
-//      → 没有 close 动作、没有「拖到别的组」。
-//   3. 唯一能收的是 **area**。标题栏（`TitleBar`）**永远在**，它是唯一的恢复入口；
-//      收起来的区域长什么样由 `Chrome`（全局偏好）决定，那只是一只**把手**：
-//      · `bar`   —— 收起来就**不占位**（空间给别的区域），恢复靠标题栏的按钮；
-//      · `strip` —— 收起来**留一条**（竖条 / 横条，方向随它所在的 row / column），
-//                    条还在原位、写着区域名，点条即展开。
-//      两种共用同一份「哪个区域收起了」状态，切换不丢；strip 不改变标题栏的任何行为。
-//      把手要显性、要能一眼看出「这儿还有东西」，但不需要额外的浮层入口 ——
-//      标题栏一直在，所以永远找得回来。
-//   3b. 折叠条上**单击 = 展开 / 收起，双击 = 最大化 / 还原**（同一条，靠点击次数区分）。
-//      最大化是临时视图状态（不进 `collapsed`）：这一条吃掉整个骨架，其余全让位。
-//   4. **每页有一个主区域**（`main`）：这一页围绕它组织，它永远展开、不参与收起 ——
-//      收起主区等于把这一页收没了。
-//   5. area 内有多个 view 时，排列**形态可配**：tab / 折叠 / 格子。单个 view 不显示 tab 条 ——
-//      一个 tab 的 tab 条是纯噪音。
+//   **Window** —— 上 / 下 / 左 / 右 4 条**可选状态栏** + 中间一个 page（见 `Window.tsx`）。
+//   状态栏是全局概念，内容是**贡献**装配出来的（全局按钮 + page 贡献的区域开关），
+//   window 不认识任何 page 的业务 —— 它只知道「哪个区域、什么名字、在哪一侧」。
 //
-// 所以这张表里最重要的其实是「没有」这一列：约束少了，能出错的状态也少了
-// （dockview 版里那个「关掉 view ⇒ 组被删 ⇒ area 没了 ⇒ 恢复入口也失效」的死锁，
-// 在这套模型下不可能发生 —— view 不可关，area 的身份来自模板而不是「运行时有没有内容」）。
+//   **Page** —— 内部只有 **5 个固定槽位**：`center` + `top` / `bottom` / `left` / `right`。
+//   槽位是**物理位置**，不嵌套（没有 row / col / split 树），不可拖换位置、不可分、不可浮动；
+//   区域只能沿相邻边界伸缩（`PageState.sizes`），改不了骨架。
+//
+// 这个模型里最重要的两条概念：
+//
+//   1. **center 就是主区域**（不是「可以放主区域的槽之一」）。一页围绕它组织：它必备、
+//      永远展开、状态栏里不给它按钮 —— 收起 center 等于把这一页收没了。
+//      其余四边都是**可收起的位置**，容纳的是主区的附件（详情 / 资产 / 诊断…）。
+//   2. **区域的身份是概念 id，不是方位**。区域声明时给 `id`（`detail` / `assets` / `diag`…），
+//      再给 `slot` 说明它现在落在哪个方位。**view / plugin 一律按 id 插入，不按方位插入**
+//      （写 `area: 'left'` 就错了：方位会变，概念不会）。反过来，方位改了 id 不变 ——
+//      所以「左边那块」挪到右边时，标题栏按钮、偏好键、折叠条上的名字都不必跟着改。
+//
+// 其余约束（都来自「骨架固定」这一条公理，所以能出错的状态也少）：
+//
+//   · view **不可关闭、不可移动**：它声明自己进哪个 page 的哪个区域，就只能在那儿。
+//   · 唯一能收的是**四边的区域**（center 不在其列）。收起来长什么样由 `Chrome` 决定：
+//       `bar`   → 不占位（空间给 center），恢复靠状态栏上的按钮；
+//       `strip` → 留一条（方向随槽位），点条即展开（双击最大化）。
+//     两种共用同一份 `collapsed`，切换不丢。
+//   · 最大化 = 这一块吃掉整个 page，其余全让位；它是临时视图状态，不进 `collapsed`。
+//   · 区域内有多个 view 时摆法可配：tab / 折叠 / 格子。单个 view 不画 tab 条。
 
 import type { ReactNode } from 'react';
+
+/** 四边：可以收起的位置。中心不在其中 —— 中心是主区域，见 `PageDef.center` */
+export type Side = 'top' | 'bottom' | 'left' | 'right';
+
+/** 槽位：page 里 5 个固定位置的**物理方位** */
+export type Slot = Side | 'center';
 
 /**
  * area 内多 view 的排列形态。
@@ -44,68 +54,84 @@ export const MODE_LABEL: Record<Mode, string> = {
     grid: '格子',
 };
 
-/** 区域定义：只描述「在骨架里的位置与默认呈现」 */
+/**
+ * 区域定义 = **一个概念**（详情的概念、资产的概念…）+ 它现在占据的位置。
+ *
+ * `id` 是概念（布局单元 id），`slot` 是位置。贡献者按 `id` 插入 view；
+ * 把区域从左侧挪到右侧只改 `slot`，插好的 view 一个都不用动。
+ */
 export interface AreaDef {
+    /** **概念 id**（不是方位）：view / plugin 按它插入；方位改了它也不改 */
     id: string;
-    /** 区域名。多 view 时显示在头部；标题栏按钮 / 折叠条也用它 */
+    /** 区域名。区域头 / 状态栏按钮的 tooltip / 折叠条都用它 */
     title: string;
-    /** 沿父轴的 px，或 `'fr'`（在兄弟之间分剩余空间）。拖过的值存在 `PageState.sizes` 里覆盖它 */
+    /** 物理方位 */
+    slot: Slot;
+    /**
+     * left / right 是宽度，top / bottom 是高度（px），或 `'fr'`（分剩余空间）。
+     * center 用 `'fr'`。拖过的值存在 `PageState.sizes` 里覆盖它。
+     */
     size: number | 'fr';
     min?: number;
-    /** 初始是否折叠成条；缺省展开 */
+    /** 初始是否收起；缺省展开。center 收不起来，写了也不生效 */
     initial?: 'open' | 'collapsed';
-    /** 默认形态；缺省 tab。只在 area 里有多个 view 时生效 */
+    /** 默认形态；缺省 tab。只在区域里有多个 view 时生效 */
     mode?: Mode;
     /** 允许的形态；缺省三种全允许，给一个值就是**锁定形态**（该区域不给切换按钮） */
     modes?: readonly Mode[];
 }
 
-/** 分割节点：`x` = 左右排，`y` = 上下排 */
-export interface SplitDef {
-    axis: 'x' | 'y';
-    children: LayoutNode[];
+export function area(
+    id: string,
+    opts: Omit<AreaDef, 'id' | 'slot' | 'title'> & { slot: Slot; title?: string },
+): AreaDef {
+    return { ...opts, id, title: opts.title ?? id };
 }
 
-export type LayoutNode = AreaDef | SplitDef;
-
-export function area(id: string, opts: Omit<AreaDef, 'id' | 'title'> & { title?: string }): AreaDef {
-    return { id, title: opts.title ?? id, ...opts };
-}
-
-/** 左右排 */
-export function row(...children: LayoutNode[]): SplitDef {
-    return { axis: 'x', children };
-}
-
-/** 上下排 */
-export function col(...children: LayoutNode[]): SplitDef {
-    return { axis: 'y', children };
-}
-
-/** 页模板：布局固定，标题只是给人看的 */
+/** 页模板：**只有槽位上的区域清单**，没有嵌套、没有分割方式可写 */
 export interface PageDef {
     type: string;
     title: string;
-    /**
-     * 主区域 id —— **这一页围绕它组织**：它永远展开、不参与收起，
-     * 标题栏里也不给它按钮（收起主区等于把这一页收没了）。
-     *
-     * 有了它，「其余区域相对主区的方位」就能从模板推出来（`sidesOf`），
-     * 标题栏据此把按钮分到左右两组 —— 不用手写一份「谁在左边」的清单。
-     */
-    main: string;
-    layout: LayoutNode;
+    /** 中心区域 = 本页主区域：必备、永远展开、不参与收起 */
+    center: AreaDef;
+    /** 四边的区域，各槽位最多一个 */
+    sides: AreaDef[];
+    /** `[center, ...sides]`（模板推出来，别再手写一份） */
+    areas: AreaDef[];
 }
 
-export function definePage(page: PageDef): PageDef {
-    return page;
+/**
+ * 定义页模板。
+ *
+ * 这里把「一个槽位只有一个区域」「center 的 slot 必须是 center」两条硬约束在**定义时**就检掉：
+ * 这些错误写在模板里，运行时表现出来只是「有一块看不见」，排起来极费劲。
+ */
+export function definePage(def: { type: string; title: string; center: AreaDef; sides?: readonly AreaDef[] }): PageDef {
+    const { type, title, center } = def;
+    const sides = [...(def.sides ?? [])];
+    if (center.slot !== 'center') {
+        throw new Error(`页「${type}」的 center「${center.id}」必须声明 slot: 'center'（写的是 '${center.slot}'）`);
+    }
+    const seen = new Set<string>([center.id]);
+    const slots = new Set<Slot>(['center']);
+    for (const item of sides) {
+        if (item.slot === 'center') {
+            throw new Error(`页「${type}」的区域「${item.id}」在 sides 里却声明 slot: 'center'`);
+        }
+        if (seen.has(item.id)) throw new Error(`页「${type}」的区域 id 重复：${item.id}`);
+        if (slots.has(item.slot)) throw new Error(`页「${type}」的槽位 ${item.slot} 上有两个区域`);
+        seen.add(item.id);
+        slots.add(item.slot);
+    }
+    return { type, title, center, sides, areas: [center, ...sides] };
 }
 
 /**
  * 视图：真正的内容单元。
  *
- * `placement` 是「能进哪些页的哪个区域」——**单向声明**（view 认识 pageType，page 不认识 view）。
- * 没有 `primary`、没有 `closeable`、没有「关闭后怎么办」：不可关闭是这个模型的公理，不是一个选项。
+ * `placement` 是「能进哪些页的哪个区域」——**单向声明**（view 认识 pageType，page 不认识 view），
+ * 且**按区域的概念 id 指名**，不按方位（`area: 'left'` 是错的）。
+ * 没有 closeable、没有「关闭后怎么办」：不可关闭是这个模型的公理，不是一个选项。
  */
 export interface ViewDef {
     id: string;
@@ -118,65 +144,29 @@ export function defineView(view: ViewDef): ViewDef {
     return view;
 }
 
-// ── 从模板推导（模板是唯一真源，别再手写一份区域清单）────────────────────────────
+// ── 从模板查（模板是唯一真源，别再手写一份区域清单）────────────────────────────
 
-/** 树里所有 area，按声明顺序 */
-export function areasOf(node: LayoutNode): AreaDef[] {
-    if ('axis' in node) return node.children.flatMap(areasOf);
-    return [node];
+/** 按概念 id 找区域 */
+export function areaOf(page: PageDef, areaId: string): AreaDef | undefined {
+    return page.areas.find((def) => def.id === areaId);
 }
 
-/** 区域相对主区的方位 —— 标题栏按它把按钮分到左右两组 */
-export type Side = 'left' | 'right' | 'top' | 'bottom';
+/** 按方位找区域（center 返回 `page.center`） */
+export function areaInSlot(page: PageDef, slot: Slot): AreaDef | undefined {
+    return slot === 'center' ? page.center : page.sides.find((def) => def.slot === slot);
+}
 
 /**
- * 每个非主区 area 相对**主区**的方位（从模板推导，别手写清单）。
- *
- * 规则只看「把主区和它分在两侧的那个 split 的轴」：
- *   · 左右排（axis x）→ 主区左边 = left，右边 = right
- *   · 上下排（axis y）→ 主区上面 = top，下面 = bottom
- * 嵌套时外层方位优先：一个区域只有一条最外层方位，不再被内层覆盖。
+ * 某页能收起的区域（center 与「这一页没内容的区域」不在此列）—— 状态栏按钮就用它。
+ * 顺序 = 模板声明顺序（`[center, ...sides]` 去掉 center）。
  */
-export function sidesOf(page: PageDef): Map<string, Side> {
-    const out = new Map<string, Side>();
-
-    const holds = (node: LayoutNode, id: string): boolean =>
-        'axis' in node ? node.children.some((child) => holds(child, id)) : node.id === id;
-
-    const walk = (node: LayoutNode, side: Side | null): void => {
-        if (!('axis' in node)) {
-            // 主区自己不记方位：它不参与收起
-            if (node.id !== page.main) out.set(node.id, side ?? 'bottom');
-            return;
-        }
-        const mainIndex = node.children.findIndex((child) => holds(child, page.main));
-        if (mainIndex < 0) {
-            for (const child of node.children) walk(child, side);
-            return;
-        }
-        node.children.forEach((child, index) => {
-            if (index === mainIndex) {
-                walk(child, side);
-                return;
-            }
-            const derived: Side =
-                node.axis === 'x' ? (index < mainIndex ? 'left' : 'right') : index < mainIndex ? 'top' : 'bottom';
-            walk(child, side ?? derived);
-        });
-    };
-
-    walk(page.layout, null);
-    return out;
+export function collapsibleAreas(page: PageDef, hasViews: (areaId: string) => boolean): AreaDef[] {
+    return page.sides.filter((def) => hasViews(def.id));
 }
 
 /** 某页能给某个区域塞的 view，按声明顺序 */
 export function viewsIn(views: readonly ViewDef[], pageType: string, areaId: string): ViewDef[] {
     return views.filter((view) => view.placement[pageType]?.area === areaId);
-}
-
-/** 某页能放的 view（不管区域），用来算「这个区域是不是根本没内容」 */
-export function viewsOfPage(views: readonly ViewDef[], pageType: string): ViewDef[] {
-    return views.filter((view) => view.placement[pageType] !== undefined);
 }
 
 // ── 用户状态：只记「开合 / 形态 / 当前 tab / 拖过的尺寸」──────────────────────────
@@ -187,8 +177,8 @@ export function viewsOfPage(views: readonly ViewDef[], pageType: string): ViewDe
 
 /**
  * 区域收起后的**把手形态**（全局偏好，跨页共享）。它只回答「收起来长什么样」，
- * 不改变标题栏 —— 标题栏永远在，两种形态下行为一致：
- *   · `bar`   —— 不占位（空间让给别的区域，恢复靠标题栏按钮）；
+ * 不改变状态栏 —— 状态栏永远在，两种形态下行为一致：
+ *   · `bar`   —— 不占位（空间让给 center，恢复靠状态栏上的按钮）；
  *   · `strip` —— 留一条（竖条 / 横条，点条展开）。
  * 共用同一份 `collapsed`，所以随时可以切、状态不丢。
  */
@@ -224,7 +214,7 @@ export interface PageState {
     modes: Record<string, Mode>;
     /** tab 形态下每个区域选中的 view id */
     active: Record<string, string>;
-    /** 用户拖过的区域尺寸（px，沿父轴）。缺省用模板的 `size` */
+    /** 用户拖过的区域尺寸（px，沿相邻边界）。缺省用模板的 `size` */
     sizes: Record<string, number>;
 }
 
@@ -265,7 +255,7 @@ export function saveState(pageType: string, state: PageState, storage: Storage):
 /** 模板给的初始状态（没有任何用户偏好时） */
 export function initialState(page: PageDef): PageState {
     const collapsed: Record<string, true> = {};
-    for (const def of areasOf(page.layout)) {
+    for (const def of page.sides) {
         if (def.initial === 'collapsed') collapsed[def.id] = true;
     }
     return { collapsed, modes: {}, active: {}, sizes: {} };

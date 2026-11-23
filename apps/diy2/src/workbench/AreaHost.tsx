@@ -1,31 +1,36 @@
 // AreaHost.tsx —— 布局渲染器。**唯一的渲染逻辑**，而且它很短。
 //
-// 为什么这么短：这个模型的全部规则是「骨架固定 + area 可折叠成条 + area 内 view 换形态」。
+// 为什么这么短：这个模型的全部规则是「5 个固定槽位 + area 可折叠成条 + area 内 view 换形态」。
 //   · 没有拖拽换位 ⇒ 没有 reorder / 落点判定 / 快照兼容那一堆；
-//     只有沿模板已有边界的宽度伸缩（`Resizer`，它改不了骨架）
+//     只有沿槽位边界的尺寸伸缩（`Resizer`，它改不了骨架）
 //   · 没有关闭 ⇒ 不会出现「组被删、区域没了」（dockview 版那个死锁在这套模型里不可能发生）
-//   · 最大化只有一种：这一块吃掉整个骨架、其余让位（`Maximized`）；不是 floating，没有 z-index 战场
+//   · 最大化只有一种：这一块吃掉整个骨架、其余让位（`MaximizedArea`）；不是 floating，没有 z-index 战场
+//
+// 骨架就一条公式：
+//
+//     [  top   ]
+//     [left|center|right]
+//     [ bottom ]
+//
+// `center` 是**主区域**（必备、不参与收起）；四边是可收起的附件，没有就是没这块。
+// 区域的 `slot` 决定它落在哪格，**身份是 `id`（概念）而不是方位** —— 所以插 view 认 id，
+// 把 detail 从左侧挪到右侧时，view 的声明一行都不用改。
 //
 // 标题栏（`TitleBar`）**永远在**，是区域开合的唯一恢复入口：
-//   · 它整宽、**横跨导航**，两端放区域开关（只有图标，文字在 tooltip）。
+//   · 它整宽、**横跨导航**，两端放四边区域的开关（只有图标，文字在 tooltip）。
 //   · `chrome` 只决定**收起的区域长什么样**，不决定标题栏在不在：
-//       `bar`   → 收起 = 完全不占位（空间给别的区域）；
-//       `strip` → 收起 = 留一条（竖条 / 横条，方向随它所在的 row / column），点条即展开。
+//       `bar`   → 收起 = 完全不占位（空间给 center）；
+//       `strip` → 收起 = 留一条（竖条 / 横条，方向随槽位），点条即展开。
 //   两种形态只是同一只把手的两副样子，共用「谁收起了」，随时可切、状态不丢。
 //
 // 折叠条上：**单击 = 展开，双击 = 最大化**；最大化后那条 28px 的头**双击 = 还原**。
 //
-// **主区域不参与收起**：每页声明一个 `main`（`PageDef.main`），它是这一页的组织中心，
-// 收起它等于把这一页收没了。标题栏不给它按钮，strip 模式也不给它折叠按钮。
-// （最大化时它会临时让位 —— 那是用户明确要的「看这一块」，不是收起。）
-//
-// 渲染永远是「模板 → 区域 → 该区有哪些 view → 按形态摊开」这一条单向链，
+// 渲染永远是「模板 → 槽位 → 区域 → 该区有哪些 view → 按形态摊开」这一条单向链，
 // 宿主只额外记四样用户偏好：区域收起 / 形态 / tab 选中 / 谁被最大化。
 
 import { roomTitle, useRoomDialogsContext, useSelectedRoom } from '@diy-agent/entity-chat';
 import {
     createContext,
-    Fragment,
     useContext,
     useEffect,
     useMemo,
@@ -39,7 +44,9 @@ import {
 
 import {
     activeOf,
-    areasOf,
+    areaInSlot,
+    areaOf,
+    collapsibleAreas,
     initialState,
     loadChrome,
     loadState,
@@ -48,12 +55,10 @@ import {
     modesOf,
     saveChrome,
     saveState,
-    sidesOf,
     sizeOf as sizeOfDef,
     viewsIn,
     type AreaDef,
     type Chrome,
-    type LayoutNode,
     type Mode,
     type PageDef,
     type PageState,
@@ -64,10 +69,6 @@ import {
 /** 区域控制面：折叠 / 形态 / tab 选中（全部在区域自己身上，宿主只读不摆） */
 export interface WbApi {
     readonly page: PageDef;
-    /** 主区域 id：永远展开，不参与收起 */
-    readonly main: string;
-    /** 每个非主区 area 相对主区的方位（模板推导，标题栏据此分组） */
-    readonly sides: ReadonlyMap<string, Side>;
     /** 收起的表现形态（全局偏好；**不影响标题栏存不存在**） */
     readonly chrome: Chrome;
     setChrome: (chrome: Chrome) => void;
@@ -82,7 +83,7 @@ export interface WbApi {
     setMode: (areaId: string, mode: Mode) => void;
     activeOf: (areaId: string) => string | undefined;
     setActive: (areaId: string, viewId: string) => void;
-    /** 该区域能放几个 view（页外开关据此显示角标；0 = 这个页没有这块） */
+    /** 该区域能放几个 view（标题栏据此显示开关；0 = 这个页没有这块） */
     viewCountOf: (areaId: string) => number;
     /** 区域当前尺寸（拖过的优先，其次模板默认） */
     sizeOf: (areaId: string) => number | 'fr';
@@ -118,8 +119,8 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
         saveChrome(chrome, storage);
     }, [chrome, storage]);
 
-    const defs = useMemo(() => new Map(areasOf(page.layout).map((def) => [def.id, def])), [page.layout]);
-    const sides = useMemo(() => sidesOf(page), [page]);
+    // 区域清单来自模板（center + 四边），这里只建索引
+    const defs = useMemo(() => new Map(page.areas.map((def) => [def.id, def])), [page]);
 
     // 依赖只到「哪些 view 属于哪」这一层：render 函数本身不是状态
     const placementKey = useMemo(
@@ -131,8 +132,6 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
         const viewsOf = (areaId: string) => viewsIn(views, page.type, areaId);
         return {
             page,
-            main: page.main,
-            sides,
             chrome,
             setChrome,
             maximized: state.maximized ?? null,
@@ -193,7 +192,7 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
         };
         // placementKey 覆盖了 views 里真正被读到的部分
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [page, defs, sides, chrome, state, placementKey]);
+    }, [page, defs, chrome, state, placementKey]);
 }
 
 // ── 形态切换（只在「这个区域有多个 view」且「模板允许多种形态」时出现）────────────────
@@ -252,7 +251,7 @@ function TabLayout({ areaId, list }: { areaId: string; list: ViewDef[] }) {
                 </div>
                 <ModeSwitch areaId={areaId} />
             </div>
-            <div className="wb-body" role="tabpanel">
+            <div className="wb-area-body" role="tabpanel">
                 {active.render()}
             </div>
         </>
@@ -271,7 +270,7 @@ function AccordionLayout({ areaId, list }: { areaId: string; list: ViewDef[] }) 
                 <span className="wb-head-title">折叠 · {String(list.length)}</span>
                 <ModeSwitch areaId={areaId} />
             </div>
-            <div className="wb-body wb-acc">
+            <div className="wb-area-body wb-acc">
                 {list.map((view) => {
                     const on = open[view.id] === true;
                     return (
@@ -305,7 +304,7 @@ function GridLayout({ areaId, list }: { areaId: string; list: ViewDef[] }) {
                 <span className="wb-head-title">格子 · {String(list.length)}</span>
                 <ModeSwitch areaId={areaId} />
             </div>
-            <div className="wb-body wb-grid">
+            <div className="wb-area-body wb-grid">
                 {list.map((view) => (
                     <section key={view.id} className="wb-cell">
                         <div className="wb-cell-title">{view.title}</div>
@@ -322,7 +321,7 @@ function GridLayout({ areaId, list }: { areaId: string; list: ViewDef[] }) {
 // 全用 SVG 而不靠字符：几何块 U+25A4… 这类字形在不同字体里宽窄不一，
 // 而标题栏是 28px 高的一条，差 1px 就会显得歪。
 
-/** 区域图标：外框 + **指针位置的高亮块**。方位从模板推（`sidesOf`），不手写图标表 */
+/** 区域图标：外框 + **该方位上的高亮块**。只有四边有图标 —— center 不进标题栏 */
 function AreaGlyph({ side }: { side: Side }) {
     const inner =
         side === 'left'
@@ -391,7 +390,7 @@ function GearGlyph() {
     );
 }
 
-// ── 边界手柄（拖宽度，不动骨架）─────────────────────────────────────────────
+// ── 边界手柄（拖尺寸，不动骨架）───────────────────────────────────────────────
 
 /** 手柄作为 flex 项的宽度（px）：可见的线就这 1px，命中区靠 CSS 的 ::after 向两侧溢出到 5px */
 const HANDLE = 1;
@@ -403,39 +402,50 @@ const FALLBACK_MIN = 120;
 const NEIGHBOR_KEEP = 160;
 
 /**
- * 相邻两个子项之间的边界手柄。
+ * 槽位边界手柄。**每条边界最多调一侧**，而且必须是「模板给了固定 px 的那一侧」：
  *
- * 拖的**不是骨架**：只让「模板给了固定 px 的那一侧」沿这条边变宽变窄，相邻的 `fr` 自动让位。
- * 两侧都是 `fr` 或都是子树 → 不渲染手柄，因为「拖了该改谁」没有正确答案。
+ *   · left | center 之间 → 只调 left；center | right 之间 → 只调 right；
+ *   · top / mid 之间 → 只调 top；mid / bottom 之间 → 只调 bottom。
+ *
+ * center 自己永不调（它是 `fr`，占剩余）；四边是 `fr` 时也不给手柄 ——
+ * 两个 `fr` 之间「拖了该改谁」没有正确答案，而骨架固定本来就是这套模型的意思。
+ *
+ * `sign` = 拖动方向与尺寸变化的关系：+1 = 往右/下拖变大，-1 = 反过来。
  *
  * 拖动过程直接改 DOM 的 `flex`、松手才提交 state：中间每帧走 React 重渲染会把
  * 整页（含对话虚拟列表）拖到掉帧。
  */
-function Resizer({ axis, prev, next }: { axis: 'x' | 'y'; prev: LayoutNode; next: LayoutNode }) {
+function Resizer({ axis, target, sign }: { axis: 'x' | 'y'; target: AreaDef; sign: 1 | -1 }) {
     const api = useWb();
-
-    const prevDef = 'axis' in prev ? null : prev;
-    const nextDef = 'axis' in next ? null : next;
-    const prevFixed = prevDef !== null && api.sizeOf(prevDef.id) !== 'fr';
-    const nextFixed = nextDef !== null && api.sizeOf(nextDef.id) !== 'fr';
-
-    // 优先调前一个（拖右边界改左边那块，最直觉）；前一个是 fr 才调后一个
-    const target = prevFixed ? prevDef : nextFixed ? nextDef : null;
-    if (target === null) return null;
-    const sign = prevFixed ? 1 : -1;
 
     const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
         const handle = event.currentTarget;
         const parent = handle.parentElement;
         const from = api.sizeOf(target.id);
-        const areaEl = parent?.querySelector<HTMLElement>(`[data-area="${target.id}"]`);
-        if (parent === null || areaEl === null || areaEl === undefined || from === 'fr') return;
+        if (parent === null || from === 'fr') return;
+        const areaEl = parent.querySelector<HTMLElement>(`[data-area="${target.id}"]`);
+        if (areaEl === null) return;
 
+        // 邻居 = 边界另一侧那块（target 自己占的那侧不算）。上限按**邻居实测尺寸**算：
+        // 用父容器 span 会把「这条边以外的第三块」也算进可让空间里，拖到底会突然跳一步。
+        const prevEl = handle.previousElementSibling as HTMLElement | null;
+        const neighborEl = (
+            prevEl?.dataset.area === target.id ? handle.nextElementSibling : prevEl
+        ) as HTMLElement | null;
+        const neighborBox = neighborEl?.getBoundingClientRect();
         const box = parent.getBoundingClientRect();
+
         const origin = axis === 'x' ? event.clientX : event.clientY;
-        const span = axis === 'x' ? box.width : box.height;
-        const min = target.min ?? FALLBACK_MIN;
-        const max = Math.max(min, span - NEIGHBOR_KEEP);
+        const neighborSpan =
+            neighborBox === undefined
+                ? axis === 'x'
+                    ? box.width
+                    : box.height
+                : axis === 'x'
+                  ? neighborBox.width
+                  : neighborBox.height;
+        const min = Math.min(target.min ?? FALLBACK_MIN, Math.round(from));
+        const max = Math.max(min, Math.round(from) + Math.max(0, Math.round(neighborSpan) - NEIGHBOR_KEEP));
         let last = Math.round(from);
 
         event.preventDefault();
@@ -467,7 +477,7 @@ function Resizer({ axis, prev, next }: { axis: 'x' | 'y'; prev: LayoutNode; next
             style={{ flex: `0 0 ${String(HANDLE)}px` }}
             role="separator"
             aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
-            title="拖动调整宽度（双击复位）"
+            title="拖动调整尺寸（双击复位）"
             onPointerDown={onPointerDown}
             onDoubleClick={() => {
                 api.resetSize(target.id);
@@ -476,16 +486,22 @@ function Resizer({ axis, prev, next }: { axis: 'x' | 'y'; prev: LayoutNode; next
     );
 }
 
-// ── 区域 → 树 ─────────────────────────────────────────────────────────────────
+// ── 区域 → 骨架 ────────────────────────────────────────────────────────────────
 
-/** 折叠条沿父轴的厚度（px）。够容下竖排文字的两三个字，又不至于占掉相当于一块内容 */
+/** 折叠条沿伸缩轴的厚度（px）。够容下竖排文字的两三个字，又不至于占掉相当于一块内容 */
 const FOLD_THICKNESS = 28;
 
+/** 区域的伸缩轴：上下边是 y，左右边与中心是 x */
+function axisOf(def: AreaDef): 'x' | 'y' {
+    return def.slot === 'top' || def.slot === 'bottom' ? 'y' : 'x';
+}
+
 /**
- * 折叠按钮：**每个区域右上角都有一个**，收成一条 / 展开回来。
+ * 折叠按钮：**四边的区域右上角各有一个**，收成一条 / 展开回来。
  *
  * 位置是 absolute（不占内容空间）。多 view 区域的 head 右侧预留了 `padding-right`，
  * 按钮正好落在 head 的空白处；单 view 区域没有 head，按钮浮在内容右上角（hover 显现）。
+ * center 没有这个按钮：它不参与收起。
  */
 function FoldToggle({ def, axis }: { def: AreaDef; axis: 'x' | 'y' }) {
     const api = useWb();
@@ -507,8 +523,8 @@ function FoldToggle({ def, axis }: { def: AreaDef; axis: 'x' | 'y' }) {
 }
 
 /**
- * 折叠后的样子：一条。横竖由**它所在的容器**决定 ——
- * 在 row 里就收成竖条（窄、满高），在 col 里就收成横条（矮、满宽）。
+ * 折叠后的样子：一条。横竖由**它所在的槽位**决定 ——
+ * 左右边收成竖条（窄、满高），上下边收成横条（矮、满宽）。
  *
  * 整条就是按钮（不只是箭头）：28px 宽的东西里再分命中区没有意义。
  *
@@ -570,7 +586,7 @@ function FoldedArea({ def, axis }: { def: AreaDef; axis: 'x' | 'y' }) {
 function AreaContent({ areaId, list }: { areaId: string; list: ViewDef[] }) {
     const api = useWb();
     // 单 view：不画头部（一个 tab 的 tab 条是噪音），也谈不上形态
-    if (list.length === 1) return <div className="wb-body">{list[0]!.render()}</div>;
+    if (list.length === 1) return <div className="wb-area-body">{list[0]!.render()}</div>;
     const mode = api.modeOf(areaId);
     if (mode === 'accordion') return <AccordionLayout areaId={areaId} list={list} />;
     if (mode === 'grid') return <GridLayout areaId={areaId} list={list} />;
@@ -578,7 +594,7 @@ function AreaContent({ areaId, list }: { areaId: string; list: ViewDef[] }) {
 }
 
 /**
- * 最大化：这一块吃掉整个**骨架**（含主区，用户明确要看这一块），其余全让位。
+ * 最大化：这一块吃掉整个**骨架**（含 center，用户明确要看这一块），其余全让位。
  *
  * 它不是浮层：没有 overlay、没有 z-index 战场 —— 仍然住在骨架的位置上，
  * 只是兄弟都不渲染。顶部一条 28px 的头就是**还原入口**：双击它、或点右边的按钮。
@@ -615,72 +631,109 @@ function MaximizedArea({ def, views }: { def: AreaDef; views: readonly ViewDef[]
     );
 }
 
-function AreaView({ def, views, parentAxis }: { def: AreaDef; views: readonly ViewDef[]; parentAxis: 'x' | 'y' }) {
+/**
+ * 一个槽位上的区域。`def` 可能不存在（模板没给这个槽位）或没内容（这一页没给它 view）——
+ * 两种都不渲染，也不占位。
+ */
+function AreaView({ def, views }: { def: AreaDef | undefined; views: readonly ViewDef[] }) {
     const api = useWb();
-    const open = api.isOpen(def.id);
-    const list = useMemo(() => viewsIn(views, api.page.type, def.id), [views, api.page.type, def.id]);
+    const list = useMemo(
+        () => (def === undefined ? [] : viewsIn(views, api.page.type, def.id)),
+        [views, api.page.type, def],
+    );
 
-    // 这个页没东西可放 → 不渲染（不是「收起」：连骨架里的位置都没有）
-    if (list.length === 0) return null;
+    if (def === undefined || list.length === 0) return null;
 
-    // 主区永远展开：收起它这一页就没了，所以它既不在标题栏里、也没有折叠按钮
-    const isMain = def.id === api.main;
+    const axis = axisOf(def);
+    const isMain = def.slot === 'center';
     const bar = api.chrome === 'bar';
 
-    if (!open && !isMain) {
-        // bar：整块不占位（空间给别的区域），恢复入口在标题栏 —— 标题栏永远在，不可能找不回来
+    if (!isMain && !api.isOpen(def.id)) {
+        // bar：整块不占位（空间给 center），恢复入口在标题栏 —— 标题栏永远在，不可能找不回来
         // strip：收成一条，位置还在，点条展开（双击最大化）
-        return bar ? null : <FoldedArea def={def} axis={parentAxis} />;
+        return bar ? null : <FoldedArea def={def} axis={axis} />;
     }
 
     // 尺寸：fr 分剩余、px 固定。px 的那几条边可以拖（`Resizer`），拖过的值存在 PageState.sizes
     const size = api.sizeOf(def.id);
     const style: CSSProperties = size === 'fr' ? { flex: '1 1 0px' } : { flex: `0 0 ${String(size)}px` };
     if (def.min !== undefined) {
-        if (parentAxis === 'x') style.minWidth = def.min;
+        if (axis === 'x') style.minWidth = def.min;
         else style.minHeight = def.min;
     }
 
     // 折叠按钮只在 strip 模式下有：bar 模式的收起动作归标题栏，区域自己不再放第二个入口
-    const foldBtn = !isMain && !bar ? <FoldToggle def={def} axis={parentAxis} /> : null;
-    const mark = isMain ? 'true' : undefined;
+    const foldBtn = !isMain && !bar ? <FoldToggle def={def} axis={axis} /> : null;
     const mode = list.length === 1 ? undefined : api.modeOf(def.id);
 
     return (
-        <div className="wb-area" style={style} data-area={def.id} data-mode={mode} data-main={mark}>
+        <div
+            className="wb-area"
+            style={style}
+            data-area={def.id}
+            data-mode={mode}
+            data-main={isMain ? 'true' : undefined}
+        >
             <AreaContent areaId={def.id} list={list} />
             {foldBtn}
         </div>
     );
 }
 
-function NodeView({ node, views, parentAxis }: { node: LayoutNode; views: readonly ViewDef[]; parentAxis: 'x' | 'y' }) {
-    if ('axis' in node) {
-        const children = node.children;
-        return (
-            <div className={node.axis === 'x' ? 'wb-split-x' : 'wb-split-y'}>
-                {children.map((child, index) => (
-                    <Fragment key={'axis' in child ? `split-${String(index)}` : child.id}>
-                        {index > 0 && <Resizer axis={node.axis} prev={children[index - 1] ?? child} next={child} />}
-                        <NodeView node={child} views={views} parentAxis={node.axis} />
-                    </Fragment>
-                ))}
+/**
+ * 骨架本体 = 5 个固定槽位拼出来的三行。
+ *
+ * 手柄与区域**同层插入**（拖动的实质是改同层兄弟的 flex），所以顺序必须是
+ * `区域 → 手柄 → 区域`；`Resizer` 靠 `previousElementSibling` 找邻居，见它自己的注释。
+ */
+function Skeleton({ api, views }: { api: WbApi; views: readonly ViewDef[] }) {
+    const page = api.page;
+    const maxDef = api.maximized === null ? undefined : areaOf(page, api.maximized);
+
+    // 最大化时只渲染那一块：它的头就是还原入口，所以其余全让位是安全的
+    if (maxDef !== undefined) return <MaximizedArea def={maxDef} views={views} />;
+
+    const top = areaInSlot(page, 'top');
+    const bottom = areaInSlot(page, 'bottom');
+    const left = areaInSlot(page, 'left');
+    const right = areaInSlot(page, 'right');
+
+    // 手柄只在「这块真有内容 + 展开着 + 尺寸是固定 px」时才画：
+    // fr 的一侧与 center 分剩余空间，拖它改谁没有正确答案（比例就是模板的意思）。
+    const draggable = (def: AreaDef | undefined): def is AreaDef =>
+        def !== undefined &&
+        def.slot !== 'center' &&
+        api.viewCountOf(def.id) > 0 &&
+        api.isOpen(def.id) &&
+        api.sizeOf(def.id) !== 'fr';
+
+    return (
+        <div className="wb-skel">
+            <AreaView def={top} views={views} />
+            {draggable(top) && <Resizer axis="y" target={top} sign={1} />}
+            <div className="wb-mid">
+                <AreaView def={left} views={views} />
+                {draggable(left) && <Resizer axis="x" target={left} sign={1} />}
+                <AreaView def={page.center} views={views} />
+                {draggable(right) && <Resizer axis="x" target={right} sign={-1} />}
+                <AreaView def={right} views={views} />
             </div>
-        );
-    }
-    return <AreaView def={node} views={views} parentAxis={parentAxis} />;
+            {draggable(bottom) && <Resizer axis="y" target={bottom} sign={-1} />}
+            <AreaView def={bottom} views={views} />
+        </div>
+    );
 }
 
 // ── 标题栏 ────────────────────────────────────────────────────────────────────
 //
 // 整页最顶一条，**图标化**（文字全进 tooltip）：
-//   左：[导航] + 主区左侧 / 上方的区域
+//   左：[导航] + 左 / 上方的区域
 //   中：房间名（这条件里唯一的文字）
-//   右：主区右侧 / 下方的区域 │ [设置] │ [换成折叠条]
+//   右：右 / 下方的区域 │ [设置] │ [换成折叠条]
 //
-// **layout 图标贴两端、功能按钮用竖线隔开**：两者性质不同 —— 一个回答「页面怎么摆」，
-// 一个回答「应用能干什么」。分组不手写：方位从模板推（`sidesOf`），挪了模板里的区域，
-// 按钮自动跟着换边。
+// **区域按钮贴两端、功能按钮用竖线隔开**：两者性质不同 —— 一个回答「页面怎么摆」，
+// 一个回答「应用能干什么」。分组不手写：方位从模板的 `slot` 推，把区域挪到别的边，
+// 按钮自动跟着换端。
 
 /** 导航开关（全局层，由壳持有；标题栏左端放它的按钮） */
 export interface NavState {
@@ -714,22 +767,17 @@ function TbIconButton({
     );
 }
 
-function TbAreaButton({
-    def,
-    side,
-    open,
-    onToggle,
-}: {
-    def: AreaDef;
-    side: Side;
-    open: boolean;
-    onToggle: () => void;
-}) {
+function TbAreaButton({ def, open, onToggle }: { def: AreaDef & { slot: Side }; open: boolean; onToggle: () => void }) {
     return (
         <TbIconButton on={open} label={`${open ? '收起' : '展开'}「${def.title}」`} onClick={onToggle}>
-            <AreaGlyph side={side} />
+            <AreaGlyph side={def.slot} />
         </TbIconButton>
     );
+}
+
+/** 四边区域才可能出现在标题栏上（center 不参与收起，所以永远没有按钮） */
+function isSide(def: AreaDef): def is AreaDef & { slot: Side } {
+    return def.slot !== 'center';
 }
 
 /**
@@ -738,9 +786,9 @@ function TbAreaButton({
  * 名字对齐 VS Code 的 `PART_TITLEBAR` / Theia 的 `ApplicationShell.TOP`：那边放的是
  * 「不属于任何一个编辑器组、但指挥整个窗口」的东西（菜单、命令中心、窗口控件）。
  * 这里放：
- *   左：应用名 + 导航开关 + 主区左侧的区域
+ *   左：应用名 + 导航开关 + 左 / 上方的区域
  *   中：页名 · 房间名（面包屑）
- *   右：主区右侧 / 下方的区域 + 全局工具 + 表现方式切换
+ *   右：右 / 下方的区域 + 全局工具 + 表现方式切换
  *
  * **为什么它横跨导航**：它指挥的包括导航本身（左端就有导航开关），
  * 一条要管住所有区域的横条不能住在其中一个区域里面。
@@ -754,24 +802,22 @@ export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
     const room = useSelectedRoom();
     const strip = api?.chrome === 'strip';
 
-    // 只列「这个页真有内容」的区域：项目页没有 assets，就不该有它的按钮
+    // 只列「这个页真有内容」的四边区域：项目页没有 assets，就不该有它的按钮。
+    // 判据一律是**概念 id**，不是方位 —— 方位只决定它出现在左端还是右端。
     const items = useMemo(() => {
         if (!api) return [];
-        return areasOf(api.page.layout)
-            .filter((def) => def.id !== api.main && api.viewCountOf(def.id) > 0)
-            .map((def) => ({ def, side: api.sides.get(def.id) ?? 'bottom' }));
+        return collapsibleAreas(api.page, (areaId) => api.viewCountOf(areaId) > 0).filter(isSide);
     }, [api]);
-    const left = items.filter((item) => item.side === 'left' || item.side === 'top');
-    const right = items.filter((item) => item.side === 'right' || item.side === 'bottom');
+    const left = items.filter((def) => def.slot === 'left' || def.slot === 'top');
+    const right = items.filter((def) => def.slot === 'right' || def.slot === 'bottom');
 
-    const renderItem = (item: { def: AreaDef; side: Side }) => (
+    const renderItem = (def: AreaDef & { slot: Side }) => (
         <TbAreaButton
-            key={item.def.id}
-            def={item.def}
-            side={item.side}
-            open={api?.isOpen(item.def.id) ?? false}
+            key={def.id}
+            def={def}
+            open={api?.isOpen(def.id) ?? false}
             onToggle={() => {
-                api?.toggleArea(item.def.id);
+                api?.toggleArea(def.id);
             }}
         />
     );
@@ -840,22 +886,12 @@ export function Workbench({
     nav: NavState;
     navRail: ReactNode;
 }) {
-    // 最大化时只渲染那一块：它的头就是还原入口，所以其余全让位是安全的
-    const maxDef =
-        api.maximized === null ? undefined : areasOf(api.page.layout).find((def) => def.id === api.maximized);
-
     return (
         <Ctx.Provider value={api}>
             <TitleBar nav={nav} api={api} />
             <div className="wb-body">
                 {navRail}
-                <div className="wb-skeleton">
-                    {maxDef === undefined ? (
-                        <NodeView node={api.page.layout} views={views} parentAxis="x" />
-                    ) : (
-                        <MaximizedArea def={maxDef} views={views} />
-                    )}
-                </div>
+                <Skeleton api={api} views={views} />
             </div>
         </Ctx.Provider>
     );

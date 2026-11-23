@@ -1,7 +1,10 @@
 // pages.tsx —— 两个页模板 + 全部视图（**宿主侧装配**）。
 //
 // 这里只有**内容区**：导航不进模板 —— 它是全局层（跨页类型共享宽度与收起），住在
-// App.tsx 的壳里。页模板回答的是「这一页除了导航还有什么、各自在哪、多宽」。
+// App.tsx 的壳里。页模板回答的是「这一页除了导航还有什么、各自在哪、多大」。
+//
+// 区域一律用**概念 id** 声明（`conversation` / `detail` / `assets` / `diag`），`slot` 只说位置。
+// 所以「把详情从左侧挪到右侧」= 改一个 `slot`，插在 `detail` 里的 view 一行都不用动。
 //
 // 两页的差别只有一处：任务页多一个「资产」区（这一轮聊出来的东西）。
 // 这足够说明「骨架按页类型定」—— 同一个区域 id 在别的页里可能根本不存在（assets 在
@@ -10,32 +13,38 @@
 import { EntityChatApp, TaskPanel, useSelectedRoom, type Room } from '@diy-agent/entity-chat';
 
 import { useWb } from './AreaHost';
-import { area, col, definePage, defineView, row, type PageDef } from './model';
+import { area, definePage, defineView, type PageDef } from './model';
 
 // ── 页模板：位置写死，尺寸可拖 ───────────────────────────────────────────────────
 //
 // `modes: ['tab']` = 这个区域锁定标签页（不给切换按钮）；不写 = 三种形态都允许。
-// 现在只有 bottom 有多个 view，所以只有它会真的出现形态按钮 —— 其余区域单 view
+// 现在只有 diag 有多个 view，所以只有它会真的出现形态按钮 —— 其余区域单 view
 // 连头部都不画（一个 tab 的 tab 条是纯噪音）。
 
-const detail = (title: string) => area('detail', { title, size: 320, min: 240 });
-const center = () => area('center', { title: '对话', size: 'fr', min: 420 });
-const assets = () => area('assets', { title: '资产', size: 320, min: 240, initial: 'collapsed' });
-const bottom = () => area('bottom', { title: '诊断', size: 200, min: 120, initial: 'collapsed' });
-export const taskPage = definePage({
+/** 中心 = 主区域：每页必备，名字是这一页围绕什么组织（这里是对话） */
+const conversation = () => area('conversation', { slot: 'center', title: '对话', size: 'fr', min: 420 });
+
+const taskPage = definePage({
     type: 'task',
     title: '任务',
-    // 主区 = 对话：这一页围绕它组织，它永远展开，其余三块都是它的「附件」
-    main: 'center',
-    layout: col(row(detail('任务详情'), center(), assets()), bottom()),
+    center: conversation(),
+    // 三块附件：详情（左）/ 资产（右）/ 诊断（下）
+    sides: [
+        area('detail', { slot: 'left', title: '任务详情', size: 320, min: 240 }),
+        area('assets', { slot: 'right', title: '资产', size: 320, min: 240, initial: 'collapsed' }),
+        area('diag', { slot: 'bottom', title: '诊断', size: 200, min: 120, initial: 'collapsed' }),
+    ],
 });
 
 export const projectPage = definePage({
     type: 'project',
     title: '项目',
-    main: 'center',
+    center: conversation(),
     // 项目页没有 assets：项目没有「这一轮聊出来的东西」这层
-    layout: col(row(detail('项目信息'), center()), bottom()),
+    sides: [
+        area('detail', { slot: 'left', title: '项目信息', size: 320, min: 240 }),
+        area('diag', { slot: 'bottom', title: '诊断', size: 200, min: 120, initial: 'collapsed' }),
+    ],
 });
 
 /** 房间类型 → 页模板。**唯一一处**这个判断，别在别处再抄一份 */
@@ -145,7 +154,19 @@ function DiagArea() {
                     <code>workbench:{api.page.type}</code>
                 </dd>
                 <dt>骨架</dt>
-                <dd>模板写死（见 src/workbench/pages.tsx）</dd>
+                <dd>5 个固定槽位（center + 四边），见 src/workbench/pages.tsx</dd>
+            </dl>
+            <div className="wb-info-title">区域（概念 id @ 槽位）</div>
+            <dl className="wb-kv">
+                {api.page.areas.map((def) => (
+                    <div key={def.id} className="wb-info-row">
+                        <dt>
+                            <code>{def.id}</code>
+                            {def.slot === 'center' ? ' · 主区域' : ''}
+                        </dt>
+                        <dd>{def.slot}</dd>
+                    </div>
+                ))}
             </dl>
             <p className="wb-dim">
                 区域的开合、形态、选中的 tab、拖过的尺寸存在上面那个键里；<b>位置</b>不在 —— 骨架在模板里写死。
@@ -161,19 +182,23 @@ function GuideArea() {
             <div className="wb-info-title">这套工作台的规则</div>
             <ul className="wb-rules">
                 <li>
-                    <b>区域位置写死</b>：不能拖换位置、不能分、不能浮动。
-                    尺寸只能沿着模板已经给出的边界拖宽窄（双击复位）。
+                    <b>骨架固定 5 个槽位</b>：center + 上下左右。不能拖换位置、不能分、不能浮动。
+                    尺寸只能沿着槽位边界拖（双击复位）。
+                </li>
+                <li>
+                    <b>center 就是主区域</b>：每页必备、永远展开、不参与收起 —— 收起它等于把这一页收没了。
+                    四边放的都是它的附件。
+                </li>
+                <li>
+                    <b>区域的身份是概念 id，不是方位</b>：插 view / 接插件一律按 id（<code>detail</code>、
+                    <code>assets</code>…），不按 <code>left</code> 这样的位置 —— 位置会变，概念不会。
                 </li>
                 <li>
                     <b>视图不可关闭、不可搬</b>：它声明自己在哪个区域的哪，就只在那儿。
                 </li>
                 <li>
-                    <b>只有区域能收起，两种表现方式</b>：顶部标题栏两端放区域图标（整宽横跨导航，
-                    因为管着所有区域），按一下显示 / 收起（收起 = 不占位，空间给主区）； 也可以换成「折叠成一条」——
-                    标题栏整个不画，区域自己收成竖条 / 横条，位置还在，右下角浮钮换回来。
-                </li>
-                <li>
-                    <b>每页有一个主区域</b>（这一页是「对话」）：它永远展开、不参与收起 —— 收起主区等于把这一页收没了。
+                    <b>只有四边能收起，两种表现方式</b>：标题栏两端放区域图标（收起 = 不占位，空间给 center）；
+                    也可以换成「折叠成一条」—— 区域自己收成竖条 / 横条，位置还在。
                 </li>
                 <li>
                     <b>区域里多个视图时，摆法可配</b>：标签页 / 折叠 / 格子，只换摊开方式，不动骨架。
@@ -198,7 +223,7 @@ export const wbViews = [
     defineView({
         id: 'chat',
         title: '对话',
-        placement: { task: { area: 'center' }, project: { area: 'center' } },
+        placement: { task: { area: 'conversation' }, project: { area: 'conversation' } },
         render: () => <ChatBody />,
     }),
     defineView({
@@ -210,13 +235,13 @@ export const wbViews = [
     defineView({
         id: 'diag',
         title: '诊断',
-        placement: { task: { area: 'bottom' }, project: { area: 'bottom' } },
+        placement: { task: { area: 'diag' }, project: { area: 'diag' } },
         render: () => <DiagArea />,
     }),
     defineView({
         id: 'guide',
         title: '规则',
-        placement: { task: { area: 'bottom' }, project: { area: 'bottom' } },
+        placement: { task: { area: 'diag' }, project: { area: 'diag' } },
         render: () => <GuideArea />,
     }),
 ];
