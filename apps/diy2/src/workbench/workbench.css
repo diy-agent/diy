@@ -202,72 +202,121 @@ body.wb-resizing-y * {
     pointer-events: none;
 }
 
-/* ── 区域头部 ─────────────────────────────────────────────────────────────── */
-
-.wb-head {
+/* ── 区域头部（每个区域都有；折叠后的条与它同色同厚）───────────────────────────
+ *
+ * 它是区域的**唯一操作面**：单击折叠 / 展开（center 不可收），双击最大化 / 还原。
+ * 背景 `--wb-bg-2`、高度 28px —— 与折叠条、最大化头、窗口标题栏同一个数，
+ * 所以同一块区域在「展开中」与「收起后」看起来就是同一条被压扁了。
+ * 2026-11-23 用户裁：每个 area 都带这一条，操作全在 bar 上，不再另配右上角的折叠按钮。
+ */
+.wb-area-bar {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 30px;
-    /* 右侧 30px 是给折叠按钮的位置（它 absolute 在右上角），否则会压住形态按钮 */
-    padding: 0 30px 0 6px;
+    height: 28px;
+    padding: 0 3px 0 8px;
     background: var(--wb-bg-2);
     border-bottom: 1px solid var(--wb-line);
+    font-size: 11.5px;
+    color: var(--wb-fg-2);
+    user-select: none;
 }
 
-.wb-head-title {
-    flex: 1;
-    font-size: 11.5px;
+/* 可收起的区域：整条都是命中面，光标告知「这一条能点」 */
+.wb-area-bar[data-foldable] {
+    cursor: pointer;
+}
+
+/* 区域名：一直显示 —— 单 view 时它就是这一行的全部信息，多 view 时它是 tab 条的锚 */
+.wb-area-name {
+    flex: 0 0 auto;
+    max-width: 40%;
+    overflow: hidden;
     color: var(--wb-dim);
     letter-spacing: 0.02em;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
 
-/* tab 形态的头部：左边一排 tab，右边形态按钮 */
-.wb-head-tabs {
-    padding: 0 30px 0 4px;
+/* 非 tab 形态的标注（「折叠 · 3」「格子 · 3」）：tabs 的替身，占掉中间那段 */
+.wb-bar-note {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--wb-dim);
+    opacity: 0.75;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
 
-/* ── 折叠按钮（每个区域右上角）───────────────────────────────────────────────
- *
- * 位置是 absolute：不占内容空间，也不会因为内容区滚动而跑掉。
- * 默认透明 —— 平时不打扰，鼠标进到区域里才浮现（头部的按钮除外，见 `.is-head`）。
- */
-.wb-fold-btn {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    z-index: 6;
-    width: 20px;
-    height: 20px;
+/* 右端的 `⋯`：只换摆法、不动骨架。默认半透明，hover / 打开时才亮出来 */
+.wb-area-menu {
+    flex: 0 0 auto;
     display: grid;
     place-items: center;
+    width: 22px;
+    height: 20px;
     padding: 0;
-    font-size: 10px;
+    font-size: 14px;
     line-height: 1;
     color: var(--wb-dim);
-    background: var(--wb-bg-2);
-    border: 1px solid transparent;
+    background: transparent;
+    border: 0;
     border-radius: 4px;
     cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.12s ease;
+    opacity: 0.55;
 }
 
-.wb-area:hover > .wb-fold-btn,
-.wb-fold-btn:focus-visible {
+.wb-area-bar:hover > .wb-area-menu,
+.wb-area-menu:focus-visible,
+.wb-area-menu.on {
     opacity: 1;
 }
 
-.wb-fold-btn:hover {
+.wb-area-menu:hover {
     color: var(--wb-fg);
     background: var(--wb-tint-strong);
-    border-color: var(--wb-line-2);
 }
 
-/* 头部区域的按钮站在 head 的留白里：head 本来就是底色，不需要再补边框 */
-.wb-area[data-mode] > .wb-fold-btn {
-    border-color: var(--wb-line-2);
+/* 形态菜单：portal 到 body、fixed 定位 ——
+ * 区域是 `overflow: hidden` 的，菜单若留在里面，「格子」那种矮区域会把它裁掉半截。
+ */
+.wb-menu {
+    position: fixed;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 4px;
+    background: #161b22;
+    border: 1px solid var(--wb-line-2);
+    border-radius: 7px;
+    box-shadow: 0 8px 24px #00000066;
+    font-size: 12px;
+}
+
+.wb-menu button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    text-align: left;
+    color: var(--wb-fg-2);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.wb-menu button:hover {
+    color: var(--wb-fg);
+    background: var(--wb-tint);
+}
+
+.wb-menu button.on {
+    color: var(--wb-accent-fg);
+    background: var(--wb-accent-soft);
 }
 
 /* ── 折叠后的条 ────────────────────────────────────────
@@ -306,12 +355,8 @@ body.wb-resizing-y * {
     background: #182029;
 }
 
-.wb-fold-arrow {
-    font-size: 9px;
-    opacity: 0.8;
-}
-
-/* 竖条：箭头在上、文字竖排（中文字符自己就是竖的，不需要 text-orientation: upright）*/
+/* 竖条：文字竖排（中文字符自己就是竖的，不需要 text-orientation: upright）。
+ * 没有箭头图标 —— 条本身就是按钮（单击展开 / 双击最大化）*/
 .wb-folded-x .wb-fold-strip {
     flex-direction: column;
 }
@@ -373,40 +418,6 @@ body.wb-resizing-y * {
     color: var(--wb-fg);
     background: var(--wb-accent-soft);
     box-shadow: inset 0 0 0 1px var(--wb-accent-line);
-}
-
-/* 形态切换：三个小图标，只换摆法不动骨架 */
-.wb-modes {
-    flex: 0 0 auto;
-    display: flex;
-    gap: 1px;
-    padding: 1px;
-    background: #0b0f14;
-    border: 1px solid var(--wb-line);
-    border-radius: 6px;
-}
-
-.wb-modes button {
-    width: 22px;
-    height: 19px;
-    display: grid;
-    place-items: center;
-    font-size: 11px;
-    line-height: 1;
-    color: var(--wb-dim);
-    background: transparent;
-    border: 0;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-.wb-modes button:hover {
-    color: var(--wb-fg);
-}
-
-.wb-modes button[aria-pressed='true'] {
-    color: var(--wb-accent-fg);
-    background: var(--wb-accent-soft);
 }
 
 /* ── 折叠形态 ─────────────────────────────────────────────────────────────── */
@@ -745,7 +756,8 @@ body.wb-resizing-y * {
     background: var(--wb-bg-2);
     color: var(--wb-dim);
     font-size: 11.5px;
-    cursor: default;
+    /* 条本身就是还原按钮（单击 / 双击都还原），不再另配一颗圆圈按钮 */
+    cursor: pointer;
     user-select: none;
 }
 
@@ -757,29 +769,6 @@ body.wb-resizing-y * {
 .wb-max-hint {
     color: var(--wb-dim-2, var(--wb-dim));
     opacity: 0.7;
-}
-
-.wb-max-exit {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--wb-dim);
-    font-size: 10px;
-    line-height: 1;
-    cursor: pointer;
-}
-
-.wb-max-exit:hover {
-    color: var(--wb-fg);
-    background: var(--wb-tint-strong);
-    border-color: var(--wb-line-2);
 }
 
 .wb-tb-sep {

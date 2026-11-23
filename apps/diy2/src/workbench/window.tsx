@@ -13,11 +13,12 @@
 //
 // 布局固定为三组，各组内的顺序 = **贡献注册顺序**：
 //
-//     [ 左端：leading 按钮 │ left/top 区域 ]  [ 中间：文字 ]  [ 右端：right/bottom 区域 │ tools │ 把手形态 ]
+//     [ 左端：leading 按钮 ]  [ 中间：文字 ]  [ 右端：区域按钮 │ tools │ 把手形态 ]
 //
-// 区域按钮贴两端、工具按钮用竖线隔开：一个回答「页面怎么摆」，一个回答「应用能干什么」。
-// 方位（`side`）只决定按钮落在左端还是右端 —— 把「详情」从左侧挪到右侧，注册的贡献
-// 一个字都不用改（它声明的仍是自己的方位，window 自己会去对的一端）。
+// **所有区域按钮都在右端**（2026-11-23 用户裁：分两端放「麻烦得很」）：左边只留应用级
+// 入口（导航开关），区域一眼可数、不必到两端去找。方位（`side`）因此只剩一个用处 ——
+// **画图标**（高亮块画在哪一边），不再决定按钮落在哪端。
+// 区域按钮与工具按钮之间用竖线隔开：一个回答「页面怎么摆」，一个回答「应用能干什么」。
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
@@ -30,7 +31,7 @@ export interface AreaContribution {
     id: string;
     /** 名字：tooltip / aria-label 用 —— window 不画文字按钮 */
     title: string;
-    /** 方位：**只**决定落在左端（left/top）还是右端（right/bottom） */
+    /** 方位：**只用来画图标**（高亮块画在哪一边）；按钮一律落右端 */
     side: Side;
     open: boolean;
     onToggle: () => void;
@@ -132,9 +133,6 @@ function TbArea({ item }: { item: AreaContribution }) {
     );
 }
 
-/** 左端收 left / top，右端收 right / bottom —— 方位只影响分组 */
-const LEFT_SIDES: readonly Side[] = ['left', 'top'];
-
 function Sep() {
     return <span className="wb-tb-sep" aria-hidden="true" />;
 }
@@ -156,8 +154,6 @@ export function Window({
 }) {
     const parts = useMemo(() => combineWindow(contributions), [contributions]);
 
-    const left = parts.areas.filter((item) => LEFT_SIDES.includes(item.side));
-    const right = parts.areas.filter((item) => !LEFT_SIDES.includes(item.side));
     // 没有可收起的区域时不给把手切换：那颗按钮此时改不动任何东西
     const toggleable = parts.areas.length > 0;
     const strip = chrome === 'strip';
@@ -167,10 +163,6 @@ export function Window({
             <div className="wb-tb-group">
                 {parts.leading.map((item) => (
                     <TbButton key={item.id} item={item} />
-                ))}
-                {parts.leading.length > 0 && left.length > 0 ? <Sep /> : null}
-                {left.map((item) => (
-                    <TbArea key={item.id} item={item} />
                 ))}
             </div>
 
@@ -184,16 +176,16 @@ export function Window({
             </div>
 
             <div className="wb-tb-group wb-tb-group-end">
-                {right.map((item) => (
+                {parts.areas.map((item) => (
                     <TbArea key={item.id} item={item} />
                 ))}
-                {right.length > 0 && (parts.tools.length > 0 || toggleable) ? <Sep /> : null}
+                {parts.areas.length > 0 && parts.tools.length > 0 ? <Sep /> : null}
                 {parts.tools.map((item) => (
                     <TbButton key={item.id} item={item} />
                 ))}
                 {toggleable ? (
                     <>
-                        {parts.tools.length > 0 ? <Sep /> : null}
+                        {parts.areas.length > 0 || parts.tools.length > 0 ? <Sep /> : null}
                         <TbButton
                             item={{
                                 id: 'chrome',

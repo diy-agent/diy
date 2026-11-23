@@ -16,17 +16,21 @@
 // 区域的 `slot` 决定它落在哪格，**身份是 `id`（概念）而不是方位** —— 所以插 view 认 id，
 // 把 detail 从左侧挪到右侧时，view 的声明一行都不用改。
 //
-// 标题栏（`Window`，见 `window.tsx`）**永远在**，是区域开合的唯一恢复入口：
-//   · 它整宽、**横跨导航**，两端放四边区域的开关（只有图标，文字在 tooltip）。
-//   · 它**不认识 page**：里面摆什么全由「贡献」决定（依赖倒置）—— 全局壳注册导航 / 设置，
-//     本文件注册「这一页有哪些可收起的区域」。加一个按钮 = 多传一份贡献。
-//   · `chrome` 只决定**收起的区域长什么样**，不决定标题栏在不在：
-//       `bar`   → 收起 = 完全不占位（空间给 center）；
-//       `strip` → 收起 = 留一条（竖条 / 横条，方向随槽位），点条即展开。
-//   两种形态只是同一只把手的两副样子，共用「谁收起了」，随时可切、状态不丢。
-//   这个偏好**归 window**（跨页共享），由宿主把它当 prop 传进来。
+// 两块 bar，分工不同：
 //
-// 折叠条上：**单击 = 展开，双击 = 最大化**；最大化后那条 28px 的头**双击 = 还原**。
+//   · **窗口标题栏**（`Window`，见 `window.tsx`）—— 整宽、横跨导航、**永远在**。
+//     里面是应用级按钮（导航 / 设置）与**全部区域开关**（2026-11-23 用户裁：都放右端，
+//     不再分两边；方位只剩「画图标」一个用处）。它**不认识 page**：摆什么全由「贡献」
+//     决定（依赖倒置）—— 全局壳注册导航 / 设置，本文件注册「这一页有哪些可收起的区域」。
+//   · **区域标题栏**（`AreaBar`）—— **每个区域都有**，背景色与折叠后的条一致（`--wb-bg-2`）。
+//     单击 = 折叠 / 展开（center 不可收），双击 = 最大化 / 还原；右端 `⋯` 菜单是形态
+//     （tab / 折叠 / 格子）。折叠后的条与它是同一个东西被压扁：同色、同厚、同一份手势。
+//
+// `chrome` 只决定**收起的区域长什么样**，不决定任何 bar 在不在：
+//   `bar`   → 收起 = 完全不占位（空间给 center，恢复靠窗口标题栏）；
+//   `strip` → 收起 = 留一条（竖条 / 横条，方向随槽位），点条即展开。
+// 两种形态只是同一只把手的两副样子，共用「谁收起了」，随时可切、状态不丢。
+// 这个偏好**归 window**（跨页共享），由宿主把它当 prop 传进来。
 //
 // 渲染永远是「模板 → 槽位 → 区域 → 该区有哪些 view → 按形态摊开」这一条单向链，
 // 宿主只额外记四样用户偏好：区域收起 / 形态 / tab 选中 / 谁被最大化。
@@ -44,6 +48,7 @@ import {
     type PointerEvent as ReactPointerEvent,
     type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
     activeOf,
@@ -185,124 +190,257 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
     }, [page, defs, state, placementKey]);
 }
 
-// ── 形态切换（只在「这个区域有多个 view」且「模板允许多种形态」时出现）────────────────
+// ── 区域头部：每个区域都有，操作也都在它身上 ──────────────────────────────
+//
+// 2026-11-23 用户定：**每个 viewarea 都有自己的标题栏**，背景色与折叠后的条一致
+// （`--wb-bg-2`）—— 于是同一块区域在两种形态下看起来是一回事：展开是带头的方块，
+// 收起是同一块被压成一条。行为也统一在这一条 bar 上：
+//
+//   · 单击 = 折叠 / 展开（center 不参与：它不可收起）
+//   · 双击 = 最大化 / 还原
+//
+// 右端的 `⋯` 菜单装「这块内容怎么摊开」（tab / 折叠 / 格子）。不常驻三个图标：
+// 每个区域摆一排太吵，而它只对「有多个 view」有意义。入口仍在**每个区域自己的**头上，
+// 因为每个区域都有 bar。
 
-const MODE_GLYPH: Record<Mode, string> = { tab: '▤', accordion: '☰', grid: '▦' };
+/**
+ * 「单击 = 折叠/展开、双击 = 最大化」的手势。
+ *
+ * 展开的头部与折叠后的条**共用同一份** —— 行为一致是这套模型的要求：
+ * 同一个区域在两种形态下，点它的头做的是同一件事。
+ * 区分靠 `detail`：单击要延迟 `SINGLE_CLICK_DELAY` 才执行，否则双击时第一下已经把块
+ * 收掉了，第二下根本落不到它身上。这点延迟是这个交互不可避免的代价。
+ */
+const SINGLE_CLICK_DELAY = 180;
 
-function ModeSwitch({ areaId }: { areaId: string }) {
+function useBarGesture(def: AreaDef, foldable: boolean) {
     const api = useWb();
-    const allowed = api.allowedModes(areaId);
-    if (allowed.length < 2) return null;
-    const now = api.modeOf(areaId);
+    const pending = useRef<number | null>(null);
+
+    // 卸载（区域被展开、切页）时把挂着的定时器收掉，不然它会在之后对着一个已消失的块 toggle
+    useEffect(
+        () => () => {
+            if (pending.current !== null) window.clearTimeout(pending.current);
+        },
+        [],
+    );
+
+    return (event: ReactMouseEvent<HTMLElement>) => {
+        // 点在头里的控件（tab / 菜单按钮）上不算「点头」—— 那是它们自己的事
+        const inside = (event.target as Element).closest('button');
+        if (inside !== null && inside !== event.currentTarget) return;
+
+        if (pending.current !== null) {
+            window.clearTimeout(pending.current);
+            pending.current = null;
+        }
+        if (event.detail > 1) {
+            api.setMaximized(def.id);
+            return;
+        }
+        // center 不可收起：单击不做任何事（双击最大化仍然有效）
+        if (!foldable) return;
+        pending.current = window.setTimeout(() => {
+            pending.current = null;
+            api.toggleArea(def.id);
+        }, SINGLE_CLICK_DELAY);
+    };
+}
+
+/** 多 view 时的 tab 条：区域头与最大化头共用 */
+function AreaTabs({ areaId, list }: { areaId: string; list: ViewDef[] }) {
+    const api = useWb();
+    const activeId = api.activeOf(areaId);
     return (
-        <div className="wb-modes" role="group" aria-label="呈现形态">
-            {allowed.map((mode) => (
+        <div className="wb-tabs" role="tablist">
+            {list.map((view) => (
                 <button
-                    key={mode}
+                    key={view.id}
                     type="button"
-                    title={`${MODE_LABEL[mode]}（只换摆法，不动骨架）`}
-                    aria-label={MODE_LABEL[mode]}
-                    aria-pressed={mode === now}
+                    role="tab"
+                    aria-selected={view.id === activeId}
+                    className={view.id === activeId ? 'on' : undefined}
                     onClick={() => {
-                        api.setMode(areaId, mode);
+                        api.setActive(areaId, view.id);
                     }}
                 >
-                    <span aria-hidden="true">{MODE_GLYPH[mode]}</span>
+                    {view.title}
                 </button>
             ))}
         </div>
     );
 }
 
-// ── 三种形态 ────────────────────────────────────────────────────────────────────
+/** 菜单宽度（px）：与 `.wb-menu` 的 CSS 同值，用来算右对齐的位置 */
+const MENU_WIDTH = 132;
 
-function TabLayout({ areaId, list }: { areaId: string; list: ViewDef[] }) {
+/**
+ * 形态菜单（区域头右端的 `⋯`）。
+ *
+ * 用 fixed 定位 + portal 画到 body 上：区域自己是 `overflow: hidden` 的，菜单若留在
+ * 里面，「格子」那种矮区域会把菜单裁掉半截。
+ */
+function ModeMenu({ areaId, count }: { areaId: string; count: number }) {
     const api = useWb();
-    const activeId = api.activeOf(areaId);
-    const active = list.find((view) => view.id === activeId) ?? list[0]!;
+    const allowed = api.allowedModes(areaId);
+    const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+    const now = api.modeOf(areaId);
+
+    // 点外面 / 按 Esc 就收 —— 菜单是瞬时的，不需要「点确定」
+    useEffect(() => {
+        if (at === null) return;
+        const away = (event: PointerEvent) => {
+            const target = event.target as Element | null;
+            if (target !== null && target.closest('.wb-menu') !== null) return;
+            setAt(null);
+        };
+        const esc = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setAt(null);
+        };
+        document.addEventListener('pointerdown', away, true);
+        document.addEventListener('keydown', esc);
+        return () => {
+            document.removeEventListener('pointerdown', away, true);
+            document.removeEventListener('keydown', esc);
+        };
+    }, [at]);
+
+    // 单 view 或模板锁定形态时，形态不是个选择 —— 不给一颗点了没用的按钮
+    if (count < 2 || allowed.length < 2) return null;
+
     return (
         <>
-            <div className="wb-head wb-head-tabs">
-                <div className="wb-tabs" role="tablist">
-                    {list.map((view) => (
-                        <button
-                            key={view.id}
-                            type="button"
-                            role="tab"
-                            aria-selected={view.id === active.id}
-                            className={view.id === active.id ? 'on' : undefined}
-                            onClick={() => {
-                                api.setActive(areaId, view.id);
-                            }}
-                        >
-                            {view.title}
-                        </button>
-                    ))}
-                </div>
-                <ModeSwitch areaId={areaId} />
-            </div>
-            <div className="wb-area-body" role="tabpanel">
-                {active.render()}
-            </div>
+            <button
+                type="button"
+                className={at === null ? 'wb-area-menu' : 'wb-area-menu on'}
+                title="呈现形态（只换摆法，不动骨架）"
+                aria-label="呈现形态"
+                aria-haspopup="menu"
+                aria-expanded={at !== null}
+                onClick={(event) => {
+                    if (at !== null) {
+                        setAt(null);
+                        return;
+                    }
+                    const box = event.currentTarget.getBoundingClientRect();
+                    setAt({ x: Math.max(6, box.right - MENU_WIDTH), y: box.bottom + 4 });
+                }}
+            >
+                <span aria-hidden="true">⋯</span>
+            </button>
+            {at === null
+                ? null
+                : createPortal(
+                      <div className="wb-menu" role="menu" style={{ left: at.x, top: at.y, width: MENU_WIDTH }}>
+                          {allowed.map((mode) => (
+                              <button
+                                  key={mode}
+                                  type="button"
+                                  role="menuitemradio"
+                                  aria-checked={mode === now}
+                                  className={mode === now ? 'on' : undefined}
+                                  onClick={() => {
+                                      api.setMode(areaId, mode);
+                                      setAt(null);
+                                  }}
+                              >
+                                  {MODE_LABEL[mode]}
+                              </button>
+                          ))}
+                      </div>,
+                      document.body,
+                  )}
         </>
     );
 }
 
-function AccordionLayout({ areaId, list }: { areaId: string; list: ViewDef[] }) {
+/**
+ * 区域标题栏：区域名 +（多 view 时）tab 条或形态标注 + 右端 `⋯`。
+ *
+ * 单 view 也画这一条 —— 「每个区域都有头」是这次改动的要点：它同时是折叠 / 最大化的
+ * 命中面，没有头就没有地方点。
+ */
+function AreaBar({ def, list }: { def: AreaDef; list: ViewDef[] }) {
+    const api = useWb();
+    const foldable = def.slot !== 'center';
+    const gesture = useBarGesture(def, foldable);
+    const mode = list.length === 1 ? undefined : api.modeOf(def.id);
+
+    return (
+        <div
+            className="wb-area-bar"
+            data-foldable={foldable ? 'true' : undefined}
+            title={foldable ? '单击折叠 / 展开，双击最大化' : '双击最大化'}
+            onClick={gesture}
+        >
+            <span className="wb-area-name">{def.title}</span>
+            {mode === 'tab' ? (
+                <AreaTabs areaId={def.id} list={list} />
+            ) : mode === undefined ? null : (
+                <span className="wb-bar-note">
+                    {MODE_LABEL[mode]} · {String(list.length)}
+                </span>
+            )}
+            <ModeMenu areaId={def.id} count={list.length} />
+        </div>
+    );
+}
+
+// ── 三种形态 ────────────────────────────────────────────────────────────────────
+
+function TabBody({ areaId, list }: { areaId: string; list: ViewDef[] }) {
+    const api = useWb();
+    const active = list.find((view) => view.id === api.activeOf(areaId)) ?? list[0]!;
+    return (
+        <div className="wb-area-body" role="tabpanel">
+            {active.render()}
+        </div>
+    );
+}
+
+function AccordionLayout({ list }: { list: ViewDef[] }) {
     // 折叠项的开合是**临时视图状态**（不是布局偏好）：关掉页面就忘，不值得存盘。
     // 默认第一个展开 —— 进来总得看见点东西。
     const [open, setOpen] = useState<Record<string, boolean>>(() =>
         list[0] === undefined ? {} : { [list[0].id]: true },
     );
     return (
-        <>
-            <div className="wb-head">
-                <span className="wb-head-title">折叠 · {String(list.length)}</span>
-                <ModeSwitch areaId={areaId} />
-            </div>
-            <div className="wb-area-body wb-acc">
-                {list.map((view) => {
-                    const on = open[view.id] === true;
-                    return (
-                        <section key={view.id} className={on ? 'wb-acc-item on' : 'wb-acc-item'}>
-                            <button
-                                type="button"
-                                className="wb-acc-head"
-                                aria-expanded={on}
-                                onClick={() => {
-                                    setOpen((prev) => ({ ...prev, [view.id]: !on }));
-                                }}
-                            >
-                                <span className="wb-chev" aria-hidden="true">
-                                    {on ? '▾' : '▸'}
-                                </span>
-                                {view.title}
-                            </button>
-                            {on && <div className="wb-acc-body">{view.render()}</div>}
-                        </section>
-                    );
-                })}
-            </div>
-        </>
+        <div className="wb-area-body wb-acc">
+            {list.map((view) => {
+                const on = open[view.id] === true;
+                return (
+                    <section key={view.id} className={on ? 'wb-acc-item on' : 'wb-acc-item'}>
+                        <button
+                            type="button"
+                            className="wb-acc-head"
+                            aria-expanded={on}
+                            onClick={() => {
+                                setOpen((prev) => ({ ...prev, [view.id]: !on }));
+                            }}
+                        >
+                            <span className="wb-chev" aria-hidden="true">
+                                {on ? '▾' : '▸'}
+                            </span>
+                            {view.title}
+                        </button>
+                        {on && <div className="wb-acc-body">{view.render()}</div>}
+                    </section>
+                );
+            })}
+        </div>
     );
 }
 
-function GridLayout({ areaId, list }: { areaId: string; list: ViewDef[] }) {
+function GridLayout({ list }: { list: ViewDef[] }) {
     return (
-        <>
-            <div className="wb-head">
-                <span className="wb-head-title">格子 · {String(list.length)}</span>
-                <ModeSwitch areaId={areaId} />
-            </div>
-            <div className="wb-area-body wb-grid">
-                {list.map((view) => (
-                    <section key={view.id} className="wb-cell">
-                        <div className="wb-cell-title">{view.title}</div>
-                        <div className="wb-cell-body">{view.render()}</div>
-                    </section>
-                ))}
-            </div>
-        </>
+        <div className="wb-area-body wb-grid">
+            {list.map((view) => (
+                <section key={view.id} className="wb-cell">
+                    <div className="wb-cell-title">{view.title}</div>
+                    <div className="wb-cell-body">{view.render()}</div>
+                </section>
+            ))}
+        </div>
     );
 }
 
@@ -413,69 +551,16 @@ function axisOf(def: AreaDef): 'x' | 'y' {
 }
 
 /**
- * 折叠按钮：**四边的区域右上角各有一个**，收成一条 / 展开回来。
+ * 折叠后的样子：一条 —— 与展开时的**头部同色同高**（`--wb-bg-2` / 28px），
+ * 就是同一个头被压扁了。横竖由**它所在的槽位**决定：左右边收成竖条（窄、满高），
+ * 上下边收成横条（矮、满宽）。
  *
- * 位置是 absolute（不占内容空间）。多 view 区域的 head 右侧预留了 `padding-right`，
- * 按钮正好落在 head 的空白处；单 view 区域没有 head，按钮浮在内容右上角（hover 显现）。
- * center 没有这个按钮：它不参与收起。
+ * 整条就是按钮，**不再画展开箭头**：28px 厚的东西里再分命中区没有意义，
+ * 箭头也只是一颗多余的圆形按钮。条本身就是操作面（单击展开、双击最大化），
+ * 与展开态的头行为一致（同一个 `useBarGesture`）。
  */
-function FoldToggle({ def, axis }: { def: AreaDef; axis: 'x' | 'y' }) {
-    const api = useWb();
-    return (
-        <button
-            type="button"
-            className="wb-fold-btn"
-            title={`折叠「${def.title}」—— 收成一条，点条展开`}
-            aria-label={`折叠${def.title}`}
-            aria-expanded
-            onClick={() => {
-                api.toggleArea(def.id);
-            }}
-        >
-            {/* 往哪个方向收：左右排 → 往左收成竖条；上下排 → 往上收成横条 */}
-            <span aria-hidden="true">{axis === 'x' ? '◂' : '▴'}</span>
-        </button>
-    );
-}
-
-/**
- * 折叠后的样子：一条。横竖由**它所在的槽位**决定 ——
- * 左右边收成竖条（窄、满高），上下边收成横条（矮、满宽）。
- *
- * 整条就是按钮（不只是箭头）：28px 宽的东西里再分命中区没有意义。
- *
- * **单击 = 展开，双击 = 最大化**。区分靠 `event.detail`：单击要延迟 `SINGLE_CLICK_DELAY`
- * 才执行（否则双击时第一下已经把条撤了，第二下根本落不到它身上，双击永远不可能发生）。
- * 这点延迟是这个交互不可避免的代价。
- */
-const SINGLE_CLICK_DELAY = 180;
-
 function FoldedArea({ def, axis }: { def: AreaDef; axis: 'x' | 'y' }) {
-    const api = useWb();
-    const pending = useRef<number | null>(null);
-
-    // 卸载（区域被展开、切页）时把挂着的定时器收掉，不然它会在之后对着一个已消失的条 toggle
-    useEffect(
-        () => () => {
-            if (pending.current !== null) window.clearTimeout(pending.current);
-        },
-        [],
-    );
-
-    const onClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
-        if (pending.current !== null) {
-            window.clearTimeout(pending.current);
-            pending.current = null;
-        }
-        if (event.detail > 1) {
-            api.setMaximized(def.id);
-            return;
-        }
-        pending.current = window.setTimeout(() => {
-            pending.current = null;
-            api.toggleArea(def.id);
-        }, SINGLE_CLICK_DELAY);
-    };
+    const gesture = useBarGesture(def, true);
 
     const style: CSSProperties = { flex: `0 0 ${String(FOLD_THICKNESS)}px` };
     if (axis === 'x') style.minWidth = FOLD_THICKNESS;
@@ -487,60 +572,53 @@ function FoldedArea({ def, axis }: { def: AreaDef; axis: 'x' | 'y' }) {
                 className="wb-fold-strip"
                 title={`单击展开「${def.title}」，双击最大化`}
                 aria-label={`展开${def.title}（双击最大化）`}
-                onClick={onClick}
+                onClick={gesture}
             >
-                <span className="wb-fold-arrow" aria-hidden="true">
-                    {axis === 'x' ? '▸' : '▾'}
-                </span>
                 <span className="wb-fold-name">{def.title}</span>
             </button>
         </div>
     );
 }
 
-/** 区域里的内容：单 view 直铺，多 view 按形态摊开（骨架在这里不参与） */
+/**
+ * 区域里的内容：单 view 直铺，多 view 按形态摊开。
+ *
+ * 头部不在这里 —— 它由 `AreaBar` 统一画（每个区域都有，折叠 / 最大化的命中面在它身上）。
+ */
 function AreaContent({ areaId, list }: { areaId: string; list: ViewDef[] }) {
     const api = useWb();
-    // 单 view：不画头部（一个 tab 的 tab 条是噪音），也谈不上形态
     if (list.length === 1) return <div className="wb-area-body">{list[0]!.render()}</div>;
     const mode = api.modeOf(areaId);
-    if (mode === 'accordion') return <AccordionLayout areaId={areaId} list={list} />;
-    if (mode === 'grid') return <GridLayout areaId={areaId} list={list} />;
-    return <TabLayout areaId={areaId} list={list} />;
+    if (mode === 'accordion') return <AccordionLayout list={list} />;
+    if (mode === 'grid') return <GridLayout list={list} />;
+    return <TabBody areaId={areaId} list={list} />;
 }
 
 /**
  * 最大化：这一块吃掉整个**骨架**（含 center，用户明确要看这一块），其余全让位。
  *
- * 它不是浮层：没有 overlay、没有 z-index 战场 —— 仍然住在骨架的位置上，
- * 只是兄弟都不渲染。顶部一条 28px 的头就是**还原入口**：双击它、或点右边的按钮。
+ * 它不是浮层：没有 overlay、没有 z-index 战场 —— 仍然住在骨架的位置上，只是兄弟都不渲染。
+ * 顶部那条就是**还原入口**：单击 / 双击它都还原（同一个动作，不歧义），
+ * 所以不再画一颗单独的圆圈还原按钮 —— 条本身就是那颗按钮，行为与区域头一致。
  */
 function MaximizedArea({ def, views }: { def: AreaDef; views: readonly ViewDef[] }) {
     const api = useWb();
     const list = useMemo(() => viewsIn(views, api.page.type, def.id), [views, api.page.type, def.id]);
     if (list.length === 0) return null;
+
+    const restore = (event: ReactMouseEvent<HTMLDivElement>) => {
+        // 点 tab 是自己切 view，不是还原
+        const target = event.target as Element;
+        if (target !== event.currentTarget && target.closest('button') !== null) return;
+        api.setMaximized(null);
+    };
+
     return (
         <div className="wb-area wb-max" data-area={def.id} data-maximized="true">
-            <div
-                className="wb-max-bar"
-                title="双击还原"
-                onDoubleClick={() => {
-                    api.setMaximized(null);
-                }}
-            >
+            <div className="wb-max-bar" title="单击 / 双击还原" onClick={restore}>
                 <span className="wb-max-name">{def.title}</span>
-                <span className="wb-max-hint">双击还原</span>
-                <button
-                    type="button"
-                    className="wb-max-exit"
-                    title="还原"
-                    aria-label="还原布局"
-                    onClick={() => {
-                        api.setMaximized(null);
-                    }}
-                >
-                    <span aria-hidden="true">◱</span>
-                </button>
+                {list.length > 1 ? <AreaTabs areaId={def.id} list={list} /> : null}
+                <span className="wb-max-hint">最大化 · 单击还原</span>
             </div>
             <AreaContent areaId={def.id} list={list} />
         </div>
@@ -587,20 +665,11 @@ function AreaView({
         else style.minHeight = def.min;
     }
 
-    // 折叠按钮只在 strip 模式下有：bar 模式的收起动作归标题栏，区域自己不再放第二个入口
-    const foldBtn = !isMain && !bar ? <FoldToggle def={def} axis={axis} /> : null;
-    const mode = list.length === 1 ? undefined : api.modeOf(def.id);
-
+    // 收起入口只有一处：**区域自己的头部**（单击 / 双击），不再另放一颗右上角的按钮
     return (
-        <div
-            className="wb-area"
-            style={style}
-            data-area={def.id}
-            data-mode={mode}
-            data-main={isMain ? 'true' : undefined}
-        >
+        <div className="wb-area" style={style} data-area={def.id} data-main={isMain ? 'true' : undefined}>
+            <AreaBar def={def} list={list} />
             <AreaContent areaId={def.id} list={list} />
-            {foldBtn}
         </div>
     );
 }
