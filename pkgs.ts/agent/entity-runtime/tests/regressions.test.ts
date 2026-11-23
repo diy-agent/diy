@@ -7,8 +7,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { RunOptions } from '../src/agent';
-import type { AgentEvent } from '../src/types';
-import { BOT_A, BOT_B, HUMAN, makeRoom, waitFor } from './support/harness';
+import type { AgentEvent, Item } from '../src/types';
+import { BOT_A, BOT_B, HUMAN, makeRoom, sleep, waitFor } from './support/harness';
 
 /** 上下文里某段文字出现了几次 */
 function countIn(context: unknown, needle: string): number {
@@ -90,6 +90,107 @@ describe('P0 回归', () => {
         await waitFor(() => !restarted.room.busy());
         const context = restarted.room.contextOf(BOT_A.id) ?? [];
         expect(countIn(context, '挂着别动')).toBe(1);
+    });
+
+    // 下面两条守同一个真事故事实（2026-11-23）：用户在提问卡上答了 squash，那条回答
+    // 已经落库、也进了房间，但模型上下文里从来没有它 —— 于是 bot 又输出一遍“正在等待”。
+    // 两个缺陷各一条：水位写得太满（F）、重投时盲标 alreadyInContext（G）。
+
+    it('F. 一轮正在跑时落快照（压缩）后重启：那条输入不会丢', async () => {
+        let calls = 0;
+        const run = async function* (input: RunOptions): AsyncIterable<AgentEvent> {
+            calls += 1;
+            const turnId = input.turnId ?? 'turn';
+            const messageId = `msg-${calls}`;
+            yield { seq: 1, type: 'run.started', turnId, messageId };
+            if (calls === 2) {
+                // 第二轮挂住：让“这一轮正在跑”的状态持续到我们落完整快照
+                while (!input.signal.aborted) await sleep(2);
+                yield { seq: 2, type: 'run.failed', turnId, message: 'aborted' };
+                return;
+            }
+            const text = `第 ${calls} 轮的回复`;
+            yield { seq: 2, type: 'text.delta', messageId, delta: text };
+            input.onStepTranscript?.([{ role: 'assistant', content: [{ type: 'text', text }] }]);
+            yield { seq: 3, type: 'run.finished', turnId, finishReason: 'stop', steps: 1, maxOutputTokens: 0 };
+            yield { seq: 4, type: 'message.completed', messageId };
+            yield { seq: 5, type: 'run.completed', turnId };
+        } as (input: RunOptions) => AsyncIterable<AgentEvent>;
+
+        const h = makeRoom({ run });
+        await h.room.say({ text: '第一轮', author: HUMAN });
+
+        // 第二轮：这句话已经进了公共日志，但这一轮还没跑完（既没入 transcript、也没跑完）
+        void h.room.say({ text: '第二轮：这句话不能被吞', author: HUMAN }).catch(() => undefined);
+        await waitFor(() => h.room.busy());
+
+        // 在跑的当口压一次 ⇒ 触发落快照；旧写法会把水位推到房间末尾（含正在跑的那条）
+        await h.room.compact(BOT_A.id, { keepLast: 0, maxChars: 1 });
+
+        const target = h.store
+            .roomEntries(h.spec.id)
+            .find((entry) => entry.kind === 'say' && entry.text === '第二轮：这句话不能被吞');
+        expect(target).toBeDefined();
+        const saved = h.store.loadSession(h.spec.id, BOT_A.id)!;
+        expect(saved.logSeq).toBeLessThan(target!.seq);
+
+        // 进程被杀（这里用重建房间等价）：第二轮仍在库里挂着“投递中”
+        const restarted = h.rebuild();
+        restarted.room.recover();
+        // 判据用 calls 而不是 h.runs：这里注入的是自定义 run，只有 harness 的脚本 run 才往 runs 里记
+        await waitFor(() => calls >= 3);
+        await waitFor(() => !restarted.room.busy());
+
+        expect(countIn(restarted.room.contextOf(BOT_A.id) ?? [], '第二轮：这句话不能被吞')).toBe(1);
+        h.room.cancel();
+    });
+
+    it('G. 老库坏水位（已越过一条其实没读过的消息）时，恢复也不丢', async () => {
+        const h = makeRoom({ reply: () => '收到' });
+        await h.room.say({ text: '第一句', author: HUMAN });
+
+        // 手工造现场：消息已落库、投递还没送到，而快照水位是旧语义写的（= 房间末尾，越过了它）
+        const item: Item = {
+            id: 'u-legacy-1',
+            seq: 2,
+            order: 99,
+            turn: 2,
+            turnId: 'turn-legacy',
+            at: Date.now(),
+            status: 'done',
+            author: HUMAN,
+            type: 'chat',
+            data: { text: '旧水位越过的那句话' },
+        };
+        h.store.appendItem(h.spec.id, item);
+        h.store.appendRoomEntry(h.spec.id, {
+            kind: 'say',
+            seq: 2,
+            at: Date.now(),
+            author: HUMAN,
+            text: '旧水位越过的那句话',
+            messageId: item.id,
+            turn: 2,
+            turnId: 'turn-legacy',
+        });
+        h.store.setDelivery({
+            roomId: h.spec.id,
+            messageId: item.id,
+            botId: BOT_A.id,
+            state: 'delivering',
+            mode: 'next-step',
+            turn: 2,
+            turnId: 'turn-legacy',
+        });
+        const snapshot = h.store.loadSession(h.spec.id, BOT_A.id)!;
+        h.store.saveSession(h.spec.id, BOT_A.id, { ...snapshot, logSeq: 2 });
+
+        const restarted = h.rebuild();
+        restarted.room.recover();
+        await waitFor(() => restarted.runs.length > 0);
+        await waitFor(() => !restarted.room.busy());
+
+        expect(countIn(restarted.room.contextOf(BOT_A.id) ?? [], '旧水位越过的那句话')).toBe(1);
     });
 });
 

@@ -21,12 +21,16 @@ interface EntryBase {
 }
 
 export type RoomEntry =
-    | (EntryBase & { kind: 'say'; author: Author; text: string })
+    /**
+     * `messageId` = 对应的那条 item（`u-*`）。崩溃恢复要按它把「这条投递」和「这条公共条目」
+     * 对上：没对上的话，重投时无从判断这句话到底进没进过这个 bot 的上下文（见 room.recover）。
+     */
+    | (EntryBase & { kind: 'say'; author: Author; text: string; messageId?: string })
     | (EntryBase & { kind: 'conclusion'; botId: string; name: string; color?: string; text: string })
     | (EntryBase & { kind: 'notice'; text: string });
 
 export type RoomEntryInput =
-    | { kind: 'say'; author: Author; text: string; turn?: number; turnId?: string }
+    | { kind: 'say'; author: Author; text: string; messageId?: string; turn?: number; turnId?: string }
     | { kind: 'conclusion'; botId: string; name: string; color?: string; text: string; turn?: number; turnId?: string }
     | { kind: 'notice'; text: string; turn?: number; turnId?: string };
 

@@ -262,6 +262,8 @@ export class RoomActor {
             kind: 'say',
             author: input.author,
             text,
+            // 投递 / 公共条目对得上的唯一钥匙：崩溃恢复要靠它问 session「你读过这句没有」
+            messageId: saved.id,
             turn: turn.turn,
             turnId: turn.turnId,
         });
@@ -325,12 +327,18 @@ export class RoomActor {
                 delivery.turn === undefined
                     ? undefined
                     : { turn: delivery.turn, turnId: delivery.turnId ?? `turn-${delivery.messageId}` };
+            // 这条投递对应的公共条目（只有 say 带 messageId）。拿到它才能问 session
+            // 「你上下文里到底有没有它」—— 不传的话 session 无处可查，只像个眼瞎的盲标。
+            const entry = this.log
+                .all()
+                .find((item) => item.kind === 'say' && item.messageId === delivery.messageId);
             void this.sessionOf(bot).post({
                 messageId: delivery.messageId,
                 text,
                 mode: delivery.mode ?? 'next-step',
-                // 这句人话在公共日志里，session 回放时已经读到了；再追加一次会让模型看到两遍
-                alreadyInContext: true,
+                // 不写 alreadyInContext：由 session 按序号自己判断（回放带了就带上它，
+                // 水位跳过了就当普通消息补上）。原先无条件写 true 就是把消息凭空抹掉的那一刀。
+                ...(entry === undefined ? {} : { entry }),
                 ...(turn === undefined ? {} : { turn }),
             });
         }
@@ -598,8 +606,9 @@ export class RoomActor {
         const session = this.sessions.get(botId);
         if (session === undefined) return;
         const snapshot = session.snapshot();
-        // 水位和快照一起存：重启回放只补这之后新增的公共条目
-        this.deps.store.saveSession(this.id, botId, { ...snapshot, logSeq: this.log.lastSeq });
+        // 水位由 session 自己算（它才知道自己真读到哪了）：房间的 log.lastSeq 含
+        // 「已 append 但这一侧还没读」的条目，拿它当水位会在重启后跳过那些消息。
+        this.deps.store.saveSession(this.id, botId, snapshot);
         this.turnSeq = Math.max(this.turnSeq, snapshot.turn);
     }
 
