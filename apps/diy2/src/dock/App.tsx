@@ -13,7 +13,6 @@ import { LayerProvider } from '@astryxdesign/core/Layer';
 import { Theme } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import {
-    bootstrapStore,
     RoomDialogsProvider,
     roomTitle,
     useBots,
@@ -35,11 +34,13 @@ import './dock.css';
 import { DOCK_AREAS, roomPage, roomViews } from './page';
 import { useAreaStates } from './useAreas';
 
-// store 的首屏加载由**这一层**触发（整页 App 是在它的 useEffect 里）：工作台没有
+// store 的首屏加载由**入口**触发（整页 App 是在它的 useEffect 里）：工作台没有
 // <EntityChatApp /> 负责这件事，所以宿主自己点一次。幂等 —— center 里的 App 再调也只是走同一条路。
-// syncAddress: false —— 地址栏归页面路由管，工作台是一页多区：store 一去 replaceState
-// 就变成 /room/xxx，刷新那次就落到别的壳里去了。
-bootstrapStore({ syncAddress: false });
+//
+// 为什么挪到入口文件：地址同步开关（syncAddress）是**每次进程只能定一次**的全局决定，
+// 而 DockApp 被两个入口共用 —— 主入口 `/` 要 URL 就是路由（刷新 /room/<id> 回到那个房间），
+// lab 页 /dock.html 则不能改写地址栏（一改写就把 /dock.html 换成 /room/xxx，刷新就掉进主入口）。
+// 写在组件模块里两个入口就只能是同一个值。
 
 /**
  * 页外的区域开关。
