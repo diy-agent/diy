@@ -1,6 +1,6 @@
 // model.ts —— page / area / view 三概念，**不带任何布局引擎依赖**。
 //
-// 与 workbench-dock（dockview 版）的区别，全在这几条约束里：
+// 与之前那套 workbench-dock（dockview）的区别，全在这几条约束里：
 //
 //   1. 布局**固定**：area 的排列（谁在左、谁在下）与尺寸都由模板写死，用户不能拖、不能分、不能改。
 //      → 没有 sash、没有 drag、没有 floating、没有 split。
@@ -11,7 +11,8 @@
 //      一个 tab 的 tab 条是纯噪音。
 //
 // 所以这张表里最重要的其实是「没有」这一列：约束少了，能出错的状态也少了
-// （dockview 版里那个「关掉 view ⇒ 组被删 ⇒ area 没了」的死锁，在这套模型下不可能发生）。
+// （dockview 版里那个「关掉 view ⇒ 组被删 ⇒ area 没了 ⇒ 恢复入口也失效」的死锁，
+// 在这套模型下不可能发生 —— view 不可关，area 的身份来自模板而不是「运行时有没有内容」）。
 
 import type { ReactNode } from 'react';
 
@@ -129,8 +130,9 @@ export interface PageState {
     active: Record<string, string>;
 }
 
+/** 偏好键按**页类型**分（不含房间 id）：切房间时骨架不动、偏好也该跟着走 */
 export function stateKey(pageType: string): string {
-    return `wb2:${pageType}`;
+    return `workbench:${pageType}`;
 }
 
 /** 读不到（从没存过 / 坏数据）返回 null —— 与「存过一个空状态」区分：后者是用户的意图 */
