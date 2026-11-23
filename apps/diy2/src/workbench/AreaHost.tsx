@@ -16,19 +16,22 @@
 // 区域的 `slot` 决定它落在哪格，**身份是 `id`（概念）而不是方位** —— 所以插 view 认 id，
 // 把 detail 从左侧挪到右侧时，view 的声明一行都不用改。
 //
-// 标题栏（`TitleBar`）**永远在**，是区域开合的唯一恢复入口：
+// 标题栏（`Window`，见 `window.tsx`）**永远在**，是区域开合的唯一恢复入口：
 //   · 它整宽、**横跨导航**，两端放四边区域的开关（只有图标，文字在 tooltip）。
+//   · 它**不认识 page**：里面摆什么全由「贡献」决定（依赖倒置）—— 全局壳注册导航 / 设置，
+//     本文件注册「这一页有哪些可收起的区域」。加一个按钮 = 多传一份贡献。
 //   · `chrome` 只决定**收起的区域长什么样**，不决定标题栏在不在：
 //       `bar`   → 收起 = 完全不占位（空间给 center）；
 //       `strip` → 收起 = 留一条（竖条 / 横条，方向随槽位），点条即展开。
 //   两种形态只是同一只把手的两副样子，共用「谁收起了」，随时可切、状态不丢。
+//   这个偏好**归 window**（跨页共享），由宿主把它当 prop 传进来。
 //
 // 折叠条上：**单击 = 展开，双击 = 最大化**；最大化后那条 28px 的头**双击 = 还原**。
 //
 // 渲染永远是「模板 → 槽位 → 区域 → 该区有哪些 view → 按形态摊开」这一条单向链，
 // 宿主只额外记四样用户偏好：区域收起 / 形态 / tab 选中 / 谁被最大化。
 
-import { roomTitle, useRoomDialogsContext, useSelectedRoom } from '@diy-agent/entity-chat';
+import { roomTitle, useSelectedRoom } from '@diy-agent/entity-chat';
 import {
     createContext,
     useContext,
@@ -46,14 +49,11 @@ import {
     activeOf,
     areaInSlot,
     areaOf,
-    collapsibleAreas,
     initialState,
-    loadChrome,
     loadState,
     MODE_LABEL,
     modeOf,
     modesOf,
-    saveChrome,
     saveState,
     sizeOf as sizeOfDef,
     viewsIn,
@@ -65,13 +65,11 @@ import {
     type Side,
     type ViewDef,
 } from './model';
+import { Window, type WindowContribution } from './window';
 
 /** 区域控制面：折叠 / 形态 / tab 选中（全部在区域自己身上，宿主只读不摆） */
 export interface WbApi {
     readonly page: PageDef;
-    /** 收起的表现形态（全局偏好；**不影响标题栏存不存在**） */
-    readonly chrome: Chrome;
-    setChrome: (chrome: Chrome) => void;
     /** 被最大化的区域 id；null = 没在最大化 */
     readonly maximized: string | null;
     /** 最大化 / 还原（传同一个 id 就是切换；传 null = 还原） */
@@ -108,16 +106,10 @@ export function useWb(): WbApi {
  */
 export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], storage: Storage = localStorage): WbApi {
     const [state, setState] = useState<PageState>(() => loadState(page.type, storage) ?? initialState(page));
-    // 表现方式是**全局**偏好（不按页分）：它回答的是「收起长什么样」，不是「这页哪些收了」
-    const [chrome, setChrome] = useState<Chrome>(() => loadChrome(storage));
 
     useEffect(() => {
         saveState(page.type, state, storage);
     }, [state, page.type, storage]);
-
-    useEffect(() => {
-        saveChrome(chrome, storage);
-    }, [chrome, storage]);
 
     // 区域清单来自模板（center + 四边），这里只建索引
     const defs = useMemo(() => new Map(page.areas.map((def) => [def.id, def])), [page]);
@@ -132,8 +124,6 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
         const viewsOf = (areaId: string) => viewsIn(views, page.type, areaId);
         return {
             page,
-            chrome,
-            setChrome,
             maximized: state.maximized ?? null,
             setMaximized: (areaId) => {
                 setState((prev) => {
@@ -192,7 +182,7 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
         };
         // placementKey 覆盖了 views 里真正被读到的部分
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [page, defs, chrome, state, placementKey]);
+    }, [page, defs, state, placementKey]);
 }
 
 // ── 形态切换（只在「这个区域有多个 view」且「模板允许多种形态」时出现）────────────────
@@ -313,80 +303,6 @@ function GridLayout({ areaId, list }: { areaId: string; list: ViewDef[] }) {
                 ))}
             </div>
         </>
-    );
-}
-
-// ── 图标（标题栏只放图标，文字全进 tooltip）──────────────────────────────────────
-//
-// 全用 SVG 而不靠字符：几何块 U+25A4… 这类字形在不同字体里宽窄不一，
-// 而标题栏是 28px 高的一条，差 1px 就会显得歪。
-
-/** 区域图标：外框 + **该方位上的高亮块**。只有四边有图标 —— center 不进标题栏 */
-function AreaGlyph({ side }: { side: Side }) {
-    const inner =
-        side === 'left'
-            ? { x: 2, y: 2, width: 3.5, height: 10 }
-            : side === 'right'
-              ? { x: 8.5, y: 2, width: 3.5, height: 10 }
-              : side === 'top'
-                ? { x: 2, y: 2, width: 10, height: 3.5 }
-                : { x: 2, y: 8.5, width: 10, height: 3.5 };
-    return (
-        <svg className="wb-glyph" viewBox="0 0 14 14" aria-hidden="true">
-            <rect
-                x="1.5"
-                y="1.5"
-                width="11"
-                height="11"
-                rx="2.5"
-                fill="none"
-                stroke="currentColor"
-                strokeOpacity="0.45"
-            />
-            <rect {...inner} rx="1" fill="currentColor" />
-        </svg>
-    );
-}
-
-/** 把手形态：一根竖边 + 一条细条 —— “收起时留一条” */
-function FarGlyph() {
-    return (
-        <svg className="wb-glyph" viewBox="0 0 14 14" aria-hidden="true">
-            <rect
-                x="1.5"
-                y="1.5"
-                width="11"
-                height="11"
-                rx="2.5"
-                fill="none"
-                stroke="currentColor"
-                strokeOpacity="0.45"
-            />
-            <rect x="2.2" y="2.2" width="1.8" height="9.6" rx="0.9" fill="currentColor" />
-        </svg>
-    );
-}
-
-/** 导航：三条横线（就是「列表」的意思） */
-function NavGlyph() {
-    return (
-        <svg className="wb-glyph" viewBox="0 0 14 14" aria-hidden="true">
-            <g stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
-                <path d="M2.5 4h9M2.5 7h9M2.5 10h9" />
-            </g>
-        </svg>
-    );
-}
-
-/** 设置：齿轮（圆 + 八辐） */
-function GearGlyph() {
-    return (
-        <svg className="wb-glyph" viewBox="0 0 14 14" aria-hidden="true">
-            <circle cx="7" cy="7" r="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
-            <g stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
-                <path d="M7 1.6v1.6M7 10.8v1.6M1.6 7h1.6M10.8 7h1.6M3.2 3.2l1.13 1.13M9.67 9.67l1.13 1.13M10.8 3.2L9.67 4.33M4.33 9.67L3.2 10.8" />
-            </g>
-        </svg>
     );
 }
 
@@ -635,7 +551,16 @@ function MaximizedArea({ def, views }: { def: AreaDef; views: readonly ViewDef[]
  * 一个槽位上的区域。`def` 可能不存在（模板没给这个槽位）或没内容（这一页没给它 view）——
  * 两种都不渲染，也不占位。
  */
-function AreaView({ def, views }: { def: AreaDef | undefined; views: readonly ViewDef[] }) {
+function AreaView({
+    def,
+    views,
+    chrome,
+}: {
+    def: AreaDef | undefined;
+    views: readonly ViewDef[];
+    /** 收起后的样子（window 偏好，宿主传下来；本文件不持有它） */
+    chrome: Chrome;
+}) {
     const api = useWb();
     const list = useMemo(
         () => (def === undefined ? [] : viewsIn(views, api.page.type, def.id)),
@@ -646,7 +571,7 @@ function AreaView({ def, views }: { def: AreaDef | undefined; views: readonly Vi
 
     const axis = axisOf(def);
     const isMain = def.slot === 'center';
-    const bar = api.chrome === 'bar';
+    const bar = chrome === 'bar';
 
     if (!isMain && !api.isOpen(def.id)) {
         // bar：整块不占位（空间给 center），恢复入口在标题栏 —— 标题栏永远在，不可能找不回来
@@ -686,7 +611,7 @@ function AreaView({ def, views }: { def: AreaDef | undefined; views: readonly Vi
  * 手柄与区域**同层插入**（拖动的实质是改同层兄弟的 flex），所以顺序必须是
  * `区域 → 手柄 → 区域`；`Resizer` 靠 `previousElementSibling` 找邻居，见它自己的注释。
  */
-function Skeleton({ api, views }: { api: WbApi; views: readonly ViewDef[] }) {
+function Skeleton({ api, views, chrome }: { api: WbApi; views: readonly ViewDef[]; chrome: Chrome }) {
     const page = api.page;
     const maxDef = api.maximized === null ? undefined : areaOf(page, api.maximized);
 
@@ -709,189 +634,89 @@ function Skeleton({ api, views }: { api: WbApi; views: readonly ViewDef[] }) {
 
     return (
         <div className="wb-skel">
-            <AreaView def={top} views={views} />
+            <AreaView def={top} views={views} chrome={chrome} />
             {draggable(top) && <Resizer axis="y" target={top} sign={1} />}
             <div className="wb-mid">
-                <AreaView def={left} views={views} />
+                <AreaView def={left} views={views} chrome={chrome} />
                 {draggable(left) && <Resizer axis="x" target={left} sign={1} />}
-                <AreaView def={page.center} views={views} />
+                <AreaView def={page.center} views={views} chrome={chrome} />
                 {draggable(right) && <Resizer axis="x" target={right} sign={-1} />}
-                <AreaView def={right} views={views} />
+                <AreaView def={right} views={views} chrome={chrome} />
             </div>
             {draggable(bottom) && <Resizer axis="y" target={bottom} sign={-1} />}
-            <AreaView def={bottom} views={views} />
+            <AreaView def={bottom} views={views} chrome={chrome} />
         </div>
     );
 }
 
-// ── 标题栏 ────────────────────────────────────────────────────────────────────
+// ── 页壳装配（宿主侧）──────────────────────────────────────────────────────────
 //
-// 整页最顶一条，**图标化**（文字全进 tooltip）：
-//   左：[导航] + 左 / 上方的区域
-//   中：房间名（这条件里唯一的文字）
-//   右：右 / 下方的区域 │ [设置] │ [换成折叠条]
-//
-// **区域按钮贴两端、功能按钮用竖线隔开**：两者性质不同 —— 一个回答「页面怎么摆」，
-// 一个回答「应用能干什么」。分组不手写：方位从模板的 `slot` 推，把区域挪到别的边，
-// 按钮自动跟着换端。
-
-/** 导航开关（全局层，由壳持有；标题栏左端放它的按钮） */
-export interface NavState {
-    open: boolean;
-    toggle: () => void;
-}
-
-/** 标题栏按钮：**只有图标**（文字在 tooltip）。`on` 缺省 = 中性按钮（如设置） */
-function TbIconButton({
-    on,
-    label,
-    onClick,
-    children,
-}: {
-    on?: boolean;
-    label: string;
-    onClick: () => void;
-    children: ReactNode;
-}) {
-    return (
-        <button
-            type="button"
-            className={on === true ? 'wb-tb-btn on' : 'wb-tb-btn'}
-            aria-pressed={on}
-            title={label}
-            aria-label={label}
-            onClick={onClick}
-        >
-            {children}
-        </button>
-    );
-}
-
-function TbAreaButton({ def, open, onToggle }: { def: AreaDef & { slot: Side }; open: boolean; onToggle: () => void }) {
-    return (
-        <TbIconButton on={open} label={`${open ? '收起' : '展开'}「${def.title}」`} onClick={onToggle}>
-            <AreaGlyph side={def.slot} />
-        </TbIconButton>
-    );
-}
-
-/** 四边区域才可能出现在标题栏上（center 不参与收起，所以永远没有按钮） */
-function isSide(def: AreaDef): def is AreaDef & { slot: Side } {
-    return def.slot !== 'center';
-}
+// 这里做**唯一一件 window 不该做的事**：把「页面有什么」翻译成贡献。
+// window 只收到 `areas: [{ id, title, side, open, onToggle }]` —— 它不知道这些区域
+// 属于哪个页、里面装什么，因为「这一页有没有资产」是页自己的事（模板说了算）。
 
 /**
- * 标题栏 —— 整页最顶一条，**横跨导航**。
+ * 一页 = **窗口（标题栏，永远在）** + 导航 + 固定骨架。
  *
- * 名字对齐 VS Code 的 `PART_TITLEBAR` / Theia 的 `ApplicationShell.TOP`：那边放的是
- * 「不属于任何一个编辑器组、但指挥整个窗口」的东西（菜单、命令中心、窗口控件）。
- * 这里放：
- *   左：应用名 + 导航开关 + 左 / 上方的区域
- *   中：页名 · 房间名（面包屑）
- *   右：右 / 下方的区域 + 全局工具 + 表现方式切换
+ * 标题栏和主体是兄弟，但标题栏占满宽度 —— 它管的是**包括导航在内的**所有东西，
+ * 不能缩在导航右边。它也**不随 `chrome` 消失**：那是唯一能找回收起区域的地方，
+ * 让它跟着形态走就是 dockview 版那个死锁（入口长在被收起的那个东西身上）。
  *
- * **为什么它横跨导航**：它指挥的包括导航本身（左端就有导航开关），
- * 一条要管住所有区域的横条不能住在其中一个区域里面。
- *
- * **为什么它能当「唯一的恢复入口」**：它不在骨架里，而且比导航更外层 ——
- * 任何区域（含导航）收起都不影响它。这正是 dockview 版栽的地方
- * （入口长在被收起的那个东西身上）。
- */
-export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
-    const dialogs = useRoomDialogsContext();
-    const room = useSelectedRoom();
-    const strip = api?.chrome === 'strip';
-
-    // 只列「这个页真有内容」的四边区域：项目页没有 assets，就不该有它的按钮。
-    // 判据一律是**概念 id**，不是方位 —— 方位只决定它出现在左端还是右端。
-    const items = useMemo(() => {
-        if (!api) return [];
-        return collapsibleAreas(api.page, (areaId) => api.viewCountOf(areaId) > 0).filter(isSide);
-    }, [api]);
-    const left = items.filter((def) => def.slot === 'left' || def.slot === 'top');
-    const right = items.filter((def) => def.slot === 'right' || def.slot === 'bottom');
-
-    const renderItem = (def: AreaDef & { slot: Side }) => (
-        <TbAreaButton
-            key={def.id}
-            def={def}
-            open={api?.isOpen(def.id) ?? false}
-            onToggle={() => {
-                api?.toggleArea(def.id);
-            }}
-        />
-    );
-
-    return (
-        <header className="wb-titlebar">
-            <div className="wb-tb-group">
-                <TbIconButton on={nav.open} label={nav.open ? '收起导航' : '展开导航'} onClick={nav.toggle}>
-                    <NavGlyph />
-                </TbIconButton>
-                {left.length > 0 && <span className="wb-tb-sep" aria-hidden="true" />}
-                {left.map(renderItem)}
-            </div>
-
-            <div className="wb-tb-mid">
-                <span className="wb-tb-name">{room ? roomTitle(room) : ''}</span>
-            </div>
-
-            <div className="wb-tb-group wb-tb-group-end">
-                {right.map(renderItem)}
-                {right.length > 0 && <span className="wb-tb-sep" aria-hidden="true" />}
-                <TbIconButton
-                    label="设置"
-                    onClick={() => {
-                        dialogs.openSettings();
-                    }}
-                >
-                    <GearGlyph />
-                </TbIconButton>
-                {api && (
-                    <>
-                        <span className="wb-tb-sep" aria-hidden="true" />
-                        {/* 只换「收起的区域长什么样」：不占位 ↔ 留一条。
-                            标题栏本身不参与切换 —— 它永远在，是唯一的恢复入口 */}
-                        <TbIconButton
-                            on={strip}
-                            label={strip ? '收起时改成不占位（现在留一条）' : '收起时改成留一条（现在不占位）'}
-                            onClick={() => {
-                                api.setChrome(strip ? 'bar' : 'strip');
-                            }}
-                        >
-                            <FarGlyph />
-                        </TbIconButton>
-                    </>
-                )}
-            </div>
-        </header>
-    );
-}
-
-/**
- * 一页 = **标题栏（永远在）** + 导航 + 固定骨架。
- *
- * 标题栏和主体是兄弟，都在页层内，但标题栏占满宽度 —— 它的定位是「管住包括导航在内的
- * 所有区域」，所以不能缩在导航右边。它也**不随 `chrome` 消失**：那是唯一能找回
- * 收起区域的地方，让它跟着形态走就是 dockview 版那个死锁（入口长在被收起的那个东西身上）。
+ * 依赖方向（见 `window.tsx` 文件头）：
+ *   · `global` —— 应用壳注册的贡献（导航开关 / 设置…），本文件只转发，不解释；
+ *   · `page`   —— 本文件按模板算出来的（这一页有哪些可收起的区域 + 面包屑）。
  */
 export function Workbench({
     api,
     views,
-    nav,
     navRail,
+    global,
+    chrome,
+    onChromeChange,
 }: {
     api: WbApi;
     views: readonly ViewDef[];
-    nav: NavState;
+    /** 导航本体（全局层：宽度与收起跨页类型共享，不进页模板） */
     navRail: ReactNode;
+    /** 全局层贡献：应用壳注册的按钮，页不解释 */
+    global: readonly WindowContribution[];
+    /** 收起后的样子（window 偏好，骨架与标题栏共用同一位源） */
+    chrome: Chrome;
+    onChromeChange: (chrome: Chrome) => void;
 }) {
+    const room = useSelectedRoom();
+
+    // 页贡献：只列「这一页真有内容」的四边区域 —— 项目页没有 assets，就不该有它的按钮。
+    // 判据一律是概念 id，方位只决定按钮落在左端还是右端。
+    // `sides` 里的 slot 不会是 center（`definePage` 已校验），所以这个 `as Side` 是安全的。
+    const page = useMemo<WindowContribution>(
+        () => ({
+            id: 'page',
+            title: room ? roomTitle(room) : null,
+            areas: api.page.sides
+                .filter((def) => api.viewCountOf(def.id) > 0)
+                .map((def) => ({
+                    id: def.id,
+                    title: def.title,
+                    side: def.slot as Side,
+                    open: api.isOpen(def.id),
+                    onToggle: () => {
+                        api.toggleArea(def.id);
+                    },
+                })),
+        }),
+        [api, room],
+    );
+
+    // 全局在前：左端因此是「导航 │ 区域」，右端是「区域 │ 工具 │ 把手」
+    const contributions = useMemo(() => [...global, page], [global, page]);
+
     return (
         <Ctx.Provider value={api}>
-            <TitleBar nav={nav} api={api} />
+            <Window contributions={contributions} chrome={chrome} onChromeChange={onChromeChange} />
             <div className="wb-body">
                 {navRail}
-                <Skeleton api={api} views={views} />
+                <Skeleton api={api} views={views} chrome={chrome} />
             </div>
         </Ctx.Provider>
     );

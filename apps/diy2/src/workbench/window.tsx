@@ -1,0 +1,215 @@
+// window.tsx —— **窗口层**：一条标题栏 + 四边状态栏位置。只摆按钮，不认识任何业务。
+//
+// 依赖方向是**倒过来**的（这是这个文件存在的全部理由）：
+//
+//     App（全局：导航开关 / 设置）─┐
+//                                 ├─→ 贡献 ─→ window（摆位置）
+//     page（这一页有哪些区域可收）─┘
+//
+// 也就是说 window **不 import** page 模板、不认识 room / 视图 / WbApi ——
+// 它只知道「这一项叫什么、落在哪一端、点它干什么」。区域是**页面**的概念
+// （这一页有没有「资产」只有模板知道），状态栏是**窗口**的概念（跨页存在、切页不重排）。
+// 让 window 反向 import page 就等于把两者焊死：加一页要改 window，插件也无处挂入口。
+//
+// 布局固定为三组，各组内的顺序 = **贡献注册顺序**：
+//
+//     [ 左端：leading 按钮 │ left/top 区域 ]  [ 中间：文字 ]  [ 右端：right/bottom 区域 │ tools │ 把手形态 ]
+//
+// 区域按钮贴两端、工具按钮用竖线隔开：一个回答「页面怎么摆」，一个回答「应用能干什么」。
+// 方位（`side`）只决定按钮落在左端还是右端 —— 把「详情」从左侧挪到右侧，注册的贡献
+// 一个字都不用改（它声明的仍是自己的方位，window 自己会去对的一端）。
+
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+
+import { AreaGlyph, FarGlyph } from './glyphs';
+import { loadChrome, saveChrome, type Chrome, type Side } from './model';
+
+/** 一份**区域贡献**：状态栏上的一个开关，控制某一页的某个区域收起 / 展开 */
+export interface AreaContribution {
+    /** 概念 id（与 page 模板里的一致，window 只用它做 key） */
+    id: string;
+    /** 名字：tooltip / aria-label 用 —— window 不画文字按钮 */
+    title: string;
+    /** 方位：**只**决定落在左端（left/top）还是右端（right/bottom） */
+    side: Side;
+    open: boolean;
+    onToggle: () => void;
+}
+
+/** 一颗工具按钮（图标 + tooltip） */
+export interface ButtonContribution {
+    id: string;
+    label: string;
+    glyph: ReactNode;
+    /** 有 `on` 才是开关（按 pressed 渲染）；缺省 = 中性按钮 */
+    on?: boolean;
+    onClick: () => void;
+}
+
+/**
+ * **一份贡献** = 一个注册者往窗口里放的东西。
+ *
+ * 全局壳注册一份（导航 / 设置…），页注册一份（这一页可收起的区域）。
+ * window 不区分来源 —— 谁注册的、注册了几份，对它都一样：合并后按组摆开。
+ */
+export interface WindowContribution {
+    /** 注册者 id（调试用，窗口不解释它） */
+    id: string;
+    /** 左端固定按钮 */
+    leading?: readonly ButtonContribution[];
+    /** 区域开关 */
+    areas?: readonly AreaContribution[];
+    /** 右端工具按钮 */
+    tools?: readonly ButtonContribution[];
+    /** 中间的文字（面包屑）。多份贡献都有时按注册顺序并列 */
+    title?: ReactNode;
+}
+
+/** 合并后的四组（渲染只认这个，不再看贡献边界） */
+export interface WindowParts {
+    leading: ButtonContribution[];
+    areas: AreaContribution[];
+    tools: ButtonContribution[];
+    titles: ReactNode[];
+}
+
+/** 把多份贡献摊平成四组 —— 顺序 = 注册顺序，不做去重 / 不做排序 */
+export function combineWindow(contributions: readonly WindowContribution[]): WindowParts {
+    const parts: WindowParts = { leading: [], areas: [], tools: [], titles: [] };
+    for (const item of contributions) {
+        if (item.leading !== undefined) parts.leading.push(...item.leading);
+        if (item.areas !== undefined) parts.areas.push(...item.areas);
+        if (item.tools !== undefined) parts.tools.push(...item.tools);
+        if (item.title !== undefined && item.title !== null) parts.titles.push(item.title);
+    }
+    return parts;
+}
+
+/**
+ * 把手形态（收起后「不占位」还是「留一条」）—— **窗口的偏好，不是页的**。
+ *
+ * 它跨页共享（切页类型不重置），也不属于任何区域的业务，所以状态住在这里；
+ * 渲染骨架时由宿主当 prop 传下去。放在 page 的 `PageState` 里会变成
+ * 「window 向 page 要自己的偏好」，方向反了。
+ */
+export function useChrome(storage: Storage = localStorage): [Chrome, (chrome: Chrome) => void] {
+    const [chrome, setChrome] = useState<Chrome>(() => loadChrome(storage));
+    useEffect(() => {
+        saveChrome(chrome, storage);
+    }, [chrome, storage]);
+    return [chrome, setChrome];
+}
+
+// ── 渲染 ──────────────────────────────────────────────────────────────────────
+
+/** 按钮：**只有图标**，文字全进 tooltip（标题栏是 28px 高的一条） */
+function TbButton({ item }: { item: ButtonContribution }) {
+    return (
+        <button
+            type="button"
+            className={item.on === true ? 'wb-tb-btn on' : 'wb-tb-btn'}
+            aria-pressed={item.on}
+            title={item.label}
+            aria-label={item.label}
+            onClick={item.onClick}
+        >
+            {item.glyph}
+        </button>
+    );
+}
+
+function TbArea({ item }: { item: AreaContribution }) {
+    return (
+        <TbButton
+            item={{
+                id: item.id,
+                label: `${item.open ? '收起' : '展开'}「${item.title}」`,
+                glyph: <AreaGlyph side={item.side} />,
+                on: item.open,
+                onClick: item.onToggle,
+            }}
+        />
+    );
+}
+
+/** 左端收 left / top，右端收 right / bottom —— 方位只影响分组 */
+const LEFT_SIDES: readonly Side[] = ['left', 'top'];
+
+function Sep() {
+    return <span className="wb-tb-sep" aria-hidden="true" />;
+}
+
+/**
+ * 标题栏本体。
+ *
+ * `contributions` 是**唯一的输入面**：加一个按钮 = 多传一份贡献，不用改这里。
+ * 它不跟自己以外的东西通信 —— 没有 context、没有 store、没有回调表。
+ */
+export function Window({
+    contributions,
+    chrome,
+    onChromeChange,
+}: {
+    contributions: readonly WindowContribution[];
+    chrome: Chrome;
+    onChromeChange: (chrome: Chrome) => void;
+}) {
+    const parts = useMemo(() => combineWindow(contributions), [contributions]);
+
+    const left = parts.areas.filter((item) => LEFT_SIDES.includes(item.side));
+    const right = parts.areas.filter((item) => !LEFT_SIDES.includes(item.side));
+    // 没有可收起的区域时不给把手切换：那颗按钮此时改不动任何东西
+    const toggleable = parts.areas.length > 0;
+    const strip = chrome === 'strip';
+
+    return (
+        <header className="wb-titlebar">
+            <div className="wb-tb-group">
+                {parts.leading.map((item) => (
+                    <TbButton key={item.id} item={item} />
+                ))}
+                {parts.leading.length > 0 && left.length > 0 ? <Sep /> : null}
+                {left.map((item) => (
+                    <TbArea key={item.id} item={item} />
+                ))}
+            </div>
+
+            <div className="wb-tb-mid">
+                {parts.titles.map((node, index) => (
+                    <span key={index} className="wb-tb-name">
+                        {index > 0 ? ' · ' : null}
+                        {node}
+                    </span>
+                ))}
+            </div>
+
+            <div className="wb-tb-group wb-tb-group-end">
+                {right.map((item) => (
+                    <TbArea key={item.id} item={item} />
+                ))}
+                {right.length > 0 && (parts.tools.length > 0 || toggleable) ? <Sep /> : null}
+                {parts.tools.map((item) => (
+                    <TbButton key={item.id} item={item} />
+                ))}
+                {toggleable ? (
+                    <>
+                        {parts.tools.length > 0 ? <Sep /> : null}
+                        <TbButton
+                            item={{
+                                id: 'chrome',
+                                // 只换「收起的区域长什么样」：不占位 ↔ 留一条。
+                                // 标题栏本身不参与切换 —— 它永远在，是唯一的恢复入口
+                                label: strip ? '收起时改成不占位（现在留一条）' : '收起时改成留一条（现在不占位）',
+                                glyph: <FarGlyph />,
+                                on: strip,
+                                onClick: () => {
+                                    onChromeChange(strip ? 'bar' : 'strip');
+                                },
+                            }}
+                        />
+                    </>
+                ) : null}
+            </div>
+        </header>
+    );
+}

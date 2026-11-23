@@ -7,7 +7,8 @@
 //   2. Sidebar 自带宽度拖拽与按钮（localStorage `entity-chat:sidebar-width`），
 //      与骨架里区域的尺寸（`workbench:<pageType>.sizes`）是两套真源 —— 它不属于任何一页。
 //
-// 标题栏**永远在**（两种把手形态下都在），是区域开合唯一的写入口：
+// 标题栏（`window.tsx` 的 `Window`）**永远在**（两种把手形态下都在），是区域开合唯一的写入口。
+// 它**不认识 page**：里面摆什么由「贡献」装配（本文件的全局按钮 + 页自己算的区域开关）：
 //   · `bar`   —— 收起 = 不占位，只能从标题栏换回来；
 //   · `strip` —— 收起 = 留一条，就地可点（单击展开 / 双击最大化）。
 // 只换「收起来长什么样」，共用同一份开合状态 —— 所以随时可以切、状态不丢。
@@ -25,7 +26,7 @@ import {
     useRoomDialogsContext,
     useSelectedRoom,
 } from '@diy-agent/entity-chat';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import '../index.css';
 import '@astryxdesign/core/astryx.css';
@@ -33,11 +34,19 @@ import '@astryxdesign/theme-neutral/theme.css';
 import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
-import { type NavState, TitleBar, usePageWorkbench, Workbench } from './AreaHost';
+import { usePageWorkbench, Workbench } from './AreaHost';
+import { GearGlyph, NavGlyph } from './glyphs';
 import { type PageDef } from './model';
 import { pageFor, wbViews } from './pages';
+import { useChrome, Window, type WindowContribution } from './window';
 
 // ── 全局层：导航 ───────────────────────────────────────────────────────────────
+
+/** 导航的开关（全局层持有）—— 标题栏上的那颗按钮由这里当贡献注册，window 不认识它 */
+interface NavState {
+    open: boolean;
+    toggle: () => void;
+}
 
 const NAV_OPEN_KEY = 'workbench:nav-open';
 
@@ -76,10 +85,36 @@ function NavRail({ nav }: { nav: NavState }) {
 
 // ── 页实例 ────────────────────────────────────────────────────────────────────
 
-/** 一页 = 标题栏 + 导航 + 固定骨架。`key` 由外部按 page.type 给 —— 换页类型 = 换一份偏好 */
-function PageShell({ page, nav }: { page: PageDef; nav: NavState }) {
+/**
+ * 一页 = 标题栏 + 导航 + 固定骨架。`key` 由外部按 page.type 给 —— 换页类型 = 换一份偏好。
+ *
+ * `global` / `chrome` 都由壳持有并向下一层传：标题栏的全局按钮不属于任何一页，
+ * 收起形态又是**窗口**的偏好（跨页共享）。页只多贡献一件东西：这一页有哪些可收起的区域。
+ */
+function PageShell({
+    page,
+    nav,
+    global,
+    chrome,
+    onChromeChange,
+}: {
+    page: PageDef;
+    nav: NavState;
+    global: readonly WindowContribution[];
+    chrome: ReturnType<typeof useChrome>[0];
+    onChromeChange: (chrome: ReturnType<typeof useChrome>[0]) => void;
+}) {
     const api = usePageWorkbench(page, wbViews);
-    return <Workbench api={api} views={wbViews} nav={nav} navRail={<NavRail nav={nav} />} />;
+    return (
+        <Workbench
+            api={api}
+            views={wbViews}
+            navRail={<NavRail nav={nav} />}
+            global={global}
+            chrome={chrome}
+            onChromeChange={onChromeChange}
+        />
+    );
 }
 
 function Host() {
@@ -98,19 +133,53 @@ function Host() {
         }
     }, [open]);
 
-    const nav: NavState = {
-        open,
-        toggle: () => {
-            setOpen((value) => !value);
-        },
-    };
+    const toggle = useCallback(() => {
+        setOpen((value) => !value);
+    }, []);
+    const nav = useMemo<NavState>(() => ({ open, toggle }), [open, toggle]);
+
+    // 收起后的样子是**窗口**的偏好（跨页共享）；hook 在 window 里，壳只把它往下传
+    const [chrome, setChrome] = useChrome();
+
+    // 全局层向标题栏**注册**的按钮：导航开关 + 设置。
+    // 这两颗不属于任何一页，所以不该由页模板提供（那会让每页各写一份）。
+    const global = useMemo<WindowContribution[]>(
+        () => [
+            {
+                id: 'nav',
+                leading: [
+                    {
+                        id: 'nav',
+                        label: open ? '收起导航' : '展开导航',
+                        glyph: <NavGlyph />,
+                        on: open,
+                        onClick: toggle,
+                    },
+                ],
+            },
+            {
+                id: 'app',
+                tools: [
+                    {
+                        id: 'settings',
+                        label: '设置',
+                        glyph: <GearGlyph />,
+                        onClick: () => {
+                            dialogs.openSettings();
+                        },
+                    },
+                ],
+            },
+        ],
+        [open, toggle, dialogs],
+    );
 
     // 没有房间时**也要**有导航：新建第一个房间的入口就在左栏，把它藏起来等于没法开工
     if (!room) {
         return (
             <RoomDialogsProvider value={dialogs}>
                 <div className="wb-shell">
-                    <TitleBar nav={nav} />
+                    <Window contributions={global} chrome={chrome} onChromeChange={setChrome} />
                     <div className="wb-body">
                         <NavRail nav={nav} />
                         <div className="wb-splash">
@@ -128,7 +197,14 @@ function Host() {
     return (
         <RoomDialogsProvider value={dialogs}>
             <div className="wb-shell">
-                <PageShell key={page.type} page={page} nav={nav} />
+                <PageShell
+                    key={page.type}
+                    page={page}
+                    nav={nav}
+                    global={global}
+                    chrome={chrome}
+                    onChromeChange={setChrome}
+                />
             </div>
             {dialogs.element}
         </RoomDialogsProvider>
