@@ -161,6 +161,15 @@ describe('resolveConfig', () => {
         expect(describeConfig(config)).toContain('/lab ');
     });
 
+    it('生产入口 + 沙箱数据根：自报不说「生产」，标签取数据根目录名（回归：`bin/diy2 web --home run/diy2/lab` 曾打出「生产/lab」「开发/prod」）', () => {
+        const home = join(tmp(), 'staging');
+        const config = resolveConfig({ moduleDir: APP_ROOT, mode: 'production', overrides: { home } });
+        const line = describeConfig(config);
+        expect(line).not.toContain('生产');
+        expect(line).toContain(home);
+        expect(config.launch).toBe('staging');
+    });
+
     it('**不读** DIY2_* 环境变量（回归：外层 shell 漏出来的变量不许改配置）', () => {
         const home = tmp();
         const polluted = { DIY2_HOME: home, DIY2_PORT: '5399', DIY2_VARIANT: 'staging', DIY2_ENV: 'production' };

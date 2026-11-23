@@ -387,8 +387,16 @@ _check_full_body() {
   # 「经由哪个包拉进来的」，只有遍历 import 图才行。
   run node scripts/check-renderer-boundary.mjs
   # 构建配置漂移护栏（2026-10-31）：各包 tsconfig.build.json 的 composite/references 与
-  # tsconfig.build-all.json 都是**生成物**（node scripts/gen-tsconfig-build-all.mjs）——手改就报
-  run node scripts/gen-tsconfig-build-all.mjs --check
+  # tsconfig.build-all.json 都是**生成物**（node scripts/gen-tsconfig-build-all.mjs）——手改就报。
+  # 文件**不存在**时先生成、不判漂移：它落在 build/ 里，而 clean / 全新 worktree 都没有 build/ ——
+  # 2026-11-23 实测，干净 worktree 上 `./sha.sh clean && ./sha.sh check` 必红，人第一反应是去
+  # 重跑 gen（提示说的就是那句），跑了才发现「本来就没有，不是被人改坏」。
+  if [[ -f build/tsconfig.build-all.json ]]; then
+    run node scripts/gen-tsconfig-build-all.mjs --check
+  else
+    echo "${secondary}build/tsconfig.build-all.json 不存在（clean 后 / 新 worktree）→ 先生成再比${reset}"
+    run node scripts/gen-tsconfig-build-all.mjs
+  fi
   # 各领域规范索引护栏（##388）：~/SPECS.md 的 key 唯一 / 指针可解析 / 链上新增未收录（ratchet：存量基线 scripts/specs-unindexed.txt）
   #（实现见 scripts/check-specs.mts；**总表缺失 = skip + 提示、不算失败**，跨机器 / CI 没有家目录那份文件）
   run npx tsx scripts/check-specs.mts

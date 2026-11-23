@@ -26,7 +26,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 /** 产物里的 app 标识（`/api/info` 自报、注册表 `app` 字段、探活判据共用一处） */
 export const APP_ID = 'diy2';
@@ -120,6 +120,19 @@ export function defaultLaunch(mode: Diy2Env): string {
     if (mode === 'production') return 'prod';
     if (mode === 'test') return 'test';
     return 'lab';
+}
+
+/**
+ * 「生产入口 + 非生产数据根」时的标签：取数据根目录名（`run/diy2/lab` → `lab`）。
+ *
+ * 为什么：`bin/diy2 web --home run/diy2/lab` 不带 `--launch` 时，按 env 缺省会叫 `prod` ——
+ * 于是自报成了「开发/prod home=…/run/diy2/lab」，跟包级入口（`apps/diy2/sha.sh lab` 传
+ * `--launch lab`）叫法不一，同一条命令的两种发起方式在注册表里成了两个标签。
+ * 目录名不合法 / 是根目录 → 回落缺省，不硬凑。
+ */
+function sandboxLaunch(home: string): string | undefined {
+    const name = basename(home);
+    return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) ? name : undefined;
 }
 
 /**
@@ -281,7 +294,6 @@ export function resolveConfig(opts?: {
     const moduleDir = opts?.moduleDir ?? process.cwd();
     const appRoot = findAppRoot(moduleDir) ?? findAppRoot(join(moduleDir, '..')) ?? resolve(moduleDir);
     const repoRoot = findRepoRoot(appRoot) ?? null;
-    const launch = overrides.launch?.trim() || defaultLaunch(mode);
 
     const notes: string[] = [];
     const { home } = resolveHome({
@@ -289,6 +301,11 @@ export function resolveConfig(opts?: {
         explicit: overrides.home,
         allowProdHome: overrides.allowProdHome,
     });
+    // 标签在 home **之后**定：生产入口配沙箱数据根时，标签就取那个目录名（见 sandboxLaunch）。
+    const launch =
+        overrides.launch?.trim() ||
+        (mode === 'production' && !isProdHome(home) ? sandboxLaunch(home) : undefined) ||
+        defaultLaunch(mode);
 
     const portFile = join(home, 'app.port');
     const recordedPort = readPortFile(portFile);
@@ -358,7 +375,10 @@ export function modelConfigHint(config: Diy2Config): string | null {
 
 /** 启动时的一行自报（诊断「我连的是谁 / 数据在哪」的唯一线索） */
 export function describeConfig(config: Diy2Config, actualPort?: number): string {
-    const where = config.env === 'production' ? '生产' : config.env === 'test' ? '测试' : '开发';
+    // 「生产」由**数据根**判定，不由入口声明的 env 判定：`bin/diy2 web --home run/diy2/lab`
+    // 是生产入口 + 沙箱数据，按 env 说会打出「生产/lab home=…/run/…」——自相矛盾的一行日志，
+    // 而人正是靠这一行确认「我连的是哪个库」。
+    const where = isProdHome(config.home) ? '生产' : config.env === 'test' ? '测试' : '开发';
     // 实际监听端口可能不等于 config.port（0 = 内核分配、粘性端口被占后漂移）：
     // 自报以**实际**为准，否则这行日志在「到底连哪个端口」这件事上说谎。
     const shown = actualPort ?? config.port;
