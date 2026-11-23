@@ -147,12 +147,15 @@ export class RpcChatClient implements ChatClient {
             deliveries: Delivery[];
             asks: Snapshot['asks'];
             answered: Snapshot['answeredAsks'];
+            speaking?: Snapshot['speaking'];
         }>('chat.history', { id: entityId });
         return {
             items: history.items,
             deliveries: history.deliveries,
             asks: history.asks ?? [],
             answeredAsks: history.answered ?? [],
+            // 老服务端没有这个字段：留 undefined（客户端退回倒推，见 Snapshot.speaking）
+            ...(history.speaking === undefined ? {} : { speaking: history.speaking }),
         };
     }
 

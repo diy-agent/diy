@@ -10,12 +10,13 @@
 import { AlertTriangle, ChevronDown, Send, Square } from 'lucide-react';
 import * as React from 'react';
 
-import { buildTimeline, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
+import { buildTimeline, jobOf, jobViewOfNotice, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
 
 import { AskCard } from '../../components/AskCard';
 import { BotAvatar } from '../../components/BotAvatar';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
 import { ErrorBar } from '../../components/ErrorBar';
+import { JobCard } from '../../components/JobCard';
 import { Markdown } from '../../components/Markdown';
 import { EndFooterLine } from '../../components/EndFooterLine';
 import { RunningIndicator } from '../../components/RunningIndicator';
@@ -75,6 +76,10 @@ function ToolGroup({ tools }: { tools: Array<TimelinePart & { kind: 'tool' }> })
 }
 
 function ToolRow({ tool }: { tool: TimelinePart & { kind: 'tool' } }) {
+    // 后台作业（job / bash background）单独成卡：普通工具行只剩 name + 截断 target，
+    // 而用户要看的是 run id / 状态 / 退出码 / 输出（判据在 chat-core 的 `jobOf`）
+    const job = jobOf(tool);
+    if (job !== undefined) return <JobCard view={job} />;
     const target = toolTargetOf(tool);
     const status = TOOL_STATUS[tool.state];
     const mark = status === 'running' ? '◌' : status === 'ok' ? '✓' : '✗';
@@ -92,6 +97,8 @@ function ToolRow({ tool }: { tool: TimelinePart & { kind: 'tool' } }) {
 function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
     if (entry.kind === 'notice') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
+        // 后台作业收口：带结构化事实的画卡片（run id / 状态 / 退出码 / 输出尾部）
+        if (entry.job !== undefined) return <JobCard view={jobViewOfNotice(entry.job, text)} />;
         return (
             <div className="my-1 flex items-center gap-3 text-[11px] text-muted-foreground">
                 <span className="h-px flex-1 bg-border" />

@@ -64,6 +64,21 @@ export function formatDuration(ms: number | undefined): string {
  */
 export const MAX_TAIL_BYTES = 16 * 1024;
 
+/** ANSI 色码（`\u001b[38;5;66;1m` 这类） */
+const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
+
+/**
+ * 去掉 ANSI 色码。
+ *
+ * 为什么在**取尾部**这一层做：`out.log` 原文件里颜色码是给终端看的，而 tail 的去处是
+ * 聊天记录 / 模型上下文 / 通知文案 —— 那里 `\u001b[38;5;255;48;5;66;1m` 只是乱码，
+ * 还占 token（2026-11-23：用户看到的 `job-done` 通知整段都是这种东西）。
+ * 文件本身不动：真要颜色就去读 `out.log`。
+ */
+export function stripAnsi(text: string): string {
+    return text.replace(ANSI, "");
+}
+
 export interface TailResult {
     text: string;
     /** 实际给出的行数 */
@@ -91,9 +106,9 @@ export function tailOf(raw: string, wantLines: number, maxBytes: number = MAX_TA
     if (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
     if (rows.length > want) {
         const kept = rows.slice(rows.length - want);
-        return { text: kept.join("\n"), lines: kept.length, droppedBytes };
+        return { text: stripAnsi(kept.join("\n")), lines: kept.length, droppedBytes };
     }
-    return { text: rows.join("\n"), lines: rows.length, droppedBytes };
+    return { text: stripAnsi(rows.join("\n")), lines: rows.length, droppedBytes };
 }
 
 /** 退出情况的**唯一**表述：`退出码 0` / `退出码 7` / `信号 SIGKILL` / `（未结束）`。 */

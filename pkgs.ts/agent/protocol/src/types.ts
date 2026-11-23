@@ -84,9 +84,31 @@ interface ItemBase {
     author?: Author;
 }
 
+/**
+ * `job-done` 通知的**结构化事实**（与 `text` 同一件事，只是不拍平）。
+ *
+ * 为什么要在条目上带一份：`text` 是一段给模型读的人话（命令 + 输出尾部），当分隔线糊在
+ * 一行里既看不出状态也看不出退出码；而 `run` / `state` / `exitCode` / `tail` 本来就有，
+ * 只是没进条目。UI 据此画作业卡片（2026-11-23）。
+ */
+export interface JobNotice {
+    /** run id（`job status` / `job output` 的入参） */
+    run: string;
+    /** RunState：running / exited / killed / failed */
+    state: string;
+    exitCode?: number | null;
+    signal?: string | null;
+    durationMs?: number;
+    command?: string;
+    /** 输出尾部（已去过 ANSI 色码） */
+    tail?: string;
+    /** tail 之前被截掉的字节数 */
+    truncatedBytes?: number;
+}
+
 export type Item =
     | (ItemBase & { type: 'chat'; data: { text: string } })
-    | (ItemBase & { type: 'notice'; data: { text: string; kind: string } })
+    | (ItemBase & { type: 'notice'; data: { text: string; kind: string; job?: JobNotice } })
     | (ItemBase & {
           type: 'tool';
           data: { name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' };
@@ -275,6 +297,16 @@ export interface Snapshot {
     asks?: AskRequest[];
     /** 已经有结局的提问（最近的若干条）：刷新后卡片仍在，显示已选状态 */
     answeredAsks?: AnsweredAsk[];
+    /**
+     * **服务端事实**：这一刻还在跑的成员（= 房间的 `running` 集合，与运行中广播同源）。
+     *
+     * 为什么必须进快照：客户端原先靠「快照里有没有 `status:'streaming'` 的条目」倒推，
+     * 而一轮卡在**等上游**（还没吐第一个字）时一个流式条目都没有 —— 刷新之后既没有
+     * 「正在说话…」也没有停止按钮，用户看不出它在跑、更停不掉（2026-11-23 实测）。
+     *
+     * 缺省 `undefined` = 老服务端：客户端退回旧的倒推。空数组是**有意义**的（确实没人跑）。
+     */
+    speaking?: string[];
 }
 
 /** capabilities 决定 UI 显示哪些按钮（不要写 surfaceId 分支） */

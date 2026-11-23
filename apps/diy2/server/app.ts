@@ -586,6 +586,9 @@ export function createDiy2App(opts: {
                         deliveries: actor.deliveries(),
                         asks: actor.pendingAskRequests(),
                         answered: actor.answeredAskRequests(),
+                        // 服务端事实：谁还在跑。取房间自己的 `running` 集合（与广播同源），
+                        // 客户端不再靠「有没有流式条目」倒推 —— 卡在等上游的那一轮没有流式条目。
+                        speaking: actor.runningBots(),
                     };
                 },
                 chat: async ({ input }) => {
