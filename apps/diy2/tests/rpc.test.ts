@@ -120,6 +120,24 @@ describe('/rpc 房间事件流', () => {
         }
     });
 
+    it('空模型 key 进不了库：schema 层就拒（`??` 挡不住 `\'\'`）', async () => {
+        const transport = new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 }));
+        const binding = new ChannelClientBinding(transport);
+        try {
+            const before = await binding.invoke<unknown, Array<{ id: string }>>('diy2.rooms.list', { input: {} });
+            // 界面在模型目录为空时 `defaultModelKey` 就是 ''：以前原样发上来，落成一个"标识不合法"的实体
+            await expect(
+                binding.invoke('diy2.rooms.create', {
+                    input: { type: 'project', name: '空模型', modelKey: '' },
+                }),
+            ).rejects.toThrow();
+            const after = await binding.invoke<unknown, Array<{ id: string }>>('diy2.rooms.list', { input: {} });
+            expect(after.length).toBe(before.length);
+        } finally {
+            transport.close();
+        }
+    });
+
     it('不存在的房间：流以错误结束，不是静默空流', async () => {
         const transport = new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 }));
         const binding = new ChannelClientBinding(transport);

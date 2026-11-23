@@ -10,18 +10,29 @@ import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, primaryBotOf, roomTitle, roomTypeLabel, type Room } from './model';
 import { modelLabel } from './models';
-import { actions, useBots, useError, useLoaded, useRooms, useSelectedRoom } from './store';
+import {
+    actions,
+    useBots,
+    useDefaultModelKey,
+    useError,
+    useLoaded,
+    useProviders,
+    useRooms,
+    useSelectedRoom,
+} from './store';
 import { useRoomDialogs } from './useRoomDialogs';
 
 function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
+    const providers = useProviders();
+    const label = modelLabel(providers, value);
     return (
         <button
             onClick={onClick}
-            title={`${modelLabel(value)} · 点击切换`}
+            title={`${label} · 点击切换`}
             className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted"
         >
             <Cpu className="size-3" />
-            {modelLabel(value).split(' · ')[0]}
+            {label.split(' · ')[0]}
         </button>
     );
 }

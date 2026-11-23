@@ -144,6 +144,7 @@ beforeEach(async () => {
             update: async () => ({}),
         },
         bots: { list: async () => [] },
+        models: { list: async () => ({ providers: [] }) },
         load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
         watch: () => () => undefined,
         drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },

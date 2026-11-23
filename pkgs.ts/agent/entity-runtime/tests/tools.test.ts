@@ -1,14 +1,16 @@
 // tools.test.ts —— 房间工具（read / write / edit / bash）的边界。
 //
-// 只测我们自己装配与移植的那一层：路径解析（不设边界）、唯一命中、失败抛异常（不是"返回失败字符串"）。
+// 只测 diy2 自己那一层：路径解析（不设边界）、唯一命中、失败抛异常（不是"返回失败字符串"）。
+// 工具语义（读窗口 / 原子写 / diff / 退出码口径）已归 `@diy-agent/tools` 内核 ——
+// 这里断言的是"房间拿到的就是内核那份"，不重复测内核的细节。
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { buildRoomTools } from '../src/tools/index';
+import { buildRoomTools, DEFAULT_BASH_TIMEOUT_MS } from '../src/tools/index';
 
 /** ToolSet 里的 execute 签名带 SDK 参数，测试只喂输入 */
 type Executable = { execute: (input: unknown) => Promise<unknown> };
@@ -30,37 +32,44 @@ afterAll(async () => {
 describe('房间工具', () => {
     it('write → read：内容落盘，读回来带行号', async () => {
         const tools = buildRoomTools({ cwd: dir, shell: false });
-        await toolOf(tools, 'write').execute({ path: 'notes/a.txt', content: '第一行\n第二行\n第三行' });
+        const written = String(
+            await toolOf(tools, 'write').execute({ path: 'notes/a.txt', content: '第一行\n第二行\n第三行' }),
+        );
+        // 内核的写回执：一行摘要 + unified diff（以前那份移植只回一句"已写入"）
+        expect(written).toContain('新建');
+        expect(written).toContain('+第一行');
 
         const text = String(await toolOf(tools, 'read').execute({ path: 'notes/a.txt' }));
         expect(text).toContain('共 3 行');
-        expect(text).toContain('1\t第一行');
-        expect(text).toContain('3\t第三行');
+        expect(text).toContain('1: 第一行');
+        expect(text).toContain('3: 第三行');
         expect(await readFile(join(dir, 'notes/a.txt'), 'utf8')).toBe('第一行\n第二行\n第三行');
     });
 
-    it('读 cwd 之外：放行（房间目录只是相对路径基准，不是边界）', async () => {
-        const tools = buildRoomTools({ cwd: dir, shell: false });
-        const outside = join(dir, '..', `outside-${process.pid}.txt`);
-        await writeFile(outside, '外面\n', 'utf8');
+    // 房间目录**不是**可写范围（2026-11-21 用户裁，与内核 / diy1 同口径）：任务在 git worktree 里时
+    // 文件就在房间目录之外，拦了只能退回 bash 写、绕开 diff 摘要与审计。这条是契约变更的正面证据 ——
+    // 防有人把护栏又加回去。
+    it('房间外路径不拦：绝对路径与 ../ 都照常读写（房间目录只是相对路径基准）', async () => {
+        const outside = await mkdtemp(join(tmpdir(), 'diy2-tools-outside-'));
         try {
-            const text = String(await toolOf(tools, 'read').execute({ path: outside }));
-            expect(text).toContain('1\t外面');
-        } finally {
-            await rm(outside, { force: true });
-        }
-    });
+            const tools = buildRoomTools({ cwd: dir, shell: false });
+            const target = join(outside, 'far.txt');
 
-    it('写 / 改 cwd 之外：同样放行', async () => {
-        const tools = buildRoomTools({ cwd: dir, shell: false });
-        const outside = join(dir, '..', `outside-w-${process.pid}.txt`);
-        try {
-            await toolOf(tools, 'write').execute({ path: outside, content: 'a\nb\n' });
-            expect(await readFile(outside, 'utf8')).toBe('a\nb\n');
-            await toolOf(tools, 'edit').execute({ path: outside, edits: [{ oldText: 'b', newText: 'c' }] });
-            expect(await readFile(outside, 'utf8')).toBe('a\nc\n');
+            const written = String(await toolOf(tools, 'write').execute({ path: target, content: '外面' }));
+            expect(written).toContain('新建');
+            expect(String(await toolOf(tools, 'read').execute({ path: target }))).toContain('1: 外面');
+
+            await toolOf(tools, 'edit').execute({
+                path: target,
+                edits: [{ oldText: '外面', newText: '改过' }],
+            });
+            expect(await readFile(target, 'utf8')).toBe('改过');
+
+            // 相对路径的 `../` 同样放行（不再有"越界"这回事）
+            const up = `../${outside.split('/').pop() ?? ''}/far.txt`;
+            expect(String(await toolOf(tools, 'read').execute({ path: up }))).toContain('改过');
         } finally {
-            await rm(outside, { force: true });
+            await rm(outside, { recursive: true, force: true });
         }
     });
 
@@ -70,7 +79,7 @@ describe('房间工具', () => {
 
         await expect(
             toolOf(tools, 'edit').execute({ path: 'b.txt', edits: [{ oldText: 'a', newText: 'x' }] }),
-        ).rejects.toThrow(/命中 2 处/);
+        ).rejects.toThrow(/出现 2 次/);
 
         await toolOf(tools, 'edit').execute({
             path: 'b.txt',
@@ -84,15 +93,22 @@ describe('房间工具', () => {
         await toolOf(tools, 'write').execute({ path: 'c.txt', content: 'hello' });
         await expect(
             toolOf(tools, 'edit').execute({ path: 'c.txt', edits: [{ oldText: 'nope', newText: 'x' }] }),
-        ).rejects.toThrow(/未命中/);
+        ).rejects.toThrow(/找不到/);
+    });
+
+    it('bash 缺省带执行预算（不是"不设超时"）：值抄 diy1 的 300s', () => {
+        // 回归钉子：这里曾经是 `?? 0`（= 不限），一条卡死的命令能把整轮挂到人来看，
+        // 而步数刹车管不到它。要放开只能显式传 0。
+        expect(DEFAULT_BASH_TIMEOUT_MS).toBe(300_000);
     });
 
     it('bash：在房间目录执行，退出码与输出都在结果里', async () => {
         const tools = buildRoomTools({ cwd: dir, shell: true, bashTimeoutMs: 10_000 });
         const out = String(await toolOf(tools, 'bash').execute({ command: 'pwd && echo hi' }));
-        expect(out).toContain('exit: 0');
+        expect(out).toContain('exit_code: 0');
         expect(out).toContain('hi');
-        expect(out).toContain(dir);
+        // cwd 打的是 realpath（macOS 的 /var → /private/var），别拿构造时的字符串硬比
+        expect(out).toContain(await realpath(dir));
     });
 
     it('ask 不阻塞：调用后立刻返回回执，提问同时推到界面', async () => {
@@ -220,11 +236,13 @@ describe('房间工具', () => {
         expect(describeAnswer(textAsk, only({ text: ' 就它了 ' }))).toBe('就它了');
     });
 
-    it('bash 非零退出：返回结果而不是抛错（靠退出码改命令）', async () => {
+    it('bash 非零退出：抛错，但诊断（退出码 + stderr）在 error 里给全', async () => {
+        // 内核口径（##353）：非零退出是**工具失败**，抛而不是 return —— 返回字符串会被 SDK
+        // 当成正常结果画 ✓（"✓ + Command failed" 那种自相矛盾）。模型侧照样看得到诊断。
         const tools = buildRoomTools({ cwd: dir, shell: true, bashTimeoutMs: 10_000 });
-        const out = String(await toolOf(tools, 'bash').execute({ command: 'echo boom >&2; exit 3' }));
-        expect(out).toContain('exit: 3');
-        expect(out).toContain('boom');
+        await expect(toolOf(tools, 'bash').execute({ command: 'echo boom >&2; exit 3' })).rejects.toThrow(
+            /exit_code: 3[\s\S]*boom/,
+        );
     });
 
     it('journal：写一条走回调（不落文件、不进 cwd）', async () => {

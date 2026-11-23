@@ -47,7 +47,8 @@ export {
 export { adviceOf, endItems, endReasonOf, publishable, type EndFacts, type EndItemContext } from './end-reason';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';
-export { buildRoomTools, type RoomToolsOptions } from './tools/index';
+export { buildRoomTools, type RoomJobs, type RoomToolsOptions } from './tools/index';
+export { createJobRegistry, jobOwnerOf, parseJobOwner, type JobOwner, type RoomJobsHost } from './jobs';
 export { RoomLog, toMessage, type RoomEntry, type RoomEntryInput } from './room-log';
 export {
     BotSession,
@@ -59,7 +60,18 @@ export {
     type Turn,
     type TurnResult,
 } from './session';
-export { modelOf, parseModelKey } from './providers';
+export {
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    defaultModelKeyOf,
+    maxOutputTokensOf,
+    modelConfigPath,
+    modelHome,
+    modelOf,
+    modelProviders,
+    parseModelKey,
+    type ModelView,
+    type ProviderView,
+} from './providers';
 export { factsOf, replay, STOP_SCENARIOS, type StopReplay, type StopScenario } from './stop-scenarios';
 export type { AgentEvent, Author, Bot, Delivery, Room, RoomMember, RoomEvent, InboxMode, Item } from './types';
 export { dayOf, renderTaskDoc, taskDirOf } from './task-dir';

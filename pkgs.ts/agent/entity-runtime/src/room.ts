@@ -27,6 +27,8 @@ import { ASK_DRAFT_PREFIX, type Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
 import { createRoomContext } from './system-context';
 import { buildRoomTools } from './tools/index';
+import { jobOwnerOf, type JobOwner } from './jobs';
+import type { JobDoneEvent, RunRegistry } from '@diy-agent/jobs/node';
 import type { CompactEvent } from './compaction';
 import {
     BotSession,
@@ -78,6 +80,13 @@ export interface RoomActorDeps {
     home?: string;
     /** 是否开放 shell（缺省开放） */
     shell?: boolean;
+    /**
+     * 后台作业账本（进程级单例，由宿主创建）。不传 = bash 没有 `background`、也没有 `job` 工具。
+     * 收口通知由宿主挂 `RunRegistry` 的 notifier 后调 `notifyJobDone` 送回来（见 jobs.ts）。
+     */
+    jobs?: { registry: RunRegistry };
+    /** 步数上限（缺省 `DEFAULT_MAX_STEPS`；到顶按 `max-steps` 收尾） */
+    maxSteps?: number;
     /** shell 缺省超时 */
     bashTimeoutMs?: number;
 
@@ -605,6 +614,9 @@ export class RoomActor {
                       cwd,
                       ...(this.deps.shell === undefined ? {} : { shell: this.deps.shell }),
                       ...(this.deps.bashTimeoutMs === undefined ? {} : { bashTimeoutMs: this.deps.bashTimeoutMs }),
+                      ...(this.deps.jobs === undefined
+                          ? {}
+                          : { jobs: { registry: this.deps.jobs.registry, owner: jobOwnerOf(this.id, botId) } }),
                       ask: this.gate,
                       askOwner: botId,
                       onJournal: (input) => {
@@ -621,6 +633,11 @@ export class RoomActor {
     }
 
     private toolsHint(): string {
+        const jobHint =
+            this.deps.jobs === undefined
+                ? ''
+                : '\n后台长活（构建 / 测试 / 装依赖）用 bash 的 background，再用 job 查状态 / 取输出 / 停；' +
+                  '起完就别轮询，结束时会插话叫醒你。';
         return (
             '可以用 read / write / edit 读写文件、用 bash 执行命令；' +
             `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
@@ -628,7 +645,8 @@ export class RoomActor {
             '留下决策 / 踩坑 / 评审结论时用 journal（一句话一条，按 kind 分类）。' +
             '需要用户做决定时**必须**调用 ask（选项 / 表单）：不要在正文里提问，' +
             '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。' +
-            'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。'
+            'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。' +
+            jobHint
         );
     }
 
@@ -722,6 +740,7 @@ export class RoomActor {
             ...(this.deps.run === undefined ? {} : { run: this.deps.run }),
             ...(this.deps.compactor === undefined ? {} : { compactor: this.deps.compactor }),
             ...(this.deps.budget === undefined ? {} : { budget: this.deps.budget }),
+            ...(this.deps.maxSteps === undefined ? {} : { maxSteps: this.deps.maxSteps }),
             ...(this.toolsFor(bot.id) === undefined ? {} : { tools: this.toolsFor(bot.id) }),
             ...(this.hasTools ? { toolsHint: this.toolsHint() } : {}),
             ...(systemContext === '' ? {} : { systemContext }),
@@ -864,6 +883,37 @@ export class RoomActor {
             text: `[${name} 的结论] ${result.text}`,
             mode: 'next-turn',
             turn: { turn: result.turn, turnId: result.turnId },
+        });
+    }
+
+    /**
+     * 后台作业收口：宿主把 `JobDoneEvent` 按归属串路由回来，这里给起它的成员插一条 notice 并叫醒它。
+     *
+     * 不负责「告诉用户作业结束了」——UI 自己看账本；这里只解决模型的记忆：它起完活就去干别的了，
+     * 不叫醒就永远不会去取结果。归属串对不上（别的房间 / 已退出的成员）= 静默丢弃。
+     */
+    notifyJobDone(owner: JobOwner, event: JobDoneEvent): void {
+        const bot = this.members().find((candidate) => candidate.id === owner.botId);
+        if (bot === undefined) return;
+        const turn = this.newTurn();
+        const now = this.deps.now?.() ?? Date.now();
+        const notice: Item = {
+            id: `n-${now.toString(36)}-${this.order + 1}`,
+            seq: this.deps.store.seqOf(this.id) + 1,
+            order: this.nextOrder(),
+            turn: turn.turn,
+            turnId: turn.turnId,
+            at: now,
+            status: 'done',
+            type: 'notice',
+            data: { text: event.text, kind: 'job-done' },
+        };
+        this.deps.emit({ kind: 'item', item: this.deps.store.appendItem(this.id, notice) });
+        void this.sessionOf(bot).post({
+            messageId: notice.id,
+            turn,
+            mode: 'next-turn',
+            text: `[后台作业结束] ${event.text}`,
         });
     }
 }

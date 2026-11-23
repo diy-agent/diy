@@ -61,10 +61,11 @@ function render(): string {
 }
 
 beforeEach(async () => {
-    // 命令面走 RPC：注入假客户端，喂一份固定的房间列表
+    // 命令面走 RPC：注入假客户端，喂一份固定的房间列表（目录为空 = 用服务端缺省模型）
     setDiy2Client({
         rooms: { list: async () => rooms },
         bots: { list: async () => [] },
+        models: { list: async () => ({ providers: [] }) },
         load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
         watch: () => () => undefined,
         drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },

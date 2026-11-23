@@ -8,7 +8,7 @@ import * as React from 'react';
 import type { Room, SessionInfo } from '@diy-agent/chat-core';
 
 import { contextWindowOf } from '../models';
-import { actions, useStore } from '../store';
+import { actions, useProviders, useStore } from '../store';
 
 /** 实测：中文 + JSON 结构下约 0.78 token / 字符（diy2 实测 522 tok ↔ 674 chars） */
 const TOKENS_PER_CHAR = 0.78;
@@ -59,6 +59,7 @@ function Row({ session, busy, onCompact }: { session: SessionInfo; busy: boolean
 
 export function ContextPanel({ room }: { room: Room }) {
     const state = useStore();
+    const providers = useProviders();
     const sessions = state.sessions[room.id] ?? [];
     const [open, setOpen] = React.useState(false);
     const [busy, setBusy] = React.useState<string | null>(null);
@@ -70,7 +71,7 @@ export function ContextPanel({ room }: { room: Room }) {
     const keep = keepLast ?? serverBudget?.keepLast ?? 12;
     const chars = maxChars ?? serverBudget?.maxChars ?? 24000;
 
-    const windowTokens = contextWindowOf(room.modelKey);
+    const windowTokens = contextWindowOf(providers, room.modelKey);
     const used = sessions.reduce((sum, session) => sum + tokensOf(session.stats.chars), 0);
     const ratio = windowTokens === undefined || windowTokens === 0 ? undefined : used / windowTokens;
 
