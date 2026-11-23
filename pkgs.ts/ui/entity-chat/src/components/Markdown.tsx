@@ -1,7 +1,7 @@
 // Markdown —— 中性的 markdown 渲染（react-markdown + gfm），不依赖任何 UI 库。
 //
-// 为什么自己写：assistant-ui 的 MarkdownText 绑在它的 runtime 上，Astryx 有自带的
-// Markdown；两面都不适合拿给第三个表面用。这里只做"文本 → HTML"这一件事。
+// 为什么自己写：Astryx 自带的 Markdown 绑在它的设计系统上，而 shadcn 面是全裸 Tailwind、
+// 不该为一个 markdown 去引聊天框架。这里只做"文本 → HTML"这一件事，两面共用。
 
 import * as React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -9,7 +9,14 @@ import remarkGfm from 'remark-gfm';
 
 import { highlightCode, languageOf } from './highlight';
 
-export const Markdown = React.memo(function Markdown({ text }: { text: string }) {
+export const Markdown = React.memo(function Markdown({
+    text,
+    onLinkClick,
+}: {
+    text: string;
+    /** 点击链接时额外处理（桌面端开真正的浏览器窗口）；返回 false = 已拦下默认跳转 */
+    onLinkClick?: (href: string, event: React.MouseEvent<HTMLAnchorElement>) => false | void;
+}) {
     return (
         <div className="text-[13px] leading-relaxed break-words">
             <ReactMarkdown
@@ -28,6 +35,13 @@ export const Markdown = React.memo(function Markdown({ text }: { text: string })
                             target="_blank"
                             rel="noreferrer"
                             className="text-sky-400 underline underline-offset-2"
+                            onClick={
+                                onLinkClick === undefined
+                                    ? undefined
+                                    : (event) => {
+                                          onLinkClick(href ?? '', event);
+                                      }
+                            }
                         >
                             {children}
                         </a>

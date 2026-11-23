@@ -139,13 +139,15 @@ cd apps/diy2 && npm link
 工作区包和第三方依赖都内联了，所以装上就能跑，不需要额外装依赖。发布前记得去掉
 `"private": true`（现在是防手滑）。
 
-UI 有三个可切换的表面（同一份时间线 + 同一个 store，只换渲染器）：
+UI 有两个可切换的表面（同一份时间线 + 同一个 store，只换渲染器，能力已对齐）：
 
 | 表面           | 用的东西                                                       |
 | -------------- | -------------------------------------------------------------- |
 | Astryx（默认） | `@astryxdesign/core` 的 Chat 组件族 + lab 的 `ChatVirtualizer` |
-| assistant-ui   | 官方模板组件（已复制进 `entity-chat/src/assistant-ui/`）       |
 | shadcn         | 裸 Tailwind + 自己的 `Markdown` / `BotAvatar`                  |
+
+（第三面 assistant-ui 已于 2026-11-23 删除，理由见
+`docs/plans/2026-11-24-surface-parity.md`。）
 
 数据：`<数据根>/diy2.db`（node:sqlite；生产数据根 `~/.diy/diy2`，lab 见上表）。落盘的东西：
 

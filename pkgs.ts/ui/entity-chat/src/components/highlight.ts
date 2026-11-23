@@ -4,7 +4,7 @@
 // 这里只注册我们真的会遇到的十种，其余语言退化成不高亮的纯文本。
 //
 // 为什么不用 Astryx 的 tokenizer：它是 lab 的 canary API，而这段代码要给
-// 三个表面共用（assistant-ui / Astryx / shadcn），不能绑在某一个库上。
+// 两个表面共用（Astryx / shadcn），不能绑在某一个库上。
 
 import hljs from 'highlight.js/lib/core';
 import bash from 'highlight.js/lib/languages/bash';

@@ -3,7 +3,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { TimelinePart } from '@diy-agent/chat-core';
-import { deliveryFooterOf, deliveryStatusOf, runsOf, toolTargetOf } from './mapping';
+import { deliveryFooterOf, deliveryStatusOf } from './mapping';
+import { runsOf, toolTargetOf } from '../shared';
 
 const tool = (args: unknown): TimelinePart & { kind: 'tool' } => ({
     kind: 'tool',
