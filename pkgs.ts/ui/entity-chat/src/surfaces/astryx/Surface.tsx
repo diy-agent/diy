@@ -1,6 +1,6 @@
 // Astryx surface —— 用 Astryx 的 Chat 组件族渲染同一条时间线。
 //
-// 与 assistant-ui surface 的分工完全一致：分组在 chat-core.buildTimeline，
+// 与 shadcn surface 的分工完全一致：分组在 chat-core.buildTimeline，
 // 这里只做「时间线条目 → Astryx 组件」的映射，不碰状态机、不碰传输。
 
 import {
@@ -21,11 +21,14 @@ import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Type
 import { ChatVirtualizer } from '@astryxdesign/lab';
 import type { ChatVirtualizerHandle } from '@astryxdesign/lab';
 import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
+import { ArrowDown } from 'lucide-react';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
 import { AskCard } from '../../components/AskCard';
+import { CopyButton } from '../../components/CopyButton';
 import { openLinkInNewWindow } from '../../links';
 import { BotAvatar } from '../../components/BotAvatar';
 import { EndFooterLine } from '../../components/EndFooterLine';
+import { plainTextOf } from '../shared';
 import { deliveryFooterOf, deliveryStatusOf, runsOf, TOOL_STATUS, toolTargetOf } from './mapping';
 import { RunningIndicator } from '../../components/RunningIndicator';
 import * as React from 'react';
@@ -117,6 +120,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
     // 拆成「工具行一个兄弟 + 正文一个气泡」会让名字落到第二行，而 Astryx 的头像偏移
     // 是按「消息里有没有 data-chat-name」算的，名字一旦不在首行，头像就开始漂。
     const runs = runsOf(entry.parts);
+    const copyable = plainTextOf(entry.parts);
     return (
         <ChatMessage
             key={entry.key}
@@ -182,7 +186,17 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                     </div>
                 )}
                 {/* 这一轮是怎么停的：正常收尾不占页脚（endFooterOf 对 completed 返回 undefined） */}
-                <EndFooterLine reason={entry.endReason} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <EndFooterLine reason={entry.endReason} />
+                    {/* 复制这条回复的正文：与 shadcn 面同一个共用件（那一面是悬停浮现，
+                        这里没有 group-hover 的容器，用低对比常驻） */}
+                    {copyable !== '' && (
+                        <CopyButton
+                            text={copyable}
+                            className="rounded p-0.5 text-muted-foreground opacity-50 transition-opacity hover:bg-muted hover:text-foreground hover:opacity-100"
+                        />
+                    )}
+                </div>
             </ChatMessageBubble>
         </ChatMessage>
     );
@@ -196,7 +210,7 @@ const MessageList = React.memo(function MessageList({ entries, roomId }: { entri
     return (
         <>
             {entries.map((entry) => (
-                // content-visibility：离开视口的条目跳过布局/绘制（assistant-ui 模板同款）
+                // content-visibility：离开视口的条目跳过布局/绘制
                 <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
                     <EntryView entry={entry} roomId={roomId} />
                 </div>
@@ -324,6 +338,22 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
         [candidates],
     );
 
+    /**
+     * 滚动容器改由我们自己持有（ChatVirtualizer 的 attach 模式）：own-container 模式下它
+     * 不暴露滚动元素，我们既监听不到「用户上翻了」，也给不出「回到底部」的入口 ——
+     * 而 shadcn 面有那个按钮，两个表面在这一点上应当一致。
+     *
+     * 代价：attach 模式下 follow-at-end 也归我们（官方文档明确说这个模式要求调用方的
+     * 容器「不自己跑 follow」，否则两个写入者抢同一个位置）。
+     */
+    const [scrollElement, setScrollElement] = React.useState<HTMLDivElement | null>(null);
+    const stickRef = React.useRef(true);
+    const [atBottom, setAtBottom] = React.useState(true);
+    React.useEffect(() => {
+        if (scrollElement === null || !stickRef.current) return;
+        scrollElement.scrollTop = scrollElement.scrollHeight;
+    }, [scrollElement, entries]);
+
     return (
         <div data-astryx-theme="neutral" style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
             {state.error === undefined || state.error === '' ? null : (
@@ -338,20 +368,76 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                 </div>
             )}
             {/* 长会话用官方 ChatVirtualizer：只渲染视口附近的条目（1 万条的 story 也是它） */}
-            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', paddingInline: 24 }}>
-                <ChatVirtualizer
-                    handleRef={virtualizer}
-                    data={entries}
-                    getRowKey={(entry) => entry.key}
-                    getItemType={(entry) => entry.kind}
-                    estimatedItemSize={estimateRowHeight}
-                    renderItem={({ item }) => (
-                        // 行距必须放在 renderItem 内部（容器 gap 不会被测量，行高会累计漂移）
-                        <div style={{ paddingBlock: 6 }}>
-                            <EntryView entry={item} roomId={targetId} />
+            <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+                <div
+                    ref={setScrollElement}
+                    onScroll={(event) => {
+                        const element = event.currentTarget;
+                        const stuck = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+                        stickRef.current = stuck;
+                        setAtBottom(stuck);
+                    }}
+                    style={{ height: '100%', overflowY: 'auto', paddingInline: 24 }}
+                >
+                    {entries.length === 0 ? (
+                        // 空房间不能只是一片空白：得告诉人「能干什么」（与 shadcn 面同一句）
+                        <div
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 13,
+                                opacity: 0.6,
+                                paddingBlock: 64,
+                            }}
+                        >
+                            还没有消息。发一句，或 @ 一个 bot。
                         </div>
+                    ) : (
+                        <ChatVirtualizer
+                            // null（不是 undefined）= attach 模式的「等待」态：否则第一帧就把所有行挂上
+                            // 再拆掉，2000 条时实测要 10s
+                            scrollElement={scrollElement}
+                            handleRef={virtualizer}
+                            data={entries}
+                            getRowKey={(entry) => entry.key}
+                            getItemType={(entry) => entry.kind}
+                            estimatedItemSize={estimateRowHeight}
+                            renderItem={({ item }) => (
+                                // 行距必须放在 renderItem 内部（容器 gap 不会被测量，行高会累计漂移）
+                                <div style={{ paddingBlock: 6 }}>
+                                    <EntryView entry={item} roomId={targetId} />
+                                </div>
+                            )}
+                        />
                     )}
-                />
+                </div>
+                {!atBottom && entries.length > 0 && (
+                    <button
+                        onClick={() => virtualizer.current?.scrollToDistanceFromBottomPx(0)}
+                        title="回到最新"
+                        aria-label="回到最新"
+                        style={{
+                            position: 'absolute',
+                            right: 20,
+                            bottom: 12,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: 26,
+                            height: 26,
+                            borderRadius: 999,
+                            border: '1px solid var(--border)',
+                            background: 'var(--background)',
+                            color: 'var(--muted-foreground)',
+                            boxShadow: '0 2px 8px rgba(0,0,0,.12)',
+                            cursor: 'pointer',
+                        }}
+                    >
+                        <ArrowDown style={{ width: 14, height: 14 }} />
+                    </button>
+                )}
+            </div>
                 <div style={{ flex: '0 0 auto', paddingBlock: 12 }}>
                     {/* astryx 的 composer 关掉了自己的停止按钮（isStopShown=false），
                         原本指望 SpeakingBar 兜底，但这套布局没渲染它 ⇒ 运行中完全找不到停的地方 */}
@@ -378,7 +464,6 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                         placeholder="和这个实体对话…（@ 选 bot）"
                     />
                 </div>
-            </div>
         </div>
     );
 }

@@ -1,10 +1,10 @@
 // askJump —— 「跳到某张提问卡」的**壳层通道**。
 //
-// 为什么要有这一层：待答条属于壳层（一个房间一条、三个表面共用），但「怎么把一张卡滚进
-// 视口」只有表面自己知道 —— assistant-ui / shadcn 是窗口化（卡片可能还没渲染，要先 reveal），
+// 为什么要有这一层：待答条属于壳层（一个房间一条、两个表面共用），但「怎么把一张卡滚进
+// 视口」只有表面自己知道 —— shadcn 面是窗口化（卡片可能还没渲染，要先 reveal），
 // astryx 是 ChatVirtualizer（只有 anchorToKey）。壳层直接 querySelector 在窗口化表面上会落空。
 //
-// 第一版把条加在 assistant-ui 的 ChatPanel 里，lab 实机一看：默认表面是 **astryx**，
+// 第一版把条加在某个表面自己的组件里，lab 实机一看：默认表面是 **astryx**，
 // 条根本不出现 —— 表面私有的入口 = 用户看不到的入口（见 docs/plans/2026-11-22-ask-lifecycle.md）。
 
 export type AskJumper = (askId: string) => void;

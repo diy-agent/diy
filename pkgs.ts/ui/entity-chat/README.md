@@ -14,14 +14,21 @@
 | `src/store.tsx` | 壳层：房间列表 / 选择 / 重试连接（挂 `ConversationStore`） |
 | `src/address.ts` | 「现在在看哪儿」：纯函数，`/room/task/t-001` ↔ `{page,id}` |
 | `src/nav.ts` + `src/nav/` | 侧栏插槽：壳只铺注册表，内建三块（项目/历史/未归属）也是注册项 |
-| `src/projection.ts` | 时间线 → assistant-ui 的 `ThreadMessageLike` |
+| `src/surfaces/registry.tsx` | 表面注册表：壳层只认这个数组，不写 `if (tab === …)` |
 | `src/surfaces/astryx` | Astryx 表面（默认，`ChatVirtualizer` 虚拟化） |
-| `src/surfaces/shadcn` | 裸 Tailwind 表面（无 chat 库） |
-| `src/assistant-ui` | assistant-ui 官方模板（复制进来维护） |
-| `src/components` | 三面共用：`Markdown` / 代码高亮 / `BotAvatar` / `AskCard` / `RunningIndicator` |
+| `src/surfaces/shadcn` | 裸 Tailwind 表面（无 chat 库；窗口化 + `content-visibility`） |
+| `src/surfaces/shared.ts` | 两面共用的纯映射：工具行 target / parts 分组 / 可复制正文 |
+| `src/surfaces/mention-complete.ts` | @ 补全的纯文本逻辑（判定 + 替换 + 过滤，可单测） |
+| `src/components` | 两面共用：`Markdown` / 代码高亮 / `BotAvatar` / `AskCard` / `RunningIndicator` |
 
 分组语义只有一份（`@diy-agent/chat-core` 的 `buildTimeline`），状态只有一份
 （`ConversationStore`）。surface 之间**不互相 import**，壳层按注册表切换。
+
+**两面能力已对齐**（2026-11-23）：同一份 `shared.ts` 映射、同一批业务件，各面都有
+@ 补全 / 消息复制 / 回到底部 / 空态 / 贴底跟随。第三面 assistant-ui 已删 —— 它更完整的是
+「一对一 chat」形态（分支 / 编辑重发 / 语音 / 建议），那些在我们的房间模型里没有对应事实，
+为不消费的能力付 2431 行 registry 件 + 162 行投影 + 10 个传递依赖；判据见
+`docs/plans/2026-11-24-surface-parity.md`。
 
 传输：`@diy-agent/chat-transport-rpc` 的 `RpcChatClient`（命令 + 事件都走一条 WebSocket `/rpc`，
 断线退避重连）。**命令用 unary，事件是 `room` server-stream**（见该包的 `src/hub.ts`）；
