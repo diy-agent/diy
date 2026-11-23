@@ -82,9 +82,71 @@
     display: flex;
     min-width: 0;
     min-height: 0;
-    gap: 1px;
-    background: var(--wb-line);
+    /* 分隔线不再是 gap：相邻两项之间插了一个 1px 的 `.wb-resizer`（它同时是拖拽手柄）。
+       没有手柄的位置（如两侧都是 fr）直接用边框兑底 —— 见下面的 `:not(.wb-resizer)` 规则。 */
+    gap: 0;
     flex: 1 1 0;
+}
+
+/* 兜底分隔：相邻两项之间没有手柄时，也还有一条线 */
+.wb-split-x > :not(.wb-resizer) + :not(.wb-resizer) {
+    border-left: 1px solid var(--wb-line);
+}
+
+.wb-split-y > :not(.wb-resizer) + :not(.wb-resizer) {
+    border-top: 1px solid var(--wb-line);
+}
+
+/* ── 边界手柄（拖宽度）───────────────────────────────────────────────────────
+ *
+ * 可见的只有 1px 背景，但 `::after` 向两侧各溢出 2px —— 命中区 5px。
+ * 这也正是 VS Code / 浏览器开发者工具的做法：线要细，可拖区域不能细。
+ */
+.wb-resizer {
+    position: relative;
+    flex: 0 0 1px;
+    z-index: 4;
+    background: var(--wb-line);
+    touch-action: none;
+}
+
+.wb-resizer-x {
+    cursor: col-resize;
+}
+
+.wb-resizer-y {
+    cursor: row-resize;
+}
+
+.wb-resizer::after {
+    content: '';
+    position: absolute;
+    inset: 0 -2px;
+}
+
+.wb-resizer-y::after {
+    inset: -2px 0;
+}
+
+.wb-resizer:hover,
+.wb-resizer:active {
+    background: var(--wb-accent-fg);
+}
+
+/* 拖动中：光标在整个窗口内保持不变，且不许选中文本 */
+body.wb-resizing,
+body.wb-resizing * {
+    user-select: none;
+}
+
+body.wb-resizing-x,
+body.wb-resizing-x * {
+    cursor: col-resize !important;
+}
+
+body.wb-resizing-y,
+body.wb-resizing-y * {
+    cursor: row-resize !important;
 }
 
 .wb-split-x {
@@ -589,27 +651,17 @@
     overflow: hidden;
 }
 
-/* 应用标识：一个只占位的牌子，与后面的按钮用一条竖线隔开 */
-.wb-tb-app {
-    flex: 0 0 auto;
-    padding-right: 8px;
-    margin-right: 2px;
-    border-right: 1px solid var(--wb-line);
-    color: var(--wb-fg-2);
-    font-weight: 700;
-    letter-spacing: 0.02em;
-}
-
-.wb-tb-side {
+/* layout 图标组：贴两端。左边这组管导航与主区左侧 / 上方的区域，右边那组管右侧 / 下方 */
+.wb-tb-group {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 1px;
+    flex: 0 0 auto;
     min-width: 0;
 }
 
-.wb-tb-end {
+.wb-tb-group-end {
     margin-left: auto;
-    flex: 0 0 auto;
 }
 
 /* 中间是页信息，不是控制区：窄了先挤它，两侧按钮永远够点 */
@@ -618,35 +670,30 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
 }
 
-.wb-tb-page {
-    color: var(--wb-fg-2);
-    font-weight: 600;
-}
-
-.wb-tb-dim {
+/* 这条件里唯一的文字：房间名。页名不画 —— 与它重复（一个页只有一个主区，看主区就知道是哪页） */
+.wb-tb-name {
     overflow: hidden;
+    color: var(--wb-fg-2);
     text-overflow: ellipsis;
 }
 
+/* 方形图标按钮：只有图标，文字在 tooltip（title / aria-label） */
 .wb-tb-btn {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    height: 20px;
-    padding: 0 7px;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
     border: 1px solid transparent;
     border-radius: 4px;
     background: transparent;
     color: var(--wb-dim);
-    font: inherit;
-    font-size: 11px;
-    white-space: nowrap;
     cursor: pointer;
 }
 
@@ -662,9 +709,45 @@
     border-color: var(--wb-line-2);
 }
 
-.wb-tb-glyph {
-    font-size: 10px;
-    opacity: 0.85;
+/* 图标统一 14×14，颜色跟随所在按钮 */
+.wb-glyph {
+    display: block;
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+}
+
+/* ── 折叠条模式下的回切浮钮 ──────────────────────────────────────────────────
+ *
+ * 这一模式下不渲染标题栏（页顶不多一条），所以「换回标题栏」没有位置可挂 ——
+ * 留一个不占位的角标：fixed 定位，平时很淡，鼠标进到页面右下角才亮起来。
+ */
+.wb-chrome-fab {
+    position: fixed;
+    right: 10px;
+    bottom: 10px;
+    z-index: 20;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid var(--wb-line);
+    border-radius: 6px;
+    background: var(--wb-bg-2);
+    color: var(--wb-dim);
+    opacity: 0.45;
+    cursor: pointer;
+    transition:
+        opacity 120ms,
+        color 120ms;
+}
+
+.wb-chrome-fab:hover,
+.wb-chrome-fab:focus-visible {
+    color: var(--wb-fg);
+    opacity: 1;
 }
 
 .wb-tb-sep {

@@ -5,12 +5,15 @@
 // 页层才是「骨架固定 + area 内形态可配」的区域树。把导航塞进页模板会带来两个问题：
 //   1. 切页类型时它跟着重排（任务页收起了、项目页又展开），用户会以为坏了；
 //   2. Sidebar 自带宽度拖拽与按钮（localStorage `entity-chat:sidebar-width`），
-//      与「区域尺寸写死」是两套真源。
+//      与骨架里区域的尺寸（`workbench:<pageType>.sizes`）是两套真源 —— 它不属于任何一页。
+//
+// 两种收起方式的入口都**不靠标题栏才能存在**：`bar` 靠标题栏，`strip` 根本没画标题栏，
+// 回切入口是页面右下角一个不占位的浮钮（`ChromeFab`）。
 //
 // 区域收起的两个入口，都不是「长在被收起的那个东西身上」（dockview 版就栽在这里）：
 //   · bar   —— 页顶标题栏（`TitleBar`），它不在骨架里、还比导航更外层；
 //   · strip —— 区域自己收成一条，条还在原地，点条展开。
-// 两种随时切换（标题栏右端那个按钮），共用同一份开合状态。
+// 两种随时切换（标题栏右端那个图标 / strip 模式下的右下角浮钮），共用同一份开合状态。
 
 import { LayerProvider } from '@astryxdesign/core/Layer';
 import { Theme } from '@astryxdesign/core/theme';

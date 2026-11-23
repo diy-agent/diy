@@ -2,8 +2,9 @@
 //
 // 与之前那套 workbench-dock（dockview）的区别，全在这几条约束里：
 //
-//   1. 布局**固定**：area 的排列（谁在左、谁在下）与尺寸都由模板写死，用户不能拖、不能分、不能改。
-//      → 没有 sash、没有 drag、没有 floating、没有 split。
+//   1. 布局**骨架固定**：area 的排列（谁在左、谁在下）由模板写死 —— 不能拖换位置、不能分、不能浮动。
+//      尺寸**可以**沿相邻边界拖（`sizes`），但那只在模板给的这条边上伸缩，改变不了骨架。
+//      → 没有 drag-reorder、没有 floating、没有 split；只有「边界变宽变窄」这一种拖。
 //   2. view **不可关闭、不可移动**：它声明自己属于哪个 page 的哪个 area，就只能在那儿。
 //      → 没有 close 动作、没有「拖到别的组」。
 //   3. 唯一能收的是 **area**，而且只有两种表现方式（`Chrome`，全局偏好）：
@@ -43,7 +44,7 @@ export interface AreaDef {
     id: string;
     /** 区域名。多 view 时显示在头部；标题栏按钮 / 折叠条也用它 */
     title: string;
-    /** 沿父轴的 px，或 `'fr'`（在兄弟之间分剩余空间） */
+    /** 沿父轴的 px，或 `'fr'`（在兄弟之间分剩余空间）。拖过的值存在 `PageState.sizes` 里覆盖它 */
     size: number | 'fr';
     min?: number;
     /** 初始是否折叠成条；缺省展开 */
@@ -173,9 +174,10 @@ export function viewsOfPage(views: readonly ViewDef[], pageType: string): ViewDe
     return views.filter((view) => view.placement[pageType] !== undefined);
 }
 
-// ── 用户状态：只记「开合 / 形态 / 当前 tab」──────────────────────────────────────
+// ── 用户状态：只记「开合 / 形态 / 当前 tab / 拖过的尺寸」──────────────────────────
 //
-// 刻意很小 —— 尺寸、位置、分割方式都不在里面，因为它们不可改（那是模板的事）。
+// 刻意很小 —— **位置**与**分割方式**都不在里面，因为它们不可改（那是模板的事）。
+// 尺寸只记「用户真拖过的那几个」，没拖过的不占键（模板改默认值仍然生效）。
 // 也刻意**不记 view 的开关**：view 不可关闭，没有「关掉了」这个状态要持久化。
 
 /**
@@ -211,6 +213,8 @@ export interface PageState {
     modes: Record<string, Mode>;
     /** tab 形态下每个区域选中的 view id */
     active: Record<string, string>;
+    /** 用户拖过的区域尺寸（px，沿父轴）。缺省用模板的 `size` */
+    sizes: Record<string, number>;
 }
 
 /** 偏好键按**页类型**分（不含房间 id）：切房间时骨架不动、偏好也该跟着走 */
@@ -228,6 +232,7 @@ export function loadState(pageType: string, storage: Storage): PageState | null 
             collapsed: parsed.collapsed ?? {},
             modes: parsed.modes ?? {},
             active: parsed.active ?? {},
+            sizes: parsed.sizes ?? {},
         };
     } catch {
         // 坏数据就当没有：布局偏好不值得为它挡住整页
@@ -249,7 +254,12 @@ export function initialState(page: PageDef): PageState {
     for (const def of areasOf(page.layout)) {
         if (def.initial === 'collapsed') collapsed[def.id] = true;
     }
-    return { collapsed, modes: {}, active: {} };
+    return { collapsed, modes: {}, active: {}, sizes: {} };
+}
+
+/** 区域当前尺寸：用户拖过的优先，其次模板默认 */
+export function sizeOf(def: AreaDef, state: PageState): number | 'fr' {
+    return state.sizes[def.id] ?? def.size;
 }
 
 /** 该区域允许的形态；`modes` 缺省 = 三种全允许 */

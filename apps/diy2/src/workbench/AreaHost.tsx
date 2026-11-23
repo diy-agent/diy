@@ -1,16 +1,17 @@
 // AreaHost.tsx —— 布局渲染器。**唯一的渲染逻辑**，而且它很短。
 //
 // 为什么这么短：这个模型的全部规则是「骨架固定 + area 可折叠成条 + area 内 view 换形态」。
-//   · 没有拖拽 ⇒ 没有 sash / 命中测试 / 尺寸记账 / 快照兼容那一堆
+//   · 没有拖拽换位 ⇒ 没有 reorder / 落点判定 / 快照兼容那一堆；
+//     只有沿模板已有边界的宽度伸缩（`Resizer`，它改不了骨架）
 //   · 没有关闭 ⇒ 不会出现「组被删、区域没了」（dockview 版那个死锁在这套模型里不可能发生）
 //   · 没有浮动 / 最大化 ⇒ 没有 overlay 层与它的 z-index 战场
 //
-// 「收起」有两种表现方式（`chrome`，全局偏好，2026-11-23 两版都做出来对比）：
-//   · `bar`   —— 页顶一条标题栏（`TitleBar`）：整宽、**横跨导航**，左右各放按钮，
-//                按一下显示 / 收起。收起 = 完全不占位（主区吃掉空间），恢复入口在标题栏里。
-//   · `strip` —— 折叠成一条：区域自己收成竖条 / 横条（方向随它所在的 row / column），
-//                条上写着区域名，点条就展开，位置还在。
-// 两种共用同一份「谁收起了」，只换表现形式 —— 所以随时可以切换对比，状态不丢。
+// 「收起」有两种表现方式（`chrome`，全局偏好）：
+//   · `bar`   —— 页顶一条标题栏（`TitleBar`）：整宽、**横跨导航**，两端放区域开关（只有图标，
+//                文字在 tooltip）。收起 = 完全不占位（主区吃掉空间），恢复入口在标题栏里。
+//   · `strip` —— **不渲染标题栏**（页顶不多一条，这才是这种模式的意义）：区域自己收成
+//                竖条 / 横条（方向随它所在的 row / column），点条就展开。回切入口是右下角浮钮。
+// 两种共用同一份「谁收起了」，只换表现形式 —— 所以随时可以切换，状态不丢。
 //
 // **主区域不参与收起**：每页声明一个 `main`（`PageDef.main`），它是这一页的组织中心，
 // 收起它等于把这一页收没了。标题栏不给它按钮，strip 模式也不给它折叠按钮。
@@ -19,7 +20,17 @@
 // 宿主只额外记三样用户偏好：区域收起、形态、tab 选中。
 
 import { roomTitle, useRoomDialogsContext, useSelectedRoom } from '@diy-agent/entity-chat';
-import { createContext, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+    createContext,
+    Fragment,
+    useContext,
+    useEffect,
+    useMemo,
+    useState,
+    type CSSProperties,
+    type PointerEvent as ReactPointerEvent,
+    type ReactNode,
+} from 'react';
 
 import {
     activeOf,
@@ -33,6 +44,7 @@ import {
     saveChrome,
     saveState,
     sidesOf,
+    sizeOf as sizeOfDef,
     viewsIn,
     type AreaDef,
     type Chrome,
@@ -63,6 +75,11 @@ export interface WbApi {
     setActive: (areaId: string, viewId: string) => void;
     /** 该区域能放几个 view（页外开关据此显示角标；0 = 这个页没有这块） */
     viewCountOf: (areaId: string) => number;
+    /** 区域当前尺寸（拖过的优先，其次模板默认） */
+    sizeOf: (areaId: string) => number | 'fr';
+    setSize: (areaId: string, px: number) => void;
+    /** 去掉拖过的尺寸 —— 回到**模板**的默认（不是回某个固定值） */
+    resetSize: (areaId: string) => void;
 }
 
 const Ctx = createContext<WbApi | null>(null);
@@ -134,6 +151,21 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
                 setState((prev) => ({ ...prev, active: { ...prev.active, [areaId]: viewId } }));
             },
             viewCountOf: (areaId) => viewsOf(areaId).length,
+            sizeOf: (areaId) => {
+                const def = defs.get(areaId);
+                return def === undefined ? 'fr' : sizeOfDef(def, state);
+            },
+            setSize: (areaId, px) => {
+                setState((prev) => ({ ...prev, sizes: { ...prev.sizes, [areaId]: px } }));
+            },
+            resetSize: (areaId) => {
+                setState((prev) => {
+                    if (prev.sizes[areaId] === undefined) return prev;
+                    const sizes = { ...prev.sizes };
+                    delete sizes[areaId];
+                    return { ...prev, sizes };
+                });
+            },
         };
         // placementKey 覆盖了 views 里真正被读到的部分
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -261,7 +293,147 @@ function GridLayout({ areaId, list }: { areaId: string; list: ViewDef[] }) {
     );
 }
 
-// ── 区域 → 树 ───────────────────────────────────────────────────────────────────
+// ── 图标（标题栏只放图标，文字全进 tooltip）──────────────────────────────────────
+//
+// 全用 SVG 而不靠字符：几何块 U+25A4… 这类字形在不同字体里宽窄不一，
+// 而标题栏是 28px 高的一条，差 1px 就会显得歪。
+
+/** 区域图标：外框 + **指针位置的高亮块**。方位从模板推（`sidesOf`），不手写图标表 */
+function AreaGlyph({ side }: { side: Side }) {
+    const inner =
+        side === 'left'
+            ? { x: 2, y: 2, width: 3.5, height: 10 }
+            : side === 'right'
+              ? { x: 8.5, y: 2, width: 3.5, height: 10 }
+              : side === 'top'
+                ? { x: 2, y: 2, width: 10, height: 3.5 }
+                : { x: 2, y: 8.5, width: 10, height: 3.5 };
+    return (
+        <svg className="wb-glyph" viewBox="0 0 14 14" aria-hidden="true">
+            <rect
+                x="1.5"
+                y="1.5"
+                width="11"
+                height="11"
+                rx="2.5"
+                fill="none"
+                stroke="currentColor"
+                strokeOpacity="0.45"
+            />
+            <rect {...inner} rx="1" fill="currentColor" />
+        </svg>
+    );
+}
+
+/** 导航：三条横线（就是「列表」的意思） */
+function NavGlyph() {
+    return (
+        <svg className="wb-glyph" viewBox="0 0 14 14" aria-hidden="true">
+            <g stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+                <path d="M2.5 4h9M2.5 7h9M2.5 10h9" />
+            </g>
+        </svg>
+    );
+}
+
+/** 设置：齿轮（圆 + 八辐） */
+function GearGlyph() {
+    return (
+        <svg className="wb-glyph" viewBox="0 0 14 14" aria-hidden="true">
+            <circle cx="7" cy="7" r="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+            <g stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
+                <path d="M7 1.6v1.6M7 10.8v1.6M1.6 7h1.6M10.8 7h1.6M3.2 3.2l1.13 1.13M9.67 9.67l1.13 1.13M10.8 3.2L9.67 4.33M4.33 9.67L3.2 10.8" />
+            </g>
+        </svg>
+    );
+}
+
+// ── 边界手柄（拖宽度，不动骨架）─────────────────────────────────────────────
+
+/** 手柄作为 flex 项的宽度（px）：可见的线就这 1px，命中区靠 CSS 的 ::after 向两侧溢出到 5px */
+const HANDLE = 1;
+
+/** 拖动时两侧的最小可闻尺寸（px）：没有 `min` 的区域用这个 */
+const FALLBACK_MIN = 120;
+
+/** 另一侧至少还要留多少（px）—— 不能把邻居拖成一条缝 */
+const NEIGHBOR_KEEP = 160;
+
+/**
+ * 相邻两个子项之间的边界手柄。
+ *
+ * 拖的**不是骨架**：只让「模板给了固定 px 的那一侧」沿这条边变宽变窄，相邻的 `fr` 自动让位。
+ * 两侧都是 `fr` 或都是子树 → 不渲染手柄，因为「拖了该改谁」没有正确答案。
+ *
+ * 拖动过程直接改 DOM 的 `flex`、松手才提交 state：中间每帧走 React 重渲染会把
+ * 整页（含对话虚拟列表）拖到掉帧。
+ */
+function Resizer({ axis, prev, next }: { axis: 'x' | 'y'; prev: LayoutNode; next: LayoutNode }) {
+    const api = useWb();
+
+    const prevDef = 'axis' in prev ? null : prev;
+    const nextDef = 'axis' in next ? null : next;
+    const prevFixed = prevDef !== null && api.sizeOf(prevDef.id) !== 'fr';
+    const nextFixed = nextDef !== null && api.sizeOf(nextDef.id) !== 'fr';
+
+    // 优先调前一个（拖右边界改左边那块，最直觉）；前一个是 fr 才调后一个
+    const target = prevFixed ? prevDef : nextFixed ? nextDef : null;
+    if (target === null) return null;
+    const sign = prevFixed ? 1 : -1;
+
+    const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+        const handle = event.currentTarget;
+        const parent = handle.parentElement;
+        const from = api.sizeOf(target.id);
+        const areaEl = parent?.querySelector<HTMLElement>(`[data-area="${target.id}"]`);
+        if (parent === null || areaEl === null || areaEl === undefined || from === 'fr') return;
+
+        const box = parent.getBoundingClientRect();
+        const origin = axis === 'x' ? event.clientX : event.clientY;
+        const span = axis === 'x' ? box.width : box.height;
+        const min = target.min ?? FALLBACK_MIN;
+        const max = Math.max(min, span - NEIGHBOR_KEEP);
+        let last = Math.round(from);
+
+        event.preventDefault();
+        handle.setPointerCapture(event.pointerId);
+        // 拖动期间整页光标/选区归手柄：鼠标快过元素边界时也不变成文本光标
+        document.body.classList.add('wb-resizing', `wb-resizing-${axis}`);
+
+        const move = (ev: PointerEvent) => {
+            const delta = (axis === 'x' ? ev.clientX : ev.clientY) - origin;
+            last = Math.min(max, Math.max(min, Math.round(from + sign * delta)));
+            areaEl.style.flex = `0 0 ${String(last)}px`;
+        };
+        const end = () => {
+            handle.removeEventListener('pointermove', move);
+            handle.removeEventListener('pointerup', end);
+            handle.removeEventListener('pointercancel', end);
+            document.body.classList.remove('wb-resizing', `wb-resizing-${axis}`);
+            // 松手提交一次：存盘，并让所有读 sizeOf 的地方（含折叠条宽度）同步
+            api.setSize(target.id, last);
+        };
+        handle.addEventListener('pointermove', move);
+        handle.addEventListener('pointerup', end);
+        handle.addEventListener('pointercancel', end);
+    };
+
+    return (
+        <div
+            className={`wb-resizer wb-resizer-${axis}`}
+            style={{ flex: `0 0 ${String(HANDLE)}px` }}
+            role="separator"
+            aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
+            title="拖动调整宽度（双击复位）"
+            onPointerDown={onPointerDown}
+            onDoubleClick={() => {
+                api.resetSize(target.id);
+            }}
+        />
+    );
+}
+
+// ── 区域 → 树 ─────────────────────────────────────────────────────────────────
 
 /** 折叠条沿父轴的厚度（px）。够容下竖排文字的两三个字，又不至于占掉相当于一块内容 */
 const FOLD_THICKNESS = 28;
@@ -340,8 +512,9 @@ function AreaView({ def, views, parentAxis }: { def: AreaDef; views: readonly Vi
         return bar ? null : <FoldedArea def={def} axis={parentAxis} />;
     }
 
-    // 尺寸：fr 分剩余、px 固定。**没有可拖的手柄** —— 这两个值就是最终值。
-    const style: CSSProperties = def.size === 'fr' ? { flex: '1 1 0px' } : { flex: `0 0 ${String(def.size)}px` };
+    // 尺寸：fr 分剩余、px 固定。px 的那几条边可以拖（`Resizer`），拖过的值存在 PageState.sizes
+    const size = api.sizeOf(def.id);
+    const style: CSSProperties = size === 'fr' ? { flex: '1 1 0px' } : { flex: `0 0 ${String(size)}px` };
     if (def.min !== undefined) {
         if (parentAxis === 'x') style.minWidth = def.min;
         else style.minHeight = def.min;
@@ -378,15 +551,14 @@ function AreaView({ def, views, parentAxis }: { def: AreaDef; views: readonly Vi
 
 function NodeView({ node, views, parentAxis }: { node: LayoutNode; views: readonly ViewDef[]; parentAxis: 'x' | 'y' }) {
     if ('axis' in node) {
+        const children = node.children;
         return (
             <div className={node.axis === 'x' ? 'wb-split-x' : 'wb-split-y'}>
-                {node.children.map((child, index) => (
-                    <NodeView
-                        key={'axis' in child ? `split-${String(index)}` : child.id}
-                        node={child}
-                        views={views}
-                        parentAxis={node.axis}
-                    />
+                {children.map((child, index) => (
+                    <Fragment key={'axis' in child ? `split-${String(index)}` : child.id}>
+                        {index > 0 && <Resizer axis={node.axis} prev={children[index - 1] ?? child} next={child} />}
+                        <NodeView node={child} views={views} parentAxis={node.axis} />
+                    </Fragment>
                 ))}
             </div>
         );
@@ -396,9 +568,14 @@ function NodeView({ node, views, parentAxis }: { node: LayoutNode; views: readon
 
 // ── 标题栏 ────────────────────────────────────────────────────────────────────
 //
-// 整页最顶一条。**左组** = 应用名 + 导航 + 主区左侧的区域，**右组** = 主区右侧 / 下方的
-// 区域 + 全局工具 + 表现方式切换。分组不手写：方位从模板推（`sidesOf`），挪了模板里的区域，
-// 按钮自动跟着换组。
+// 整页最顶一条，**图标化**（文字全进 tooltip）：
+//   左：[导航] + 主区左侧 / 上方的区域
+//   中：房间名（这条件里唯一的文字）
+//   右：主区右侧 / 下方的区域 │ [设置] │ [换成折叠条]
+//
+// **layout 图标贴两端、功能按钮用竖线隔开**：两者性质不同 —— 一个回答「页面怎么摆」，
+// 一个回答「应用能干什么」。分组不手写：方位从模板推（`sidesOf`），挪了模板里的区域，
+// 按钮自动跟着换边。
 
 /** 导航开关（全局层，由壳持有；标题栏左端放它的按钮） */
 export interface NavState {
@@ -406,20 +583,47 @@ export interface NavState {
     toggle: () => void;
 }
 
-function TbAreaButton({ def, open, onToggle }: { def: AreaDef; open: boolean; onToggle: () => void }) {
+/** 标题栏按钮：**只有图标**（文字在 tooltip）。`on` 缺省 = 中性按钮（如设置） */
+function TbIconButton({
+    on,
+    label,
+    onClick,
+    children,
+}: {
+    on?: boolean;
+    label: string;
+    onClick: () => void;
+    children: ReactNode;
+}) {
     return (
         <button
             type="button"
-            className={open ? 'wb-tb-btn on' : 'wb-tb-btn'}
-            aria-pressed={open}
-            title={`${open ? '收起' : '展开'}「${def.title}」`}
-            onClick={onToggle}
+            className={on === true ? 'wb-tb-btn on' : 'wb-tb-btn'}
+            aria-pressed={on}
+            title={label}
+            aria-label={label}
+            onClick={onClick}
         >
-            <span className="wb-tb-glyph" aria-hidden="true">
-                {open ? '▣' : '▢'}
-            </span>
-            {def.title}
+            {children}
         </button>
+    );
+}
+
+function TbAreaButton({
+    def,
+    side,
+    open,
+    onToggle,
+}: {
+    def: AreaDef;
+    side: Side;
+    open: boolean;
+    onToggle: () => void;
+}) {
+    return (
+        <TbIconButton on={open} label={`${open ? '收起' : '展开'}「${def.title}」`} onClick={onToggle}>
+            <AreaGlyph side={side} />
+        </TbIconButton>
     );
 }
 
@@ -455,10 +659,11 @@ export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
     const left = items.filter((item) => item.side === 'left' || item.side === 'top');
     const right = items.filter((item) => item.side === 'right' || item.side === 'bottom');
 
-    const renderItem = (item: { def: AreaDef }) => (
+    const renderItem = (item: { def: AreaDef; side: Side }) => (
         <TbAreaButton
             key={item.def.id}
             def={item.def}
+            side={item.side}
             open={api?.isOpen(item.def.id) ?? false}
             onToggle={() => {
                 api?.toggleArea(item.def.id);
@@ -468,69 +673,42 @@ export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
 
     return (
         <header className="wb-titlebar">
-            <div className="wb-tb-side">
-                <span className="wb-tb-app">diy2</span>
-                <button
-                    type="button"
-                    className={nav.open ? 'wb-tb-btn on' : 'wb-tb-btn'}
-                    aria-pressed={nav.open}
-                    title={nav.open ? '收起导航' : '展开导航'}
-                    onClick={nav.toggle}
-                >
-                    <span className="wb-tb-glyph" aria-hidden="true">
-                        ▤
-                    </span>
-                    导航
-                </button>
+            <div className="wb-tb-group">
+                <TbIconButton on={nav.open} label={nav.open ? '收起导航' : '展开导航'} onClick={nav.toggle}>
+                    <NavGlyph />
+                </TbIconButton>
                 {bar && left.length > 0 && <span className="wb-tb-sep" aria-hidden="true" />}
                 {bar && left.map(renderItem)}
             </div>
 
             <div className="wb-tb-mid">
-                {api && <span className="wb-tb-page">{api.page.title}</span>}
-                <span className="wb-tb-dim">{room ? roomTitle(room) : '—'}</span>
+                <span className="wb-tb-name">{room ? roomTitle(room) : ''}</span>
             </div>
 
-            <div className="wb-tb-side wb-tb-end">
+            <div className="wb-tb-group wb-tb-group-end">
                 {bar && right.map(renderItem)}
                 {bar && right.length > 0 && <span className="wb-tb-sep" aria-hidden="true" />}
-                <button
-                    type="button"
-                    className="wb-tb-btn"
-                    title="新建项目"
-                    onClick={() => {
-                        dialogs.openProject();
-                    }}
-                >
-                    ＋
-                </button>
-                <button
-                    type="button"
-                    className="wb-tb-btn"
-                    title="设置"
+                <TbIconButton
+                    label="设置"
                     onClick={() => {
                         dialogs.openSettings();
                     }}
                 >
-                    ⚙
-                </button>
+                    <GearGlyph />
+                </TbIconButton>
                 {api && (
                     <>
                         <span className="wb-tb-sep" aria-hidden="true" />
-                        {/* 表现方式切换：这一轮两种都做出来对比，定了之后这个按钮就可以删 */}
-                        <button
-                            type="button"
-                            className="wb-tb-btn"
-                            title={bar ? '换一种收起方式：折叠成条' : '换一种收起方式：标题栏'}
+                        {/* 只在标题栏模式下出现：折叠条模式根本没有标题栏，
+                            回切入口是右下角那个浮钮（见 `ChromeFab`） */}
+                        <TbIconButton
+                            label="换成折叠条（区域自己收成一条）"
                             onClick={() => {
-                                api.setChrome(bar ? 'strip' : 'bar');
+                                api.setChrome('strip');
                             }}
                         >
-                            <span className="wb-tb-glyph" aria-hidden="true">
-                                {bar ? '▁' : '◂'}
-                            </span>
-                            {bar ? '标题栏' : '折叠条'}
-                        </button>
+                            <AreaGlyph side="left" />
+                        </TbIconButton>
                     </>
                 )}
             </div>
@@ -543,6 +721,35 @@ export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
  *
  * 标题栏和主体是兄弟，都在页层内，但标题栏占满宽度 —— 它的定位是「管住包括导航在内的
  * 所有区域」，所以不能缩在导航右边。
+ */
+/**
+ * 折叠条模式下「换回标题栏」的浮钮。
+ *
+ * `strip` 模式**不渲染标题栏** —— 那正是这种模式的意义（页顶不多一条）。
+ * 但那就没有入口回去了，所以留一个不占位的角标：fixed 定位，盖在页面右下角，
+ * 平时低对比度，鼠标过去才出来。它不属于任何一块区域，也就不会被哪个区域收起带走。
+ */
+function ChromeFab({ api }: { api: WbApi }) {
+    return (
+        <button
+            type="button"
+            className="wb-chrome-fab"
+            title="换回标题栏（页顶一条，左右放区域开关）"
+            aria-label="换回标题栏"
+            onClick={() => {
+                api.setChrome('bar');
+            }}
+        >
+            <AreaGlyph side="top" />
+        </button>
+    );
+}
+
+/**
+ * 一页 = （标题栏 | 浮钮）+ 导航 + 固定骨架。
+ *
+ * 两种收起方式下页顶不一样高：`bar` 有 28px 的标题栏，`strip` 什么都没有（多出来的
+ * 28px 给内容）。这正是用户选它们时的取舍本身。
  */
 export function Workbench({
     api,
@@ -557,13 +764,14 @@ export function Workbench({
 }) {
     return (
         <Ctx.Provider value={api}>
-            <TitleBar nav={nav} api={api} />
+            {api.chrome === 'bar' ? <TitleBar nav={nav} api={api} /> : null}
             <div className="wb-body">
                 {navRail}
                 <div className="wb-skeleton">
                     <NodeView node={api.page.layout} views={views} parentAxis="x" />
                 </div>
             </div>
+            {api.chrome === 'bar' ? null : <ChromeFab api={api} />}
         </Ctx.Provider>
     );
 }
