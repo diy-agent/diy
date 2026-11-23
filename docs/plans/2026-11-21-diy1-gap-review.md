@@ -166,7 +166,7 @@
 
 | 批次 | 状态 | 落在哪 |
 |---|---|---|
-| P0-1 工具换回 `@diy-agent/tools` | ✅ | `entity-runtime/src/tools/`（删掉 `files.ts` / `shell.ts` 移植版）；**bash 预算**：内核 `makeShellTool` 没有缺省，换回时曾写成「不传 = 不限」——比移植版的 120s 更松，一条卡死的命令能把整轮挂住而步数刹车管不到；现定 `DEFAULT_BASH_TIMEOUT_MS = 300_000`（抄 diy1 `DEFAULT_LIMITS`），diy2 可用 `DIY2_BASH_TIMEOUT_MS` 覆盖 |
+| P0-1 工具换回 `@diy-agent/tools` | ✅ | `entity-runtime/src/tools/`（删掉 `files.ts` / `shell.ts` 移植版）；**bash 预算**：内核 `makeShellTool` 没有缺省，换回时曾写成「不传 = 不限」——比移植版的 120s 更松，一条卡死的命令能把整轮挂住而步数刹车管不到；现定 `DEFAULT_BASH_TIMEOUT_MS = 300_000`（抄 diy1 `DEFAULT_LIMITS`），diy2 用 `--bash-timeout-ms` 覆盖（配置只来自 argv，不读环境） |
 | P0-2 接 `@diy-agent/jobs` | ✅ | `job` 工具 + run 账 + 收口唤醒（notify 走房间） |
 | P0-3 回合刹车 | ✅ | `maxSteps`（env > 房间 > 200）+ `stopWhen` 生效 + 打满落 notice |
 | 房间路径护栏（评审外发现） | ✅ 用户裁决**删掉** | 护栏不是沙箱（bash 本就不受限），却把「任务在 worktree 里」逼回 bash 写 —— 文件改动从此没有 diff 摘要、也没走统一的写路径（diy1 那边还多一层 `onAudit` 落盘，diy2 本来就没有审计，不拿它当理由）；房间目录今后只是相对路径基准与命令 cwd。装配里那个没人接的 `onAudit` 参数一并删掉（要审计时再加） |
@@ -184,4 +184,5 @@
 | 1 | provider 显示名退化成 id（界面显示 `opencode-go` 而不是 `OpenCode Go`） | 目录（`model.yaml` / `@diy-agent/model-catalog`）没有「显示名」字段，编一个名字就是第二份真源；等目录真加了这个字段再说 |
 | 2 | 作业跨进程不 adopt | 内核 `RunRegistry` 支持 `adopt`，diy2 没接：重启前起的 run 重启后既不判活也不叫醒。接它要先想清"重启后日志文件归属谁" |
 | 3 | `toolsHint()` 固定说「用 bash」 | pwsh 平台上工具名是 `pwsh`，提示词对不上；改它要顺带过一遍提示词缓存（前缀一变全失效） |
-| 4 | `end-reason.ts` 的 advice 文案写死 `DIY2_MAX_STEPS` | 库层引用 app 专属 env；正解是让宿主传「调参提示」（另一个参数），不是硬编码 |
+
+> 原先第 4 条（`end-reason.ts` 的 advice 写死 `DIY2_MAX_STEPS`）已修：文案改成动作描述，库层不再点 app 专属参数。
