@@ -52,6 +52,7 @@ export function Sidebar({
     onRequestDelete,
     onOpenSettings,
     widthMode = 'own',
+    showToggle = true,
 }: {
     open: boolean;
     onToggle: () => void;
@@ -59,6 +60,14 @@ export function Sidebar({
     onCreateTask: (projectId: string) => void;
     onRequestDelete: (room: Room) => void;
     onOpenSettings: () => void;
+    /**
+     * 侧栏自己的收起 / 展开按钮（头部那颗）。
+     *
+     * `false` 用于**宿主已经有自己的开关**的情形（如工作台的标题栏左端那颗）：
+     * 两个入口做同一件事、还挨得很近，用户会分不清哪个在管什么。
+     * `onToggle` 仍需传 —— 它还是 `⌘B` 与空态里的「展开侧栏」要用的。
+     */
+    showToggle?: boolean;
     /**
      * 宽度归谁管。
      *
@@ -137,21 +146,30 @@ export function Sidebar({
             style={own ? { width: open ? width : SIDEBAR_RAIL_W } : undefined}
             data-sidebar-width={own ? (open ? width : SIDEBAR_RAIL_W) : undefined}
         >
-            <div className={`flex items-center border-b py-3 ${open ? 'gap-2 px-3' : 'justify-center px-1'}`}>
-                {open && (
-                    <>
-                        <span className="text-sm font-semibold">diy</span>
-                        <span className="text-xs text-muted-foreground">容器对话</span>
-                    </>
-                )}
-                <button
-                    onClick={onToggle}
-                    title={open ? '收起侧栏（⌘B）' : '展开侧栏（⌘B）'}
-                    className={`rounded p-1 text-muted-foreground hover:bg-muted ${open ? 'ml-auto' : ''}`}
-                >
-                    {open ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
-                </button>
-            </div>
+            {/* 收起（只剩图标列）且没有自己的开关 → 这条头什么也不剩，不渲染 */}
+            {(open || showToggle) && (
+                <div className={`flex items-center border-b py-3 ${open ? 'gap-2 px-3' : 'justify-center px-1'}`}>
+                    {open && (
+                        <>
+                            <span className="text-sm font-semibold">diy</span>
+                            <span className="text-xs text-muted-foreground">容器对话</span>
+                        </>
+                    )}
+                    {showToggle && (
+                        <button
+                            onClick={onToggle}
+                            title={open ? '收起侧栏（⌘B）' : '展开侧栏（⌘B）'}
+                            className={`rounded p-1 text-muted-foreground hover:bg-muted ${open ? 'ml-auto' : ''}`}
+                        >
+                            {open ? (
+                                <PanelLeftClose className="size-4" />
+                            ) : (
+                                <PanelLeftOpen className="size-4" />
+                            )}
+                        </button>
+                    )}
+                </div>
+            )}
 
             <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
                 {sources.map((source) => (

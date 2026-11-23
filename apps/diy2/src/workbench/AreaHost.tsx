@@ -4,20 +4,23 @@
 //   · 没有拖拽换位 ⇒ 没有 reorder / 落点判定 / 快照兼容那一堆；
 //     只有沿模板已有边界的宽度伸缩（`Resizer`，它改不了骨架）
 //   · 没有关闭 ⇒ 不会出现「组被删、区域没了」（dockview 版那个死锁在这套模型里不可能发生）
-//   · 没有浮动 / 最大化 ⇒ 没有 overlay 层与它的 z-index 战场
+//   · 最大化只有一种：这一块吃掉整个骨架、其余让位（`Maximized`）；不是 floating，没有 z-index 战场
 //
-// 「收起」有两种表现方式（`chrome`，全局偏好）：
-//   · `bar`   —— 页顶一条标题栏（`TitleBar`）：整宽、**横跨导航**，两端放区域开关（只有图标，
-//                文字在 tooltip）。收起 = 完全不占位（主区吃掉空间），恢复入口在标题栏里。
-//   · `strip` —— **不渲染标题栏**（页顶不多一条，这才是这种模式的意义）：区域自己收成
-//                竖条 / 横条（方向随它所在的 row / column），点条就展开。回切入口是右下角浮钮。
-// 两种共用同一份「谁收起了」，只换表现形式 —— 所以随时可以切换，状态不丢。
+// 标题栏（`TitleBar`）**永远在**，是区域开合的唯一恢复入口：
+//   · 它整宽、**横跨导航**，两端放区域开关（只有图标，文字在 tooltip）。
+//   · `chrome` 只决定**收起的区域长什么样**，不决定标题栏在不在：
+//       `bar`   → 收起 = 完全不占位（空间给别的区域）；
+//       `strip` → 收起 = 留一条（竖条 / 横条，方向随它所在的 row / column），点条即展开。
+//   两种形态只是同一只把手的两副样子，共用「谁收起了」，随时可切、状态不丢。
+//
+// 折叠条上：**单击 = 展开，双击 = 最大化**；最大化后那条 28px 的头**双击 = 还原**。
 //
 // **主区域不参与收起**：每页声明一个 `main`（`PageDef.main`），它是这一页的组织中心，
 // 收起它等于把这一页收没了。标题栏不给它按钮，strip 模式也不给它折叠按钮。
+// （最大化时它会临时让位 —— 那是用户明确要的「看这一块」，不是收起。）
 //
 // 渲染永远是「模板 → 区域 → 该区有哪些 view → 按形态摊开」这一条单向链，
-// 宿主只额外记三样用户偏好：区域收起、形态、tab 选中。
+// 宿主只额外记四样用户偏好：区域收起 / 形态 / tab 选中 / 谁被最大化。
 
 import { roomTitle, useRoomDialogsContext, useSelectedRoom } from '@diy-agent/entity-chat';
 import {
@@ -26,8 +29,10 @@ import {
     useContext,
     useEffect,
     useMemo,
+    useRef,
     useState,
     type CSSProperties,
+    type MouseEvent as ReactMouseEvent,
     type PointerEvent as ReactPointerEvent,
     type ReactNode,
 } from 'react';
@@ -63,9 +68,13 @@ export interface WbApi {
     readonly main: string;
     /** 每个非主区 area 相对主区的方位（模板推导，标题栏据此分组） */
     readonly sides: ReadonlyMap<string, Side>;
-    /** 收起的表现方式（全局偏好） */
+    /** 收起的表现形态（全局偏好；**不影响标题栏存不存在**） */
     readonly chrome: Chrome;
     setChrome: (chrome: Chrome) => void;
+    /** 被最大化的区域 id；null = 没在最大化 */
+    readonly maximized: string | null;
+    /** 最大化 / 还原（传同一个 id 就是切换；传 null = 还原） */
+    setMaximized: (areaId: string | null) => void;
     isOpen: (areaId: string) => boolean;
     toggleArea: (areaId: string) => void;
     modeOf: (areaId: string) => Mode;
@@ -126,13 +135,28 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
             sides,
             chrome,
             setChrome,
+            maximized: state.maximized ?? null,
+            setMaximized: (areaId) => {
+                setState((prev) => {
+                    const next = prev.maximized === (areaId ?? undefined) ? undefined : (areaId ?? undefined);
+                    if (next === prev.maximized) return prev;
+                    const draft: PageState = { ...prev };
+                    if (next === undefined) delete draft.maximized;
+                    else draft.maximized = next;
+                    return draft;
+                });
+            },
             isOpen: (areaId) => state.collapsed[areaId] !== true,
             toggleArea: (areaId) => {
                 setState((prev) => {
                     const collapsed = { ...prev.collapsed };
                     if (collapsed[areaId] === true) delete collapsed[areaId];
                     else collapsed[areaId] = true;
-                    return { ...prev, collapsed };
+                    // 手动开关区域 = 退出最大化（否则“我点了它怎么没反应”）：
+                    // 最大化期间标题栏按钮仍在，它们必须能直接回到普通布局
+                    const draft: PageState = { ...prev, collapsed };
+                    delete draft.maximized;
+                    return draft;
                 });
             },
             modeOf: (areaId) => {
@@ -325,6 +349,25 @@ function AreaGlyph({ side }: { side: Side }) {
     );
 }
 
+/** 把手形态：一根竖边 + 一条细条 —— “收起时留一条” */
+function FarGlyph() {
+    return (
+        <svg className="wb-glyph" viewBox="0 0 14 14" aria-hidden="true">
+            <rect
+                x="1.5"
+                y="1.5"
+                width="11"
+                height="11"
+                rx="2.5"
+                fill="none"
+                stroke="currentColor"
+                strokeOpacity="0.45"
+            />
+            <rect x="2.2" y="2.2" width="1.8" height="9.6" rx="0.9" fill="currentColor" />
+        </svg>
+    );
+}
+
 /** 导航：三条横线（就是「列表」的意思） */
 function NavGlyph() {
     return (
@@ -468,9 +511,40 @@ function FoldToggle({ def, axis }: { def: AreaDef; axis: 'x' | 'y' }) {
  * 在 row 里就收成竖条（窄、满高），在 col 里就收成横条（矮、满宽）。
  *
  * 整条就是按钮（不只是箭头）：28px 宽的东西里再分命中区没有意义。
+ *
+ * **单击 = 展开，双击 = 最大化**。区分靠 `event.detail`：单击要延迟 `SINGLE_CLICK_DELAY`
+ * 才执行（否则双击时第一下已经把条撤了，第二下根本落不到它身上，双击永远不可能发生）。
+ * 这点延迟是这个交互不可避免的代价。
  */
+const SINGLE_CLICK_DELAY = 180;
+
 function FoldedArea({ def, axis }: { def: AreaDef; axis: 'x' | 'y' }) {
     const api = useWb();
+    const pending = useRef<number | null>(null);
+
+    // 卸载（区域被展开、切页）时把挂着的定时器收掉，不然它会在之后对着一个已消失的条 toggle
+    useEffect(
+        () => () => {
+            if (pending.current !== null) window.clearTimeout(pending.current);
+        },
+        [],
+    );
+
+    const onClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
+        if (pending.current !== null) {
+            window.clearTimeout(pending.current);
+            pending.current = null;
+        }
+        if (event.detail > 1) {
+            api.setMaximized(def.id);
+            return;
+        }
+        pending.current = window.setTimeout(() => {
+            pending.current = null;
+            api.toggleArea(def.id);
+        }, SINGLE_CLICK_DELAY);
+    };
+
     const style: CSSProperties = { flex: `0 0 ${String(FOLD_THICKNESS)}px` };
     if (axis === 'x') style.minWidth = FOLD_THICKNESS;
     else style.minHeight = FOLD_THICKNESS;
@@ -479,17 +553,64 @@ function FoldedArea({ def, axis }: { def: AreaDef; axis: 'x' | 'y' }) {
             <button
                 type="button"
                 className="wb-fold-strip"
-                title={`展开「${def.title}」`}
-                aria-label={`展开${def.title}`}
-                onClick={() => {
-                    api.toggleArea(def.id);
-                }}
+                title={`单击展开「${def.title}」，双击最大化`}
+                aria-label={`展开${def.title}（双击最大化）`}
+                onClick={onClick}
             >
                 <span className="wb-fold-arrow" aria-hidden="true">
                     {axis === 'x' ? '▸' : '▾'}
                 </span>
                 <span className="wb-fold-name">{def.title}</span>
             </button>
+        </div>
+    );
+}
+
+/** 区域里的内容：单 view 直铺，多 view 按形态摊开（骨架在这里不参与） */
+function AreaContent({ areaId, list }: { areaId: string; list: ViewDef[] }) {
+    const api = useWb();
+    // 单 view：不画头部（一个 tab 的 tab 条是噪音），也谈不上形态
+    if (list.length === 1) return <div className="wb-body">{list[0]!.render()}</div>;
+    const mode = api.modeOf(areaId);
+    if (mode === 'accordion') return <AccordionLayout areaId={areaId} list={list} />;
+    if (mode === 'grid') return <GridLayout areaId={areaId} list={list} />;
+    return <TabLayout areaId={areaId} list={list} />;
+}
+
+/**
+ * 最大化：这一块吃掉整个**骨架**（含主区，用户明确要看这一块），其余全让位。
+ *
+ * 它不是浮层：没有 overlay、没有 z-index 战场 —— 仍然住在骨架的位置上，
+ * 只是兄弟都不渲染。顶部一条 28px 的头就是**还原入口**：双击它、或点右边的按钮。
+ */
+function MaximizedArea({ def, views }: { def: AreaDef; views: readonly ViewDef[] }) {
+    const api = useWb();
+    const list = useMemo(() => viewsIn(views, api.page.type, def.id), [views, api.page.type, def.id]);
+    if (list.length === 0) return null;
+    return (
+        <div className="wb-area wb-max" data-area={def.id} data-maximized="true">
+            <div
+                className="wb-max-bar"
+                title="双击还原"
+                onDoubleClick={() => {
+                    api.setMaximized(null);
+                }}
+            >
+                <span className="wb-max-name">{def.title}</span>
+                <span className="wb-max-hint">双击还原</span>
+                <button
+                    type="button"
+                    className="wb-max-exit"
+                    title="还原"
+                    aria-label="还原布局"
+                    onClick={() => {
+                        api.setMaximized(null);
+                    }}
+                >
+                    <span aria-hidden="true">◱</span>
+                </button>
+            </div>
+            <AreaContent areaId={def.id} list={list} />
         </div>
     );
 }
@@ -507,8 +628,8 @@ function AreaView({ def, views, parentAxis }: { def: AreaDef; views: readonly Vi
     const bar = api.chrome === 'bar';
 
     if (!open && !isMain) {
-        // bar：整块不占位（空间给主区），恢复入口在标题栏 —— 标题栏永远在，所以不可能找不回来
-        // strip：收成一条，位置还在，点条展开
+        // bar：整块不占位（空间给别的区域），恢复入口在标题栏 —— 标题栏永远在，不可能找不回来
+        // strip：收成一条，位置还在，点条展开（双击最大化）
         return bar ? null : <FoldedArea def={def} axis={parentAxis} />;
     }
 
@@ -523,27 +644,11 @@ function AreaView({ def, views, parentAxis }: { def: AreaDef; views: readonly Vi
     // 折叠按钮只在 strip 模式下有：bar 模式的收起动作归标题栏，区域自己不再放第二个入口
     const foldBtn = !isMain && !bar ? <FoldToggle def={def} axis={parentAxis} /> : null;
     const mark = isMain ? 'true' : undefined;
+    const mode = list.length === 1 ? undefined : api.modeOf(def.id);
 
-    // 单 view：不画头部（一个 tab 的 tab 条是噪音），也谈不上形态
-    if (list.length === 1) {
-        return (
-            <div className="wb-area" style={style} data-area={def.id} data-main={mark}>
-                <div className="wb-body">{list[0]!.render()}</div>
-                {foldBtn}
-            </div>
-        );
-    }
-
-    const mode = api.modeOf(def.id);
     return (
         <div className="wb-area" style={style} data-area={def.id} data-mode={mode} data-main={mark}>
-            {mode === 'accordion' ? (
-                <AccordionLayout areaId={def.id} list={list} />
-            ) : mode === 'grid' ? (
-                <GridLayout areaId={def.id} list={list} />
-            ) : (
-                <TabLayout areaId={def.id} list={list} />
-            )}
+            <AreaContent areaId={def.id} list={list} />
             {foldBtn}
         </div>
     );
@@ -647,7 +752,7 @@ function TbAreaButton({
 export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
     const dialogs = useRoomDialogsContext();
     const room = useSelectedRoom();
-    const bar = (api?.chrome ?? 'bar') === 'bar';
+    const strip = api?.chrome === 'strip';
 
     // 只列「这个页真有内容」的区域：项目页没有 assets，就不该有它的按钮
     const items = useMemo(() => {
@@ -677,8 +782,8 @@ export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
                 <TbIconButton on={nav.open} label={nav.open ? '收起导航' : '展开导航'} onClick={nav.toggle}>
                     <NavGlyph />
                 </TbIconButton>
-                {bar && left.length > 0 && <span className="wb-tb-sep" aria-hidden="true" />}
-                {bar && left.map(renderItem)}
+                {left.length > 0 && <span className="wb-tb-sep" aria-hidden="true" />}
+                {left.map(renderItem)}
             </div>
 
             <div className="wb-tb-mid">
@@ -686,8 +791,8 @@ export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
             </div>
 
             <div className="wb-tb-group wb-tb-group-end">
-                {bar && right.map(renderItem)}
-                {bar && right.length > 0 && <span className="wb-tb-sep" aria-hidden="true" />}
+                {right.map(renderItem)}
+                {right.length > 0 && <span className="wb-tb-sep" aria-hidden="true" />}
                 <TbIconButton
                     label="设置"
                     onClick={() => {
@@ -699,15 +804,16 @@ export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
                 {api && (
                     <>
                         <span className="wb-tb-sep" aria-hidden="true" />
-                        {/* 只在标题栏模式下出现：折叠条模式根本没有标题栏，
-                            回切入口是右下角那个浮钮（见 `ChromeFab`） */}
+                        {/* 只换「收起的区域长什么样」：不占位 ↔ 留一条。
+                            标题栏本身不参与切换 —— 它永远在，是唯一的恢复入口 */}
                         <TbIconButton
-                            label="换成折叠条（区域自己收成一条）"
+                            on={strip}
+                            label={strip ? '收起时改成不占位（现在留一条）' : '收起时改成留一条（现在不占位）'}
                             onClick={() => {
-                                api.setChrome('strip');
+                                api.setChrome(strip ? 'bar' : 'strip');
                             }}
                         >
-                            <AreaGlyph side="left" />
+                            <FarGlyph />
                         </TbIconButton>
                     </>
                 )}
@@ -717,39 +823,11 @@ export function TitleBar({ nav, api }: { nav: NavState; api?: WbApi }) {
 }
 
 /**
- * 一页 = 标题栏（整宽）+ 导航 + 固定骨架。
+ * 一页 = **标题栏（永远在）** + 导航 + 固定骨架。
  *
  * 标题栏和主体是兄弟，都在页层内，但标题栏占满宽度 —— 它的定位是「管住包括导航在内的
- * 所有区域」，所以不能缩在导航右边。
- */
-/**
- * 折叠条模式下「换回标题栏」的浮钮。
- *
- * `strip` 模式**不渲染标题栏** —— 那正是这种模式的意义（页顶不多一条）。
- * 但那就没有入口回去了，所以留一个不占位的角标：fixed 定位，盖在页面右下角，
- * 平时低对比度，鼠标过去才出来。它不属于任何一块区域，也就不会被哪个区域收起带走。
- */
-function ChromeFab({ api }: { api: WbApi }) {
-    return (
-        <button
-            type="button"
-            className="wb-chrome-fab"
-            title="换回标题栏（页顶一条，左右放区域开关）"
-            aria-label="换回标题栏"
-            onClick={() => {
-                api.setChrome('bar');
-            }}
-        >
-            <AreaGlyph side="top" />
-        </button>
-    );
-}
-
-/**
- * 一页 = （标题栏 | 浮钮）+ 导航 + 固定骨架。
- *
- * 两种收起方式下页顶不一样高：`bar` 有 28px 的标题栏，`strip` 什么都没有（多出来的
- * 28px 给内容）。这正是用户选它们时的取舍本身。
+ * 所有区域」，所以不能缩在导航右边。它也**不随 `chrome` 消失**：那是唯一能找回
+ * 收起区域的地方，让它跟着形态走就是 dockview 版那个死锁（入口长在被收起的那个东西身上）。
  */
 export function Workbench({
     api,
@@ -762,16 +840,23 @@ export function Workbench({
     nav: NavState;
     navRail: ReactNode;
 }) {
+    // 最大化时只渲染那一块：它的头就是还原入口，所以其余全让位是安全的
+    const maxDef =
+        api.maximized === null ? undefined : areasOf(api.page.layout).find((def) => def.id === api.maximized);
+
     return (
         <Ctx.Provider value={api}>
-            {api.chrome === 'bar' ? <TitleBar nav={nav} api={api} /> : null}
+            <TitleBar nav={nav} api={api} />
             <div className="wb-body">
                 {navRail}
                 <div className="wb-skeleton">
-                    <NodeView node={api.page.layout} views={views} parentAxis="x" />
+                    {maxDef === undefined ? (
+                        <NodeView node={api.page.layout} views={views} parentAxis="x" />
+                    ) : (
+                        <MaximizedArea def={maxDef} views={views} />
+                    )}
                 </div>
             </div>
-            {api.chrome === 'bar' ? null : <ChromeFab api={api} />}
         </Ctx.Provider>
     );
 }

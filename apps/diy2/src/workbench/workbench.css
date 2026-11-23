@@ -316,6 +316,12 @@ body.wb-resizing-y * {
     flex-direction: column;
 }
 
+/* 按下的反馈：这条现在要区分单击 / 双击，得让人看出第一下被接住了
+ * （展开本身延迟 180ms 才发生，没反馈会像“点了没反应”）*/
+.wb-fold-strip:active {
+    background: #1b232c;
+}
+
 .wb-folded-x .wb-fold-name {
     writing-mode: vertical-rl;
 }
@@ -633,8 +639,8 @@ body.wb-resizing-y * {
  * 它**不在骨架里** —— 所以任何区域（含导航）收起都不影响它，这正是它能当唯一
  * 恢复入口的原因。
  *
- * 高度 28px 是「够点、又不抢内容」的折中：和折叠条的厚度同一个数，
- * 两种表现方式切换时页面的高度基准不变。
+ * 高度 28px 是「够点、又不抢内容」的折中：和折叠条、最大化头同一个数，
+ * 页局控件的高度基准就这一个。
  */
 
 .wb-titlebar {
@@ -717,37 +723,63 @@ body.wb-resizing-y * {
     height: 14px;
 }
 
-/* ── 折叠条模式下的回切浮钮 ──────────────────────────────────────────────────
+/* ── 最大化 ──────────────────────────────────────────────────────────────────
  *
- * 这一模式下不渲染标题栏（页顶不多一条），所以「换回标题栏」没有位置可挂 ——
- * 留一个不占位的角标：fixed 定位，平时很淡，鼠标进到页面右下角才亮起来。
+ * 最大化不是浮层：它仍住在骨架的位置上，只是兄弟都不渲染（所以没有 z-index 战场）。
+ * 顶部这条 28px 是**还原入口** —— 双击它，或点右边的按钮。厚道与标题栏 / 折叠条同一个数，
+ * 三种状态下「一条」的手感一致。
  */
-.wb-chrome-fab {
-    position: fixed;
-    right: 10px;
-    bottom: 10px;
-    z-index: 20;
+.wb-area.wb-max {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+}
+
+.wb-max-bar {
+    flex: 0 0 28px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 6px;
+    border-bottom: 1px solid var(--wb-line);
+    background: var(--wb-bg-2);
+    color: var(--wb-dim);
+    font-size: 11.5px;
+    cursor: default;
+    user-select: none;
+}
+
+.wb-max-name {
+    color: var(--wb-fg-2);
+}
+
+/* 提示就写在条上：这个交互（双击还原）没有别的发现途径 */
+.wb-max-hint {
+    color: var(--wb-dim-2, var(--wb-dim));
+    opacity: 0.7;
+}
+
+.wb-max-exit {
+    margin-left: auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
+    width: 20px;
+    height: 20px;
     padding: 0;
-    border: 1px solid var(--wb-line);
-    border-radius: 6px;
-    background: var(--wb-bg-2);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
     color: var(--wb-dim);
-    opacity: 0.45;
+    font-size: 10px;
+    line-height: 1;
     cursor: pointer;
-    transition:
-        opacity 120ms,
-        color 120ms;
 }
 
-.wb-chrome-fab:hover,
-.wb-chrome-fab:focus-visible {
+.wb-max-exit:hover {
     color: var(--wb-fg);
-    opacity: 1;
+    background: var(--wb-tint-strong);
+    border-color: var(--wb-line-2);
 }
 
 .wb-tb-sep {

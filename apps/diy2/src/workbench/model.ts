@@ -7,11 +7,16 @@
 //      → 没有 drag-reorder、没有 floating、没有 split；只有「边界变宽变窄」这一种拖。
 //   2. view **不可关闭、不可移动**：它声明自己属于哪个 page 的哪个 area，就只能在那儿。
 //      → 没有 close 动作、没有「拖到别的组」。
-//   3. 唯一能收的是 **area**，而且只有两种表现方式（`Chrome`，全局偏好）：
-//      · `bar`   —— 页顶一条标题栏（`TitleBar`）：整宽、横跨导航，左右各放按钮，按一下显示 / 收起。
-//                    收起 = **完全不占位**（主区吃掉空间），恢复入口在标题栏（永远在）。
-//      · `strip` —— 折叠成一条：区域自己收成竖条 / 横条，位置还在，条上写着区域名。
-//      两种共用同一份「哪个区域收起了」状态，只换「收起来长什么样」。
+//   3. 唯一能收的是 **area**。标题栏（`TitleBar`）**永远在**，它是唯一的恢复入口；
+//      收起来的区域长什么样由 `Chrome`（全局偏好）决定，那只是一只**把手**：
+//      · `bar`   —— 收起来就**不占位**（空间给别的区域），恢复靠标题栏的按钮；
+//      · `strip` —— 收起来**留一条**（竖条 / 横条，方向随它所在的 row / column），
+//                    条还在原位、写着区域名，点条即展开。
+//      两种共用同一份「哪个区域收起了」状态，切换不丢；strip 不改变标题栏的任何行为。
+//      把手要显性、要能一眼看出「这儿还有东西」，但不需要额外的浮层入口 ——
+//      标题栏一直在，所以永远找得回来。
+//   3b. 折叠条上**单击 = 展开 / 收起，双击 = 最大化 / 还原**（同一条，靠点击次数区分）。
+//      最大化是临时视图状态（不进 `collapsed`）：这一条吃掉整个骨架，其余全让位。
 //   4. **每页有一个主区域**（`main`）：这一页围绕它组织，它永远展开、不参与收起 ——
 //      收起主区等于把这一页收没了。
 //   5. area 内有多个 view 时，排列**形态可配**：tab / 折叠 / 格子。单个 view 不显示 tab 条 ——
@@ -181,10 +186,11 @@ export function viewsOfPage(views: readonly ViewDef[], pageType: string): ViewDe
 // 也刻意**不记 view 的开关**：view 不可关闭，没有「关掉了」这个状态要持久化。
 
 /**
- * 区域收起的**表现方式**（全局偏好，跨页共享）：
- *   · `bar`   —— 页顶一条标题栏（整宽、横跨导航），左右各放按钮，收起 = 完全不占位；
- *   · `strip` —— 折叠成一条：区域自己收成竖条 / 横条，位置还在。
- * 只换「收起来长什么样」，共用同一份 `collapsed`。
+ * 区域收起后的**把手形态**（全局偏好，跨页共享）。它只回答「收起来长什么样」，
+ * 不改变标题栏 —— 标题栏永远在，两种形态下行为一致：
+ *   · `bar`   —— 不占位（空间让给别的区域，恢复靠标题栏按钮）；
+ *   · `strip` —— 留一条（竖条 / 横条，点条展开）。
+ * 共用同一份 `collapsed`，所以随时可以切、状态不丢。
  */
 export type Chrome = 'bar' | 'strip';
 
@@ -207,8 +213,13 @@ export function saveChrome(chrome: Chrome, storage: Storage): void {
 }
 
 export interface PageState {
-    /** 收起（两种表现方式共用这一份状态：bar 下是「不占位」，strip 下是「收成一条」） */
+    /** 收起（两种把手形态共用这一份状态：bar 下是「不占位」，strip 下是「收成一条」） */
     collapsed: Record<string, true>;
+    /**
+     * 被最大化的区域（临时视图状态，**不进 `collapsed`**）。
+     * 有它就只渲染这一块、吃掉整个骨架；清掉即回到 `collapsed` / `sizes` 原样。
+     */
+    maximized?: string;
     /** 覆盖模板默认的形态 */
     modes: Record<string, Mode>;
     /** tab 形态下每个区域选中的 view id */
@@ -242,7 +253,10 @@ export function loadState(pageType: string, storage: Storage): PageState | null 
 
 export function saveState(pageType: string, state: PageState, storage: Storage): void {
     try {
-        storage.setItem(stateKey(pageType), JSON.stringify(state));
+        // `maximized` **不存盘**：它是「临时看一眼」的视图状态，刷新后回到正常布局更符合直觉
+        // （否则下次打开只剩一块，用户会以为布局坏了）。
+        const { maximized: _drop, ...rest } = state;
+        storage.setItem(stateKey(pageType), JSON.stringify(rest));
     } catch {
         // 隐私模式 / 配额满：不影响使用，只是下次打开回到默认
     }

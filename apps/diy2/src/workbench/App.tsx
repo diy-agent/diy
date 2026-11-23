@@ -7,13 +7,12 @@
 //   2. Sidebar 自带宽度拖拽与按钮（localStorage `entity-chat:sidebar-width`），
 //      与骨架里区域的尺寸（`workbench:<pageType>.sizes`）是两套真源 —— 它不属于任何一页。
 //
-// 两种收起方式的入口都**不靠标题栏才能存在**：`bar` 靠标题栏，`strip` 根本没画标题栏，
-// 回切入口是页面右下角一个不占位的浮钮（`ChromeFab`）。
+// 标题栏**永远在**（两种把手形态下都在），是区域开合唯一的写入口：
+//   · `bar`   —— 收起 = 不占位，只能从标题栏换回来；
+//   · `strip` —— 收起 = 留一条，就地可点（单击展开 / 双击最大化）。
+// 只换「收起来长什么样」，共用同一份开合状态 —— 所以随时可以切、状态不丢。
 //
-// 区域收起的两个入口，都不是「长在被收起的那个东西身上」（dockview 版就栽在这里）：
-//   · bar   —— 页顶标题栏（`TitleBar`），它不在骨架里、还比导航更外层；
-//   · strip —— 区域自己收成一条，条还在原地，点条展开。
-// 两种随时切换（标题栏右端那个图标 / strip 模式下的右下角浮钮），共用同一份开合状态。
+// 导航自己的收起按钮已停用（`showToggle={false}`）：标题栏左端那颗做的是同一件事。
 
 import { LayerProvider } from '@astryxdesign/core/Layer';
 import { Theme } from '@astryxdesign/core/theme';
@@ -64,6 +63,9 @@ function NavRail({ nav }: { nav: NavState }) {
         <Sidebar
             open={nav.open}
             onToggle={nav.toggle}
+            // 侧栏自己的收起按钮「退休」：标题栏左端那颗做同一件事，
+            // 两个入口挨着、各管一丰，只会让人分不清
+            showToggle={false}
             onCreateProject={dialogs.openProject}
             onCreateTask={dialogs.openTask}
             onRequestDelete={dialogs.requestDelete}
