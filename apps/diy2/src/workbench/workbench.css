@@ -58,7 +58,18 @@
 }
 
 .wb-root {
+    /* 页层：上面骨架 + 下面状态栏（column） */
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* 骨架：状态栏以外的部分。状态栏是「页的」一条，所以它在页层内部、不跨导航 ——
+ * 导航是全局层（自己带宽度与收起），两者的真源不混。 */
+.wb-skeleton {
+    flex: 1 1 0;
     display: flex;
     min-width: 0;
     min-height: 0;
@@ -550,4 +561,102 @@
 
 .wb-rules b {
     color: var(--wb-fg);
+}
+
+/* ── 状态栏（Zed 式）───────────────────────────────────────
+ *
+ * 页底一条：左组 = 导航 + 主区左侧的区域，右组 = 主区右侧 / 下方的区域 + 表现方式切换。
+ * 它**不在骨架里** —— 所以任何区域收起都不影响它，这正是它能当唯一恢复入口的原因。
+ *
+ * 高度 28px 是「够点、又不抢内容」的折中：和折叠条的厚度同一个数，
+ * 两种表现方式切换时页面的高度基准不变。
+ */
+
+.wb-statusbar {
+    flex: 0 0 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px;
+    border-top: 1px solid var(--wb-line);
+    background: var(--wb-bg-2);
+    font-size: 11px;
+    color: var(--wb-dim);
+    user-select: none;
+    overflow: hidden;
+}
+
+.wb-sb-side {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+}
+
+.wb-sb-end {
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+
+/* 中间是页信息，不是控制区：窄了先挤它，两侧按钮永远够点 */
+.wb-sb-mid {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.wb-sb-page {
+    color: var(--wb-fg-2);
+    font-weight: 600;
+}
+
+.wb-sb-dim {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wb-sb-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 20px;
+    padding: 0 7px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--wb-dim);
+    font: inherit;
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.wb-sb-btn:hover {
+    color: var(--wb-fg);
+    background: var(--wb-tint);
+}
+
+/* 展开态 = 亮起；收起态 = 暗着（点它才出现）—— 与「按钮是开关」的直觉一致 */
+.wb-sb-btn.on {
+    color: var(--wb-fg);
+    background: var(--wb-tint-strong);
+    border-color: var(--wb-line-2);
+}
+
+.wb-sb-glyph {
+    font-size: 10px;
+    opacity: 0.85;
+}
+
+.wb-sb-sep {
+    flex: 0 0 auto;
+    width: 1px;
+    height: 14px;
+    margin: 0 4px;
+    background: var(--wb-line);
 }

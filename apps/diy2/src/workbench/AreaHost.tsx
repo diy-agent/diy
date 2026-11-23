@@ -5,36 +5,55 @@
 //   · 没有关闭 ⇒ 不会出现「组被删、区域没了」（dockview 版那个死锁在这套模型里不可能发生）
 //   · 没有浮动 / 最大化 ⇒ 没有 overlay 层与它的 z-index 战场
 //
-// 折叠与「隐藏」的区别（2026-11-23 用户裁）：折叠不是让区域消失，而是**收成一条**，
-// 条的横竖跟着它所在的 row / column 走，条上写着区域名，点条就展开。
-// 于是宿主不需要页外控制面：恢复入口永远在布局里、在它原来的位置。
+// 「收起」有两种表现方式（`chrome`，全局偏好，2026-11-23 两版都做出来对比）：
+//   · `bar`   —— Zed 式：页底一条状态栏，左右各放按钮，按一下显示 / 收起。
+//                收起 = 完全不占位（主区吃掉空间），恢复入口在状态栏里，永远在。
+//   · `strip` —— 折叠成一条：区域自己收成竖条 / 横条（方向随它所在的 row / column），
+//                条上写着区域名，点条就展开，位置还在。
+// 两种共用同一份「谁收起了」，只换表现形式 —— 所以随时可以切换对比，状态不丢。
+//
+// **主区域不参与收起**：每页声明一个 `main`（`PageDef.main`），它是这一页的组织中心，
+// 收起它等于把这一页收没了。状态栏不给它按钮，strip 模式也不给它折叠按钮。
 //
 // 渲染永远是「模板 → 区域 → 该区有哪些 view → 按形态摊开」这一条单向链，
 // 宿主只额外记三样用户偏好：区域收起、形态、tab 选中。
 
+import { roomTitle, useSelectedRoom } from '@diy-agent/entity-chat';
 import { createContext, useContext, useEffect, useMemo, useState, type CSSProperties } from 'react';
 
 import {
     activeOf,
     areasOf,
     initialState,
+    loadChrome,
     loadState,
     MODE_LABEL,
     modeOf,
     modesOf,
+    saveChrome,
     saveState,
+    sidesOf,
     viewsIn,
     type AreaDef,
+    type Chrome,
     type LayoutNode,
     type Mode,
     type PageDef,
     type PageState,
+    type Side,
     type ViewDef,
 } from './model';
 
 /** 区域控制面：折叠 / 形态 / tab 选中（全部在区域自己身上，宿主只读不摆） */
 export interface WbApi {
     readonly page: PageDef;
+    /** 主区域 id：永远展开，不参与收起 */
+    readonly main: string;
+    /** 每个非主区 area 相对主区的方位（模板推导，状态栏据此分组） */
+    readonly sides: ReadonlyMap<string, Side>;
+    /** 收起的表现方式（全局偏好） */
+    readonly chrome: Chrome;
+    setChrome: (chrome: Chrome) => void;
     isOpen: (areaId: string) => boolean;
     toggleArea: (areaId: string) => void;
     modeOf: (areaId: string) => Mode;
@@ -62,12 +81,19 @@ export function useWb(): WbApi {
  */
 export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], storage: Storage = localStorage): WbApi {
     const [state, setState] = useState<PageState>(() => loadState(page.type, storage) ?? initialState(page));
+    // 表现方式是**全局**偏好（不按页分）：它回答的是「收起长什么样」，不是「这页哪些收了」
+    const [chrome, setChrome] = useState<Chrome>(() => loadChrome(storage));
 
     useEffect(() => {
         saveState(page.type, state, storage);
     }, [state, page.type, storage]);
 
+    useEffect(() => {
+        saveChrome(chrome, storage);
+    }, [chrome, storage]);
+
     const defs = useMemo(() => new Map(areasOf(page.layout).map((def) => [def.id, def])), [page.layout]);
+    const sides = useMemo(() => sidesOf(page), [page]);
 
     // 依赖只到「哪些 view 属于哪」这一层：render 函数本身不是状态
     const placementKey = useMemo(
@@ -79,6 +105,10 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
         const viewsOf = (areaId: string) => viewsIn(views, page.type, areaId);
         return {
             page,
+            main: page.main,
+            sides,
+            chrome,
+            setChrome,
             isOpen: (areaId) => state.collapsed[areaId] !== true,
             toggleArea: (areaId) => {
                 setState((prev) => {
@@ -107,7 +137,7 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
         };
         // placementKey 覆盖了 views 里真正被读到的部分
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [page, defs, state, placementKey]);
+    }, [page, defs, sides, chrome, state, placementKey]);
 }
 
 // ── 形态切换（只在「这个区域有多个 view」且「模板允许多种形态」时出现）────────────────
@@ -300,8 +330,15 @@ function AreaView({ def, views, parentAxis }: { def: AreaDef; views: readonly Vi
     // 这个页没东西可放 → 不渲染（不是「收起」：连骨架里的位置都没有）
     if (list.length === 0) return null;
 
-    // 收起 = 折叠成一条，位置还在
-    if (!open) return <FoldedArea def={def} axis={parentAxis} />;
+    // 主区永远展开：收起它这一页就没了，所以它既不在状态栏里、也没有折叠按钮
+    const isMain = def.id === api.main;
+    const bar = api.chrome === 'bar';
+
+    if (!open && !isMain) {
+        // bar：整块不占位（空间给主区），恢复入口在状态栏 —— 状态栏永远在，所以不可能找不回来
+        // strip：收成一条，位置还在，点条展开
+        return bar ? null : <FoldedArea def={def} axis={parentAxis} />;
+    }
 
     // 尺寸：fr 分剩余、px 固定。**没有可拖的手柄** —— 这两个值就是最终值。
     const style: CSSProperties = def.size === 'fr' ? { flex: '1 1 0px' } : { flex: `0 0 ${String(def.size)}px` };
@@ -310,19 +347,23 @@ function AreaView({ def, views, parentAxis }: { def: AreaDef; views: readonly Vi
         else style.minHeight = def.min;
     }
 
+    // 折叠按钮只在 strip 模式下有：bar 模式的收起动作归状态栏，区域自己不再放第二个入口
+    const foldBtn = !isMain && !bar ? <FoldToggle def={def} axis={parentAxis} /> : null;
+    const mark = isMain ? 'true' : undefined;
+
     // 单 view：不画头部（一个 tab 的 tab 条是噪音），也谈不上形态
     if (list.length === 1) {
         return (
-            <div className="wb-area" style={style} data-area={def.id}>
+            <div className="wb-area" style={style} data-area={def.id} data-main={mark}>
                 <div className="wb-body">{list[0]!.render()}</div>
-                <FoldToggle def={def} axis={parentAxis} />
+                {foldBtn}
             </div>
         );
     }
 
     const mode = api.modeOf(def.id);
     return (
-        <div className="wb-area" style={style} data-area={def.id} data-mode={mode}>
+        <div className="wb-area" style={style} data-area={def.id} data-mode={mode} data-main={mark}>
             {mode === 'accordion' ? (
                 <AccordionLayout areaId={def.id} list={list} />
             ) : mode === 'grid' ? (
@@ -330,7 +371,7 @@ function AreaView({ def, views, parentAxis }: { def: AreaDef; views: readonly Vi
             ) : (
                 <TabLayout areaId={def.id} list={list} />
             )}
-            <FoldToggle def={def} axis={parentAxis} />
+            {foldBtn}
         </div>
     );
 }
@@ -353,12 +394,118 @@ function NodeView({ node, views, parentAxis }: { node: LayoutNode; views: readon
     return <AreaView def={node} views={views} parentAxis={parentAxis} />;
 }
 
-/** 一页 = 固定骨架 + area 内可配形态 */
-export function Workbench({ api, views }: { api: WbApi; views: readonly ViewDef[] }) {
+// ── 状态栏（Zed 式）────────────────────────────────────────────────────────────
+//
+// 页面最底一条。**左组** = 导航 + 主区左侧的区域，**右组** = 主区右侧 / 下方的区域 + 表现方式切换。
+// 分组不手写：方位从模板推（`sidesOf`），挪了模板里的区域，按钮自动跟着换组。
+//
+// 它为什么能当「唯一的恢复入口」：它不在骨架里，任何区域的收起都不影响它 ——
+// 这正是 dockview 版栽的地方（入口长在被收起的那个东西身上）。
+
+/** 导航开关（全局层，由壳持有；状态栏左端放它的按钮） */
+export interface NavState {
+    open: boolean;
+    toggle: () => void;
+}
+
+function SbAreaButton({ def, open, onToggle }: { def: AreaDef; open: boolean; onToggle: () => void }) {
+    return (
+        <button
+            type="button"
+            className={open ? 'wb-sb-btn on' : 'wb-sb-btn'}
+            aria-pressed={open}
+            title={`${open ? '收起' : '展开'}「${def.title}」`}
+            onClick={onToggle}
+        >
+            <span className="wb-sb-glyph" aria-hidden="true">
+                {open ? '▣' : '▢'}
+            </span>
+            {def.title}
+        </button>
+    );
+}
+
+export function StatusBar({ nav }: { nav: NavState }) {
+    const api = useWb();
+    const room = useSelectedRoom();
+    const bar = api.chrome === 'bar';
+
+    // 只列「这个页真有内容」的区域：项目页没有 assets，就不该有它的按钮
+    const items = useMemo(
+        () =>
+            areasOf(api.page.layout)
+                .filter((def) => def.id !== api.main && api.viewCountOf(def.id) > 0)
+                .map((def) => ({ def, side: api.sides.get(def.id) ?? 'bottom' })),
+        [api],
+    );
+    const left = items.filter((item) => item.side === 'left' || item.side === 'top');
+    const right = items.filter((item) => item.side === 'right' || item.side === 'bottom');
+
+    const renderItem = (item: { def: AreaDef }) => (
+        <SbAreaButton
+            key={item.def.id}
+            def={item.def}
+            open={api.isOpen(item.def.id)}
+            onToggle={() => {
+                api.toggleArea(item.def.id);
+            }}
+        />
+    );
+
+    return (
+        <div className="wb-statusbar">
+            <div className="wb-sb-side">
+                <button
+                    type="button"
+                    className={nav.open ? 'wb-sb-btn on' : 'wb-sb-btn'}
+                    aria-pressed={nav.open}
+                    title={nav.open ? '收起导航' : '展开导航'}
+                    onClick={nav.toggle}
+                >
+                    <span className="wb-sb-glyph" aria-hidden="true">
+                        ▤
+                    </span>
+                    导航
+                </button>
+                {bar && left.map(renderItem)}
+            </div>
+
+            <div className="wb-sb-mid">
+                <span className="wb-sb-page">{api.page.title}</span>
+                <span className="wb-sb-dim">{room ? roomTitle(room) : '—'}</span>
+            </div>
+
+            <div className="wb-sb-side wb-sb-end">
+                {bar && right.map(renderItem)}
+                {bar && <span className="wb-sb-sep" aria-hidden="true" />}
+                {/* 表现方式切换：这一轮两种都做出来对比，定了之后这个按钮就可以删 */}
+                <button
+                    type="button"
+                    className="wb-sb-btn"
+                    title={bar ? '换一种收起方式：折叠成条' : '换一种收起方式：状态栏'}
+                    onClick={() => {
+                        api.setChrome(bar ? 'strip' : 'bar');
+                    }}
+                >
+                    <span className="wb-sb-glyph" aria-hidden="true">
+                        {bar ? '▁' : '◂'}
+                    </span>
+                    {bar ? '状态栏' : '折叠条'}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+/** 一页 = 固定骨架 + area 内可配形态 + 底部状态栏 */
+export function Workbench({ api, views, nav }: { api: WbApi; views: readonly ViewDef[]; nav: NavState }) {
     return (
         <Ctx.Provider value={api}>
             <div className="wb-root">
-                <NodeView node={api.page.layout} views={views} parentAxis="x" />
+                <div className="wb-skeleton">
+                    <NodeView node={api.page.layout} views={views} parentAxis="x" />
+                </div>
+                <StatusBar nav={nav} />
             </div>
         </Ctx.Provider>
     );

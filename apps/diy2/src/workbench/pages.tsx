@@ -25,12 +25,15 @@ const bottom = () => area('bottom', { title: '诊断', size: 200, min: 120, init
 export const taskPage = definePage({
     type: 'task',
     title: '任务',
+    // 主区 = 对话：这一页围绕它组织，它永远展开，其余三块都是它的「附件」
+    main: 'center',
     layout: col(row(detail('任务详情'), center(), assets()), bottom()),
 });
 
 export const projectPage = definePage({
     type: 'project',
     title: '项目',
+    main: 'center',
     // 项目页没有 assets：项目没有「这一轮聊出来的东西」这层
     layout: col(row(detail('项目信息'), center()), bottom()),
 });
@@ -162,9 +165,12 @@ function GuideArea() {
                     <b>视图不可关闭、不可搬</b>：它声明自己在哪个区域的哪，就只在那儿。
                 </li>
                 <li>
-                    <b>只有区域能收起，而且收成一条</b>：右上角那个 ◂ / ▴ 把区域折成一条，条的 横竖跟着它所在的 row /
-                    column 走，条上写着区域名，点条就展开。 没有「整块消失」这个状态 ——
-                    骨架是固定的，收起来的区域也还占一条位置。
+                    <b>只有区域能收起，两种表现方式</b>：底部状态栏左右各放按钮，按一下显示 / 收起 （收起 =
+                    不占位，空间给主区）；也可以切成「折叠成一条」—— 区域自己收成竖条 / 横条，
+                    位置还在。两种共用同一份开合状态，右下角那个按钮随时切换对比。
+                </li>
+                <li>
+                    <b>每页有一个主区域</b>（这一页是「对话」）：它永远展开、不参与收起 —— 收起主区等于把这一页收没了。
                 </li>
                 <li>
                     <b>区域里多个视图时，摆法可配</b>：标签页 / 折叠 / 格子，只换摊开方式，不动骨架。

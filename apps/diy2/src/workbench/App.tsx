@@ -6,10 +6,10 @@
 //   2. Sidebar 自带宽度拖拽与按钮（localStorage `entity-chat:sidebar-width`），
 //      与「区域尺寸写死」是两套真源。
 //
-// 页外控制面（区域开关）放在布局**外面**：区域收起之后，区域里的按钮跟着一起不见，
-// 恢复入口不能住在布局里。
-// → 2026-11-23 改：折叠不再是「不见」，而是**收成一条**，条上就写着区域名、点它就展开。
-//   恢复入口回到了布局里（而且回到了原地），页外那条浮层于是没有存在的理由，已删。
+// 区域收起的两个入口，都不是「长在被收起的那个东西身上」（dockview 版就栽在这里）：
+//   · bar   —— 页底状态栏（`StatusBar`），它不在骨架里，任何区域收起都不影响它；
+//   · strip —— 区域自己收成一条，条还在原地，点条展开。
+// 两种随时切换（状态栏右端那个按钮），共用同一份开合状态。
 
 import { LayerProvider } from '@astryxdesign/core/Layer';
 import { Theme } from '@astryxdesign/core/theme';
@@ -30,7 +30,7 @@ import '@astryxdesign/theme-neutral/theme.css';
 import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
-import { usePageWorkbench, Workbench } from './AreaHost';
+import { type NavState, usePageWorkbench, Workbench } from './AreaHost';
 import { type PageDef } from './model';
 import { pageFor, wbViews } from './pages';
 
@@ -53,24 +53,13 @@ function loadNavOpen(): boolean {
  * `widthMode` 用缺省的 `own`：宽度与右缘手柄归 Sidebar 自己（键 `entity-chat:sidebar-width`），
  * 收起态是 56px 图标列。它**不参与**页层的骨架 —— 见文件头。
  */
-function NavRail() {
+function NavRail({ nav }: { nav: NavState }) {
     const dialogs = useRoomDialogsContext();
-    const [open, setOpen] = useState(loadNavOpen);
-
-    useEffect(() => {
-        try {
-            localStorage.setItem(NAV_OPEN_KEY, open ? '1' : '0');
-        } catch {
-            /* 存储不可用：本次运行仍然生效，只是下次回到展开 */
-        }
-    }, [open]);
 
     return (
         <Sidebar
-            open={open}
-            onToggle={() => {
-                setOpen((value) => !value);
-            }}
+            open={nav.open}
+            onToggle={nav.toggle}
             onCreateProject={dialogs.openProject}
             onCreateTask={dialogs.openTask}
             onRequestDelete={dialogs.requestDelete}
@@ -82,9 +71,9 @@ function NavRail() {
 // ── 页实例 ────────────────────────────────────────────────────────────────────
 
 /** 一页 = 固定骨架 + 区域内可配形态。`key` 由外部按 page.type 给 —— 换页类型 = 换一份偏好 */
-function PageShell({ page }: { page: PageDef }) {
+function PageShell({ page, nav }: { page: PageDef; nav: NavState }) {
     const api = usePageWorkbench(page, wbViews);
-    return <Workbench api={api} views={wbViews} />;
+    return <Workbench api={api} views={wbViews} nav={nav} />;
 }
 
 function Host() {
@@ -92,12 +81,30 @@ function Host() {
     const loaded = useLoaded();
     const dialogs = useRoomDialogs();
 
+    // 导航的开关提到了壳这一层：状态栏左端要放它的按钮，而状态栏在页层内部
+    const [open, setOpen] = useState(loadNavOpen);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(NAV_OPEN_KEY, open ? '1' : '0');
+        } catch {
+            /* 存储不可用：本次运行仍然生效，只是下次回到展开 */
+        }
+    }, [open]);
+
+    const nav: NavState = {
+        open,
+        toggle: () => {
+            setOpen((value) => !value);
+        },
+    };
+
     // 没有房间时**也要**有导航：新建第一个房间的入口就在左栏，把它藏起来等于没法开工
     if (!room) {
         return (
             <RoomDialogsProvider value={dialogs}>
                 <div className="wb-shell">
-                    <NavRail />
+                    <NavRail nav={nav} />
                     <div className="wb-splash">
                         {loaded ? '还没有房间 —— 用左边的「新建」开一个' : '正在连接 diy2 …'}
                     </div>
@@ -112,8 +119,8 @@ function Host() {
     return (
         <RoomDialogsProvider value={dialogs}>
             <div className="wb-shell">
-                <NavRail />
-                <PageShell key={page.type} page={page} />
+                <NavRail nav={nav} />
+                <PageShell key={page.type} page={page} nav={nav} />
             </div>
             {dialogs.element}
         </RoomDialogsProvider>

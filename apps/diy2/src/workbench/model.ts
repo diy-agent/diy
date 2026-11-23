@@ -6,11 +6,14 @@
 //      → 没有 sash、没有 drag、没有 floating、没有 split。
 //   2. view **不可关闭、不可移动**：它声明自己属于哪个 page 的哪个 area，就只能在那儿。
 //      → 没有 close 动作、没有「拖到别的组」。
-//   3. 唯一能收的是 **area**，而且收法固定：折叠成**一条**（竖条 / 横条随它所在的
-//      row / column 走），条上就写着区域名，点条展开。恢复入口**在布局里、在原地**，
-//      不需要页外浮层，也不可能出现「收起来就找不回来」。
-//      没有「整块消失」这个状态 —— 骨架是固定的，收起来的区域也还占一条位置。
-//   4. area 内有多个 view 时，排列**形态可配**：tab / 折叠 / 格子。单个 view 不显示 tab 条 ——
+//   3. 唯一能收的是 **area**，而且只有两种表现方式（`Chrome`，全局偏好）：
+//      · `bar`   —— Zed 式：页面底一条状态栏，左右各放按钮，按一下显示 / 收起。
+//                    收起 = **完全不占位**（主区吃掉空间），恢复入口在状态栏（永远在）。
+//      · `strip` —— 折叠成一条：区域自己收成竖条 / 横条，位置还在，条上写着区域名。
+//      两种共用同一份「哪个区域收起了」状态，只换「收起来长什么样」。
+//   4. **每页有一个主区域**（`main`）：这一页围绕它组织，它永远展开、不参与收起 ——
+//      收起主区等于把这一页收没了。
+//   5. area 内有多个 view 时，排列**形态可配**：tab / 折叠 / 格子。单个 view 不显示 tab 条 ——
 //      一个 tab 的 tab 条是纯噪音。
 //
 // 所以这张表里最重要的其实是「没有」这一列：约束少了，能出错的状态也少了
@@ -38,7 +41,7 @@ export const MODE_LABEL: Record<Mode, string> = {
 /** 区域定义：只描述「在骨架里的位置与默认呈现」 */
 export interface AreaDef {
     id: string;
-    /** 区域名。多 view 时显示在头部；页外开关也用它 */
+    /** 区域名。多 view 时显示在头部；状态栏按钮 / 折叠条也用它 */
     title: string;
     /** 沿父轴的 px，或 `'fr'`（在兄弟之间分剩余空间） */
     size: number | 'fr';
@@ -77,6 +80,14 @@ export function col(...children: LayoutNode[]): SplitDef {
 export interface PageDef {
     type: string;
     title: string;
+    /**
+     * 主区域 id —— **这一页围绕它组织**：它永远展开、不参与收起，
+     * 状态栏里也不给它按钮（收起主区等于把这一页收没了）。
+     *
+     * 有了它，「其余区域相对主区的方位」就能从模板推出来（`sidesOf`），
+     * 状态栏据此把按钮分到左右两组 —— 不用手写一份「谁在左边」的清单。
+     */
+    main: string;
     layout: LayoutNode;
 }
 
@@ -109,6 +120,49 @@ export function areasOf(node: LayoutNode): AreaDef[] {
     return [node];
 }
 
+/** 区域相对主区的方位 —— 状态栏按它把按钮分到左右两组 */
+export type Side = 'left' | 'right' | 'top' | 'bottom';
+
+/**
+ * 每个非主区 area 相对**主区**的方位（从模板推导，别手写清单）。
+ *
+ * 规则只看「把主区和它分在两侧的那个 split 的轴」：
+ *   · 左右排（axis x）→ 主区左边 = left，右边 = right
+ *   · 上下排（axis y）→ 主区上面 = top，下面 = bottom
+ * 嵌套时外层方位优先：一个区域只有一条最外层方位，不再被内层覆盖。
+ */
+export function sidesOf(page: PageDef): Map<string, Side> {
+    const out = new Map<string, Side>();
+
+    const holds = (node: LayoutNode, id: string): boolean =>
+        'axis' in node ? node.children.some((child) => holds(child, id)) : node.id === id;
+
+    const walk = (node: LayoutNode, side: Side | null): void => {
+        if (!('axis' in node)) {
+            // 主区自己不记方位：它不参与收起
+            if (node.id !== page.main) out.set(node.id, side ?? 'bottom');
+            return;
+        }
+        const mainIndex = node.children.findIndex((child) => holds(child, page.main));
+        if (mainIndex < 0) {
+            for (const child of node.children) walk(child, side);
+            return;
+        }
+        node.children.forEach((child, index) => {
+            if (index === mainIndex) {
+                walk(child, side);
+                return;
+            }
+            const derived: Side =
+                node.axis === 'x' ? (index < mainIndex ? 'left' : 'right') : index < mainIndex ? 'top' : 'bottom';
+            walk(child, side ?? derived);
+        });
+    };
+
+    walk(page.layout, null);
+    return out;
+}
+
 /** 某页能给某个区域塞的 view，按声明顺序 */
 export function viewsIn(views: readonly ViewDef[], pageType: string, areaId: string): ViewDef[] {
     return views.filter((view) => view.placement[pageType]?.area === areaId);
@@ -124,8 +178,34 @@ export function viewsOfPage(views: readonly ViewDef[], pageType: string): ViewDe
 // 刻意很小 —— 尺寸、位置、分割方式都不在里面，因为它们不可改（那是模板的事）。
 // 也刻意**不记 view 的开关**：view 不可关闭，没有「关掉了」这个状态要持久化。
 
+/**
+ * 区域收起的**表现方式**（全局偏好，跨页共享）：
+ *   · `bar`   —— Zed 式：页底一条状态栏，左右各放按钮，收起 = 完全不占位；
+ *   · `strip` —— 折叠成一条：区域自己收成竖条 / 横条，位置还在。
+ * 只换「收起来长什么样」，共用同一份 `collapsed`。
+ */
+export type Chrome = 'bar' | 'strip';
+
+const CHROME_KEY = 'workbench:chrome';
+
+export function loadChrome(storage: Storage): Chrome {
+    try {
+        return storage.getItem(CHROME_KEY) === 'strip' ? 'strip' : 'bar';
+    } catch {
+        return 'bar';
+    }
+}
+
+export function saveChrome(chrome: Chrome, storage: Storage): void {
+    try {
+        storage.setItem(CHROME_KEY, chrome);
+    } catch {
+        /* 存储不可用：本次运行仍然生效 */
+    }
+}
+
 export interface PageState {
-    /** 折叠成条的区�� id（不是「消失」——条还在原地，点它就展开） */
+    /** 收起（两种表现方式共用这一份状态：bar 下是「不占位」，strip 下是「收成一条」） */
     collapsed: Record<string, true>;
     /** 覆盖模板默认的形态 */
     modes: Record<string, Mode>;
