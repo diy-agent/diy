@@ -220,7 +220,7 @@ export function adviceOf(reason: TurnEndReason): string {
         case 'max-tokens':
             return '说「继续」接上；常撞的话提高 maxOutputTokens，或让它分段写';
         case 'max-steps':
-            return '说「继续」接着干；反复撞上限就拆任务，或调 DIY2_MAX_STEPS';
+            return '说「继续」接着干；反复撞上限就拆任务，或提高一轮的步数上限';
         case 'filtered':
             return '换个说法再问，或换个模型';
         case 'tool-mismatch':
