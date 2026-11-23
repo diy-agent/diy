@@ -1,9 +1,8 @@
-// providers.ts —— 模型接入（照 diy 的三段式 key；key 从 env 或 ~/.diy/model.yaml 读）
+// providers.ts —— 模型接入（照 diy 的三段式 key；key 从 env 或**本实例数据根**的 model.yaml 读）
 
 import { setDefaultResultOrder } from 'node:dns';
 import { readFileSync } from 'node:fs';
 import { setDefaultAutoSelectFamily } from 'node:net';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
@@ -63,27 +62,30 @@ export function maxOutputTokensOf(modelKey: string, explicit?: number): number {
 }
 
 /**
- * model.yaml 的路径（三档，优先级从高到低）：
- *   1. `DIY_MODEL_CONFIG` —— 显式文件（diy2 用它把「本实例的数据根」投影进来）；
- *   2. `DIY_HOME/model.yaml` —— 仓库口径：数据根下的配置（diy-app 的 AppConfig.diyHome 同一口径）；
- *   3. `~/.diy/model.yaml` —— 老缺省（生产数据根）。
+ * model.yaml 的路径（**只认数据根**，此刻意不回落生产配置）：
+ *   1. `DIY_MODEL_CONFIG` —— 显式文件；
+ *   2. `DIY_HOME/model.yaml` —— 本实例数据根下的配置（diy-app / diy2 同一口径）；
+ *   3. 都没有 → `undefined`：不读任何文件（key 只能从 env 拿）。
  *
- * 为什么必须参数化（##dev-app 构建对齐）：写死 `~/.diy/model.yaml` 时，把数据根换成
- * `build/lab/home` 只隔离了 sqlite，配置仍读生产真账号 —— 「隔离」是假的：lab 里的实验
- * 会用生产 key，而任何人以为自己在沙箱里。
+ * 为什么删掉「回落 `~/.diy/model.yaml`」这一档（2026-11-23）：测试实例只换数据根、配置
+ * 却仍读生产真账号，等于**假隔离** —— lab 里的实验会用生产 key，而任何人以为自己在沙箱里。
+ * 现在测试实例完全依赖自己的数据根：缺配置就报「缺 key」，由 `scripts/seed-run-home.sh`
+ * 显式把 `~/.diy` 的配置**填充**进去（准备动作，不是运行时查找）。
  */
-export function modelConfigPath(env: NodeJS.ProcessEnv = process.env): string {
+export function modelConfigPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
     const explicit = env['DIY_MODEL_CONFIG']?.trim();
     if (explicit !== undefined && explicit !== '') return explicit;
     const home = env['DIY_HOME']?.trim();
     if (home !== undefined && home !== '') return join(home, 'model.yaml');
-    return join(homedir(), '.diy', 'model.yaml');
+    return undefined;
 }
 
 /** 从 model.yaml 里取某 provider 下指定账户的 key（极简解析） */
 function keyFromDiyConfig(provider: string, account: string): string | undefined {
+    const path = modelConfigPath();
+    if (path === undefined) return undefined;
     try {
-        const lines = readFileSync(modelConfigPath(), 'utf8').split('\n');
+        const lines = readFileSync(path, 'utf8').split('\n');
         const start = lines.findIndex((line) => line.trim() === `${provider}:`);
         if (start < 0) return undefined;
         let current = '';
@@ -106,7 +108,15 @@ export function modelOf(modelKey: string): LanguageModel {
     const envName = PROVIDER_ENV[key.provider];
     const apiKey =
         (envName === undefined ? undefined : process.env[envName]) ?? keyFromDiyConfig(key.provider, key.account);
-    if (apiKey === undefined) throw new Error(`缺少 ${key.provider}/${key.account} 的 key`);
+    if (apiKey === undefined) {
+        const hint = modelConfigPath();
+        throw new Error(
+            `缺少 ${key.provider}/${key.account} 的 key` +
+                (hint === undefined
+                    ? '（未设置 DIY_HOME / DIY_MODEL_CONFIG，未读任何配置）'
+                    : `（${hint} 里没有；测试实例可跑 scripts/seed-run-home.sh 填充）`),
+        );
+    }
     const provider = createOpenAICompatible({
         name: key.provider,
         baseURL: api,

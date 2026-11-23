@@ -99,7 +99,7 @@ sync-deps() {
     run node scripts/check-sync.mjs --write-stamp
 }
 
-# mono所有workspaced的sync（= 依赖 + dev 数据根配置投影）
+# mono所有workspaced的sync（= 依赖 + 测试数据根真配置填充）
 #
 # ##452：**幂等短路**。原先每调一次就是 `npm i --workspaces` + 子模块 + electron 检查 +
 # 各包 sync + 真配置投影 ≈ 45s，而 agent 每轮验前都会 sync 一次 —— 其中 99% 的调用
@@ -110,9 +110,15 @@ sync-deps() {
 # 也不许误判「新鲜」跳过真正的变更 —— 内容哈希那份权威判断在 check-sync.mjs 里，
 # 全量路径仍会跑它；`--force` 强制无条件全量。
 sha.def "sync" \
-  --desc "依赖同步：npm i + workspace 链接（真配置直读 ~/.diy，不再投影副本）"
+  --desc "依赖同步：npm i + workspace 链接 + 测试数据根真配置填充"
 
 sync()  {
+    # 真配置**填充**进 run/<app>/<label>（毫秒级、幂等；与 sync 的幂等短路无关，先跑）。
+    # 拷而不是直读：测试实例必须完整依赖自己的数据根（理由见 scripts/seed-run-home.sh 头注）。
+    if [[ "${DIY_SYNC_HOME:-1}" != "0" ]]; then
+        run bash scripts/seed-run-home.sh
+    fi
+
     case "${1:-}" in
         --force|-f) ;;
         "")        if _sync_uptodate; then

@@ -47,6 +47,8 @@ const config = resolveConfig({
 for (const note of config.notes) console.warn(`[diy2] ${note}`);
 // entity-runtime 读 model.yaml 的路径（懒读：只在真发请求时用，所以此处设置即生效）。
 // 这是**出**：给它一个信号，不是我们自己读环境。
+// `DIY_HOME` 也一并交给它 —— 否则它拿不到数据根，只能回落 `~/.diy`（= 测试实例用了生产配置）。
+process.env['DIY_HOME'] ??= config.home;
 if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
 const hint = modelConfigHint(config);
 if (hint !== null) console.warn(hint);

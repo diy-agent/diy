@@ -16,7 +16,11 @@
 #   ./scripts/migrate-run-home.sh --apply      # 执行
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 仓库根按**当前目录**认（可以从别的 worktree 调本脚本迁自己那份），退回脚本所在仓。
+ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "$ROOT_DIR" ]]; then
+  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
 APPLY=0
 for arg in "$@"; do
   case "$arg" in
@@ -35,6 +39,7 @@ done
 # 源 → 目标（都相对仓库根）。加新条目就在这里加一行。
 pairs=(
   "build/lab/home|run/diy-app/lab"
+  "build/staging/home|run/diy-app/staging"
   "build/test/home|run/diy-app/test"
   "build/preview/home|run/diy-app/preview"
   "apps/diy2/build/prod/home|run/diy2/prod"

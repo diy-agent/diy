@@ -89,7 +89,7 @@ CLI 复用已运行实例前**必须问对方是谁**：连端口发 `diy.getApp
 
 ## sync-home
 
-**真配置不投影**（2026-11-23 起）：`./sha.sh sync` 只做依赖同步。`~/.diy/model.yaml` 等 4 份是真配置的**唯一真源**，各 app 直读（diy2 查找链 `--model-config` > `<home>/model.yaml` > `~/.diy/model.yaml`）。以前投影到 `build/<variant>/home` 的副本已取消（同一份含 key 的文件散成 N 份副本 + 与产物树混住）
+**测试实例完整依赖自己的数据根**（2026-11-23 起）：运行时**不**直读 `~/.diy/model.yaml` —— 否则 lab 里改模型/存凭据会写生产文件（假隔离）。查找链 = `--model-config` > `<home>/model.yaml`；`~/.diy/model.yaml` 只剩「home 的父目录就是生产根」这一档（结构性判据，非 mode 标签）。真配置由 `scripts/seed-run-home.sh` 在**准备**阶段填进 `run/<app>/<label>/`（`./sha.sh sync` 顺带跑，幂等；含 key、只落 gitignore 内的 run/）
 
 （见 ba99d638:pkgs.ts/diy-app/AGENTS.md:53）
 

@@ -65,6 +65,7 @@ if (isProdHome(config.home) && options.input.allowProdHome !== true) {
     console.error('[diy2] 请用 `./sha.sh dev`（数据根 run/diy2/lab），或加 --allow-prod-home');
     process.exit(1);
 }
+process.env['DIY_HOME'] ??= config.home;
 if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
 const hint = modelConfigHint(config);
 if (hint !== null) console.warn(hint);

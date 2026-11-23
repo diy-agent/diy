@@ -304,14 +304,20 @@ export function resolveConfig(opts?: {
               ? defaultWebDir
               : undefined;
 
-    // model.yaml 两档：显式 `--model-config` > 本数据根（都没有时由 entity-runtime 回落
-    // `~/.diy/model.yaml` —— 真配置只有那一个真源，不再往各 launch 的数据根投影副本）。
-    const modelConfigPath =
-        overrides.modelConfig !== undefined && overrides.modelConfig.trim() !== ''
-            ? resolve(overrides.modelConfig)
-            : existsSync(join(home, 'model.yaml'))
-              ? join(home, 'model.yaml')
-              : undefined;
+    // model.yaml：显式 `--model-config` > 本数据根 > **生产数据根才有的一档**（`~/.diy/model.yaml`）。
+    // 最后那档按 home 位置判定（父目录就是生产根），不是按 mode 标签 —— 测试实例换到 run/
+    // 之后天然拿不到它，不可能「隔离了 sqlite 却仍用生产 key」。
+    const modelConfigPath = (() => {
+        if (overrides.modelConfig !== undefined && overrides.modelConfig.trim() !== '') {
+            return resolve(overrides.modelConfig);
+        }
+        if (existsSync(join(home, 'model.yaml'))) return join(home, 'model.yaml');
+        const prodConfig = join(realHomeDir(), '.diy', 'model.yaml');
+        if (samePath(dirname(home), join(realHomeDir(), '.diy')) && existsSync(prodConfig)) {
+            return prodConfig;
+        }
+        return undefined;
+    })();
 
     return {
         app: APP_ID,
@@ -339,16 +345,14 @@ export function resolveConfig(opts?: {
 }
 
 /**
- * 数据根里没有 model.yaml 时的提示（不是错误：entity-runtime 会回落到 `~/.diy/model.yaml`）。
- * 非得说出来，是因为「隔离了数据根却没隔离配置」是同一类事故里最难自己发现的一种
- * （lab 的实验会用生产 key，而人以为在沙箱里）。
+ * 数据根里没有 model.yaml 时的提示。测试实例**不会**回落 `~/.diy/model.yaml`（那是假隔离），
+ * 所以这里给出填充命令；生产数据根自带一档（见 resolveConfig）。
  */
 export function modelConfigHint(config: Diy2Config): string | null {
     if (config.modelConfigPath !== undefined) return null;
-    const candidates = [join(config.home, 'model.yaml'), join(realHomeDir(), '.diy', 'model.yaml')];
     return (
-        `[diy2] 没有找到 model.yaml（${candidates.join(' / ')}）` +
-        ' → 模型配置用 ~/.diy/model.yaml（真配置的唯一真源；--model-config 可显式指定）'
+        `[diy2] 数据根里没有 model.yaml（${join(config.home, 'model.yaml')}）` +
+        ' → 模型会报缺 key；测试实例跑 ./scripts/seed-run-home.sh 填充，或 --model-config 显式指定'
     );
 }
 

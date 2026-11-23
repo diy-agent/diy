@@ -20,7 +20,12 @@
 └── build/                      # 只剩跨包中间物（tsconfig.build-all.json 等）
 ```
 
-真配置不再投影：查找链 `--model-config` > `<home>/model.yaml` > `~/.diy/model.yaml`（diy-app 已有回落；diy2 删 `launchHomeConfig` 这档）。
+**真配置：测试实例完整依赖自己的数据根。** 查找链 = `--model-config` > `<home>/model.yaml`；
+`~/.diy/model.yaml` 只剩「home 的父目录就是生产根」这一档（结构性判据，不是 mode 标签）。
+entity-runtime 的 `modelConfigPath()` 删掉无 home 时的回落（返回 `undefined`）—— 否则
+「换数据根只隔离了 sqlite、配置仍读生产真账号」的假隔离还在。真配置由
+`scripts/seed-run-home.sh` 在**准备**阶段填进 `run/<app>/<label>/`（`./sha.sh sync` 顺带跑）：
+拷而不是直读，lab 里改模型 / 存凭据才不会写生产文件。
 
 ## 三、现状证据
 
@@ -64,11 +69,13 @@
 - [ ] `apps/diy2/sha.sh`：`_launch_home` → `_run_home` 同款（`<repo>/run/diy2/<label>`）；`lab` / `staging` / `start` 全部显式 `--home`
 - [ ] 根 `sha.sh`：`lab` / `agent` / 其它起实例处改用 `run/<app>/<label>` 并显式传
 
-### T4 删掉真配置投影片
+### T4 真配置改成「填充」
 
-- [ ] 根 `sha.sh::sync-dev-home` 删除，`sync` 的调用列表同步去掉（它只投影 4 个文件，现在 `~/.diy` 直读）
-- [ ] `apps/diy2/server/config.ts`：删 `launchHomeConfig` 与 `modelConfigHint` 里的第二候选
-- [ ] `docs` / 知识库中提到「投影到 build/<launch>/home」的句子一并改（T7）
+- [x] 根 `sha.sh::sync-dev-home` 删除（投影到 `build/<variant>/home` 的路径已不存在）
+- [x] `apps/diy2/server/config.ts`：删 `launchHomeConfig`；`~/.diy/model.yaml` 只按「home 的父目录 = 生产根」给
+- [x] `pkgs.ts/agent/entity-runtime/src/providers.ts::modelConfigPath`：删无 home 时的回落（→ `undefined`）
+- [x] `scripts/seed-run-home.sh`：把 4 份真配置填充进 `run/<app>/<label>`（幂等，含 key 只落 gitignore 内）
+- [x] 根 `sha.sh::sync` 调它（幂等短路之前，毫秒级）
 
 ### T5 clean / gitignore
 
