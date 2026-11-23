@@ -15,6 +15,12 @@ export interface TranscriptEntry {
     /** 产生它的轮次；种子 / 未知为 undefined */
     turn?: number;
     /**
+     * 它对应的房间公共条目序号（只有 `origin: 'public'` 的建议带）。
+     * 用途只有一个：重启回放的水位 —— 「这条到底进没进过我的上下文」要靠序号回答，
+     * 靠文本比对或靠房间的 lastSeq 都会答错（见 session.logSeq）。
+     */
+    seq?: number;
+    /**
      * public = 房间公共层（人话、别人的结论）
      * self   = 自己这一轮跑出来的内容（含 tool / reasoning）
      * note   = 压缩留下的占位说明
