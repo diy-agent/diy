@@ -190,7 +190,10 @@ describe('resolveConfig', () => {
                 overrides: { launch: 'lab' },
             });
             expect(config.home).toBe(join(APP_ROOT, 'build', 'lab', 'home'));
-            expect(config.port).toBe(0);
+            // 不断言 port === 0：`build/lab/home/app.port` 可能**真有值**（lab 正在跑）——
+            // 那属于「记录端口」，本来就是合法来源。要钉住的是「DIY2_PORT 没被吃掉」。
+            expect(config.port).not.toBe(5399);
+            expect(config.portSource).not.toBe('cli');
             expect(config.env).toBe('development');
         } finally {
             for (const [key, value] of Object.entries(saved)) {
