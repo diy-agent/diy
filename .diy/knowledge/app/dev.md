@@ -59,7 +59,7 @@ updated: 2026-10-23
 
 ## intent-build
 
-**`tests/cli.intent.*` 跑的是 `build/test/` 编译产物**（起隔离 Electron，main/preload/renderer 全来自产物）：改 `src/**` 后不构建就跑 = 拿旧代码断言（症状：文案/diff 断言莫名失败，而同一份源码的单测全绿）。`sha.sh test-intent` 自动 `DIY_VARIANT=test build`；`tests/core|services` 是 vitest 直读源码，无需构建
+**`tests/cli.intent.*` 跑的是 `build/prod/` 编译产物**（起隔离 Electron，main/preload/renderer 全来自产物）：改 `src/**` 后不构建就跑 = 拿旧代码断言（症状：文案/diff 断言莫名失败，而同一份源码的单测全绿）。`sha.sh test-intent` 自动 `DIY_VARIANT=test DIY_HOME=run/diy-app/test build`；**产物只有一份**，故同一 worktree 里别与 `lab`（watch 写同一目录）同时跑；`tests/core|services` 是 vitest 直读源码，无需构建
 
 （见 ba99d638:pkgs.ts/diy-app/AGENTS.md:126）
 

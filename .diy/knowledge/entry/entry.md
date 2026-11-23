@@ -25,7 +25,7 @@ updated: 2026-10-23
 
 ## home-guard
 
-「继承来的生产 `DIY_HOME` 一律拒绝」：判据 `core/instance-identity.ts::isProdDataHome`、回落 `core/dev-home.ts::resolveDevHome`（`./diy.sh` 与 `./sha.sh lab` 共用；不拦则 lab 开着生产数据根跑、还会把种子写进去；放行需 `DIY_ALLOW_PROD_HOME=1`）。细节见 `apps/diy-app/AGENTS.md::env.home`
+「数据根只认显式值」：判据 `core/instance-identity.ts::isProdDataHome` + `core/dev-home.ts::resolveDataHome`（`./diy.sh` 与 `./sha.sh lab` 共用）。**非生产没给 `DIY_HOME` → 报错退出**（不按变体推导）；继承来的生产根 → 报错（不静默回落；放行需 `DIY_ALLOW_PROD_HOME=1`）。细节见 `apps/diy-app/AGENTS.md::env.home`
 
 （见 docs/instance-modes.md:40）
 

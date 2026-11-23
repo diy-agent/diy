@@ -14,7 +14,7 @@ import { instanceApi } from '../src/cli/instance';
 const ROW = {
     pid: 4242,
     port: 5300,
-    home: '/w/build/lab/home',
+    home: '/w/run/diy2/lab',
     variant: 'lab',
     env: 'development',
     launch: 'lab',
@@ -29,9 +29,9 @@ const handlers = {
         list: () => ({ instances: [ROW] }),
         stop: async () => ({ stopped: 1, instances: [ROW] }),
         port: async () => 5300,
-        home: () => '/w/build/lab/home',
+        home: () => '/w/run/diy2/lab',
         // `web` 是进程生命周期命令（拉起 / 复用服务端），单测只钉形状
-        web: async () => ({ port: 5300, pid: 4242, home: '/w/build/lab/home', reused: true }),
+        web: async () => ({ port: 5300, pid: 4242, home: '/w/run/diy2/lab', reused: true }),
     },
 };
 
@@ -97,7 +97,7 @@ describe('diy2 CLI（@diy-agent/rpc/cli + mem）', () => {
     it('home 输出裸路径', async () => {
         const result = await makeCli().run(['home']);
         expect(result.code).toBe(0);
-        expect(result.out.join('\n')).toBe('/w/build/lab/home');
+        expect(result.out.join('\n')).toBe('/w/run/diy2/lab');
     });
 
     it('未知命令 → usage error（退出码 2）', async () => {

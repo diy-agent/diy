@@ -56,7 +56,7 @@ AGENTS.md 链瘦身前 28.3 KB 占 system 81%（~/AGENTS.md 17.0 · 仓库 9.5 �
 
 **上下文质量的 L0 机械记分卡**（零 LLM，全从 `llm.jsonl` 解析）五个指标：`recheck` 重查率（bash 里 `cat|sed|head|tail` 的路径在最近 20 步内读过，每步上限 1）· `ungrounded` 工具报错率（`output.type==error-text` 或退出码非 0）· `idle` 空转率（无工具调用）· `hallucinated_ref` 假引用率（`<path>:<line>` 经 `git ls-files` + 行数校验）· `human_nudge` 真人消息数（含催促）。
 **##5 实测基线**（1103 步 / 1079 调用 / 74 轮）：recheck 45.3% · err 2.9% · idle 4.0% · hallu 0.45% · 真人消息 62 条。recheck 45% 换算成成本 ≈500 步重复劳动 ≈20 MB 前缀。
-**用法铁律**：只做**事件对齐**（kb 改动前 30 步 vs 后 30 步），绝对值不跨任务比较。演示页：`build/lab/home/projects/1/tasks/5/gen/demo/2026-10-23-kgscore/index.html`（解析器同目录 `score.py`）。
+**用法铁律**：只做**事件对齐**（kb 改动前 30 步 vs 后 30 步），绝对值不跨任务比较。演示页：`run/diy-app/lab/projects/1/tasks/5/gen/demo/2026-10-23-kgscore/index.html`（旧路径 `build/lab/home/…`）（解析器同目录 `score.py`）。
 
 ## step-cost
 

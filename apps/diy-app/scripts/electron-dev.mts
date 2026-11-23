@@ -12,7 +12,7 @@ import {
   lockAdvice,
   readLock,
 } from "../src/main/core/single-instance";
-import { resolveDevHome } from "../src/main/core/dev-home";
+import { resolveDataHome } from "../src/main/core/dev-home";
 import { appendAppExit } from "../src/main/services/interrupted-cause";
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, appendFileSync, type Dirent } from "node:fs";
 // 注：Chromium 开关（disable-features=RustPng / use-gl=angle）由 src/main/index.ts 经
@@ -28,8 +28,9 @@ if (explicitPort) electronArgs.push("--port", explicitPort);
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = join(scriptDir, ".."); // apps/diy-app
 const repoRoot = join(scriptDir, "..", "..", "..");
-// 产物/数据变体根（prod|test|lab）。本脚本服务 lab 开发实例：独占 build/lab/{main,preload}
-// 产物 + build/lab/home 数据根（单实例锁 per-home），与 test 等变体互不干扰。
+// 本脚本服务 lab 开发实例。产物写到**固定的** build/prod/{main,preload}（一份产物），
+// 数据根由 `sha.sh lab` 算好经 DIY_HOME 传进来（run/diy-app/lab，单实例锁 per-home）。
+// DIY_VARIANT 只是运行时标签（dev 能力 / 自动种入缺省），不参与任何路径拼装。
 const variant = process.env["DIY_VARIANT"] ?? "lab";
 if (variant === "preview") {
     // preview 是**编译后运行**的稳定实例（`sha.sh preview`，无 watch），不是本脚本的模式。
@@ -37,22 +38,22 @@ if (variant === "preview") {
     console.error("✗ preview 是编译后运行的变体（无 watch）：用 ./sha.sh preview；开发实例仍用 ./sha.sh lab");
     process.exit(1);
 }
-process.env["DIY_VARIANT"] = variant; // 传给 vite 配置（决定 outDir）
-const outRel = join("build", variant); // 相对 appDir 的产物根
-// 数据根：build/<variant>/home —— 「变体互不干扰」全靠它（单实例锁也是 per-home）。
-// ⚠️ 继承来的 DIY_HOME 会把它顶掉：宿主 shell / agent / CI 常导出 DIY_HOME=~/.diy，lab
-// 就直接开着**生产数据根**跑（实测踩过：宿主正是如此，一路直奔 ~/.diy，只因 prod 实例占着
-// 锁才没造成污染；而 lab 缺省带初始种入，真跑起来会把示例项目写进生产）。
-// 决策与警告交给 core/dev-home（同一条口径 diy.sh 也在用，且可被单测覆盖）。
-const decision = resolveDevHome({
-  variant,
-  repoRoot,
-  inherited: process.env["DIY_HOME"],
-  allowProdHome: process.env["DIY_ALLOW_PROD_HOME"] === "1",
-});
-if (decision.rejected) {
-  console.warn(`[dev] 警告: 忽略继承的生产数据目录 DIY_HOME=${decision.rejected}，改用本变体的 ${decision.home}`);
-  console.warn(`[dev] 警告: 确需操作生产数据请显式声明 DIY_ALLOW_PROD_HOME=1 ./sha.sh ${variant}`);
+process.env["DIY_VARIANT"] = variant; // 运行时标签（下游读它判断 dev 能力，不拼路径）
+const outRel = join("build", "prod"); // 相对 appDir 的产物根（**固定**，一份产物）
+// 数据根：**只认显式值**（`sha.sh lab` 会算好 run/diy-app/lab 传进来）。
+// ⚠️ 两个坑：① 宿主 shell / agent / CI 常导出 DIY_HOME=~/.diy —— 撞生产根必须拒（那会写脏真库）；
+// ② 没给值以前会回落 build/<variant>/home，那是**产物树**，`clean` 一跑就把数据删了（已废）——
+// 现在缺了直接报错，不推导。判据在 core/dev-home（单测覆盖）。
+let decision: { home: string };
+try {
+  decision = resolveDataHome({
+    explicit: process.env["DIY_HOME"],
+    allowProdHome: process.env["DIY_ALLOW_PROD_HOME"] === "1",
+    hint: "cd apps/diy-app && ./sha.sh lab",
+  });
+} catch (e) {
+  console.error(`[dev] ${(e as Error).message}`);
+  process.exit(1);
 }
 mkdirSync(decision.home, { recursive: true });
 process.env["DIY_HOME"] = decision.home;

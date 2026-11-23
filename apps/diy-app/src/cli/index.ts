@@ -53,20 +53,17 @@ function reportForeignInstance(
 }
 
 /** 定位包根（build/ 的父目录）。**别数 dirname**：源码模式 `src/cli/index.ts` 与产物模式
- * `build/<variant>/cli/index.js` 深度不同（固定 4 次只对产物成立，tsx 直跑会算到 pkgs.ts/）。
+ * `build/prod/cli/index.js` 深度不同（固定 4 次只对产物成立，tsx 直跑会算到 pkgs.ts/）。
  * 判据在 core/app-root.ts（按包标记上溯），理由与实测见该文件头注。 */
 function appRoot(): string {
     return resolveAppRoot(fileURLToPath(import.meta.url));
 }
 
-/** 产物变体根（prod|test|lab）：入口脚本经 DIY_VARIANT 注入，缺省 prod。
- * 决定 spawn 哪个 build/<variant>/main/index.mjs（测试=test、lab 独占）。 */
-function variant(): string {
-    return process.env["DIY_VARIANT"] ?? "prod";
-}
-
+/** 产物入口：**固定** `build/prod/main/index.mjs`（产物只有一份）。
+ * `DIY_VARIANT` 只是运行时标签（dev 能力 / 实例显示名），不再选目录；
+ * 实例隔离靠 `DIY_HOME`（由入口脚本显式给）。 */
 function mainEntry(): string {
-    return join(appRoot(), "build", variant(), "main", "index.mjs");
+    return join(appRoot(), "build", "prod", "main", "index.mjs");
 }
 
 /** 启动 diy 管控台（Electron 主进程产物），作为独立进程持续运行 */

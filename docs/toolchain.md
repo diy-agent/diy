@@ -34,7 +34,7 @@
 `./sha.sh sync` = `npm i --workspaces --include-workspace-root` + 子模块 + 各包 sync + electron 二进制收成共享软链。
 
 - `--include-workspace-root` **不能省**：光 `npm i --workspaces` 只装 workspace、漏装根 `package.json` 依赖（`remark-gfm` 等），干净 worktree 上必现 build 解析失败。
-- 末尾顺带 `sync-dev-home`：把 `~/.diy` 的真配置（`model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml`）逐字投影进 `build/<variant>/home/`（变体随 `DIY_VARIANT`，缺省 lab；`DIY_SYNC_HOME=0` 关）。seed 只种示例数据，真配置归它。
+- **不再投影真配置**（2026-11-23 起）：`~/.diy` 的 4 份（`model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml`）是真源，各 app 直读。以前投影到 `build/<variant>/home/` 的副本已取消（N 份含 key 的副本 + 与产物树混住）。seed 只种示例数据。
 
 ## sync-gate — 入口自动过闸（`scripts/check-sync.mjs`）
 
@@ -57,7 +57,7 @@ build / check / test / lab 入口先跑只读快检：workspace 链接缺失或�
 - 根 `./sha.sh publish [--dry-run]` → 清单 **`scripts/publish-targets.mjs`**（唯一来源；`release` 工具共用）：`diy-rpc` / `diy-ui` / session / session-store-jsonl / workbench / workbench-ui / model-catalog / model-config-page / llm-provider / bot / workbench-plugin / dev-paths（应用不在这个清单里，见下面 app publish）。
 - **改版本**：`./sha.sh release status`（本地 vs registry）/ `release bump patch|minor|major [--only a,b] [--set 包=版本]`（改包版本 + 同步内部依赖范围 + `package-lock.json` + sync 印记；**不提交、不发包**）——见 `scripts/release.mjs`。
 - 能力包 publish = `tsc -p tsconfig.build.json` + `scripts/npm-publish.mjs`：在 `dist/` 生成发行版 `package.json`（`exports` 指 `*.js` + `.d.ts`）→ `npm publish dist`。**产物目录只有 `build/` 与 `dist/` 两种**（2026-11-15 起老包的 `lib/` 也迁完了；`.gitignore` 不再拦 `lib/`，落错地方会以未跟踪文件露出来）。
-- app publish = `node scripts/npm-publish-app.mjs apps/<app> [--variant=lab]`：把 `bin/` + `build/<variant>/` 组装到 `dist/` → `npm publish dist`（`apps/chat` 已在 #478 删除，现在是 `apps/diy-app`）。
+- app publish = `node scripts/npm-publish-app.mjs apps/<app>`：把 `bin/` + `build/prod/` 组装到 `dist/` → `npm publish dist`（产物根固定 `build/prod`；`apps/chat` 已在 #478 删除，现在是 `apps/diy-app`）。
 - 仓内 `package.json` 恒指 `src/*.ts` 且留 `private:true`（护栏，别为了让 publish 通过而改）；发行物由脚本剥离。
 - **仓内依赖改写**：仓内写 `*` / `workspace:*`，发布时统一改成 `^${仓内版本}`（唯一实现在 `scripts/npm-publish-common.mjs`）。不改写就会装回旧版 —— ##478 之前出过事：chat-page（当时还存在）依赖 `ui: ^0.1.0` 而 ui 已是 0.2.0，用户装到的是旧 ui。
 - **可重复跑**：发布前 `npm view <name>@<version>` 探一下，已存在就跳过（npm 不允许重发同版本），部分失败后直接重跑整条即可。

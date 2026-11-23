@@ -17,13 +17,13 @@ updated: 2026-10-23
 
 ## diy-sh
 
-`./diy.sh`（仓库根）→ 跑 `auto`：`build/<variant>/cli/index.js` 优先，打包源比产物新则回退 `tsx src/cli/index.ts`（`DIY_CLI_MODE`）；注入 `DIY_HOME=./build/<variant>/home`、`DIY_VARIANT=lab`（缺省）、`DIY_CLI`
+`./diy.sh`（仓库根）→ 跑 `auto`：`build/prod/cli/index.js` 优先，打包源比产物新则回退 `tsx src/cli/index.ts`（`DIY_CLI_MODE`）；注入 `DIY_HOME=./run/diy-app/<variant>`（缺省 lab）、`DIY_VARIANT=lab`（**只是标签**）、`DIY_CLI`
 
 （见 ba99d638:pkgs.ts/diy-app/AGENTS.md:47）
 
 ## electron-dev
 
-`scripts/electron-dev.mts`（lab）→ `build/<variant>/main/index.mjs`；注入 `DIY_HOME=./build/<variant>/home`（继承来的生产根被拒，见 `app.entry#home`）、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development`
+`scripts/electron-dev.mts`（lab）→ `build/prod/main/index.mjs`；注入 `DIY_HOME=run/diy-app/lab`（缺了报错、继承来的生产根被拒，见 `app.entry#home`）、`DIY_VARIANT`、`DIY_CLI`、`DIY_DEV_SERVER_URL`、`DIY_ENV=development`
 
 （见 ba99d638:pkgs.ts/diy-app/AGENTS.md:49）
 
@@ -83,18 +83,18 @@ CLI 复用已运行实例前**必须问对方是谁**：连端口发 `diy.getApp
 
 ## self-declare
 
-**三件套 `DIY_HOME`/`DIY_CLI`/`DIY_ENV` 都自证，不继承**（开发入口）。继承的生产值（agent 会话常带 `DIY_HOME=~/.diy`、`DIY_CLI=<全局 diy>`、`DIY_ENV=production`）会：操作生产数据 / 让模型敲错的 CLI / 误关 dev 能力。数据根判据：`core/instance-identity.ts`（`prodDataHome` / `isProdDataHome` / `cliEntryForRepo`，**全仓唯一**；dev 侧再经 `core/dev-home.ts::resolveDevHome` 回落 `build/<variant>/home`）；`DIY_ALLOW_PROD_HOME=1` 放行。数据根：未设置或指向生产根 → `<repo>/build/<variant>/home`（**与静态产物同一个 variant 轴**；`serve` 缺省 variant=`prod`）；`DIY_ENV`：`production` → `development`。`serve` 直接跑也走同一套（它不 import main），数据根经 `core/dev-home.ts::resolveDevHome` —— 不要在入口里另写一套回落
+**三件套 `DIY_HOME`/`DIY_CLI`/`DIY_ENV` 都自证，不继承**（开发入口）。继承的生产值（agent 会话常带 `DIY_HOME=~/.diy`、`DIY_CLI=<全局 diy>`、`DIY_ENV=production`）会：操作生产数据 / 让模型敲错的 CLI / 误关 dev 能力。数据根判据：`core/instance-identity.ts`（`prodDataHome` / `isProdDataHome` / `cliEntryForRepo`，**全仓唯一**；`core/dev-home.ts::resolveDataHome` 只认显式值）。**非生产没给 `DIY_HOME` → 报错退出**（不推导、不回落；路径由入口脚本按 `run/<app>/<label>` 算）；撞生产根 → 报错（`DIY_ALLOW_PROD_HOME=1` 才放行）；`DIY_ENV`：`production` → `development`。`serve` 直接跑也走同一套（它不 import main）
 
 （见 ba99d638:pkgs.ts/diy-app/AGENTS.md:60）
 
 ## sync-home
 
-**真配置同步**（`./sha.sh sync` 末尾的 `sync-dev-home`，脚本侧非 TS）：把 `~/.diy` 的 `model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml` 投影进 `build/<variant>/home/`（逐字覆盖这 4 份；`state.yaml` / `projects/` / `local/` 一律不碰）。变体随 `DIY_VARIANT`（缺省 lab），`DIY_SYNC_HOME=0` 关 · `DIY_SYNC_HOME_SRC` 换源。⚠️ 含真 key，落 build/**（已 gitignore）
+**测试实例完整依赖自己的数据根**（2026-11-23 起）：运行时**不**直读 `~/.diy/model.yaml` —— 否则 lab 里改模型/存凭据会写生产文件（假隔离）。查找链 = `--model-config` > `<home>/model.yaml`；`~/.diy/model.yaml` 只剩「home 的父目录就是生产根」这一档（结构性判据，非 mode 标签）。真配置由 `scripts/seed-run-home.sh` 在**准备**阶段填进 `run/<app>/<label>/`（`./sha.sh sync` 顺带跑，幂等；含 key、只落 gitignore 内的 run/）
 
 （见 ba99d638:pkgs.ts/diy-app/AGENTS.md:53）
 
 ## variant
 
-`DIY_VARIANT` = `prod|test|lab|preview`，**产物/数据分根的唯一轴**：vite 配置据此定 `outDir=build/<variant>/*`，运行时据此选 `build/<variant>/main`，缺省 `prod`（`./diy.sh` 缺省 `lab`）。**`lab` = watch/HMR（边改边看）**；**`preview` = 编译后运行、无 watch 的稳定实例**（2026-10-23 恢复，##404：lab 每改一处 src 就重启主进程、打断正在跑的轮次，实测 129 轮里 128 轮这么死的 ⇒ 要持续对话的实例用 preview）。产物 `<包>/build/preview/**`、数据根**仓库根** `build/preview/home`（两处基准不同，别照产物路径推）。入口 `apps/diy-app/sha.sh preview`（`--build` 强制重编译 / `--from <variant>` 首次克隆该变体的 home 续用其任务与会话）。`scripts/electron-dev.mts` 仍拒绝 preview（它不是 watch 模式）；web 的 `src/serve` 也不认这个变体。
+`DIY_VARIANT` = `prod|test|lab|preview`，**只剩运行时标签**（dev 能力 / 自动种入缺省 / 实例显示名）——**不决定任何路径**。产物固定 `apps/<app>/build/prod/**`（vite `outDir` 写死）；数据根由入口脚本算 `run/<app>/<label>` 并显式传 `DIY_HOME`。**`lab` = watch/HMR（边改边看）**；**`preview` = 编译后运行、无 watch 的稳定实例**（##404：lab 每改一处 src 就重启主进程、打断正在跑的轮次 ⇒ 要持续对话用它）。`preview` 只是标签，产物仍是 `build/prod`，数据根 `run/diy-app/preview`；入口 `apps/diy-app/sha.sh preview`（`--build` 强制重编译 / `--from <label>` 首次克隆那份 home）。**一份产物 ⇒ 同一 worktree 的 `lab` 与 `test`/`staging --build` 不能同时跑**（watch 会覆盖产物）。
 
 （见 apps/diy-app/sha.sh:113）

@@ -15,7 +15,6 @@
 
 import { setDefaultResultOrder } from 'node:dns';
 import { setDefaultAutoSelectFamily } from 'node:net';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
@@ -57,21 +56,25 @@ export function parseModelKey(value: string): ParsedModelKey {
 }
 
 /**
- * model.yaml 的路径（三档，优先级从高到低）：
+ * model.yaml 的路径（两档，优先级从高到低）：
  *   1. `DIY_MODEL_CONFIG` —— 显式文件（diy2 用它把「本实例的数据根」投影进来）；
- *   2. `DIY_HOME/model.yaml` —— 仓库口径：数据根下的配置（diy-app 的 AppConfig.diyHome 同一口径）；
- *   3. `~/.diy/model.yaml` —— 老缺省（生产数据根）。
+ *   2. `DIY_HOME/model.yaml` —— 仓库口径：数据根下的配置（diy-app 的 AppConfig.diyHome 同一口径）。
+ *   3. 都没有 → `undefined`：**不读任何文件**（key 只能从 env 拿）。
  *
  * 为什么必须参数化（##dev-app 构建对齐）：写死 `~/.diy/model.yaml` 时，把数据根换成
- * `build/lab/home` 只隔离了 sqlite，配置仍读生产真账号 —— 「隔离」是假的：lab 里的实验
+ * `run/diy-app/lab` 只隔离了 sqlite，配置仍读生产真账号 —— 「隔离」是假的：lab 里的实验
  * 会用生产 key，而任何人以为自己在沙箱里。
+ *
+ * 为什么删掉「回落 `~/.diy/model.yaml`」这一档（2026-11-23）：后两档（env 缺省 / 数据根缺省）
+ * 只要有一档回指生产，隔离就是假的。测试实例应当**完整依赖自己的数据根**：缺配置就报「缺 key」，
+ * 由 `scripts/seed-run-home.sh` 在准备阶段把 `~/.diy` 的配置**填充**进去（准备动作，不是运行时查找）。
  */
-export function modelConfigPath(env: NodeJS.ProcessEnv = process.env): string {
+export function modelConfigPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
     const explicit = env['DIY_MODEL_CONFIG']?.trim();
     if (explicit !== undefined && explicit !== '') return explicit;
     const home = env['DIY_HOME']?.trim();
     if (home !== undefined && home !== '') return join(home, 'model.yaml');
-    return join(homedir(), '.diy', 'model.yaml');
+    return undefined;
 }
 
 /**
@@ -82,9 +85,15 @@ export function modelConfigPath(env: NodeJS.ProcessEnv = process.env): string {
  * 两者的连接点就是 `dirname` —— 所以这三个文件必须落在同一目录（`sha.sh sync` 与
  * `~/.diy/` 都是这个布局）。
  */
-export function modelHome(env: NodeJS.ProcessEnv = process.env): string {
-    return dirname(modelConfigPath(env));
+export function modelHome(env: NodeJS.ProcessEnv = process.env): string | undefined {
+    const path = modelConfigPath(env);
+    return path === undefined ? undefined : dirname(path);
 }
+
+/** 「本实例没有模型配置」的统一话术（`undefined` 数据根的三个出口共用） */
+const NO_MODEL_HOME = '本实例没有模型配置：需要 DIY_HOME（数据根，含 model.yaml）或 DIY_MODEL_CONFIG';
+
+const NO_MODEL_HOME_HINT = '测试实例跑 ./scripts/seed-run-home.sh <数据根> 填充';
 
 /** 对话场景的输出上限缺省（对齐老路径 `local-agent.ts` 的 16384 场景缺省） */
 export const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
@@ -134,7 +143,9 @@ function maybeParseModelKey(value: string): ParsedModelKey | undefined {
  * 找会拿到别人的 baseURL ⇒ 请求发到错的端点，上游不回应（实测表现就是「请求超时」）。
  */
 function catalogEntry(key: ParsedModelKey, env: NodeJS.ProcessEnv): ModelCatalogEntry | undefined {
-    return loadCatalog(modelHome(env), { env }).find(
+    const home = modelHome(env);
+    if (home === undefined) return undefined;
+    return loadCatalog(home, { env }).find(
         (entry) => entry.providerId === key.provider && entry.modelId === key.model,
     );
 }
@@ -172,6 +183,7 @@ export function modelOf(modelKey: string, options: ModelOptions = {}): LanguageM
     const env = options.env ?? process.env;
     const key = parseModelKey(modelKey);
     const home = modelHome(env);
+    if (home === undefined) throw new Error(`${NO_MODEL_HOME}；${NO_MODEL_HOME_HINT}`);
     const entry = catalogEntry(key, env);
     if (entry === undefined) {
         throw new Error(
@@ -220,6 +232,7 @@ export type { ModelCostView };
  */
 export function modelProviders(env: NodeJS.ProcessEnv = process.env): ProviderView[] {
     const home = modelHome(env);
+    if (home === undefined) return [];
     const accountsByProvider = new Map(listAccountStates(home).map((item) => [item.providerId, item.accounts]));
     const grouped = new Map<string, ProviderView>();
     for (const entry of loadCatalog(home, { env })) {
@@ -255,5 +268,6 @@ export function modelProviders(env: NodeJS.ProcessEnv = process.env): ProviderVi
  * 猜（"第一个 provider 的第一个模型"）会让「换一台机器 → 默认模型变了」变得无法解释。
  */
 export function defaultModelKeyOf(env: NodeJS.ProcessEnv = process.env): string | undefined {
-    return readDefaultModel(modelHome(env)) ?? undefined;
+    const home = modelHome(env);
+    return home === undefined ? undefined : (readDefaultModel(home) ?? undefined);
 }

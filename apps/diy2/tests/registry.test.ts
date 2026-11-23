@@ -34,7 +34,7 @@ function record(overrides: Partial<InstanceRecord> = {}): InstanceRecord {
         mode: 'source',
         port: 5300,
         pingPort: null,
-        diyHome: '/w/build/lab/home',
+        diyHome: '/w/run/diy2/lab',
         variant: 'lab',
         env: 'development',
         argv: [],

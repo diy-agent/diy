@@ -26,13 +26,13 @@ options:
   --mode <production|development|test>  运行环境（缺省 production）
   --launch <名字>                        入口名（缺省由环境推：prod / lab / test）
   -p, --port <n>                         端口；0 = 内核分配（缺省：生产 5192）
-      --home <dir>                       数据根（缺省：生产 ~/.diy/diy2，其余 <appRoot>/build/<launch>/home）
+      --home <dir>                       数据根（缺省：生产 ~/.diy/diy2；非生产**必须显式给**）
       --name <名字>                       实例名
       --tools <shell|files>              工具面
       --compact-keep <n>                 压缩保留最近 n 条消息
       --compact-chars <n>                压缩预算（字符）
       --web-dir <dir>                    UI 产物目录（缺省 <buildRoot>/web）
-      --model-config <file>              model.yaml（缺省：本数据根 > 本 launch 的仓库级数据根）
+      --model-config <file>              model.yaml（缺省：本数据根；都没有则回落 ~/.diy/model.yaml）
       --allow-prod-home                  显式放行生产数据根
   -h, --help                             本帮助`;
 
@@ -47,6 +47,8 @@ const config = resolveConfig({
 for (const note of config.notes) console.warn(`[diy2] ${note}`);
 // entity-runtime 读 model.yaml 的路径（懒读：只在真发请求时用，所以此处设置即生效）。
 // 这是**出**：给它一个信号，不是我们自己读环境。
+// `DIY_HOME` 也一并交给它 —— 否则它拿不到数据根，只能回落 `~/.diy`（= 测试实例用了生产配置）。
+process.env['DIY_HOME'] ??= config.home;
 if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
 const hint = modelConfigHint(config);
 if (hint !== null) console.warn(hint);

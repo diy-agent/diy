@@ -26,7 +26,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 /** 产物里的 app 标识（`/api/info` 自报、注册表 `app` 字段、探活判据共用一处） */
 export const APP_ID = 'diy2';
@@ -131,6 +131,19 @@ export function defaultLaunch(mode: Diy2Env): string {
 }
 
 /**
+ * 「生产入口 + 非生产数据根」时的标签：取数据根目录名（`run/diy2/lab` → `lab`）。
+ *
+ * 为什么：`bin/diy2 web --home run/diy2/lab` 不带 `--launch` 时，按 env 缺省会叫 `prod` ——
+ * 于是自报成了「开发/prod home=…/run/diy2/lab」，跟包级入口（`apps/diy2/sha.sh lab` 传
+ * `--launch lab`）叫法不一，同一条命令的两种发起方式在注册表里成了两个标签。
+ * 目录名不合法 / 是根目录 → 回落缺省，不硬凑。
+ */
+function sandboxLaunch(home: string): string | undefined {
+    const name = basename(home);
+    return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) ? name : undefined;
+}
+
+/**
  * 生产数据根（**两个**：仓库级 `~/.diy` 与 diy2 自己的 `~/.diy/diy2`）。
  * 判据在这里只有一处；`resolveHome` 用它拦「dev 偷用生产根」。
  */
@@ -192,28 +205,34 @@ export function cliEntryOf(appRoot: string): string {
 }
 
 /**
- * 数据根裁决：显式 `--home` > 缺省（生产 `~/.diy/diy2`，非生产 `<appRoot>/build/<launch>/home`）。
+ * 数据根裁决：显式 `--home` 优先；生产缺省 `~/.diy/diy2`；**非生产没给直接抛错**。
  *
- * 非生产下拿到**生产根** → 拒绝并回落缺省（浏览器里点错一个房间就写脏真库）。
- * 返回 `rejected` 供调用方打警告：静默纠正在这种事上是坏文明。
+ * 为什么不再按 launch 推导（2026-11-23 裁）：那条回落把数据根放进 `<appRoot>/build/<launch>/home`，
+ * 也就是**产物树**里 —— `sha.sh clean` = `rm -rf ./build`，一次自愈就把库删了（真发生过）。
+ * 现在路径只在入口脚本算（`run/diy2/<label>`），server 只认显式值。
+ *
+ * 非生产下拿到**生产根** → 拒绝并抛错（浏览器里点错一个房间就写脏真库；不静默纠正）。
  */
 export function resolveHome(opts: {
     mode: Diy2Env;
-    launch: string;
-    appRoot: string;
     explicit?: string | undefined;
     allowProdHome?: boolean | undefined;
-}): { home: string; rejected: string | null } {
-    const fallback =
-        opts.mode === 'production'
-            ? join(realHomeDir(), '.diy', 'diy2')
-            : join(opts.appRoot, 'build', opts.launch, 'home');
+}): { home: string } {
     const explicit = opts.explicit?.trim();
-    if (explicit === undefined || explicit === '') return { home: fallback, rejected: null };
-    if (opts.mode !== 'production' && isProdHome(explicit) && opts.allowProdHome !== true) {
-        return { home: fallback, rejected: explicit };
+    if (explicit === undefined || explicit === '') {
+        if (opts.mode === 'production') return { home: join(realHomeDir(), '.diy', 'diy2') };
+        throw new Error(
+            '非生产实例必须显式给数据根：--home <dir>（或 DIY2_HOME=<dir>）' +
+                ' —— 生产入口缺省 ~/.diy/diy2，非生产不再按 launch 推导路径',
+            { cause: { code: 'config/home-required' } },
+        );
     }
-    return { home: resolve(explicit), rejected: null };
+    if (opts.mode !== 'production' && isProdHome(explicit) && opts.allowProdHome !== true) {
+        throw new Error(`拒绝非生产入口使用生产数据根 ${explicit}` + '（确要如此：--home 加 --allow-prod-home）', {
+            cause: { code: 'config/prod-home-refused' },
+        });
+    }
+    return { home: resolve(explicit) };
 }
 
 /**
@@ -283,22 +302,18 @@ export function resolveConfig(opts?: {
     const moduleDir = opts?.moduleDir ?? process.cwd();
     const appRoot = findAppRoot(moduleDir) ?? findAppRoot(join(moduleDir, '..')) ?? resolve(moduleDir);
     const repoRoot = findRepoRoot(appRoot) ?? null;
-    const launch = overrides.launch?.trim() || defaultLaunch(mode);
 
     const notes: string[] = [];
-    const { home, rejected } = resolveHome({
+    const { home } = resolveHome({
         mode,
-        launch,
-        appRoot,
         explicit: overrides.home,
         allowProdHome: overrides.allowProdHome,
     });
-    if (rejected !== null) {
-        notes.push(
-            `拒绝非生产入口使用生产数据根 ${rejected} → 回落到 ${home}` +
-                '（真要用它：显式 --home 并加 --allow-prod-home）',
-        );
-    }
+    // 标签在 home **之后**定：生产入口配沙箱数据根时，标签就取那个目录名（见 sandboxLaunch）。
+    const launch =
+        overrides.launch?.trim() ||
+        (mode === 'production' && !isProdHome(home) ? sandboxLaunch(home) : undefined) ||
+        defaultLaunch(mode);
 
     const portFile = join(home, 'app.port');
     const recordedPort = readPortFile(portFile);
@@ -314,19 +329,20 @@ export function resolveConfig(opts?: {
               ? defaultWebDir
               : undefined;
 
-    // model.yaml 三档：显式 `--model-config` > 本数据根 > **本 launch 的仓库级数据根**
-    // （`<repo>/build/<launch>/home/model.yaml`，根目录 `./sha.sh sync` 把真配置投影到那里）。
-    // 最后一档是为了「一份真配置，多个 app 共用」：diy-app 的 lab 与 diy2 的 lab 用同一个 launch，
-    // 不该各自拷一份含 API key 的文件（也不该让 diy2 去占 diy-app 的 app.port）。
-    const launchHomeConfig = repoRoot === null ? undefined : join(repoRoot, 'build', launch, 'home', 'model.yaml');
-    const modelConfigPath =
-        overrides.modelConfig !== undefined && overrides.modelConfig.trim() !== ''
-            ? resolve(overrides.modelConfig)
-            : existsSync(join(home, 'model.yaml'))
-              ? join(home, 'model.yaml')
-              : launchHomeConfig !== undefined && existsSync(launchHomeConfig)
-                ? launchHomeConfig
-                : undefined;
+    // model.yaml：显式 `--model-config` > 本数据根 > **生产数据根才有的一档**（`~/.diy/model.yaml`）。
+    // 最后那档按 home 位置判定（父目录就是生产根），不是按 mode 标签 —— 测试实例换到 run/
+    // 之后天然拿不到它，不可能「隔离了 sqlite 却仍用生产 key」。
+    const modelConfigPath = (() => {
+        if (overrides.modelConfig !== undefined && overrides.modelConfig.trim() !== '') {
+            return resolve(overrides.modelConfig);
+        }
+        if (existsSync(join(home, 'model.yaml'))) return join(home, 'model.yaml');
+        const prodConfig = join(realHomeDir(), '.diy', 'model.yaml');
+        if (samePath(dirname(home), join(realHomeDir(), '.diy')) && existsSync(prodConfig)) {
+            return prodConfig;
+        }
+        return undefined;
+    })();
 
     return {
         app: APP_ID,
@@ -358,24 +374,23 @@ export function resolveConfig(opts?: {
 }
 
 /**
- * 数据根里没有 model.yaml 时的提示（不是错误：entity-runtime 会回落到 `~/.diy/model.yaml`）。
- * 非得说出来，是因为「隔离了数据根却没隔离配置」是同一类事故里最难自己发现的一种
- * （lab 的实验会用生产 key，而人以为在沙箱里）。
+ * 数据根里没有 model.yaml 时的提示。测试实例**不会**回落 `~/.diy/model.yaml`（那是假隔离），
+ * 所以这里给出填充命令；生产数据根自带一档（见 resolveConfig）。
  */
 export function modelConfigHint(config: Diy2Config): string | null {
     if (config.modelConfigPath !== undefined) return null;
-    const candidates = [join(config.home, 'model.yaml')];
-    if (config.repoRoot !== null) candidates.push(join(config.repoRoot, 'build', config.launch, 'home', 'model.yaml'));
     return (
-        `[diy2] 没有找到 model.yaml（${candidates.join(' / ')}）` +
-        ' → 模型配置回落到 ~/.diy/model.yaml（根目录 `./sha.sh sync` 会把真配置投影到 launch 数据根；' +
-        '--model-config 可显式指定）'
+        `[diy2] 数据根里没有 model.yaml（${join(config.home, 'model.yaml')}）` +
+        ' → 模型会报缺 key；测试实例跑 ./scripts/seed-run-home.sh 填充，或 --model-config 显式指定'
     );
 }
 
 /** 启动时的一行自报（诊断「我连的是谁 / 数据在哪」的唯一线索） */
 export function describeConfig(config: Diy2Config, actualPort?: number): string {
-    const where = config.env === 'production' ? '生产' : config.env === 'test' ? '测试' : '开发';
+    // 「生产」由**数据根**判定，不由入口声明的 env 判定：`bin/diy2 web --home run/diy2/lab`
+    // 是生产入口 + 沙箱数据，按 env 说会打出「生产/lab home=…/run/…」——自相矛盾的一行日志，
+    // 而人正是靠这一行确认「我连的是哪个库」。
+    const where = isProdHome(config.home) ? '生产' : config.env === 'test' ? '测试' : '开发';
     // 实际监听端口可能不等于 config.port（0 = 内核分配、粘性端口被占后漂移）：
     // 自报以**实际**为准，否则这行日志在「到底连哪个端口」这件事上说谎。
     const shown = actualPort ?? config.port;

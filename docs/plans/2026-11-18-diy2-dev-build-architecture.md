@@ -1,3 +1,7 @@
+> ⚠️ **2026-11-23 起部分被取代**：产物固定 `build/prod`（一份），数据根不再按 launch/variant 推导，
+> 改为显式 `--home`（非生产缺失即报错）、落在 `run/<app>/<label>`。见
+> `docs/plans/2026-11-23-build-run-layout.md`。下文保留当时的推理与决策过程。
+
 # diy2 的 dev / build 架构对齐：DIY2_HOME、端口、dev 工具整体控制
 
 > 2026-11-18 · 落地记录（方案 + 已实现的改动）。**不考虑兼容性**：旧入口（`npm run dev` /

@@ -24,6 +24,9 @@ __pycache__/
 # → tsc 报 `mkdir …/dist: file exists` + 大片 TS6305，`./sha.sh build` 全红。
 dist
 build
+# 运行时数据根（每 worktree 自己一份：diy2.db / rooms / electron_user_data / log）。
+# **不在 build/ 下** —— clean 删 build 时不该碰数据；目录名带 app 维度（run/<app>/<label>）。
+/run/
 # 编译产物只许落 build/ 或 dist/（临时目录）。
 # 以前还拦过 `lib/`（老的能力包把产物编到 lib/，main/exports 指 lib/*.js），代价是它同时吞
 # 正经的源码目录（scripts/lib、renderer_solid/lib、pkgs.ts/ui/core/web/src/lib）—— 新文件

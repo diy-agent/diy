@@ -2,41 +2,41 @@
 # diy.sh — worktree 开发入口（测试约定 ./diy.sh，cwd=仓库根）。
 #
 # 机制（与 src/runtime.ts / src/cli/index.ts / src/main/index.ts 契约一致）：
-#   1. CLI：DIY_CLI_MODE=auto（默认）优先用编译产物 build/<variant>/cli/index.js（实测冷启动
+#   1. CLI：DIY_CLI_MODE=auto（默认）优先用编译产物 build/prod/cli/index.js（实测冷启动
 #      ~2.5× 快于 tsx：310ms vs 629ms），只要 CLI 打包源比产物新就自动回退 tsx
 #      源码，保持「改完即生效」；DIY_CLI_MODE=tsx 强制源码、=compiled 强制产物；
 #      =http 走 server /cli 端点（curl，免 node 启动，~60ms；传输失败自动回退直连）
 #   2. GUI：CLI 通过 ensureAppPort() 复用或拉起 Electron 产物
-#      build/<variant>/main/index.mjs + .../preload/index.js + .../renderer/index.html
+#      build/prod/main/index.mjs + .../preload/index.js + .../renderer/index.html
 #      → GUI 必须先构建才会存在，未构建直接报错（见下方检查）
 #   3. lab 模式另走：cd apps/diy-app && ./sha.sh lab
 #      起 Vite dev server 并注入 DIY_DEV_SERVER_URL，走 loadURL 热更新（HMR），无需 build
-#   4. 数据隔离：DIY_HOME 默认 ./build/<variant>/home（本 worktree × 变体独立），注入后由
+#   4. 数据隔离：DIY_HOME 默认 ./run/diy-app/<variant>（本 worktree 内、按标签分根），注入后由
 #      src/runtime.ts readRuntimeConfig() 统一读取；测试用 mkdtemp 隔离
 #      环境声明：DIY_ENV 默认 development（dev/test 专属能力的判据，缺省按 production）
 #   5. 发布入口：apps/diy-app/bin/diy 跑编译产物 build/prod/cli/index.js，数据落 ~/.diy
 #
 # 前置要求：首次使用或改动 main/preload/renderer 后，需先构建：
 #   cd apps/diy-app && ./sha.sh build
-# 否则 build/<variant>/main/index.mjs 不存在，CLI 会在 stderr 提示并退出（不污染 stdout JSON）。
+# 否则 build/prod/main/index.mjs 不存在，CLI 会在 stderr 提示并退出（不污染 stdout JSON）。
 # 变体：DIY_VARIANT=prod|test|lab|preview（缺省 lab）。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR/apps/diy-app"
-# 变体根：决定连/起哪个实例（prod 一般由全局 diy 负责，这里缺省 lab）。
-# lab 与 prod 共用 ./diy.sh 作为「通用 CLI 客户端」，连谁由 DIY_VARIANT + DIY_HOME 决定。
+# 标签：决定连/起哪个实例（prod 一般由全局 diy 负责，这里缺省 lab）。**不参与产物路径** ——
+# 产物固定 build/prod；连谁由 DIY_VARIANT（标签）+ DIY_HOME（数据根）共同决定。
 DIY_VARIANT="${DIY_VARIANT:-lab}"
 export DIY_VARIANT
 # preview（2026-10-23 恢复，##404）= 编译后运行的稳定实例（无 watch）；连它需先
 # `apps/diy-app/sha.sh preview` 把产物与数据根（build/preview/home）备好。
 
 # 前置检查：GUI 产物必须存在（CLI 本身是 tsx 源码无需构建，但要拉起的 Electron 必须已构建）
-GUI_ENTRY="$APP_DIR/build/${DIY_VARIANT}/main/index.mjs"
+GUI_ENTRY="$APP_DIR/build/prod/main/index.mjs"
 if [[ ! -f "$GUI_ENTRY" ]]; then
   echo "[diy.sh] 未找到 Electron 产物: $GUI_ENTRY" >&2
-  echo "[diy.sh] 机制: CLI(编译产物/tsx 源码) 需拉起 GUI 产物(build/<variant>/main)才能响应 RPC" >&2
-  echo "[diy.sh] 请先构建（变体 ${DIY_VARIANT}）: DIY_VARIANT=${DIY_VARIANT} ./apps/diy-app/sha.sh build" >&2
+  echo "[diy.sh] 机制: CLI(编译产物/tsx 源码) 需拉起 GUI 产物(build/prod/main)才能响应 RPC" >&2
+  echo "[diy.sh] 请先构建: cd apps/diy-app && ./sha.sh build" >&2
   echo "[diy.sh] 或开发模式（HMR，无需 build）: cd apps/diy-app && ./sha.sh lab" >&2
   exit 1
 fi
@@ -78,15 +78,16 @@ if [[ -n "${DIY_HOME:-}" ]]; then _home_check="$(_norm_dir "$DIY_HOME")"; fi
 if [[ -n "$_home_check" && "$_home_check" == "$_prod_home_norm" && "${DIY_ALLOW_PROD_HOME:-}" != "1" ]]; then
   # 变量一律用 ${} 界定：紧跟多字节字符时，非 UTF-8 locale 下 bash 会把字符首字节
   # 并入变量名，set -u 下报 "unbound variable"（踩过）
-  echo "[diy.sh] 警告: 忽略继承的生产数据目录 DIY_HOME=${DIY_HOME}, 改用本 worktree 的 build/${DIY_VARIANT}/home" >&2
-  echo "[diy.sh] 警告: 确需操作生产数据请显式声明 DIY_ALLOW_PROD_HOME=1 ./diy.sh ..." >&2
-  unset DIY_HOME
+  echo "[diy.sh] 拒绝：非生产入口不用生产数据根 DIY_HOME=${DIY_HOME}" >&2
+  echo "[diy.sh] 确需操作生产数据请显式声明 DIY_ALLOW_PROD_HOME=1 ./diy.sh ..." >&2
+  echo "[diy.sh] 或用别的数据根：DIY_HOME=./run/diy-app/lab ./diy.sh ..." >&2
+  exit 1
 fi
 
-# 数据根：默认「本 worktree × 变体」；上面的生产根已被拒，其余继承值照旧透传
-# （TS 侧对应：core/dev-home.ts::resolveDevHome + core/instance-identity.ts 判据；
-#   bash 无法 import TS，故此处是 shell 侧唯一的默认值定义处 —— 改这里要同步改那两个）。
-export DIY_HOME="${DIY_HOME:-$SCRIPT_DIR/build/${DIY_VARIANT}/home}"
+# 数据根：显式值优先；缺省「本 worktree × 标签」= run/diy-app/<variant>（上面已拒掉生产根）。
+# 核心代码只认显式 DIY_HOME（core/dev-home.ts::resolveDataHome 缺失即报错），本脚本就是那个
+# 「把路径算出来的入口」；bash 无法 import TS，改这里要同步 dev-home 的判据说明。
+export DIY_HOME="${DIY_HOME:-$SCRIPT_DIR/run/diy-app/${DIY_VARIANT}}"
 mkdir -p "$DIY_HOME"
 
 # ── CLI 入口自证，不继承 ──
@@ -211,7 +212,7 @@ cd "$APP_DIR"
 #   比产物新（刚改完码没重新 build）→ 回退 tsx 源码，保住「改完即生效」。
 #   新鲜度检查实测 ~14ms，远小于省下的 ~390ms。
 # DIY_CLI_MODE 默认值见文件上部（已设）；此处只定位产物路径。
-CLI_JS="$APP_DIR/build/${DIY_VARIANT}/cli/index.js"
+CLI_JS="$APP_DIR/build/prod/cli/index.js"
 DIY_CLI_EFFECTIVE="tsx"
 if [[ "$DIY_CLI_MODE" != "tsx" && -f "$CLI_JS" ]]; then
   if [[ "$DIY_CLI_MODE" == "compiled" ]]; then
@@ -226,7 +227,7 @@ fi
 
 # 机制提示（仅交互终端输出到 stderr，不污染 --json 的 stdout）
 if [[ -t 2 ]]; then
-  echo "[diy.sh] CLI=${DIY_CLI_MODE:-auto}(${DIY_CLI_EFFECTIVE:-?}) | VARIANT=${DIY_VARIANT} | GUI=build/${DIY_VARIANT}/main产物 | HOME=${DIY_HOME} | 需先 build（lab 模式除外）" >&2
+  echo "[diy.sh] CLI=${DIY_CLI_MODE:-auto}(${DIY_CLI_EFFECTIVE:-?}) | 标签=${DIY_VARIANT} | GUI=build/prod/main产物 | HOME=${DIY_HOME} | 需先 build（lab 模式除外）" >&2
 fi
 
 # DIY_CLI：当前生效的 CLI 入口（提示词模版 100-diy 用它告诉 agent 该敲哪个命令；

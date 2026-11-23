@@ -33,8 +33,8 @@ export const RESTART_CODE = 75;
 const USAGE = `用法：npx tsx server/dev.ts [options]
 
 options:
-  --launch <名字>        入口名（缺省 lab；数据根 <appRoot>/build/<launch>/home）
-  --home <dir>           数据根（缺省 <appRoot>/build/<launch>/home）
+  --launch <名字>        入口名（缺省 lab；只是标签，不决定路径）
+  --home <dir>           数据根（**必给**；./sha.sh dev 传 run/diy2/<launch>）
   -p, --port <n>         端口；0 = 内核分配（缺省沿用 <home>/app.port）
       --name <名字>       实例名
       --mode <...>       运行环境（缺省 development；显式 production 需配 --allow-prod-home）
@@ -44,7 +44,7 @@ options:
       --compact-chars <n> 压缩预算（字符）
       --web-dir <dir>    UI 产物目录（dev 不用：页面与 HMR 由挂进同一 server 的 vite 提供）
       --model-config <file>
-                         model.yaml（缺省：本数据根 > 本 launch 的仓库级数据根）
+                         model.yaml（缺省：本数据根；都没有则回落 ~/.diy/model.yaml）
       --allow-prod-home  显式放行生产数据根
   -h, --help             本帮助`;
 
@@ -62,9 +62,10 @@ for (const note of config.notes) console.warn(`[diy2] ${note}`);
 // 也必须再加 --allow-prod-home 才放行 —— 一次实验就写脏真库的代价太大。
 if (isProdHome(config.home) && options.input.allowProdHome !== true) {
     console.error(`[diy2] dev 入口拒绝使用生产数据根：${config.home}`);
-    console.error('[diy2] 请用 `./sha.sh dev`（数据根 build/lab/home），或加 --allow-prod-home');
+    console.error('[diy2] 请用 `./sha.sh dev`（数据根 run/diy2/lab），或加 --allow-prod-home');
     process.exit(1);
 }
+process.env['DIY_HOME'] ??= config.home;
 if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
 const hint = modelConfigHint(config);
 if (hint !== null) console.warn(hint);

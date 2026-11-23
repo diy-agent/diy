@@ -1,11 +1,11 @@
 import { defineConfig } from "vite";
-import { VARIANT as V, isExternal } from "./vite.pkg-deps";
+import { BUILD_DIR, isExternal } from "./vite.pkg-deps";
 
 // pkgDeps / external 判据 / 变体根 = vite.pkg-deps.ts（共享真源）
 
 export default defineConfig({
   build: {
-    outDir: `build/${V}/preload`,
+    outDir: `build/${BUILD_DIR}/preload`,
     lib: {
       entry: "src/preload/index.ts",
       formats: ["cjs"],

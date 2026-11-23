@@ -31,16 +31,15 @@ import { installDiagnostics } from "../main/services/diagnostics";
 import { traffic } from "../main/core/traffic";
 import { readRuntimeConfig } from "../runtime";
 import { cliEntryForRepo, findRepoRoot, prodHomeAllowed } from "../main/core/instance-identity";
-import { resolveDevHome } from "../main/core/dev-home";
+import { resolveDataHome } from "../main/core/dev-home";
 // 实例注册表（##366）：serve 也是「一个 diy 实例」—— 大盘里该看得见它（只是没有窗口可唤起）
 import { dropSelfRecord, setSelfPort, writeSelfRecord } from "../main/services/instances";
 
 // 计算项目根目录：从 src/serve/index.ts 向上两级到 apps/diy-app/
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// preview 变体已删除（##381）：显式报错，不静默落到 build/preview/**（与 diy.sh / sha.sh / electron-dev.mts 同一口径）。
-// 必须**在算数据根与 STATIC_DIR 之前**拦 —— 那两者都取 `DIY_VARIANT`，先算再报错会给出误导性归因
-// （实测：落到「请先构建 renderer: ./sha.sh build-renderer」，真因却是变体已删）。
+// preview 是**编译后运行**的稳定实例（`sha.sh preview` 起 Electron），不是 serve 的模式：
+// 显式拦一下，免得有人以为它还有独立的产物根（产物已统一 build/prod，##381 起无 preview 目录）。
 if (process.env["DIY_VARIANT"] === "preview") {
   console.error("✗ preview 变体已删除，改用 lab：DIY_VARIANT=lab ./sha.sh lab");
   process.exit(1);
@@ -53,19 +52,18 @@ if (process.env["DIY_VARIANT"] === "preview") {
 // 找不到仓库根（打包部署目录）就不动：宁可缺、由 prompt-registry 走「未注入」告警。
 const repoRoot = findRepoRoot(__dirname);
 if (repoRoot) {
-  // 数据根：与静态产物**同一个 variant 轴**（静态产物在 `apps/diy-app/build/<variant>/renderer`，
-  // 数据根在 `<repo>/build/<variant>/home` —— **两者不同父目录**，但同取 `DIY_VARIANT`，见 AGENTS.md
-  // env.variant）—— 入口的默认值 + 生产根拒绝都交给 core/dev-home（与 lab / diy.sh
-  // 同一判据，别在这里再写一套）。缺省 variant=prod（serve 独立跑时走 build/prod/home）。
-  const variant = process.env["DIY_VARIANT"] ?? "prod";
-  const decision = resolveDevHome({
-    variant,
-    repoRoot,
-    inherited: process.env["DIY_HOME"],
-    allowProdHome: prodHomeAllowed(),
-  });
-  if (decision.rejected !== null) {
-    console.warn(`[serve] 警告: 忽略继承的生产数据目录 DIY_HOME=${decision.rejected}, 改用 ${decision.home}`);
+  // 数据根：**只认显式值**（`sha.sh serve` 会算好 run/diy-app/serve 传进来）。
+  // 生产根拒绝 + 缺失报错都交给 core/dev-home（与 lab / diy.sh 同一判据，别在这里再写一套）。
+  let decision: { home: string };
+  try {
+    decision = resolveDataHome({
+      explicit: process.env["DIY_HOME"],
+      allowProdHome: prodHomeAllowed(),
+      hint: "cd apps/diy-app && ./sha.sh serve",
+    });
+  } catch (e) {
+    console.error(`[serve] ${(e as Error).message}`);
+    process.exit(1);
   }
   process.env["DIY_HOME"] = decision.home;
   // 环境：开发入口不该是 production（那会关掉 dev 专属能力）
@@ -84,8 +82,8 @@ const cfg = readRuntimeConfig();
 installDiagnostics(cfg.home, "serve");
 traffic.init(); // 流量观测（订阅 undici diagnostics_channel）
 const ROOT = path.resolve(__dirname, "..", "..");
-// 与上面的数据根同一根：build/<variant>/{renderer,home}（缺省 prod，与 resolveDevHome 的 variant 同源）
-const STATIC_DIR = path.resolve(ROOT, "build", process.env["DIY_VARIANT"] ?? "prod", "renderer");
+// 静态产物：**固定** build/prod/renderer（产物只有一份；数据根与它无关）
+const STATIC_DIR = path.resolve(ROOT, "build", "prod", "renderer");
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",

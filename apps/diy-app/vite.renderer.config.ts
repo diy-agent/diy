@@ -4,8 +4,6 @@ import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
 import { builtinModules } from "node:module";
 
-const V = process.env.DIY_VARIANT ?? "prod"; // 变体产物根：prod|test|lab
-
 /**
  * 浏览器安全护栏：**renderer 产物里不许出现 `node:` 内置模块**。
  *
@@ -47,7 +45,7 @@ export default defineConfig({
   root: "src/renderer_solid",
   base: "",
   build: {
-    outDir: `../../build/${V}/renderer`,
+    outDir: `../../build/prod/renderer`,
     emptyOutDir: true,
   },
   plugins: [solid({ tsconfig: { compilerOptions: { jsx: "preserve", jsxImportSource: "solid-js" } } } as any), tailwindcss(), browserSafe()],
