@@ -63,7 +63,8 @@ worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目
          （生产 5192，其余 0；生产不拿记录当监听端口，只拿它当**探活候选**）
 环境     --mode          （缺省由入口定：生产入口 production、dev 入口 development、测试 test）
 入口名   --launch        （缺省由环境推：prod / lab / test）
-其它     --name / --tools / --compact-keep / --compact-chars / --web-dir / --model-config
+其它     --name / --tools / --compact-keep / --compact-chars / --web-dir
+模型      <home>/model.yaml（**只有这一份**：不读 --model-config、不回落 ~/.diy/model.yaml）
 注册表   DIY_INSTANCE_REGISTRY / DIY_DEV_HOME（目录位置，不是运行配置；测试隔离用）
 ```
 
@@ -159,7 +160,10 @@ UI 有两个可切换的表面（同一份时间线 + 同一个 store，只换�
 - `session_state`：每个 bot 的上下文快照 + `log_seq` 回放水位
 - `deliveries`：每个 (message, bot) 的投递状态（queued → delivering → delivered/failed）
 
-聊天走真实模型（默认 `chen56@opencode-go/deepseek-v4.1-flash`，可在房间头部 / 设置里改），
+聊天走真实模型，模型数据**只来自本数据根**的 `<home>/model.yaml`（+ `<home>/providers.custom.yaml`
++ `<home>/data/models.dev.json` 快照）。缺这份配置是一个**明确状态**：服务端照常起，界面上不出假模型，
+顶部挂横幅指向那份路径 —— 不会去别处找一份能用的（曾经的 `--model-config` 与「回落
+`~/.diy/model.yaml`」已删：那两条会让人在 `~/.diy/diy2` 用自己的库、发别人的账号）。
 工具：`read` / `write` / `edit` / `bash`（`--tools files` 可关掉 bash）+ `ask` 提问卡。
 
 多 agent（容器一个 primary）：

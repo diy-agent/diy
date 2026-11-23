@@ -48,6 +48,33 @@
     color: var(--wb-fg);
 }
 
+/* 模型配置不全时的横幅（没 model.yaml / 缺目录快照）。
+ *
+ * 位置：壳的第一行（标题栏之上）—— 它不是某一页的东西，也不该被区域的收起展开影响；
+ * 行高做成一行内可折行，路径长了就换行，不截断（路径是这条横幅里唯一可执行的信息）。 */
+.wb-banner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    align-items: baseline;
+    padding: 6px 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #f7b267;
+    background: rgba(247, 178, 103, 0.12);
+    border-bottom: 1px solid rgba(247, 178, 103, 0.3);
+}
+.wb-banner-title {
+    font-weight: 600;
+}
+.wb-banner code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--wb-fg);
+}
+.wb-banner-hint {
+    color: var(--wb-dim);
+}
+
 .wb-body {
     /* 导航（全局层，自带宽度）+ 页层骨架（铺满剩余） */
     flex: 1 1 0;

@@ -53,7 +53,9 @@ for (const note of config.notes) boot.warn(note);
 // 这是**出**：给它一个信号，不是我们自己读环境。
 // `DIY_HOME` 也一并交给它 —— 否则它拿不到数据根，只能回落 `~/.diy`（= 测试实例用了生产配置）。
 process.env['DIY_HOME'] ??= config.home;
-if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
+// `=` 不是 `??=`：外层 shell / agent 里漏出来的 `DIY_MODEL_CONFIG`（常指向 diy1 的
+// `~/.diy/model.yaml`）一旦被继承，实例就“用自己的库、别人的 key”。数据根说话。
+process.env['DIY_MODEL_CONFIG'] = config.modelConfigPath;
 const hint = modelConfigHint(config);
 if (hint !== null) boot.warn(hint);
 

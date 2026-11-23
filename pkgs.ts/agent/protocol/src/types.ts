@@ -566,8 +566,20 @@ export interface ModelCatalogProvider {
 /** `diy2.models.list` 的回包 */
 export interface ModelCatalogSnapshot {
     providers: ModelCatalogProvider[];
-    /** `model.yaml` 的 `defaultModel`；缺省 = 服务端用兜底常量 */
+    /** `model.yaml` 的 `defaultModel`；缺省 = 这个实例还没配（界面不猜一个） */
     defaultModelKey?: string;
+    /**
+     * 数据根里有没有 `model.yaml`。
+     *
+     * 不是「目录空不空」的另一种说法：目录空也可能是「配了但没有一家账号填了 key」，
+     * 两者的出路不同（一个去写配置、一个去补 key）。`false` 是**明确状态**：界面挂横幅、
+     * 不发请求（发了也只会得到「模型目录里没有 …」）。
+     */
+    configured: boolean;
+    /** `model.yaml` 的绝对路径（横幅里给人看 / 复制） */
+    modelConfigPath: string;
+    /** 目录快照（`<home>/data/models.dev.json`）缺没缺；缺了 = 标准 provider 全没有规格 */
+    snapshotMissing: boolean;
 }
 
 // ── actor 收件箱（后端内部，但类型放这里以便将来跨进程）─────────

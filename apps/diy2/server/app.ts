@@ -13,6 +13,7 @@
 // 监听由调用方做：`server/index.ts`（生产）、`server/dev.ts`（单端口 dev）、`bin/diy2`（全局命令）。
 
 import { type IncomingMessage, type ServerResponse } from 'node:http';
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -32,6 +33,7 @@ import {
     modelProviders,
     newEntityId,
     openStore,
+    snapshotPath,
     withTurnFact,
 } from '@diy-agent/entity-runtime';
 import type { BotLastTurn, CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
@@ -54,15 +56,18 @@ import type {
 const log = openLog('app');
 
 /**
- * 新房间的缺省模型：`model.yaml` 的 `defaultModel` 优先，没有才用这个写死的兜底。
+ * 没配模型时的占位 key —— **故意是一个用不了的条目**（目录里没有 `none/none`）。
  *
- * 为什么还留一个常量：新房间必须有模型，而「随便挑目录里的第一个」会让换台机器后缺省值
- * 悄悄换人（第一个恰好是别家）。宁可固定一个已知能用的，让人改 `model.yaml` 来表达偏好。
+ * 上一版这里写死的是 `chen56@opencode-go/deepseek-v4.1-flash`：一个具体**账号**名。
+ * 于是「一条配置都没有」的实例也能发请求 —— 用的是别人的账号，账目 / 限流 / 缓存全记在
+ * 那边，界面上却一切正常。占位 key 把这件事变成一次响亮失败：`modelOf` 会报「模型目录里
+ * 没有 none/none（数据根 …）」。新房间仍然要先拿到一个 modelKey（界面上「这个房间用哪个
+ * 模型」是真字段），所以不能不给。
  */
-const FALLBACK_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
-/** 缺省模型：`model.yaml` 的 `defaultModel` → 兜底常量（见 `FALLBACK_MODEL`） */
+const NONE_MODEL_KEY = 'none@none/none';
+/** 缺省模型：`model.yaml` 的 `defaultModel` → 占位 key（见 `NONE_MODEL_KEY`） */
 function defaultModelKey(): string {
-    return defaultModelKeyOf() ?? FALLBACK_MODEL;
+    return defaultModelKeyOf() ?? NONE_MODEL_KEY;
 }
 /** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
 const ASK_DRAFT_TTL = 30 * 60 * 1000;
@@ -342,22 +347,6 @@ function seed(): void {
         } else {
             specs.push(room);
         }
-    }
-
-    // 2) 老库兼容：rooms 表是后加的，之前只落了成员。成员表里有、房间表里没有的，
-    //    按主 bot 还原一个容器 —— 消息本来就还在磁盘上，别让它们没有入口。
-    const known = new Set(specs.map((spec) => spec.id));
-    for (const [roomId, members] of Object.entries(saved)) {
-        if (known.has(roomId)) continue;
-        const primary = members.find((member) => member.primary === true) ?? members[0];
-        const bot = primary === undefined ? undefined : bots.find((entry) => entry.id === primary.botId);
-        specs.push({
-            id: roomId,
-            type: roomId.startsWith('task') ? 'task' : 'project',
-            data: roomId.startsWith('task') ? { title: bot?.name ?? roomId } : { name: bot?.name ?? roomId },
-            members,
-            modelKey: bot?.modelKey ?? defaultModelKey(),
-        });
     }
 
     for (const spec of specs) {
@@ -905,7 +894,15 @@ export async function createDiy2App(opts: {
              * 服务端发不出去」就是这么来的。回包永不含 key 值（账号只有名字与填没填）。
              */
             models: {
-                list: async () => ({ providers: modelProviders(), defaultModelKey: defaultModelKey() }),
+                // `configured` / `snapshotMissing` 不是兼容字段，是**状态**：没有 model.yaml 的
+                // 实例是一个明确形态（模型面不可用），界面顶部据此挂横幅 —— 不靠「目录恰好是空的」去猜。
+                list: async () => ({
+                    providers: modelProviders(),
+                    defaultModelKey: defaultModelKeyOf(),
+                    configured: existsSync(config.modelConfigPath),
+                    modelConfigPath: config.modelConfigPath,
+                    snapshotMissing: !existsSync(snapshotPath(config.home)),
+                }),
             },
             links: {
                 list: async ({ input }) => {

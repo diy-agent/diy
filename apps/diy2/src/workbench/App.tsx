@@ -25,6 +25,7 @@ import {
     Sidebar,
     useBotRows,
     useLoaded,
+    useModelSetup,
     useRoomDialogs,
     useRoomDialogsContext,
     useSelectedRoom,
@@ -84,6 +85,39 @@ function NavRail({ nav }: { nav: NavState }) {
             // `onOpenSettings` **不传**：设置入口只在标题栏右端一处（原来侧栏底部还有
             // 一颗，两边做同一件事，留在左下角只会让人犹豫点哪个）
         />
+    );
+}
+
+// ── 模型配置的横幅 ─────────────────────────────────────────────────
+
+/**
+ * 顶部横幅：这个实例的模型配置**不全**（没 model.yaml / 缺目录快照）。
+ *
+ * 为什么是横幅而不是拦住整页：没有 model.yaml 时服务端照样起（房间 / 会话 / 工具都正常），
+ * 只有「发一轮」和「选模型」会失败 —— 把整页拦下反而让人看不到自己已有的房间。
+ * 横幅只说三件事：缺什么、缺在哪、怎么补（全是可复制的路径 / 命令）。
+ */
+function ModelConfigBanner() {
+    const setup = useModelSetup();
+    // 首屏之前 store 里是「正常」（见 store 的初始值）：没问过服务端就不指控
+    if (setup.configured && !setup.snapshotMissing) return null;
+    return (
+        <div className="wb-banner" role="status">
+            <span className="wb-banner-title">模型配置不全</span>
+            {setup.configured ? null : (
+                <span>
+                    没有 model.yaml（<code>{setup.modelConfigPath}</code>）—— 不会去别处找
+                </span>
+            )}
+            {setup.snapshotMissing ? (
+                <span>
+                    缺目录快照 <code>data/models.dev.json</code>（标准 provider 全没有规格）
+                </span>
+            ) : null}
+            <span className="wb-banner-hint">
+                填充：仓库根跑 <code>./scripts/seed-run-home.sh &lt;数据根&gt;</code>
+            </span>
+        </div>
     );
 }
 
@@ -197,6 +231,7 @@ function Host() {
         return (
             <RoomDialogsProvider value={dialogs}>
                 <div className="wb-shell">
+                    <ModelConfigBanner />
                     <Window contributions={global} chrome={chrome} onChromeChange={setChrome} />
                     <div className="wb-body">
                         <NavRail nav={nav} />
@@ -216,6 +251,7 @@ function Host() {
     return (
         <RoomDialogsProvider value={dialogs}>
             <div className="wb-shell">
+                <ModelConfigBanner />
                 <PageShell
                     key={page.type}
                     page={page}

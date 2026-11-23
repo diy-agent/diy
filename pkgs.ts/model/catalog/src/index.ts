@@ -31,6 +31,7 @@ export {
     listProviders,
     loadCatalog,
     readAccountValue,
+    snapshotPath,
 } from "./catalog.js";
 export {
     readDefaultModel,

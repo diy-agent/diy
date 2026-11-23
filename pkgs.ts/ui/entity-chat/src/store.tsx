@@ -27,7 +27,7 @@ import {
 import type { NavAddress } from './address';
 import { drafts } from './drafts';
 import type { TaskStatus } from './model';
-import { firstUsableModelKey, type ModelCatalogPayload, type Provider } from './models';
+import { firstUsableModelKey, type ModelCatalogPayload, type ModelSetup, type Provider } from './models';
 import { mergePendingAsks } from './pendingAsk';
 
 // ─── 会话（chat-core）─────────────────────────────────────────────
@@ -104,6 +104,12 @@ interface ShellState {
      * 选模型器 / 上下文窗口 / 模型名全部从这里取，界面只认形状。
      */
     providers: Provider[];
+    /**
+     * 这份目录是从**什么状态**的配置里读出来的（没 model.yaml / 缺快照 / 正常）。
+     *
+     * 与 `providers` 分开的原因见 `models.ts` 的 `ModelSetup`：空目录有三种成因，出路不同。
+     */
+    modelSetup: ModelSetup;
     loaded: boolean;
     /** 各房间的上下文概况（每个 bot 的会话 + 最近压缩事件） */
     sessions: Record<string, SessionInfo[]>;
@@ -139,6 +145,8 @@ let state: ShellState = {
     // 空串 = 「还不知道」：首屏 refresh 会从服务端（model.yaml）补上
     defaultModelKey: loadDefaultModelOverride() ?? '',
     providers: [],
+    // 首屏之前不指控：没问过服务端就说「你没配置」会在每次刷新时闪一下横幅
+    modelSetup: { configured: true, modelConfigPath: '', snapshotMissing: false },
     loaded: false,
     sessions: {},
     lastActivity: {},
@@ -251,6 +259,19 @@ export function useDefaultModelKey(): string {
         subscribeShell,
         () => state.defaultModelKey,
         () => state.defaultModelKey,
+    );
+}
+
+/**
+ * 模型配置的状态（没 model.yaml / 缺目录快照）。
+ *
+ * 宿主拿它画横幅：没配置是个**要看见**的状态，不是「目录恰好空着」的副作用。
+ */
+export function useModelSetup(): ModelSetup {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.modelSetup,
+        () => state.modelSetup,
     );
 }
 
@@ -535,6 +556,11 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     emit({
         ...state,
         providers: catalog.providers,
+        modelSetup: {
+            configured: catalog.configured,
+            modelConfigPath: catalog.modelConfigPath,
+            snapshotMissing: catalog.snapshotMissing,
+        },
         ...(defaultModelKey === '' ? {} : { defaultModelKey }),
         rooms,
         lastActivity,

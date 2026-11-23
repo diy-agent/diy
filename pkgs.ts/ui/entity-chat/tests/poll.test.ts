@@ -11,6 +11,9 @@ type Handler = () => void;
 const handlers = new Map<string, Handler>();
 let calls: string[] = [];
 
+/** 空目录的回包：`configured` / `snapshotMissing` 是回包的契约字段（横幅据此画），不是可选项 */
+const EMPTY_CATALOG = { providers: [], configured: true, modelConfigPath: '', snapshotMissing: false };
+
 /** 环境替身：store 只在函数里做 `typeof window !== 'undefined'` 检查，所以这时挂得上 */
 function installFakeEnv(visibility: 'visible' | 'hidden'): void {
     const documentStub = {
@@ -60,7 +63,7 @@ async function bootstrap(): Promise<typeof import('../src/store')> {
         models: {
             list: async () => {
                 calls.push('/models');
-                return { providers: [] };
+                return EMPTY_CATALOG;
             },
         },
         drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
@@ -124,7 +127,7 @@ describe('房间列表轮询', () => {
                 },
             },
             bots: { list: async () => [], update: async () => ({}) },
-            models: { list: async () => ({ providers: [] }) },
+            models: { list: async () => EMPTY_CATALOG },
             drafts: {
                 list: async () => ({ drafts: [] }),
                 put: async () => ({ updatedAt: 0 }),
@@ -153,7 +156,7 @@ describe('房间列表轮询', () => {
                 update: async () => ({}),
             },
             bots: { list: async () => [] },
-            models: { list: async () => ({ providers: [] }) },
+            models: { list: async () => EMPTY_CATALOG },
             drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
         } as never);
 
@@ -178,7 +181,7 @@ describe('房间列表轮询', () => {
             models: {
                 list: async () => {
                     calls.push('/models');
-                    return { providers: [] };
+                    return EMPTY_CATALOG;
                 },
             },
             drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },

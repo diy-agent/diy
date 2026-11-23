@@ -12,7 +12,7 @@
 export { App as EntityChatApp } from './App';
 export type { Bot, Item, Room } from './model';
 export { roomTitle } from './model';
-export type { ModelInfo, ModelKey, Provider } from './models';
+export type { ModelInfo, ModelKey, ModelSetup, Provider } from './models';
 
 // ── 导航 ──────────────────────────────────────────────────────
 export { navigate } from './store';
@@ -60,6 +60,7 @@ export {
     useIsCurrentRoom,
     useLastActivityOf,
     useLoaded,
+    useModelSetup,
     usePendingAskOf,
     useRooms,
     useSelectedRoom,

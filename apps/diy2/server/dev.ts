@@ -70,7 +70,8 @@ if (isProdHome(config.home) && options.input.allowProdHome !== true) {
     process.exit(1);
 }
 process.env['DIY_HOME'] ??= config.home;
-if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
+// 同生产入口：环境变量不许劫持数据根的模型配置（见 server/index.ts）
+process.env['DIY_MODEL_CONFIG'] = config.modelConfigPath;
 const hint = modelConfigHint(config);
 if (hint !== null) boot.warn(hint);
 

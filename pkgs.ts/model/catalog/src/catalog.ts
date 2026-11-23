@@ -9,8 +9,7 @@
 // ⚠️ 账号的 `data.value`（key）**只被 readAccountValue 读取**，目录与列表里永远只有名字。
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { load as loadYaml } from "js-yaml";
 import { CatalogError } from "./errors.js";
 import type {
@@ -364,17 +363,26 @@ function loadCustomSpecs(home: string): Record<string, RawSpecProvider> {
     return raw as Record<string, RawSpecProvider>;
 }
 
-/** 快照（std provider 的 spec）：显式路径 > `$DIY_HOME/data/` > 本仓 diy-app 的内置产物 */
+/**
+ * 目录快照（models.dev 的 std provider 规格）的缺省位置。
+ *
+ * 单独导出：调用方要能回答「我这儿到底缺没缺这份」——「缺」是一个要显示出来的状态，
+ * 不是静默回落到别的目录。
+ */
+export function snapshotPath(home: string): string {
+    return join(home, "data", "models.dev.json");
+}
+
+/**
+ * 快照（std provider 的 spec）：显式路径 > `$DIY_HOME/data/`。
+ *
+ * 曾经还有第三档：「四级上跳读**本仓** `apps/diy-app/src/main/data/models.dev.json`」。删于
+ * 2026-11-24：那是 diy-app 的产物快照（199 家 / 11-03），发布形态下这个相对路径指向不存在的
+ * 位置、monorepo 下又让另一个 app 的旧数据给本 app 的目录定义规格 —— 两种形态都不对。
+ * 现在**没有快照就是没有**：std provider 全部缺席，调用方据 `snapshotPath()` 报「缺快照」。
+ */
 function loadSnapshot(home: string, options?: CatalogOptions): Record<string, RawSpecProvider> | null {
-    const candidates = [
-        options?.snapshotPath,
-        join(home, "data", "models.dev.json"),
-        // ##512：catalog 在 pkgs.ts/model/catalog/、app 在仓库根的 apps/ ⇒ **四级**上跳。
-        // 别按 src/ 或 lib/ 分别算 —— 两者都在 catalog 下同级，都要跳到仓库根才有 apps/。
-        // 三级会落到 pkgs.ts/apps/（不存在），于是 snapshot 静默为 null、模型目录空，
-        // 而 model.yaml 里配的 provider 全部被 loadCatalog 跳过（没有 spec.api 就发不出请求）。
-        resolve(dirname(fileURLToPath(import.meta.url)), "../../../../apps/diy-app/src/main/data/models.dev.json"),
-    ];
+    const candidates = [options?.snapshotPath, snapshotPath(home)];
     for (const candidate of candidates) {
         if (candidate === undefined || !existsSync(candidate)) continue;
         const raw = readYaml(candidate);

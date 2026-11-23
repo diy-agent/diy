@@ -80,6 +80,7 @@ export {
     modelOf,
     modelProviders,
     parseModelKey,
+    snapshotPath,
     type ModelView,
     type ProviderView,
 } from './providers';

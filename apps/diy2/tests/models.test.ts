@@ -58,6 +58,9 @@ interface Catalog {
         models: Array<Record<string, unknown>>;
     }>;
     defaultModelKey?: string;
+    configured: boolean;
+    modelConfigPath: string;
+    snapshotMissing: boolean;
 }
 
 let home = '';
@@ -123,6 +126,21 @@ describe('diy2.models.list', () => {
 
     it('defaultModelKey 来自 model.yaml（界面不再自己写死一个）', async () => {
         expect((await list()).defaultModelKey).toBe('main@acme/fast');
+    });
+
+    it('configured / snapshotMissing 是状态，不靠「目录恰好空着」去猜', async () => {
+        const full = await list();
+        expect(full.configured).toBe(true);
+        expect(full.modelConfigPath).toBe(join(home, 'model.yaml'));
+        // 测试数据根没有 data/models.dev.json：规格全来自 providers.custom.yaml
+        expect(full.snapshotMissing).toBe(true);
+
+        // 拿掉 model.yaml = 这个实例**没配模型**（不是「配了但没 key」）
+        rmSync(join(home, 'model.yaml'));
+        const empty = await list();
+        expect(empty.configured).toBe(false);
+        expect(empty.modelConfigPath).toBe(join(home, 'model.yaml'));
+        expect(empty.defaultModelKey).toBeUndefined();
     });
 
     it('回包里没有 key 值（账号只有名字 + 布尔）', async () => {

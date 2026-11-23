@@ -23,6 +23,18 @@ export type ProviderAccount = ModelCatalogProvider['accounts'][number];
 /** `diy2.models.list` 的回包（与协议的 `ModelCatalogSnapshot` 同一个形状） */
 export type ModelCatalogPayload = ModelCatalogSnapshot;
 
+/**
+ * 实例的模型配置**状态**（从回包里抽出来的三件；与 `providers` 分开传）。
+ *
+ * 为什么要有它：`providers.length === 0` 说不了「为什么空」—— 没写 model.yaml、缺目录快照、
+ * 或是账号全空 key，三种情况的出路完全不同。而「没配置」这件事必须在界面上看得见。
+ */
+export interface ModelSetup {
+    configured: boolean;
+    modelConfigPath: string;
+    snapshotMissing: boolean;
+}
+
 /** 三段式：`account@provider/model` */
 export interface ModelKey {
     provider: string;
