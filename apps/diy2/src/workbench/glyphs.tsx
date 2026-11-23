@@ -66,14 +66,21 @@ export function NavGlyph() {
     );
 }
 
-/** 设置：齿轮（圆 + 八辐） */
+/** 设置：lucide `settings` 的同一枚齿轮 —— 与 entity-chat 侧栏原来那颗图标同一形状（2026-11-23 用户指定） */
 export function GearGlyph() {
     return (
-        <svg className="wb-glyph" viewBox="0 0 14 14" aria-hidden="true">
-            <circle cx="7" cy="7" r="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
-            <g stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
-                <path d="M7 1.6v1.6M7 10.8v1.6M1.6 7h1.6M10.8 7h1.6M3.2 3.2l1.13 1.13M9.67 9.67l1.13 1.13M10.8 3.2L9.67 4.33M4.33 9.67L3.2 10.8" />
-            </g>
+        <svg
+            className="wb-glyph"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+            <circle cx="12" cy="12" r="3" />
         </svg>
     );
 }

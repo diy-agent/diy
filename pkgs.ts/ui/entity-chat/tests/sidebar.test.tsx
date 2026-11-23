@@ -6,6 +6,7 @@
 //   1. 有数据时内建三块都在（项目 / 历史 / 未归属）；
 //   2. 外部注册一个来源，它的输出真的出现在侧栏里（插槽是通的）；
 //   3. 反注册之后它消失（热更新 / 插件卸载的路径）。
+//   4. 底部设置入口是可选的（宿主自己已有入口时不传，如工作台的标题栏）。
 
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -100,6 +101,12 @@ describe('侧栏按注册表渲染', () => {
         expect(html.split('href="/room/task/t-closed"').length - 1).toBe(1);
         // 未关闭的那个反过来：只在项目树里
         expect(html.split('href="/room/task/t-open"').length - 1).toBe(1);
+    });
+
+    it('底部设置入口可选：不传就不渲染（工作台把它放在标题栏）', () => {
+        expect(render()).toContain('模型设置');
+        const { onOpenSettings: _omit, ...rest } = HOST;
+        expect(renderToStaticMarkup(<Sidebar {...rest} />)).not.toContain('模型设置');
     });
 
     it('外部注册的来源出现在侧栏里，反注册后消失', () => {

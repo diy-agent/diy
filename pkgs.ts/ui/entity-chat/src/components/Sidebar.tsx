@@ -59,7 +59,13 @@ export function Sidebar({
     onCreateProject: () => void;
     onCreateTask: (projectId: string) => void;
     onRequestDelete: (room: Room) => void;
-    onOpenSettings: () => void;
+    /**
+     * 底部的模型设置入口。**可选** —— 不传 = 不渲染。
+     *
+     * 工作台就是这种情形：设置已经放在窗口标题栏右端（全局、跨页都在），
+     * 侧栏底部再来一颗（左下角）做的是同一个动作，两个入口隔着半屏反而让人犹豫点哪个。
+     */
+    onOpenSettings?: () => void;
     /**
      * 侧栏自己的收起 / 展开按钮（头部那颗）。
      *
@@ -161,11 +167,7 @@ export function Sidebar({
                             title={open ? '收起侧栏（⌘B）' : '展开侧栏（⌘B）'}
                             className={`rounded p-1 text-muted-foreground hover:bg-muted ${open ? 'ml-auto' : ''}`}
                         >
-                            {open ? (
-                                <PanelLeftClose className="size-4" />
-                            ) : (
-                                <PanelLeftOpen className="size-4" />
-                            )}
+                            {open ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
                         </button>
                     )}
                 </div>
@@ -177,20 +179,26 @@ export function Sidebar({
                 ))}
             </div>
 
-            <div className={`flex items-center border-t py-2 ${open ? 'justify-between px-3' : 'justify-center'}`}>
-                {open && (
-                    <span className="text-[11px] leading-relaxed text-muted-foreground">
-                        容器 = 一条对话；成员在容器内
-                    </span>
-                )}
-                <button
-                    onClick={onOpenSettings}
-                    title="模型设置"
-                    className="rounded p-1 text-muted-foreground hover:bg-muted"
-                >
-                    <Settings className="size-4" />
-                </button>
-            </div>
+            {/* 底部那一行：展开时有说明文字，收起时只剩设置这颗。两者都没有就整行不渲染 ——
+                否则收起态会留下一条只有 border 的空条。 */}
+            {(open || onOpenSettings !== undefined) && (
+                <div className={`flex items-center border-t py-2 ${open ? 'justify-between px-3' : 'justify-center'}`}>
+                    {open && (
+                        <span className="text-[11px] leading-relaxed text-muted-foreground">
+                            容器 = 一条对话；成员在容器内
+                        </span>
+                    )}
+                    {onOpenSettings !== undefined && (
+                        <button
+                            onClick={onOpenSettings}
+                            title="模型设置"
+                            className="rounded p-1 text-muted-foreground hover:bg-muted"
+                        >
+                            <Settings className="size-4" />
+                        </button>
+                    )}
+                </div>
+            )}
 
             {/* 右缘拖拽手柄（就这样写，不抽组件）：让它在视觉上**盖住那条 border** ——
                 「这条线能拖」比在旁边加一个可拖的小块更直接。双击复位到默认宽。

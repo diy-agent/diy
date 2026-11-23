@@ -598,24 +598,48 @@ function AreaContent({ areaId, list }: { areaId: string; list: ViewDef[] }) {
  * 最大化：这一块吃掉整个**骨架**（含 center，用户明确要看这一块），其余全让位。
  *
  * 它不是浮层：没有 overlay、没有 z-index 战场 —— 仍然住在骨架的位置上，只是兄弟都不渲染。
- * 顶部那条就是**还原入口**：单击 / 双击它都还原（同一个动作，不歧义），
+ * 顶部那条就是**还原入口**：单击 / 双击都还原（同一个动作，不歧义），双击回到刚才的大小。
  * 所以不再画一颗单独的圆圈还原按钮 —— 条本身就是那颗按钮，行为与区域头一致。
  */
 function MaximizedArea({ def, views }: { def: AreaDef; views: readonly ViewDef[] }) {
     const api = useWb();
     const list = useMemo(() => viewsIn(views, api.page.type, def.id), [views, api.page.type, def.id]);
+
+    // 还原也要走单 / 双击判别（与区域头同一套节奏）：单击就立即还原的话，双击的**第二下**
+    // 会落到还原后的新布局上 —— 这一块已经不在了，于是变成「点到了邻块的头」，
+    // 实测会把那一块顺手折叠掉。所以单击等过双击窗口再执行。
+    const pending = useRef<number | null>(null);
+    useEffect(
+        () => () => {
+            if (pending.current !== null) window.clearTimeout(pending.current);
+        },
+        [],
+    );
+
     if (list.length === 0) return null;
 
     const restore = (event: ReactMouseEvent<HTMLDivElement>) => {
-        // 点 tab 是自己切 view，不是还原
+        // 点 tab / 菜单按钮是它们自己的事，不是还原
         const target = event.target as Element;
         if (target !== event.currentTarget && target.closest('button') !== null) return;
-        api.setMaximized(null);
+
+        if (pending.current !== null) {
+            window.clearTimeout(pending.current);
+            pending.current = null;
+        }
+        if (event.detail > 1) {
+            api.setMaximized(null);
+            return;
+        }
+        pending.current = window.setTimeout(() => {
+            pending.current = null;
+            api.setMaximized(null);
+        }, SINGLE_CLICK_DELAY);
     };
 
     return (
         <div className="wb-area wb-max" data-area={def.id} data-maximized="true">
-            <div className="wb-max-bar" title="单击 / 双击还原" onClick={restore}>
+            <div className="wb-max-bar" title="单击 / 双击还原到原来的大小" onClick={restore}>
                 <span className="wb-max-name">{def.title}</span>
                 {list.length > 1 ? <AreaTabs areaId={def.id} list={list} /> : null}
                 <span className="wb-max-hint">最大化 · 单击还原</span>

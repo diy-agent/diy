@@ -78,7 +78,8 @@ function NavRail({ nav }: { nav: NavState }) {
             onCreateProject={dialogs.openProject}
             onCreateTask={dialogs.openTask}
             onRequestDelete={dialogs.requestDelete}
-            onOpenSettings={dialogs.openSettings}
+            // `onOpenSettings` **不传**：设置入口只在标题栏右端一处（原来侧栏底部还有
+            // 一颗，两边做同一件事，留在左下角只会让人犹豫点哪个）
         />
     );
 }
