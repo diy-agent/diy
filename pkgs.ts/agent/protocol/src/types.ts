@@ -106,6 +106,34 @@ export interface JobNotice {
     truncatedBytes?: number;
 }
 
+/**
+ * 一条 run 的**列表投影**（`diy2.jobs.list` 的回包项）：界面画「现在在跑什么」用的那一份。
+ *
+ * 为什么不直接发注册表的 `RunInfo`：那份是**账本内部形状**（`notified` / `awaitingGroup` /
+ * `hadSurvivingGroup` / `dir` …），界面一个都不用；界面要的是「哪条在跑、跑了多久、什么命令、
+ * 谁起的、日志在哪」。投影住协议里 ⇒ 服务端只挑一次，两个 surface 不再各猜一遍。
+ */
+export interface JobRunRow {
+    id: string;
+    /** RunState：running / exited / killed / failed */
+    state: string;
+    startedAt: number;
+    endedAt?: number;
+    /** 已跑时长（运行中 = 到现在；终态 = 收口时刻 − 起点） */
+    durationMs: number;
+    command: string;
+    /** 人话标题（缺省 = 命令首行） */
+    title?: string;
+    cwd: string;
+    logPath: string;
+    pid?: number;
+    exitCode?: number | null;
+    signal?: string | null;
+    error?: string;
+    /** 谁起的：`taskUri` 是 dsh 的实体地址（房间 / 任务），turnId 是那一轮 */
+    origin?: { taskUri: string; turnId?: string };
+}
+
 export type Item =
     | (ItemBase & { type: 'chat'; data: { text: string } })
     | (ItemBase & { type: 'notice'; data: { text: string; kind: string; job?: JobNotice } })

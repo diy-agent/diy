@@ -30,6 +30,9 @@ export type { NavContext, NavHost, NavSource } from './nav';
 // 弹窗由宿主挂一次 `useRoomDialogs()`（整页 App 与工作台共用同一套状态）。
 export { Sidebar } from './components/Sidebar';
 export { TaskPanel } from './components/TaskPanel';
+// 作业卡片：两个 surface 共用（判据在 chat-core 的 `jobOf`）。导出来是为了
+// `/job-demo.html` 那类选择型实验台能直接拿真组件摆样子 —— 别在 demo 里另画一份。
+export { JobCard } from './components/JobCard';
 export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';
 export type { RoomDialogs } from './useRoomDialogs';
 

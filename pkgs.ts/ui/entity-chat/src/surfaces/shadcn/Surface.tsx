@@ -44,11 +44,11 @@ function timeOf(at: number): string {
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-function ToolGroup({ tools }: { tools: Array<TimelinePart & { kind: 'tool' }> }) {
+function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool' }>; live?: boolean }) {
     const [open, setOpen] = React.useState(false);
     if (tools.length === 1) {
         const tool = tools[0]!;
-        return <ToolRow tool={tool} />;
+        return <ToolRow tool={tool} live={live === true} />;
     }
     return (
         <div className="my-1">
@@ -62,7 +62,7 @@ function ToolGroup({ tools }: { tools: Array<TimelinePart & { kind: 'tool' }> })
             {open && (
                 <div className="mt-1 border-l border-border pl-3">
                     {tools.map((tool) => (
-                        <ToolRow key={tool.id} tool={tool} />
+                        <ToolRow key={tool.id} tool={tool} live={live === true} />
                     ))}
                 </div>
             )}
@@ -70,11 +70,11 @@ function ToolGroup({ tools }: { tools: Array<TimelinePart & { kind: 'tool' }> })
     );
 }
 
-function ToolRow({ tool }: { tool: TimelinePart & { kind: 'tool' } }) {
+function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: boolean }) {
     // 后台作业（job / bash background）单独成卡：普通工具行只剩 name + 截断 target，
     // 而用户要看的是 run id / 状态 / 退出码 / 输出（判据在 chat-core 的 `jobOf`）
     const job = jobOf(tool);
-    if (job !== undefined) return <JobCard view={job} />;
+    if (job !== undefined) return <JobCard view={job} live={live} />;
     const target = toolTargetOf(tool);
     const status = TOOL_STATUS[tool.state];
     const mark = status === 'running' ? '◌' : status === 'ok' ? '✓' : '✗';
@@ -99,7 +99,7 @@ function ErrorBox({ text }: { text: string }) {
 }
 
 /** 一个 assistant 条目内部的块（正文 / 工具组 / 提问卡 / 失败） */
-function RunsView({ runs, roomId }: { runs: Run[]; roomId: string }) {
+function RunsView({ runs, roomId, live }: { runs: Run[]; roomId: string; live?: boolean }) {
     return (
         <>
             {runs.map((run, index) => {
@@ -126,7 +126,7 @@ function RunsView({ runs, roomId }: { runs: Run[]; roomId: string }) {
                     );
                 if (run.kind === 'text')
                     return <Markdown key={`t${index}`} text={run.text} onLinkClick={openLinkInNewWindow} />;
-                return <ToolGroup key={`c${index}`} tools={run.tools} />;
+                return <ToolGroup key={`c${index}`} tools={run.tools} live={live === true} />;
             })}
         </>
     );
@@ -227,7 +227,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                         />
                     )}
                 </div>
-                <RunsView runs={runs} roomId={roomId} />
+                <RunsView runs={runs} roomId={roomId} live={entry.waiting === true} />
                 <EndFooterLine reason={entry.endReason} />
                 {entry.waiting === true && (
                     <div className="mt-1.5">

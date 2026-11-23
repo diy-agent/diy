@@ -57,7 +57,7 @@ function TimeOf({ at }: { at: number }) {
  * JSON target —— run id、状态、退出码、输出全丢，而那些正是“它到底啥情况”的全部答案。
  * 分组顺序不动（卡插在它原来那一格），所以「说一段 → 跑作业 → 再说一段」的时间顺序不变。
  */
-function ToolRun({ tools }: { tools: (TimelinePart & { kind: 'tool' })[] }) {
+function ToolRun({ tools, live }: { tools: (TimelinePart & { kind: 'tool' })[]; live?: boolean }) {
     const blocks: React.ReactNode[] = [];
     let pending: (TimelinePart & { kind: 'tool' })[] = [];
     const flush = (): void => {
@@ -85,7 +85,7 @@ function ToolRun({ tools }: { tools: (TimelinePart & { kind: 'tool' })[] }) {
             continue;
         }
         flush();
-        blocks.push(<JobCard key={tool.id} view={job} />);
+        blocks.push(<JobCard key={tool.id} view={job} live={live === true} />);
     }
     flush();
     return <>{blocks}</>;
@@ -222,7 +222,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                             {run.text}
                         </Markdown>
                     ) : (
-                        <ToolRun key={`c${index}`} tools={run.tools} />
+                        <ToolRun key={`c${index}`} tools={run.tools} live={entry.waiting === true} />
                     );
                 })}
                 {/* 还在跑但没有流式内容（工具刚结束 / 等待下一段）：挂在正文末尾，

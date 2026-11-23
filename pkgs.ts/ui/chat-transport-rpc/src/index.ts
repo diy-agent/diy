@@ -23,11 +23,14 @@ import type {
 } from '@diy-agent/chat-core';
 
 import type {
+    JobRunRow,
     ModelCatalogModel,
     ModelCatalogProvider,
     ModelCatalogSnapshot,
     ModelCostView,
 } from '@diy-agent/protocol';
+
+export type { JobRunRow };
 
 import { StreamHub } from './hub';
 
@@ -130,6 +133,17 @@ export class RpcChatClient implements ChatClient {
     /** 模型目录（选模型器 / 新建房间的缺省值）；服务端保证不含 key 值 */
     readonly models = {
         list: (): Promise<ModelCatalogSnapshot> => this.call('models.list', {}),
+    };
+
+    /**
+     * 后台作业（run 表）：与 agent 的 `job list` / `job kill` 同一份账本。
+     *
+     * 界面拿它画「现在在跑什么」——在此之前这张表只存在于 agent 的对话里，
+     * 人看不见（只能等模型自己想起来调 `job status`）。
+     */
+    readonly jobs = {
+        list: (): Promise<{ rows: JobRunRow[] }> => this.call('jobs.list', {}),
+        kill: (id: string): Promise<{ ok: boolean }> => this.call('jobs.kill', { id }),
     };
 
     readonly links = {
