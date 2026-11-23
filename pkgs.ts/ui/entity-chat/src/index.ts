@@ -25,9 +25,9 @@ export type { NavContext, NavHost, NavSource } from './nav';
 
 // ── 宿主装配用的部件 ──────────────────────────────────────
 //
-// 工作台把「外壳」拆给 dock 的 area：左栏是侧栏、右栏是任务面板、中间只留对话。
+// 工作台把「外壳」拆给各个区域：左边是侧栏、详情区是任务面板、center 只留对话。
 // 这些部件自己不知道被装在哪里 —— 宽度 / 收起由外层 area 决定（`widthMode="fill"`），
-// 弹窗由宿主挂一次 `useRoomDialogs()`（App 与 /dock.html 共用同一套状态）。
+// 弹窗由宿主挂一次 `useRoomDialogs()`（整页 App 与工作台共用同一套状态）。
 export { Sidebar } from './components/Sidebar';
 export { TaskPanel } from './components/TaskPanel';
 export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';

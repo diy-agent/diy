@@ -23,14 +23,11 @@ export default defineConfig({
         outDir: 'build/prod/web',
         emptyOutDir: true,
         rollupOptions: {
-            // 主应用 + 工作台页（/dock.html，把 workbench-dock 接到真数据上）。
-            // workbench-dock 的**框架范例**仍在它自己的包（pkgs.ts/ui/workbench-dock/examples），
-            // 不跟业务 app 一起发；这里进来的只有「接进 diy2」的那一个壳。
+            // 只有主应用（`/` → src/main.tsx → 工作台）。
             // 其余 lab 页（/stops.html、/perf.html、/astryx-lab.html）dev 下按文件直接可访问，
             // 不在这里列 —— 列了就是要随产物发，那得先想清楚谁在用。
             input: {
                 main: 'index.html',
-                dock: 'dock.html',
             },
         },
     },

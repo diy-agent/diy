@@ -22,13 +22,31 @@ import { createStaticHandler } from './static';
 import { createRpcSocket, type RpcStreamInfo } from './rpc';
 import { APP_ID, type Diy2Config } from './config';
 
-import { JOURNAL_KINDS, RoomActor, newEntityId, openStore } from '@diy-agent/entity-runtime';
+import {
+    JOURNAL_KINDS,
+    RoomActor,
+    createJobRegistry,
+    defaultModelKeyOf,
+    modelProviders,
+    newEntityId,
+    openStore,
+} from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
 import { diy2Api } from '@diy-agent/protocol';
 import type { AskAnswer, AskQuestionAnswer, Author, Bot, Room } from '@diy-agent/protocol';
 
-const DEFAULT_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
+/**
+ * 新房间的缺省模型：`model.yaml` 的 `defaultModel` 优先，没有才用这个写死的兜底。
+ *
+ * 为什么还留一个常量：新房间必须有模型，而「随便挑目录里的第一个」会让换台机器后缺省值
+ * 悄悄换人（第一个恰好是别家）。宁可固定一个已知能用的，让人改 `model.yaml` 来表达偏好。
+ */
+const FALLBACK_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
+/** 缺省模型：`model.yaml` 的 `defaultModel` → 兜底常量（见 `FALLBACK_MODEL`） */
+function defaultModelKey(): string {
+    return defaultModelKeyOf() ?? FALLBACK_MODEL;
+}
 /** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
 const ASK_DRAFT_TTL = 30 * 60 * 1000;
 /** 对话框草稿：synthetic owner 不随房间级联删，超过这么久没人再来就清掉 */
@@ -51,6 +69,11 @@ let info: () => Diy2AppInfo;
 
 /** roomId → 聚合根（房间的领域对象） */
 let rooms = new Map<string, RoomActor>();
+/**
+ * 后台作业账本：**进程级一张表**（`bash(background)` 起的 run 与 `job` 工具查的是同一份）。
+ * 收口通知按归属串 `<roomId>#<botId>` 回到对应房间 —— 房间不在（已删 / 别的进程起的）就静默。
+ */
+let jobs: ReturnType<typeof createJobRegistry>;
 /**
  * 话题上推的帧：房间领域事件 + 传输层的收尾帧。
  *
@@ -122,6 +145,9 @@ function actorOf(spec: Room): RoomActor {
             ...(cwd === undefined ? {} : { cwd }),
             home: config.home,
             shell: config.tools !== 'files',
+            jobs: { registry: jobs },
+            ...(config.maxSteps === undefined ? {} : { maxSteps: config.maxSteps }),
+            ...(config.bashTimeoutMs === undefined ? {} : { bashTimeoutMs: config.bashTimeoutMs }),
         });
         rooms.set(spec.id, actor);
         // 运行时新建的容器也要落库：不落的话重启后侧栏里就没了（消息还在，只是没入口）
@@ -164,7 +190,7 @@ function seed(): void {
                 color: COLORS[bots.length % COLORS.length]!,
                 persona,
                 homeRoomId,
-                modelKey: DEFAULT_MODEL,
+                modelKey: defaultModelKey(),
             };
             store.upsertBot(bot);
             return bot;
@@ -186,21 +212,21 @@ function seed(): void {
                 { botId: byName('diy')?.id ?? bots[0]!.id, primary: true },
                 { botId: byName('小满')?.id ?? bots[0]!.id },
             ],
-            modelKey: DEFAULT_MODEL,
+            modelKey: defaultModelKey(),
         },
         {
             id: 'proj:cops',
             type: 'project',
             data: { name: 'cops', dir: '~/git/cops' },
             members: [{ botId: byName('cops')?.id ?? bots[1]!.id, primary: true }],
-            modelKey: DEFAULT_MODEL,
+            modelKey: defaultModelKey(),
         },
         {
             id: 'task:t-001',
             type: 'task',
             data: { title: '任务树与多会话', dir: '~/git/diy/diy', projectId: 'proj:diy', status: 'open' },
             members: [{ botId: byName('任务树与多会话')?.id ?? bots[2]!.id, primary: true }],
-            modelKey: DEFAULT_MODEL,
+            modelKey: defaultModelKey(),
         },
     ];
 
@@ -235,7 +261,7 @@ function seed(): void {
             type: roomId.startsWith('task') ? 'task' : 'project',
             data: roomId.startsWith('task') ? { title: bot?.name ?? roomId } : { name: bot?.name ?? roomId },
             members,
-            modelKey: bot?.modelKey ?? DEFAULT_MODEL,
+            modelKey: bot?.modelKey ?? defaultModelKey(),
         });
     }
 
@@ -296,7 +322,7 @@ function newBot(name: string, homeRoomId: string, persona: string): Bot {
         color: COLORS[store.listBots().length % COLORS.length]!,
         persona,
         homeRoomId,
-        modelKey: DEFAULT_MODEL,
+        modelKey: defaultModelKey(),
     };
 }
 
@@ -378,6 +404,13 @@ export function createDiy2App(opts: {
     mkdirSync(config.home, { recursive: true });
     store = openStore(config.dbPath);
 
+    // 作业账本要在 `seed()` / 首个房间之前建好：`actorOf` 装配工具时要用它。
+    // 根目录 `<home>/log/job/runs`：与其余运行产物同根，清 home 就清干净。
+    jobs = createJobRegistry({
+        rootDir: join(config.home, 'log', 'job', 'runs'),
+        onDone: (event, owner) => rooms.get(owner.roomId)?.notifyJobDone(owner, event),
+    });
+
     seed();
 
     // 对话框草稿的 owner 是 synthetic scope（`dlg:<用途>:<roomId>`）：删项目时已级联，
@@ -386,7 +419,7 @@ export function createDiy2App(opts: {
     if (prunedDialogs > 0) console.log(`[drafts] 清掉 ${prunedDialogs} 条过期对话框草稿`);
 
     /**
-     * diy2 的**命令面**（RPC）。与 REST 并存到客户端全部切完（P2a），之后删 REST。
+     * diy2 的**命令面**（RPC）：浏览器侧唯一的 API（REST 已删，只剩 `/api/info` 探活）。
      *
      * handler 直接复用路由里的同一套领域操作，不再经过 req/res —— 错误用异常表达，
      * 由 rpc 传输层转成错误帧（HTTP 那边是 4xx/5xx）。
@@ -428,7 +461,8 @@ export function createDiy2App(opts: {
                     if (type === 'task' && (typeof projectId !== 'string' || roomOf(projectId) === undefined)) {
                         throw new Error('task 需要有效的 data.projectId');
                     }
-                    const modelKey = input.modelKey ?? DEFAULT_MODEL;
+                    // `??` 挡不住空串（界面上的"没选"可能就是 ''）：空串按没填处理
+                    const modelKey = input.modelKey || defaultModelKey();
                     const id = newEntityId();
                     const bot = { ...newBot(input.name, id, `${type} bot`), modelKey };
                     store.upsertBot(bot);
@@ -590,6 +624,16 @@ export function createDiy2App(opts: {
             },
             journal: {
                 list: async ({ input }) => ({ entries: store.journalOf(input.id, input.limit ?? 50) }),
+            },
+            /**
+             * 模型目录（选模型器 / 新建房间的缺省值）。
+             *
+             * 真源是 `model.yaml`（`@diy-agent/model-catalog`），**不经过界面里的表**：界面原来自带
+             * 一份 `PROVIDERS`（端点 / 价目 / 上下文窗口），与真配置各自演进 —— 「界面上能选、
+             * 服务端发不出去」就是这么来的。回包永不含 key 值（账号只有名字与填没填）。
+             */
+            models: {
+                list: async () => ({ providers: modelProviders(), defaultModelKey: defaultModelKey() }),
             },
             links: {
                 list: async ({ input }) => {

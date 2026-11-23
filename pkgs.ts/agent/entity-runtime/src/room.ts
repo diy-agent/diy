@@ -27,6 +27,8 @@ import { ASK_DRAFT_PREFIX, type Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
 import { createRoomContext } from './system-context';
 import { buildRoomTools } from './tools/index';
+import { jobOwnerOf, type JobOwner } from './jobs';
+import type { JobDoneEvent, RunRegistry } from '@diy-agent/jobs/node';
 import type { CompactEvent } from './compaction';
 import {
     BotSession,
@@ -78,6 +80,13 @@ export interface RoomActorDeps {
     home?: string;
     /** 是否开放 shell（缺省开放） */
     shell?: boolean;
+    /**
+     * 后台作业账本（进程级单例，由宿主创建）。不传 = bash 没有 `background`、也没有 `job` 工具。
+     * 收口通知由宿主挂 `RunRegistry` 的 notifier 后调 `notifyJobDone` 送回来（见 jobs.ts）。
+     */
+    jobs?: { registry: RunRegistry };
+    /** 步数上限（缺省 `DEFAULT_MAX_STEPS`；到顶按 `max-steps` 收尾） */
+    maxSteps?: number;
     /** shell 缺省超时 */
     bashTimeoutMs?: number;
 
@@ -253,6 +262,8 @@ export class RoomActor {
             kind: 'say',
             author: input.author,
             text,
+            // 投递 / 公共条目对得上的唯一钥匙：崩溃恢复要靠它问 session「你读过这句没有」
+            messageId: saved.id,
             turn: turn.turn,
             turnId: turn.turnId,
         });
@@ -316,12 +327,18 @@ export class RoomActor {
                 delivery.turn === undefined
                     ? undefined
                     : { turn: delivery.turn, turnId: delivery.turnId ?? `turn-${delivery.messageId}` };
+            // 这条投递对应的公共条目（只有 say 带 messageId）。拿到它才能问 session
+            // 「你上下文里到底有没有它」—— 不传的话 session 无处可查，只像个眼瞎的盲标。
+            const entry = this.log
+                .all()
+                .find((item) => item.kind === 'say' && item.messageId === delivery.messageId);
             void this.sessionOf(bot).post({
                 messageId: delivery.messageId,
                 text,
                 mode: delivery.mode ?? 'next-step',
-                // 这句人话在公共日志里，session 回放时已经读到了；再追加一次会让模型看到两遍
-                alreadyInContext: true,
+                // 不写 alreadyInContext：由 session 按序号自己判断（回放带了就带上它，
+                // 水位跳过了就当普通消息补上）。原先无条件写 true 就是把消息凭空抹掉的那一刀。
+                ...(entry === undefined ? {} : { entry }),
                 ...(turn === undefined ? {} : { turn }),
             });
         }
@@ -589,8 +606,9 @@ export class RoomActor {
         const session = this.sessions.get(botId);
         if (session === undefined) return;
         const snapshot = session.snapshot();
-        // 水位和快照一起存：重启回放只补这之后新增的公共条目
-        this.deps.store.saveSession(this.id, botId, { ...snapshot, logSeq: this.log.lastSeq });
+        // 水位由 session 自己算（它才知道自己真读到哪了）：房间的 log.lastSeq 含
+        // 「已 append 但这一侧还没读」的条目，拿它当水位会在重启后跳过那些消息。
+        this.deps.store.saveSession(this.id, botId, snapshot);
         this.turnSeq = Math.max(this.turnSeq, snapshot.turn);
     }
 
@@ -605,6 +623,9 @@ export class RoomActor {
                       cwd,
                       ...(this.deps.shell === undefined ? {} : { shell: this.deps.shell }),
                       ...(this.deps.bashTimeoutMs === undefined ? {} : { bashTimeoutMs: this.deps.bashTimeoutMs }),
+                      ...(this.deps.jobs === undefined
+                          ? {}
+                          : { jobs: { registry: this.deps.jobs.registry, owner: jobOwnerOf(this.id, botId) } }),
                       ask: this.gate,
                       askOwner: botId,
                       onJournal: (input) => {
@@ -621,6 +642,11 @@ export class RoomActor {
     }
 
     private toolsHint(): string {
+        const jobHint =
+            this.deps.jobs === undefined
+                ? ''
+                : '\n后台长活（构建 / 测试 / 装依赖）用 bash 的 background，再用 job 查状态 / 取输出 / 停；' +
+                  '起完就别轮询，结束时会插话叫醒你。';
         return (
             '可以用 read / write / edit 读写文件、用 bash 执行命令；' +
             `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
@@ -628,7 +654,8 @@ export class RoomActor {
             '留下决策 / 踩坑 / 评审结论时用 journal（一句话一条，按 kind 分类）。' +
             '需要用户做决定时**必须**调用 ask（选项 / 表单）：不要在正文里提问，' +
             '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。' +
-            'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。'
+            'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。' +
+            jobHint
         );
     }
 
@@ -722,6 +749,7 @@ export class RoomActor {
             ...(this.deps.run === undefined ? {} : { run: this.deps.run }),
             ...(this.deps.compactor === undefined ? {} : { compactor: this.deps.compactor }),
             ...(this.deps.budget === undefined ? {} : { budget: this.deps.budget }),
+            ...(this.deps.maxSteps === undefined ? {} : { maxSteps: this.deps.maxSteps }),
             ...(this.toolsFor(bot.id) === undefined ? {} : { tools: this.toolsFor(bot.id) }),
             ...(this.hasTools ? { toolsHint: this.toolsHint() } : {}),
             ...(systemContext === '' ? {} : { systemContext }),
@@ -864,6 +892,37 @@ export class RoomActor {
             text: `[${name} 的结论] ${result.text}`,
             mode: 'next-turn',
             turn: { turn: result.turn, turnId: result.turnId },
+        });
+    }
+
+    /**
+     * 后台作业收口：宿主把 `JobDoneEvent` 按归属串路由回来，这里给起它的成员插一条 notice 并叫醒它。
+     *
+     * 不负责「告诉用户作业结束了」——UI 自己看账本；这里只解决模型的记忆：它起完活就去干别的了，
+     * 不叫醒就永远不会去取结果。归属串对不上（别的房间 / 已退出的成员）= 静默丢弃。
+     */
+    notifyJobDone(owner: JobOwner, event: JobDoneEvent): void {
+        const bot = this.members().find((candidate) => candidate.id === owner.botId);
+        if (bot === undefined) return;
+        const turn = this.newTurn();
+        const now = this.deps.now?.() ?? Date.now();
+        const notice: Item = {
+            id: `n-${now.toString(36)}-${this.order + 1}`,
+            seq: this.deps.store.seqOf(this.id) + 1,
+            order: this.nextOrder(),
+            turn: turn.turn,
+            turnId: turn.turnId,
+            at: now,
+            status: 'done',
+            type: 'notice',
+            data: { text: event.text, kind: 'job-done' },
+        };
+        this.deps.emit({ kind: 'item', item: this.deps.store.appendItem(this.id, notice) });
+        void this.sessionOf(bot).post({
+            messageId: notice.id,
+            turn,
+            mode: 'next-turn',
+            text: `[后台作业结束] ${event.text}`,
         });
     }
 }

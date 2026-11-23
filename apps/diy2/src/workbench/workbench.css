@@ -1,0 +1,780 @@
+/* workbench.css —— 工作台的壳与骨架样式。
+ *
+ * 骨架用 flex 表达，区域之间靠 1px 的 gap 露底色当下划线 —— 这样「分界」是布局自带的，
+ * 不需要每个区域各自画 border，也不会出现「两个相邻区域都画了右边框」的双线。
+ *
+ * 这里**没有一条拖拽相关样式**（无 sash / 无 resize handle / 无 cursor: col-resize）：
+ * 骨架固定是模型的一部分，不是还没做。
+ *
+ * ── 色值：与主入口同源 ─────────────────────────────────────────────────────
+ *
+ * 这一套（#0d1117 / #161b22 / #21262d …）就是 diy2 当前的壳色，从
+ * workbench-dock/examples/04-vanilla/style.css 抄来（那个包只作框架范例，diy2 不再依赖）。
+ * 工作台必须和主入口同一个底，所以这里继续用同一份色值，不单方面换成 Astryx 的
+ * neutral 灰（#1b1b1b）：那不是「对齐」，那会让工作台和主入口分家。
+ * 真要做的是以后两边一起换主题 token，属于另一个任务。
+ *
+ * ⚠️ 前提：文档要有 `<html class="dark">`（index.html）。
+ * 少了它 color-scheme 是 light，Astryx 组件全走浅色分支 —— 壳是暗的、组件是白的，
+ * 看起来就像两套 CSS 打起来了（这个坑踩过一次）。
+ */
+
+:root {
+    --wb-bg: #0d1117;
+    --wb-bg-2: #10151c;
+    --wb-line: #21262d;
+    --wb-line-2: #30363d;
+    --wb-fg: #e6edf3;
+    --wb-fg-2: #adbac7;
+    --wb-dim: #8b949e;
+    --wb-accent: #1f6feb;
+    --wb-accent-fg: #79c0ff;
+    /* 叠色层：hover / 选中 / 遮罩统一走这几个，避免到处散落 #ffffff0a 这类字面量 */
+    --wb-tint: #ffffff0a;
+    --wb-tint-strong: #ffffff14;
+    --wb-accent-soft: #1f6feb26;
+    --wb-accent-line: #1f6feb55;
+}
+
+/* ── 壳 ───────────────────────────────────────────────────────────────────── */
+
+.wb-shell {
+    /* 整屏（column）：标题栏横跨整宽，下面才是「导航 + 骨架」 */
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--wb-bg);
+    color: var(--wb-fg);
+}
+
+.wb-body {
+    /* 导航（全局层，自带宽度）+ 页层骨架（铺满剩余） */
+    flex: 1 1 0;
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+}
+
+.wb-splash {
+    flex: 1 1 auto;
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+    color: var(--wb-dim);
+    font-size: 13px;
+}
+
+/* 骨架：标题栏与导航以外的部分。标题栏不在这里 —— 它横跨整宽、管着导航，
+ * 不能躺在一个 flex 单元格里。
+ *
+ *   .wb-skel  = column：[top][mid][bottom]
+ *   .wb-mid   = row   ：[left][center][right]
+ *
+ * 槽位写死在这两层 CSS 里，模板改不了 —— 模板只能决定「哪个概念的区域落在哪一格」。
+ */
+.wb-skel {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    /* 分隔线不再是 gap：相邻两项之间插了一个 1px 的 `.wb-resizer`（它同时是拖拽手柄）。
+       没有手柄的位置（如两侧都是 fr）直接用边框兜底 —— 见下面的 `:not(.wb-resizer)` 规则。 */
+    gap: 0;
+}
+
+.wb-mid {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: row;
+    min-width: 0;
+    min-height: 0;
+    gap: 0;
+}
+
+/* 兜底分隔：相邻两项之间没有手柄时，也还有一条线 */
+.wb-mid > :not(.wb-resizer) + :not(.wb-resizer) {
+    border-left: 1px solid var(--wb-line);
+}
+
+.wb-skel > :not(.wb-resizer) + :not(.wb-resizer) {
+    border-top: 1px solid var(--wb-line);
+}
+
+/* ── 边界手柄（拖宽度）───────────────────────────────────────────────────────
+ *
+ * 可见的只有 1px 背景，但 `::after` 向两侧各溢出 2px —— 命中区 5px。
+ * 这也正是 VS Code / 浏览器开发者工具的做法：线要细，可拖区域不能细。
+ */
+.wb-resizer {
+    position: relative;
+    flex: 0 0 1px;
+    z-index: 4;
+    background: var(--wb-line);
+    touch-action: none;
+}
+
+.wb-resizer-x {
+    cursor: col-resize;
+}
+
+.wb-resizer-y {
+    cursor: row-resize;
+}
+
+.wb-resizer::after {
+    content: '';
+    position: absolute;
+    inset: 0 -2px;
+}
+
+.wb-resizer-y::after {
+    inset: -2px 0;
+}
+
+.wb-resizer:hover,
+.wb-resizer:active {
+    background: var(--wb-accent-fg);
+}
+
+/* 拖动中：光标在整个窗口内保持不变，且不许选中文本 */
+body.wb-resizing,
+body.wb-resizing * {
+    user-select: none;
+}
+
+body.wb-resizing-x,
+body.wb-resizing-x * {
+    cursor: col-resize !important;
+}
+
+body.wb-resizing-y,
+body.wb-resizing-y * {
+    cursor: row-resize !important;
+}
+
+/* 子项默认平分；area 用内联 style 覆盖成自己的 px / fr */
+.wb-skel > *,
+.wb-mid > * {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+}
+
+.wb-area {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--wb-bg);
+}
+
+/* 区域的内容体。**不是 `.wb-body`**：那是「导航 + 骨架」整块（window body），
+ * 同名会把 `overflow: auto` 加到整块上，也让人读不懂哪一层在滚。 */
+.wb-area-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
+}
+
+/* 骨架调试：看清哪块是哪块（默认关；页外那条 bar 上的「骨架」按钮） */
+.wb-skel .wb-area {
+    outline: 1px dashed var(--wb-accent-line);
+    outline-offset: -1px;
+}
+
+.wb-skel .wb-area::before {
+    content: attr(data-area);
+    position: absolute;
+    right: 3px;
+    bottom: 1px;
+    z-index: 5;
+    font:
+        10px ui-monospace,
+        Menlo,
+        monospace;
+    color: var(--wb-accent-fg);
+    pointer-events: none;
+}
+
+/* ── 区域头部（每个区域都有；折叠后的条与它同色同厚）───────────────────────────
+ *
+ * 它是区域的**唯一操作面**：单击折叠 / 展开（center 不可收），双击最大化 / 还原。
+ * 背景 `--wb-bg-2`、高度 28px —— 与折叠条、最大化头、窗口标题栏同一个数，
+ * 所以同一块区域在「展开中」与「收起后」看起来就是同一条被压扁了。
+ * 2026-11-23 用户裁：每个 area 都带这一条，操作全在 bar 上，不再另配右上角的折叠按钮。
+ */
+.wb-area-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 3px 0 8px;
+    background: var(--wb-bg-2);
+    border-bottom: 1px solid var(--wb-line);
+    font-size: 11.5px;
+    color: var(--wb-fg-2);
+    user-select: none;
+}
+
+/* 可收起的区域：整条都是命中面，光标告知「这一条能点」 */
+.wb-area-bar[data-foldable] {
+    cursor: pointer;
+}
+
+/* 区域名：一直显示 —— 单 view 时它就是这一行的全部信息，多 view 时它是 tab 条的锚 */
+.wb-area-name {
+    flex: 0 0 auto;
+    max-width: 40%;
+    overflow: hidden;
+    color: var(--wb-dim);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* 非 tab 形态的标注（「折叠 · 3」「格子 · 3」）：tabs 的替身，占掉中间那段 */
+.wb-bar-note {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--wb-dim);
+    opacity: 0.75;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* 右端的 `⋯`：只换摆法、不动骨架。默认半透明，hover / 打开时才亮出来 */
+.wb-area-menu {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 20px;
+    padding: 0;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--wb-dim);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0.55;
+}
+
+.wb-area-bar:hover > .wb-area-menu,
+.wb-area-menu:focus-visible,
+.wb-area-menu.on {
+    opacity: 1;
+}
+
+.wb-area-menu:hover {
+    color: var(--wb-fg);
+    background: var(--wb-tint-strong);
+}
+
+/* 形态菜单：portal 到 body、fixed 定位 ——
+ * 区域是 `overflow: hidden` 的，菜单若留在里面，「格子」那种矮区域会把它裁掉半截。
+ */
+.wb-menu {
+    position: fixed;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 4px;
+    background: #161b22;
+    border: 1px solid var(--wb-line-2);
+    border-radius: 7px;
+    box-shadow: 0 8px 24px #00000066;
+    font-size: 12px;
+}
+
+.wb-menu button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    text-align: left;
+    color: var(--wb-fg-2);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.wb-menu button:hover {
+    color: var(--wb-fg);
+    background: var(--wb-tint);
+}
+
+.wb-menu button.on {
+    color: var(--wb-accent-fg);
+    background: var(--wb-accent-soft);
+}
+
+/* ── 折叠后的条 ────────────────────────────────────────
+ *
+ * 横竖跟着容器走：
+ *   · 在 row 里（左右排）→ `.wb-folded-x`：窄、满高，文字竖排
+ *   · 在 col 里（上下排）→ `.wb-folded-y`：矮、满宽，文字横排
+ * 整条就是按钮 —— 28px 厚的东西里再分命中区没有意义。
+ */
+
+.wb-area.wb-folded {
+    /* 折叠后不再参与弹性分配：就占一条的厚度 */
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+.wb-fold-strip {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    color: var(--wb-dim);
+    background: var(--wb-bg-2);
+    border: 0;
+    cursor: pointer;
+}
+
+.wb-fold-strip:hover {
+    color: var(--wb-fg);
+    background: #182029;
+}
+
+/* 竖条：文字竖排（中文字符自己就是竖的，不需要 text-orientation: upright）。
+ * 没有箭头图标 —— 条本身就是按钮（单击展开 / 双击最大化）*/
+.wb-folded-x .wb-fold-strip {
+    flex-direction: column;
+}
+
+/* 按下的反馈：这条现在要区分单击 / 双击，得让人看出第一下被接住了
+ * （展开本身延迟 180ms 才发生，没反馈会像“点了没反应”）*/
+.wb-fold-strip:active {
+    background: #1b232c;
+}
+
+.wb-folded-x .wb-fold-name {
+    writing-mode: vertical-rl;
+}
+
+/* 横条：横排、靠左 —— 一条 1400px 宽的字居中会显得漂在半空，
+ * 靠左才跟区域内容的左缘对齐（也跟竖条的居中形成了一个对比：窄的居中、宽的靠左）*/
+.wb-folded-y .wb-fold-strip {
+    justify-content: flex-start;
+    padding-left: 10px;
+}
+
+.wb-folded-y .wb-fold-name {
+    writing-mode: horizontal-tb;
+}
+
+.wb-tabs {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.wb-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.wb-tabs button {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--wb-dim);
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.wb-tabs button:hover {
+    color: var(--wb-fg);
+    background: var(--wb-tint);
+}
+
+.wb-tabs button.on {
+    color: var(--wb-fg);
+    background: var(--wb-accent-soft);
+    box-shadow: inset 0 0 0 1px var(--wb-accent-line);
+}
+
+/* ── 折叠形态 ─────────────────────────────────────────────────────────────── */
+
+.wb-acc {
+    display: flex;
+    flex-direction: column;
+}
+
+.wb-acc-item {
+    border-bottom: 1px solid var(--wb-line);
+}
+
+.wb-acc-head {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 9px;
+    font-size: 12px;
+    text-align: left;
+    color: var(--wb-fg-2);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+}
+
+.wb-acc-head:hover {
+    background: var(--wb-tint);
+}
+
+.wb-acc-item.on > .wb-acc-head {
+    color: var(--wb-fg);
+    background: var(--wb-tint);
+}
+
+.wb-chev {
+    color: var(--wb-dim);
+    font-size: 10px;
+}
+
+.wb-acc-body {
+    padding: 8px 10px 10px;
+    font-size: 12px;
+    color: var(--wb-fg-2);
+    border-top: 1px dashed var(--wb-line);
+}
+
+/* ── 格子形态 ─────────────────────────────────────────────────────────────── */
+
+.wb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    grid-auto-rows: minmax(120px, auto);
+    gap: 6px;
+    padding: 6px;
+    align-content: start;
+}
+
+.wb-cell {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: #0f141a;
+    border: 1px solid var(--wb-line);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.wb-cell-title {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    font-size: 11px;
+    color: var(--wb-dim);
+    background: var(--wb-bg-2);
+    border-bottom: 1px solid var(--wb-line);
+}
+
+.wb-cell-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 6px 8px;
+}
+
+/* ── 视图里的通用排版 ─────────────────────────────────────────────────────── */
+
+.wb-fill,
+.wb-chat {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* TaskPanel 自带 w-[340px]：宽度归 area，别让两边都管 */
+.wb-fill > * {
+    width: 100% !important;
+    max-width: none !important;
+}
+
+.wb-info {
+    height: 100%;
+    overflow: auto;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--wb-fg-2);
+}
+
+.wb-info-title {
+    margin-bottom: 6px;
+    font-size: 11px;
+    color: var(--wb-dim);
+}
+
+.wb-info dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px 10px;
+    margin: 0;
+}
+
+.wb-info dt {
+    color: var(--wb-dim);
+}
+
+.wb-info dd {
+    margin: 0;
+    word-break: break-all;
+}
+
+.wb-info-row {
+    display: contents;
+}
+
+.wb-empty {
+    padding: 10px;
+    font-size: 12px;
+    color: var(--wb-dim);
+}
+
+.wb-demo {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--wb-fg-2);
+}
+
+.wb-demo-title {
+    margin-bottom: 5px;
+    font-size: 11px;
+    color: var(--wb-accent-fg);
+}
+
+.wb-demo ul {
+    margin: 0;
+    padding-left: 17px;
+}
+
+.wb-demo p {
+    margin: 0 0 6px;
+}
+
+.wb-dim {
+    color: var(--wb-dim);
+    font-size: 11.5px;
+}
+
+.wb-kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px 10px;
+    margin: 0 0 8px;
+    font-size: 11.5px;
+}
+
+.wb-kv dt {
+    color: var(--wb-dim);
+}
+
+.wb-kv dd {
+    margin: 0;
+}
+
+.wb-kv code,
+.wb-demo code {
+    font:
+        11.5px ui-monospace,
+        Menlo,
+        monospace;
+    color: var(--wb-accent-fg);
+}
+
+.wb-log {
+    margin: 0;
+    font:
+        11px/1.6 ui-monospace,
+        Menlo,
+        monospace;
+    color: var(--wb-dim);
+    white-space: pre-wrap;
+}
+
+/* ── 视图内的说明性排版 ──────────────────────────────────────────────────── */
+
+.wb-hint {
+    margin: 8px 0 0;
+    font-size: 11.5px;
+    line-height: 1.65;
+    color: var(--wb-dim);
+}
+
+.wb-rules {
+    margin: 0;
+    padding-left: 17px;
+    font-size: 12px;
+    line-height: 1.75;
+    color: var(--wb-fg-2);
+}
+
+.wb-rules b {
+    color: var(--wb-fg);
+}
+
+/* ── 标题栏 ────────────────────────────────────────────────
+ *
+ * 整页最顶、**整宽**（左端顶到屏幕左边，也压在导航上面）—— 因为它指揥的是
+ * 包括导航在内的所有区域。左组 = 应用名 + 导航 + 主区左侧的区域，
+ * 右组 = 主区右侧 / 下方的区域 + 全局工具 + 表现方式切换。
+ * 它**不在骨架里** —— 所以任何区域（含导航）收起都不影响它，这正是它能当唯一
+ * 恢复入口的原因。
+ *
+ * 高度 28px 是「够点、又不抢内容」的折中：和折叠条、最大化头同一个数，
+ * 页局控件的高度基准就这一个。
+ */
+
+.wb-titlebar {
+    flex: 0 0 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px;
+    border-bottom: 1px solid var(--wb-line);
+    background: var(--wb-bg-2);
+    font-size: 11px;
+    color: var(--wb-dim);
+    user-select: none;
+    overflow: hidden;
+}
+
+/* layout 图标组：贴两端。左边这组管导航与主区左侧 / 上方的区域，右边那组管右侧 / 下方 */
+.wb-tb-group {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.wb-tb-group-end {
+    margin-left: auto;
+}
+
+/* 中间是页信息，不是控制区：窄了先挤它，两侧按钮永远够点 */
+.wb-tb-mid {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+/* 这条件里唯一的文字：房间名。页名不画 —— 与它重复（一个页只有一个主区，看主区就知道是哪页） */
+.wb-tb-name {
+    overflow: hidden;
+    color: var(--wb-fg-2);
+    text-overflow: ellipsis;
+}
+
+/* 方形图标按钮：只有图标，文字在 tooltip（title / aria-label） */
+.wb-tb-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--wb-dim);
+    cursor: pointer;
+}
+
+.wb-tb-btn:hover {
+    color: var(--wb-fg);
+    background: var(--wb-tint);
+}
+
+/* 展开态 = 亮起；收起态 = 暗着（点它才出现）—— 与「按钮是开关」的直觉一致 */
+.wb-tb-btn.on {
+    color: var(--wb-fg);
+    background: var(--wb-tint-strong);
+    border-color: var(--wb-line-2);
+}
+
+/* 图标统一 14×14，颜色跟随所在按钮 */
+.wb-glyph {
+    display: block;
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+}
+
+/* ── 最大化 ──────────────────────────────────────────────────────────────────
+ *
+ * 最大化不是浮层：它仍住在骨架的位置上，只是兄弟都不渲染（所以没有 z-index 战场）。
+ * 顶部这条 28px 是**还原入口** —— 双击它，或点右边的按钮。厚道与标题栏 / 折叠条同一个数，
+ * 三种状态下「一条」的手感一致。
+ */
+.wb-area.wb-max {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+}
+
+.wb-max-bar {
+    flex: 0 0 28px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 6px;
+    border-bottom: 1px solid var(--wb-line);
+    background: var(--wb-bg-2);
+    color: var(--wb-dim);
+    font-size: 11.5px;
+    /* 条本身就是还原按钮（单击 / 双击都还原），不再另配一颗圆圈按钮 */
+    cursor: pointer;
+    user-select: none;
+}
+
+.wb-max-name {
+    color: var(--wb-fg-2);
+}
+
+/* 提示就写在条上：这个交互（双击还原）没有别的发现途径 */
+.wb-max-hint {
+    color: var(--wb-dim-2, var(--wb-dim));
+    opacity: 0.7;
+}
+
+.wb-tb-sep {
+    flex: 0 0 auto;
+    width: 1px;
+    height: 14px;
+    margin: 0 4px;
+    background: var(--wb-line);
+}

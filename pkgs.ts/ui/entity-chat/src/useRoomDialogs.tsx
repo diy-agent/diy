@@ -1,7 +1,7 @@
 // useRoomDialogs.tsx —— 「新建项目 / 新建任务 / 加成员 / 设置 / 删房间 / 换模型」这一组弹窗。
 //
-// 为什么抽成 hook：这些弹窗**挂在哪由宿主决定**。整页 App 挂在根上，工作台（`/dock.html`）
-// 挂在 `<PageWorkbench>` 外面 —— 两边的状态与动作都只来自 store（`rooms` / `selected` /
+// 为什么抽成 hook：这些弹窗**挂在哪由宿主决定**。整页 App 挂在根上，工作台挂在骨架
+// 外面 —— 两边的状态与动作都只来自 store（`rooms` / `selected` /
 // `actions`），所以一份实现、两个宿主各调一次：
 //
 //     const dialogs = useRoomDialogs();

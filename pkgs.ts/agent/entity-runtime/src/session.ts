@@ -14,7 +14,7 @@
 
 import { experimental_createSteering, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 
-import { runAgent, type RunOptions } from './agent';
+import { runAgent, DEFAULT_MAX_STEPS, type RunOptions } from './agent';
 import { endItems, endReasonOf } from './end-reason';
 import { friendlyError } from './errors';
 import {
@@ -100,6 +100,11 @@ export interface SessionSeed {
     collapsed?: number;
     /** 上一轮实测用量（压缩判据用） */
     usage?: TokenUsage;
+    /**
+     * 已读到的公共日志水位（房间最后一条「这条 session 真的看过」的 seq）。
+     * 缺省 / 0 = 老库，回放从日志开头补（宁可重复也不能少）。
+     */
+    logSeq?: number;
 }
 
 export interface SessionDeps {
@@ -125,6 +130,8 @@ export interface SessionDeps {
     commitDelta?: () => void;
     /** 本轮输出上限（缺省按 modelKey 推，见 providers.ts `maxOutputTokensOf`） */
     maxOutputTokens?: number;
+    /** 步数上限（缺省 `DEFAULT_MAX_STEPS`；到顶按 `max-steps` 收尾，不算失败） */
+    maxSteps?: number;
 }
 
 interface QueueItem {
@@ -163,11 +170,28 @@ export class BotSession {
     /** 当前使用的模型：房间改模型时要能推下来（构造时的 deps.modelKey 只是初值） */
     private modelKey: string;
 
+    /**
+     * 自己读到哪一条公共日志了（重启回放从它往后补）。
+     *
+     * 为什么存在 session 而不是由房间给：房间的 `log.lastSeq` 含「已经 append 到公共日志、
+     * 但这一侧还没读」的条目 —— 典型现场是「用户发言已落库、下一轮刚起跑时压了一次，
+     * 于是顺手落了快照」，快照水位跳过这轮正在处理的输入，重启回放跳过它 ⇒ 那句话在
+     * 库里、在界面上都在，只有模型看不见（2026-11-23 的真事故）。
+     *
+     * 推进点只有三个，全部对应「真的读过了」：
+     *   · steering 送达（SDK 已经把它插进在跑的那轮）
+     *   · drainPending（已 ingest 的公共条目并进 transcript）
+     *   · 本轮 userEntries 入账（本轮 prompt 已经直接带上了它）
+     * 还在队列里等着的消息**不算** —— 重启后要靠回放把它补回来。
+     */
+    private logSeq = 0;
+
     constructor(private readonly deps: SessionDeps) {
         const seed = deps.seed?.();
         this.transcript = seed?.entries ?? [];
         this.collapsed = seed?.collapsed ?? 0;
         this.lastUsage = seed?.usage;
+        this.logSeq = seed?.logSeq ?? 0;
         this.modelKey = deps.modelKey;
     }
 
@@ -234,20 +258,50 @@ export class BotSession {
     }
 
     /** 持久化快照（房间在每轮结束 / 压缩后落盘） */
-    snapshot(): { turn: number; collapsed: number; entries: TranscriptEntry[]; usage?: TokenUsage } {
+    snapshot(): {
+        turn: number;
+        collapsed: number;
+        entries: TranscriptEntry[];
+        logSeq: number;
+        usage?: TokenUsage;
+    } {
         return {
             turn: this.turnNow,
             collapsed: this.collapsed,
             entries: [...this.transcript],
+            logSeq: this.logSeq,
             ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
         };
+    }
+
+    /** 把水位推到至少 seq（单调；0 / 缺省什么都不做） */
+    private bumpLogSeq(seq: number | undefined): void {
+        if (seq === undefined || seq <= this.logSeq) return;
+        this.logSeq = seq;
+    }
+
+    /**
+     * 这条公共条目是不是已经在自己上下文里了。
+     *
+     * **按序号精确查 transcript / pending**，不能只看水位：老库里那批水位是旧语义
+     * （房间 lastSeq）写的，它可能已经越过一条其实没读过的消息 —— 只看水位就和旧写法一样丢。
+     */
+    private hasInContext(seq: number | undefined): boolean {
+        if (seq === undefined) return false;
+        if (this.pending.some((entry) => entry.seq === seq)) return true;
+        return this.transcript.some((entry) => entry.seq === seq);
     }
 
     /** 房间公共条目 → 自己这一侧的一条消息；不触发任何运行 */
     ingest(entry: RoomEntry): void {
         const message = toMessage(entry, this.deps.bot.id);
         if (message === null) return;
-        this.pending.push({ message, origin: 'public', ...(entry.turn === undefined ? {} : { turn: entry.turn }) });
+        this.pending.push({
+            message,
+            origin: 'public',
+            seq: entry.seq,
+            ...(entry.turn === undefined ? {} : { turn: entry.turn }),
+        });
     }
 
     /** 手动压一次（只影响自己，不触发运行） */
@@ -264,12 +318,16 @@ export class BotSession {
         turn?: Turn;
         entry?: RoomEntry;
         /**
-         * 这条消息已经在自己的上下文里了（崩溃恢复：公共日志回放时已经带进来）。
-         * 置 true 时不再把它作为本轮 prompt 的 user 消息追加一次。
+         * 这条消息已经在自己的上下文里了：置 true 时不再把它作为本轮 prompt 的 user 消息追加一次。
+         *
+         * 不给就**自己看**（序号在 pending 里 / 已进 transcript）—— 崩溃恢复那条路原先由
+         * 房间无条件传 true（“公共日志回放时已经读到了”），可水位一旦越过它回放根本不会带它，
+         * 这一句就把它从 prompt 里抹掉了：消息凭空消失（见 hasInContext）。
          */
         alreadyInContext?: boolean;
     }): Promise<void> {
         const mode = input.mode ?? 'next-step';
+        const alreadyInContext = input.alreadyInContext ?? this.hasInContext(input.entry?.seq);
         const { promise, resolve } = withResolve();
 
         // 正在跑且是 next-step：直接交给 SDK，在下一个 step 边界插入
@@ -287,7 +345,7 @@ export class BotSession {
                         mode: 'next-turn',
                         turn: input.turn,
                         entry: input.entry,
-                        alreadyInContext: input.alreadyInContext,
+                        alreadyInContext,
                         resolve,
                     });
                     // 这条路径只在 runTurn 退出之后才可能走到，pump 已经停了：
@@ -304,6 +362,9 @@ export class BotSession {
                 .steer(input.text, { id: input.messageId })
                 .then((outcome) => {
                     if (outcome.type === 'delivered') {
+                        // 注意**不推水位**：它插进的是 SDK 在跑的那轮上下文，没进 transcript、
+                        // 也不在任何快照里 —— 此刻推水位，重启后回放就不会补它，模型下一次
+                        // 只看到自己的回复而看不到这条插话。宁可重启后重复一回，也不能少。
                         this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivered' });
                         return;
                     }
@@ -320,7 +381,7 @@ export class BotSession {
             mode,
             turn: input.turn,
             entry: input.entry,
-            alreadyInContext: input.alreadyInContext,
+            alreadyInContext,
             resolve,
         });
         void this.pump();
@@ -393,6 +454,7 @@ export class BotSession {
                 message: { role: 'user', content: item.text },
                 origin: 'public',
                 ...(item.turn === undefined ? {} : { turn: item.turn.turn }),
+                ...(item.entry === undefined ? {} : { seq: item.entry.seq }),
             }));
         const messages: ModelMessage[] = [...this.transcript, ...userEntries].map((entry) => entry.message);
 
@@ -417,7 +479,10 @@ export class BotSession {
         let toolCalls = 0;
         /** 运行时实际发出去的上限（`run.finished` 带回；没带回就用开跑前算的） */
         let reportedBudget: number | undefined;
+        /** 运行时实际生效的步数上限（同上；对账用） */
+        let reportedStepCap: number | undefined;
         const maxOutputTokens = maxOutputTokensOf(this.modelKey, this.deps.maxOutputTokens);
+        const maxSteps = this.deps.maxSteps ?? DEFAULT_MAX_STEPS;
         try {
             const run = this.deps.run ?? runAgent;
             for await (const event of run({
@@ -425,9 +490,13 @@ export class BotSession {
                 modelKey: this.modelKey,
                 messages,
                 turnId: turn.turnId,
+                // provider 的会话亲和键 = **bot**（不是轮次）：同一实体跨轮复用同一会话，
+                // 网关侧的提示词缓存才留得住。opencode 那些网关缺这个 id 直接 400。
+                sessionId: this.deps.bot.id,
                 signal: abort.signal,
                 steering,
                 maxOutputTokens,
+                maxSteps,
                 ...(this.deps.tools === undefined ? {} : { tools: this.deps.tools }),
                 ...(this.deps.toolsHint === undefined ? {} : { toolsHint: this.deps.toolsHint }),
                 ...(this.deps.systemContext === undefined ? {} : { systemContext: this.deps.systemContext }),
@@ -452,6 +521,7 @@ export class BotSession {
                     // session 在开跑前算的是"打算发多少"，两者不一致时（换模型 / 网关改写）
                     // 对账要信实际值，否则页脚会报一个没发生过的数字。
                     if (typeof event.maxOutputTokens === 'number') reportedBudget = event.maxOutputTokens;
+                    if (typeof event.maxSteps === 'number') reportedStepCap = event.maxSteps;
                 }
                 if (event.type === 'tool.started') toolCalls += 1;
                 if (event.type === 'text.delta') text += event.delta;
@@ -469,6 +539,10 @@ export class BotSession {
         } finally {
             // 本轮真正发生过的内容（含自己的 tool / reasoning）原样入账
             this.transcript.push(...userEntries, ...produced);
+            // 到这一步本轮输入才**真的进了 transcript**（= 会被写进快照）。水位只能跟到这里：
+            // 在起跑前就推的话，“开了跑没过久崩”这种情形下快照里没它、水位又越过了它 ⇒ 回放不再补，
+            // 那句话就只剩在库里和界面上。
+            for (const item of items) this.bumpLogSeq(item.entry?.seq);
             // 跑的过程中到达的公共条目：排在本轮产出之后，下一轮才被读到
             this.drainPending();
 
@@ -486,6 +560,7 @@ export class BotSession {
                 textLength: text.length,
                 toolCalls,
                 maxOutputTokens: reportedBudget ?? maxOutputTokens,
+                maxSteps: reportedStepCap ?? maxSteps,
             });
 
             // 「怎么停的」必须说出来，否则数据里和正常收尾一模一样：
@@ -586,6 +661,8 @@ export class BotSession {
 
     private drainPending(): void {
         if (this.pending.length === 0) return;
+        // 并进来就算读过了：水位跟到这里最深的一条，重启回放不必再补它们
+        for (const entry of this.pending) this.bumpLogSeq(entry.seq);
         this.transcript.push(...this.pending);
         this.pending = [];
     }

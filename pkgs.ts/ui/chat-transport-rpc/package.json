@@ -17,6 +17,7 @@
     },
     "dependencies": {
         "@diy-agent/chat-core": "*",
+        "@diy-agent/protocol": "*",
         "@diy-agent/rpc": "*"
     }
 }
