@@ -3,10 +3,17 @@ import * as React from 'react';
 import { DIR_SUGGESTIONS, roomTitle, roomTypeLabel, type Bot, type Room } from '../model';
 import { useStore } from '../store';
 import { ModelPicker } from './ModelPicker';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@diy-agent/ui-shadcn';
 
 /**
- * 弹窗外壳：点遮罩 / Esc 关闭（Esc 挂在 document 上 —— 弹窗里的 input 不一定拿得到焦点）。
- * `size` 默认 md；`wide` 留给需要多条表格列的弹窗（28rem 塞不下四列）。
+ * 弹窗外壳 = shadcn `Dialog` 的薄适配层（2026-11-23 换掉自建实现）。
+ *
+ * 自建版只有「遮罩点击 + document 上的 Esc」，缺 focus trap / `role=dialog` /
+ * `aria-modal` / 初始焦点 / 关闭后焦点还原 / 滚动锁；Esc 挂 document 还会在
+ * 嵌套弹窗时一次把外层一起关掉。这些现在全由 Base UI 的 Dialog 原语负责。
+ *
+ * 保留 `Modal` 这个名字与签名，让 5 个业务弹窗（新建项目 / 新建任务 / 删除确认 /
+ * 加成员 / 模型与设置）零改动。`size` 默认 md；`wide` 留给需要多条表格列的弹窗。
  */
 export function Modal({
     title,
@@ -19,24 +26,20 @@ export function Modal({
     onClose: () => void;
     size?: 'md' | 'wide';
 }) {
-    React.useEffect(() => {
-        const onKey = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') onClose();
-        };
-        document.addEventListener('keydown', onKey);
-        return () => document.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-            <div
-                className={`w-full rounded-xl border bg-background p-4 ${size === 'wide' ? 'max-w-3xl' : 'max-w-md'}`}
-                onClick={(event) => event.stopPropagation()}
-            >
-                <h2 className="mb-3 text-sm font-semibold">{title}</h2>
+        <Dialog
+            open
+            onOpenChange={(next) => {
+                if (!next) onClose();
+            }}
+        >
+            <DialogContent className={size === 'wide' ? 'sm:max-w-3xl' : 'sm:max-w-md'}>
+                <DialogHeader>
+                    <DialogTitle>{title}</DialogTitle>
+                </DialogHeader>
                 {children}
-            </div>
-        </div>
+            </DialogContent>
+        </Dialog>
     );
 }
 

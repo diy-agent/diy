@@ -22,7 +22,9 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { AreaGlyph, FarGlyph } from './glyphs';
+import { PanelBottom, PanelLeft, PanelRight, PanelTop } from 'lucide-react';
+
+import { FarGlyph } from './glyphs';
 import { loadChrome, saveChrome, type Chrome, type Side } from './model';
 
 /** 一份**区域贡献**：状态栏上的一个开关，控制某一页的某个区域收起 / 展开 */
@@ -139,13 +141,17 @@ function TbButton({ item, wide = false }: { item: ButtonContribution; wide?: boo
     );
 }
 
+/** 四个方位 → lucide 的 panel 系列（外框 + 该侧实心条，与原来的自绘图标同义） */
+const AREA_GLYPH = { left: PanelLeft, right: PanelRight, top: PanelTop, bottom: PanelBottom } as const;
+
 function TbArea({ item }: { item: AreaContribution }) {
+    const Glyph = AREA_GLYPH[item.side];
     return (
         <TbButton
             item={{
                 id: item.id,
                 label: `${item.open ? '收起' : '展开'}「${item.title}」`,
-                glyph: <AreaGlyph side={item.side} />,
+                glyph: <Glyph className="wb-glyph" />,
                 on: item.open,
                 onClick: item.onToggle,
             }}

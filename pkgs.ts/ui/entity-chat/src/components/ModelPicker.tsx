@@ -2,6 +2,12 @@
 //
 // 目录从服务端来（`useProviders()`，真源 model.yaml），本文件**不认识任何具体 provider**：
 // 以前这里 import 一张写死的 `PROVIDERS` 表，于是「界面上能选、服务端发不出去」成了常态。
+//
+// 控件用 shadcn 的 `Select`（Base UI 原语）而不是原生 <select>（2026-11-23）：
+// 原生 select 的下拉由操作系统绘制，方向键/Home/End/字母跳转全看平台实现，
+// 且在 overflow 容器里会被裁剪。换过来之后键盘行为、aria 与弹层定位都归组件层管。
+
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@diy-agent/ui-shadcn';
 
 import { findProvider, formatModelKey, parseModelKey } from '../models';
 import { useProviders } from '../store';
@@ -41,57 +47,65 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (key
             <div className="grid grid-cols-3 gap-2">
                 <label className="block text-xs">
                     <span className="mb-1 block text-muted-foreground">provider</span>
-                    <select
+                    <Select
                         value={provider.id}
-                        onChange={(event) => {
-                            const next = findProvider(providers, event.target.value);
-                            if (next !== undefined) pick({ provider: next });
+                        onValueChange={(next) => {
+                            const found = findProvider(providers, String(next));
+                            if (found !== undefined) pick({ provider: found });
                         }}
-                        className="w-full rounded-lg border bg-card px-2 py-1.5 text-sm outline-none"
                     >
-                        {providers.map((item) => (
-                            <option key={item.id} value={item.id}>
-                                {item.name}
-                            </option>
-                        ))}
-                    </select>
+                        <SelectTrigger size="sm" className="w-full">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {providers.map((item) => (
+                                <SelectItem key={item.id} value={item.id}>
+                                    {item.name}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </label>
                 <label className="block text-xs">
                     <span className="mb-1 block text-muted-foreground">account</span>
-                    <select
-                        value={account?.name ?? ''}
-                        onChange={(event) => pick({ account: event.target.value })}
-                        className="w-full rounded-lg border bg-card px-2 py-1.5 text-sm outline-none"
-                    >
-                        {provider.accounts.map((item) => (
-                            <option key={item.name} value={item.name}>
-                                {item.name}
-                                {item.configured ? '' : '（未填 key）'}
-                            </option>
-                        ))}
-                    </select>
+                    <Select value={account?.name ?? ''} onValueChange={(next) => pick({ account: String(next) })}>
+                        <SelectTrigger size="sm" className="w-full">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {provider.accounts.map((item) => (
+                                <SelectItem key={item.name} value={item.name}>
+                                    {item.configured ? item.name : `${item.name}（未填 key）`}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </label>
                 <label className="block text-xs">
                     <span className="mb-1 block text-muted-foreground">model</span>
-                    <select
-                        value={model?.id ?? ''}
-                        onChange={(event) => pick({ model: event.target.value })}
-                        className="w-full rounded-lg border bg-card px-2 py-1.5 text-sm outline-none"
-                    >
-                        {provider.models.map((item) => (
-                            <option key={item.id} value={item.id}>
-                                {item.name}
-                            </option>
-                        ))}
-                    </select>
+                    <Select value={model?.id ?? ''} onValueChange={(next) => pick({ model: String(next) })}>
+                        <SelectTrigger size="sm" className="w-full">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {provider.models.map((item) => (
+                                <SelectItem key={item.id} value={item.id}>
+                                    {item.name}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </label>
             </div>
             <p className="text-[10px] text-muted-foreground">
                 {model === undefined
                     ? '目录里没有模型'
-                    : [model.contextWindow === undefined ? '窗口未知' : `${Math.round(model.contextWindow / 1024)}k 上下文`,
-                       model.cost === undefined ? null : `$${model.cost.input}/$${model.cost.output} 每百万 token`,
-                       `${provider.api}`,
+                    : [
+                          model.contextWindow === undefined
+                              ? '窗口未知'
+                              : `${Math.round(model.contextWindow / 1024)}k 上下文`,
+                          model.cost === undefined ? null : `$${model.cost.input}/$${model.cost.output} 每百万 token`,
+                          `${provider.api}`,
                       ]
                           .filter((part): part is string => part !== null)
                           .join(' · ')}
