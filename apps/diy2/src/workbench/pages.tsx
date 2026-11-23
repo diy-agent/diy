@@ -1,4 +1,4 @@
-// pages.tsx —— 两个页模板 + 全部视图（**宿主侧装配**）。
+// pages.tsx —— 三个页模板 + 全部视图（**宿主侧装配**）。
 //
 // 这里只有**内容区**：导航不进模板 —— 它是全局层（跨页类型共享宽度与收起），住在
 // App.tsx 的壳里。页模板回答的是「这一页除了导航还有什么、各自在哪、多大」。
@@ -6,9 +6,14 @@
 // 区域一律用**概念 id** 声明（`conversation` / `detail` / `assets` / `diag`），`slot` 只说位置。
 // 所以「把详情从左侧挪到右侧」= 改一个 `slot`，插在 `detail` 里的 view 一行都不用动。
 //
-// 两页的差别只有一处：任务页多一个「资产」区（这一轮聊出来的东西）。
-// 这足够说明「骨架按页类型定」—— 同一个区域 id 在别的页里可能根本不存在（assets 在
-// 项目页没有），所以折叠入口只能长在区域自己身上：不存在的区域没有条可收，也不该有开关。
+// 页模板的差别只有一处：任务页多一个「资产」区（这一轮聊出来的东西）。这足够说明
+// 「骨架按页类型定」—— 同一个区域 id 在别的页里可能根本不存在（assets 在项目页没有），
+// 所以折叠入口只能长在区域自己身上：不存在的区域没有条可收，也不该有开关。
+//
+// 第三个模板 `generic` 兜的不是「以后再说」，而是一个**安全边界**：`Room.type` 是开放
+// 字符串（`stock` 之类都可能出现），没有它时未知类型会掉进任务页，详情区拿 `TaskPanel`
+// 渲染一个非任务房间 —— 那一按保存就写 `title`、清 `desc`，把别的容器的数据改脏。
+// 未知类型只配一个只读信息卡。
 
 import { EntityChatApp, TaskPanel, useSelectedRoom, type Room } from '@diy-agent/entity-chat';
 
@@ -53,9 +58,33 @@ export const projectPage = definePage({
     ],
 });
 
-/** 房间类型 → 页模板。**唯一一处**这个判断，别在别处再抄一份 */
+/**
+ * 未知类型的兜底页：只给对话 + 只读信息卡（没有可写的面板）。
+ *
+ * 为什么值得单独一个模板，而不是「任务页 + 多判一次 type」：判定只有一处（下面
+ * `pageFor`），详情区照旧只认 `page.type` —— 否则「哪一页该给可写面板」这件事就有两份
+ * 判断（pageFor 一份、DetailArea 一份），迟早对不上。
+ */
+export const genericPage = definePage({
+    type: 'generic',
+    title: '房间',
+    center: conversation(),
+    sides: [
+        area('detail', { slot: 'left', title: '房间信息', size: 320, min: 240 }),
+        area('diag', { slot: 'bottom', title: '诊断', size: 200, min: 120, initial: 'collapsed' }),
+    ],
+});
+
+/**
+ * 房间类型 → 页模板。**唯一一处**这个判断，别在别处再抄一份。
+ *
+ * `Room.type` 是开放字符串（见 agent/protocol 的 Room），所以必须有兜底：只认
+ * `task` / `project`，其余一律 generic。
+ */
 export function pageFor(type: string): PageDef {
-    return type === 'project' ? projectPage : taskPage;
+    if (type === 'task') return taskPage;
+    if (type === 'project') return projectPage;
+    return genericPage;
 }
 
 // ── 视图 ────────────────────────────────────────────────────────────────────────
@@ -84,8 +113,8 @@ function TaskDetail({ room }: { room: Room }) {
     );
 }
 
-/** 项目信息：scope / 数据长什么样（也是「谁在读同一个 store」的验证） */
-function ProjectInfo({ room }: { room: Room }) {
+/** 房间信息（项目页 / 未知类型页共用）：id / type / data 长什么样 —— 只读 */
+function InfoCard({ room }: { room: Room }) {
     const data = Object.entries(room.data ?? {});
     return (
         <div className="wb-info">
@@ -113,16 +142,17 @@ function ProjectInfo({ room }: { room: Room }) {
 }
 
 /**
- * 详情区：任务页给真任务面板，其它页给信息卡。
+ * 详情区：任务页给真任务面板，其它页给只读信息卡。
  *
  * 判据用 `page.type`（页模板）而不是 `room.type` —— 页模板是 `pageFor` 算出来的，
- * 同一个房间将来可能被别的东西覆盖成另一页；两处各判一次迟早对不上。
+ * 同一个房间将来可能被别的东西覆盖成另一页；两处各判一次迟早对不上。未知类型
+ * 落到 generic 页，自然拿到信息卡，不会拿到一个会写数据的任务面板。
  */
 function DetailArea() {
     const api = useWb();
     const room = useSelectedRoom();
     if (!room) return <Empty>没有选中房间</Empty>;
-    return api.page.type === 'task' ? <TaskDetail room={room} /> : <ProjectInfo room={room} />;
+    return api.page.type === 'task' ? <TaskDetail room={room} /> : <InfoCard room={room} />;
 }
 
 /**
@@ -223,13 +253,21 @@ export const wbViews = [
     defineView({
         id: 'detail',
         title: '详情',
-        placement: { task: { area: 'detail' }, project: { area: 'detail' } },
+        placement: {
+            task: { area: 'detail' },
+            project: { area: 'detail' },
+            generic: { area: 'detail' },
+        },
         render: () => <DetailArea />,
     }),
     defineView({
         id: 'chat',
         title: '对话',
-        placement: { task: { area: 'conversation' }, project: { area: 'conversation' } },
+        placement: {
+            task: { area: 'conversation' },
+            project: { area: 'conversation' },
+            generic: { area: 'conversation' },
+        },
         render: () => <ChatBody />,
     }),
     defineView({
@@ -241,13 +279,21 @@ export const wbViews = [
     defineView({
         id: 'diag',
         title: '诊断',
-        placement: { task: { area: 'diag' }, project: { area: 'diag' } },
+        placement: {
+            task: { area: 'diag' },
+            project: { area: 'diag' },
+            generic: { area: 'diag' },
+        },
         render: () => <DiagArea />,
     }),
     defineView({
         id: 'guide',
         title: '规则',
-        placement: { task: { area: 'diag' }, project: { area: 'diag' } },
+        placement: {
+            task: { area: 'diag' },
+            project: { area: 'diag' },
+            generic: { area: 'diag' },
+        },
         render: () => <GuideArea />,
     }),
 ];

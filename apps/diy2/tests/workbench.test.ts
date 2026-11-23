@@ -20,6 +20,7 @@ import {
     viewsIn,
     type PageState,
 } from '../src/workbench/model';
+import { genericPage, pageFor, wbViews } from '../src/workbench/pages';
 
 /** 最小可用的假 Storage：能种数据、也能模拟「隐私模式 / 配额满」 */
 function fakeStorage(seed: Record<string, string> = {}, throwOn?: 'get' | 'set'): Storage {
@@ -207,3 +208,31 @@ describe('查表：归属 / 形态 / 选中 / 尺寸的兜底', () => {
 function baseState(): PageState {
     return { collapsed: {}, modes: {}, active: {}, sizes: {} };
 }
+
+// 真模板的单测（import 真实装配，不是另造一份）—— 兜底错了的后果是「启一个非任务房间
+// 会拿到一个可写面板」，静默改脏别的容器的 data，所以必须在单测里钉住。
+describe('pageFor：未知类型不许掉进任务页', () => {
+    it('task / project 各自认领', () => {
+        expect(pageFor('task').type).toBe('task');
+        expect(pageFor('project').type).toBe('project');
+    });
+
+    it('其它类型（Room.type 是开放字符串）→ generic', () => {
+        for (const type of ['stock', 'doc', '', 'TASK', 'taskx', 'task ']) {
+            expect(pageFor(type).type).toBe('generic');
+        }
+    });
+
+    it('generic 页只给对话 + 信息卡 + 诊断，没有资产区', () => {
+        expect(genericPage.areas.map((def) => def.id)).toEqual(['conversation', 'detail', 'diag']);
+        expect(genericPage.center.id).toBe('conversation');
+    });
+
+    it('每个模板的每个区域都有 view 落进去（否则那块永远是空白，且单 view 区域不给 ⋯）', () => {
+        for (const def of [pageFor('task'), pageFor('project'), genericPage]) {
+            for (const side of def.areas) {
+                expect(viewsIn(wbViews, def.type, side.id).length, `${def.type} / ${side.id}`).toBeGreaterThan(0);
+            }
+        }
+    });
+});
