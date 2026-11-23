@@ -196,26 +196,39 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
 // （`--wb-bg-2`）—— 于是同一块区域在两种形态下看起来是一回事：展开是带头的方块，
 // 收起是同一块被压成一条。行为也统一在这一条 bar 上：
 //
-//   · 单击 = 折叠 / 展开（center 不参与：它不可收起）
-//   · 双击 = 最大化 / 还原
+//   · 单击 = 最小 / 普通互切（center 不参与：它不可收起；最大化期间单击一律无效）
+//   · 双击 = 最大化 / 还原（**只有**这一个动作）
 //
 // 右端的 `⋯` 菜单装「这块内容怎么摊开」（tab / 折叠 / 格子）。不常驻三个图标：
 // 每个区域摆一排太吵，而它只对「有多个 view」有意义。入口仍在**每个区域自己的**头上，
 // 因为每个区域都有 bar。
 
 /**
- * 「单击 = 折叠/展开、双击 = 最大化」的手势。
+ * 标题栏手势：**双击只管最大化 / 还原，单击只管最小 / 普通互切**。
  *
- * 展开的头部与折叠后的条**共用同一份** —— 行为一致是这套模型的要求：
- * 同一个区域在两种形态下，点它的头做的是同一件事。
- * 区分靠 `detail`：单击要延迟 `SINGLE_CLICK_DELAY` 才执行，否则双击时第一下已经把块
- * 收掉了，第二下根本落不到它身上。这点延迟是这个交互不可避免的代价。
+ * 展开的头、折叠后的条、最大化时的那条 bar **共用同一份** —— 三处的点在语义上是同一件事，
+ * 各写一份迟早分叉（2026-11-23 的 bug 就是这么来的：最大化条上单击也还原，跟「单击只切
+ * 最小 / 普通」打架）。
+ *
+ * **不用 `event.detail`、也不监听 `dblclick`**，自己计时：两次 `click` 落在 `DOUBLE_WINDOW`
+ * 内就是双击。理由是 `detail` 由浏览器按系统双击间隔（约 500ms）算，跟这里的窗口不可能对齐 ——
+ * 用它会多出一片灰区：第二击带 `detail === 2` 却晚于窗口，于是第一击已经「收起」、
+ * 第二击又去「最大化」。自己计时就没有灰区：> 窗口的两击就是两次单击。
+ *
+ *   第一击：挂一个 `DOUBLE_WINDOW` 的定时器，窗口内没有第二击才当作单击执行。
+ *   窗口内的第二击：取消挂起的单击，只做最大化 / 还原。
+ *   窗口外的第二击：就是新的一次单击（上一击已经执行完了）。
+ *
+ * 为什么单击非等不可：单击「收起」会让这个元素**消失**（变条或整块不占位），第二击就落到
+ * 别的元素上去了。这点延迟是「单击 / 双击同一个目标」的固有代价。
  */
-const SINGLE_CLICK_DELAY = 180;
+const DOUBLE_WINDOW = 250;
 
 function useBarGesture(def: AreaDef, foldable: boolean) {
     const api = useWb();
     const pending = useRef<number | null>(null);
+    // 上一击的时间戳（`-Infinity` = 还没有过，避免页面刚加载时 `now - 0 < 窗口` 误判成双击）
+    const lastHit = useRef(Number.NEGATIVE_INFINITY);
 
     // 卸载（区域被展开、切页）时把挂着的定时器收掉，不然它会在之后对着一个已消失的块 toggle
     useEffect(
@@ -230,20 +243,28 @@ function useBarGesture(def: AreaDef, foldable: boolean) {
         const inside = (event.target as Element).closest('button');
         if (inside !== null && inside !== event.currentTarget) return;
 
-        if (pending.current !== null) {
-            window.clearTimeout(pending.current);
-            pending.current = null;
-        }
-        if (event.detail > 1) {
-            api.setMaximized(def.id);
+        const now = performance.now();
+        const isDouble = now - lastHit.current < DOUBLE_WINDOW;
+        lastHit.current = now;
+
+        if (isDouble) {
+            // 双击只做一件事：最大化 / 还原。挂起的单击必须撤掉，否则它会在最大化的新
+            // 布局上再 toggle 一次（就变成「最大化顺手折叠了邻块」）
+            if (pending.current !== null) {
+                window.clearTimeout(pending.current);
+                pending.current = null;
+            }
+            lastHit.current = Number.NEGATIVE_INFINITY; // 三连击的第三下重新当第一击
+            api.setMaximized(api.maximized === def.id ? null : def.id);
             return;
         }
-        // center 不可收起：单击不做任何事（双击最大化仍然有效）
-        if (!foldable) return;
+
+        // 单击：最大化期间无效；center 不可收起 —— 两种都直接不做，连定时器都不必挂
+        if (api.maximized !== null || !foldable) return;
         pending.current = window.setTimeout(() => {
             pending.current = null;
             api.toggleArea(def.id);
-        }, SINGLE_CLICK_DELAY);
+        }, DOUBLE_WINDOW);
     };
 }
 
@@ -598,51 +619,23 @@ function AreaContent({ areaId, list }: { areaId: string; list: ViewDef[] }) {
  * 最大化：这一块吃掉整个**骨架**（含 center，用户明确要看这一块），其余全让位。
  *
  * 它不是浮层：没有 overlay、没有 z-index 战场 —— 仍然住在骨架的位置上，只是兄弟都不渲染。
- * 顶部那条就是**还原入口**：单击 / 双击都还原（同一个动作，不歧义），双击回到刚才的大小。
- * 所以不再画一颗单独的圆圈还原按钮 —— 条本身就是那颗按钮，行为与区域头一致。
+ * 顶部那条与区域头是**同一套手势**（`useBarGesture`）：双击还原，单击无效。
+ * 不画单独的圆圈还原按钮 —— 条本身就是那颗按钮。
  */
 function MaximizedArea({ def, views }: { def: AreaDef; views: readonly ViewDef[] }) {
     const api = useWb();
     const list = useMemo(() => viewsIn(views, api.page.type, def.id), [views, api.page.type, def.id]);
-
-    // 还原也要走单 / 双击判别（与区域头同一套节奏）：单击就立即还原的话，双击的**第二下**
-    // 会落到还原后的新布局上 —— 这一块已经不在了，于是变成「点到了邻块的头」，
-    // 实测会把那一块顺手折叠掉。所以单击等过双击窗口再执行。
-    const pending = useRef<number | null>(null);
-    useEffect(
-        () => () => {
-            if (pending.current !== null) window.clearTimeout(pending.current);
-        },
-        [],
-    );
+    // 已最大化：单击无效、双击还原（`foldable` 对这条 bar 无意义，传 false = 不参与收起）
+    const gesture = useBarGesture(def, false);
 
     if (list.length === 0) return null;
 
-    const restore = (event: ReactMouseEvent<HTMLDivElement>) => {
-        // 点 tab / 菜单按钮是它们自己的事，不是还原
-        const target = event.target as Element;
-        if (target !== event.currentTarget && target.closest('button') !== null) return;
-
-        if (pending.current !== null) {
-            window.clearTimeout(pending.current);
-            pending.current = null;
-        }
-        if (event.detail > 1) {
-            api.setMaximized(null);
-            return;
-        }
-        pending.current = window.setTimeout(() => {
-            pending.current = null;
-            api.setMaximized(null);
-        }, SINGLE_CLICK_DELAY);
-    };
-
     return (
         <div className="wb-area wb-max" data-area={def.id} data-maximized="true">
-            <div className="wb-max-bar" title="单击 / 双击还原到原来的大小" onClick={restore}>
+            <div className="wb-max-bar" title="双击还原到原来的大小" onClick={gesture}>
                 <span className="wb-max-name">{def.title}</span>
                 {list.length > 1 ? <AreaTabs areaId={def.id} list={list} /> : null}
-                <span className="wb-max-hint">最大化 · 单击还原</span>
+                <span className="wb-max-hint">最大化 · 双击还原</span>
             </div>
             <AreaContent areaId={def.id} list={list} />
         </div>
