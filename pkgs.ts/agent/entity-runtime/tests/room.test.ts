@@ -91,6 +91,17 @@ describe('RoomActor', () => {
         expect(h.room.member(BOT_B.id)?.persona).toBe('产品视角');
     });
 
+    it("空的 modelKey（''）不算覆盖 —— 继续往下继承，不拿空串去发请求", () => {
+        // `??` 只跳过 null/undefined：一行 `modelKey: ''` 会把后面的真实值挡掉。
+        // 而空串是**会落库**的（「这个成员没选过模型」），所以必须按「没填」处理。
+        const h = makeRoom({
+            modelKey: 'm-room',
+            members: [{ botId: BOT_A.id, primary: true, modelKey: '' }],
+        });
+
+        expect(h.room.member(BOT_A.id)?.modelKey).toBe('m-room');
+    });
+
     it('cancel：在跑的会话被中止，投递仍算已送达（失败体现在 bot 的回复上）', async () => {
         const h = makeRoom({ hang: true });
         const running = h.room.say({ text: '会被取消', author: HUMAN });

@@ -1,4 +1,4 @@
-import { Bot as BotIcon, Folder, ListTodo, PanelRight, Plus } from 'lucide-react';
+import { Bot as BotIcon, Cpu, Folder, ListTodo, PanelRight, Plus } from 'lucide-react';
 import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
@@ -9,16 +9,43 @@ import { ComposerBar } from './components/ComposerBar';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, primaryBotOf, roomTitle, roomTypeLabel, type Room } from './model';
+import { modelLabel } from './models';
 import {
     actions,
     useBots,
     useDefaultModelKey,
     useError,
     useLoaded,
+    useProviders,
     useRooms,
     useSelectedRoom,
 } from './store';
 import { useRoomDialogs } from './useRoomDialogs';
+
+/**
+ * 房间头部那个模型胶囊。
+ *
+ * 房间**没选过**模型时（空串）跟着目录的 `defaultModel` 走：显示成「默认 · <模型名>」。
+ * 这比显示空白或占位 key 强 —— 一眼看得出「它会用哪个」且「我没显式选过」。
+ */
+function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
+    const providers = useProviders();
+    const defaultKey = useDefaultModelKey();
+    const inherited = value.trim() === '';
+    const shown = inherited ? (defaultKey ?? '') : value;
+    const label = modelLabel(providers, shown);
+    const short = label.split(' · ')[0];
+    return (
+        <button
+            onClick={onClick}
+            title={inherited ? `跟随默认：${label} · 点击切换` : `${label} · 点击切换`}
+            className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted"
+        >
+            <Cpu className="size-3" />
+            {inherited && shown.trim() !== '' ? `默认 · ${short}` : short}
+        </button>
+    );
+}
 
 function roomDir(room: Room): string | undefined {
     const dir = room.data['dir'];

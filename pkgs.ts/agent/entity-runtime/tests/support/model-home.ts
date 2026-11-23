@@ -81,10 +81,12 @@ export interface ModelHome {
  *
  * 用 `DIY_MODEL_CONFIG` 而不是 `DIY_HOME`：前者是 diy2 实际用的那一档（`server/config.ts` 装配），
  * 后者会连带影响别的读 `DIY_HOME` 的东西。
+ *
+ * `modelYaml` 可以整份换掉（测「目录里没有 defaultModel」这类边界）。
  */
-export function useModelHome(): ModelHome {
+export function useModelHome(options: { modelYaml?: string } = {}): ModelHome {
     const home = mkdtempSync(join(tmpdir(), 'diy2-model-'));
-    writeFileSync(join(home, 'model.yaml'), MODEL_YAML);
+    writeFileSync(join(home, 'model.yaml'), options.modelYaml ?? MODEL_YAML);
     writeFileSync(join(home, 'providers.custom.yaml'), PROVIDERS_CUSTOM_YAML);
     const configPath = join(home, 'model.yaml');
     const previous = process.env['DIY_MODEL_CONFIG'];

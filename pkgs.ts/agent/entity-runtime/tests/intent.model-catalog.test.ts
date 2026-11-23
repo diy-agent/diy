@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { modelConfigPath, modelHome, modelOf } from '../src/providers';
+import { defaultModelKeyOf, modelConfigPath, modelHome, modelOf } from '../src/providers';
 import { useModelHome, type ModelHome } from './support/model-home';
 
 let modelHomeDir: ModelHome;
@@ -43,6 +43,22 @@ describe('模型接入只看目录', () => {
 
     it('provider 有、账号没有 ⇒ 报错并带数据根（不静默退回第一个账号）', () => {
         expect(() => modelOf('nobody@acme/fast')).toThrow(/取不到 acme\/nobody 的 key/);
+    });
+
+    it('空 key = 用目录的 defaultModel（房间没选过模型也发得出去）', () => {
+        // 行里只存「人选过的」，没选过就是空串 —— 缺省在发送时现算。这条锁的是
+        // 「配置后补能自愈」：先建房间（当时没配置）→ 后来配上 model.yaml → 不用改行。
+        expect(defaultModelKeyOf()).toBe('main@acme/fast');
+        const model = modelOf('') as unknown as { modelId?: string };
+        expect(model.modelId).toBe('fast');
+    });
+
+    it('空 key 且目录没有 defaultModel ⇒ 报错并指出数据根（不拿空 key 去发）', () => {
+        modelHomeDir.restore();
+        modelHomeDir = useModelHome({ modelYaml: 'customProviders: {}\n' });
+        expect(defaultModelKeyOf()).toBeUndefined();
+        expect(() => modelOf('')).toThrow(/没有指定模型/);
+        expect(() => modelOf('')).toThrow(/model\.yaml/);
     });
 
     it('会话 id 只影响请求头，不影响解析（不给也不炸）', () => {

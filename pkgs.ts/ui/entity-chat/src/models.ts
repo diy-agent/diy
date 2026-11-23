@@ -70,8 +70,14 @@ export function modelOfKey(providers: readonly Provider[], value: string): Model
     return findProvider(providers, key.provider)?.models.find((model) => model.id === key.model);
 }
 
-/** 「模型名 · 账号@provider」；目录里没有这个模型 ⇒ 原样显示 key（不编造名字） */
+/**
+ * 「模型名 · 账号@provider」；目录里没有这个模型 ⇒ 原样显示 key（不编造名字）。
+ *
+ * 空串 = 「这个房间没选过模型，跟随 model.yaml 的 defaultModel」—— 不能显示成空白，
+ * 更不该拿一个占位 key 冒充模型名（曾经写成 `none@none/none`，界面上看起来像真配好了）。
+ */
 export function modelLabel(providers: readonly Provider[], value: string): string {
+    if (value.trim() === '') return '未设置模型';
     const key = parseModelKey(value);
     if (key === undefined) return value;
     const info = modelOfKey(providers, value);

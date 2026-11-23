@@ -56,18 +56,18 @@ import type {
 const log = openLog('app');
 
 /**
- * 没配模型时的占位 key —— **故意是一个用不了的条目**（目录里没有 `none/none`）。
+ * 新房间 / 新 bot 落库时的模型值：`model.yaml` 的 `defaultModel`，**没配置就存空串**。
  *
- * 上一版这里写死的是 `chen56@opencode-go/deepseek-v4.1-flash`：一个具体**账号**名。
- * 于是「一条配置都没有」的实例也能发请求 —— 用的是别人的账号，账目 / 限流 / 缓存全记在
- * 那边，界面上却一切正常。占位 key 把这件事变成一次响亮失败：`modelOf` 会报「模型目录里
- * 没有 none/none（数据根 …）」。新房间仍然要先拿到一个 modelKey（界面上「这个房间用哪个
- * 模型」是真字段），所以不能不给。
+ * 曾经这里存的是一个占位 key（`none@none/none`）—— 想靠它把「没配置」变成一次响亮失败。
+ * 真跑起来才发现它是**会被写进 sqlite 的**：房间和 bot 的行比配置活得久，于是后补了
+ * model.yaml 之后那些行仍然指着占位 key，发不出去、界面上还显示成真的模型名（实测：
+ * 「none · none@none」，看着像配好了）。
+ *
+ * 现在的口径：**行里只存人选的**，空串 = 用目录的 defaultModel（解析在 `modelOf` 里）。
+ * 这样配置后补也能「自愈」 —— 行不用动，缺省在发送时现算。
  */
-const NONE_MODEL_KEY = 'none@none/none';
-/** 缺省模型：`model.yaml` 的 `defaultModel` → 占位 key（见 `NONE_MODEL_KEY`） */
-function defaultModelKey(): string {
-    return defaultModelKeyOf() ?? NONE_MODEL_KEY;
+function persistedDefaultModelKey(): string {
+    return defaultModelKeyOf() ?? '';
 }
 /** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
 const ASK_DRAFT_TTL = 30 * 60 * 1000;
@@ -290,7 +290,7 @@ function seed(): void {
                 color: COLORS[bots.length % COLORS.length]!,
                 persona,
                 homeRoomId,
-                modelKey: defaultModelKey(),
+                modelKey: persistedDefaultModelKey(),
             };
             store.upsertBot(bot);
             return bot;
@@ -312,21 +312,21 @@ function seed(): void {
                 { botId: byName('diy')?.id ?? bots[0]!.id, primary: true },
                 { botId: byName('小满')?.id ?? bots[0]!.id },
             ],
-            modelKey: defaultModelKey(),
+            modelKey: persistedDefaultModelKey(),
         },
         {
             id: 'proj:cops',
             type: 'project',
             data: { name: 'cops', dir: '~/git/cops' },
             members: [{ botId: byName('cops')?.id ?? bots[1]!.id, primary: true }],
-            modelKey: defaultModelKey(),
+            modelKey: persistedDefaultModelKey(),
         },
         {
             id: 'task:t-001',
             type: 'task',
             data: { title: '任务树与多会话', dir: '~/git/diy/diy', projectId: 'proj:diy', status: 'open' },
             members: [{ botId: byName('任务树与多会话')?.id ?? bots[2]!.id, primary: true }],
-            modelKey: defaultModelKey(),
+            modelKey: persistedDefaultModelKey(),
         },
     ];
 
@@ -418,7 +418,7 @@ function newBot(name: string, homeRoomId: string, persona: string): Bot {
         color: COLORS[store.listBots().length % COLORS.length]!,
         persona,
         homeRoomId,
-        modelKey: defaultModelKey(),
+        modelKey: persistedDefaultModelKey(),
     };
 }
 
@@ -566,7 +566,7 @@ export async function createDiy2App(opts: {
                         throw new Error('task 需要有效的 data.projectId');
                     }
                     // `??` 挡不住空串（界面上的"没选"可能就是 ''）：空串按没填处理
-                    const modelKey = input.modelKey || defaultModelKey();
+                    const modelKey = input.modelKey || persistedDefaultModelKey();
                     const id = newEntityId();
                     const bot = { ...newBot(input.name, id, `${type} bot`), modelKey };
                     store.upsertBot(bot);

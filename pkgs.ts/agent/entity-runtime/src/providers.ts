@@ -202,9 +202,18 @@ export interface ModelOptions {
  */
 export function modelOf(modelKey: string, options: ModelOptions = {}): LanguageModel {
     const env = options.env ?? process.env;
-    const key = parseModelKey(modelKey);
     const home = modelHome(env);
     if (home === undefined) throw new Error(`${NO_MODEL_HOME}；${NO_MODEL_HOME_HINT}`);
+    // 空 key = 「用这个数据根的默认模型」。**解析放在这里、而不是写在行里**：房间 / bot 的行
+    // 比配置活得久（配置常是后补的，行是先建的），把默认值抄进行里 =「配好了还得逐个房间改」。
+    const resolved = modelKey.trim() === '' ? defaultModelKeyOf(env) : modelKey;
+    if (resolved === undefined) {
+        throw new Error(
+            `没有指定模型，且 ${home}/model.yaml 里没有 defaultModel（不会去别处找）` +
+                `，也没配账号 —— 填充：./scripts/seed-run-home.sh ${home}`,
+        );
+    }
+    const key = parseModelKey(resolved);
     const entry = catalogEntry(key, env);
     if (entry === undefined) {
         throw new Error(

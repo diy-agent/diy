@@ -4,15 +4,18 @@
 // 以前这里 import 一张写死的 `PROVIDERS` 表，于是「界面上能选、服务端发不出去」成了常态。
 
 import { findProvider, formatModelKey, parseModelKey } from '../models';
-import { useProviders } from '../store';
+import { useDefaultModelKey, useProviders } from '../store';
 
 export function ModelPicker({ value, onChange }: { value: string; onChange: (key: string) => void }) {
     const providers = useProviders();
+    const defaultKey = useDefaultModelKey();
     if (providers.length === 0) {
         return <p className="text-xs text-muted-foreground">模型目录还没加载（看 model.yaml 能不能读到）</p>;
     }
 
-    const key = parseModelKey(value);
+    // 空串 = 没显式选过 ⇒ 显示「会用什么」= 目录的 defaultModel；下拉改一下就变成显式选择。
+    const inherited = value.trim() === '';
+    const key = parseModelKey(inherited ? (defaultKey ?? '') : value);
     // 当前值可能指向一个已经不存在的 provider / 账号 / 模型（改了 model.yaml、换了机器）：
     // 一律退到目录里的第一个可用项显示，但**不自动改写**上游的值 —— 要不要改由人决定。
     const provider = (key === undefined ? undefined : findProvider(providers, key.provider)) ?? providers[0]!;
@@ -86,6 +89,11 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (key
                     </select>
                 </label>
             </div>
+            {inherited && (
+                <p className="text-[10px] text-muted-foreground">
+                    没显式选过 ⇒ 跟随 model.yaml 的 defaultModel（改一下就变成这条的专属选择）
+                </p>
+            )}
             <p className="text-[10px] text-muted-foreground">
                 {model === undefined
                     ? '目录里没有模型'

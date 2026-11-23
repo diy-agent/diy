@@ -31,8 +31,14 @@ export function botsOf(room: Room, bots: Record<string, Bot>): Bot[] {
 
 // ── 继承：成员 > 房间 > bot 自己 ────────────────────────────────
 
+/**
+ * 成员 > 房间 > bot 三级覆盖；**空串 = 继续往下继承**（再没有就是「用目录的 defaultModel」）。
+ *
+ * 不能只靠 `??`：空串是真值语义上的「没填」，而 `??` 只跳过 null/undefined —— 于是
+ * 一行 `modelKey: ''` 会把后面的真实值挡掉，最后拿空 key 去发请求。
+ */
 export function effectiveModelOf(room: Room, bot: Bot): string {
-    return memberOf(room, bot.id)?.modelKey ?? room.modelKey ?? bot.modelKey;
+    return memberOf(room, bot.id)?.modelKey || room.modelKey || bot.modelKey || '';
 }
 
 export function effectivePersonaOf(room: Room, bot: Bot): string {
