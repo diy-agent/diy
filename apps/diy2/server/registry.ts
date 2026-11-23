@@ -6,7 +6,7 @@
 //
 // 位置口径与 `@diy-agent/dev-paths`（仓库唯一真源）一致：`~/.diy/dev/apps`：
 //   · 挂 `.diy` 下但独立分区：注册表描述「本机有哪些实例」，跨数据根，属于设备级；
-//   · **不能**放进某个实例的 home（lab 的 build/lab/home）—— 那样别的工具看不见它。
+//   · **不能**放进某个实例的 home（如 run/diy2/lab）—— 那样别的工具看不见它。
 // 这里不 import 那个包：它的 `main` 指 `dist/`（构建产物），干净 worktree 里没有 →
 // dev 会连带起不来。故本地实现同一份路径口径（方差见 tests/registry.test.ts 的覆盖），
 // 覆盖变量沿用共享那一组名字（`DIY_INSTANCE_REGISTRY` > `DIY_DEV_HOME`），不认 `DIY2_*`（见 registryDir）。

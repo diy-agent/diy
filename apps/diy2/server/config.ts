@@ -184,28 +184,34 @@ export function cliEntryOf(appRoot: string): string {
 }
 
 /**
- * 数据根裁决：显式 `--home` > 缺省（生产 `~/.diy/diy2`，非生产 `<appRoot>/build/<launch>/home`）。
+ * 数据根裁决：显式 `--home` 优先；生产缺省 `~/.diy/diy2`；**非生产没给直接抛错**。
  *
- * 非生产下拿到**生产根** → 拒绝并回落缺省（浏览器里点错一个房间就写脏真库）。
- * 返回 `rejected` 供调用方打警告：静默纠正在这种事上是坏文明。
+ * 为什么不再按 launch 推导（2026-11-23 裁）：那条回落把数据根放进 `<appRoot>/build/<launch>/home`，
+ * 也就是**产物树**里 —— `sha.sh clean` = `rm -rf ./build`，一次自愈就把库删了（真发生过）。
+ * 现在路径只在入口脚本算（`run/diy2/<label>`），server 只认显式值。
+ *
+ * 非生产下拿到**生产根** → 拒绝并抛错（浏览器里点错一个房间就写脏真库；不静默纠正）。
  */
 export function resolveHome(opts: {
     mode: Diy2Env;
-    launch: string;
-    appRoot: string;
     explicit?: string | undefined;
     allowProdHome?: boolean | undefined;
-}): { home: string; rejected: string | null } {
-    const fallback =
-        opts.mode === 'production'
-            ? join(realHomeDir(), '.diy', 'diy2')
-            : join(opts.appRoot, 'build', opts.launch, 'home');
+}): { home: string } {
     const explicit = opts.explicit?.trim();
-    if (explicit === undefined || explicit === '') return { home: fallback, rejected: null };
-    if (opts.mode !== 'production' && isProdHome(explicit) && opts.allowProdHome !== true) {
-        return { home: fallback, rejected: explicit };
+    if (explicit === undefined || explicit === '') {
+        if (opts.mode === 'production') return { home: join(realHomeDir(), '.diy', 'diy2') };
+        throw new Error(
+            '非生产实例必须显式给数据根：--home <dir>（或 DIY2_HOME=<dir>）' +
+                ' —— 生产入口缺省 ~/.diy/diy2，非生产不再按 launch 推导路径',
+            { cause: { code: 'config/home-required' } },
+        );
     }
-    return { home: resolve(explicit), rejected: null };
+    if (opts.mode !== 'production' && isProdHome(explicit) && opts.allowProdHome !== true) {
+        throw new Error(`拒绝非生产入口使用生产数据根 ${explicit}` + '（确要如此：--home 加 --allow-prod-home）', {
+            cause: { code: 'config/prod-home-refused' },
+        });
+    }
+    return { home: resolve(explicit) };
 }
 
 /**
@@ -278,19 +284,11 @@ export function resolveConfig(opts?: {
     const launch = overrides.launch?.trim() || defaultLaunch(mode);
 
     const notes: string[] = [];
-    const { home, rejected } = resolveHome({
+    const { home } = resolveHome({
         mode,
-        launch,
-        appRoot,
         explicit: overrides.home,
         allowProdHome: overrides.allowProdHome,
     });
-    if (rejected !== null) {
-        notes.push(
-            `拒绝非生产入口使用生产数据根 ${rejected} → 回落到 ${home}` +
-                '（真要用它：显式 --home 并加 --allow-prod-home）',
-        );
-    }
 
     const portFile = join(home, 'app.port');
     const recordedPort = readPortFile(portFile);
@@ -306,19 +304,14 @@ export function resolveConfig(opts?: {
               ? defaultWebDir
               : undefined;
 
-    // model.yaml 三档：显式 `--model-config` > 本数据根 > **本 launch 的仓库级数据根**
-    // （`<repo>/build/<launch>/home/model.yaml`，根目录 `./sha.sh sync` 把真配置投影到那里）。
-    // 最后一档是为了「一份真配置，多个 app 共用」：diy-app 的 lab 与 diy2 的 lab 用同一个 launch，
-    // 不该各自拷一份含 API key 的文件（也不该让 diy2 去占 diy-app 的 app.port）。
-    const launchHomeConfig = repoRoot === null ? undefined : join(repoRoot, 'build', launch, 'home', 'model.yaml');
+    // model.yaml 两档：显式 `--model-config` > 本数据根（都没有时由 entity-runtime 回落
+    // `~/.diy/model.yaml` —— 真配置只有那一个真源，不再往各 launch 的数据根投影副本）。
     const modelConfigPath =
         overrides.modelConfig !== undefined && overrides.modelConfig.trim() !== ''
             ? resolve(overrides.modelConfig)
             : existsSync(join(home, 'model.yaml'))
               ? join(home, 'model.yaml')
-              : launchHomeConfig !== undefined && existsSync(launchHomeConfig)
-                ? launchHomeConfig
-                : undefined;
+              : undefined;
 
     return {
         app: APP_ID,
@@ -352,12 +345,10 @@ export function resolveConfig(opts?: {
  */
 export function modelConfigHint(config: Diy2Config): string | null {
     if (config.modelConfigPath !== undefined) return null;
-    const candidates = [join(config.home, 'model.yaml')];
-    if (config.repoRoot !== null) candidates.push(join(config.repoRoot, 'build', config.launch, 'home', 'model.yaml'));
+    const candidates = [join(config.home, 'model.yaml'), join(realHomeDir(), '.diy', 'model.yaml')];
     return (
         `[diy2] 没有找到 model.yaml（${candidates.join(' / ')}）` +
-        ' → 模型配置回落到 ~/.diy/model.yaml（根目录 `./sha.sh sync` 会把真配置投影到 launch 数据根；' +
-        '--model-config 可显式指定）'
+        ' → 模型配置用 ~/.diy/model.yaml（真配置的唯一真源；--model-config 可显式指定）'
     );
 }
 

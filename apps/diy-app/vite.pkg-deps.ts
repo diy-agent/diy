@@ -36,8 +36,8 @@ export const WORKSPACE_TS_DEPS = [
   "@diy-agent/hub",
 ];
 
-/** 变体产物根：prod|test|lab（见根 AGENTS.md「实例三态」） */
-export const VARIANT = process.env.DIY_VARIANT ?? "prod";
+/** 产物根：**固定** `build/prod`（变体轴已废：一份产物跑所有实例，数据根由 --home 决定） */
+export const BUILD_DIR = "prod";
 
 // Windows 上解析结果是 `C:/…`：既不以 `./` 也不以 `/` 开头 —— 按「裸 id」判会误判成外部依赖，
 // 于是产物里留下 `import … from "C:/…"`，ESM 加载抛 ERR_UNSUPPORTED_ESM_URL_SCHEME。

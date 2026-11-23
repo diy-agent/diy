@@ -1,65 +1,43 @@
 // tests/core/dev-home.test.ts
-// 🎯 dev 变体（lab）数据根的决策：恒为 build/<variant>/home，继承来的**生产根**必须被拒。
-// 这条守的是「别把示例数据写进用户真实数据根」（##286 实测：宿主 shell 的 DIY_HOME=~/.diy
-// 一路透传，lab 直奔生产）。
+// 🎯 数据根决策：**只认显式值**。缺了报错（不按变体推导），继承来的生产根必须被拒。
+// 这条守的是两件事：别把数据写进产物树（clean 会删），别把示例数据写进用户真实数据根。
 //
-// 「生产根」的定义在 instance-identity（单一定义处，见那里的单测）；本文件只测「撞上后怎么办」。
+// 「生产根」的定义在 instance-identity（单一定义处，见那里的单测）。
 
 import { describe, it, expect } from "vitest";
-import { join } from "node:path";
-import { resolveDevHome } from "../../src/main/core/dev-home";
+import { resolveDataHome } from "../../src/main/core/dev-home";
 import { prodDataHome } from "../../src/main/core/instance-identity";
 
-const REPO = "/repo";
-
-describe("resolveDevHome", () => {
-    it("没有继承值 → build/<variant>/home", () => {
-        expect(resolveDevHome({ variant: "lab", repoRoot: REPO })).toEqual({
-            home: join(REPO, "build/lab/home"),
-            rejected: null,
-        });
-        expect(resolveDevHome({ variant: "lab", repoRoot: REPO }).home).toBe(
-            join(REPO, "build/lab/home"),
-        );
+describe("resolveDataHome", () => {
+    it("没给显式值 → 报错（不推导 build/<variant>/home）", () => {
+        expect(() => resolveDataHome({})).toThrow(/必须显式给数据根/);
     });
 
-    it("继承生产根 → 拒绝并回落到本变体的 home", () => {
-        const d = resolveDevHome({
-            variant: "lab",
-            repoRoot: REPO,
-            inherited: prodDataHome(),
-        });
-        expect(d.home).toBe(join(REPO, "build/lab/home"));
-        expect(d.rejected).toBe(prodDataHome());
+    it("空白值等同于没给", () => {
+        expect(() => resolveDataHome({ explicit: "   " })).toThrow(/必须显式给数据根/);
+    });
+
+    it("报错带上入口脚本给的提示命令", () => {
+        expect(() => resolveDataHome({ hint: "./diy.sh lab" })).toThrow(/\.\/diy\.sh lab/);
+    });
+
+    it("继承生产根 → 拒绝（报错，不静默回落）", () => {
+        expect(() => resolveDataHome({ explicit: prodDataHome() })).toThrow(/拒绝用生产数据根/);
     });
 
     it("生产根的等价写法（尾斜杠）也拒绝", () => {
-        const d = resolveDevHome({
-            variant: "lab",
-            repoRoot: REPO,
-            inherited: `${prodDataHome()}/`,
-        });
-        expect(d.home).toBe(join(REPO, "build/lab/home"));
+        expect(() => resolveDataHome({ explicit: `${prodDataHome()}/` })).toThrow(/拒绝用生产数据根/);
     });
 
     it("DIY_ALLOW_PROD_HOME 显式放行时照旧透传", () => {
-        const d = resolveDevHome({
-            variant: "lab",
-            repoRoot: REPO,
-            inherited: prodDataHome(),
-            allowProdHome: true,
+        expect(resolveDataHome({ explicit: prodDataHome(), allowProdHome: true })).toEqual({
+            home: prodDataHome(),
         });
-        expect(d.home).toBe(prodDataHome());
-        expect(d.rejected).toBeNull();
     });
 
-    it("非生产的自定义 home 照旧透传（实验要用临时目录）", () => {
-        const d = resolveDevHome({
-            variant: "lab",
-            repoRoot: REPO,
-            inherited: "/tmp/scratch-home",
+    it("自定义 home 照旧透传（实验要用临时目录）", () => {
+        expect(resolveDataHome({ explicit: "/tmp/scratch-home" })).toEqual({
+            home: "/tmp/scratch-home",
         });
-        expect(d.home).toBe("/tmp/scratch-home");
-        expect(d.rejected).toBeNull();
     });
 });

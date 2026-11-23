@@ -86,43 +86,29 @@ describe('resolvePort', () => {
 });
 
 describe('resolveHome', () => {
-    it('缺省：生产 ~/.diy/diy2；非生产 <appRoot>/build/<launch>/home', () => {
-        expect(resolveHome({ mode: 'production', launch: 'prod', appRoot: '/w/apps/diy2' }).home).toBe(prodHome());
-        expect(resolveHome({ mode: 'development', launch: 'lab', appRoot: '/w/apps/diy2' }).home).toBe(
-            join('/w/apps/diy2', 'build', 'lab', 'home'),
-        );
-        expect(resolveHome({ mode: 'test', launch: 'test', appRoot: '/w' }).home).toBe(
-            join('/w', 'build', 'test', 'home'),
-        );
+    it('生产缺省 ~/.diy/diy2；非生产**没给就报错**（不再按 launch 推导）', () => {
+        expect(resolveHome({ mode: 'production' }).home).toBe(prodHome());
+        expect(() => resolveHome({ mode: 'development' })).toThrow(/必须显式给数据根/);
+        expect(() => resolveHome({ mode: 'test' })).toThrow(/必须显式给数据根/);
     });
 
-    it('非生产拿到生产根 → 拒绝并回落缺省（静默写脏真库是更坏的结局）', () => {
-        const result = resolveHome({ mode: 'development', launch: 'lab', appRoot: '/w', explicit: prodHome() });
-        expect(result.home).toBe(join('/w', 'build', 'lab', 'home'));
-        expect(result.rejected).toBe(prodHome());
+    it('非生产拿到生产根 → 抛错（不静默回落，写脏真库是更坏的结局）', () => {
+        expect(() => resolveHome({ mode: 'development', explicit: prodHome() })).toThrow(
+            /拒绝非生产入口使用生产数据根/,
+        );
     });
 
     it('显式 --allow-prod-home 才放行', () => {
-        const allowed = resolveHome({
-            mode: 'development',
-            launch: 'lab',
-            appRoot: '/w',
-            explicit: prodHome(),
-            allowProdHome: true,
-        });
-        expect(allowed.home).toBe(prodHome());
-        expect(allowed.rejected).toBeNull();
+        expect(resolveHome({ mode: 'development', explicit: prodHome(), allowProdHome: true }).home).toBe(prodHome());
     });
 
     it('生产拿生产根是正常语义（不拒）', () => {
-        expect(
-            resolveHome({ mode: 'production', launch: 'prod', appRoot: '/w', explicit: prodHome() }).rejected,
-        ).toBeNull();
+        expect(resolveHome({ mode: 'production', explicit: prodHome() }).home).toBe(prodHome());
     });
 
     it('任意显式目录照用（沙箱 / 临时目录）', () => {
         const dir = tmp();
-        expect(resolveHome({ mode: 'development', launch: 'lab', appRoot: '/w', explicit: dir }).home).toBe(dir);
+        expect(resolveHome({ mode: 'development', explicit: dir }).home).toBe(dir);
     });
 });
 
@@ -184,12 +170,13 @@ describe('resolveConfig', () => {
             process.env[key] = value;
         }
         try {
+            const home = tmp();
             const config = resolveConfig({
                 moduleDir: APP_ROOT,
                 mode: 'development',
-                overrides: { launch: 'lab' },
+                overrides: { launch: 'lab', home },
             });
-            expect(config.home).toBe(join(APP_ROOT, 'build', 'lab', 'home'));
+            expect(config.home).toBe(home);
             expect(config.port).toBe(0);
             expect(config.env).toBe('development');
         } finally {
@@ -211,31 +198,32 @@ describe('resolveConfig', () => {
         expect(config.portSource).toBe('cli');
     });
 
-    it('被拒的生产根变成一条 note（入口负责打出来，不静默）', () => {
-        const config = resolveConfig({
-            moduleDir: APP_ROOT,
-            mode: 'development',
-            overrides: { home: prodHome() },
-        });
-        expect(config.home).toBe(join(APP_ROOT, 'build', 'lab', 'home'));
-        expect(config.notes.join('\n')).toContain('拒绝非生产入口使用生产数据根');
+    it('被拒的生产根直接抛错（入口负责报出来，不静默回落）', () => {
+        expect(() =>
+            resolveConfig({
+                moduleDir: APP_ROOT,
+                mode: 'development',
+                overrides: { home: prodHome() },
+            }),
+        ).toThrow(/拒绝非生产入口使用生产数据根/);
     });
 
     it('webDir：产物在就有，不在就 undefined；--web-dir 优先', () => {
         const appRoot = tmp();
         // 造一个最小的包目录（findAppRoot 认 package.json 的 name）
         writeFileSync(join(appRoot, 'package.json'), JSON.stringify({ name: '@diy-agent/app-diy2' }));
-        expect(resolveConfig({ moduleDir: appRoot, mode: 'development' }).webDir).toBeUndefined();
+        const home = tmp();
+        expect(resolveConfig({ moduleDir: appRoot, mode: 'development', overrides: { home } }).webDir).toBeUndefined();
 
         mkdirSync(join(appRoot, 'build', 'prod', 'web'), { recursive: true });
-        expect(resolveConfig({ moduleDir: appRoot, mode: 'development' }).webDir).toBe(
+        expect(resolveConfig({ moduleDir: appRoot, mode: 'development', overrides: { home } }).webDir).toBe(
             join(appRoot, 'build', 'prod', 'web'),
         );
         expect(
             resolveConfig({
                 moduleDir: appRoot,
                 mode: 'development',
-                overrides: { webDir: join(appRoot, 'elsewhere') },
+                overrides: { home, webDir: join(appRoot, 'elsewhere') },
             }).webDir,
         ).toBe(join(appRoot, 'elsewhere'));
     });

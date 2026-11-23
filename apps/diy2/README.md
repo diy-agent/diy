@@ -44,11 +44,11 @@ curl -s "http://127.0.0.1:$PORT/api/rooms"  # 数据面
 
 「入口名（launch）」只决定**运行空间**，不是构建目标（lab / staging / prod 跑同一份产物、同一份代码）：
 
-| 命令 | launch | 数据根 | 环境 | 端口 |
-|---|---|---|---|---|
-| `./sha.sh dev` / `lab` | lab | `apps/diy2/build/lab/home` | development | 0（内核分配，落 `<home>/app.port`） |
-| `./sha.sh staging [--build]` | staging | `apps/diy2/build/staging/home` | development | 0 |
-| `./sha.sh start`（= `diy2 web`） | prod | `~/.diy/diy2` | production | 5192 |
+| 命令                             | launch  | 数据根（本 worktree） | 环境        | 端口                                |
+| -------------------------------- | ------- | --------------------- | ----------- | ----------------------------------- |
+| `./sha.sh dev` / `lab`           | lab     | `run/diy2/lab`        | development | 0（内核分配，落 `<home>/app.port`） |
+| `./sha.sh staging [--build]`     | staging | `run/diy2/staging`    | development | 0                                   |
+| `./sha.sh start`（= `diy2 web`） | prod    | `~/.diy/diy2`         | production  | 5192                                |
 
 产物目录**固定** `apps/diy2/build/prod/{web,server,cli}`（一个包目录一份产物）：多份并存靠
 worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目录。
@@ -58,7 +58,7 @@ worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目
 同一个解析器 —— 服务端入口 / dev 入口 / 每个 CLI 命令读的是同一份形状）：
 
 ```
-数据根   --home          > 缺省（生产 ~/.diy/diy2，其余 <appRoot>/build/<launch>/home）
+数据根   --home          > 缺省（生产 ~/.diy/diy2；**非生产必须显式给** —— 入口脚本传 run/diy2/<launch>）
 端口     --port / -p     > <home>/app.port 记录（仅非生产） > 缺省
          （生产 5192，其余 0；生产不拿记录当监听端口，只拿它当**探活候选**）
 环境     --mode          （缺省由入口定：生产入口 production、dev 入口 development、测试 test）
@@ -73,9 +73,9 @@ worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目
   自报的 `home`（+ 注册表 `pid`）。
   所以 `diy2 web` 第二次敲会**复用**在跑的实例（`--restart` 才先停再起），不会 EADDRINUSE 崩，
   也不会连到别的数据根/别的 worktree 的实例上。
-- **非生产拒绝生产数据根**：`--home ~/.diy/diy2` 在 dev 入口被拒并回落 `build/<launch>/home`
-  （`--allow-prod-home` 才放行，启动时会打一条 note）。非生产也**不吃**记录里的 5192 ——
-  那会把生产门牌占住。
+- **非生产拒绝生产数据根**：`--home ~/.diy/diy2` 在 dev 入口直接报错（`--allow-prod-home` 才放行）。
+  非生产也**不吃**记录里的 5192 —— 那会把生产门牌占住。
+- **非生产没给 `--home` → 报错退出**：不按 launch 推导（那条回落会把数据根放进产物树，`clean` 一跑就删库）。
 
 实例在启动时**自报**到 `~/.diy/dev/apps/<pid>.json`（与 diy-app / workbench 同一张表，
 口径来自 `@diy-agent/dev-paths`）：dev 启动器、remote 发现、`./sha.sh list` 都读它。
@@ -141,11 +141,11 @@ cd apps/diy2 && npm link
 
 UI 有三个可切换的表面（同一份时间线 + 同一个 store，只换渲染器）：
 
-| 表面 | 用的东西 |
-|---|---|
+| 表面           | 用的东西                                                       |
+| -------------- | -------------------------------------------------------------- |
 | Astryx（默认） | `@astryxdesign/core` 的 Chat 组件族 + lab 的 `ChatVirtualizer` |
-| assistant-ui | 官方模板组件（已复制进 `entity-chat/src/assistant-ui/`） |
-| shadcn | 裸 Tailwind + 自己的 `Markdown` / `BotAvatar` |
+| assistant-ui   | 官方模板组件（已复制进 `entity-chat/src/assistant-ui/`）       |
+| shadcn         | 裸 Tailwind + 自己的 `Markdown` / `BotAvatar`                  |
 
 数据：`<数据根>/diy2.db`（node:sqlite；生产数据根 `~/.diy/diy2`，lab 见上表）。落盘的东西：
 
@@ -161,6 +161,7 @@ UI 有三个可切换的表面（同一份时间线 + 同一个 store，只换�
 工具：`read` / `write` / `edit` / `bash`（`--tools files` 可关掉 bash）+ `ask` 提问卡。
 
 多 agent（容器一个 primary）：
+
 - 没有 @：**只有 primary 回复**
 - `@名字`：只让命中的 bot 回复（primary 也可以被 @）
 - `@all`：全体回复

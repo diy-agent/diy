@@ -26,13 +26,13 @@ options:
   --mode <production|development|test>  运行环境（缺省 production）
   --launch <名字>                        入口名（缺省由环境推：prod / lab / test）
   -p, --port <n>                         端口；0 = 内核分配（缺省：生产 5192）
-      --home <dir>                       数据根（缺省：生产 ~/.diy/diy2，其余 <appRoot>/build/<launch>/home）
+      --home <dir>                       数据根（缺省：生产 ~/.diy/diy2；非生产**必须显式给**）
       --name <名字>                       实例名
       --tools <shell|files>              工具面
       --compact-keep <n>                 压缩保留最近 n 条消息
       --compact-chars <n>                压缩预算（字符）
       --web-dir <dir>                    UI 产物目录（缺省 <buildRoot>/web）
-      --model-config <file>              model.yaml（缺省：本数据根 > 本 launch 的仓库级数据根）
+      --model-config <file>              model.yaml（缺省：本数据根；都没有则回落 ~/.diy/model.yaml）
       --allow-prod-home                  显式放行生产数据根
   -h, --help                             本帮助`;
 

@@ -369,7 +369,7 @@ export function createDiy2App(opts: {
 }): Diy2App {
     config = opts.config;
     // null 与 undefined 是两件事：null = 「我明确不要静态服务」（dev 的页面来自 vite），
-    // undefined = 「按配置来」（生产）。写成 `??` 会让 dev 在 build/lab/web 存在时**悄悄**
+    // undefined = 「按配置来」（生产）。写成 `??` 会让 dev 在 build/prod/web 存在时**悄悄**
     // 拿到上一轮的旧壳子 —— 那种 bug 只能靠肉眼分辨「为什么改了 UI 没变」。
     serveStatic = createStaticHandler(opts.webDir === null ? undefined : (opts.webDir ?? config.webDir));
     rooms = new Map();

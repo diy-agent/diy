@@ -17,8 +17,8 @@
 # 现在：**一切入口 = ./sha.sh**（与 apps/diy-app 同构）。
 #
 # ── 三个运行面（同一个包 = 一份产物 build/prod/）──
-#   ./sha.sh dev       开发：单端口（vite 挂进服务端，HMR），数据根 build/lab/home
-#   ./sha.sh staging   验收：build/prod 产物 + 数据根 build/staging/home（改码不波及）
+#   ./sha.sh dev       开发：单端口（vite 挂进服务端，HMR），数据根 run/diy2/lab
+#   ./sha.sh staging   验收：build/prod 产物 + 数据根 run/diy2/staging（改码不波及）
 #   ./sha.sh start     真生产：= `diy2 web`（~/.diy/diy2、端口 5192）
 #   ./sha.sh build     出产物：build/prod/{web,server,cli}
 #
@@ -39,8 +39,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # 产物根：一个包目录一份产物（多份并存靠 worktree，不靠变体目录）
 BUILD_ROOT="$SCRIPT_DIR/build/prod"
 
-# 某个 launch 的数据根（与 server/config.ts 的缺省一致：<appRoot>/build/<launch>/home）
-_launch_home() { echo "$SCRIPT_DIR/build/${1:-lab}/home"; }
+# 本 worktree × 本标签的数据根：`run/diy2/<label>`。
+# 路径**只在这里算**：server/config.ts 非生产只认显式 --home（缺了报错），不再按 launch 推导。
+_run_home() { echo "$REPO_ROOT/run/diy2/${1:-lab}"; }
 
 # 产物齐不齐（静默；返回 1 = 缺）：start / stop / port / list / status 都走 bin/diy2 →
 # CLI 产物，staging 走服务端产物 —— 两者都算「已构建」，缺任一个都得先 build。
@@ -68,22 +69,22 @@ _need_build() {
 
 # dev / lab 共用的选项（两个名字都保留：`lab` 是根入口 `./sha.sh lab --app diy2` 的老姿势）
 _DEV_OPTS=(
-  --opt "--home:string:数据根（缺省 <appRoot>/build/<launch>/home）"
+  --opt "--home:string:数据根（缺省 run/diy2/<launch>；核心只认显式值）"
   --opt "-p,--port:int:端口；0 = 内核分配（缺省沿用 <home>/app.port）"
   --opt "--launch:string=lab[lab|dev|staging]:入口名（注册表自报，缺省 lab）"
   --opt "--name:string:实例名"
   --opt "--reset:bool:先清空数据根再起（会问一次）"
   --arg "REST...:透传给 server/dev.ts 的其余参数（写在 -- 之后）"
 )
-sha.def "dev" "${_DEV_OPTS[@]}" --desc "开发：单端口（vite 挂进服务端，HMR），数据根 build/lab/home"
+sha.def "dev" "${_DEV_OPTS[@]}" --desc "开发：单端口（vite 挂进服务端，HMR），数据根 run/diy2/lab"
 sha.def "lab" "${_DEV_OPTS[@]}" --desc "同 dev（保留旧名）"
 
 sha.def "staging" \
-  --opt "--home:string:数据根（缺省 build/staging/home）" \
+  --opt "--home:string:数据根（缺省 run/diy2/staging）" \
   --opt "-p,--port:int:端口；0 = 内核分配" \
   --opt "--build:bool:先构建产物（缺产物时自动构建）" \
   --arg "REST...:透传给服务端产物的其余参数（写在 -- 之后）" \
-  --desc "验收：build/prod 产物 + 沙箱数据根 build/staging/home（改码不波及）"
+  --desc "验收：build/prod 产物 + 沙箱数据根 run/diy2/staging（改码不波及）"
 
 sha.def "start" \
   --opt "--home:string:数据根（缺省 ~/.diy/diy2）" \
@@ -99,17 +100,17 @@ sha.def "stop" \
   --desc "停实例（缺省 = 本 worktree 起的全部；不按端口 kill，见 dev 的注释）"
 
 _QUERY_OPTS=(
-  --opt "--home:string:数据根（缺省 build/lab/home）"
+  --opt "--home:string:数据根（缺省 run/diy2/<launch>）"
   --opt "--launch:string=lab[lab|dev|staging]:入口名（与 dev 缺省一致）"
   --opt "--json:bool:JSON 输出"
 )
 sha.def "port" "${_QUERY_OPTS[@]}" --desc "本数据根实例的实际端口（给脚本用；没有实例 → 退出码 1）"
 sha.def "home" \
-  --opt "--home:string:显式给数据根（缺省 build/<launch>/home）" \
+  --opt "--home:string:显式给数据根（缺省 run/diy2/<launch>）" \
   --opt "--launch:string=lab[lab|dev|staging]:入口名（与 dev 缺省一致）" \
-  --desc "本数据根路径（与 server/config.ts 的缺省同一规则）"
+  --desc "本数据根路径（入口脚本算好，核心只认显式值）"
 sha.def "status" \
-  --opt "--home:string:数据根（缺省 build/lab/home）" \
+  --opt "--home:string:数据根（缺省 run/diy2/<launch>）" \
   --opt "--launch:string=lab[lab|dev|staging]:入口名（与 dev 缺省一致）" \
   --desc "一眼看清：数据根 + 上次用的端口 + 在跑的实例"
 
@@ -119,13 +120,13 @@ sha.def "build" --desc "出产物：build/prod/{web,server,cli}"
 sha.def "build-web" --desc "只构建 UI → build/prod/web"
 sha.def "build-server" --desc "只构建服务端 → build/prod/server"
 sha.def "build-cli" --desc "只构建 CLI → build/prod/cli"
-sha.def "clean" --desc "删掉 build/"
+sha.def "clean" --desc "删掉 build/（纯产物；数据在 run/，不受影响）"
 
 ####################################################################################
 # mono 必备子命令（根 ./sha.sh check/fix/test 组装这些）
 ####################################################################################
 
-clean() { run rm -rf ./build; }
+clean() { run rm -rf ./build; }  # 只删产物：数据根已移出 build/（run/<app>/…）
 
 sync() { :; }
 
@@ -201,13 +202,11 @@ dev() {
   sha.parse "$@" || return $?
 
   ensure_sync
-  local -a args=(server/dev.ts --launch "${launch:-lab}")
-  [[ -n $home ]] && args+=(--home "$home")
+  local data_home="${home:-$(_run_home "${launch:-lab}")}"
+  local -a args=(server/dev.ts --launch "${launch:-lab}" --home "$data_home")
   [[ -n $port ]] && args+=(--port "$port")
   [[ -n $name ]] && args+=(--name "$name")
   args+=("${REST[@]}")
-
-  local data_home="${home:-$(_launch_home "${launch:-lab}")}"
   if (( reset )); then
     printf '%s清空 %s？[y/N]%s ' "$warn" "$data_home" "$reset_color"
     local answer=""
@@ -249,7 +248,7 @@ lab() { dev "$@"; }
 # 起产物（staging / 生产）
 ####################################################################################
 
-# 验收沙箱：跑**本包产物**，数据根在 worktree 内（build/staging/home），环境 development。
+# 验收沙箱：跑**本包产物**，数据根在 worktree 内（run/diy2/staging），环境 development。
 # 与 start 的区别只有数据根与环境 —— staging 与真生产可以同时跑（端口/数据根都分开）。
 #   ./sha.sh staging                # 产物缺失才编译
 #   ./sha.sh staging --build        # 强制重编
@@ -266,8 +265,8 @@ staging() {
     build || return $?
   fi
 
-  local -a args=("$BUILD_ROOT/server/index.mjs" --mode development --launch staging)
-  [[ -n $home ]] && args+=(--home "$home")
+  local data_home="${home:-$(_run_home staging)}"
+  local -a args=("$BUILD_ROOT/server/index.mjs" --mode development --launch staging --home "$data_home")
   [[ -n $port ]] && args+=(--port "$port")
   args+=("${REST[@]}")
   run node "${args[@]}"
@@ -322,15 +321,15 @@ stop() {
   run node ./bin/diy2 "${args[@]}"
 }
 
-# 本 worktree × 本 launch 的数据根。
+# 本 worktree × 本标签的数据根（run/diy2/<label>）。
 #
 # 这里**自己算**而不问 `diy2 home`：CLI 是发布形态入口（环境固定 production），它的缺省
-# 数据根是 ~/.diy/diy2；dev 的缺省是 <appRoot>/build/<launch>/home —— 两条缺省规则本来
-# 就在 server/config.ts（resolveHome），这里只是同一规则的一行投影（--launch 决定目录名）。
+# 数据根是 ~/.diy/diy2。非生产侧没有「缺省」可问 —— server/config.ts 只认显式 --home，
+# 路径就该由入口脚本按 `run/<app>/<label>` 约定算出来传下去。
 home() {
   local home launch
   sha.parse "$@" || return $?
-  echo "${home:-$(_launch_home "${launch:-lab}")}"
+  echo "${home:-$(_run_home "${launch:-lab}")}"
 }
 
 port() {
@@ -342,14 +341,14 @@ port() {
   sha.parse "$@" || return $?
   local -a args=(port)
   (( json )) && args+=(--json)
-  run node ./bin/diy2 "${args[@]}" --launch "${launch:-lab}" --home "${home:-$(_launch_home "${launch:-lab}")}"
+  run node ./bin/diy2 "${args[@]}" --launch "${launch:-lab}" --home "${home:-$(_run_home "${launch:-lab}")}"
 }
 
 # 一眼看清：本 launch 的运行空间 + 本机实例表
 status() {
   local home launch
   sha.parse "$@" || return $?
-  local data_home="${home:-$(_launch_home "${launch:-lab}")}"
+  local data_home="${home:-$(_run_home "${launch:-lab}")}"
   echo "launch：${launch:-lab}"
   echo "数据根：${data_home}"
   # 「下次连哪」与「现在连哪」分开说：前者是 app.port 记录（不证明存活），后者靠探活

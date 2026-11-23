@@ -20,7 +20,7 @@ import { parseOptions } from '@diy-agent/rpc/cli';
 import type { ConfigOverrides } from '../../server/config';
 
 /** 数据根缺省的说明文案（缺省值由 server/config.ts 裁决，这里只说规则） */
-const HOME_DESC = '数据根（缺省：生产 ~/.diy/diy2，其余 <appRoot>/build/<launch>/home）';
+const HOME_DESC = '数据根（缺省：生产 ~/.diy/diy2；非生产必须显式给）';
 
 export const ENV_VALUES = ['production', 'development', 'test'] as const;
 

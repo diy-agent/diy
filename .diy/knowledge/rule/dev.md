@@ -13,11 +13,11 @@ updated: 2026-11-22
 
 ## instance-lifecycle
 
-**实例起停权限与数据定性**：`test` / `lab` 由 agent **自由起停**（随便折腾，不用问；`lab` 同时是人机沟通·验证 UI 的入口 —— 原 `preview` 的职责已并入它）。二者数据皆**临时非生产**（仓库根 `build/<variant>/home`，坏了就清，必要时可重置）。**唯全局 `diy`（prod / `~/.diy`）是日常实跑的生产 app** —— 不动其数据根、不杀其进程，重启留给用户手动。
+**实例起停权限与数据定性**：`test` / `lab` 由 agent **自由起停**（随便折腾，不用问；`lab` 同时是人机沟通·验证 UI 的入口 —— 原 `preview` 的职责已并入它）。二者数据皆**临时非生产**（`<worktree>/run/<app>/<label>`，坏了就清，必要时可重置）。**唯全局 `diy`（prod / `~/.diy`）是日常实跑的生产 app** —— 不动其数据根、不杀其进程，重启留给用户手动。
 
 ## lab-owner
 
-**lab 一律开在「自己任务的 worktree」里**（`~/git/diy/diy.worktrees/t<号>-*/` 内 `./sha.sh lab`；数据根随之隔离在该 worktree 的 `build/lab/home`）。**根 worktree（`~/git/diy/diy`）的 `build/lab/home` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree。
+**lab 一律开在「自己任务的 worktree」里**（`~/git/diy/diy.worktrees/t<号>-*/` 内 `./sha.sh lab`；数据根随之隔离在该 worktree 的 `run/diy-app/lab`）。**根 worktree（`~/git/diy/diy`）的 `run/diy-app/lab` 是「无主」的** —— 只与用户联合使用（人在那儿看效果），**agent 不自己去开**：判别不了谁在用，撞 `SingletonLock` 或把种子 / 真配置写进用户正开着的根。要实验先给自己任务开 worktree。
 
 ## new-pkg
 

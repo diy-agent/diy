@@ -110,24 +110,19 @@ sync-deps() {
 # 也不许误判「新鲜」跳过真正的变更 —— 内容哈希那份权威判断在 check-sync.mjs 里，
 # 全量路径仍会跑它；`--force` 强制无条件全量。
 sha.def "sync" \
-  --desc "依赖同步：npm i + workspace 链接 + 配置同步到 lab 数据根"
+  --desc "依赖同步：npm i + workspace 链接（真配置直读 ~/.diy，不再投影副本）"
 
 sync()  {
     case "${1:-}" in
         --force|-f) ;;
         "")        if _sync_uptodate; then
                        echo "${info}依赖未变（stamp 命中、workspace 链接齐全）→ 跳过 npm i${reset}"
-                       sync-dev-home
                        return 0
                    fi ;;
         *) echo "${error}用法：./sha.sh sync [--force]${reset}" >&2; return 2 ;;
     esac
 
     sync-deps
-
-    # 本 worktree 的变体数据根缺「真配置」（真账号 / 投递划分 / 真人物），
-    # 补齐它 —— 见下条 sync-dev-home
-    sync-dev-home
 }
 
 # sync 的幂等快判：**只读、不写任何东西**，ms 级（sync 自己不能挂 ensure-sync，故这里自判）
@@ -171,50 +166,6 @@ ensure-sync() { ensure_sync; }
 # 只看同步状态（只读、不改任何东西，含 electron 等只提示项）；落后时非零退出
 sync-status() {  node scripts/check-sync.mjs "$@"; }
 
-# ── dev 数据根配置同步 ────────────────────────────────────────────────────────
-# 把生产数据根（~/.diy）的**真配置**投影进本 worktree 的变体数据根 build/<variant>/home：
-#   model.yaml · context.yaml · personas.yaml · providers.custom.yaml（这 4 份 = 真配置的投影）
-# 与 seed 的分工：seed 只种**示例 / 测试数据**（示例项目与任务 + 缺省人物 + `$VAR` 占位凭据），
-# 真配置（真账号 / 投递划分 / 真人物）由这里来 —— 原先是手工 cp，漏一份实验结论就不可信。
-#   · 变体 `DIY_VARIANT`（缺省 lab；与 ./sha.sh lab 配对，见 AGENTS.md entry.variant-match）
-#   · **幂等**：每次都整份覆盖这 4 份（`cp -p`，mtime 也随源）；目标 home 的**其余内容**
-#     （state.yaml / projects / local / .seed-done）**一律不碰**
-#   · 目标 home 不存在则 mkdir -p；源缺某文件 → 跳过 + 提示，**不让 sync 整体失败**
-#   · `DIY_SYNC_HOME=0` 关掉这一步；`DIY_SYNC_HOME_SRC` 换源（测试 / 换机）
-# ⚠️ 这 4 份含真实 API key，落到 build/**（已 gitignore）：勿提交、勿外传。
-sync-dev-home() {
-    local variant="${DIY_VARIANT:-lab}"
-    local src="${DIY_SYNC_HOME_SRC:-$HOME/.diy}"
-    local dst="$ROOT_DIR/build/$variant/home"
-
-    case "$(printf '%s' "${DIY_SYNC_HOME:-1}" | tr '[:upper:]' '[:lower:]')" in
-        0 | false | off | no)
-            echo "${info}dev 数据根配置同步：已按 DIY_SYNC_HOME 关闭（跳过）${reset}"
-            return 0
-            ;;
-    esac
-
-    if [[ ! -d "$src" ]]; then
-        echo "${secondary}warn: 源数据根不存在（${src}）→ 跳过 dev 配置同步（seed 仍会种示例数据）${reset}"
-        return 0
-    fi
-
-    mkdir -p "$dst"
-    local f missing=()
-    for f in model.yaml input-limit.yaml personas.yaml providers.custom.yaml; do
-        if [[ -f "$src/$f" ]]; then
-            run cp -p "$src/$f" "$dst/$f"
-        else
-            missing+=("$f")
-        fi
-    done
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        echo "${secondary}warn: 源缺 ${missing[*]}（${src}）→ 已跳过，其余照常${reset}"
-    fi
-    echo "${error}⚠️  已把真配置（含 API key）同步到 ${dst} —— 该目录在 .gitignore 内，勿提交、勿外传${reset}"
-    echo "${secondary}提示：配置是启动时读入的，已在跑的老实例要重启才看得到${reset}"
-    echo "${info}✅ 本 worktree 已可起 ./sha.sh lab 做真 LLM 实验（变体 ${variant}）${reset}"
-}
 # 全局 bin 目录：Windows 的 `npm prefix -g` 本身就是 bin 目录（%APPDATA%\npm）；
 # POSIX 下 bin 在 prefix/bin。
 _link_global_bin() {
@@ -713,7 +664,7 @@ github-actions-cicd()    {
     publish
 }
 
-# lab：HMR 开发实例（人看效果 / agent 实验都用它），独占 build/lab/**，与 test 互不干扰。
+# lab：HMR 开发实例（人看效果 / agent 实验都用它），数据根 run/diy-app/lab，与 test/staging 隔离。
 # lab [--app <name>]：缺省起 diy-app；其它 app 走 apps/<name>/sha.sh lab
 lab()     {
     local app_name="diy-app"

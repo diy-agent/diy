@@ -30,15 +30,20 @@ source "../../sha.common.sh"
 # mono必备子命令（根 ./sha.sh check/fix/test/test-unit 组装这些）
 ####################################################################################
 
-# 产物变体根：prod|test|lab|preview。vite 配置读 DIY_VARIANT 决定输出目录；
-# build/<variant>/{main,preload,cli,renderer,serve} 各自独立（见根 AGENTS.md「实例/变体」）。
+# 产物根固定 `build/prod`（**一份产物**，vite 配置不再读 DIY_VARIANT 决定 outDir）；
+# 实例之间的隔离**只靠数据根**：`run/diy-app/<label>`，由各入口脚本算好显式传 DIY_HOME。
 #
 # preview（2026-10-23 恢复，##404）：**编译后运行、无 watch** 的稳定实例。lab 的 HMR 每次改
 # src 都重启主进程，把正在进行的 agent 轮次打断（实测 129 轮里 128 轮这么死的）。所以
 # 「要持续对话的实例」用 preview（产物冻住，改码不波及它），「边改边看」仍用 lab。
-# 二者按变体分根（build/<variant>/** 与 build/<variant>/home），互不抢单实例锁。
+# 二者靠不同数据根隔离（单实例锁 per-home），产物是同一份。
+# 运行时标签（dev 能力 / 自动种入缺省 / 实例显示名）——**不参与任何路径拼装**。
 export DIY_VARIANT="${DIY_VARIANT:-prod}"
-_build_dir() { echo "build/${DIY_VARIANT:-prod}"; }
+# 产物根：固定 `build/prod`，一份产物跑所有实例（数据根由 DIY_HOME 显式给，见 core/dev-home.ts）。
+_build_dir() { echo "build/prod"; }
+_repo_root() { (cd "$SCRIPT_DIR/../.." && pwd); }
+# 本 worktree 的数据根：**入口脚本负责算**，核心代码只认显式 DIY_HOME（缺了直接报错）。
+_run_home() { echo "$(_repo_root)/run/diy-app/${1:-lab}"; }
 
 # electron 二进制就绪（全机共享 store + 本 worktree 软链；缺则下载一次，带超时）。
 # 为什么**起 Electron 前必须过这一道**：electron 无 postinstall，dist/path.txt 缺时
@@ -140,6 +145,7 @@ test-unit() {
 #: ⚠️ 只在发布前或改到布局/浮层时才跑 —— 它慢且脆，不进默认链路。
 test-e2e() {
   export DIY_VARIANT=test
+  export DIY_HOME="${DIY_HOME:-$(_run_home test)}"
   _ensure_electron
   build
   run npx vitest run --no-file-parallelism tests/e2e "$@"
@@ -151,12 +157,12 @@ test-os() { run npx vitest run tests/os --no-file-parallelism --no-isolate; }
 ####################################################################################
 
 # 开发实例：renderer dev server + watch main/preload + electron（HMR，免构建）——
-# 人看效果、agent 快速验证/debug 都用它。产物/数据根 build/lab/{main,preload,home}，
-# 与 test 互不干扰，可同时运行（单实例锁 per-home）。透传参数，如 --port 18888
-lab() { _ensure_electron; run env DIY_VARIANT=lab npx tsx scripts/electron-dev.mts "$@"; }
-# 编译后运行的**稳定实例**（无 watch）：跑 build/preview/** 的产物，改 src 不会重启它。
+# 人看效果、agent 快速验证/debug 都用它。产物在 build/prod（一份），数据根 run/diy-app/lab，
+# 与 test/staging 隔离（单实例锁 per-home）。透传参数，如 --port 18888
+lab() { _ensure_electron; run env DIY_VARIANT=lab DIY_HOME="$(_run_home lab)" npx tsx scripts/electron-dev.mts "$@"; }
+# 编译后运行的**稳定实例**（无 watch）：跑 build/prod 的产物，改 src 不会重启它。
 # 用途：人要持续对话 / 长会话（lab 的 watch 重启会打断正在进行的轮次）。
-# 数据根 build/preview/home（按变体分根，不与 lab 抢单实例锁）。
+# 数据根 run/diy-app/preview（与 lab 不同 home，因此单实例锁不冲突）。
 #   ./sha.sh preview                # 产物缺失才编译，然后起/连实例
 #   ./sha.sh preview --build        # 强制重新编译后再起
 #   ./sha.sh preview --from lab     # **首次**把 lab 的数据根克隆过来（续用那里的任务/会话）
@@ -171,12 +177,11 @@ preview() {
     esac
   done
   export DIY_VARIANT=preview
-  # 产物在 <包>/build/<variant>/（vite outDir），数据根在**仓库根** build/<variant>/home
-  # （core/dev-home 的缺省，见其头注）——两处基准不同，别照着产物那个路径写。
-  local repo_root; repo_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
-  local home="$repo_root/build/preview/home"
+  # 产物在 <包>/build/prod（vite outDir），数据根是本 worktree 的 run/diy-app/preview
+  # （由 _run_home 算好显式传下去）——两处基准不同，别照着产物那个路径写。
+  local home="$(_run_home preview)"
   if [[ -n "$from" ]]; then
-    local src="$repo_root/build/$from/home"
+    local src="$(_run_home "$from")"
     [[ -d "$src" ]] || { echo "✗ 源数据根不存在：$src" >&2; return 1; }
     if [[ -d "$home" ]] && [[ -n "$(ls -A "$home" 2>/dev/null)" ]]; then
       echo "✗ 目标数据根非空，拒绝覆盖：$home（要重建先 rm -rf 它）" >&2
@@ -187,14 +192,14 @@ preview() {
     # cache（可重建；模型目录也在里面）—— 只带走真正是「数据」的部分。
     run rsync -a --exclude 'electron_user_data/' --exclude 'app.port' --exclude 'cache/' "$src/" "$home/"
   fi
-  if ((do_build)) || [[ ! -f build/preview/main/index.mjs ]]; then
+  if ((do_build)) || [[ ! -f build/prod/main/index.mjs ]]; then
     build
   fi
   echo "── preview（编译产物，无 watch）"
   echo "   数据根：$home"
   # 起/连都交给 CLI 的 ensureAppPort（探活 → 验身份 → 复用或拉起，##328）：
   # 不要在这里自己 spawn —— 否则锁冲突诊断 / CDP 提示 / 身份校验会两处分叉。
-  run env DIY_VARIANT=preview DIY_ENV=development DIY_HOME="$home" node ./build/preview/cli/index.js app info
+  run env DIY_VARIANT=preview DIY_ENV=development DIY_HOME="$home" node ./build/prod/cli/index.js app info
   echo "   与它对话：DIY_VARIANT=preview DIY_HOME=$home ../../diy.sh agent local chat <taskUri>"
 }
 # 开发期跑 CLI 源码：./sha.sh cli task list
@@ -202,7 +207,8 @@ cli() { run npx tsx src/cli/index.ts "$@"; }
 # 纯 Web 服务（先构建 renderer，透传参数，如 --port <port>）
 serve() {
   build-renderer
-  run npx tsx src/serve/index.ts "$@"
+  # 数据根：本 worktree 的 run/diy-app/serve（核心只认显式值，缺了会报错退出）
+  run env DIY_HOME="${DIY_HOME:-$(_run_home serve)}" npx tsx src/serve/index.ts "$@"
 }
 serve-build() {
   build-renderer
@@ -210,7 +216,7 @@ serve-build() {
 }
 build-cli() { run npx vite build --config vite.cli.config.ts; }
 build-renderer() { run npx vite build --config vite.renderer.config.ts; }
-# 预生产（staging）：跑 **prod 产物**，但数据根在 worktree 内（`build/staging/home`）。
+# 预生产（staging）：跑 **build/prod 产物**，但数据根在 worktree 内（`run/diy-app/staging/<slot>`）。
 # 与 start 的区别只有数据根与环境：start = 真生产（`~/.diy`），staging = 沙箱验收。
 # 单实例锁是 per-home，所以 staging 与生产可以同时跑，互不干扰。
 # 第一个非 `-` 开头的位置参数 = slot（第几份实例，缺省 1）
@@ -219,9 +225,7 @@ staging() {
   if [ -n "${1:-}" ] && [ "${1#-}" = "$1" ]; then slot="$1"; shift; fi
   build
   _ensure_electron
-  # 仓库根：本包没有 _repo_root（那是 _diy/apps/dev 的私有函数），就地算
-  local root; root="$(cd "$SCRIPT_DIR/../.." && pwd)"
-  local home; home="${DIY_LAUNCH:+${DIY_HOME:-}}"; home="${home:-$root/build/staging/$slot/home}"
+  local home; home="${DIY_HOME:-$(_run_home "staging/$slot")}"
   run mkdir -p "$home"
   echo "${info}产物：$(_build_dir)（prod 构建）${reset}"
   echo "${info}数据根：${home}（staging/${slot}，不是 ~/.diy）${reset}"
@@ -249,6 +253,7 @@ test-core-intent() {
 #: ⚠️ 不在 test 里跑：每个文件一个 app，慢。改到 renderer / diy.ui.* 时才跑，发布前全跑。
 test-ui() {
   export DIY_VARIANT=test
+  export DIY_HOME="${DIY_HOME:-$(_run_home test)}"
   _ensure_electron
   build
   export DIY_CLI_MODE="${DIY_CLI_MODE:-http}"
@@ -268,8 +273,9 @@ test-intent() {
     echo "  例：  DIY_INTENT_ENABLE=1 ./sha.sh test-intent persona"
     return 0
   fi
-  # 测试实例独占 build/test/**：与 lab 的 watch 产物不撞（##184 实例分根）
+  # 产物只有一份（build/prod）：测试与 lab **不能在同一 worktree 同时跑**（watch 会覆盖产物）
   export DIY_VARIANT=test
+  export DIY_HOME="${DIY_HOME:-$(_run_home test)}"
   _ensure_electron
   build
   export DIY_CLI_MODE="${DIY_CLI_MODE:-http}"
