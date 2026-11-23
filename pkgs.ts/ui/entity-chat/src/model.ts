@@ -82,6 +82,19 @@ export function isClosed(room: Room): boolean {
 }
 
 /**
+ * 任务编号（`data.number`，后端按创建顺序分配、只增不减）。
+ *
+ * 只对 task 成立：别的容器（project / stock…）哪怕 data 里碰巧有 number，
+ * 也不是「任务 #n」，不该出现在导航里。缺失 / 不是有限数字 → undefined（界面不显示，
+ * 不拿 0 或 id 顶替 —— 编号要么是真的，要么就没有）。
+ */
+export function taskNumberOf(room: Room): number | undefined {
+    if (room.type !== 'task') return undefined;
+    const raw = room.data['number'];
+    return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
+/**
  * 关闭时刻（毫秒，落 `room.data.closedAt`，关闭时由 `store.setRoomStatus` 顺手盖上）。
  * 三态时代留下的 done 没有这个键 —— 返回 undefined：排序垫底、单元格显示「—」。
  */

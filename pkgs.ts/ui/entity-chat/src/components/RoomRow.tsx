@@ -8,7 +8,7 @@ import * as React from 'react';
 
 import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
-import { formatActivityAgo, formatAtAbsolute, roomTitle, type Room } from '../model';
+import { formatActivityAgo, formatAtAbsolute, roomTitle, taskNumberOf, type Room } from '../model';
 import { pendingAskHintOf } from '../pendingAsk';
 import { actions, useIsCurrentRoom, useLastActivityOf, usePendingAskOf, usePendingAskTitlesOf } from '../store';
 import { isPlainLeftClick } from './link';
@@ -93,6 +93,8 @@ export function RoomRowView({
     const activityAgo = formatActivityAgo(activityAt);
     const [renaming, setRenaming] = React.useState(false);
     const isProject = room.type === 'project';
+    /** 任务编号（非 task / 没编号 = undefined）。提出来是为了 narrow 后直接用 */
+    const number = taskNumberOf(room);
     const Icon = Folder;
     // 真地址：中键新标签页 / 右键复制链接由浏览器提供，别再拿 onClick 假装
     const href = formatAddress(roomAddressOf(room));
@@ -135,7 +137,7 @@ export function RoomRowView({
 
     return (
         <div
-            className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
+            className={`group relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
                 active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
             }`}
         >
@@ -161,6 +163,12 @@ export function RoomRowView({
             )}
 
             {isProject ? <Icon className="size-3.5 shrink-0 text-sky-400" /> : <StatusIcon room={room} />}
+
+            {/* 任务编号（#14）：紧跟在状态图标后面 —— 它是这一行除了标题之外唯一的**身份**。
+                用户要认「#14 那个任务」，标题可能重名 / 被改；编号不会。 */}
+            {number !== undefined && (
+                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">#{number}</span>
+            )}
 
             <EditableName
                 value={roomTitle(room)}
@@ -215,23 +223,36 @@ export function RoomRowView({
                 </span>
             )}
 
-            <RowAction title="重命名" onClick={() => setRenaming(true)}>
-                <Pencil className="size-3.5" />
-            </RowAction>
-
-            {isProject && onCreateTask !== undefined && (
-                <RowAction title="在本项目下新建任务（并直接对话）" onClick={onCreateTask}>
-                    <ListPlus className="size-3.5" />
-                </RowAction>
-            )}
-
-            <RowAction
-                title={`删除${isProject ? '项目（连带其任务）' : '任务'}`}
-                onClick={() => onRequestDelete(room)}
-                danger
+            {/* hover / 键盘聚焦才出现的行内动作：**绝对定位盖在行尾**，不参与布局。
+                以前它们留在 flex 行里、只把透明度打到 0 —— 位置一直占着，于是每一行
+                右边都空出三个按钮的宽度，列表的信息密度白白少一截（用户报过）。
+                底色跟着行的状态走（选中 = accent，其它 = muted），再加左侧渐隐，
+                否则下面的「最后活动 / 草稿 / 提问」标记会从按钮缝里透出来。 */}
+            <div
+                className={`absolute inset-y-0 right-0 flex items-center gap-0.5 pl-6 pr-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 ${
+                    active
+                        ? 'bg-gradient-to-l from-accent via-accent to-transparent'
+                        : 'bg-gradient-to-l from-muted via-muted to-transparent'
+                }`}
             >
-                <Trash2 className="size-3.5" />
-            </RowAction>
+                <RowAction title="重命名" onClick={() => setRenaming(true)}>
+                    <Pencil className="size-3.5" />
+                </RowAction>
+
+                {isProject && onCreateTask !== undefined && (
+                    <RowAction title="在本项目下新建任务（并直接对话）" onClick={onCreateTask}>
+                        <ListPlus className="size-3.5" />
+                    </RowAction>
+                )}
+
+                <RowAction
+                    title={`删除${isProject ? '项目（连带其任务）' : '任务'}`}
+                    onClick={() => onRequestDelete(room)}
+                    danger
+                >
+                    <Trash2 className="size-3.5" />
+                </RowAction>
+            </div>
         </div>
     );
 }
