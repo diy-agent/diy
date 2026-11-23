@@ -94,12 +94,24 @@ describe('/rpc 房间事件流', () => {
             });
             expect(rooms.some((room) => room.id === 'task:t-001')).toBe(true);
 
-            const created = await binding.invoke<unknown, { id: string; data: { number?: number } }>(
+            const created = await binding.invoke<unknown, { id: string; data: { number?: number; taskDir?: string } }>(
                 'diy2.rooms.create',
                 { input: { type: 'task', name: 'RPC 任务', data: { projectId: 'proj:diy' } } },
             );
             expect(created.id).toMatch(/^[0-9a-f-]{36}$/);
             expect(created.data.number).toBeGreaterThan(0);
+            expect(created.data.taskDir).toMatch(/tasks\/\d{4}-\d{2}-\d{2}\//);
+
+            // 侧栏的 #号 来自 `rooms.list`（内存 spec），不是 create 的回包：
+            // 只验 create 会漏掉「本次运行内建的任务没有 number」这个 bug（用户报过）。
+            // `taskDir` 同一根因（库侧派生、create 时手写的 spec 里没有），一并钉住。
+            const listed = await binding.invoke<
+                unknown,
+                Array<{ id: string; data: { number?: number; taskDir?: string } }>
+            >('diy2.rooms.list', { input: {} });
+            const mine = listed.find((room) => room.id === created.id);
+            expect(mine?.data.number).toBe(created.data.number);
+            expect(mine?.data.taskDir).toBe(created.data.taskDir);
 
             await binding.invoke('diy2.drafts.put', {
                 input: { owner: created.id, field: 'composer', value: { text: '半句话' } },

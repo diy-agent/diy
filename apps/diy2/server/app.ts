@@ -131,6 +131,27 @@ function labelOf(id: string): { label: string; type: string } {
     return { label: id, type: store.entityOf(id)?.type ?? 'unknown' };
 }
 
+/**
+ * 把**库侧派生**的只读字段抄回内存 spec（`Room.data.number` / `data.taskDir`）。
+ *
+ * 这两个值都不是调用方给的，而只能由 store 算出来：
+ * · `number` —— `counters` 在**落库那一刻**才发号（永不回收）；
+ * · `taskDir` —— 由创建日派生（`<数据根>/tasks/<日期>/<id>`，不落库）。
+ * 而内存那份 `Room` 是 server 手写的投影（`create` / `seed`），手写的地方不可能知道它们。
+ * 不抄回来的话，`rooms.list` 给出的任务就一直缺这两个键 —— 侧栏没有 `#号`（UI 读
+ * `data.number`，见 entity-chat 的 `taskNumberOf`）、详情面板的「任务目录」显示「—」；
+ * 重启时 `seed()` 从库里重读才补上。用户报的「新任务没有 number」就是这个窗口
+ * （库与磁盘上的 `task.md` 一直是对的，所以只有界面上看得见）。
+ */
+function adoptDerived(spec: Room): void {
+    if (spec.type !== 'task') return;
+    const task = store.taskOf(spec.id);
+    if (task === undefined) return;
+    if (spec.data['number'] !== task.number) spec.data['number'] = task.number;
+    const dir = store.taskDirOf(spec.id);
+    if (dir !== undefined && spec.data['taskDir'] !== dir) spec.data['taskDir'] = dir;
+}
+
 function actorOf(spec: Room): RoomActor {
     let actor = rooms.get(spec.id);
     if (actor === undefined) {
@@ -152,6 +173,8 @@ function actorOf(spec: Room): RoomActor {
         rooms.set(spec.id, actor);
         // 运行时新建的容器也要落库：不落的话重启后侧栏里就没了（消息还在，只是没入口）
         store.saveRoom(spec);
+        // 落库之后派生值才存在（见上）：内存 spec 是这次 list 的来源，必须当场补齐
+        adoptDerived(spec);
     }
     return actor;
 }
