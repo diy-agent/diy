@@ -190,6 +190,20 @@ export function RoomRowView({
                 onCommit={(next) => void actions.renameRoom(room.id, next)}
             />
 
+            {isProject && onCreateTask !== undefined && (
+                <button
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onCreateTask();
+                    }}
+                    title={`在「${roomTitle(room)}」下新建任务`}
+                    aria-label={`在「${roomTitle(room)}」下新建任务`}
+                    className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                    <ListPlus className="size-3.5" />
+                </button>
+            )}
+
             {isProject && collapsed && (openTaskCount ?? 0) > 0 && (
                 <span
                     title={`${openTaskCount} 个未关闭任务`}
@@ -234,10 +248,8 @@ export function RoomRowView({
                 </span>
             )}
 
-            {/* 行尾两个常驻按钮（用户 2026-11-24：任务要有「关闭」和「⋮」）：
-                · 关闭/打开 = 高频、且是她点名的「历史任务加打开按钮」（不再靠点状态图标那种隐含交互）
-                · ⋮ = 重命名 / 新建任务 / 删除，低频收进菜单
-                  以前是 hover 才浮现的三颗按钮（绝对定位盖住行尾），等于把能力藏起来。 */}
+            {/* 任务行尾两个常驻按钮：关闭/打开与 ⋮；项目行的「新建任务」是行内独立按钮，
+                不藏在菜单里。低频的重命名 / 删除留在菜单。 */}
             {!isProject && (
                 <button
                     onClick={(event) => {
@@ -260,16 +272,6 @@ export function RoomRowView({
                         icon: <Pencil className="size-3.5" />,
                         onClick: () => setRenaming(true),
                     },
-                    ...(isProject && onCreateTask !== undefined
-                        ? [
-                              {
-                                  key: 'new-task',
-                                  label: '新建任务',
-                                  icon: <ListPlus className="size-3.5" />,
-                                  onClick: onCreateTask,
-                              },
-                          ]
-                        : []),
                     {
                         key: 'delete',
                         label: isProject ? '删除项目' : '删除任务',

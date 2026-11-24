@@ -4,7 +4,7 @@
 // 贡献的来源**没有任何区别**（同一个 render 契约），所以这条路一直被走着 —— 插件那条
 // 路才不会在某个改动里悄悄烂掉。
 
-import { ListPlus, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import * as React from 'react';
 
 import { RoomRow } from '../components/RoomRow';
@@ -78,7 +78,7 @@ function ProjectsBlock({ context }: { context: NavContext }) {
 }
 
 /**
- * 一个项目（包含它下面未关闭的任务）。
+ * 一个项目（包含它下面未关闭的任务）。新建任务入口在项目行上常驻，不再只在空项目显示。
  *
  * `rooms` 整份传进来而不是传算好的 `tasks`：每次渲染新 filter 出来的数组会是一个
  * 新引用，`memo` 就失效了。这里 props 只跟「列表变了 / 展开态变了 / 回调变了」走。
@@ -125,15 +125,6 @@ const ProjectRow = React.memo(function ProjectRow({
                     <RoomRow room={task} compact={compact} onRequestDelete={onRequestDelete} />
                 </div>
             ))}
-            {!compact && !collapsed && tasks.length === 0 && (
-                <button
-                    onClick={create}
-                    className="ml-6 mt-0.5 flex items-center gap-1 rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
-                >
-                    <ListPlus className="size-3" />
-                    新建任务
-                </button>
-            )}
         </div>
     );
 });

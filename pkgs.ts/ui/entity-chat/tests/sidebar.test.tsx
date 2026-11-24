@@ -90,6 +90,12 @@ describe('侧栏按注册表渲染', () => {
         expect(html).toContain('孤儿容器');
     });
 
+    it('每个项目行都在行上提供新建任务按钮，不依赖三点菜单或空项目占位', () => {
+        const html = render();
+        expect(html).toContain('aria-label="在「diy」下新建任务"');
+        expect(html).not.toContain('新建任务</button>');
+    });
+
     it('导航项是真链接（可以直接复制 / 中键新窗口）', () => {
         const html = render();
         expect(html).toContain('href="/room/proj/diy"');

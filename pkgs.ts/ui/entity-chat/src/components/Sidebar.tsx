@@ -187,12 +187,7 @@ export function Sidebar({
             {/* 底部那一行：展开时有说明文字，收起时只剩设置这颗。两者都没有就整行不渲染 ——
                 否则收起态会留下一条只有 border 的空条。 */}
             {(open || onOpenSettings !== undefined) && (
-                <div className={`flex items-center border-t py-2 ${open ? 'justify-between px-3' : 'justify-center'}`}>
-                    {open && (
-                        <span className="text-[11px] leading-relaxed text-muted-foreground">
-                            容器 = 一条对话；成员在容器内
-                        </span>
-                    )}
+                <div className={`flex items-center border-t py-2 ${open ? 'justify-end px-3' : 'justify-center'}`}>
                     {onOpenSettings !== undefined && (
                         <button
                             onClick={onOpenSettings}

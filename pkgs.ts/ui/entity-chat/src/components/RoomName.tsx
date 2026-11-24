@@ -205,10 +205,16 @@ export function StatusGlyph({
     const Icon = STATUS_ICON[status];
     return (
         <span
-            className={`inline-flex shrink-0 ${meta.text} ${className} ${running ? 'animate-pulse' : ''}`}
+            className={`relative inline-flex shrink-0 ${meta.text} ${className}`}
             title={`${running ? '正在运行 · ' : ''}状态：${meta.label}`}
         >
             <Icon className={iconClass} strokeWidth={2.4} />
+            {running && (
+                <span
+                    aria-label="正在运行"
+                    className="absolute -right-0.5 -top-0.5 size-1.5 animate-pulse rounded-full bg-emerald-400 ring-1 ring-background"
+                />
+            )}
         </span>
     );
 }
