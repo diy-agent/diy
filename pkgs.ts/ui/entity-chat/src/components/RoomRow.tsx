@@ -45,6 +45,8 @@ export interface RoomRowProps {
     openTaskCount?: number;
     onToggleCollapse?: () => void;
     onCreateTask?: () => void;
+    /** 项目行可传入其子任务聚合运行态；否则读取本房间活动流 */
+    runningOverride?: boolean;
     onRequestDelete: (room: Room) => void;
 }
 
@@ -62,6 +64,7 @@ export function RoomRowView({
     openTaskCount,
     onToggleCollapse,
     onCreateTask,
+    runningOverride,
     onRequestDelete,
 }: RoomRowProps) {
     // 细粒度订阅：这一行只关心「是不是当前那一行」「自己的草稿 / 待答提问 / 最后活动」。
@@ -87,7 +90,8 @@ export function RoomRowView({
     const activityAgo = formatActivityAgo(activityAt);
     // 这个容器此刻在跑几个人（全实例活动流；别的房间起停不重渲这一行）。
     // **不加新元素**（用户 2026-11-24 裁）：呼吸 + 提亮就够，行里已经有三件标记了。
-    const running = useRunningOf(room.id) > 0;
+    const roomRunning = useRunningOf(room.id) > 0;
+    const running = runningOverride ?? roomRunning;
     const [renaming, setRenaming] = React.useState(false);
     const isProject = room.type === 'project';
     /** 任务当前是 open（行尾显「关闭」还是「打开」—— 状态只有这一个判据） */
@@ -116,7 +120,10 @@ export function RoomRowView({
                 }`}
             >
                 {isProject ? (
-                    <Icon className="size-4 text-sky-400" />
+                    <span className={`relative inline-flex ${running ? 'text-emerald-400' : 'text-sky-400'}`}>
+                        <Icon className="size-4" />
+                        {running && <span aria-label="项目中有任务正在运行" className="absolute -bottom-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-emerald-400 ring-1 ring-background" />}
+                    </span>
                 ) : (
                     <StatusGlyph room={room} iconClass="size-4" running={running} />
                 )}
@@ -167,7 +174,10 @@ export function RoomRowView({
             )}
 
             {isProject ? (
-                <Icon className="size-3.5 shrink-0 text-sky-400" />
+                <span className={`relative inline-flex shrink-0 ${running ? 'text-emerald-400' : 'text-sky-400'}`} title={running ? '项目中有任务正在运行' : '项目'}>
+                    <Icon className="size-3.5" />
+                    {running && <span aria-label="项目中有任务正在运行" className="absolute -bottom-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-emerald-400 ring-1 ring-background" />}
+                </span>
             ) : (
                 // 只画形状，不接点击：状态切换现在有行尾那颗**显式**的关闭/打开按钮。
                 // 一颗图标既当状态又当开关，双击误触就直接把任务关了（用户报过这个隐含交互）。

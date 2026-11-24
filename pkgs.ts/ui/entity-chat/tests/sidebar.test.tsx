@@ -90,6 +90,22 @@ describe('侧栏按注册表渲染', () => {
         expect(html).toContain('孤儿容器');
     });
 
+    it('项目行在任一打开的子任务运行时显示活动态', async () => {
+        setDiy2Client({
+            rooms: { list: async () => rooms.map((room) => ({ ...room, running: room.id === 'task:t-open' ? 1 : 0 })) },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const html = render();
+        expect(html).toContain('项目中有任务正在运行');
+    });
+
     it('每个项目行都在行上提供新建任务按钮，不依赖三点菜单或空项目占位', () => {
         const html = render();
         expect(html).toContain('aria-label="在「diy」下新建任务"');

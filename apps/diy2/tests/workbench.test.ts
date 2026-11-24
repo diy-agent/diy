@@ -66,14 +66,14 @@ describe('标题栏的活动入口', () => {
         const parts = combineWindow([
             {
                 id: 'global-activity',
-                tools: [
-                    { id: 'sessions', label: '会话活动', glyph: '会话 0', onClick: () => undefined },
+                activity: [
+                    { id: 'sessions', label: '会话活动', glyph: '会话 0', standalone: true, onClick: () => undefined },
                     { id: 'jobs', label: '后台任务', glyph: '后台 0', onClick: () => undefined },
                 ],
             },
         ]);
-        expect(parts.tools.map((item) => item.id)).toEqual(['sessions', 'jobs']);
-        expect(parts.tools.map((item) => item.glyph)).toEqual(['会话 0', '后台 0']);
+        expect(parts.activity.map((item) => item.id)).toEqual(['sessions', 'jobs']);
+        expect(parts.activity.map((item) => item.glyph)).toEqual(['会话 0', '后台 0']);
     });
 });
 

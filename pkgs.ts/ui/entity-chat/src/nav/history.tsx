@@ -17,7 +17,7 @@ import {
     type Room,
 } from '../model';
 import type { NavContext, NavSource } from '../nav';
-import { actions, useIsCurrentRoom, useLastActivityOf, useRooms } from '../store';
+import { actions, useIsCurrentRoom, useLastActivityOf, useRooms, useRunningOf } from '../store';
 import { projectNamesOf } from './projects';
 
 /** 历史任务区展开状态：默认展开（用户要的是“方便回头看”，默认收起等于又藏起来了） */
@@ -50,6 +50,7 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
     const active = useIsCurrentRoom(room.id);
     const closedAt = closedAtOf(room);
     const activityAt = useLastActivityOf(room.id);
+    const running = useRunningOf(room.id) > 0;
     const detail: string[] = [];
     if (closedAt !== undefined) {
         const absolute = formatClosedAtAbsolute(closedAt);
@@ -63,7 +64,7 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
                 active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
             }`}
         >
-            <StatusGlyph room={room} iconClass="size-3.5" />
+            <StatusGlyph room={room} iconClass="size-3.5" running={running} />
             <a
                 href={formatAddress(roomAddressOf(room))}
                 onClick={(event) => {

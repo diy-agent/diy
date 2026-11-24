@@ -22,7 +22,6 @@ import {
     ActiveJobsGlyph,
     ActiveSessionsGlyph,
     JobsPanel,
-    jumpToFirstRunningRoom,
     RoomDialogsProvider,
     Sidebar,
     useLoaded,
@@ -171,12 +170,13 @@ function Host() {
                 // 数字由组件自己订阅（全实例活动流）—— 宿主不跟着重渲，否则每有人开跑就要
                 // 把整页的根走一遍。
                 id: 'activity',
-                tools: [
+                activity: [
                     {
+                        // 点击在 glyph 自己身上（要弹列表并拿按钮位置做锚点），壳只负责摆位置
                         id: 'sessions',
-                        label: '会话活动：有轮次在跑时呼吸，点击跳到第一个',
+                        label: '会话活动：查看正在运行的会话列表',
                         glyph: <ActiveSessionsGlyph />,
-                        onClick: jumpToFirstRunningRoom,
+                        standalone: true,
                     },
                     {
                         id: 'jobs',

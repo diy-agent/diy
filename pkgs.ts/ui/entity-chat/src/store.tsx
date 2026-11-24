@@ -26,7 +26,7 @@ import {
 } from './address';
 import type { NavAddress } from './address';
 import { drafts } from './drafts';
-import type { TaskStatus } from './model';
+import { isClosed, type TaskStatus } from './model';
 import { firstUsableModelKey, type ModelCatalogPayload, type Provider } from './models';
 import { mergePendingAsks } from './pendingAsk';
 
@@ -336,23 +336,48 @@ export function useRunningOf(roomId: string): number {
 }
 
 /**
- * 只订阅「全实例共有几个会话在跑」（标题栏那颗图标）。
+ * 「一个房间算不算会话在跑」的**唯一判据** —— 标题栏那个数字与它弹出的列表共用一份。
  *
- * 数的是**成员**不是房间：一个房间里两个 bot 抢着说话，用户看到的是两轮在跑。
+ * 各写一份必然走散：2026-11-25 出现过数字把 project 行也算进去、列表却排除，于是「会话 1」点开是空的。
+ * 三个条件都不能省：project 是导航用的壳（它自己没有会话）、closed 任务里的旧 turn 不算、0 不算。
+ */
+export function isRunningSession(room: Room, running: number): boolean {
+    return room.type !== 'project' && !isClosed(room) && running > 0;
+}
+
+/** 正在跑的会话房间（顺序同侧栏）。标题栏的数字就是这个数组的长度 */
+export function useRunningSessionRooms(): Room[] {
+    const rooms = useRooms();
+    const running = React.useSyncExternalStore(
+        subscribeShell,
+        () => state.running,
+        () => state.running,
+    );
+    return React.useMemo(
+        () => rooms.filter((room) => isRunningSession(room, running[room.id] ?? 0)),
+        [rooms, running],
+    );
+}
+
+/**
+ * 只订阅「全实例有几个会话房间在跑」（标题栏会话入口）。
+ *
+ * 数字与弹出的房间列表一一对应；同一房间多个成员运行仍只算一个会话。
  */
 export function useRunningSessions(): number {
     return React.useSyncExternalStore(
         subscribeShell,
-        () => {
-            let total = 0;
-            for (const count of Object.values(state.running)) total += count;
-            return total;
-        },
-        () => {
-            let total = 0;
-            for (const count of Object.values(state.running)) total += count;
-            return total;
-        },
+        () => state.rooms.reduce((total, room) => total + (isRunningSession(room, state.running[room.id] ?? 0) ? 1 : 0), 0),
+        () => state.rooms.reduce((total, room) => total + (isRunningSession(room, state.running[room.id] ?? 0) ? 1 : 0), 0),
+    );
+}
+
+/** 项目行的聚合状态：是否有任意子任务正在运行。 */
+export function useAnyRunningInRooms(roomIds: readonly string[]): boolean {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => roomIds.some((id) => (state.running[id] ?? 0) > 0),
+        () => roomIds.some((id) => (state.running[id] ?? 0) > 0),
     );
 }
 
