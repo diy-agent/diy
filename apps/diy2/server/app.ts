@@ -30,6 +30,7 @@ import {
     modelProviders,
     newEntityId,
     openStore,
+    unitBoard,
 } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
@@ -694,6 +695,13 @@ export function createDiy2App(opts: {
              */
             models: {
                 list: async () => ({ providers: modelProviders(), defaultModelKey: defaultModelKey() }),
+            },
+            /**
+             * 任务内部的拆分图（unit DAG）。只读：writer 只有 agent 的工具（2026-11-24 裁），
+             * 界面是旁观者的窗口 —— 想改就在聊天里说。推导在 `unitBoard`（同一份纯函数）。
+             */
+            units: {
+                list: async ({ input }) => unitBoard(store.listUnits(input.id), store.unitDepsOf(input.id)),
             },
             links: {
                 list: async ({ input }) => {

@@ -76,6 +76,16 @@ export const FactsCellSchema = z
 export type FactsCell = z.infer<typeof FactsCellSchema>;
 
 /**
+ * 任务分解图里的一个 unit 引用（ready / doing / blocked 三档共用；只给定位与原因所需的最小信息）。
+ * 正文（body）不进上下文：要全文用 `unit_get`。
+ */
+const UNIT_REF = z.object({
+  id: z.string().describe("unit id（任务内唯一，形如 u3）"),
+  title: z.string().describe("这一步做什么（一句可执行的话）"),
+  deps: z.array(z.string()).describe("前置 unit id：这些都 done 了才能做它（blocked 的原因就是它们）"),
+});
+
+/**
  * 注入 globals 的**契约（单一真源）**：
  *   · `flattenVars()` 派生出引擎静态校验用的扁平 VarSpec[]
  *   · `buildVarTree()` 派生出试验场「变量定义」view 的二维树（名字/类型 + 说明）
@@ -287,6 +297,23 @@ export const AssembleGlobalsSchema = z.object({
     })
     .optional()
     .describe("任务日志（append-only 的决策/踩坑/评审）：没有记录时整节缺席"),
+  units: z
+    .object({
+      ready: z.array(UNIT_REF).describe("现在能做的（前置都 done）——「该做什么」只看它"),
+      doing: z.array(UNIT_REF).describe("正在做（允许多条并行；不是单指针）"),
+      blocked: z.array(UNIT_REF).describe("还不能做（有未完成前置）"),
+      layers: z
+        .array(
+          z.array(
+            UNIT_REF.extend({
+              status: z.enum(["open", "doing", "done"]).describe("open=待做 / doing=在做 / done=做完（没有 cancelled：取消就是真删）"),
+            }),
+          ),
+        )
+        .describe("全图按依赖分层（同层之间没有依赖边）；全量注入，溢出判定见 unitsProvider 注释"),
+    })
+    .optional()
+    .describe("任务内部拆解图（unit DAG）：节点 + 状态 + 依赖边；空图整节缺席"),
   room: z
     .object({
       members: z

@@ -109,6 +109,16 @@ export const journalApi = RpcSchema.group({
     },
 });
 
+/**
+ * 任务内部的拆分图（unit DAG）。**只读**：writer 只有 agent 的 `unit_*` 工具（2026-11-24 裁），
+ * 界面是旁观窗口。
+ */
+export const unitsApi = RpcSchema.group({
+    children: {
+        list: RpcSchema.unary({ input: { id: Id }, output: Any }),
+    },
+});
+
 export const linksApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: { id: Id }, output: Any }),
@@ -164,6 +174,7 @@ export const diy2Api = RpcSchema.group({
         drafts: draftsApi,
         journal: journalApi,
         models: modelsApi,
+        units: unitsApi,
         links: linksApi,
         jobs: jobsApi,
     },

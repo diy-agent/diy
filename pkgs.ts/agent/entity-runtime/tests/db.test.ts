@@ -434,3 +434,67 @@ describe('提问（asks）持久化', () => {
         expect(store.asksOf(room.id)).toEqual([]);
     });
 });
+
+describe('unit（任务内部的 DAG 节点）', () => {
+    const add = (store: ReturnType<typeof openStore>, taskId: string, title: string) =>
+        store.saveUnit({ taskId, title, body: '', status: 'open' });
+
+    it('新 unit 分配 u1 / u2…（task 内递增，删掉的号不回收）', () => {
+        const store = openStore(':memory:');
+        expect(add(store, 't1', 'a').id).toBe('u1');
+        expect(add(store, 't1', 'b').id).toBe('u2');
+        expect(store.removeUnit('t1', 'u2')).toBe(true);
+        // 删了 u2，下一个还是 u3 —— 聊天里引用过的号永远对得上
+        expect(add(store, 't1', 'c').id).toBe('u3');
+        expect(add(store, 't2', '别的任务').id).toBe('u1');
+    });
+
+    it('listUnits 按创建序；更新保留 seq / createdAt 与 id', () => {
+        const store = openStore(':memory:');
+        const first = add(store, 't1', 'a');
+        add(store, 't1', 'b');
+        const updated = store.saveUnit({ taskId: 't1', id: first.id, title: 'a2', body: '说明', status: 'doing' });
+        expect(updated.id).toBe('u1');
+        expect(updated.seq).toBe(first.seq);
+        expect(updated.createdAt).toBe(first.createdAt);
+        expect(store.listUnits('t1').map((unit) => unit.title)).toEqual(['a2', 'b']);
+        expect(store.unitOf('t1', 'u1')?.status).toBe('doing');
+    });
+
+    it('显式 id 但不存在 → 抛（新号只能由 counters 发）', () => {
+        const store = openStore(':memory:');
+        expect(() => store.saveUnit({ taskId: 't1', id: 'u9', title: 'x', body: '', status: 'open' })).toThrow(
+            /不存在/,
+        );
+    });
+
+    it('linkUnits 校验存在 / 不自连 / 挡环；unlink 幂等', () => {
+        const store = openStore(':memory:');
+        const a = add(store, 't1', 'a').id;
+        const b = add(store, 't1', 'b').id;
+        const c = add(store, 't1', 'c').id;
+        store.linkUnits('t1', a, b);
+        store.linkUnits('t1', b, c);
+        expect(() => store.linkUnits('t1', c, a)).toThrow(/成环/);
+        expect(() => store.linkUnits('t1', a, a)).toThrow(/自己/);
+        expect(() => store.linkUnits('t1', a, 'u99')).toThrow(/不存在/);
+        expect(store.unitDepsOf('t1')).toEqual([
+            { from: a, to: b },
+            { from: b, to: c },
+        ]);
+        expect(store.unlinkUnits('t1', b, c)).toBe(true);
+        expect(store.unlinkUnits('t1', b, c)).toBe(false);
+    });
+
+    it('删前置连带删边 = 解锁后继（真删的自然语义）', () => {
+        const store = openStore(':memory:');
+        const a = add(store, 't1', 'a').id;
+        const b = add(store, 't1', 'b').id;
+        store.linkUnits('t1', a, b);
+        store.removeUnit('t1', a);
+        expect(store.unitDepsOf('t1')).toEqual([]);
+        expect(store.listUnits('t1').map((unit) => unit.id)).toEqual([b]);
+        // 删除幂等
+        expect(store.removeUnit('t1', a)).toBe(false);
+    });
+});

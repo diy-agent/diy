@@ -15,7 +15,7 @@
 // 渲染一个非任务房间 —— 那一按保存就写 `title`、清 `desc`，把别的容器的数据改脏。
 // 未知类型只配一个只读信息卡。
 
-import { EntityChatApp, TaskPanel, useSelectedRoom, type Room } from '@diy-agent/entity-chat';
+import { EntityChatApp, TaskPanel, UnitGraph, useSelectedRoom, type Room } from '@diy-agent/entity-chat';
 
 import { useWb } from './AreaHost';
 import { area, definePage, defineView, type PageDef } from './model';
@@ -109,6 +109,17 @@ function TaskDetail({ room }: { room: Room }) {
     return (
         <div className="wb-fill">
             <TaskPanel room={room} />
+        </div>
+    );
+}
+
+/** 分解：unit DAG 的只读视图（任务页专属；非任务房由组件自己说清楚） */
+function UnitsBody() {
+    const room = useSelectedRoom();
+    if (!room) return <Empty>没有选中房间</Empty>;
+    return (
+        <div className="wb-fill">
+            <UnitGraph room={room} />
         </div>
     );
 }
@@ -250,6 +261,16 @@ function Empty({ children }: { children: string }) {
 }
 
 export const wbViews = [
+    /**
+     * 任务内部拆分图（unit DAG）。与「详情」同一个区域 → 自然变成 tab（不用动骨架）：
+     * 两者都是「任务本体」，只是一个是正文、一个是步骤图。只读（写入口只有 agent 的工具）。
+     */
+    defineView({
+        id: 'units',
+        title: '分解',
+        placement: { task: { area: 'detail' } },
+        render: () => <UnitsBody />,
+    }),
     defineView({
         id: 'detail',
         title: '详情',

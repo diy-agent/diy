@@ -29,7 +29,13 @@ export {
     type Store,
     type TaskInput,
     type TaskRecord,
+    UNIT_STATUSES,
+    type UnitDep,
+    type UnitInput,
+    type UnitRecord,
+    type UnitStatus,
 } from './db';
+export { unitBoard, type UnitBoard, type UnitBoardRow, type UnitFacts } from './units';
 export {
     CORE_TYPES,
     LINK_KINDS,

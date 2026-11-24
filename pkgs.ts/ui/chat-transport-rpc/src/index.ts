@@ -49,6 +49,32 @@ export interface RpcChatClientOptions {
 /** 房间 → 话题名（与 server 的 `room:<id>` 一一对应） */
 const topicOf = (entityId: string): string => `room:${entityId}`;
 
+/** 一个 unit（任务内部的原子步；与 `@diy-agent/entity-runtime` 的 `UnitBoardRow` 同形） */
+export interface UnitItem {
+    id: string;
+    title: string;
+    body: string;
+    status: 'open' | 'doing' | 'done';
+    /** 前置：这些做完才能做它 */
+    deps: string[];
+    /** 后继：它做完才能做它们 */
+    dependents: string[];
+    /** 拓扑层（0 起）：同层之间无依赖 */
+    layer: number;
+}
+
+/** 任务内部拆分图（unit DAG）的视图快照；ready / doing / blocked / done 都是 id 集合 */
+export interface UnitBoardView {
+    rows: UnitItem[];
+    ready: string[];
+    doing: string[];
+    blocked: string[];
+    done: string[];
+    layers: UnitItem[][];
+    /** 图里有环（正常为 false；为 true 说明库被写脏了，界面该亮出来） */
+    cyclic: boolean;
+}
+
 /** 一条草稿（服务端 rooms/drafts 的返回项） */
 export interface DraftEntry {
     field: string;
@@ -150,6 +176,14 @@ export class RpcChatClient implements ChatClient {
             lines?: number,
         ): Promise<{ found: boolean; tail?: { text: string; lines: number; droppedBytes: number } }> =>
             this.call('jobs.tail', { id, ...(lines === undefined ? {} : { lines }) }),
+    };
+
+    /**
+     * 任务内部的拆分图（unit DAG）。**只读**：writer 只有 agent 的 `unit_*` 工具，
+     * 界面是旁观窗口 —— 想改就在聊天里说。
+     */
+    readonly units = {
+        list: (id: string): Promise<UnitBoardView> => this.call('units.list', { id }),
     };
 
     readonly links = {

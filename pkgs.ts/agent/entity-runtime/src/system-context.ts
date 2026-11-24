@@ -29,6 +29,7 @@ import { skillsOf } from '@diy-agent/skills';
 import { localISOString } from '@diy-agent/time';
 
 import type { JournalEntry } from './db';
+import type { UnitBoard } from './units';
 import { watchedValue } from './watch-cache';
 
 /** 房间上下文需要的 spec 形状（只读；与 `Room` 结构兼容） */
@@ -58,6 +59,8 @@ export interface RoomContextOptions {
     readonly skillsRoot?: string;
     /** 任务日志（append-only）：由宿主给取数函数；不传 = 不投 journal 节 */
     readonly journal?: () => readonly JournalEntry[];
+    /** 任务内部的拆分图（unit DAG）：宿主给取数函数；不传 = 不投 units 节 */
+    readonly units?: () => UnitBoard;
     /** 房间成员（@ 键 / 是否主人格）：不传 = 不投 room 节 */
     readonly members?: () => readonly { id: string; name: string; key: string; main: boolean }[];
 }
@@ -219,6 +222,35 @@ function journalProvider(get?: () => readonly JournalEntry[]): ContextProvider {
     };
 }
 
+/**
+ * 任务拆分图（unit DAG）。**全量注入**（2026-11-24 用户裁：先简单走）——
+ * 于是「现在能做哪几条」不需要多一次工具调用，代价是图越长上下文越贵。
+ *
+ * ⚠️ 溢出线：>40 个 unit 或本节 >1.5 KB 时必须改成摘要（只给 ready + 计数，全图靠
+ * `unit_list` 按需查）。全量是阶段一的省事，不是终态。
+ */
+function unitsProvider(get?: () => UnitBoard): ContextProvider {
+    return {
+        key: 'units',
+        provide: () => {
+            const board = get?.();
+            if (board === undefined || board.rows.length === 0) return undefined;
+            const ref = (id: string) => {
+                const row = board.rows.find((item) => item.id === id);
+                return { id, title: row?.title ?? '', deps: row?.deps ?? [] };
+            };
+            return {
+                ready: board.ready.map(ref),
+                doing: board.doing.map(ref),
+                blocked: board.blocked.map(ref),
+                layers: board.layers.map((layer) =>
+                    layer.map((row) => ({ id: row.id, title: row.title, deps: row.deps, status: row.status })),
+                ),
+            };
+        },
+    };
+}
+
 /** 房间成员（低频）：模型要 @ 谁，得先知道房里有什么名字 */
 function roomProvider(opts: RoomContextOptions): ContextProvider {
     return {
@@ -327,6 +359,7 @@ export function roomProviders(opts: RoomContextOptions): ContextProvider[] {
         docsProvider(opts.cwd),
         roomProvider(opts),
         journalProvider(opts.journal),
+        unitsProvider(opts.units),
         taskProvider(opts.spec, opts.cwd),
     ];
 }
