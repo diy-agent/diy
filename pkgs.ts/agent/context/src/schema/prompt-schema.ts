@@ -76,11 +76,20 @@ export const FactsCellSchema = z
 export type FactsCell = z.infer<typeof FactsCellSchema>;
 
 /**
- * 任务分解图里的一个 unit 引用（ready / doing / blocked 三档共用；只给定位与原因所需的最小信息）。
+ * 任务分解图里的一个 unit 引用（只给定位与原因所需的最小信息）。
  * 正文（body）不进上下文：要全文用 `unit_get`。
+ *
+ * 两种粒度：`UNIT_HEAD`（只有 id + 标题，给 ready / doing 这些行动指令）与 `UNIT_REF`
+ * （+ deps，给 `layers` 里的全图）。blocked / done 不单列 —— 它们是 `layers` 的派生读法。
  */
+/** 一条 unit 在「行动指令」里的样子：只点名 id + 标题（前置在 `layers` 里） */
+const UNIT_HEAD = z.object({
+  id: z.string().describe("unit id（任务内唯一；拆图时自起的 key，如 state / cancel-tool）"),
+  title: z.string().describe("这一件是什么产出（能被验收，不是动作：写「什么改好了」，不是「改哪个文件」）"),
+});
+
 const UNIT_REF = z.object({
-  id: z.string().describe("unit id（任务内唯一，形如 u3）"),
+  id: z.string().describe("unit id（任务内唯一；拆图时自起的 key，如 state / cancel-tool）"),
   title: z.string().describe("这一件是什么产出（能被验收，不是动作：写「什么改好了」，不是「改哪个文件」）"),
   deps: z.array(z.string()).describe("前置 unit id：这些都 done 了才能做它（blocked 的原因就是它们）"),
 });
@@ -299,9 +308,8 @@ export const AssembleGlobalsSchema = z.object({
     .describe("任务日志（append-only 的决策/踩坑/评审）：没有记录时整节缺席"),
   units: z
     .object({
-      ready: z.array(UNIT_REF).describe("现在能做的（前置都 done）——「该做什么」只看它"),
-      doing: z.array(UNIT_REF).describe("正在做（允许多条并行；不是单指针）"),
-      blocked: z.array(UNIT_REF).describe("还不能做（有未完成前置）"),
+      ready: z.array(UNIT_HEAD).describe("现在能做的（前置都 done）——「该做什么」只看它"),
+      doing: z.array(UNIT_HEAD).describe("正在做（允许多条并行；不是单指针）"),
       layers: z
         .array(
           z.array(
@@ -310,10 +318,23 @@ export const AssembleGlobalsSchema = z.object({
             }),
           ),
         )
-        .describe("全图按依赖分层（同层之间没有依赖边）；全量注入，溢出判定见 unitsProvider 注释"),
+        .optional()
+        .describe("全图按依赖分层（同层之间没有依赖边）；图太大时整节缺席、只给 ready + counts"),
+      counts: z
+        .object({
+          open: z.number().int(),
+          doing: z.number().int(),
+          done: z.number().int(),
+        })
+        .optional()
+        .describe("各状态条数（只有图溢出、不给全图时才出现）"),
+      note: z.string().optional().describe("溢出时的提示：全图用 unit_list 按需查"),
     })
     .optional()
-    .describe("任务内部拆解图（unit DAG）：节点 + 状态 + 依赖边；空图整节缺席"),
+    .describe(
+      "任务内部拆解图（unit DAG）：现在能做的 + 按层摆的全图。blocked / done 不点名 —— " +
+        "「open 且不在 ready」就是 blocked，status=done 的就是 done，`layers` 里都有。空图整节缺席",
+    ),
   room: z
     .object({
       members: z

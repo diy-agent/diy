@@ -166,13 +166,14 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         });
         const system = ctx.open().system;
         expect(system).toContain('units:');
-        // 三档都进：ready 是「该做什么」的答案，blocked 带前置解释为什么还不能做
+        // ready 是「该做什么」的答案；blocked / done **不点名** —— open 且不在 ready 就是 blocked
         expect(system).toContain('ready:');
         expect(system).toContain('u4');
         expect(system).toContain('doing:');
-        expect(system).toContain('blocked:');
-        // 分层是全图的骨架（视图与上下文同一形状）
+        expect(system).not.toContain('blocked:');
+        // 分层是全图的骨架（视图与上下文同一形状）：每条带 status + deps，blocked / done 由它读出来
         expect(system).toContain('layers:');
+        expect(system).toContain('deps:');
         // title 进上下文，body 不进（要全文用 unit_get）
         expect(system).toContain('写领域函数');
     });

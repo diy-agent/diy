@@ -223,11 +223,25 @@ function journalProvider(get?: () => readonly JournalEntry[]): ContextProvider {
 }
 
 /**
+ * 全量形态的硬线：过线就退化成摘要（只给「现在能做」+ 计数，全图按需 `unit_list`）。
+ *
+ * 1.5 KB 的说法（原设计稿）在真实数据上太紧：一行真实 unit 约 120 字节，1.5 KB 只装得下
+ * 十来条 —— 常见的 10~20 条图会**天天**走摘要，等于默认不给图。40 条 × 120 B ≈ 5 KB，
+ * 取 4 KB 作字节线、40 条作条数线（两条各自兜住「条数少但标题很长」与「标题短但极多」）。
+ */
+const UNITS_FULL_MAX_BYTES = 4096;
+const UNITS_FULL_MAX_COUNT = 40;
+
+/**
  * 任务拆分图（unit DAG）。**全量注入**（2026-11-24 用户裁：先简单走）——
  * 于是「现在能做哪几条」不需要多一次工具调用，代价是图越长上下文越贵。
  *
- * ⚠️ 溢出线：>40 个 unit 或本节 >1.5 KB 时必须改成摘要（只给 ready + 计数，全图靠
- * `unit_list` 按需查）。全量是阶段一的省事，不是终态。
+ * 两条去冗余的规矩（##u6）：
+ *   · **每个 unit 只出现一次**（在 `layers` 里，带 status + deps）；`ready` / `doing` 只点名
+ *     「现在该干什么」，标题顺带给（那几条是行动指令，值得重复一次）。
+ *   · **`blocked` / `done` 不点名**：`status` 与 `deps` 都在层里，`open` 且不在 `ready` =
+ *     blocked、`done` 就是 status=done —— 再点名一遍是同一事实的第二份，模型读两遍还得自己核对。
+ *     要看分档的完整清单，`unit_list` 一次给全（工具是按需的，不怕重复）。
  */
 function unitsProvider(get?: () => UnitBoard): ContextProvider {
     return {
@@ -235,17 +249,29 @@ function unitsProvider(get?: () => UnitBoard): ContextProvider {
         provide: () => {
             const board = get?.();
             if (board === undefined || board.rows.length === 0) return undefined;
-            const ref = (id: string) => {
-                const row = board.rows.find((item) => item.id === id);
-                return { id, title: row?.title ?? '', deps: row?.deps ?? [] };
+            const titleOf = (id: string): string => board.rows.find((row) => row.id === id)?.title ?? '';
+            // 行动指令：只有「现在能做 / 在做」值得带标题（其余在 layers 里各有一行）
+            const head = {
+                ready: board.ready.map((id) => ({ id, title: titleOf(id) })),
+                doing: board.doing.map((id) => ({ id, title: titleOf(id) })),
             };
-            return {
-                ready: board.ready.map(ref),
-                doing: board.doing.map(ref),
-                blocked: board.blocked.map(ref),
+
+            const full = {
+                ...head,
                 layers: board.layers.map((layer) =>
-                    layer.map((row) => ({ id: row.id, title: row.title, deps: row.deps, status: row.status })),
+                    layer.map((row) => ({ id: row.id, title: row.title, status: row.status, deps: row.deps })),
                 ),
+            };
+            // 字节按实际注入值估（信封的 yaml 渲染只会更紧，不会更松）
+            if (board.rows.length <= UNITS_FULL_MAX_COUNT && JSON.stringify(full).length <= UNITS_FULL_MAX_BYTES) {
+                return full;
+            }
+            const count = (status: UnitBoard['rows'][number]['status']): number =>
+                board.rows.filter((row) => row.status === status).length;
+            return {
+                ...head,
+                counts: { open: count('open'), doing: count('doing'), done: count('done') },
+                note: `图较大（${board.rows.length} 条），只给现在能做的；全图分层用 unit_list`,
             };
         },
     };
