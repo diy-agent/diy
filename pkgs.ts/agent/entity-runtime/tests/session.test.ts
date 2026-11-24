@@ -359,15 +359,19 @@ describe('BotSession', () => {
         // `endReason` 是这一轮**为什么**结束的收尾事实。脚本 run 现在也发 `run.finished`
         // （与真 agent 一致），所以这里是 completed + 上游原文 stop，不是"猜"出来的。
         // 没有它，「被截断」和「说完了」在数据里就没区别（见 intent.truncation.test.ts）
-        expect(h.ends).toEqual([
-            {
-                turn: 1,
-                turnId: 'turn-1',
-                text: 'reply-1',
-                failed: false,
-                endReason: { type: 'completed', finishReason: 'stop', steps: 1 },
-            },
-        ]);
+        // 起止时刻是本轮自己的事实（界面消息头 + 结算行都读它）：只断言它们存在且
+        // 时间不倒流，不断言具体毫秒值。
+        expect(h.ends).toHaveLength(1);
+        const end = h.ends[0]!;
+        expect(end).toMatchObject({
+            turn: 1,
+            turnId: 'turn-1',
+            text: 'reply-1',
+            failed: false,
+            endReason: { type: 'completed', finishReason: 'stop', steps: 1 },
+        });
+        expect(end.startedAt).toBeTypeOf('number');
+        expect(end.endedAt).toBeGreaterThanOrEqual(end.startedAt!);
     });
 
     it('运行失败只落一条错误条目（run.failed 的原文不重复）', async () => {

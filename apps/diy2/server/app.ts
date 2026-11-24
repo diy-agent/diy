@@ -695,6 +695,9 @@ export function createDiy2App(opts: {
                         // 服务端事实：谁还在跑。取房间自己的 `running` 集合（与广播同源），
                         // 客户端不再靠「有没有流式条目」倒推 —— 卡在等上游的那一轮没有流式条目。
                         speaking: actor.runningBots(),
+                        // 在跑的那几轮从何时开始：刷新后消息头 / 「已用 Ns」靠它，
+                        // 不能由客户端拿条目时刻去估（收轮时会跟 turn.end 给的 startedAt 跳一下）
+                        runningTurns: actor.runningTurns(),
                     };
                 },
                 chat: async ({ input }) => {

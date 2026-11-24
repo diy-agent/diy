@@ -50,8 +50,17 @@ export interface TurnResult extends Turn {
     /** 本轮产出的全部文本（房间层据此写"结论"条目） */
     text: string;
     failed: boolean;
-    /** 本轮实测用量（真实 token，可用于校准预算） */
+    /**
+     * 本轮实测用量（真实 token，可用于校准预算）。
+     *
+     * **是本轮的**，不是上一轮的：`lastUsage`（压缩判据用）在失败轮不会被刷新，直接用
+     * 它会把这轮的结算行写成上一轮的数字（失败轮最常见的就是拿不到 usage）。
+     */
     usage?: TokenUsage;
+    /** 这一轮的开始时刻（= `turn.start` 广播的那个值，同一个来源） */
+    startedAt?: number;
+    /** 这一轮的结束时刻 */
+    endedAt?: number;
     /**
      * 这一轮**为什么**结束。`max-tokens` / `tool-mismatch` / `interrupted` 都要能说出来 ——
      * 否则「被截断」和「说完了」在数据里没有区别（就是「执行一半停下」那个 bug）。
@@ -71,7 +80,7 @@ export type SessionEvent =
      * 为什么不复用 `busy: true`：一次 busy 期间可以连着跑好几轮（队列分几批），
      * 而"新的一轮"才是世界状态换代的时刻 —— 见 ask.ts 头部的寿命规则。
      */
-    | { type: 'turn.start'; turn: Turn }
+    | { type: 'turn.start'; turn: Turn; startedAt: number }
     /** 一轮结束（房间据此写结论） */
     | { type: 'turn.end'; result: TurnResult }
     /** 真压了一次 */
@@ -175,6 +184,8 @@ export class BotSession {
     private readonly events: CompactEvent[] = [];
     /** 上一轮实测用量：给策略做真实 token 判据 */
     private lastUsage: TokenUsage | undefined;
+    /** **本轮**实测用量：结算行（tokens）只用它，与本轮生命周期同起同落 */
+    private turnUsage: TokenUsage | undefined;
     /** 最近一次运行的轮次号（手动压缩时用它，不额外消耗轮次） */
     private turnNow = 0;
     /** 当前使用的模型：房间改模型时要能推下来（构造时的 deps.modelKey 只是初值） */
@@ -447,8 +458,12 @@ export class BotSession {
     private async runTurn(items: QueueItem[]): Promise<void> {
         const turn = items[0]?.turn ?? this.deps.allocateTurn();
         this.turnNow = turn.turn;
+        // 这一轮的起止时刻：**一个来源**（广播、turn.end、界面消息头 / 结算行全从这里来）。
+        // 不让客户端各自 `Date.now()`：跨刷新、跨 surface 的两个数字必须说的是同一件事。
+        const startedAt = Date.now();
+        this.turnUsage = undefined;
         // 先广播"这一轮开始了"：房间据此把上一个回合留下的未答提问判过期（ask.ts 的寿命规则）
-        this.emit({ type: 'turn.start', turn });
+        this.emit({ type: 'turn.start', turn, startedAt });
         const projector = new Projector(this.authorOf(), turn.turn);
         const abort = new AbortController();
         this.abort = abort;
@@ -566,6 +581,7 @@ export class BotSession {
                 },
                 onUsage: (usage) => {
                     this.lastUsage = usage;
+                    this.turnUsage = usage;
                 },
             })) {
                 watch.apply(event);
@@ -620,7 +636,7 @@ export class BotSession {
             for (const item of projector.finalize()) this.emit({ type: 'item', item });
 
             // 为什么结束：判定只在 end-reason.ts（session / 房间 / 测试 / lab 页共用一份）。
-            const endReason = endReasonOf({
+            const verdict = endReasonOf({
                 failed,
                 aborted: abort.signal.aborted,
                 // 谁按的停：人按的（cancel）与看门狗杀的要分开 —— 后者是事实，不是故障。
@@ -635,6 +651,9 @@ export class BotSession {
                 maxOutputTokens: reportedBudget ?? maxOutputTokens,
                 maxSteps: reportedStepCap ?? maxSteps,
             });
+            // 工具次数放进结算事实（`endReasonOf` 只判「为什么停」，不记次数）：
+            // 结算行要写「N 次工具」，而它只能从运行侧数得到。
+            const endReason = toolCalls === 0 ? verdict : { ...verdict, toolCalls };
 
             // 「怎么停的」必须说出来，否则数据里和正常收尾一模一样：
             // 截断 / 过滤 / 工具悬空 → notice；未知 / 失败 → 错误条目（未知按错误处理）。
@@ -660,7 +679,9 @@ export class BotSession {
                     text: text.trim(),
                     failed: endReason.type === 'error' || endReason.type === 'unknown',
                     endReason,
-                    ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
+                    startedAt,
+                    endedAt: Date.now(),
+                    ...(this.turnUsage === undefined ? {} : { usage: this.turnUsage }),
                 },
             });
 

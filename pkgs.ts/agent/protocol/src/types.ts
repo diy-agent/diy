@@ -323,7 +323,32 @@ export type StreamEvent =
      * 刷新后不带回来（它不在快照里）：ephemeral 的结局靠条目持久，`completed`
      * 本来也不需要页脚。
      */
-    | { kind: 'turn.end'; botId: string; turnId: string; reason: TurnEndReason }
+    | {
+          kind: 'turn.end';
+          botId: string;
+          turnId: string;
+          reason: TurnEndReason;
+          /**
+           * 这一轮的起止时刻（epoch ms）—— 与 `turn.start` 的 `startedAt` 是**同一个值**。
+           *
+           * 为什么必须由服务端成对给出：消息头写开始时刻、底部结算行写「耗时 + 结束于」，
+           * 前端拿 `Date.now()` 或条目时间自己估，两个数字会各算各的（跨刷新更明显）。
+           */
+          startedAt?: number;
+          endedAt?: number;
+          /** 本轮实测用量（模型给的，不是估算）：结算行写 tokens 用它 */
+          usage?: TurnUsage;
+          /** 本轮发起的工具调用数（结算行的「N 次工具」；缺省 = 这一轮没调工具） */
+          toolCalls?: number;
+      }
+    /**
+     * 一轮**开始**了（ephemeral）：带着服务端认定的开始时刻，供消息头与「已用 Ns」走字。
+     *
+     * 没有它，运行中的耗时只能从「本轮第一条条目」倒推 —— 那条通常是用户消息，看起来
+     * 等价，但它是**落库**时刻而不是**开跑**时刻（排队、唤醒都有几十毫秒到几秒的差），
+     * 而且收轮时 `turn.end` 给的 startedAt 会把它改掉，界面上的秒数会跳一下。
+     */
+    | { kind: 'turn.start'; botId: string; turnId: string; startedAt: number }
     /**
      * 这一轮**此刻在等什么、有多久没动**（即时事实，UI 的"还活着吗"用它）。
      *
@@ -395,6 +420,14 @@ export interface Snapshot {
      * 缺省 `undefined` = 老服务端：客户端退回旧的倒推。空数组是**有意义**的（确实没人跑）。
      */
     speaking?: string[];
+    /**
+     * 还在跑的那几轮的**开始时刻**（botId → epoch ms）：给消息头与「已用 Ns」走字。
+     *
+     * 只装 `speaking` 里那些 bot 的 turn；刷新后 `turn.start` 事件丢了，但时间不会变 ——
+     * 所以它是快照事实，不是事件重放。缺省 / 缺某个 bot = 老服务端或数据没到，
+     * 客户端退回用条目时刻（只会差几十毫秒，不会空白）。
+     */
+    runningTurns?: Array<{ botId: string; turnId: string; startedAt: number }>;
 }
 
 /** capabilities 决定 UI 显示哪些按钮（不要写 surfaceId 分支） */
@@ -414,6 +447,12 @@ export const DEFAULT_CAPABILITIES: Capabilities = {
 };
 
 // ── 运行时事件（模型 → 投影层）───────────────────────────────────
+
+/** 一轮的实测用量（上游报的，非估算）。`inputTokens` 含缓存读，与上游口径一致 */
+export interface TurnUsage {
+    inputTokens: number;
+    outputTokens: number;
+}
 
 /**
  * 一轮为什么结束。**只说事实，不猜原因**（判据在 runtime，文案在 UI）。
@@ -452,6 +491,13 @@ export interface TurnEndReason {
     maxSteps?: number;
     /** 本轮的 step 数（多轮工具循环时用于区分「说完了」和「刚到一半」） */
     steps?: number;
+    /**
+     * 本轮发起的工具调用数（结算行的「N 次工具」）。
+     *
+     * 与 `steps` 分开：一步可以零次工具（纯思考）、也可以并行几次；用户看「跑了多久 /
+     * 用了多少 token / 调了几次工具」比看 step 数有意义。缺省 = 一次也没调。
+     */
+    toolCalls?: number;
     /**
      * `stalled` 时：卡在哪个 await（`model-stream` / `tool` / `tool:<name>` / `compact`）。
      *

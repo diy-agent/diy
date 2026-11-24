@@ -3,7 +3,8 @@
 import { normalizeAskRequest } from '@diy-agent/protocol';
 
 import type { BotProgress } from './progress';
-import type { AnsweredAsk, AskRequest, Delivery, Item, StreamEvent, TurnEndReason } from './types';
+import type { TurnFacts } from './timeline';
+import type { AnsweredAsk, AskRequest, Delivery, Item, StreamEvent } from './types';
 
 export interface ConversationState {
     items: Item[];
@@ -19,12 +20,15 @@ export interface ConversationState {
     /** 正在说话的成员 id（房间广播，按成员顺序） */
     speaking: string[];
     /**
-     * 某一轮**为什么**结束（turnId → 判定）。页脚用它显示结局。
+     * 各轮的时间与结局（`turnId\u0000botId` → 事实）。消息头写开始时刻、底部行写
+     * 「已用 / 结算」，两者读的都是它。
      *
-     * 只活在这一次连接里（快照里没有它）：`completed` 本来不需要页脚，
-     * 需要解释的那几种在时间线上都有持久条目 —— 刷新后信息不会丢，只是页脚那行会消失。
+     * 运行中的轮只有 `startedAt`（来自 `turn.start` 或快照的 `runningTurns`），
+     * 收尾时随 `turn.end` 补齐 `endedAt` / `usage` / `reason`。
+     *
+     * 会不会无限长大：每轮一条，与「这次连接里跑过多少轮」同阶；刷新即清。
      */
-    turnEnds: Record<string, TurnEndReason>;
+    turns: Record<string, TurnFacts>;
     /**
      * 每个成员此刻的进展（`progress` 事件给的事实：在等谁 / 多久没动 / 有无心跳）。
      *
@@ -43,7 +47,7 @@ export function emptyState(): ConversationState {
         seq: 0,
         running: false,
         speaking: [],
-        turnEnds: {},
+        turns: {},
         progress: {},
     };
 }
@@ -116,16 +120,39 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
                     },
                 },
             };
+        case 'turn.start':
+            // 开轮：先只记开始时刻。消息头与「已用 Ns」立刻有值，不必等第一条内容。
+            // key 必须带 botId：同一轮里多个 bot 各跑各的，只按 turnId 存会互相覆盖。
+            return {
+                ...state,
+                turns: {
+                    ...state.turns,
+                    [`${event.turnId}\u0000${event.botId}`]: {
+                        ...state.turns[`${event.turnId}\u0000${event.botId}`],
+                        startedAt: event.startedAt,
+                    },
+                },
+            };
         case 'turn.end': {
             // 收尾后这一轮的进展事实就作废（不清的话，下一轮开始前 indicator 会闪一下旧文案）
             const progress = { ...state.progress };
             delete progress[event.botId];
-            // key 必须带 botId：同一轮里多个 bot 各跑各的，只按 turnId 存会互相覆盖 ——
-            // A 被截断、B 正常说完时，A 的页脚会显示成 B 的结局
+            const key = `${event.turnId}\u0000${event.botId}`;
             return {
                 ...state,
                 progress,
-                turnEnds: { ...state.turnEnds, [`${event.turnId}\u0000${event.botId}`]: event.reason },
+                turns: {
+                    ...state.turns,
+                    [key]: {
+                        ...state.turns[key],
+                        // 服务端给的开始时刻优先；老服务端没给就沿用 turn.start 那个
+                        ...(event.startedAt === undefined ? {} : { startedAt: event.startedAt }),
+                        ...(event.endedAt === undefined ? {} : { endedAt: event.endedAt }),
+                        ...(event.usage === undefined ? {} : { usage: event.usage }),
+                        ...(event.toolCalls === undefined ? {} : { toolCalls: event.toolCalls }),
+                        reason: event.reason,
+                    },
+                },
             };
         }
         case 'ask': {
@@ -174,6 +201,7 @@ export function fromSnapshot(snapshot: {
     asks?: AskRequest[];
     answeredAsks?: AnsweredAsk[];
     speaking?: string[];
+    runningTurns?: Array<{ botId: string; turnId: string; startedAt: number }>;
 }): ConversationState {
     // 同 id 只留最新一条（append-only 更新：重跑的 item 会以新 seq 再写一遍）
     const latest = new Map<string, Item>();
@@ -203,8 +231,15 @@ export function fromSnapshot(snapshot: {
         seq: Math.max(0, ...snapshot.items.map((item) => item.seq)),
         running: speaking.length > 0,
         speaking,
-        // 快照不带 endReason：它是这一次连接里的事实，不是历史数据。
-        turnEnds: {},
+        // 刷新后 `turn.start` / `turn.end` 都丢了 —— 但**在跑的那几轮**的开始时刻不能丢
+        // （丢了消息头就没时间、走字也起不来）。已收的轮次不补：结算行靠时间线上的
+        // 持久条目（notice / error）说清了，这里的 turns 只是这一次连接里的活事实。
+        turns: Object.fromEntries(
+            (snapshot.runningTurns ?? []).map((turn) => [
+                `${turn.turnId}\u0000${turn.botId}`,
+                { startedAt: turn.startedAt } satisfies TurnFacts,
+            ]),
+        ),
         // 同理：进展事实也只在连接里活，刷完等第一条 tick（≤5s）再回来
         progress: {},
     };

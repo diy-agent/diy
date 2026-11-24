@@ -176,6 +176,7 @@ export class RpcChatClient implements ChatClient {
             asks: Snapshot['asks'];
             answered: Snapshot['answeredAsks'];
             speaking?: Snapshot['speaking'];
+            runningTurns?: Snapshot['runningTurns'];
         }>('chat.history', { id: entityId });
         return {
             items: history.items,
@@ -184,6 +185,8 @@ export class RpcChatClient implements ChatClient {
             answeredAsks: history.answered ?? [],
             // 老服务端没有这个字段：留 undefined（客户端退回倒推，见 Snapshot.speaking）
             ...(history.speaking === undefined ? {} : { speaking: history.speaking }),
+            // 同上：老服务端没有 runningTurns 时客户端退回用条目时刻
+            ...(history.runningTurns === undefined ? {} : { runningTurns: history.runningTurns }),
         };
     }
 

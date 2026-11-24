@@ -24,6 +24,7 @@ export class DirectRoomClient implements ChatClient {
             asks: this.harness.room.pendingAskRequests(),
             // 与线上 `chat.history` 对齐：谁在跑是**服务端事实**，不由客户端倒推
             speaking: this.harness.room.runningBots(),
+            runningTurns: this.harness.room.runningTurns(),
         });
     }
 

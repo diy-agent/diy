@@ -25,5 +25,6 @@ export type {
     Snapshot,
     StreamEvent,
     TurnEndReason,
+    TurnUsage,
 } from '@diy-agent/protocol';
 export { DEFAULT_CAPABILITIES } from '@diy-agent/protocol';

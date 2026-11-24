@@ -27,8 +27,21 @@ export {
     type BotProgress,
 } from './progress';
 export { ConversationStore, type ConversationModel } from './store';
-export { endFooterOf, type EndFooter } from './end-footer';
-export { buildTimeline, type TimelineDelivery, type TimelineEntry, type TimelinePart } from './timeline';
+export {
+    endFooterOf,
+    settleFactsOf,
+    tokenText,
+    turnSettleOf,
+    type EndFooter,
+    type TurnSettle,
+} from './end-footer';
+export {
+    buildTimeline,
+    type TimelineDelivery,
+    type TimelineEntry,
+    type TimelinePart,
+    type TurnFacts,
+} from './timeline';
 export {
     DEFAULT_CAPABILITIES,
     type AnsweredAsk,
@@ -50,4 +63,5 @@ export {
     type Snapshot,
     type StreamEvent,
     type TurnEndReason,
+    type TurnUsage,
 } from './types';
