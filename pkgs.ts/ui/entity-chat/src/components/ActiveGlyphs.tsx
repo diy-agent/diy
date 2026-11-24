@@ -6,10 +6,8 @@
 // 为什么放在这里而不是壳（apps/diy2）：它读的是 entity-chat 的 store（全实例活动流），
 // 壳不该认识「会话」这个概念 —— 壳只负责把贡献摆进标题栏（见 workbench/window.tsx）。
 //
-// 三件事说清：
-//   · 数字 = **人/进程在动的个数**（会话数的是成员，一个房间两个 bot 抢话就是 2）
-//   · 0 时**不消失**：变灰、不呼吸 —— 它同时是「现在很闲」这句话，忽隐忽现更让人以为界面在抽
-//   · 呼吸只在 >0 时开（`animate-pulse`）：静态时它就是个普通图标
+// 标题栏里要一眼可认：不用 hover 才知道这是什么，也不用看空图标猜它是不是坏了。
+// 所以两颗都带固定文字与数字（包括 0）；有活动时亮绿并呼吸，无活动时灰显。
 //
 // 点击 = 会话那颗跳到第一个在跑的房间；作业那颗**打开全局面板**（`JobsPanel`）——
 // 不是「跳到它所属房间」：房间删了正是「结局无人接」的现场，那时候没有房间可跳。
@@ -20,16 +18,17 @@ import * as React from 'react';
 
 import { useActiveJobs, useRunningSessions } from '../store';
 
-/** 图标 + 数字：数字只在 >0 时出现（0 已经是“灰”这件事本身） */
-function Glyph({ icon, count, title }: { icon: React.ReactNode; count: number; title: string }) {
+/** 图标、类别与总数都常显；视觉状态只表达是否正在活动 */
+function Glyph({ icon, label, count, title }: { icon: React.ReactNode; label: string; count: number; title: string }) {
     const live = count > 0;
     return (
         <span
-            className={`inline-flex items-center gap-0.5 ${live ? 'text-emerald-500' : 'text-muted-foreground/50'}`}
+            className={`inline-flex items-center gap-1 whitespace-nowrap ${live ? 'text-emerald-400' : 'text-muted-foreground/70'}`}
             title={title}
         >
             <span className={live ? 'animate-pulse' : ''}>{icon}</span>
-            {live && <span className="text-[10px] tabular-nums leading-none">{count}</span>}
+            <span className="text-[10px] leading-none">{label}</span>
+            <span className="text-[10px] tabular-nums leading-none">{count}</span>
         </span>
     );
 }
@@ -40,6 +39,7 @@ export function ActiveSessionsGlyph() {
     return (
         <Glyph
             icon={<MessageSquare className="size-3.5" />}
+            label="会话"
             count={count}
             title={count === 0 ? '没有会话在跑' : `${count} 个会话在跑（点击跳到第一个）`}
         />
@@ -52,6 +52,7 @@ export function ActiveJobsGlyph() {
     return (
         <Glyph
             icon={<SquareTerminal className="size-3.5" />}
+            label="后台任务"
             count={count}
             title={
                 count === 0

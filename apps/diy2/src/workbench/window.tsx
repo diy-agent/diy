@@ -108,7 +108,13 @@ function TbButton({ item }: { item: ButtonContribution }) {
     return (
         <button
             type="button"
-            className={item.on === true ? 'wb-tb-btn on' : 'wb-tb-btn'}
+            className={[
+                'wb-tb-btn',
+                item.id === 'sessions' || item.id === 'jobs' ? 'wb-tb-activity' : '',
+                item.on === true ? 'on' : '',
+            ]
+                .filter(Boolean)
+                .join(' ')}
             aria-pressed={item.on}
             title={item.label}
             aria-label={item.label}

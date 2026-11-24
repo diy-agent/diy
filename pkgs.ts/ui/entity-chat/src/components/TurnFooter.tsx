@@ -52,16 +52,16 @@ export function TurnFooter({
             <div className={`flex min-w-0 items-center gap-1.5 ${live ? 'text-muted-foreground' : TONE_CLASS[settle?.tone ?? 'muted']}`}>
                 {live ? (
                     <>
-                        <RunningIndicator roomId={roomId} botId={entry.author?.id} />
                         {onStopBot !== undefined && entry.author !== undefined && (
                             <button
                                 onClick={() => onStopBot(entry.author!.id)}
                                 title="停这一轮"
-                                className="rounded px-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                                className="shrink-0 rounded px-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
                             >
                                 停
                             </button>
                         )}
+                        <RunningIndicator roomId={roomId} botId={entry.author?.id} />
                     </>
                 ) : (
                     <>

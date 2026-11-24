@@ -33,14 +33,19 @@ function entry(overrides: Partial<TimelineEntry>): TimelineEntry {
 }
 
 describe('TurnFooter', () => {
-    it('运行中：只写「已用」，不写结算（没有结局可写）', () => {
+    it('运行中：停止按钮固定在变化文案左侧，只写「已用」，不写结算', () => {
         const startedAt = Date.now() - 12_000;
         const html = renderToStaticMarkup(
-            <TurnFooter entry={entry({ streaming: true, turn: { startedAt } })} roomId="r1" />,
+            <TurnFooter
+                entry={entry({ streaming: true, turn: { startedAt } })}
+                roomId="r1"
+                onStopBot={() => undefined}
+            />,
         );
         expect(html).toContain('已用');
         expect(html).toContain('12s');
         expect(html).not.toContain('完成');
+        expect(html.indexOf('>停</button>')).toBeLessThan(html.indexOf('执行中'));
     });
 
     it('结束：结算片段 + 结束时刻，标签用页脚那套文案', () => {

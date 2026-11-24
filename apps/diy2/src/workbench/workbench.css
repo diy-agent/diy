@@ -719,6 +719,13 @@ body.wb-resizing-y * {
     background: var(--wb-tint);
 }
 
+/* 活动状态不是隐形图标：标题栏常显「会话 0 / 后台 0」，有活动时实时变绿呼吸。 */
+.wb-tb-activity {
+    width: auto;
+    min-width: 22px;
+    padding: 0 6px;
+}
+
 /* 展开态 = 亮起；收起态 = 暗着（点它才出现）—— 与「按钮是开关」的直觉一致 */
 .wb-tb-btn.on {
     color: var(--wb-fg);
