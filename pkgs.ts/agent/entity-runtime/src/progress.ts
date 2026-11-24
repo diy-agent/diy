@@ -18,10 +18,18 @@
 //   · 工具 / compact / 整轮墙钟 → **本文件独占**：这三样 agent 层看不见（它不跑 compact、
 //     不知道 turn 何时开、看不到 ask 的寿命），所以由 session 判，且**一律只提示**。
 //
+// ## 过程不许进历史（用户 2026-11-24）
+//
+// 本文件产出的是**事实**（在等谁 / 空了多久 / 有没有活的证据），它只走 ephemeral 的
+// `progress` 事件：刷新即失，合理 —— 下一秒 tick 又会把它刷回来（轮次还在跑）。
+// 以前这里还派生出「该提醒了吧」的 verdict，再被 session 翻成一条 notice **落进永久历史**，
+// 于是“61 秒还没吐出第一个字”“44 秒没有新内容”这种东西一天天堆在时间线里。
+// verdict / progressNotice 已删：**过程不上墙，只有结局（stalled / error / 预算用完）才落盘**。
+//
 // 与 `end-reason.ts` 同样的两条纪律：
 //   1. **判据只在这一个文件**（不 import agent / db / room）：UI、room、测试共用一份
 //   2. **只说事实**：`what`（在等谁）/ `idleMs`（多久没动）/ `alive`（有没有活的证据）；
-//      「该怎么跟用户说」在 `end-reason.ts` 的 `endItemsOf` / `progressNotice`
+//      人话（“再等就中止”）只在真出事时由 `end-reason.ts` 的 `endItemsOf` 说
 //
 // 为什么必须区分"首字节"和"流中静默"：慢模型 90s 才吐第一个字节是常事（首字节阈值宽一些），
 // 而流已经开始吐字后突然静默，几乎一定是网关卡住 / 连接半死。
@@ -61,12 +69,10 @@ export interface ProgressPolicy {
     streamWarnMs: number;
     /** 吐过字之后多久没新内容报 `stalled` 档（派生；真正的杀在 StallWatchdog） */
     streamStalledMs: number;
-    /** 工具多久没心跳只提示（**不杀**：工具可能合法长跑；这个 agent 层看不见） */
+    /** 工具多久没心跳算 `slow` 档（**不杀**：工具可能合法长跑；这个 agent 层看不见） */
     toolSilenceMs: number;
-    /** 压缩多久没回只提示 */
+    /** 压缩多久没回算 `slow` 档 */
     compactMs: number;
-    /** 整轮墙钟到这个点只提示（防"每一步都在动、但永远不停"） */
-    turnWallMs: number;
 }
 
 /**
@@ -89,7 +95,6 @@ export const DEFAULT_PROGRESS_POLICY: ProgressPolicy = {
     ...progressPolicyFromStall(DEFAULT_STALL),
     toolSilenceMs: 300_000,
     compactMs: 300_000,
-    turnWallMs: 1_800_000,
 };
 
 /**
@@ -121,19 +126,10 @@ export interface TurnProgress {
 }
 
 /**
- * 一次判定的结论（`warn` 自带去重，调用方可以每 5s 调一次 `evaluate()`）。
- *
- * **没有 `abort`**：本文件只说不杀，中止权在 `stall-watchdog.ts`（见文件头）。
- * 以前这里有个 `abort` 变体，和 StallWatchdog 抢同一个模型流，已删。
- */
-export type ProgressVerdict = { action: 'wait' } | { action: 'warn'; awaiting: string; idleMs: number; note: string };
-
-/**
  * 此刻的对外事实（= `progress` 事件的内容）。
  *
- * 为什么不用 `ProgressVerdict`：verdict 是「该动手了吗」的判断（wait/warn/abort，
- * 自带去重），而 UI 要的是「现在卡在哪、多久没动」这个可每秒自走的数 —— 每 5s
- * 都会变（idleMs 在涨），不能被 warnOnce 去重掉。
+ * UI 要的是「现在卡在哪、多久没动」这个可每秒自走的数 —— 每 5s 都会变（idleMs 在涨），
+ * 不能被"同一种提示只出一次"这类去重掉。档位（`stageOf`）也在这一层算好一起发。
  */
 export interface ProgressFact {
     awaiting: string;
@@ -175,7 +171,6 @@ export interface ProgressWatchOptions {
 export class ProgressWatch {
     private readonly policy: ProgressPolicy;
     private readonly now: () => number;
-    private readonly warned = new Set<string>();
     private state: TurnProgress | null = null;
 
     constructor(options: ProgressWatchOptions = {}) {
@@ -193,7 +188,6 @@ export class ProgressWatch {
             pending: [{ what: 'model-stream', enteredAt: at, heartbeat: null }],
         };
         this.state = state;
-        this.warned.clear();
         return state;
     }
 
@@ -277,60 +271,6 @@ export class ProgressWatch {
         }
     }
 
-    /**
-     * 判一次。调用方按固定节奏（5s）调即可 —— `warn` 对同一 (awaiting, note) 只出一次。
-     */
-    evaluate(): ProgressVerdict {
-        const state = this.state;
-        if (state === null) return { action: 'wait' };
-        const at = this.now();
-
-        // 整轮墙钟：只提示，不杀（"每一步都在动"不该被 watchdog 掐掉）
-        const wall = at - state.startedAt;
-        if (wall >= this.policy.turnWallMs) {
-            return this.warnOnce('turn-wall', 'turn', wall, 'turn-wall');
-        }
-
-        const pending = state.pending[state.pending.length - 1];
-        if (pending === undefined) return { action: 'wait' };
-
-        if (pending.what === 'model-stream') {
-            // 首字节前从开跑算，之后从最后一次进展算
-            const idle = at - Math.max(pending.enteredAt, state.lastProgressAt);
-            if (!state.sawContent) {
-                if (idle >= this.policy.firstByteWarnMs) {
-                    return this.warnOnce('first-byte', 'model-stream', idle, 'no-first-byte');
-                }
-                return { action: 'wait' };
-            }
-            if (idle >= this.policy.streamWarnMs) {
-                return this.warnOnce('stream-silent', 'model-stream', idle, 'stream-silent');
-            }
-            return { action: 'wait' };
-        }
-
-        if (pending.what.startsWith('tool:')) {
-            // 有活的证据 ⇒ 永不报警（12 分钟的 bash 也是健康的）
-            if (pending.heartbeat !== null) return { action: 'wait' };
-            const idle = at - pending.enteredAt;
-            if (idle >= this.policy.toolSilenceMs) {
-                return this.warnOnce(`${pending.what}:silent`, pending.what, idle, 'tool-silent');
-            }
-            return { action: 'wait' };
-        }
-
-        if (pending.what === 'compact') {
-            const idle = at - pending.enteredAt;
-            if (idle >= this.policy.compactMs) {
-                return this.warnOnce('compact:slow', 'compact', idle, 'compact-slow');
-            }
-            return { action: 'wait' };
-        }
-
-        // ask 的寿命规则在 ask.ts（它有自己的过期判定），这里不重复
-        return { action: 'wait' };
-    }
-
     /** 此刻的对外事实（`progress` 事件用）：每 tick 都要的「还在动吗」（带 `alive`） */
     fact(): ProgressFact | undefined {
         const state = this.state;
@@ -346,6 +286,18 @@ export class ProgressWatch {
         return { awaiting: pending.what, idleMs: at - from, alive: pending.heartbeat !== null, sawContent: state.sawContent };
     }
 
+    /**
+     * 此刻的档位 —— **用本 watch 自己的 policy 算**。
+     *
+     * 存在理由：`stageOf(fact)` 不传 policy 就用默认值，于是「每 bot 可配的阈值」在
+     * 调用方漏传时会静默失灵（测试里真踩到了：覆盖了 `firstByteWarnMs: 10`，档位还是 quiet）。
+     * 要算档位就调这个，别再自己拿 `fact()` 去拼。
+     */
+    stage(): ProgressStage | undefined {
+        const fact = this.fact();
+        return fact === undefined ? undefined : stageOf(fact, this.policy);
+    }
+
     /** 只读快照（诊断面 / 测试用；调用方不得改它） */
     snapshot(): TurnProgress | null {
         return this.state;
@@ -353,7 +305,6 @@ export class ProgressWatch {
 
     reset(): void {
         this.state = null;
-        this.warned.clear();
     }
 
     private markHeartbeat(what: string, at: number, from: 'stream' | 'tool-output'): void {
@@ -372,12 +323,6 @@ export class ProgressWatch {
         if (index < 0) return false;
         state.pending.splice(index, 1);
         return true;
-    }
-
-    private warnOnce(key: string, awaiting: string, idleMs: number, note: string): ProgressVerdict {
-        if (this.warned.has(key)) return { action: 'wait' };
-        this.warned.add(key);
-        return { action: 'warn', awaiting, idleMs, note };
     }
 }
 

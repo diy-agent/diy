@@ -200,7 +200,7 @@ describe('BotSession', () => {
     it('progress 事件：报「在等谁、多久没动」，且只在事实变了时发（不是每 tick 一条）', async () => {
         const h = makeSession({
             hangOnAbort: true,
-            // 首字节 15ms 就提示：这段区间里该有一条 warn，但**永远不会 abort**（杀归 agent 层）
+            // 首字节 15ms 就进 slow 档：这段区间里档位会变，但**永远不会 abort**（杀归 agent 层）
             progressPolicy: { firstByteWarnMs: 15 },
             progressTickMs: 5,
         });
@@ -222,9 +222,10 @@ describe('BotSession', () => {
             expect(event.idleMs).toBeGreaterThanOrEqual(0);
         }
 
-        // 跨过首字节线 ⇒ 落一条提醒条目（刷新后还在），且是还没杀的时候说的
-        const notice = h.items.find((item) => item.type === 'notice');
-        expect(notice?.type === 'notice' ? notice.data.kind : undefined).toBe('progress:no-first-byte');
+        // 跨过首字节线：**只把档位升到 slow，什么都不落库**（用户 2026-11-24：过程不进历史）。
+        // 以前这里会多一条 `progress:no-first-byte` notice，永久留在时间线上 —— 已删。
+        expect(progress.some((event) => event.type === 'progress' && event.stage === 'slow')).toBe(true);
+        expect(h.items.some((item) => item.type === 'notice')).toBe(false);
         expect(h.ends[0]?.endReason.type).toBe('interrupted');
     });
 

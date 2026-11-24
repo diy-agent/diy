@@ -15,7 +15,7 @@
 import { experimental_createSteering, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 
 import { runAgent, DEFAULT_MAX_STEPS, type RunOptions } from './agent';
-import { endItems, endReasonOf, progressNotice } from './end-reason';
+import { endItems, endReasonOf } from './end-reason';
 import { friendlyError } from './errors';
 import {
     DEFAULT_BUDGET,
@@ -476,7 +476,11 @@ export class BotSession {
         let stallFact: { awaiting: string; idleMs: number } | undefined;
         const watchdog = setInterval(() => {
             if (abort.signal.aborted) return;
-            // 1. 先把「此刻在等什么」广播出去（UI 的"还活着吗"靠它；进 items 的只有下面第 2 步的 warn）
+            // **只广播事实，不落条目**（用户 2026-11-24：「过程不该进历史」）。
+            // 这条 `progress` 事件是 ephemeral 的：刷新即失 —— 合理，下一秒 tick 又会把它
+            // 刷回来（轮次还在跑）。以前这里还多一步：把「该提醒了」翻成一条 notice 写进
+            // 永久时间线，于是“61 秒还没吐第一个字”“压缩已经 5 分钟没回”一天天堆着；
+            // 现在这些只活在这一刻的档位里（`stage`），真出事由 endItems 给一条结论。
             const fact = watch.fact();
             const stage = fact === undefined ? null : broadcast.shouldSend(fact);
             if (fact !== undefined && stage !== null) {
@@ -489,14 +493,6 @@ export class BotSession {
                     stage,
                 });
             }
-            // 2. 再判该不该提示（**永远不会 abort** —— 能杀的是 agent 层的 StallWatchdog）
-            const verdict = watch.evaluate();
-            if (verdict.action !== 'warn') return;
-            // 还没到斩杀线：落一条 notice 让人知道（刷新后也还在）
-            this.emit({
-                type: 'item',
-                item: progressNotice(verdict, { turn: turn.turn, turnId: turn.turnId }),
-            });
         }, this.deps.progressTickMs ?? 5_000);
         // 别拖住进程退出（worktree 里跑测试时不至于挂住）
         (watchdog as { unref?: () => void }).unref?.();
