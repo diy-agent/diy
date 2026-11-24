@@ -11,7 +11,20 @@ import { chainOf, clipTitle, edgePath, layoutUnits, UNIT_NODE_H, UNIT_NODE_W, ty
 
 /** 造一行 unit（只给布局用得上的字段；body 与 dependents 由 deps 反推） */
 function row(id: string, deps: string[], layer: number, title = `步骤 ${id}`): UnitItem {
-    return { id, title, body: '', status: 'open', deps, dependents: [], layer };
+    return {
+        id,
+        title,
+        body: '',
+        status: 'open',
+        parent: null,
+        children: [],
+        group: false,
+        depth: 0,
+        deps,
+        dependents: [],
+        layer,
+        batch: null,
+    };
 }
 
 /**

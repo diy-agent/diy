@@ -30,6 +30,7 @@ import {
     modelProviders,
     newEntityId,
     openStore,
+    unitBatchViews,
     unitBoard,
 } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
@@ -701,7 +702,11 @@ export function createDiy2App(opts: {
              * 界面是旁观者的窗口 —— 想改就在聊天里说。推导在 `unitBoard`（同一份纯函数）。
              */
             units: {
-                list: async ({ input }) => unitBoard(store.listUnits(input.id), store.unitDepsOf(input.id)),
+                list: async ({ input }) => {
+                    const board = unitBoard(store.listUnits(input.id), store.unitDepsOf(input.id));
+                    // 批次与图一起给：界面要按批次显示「这次验收包含哪几条」，只给 id 不够
+                    return { ...board, batches: unitBatchViews(board, store.listBatches(input.id)) };
+                },
             },
             links: {
                 list: async ({ input }) => {

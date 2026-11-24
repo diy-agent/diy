@@ -32,6 +32,8 @@ export interface UnitItem {
     deps: string[];
     dependents: string[];
     layer: number;
+    /** 所属**交付批次**的 id；`null` = 未分批。与 parent / deps 正交 */
+    batch: string | null;
 }
 
 export interface UnitBoard {
@@ -47,6 +49,29 @@ export interface UnitBoard {
     heldBy: Record<string, string>;
     layers: UnitItem[][];
     cyclic: boolean;
+    /** 交付批次（旧服务端不返回 = 界面不显示批次那一条，不报错） */
+    batches?: UnitBatchItem[];
+}
+
+/**
+ * 一个交付批次在界面上的样子（与 `unitBatchViews` 同形，只取界面用得到的）。
+ *
+ * `stage` 不是存下来的状态：它是「成员做到哪了」的派生 —— 所以界面上不该出现
+ * 「批次已完成」这种手改开关，只有 `accepted`（人验收过）是真实发生过的动作。
+ */
+export interface UnitBatchItem {
+    id: string;
+    title: string;
+    note: string;
+    /** 对齐服务端视图；当前摘要条暂不展示验收时间 */
+    acceptedAt: number | null;
+    stage: 'empty' | 'todo' | 'active' | 'review' | 'accepted';
+    /** 这批里现在能开工的成员 */
+    ready: string[];
+    /** 挡住本批的批外节点 */
+    waitingOn: string[];
+    total: number;
+    doneCount: number;
 }
 
 /** 节点框（`x`/`y` 是**中心**，与 dagre 一致；渲染时减半宽半高） */

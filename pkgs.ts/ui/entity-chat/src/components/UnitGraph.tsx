@@ -11,8 +11,19 @@
 // 会立刻产生「两边同时改图」的冲突语义（谁赢 / 怎么合并 / 撤销给谁看），目前没有这个需求。
 // 要改就在聊天里说一句，agent 改完这里 5 秒内自己变。
 import { roomTitle, type Room } from '../model';
-import type { UnitItem } from '../unitLayout';
+import type { UnitBatchItem, UnitItem } from '../unitLayout';
 import { useUnitBoard } from '../useUnitBoard';
+
+/**
+ * 批次的阶段颜色。只有 `review`（成员全做完、等人点头）值得抢眼 ——
+ * 那是唯一一个「不催就卡着」的阶段；`accepted` 退成灰色（已经过去了）。
+ */
+function stageClass(stage: UnitBatchItem['stage']): string {
+    if (stage === 'review') return 'bg-amber-100 text-amber-800';
+    if (stage === 'active') return 'bg-sky-50 text-sky-700';
+    if (stage === 'accepted') return 'bg-zinc-100 text-zinc-400';
+    return 'bg-zinc-100 text-zinc-500';
+}
 
 /** 状态符号：done 打勾、doing 半实心、功能域 ▾、open 可做实心 / 不可做空心 */
 function markOf(unit: UnitItem, ready: Set<string>): string {
@@ -54,6 +65,9 @@ export function UnitGraph({ room }: { room: Room }) {
 
     const ready = new Set(board.ready);
     const titleOf = (id: string): string => board.rows.find((row) => row.id === id)?.title ?? '';
+    // 批次是**正交**的一层：树不按批次分组（分组会拆散「谁在谁下面」），只在行尾标归属
+    const batches = board.batches ?? [];
+    const unbatched = board.rows.filter((row) => row.batch === null).length;
     return (
         <div className="flex h-full flex-col gap-2 overflow-auto p-3 text-xs">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-zinc-500">
@@ -67,6 +81,25 @@ export function UnitGraph({ room }: { room: Room }) {
             {board.cyclic && (
                 <div className="rounded bg-red-50 px-2 py-1 text-[11px] text-red-600">
                     图里有环（数据异常）：这些 unit 永远做不了，需要 agent 拆边。
+                </div>
+            )}
+            {batches.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                    <span className="text-zinc-400">批次</span>
+                    {batches.map((batch) => (
+                        <span
+                            key={batch.id}
+                            className={`rounded px-1.5 py-0.5 ${stageClass(batch.stage)}`}
+                            title={batch.note === '' ? batch.title : `${batch.title}\n${batch.note}`}
+                        >
+                            <code className="text-[10px] opacity-70">{batch.id}</code> {batch.title}{' '}
+                            {batch.doneCount}/{batch.total}
+                            {batch.stage === 'review' && ' · 待验收'}
+                            {batch.waitingOn.length > 0 &&
+                                ` · 等 ${batch.waitingOn.map((id) => titleOf(id) || id).join('、')}`}
+                        </span>
+                    ))}
+                    {unbatched > 0 && <span className="text-zinc-400">未分批 {unbatched}</span>}
                 </div>
             )}
             <div className="flex flex-col gap-0.5">
@@ -95,6 +128,11 @@ export function UnitGraph({ room }: { room: Room }) {
                             >
                                 {unit.title}
                             </span>
+                            {unit.batch !== null && (
+                                <span className="shrink-0 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">
+                                    {unit.batch}
+                                </span>
+                            )}
                             {holder !== undefined && (
                                 <span className="ml-auto shrink-0 text-[10px] text-zinc-400">
                                     ← 等 {titleOf(holder) || holder}
