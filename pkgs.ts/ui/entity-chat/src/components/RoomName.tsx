@@ -212,7 +212,7 @@ export function StatusGlyph({
             {running && (
                 <span
                     aria-label="正在运行"
-                    className="absolute -right-0.5 -top-0.5 size-1.5 animate-pulse rounded-full bg-emerald-400 ring-1 ring-background"
+                    className="absolute -bottom-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-emerald-400 ring-1 ring-background"
                 />
             )}
         </span>

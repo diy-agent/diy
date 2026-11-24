@@ -4,8 +4,11 @@
 // 所以在这里锁行为 —— 三态时代留下的 todo / doing / done 必须在读的时候就归位，
 // 否则用户升级后会发现「以前标过的 done 又回到树里了」。
 
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import { StatusGlyph } from '../src/components/RoomName';
 import {
     closedAtOf,
     closedTasksOf,
@@ -21,6 +24,24 @@ import type { Room } from '../src/model';
 function room(id: string, type: string, data: Record<string, unknown> = {}): Room {
     return { id, type, name: id, data, members: [], modelKey: 'm' };
 }
+
+describe('StatusGlyph —— 任务状态图标与运行提示分开表达', () => {
+    it('open/closed 是状态形状；运行时只附加呼吸点，不替换状态图标', () => {
+        const open = renderToStaticMarkup(
+            createElement(StatusGlyph, { room: room('open', 'task', { status: 'open' }), running: true }),
+        );
+        const closed = renderToStaticMarkup(
+            createElement(StatusGlyph, { room: room('closed', 'task', { status: 'closed' }), running: true }),
+        );
+
+        expect(open).toContain('lucide-circle-dot');
+        expect(open).toContain('animate-pulse');
+        expect(closed).toContain('lucide-circle-check');
+        expect(closed).toContain('animate-pulse');
+        const idle = renderToStaticMarkup(createElement(StatusGlyph, { room: room('idle', 'task', { status: 'open' }) }));
+        expect(idle).not.toContain('animate-pulse');
+    });
+});
 
 describe('taskStatusOf —— 老的三态读的时候归一', () => {
     it('todo / doing 都是 open，done 是 closed', () => {
