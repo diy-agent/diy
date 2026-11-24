@@ -8,8 +8,9 @@
 //   const key = readAccountValue('/Users/me/.diy', 'deepseek'); // 单独一条路径；别打印
 //
 // ##467 写侧（配置页用；与读侧同一份文件口径）：
-//   saveProvider(home, { providerId, spec, models })     // spec → providers.custom.yaml，models → model.yaml
-//   saveAccount(home, { providerId, name, value })       // 返回 { chars }，**永不回 token 原值**
+//   saveProvider(home, { providerId, spec, models, filter })  // spec → providers.custom.yaml，其余 → model.yaml
+//   saveAccount(home, { providerId, name, value, kind })      // 返回 { chars }，**永不回 token 原值**
+//   removeAccount(home, providerId, name) / renameAccount(home, providerId, from, to)
 //   removeProvider(home, providerId)
 //   readDefaultModel(home) / saveDefaultModel(home, key) // model.yaml 顶层 defaultModel
 //
@@ -26,6 +27,7 @@ export { costOf } from "./cost.js";
 export type { CostUsage } from "./cost.js";
 
 export {
+    availableProviders,
     listAccountStates,
     listAccounts,
     listProviders,
@@ -35,12 +37,20 @@ export {
 } from "./catalog.js";
 export {
     readDefaultModel,
+    removeAccount,
     removeProvider,
+    renameAccount,
     saveAccount,
     saveDefaultModel,
     saveProvider,
 } from "./write.js";
-export type { AccountState, ProviderAccountStates, ProviderSummary } from "./catalog.js";
+export type {
+    AccountState,
+    AvailableModel,
+    AvailableProvider,
+    ProviderAccountStates,
+    ProviderSummary,
+} from "./catalog.js";
 export type { ProviderModelPatch, SaveAccountInput, SaveProviderInput, SavedAccount } from "./write.js";
 export { effectiveMaxOutputTokens } from "./catalog.js";
 export type { CatalogOptions, ModelCatalogCost, ModelCatalogEntry, ProviderAccounts } from "./types.js";

@@ -18,6 +18,7 @@
 import { EntityChatApp, TaskPanel, useSelectedRoom, type Room } from '@diy-agent/entity-chat';
 
 import { useWb } from './AreaHost';
+import { ModelConfigView } from './ModelConfigView';
 import { area, definePage, defineView, type PageDef } from './model';
 
 // ── 页模板：位置写死，尺寸可拖 ───────────────────────────────────────────────────
@@ -73,6 +74,18 @@ export const genericPage = definePage({
         area('detail', { slot: 'left', title: '房间信息', size: 320, min: 240 }),
         area('diag', { slot: 'bottom', title: '诊断', size: 200, min: 120, initial: 'collapsed' }),
     ],
+});
+
+/**
+ * 设置页：**只办一件事**，所以只有 center（模型配置），没有四边。
+ *
+ * 它不由房间派生（`pageFor` 不认识它）—— 换页的是壳里的「屏幕」状态，不是 `Room.type`。
+ * 这条区分很重要：设置不属于任何房间，删掉房间也不该把它带走。
+ */
+export const settingsPage = definePage({
+    type: 'settings',
+    title: '设置',
+    center: area('models', { slot: 'center', title: '模型配置', size: 'fr', min: 480 }),
 });
 
 /**
@@ -285,6 +298,13 @@ export const wbViews = [
             generic: { area: 'diag' },
         },
         render: () => <DiagArea />,
+    }),
+    // 设置页的模型配置（写面在 entity-chat 的 `modelConfig`，页面本体的观感照 demo）
+    defineView({
+        id: 'model-config',
+        title: '模型配置',
+        placement: { settings: { area: 'models' } },
+        render: () => <ModelConfigView />,
     }),
     defineView({
         id: 'guide',

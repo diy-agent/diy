@@ -582,6 +582,59 @@ export interface ModelCatalogSnapshot {
     snapshotMissing: boolean;
 }
 
+// ── 配置页的视图（`diy2.models.config` / 写方法的回包）──────────────────
+//
+// 与 `ModelCatalogSnapshot` 的区别就一条：**这里列出目录里全部可用的 provider**，
+// 包括还没接进 `model.yaml` 的（`configured: false`）。选模型器只需要「能选的」，
+// 配置页要先有候选清单 —— 合成一份回包会逼着选模型器去过滤它不需要的数据。
+
+export interface ModelConfigAccount {
+    name: string;
+    configured: boolean;
+    /** 值是 `$VAR` 引用（键名不是 key 本身） */
+    env: boolean;
+    /** 字面量 key 的字符数（`env` 时缺省） */
+    chars?: number;
+}
+
+export interface ModelConfigModel {
+    id: string;
+    name: string;
+    contextWindow?: number;
+    maxOutputTokens?: number;
+    cost?: ModelCostView;
+    /** 过了 filter 就会进目录；false = 在目录里但被关掉了 */
+    enabled: boolean;
+}
+
+export interface ModelConfigProvider {
+    id: string;
+    name: string;
+    kind: 'std' | 'custom';
+    /** 在 `model.yaml` 里（false = 目录里可用、还没接） */
+    configured: boolean;
+    /** 上游基址；缺 = 发不出请求（这家整家进不了目录） */
+    api?: string;
+    npm?: string;
+    /** 规格里声明的环境变量名（填 key 时给人看） */
+    envKeys: string[];
+    doc?: string;
+    accounts: ModelConfigAccount[];
+    /** **含被关掉的**（`enabled: false`）：配置页要能把它们再打开 */
+    models: ModelConfigModel[];
+}
+
+/** `diy2.models.config` 的回包；写方法的回包也是它（写完重算一份，界面不必自己拼） */
+export interface ModelConfigSnapshot {
+    /** 数据根（页头说清「这份配置写在哪」） */
+    home: string;
+    modelConfigPath: string;
+    snapshotMissing: boolean;
+    /** `model.yaml` 顶层 `defaultModel`；没设 = 缺省（界面不猜） */
+    defaultModelKey?: string;
+    providers: ModelConfigProvider[];
+}
+
 // ── actor 收件箱（后端内部，但类型放这里以便将来跨进程）─────────
 
 export type InboxMode = 'next-step' | 'next-turn';

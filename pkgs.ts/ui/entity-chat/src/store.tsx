@@ -514,6 +514,28 @@ function watchActivity(roomId: string): void {
     });
 }
 
+/**
+ * 重拉**模型面**（配置页写完调）：`providers`（选模型器）+ `modelSetup`（横幅）+ 缺省模型。
+ *
+ * 刻意不重拉 rooms、不动地址：写完一次配置不该把用户看的位置挪走。缺省模型的算法与
+ * `refresh()` 同一口径（本端覆盖 > model.yaml > 目录里第一个可用的），别在这里另写一份。
+ */
+export async function refreshCatalog(): Promise<void> {
+    const catalog = await client.models.list();
+    const defaultModelKey =
+        loadDefaultModelOverride() ?? (catalog.defaultModelKey || firstUsableModelKey(catalog.providers) || '');
+    emit({
+        ...state,
+        providers: catalog.providers,
+        modelSetup: {
+            configured: catalog.configured,
+            modelConfigPath: catalog.modelConfigPath,
+            snapshotMissing: catalog.snapshotMissing,
+        },
+        ...(defaultModelKey === '' ? {} : { defaultModelKey }),
+    });
+}
+
 async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     // 模型目录跟着同一趟回来（真源 model.yaml；界面不再自带 provider 表）：
     // 走 `diy2.models.list`，与 rooms / bots 共用同一条 RPC 连接

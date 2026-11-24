@@ -28,6 +28,7 @@ import type {
     ModelCatalogModel,
     ModelCatalogProvider,
     ModelCatalogSnapshot,
+    ModelConfigSnapshot,
     ModelCostView,
 } from '@diy-agent/protocol';
 
@@ -140,9 +141,40 @@ export class RpcChatClient implements ChatClient {
             this.call('journal.list', { id, ...(limit === undefined ? {} : { limit }) }),
     };
 
-    /** 模型目录（选模型器 / 新建房间的缺省值）；服务端保证不含 key 值 */
+    /**
+     * 模型面。`list` 给选模型器（只要「现在能选什么」）；`config` 起是配置页（写侧）。
+     *
+     * 写方法的回包一律是**重算后的整页快照** —— 界面拿到就直接替换，不再自己拼状态。
+     * `saveAccount` 多一层 `{ config, saved }`：`saved.chars` 是 key 的长度，原值永远不回来。
+     */
     readonly models = {
         list: (): Promise<ModelCatalogSnapshot> => this.call('models.list', {}),
+        config: (): Promise<ModelConfigSnapshot> => this.call('models.config', {}),
+        saveProvider: (input: {
+            providerId: string;
+            kind?: 'std' | 'custom';
+            spec?: { id?: string; npm?: string; api?: string };
+            models?: Record<string, { name?: string; contextWindow?: number; cost?: ModelCostView }>;
+            filter?: { include?: string[] | null; exclude?: string[] | null };
+        }): Promise<ModelConfigSnapshot> => this.call('models.saveProvider', input),
+        removeProvider: (providerId: string): Promise<ModelConfigSnapshot> =>
+            this.call('models.removeProvider', { providerId }),
+        saveAccount: (input: {
+            providerId: string;
+            name: string;
+            value: string;
+            kind?: 'std' | 'custom';
+        }): Promise<{ config: ModelConfigSnapshot; saved: { providerId: string; name: string; chars: number } }> =>
+            this.call('models.saveAccount', input),
+        renameAccount: (input: {
+            providerId: string;
+            from: string;
+            to: string;
+        }): Promise<ModelConfigSnapshot> => this.call('models.renameAccount', input),
+        removeAccount: (input: { providerId: string; name: string }): Promise<ModelConfigSnapshot> =>
+            this.call('models.removeAccount', input),
+        saveDefaultModel: (modelKey: string | null): Promise<ModelConfigSnapshot> =>
+            this.call('models.saveDefaultModel', { modelKey }),
     };
 
     /**
@@ -241,4 +273,13 @@ export class RpcChatClient implements ChatClient {
 
 export { StreamHub, topicOfRoom, type StreamHubOptions } from './hub';
 /** 目录视图形状在 protocol（服务端与界面共用一份），这里顺手透出，界面不用多装一个依赖 */
-export type { ModelCatalogModel, ModelCatalogProvider, ModelCatalogSnapshot, ModelCostView };
+export type {
+    ModelCatalogModel,
+    ModelCatalogProvider,
+    ModelCatalogSnapshot,
+    ModelConfigAccount,
+    ModelConfigModel,
+    ModelConfigProvider,
+    ModelConfigSnapshot,
+    ModelCostView,
+} from '@diy-agent/protocol';

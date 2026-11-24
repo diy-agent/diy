@@ -11,6 +11,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { load as loadYaml } from "js-yaml";
+import { isEmptyDocument } from "./errors.js";
 import { CatalogError } from "./errors.js";
 import type {
     CatalogOptions,
@@ -63,8 +64,12 @@ interface RawSpecModel {
 
 interface RawSpecProvider {
     readonly id?: string;
+    readonly name?: string;
     readonly npm?: string;
     readonly api?: string;
+    /** spec 声明的环境变量名（models.dev 的 `env`；填 key 时给人看） */
+    readonly env?: readonly string[];
+    readonly doc?: string;
     readonly models?: Readonly<Record<string, RawSpecModel>>;
 }
 
@@ -180,27 +185,116 @@ export interface ProviderAccountStates {
  * **依然不含 value** —— `chars` 是长度，不是值；值只经 `readAccountValue` 流出。
  */
 export function listAccountStates(home: string): ProviderAccountStates[] {
-    const config = loadModelYaml(home);
+    return accountStatesOf(loadModelYaml(home));
+}
+
+function accountStatesOf(config: RawModelYaml): ProviderAccountStates[] {
     const out: ProviderAccountStates[] = [];
     for (const [kind, group] of [
         ["std", config.stdProviders ?? {}],
         ["custom", config.customProviders ?? {}],
     ] as const) {
         for (const [providerId, provider] of Object.entries(group)) {
-            out.push({
-                providerId,
-                kind,
-                accounts: (provider.accounts ?? []).map((account, index) => {
-                    const name = account.name ?? String(index);
-                    const value = account.data?.value ?? "";
-                    if (value.trim() === "") return { name, configured: false, env: false };
-                    if (/\$\{?[A-Za-z_]/.test(value)) return { name, configured: true, env: true };
-                    return { name, configured: true, env: false, chars: value.length };
-                }),
-            });
+            out.push({ providerId, kind, accounts: accountStates(provider.accounts ?? []) });
         }
     }
     return out;
+}
+
+function accountStates(accounts: readonly RawAccount[]): AccountState[] {
+    return accounts.map((account, index) => {
+        const name = account.name ?? String(index);
+        const value = account.data?.value ?? "";
+        if (value.trim() === "") return { name, configured: false, env: false };
+        if (/\$\{?[A-Za-z_]/.test(value)) return { name, configured: true, env: true };
+        return { name, configured: true, env: false, chars: value.length };
+    });
+}
+
+/** 目录里**可用**的一个模型 = 配置页模型表的一行 */
+export interface AvailableModel {
+    readonly id: string;
+    readonly name: string;
+    readonly contextWindow?: number;
+    readonly maxOutputTokens?: number;
+    readonly cost?: ModelCatalogCost;
+    /** 过了 filter 就会真进目录；false = 在 spec 里但被关掉了 */
+    readonly enabled: boolean;
+}
+
+/**
+ * 目录里**可用**的一个 provider = 配置页左栏的一行。
+ *
+ * 与 `ProviderSummary` 的区别：那个只列 `model.yaml` 里**已配置**的（摘要用），
+ * 这个把「目录里有、但还没接」的也列出来 —— 否则配置页只能编辑已有的那两家，
+ * 「添加服务商」根本无从下手（候选清单本身就是空的）。
+ */
+export interface AvailableProvider {
+    readonly providerId: string;
+    readonly name: string;
+    readonly kind: "std" | "custom";
+    /** 在 `model.yaml` 里 —— false = 目录里可用但还没接（界面上「连接」就是给它建这一段） */
+    readonly configured: boolean;
+    /** 上游基址；没写 = 发不出请求（`loadCatalog` 会让这家整家缺席） */
+    readonly api?: string;
+    readonly npm?: string;
+    /** spec 声明的环境变量名（models.dev 的 `env`）：填 key 时给人看 */
+    readonly envKeys: readonly string[];
+    readonly doc?: string;
+    readonly accounts: readonly AccountState[];
+    /** spec ⊕ 覆盖，**含被 filter 关掉的**（配置页要能把它们再打开） */
+    readonly models: readonly AvailableModel[];
+}
+
+/**
+ * 列出目录里**全部可用**的 provider（快照 ∪ custom spec ∪ `model.yaml`）。
+ *
+ * 三处 id 都要取并集：只看快照会漏掉自定义 provider；只看 `model.yaml` 就是
+ * `listProviders`（只有已配置的，看不到候选）。id 落在 std 组还是 custom 组，
+ * 以 `model.yaml` 的分组为准；没配置过的按来源归类（快照 → std、自定义 spec → custom）。
+ */
+export function availableProviders(home: string, options?: CatalogOptions): AvailableProvider[] {
+    const config = loadModelYaml(home);
+    const customSpecs = loadCustomSpecs(home);
+    const snapshot = loadSnapshot(home, options);
+    const stdIds = [...new Set([...Object.keys(snapshot ?? {}), ...Object.keys(config.stdProviders ?? {})])];
+    const customIds = [...new Set([...Object.keys(customSpecs), ...Object.keys(config.customProviders ?? {})])];
+    const out: AvailableProvider[] = [];
+    for (const providerId of stdIds.sort()) {
+        // snapshot 优先：同一家可能两份都有（自定义 spec 补的是快照缺的那几家）
+        const spec = snapshot?.[providerId] ?? customSpecs[providerId] ?? null;
+        out.push(availableOf(providerId, "std", spec, config.stdProviders?.[providerId]));
+    }
+    for (const providerId of customIds.sort()) {
+        out.push(availableOf(providerId, "custom", customSpecs[providerId] ?? null, config.customProviders?.[providerId]));
+    }
+    return out;
+}
+
+function availableOf(
+    providerId: string,
+    kind: "std" | "custom",
+    spec: RawSpecProvider | null,
+    config: RawProviderConfig | undefined,
+): AvailableProvider {
+    const providerConfig = config ?? {};
+    const filter = filterOf(providerConfig);
+    const api = typeof spec?.api === "string" && spec.api.trim() !== "" ? spec.api : undefined;
+    return {
+        providerId,
+        name: typeof spec?.name === "string" && spec.name.trim() !== "" ? spec.name : providerId,
+        kind,
+        configured: config !== undefined,
+        ...(api === undefined ? {} : { api }),
+        ...(typeof spec?.npm === "string" ? { npm: spec.npm } : {}),
+        envKeys: spec?.env ?? [],
+        ...(typeof spec?.doc === "string" ? { doc: spec.doc } : {}),
+        accounts: accountStates(providerConfig.accounts ?? []),
+        models: modelPairs(spec, providerConfig).map((pair) => ({
+            ...modelViewOf(pair),
+            enabled: isEnabled(pair.modelId, filter),
+        })),
+    };
 }
 
 /**
@@ -268,33 +362,67 @@ function providerInputs(home: string, options?: CatalogOptions): ProviderInput[]
     return out;
 }
 
-function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined): ModelCatalogEntry[] {
-    const specModels = input.spec?.models ?? {};
-    const overrides = input.config.models ?? {};
-    const filter = input.config.filter ?? {};
-    const include = nonEmpty(filter.include);
-    const exclude = new Set(filter.exclude ?? []);
+/** 一个模型在 spec 与配置两边的原始片段（配置层可以盖掉名字 / 上限 / 价目） */
+interface ModelPair {
+    readonly modelId: string;
+    readonly spec: RawSpecModel | undefined;
+    readonly override: RawModelOverride | undefined;
+}
+
+/** spec ⊕ 配置里出现过的**全部**模型 id（含被 filter 关掉的） */
+function modelPairs(spec: RawSpecProvider | null, config: RawProviderConfig): ModelPair[] {
+    const specModels = spec?.models ?? {};
+    const overrides = config.models ?? {};
     const ids = Object.keys(specModels);
     for (const id of Object.keys(overrides)) if (!ids.includes(id)) ids.push(id);
+    return ids.map((modelId) => ({ modelId, spec: specModels[modelId], override: overrides[modelId] }));
+}
 
+interface Filter {
+    readonly include: Set<string> | null;
+    readonly exclude: Set<string>;
+}
+
+function filterOf(config: RawProviderConfig): Filter {
+    const filter = config.filter ?? {};
+    return { include: nonEmpty(filter.include), exclude: new Set(filter.exclude ?? []) };
+}
+
+/** 过了 filter = 会进目录。`include` 非空时**只**认列出的那几个（与 `modelsOf` 同一条规则） */
+function isEnabled(modelId: string, filter: Filter): boolean {
+    if (filter.exclude.has(modelId)) return false;
+    if (filter.include !== null && !filter.include.has(modelId)) return false;
+    return true;
+}
+
+function modelViewOf(pair: ModelPair): Omit<AvailableModel, "enabled"> {
+    const contextWindow = pair.override?.limit?.context ?? pair.spec?.limit?.context;
+    const maxOutput = pair.override?.limit?.output ?? pair.spec?.limit?.output;
+    const cost = pair.override?.cost !== undefined ? costOf(pair.override.cost) : costOf(pair.spec?.cost);
+    return {
+        id: pair.modelId,
+        name: pair.override?.name ?? pair.spec?.name ?? pair.modelId,
+        ...(typeof contextWindow === "number" ? { contextWindow } : {}),
+        ...(typeof maxOutput === "number" ? { maxOutputTokens: maxOutput } : {}),
+        ...(cost === undefined ? {} : { cost }),
+    };
+}
+
+function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined): ModelCatalogEntry[] {
+    const filter = filterOf(input.config);
     const out: ModelCatalogEntry[] = [];
-    for (const modelId of ids) {
-        if (exclude.has(modelId)) continue;
-        if (include !== null && !include.has(modelId)) continue;
-        const spec = specModels[modelId];
-        const override = overrides[modelId];
-        const contextWindow = override?.limit?.context ?? spec?.limit?.context;
-        const maxOutput = override?.limit?.output ?? spec?.limit?.output;
-        const cost = override?.cost !== undefined ? costOf(override.cost) : costOf(spec?.cost);
+    for (const pair of modelPairs(input.spec, input.config)) {
+        if (!isEnabled(pair.modelId, filter)) continue;
+        const view = modelViewOf(pair);
         out.push({
             providerId: input.providerId,
-            modelId,
-            name: override?.name ?? spec?.name ?? modelId,
+            modelId: pair.modelId,
+            name: view.name,
             baseURL,
             ...(npm === undefined ? {} : { npm }),
-            ...(typeof contextWindow === "number" ? { contextWindow } : {}),
-            ...(typeof maxOutput === "number" ? { maxOutputTokens: maxOutput } : {}),
-            ...(cost === undefined ? {} : { cost }),
+            ...(view.contextWindow === undefined ? {} : { contextWindow: view.contextWindow }),
+            ...(view.maxOutputTokens === undefined ? {} : { maxOutputTokens: view.maxOutputTokens }),
+            ...(view.cost === undefined ? {} : { cost: view.cost }),
         });
     }
     return out;
@@ -417,6 +545,11 @@ function readYaml(path: string): unknown {
         return value;
     } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
+        // 「空文档」不是坏配置：0 字节、只有空行、只有注释的 YAML 都是合法的空文档，
+        // 但 js-yaml 一律抛 `expected a document, but the input is empty`。当成 `{}` ——
+        // 否则一个 `touch` 出来的空 model.yaml 会让读侧报「解析失败」，界面上就是
+        // 「目录空着 + 一条读不懂的错误」，而配置页正要去填它。
+        if (isEmptyDocument(message)) return {};
         throw new CatalogError("catalog/invalid-config", `${path} 解析失败：${message}`, path);
     }
 }

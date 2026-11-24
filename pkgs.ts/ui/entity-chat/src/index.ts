@@ -28,6 +28,7 @@ export type { NavContext, NavHost, NavSource } from './nav';
 // 工作台把「外壳」拆给各个区域：左边是侧栏、详情区是任务面板、center 只留对话。
 // 这些部件自己不知道被装在哪里 —— 宽度 / 收起由外层 area 决定（`widthMode="fill"`），
 // 弹窗由宿主挂一次 `useRoomDialogs()`（整页 App 与工作台共用同一套状态）。
+export { Modal } from './components/Dialogs';
 export { Sidebar } from './components/Sidebar';
 export { TaskPanel } from './components/TaskPanel';
 // 作业卡片：两个 surface 共用（判据在 chat-core 的 `jobOf`）。导出是为了让
@@ -50,6 +51,19 @@ export type { RoomDialogs } from './useRoomDialogs';
 //
 // 只给**读**：`actions`（改名 / 删房 / 压上下文 / 换模型）仍然不露 —— 写路径要一条一条
 // 设计语义（谁审、失败了怎么回滚），不适合顺手放出来当便利 API。
+/**
+ * 模型配置的写面（配置页专用）—— 与 `actions` 分开的**唯一**例外，理由见 `modelConfig.ts`：
+ * 模型配置是这一轮的核心能力（没配置就发不出去），它需要一个写入口；别的写路径仍然不放。
+ */
+export { modelConfig } from './modelConfig';
+export type {
+    ModelConfigAccount,
+    ModelConfigModel,
+    ModelConfigProvider,
+    ModelConfigSnapshot,
+    ProviderPatchInput,
+} from './modelConfig';
+
 export {
     bootstrapStore,
     roomOf,

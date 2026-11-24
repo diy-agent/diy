@@ -154,9 +154,70 @@ export const linksApi = RpcSchema.group({
  * 会与真配置各自演进，「界面上能选、服务端发不出去」就是这么来的。key 值永不出服务端 ——
  * 账号只有名字与「填没填」。
  */
+/** 一个模型的覆盖字段（`model.yaml` 的 `<group>.<provider>.models.<id>`） */
+const ModelPatchInput = z.object({
+    name: z.string().optional(),
+    contextWindow: z.number().optional(),
+    cost: z
+        .object({
+            input: z.number(),
+            output: z.number(),
+            cacheRead: z.number().optional(),
+            cacheWrite: z.number().optional(),
+        })
+        .optional(),
+});
+
 export const modelsApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: {}, output: Any }),
+        /**
+         * 配置页的整页快照（含目录里**还没接**的 provider）。
+         *
+         * 与 `list` 不合成一条：`list` 只要「现在能选什么」，回包小、每次都要拉；
+         * 这里要「目录里还有什么、哪些被关掉了」，只在打开配置页 / 写完时拉。
+         */
+        config: RpcSchema.unary({ input: {}, output: Any }),
+        // 写方法的回包一律是**重算后的整页快照**（`saveAccount` 多一个 `{ saved }`）：
+        // 界面不必自己拼第二份状态，也就不会出现「服务端改了、界面还是老的」。
+        saveProvider: RpcSchema.unary({
+            input: {
+                providerId: Id,
+                kind: z.enum(['std', 'custom']).optional(),
+                /** 只对 custom 有效（std 的 spec 来自目录快照，不走手填） */
+                spec: z
+                    .object({ id: z.string().optional(), npm: z.string().optional(), api: z.string().optional() })
+                    .optional(),
+                models: z.record(z.string(), ModelPatchInput).optional(),
+                /** `null` = 删掉这个键；空数组也当删（空白名单 = 全关，没人想要这个） */
+                filter: z
+                    .object({
+                        include: z.array(z.string()).nullable().optional(),
+                        exclude: z.array(z.string()).nullable().optional(),
+                    })
+                    .optional(),
+            },
+            output: Any,
+        }),
+        removeProvider: RpcSchema.unary({ input: { providerId: Id }, output: Any }),
+        /** `value` 是唯一会流进来的 key；回包只有 `chars` */
+        saveAccount: RpcSchema.unary({
+            input: {
+                providerId: Id,
+                name: z.string().min(1),
+                value: z.string().min(1),
+                /** 配置里还没有这家时先建段（界面的「连接」） */
+                kind: z.enum(['std', 'custom']).optional(),
+            },
+            output: Any,
+        }),
+        renameAccount: RpcSchema.unary({
+            input: { providerId: Id, from: z.string().min(1), to: z.string().min(1) },
+            output: Any,
+        }),
+        removeAccount: RpcSchema.unary({ input: { providerId: Id, name: z.string().min(1) }, output: Any }),
+        /** `null` = 清掉 `defaultModel`（回落到「没设」，界面不猜一个） */
+        saveDefaultModel: RpcSchema.unary({ input: { modelKey: z.string().nullable() }, output: Any }),
     },
 });
 

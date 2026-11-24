@@ -19,3 +19,13 @@ export class CatalogError extends Error {
         this.path = path;
     }
 }
+
+/**
+ * js-yaml 对**空文档**的报错（0 字节 / 只有空白 / 只有注释）。
+ *
+ * 这些文件是**合法**的 YAML —— 解析器却抛错。读侧写侧一律当 `{}` 处理：
+ * 一个刚 `touch` 出来的 `model.yaml` 必须能被配置页填进去，而不是先报「解析失败」。
+ */
+export function isEmptyDocument(message: string): boolean {
+    return message.includes("expected a document") && message.includes("input is empty");
+}

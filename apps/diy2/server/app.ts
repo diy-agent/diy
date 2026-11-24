@@ -49,8 +49,18 @@ import type {
     BotState,
     Item,
     JobRunRow,
+    ModelConfigSnapshot,
     Room,
 } from '@diy-agent/protocol';
+import {
+    availableProviders,
+    removeAccount as dropAccount,
+    removeProvider as dropProvider,
+    renameAccount as relabelAccount,
+    saveAccount as writeAccount,
+    saveDefaultModel as writeDefaultModel,
+    saveProvider as writeProvider,
+} from '@diy-agent/model-catalog';
 
 /** 装配层（index / dev）已经装好 provider；这里取句柄。未装时是 noop，不报错。 */
 const log = openLog('app');
@@ -69,6 +79,59 @@ const log = openLog('app');
 function persistedDefaultModelKey(): string {
     return defaultModelKeyOf() ?? '';
 }
+/**
+ * 配置页的整页快照（`diy2.models.config`，也是每个写方法的回包）。
+ *
+ * 与 `models.list` 分开的理由写在协议里（一个要「现在能选什么」、一个要「目录里还有什么」）。
+ * 这里**永不含 key 值** —— 账号只有名字 / 填没填 / 字符数，那是 catalog 读侧的硬边界。
+ */
+function modelConfigView(): ModelConfigSnapshot {
+    const defaultModelKey = defaultModelKeyOf();
+    return {
+        home: config.home,
+        modelConfigPath: config.modelConfigPath,
+        snapshotMissing: !existsSync(snapshotPath(config.home)),
+        ...(defaultModelKey === undefined ? {} : { defaultModelKey }),
+        providers: availableProviders(config.home).map((provider) => ({
+            id: provider.providerId,
+            name: provider.name,
+            kind: provider.kind,
+            configured: provider.configured,
+            ...(provider.api === undefined ? {} : { api: provider.api }),
+            ...(provider.npm === undefined ? {} : { npm: provider.npm }),
+            envKeys: [...provider.envKeys],
+            ...(provider.doc === undefined ? {} : { doc: provider.doc }),
+            accounts: provider.accounts.map((account) => ({
+                name: account.name,
+                configured: account.configured,
+                env: account.env,
+                ...(account.chars === undefined ? {} : { chars: account.chars }),
+            })),
+            models: provider.models.map((model) => ({
+                id: model.id,
+                name: model.name,
+                ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+                ...(model.maxOutputTokens === undefined ? {} : { maxOutputTokens: model.maxOutputTokens }),
+                ...(model.cost === undefined ? {} : { cost: model.cost }),
+                enabled: model.enabled,
+            })),
+        })),
+    };
+}
+
+/** 写方法的入参口径：宽容取字段，类型不对就让下游（catalog）报错 —— 它才是 YAML 的主人 */
+function argsOf(input: unknown): Record<string, unknown> {
+    return typeof input === 'object' && input !== null && !Array.isArray(input)
+        ? (input as Record<string, unknown>)
+        : {};
+}
+
+function textArg(args: Record<string, unknown>, field: string): string {
+    const value = args[field];
+    if (typeof value !== 'string') throw new Error(`${field} 必须是字符串`);
+    return value;
+}
+
 /** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
 const ASK_DRAFT_TTL = 30 * 60 * 1000;
 /** 对话框草稿：synthetic owner 不随房间级联删，超过这么久没人再来就清掉 */
@@ -903,6 +966,77 @@ export async function createDiy2App(opts: {
                     modelConfigPath: config.modelConfigPath,
                     snapshotMissing: !existsSync(snapshotPath(config.home)),
                 }),
+                // ── 配置页（写侧）──────────────────────────────────────────
+                //
+                // 每个写方法都回一整页新快照：界面不必自己拼第二份状态，也就不会出现
+                // 「服务端已经改了、界面上还是老的」这种最难解释的情形。
+                config: async () => modelConfigView(),
+                saveProvider: async ({ input }) => {
+                    const args = argsOf(input);
+                    const kind = args['kind'];
+                    if (kind !== undefined && kind !== 'std' && kind !== 'custom') {
+                        throw new Error('kind 只能是 std / custom');
+                    }
+                    writeProvider(config.home, {
+                        providerId: textArg(args, 'providerId'),
+                        ...(kind === undefined ? {} : { kind }),
+                        ...(args['spec'] === undefined
+                            ? {}
+                            : { spec: args['spec'] as { id?: string; npm?: string; api?: string } }),
+                        ...(args['models'] === undefined
+                            ? {}
+                            : { models: args['models'] as Record<string, never> }),
+                        ...(args['filter'] === undefined
+                            ? {}
+                            : {
+                                  filter: args['filter'] as {
+                                      include?: readonly string[] | null;
+                                      exclude?: readonly string[] | null;
+                                  },
+                              }),
+                    });
+                    return modelConfigView();
+                },
+                removeProvider: async ({ input }) => {
+                    dropProvider(config.home, textArg(argsOf(input), 'providerId'));
+                    return modelConfigView();
+                },
+                saveAccount: async ({ input }) => {
+                    const args = argsOf(input);
+                    const kind = args['kind'];
+                    if (kind !== undefined && kind !== 'std' && kind !== 'custom') {
+                        throw new Error('kind 只能是 std / custom');
+                    }
+                    const saved = writeAccount(config.home, {
+                        providerId: textArg(args, 'providerId'),
+                        name: textArg(args, 'name'),
+                        value: textArg(args, 'value'),
+                        ...(kind === undefined ? {} : { kind }),
+                    });
+                    // 只有长度：key 值到此为止（catalog 的硬边界，这里不越）
+                    return {
+                        config: modelConfigView(),
+                        saved: { providerId: saved.providerId, name: saved.name, chars: saved.chars },
+                    };
+                },
+                renameAccount: async ({ input }) => {
+                    const args = argsOf(input);
+                    relabelAccount(config.home, textArg(args, 'providerId'), textArg(args, 'from'), textArg(args, 'to'));
+                    return modelConfigView();
+                },
+                removeAccount: async ({ input }) => {
+                    const args = argsOf(input);
+                    dropAccount(config.home, textArg(args, 'providerId'), textArg(args, 'name'));
+                    return modelConfigView();
+                },
+                saveDefaultModel: async ({ input }) => {
+                    const modelKey = argsOf(input)['modelKey'];
+                    if (modelKey !== null && typeof modelKey !== 'string') {
+                        throw new Error('modelKey 必须是字符串或 null');
+                    }
+                    writeDefaultModel(config.home, modelKey);
+                    return modelConfigView();
+                },
             },
             links: {
                 list: async ({ input }) => {
