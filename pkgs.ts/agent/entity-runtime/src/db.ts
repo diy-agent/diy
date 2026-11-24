@@ -146,6 +146,12 @@ export type UnitInput = Omit<UnitRecord, 'id' | 'seq' | 'createdAt' | 'updatedAt
     id?: string;
     createdAt?: number;
     updatedAt?: number;
+    /**
+     * 显式给的 id 允许**是新的**（agent 自起的 key，见 `tools/units.ts` 的 `unit_add`）。
+     * 缺省 false：`u<n>` 号只能由 counters 发，否则「不回收」就破了。
+     * 已存在的 id 永远走更新，`allowNewId` 不影响它。
+     */
+    allowNewId?: boolean;
 };
 
 /** 一条 unit 依赖：`from` 先做完，`to` 才能做（即 `from blocks to`） */
@@ -228,8 +234,11 @@ export interface Store {
     removeUnit(taskId: string, unitId: string): boolean;
     /** 某任务的整张依赖图（一次取全，算 board 用） */
     unitDepsOf(taskId: string): UnitDep[];
-    /** 建一条依赖；校验：两端存在、不自连、不成环（成环 = 这两步永远做不了） */
-    linkUnits(taskId: string, from: string, to: string): UnitDep;
+    /**
+     * 建一条依赖；校验：两端存在、不自连、不成环（成环 = 这两步永远做不了）。
+     * `allowMissing` = 端点可以还没建（边先挂着，节点一出现就生效）。
+     */
+    linkUnits(taskId: string, from: string, to: string, options?: { allowMissing?: boolean }): UnitDep;
     unlinkUnits(taskId: string, from: string, to: string): boolean;
 
     // ── 关系（替代父子）──────────────────────────────────────
@@ -830,9 +839,13 @@ export function openStore(file: string): Store {
             throw new Error(`unit 状态不合法：${unit.status}（只有 ${UNIT_STATUSES.join(' / ')}）`);
         }
         const previous = unit.id === undefined ? undefined : readUnit(unit.taskId, unit.id);
-        // 显式给的 id 必须已存在：新号只能由 counters 发，否则 `u<n>` 的「不回收」就破了
+        // 显式给的 id 必须已存在 —— 除非调用方声明它就是新 key（`allowNewId`）。
+        // 默认严格：`u<n>` 的「不回收」靠这条守住，随手传 id 不该悄悄建节点。
         if (unit.id !== undefined && previous === undefined) {
-            throw new Error(`unit 不存在：${unit.id}（新 unit 不要传 id，由 store 分配）`);
+            if (unit.allowNewId !== true) {
+                throw new Error(`unit 不存在：${unit.id}（新 unit 不要传 id，由 store 分配）`);
+            }
+            if (unit.id.trim() === '') throw new Error('unit 的 id 不能为空');
         }
         const now = Date.now();
         const nextSeq =
@@ -841,7 +854,7 @@ export function openStore(file: string): Store {
             }).n;
         const record: UnitRecord = {
             taskId: unit.taskId,
-            id: previous?.id ?? allocateUnitId(unit.taskId),
+            id: previous?.id ?? unit.id ?? allocateUnitId(unit.taskId),
             title,
             body: unit.body,
             status: unit.status,
@@ -884,12 +897,23 @@ export function openStore(file: string): Store {
         }
     };
 
-    const addUnitDep = (taskId: string, from: string, to: string): UnitDep => {
+    /**
+     * 建一条依赖。
+     *
+     * `allowMissing`：端点还没落库时照样把边写进去（agent 并行调 `unit_add` 时，
+     * 「A 依赖 B」可能比 B 本体先到）。`unitBoard` 历来忽略悬空边，所以悬着不脏派生量；
+     * 缺的那头一旦建成，边立刻生效（id 就是 key，不需要二次解析）。环检测只在两端都在图上时做。
+     */
+    const addUnitDep = (taskId: string, from: string, to: string, allowMissing = false): UnitDep => {
         if (from === to) throw new Error(`unit 不能依赖自己：${from}`);
-        for (const id of [from, to]) {
-            if (readUnit(taskId, id) === undefined) throw new Error(`unit 不存在：${id}`);
+        const present = [from, to].filter((id) => readUnit(taskId, id) !== undefined);
+        if (!allowMissing && present.length !== 2) {
+            const missing = [from, to].find((id) => readUnit(taskId, id) === undefined)!;
+            throw new Error(`unit 不存在：${missing}`);
         }
-        if (unitReaches(taskId, to, from)) throw new Error(`unit 依赖会成环：${from} → ${to} → … → ${from}`);
+        if (present.length === 2 && unitReaches(taskId, to, from)) {
+            throw new Error(`unit 依赖会成环：${from} → ${to} → … → ${from}`);
+        }
         db.prepare('INSERT OR IGNORE INTO unit_deps (task_id, from_id, to_id) VALUES (?,?,?)').run(taskId, from, to);
         return { from, to };
     };
@@ -1370,8 +1394,8 @@ export function openStore(file: string): Store {
                 .all(taskId) as Array<Record<string, unknown>>;
             return rows.map((row) => ({ from: String(row['from_id']), to: String(row['to_id']) }));
         },
-        linkUnits(taskId: string, from: string, to: string): UnitDep {
-            return addUnitDep(taskId, from, to);
+        linkUnits(taskId: string, from: string, to: string, options?: { allowMissing?: boolean }): UnitDep {
+            return addUnitDep(taskId, from, to, options?.allowMissing === true);
         },
         unlinkUnits(taskId: string, from: string, to: string): boolean {
             const result = db

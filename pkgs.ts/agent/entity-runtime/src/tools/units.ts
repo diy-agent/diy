@@ -32,6 +32,14 @@ const EVENT = {
 
 const EVENT_PREFIX = 'task.unit.';
 
+/**
+ * key 的合法形状：小写字母开头，小写英文 / 数字 / `-` / `_`。
+ *
+ * 它不只是别名 —— **key 就是 unit 的 id**（见 `unit_add` 注释）。限定字符集是为了让 id 进得了
+ * 事件、URL、聊天引用，也不必为「模型随手起中文 key」再写一套转义。
+ */
+const KEY_PATTERN = /^[a-z][a-z0-9_-]{0,23}$/;
+
 /** 给模型看的 board：省掉 body（可能很长）与 seq（内部排序） */
 function briefBoard(board: UnitBoard) {
     return {
@@ -75,69 +83,100 @@ export function unitTools(host: UnitHost): ToolSet {
         }),
 
         unit_add: tool({
-            description:
-                '往任务里加一批工作单元。**一条 unit = 一件能被验收的产出**，不是一次动作 —— ' +
-                '判据：做完之后能拿什么东西给人看（新行为 / 新接口 / 改好的数据 / 一份能引用的结论）。' +
-                '反例（**别进图**）：读某文件、改某文件、跑测试、全量质检、扫尾翻新 —— 那些是你干活时的执行步骤，' +
-                '自己排就行，不需要图里的人看到。正例：「deleteRoom 事务化（中途失败不留半个删）」' +
-                '「unit 取消后下游进 blocked，且给得出被谁挡」。' +
-                '`deps` 是 DAG 的边，**必须写进 deps 参数**（写进 title / body 等于没连边）：' +
-                '可以写已有的 unit id（u3），也可以写同一批里**前面**某项的 key。' +
-                '一次能加几条就加几条（生长式规划）；body 写验收口径。',
+            description: [
+                '往任务里加一批工作单元。**一次调用 = 一批**：整张图一次给全最好（生长式规划时也只给这一批）。',
+                '**一条 unit = 一件能被验收的产出**，不是一次动作 —— ',
+                '判据：做完之后能拿什么东西给人看（新行为 / 新接口 / 改好的数据 / 一份能引用的结论）。',
+                '反例（**别进图**）：读某文件、改某文件、跑测试、全量质检、扫尾翻新 —— 那些是执行步骤，自己排就行。',
+                '正例：「deleteRoom 事务化（中途失败不留半个删）」「unit 取消后下游进 blocked，且给得出被谁挡」。',
+                '',
+                '`key` 必填：**它就是这条 unit 的 id**，也是以后 deps / unit_update / unit_link 引用它的名字。',
+                '起短名：`state`、`cancel-tool`、`board`（小写英文 / 数字 / - _，≤24 字符）。',
+                '`deps` 是 DAG 的边：写前置的 key —— **必须写进 deps**，写进 title / body 等于没连边。',
+                '同批里**任意项**的 key 都能引用（在它后面也可以）；端点还没落库的边会先挂着，等它出现自动生效。',
+                'body 写验收口径。',
+            ].join('\n'),
             inputSchema: z.object({
                 items: z
                     .array(
                         z.object({
                             key: z
                                 .string()
-                                .optional()
-                                .describe('本批内的别名：后面的项可以在 deps 里用它引用这一项'),
+                                .regex(KEY_PATTERN, 'key 只能是小写字母开头的小写英文 / 数字 / - _，≤24 字符')
+                                .describe('这条 unit 的 id（自起的短名，如 state / cancel-tool）；后面的项与以后的操作都用它引用'),
                             title: z.string().min(1).describe('一件能被验收的产出（不是动作：写「什么改好了」，不是「改哪个文件」）'),
                             body: z.string().optional().describe('可选：验收口径 / 注意点'),
                             deps: z
                                 .array(z.string())
                                 .optional()
-                                .describe('前置：已有的 unit id，或本批前面的 key'),
+                                .describe('前置：写它们的 key（同批任意项、或图上已有的 unit id）'),
                         }),
                     )
                     .min(1),
             }),
             execute: async ({ items }) => {
-                // 批内 key → 新 id。只能引用**前面**的项：id 由 store 分配，后面的项此刻还没有 id，
-                // 而「先建完全部再连边」得自己造一套回滚 —— 顺序解引是最小且真实的形状。
-                const keys = new Map<string, string>();
-                const added: Array<{ id: string; title: string }> = [];
-                for (const [index, item] of items.entries()) {
-                    if (item.key !== undefined && keys.has(item.key)) {
-                        throw new Error(`同批 key 重复：${item.key}`);
+                // 先校验整批再动库：半截写入比直接报错更难收拾
+                const batchKeys = new Set<string>();
+                for (const item of items) {
+                    if (!KEY_PATTERN.test(item.key)) {
+                        throw new Error(
+                            `key 只能用 小写字母开头的小写英文 / 数字 / - _（≤24 字符）：${item.key}`,
+                        );
                     }
-                    const resolved: string[] = [];
-                    for (const dep of item.deps ?? []) {
-                        const inline = keys.get(dep);
-                        if (inline !== undefined) {
-                            resolved.push(inline);
-                            continue;
-                        }
-                        // 指向本批后面的 key：明确拒绝，而不是模糊地报「unit 不存在」让人猜
-                        if (items.slice(index + 1).some((other) => other.key === dep)) {
-                            throw new Error(`deps 只能引用同批**前面**的项：${dep}（后面的项还没有 id）`);
-                        }
-                        need(host, dep);
-                        resolved.push(dep);
+                    if (batchKeys.has(item.key)) throw new Error(`同批 key 重复：${item.key}`);
+                    batchKeys.add(item.key);
+                    const taken = host.store.unitOf(host.taskId, item.key);
+                    if (taken !== undefined) {
+                        throw new Error(`key 已被占用：${item.key}（已在图里，用 unit_update 改它，或换个 key）`);
                     }
-                    const unit = host.store.saveUnit({
+                    if ((item.deps ?? []).includes(item.key)) throw new Error(`unit 不能依赖自己：${item.key}`);
+                }
+                // 两轮：**先全部建节点，再连边** —— 这样 deps 可以引用同批任意项（含后面那些），
+                // 而端点没到位的边由 allowMissing 挂起（并行调用也能接上）。
+                for (const item of items) {
+                    host.store.saveUnit({
                         taskId: host.taskId,
+                        id: item.key,
+                        allowNewId: true,
                         title: item.title,
                         body: item.body ?? '',
                         status: 'open',
                     });
-                    for (const dep of resolved) host.store.linkUnits(host.taskId, dep, unit.id);
-                    if (item.key !== undefined) keys.set(item.key, unit.id);
-                    emit(host, EVENT.added, { id: unit.id, title: unit.title, deps: resolved });
-                    added.push({ id: unit.id, title: unit.title });
+                }
+                const added: Array<{ id: string; title: string; deps: string[] }> = [];
+                for (const item of items) {
+                    const deps = [...new Set(item.deps ?? [])];
+                    for (const dep of deps) {
+                        host.store.linkUnits(host.taskId, dep, item.key, { allowMissing: true });
+                    }
+                    emit(host, EVENT.added, { id: item.key, title: item.title, deps });
+                    added.push({ id: item.key, title: item.title, deps });
                 }
                 const board = boardOf(host);
-                return { ok: true, added, ready: board.ready };
+                const known = new Set(host.store.listUnits(host.taskId).map((unit) => unit.id));
+                const edges = host.store.unitDepsOf(host.taskId);
+                const dangling = [
+                    ...new Set(
+                        edges.flatMap((edge) => [
+                            ...(known.has(edge.from) ? [] : [edge.from]),
+                            ...(known.has(edge.to) ? [] : [edge.to]),
+                        ]),
+                    ),
+                ];
+                const flat = board.rows.length > 1 && board.rows.every((row) => row.deps.length === 0);
+                return {
+                    ok: true,
+                    added,
+                    ready: board.ready,
+                    ...(dangling.length === 0 ? {} : { dangling }),
+                    ...(flat
+                        ? {
+                              warning:
+                                  `这张图现在是 ${board.rows.length} 个孤立点（彼此没有任何依赖）。` +
+                                  '如果这些事之间其实有先后，用 unit_link 连上（from 先做完 → to 才能做）。',
+                          }
+                        : {}),
+                };
             },
         }),
 
@@ -172,7 +211,9 @@ export function unitTools(host: UnitHost): ToolSet {
         }),
 
         unit_link: tool({
-            description: '加一条依赖：`from` 先做完，`to` 才能做。会成环的请求会被拒（图必须是无环的）。',
+            description:
+                '补一条依赖：`from` 先做完，`to` 才能做。两端都得已经在图上（用它们的 key）。' +
+                '会成环的请求会被拒（图必须是无环的）。',
             inputSchema: z.object({ from: z.string(), to: z.string() }),
             execute: async ({ from, to }) => {
                 need(host, from);

@@ -54,90 +54,132 @@ describe('unit 工具', () => {
         expect(tools['unit_list']).toBeUndefined();
     });
 
-    it('unit_add 一次长一批：批内可用 key 引用前面的项（边建好）；ID 按 u1 / u2 走', async () => {
+    it('unit_add：key 就是 id，批内任意项都能引用（含后面的项）', async () => {
         const { tools } = setup();
         const added = (await toolOf(tools, 'unit_add').execute({
             items: [
-                { key: 'read', title: '读现状' },
-                { title: '写数据层', deps: ['read'] },
+                { key: 'schema', title: '状态与原因落库', deps: ['board'] },
+                { key: 'board', title: '派生量认取消' },
             ],
-        })) as { added: Array<{ id: string; title: string }>; ready: string[] };
+        })) as { added: Array<{ id: string; title: string; deps: string[] }>; ready: string[] };
 
         expect(added.added).toEqual([
-            { id: 'u1', title: '读现状' },
-            { id: 'u2', title: '写数据层' },
+            { id: 'schema', title: '状态与原因落库', deps: ['board'] },
+            { id: 'board', title: '派生量认取消', deps: [] },
         ]);
-        // 只有 u1 可做：u2 被 u1 挡着
-        expect(added.ready).toEqual(['u1']);
+        // 边是 schema ← board：只有 board 可做
+        expect(added.ready).toEqual(['board']);
     });
 
-    it('批内引用只能在前面：指向后面的 key 或不存在的前置都被拒', async () => {
+    it('悬空边：引用还没建的 key 先挂着，它一出现图就成立（并行调用也能连上）', async () => {
         const { store, tools } = setup();
+        const first = (await toolOf(tools, 'unit_add').execute({
+            items: [{ key: 'tool', title: 'unit_cancel 工具', deps: ['state'] }],
+        })) as { ready: string[]; dangling?: string[] };
+        // state 还不存在 → 边挂着，tool 没被挡（board 忽略悬空边）
+        expect(first.dangling).toEqual(['state']);
+        expect(first.ready).toEqual(['tool']);
+
+        const second = (await toolOf(tools, 'unit_add').execute({
+            items: [{ key: 'state', title: 'cancelled 进状态词表' }],
+        })) as { ready: string[] };
+        // state 到了，边立刻生效 → tool 被挡住
+        expect(second.ready).toEqual(['state']);
+        expect(store.unitDepsOf('t1')).toEqual([{ from: 'state', to: 'tool' }]);
+    });
+
+    it('全是孤立点会带警告（图退化成平列表时提醒连边）', async () => {
+        const { tools } = setup();
+        const added = (await toolOf(tools, 'unit_add').execute({
+            items: [
+                { key: 'a', title: 'A' },
+                { key: 'b', title: 'B' },
+            ],
+        })) as { warning?: string };
+        expect(added.warning).toMatch(/孤立点/);
+
+        const linked = await toolOf(tools, 'unit_add').execute({ items: [{ key: 'c', title: 'C', deps: ['a'] }] });
+        expect((linked as { warning?: string }).warning).toBeUndefined();
+    });
+
+    it('key 不合格 / 重名 / 撞已有 id：整批拒绝，不半截写入', async () => {
+        const { store, tools } = setup();
+        await expect(
+            toolOf(tools, 'unit_add').execute({ items: [{ key: 'Bad Key', title: 'x' }] }),
+        ).rejects.toThrow(/key 只能用/);
         await expect(
             toolOf(tools, 'unit_add').execute({
                 items: [
-                    { title: 'a', deps: ['later'] },
-                    { key: 'later', title: 'b' },
+                    { key: 'dup', title: 'x' },
+                    { key: 'dup', title: 'y' },
                 ],
             }),
-        ).rejects.toThrow(/前面/);
-        await expect(toolOf(tools, 'unit_add').execute({ items: [{ title: 'c', deps: ['u9'] }] })).rejects.toThrow(
-            /不存在/,
-        );
-        // 两个错的第一项就坏 → 图上没有半截
-        expect(store.listUnits('t1')).toEqual([]);
+        ).rejects.toThrow(/同批 key 重复/);
+
+        await toolOf(tools, 'unit_add').execute({ items: [{ key: 'keep', title: 'x' }] });
+        await expect(
+            toolOf(tools, 'unit_add').execute({
+                items: [
+                    { key: 'fresh', title: 'y' },
+                    { key: 'keep', title: 'z' },
+                ],
+            }),
+        ).rejects.toThrow(/已被占用/);
+        expect(store.listUnits('t1').map((unit) => unit.id)).toEqual(['keep']);
     });
 
     it('update 推状态：doing / done 会让后继变可做', async () => {
         const { tools } = setup();
-        await toolOf(tools, 'unit_add').execute({ items: [{ title: 'a' }, { title: 'b', deps: ['u1'] }] });
+        await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b', deps: ['a'] }] });
 
-        await toolOf(tools, 'unit_update').execute({ id: 'u1', status: 'doing' });
+        await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'doing' });
         const listing = (await toolOf(tools, 'unit_list').execute({})) as { doing: string[]; ready: string[] };
-        expect(listing.doing).toEqual(['u1']);
+        expect(listing.doing).toEqual(['a']);
         expect(listing.ready).toEqual([]);
 
-        const done = (await toolOf(tools, 'unit_update').execute({ id: 'u1', status: 'done' })) as { ready: string[] };
-        expect(done.ready).toEqual(['u2']);
+        const done = (await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'done' })) as { ready: string[] };
+        expect(done.ready).toEqual(['b']);
     });
 
     it('unit_link 挡环；unit_unlink 幂等', async () => {
         const { tools } = setup();
-        await toolOf(tools, 'unit_add').execute({ items: [{ title: 'a' }, { title: 'b' }, { title: 'c' }] });
-        await toolOf(tools, 'unit_link').execute({ from: 'u1', to: 'u2' });
-        await toolOf(tools, 'unit_link').execute({ from: 'u2', to: 'u3' });
-        await expect(toolOf(tools, 'unit_link').execute({ from: 'u3', to: 'u1' })).rejects.toThrow(/成环/);
+        await toolOf(tools, 'unit_add').execute({
+            items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b' }, { key: 'c', title: 'c' }],
+        });
+        await toolOf(tools, 'unit_link').execute({ from: 'a', to: 'b' });
+        await toolOf(tools, 'unit_link').execute({ from: 'b', to: 'c' });
+        await expect(toolOf(tools, 'unit_link').execute({ from: 'c', to: 'a' })).rejects.toThrow(/成环/);
 
-        expect(((await toolOf(tools, 'unit_unlink').execute({ from: 'u2', to: 'u3' })) as { removed: boolean }).removed).toBe(
+        expect(((await toolOf(tools, 'unit_unlink').execute({ from: 'b', to: 'c' })) as { removed: boolean }).removed).toBe(
             true,
         );
-        expect(((await toolOf(tools, 'unit_unlink').execute({ from: 'u2', to: 'u3' })) as { removed: boolean }).removed).toBe(
+        expect(((await toolOf(tools, 'unit_unlink').execute({ from: 'b', to: 'c' })) as { removed: boolean }).removed).toBe(
             false,
         );
     });
 
     it('unit_drop 真删图，但事件里留下 title + reason（取消可追溯）', async () => {
         const { store, tools } = setup();
-        await toolOf(tools, 'unit_add').execute({ items: [{ title: 'a' }, { title: 'b', deps: ['u1'] }] });
-        const dropped = (await toolOf(tools, 'unit_drop').execute({ id: 'u1', reason: '方案改了，这步不需要' })) as {
+        await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b', deps: ['a'] }] });
+        const dropped = (await toolOf(tools, 'unit_drop').execute({ id: 'a', reason: '方案改了，这步不需要' })) as {
             ready: string[];
         };
         // 删前置 = 解锁后继
-        expect(dropped.ready).toEqual(['u2']);
-        expect(store.listUnits('t1').map((unit) => unit.id)).toEqual(['u2']);
+        expect(dropped.ready).toEqual(['b']);
+        expect(store.listUnits('t1').map((unit) => unit.id)).toEqual(['b']);
         expect(store.unitDepsOf('t1')).toEqual([]);
 
         const events = store.eventsOf('t1', 'task.unit.');
         const removal = events.find((event) => event.event === 'task.unit.dropped');
-        expect(removal?.data).toMatchObject({ id: 'u1', title: 'a', reason: '方案改了，这步不需要' });
+        expect(removal?.data).toMatchObject({ id: 'a', title: 'a', reason: '方案改了，这步不需要' });
     });
 
     it('unit_get 给全文；unit_history 按新→旧列事件', async () => {
         const { tools } = setup();
-        await toolOf(tools, 'unit_add').execute({ items: [{ title: 'a', body: '验收：测试全绿' }] });
-        await toolOf(tools, 'unit_update').execute({ id: 'u1', status: 'done' });
+        await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a', body: '验收：测试全绿' }] });
+        await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'done' });
 
-        const got = (await toolOf(tools, 'unit_get').execute({ id: 'u1' })) as { body: string; status: string };
+        const got = (await toolOf(tools, 'unit_get').execute({ id: 'a' })) as { body: string; status: string };
         expect(got.body).toBe('验收：测试全绿');
         expect(got.status).toBe('done');
 
@@ -149,6 +191,6 @@ describe('unit 工具', () => {
 
     it('不存在的 id 报错里带出路（先 unit_list）', async () => {
         const { tools } = setup();
-        await expect(toolOf(tools, 'unit_get').execute({ id: 'u7' })).rejects.toThrow(/unit_list/);
+        await expect(toolOf(tools, 'unit_get').execute({ id: 'nope' })).rejects.toThrow(/unit_list/);
     });
 });
