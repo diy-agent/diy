@@ -86,6 +86,7 @@ export type FactsCell = z.infer<typeof FactsCellSchema>;
 const UNIT_HEAD = z.object({
   id: z.string().describe("unit id（任务内唯一；拆图时自起的 key，如 state / cancel-tool）"),
   title: z.string().describe("这一件是什么产出（能被验收，不是动作：写「什么改好了」，不是「改哪个文件」）"),
+  batch: z.string().optional().describe("所属交付批次 id；缺省 = 还没分批"),
 });
 
 const UNIT_REF = z.object({
@@ -328,6 +329,32 @@ export const AssembleGlobalsSchema = z.object({
             "行尾「← 等 xxx」=被谁挡着。缩进 = 父子（父是功能域，不执行）；同父兄弟按书写顺序串行。" +
             "树太大时整节缺席、只给 ready + counts",
         ),
+      batches: z
+        .array(
+          z.object({
+            id: z.string().describe("批次 id"),
+            title: z.string().describe("这批一起交付什么（判据：一次 diff 能不能看懂）"),
+            stage: z
+              .enum(["empty", "todo", "active", "review", "accepted"])
+              .describe(
+                "todo=整批开不了工 / active=有可做或在做（派发时机）/ review=成员全做完待验收 / accepted=验收通过",
+              ),
+            progress: z.string().describe("做完 / 总数，如 2/4"),
+            canStart: z.array(z.string()).optional().describe("这批里现在能开工的（标题）"),
+            waitingOn: z.array(z.string()).optional().describe("整批被批外这些节点挡着（不完成开不了工）"),
+            note: z.string().optional().describe("这批为什么这样切 / 派给谁 / 注意什么"),
+          }),
+        )
+        .optional()
+        .describe("交付批次：验收次数 = 批次数，不是节点数。分批是**显式**画的，不从树的形状推导"),
+      unbatched: z
+        .object({
+          count: z.number().int(),
+          ids: z.array(z.string()).describe("还没挂批次的节点 id"),
+        })
+        .optional()
+        .describe("没挂批次的节点（分解完了但还没说「哪些一起交付」——这是常态，不是错）"),
+      cyclic: z.string().optional().describe("图里有环（数据异常）：环上的 unit 永远做不了"),
       counts: z
         .object({
           open: z.number().int(),

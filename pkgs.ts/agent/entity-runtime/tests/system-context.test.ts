@@ -177,6 +177,51 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         expect(system).toContain('  - [.] 注入上下文 (c)  ← 等 dom');
     });
 
+    it('units：批次投在树行尾 + batches 节（验收次数 = 批次数，不是节点数）', () => {
+        const repo = tmp();
+        const facts = [
+            { id: 'u1', title: '地基', status: 'done' as const, seq: 1, batch: 'p1' },
+            { id: 'u2', title: '接线', status: 'open' as const, seq: 2, batch: 'p1' },
+            { id: 'u3', title: '视图', status: 'open' as const, seq: 3 },
+        ];
+        const batches = [
+            {
+                taskId: 't-1',
+                id: 'p1',
+                title: '第一批',
+                note: '一次 diff 看得懂',
+                seq: 1,
+                acceptedAt: null,
+                createdAt: 0,
+                updatedAt: 0,
+            },
+        ];
+        const ctx = createRoomContext({
+            spec: { id: 'task:t-1', type: 'task', data: { title: '任务一' } },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+            units: () => unitBoard(facts, []),
+            unitBatches: () => batches,
+        });
+        const system = ctx.open().system;
+        // 树行尾标批次：分批与树正交，不按批次分组，但一眼能看出谁属于哪批
+        expect(system).toContain('- [x] 地基 (u1)  〔p1〕');
+        // 同根兄弟串行：u3 被 u2 挡着（这也让它显式落在「未分批」里）
+        expect(system).toContain('- [.] 视图 (u3)  ← 等 u2');
+        expect(system).not.toContain('视图 (u3)  〔');
+        // 批次节：阶段 + 进度 + 能开工的 + note（判据是「一次 diff 能不能看懂」）
+        expect(system).toContain('batches:');
+        expect(system).toContain('第一批');
+        expect(system).toContain('stage: active');
+        expect(system).toContain('progress: 1/2');
+        expect(system).toContain('一次 diff 看得懂');
+        // ready 里点名所属批次（行动指令直接带上下文，不用回头查树）
+        expect(system).toContain('batch: p1');
+        // 未分批要报出来（是常态，不是错）：不提就没人想起「还没说哪些一起交付」
+        expect(system).toContain('unbatched:');
+        expect(system).toContain('count: 1');
+    });
+
     it('units：空图整节缺席（不造空壳冒充）', () => {
         const repo = tmp();
         const ctx = createRoomContext({

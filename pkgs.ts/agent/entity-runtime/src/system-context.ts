@@ -28,8 +28,8 @@ import { foldKbIndex, globalKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
 import { skillsOf } from '@diy-agent/skills';
 import { localISOString } from '@diy-agent/time';
 
-import type { JournalEntry } from './db';
-import { unitTreeLines, type UnitBoard } from './units';
+import type { BatchRecord, JournalEntry } from './db';
+import { unitBatchViews, unitTreeLines, type UnitBoard } from './units';
 import { watchedValue } from './watch-cache';
 
 /** 房间上下文需要的 spec 形状（只读；与 `Room` 结构兼容） */
@@ -61,6 +61,8 @@ export interface RoomContextOptions {
     readonly journal?: () => readonly JournalEntry[];
     /** 任务内部的拆分图（unit DAG）：宿主给取数函数；不传 = 不投 units 节 */
     readonly units?: () => UnitBoard;
+    /** 交付批次（`unit_batches`）：与 `units` 搭配；不传 = 只投树、不投批次 */
+    readonly unitBatches?: () => readonly BatchRecord[];
     /** 房间成员（@ 键 / 是否主人格）：不传 = 不投 room 节 */
     readonly members?: () => readonly { id: string; name: string; key: string; main: boolean }[];
 }
@@ -241,33 +243,60 @@ const UNITS_FULL_MAX_LINES = 40;
  * 去冗余：每个节点只在 `tree` 里出现一次（带状态 + 被谁挡）；`ready` / `doing` 再点名一次
  * 是因为那是**行动指令**，值得重复。`blocked` / `done` 不点名 —— 树行里的标记就是答案。
  */
-function unitsProvider(get?: () => UnitBoard): ContextProvider {
+function unitsProvider(get?: () => UnitBoard, batchesOf?: () => readonly BatchRecord[]): ContextProvider {
     return {
         key: 'units',
         provide: () => {
             const board = get?.();
             if (board === undefined || board.rows.length === 0) return undefined;
-            const titleOf = (id: string): string => board.rows.find((row) => row.id === id)?.title ?? '';
-            const head = {
-                ready: board.ready.map((id) => ({ id, title: titleOf(id) })),
-                doing: board.doing.map((id) => ({ id, title: titleOf(id) })),
-            };
-            const tree = unitTreeLines(board);
+            const rowOf = new Map(board.rows.map((row) => [row.id, row] as const));
+            const titleOf = (id: string): string => rowOf.get(id)?.title ?? '';
+            const head = (ids: string[]): Array<{ id: string; title: string; batch?: string }> =>
+                ids.map((id) => {
+                    const batch = rowOf.get(id)?.batch ?? null;
+                    return { id, title: titleOf(id), ...(batch === null ? {} : { batch }) };
+                });
+            // 批次与工具回包（`unit_list` 的 briefBoard）**同形状**：同一份事实只设计一次
+            const views = unitBatchViews(board, batchesOf?.() ?? []);
+            const batchLines = views.map((batch) => ({
+                id: batch.id,
+                title: batch.title,
+                stage: batch.stage,
+                progress: `${batch.doneCount}/${batch.total}`,
+                ...(batch.ready.length === 0 ? {} : { canStart: batch.ready.map(titleOf) }),
+                ...(batch.waitingOn.length === 0
+                    ? {}
+                    : { waitingOn: batch.waitingOn.map((id) => `${id} ${titleOf(id)}`) }),
+                ...(batch.note === '' ? {} : { note: batch.note }),
+            }));
+            const unbatched = board.rows.filter((row) => row.batch === null);
+            const tree = unitTreeLines(board, { withBatch: true });
             const tooBig =
                 tree.length > UNITS_FULL_MAX_LINES || tree.join('\n').length > UNITS_FULL_MAX_BYTES;
+            const tail = {
+                ...(batchLines.length === 0 ? {} : { batches: batchLines }),
+                ...(unbatched.length === 0
+                    ? {}
+                    : {
+                          unbatched: {
+                              count: unbatched.length,
+                              // 溢出时只给计数：几十个 id 会把摘要撑得比树还大
+                              ids: tooBig ? [] : unbatched.map((row) => row.id),
+                          },
+                      }),
+                ...(board.cyclic ? { cyclic: '图里有环（数据异常）：环上的 unit 永远做不了' } : {}),
+            };
             if (!tooBig) {
-                return {
-                    ...head,
-                    tree,
-                    ...(board.cyclic ? { cyclic: '图里有环（数据异常）：环上的 unit 永远做不了' } : {}),
-                };
+                return { ready: head(board.ready), doing: head(board.doing), tree, ...tail };
             }
             const count = (status: UnitBoard['rows'][number]['status']): number =>
                 board.rows.filter((row) => row.status === status).length;
             return {
-                ...head,
+                ready: head(board.ready),
+                doing: head(board.doing),
                 counts: { open: count('open'), doing: count('doing'), done: count('done') },
                 note: `分解树较大（${board.rows.length} 条），只给现在能做的；全树用 unit_list`,
+                ...tail,
             };
         },
     };
@@ -381,7 +410,7 @@ export function roomProviders(opts: RoomContextOptions): ContextProvider[] {
         docsProvider(opts.cwd),
         roomProvider(opts),
         journalProvider(opts.journal),
-        unitsProvider(opts.units),
+        unitsProvider(opts.units, opts.unitBatches),
         taskProvider(opts.spec, opts.cwd),
     ];
 }

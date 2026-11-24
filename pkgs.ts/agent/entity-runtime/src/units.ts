@@ -320,7 +320,14 @@ export function unitBoard(units: readonly UnitFacts[], deps: readonly UnitDep[])
  *
  * 每行：`<缩进>- [状态] title （id）`，后面按需接 `← 等 <id>`（被谁挡着）。
  */
-export function unitTreeLines(board: UnitBoard, options?: { withBody?: boolean }): string[] {
+export function unitTreeLines(
+    board: UnitBoard,
+    options?: {
+        withBody?: boolean;
+        /** 行尾标上所属批次（`〔p1〕`）—— 分批是正交的一层，树本身不按批次分组 */
+        withBatch?: boolean;
+    },
+): string[] {
     const blocked = new Set(board.blocked);
     const doing = new Set(board.doing);
     const ready = new Set(board.ready);
@@ -328,6 +335,7 @@ export function unitTreeLines(board: UnitBoard, options?: { withBody?: boolean }
         const indent = '  '.repeat(row.depth);
         const mark = row.status === 'done' ? 'x' : ready.has(row.id) ? '>' : doing.has(row.id) ? '~' : blocked.has(row.id) ? '.' : ' ';
         const tail: string[] = [];
+        if (options?.withBatch === true && row.batch !== null) tail.push(`〔${row.batch}〕`);
         if (board.heldBy[row.id] !== undefined) tail.push(`← 等 ${board.heldBy[row.id]}`);
         if (options?.withBody === true && row.body !== '') tail.push(`body: ${row.body}`);
         return `${indent}- [${mark}] ${row.title} (${row.id})${tail.length === 0 ? '' : `  ${tail.join('  ')}`}`;

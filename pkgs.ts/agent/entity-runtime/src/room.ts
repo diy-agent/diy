@@ -738,7 +738,12 @@ export class RoomActor {
             cwd,
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
             journal: () => this.deps.store.journalOf(this.id),
-            ...(this.deps.spec.type === 'task' ? { units: () => this.unitBoardOf() } : {}),
+            ...(this.deps.spec.type === 'task'
+                ? {
+                      units: () => this.unitBoardOf(),
+                      unitBatches: () => this.deps.store.listBatches(this.id),
+                  }
+                : {}),
             members: () => {
                 const primary = this.primary();
                 return this.members().map((bot) => ({
