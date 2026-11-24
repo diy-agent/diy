@@ -20,5 +20,6 @@ export type {
     ItemStatus,
     InboxMode,
     ProgressStage,
+    StallPhase,
     TurnEndReason,
 } from '@diy-agent/protocol';

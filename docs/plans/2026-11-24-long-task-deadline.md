@@ -65,6 +65,10 @@ background job 的输出增长（tail 变了）就是心跳，写回 `pending.he
 
 ### 3.3 判定表：**不是所有 await 都按同一阈值杀**
 
+> ⚠️ **2026-11-25 改写**：下表里 `model-stream` 那两行的「abort 本轮」**已经不在 `progress.ts` 了** ——
+> 中止权归 agent 层的 StallWatchdog（当时 main 刚进的 `stall-watchdog.ts`），`progress.ts` 只留提示。
+> 详见第 10 节。下表其余部分（工具 / ask / compact / 墙钟）不变。
+
 | await | 阈值 | 到点做什么 | 为什么 |
 |---|---|---|---|
 | `model-stream`（首字节未到） | 60s | **abort 本轮** → `stalled` | 连上了不吐字 = 明确故障 |
@@ -280,6 +284,8 @@ run 还会吐 `run.failed`，`watch.apply` 会清空 pending，那时再问就�
 
 ## 8. 有意不做
 
+> **2026-11-25 补一条**：也不做「两套看门狗各管一半、靠定时器谁先响决定结局」——见第 10 节。
+
 - **不为每个 item 加 `updatedAt`**：心跳属于"这一轮"，不属于"这句话"；写了会诱导人去渲染"这条消息 3 秒前更新过"
 - **不做自动重试**：stall 后自动重发会烧 token 且掩盖真故障，只给建议
 - **不做全局"任务面板"**：pending 注册表是诊断口，不是导航；任务本体在 `task` 域，两者别混
@@ -290,6 +296,64 @@ run 还会吐 `run.failed`，`watch.apply` 会清空 pending，那时再问就�
 - **假阳性**：慢模型在 90s 才回第一个字节是常事。首包阈值做成**每 bot 可配**，默认 60s，且只提示不杀到 120s 才杀。
 - **心跳成本**：bash 输出心跳从 job 的 tail 拿（已有的读路径），不新增 IPC 轮询。
 - **多面一致**：`RunningIndicator` 两面共用，改它等于两面同时改 —— 这反而是好事（`SpeakingBar` 只在 shadcn 面有，astryx 面要对齐）。
+
+## 10. 2026-11-25 裁：一个 await 只能有一个所有者
+
+### 10.1 冲突是什么（三条，都可查代码）
+
+main 新进了 `stall-watchdog.ts`（agent 层，`touch()` 挂在每个 part 上），与本文件的
+`ProgressWatch`（session 层，从 AgentEvent **反推**）撞在同一件事上：
+
+1. **首包抢跑**：progress 的 `streamSilenceMs(120s)` 从 turn 开始算，StallWatchdog 的
+   `firstMs` 是 180s —— 120 < 180，progress 先杀，`options.signal.aborted` 变真，
+   `agent.ts` 那句 `if (stallInfo !== undefined && !options.signal.aborted)` 把它的
+   `run.failed` 吞掉。**180s 这个数值从来没生效过**。
+2. **流中静默同秒双杀**：两边都是 120s，各存一份。StallWatchdog 先响 → `failed` → 判 `error`；
+   progress 先响 → `abortedBy:'deadline'` → 判 `stalled`。**同一故障两种结局**，由定时器先后决定。
+3. **提示窗口为零**：progress 的 `stalled` 显示档阈值 = StallWatchdog 的斩杀线 ⇒ 提示发出去之前
+   那一轮已经死了，`RunningIndicator` 的第三档在「流中静默」场景里**永远看不到**。
+
+### 10.2 判据：按「谁看得见这个 await」分所有权，不是合并
+
+| await | 谁看得见（事实质量） | 所有者 | 权限 |
+|---|---|---|---|
+| 模型流（首包 / 块间） | agent 层：每个 part 都 `touch()`，零延迟 | **StallWatchdog** | 判 + 杀 |
+| 工具执行 | session：`tool.started/completed` | ProgressWatch | 只提示 |
+| compact | 只有 session（它自己跑的） | ProgressWatch | 只提示 |
+| ask / 整轮墙钟 | 只有 session | ProgressWatch | 只提示 |
+
+为什么**不合并成一套**：session 层看不到 agent 内部的 retry / 空 chunk / provider 重连，
+它的 `idleMs` 是反推的（有延迟、会失真）；agent 层又不知道 turn 何时开、compact 在不在跑。
+两边都有对方没有的事实，所以是**分工**，不是收敛。
+
+### 10.3 三件落地（代码）
+
+1. **`progress.ts` 没有 `abort` 结论了**（`ProgressVerdict` 删掉变体）；模型流那四档阈值改成
+   **从 `DEFAULT_STALL` 派生**：`progressPolicyFromStall(stall)` = 斩杀线的 1/3 提示、2/3 报
+   `stalled` 档（180s → 60s / 120s；120s → 40s / 80s）。斩杀关掉（`0`）时提示也关（`Infinity`）。
+   派生关系由测试锁死：提示档必然**严格早于**斩杀线。
+2. **`session.ts` 收尾不再有 `stalledByWatchdog`**：`abortedBy:'human'` 只来自 `cancel()`；
+   `stalled` 的事实从 `run.failed.stall` 取（`{ phase, waitedMs }` → `{ awaiting, idleMs }`）。
+3. **归因透传**：`run.failed` 加可选 `stall`（protocol 定义 `StallPhase`，agent 层两处 yield 带上）；
+   `projection.ts` 对带 `stall` 的 `run.failed` **不落 error 条目** —— 话交给 `end-reason.ts` 的
+   `stalled` notice，同一件事不说两遍，也不把超时说成出错。
+
+### 10.4 现在的窗口（数得出来）
+
+| 场景 | 提示（slow/stalled 档） | 中止 | 谁杀 |
+|---|---|---|---|
+| 首包没来 | 60s / 120s | 180s | StallWatchdog（`stalled`） |
+| 流中静默 | 40s / 80s | 120s | StallWatchdog（`stalled`） |
+| 工具无心跳 | 300s / — | 永不 | —（`job` 自己管） |
+| 整轮墙钟 | 1800s / — | 永不 | —（人自己按停） |
+
+### 10.5 已知边界（写下来免得下次当 bug 查）
+
+- progress 只从 `DEFAULT_STALL` 派生，**不读 `DIY2_LLM_STALL_*`**：env 改了之后提示档位不准，
+  但中止仍按 env 走（不影响正确性）。
+- `sawContent` 是本轮级的（不是每个 await 段级的）：工具返回后模型重新生成时，走「流中」那组
+  阈值（更早提示、更早报 `stalled` 档）。因为只提示不杀，代价仅是提示偏早。
+- `tool` 时段的 `StallInfo.phase` 在收尾时映射成 `awaiting:'tool'`（缺省 `toolMs:0`，正常不会出现）。
 
 ## 附：demo
 

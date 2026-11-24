@@ -402,8 +402,9 @@ export interface TurnEndReason {
      * 空产出就停）。它按错误处理：不发结论，时间线上一条错误。
      * 「没有证据」不等于「正常完成」（未知按错误处理，见 end-reason.ts）。
      *
-     * `stalled` = 我们**非常知道**为什么停：看门狗发现某个 await 太久没进展（progress.ts），
-     * 主动 abort 了本轮。不能塞进 `unknown` —— 那是「不知道」，而 stall 知道在等谁、等了多久。
+     * `stalled` = 我们**非常知道**为什么停：模型流太久没进展，agent 层的 StallWatchdog
+     * （`stall-watchdog.ts`）主动 abort 了本轮，并随 `run.failed.stall` 把「卡在哪 / 等了多久」带上来。
+     * 不能塞进 `unknown` —— 那是「不知道」，而 stall 知道在等谁、等了多久。
      */
     type:
         | 'completed'
@@ -425,7 +426,12 @@ export interface TurnEndReason {
     maxSteps?: number;
     /** 本轮的 step 数（多轮工具循环时用于区分「说完了」和「刚到一半」） */
     steps?: number;
-    /** `stalled` 时：卡在哪个 await（`model-stream` / `tool:<name>` / `compact`） */
+    /**
+     * `stalled` 时：卡在哪个 await（`model-stream` / `tool` / `tool:<name>` / `compact`）。
+     *
+     * `tool`（无名字）来自 StallWatchdog 的 `phase:'tool'`（缺省 `toolMs:0`，正常不会出现）；
+     * `tool:<name>` 是 session 层自己的写法（它知道工具名）。
+     */
     awaiting?: string;
     /** `stalled` 时：多久没有进展（毫秒） */
     idleMs?: number;
@@ -460,7 +466,22 @@ export type AgentEvent =
           maxSteps?: number;
       }
     | { seq: number; type: 'run.completed'; turnId: string }
-    | { seq: number; type: 'run.failed'; turnId: string; message: string };
+    | {
+          seq: number;
+          type: 'run.failed';
+          turnId: string;
+          message: string;
+          /**
+           * 上游静默、被 StallWatchdog 判超时中止时带上「卡在哪个时段 / 等了多久」。
+           *
+           * 有这个字段 = 这是**超时判定**（收尾判据落成 `stalled`），不是一般失败：
+           * 中止的事实只有杀它的那一层知道，不带上来就只能报成 `error`。
+           */
+          stall?: { phase: StallPhase; waitedMs: number };
+      };
+
+/** 停摆看门狗的时段（`first` / `stream` / `tool`；三段的判据与时长各不同） */
+export type StallPhase = 'first' | 'stream' | 'tool';
 
 // ── 模型目录的视图（`diy2.models.list` 的回包）────────────────────
 //

@@ -62,9 +62,19 @@ export function factsOf(turn: StopTurn): EndFacts {
     let steps = 0;
     let textLength = 0;
     let toolCalls = 0;
+    /** 看门狗杀的那一轮：`run.failed.stall` 是唯一来源（与 `session.ts` 同口径） */
+    let stall: { awaiting: string; idleMs: number } | undefined;
 
     for (const event of turn.events) {
-        if (event.type === 'run.failed') failed = true;
+        if (event.type === 'run.failed') {
+            failed = true;
+            if (event.stall !== undefined) {
+                stall = {
+                    awaiting: event.stall.phase === 'tool' ? 'tool' : 'model-stream',
+                    idleMs: event.stall.waitedMs,
+                };
+            }
+        }
         if (event.type === 'run.finished') {
             finished = true;
             finishReason = event.finishReason;
@@ -77,6 +87,7 @@ export function factsOf(turn: StopTurn): EndFacts {
     return {
         failed,
         aborted: turn.aborted === true,
+        ...(stall === undefined ? {} : { abortedBy: 'deadline' as const, stall }),
         finished,
         ...(finishReason === undefined ? {} : { finishReason }),
         steps,
@@ -390,6 +401,24 @@ export const STOP_SCENARIOS: readonly StopScenario[] = [
             },
             { seq: 4, type: 'message.completed', messageId: 'msg-1' },
             { seq: 5, type: 'run.completed', turnId: TURN_ID },
+        ],
+    },
+    {
+        id: 'upstream-stall',
+        title: '上游静默，被 StallWatchdog 判超时中止（不是一般 error）',
+        trigger:
+            '网关连上了不吐字节 / 流中途静默 → agent 层的 StallWatchdog 到点 abort，' +
+            'run.failed 带 stall（卡在哪个时段 / 等了多久）',
+        expect: 'stalled',
+        events: [
+            { seq: 1, type: 'run.started', turnId: TURN_ID, messageId: 'msg-1' },
+            {
+                seq: 2,
+                type: 'run.failed',
+                turnId: TURN_ID,
+                message: '上游停摆：请求发出后一直没有收到任何数据（已等 180s），本轮已中止',
+                stall: { phase: 'first', waitedMs: 180_000 },
+            },
         ],
     },
     {

@@ -9,7 +9,7 @@ import type { RunOptions } from '../src/agent';
 import type { Compactor, TranscriptEntry } from '../src/compaction';
 import type { RoomEntry } from '../src/room-log';
 import { BotSession, type SessionDeps, type SessionEvent, type Turn } from '../src/session';
-import type { AgentEvent, Bot, Item, TurnEndReason } from '../src/types';
+import type { AgentEvent, Bot, Item, StallPhase, TurnEndReason } from '../src/types';
 
 const BOT_A: Bot = { id: 'bot:a', name: 'diy', color: '#111', persona: '', homeRoomId: 'room:1', modelKey: 'm' };
 const BOT_B: Bot = { id: 'bot:b', name: 'cops', color: '#222', persona: '', homeRoomId: 'room:1', modelKey: 'm' };
@@ -30,6 +30,13 @@ function makeSession(
     options: {
         bot?: Bot;
         hangOnAbort?: boolean;
+        /**
+         * 模拟 agent 层的 StallWatchdog：到点吐一条带 `stall` 的 `run.failed`。
+         *
+         * **session 自己不再杀**（2026-11-25：中止权归 agent 层），所以想要 "卡死" 场景
+         * 就必须把这个事实喂进来 —— 否则就是 hangOnAbort 到天荒地老。
+         */
+        stall?: { afterMs: number; phase: StallPhase; waitedMs: number };
         /** 第一次开跑就失败（`run.failed` 的原文），用来锁「同一句话不出现两次」 */
         fail?: string;
         seed?: SessionDeps['seed'];
@@ -57,6 +64,18 @@ function makeSession(
         await sleep(5);
         if (options.fail !== undefined && runs.length === 1) {
             yield { seq: 2, type: 'run.failed', turnId, message: options.fail };
+            return;
+        }
+        if (options.stall !== undefined && runs.length === 1) {
+            const stall = options.stall;
+            await sleep(stall.afterMs);
+            yield {
+                seq: 2,
+                type: 'run.failed',
+                turnId,
+                message: '上游停摆：请求发出后一直没有收到任何数据（已等 180s），本轮已中止',
+                stall: { phase: stall.phase, waitedMs: stall.waitedMs },
+            };
             return;
         }
         if (options.hangOnAbort === true && runs.length === 1) {
@@ -158,36 +177,37 @@ describe('BotSession', () => {
         expect(h.deliveries).not.toContain('m1:failed');
     });
 
-    it('模型流挂死：看门狗到点中止，结局是 stalled（不是 interrupted / unknown）', async () => {
+    it('模型流挂死：agent 层 StallWatchdog 中止，结局是 stalled（不是 error / interrupted）', async () => {
         const h = makeSession({
-            hangOnAbort: true,
-            progressPolicy: { streamSilenceMs: 20 },
+            stall: { afterMs: 10, phase: 'first', waitedMs: 180_000 },
             progressTickMs: 5,
         });
         await h.session.post({ messageId: 'm1', text: '卡住' });
 
         expect(h.ends).toHaveLength(1);
         expect(h.ends[0]?.endReason.type).toBe('stalled');
+        // 「在等谁 / 空了多久」由杀它的那一层带上来（session 自己不知道）
         expect(h.ends[0]?.endReason.awaiting).toBe('model-stream');
-        expect(h.ends[0]?.endReason.idleMs).toBeGreaterThanOrEqual(20);
-        // 说清「在等谁 / 空了多久」：一条 notice（假 run 的 abort 会额外吐 run.failed，
-        // 真 SDK 发的是 'abort' part —— 所以这里只锁 notice，不断言 error 条目的有无）
+        expect(h.ends[0]?.endReason.idleMs).toBe(180_000);
         const notice = h.items.find((item) => item.type === 'notice');
-        expect(notice?.data.kind).toBe('stalled');
+        expect(notice?.type === 'notice' ? notice.data.kind : undefined).toBe('stalled');
         // 机器码在文案里被翻成人话（不能把 `model-stream` 直接甩给用户）
-        expect(String(notice?.data.text)).toContain('等模型回话时');
-        expect(String(notice?.data.text)).not.toContain('model-stream');
+        expect(String(notice?.type === 'notice' ? notice.data.text : '')).toContain('等模型回话时');
+        // 超时不是「出错」：同一件事不能既落 error 又落 stalled notice
+        expect(h.items.some((item) => item.type === 'error')).toBe(false);
     });
 
     it('progress 事件：报「在等谁、多久没动」，且只在事实变了时发（不是每 tick 一条）', async () => {
         const h = makeSession({
             hangOnAbort: true,
-            // 首字节 15ms 就提示、5 秒才杀：这段区间里该有一条 warn，但绝不 abort
-            progressPolicy: { firstByteMs: 15, streamSilenceMs: 5_000 },
+            // 首字节 15ms 就提示：这段区间里该有一条 warn，但**永远不会 abort**（杀归 agent 层）
+            progressPolicy: { firstByteWarnMs: 15 },
             progressTickMs: 5,
         });
         const running = h.session.post({ messageId: 'm1', text: '慢慢等' });
         await sleep(60);
+        // 提示归提示，没人自己动手：这一轮还挂着（这才是「只说不杀」的证据）
+        expect(h.ends).toHaveLength(0);
         h.session.cancel();
         await running;
 

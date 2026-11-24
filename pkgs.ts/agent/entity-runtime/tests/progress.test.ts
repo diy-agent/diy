@@ -1,15 +1,22 @@
 // progress.test.ts —— 卡死判据：假 clock + 脚本化事件流，不需要真等 120 秒。
 //
-// 锁五件事（对应计划 2026-11-24-long-task-deadline.md 第 6 节）：
-//   1. 挂死：不吐字节 → 60s 只提示、120s abort（提示 ≠ 杀，先礼后兵）
-//   2. 不误杀长工具：有心跳的 12 分钟 bash 永远不报警（demo 场景②）
-//   3. 工具无心跳：300s 只提示、不 abort（工具可能合法长跑）
-//   4. 正常说完不被干扰：持续吐字永不触发
-//   5. 收尾后不再判 stall / warn 去重（每 5s 调一次不该刷屏）
+// 锁五件事（对应计划 2026-11-24-long-task-deadline.md 第 6 节 + 2026-11-25 的「一个 await 一个所有者」）：
+//   1. 挂死：**只提示、从不 abort** —— 中止权在 agent 层的 StallWatchdog（本文件没有 abort 结论）
+//   2. 提示档必然**早于**斩杀线（派生关系），否则 UI 那一档永远看不到
+//   3. 不误杀长工具：有心跳的 12 分钟 bash 永远不报警（demo 场景②）
+//   4. 工具无心跳 / compact / 整轮墙钟：只提示
+//   5. 正常说完不被干扰 / 收尾后不再判 / warn 去重
 
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_PROGRESS_POLICY, ProgressBroadcast, ProgressWatch, stageOf } from '../src/progress';
+import {
+    DEFAULT_PROGRESS_POLICY,
+    ProgressBroadcast,
+    ProgressWatch,
+    progressPolicyFromStall,
+    stageOf,
+} from '../src/progress';
+import { DEFAULT_STALL } from '../src/stall-watchdog';
 import { progressNotice } from '../src/end-reason';
 import type { AgentEvent } from '../src/types';
 
@@ -38,7 +45,7 @@ function toolCompleted(seq: number, name = 'bash', toolCallId = 'call-1'): Agent
 }
 
 describe('progress：模型流挂死', () => {
-    it('60s 只提示，120s 才 abort（先礼后兵）', () => {
+    it('60s 提示、120s 报 stalled 档，**到 180s 也不自己动手**（杀归 StallWatchdog）', () => {
         const fake = clock();
         const watch = new ProgressWatch({ now: fake.now });
         watch.start('turn-1');
@@ -58,18 +65,18 @@ describe('progress：模型流挂死', () => {
         fake.tick(30_000);
         expect(watch.evaluate().action).toBe('wait');
 
-        // 120s：真的杀
+        // 120s：UI 报 stalled 档（这是让人看见的最后一档，杀在 180s 且不在这里）
         fake.tick(30_000);
-        const kill = watch.evaluate();
-        expect(kill.action).toBe('abort');
-        if (kill.action === 'abort') {
-            expect(kill.awaiting).toBe('model-stream');
-            expect(kill.note).toBe('no-first-byte');
-            expect(kill.idleMs).toBeGreaterThanOrEqual(DEFAULT_PROGRESS_POLICY.streamSilenceMs);
-        }
+        const fact = watch.fact();
+        expect(fact === undefined ? null : stageOf(fact)).toBe('stalled');
+        expect(watch.evaluate().action).toBe('wait');
+
+        // 走过 StallWatchdog 的斩杀线：本文件依然只有 wait（它连 abort 这个结论都没有）
+        fake.tick(120_000);
+        expect(watch.evaluate().action).toBe('wait');
     });
 
-    it('流中静默：吐过字后停住，120s 判失联且 note=stream-silent', () => {
+    it('流中静默：吐过字后停住，40s 提示 stream-silent、80s 报 stalled 档', () => {
         const fake = clock();
         const watch = new ProgressWatch({ now: fake.now });
         watch.start('turn-1');
@@ -78,14 +85,43 @@ describe('progress：模型流挂死', () => {
         watch.apply(textDelta(1));
         expect(watch.evaluate().action).toBe('wait');
 
-        // 吐过字 ⇒ 首字节提示不再适用
-        fake.tick(59_000);
+        // 吐过字之后用「流中」那一组，**不是**首包那组的 60s：39s 还不叫
+        fake.tick(39_999);
         expect(watch.evaluate().action).toBe('wait');
 
-        fake.tick(61_000);
-        const kill = watch.evaluate();
-        expect(kill.action).toBe('abort');
-        if (kill.action === 'abort') expect(kill.note).toBe('stream-silent');
+        // 40s（= 斩杀线 120s 的 1/3）先提示
+        fake.tick(1);
+        const warn = watch.evaluate();
+        expect(warn.action).toBe('warn');
+        if (warn.action === 'warn') expect(warn.note).toBe('stream-silent');
+
+        // 80s（= 120s 的 2/3）报 stalled 档；120s 才由 StallWatchdog 杀
+        fake.tick(40_000);
+        const fact = watch.fact();
+        expect(fact === undefined ? null : stageOf(fact)).toBe('stalled');
+        expect(watch.evaluate().action).toBe('wait');
+    });
+
+    it('提示档必然早于斩杀线（否则 UI 那一档提示窗口为零）', () => {
+        const p = DEFAULT_PROGRESS_POLICY;
+        expect(p.firstByteWarnMs).toBeLessThan(p.firstByteStalledMs);
+        expect(p.firstByteStalledMs).toBeLessThan(DEFAULT_STALL.firstMs);
+        expect(p.streamWarnMs).toBeLessThan(p.streamStalledMs);
+        expect(p.streamStalledMs).toBeLessThan(DEFAULT_STALL.idleMs);
+        // 数值与默认斩杀线对得上（180s → 60s / 120s；120s → 40s / 80s）
+        expect(p.firstByteWarnMs).toBe(60_000);
+        expect(p.firstByteStalledMs).toBe(120_000);
+        expect(p.streamWarnMs).toBe(40_000);
+        expect(p.streamStalledMs).toBe(80_000);
+    });
+
+    it('斩杀线关了（env 设 0）时提示也关：不会每 tick 刷一条', () => {
+        const p = progressPolicyFromStall({ firstMs: 0, idleMs: 0 });
+        expect(p.streamWarnMs).toBe(Number.POSITIVE_INFINITY);
+        expect(p.firstByteStalledMs).toBe(Number.POSITIVE_INFINITY);
+        // 再久也不会报任何档（StallWatchdog 自己都不杀了，提示就是空报警）
+        const policy = { ...DEFAULT_PROGRESS_POLICY, ...p };
+        expect(stageOf({ awaiting: 'model-stream', idleMs: 10 ** 9 }, policy)).toBe('quiet');
     });
 
     it('正常说完不被干扰：持续吐字永不触发', () => {
@@ -155,11 +191,11 @@ describe('progress：工具挂住', () => {
         const pending = watch.snapshot()?.pending ?? [];
         expect(pending.map((item) => item.what)).toEqual(['model-stream']);
 
-        // 回到等模型 ⇒ 流又静默 120s 才该杀（60s 起可能先给首字节提示，但不是 abort）
-        fake.tick(119_000);
-        expect(watch.evaluate().action).not.toBe('abort');
-        fake.tick(1_000);
-        expect(watch.evaluate().action).toBe('abort');
+        // 回到等模型 ⇒ 又按模型流的提示档判（本文件**永远不会 abort**，杀在 StallWatchdog）
+        fake.tick(59_999);
+        expect(watch.evaluate().action).toBe('wait');
+        fake.tick(1);
+        expect(watch.evaluate().action).toBe('warn');
     });
 
     it('同名工具并发时按 toolCallId 拔对那一根', () => {
@@ -212,17 +248,7 @@ describe('progress：收尾', () => {
         watch.apply({ seq: 2, type: 'run.finished', turnId: 'turn-1', finishReason: 'stop', steps: 1, maxOutputTokens: 8000, maxSteps: 200 });
         fake.tick(600_000);
         expect(watch.evaluate().action).toBe('wait');
-        expect(watch.stall()).toBeUndefined();
-    });
-
-    it('stall() 报的是"等谁 + 空多久"，不看阈值', () => {
-        const fake = clock();
-        const watch = new ProgressWatch({ now: fake.now });
-        watch.start('turn-1');
-        fake.tick(5_000);
-        watch.apply(toolStarted(2));
-        fake.tick(7_000);
-        expect(watch.stall()).toEqual({ awaiting: 'tool:bash', idleMs: 7_000 });
+        expect(watch.fact()).toBeUndefined();
     });
 
     it('reset 后不再产出结论；未 start 时 evaluate 安全', () => {
@@ -237,12 +263,13 @@ describe('progress：收尾', () => {
 
     it('阈值可覆盖（每 bot 可配）', () => {
         const fake = clock();
-        const watch = new ProgressWatch({ now: fake.now, policy: { firstByteMs: 10, streamSilenceMs: 20 } });
+        const watch = new ProgressWatch({ now: fake.now, policy: { firstByteWarnMs: 10 } });
         watch.start('turn-1');
         fake.tick(10);
         expect(watch.evaluate().action).toBe('warn');
-        fake.tick(10);
-        expect(watch.evaluate().action).toBe('abort');
+        // 覆盖之后依然只说不杀
+        fake.tick(10 ** 6);
+        expect(watch.evaluate().action).toBe('wait');
     });
 });
 
@@ -256,7 +283,7 @@ describe('progress：对外事实（progress 事件的内容）', () => {
         fake.tick(29_000);
         watch.beat('tool:bash', 'tool-output'); // 30s 时吐了一行
         fake.tick(3_000);
-        expect(watch.fact()).toEqual({ awaiting: 'tool:bash', idleMs: 3_000, alive: true });
+        expect(watch.fact()).toEqual({ awaiting: 'tool:bash', idleMs: 3_000, alive: true, sawContent: false });
     });
 
     it('fact 报 awaiting / idleMs / alive；未 start 或已收尾时为 undefined', () => {
@@ -266,12 +293,13 @@ describe('progress：对外事实（progress 事件的内容）', () => {
 
         watch.start('turn-1');
         fake.tick(5_000);
-        expect(watch.fact()).toEqual({ awaiting: 'model-stream', idleMs: 5_000, alive: false });
+        expect(watch.fact()).toEqual({ awaiting: 'model-stream', idleMs: 5_000, alive: false, sawContent: false });
 
         // 吐过字 = 有活的证据
         watch.apply(textDelta(1));
         expect(watch.fact()?.alive).toBe(true);
         expect(watch.fact()?.idleMs).toBe(0);
+        expect(watch.fact()?.sawContent).toBe(true);
 
         // 收尾中（pending 已清）不报事实，UI 不该再显示「在执行」
         watch.apply({

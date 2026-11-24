@@ -1,30 +1,67 @@
-// progress.ts —— 「这一轮还活着吗」的判据（session 用；假 clock 可直测）。
+// progress.ts —— 「这一轮还活着吗」的判据 + 对外事实（session 用；假 clock 可直测）。
 //
 // 存在的理由：`runTurn` 的 for-await 只有在 SDK 肯退出时才会走到 finally ——
 // 网关连上不吐字节、流中途静默时，`endReasonOf` 再完美也**永远没机会跑**，
 // 用户看到的是"一直转圈"；关掉再打开还是转圈，因为卡住的调用没人管。
 //
+// ## 本文件**只说不杀**
+//
+// 2026-11-25 裁：**中止权只有一个主人，就是 `stall-watchdog.ts` 的 StallWatchdog**
+// （它在 agent 层，是「读流的人」：`touch()` 挂在每个 part 上，事实零延迟零失真；
+// 本文件是从 AgentEvent **反推**出来的，agent 内部的 retry / 空 chunk / provider 内部重连
+// 它都看不见）。两边都能杀的时候，同一个 120s 会产出两种结局（`stalled` / `error`），
+// 而且谁先响定时器决定用户看到哪一条 —— 「同一故障两种说法」就是这么来的。
+//
+// 分工（一个 await 只能有一个所有者）：
+//   · 模型流（首包 / 块间）→ **StallWatchdog 独占**：唯一判、唯一杀。本文件只按它的
+//     斩杀线**派生**提示档（见 `DEFAULT_PROGRESS_POLICY`），负责「让人早点看见」。
+//   · 工具 / compact / 整轮墙钟 → **本文件独占**：这三样 agent 层看不见（它不跑 compact、
+//     不知道 turn 何时开、看不到 ask 的寿命），所以由 session 判，且**一律只提示**。
+//
 // 与 `end-reason.ts` 同样的两条纪律：
 //   1. **判据只在这一个文件**（不 import agent / db / room）：UI、room、测试共用一份
 //   2. **只说事实**：`what`（在等谁）/ `idleMs`（多久没动）/ `alive`（有没有活的证据）；
-//      「该怎么跟用户说」在 `end-reason.ts` 的 `endItemsOf` / `adviceOf`
+//      「该怎么跟用户说」在 `end-reason.ts` 的 `endItemsOf` / `progressNotice`
 //
-// 判定是**分批**的 —— 不是所有 await 都按同一阈值杀：
-//   · 模型流：连上了不吐字 = 明确故障 → 到点 abort 本轮（60s 先提示，120s 才杀）
-//   · 工具：可能合法长跑 12 分钟（bash 一个构建就够）→ **只提示，永不杀**
-//   · compact / ask / 整轮墙钟：只提示（前者的寿命规则在 ask.ts，后者给人自己按停）
-//
-// 为什么必须区分"首字节"和"流中静默"：慢模型 90s 才吐第一个字节是常事（首字节阈值宽一些、
-// 且先只提示），而流已经开始吐字后突然静默 120s，几乎一定是网关卡住 / 连接半死。
+// 为什么必须区分"首字节"和"流中静默"：慢模型 90s 才吐第一个字节是常事（首字节阈值宽一些），
+// 而流已经开始吐字后突然静默，几乎一定是网关卡住 / 连接半死。
 
 import type { AgentEvent, ProgressStage } from './types';
+import { DEFAULT_STALL } from './stall-watchdog';
+
+/**
+ * 模型流那四档阈值**从 StallWatchdog 的斩杀线派生**，不另写死数。
+ *
+ * 为什么必须派生：提示档如果贴着斩杀线（都一样是 120s），提示发出去之前那一轮已经死了 ——
+ * `RunningIndicator` 的第三档在「流中静默」场景里**永远看不到**（提示窗口为零）。
+ * 改成斩杀线的 1/3 提示、2/3 报 stalled，就必然留出窗口；改 StallWatchdog 的时长，
+ * 这里跟着动，两个数不会再漂。
+ *
+ * 已知边界：`DIY2_LLM_STALL_*` 改了 env 时本文件不知道（它只从 `DEFAULT_STALL` 派生）。
+ * 代价只是提示档位不准，**不影响中止**（中止在 agent 层按 env 走）。
+ */
+const WARN_RATIO = 1 / 3;
+const STALLED_RATIO = 2 / 3;
+
+/** 斩杀线 → 提示档；斩杀关掉（0）时提示也关掉 */
+function warnAt(killMs: number): number {
+    return killMs > 0 ? Math.round(killMs * WARN_RATIO) : Number.POSITIVE_INFINITY;
+}
+
+function stalledAt(killMs: number): number {
+    return killMs > 0 ? Math.round(killMs * STALLED_RATIO) : Number.POSITIVE_INFINITY;
+}
 
 export interface ProgressPolicy {
-    /** 模型连上了但一个字节都没吐：到这个点先在 UI 上提示（不杀） */
-    firstByteMs: number;
-    /** 模型流多久没动就判失联并 abort 本轮（首字节前后同一阈值，但首字节前多一条早提示） */
-    streamSilenceMs: number;
-    /** 工具多久没心跳只提示（**不杀**：工具可能合法长跑） */
+    /** 首字节前多久先提示（派生自 `StallWatchdog.firstMs`，**不杀**） */
+    firstByteWarnMs: number;
+    /** 首字节前多久报 `stalled` 档（派生；真正的杀在 StallWatchdog） */
+    firstByteStalledMs: number;
+    /** 吐过字之后多久没新内容先提示（派生自 `StallWatchdog.idleMs`） */
+    streamWarnMs: number;
+    /** 吐过字之后多久没新内容报 `stalled` 档（派生；真正的杀在 StallWatchdog） */
+    streamStalledMs: number;
+    /** 工具多久没心跳只提示（**不杀**：工具可能合法长跑；这个 agent 层看不见） */
     toolSilenceMs: number;
     /** 压缩多久没回只提示 */
     compactMs: number;
@@ -32,9 +69,24 @@ export interface ProgressPolicy {
     turnWallMs: number;
 }
 
+/**
+ * 斩杀线 → 模型流那四档（导出的原因：将来要按 env 的 `stallTimeoutsFromEnv()` 派生时，
+ * 调用方复用这一个函数就行；测试也直接验它，不去抄数）。
+ */
+export function progressPolicyFromStall(stall: {
+    firstMs: number;
+    idleMs: number;
+}): Pick<ProgressPolicy, 'firstByteWarnMs' | 'firstByteStalledMs' | 'streamWarnMs' | 'streamStalledMs'> {
+    return {
+        firstByteWarnMs: warnAt(stall.firstMs),
+        firstByteStalledMs: stalledAt(stall.firstMs),
+        streamWarnMs: warnAt(stall.idleMs),
+        streamStalledMs: stalledAt(stall.idleMs),
+    };
+}
+
 export const DEFAULT_PROGRESS_POLICY: ProgressPolicy = {
-    firstByteMs: 60_000,
-    streamSilenceMs: 120_000,
+    ...progressPolicyFromStall(DEFAULT_STALL),
     toolSilenceMs: 300_000,
     compactMs: 300_000,
     turnWallMs: 1_800_000,
@@ -71,12 +123,10 @@ export interface TurnProgress {
 /**
  * 一次判定的结论（`warn` 自带去重，调用方可以每 5s 调一次 `evaluate()`）。
  *
- * `abort` 只由模型流产出 —— 这是本文件唯一"能动手"的结论，其余全是提示。
+ * **没有 `abort`**：本文件只说不杀，中止权在 `stall-watchdog.ts`（见文件头）。
+ * 以前这里有个 `abort` 变体，和 StallWatchdog 抢同一个模型流，已删。
  */
-export type ProgressVerdict =
-    | { action: 'wait' }
-    | { action: 'warn'; awaiting: string; idleMs: number; note: string }
-    | { action: 'abort'; awaiting: string; idleMs: number; note: string };
+export type ProgressVerdict = { action: 'wait' } | { action: 'warn'; awaiting: string; idleMs: number; note: string };
 
 /**
  * 此刻的对外事实（= `progress` 事件的内容）。
@@ -89,6 +139,8 @@ export interface ProgressFact {
     awaiting: string;
     idleMs: number;
     alive: boolean;
+    /** 本轮吐过字没有：决定模型流按「首字节前」还是「流中」那组阈值分档 */
+    sawContent: boolean;
 }
 
 /**
@@ -96,12 +148,16 @@ export interface ProgressFact {
  * 工具只到 `slow`：它可能合法长跑，永远不报 stalled。
  */
 export function stageOf(
-    fact: { awaiting: string; idleMs: number },
+    fact: { awaiting: string; idleMs: number; sawContent?: boolean },
     policy: ProgressPolicy = DEFAULT_PROGRESS_POLICY,
 ): ProgressStage {
     if (fact.awaiting === 'model-stream') {
-        if (fact.idleMs >= policy.streamSilenceMs) return 'stalled';
-        if (fact.idleMs >= policy.firstByteMs) return 'slow';
+        // 首字节前 / 流中两组的斩杀线不同（180s / 120s），档位也跟着分开
+        const firstByte = fact.sawContent !== true;
+        const stalledMs = firstByte ? policy.firstByteStalledMs : policy.streamStalledMs;
+        const warnMs = firstByte ? policy.firstByteWarnMs : policy.streamWarnMs;
+        if (fact.idleMs >= stalledMs) return 'stalled';
+        if (fact.idleMs >= warnMs) return 'slow';
         return 'quiet';
     }
     if (fact.awaiting.startsWith('tool:') && fact.idleMs >= policy.toolSilenceMs) return 'slow';
@@ -241,16 +297,14 @@ export class ProgressWatch {
         if (pending.what === 'model-stream') {
             // 首字节前从开跑算，之后从最后一次进展算
             const idle = at - Math.max(pending.enteredAt, state.lastProgressAt);
-            if (idle >= this.policy.streamSilenceMs) {
-                return {
-                    action: 'abort',
-                    awaiting: 'model-stream',
-                    idleMs: idle,
-                    note: state.sawContent ? 'stream-silent' : 'no-first-byte',
-                };
+            if (!state.sawContent) {
+                if (idle >= this.policy.firstByteWarnMs) {
+                    return this.warnOnce('first-byte', 'model-stream', idle, 'no-first-byte');
+                }
+                return { action: 'wait' };
             }
-            if (idle >= this.policy.firstByteMs) {
-                return this.warnOnce('first-byte', 'model-stream', idle, 'no-first-byte');
+            if (idle >= this.policy.streamWarnMs) {
+                return this.warnOnce('stream-silent', 'model-stream', idle, 'stream-silent');
             }
             return { action: 'wait' };
         }
@@ -277,10 +331,7 @@ export class ProgressWatch {
         return { action: 'wait' };
     }
 
-    /**
-     * 此刻的对外事实（`progress` 事件用）。与 `stall()` 的区别：那个是收尾时的「停在哪」（
-     * 只在 abort 那一刻问一次），这个是每 tick 都要的「还在动吗」（带 `alive`）。
-     */
+    /** 此刻的对外事实（`progress` 事件用）：每 tick 都要的「还在动吗」（带 `alive`） */
     fact(): ProgressFact | undefined {
         const state = this.state;
         if (state === null) return undefined;
@@ -292,25 +343,7 @@ export class ProgressWatch {
             pending.what === 'model-stream'
                 ? Math.max(pending.enteredAt, state.lastProgressAt)
                 : (pending.heartbeat?.at ?? pending.enteredAt);
-        return { awaiting: pending.what, idleMs: at - from, alive: pending.heartbeat !== null };
-    }
-
-    /**
-     * 收尾前问一句"停在哪"：给 `endReasonOf` 的 `stall` 字段用。
-     *
-     * 不看阈值 —— 它只回答事实（在等谁 / 空了多久），该不该算 stall 由调用方决定。
-     */
-    stall(): { awaiting: string; idleMs: number } | undefined {
-        const state = this.state;
-        if (state === null) return undefined;
-        const pending = state.pending[state.pending.length - 1];
-        if (pending === undefined) return undefined;
-        const at = this.now();
-        const from =
-            pending.what === 'model-stream'
-                ? Math.max(pending.enteredAt, state.lastProgressAt)
-                : (pending.heartbeat?.at ?? pending.enteredAt);
-        return { awaiting: pending.what, idleMs: at - from };
+        return { awaiting: pending.what, idleMs: at - from, alive: pending.heartbeat !== null, sawContent: state.sawContent };
     }
 
     /** 只读快照（诊断面 / 测试用；调用方不得改它） */

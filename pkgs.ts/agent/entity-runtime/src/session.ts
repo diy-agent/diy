@@ -457,19 +457,21 @@ export class BotSession {
         // 下面那个 for-await **只有 SDK 肯退出时**才会走到 finally：网关连上了不吐字节、
         // 流中途静默时，收尾判据（endReasonOf / endItems / turn.end）永远没机会跑 ——
         // 用户看到的是「一直转圈」，而且关掉重开照样转（卡在调用里的人没人管）。
-        // 判据全在 progress.ts（假 clock 可测）；这里只负责「定时问一次、到点 abort」。
+        //
+        // **本层只说不杀**（2026-11-25 裁）：模型流的中止权归 agent 层的 StallWatchdog
+        //（它是「读流的人」，事实质量高一档）；这里负责「让人早点看见」 ——
+        // 按它的斩杀线派生提示档，另管它看不见的三样（工具 / compact / 整轮墙钟）。
         const watch = new ProgressWatch({
             ...(this.deps.progressPolicy === undefined ? {} : { policy: this.deps.progressPolicy }),
         });
         watch.start(turn.turnId);
         // `progress` 事件的节流器（只在事实变了时发，见 progress.ts 的 ProgressBroadcast）
         const broadcast = new ProgressBroadcast(this.deps.progressPolicy ?? {});
-        /** 这一轮是被看门狗收掉的（而不是人按的停）：收尾判据靠它区分 stalled / interrupted */
-        let stalledByWatchdog = false;
         /**
-         * **abort 那一刻**的事实（在等谁 / 空了多久）。不能在 finally 里现取：
-         * abort 之后 run 还会吐 `run.failed`，`watch.apply` 会清空 pending（收尾不再判），
-         * 那时再问就只剩 undefined —— 真事实反而丢了。
+         * StallWatchdog 中止时的事实（在等谁 / 空了多久），从 `run.failed.stall` 取。
+         *
+         * 为什么不在本层算：中止那一刻本层的 `pending` 已经被 `run.failed` 清空了（收尾不再判），
+         * 现取只剩 undefined —— 真事实反而丢了。让杀它的那一层把事实带过来。
          */
         let stallFact: { awaiting: string; idleMs: number } | undefined;
         const watchdog = setInterval(() => {
@@ -487,20 +489,14 @@ export class BotSession {
                     stage,
                 });
             }
-            // 2. 再判该不该动手
+            // 2. 再判该不该提示（**永远不会 abort** —— 能杀的是 agent 层的 StallWatchdog）
             const verdict = watch.evaluate();
-            if (verdict.action === 'warn') {
-                // 还没到斩杀线：落一条 notice 让人知道（刷新后也还在）
-                this.emit({
-                    type: 'item',
-                    item: progressNotice(verdict, { turn: turn.turn, turnId: turn.turnId }),
-                });
-                return;
-            }
-            if (verdict.action !== 'abort') return;
-            stalledByWatchdog = true;
-            stallFact = watch.stall();
-            abort.abort();
+            if (verdict.action !== 'warn') return;
+            // 还没到斩杀线：落一条 notice 让人知道（刷新后也还在）
+            this.emit({
+                type: 'item',
+                item: progressNotice(verdict, { turn: turn.turn, turnId: turn.turnId }),
+            });
         }, this.deps.progressTickMs ?? 5_000);
         // 别拖住进程退出（worktree 里跑测试时不至于挂住）
         (watchdog as { unref?: () => void }).unref?.();
@@ -580,6 +576,14 @@ export class BotSession {
                 if (event.type === 'run.failed') {
                     failed = true;
                     failureMessage = event.message;
+                    // agent 层看门狗杀的这一轮：把「在等谁 / 空了多久」拿过来（中止的事实只有它知道，
+                    // 见上面 `stallFact` 的注释）。有这个就是 `stalled`，不是一般失败。
+                    if (event.stall !== undefined) {
+                        stallFact = {
+                            awaiting: event.stall.phase === 'tool' ? 'tool' : 'model-stream',
+                            idleMs: event.stall.waitedMs,
+                        };
+                    }
                 }
                 if (event.type === 'run.finished') {
                     finished = true;
@@ -623,10 +627,10 @@ export class BotSession {
             const endReason = endReasonOf({
                 failed,
                 aborted: abort.signal.aborted,
-                ...(abort.signal.aborted
-                    ? { abortedBy: stalledByWatchdog ? ('deadline' as const) : ('human' as const) }
-                    : {}),
-                ...(stallFact === undefined ? {} : { stall: stallFact }),
+                // 谁按的停：人按的（cancel）与看门狗杀的要分开 —— 后者是事实，不是故障。
+                // 看门狗的 stallFact 放后面：它优先（它自己开跑 abort，session 信号没被 abort）
+                ...(abort.signal.aborted ? { abortedBy: 'human' as const } : {}),
+                ...(stallFact === undefined ? {} : { abortedBy: 'deadline' as const, stall: stallFact }),
                 finished,
                 ...(finishReason === undefined ? {} : { finishReason }),
                 steps,

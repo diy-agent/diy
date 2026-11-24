@@ -23,8 +23,9 @@ export interface EndFacts {
     /** 这一轮被 abort 了（人按停 / 看门狗到点） */
     aborted?: boolean;
     /**
-     * 谁按的停：`human` = 用户点了停止（事实，不是故障）；`deadline` = 看门狗判失联
-     * 主动收（见 progress.ts）。缺省当 `human`：历史上只有人会按。
+     * 谁按的停：`human` = 用户点了停止（事实，不是故障）；`deadline` = agent 层的
+     * StallWatchdog 判模型流失联、主动收（见 stall-watchdog.ts；`stall` 事实随
+     * `run.failed.stall` 带上来）。缺省当 `human`：历史上只有人会按。
      */
     abortedBy?: 'human' | 'deadline';
     /** 看门狗收尾时的事实：卡在哪个 await、空了多久（`abortedBy === 'deadline'` 才有） */
@@ -228,6 +229,7 @@ function stalledText(reason: TurnEndReason): string {
 /** 机器码 → 人话（与 progress.ts 的 `what` 一一对应） */
 function awaitText(awaiting: string): string {
     if (awaiting === 'model-stream') return '等模型回话时 ';
+    if (awaiting === 'tool') return '工具执行时 ';
     if (awaiting === 'compact') return '压缩上下文时 ';
     if (awaiting.startsWith('tool:')) return `${awaiting.slice('tool:'.length)} 在跑时 `;
     return `${awaiting} 处 `;
@@ -249,8 +251,13 @@ export function progressNotice(
         switch (warn.note) {
             case 'no-first-byte':
                 return {
-                    text: `模型已经连上了，${idle}还没吐出第一个字 —— 再等一会仍无响应就会中止这一轮`,
+                    text: `模型已经连上了，${idle}还没吐出第一个字 —— 再等一会仍无响应就会被自动中止（不想等可以直接按停止）`,
                     kind: 'progress:no-first-byte',
+                };
+            case 'stream-silent':
+                return {
+                    text: `模型流已经 ${idle}没有新内容 —— 再等一会仍无响应就会被自动中止（不想等可以直接按停止）`,
+                    kind: 'progress:stream-silent',
                 };
             case 'tool-silent':
                 return {
