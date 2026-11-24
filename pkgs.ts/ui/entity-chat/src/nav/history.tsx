@@ -1,16 +1,17 @@
 // nav/history.tsx —— 内建来源②：已关闭的任务（跨项目的「回头看看」区）。
 
-import { Archive, ChevronDown, ChevronRight } from 'lucide-react';
+import { Archive, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import * as React from 'react';
 
 import { formatAddress, roomAddressOf } from '../address';
 import { isPlainLeftClick } from '../components/link';
-import { StatusIcon } from '../components/RoomName';
+import { StatusGlyph } from '../components/RoomName';
 import {
     closedAtOf,
     closedTasksOf,
     formatClosedAgo,
     formatClosedAtAbsolute,
+    formatClock,
     formatCompactAgo,
     roomTitle,
     type Room,
@@ -37,7 +38,8 @@ function loadHistoryOpen(): boolean {
  * 每个项目都得为了“翻旧账”多长一截，而项目树本身是用来干活的）。跨项目列表里
  * 两个项目下都叫「修个 bug」的任务光看名字分不清，所以项目名必须在行上。
  *
- * 状态图标可点 —— 点它就是「重新打开」，任务会回到它所属项目的树里。
+ * 行尾有一颗**显式**的「打开」按钮（用户 2026-11-24）：以前只有「点状态图标」这一条隐含路径，
+ * 同一颗图标既表示状态又当开关，没人能看见“能点”。状态图标现在只画形状。
  *
  * 行尾是**关闭时刻**，不是最后活动：这张表按 `closedAt` 倒序（`closedTasksOf`），
  * 显示别的字段会让列表的时间不单调（3h、2d、5h…），看着像没排序。最后活动放悬停 ——
@@ -48,7 +50,6 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
     const active = useIsCurrentRoom(room.id);
     const closedAt = closedAtOf(room);
     const activityAt = useLastActivityOf(room.id);
-    const closedAgo = formatCompactAgo(closedAt);
     const detail: string[] = [];
     if (closedAt !== undefined) {
         const absolute = formatClosedAtAbsolute(closedAt);
@@ -62,7 +63,7 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
                 active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
             }`}
         >
-            <StatusIcon room={room} />
+            <StatusGlyph room={room} iconClass="size-3.5" />
             <a
                 href={formatAddress(roomAddressOf(room))}
                 onClick={(event) => {
@@ -70,7 +71,7 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
                     event.preventDefault();
                     actions.select(room.id);
                 }}
-                title={`${projectName === undefined ? '' : `${projectName} / `}${roomTitle(room)}（点状态图标可重新打开）`}
+                title={`${projectName === undefined ? '' : `${projectName} / `}${roomTitle(room)}`}
                 className="min-w-0 flex-1 truncate text-left"
             >
                 {roomTitle(room)}
@@ -83,13 +84,27 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
                     {projectName}
                 </span>
             )}
+            {/* 重新打开：历史行上唯一的常驻动作（另一颗「删除」在 hover 之外没有入口，
+                本区本来就不提供删除 —— 要删先去项目树里打开它）。 */}
+            <button
+                onClick={(event) => {
+                    event.stopPropagation();
+                    void actions.setRoomStatus(room.id, 'open');
+                }}
+                title="重新打开这个任务（回到它所属项目的树里）"
+                aria-label="打开任务"
+                className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+                <RotateCcw className="size-3.5" />
+            </button>
             {/* 只有一个时间单元（256px 侧栏里名字 + 项目 tag 已经占满一行）：
-                显示关闭时刻（= 排序键），其余细节进悬停。没有 closedAt 的老数据是「—」。 */}
+                显示关闭时刻（= 排序键，**绝对时间**），相对写法放悬停。
+                没有 closedAt 的老数据是「—」。 */}
             <span
                 title={detail.length === 0 ? '没有关闭时刻（老数据）' : detail.join('\n')}
                 className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70"
             >
-                {closedAgo ?? '—'}
+                {formatClock(closedAt) ?? '—'}
             </span>
         </div>
     );

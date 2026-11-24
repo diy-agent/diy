@@ -3,12 +3,23 @@
 // 从 Sidebar.tsx 搬出来是因为它现在被**三个**导航来源共用（项目树 / 历史 / 未归属），
 // 留在壳里会让壳重新认识 room 这个概念；壳只知道「有几个来源、按 order 渲染」。
 
-import { ChevronDown, ChevronRight, Folder, HelpCircle, ListPlus, Pencil, PenLine, Trash2 } from 'lucide-react';
+import {
+    CheckCircle2,
+    ChevronDown,
+    ChevronRight,
+    Folder,
+    HelpCircle,
+    ListPlus,
+    Pencil,
+    PenLine,
+    RotateCcw,
+    Trash2,
+} from 'lucide-react';
 import * as React from 'react';
 
 import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
-import { formatActivityAgo, formatAtAbsolute, roomTitle, taskNumberOf, type Room } from '../model';
+import { formatActivityAgo, formatAtAbsolute, formatClock, roomTitle, taskNumberOf, taskStatusOf, type Room } from '../model';
 import { pendingAskHintOf } from '../pendingAsk';
 import {
     actions,
@@ -19,36 +30,12 @@ import {
     useRunningOf,
 } from '../store';
 import { isPlainLeftClick } from './link';
-import { EditableName, StatusGlyph, StatusIcon } from './RoomName';
+import { MenuButton } from './Menu';
+import { EditableName, StatusGlyph } from './RoomName';
 
-/** hover 才出现的行内小按钮：重命名 / 删除。键盘 Tab 也能到（focus-visible 展开） */
-function RowAction({
-    title,
-    onClick,
-    children,
-    danger = false,
-}: {
-    title: string;
-    onClick: () => void;
-    children: React.ReactNode;
-    danger?: boolean;
-}) {
-    return (
-        <button
-            onClick={(event) => {
-                event.stopPropagation();
-                onClick();
-            }}
-            title={title}
-            aria-label={title}
-            className={`shrink-0 rounded p-0.5 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 ${
-                danger ? 'text-muted-foreground hover:bg-destructive/15 hover:text-destructive' : 'hover:bg-muted'
-            }`}
-        >
-            {children}
-        </button>
-    );
-}
+// 行尾的低频动作收进 `MenuButton`（components/Menu.tsx，与房间头 kebab 共用）：
+// 以前是 hover 才浮现的三颗按钮 —— 那是「藏起来的能力」，用户 2026-11-24 明确要收进三点菜单。
+// 高频的关闭 / 打开留行上常驻。
 
 export interface RoomRowProps {
     room: Room;
@@ -103,6 +90,8 @@ export function RoomRowView({
     const running = useRunningOf(room.id) > 0;
     const [renaming, setRenaming] = React.useState(false);
     const isProject = room.type === 'project';
+    /** 任务当前是 open（行尾显「关闭」还是「打开」—— 状态只有这一个判据） */
+    const openTask = !isProject && taskStatusOf(room) === 'open';
     /** 任务编号（非 task / 没编号 = undefined）。提出来是为了 narrow 后直接用 */
     const number = taskNumberOf(room);
     const Icon = Folder;
@@ -180,7 +169,9 @@ export function RoomRowView({
             {isProject ? (
                 <Icon className="size-3.5 shrink-0 text-sky-400" />
             ) : (
-                <StatusIcon room={room} running={running} />
+                // 只画形状，不接点击：状态切换现在有行尾那颗**显式**的关闭/打开按钮。
+                // 一颗图标既当状态又当开关，双击误触就直接把任务关了（用户报过这个隐含交互）。
+                <StatusGlyph room={room} iconClass="size-3.5" running={running} />
             )}
 
             {/* 任务编号（#14）：紧跟在状态图标后面 —— 它是这一行除了标题之外唯一的**身份**。
@@ -227,8 +218,9 @@ export function RoomRowView({
                 </span>
             )}
 
-            {/* 最后活动：紧贴行尾（hover 才出现的行内按钮之前），这样列表里的时间是一列对齐的。
-                没聊过的任务显示「—」（侧栏的状态图标已经说「未运行」，这一格回答的是「多久没动静」）。 */}
+            {/* 最后活动：紧贴行尾，这样列表里的时间是一列对齐的。
+                **绝对时间**（用户 2026-11-24：不要「2m / 3h」）—— 当天 `22:32`、跟天补日期；
+                相对写法（「3 小时前」）进悬停。没聊过的任务显示「—」。 */}
             {!isProject && (
                 <span
                     title={
@@ -238,40 +230,55 @@ export function RoomRowView({
                     }
                     className="shrink-0 text-[10px] tabular-nums text-muted-foreground/60"
                 >
-                    {activityAgo ?? '—'}
+                    {formatClock(activityAt) ?? '—'}
                 </span>
             )}
 
-            {/* hover / 键盘聚焦才出现的行内动作：**绝对定位盖在行尾**，不参与布局。
-                以前它们留在 flex 行里、只把透明度打到 0 —— 位置一直占着，于是每一行
-                右边都空出三个按钮的宽度，列表的信息密度白白少一截（用户报过）。
-                底色跟着行的状态走（选中 = accent，其它 = muted），再加左侧渐隐，
-                否则下面的「最后活动 / 草稿 / 提问」标记会从按钮缝里透出来。 */}
-            <div
-                className={`absolute inset-y-0 right-0 flex items-center gap-0.5 pl-6 pr-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 ${
-                    active
-                        ? 'bg-gradient-to-l from-accent via-accent to-transparent'
-                        : 'bg-gradient-to-l from-muted via-muted to-transparent'
-                }`}
-            >
-                <RowAction title="重命名" onClick={() => setRenaming(true)}>
-                    <Pencil className="size-3.5" />
-                </RowAction>
-
-                {isProject && onCreateTask !== undefined && (
-                    <RowAction title="在本项目下新建任务（并直接对话）" onClick={onCreateTask}>
-                        <ListPlus className="size-3.5" />
-                    </RowAction>
-                )}
-
-                <RowAction
-                    title={`删除${isProject ? '项目（连带其任务）' : '任务'}`}
-                    onClick={() => onRequestDelete(room)}
-                    danger
+            {/* 行尾两个常驻按钮（用户 2026-11-24：任务要有「关闭」和「⋮」）：
+                · 关闭/打开 = 高频、且是她点名的「历史任务加打开按钮」（不再靠点状态图标那种隐含交互）
+                · ⋮ = 重命名 / 新建任务 / 删除，低频收进菜单
+                  以前是 hover 才浮现的三颗按钮（绝对定位盖住行尾），等于把能力藏起来。 */}
+            {!isProject && (
+                <button
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        void actions.setRoomStatus(room.id, openTask ? 'closed' : 'open');
+                    }}
+                    title={openTask ? '关闭这个任务（收进历史，不再挂在项目树下）' : '重新打开这个任务'}
+                    aria-label={openTask ? '关闭任务' : '打开任务'}
+                    className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                 >
-                    <Trash2 className="size-3.5" />
-                </RowAction>
-            </div>
+                    {openTask ? <CheckCircle2 className="size-3.5" /> : <RotateCcw className="size-3.5" />}
+                </button>
+            )}
+
+            <MenuButton
+                items={[
+                    {
+                        key: 'rename',
+                        label: '重命名',
+                        icon: <Pencil className="size-3.5" />,
+                        onClick: () => setRenaming(true),
+                    },
+                    ...(isProject && onCreateTask !== undefined
+                        ? [
+                              {
+                                  key: 'new-task',
+                                  label: '新建任务',
+                                  icon: <ListPlus className="size-3.5" />,
+                                  onClick: onCreateTask,
+                              },
+                          ]
+                        : []),
+                    {
+                        key: 'delete',
+                        label: isProject ? '删除项目' : '删除任务',
+                        icon: <Trash2 className="size-3.5" />,
+                        onClick: () => onRequestDelete(room),
+                        danger: true,
+                    },
+                ]}
+            />
         </div>
     );
 }

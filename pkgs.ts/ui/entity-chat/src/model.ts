@@ -140,6 +140,30 @@ export function formatAtAbsolute(at: number | undefined): string | undefined {
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/**
+ * 列表 / 消息头上直接显示的时刻：**绝对时间**（用户 2026-11-24：不要「2m / 3h」）。
+ *
+ * 三级精度，都是为了在窄格里只写必要的部分：
+ *   · 当天 → `22:32`（列表里天天看的都是今天，年份月份是纯噪音）
+ *   · 同年 → `11-24 22:32`
+ *   · 跨年 → `2026-11-24 22:32`
+ *
+ * 与 `formatAtAbsolute` 的分工：那个是「完整、永不该歧义」的悬停版；这个是「能省则省」的
+ * 显示版。两者同源，只差省略策略 —— **别各写一份日期拼装**。
+ */
+export function formatClock(at: number | undefined, now: number = Date.now()): string | undefined {
+    if (at === undefined) return undefined;
+    const date = new Date(at);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    const today = new Date(now);
+    if (date.toDateString() === today.toDateString()) return clock;
+    const monthDay = `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    return date.getFullYear() === today.getFullYear()
+        ? `${monthDay} ${clock}`
+        : `${date.getFullYear()}-${monthDay} ${clock}`;
+}
+
 /** 历史行的关闭时刻（与上面同一个实现，名字分开只因为两处含义不同） */
 export function formatClosedAtAbsolute(closedAt: number | undefined): string | undefined {
     return formatAtAbsolute(closedAt);

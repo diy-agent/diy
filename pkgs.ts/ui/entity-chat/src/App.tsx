@@ -1,124 +1,104 @@
-import { Bot as BotIcon, Folder, ListTodo, PanelRight, Plus } from 'lucide-react';
+import { Bot as BotIcon, CheckCircle2, Folder, ListTodo, PanelRight, Plus, Settings } from 'lucide-react';
 import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
-import { EditableName, StatusChip } from './components/RoomName';
+import { MenuButton } from './components/Menu';
+import { EditableName } from './components/RoomName';
 import { RoomStatusBar } from './components/RoomStatusBar';
 import { ComposerBar } from './components/ComposerBar';
 import { ContextPanel } from './components/ContextPanel';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
-import { botsOf, dirOf, primaryBotOf, roomTitle, roomTypeLabel, type Room } from './model';
-import {
-    actions,
-    useBots,
-    useDefaultModelKey,
-    useError,
-    useLoaded,
-    useRooms,
-    useSelectedRoom,
-} from './store';
+import { roomTitle, roomTypeLabel, taskStatusOf, type Room } from './model';
+import { actions, useError, useLoaded, useSelectedRoom } from './store';
 import { useRoomDialogs } from './useRoomDialogs';
 
-function roomDir(room: Room): string | undefined {
-    const dir = room.data['dir'];
-    return typeof dir === 'string' && dir !== '' ? dir : undefined;
-}
-
 /**
- * 头部。`memo` 的意义：`App` 因为「侧栏一行的高亮变了」这类原因重渲时，它不该跟着
- * 整块重画（里面还有成员胶囊、上下文面板）。
+ * 头部（用户 2026-11-24 商定的瘦身版）：**类型标签 + 可编辑标题 + 右侧能力入口**。
+ *
+ * 删掉的东西（它们把同一个问题说了三遍，且都是常驻占位）：
+ * · `StatusChip` —— 任务 open/closed 已经在侧栏那行（GitHub 语言），这里再来一颗只是重复；
+ * · 目录 `~/git/diy/diy` —— 一个几乎不变的路径占了一整段横排；
+ * · 成员胶囊 + 「+成员」+ 第二行「N 个成员：@名字…」—— 三个标识说同一件事：谁是成员。
+ *   成员信息在每条消息的头像和名字上已经有，能力（加成员 / 房间设置）收进 kebab。
+ *
+ * `memo` 的意义：`App` 因「侧栏一行的高亮变了」这类原因重渲时，它不该跟着整块重画。
  */
 const RoomHeader = React.memo(function RoomHeader({
     room,
     onAddMember,
+    onOpenSettings,
     taskPanelOpen,
     taskPanelShown,
     onToggleTaskPanel,
 }: {
     room: Room;
     onAddMember: () => void;
+    onOpenSettings: () => void;
     taskPanelOpen: boolean;
     /** 宿主是否接管了右侧面板（接管后这个按钮不归本层画 —— 点了也没有本层面板可开） */
     taskPanelShown: boolean;
     onToggleTaskPanel: () => void;
 }) {
-    // 两个窄订阅：bot 表、房间列表（后者只用来把项目的 dir 继承下来）
-    const botMap = useBots();
-    const rooms = useRooms();
-    const bots = botsOf(room, botMap);
-    const primary = primaryBotOf(room, botMap);
-    const others = bots.filter((bot) => bot.id !== primary?.id);
     const isProject = room.type === 'project';
     const Icon = isProject ? Folder : ListTodo;
+    const openTask = !isProject && taskStatusOf(room) === 'open';
 
     return (
-        <header className="border-b px-5 py-3">
-            <div className="flex flex-wrap items-center gap-2">
-                <span className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                    <Icon className={`size-3 ${isProject ? 'text-sky-400' : 'text-emerald-400'}`} />
-                    {roomTypeLabel(room.type)}
-                </span>
-                <EditableName
-                    value={roomTitle(room)}
-                    mode="click"
-                    // 头部大标题：点了就改。侧栏收起来时这是唯一能看见名字的地方
-                    onCommit={(next) => void actions.renameRoom(room.id, next)}
-                    className="max-w-[22rem] truncate rounded px-1 text-left text-sm font-semibold hover:bg-muted/60"
-                    inputClassName="w-56 rounded border bg-background px-1 text-sm font-semibold outline-none"
-                />
-                <StatusChip room={room} />
-                {roomDir(room) !== undefined && (
-                    <span className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
-                        <Folder className="size-3" />
-                        {dirOf(room, rooms)}
-                    </span>
-                )}
-                <span className="ml-auto flex flex-wrap items-center gap-1.5 text-xs">
-                    <span className="text-muted-foreground">成员</span>
-                    {primary !== undefined && (
-                        <span className="flex items-center gap-1 rounded-full border px-2 py-0.5">
-                            <span className="size-2 rounded-full" style={{ background: primary.color }} />
-                            {primary.name}
-                            <span className="text-[10px] text-muted-foreground">默认应答</span>
-                        </span>
-                    )}
-                    {others.map((bot) => (
-                        <span
-                            key={bot.id}
-                            className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-muted-foreground"
-                        >
-                            <span className="size-2 rounded-full" style={{ background: bot.color }} />
-                            {bot.name}
-                        </span>
-                    ))}
+        <header className="flex items-center gap-2 border-b px-5 py-2.5">
+            <span className="flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                <Icon className={`size-3 ${isProject ? 'text-sky-400' : 'text-emerald-400'}`} />
+                {roomTypeLabel(room.type)}
+            </span>
+            <EditableName
+                value={roomTitle(room)}
+                mode="click"
+                // 头部大标题：点了就改。侧栏收起来时这是唯一能看见名字的地方
+                onCommit={(next) => void actions.renameRoom(room.id, next)}
+                className="max-w-[22rem] truncate rounded px-1 text-left text-sm font-semibold hover:bg-muted/60"
+                inputClassName="w-56 rounded border bg-background px-1 text-sm font-semibold outline-none"
+            />
+            <span className="ml-auto flex shrink-0 items-center gap-1">
+                {taskPanelShown && room.type === 'task' && (
                     <button
-                        onClick={onAddMember}
-                        className="flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted"
+                        onClick={onToggleTaskPanel}
+                        title="任务描述与正文"
+                        aria-label="任务面板"
+                        className={`rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground ${
+                            taskPanelOpen ? 'bg-muted text-foreground' : ''
+                        }`}
                     >
-                        <Plus className="size-3" />
-                        成员
+                        <PanelRight className="size-3.5" />
                     </button>
-                    {taskPanelShown && room.type === 'task' && (
-                        <button
-                            onClick={onToggleTaskPanel}
-                            className={`flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted ${
-                                taskPanelOpen ? 'bg-muted' : ''
-                            }`}
-                        >
-                            <PanelRight className="size-3" />
-                            任务
-                        </button>
-                    )}
-                </span>
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                <span>
-                    {bots.length <= 1
-                        ? '只有默认应答，没有 @ 时它自己回'
-                        : `${bots.length} 个成员：@名字叫谁谁回，@all 全回（等于开会，token 按人数涨）`}
-                </span>
-            </div>
+                )}
+                <MenuButton
+                    title="房间操作"
+                    items={[
+                        {
+                            key: 'member',
+                            label: '加成员',
+                            icon: <Plus className="size-3.5" />,
+                            onClick: onAddMember,
+                        },
+                        {
+                            key: 'settings',
+                            label: '房间设置',
+                            icon: <Settings className="size-3.5" />,
+                            onClick: onOpenSettings,
+                        },
+                        ...(openTask
+                            ? [
+                                  {
+                                      key: 'close',
+                                      label: '关闭任务',
+                                      icon: <CheckCircle2 className="size-3.5" />,
+                                      onClick: () => void actions.setRoomStatus(room.id, 'closed'),
+                                  },
+                              ]
+                            : []),
+                    ]}
+                />
+            </span>
         </header>
     );
 });
@@ -248,6 +228,7 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
                             <RoomHeader
                                 room={room}
                                 onAddMember={onAddMember}
+                                onOpenSettings={onOpenSettings}
                                 taskPanelOpen={taskPanelOpen}
                                 taskPanelShown={taskPanel}
                                 onToggleTaskPanel={onToggleTaskPanel}

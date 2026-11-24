@@ -173,9 +173,9 @@ function HoverCard({
         >
             <div className="flex items-center gap-2 border-b px-3 py-1.5">
                 <ListTree className="size-3 text-muted-foreground" />
-                <span className="text-[11px] font-medium">后台作业</span>
+                <span className="text-[11px] font-medium">后台任务</span>
                 <span className="text-[10px] text-muted-foreground">
-                    {running.length === 0 ? '没有在跑的' : `${running.length} 个在跑`}
+                    本房间 · {running.length === 0 ? '没有在跑的' : `${running.length} 个在跑`}
                 </span>
                 <button
                     onClick={onDetail}
@@ -190,7 +190,7 @@ function HoverCard({
                 ))}
                 {running.length === 0 && (
                     <p className="px-3 py-2 text-[11px] text-muted-foreground">
-                        {finished.length === 0 ? '还没有作业记录' : '现在没有在跑的（下面是最近结束的）'}
+                        {finished.length === 0 ? '还没有后台任务记录' : '现在没有在跑的（下面是最近结束的）'}
                     </p>
                 )}
                 {finished.length > 0 && (
@@ -301,7 +301,7 @@ function DetailRow({ row, now, onKilled }: { row: JobRunRow; now: number; onKill
                 {/* 结局无人接：这条跑完了，但起它的房间已不在 —— 没人被叫醒，日志只能自己来翻 */}
                 {row.delivered === false && (
                     <span
-                        title="结局无人接：起它的房间已删或成员已退 —— 作业跑完了，但没人收到通知（日志仍在）"
+                        title="结局无人接：起它的房间已删或成员已退 —— 后台任务跑完了，但没人收到通知（日志仍在）"
                         className="shrink-0 rounded border border-amber-500/40 px-1 text-[10px] text-amber-600"
                     >
                         无人接
@@ -359,11 +359,19 @@ function DetailRow({ row, now, onKilled }: { row: JobRunRow; now: number; onKill
     );
 }
 
-function JobsDrawer({ rows, now, onClose, onKilled }: {
+function JobsDrawer({ rows, now, onClose, onKilled, scope = 'room' }: {
     rows: JobRunRow[];
     now: number;
     onClose: () => void;
     onKilled: () => void;
+    /**
+     * 这份表说的是谁的后台任务。
+     *
+     * `room` = 从房间输入框底栏那颗 chip 打开（房间内入口）；
+     * `instance` = 从标题栏那颗「后台任务 N」打开 —— 数据本来就同源（`jobs.list` 一张表），
+     * 但**口径必须在标题上写清**：用户在 demo 里点出的就是这两个概念不能混。
+     */
+    scope?: 'room' | 'instance';
 }) {
     const [height, setHeight] = React.useState(66.666);
     const [max, setMax] = React.useState(false);
@@ -405,8 +413,10 @@ function JobsDrawer({ rows, now, onClose, onKilled }: {
             >
                 <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
                     <ListTree className="size-3.5 text-muted-foreground" />
-                    <span className="text-[12px] font-medium">后台作业</span>
+                    <span className="text-[12px] font-medium">后台任务</span>
                     <span className="text-[11px] text-muted-foreground">
+                        {/* 口径写在标题上：房间内 = 本房间；标题栏那颗 = 本实例全部 */}
+                        {scope === 'instance' ? '本实例全部' : '本房间'} ·{' '}
                         {running.length === 0 ? '没有在跑的' : `${running.length} 个在跑`} · 共 {rows.length} 条
                     </span>
                     <button
@@ -423,7 +433,7 @@ function JobsDrawer({ rows, now, onClose, onKilled }: {
                 <div className="min-h-0 flex-1 overflow-y-auto">
                     {rows.length === 0 ? (
                         <p className="px-4 py-6 text-[11px] text-muted-foreground">
-                            这张表还是空的 —— agent 起过 `bash` 的后台作业才会出现
+                            这张表还是空的 —— agent 起过 `bash` 的后台任务才会出现
                         </p>
                     ) : (
                         rows.map((row) => <DetailRow key={row.id} row={row} now={now} onKilled={onKilled} />)
@@ -497,10 +507,10 @@ export function JobsChip() {
                 }}
                 title={
                     error !== null
-                        ? `作业账本拉取失败：${error}`
+                        ? `后台任务账本拉取失败：${error}`
                         : idle
-                          ? `后台作业：现在没有在跑的，点开看历史（共 ${rows.length} 条）`
-                          : '后台作业：悬停看简要，点开看明细'
+                          ? `后台任务（本房间）：现在没有在跑的，点开看历史（共 ${rows.length} 条）`
+                          : '后台任务（本房间）：悬停看简要，点开看明细'
                 }
                 className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
             >
@@ -512,7 +522,7 @@ export function JobsChip() {
                         }
                     />
                 </span>
-                作业{idle ? '' : ` ${running.length}`}
+                后台任务{idle ? '' : ` ${running.length}`}
                 {!idle && <span className="tabular-nums opacity-60">{fmtDur(oldest)}</span>}
             </button>
 
@@ -564,5 +574,6 @@ export function JobsPanel({ onClose }: { onClose: () => void }) {
         return () => clearInterval(timer);
     }, [rows]);
 
-    return <JobsDrawer rows={rows} now={now} onClose={onClose} onKilled={reload} />;
+    // 标题栏入口 = 本实例全部（房间被删了也看得到，包括「结局无人接」）
+    return <JobsDrawer rows={rows} now={now} onClose={onClose} onKilled={reload} scope="instance" />;
 }

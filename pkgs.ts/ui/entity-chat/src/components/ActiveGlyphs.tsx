@@ -53,7 +53,11 @@ export function ActiveJobsGlyph() {
         <Glyph
             icon={<SquareTerminal className="size-3.5" />}
             count={count}
-            title={count === 0 ? '没有后台作业在跑' : `${count} 个后台作业在跑（点击看全部）`}
+            title={
+                count === 0
+                    ? '没有后台任务在跑'
+                    : `${count} 个后台任务在跑（本实例全部，点击看全部）`
+            }
         />
     );
 }

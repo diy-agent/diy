@@ -14,7 +14,6 @@ import {
     ChatSystemMessage,
     ChatToolCalls,
     Markdown,
-    Timestamp,
     type ChatMessageStatus,
 } from '@astryxdesign/core';
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
@@ -30,6 +29,7 @@ import {
 } from '@diy-agent/chat-core';
 import { ArrowDown } from 'lucide-react';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
+import { formatAtAbsolute, formatClock } from '../../model';
 import { AskCard } from '../../components/AskCard';
 import { CopyButton } from '../../components/CopyButton';
 import { JobCard } from '../../components/JobCard';
@@ -45,9 +45,16 @@ import { useMentionCandidates } from '../../mentions';
 import { useDraft } from '../../drafts';
 import { conversationOf, useStore } from '../../store';
 
-/** 时间戳（Astryx Timestamp 收秒或 ISO；我们的 at 是毫秒） */
+/** 消息头时刻：**绝对时间**（用户 2026-11-24 要的）：当天只写 `22:32`，跟天补日期。
+ *
+ * 不用 Astryx 的 `Timestamp`：它只有「相对 / 固定字段」两档，没有「今天省掉日期」这级精度。
+ * 全部时刻归 `formatClock` / `formatAtAbsolute` 一套，侧栏、历史、消息头才不会各写一种写法。 */
 function TimeOf({ at }: { at: number }) {
-    return <Timestamp value={Math.floor(at / 1000)} format="time" />;
+    return (
+        <span title={formatAtAbsolute(at)} className="tabular-nums">
+            {formatClock(at)}
+        </span>
+    );
 }
 
 /**
