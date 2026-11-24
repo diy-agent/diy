@@ -1,4 +1,4 @@
-// statusChips.test.tsx —— 房间状态条说什么、什么时候闭嘴。
+// statusChips.test.tsx —— 房间状态条说什么、什么时候闭嘴（2026-11-24 收窄到两件）。
 //
 // 这组用例直接来自 2026-11-24 的现场（room 01a2091d…）：提问挂 27 分钟没人答、
 // 用户那条消息 `delivering` 26 分钟，而页面上一个字都没有 ⇒ 用户以为「它砸了，
@@ -6,11 +6,13 @@
 //   1. 有提问在等 → 说清谁在等、问什么、已等多久，并给入口
 //   2. 有投递挂着但没人动 → 说出来（"发了没人理"的唯一信号）
 //   3. 都没有 → 一个字都不渲染（不要一条空边框）
+//   4. **谁在跑不在这里说**：那句话只在轮次最下面那一行（TurnFooter），这里重复就是
+//      两个位置说同一件事，用户要猜哪个准
 
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import type { AskRequest, Bot, BotProgress, Delivery } from '@diy-agent/chat-core';
+import type { AskRequest, Bot, Delivery } from '@diy-agent/chat-core';
 
 import { StatusChips, type StatusChipsProps } from '../src/components/RoomStatusBar';
 
@@ -18,13 +20,9 @@ const bot: Bot = { id: 'b1', name: 'job', color: '#a3e635', persona: '', homeRoo
 
 const base: StatusChipsProps = {
     bots: { b1: bot },
-    speaking: [],
-    progress: {},
     asks: [],
     stuck: [],
     now: 1_000_000,
-    onStop: () => undefined,
-    onStopAll: () => undefined,
     onJump: () => undefined,
 };
 
@@ -59,21 +57,11 @@ describe('StatusChips', () => {
         expect(out).not.toContain('已等');
     });
 
-    it('有成员在跑：说清卡在哪个 await，并给单停', () => {
-        const progress: Record<string, BotProgress> = {
-            b1: { awaiting: 'tool:bash', idleMs: 3_000, at: 1_000_000, alive: true, stage: 'quiet' },
-        };
-        const out = html({ speaking: ['b1'], progress });
-        expect(out).toContain('正在调用 bash…');
-        expect(out).toContain('全部停止');
-    });
-
-    it('卡住的成员直说「失联」', () => {
-        const progress: Record<string, BotProgress> = {
-            // `at` = 收到事件的时刻（自走从这里起算），idleMs 是服务端已经算好的，别再减一遍
-            b1: { awaiting: 'model-stream', idleMs: 125_000, at: 1_000_000, alive: false, stage: 'stalled' },
-        };
-        expect(html({ speaking: ['b1'], progress })).toContain('失联 2m05s');
+    it('「谁在跑」不在这里说：那句话只属于轮次最下面那一行', () => {
+        // 状态条以前会画「正在调用 bash… 44s + 全部停止」。用户 2026-11-24 裁：
+        // 同一句话在两个位置出现，用户要猜哪个准 —— 跑没跑看轮次底行，停止也在那里（单停）。
+        const out = html({});
+        expect(out).toBe('');
     });
 
     it('投递挂着、没人动：说出来（这是「发了没人理」唯一的信号）', () => {

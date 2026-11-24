@@ -35,10 +35,9 @@ import { CopyButton } from '../../components/CopyButton';
 import { JobCard } from '../../components/JobCard';
 import { openLinkInNewWindow } from '../../links';
 import { BotAvatar } from '../../components/BotAvatar';
-import { EndFooterLine } from '../../components/EndFooterLine';
 import { plainTextOf } from '../shared';
 import { deliveryFooterOf, deliveryStatusOf, runsOf, TOOL_STATUS, toolTargetOf } from './mapping';
-import { RunningIndicator } from '../../components/RunningIndicator';
+import { TurnFooter } from '../../components/TurnFooter';
 import * as React from 'react';
 
 import { useMentionCandidates } from '../../mentions';
@@ -98,7 +97,15 @@ function ToolRun({ tools, live }: { tools: (TimelinePart & { kind: 'tool' })[]; 
     return <>{blocks}</>;
 }
 
-function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
+function EntryView({
+    entry,
+    roomId,
+    onStopBot,
+}: {
+    entry: TimelineEntry;
+    roomId: string;
+    onStopBot?: (botId: string) => void;
+}) {
     if (entry.kind === 'notice') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
         // 后台作业收口：带结构化事实的当卡片画（run id / 状态 / 退出码 / 输出尾部）。
@@ -172,10 +179,13 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                 sender="assistant"
                 avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}
                 {...(entry.author === undefined ? {} : { name: entry.author.name })}
-                metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
+                metadata={
+                    <ChatMessageMetadata timestamp={<TimeOf at={entry.turn?.startedAt ?? entry.at} />} />
+                }
             >
+                {/* 还没吐字：占位的也是「这一轮最下面那一行」（正在调用… / 已用 Ns） */}
                 <div style={{ paddingBlock: 2 }}>
-                    <RunningIndicator since={entry.at} roomId={roomId} botId={entry.author?.id} />
+                    <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                 </div>
             </ChatMessage>
         );
@@ -195,7 +205,9 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
             <ChatMessageBubble
                 variant="ghost"
                 {...(entry.author === undefined ? {} : { name: entry.author.name })}
-                metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
+                metadata={
+                    <ChatMessageMetadata timestamp={<TimeOf at={entry.turn?.startedAt ?? entry.at} />} />
+                }
             >
                 {runs.map((run, index) => {
                     if (run.kind === 'error')
@@ -232,16 +244,13 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                         <ToolRun key={`c${index}`} tools={run.tools} live={entry.waiting === true} />
                     );
                 })}
-                {/* 还在跑但没有流式内容（工具刚结束 / 等待下一段）：挂在正文末尾，
-                    不再单独占列表底部一行 */}
-                {entry.waiting === true && (
-                    <div style={{ paddingTop: 6 }}>
-                        <RunningIndicator since={entry.at} roomId={roomId} botId={entry.author?.id} />
+                {/* 轮次最下面一行：运行中「正在调用 bash… 44s / 已用 2m44s」，
+                    结束换成结算（完成 · 耗时 · tokens · 步数 · 工具次数 + 结束于 HH:MM）。
+                    正文末尾不再另起一行运行指示 —— 同一轮的状态只在底部说一次。 */}
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                     </div>
-                )}
-                {/* 这一轮是怎么停的：正常收尾不占页脚（endFooterOf 对 completed 返回 undefined） */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <EndFooterLine reason={entry.endReason} />
                     {/* 复制这条回复的正文：与 shadcn 面同一个共用件（那一面是悬停浮现，
                         这里没有 group-hover 的容器，用低对比常驻） */}
                     {copyable !== '' && (
@@ -260,13 +269,21 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
  * 消息列表单独 memo：输入框每敲一个字都会让 Surface 重渲染，
  * 但整棵消息树（含 Markdown 解析）不该跟着重算 —— 不 memo 的话长会话里输入会明显卡。
  */
-const MessageList = React.memo(function MessageList({ entries, roomId }: { entries: TimelineEntry[]; roomId: string }) {
+const MessageList = React.memo(function MessageList({
+    entries,
+    roomId,
+    onStopBot,
+}: {
+    entries: TimelineEntry[];
+    roomId: string;
+    onStopBot?: (botId: string) => void;
+}) {
     return (
         <>
             {entries.map((entry) => (
                 // content-visibility：离开视口的条目跳过布局/绘制
                 <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
-                    <EntryView entry={entry} roomId={roomId} />
+                    <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                 </div>
             ))}
         </>
@@ -341,15 +358,27 @@ export function AstryxSurface({ targetId, composerExtras }: { targetId: string; 
     const conversation = conversationOf(targetId);
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
 
+    // 停某个成员：从房间状态条挪到「那一轮的底行」之后，入口由 surface 交给 EntryView
+    const stopBot = React.useCallback((botId: string) => conversation.stop(botId), [conversation]);
+
     const entries = React.useMemo(
         () =>
             buildTimeline(state.items, state.deliveries, shell.bots, {
                 speaking: state.speaking,
                 asks: state.asks,
                 answered: state.answered,
-                endReasons: state.turnEnds,
+                turns: state.turns,
             }),
-        [state.items, state.deliveries, shell.bots, state.speaking, state.asks, state.answered],
+        [
+            state.items,
+            state.deliveries,
+            shell.bots,
+            state.speaking,
+            state.asks,
+            state.answered,
+            // 轮次时刻 / 结算随 turns 变化：漏了它，收尾时底部行不会从「已用」换成结算
+            state.turns,
+        ],
     );
 
     /**
@@ -465,7 +494,7 @@ export function AstryxSurface({ targetId, composerExtras }: { targetId: string; 
                             renderItem={({ item }) => (
                                 // 行距必须放在 renderItem 内部（容器 gap 不会被测量，行高会累计漂移）
                                 <div style={{ paddingBlock: 6 }}>
-                                    <EntryView entry={item} roomId={targetId} />
+                                    <EntryView entry={item} roomId={targetId} onStopBot={stopBot} />
                                 </div>
                             )}
                         />

@@ -29,8 +29,7 @@ import { openLinkInNewWindow } from '../../links';
 import { ErrorBar } from '../../components/ErrorBar';
 import { JobCard } from '../../components/JobCard';
 import { Markdown } from '../../components/Markdown';
-import { EndFooterLine } from '../../components/EndFooterLine';
-import { RunningIndicator } from '../../components/RunningIndicator';
+import { TurnFooter } from '../../components/TurnFooter';
 import { useWindowed } from '../../components/useWindowed';
 import { useDraft } from '../../drafts';
 import { useMentionCandidates } from '../../mentions';
@@ -132,7 +131,15 @@ function RunsView({ runs, roomId, live }: { runs: Run[]; roomId: string; live?: 
     );
 }
 
-function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
+function EntryView({
+    entry,
+    roomId,
+    onStopBot,
+}: {
+    entry: TimelineEntry;
+    roomId: string;
+    onStopBot?: (botId: string) => void;
+}) {
     if (entry.kind === 'notice') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
         // 后台作业收口：带结构化事实的画卡片（run id / 状态 / 退出码 / 输出尾部）
@@ -179,9 +186,11 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                         <span className="font-medium" style={{ color: entry.author?.color }}>
                             {entry.author?.name ?? 'bot'}
                         </span>
-                        <span className="text-[10px] text-muted-foreground">{timeOf(entry.at)}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                            {timeOf(entry.turn?.startedAt ?? entry.at)}
+                        </span>
                     </div>
-                    <RunningIndicator since={entry.at} roomId={roomId} botId={entry.author?.id} />
+                    <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                 </div>
             </div>
         );
@@ -218,7 +227,9 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                     <span className="font-medium" style={{ color: entry.author?.color }}>
                         {entry.author?.name ?? 'bot'}
                     </span>
-                    <span className="text-[10px] text-muted-foreground">{timeOf(entry.at)}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                        {timeOf(entry.turn?.startedAt ?? entry.at)}
+                    </span>
                     {copyable !== '' && (
                         // 悬停才浮现：常驻的复制按钮会让每条回复都多一行视觉噪音
                         <CopyButton
@@ -228,12 +239,8 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                     )}
                 </div>
                 <RunsView runs={runs} roomId={roomId} live={entry.waiting === true} />
-                <EndFooterLine reason={entry.endReason} />
-                {entry.waiting === true && (
-                    <div className="mt-1.5">
-                        <RunningIndicator since={entry.at} roomId={roomId} botId={entry.author?.id} />
-                    </div>
-                )}
+                {/* 轮次最下面一行：运行中「正在调用 bash… 44s / 已用 2m44s」，结束换成结算 */}
+                <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
             </div>
         </div>
     );
@@ -246,16 +253,18 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
 const MessageList = React.memo(function MessageList({
     entries,
     roomId,
+    onStopBot,
 }: {
     entries: readonly TimelineEntry[];
     roomId: string;
+    onStopBot?: (botId: string) => void;
 }) {
     return (
         <>
             {entries.map((entry) => (
                 // content-visibility：离开视口的条目跳过布局/绘制
                 <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
-                    <EntryView entry={entry} roomId={roomId} />
+                    <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                 </div>
             ))}
         </>
@@ -465,15 +474,27 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
     const conversation = conversationOf(targetId);
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
 
+    // 停某个成员：入口在「那一轮的底行」（房间状态条不再重复谁在跑）
+    const stopBot = React.useCallback((botId: string) => conversation.stop(botId), [conversation]);
+
     const entries = React.useMemo(
         () =>
             buildTimeline(state.items, state.deliveries, shell.bots, {
                 speaking: state.speaking,
                 asks: state.asks,
                 answered: state.answered,
-                endReasons: state.turnEnds,
+                turns: state.turns,
             }),
-        [state.items, state.deliveries, shell.bots, state.speaking, state.asks, state.answered],
+        [
+            state.items,
+            state.deliveries,
+            shell.bots,
+            state.speaking,
+            state.asks,
+            state.answered,
+            // 轮次时刻 / 结算随 turns 变化：漏了它，收尾时底部行不会从「已用」换成结算
+            state.turns,
+        ],
     );
 
     const windowed = useWindowed(entries);
@@ -540,7 +561,7 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
                             还没有消息。发一句，或 @ 一个 bot。
                         </div>
                     ) : (
-                        <MessageList entries={windowed.visible} roomId={targetId} />
+                        <MessageList entries={windowed.visible} roomId={targetId} onStopBot={stopBot} />
                     )}
                 </div>
                 {!atBottom && entries.length > 0 && (

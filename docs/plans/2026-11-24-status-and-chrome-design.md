@@ -67,3 +67,32 @@
 - **头部要删的元素**：`App.tsx` Header 里的 `<StatusChip>`、`roomDir`/`dirOf` 那段路径、成员 chips 整块，以及它下面第二行 `<div className="mt-1 …">{bots.length <= 1 ? … : `${bots.length} 个成员：@…`}</div>`。
 - **成员能力去向**：`onAddMember` 回调已存在，只需挪挂载点（标题旁 kebab / 设置弹窗）。
 - **轮次容器**：`chat-core` 的 timeline 现在把 typing 当独立条目，要改成挂在轮次头（`headers.ts` + `timeline.ts` 两侧）；surface 侧 `astryx` 与 `assistant-ui` 各改一处渲染。
+
+## 五、落地记录（2026-11-24 第二刀）
+
+**轮次容器 = 一行底栏**。`TurnFooter`（entity-chat）取代原来的两处：
+消息头胶囊 + 正文末尾的 `RunningIndicator`；`EndFooterLine` 整个删掉。
+
+| 位置 | 内容 | 数据来源 |
+|---|---|---|
+| 消息头 | `开始时刻`（整轮不变） | `turn.start.startedAt`（快照 `runningTurns` 兜底） |
+| 底行左 · 运行中 | `正在调用 bash… 44s` + 单停 | `progress` 事件 + `startedAt` |
+| 底行右 · 运行中 | `已用 2m44s`（第一秒就起算） | `now - startedAt` |
+| 底行左 · 结束 | `完成 · 3m12s · 12.4k tokens · 7 步 · 2 次工具` | `turn.end`（reason / usage / toolCalls / endedAt） |
+| 底行右 · 结束 | `结束于 22:31` | `turn.end.endedAt` |
+
+**协议新增**（一条铁律：起止时刻必须服务端成对给）：
+- `turn.start { botId, turnId, startedAt }`（ephemeral）
+- `turn.end` 增加 `startedAt / endedAt / usage / toolCalls`
+- `Snapshot.runningTurns[]`（刷新后在跑的那几轮仍知道从何时开始）
+- `TurnEndReason.toolCalls`（结算行的「N 次工具」）
+
+**chat-core**：`ConversationState.turnEnds: TurnEndReason` → `turns: TurnFacts`
+（`startedAt / endedAt / usage / toolCalls / reason`），`TimelineEntry.endReason` → `turn`。
+`turnSettleOf` / `settleFactsOf` / `tokenText` 是结算行文案的唯一实现。
+
+**停止能力**：房间状态条不再画「谁在跑」（那句只在轮次底行），单停收进底行，
+全停临时驻 `ComposerBar`（有人在跑才出现）。
+
+**已知取舍**：刷新后已收的轮次没有 `turns`（`turn.start/turn.end` 都不在快照里），
+消息头退回「本轮第一条条目的时刻」，通常只差几十毫秒到几秒。
