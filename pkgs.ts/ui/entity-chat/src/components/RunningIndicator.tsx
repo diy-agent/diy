@@ -7,7 +7,8 @@
 //     · slow    `<Spinner> 等待模型响应 · 已 1m03s` （秒数从"等了多久"换成"多久没动"）
 //     · stalled `<Spinner> 失联 2m05s（等模型响应）`
 //     · alive   `<Spinner> bash 运行中 · 有进展 3s前`（有心跳永不报警）
-//   没有 progress（刚刷新、还没到第一条 tick）时退回旧显示 —— 至少不会更差。
+//   没有 progress（刚刷新、还没到第一条 tick）时只留「执行中」四个字 —— **不带秒**：
+//   轮次底行右侧已经有「已用 1m42s」，同一个时长说两遍就是两个数字在跳。
 //
 // 为什么用 Spinner：Astryx 的官方 loading 件（Feedback & Status 分类）；
 // 两面共用它才能视觉一致（shadcn 面没有自己的 loading 件）。
@@ -19,41 +20,24 @@ import * as React from 'react';
 import { useBotProgress } from './useBotProgress';
 import { useNow } from './useNow';
 
-function useElapsedSeconds(since: number | undefined): number | undefined {
-    const [elapsed, setElapsed] = React.useState<number | undefined>(undefined);
-
-    React.useEffect(() => {
-        if (since === undefined) return;
-        const compute = () => setElapsed(Math.max(0, Math.floor((Date.now() - since) / 1000)));
-        compute();
-        const timer = setInterval(compute, 1000);
-        return () => clearInterval(timer);
-    }, [since]);
-
-    return since === undefined ? undefined : elapsed;
-}
 
 export function RunningIndicator({
     name,
-    since,
     roomId,
     botId,
 }: {
     name?: string;
-    since?: number;
     /** 两个 surface 都传：进展事实按 (房间, 成员) 取 */
     roomId?: string;
     botId?: string;
 }) {
     const progress = useBotProgress(roomId, botId);
     const now = useNow(progress !== undefined);
-    const elapsed = useElapsedSeconds(progress === undefined ? since : undefined);
     const who = name === undefined || name === '' ? '' : `${name} `;
 
-    const line =
-        progress === undefined
-            ? `${who}${elapsed === undefined ? '执行中' : `执行中 ${elapsed}s`}`
-            : `${who}${progressLineOf(progress, now)}`;
+    // 秒数只在一处：「已用」（右侧，整轮时长）由 TurnFooter 画；这里没有 progress 时
+    // 连算术都不做 —— 两个计时器同时跑，一定会有一个看起来“不跟手”。
+    const line = progress === undefined ? `${who}执行中` : `${who}${progressLineOf(progress, now)}`;
     // 只在真卡住时变红；slow 只是"比平时慢"，不要用颜色吓人
     const color = progress?.stage === 'stalled' ? 'var(--destructive, #dc2626)' : undefined;
 

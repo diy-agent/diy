@@ -778,3 +778,19 @@ body.wb-resizing-y * {
     margin: 0 4px;
     background: var(--wb-line);
 }
+
+/* 区域标题栏右端的宿主扩展（如对话区的「Astryx / shadcn」）。
+ * `margin-left: auto` 把它推到右端、紧邻 ⋯；高度随 bar（28px），内部用 flex 对齐。 */
+.wb-area-extra {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    /* 宿主件是设计系统的按钮（px/py 自带），这里把它压到 bar 的高度内 */
+    --wb-extra-scale: 0.92;
+}
+.wb-area-extra > * {
+    transform: scale(var(--wb-extra-scale));
+    transform-origin: right center;
+}

@@ -1,30 +1,33 @@
-import { Bot as BotIcon, CheckCircle2, Folder, ListTodo, PanelRight, Plus, Settings } from 'lucide-react';
+import { Bot as BotIcon, PanelRight } from 'lucide-react';
 import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
-import { MenuButton } from './components/Menu';
-import { EditableName } from './components/RoomName';
+import { RoomMenu, SurfaceTabs } from './components/ConversationBar';
 import { RoomStatusBar } from './components/RoomStatusBar';
 import { ComposerBar } from './components/ComposerBar';
 import { ContextPanel } from './components/ContextPanel';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
-import { roomTitle, roomTypeLabel, taskStatusOf, type Room } from './model';
+import { type Room } from './model';
 import { actions, useError, useLoaded, useSelectedRoom } from './store';
+import { useSurfaceId } from './surface';
 import { useRoomDialogs } from './useRoomDialogs';
 
 /**
- * 头部（用户 2026-11-24 商定的瘦身版）：**类型标签 + 可编辑标题 + 右侧能力入口**。
+ * 对话区的**唯一一行头**（用户 2026-11-24）：左侧表面切换，右侧能力入口。
  *
- * 删掉的东西（它们把同一个问题说了三遍，且都是常驻占位）：
- * · `StatusChip` —— 任务 open/closed 已经在侧栏那行（GitHub 语言），这里再来一颗只是重复；
- * · 目录 `~/git/diy/diy` —— 一个几乎不变的路径占了一整段横排；
- * · 成员胶囊 + 「+成员」+ 第二行「N 个成员：@名字…」—— 三个标识说同一件事：谁是成员。
- *   成员信息在每条消息的头像和名字上已经有，能力（加成员 / 房间设置）收进 kebab。
+ * 删掉的两样（用户原话「项目、diy 这两个字符串删掉，三点操作按钮上移」）：
+ * · 类型标签（`☑ 项目`）—— 侧栏那行已经在用图标/位置说同一件事；
+ * · 大标题（`diy`）—— 侧栏高亮的行就是它，而顶部窗口标题栏也写着。
+ *
+ * 于是原来两行（头 + tabs）变成**一行**：表面切换上移到这里，kebab 也跟着上移。
+ * 少掉的那一行不是为了好看 —— 它站的位置是视线第一落点，常驻内容却没有任何可操作的东西。
+ *
+ * `bar="host"`：宿主（工作台的区域标题栏）已经画了表面切换和房间菜单，这一行整条不画。
  *
  * `memo` 的意义：`App` 因「侧栏一行的高亮变了」这类原因重渲时，它不该跟着整块重画。
  */
-const RoomHeader = React.memo(function RoomHeader({
+const ConversationBar = React.memo(function ConversationBar({
     room,
     onAddMember,
     onOpenSettings,
@@ -40,24 +43,9 @@ const RoomHeader = React.memo(function RoomHeader({
     taskPanelShown: boolean;
     onToggleTaskPanel: () => void;
 }) {
-    const isProject = room.type === 'project';
-    const Icon = isProject ? Folder : ListTodo;
-    const openTask = !isProject && taskStatusOf(room) === 'open';
-
     return (
-        <header className="flex items-center gap-2 border-b px-5 py-2.5">
-            <span className="flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                <Icon className={`size-3 ${isProject ? 'text-sky-400' : 'text-emerald-400'}`} />
-                {roomTypeLabel(room.type)}
-            </span>
-            <EditableName
-                value={roomTitle(room)}
-                mode="click"
-                // 头部大标题：点了就改。侧栏收起来时这是唯一能看见名字的地方
-                onCommit={(next) => void actions.renameRoom(room.id, next)}
-                className="max-w-[22rem] truncate rounded px-1 text-left text-sm font-semibold hover:bg-muted/60"
-                inputClassName="w-56 rounded border bg-background px-1 text-sm font-semibold outline-none"
-            />
+        <div className="flex items-center gap-1 border-b px-4 py-1.5">
+            <SurfaceTabs />
             <span className="ml-auto flex shrink-0 items-center gap-1">
                 {taskPanelShown && room.type === 'task' && (
                     <button
@@ -71,35 +59,9 @@ const RoomHeader = React.memo(function RoomHeader({
                         <PanelRight className="size-3.5" />
                     </button>
                 )}
-                <MenuButton
-                    title="房间操作"
-                    items={[
-                        {
-                            key: 'member',
-                            label: '加成员',
-                            icon: <Plus className="size-3.5" />,
-                            onClick: onAddMember,
-                        },
-                        {
-                            key: 'settings',
-                            label: '房间设置',
-                            icon: <Settings className="size-3.5" />,
-                            onClick: onOpenSettings,
-                        },
-                        ...(openTask
-                            ? [
-                                  {
-                                      key: 'close',
-                                      label: '关闭任务',
-                                      icon: <CheckCircle2 className="size-3.5" />,
-                                      onClick: () => void actions.setRoomStatus(room.id, 'closed'),
-                                  },
-                              ]
-                            : []),
-                    ]}
-                />
+                <RoomMenu room={room} onAddMember={onAddMember} onOpenSettings={onOpenSettings} />
             </span>
-        </header>
+        </div>
     );
 });
 
@@ -112,7 +74,22 @@ const RoomHeader = React.memo(function RoomHeader({
  * `taskPanel: false` —— 宿主管右侧区域（把任务面板放进 dock 的 right area，
  *   尺寸/收起就是布局的一部分，不该在 view 内部再长一个自绘面板）。
  */
-export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; taskPanel?: boolean } = {}) {
+export function App({
+    sidebar = true,
+    taskPanel = true,
+    bar = 'self',
+}: {
+    sidebar?: boolean;
+    taskPanel?: boolean;
+    /**
+     * 对话区顶部那条（表面切换 + 房间菜单）谁来画。
+     *
+     * `self`（缺省）= 这条组件自己画一行（整页形态）。
+     * `host` = 宿主已经画了（工作台把它摆进区域标题栏，跟「对话」那个名字同一行），
+     *   这里就**不再占一行** —— 宿主接管的好处正是「少掉一行常驻空白」。
+     */
+    bar?: 'self' | 'host';
+} = {}) {
     // 四个窄订阅。这层以前是 `useStore()`（整份快照），于是**每一条** `emit` ——
     // 别的房间来了消息、某个房间多了个待答提问、侧栏换了个高亮 —— 都会把整个 App
     // 连同侧栏、三个 nav 块一起重渲一遍。
@@ -126,10 +103,8 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
     // 弹窗（新建项目 / 建任务 / 加成员 / 设置 / 删房间 / 换模型）整体在 useRoomDialogs 里：
     // 工作台要用同一套，状态不能长在这一层。
     const dialogs = useRoomDialogs();
-    // 默认表面：Astryx（虚拟化 + 自带代码高亮，长会话最稳）
-    const [surfaceId, setSurfaceId] = React.useState<string>(
-        SURFACES.find((surface) => surface.id === 'astryx')?.id ?? SURFACES[0]!.id,
-    );
+    // 选哪一面：状态在 `surface.ts` 的模块 store（宿主也要画那几颗 tab，见那里的注释）
+    const [surfaceId] = useSurfaceId();
 
     React.useEffect(() => {
         actions.bootstrap();
@@ -225,7 +200,8 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
                         </div>
                     ) : (
                         <>
-                            <RoomHeader
+                            {bar === 'self' && (
+                            <ConversationBar
                                 room={room}
                                 onAddMember={onAddMember}
                                 onOpenSettings={onOpenSettings}
@@ -233,7 +209,7 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
                                 taskPanelShown={taskPanel}
                                 onToggleTaskPanel={onToggleTaskPanel}
                             />
-                            <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
+                            )}
                             <RoomStatusBar roomId={room.id} surfaceId={surfaceId} />
                             <SurfaceViews
                                 surfaceId={surfaceId}
@@ -259,26 +235,6 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
                 <BotIcon className="size-3" />
                 diy2 · 切片
             </div>
-        </div>
-    );
-}
-
-function SurfaceTabs({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-    return (
-        <div className="flex items-center gap-1 border-b px-4 py-1.5">
-            {SURFACES.map((surface) => (
-                <button
-                    key={surface.id}
-                    onClick={() => onChange(surface.id)}
-                    title={surface.hint}
-                    className={`rounded-md px-2.5 py-1 text-xs ${
-                        value === surface.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
-                    }`}
-                >
-                    {surface.name}
-                </button>
-            ))}
-            <span className="ml-2 text-[10px] text-muted-foreground">同一份数据，两种表面</span>
         </div>
     );
 }

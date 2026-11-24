@@ -48,11 +48,11 @@ export function TurnFooter({
     const facts = settleFactsOf(entry.turn);
 
     return (
-        <div className="flex items-baseline justify-between gap-3 pt-1.5 text-[12px] leading-4">
+        <div className="mt-2 flex items-center justify-between gap-3 border-t border-dashed pt-1.5 text-[12px] leading-4">
             <div className={`flex min-w-0 items-center gap-1.5 ${live ? 'text-muted-foreground' : TONE_CLASS[settle?.tone ?? 'muted']}`}>
                 {live ? (
                     <>
-                        <RunningIndicator since={startedAt} roomId={roomId} botId={entry.author?.id} />
+                        <RunningIndicator roomId={roomId} botId={entry.author?.id} />
                         {onStopBot !== undefined && entry.author !== undefined && (
                             <button
                                 onClick={() => onStopBot(entry.author!.id)}

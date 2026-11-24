@@ -402,6 +402,18 @@ function AreaBar({ def, list }: { def: AreaDef; list: ViewDef[] }) {
                     {MODE_LABEL[mode]} · {String(list.length)}
                 </span>
             )}
+            {/* 宿主扩展（右端）：区域级视图开关，比如对话区的「Astryx / shadcn」。
+                必须吃掉指针事件 —— 这一条是「单击折叠 / 双击最大化」的命中面，
+                点 tab 时若冒泡上去，双击就会顺手把区域最大化。 */}
+            {def.bar !== undefined && (
+                <span
+                    className="wb-area-extra"
+                    onClick={(event) => event.stopPropagation()}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                >
+                    {def.bar}
+                </span>
+            )}
             <ModeMenu areaId={def.id} count={list.length} />
         </div>
     );

@@ -6,7 +6,7 @@
 // 为什么值得这么分：以前三块写死在这个文件里（607 行），想加「股票」「文档」这类容器
 // 分区就只能继续改壳；而壳每改一次，宽度拖拽、收起态这些和内容无关的东西都要重测一遍。
 
-import { PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, Plus, Settings } from 'lucide-react';
 import * as React from 'react';
 
 import type { Room } from '../model';
@@ -152,14 +152,19 @@ export function Sidebar({
             style={own ? { width: open ? width : SIDEBAR_RAIL_W } : undefined}
             data-sidebar-width={own ? (open ? width : SIDEBAR_RAIL_W) : undefined}
         >
-            {/* 收起（只剩图标列）且没有自己的开关 → 这条头什么也不剩，不渲染 */}
+            {/* 头：**只留动作**（用户 2026-11-24：「diy」「容器对话」两个字符串删掉，新建入口放到外面）。
+                品牌名和副标题每轮都在、却从不提供任何信息；房间名在下面的树里已经高亮了。
+                新建项目从「项目」小标题那行搬到这 —— 它是侧栏级动作，不该长在某个分组里。 */}
             {(open || showToggle) && (
-                <div className={`flex items-center border-b py-3 ${open ? 'gap-2 px-3' : 'justify-center px-1'}`}>
+                <div className={`flex items-center border-b py-2 ${open ? 'gap-2 px-3' : 'justify-center px-1'}`}>
                     {open && (
-                        <>
-                            <span className="text-sm font-semibold">diy</span>
-                            <span className="text-xs text-muted-foreground">容器对话</span>
-                        </>
+                        <button
+                            onClick={onCreateProject}
+                            title="从本机目录新建项目"
+                            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        >
+                            <Plus className="size-4" />
+                        </button>
                     )}
                     {showToggle && (
                         <button

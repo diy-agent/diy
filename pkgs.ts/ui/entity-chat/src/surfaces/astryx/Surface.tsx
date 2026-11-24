@@ -57,6 +57,24 @@ function TimeOf({ at }: { at: number }) {
 }
 
 /**
+ * 一条消息的头：**名字 + 开始时刻，同一行**。
+ *
+ * 为什么不把时间交给 `ChatMessageMetadata`：Astryx 的 metadata 槽只能渲染在气泡**下方**，
+ * 而用户要的时间在头上（demo 的 `.thead` 就是 头像 + 名字 + 时间 一行）。把时间放 metadata
+ * 的结果就是「21:54」单独跑到轮次底行下面一行去 —— 用户 2026-11-24 报的「跨行」。
+ *
+ * 宽度 `100%`：name 槽默认不撑满，不写的话时间会紧贴名字，不能靠右。
+ */
+function TurnHead({ name, at, color }: { name?: string; at: number; color?: string }) {
+    return (
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: 7, width: '100%', minWidth: 0 }}>
+            <span style={{ fontWeight: 600, ...(color === undefined ? {} : { color }) }}>{name ?? 'bot'}</span>
+            <TimeOf at={at} />
+        </span>
+    );
+}
+
+/**
  * 一组连续的工具调用：**后台作业单独成卡**（`job` / `bash(background)`），其余仍走工具行。
  *
  * 为什么不干脆全塞进 `ChatToolCalls`：`job` 的 args 里没有 command / path，只能退化成截断的
@@ -136,8 +154,8 @@ function EntryView({
             >
                 <ChatMessageBubble
                     variant="ghost"
-                    {...(entry.author === undefined ? {} : { name: entry.author.name })}
-                    metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
+                    width="100%"
+                    {...(entry.author === undefined ? {} : { name: <TurnHead name={entry.author.name} at={entry.at} color={entry.author.color} /> })}
                 >
                     <Banner status="error" container="section" collapsible={false} title={text} />
                 </ChatMessageBubble>
@@ -154,9 +172,11 @@ function EntryView({
                 avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}
             >
                 <ChatMessageBubble
+                    variant="ghost"
+                    width="100%"
+                    name={<TurnHead name={entry.author?.name} at={entry.at} color={entry.author?.color} />}
                     metadata={
                         <ChatMessageMetadata
-                            timestamp={<TimeOf at={entry.at} />}
                             footer={deliveryFooterOf(entry.deliveries)}
                             status={deliveryStatusOf(entry.deliveries)}
                         />
@@ -178,13 +198,10 @@ function EntryView({
                 key={entry.key}
                 sender="assistant"
                 avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}
-                {...(entry.author === undefined ? {} : { name: entry.author.name })}
-                metadata={
-                    <ChatMessageMetadata timestamp={<TimeOf at={entry.turn?.startedAt ?? entry.at} />} />
-                }
+                name={<TurnHead name={entry.author?.name} at={entry.turn?.startedAt ?? entry.at} color={entry.author?.color} />}
             >
                 {/* 还没吐字：占位的也是「这一轮最下面那一行」（正在调用… / 已用 Ns） */}
-                <div style={{ paddingBlock: 2 }}>
+                <div style={{ paddingBlock: 2, width: '100%' }}>
                     <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                 </div>
             </ChatMessage>
@@ -204,10 +221,8 @@ function EntryView({
         >
             <ChatMessageBubble
                 variant="ghost"
-                {...(entry.author === undefined ? {} : { name: entry.author.name })}
-                metadata={
-                    <ChatMessageMetadata timestamp={<TimeOf at={entry.turn?.startedAt ?? entry.at} />} />
-                }
+                width="100%"
+                name={<TurnHead name={entry.author?.name} at={entry.turn?.startedAt ?? entry.at} color={entry.author?.color} />}
             >
                 {runs.map((run, index) => {
                     if (run.kind === 'error')
@@ -247,7 +262,7 @@ function EntryView({
                 {/* 轮次最下面一行：运行中「正在调用 bash… 44s / 已用 2m44s」，
                     结束换成结算（完成 · 耗时 · tokens · 步数 · 工具次数 + 结束于 HH:MM）。
                     正文末尾不再另起一行运行指示 —— 同一轮的状态只在底部说一次。 */}
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, width: '100%' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                         <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                     </div>

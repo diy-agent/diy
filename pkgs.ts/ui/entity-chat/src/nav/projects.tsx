@@ -49,19 +49,9 @@ function ProjectsBlock({ context }: { context: NavContext }) {
 
     return (
         <>
-            {open && (
-                <div className="mb-1 flex items-center justify-between px-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-                    项目
-                    <button
-                        onClick={host.onCreateProject}
-                        title="从本机目录新建项目"
-                        className="rounded p-0.5 hover:bg-muted"
-                    >
-                        <Plus className="size-3.5" />
-                    </button>
-                </div>
-            )}
-
+            {/* 这里原来有一行「项目」小标题 + 右侧的＋（新建项目）。两样都搬到 Sidebar 头了
+                （用户 2026-11-24：「项目」这个字符串删掉，新建放到外面）。理由：分组标题不提供信息
+                —— 树里的文件夹图标已经说明它下面是项目；而新建是侧栏级动作，不属于某个分组。 */}
             {open && projects.length === 0 && (
                 <p className="mx-2 rounded-lg border border-dashed px-2 py-2 text-[11px] leading-relaxed text-muted-foreground">
                     还没有项目。点上面的 <Plus className="inline size-3" /> 从本机目录建一个。

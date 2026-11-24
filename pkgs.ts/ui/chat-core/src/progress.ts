@@ -67,7 +67,8 @@ export function idleNowOf(progress: BotProgress, now: number = Date.now()): numb
  * 一行状态文案。
  *
  * 三档的用意（见计划 5.2）：
- *   · `quiet`   与改造前完全一致（`执行中 12s`）—— 正常思考不该变成跳动的界面
+ *   · `quiet`   `执行中`（**不带秒**）—— 轮次底行右侧已经有「已用 2m44s」，
+ *               左边再说一遍同一个秒数是重复；这里只回答「在干什么」
  *   · `slow`    `等待模型响应 · 已 1m03s`：把"秒数"从"等了多久"换成"多久没动"
  *   · `stalled` `失联 2m05s`：这一轮确实卡住了（服务端 120s 就会收，这只是最后半分钟的样子）
  *   · `alive`   `bash 运行中 · 有进展 3s 前`：有活的证据就永不报警（12 分钟的构建也是健康的）
@@ -78,7 +79,7 @@ export function progressLineOf(progress: BotProgress, now: number = Date.now()):
     if (progress.alive) return `${what} 运行中 · 有进展 ${elapsedText(idle)}前`;
     if (progress.stage === 'stalled') return `失联 ${elapsedText(idle)}（等${what}）`;
     if (progress.stage === 'slow') return `等待${what} · 已 ${elapsedText(idle)}`;
-    return `执行中 ${elapsedText(idle)}`;
+    return '执行中';
 }
 
 // ─── 「被等着的两件事」：提问、投递 ───────────────────────────────

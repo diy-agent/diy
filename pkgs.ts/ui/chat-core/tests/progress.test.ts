@@ -95,8 +95,8 @@ describe('progress：显示文案', () => {
         expect(idleNowOf(progress, 1_003_000)).toBe(8_000);
     });
 
-    it('quiet：与改造前一致（执行中 Ns）—— 正常思考不该变成跳动的界面', () => {
-        expect(progressLineOf(botProgress({ idleMs: 12_000 }), 1_000_000)).toBe('执行中 12s');
+    it('quiet：只说在干什么，秒数交给右侧的「已用」（同一时长不说两遍）', () => {
+        expect(progressLineOf(botProgress({ idleMs: 12_000 }), 1_000_000)).toBe('执行中');
     });
 
     it('slow：把秒数从「等了多久」换成「多久没动」', () => {
