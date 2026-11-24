@@ -11,8 +11,14 @@
 //   · key 只进不出：填进去就落盘，回来只有字符数（`saved.chars`），界面上永远是 `••••`
 //   · 写完即刷新：`modelConfig.*` 每个方法都会让 store 重拉模型面，选模型器与顶部横幅立刻跟上
 //   · 失败要看见：错误显示在右栏顶部（服务端的话原样带过来，它比「保存失败」有用得多）
+//   · 校验在**这一根**输入下面说：四个表单都走 TanStack Form（`useForm` + 字段级 validator），
+//     错误显示在出问题那个输入下面、边框变红。以前是「填错了就静悄悄 return」——
+//     按钮按下去什么也没发生，人只能怀疑自己没点到。
+//     为什么用库而不是手搓 `useState<string | undefined>`×5：四个表单加起来十几根输入，
+//     手搓就得自己管 touched / 提交时全量校验 / 失败后不清空输入，这些正是库白送的那部分。
 
 import { Modal, modelConfig, type ModelConfigProvider, type ModelConfigSnapshot } from '@diy-agent/entity-chat';
+import { useForm } from '@tanstack/react-form';
 import * as React from 'react';
 
 /** 错误信息：服务端的话原样带出来（catalog 的报错里有 provider id 与原因） */
@@ -46,6 +52,91 @@ function contextLabel(contextWindow: number | undefined): string {
 function costLabel(cost: { input: number; output: number } | undefined): string {
     if (cost === undefined) return '—';
     return `$${cost.input} / $${cost.output}`;
+}
+
+// ── 校验 ────────────────────────────────────────────────────────────────────
+//
+// 每条只回答一件事：「为什么不能写」。返回 `string` = 一句人话，`undefined` = 通过
+// （TanStack Form 的字段 validator 就是这个形状，不需要再包一层 zod）。
+//
+// 原则：**能拦在本地的不留给服务端**。服务端也在校验，但它只能给一句「写失败了」；
+// 而「key 里有个换行」这种事在失焦前就能说清楚（那是粘贴时最容易带进来的）。
+
+/** 从 TanStack Form 的 `meta.errors` 里拿第一条能显示的话（错误项可能是字符串或对象） */
+function errorOf(errors: readonly unknown[]): string | undefined {
+    for (const item of errors) {
+        if (typeof item === 'string' && item !== '') return item;
+    }
+    return undefined;
+}
+
+const ACCOUNT_NAME_MAX = 40;
+
+/** 账号名：这家下面唯一（同名就是同一个账号，写下去会把上一个的 key 盖掉） */
+function validAccountName(name: string, taken: readonly string[]): string | undefined {
+    const value = name.trim();
+    if (value === '') return '填个账号名（如 main）';
+    if (/\s/.test(value)) return '不能有空格';
+    if (value.length > ACCOUNT_NAME_MAX) return `太长了（${String(value.length)} 字，最多 ${String(ACCOUNT_NAME_MAX)}）`;
+    if (taken.includes(value)) return '这家已经有同名账号了 —— 换个名字，或用上面那只账号的「换钥」';
+    return undefined;
+}
+
+/** 密钥：只查形状，不联网试（试打要花一次请求，还可能被限流） */
+function validSecret(secret: string): string | undefined {
+    const value = secret.trim();
+    if (value === '') return '粘一下 key（只写不回显，保存后界面上只有字符数）';
+    if (/\s/.test(value)) return 'key 里不该有空格 / 换行 —— 常见于复制时多带了一行';
+    if (value.length < 8) return `太短了（${String(value.length)} 字）—— 确认没粘漏`;
+    return undefined;
+}
+
+/** 模型 id：写进 `model.yaml` 的就是它，会直接拿去发请求，形状错了发不出去 */
+function validModelId(id: string, existing: readonly string[]): string | undefined {
+    const value = id.trim();
+    if (value === '') return '模型 id 是必填（发送时用它）';
+    if (/\s/.test(value)) return '不能有空格';
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)) return '只能用字母数字与 . _ : / -';
+    if (existing.includes(value)) return '这家已经有这个 id 了 —— 直接在上面勾它';
+    return undefined;
+}
+
+/** 自定义服务商的 id：它会成为 `model.yaml` 里的键，所以形状要死一点（也是文件名/配置段的习惯） */
+function validProviderId(id: string, known: readonly string[]): string | undefined {
+    const value = id.trim();
+    if (value === '') return 'id 是必填（model.yaml 里用它）';
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(value)) return '小写字母数字 + . _ -（不要空格、不要中文）';
+    if (known.includes(value)) return '目录里已经有这家了 —— 在左边搜它，不用新建';
+    return undefined;
+}
+
+function validBaseUrl(api: string): string | undefined {
+    const value = api.trim();
+    if (value === '') return '接口基址是必填（ai-sdk 靠它拼请求）';
+    return /^https?:\/\/[^\s]+$/.test(value) ? undefined : '要 http(s):// 开头的完整地址';
+}
+
+/** 「可选数字」：空 = 不填（不算错）；填了就必须读得出数字且落在区间里 */
+function validOptionalNumber(
+    text: string,
+    hint: string,
+    range: { integer?: boolean; min?: number } = {},
+): string | undefined {
+    const value = text.trim();
+    if (value === '') return undefined;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return `${hint}要数字（「${value}」读不出来）`;
+    if (range.integer === true && !Number.isInteger(number)) return `${hint}要整数`;
+    if (range.min !== undefined && number < range.min) return `${hint}不能小于 ${String(range.min)}`;
+    return undefined;
+}
+
+function validNpm(npm: string): string | undefined {
+    const value = npm.trim();
+    if (value === '') return undefined;
+    return /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/i.test(value)
+        ? undefined
+        : '看着不像 npm 包名（例：@ai-sdk/openai-compatible）';
 }
 
 // ── 页 ────────────────────────────────────────────────────────────────────────
@@ -155,7 +246,12 @@ export function ModelConfigView() {
                         </p>
                     ) : null}
                 </div>
-                <AddCustomProvider busy={busy} onRun={run} onAdded={setSelected} />
+                <AddCustomProvider
+                    known={providers.map((provider) => provider.id)}
+                    busy={busy}
+                    onRun={run}
+                    onAdded={setSelected}
+                />
             </aside>
 
             <main className="min-h-0 overflow-auto">
@@ -446,6 +542,7 @@ function Accounts({
     const [renaming, setRenaming] = React.useState('');
     /** 待确认删除的账号名（空 = 没在问）—— 删 key 不可撤销，问一句 */
     const [removing, setRemoving] = React.useState('');
+    const taken = provider.accounts.map((account) => account.name);
 
     return (
         <div className="space-y-2">
@@ -462,6 +559,10 @@ function Accounts({
                                 <RenameInput
                                     value={account.name}
                                     busy={busy}
+                                    // 改成已有的名字 = 两个账号同名，写下去会把那个的 key 盖掉
+                                    validate={(next) =>
+                                        next === account.name ? undefined : validAccountName(next, taken)
+                                    }
                                     onCancel={() => setRenaming('')}
                                     onCommit={(next) => {
                                         // 名字没变 / 清空都不算改：直接退出编辑态，别发一条空写入
@@ -528,6 +629,7 @@ function Accounts({
                     providerId={provider.id}
                     kind={provider.configured ? undefined : provider.kind}
                     defaultName="main"
+                    taken={taken}
                     busy={busy}
                     onRun={onRun}
                 />
@@ -536,6 +638,7 @@ function Accounts({
                     providerId={provider.id}
                     kind={provider.configured ? undefined : provider.kind}
                     defaultName=""
+                    taken={taken}
                     busy={busy}
                     onDone={() => setAdding(false)}
                     onRun={onRun}
@@ -590,51 +693,80 @@ function Accounts({
 function RenameInput({
     value,
     busy,
+    validate,
     onCommit,
     onCancel,
 }: {
     value: string;
     busy: boolean;
+    /** 返回一句人话 = 这个名字不能用：就地标红且**不提交**（提交了也只能等服务端拦下） */
+    validate?: (next: string) => string | undefined;
     onCommit: (next: string) => void;
     onCancel: () => void;
 }) {
     const [draft, setDraft] = React.useState(value);
+    const [error, setError] = React.useState<string>();
     /** 回车已经提交过：紧接着的 blur 不要再提交一次（那次会把刚改好的名字再写一遍） */
     const done = React.useRef(false);
 
+    /** 试提交：不过校验就留在编辑态把错因亮出来（不是静默放弃，也不是关掉输入框） */
+    const commit = (next: string): void => {
+        const message = validate?.(next);
+        if (message !== undefined) {
+            setError(message);
+            return;
+        }
+        done.current = true;
+        onCommit(next);
+    };
+
     return (
-        <input
-            autoFocus
-            value={draft}
-            disabled={busy}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                    done.current = true;
-                    onCommit(draft.trim());
-                } else if (event.key === 'Escape') {
-                    done.current = true;
-                    onCancel();
-                }
-            }}
-            onBlur={() => {
-                if (done.current) return;
-                onCommit(draft.trim());
-            }}
-            className="w-full rounded border border-ring bg-background px-1.5 py-0.5 text-xs font-semibold outline-none"
-        />
+        <div>
+            <input
+                autoFocus
+                value={draft}
+                disabled={busy}
+                aria-invalid={error !== undefined}
+                onChange={(event) => {
+                    setDraft(event.target.value);
+                    setError(undefined);
+                }}
+                onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                        commit(draft.trim());
+                    } else if (event.key === 'Escape') {
+                        done.current = true;
+                        onCancel();
+                    }
+                }}
+                onBlur={() => {
+                    if (done.current) return;
+                    commit(draft.trim());
+                }}
+                className={`w-full rounded border bg-background px-1.5 py-0.5 text-xs font-semibold outline-none ${
+                    error === undefined ? 'border-ring' : 'border-red-500/60'
+                }`}
+            />
+            {error === undefined ? null : (
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-red-300">{error}</span>
+            )}
+        </div>
     );
 }
 
 /**
  * 填 key 的表单。`value` 是**唯一**会离开浏览器的密钥，送出去就不再回来：
  * 成功后本地立刻清空输入框（回包里只有字符数）。
+ *
+ * 校验走 TanStack Form 的字段级 validator：空 key / 带空白的 key / 撞名字的账号名都
+ * 就地标红，而不再是「按下保存什么也没发生」。
  */
 function KeyForm({
     providerId,
     kind,
     defaultName,
     lockName = false,
+    taken = [],
     busy,
     onDone,
     onRun,
@@ -643,63 +775,91 @@ function KeyForm({
     kind?: 'std' | 'custom';
     defaultName: string;
     lockName?: boolean;
+    /** 这家已经有的账号名：新名字撞上就是「两个 main」，写下去一个会盖掉另一个 */
+    taken?: readonly string[];
     busy: boolean;
     onDone?: () => void;
     onRun: (action: () => Promise<ModelConfigSnapshot>) => Promise<boolean>;
 }) {
-    const [name, setName] = React.useState(defaultName);
-    const [value, setValue] = React.useState('');
+    const form = useForm({
+        defaultValues: { name: defaultName, value: '' },
+        onSubmit: ({ value }) => {
+            // 进到这里 = 两根输入都过了校验：只管写，写失败的话由 `run` 抛到页头
+            void onRun(async () => {
+                // `saveAccount` 回的是 `{ config, saved }`：写面统一用整页快照，key 只回长度
+                const next = await modelConfig.saveAccount({
+                    providerId,
+                    name: value.name.trim(),
+                    value: value.value.trim(),
+                    ...(kind === undefined ? {} : { kind }),
+                });
+                return next.config;
+            }).then((ok) => {
+                if (!ok) return;
+                // 密钥送出去就不再回来：本地立刻清空（名字留着 —— 换钥的人还要看它）
+                form.setFieldValue('value', '');
+                onDone?.();
+            });
+        },
+    });
 
     return (
         <form
-            className="flex flex-wrap items-end gap-2"
+            className="mt-2 flex flex-wrap items-start gap-2"
             onSubmit={(event) => {
                 event.preventDefault();
-                const accountName = name.trim();
-                if (accountName === '' || value.trim() === '') return;
-                void onRun(async () => {
-                    // `saveAccount` 回的是 `{ config, saved }`：写面统一用整页快照，key 只回长度
-                    const next = await modelConfig.saveAccount({
-                        providerId,
-                        name: accountName,
-                        value: value.trim(),
-                        ...(kind === undefined ? {} : { kind }),
-                    });
-                    return next.config;
-                }).then((ok) => {
-                    if (!ok) return;
-                    setValue('');
-                    onDone?.();
-                });
+                event.stopPropagation();
+                void form.handleSubmit();
             }}
         >
             {lockName ? null : (
-                <label className="text-[11px]">
-                    <span className="mb-0.5 block text-muted-foreground">账号名</span>
-                    <input
-                        value={name}
-                        onChange={(event) => setName(event.target.value)}
-                        placeholder="main"
-                        className="w-24 rounded border border-border bg-background px-1.5 py-1 text-xs outline-none"
-                    />
-                </label>
+                <form.Field
+                    name="name"
+                    validators={{
+                        onChange: ({ value }) => validAccountName(value, taken),
+                        onSubmit: ({ value }) => validAccountName(value, taken),
+                    }}
+                >
+                    {(field) => (
+                        <Field
+                            label="账号名"
+                            value={field.state.value}
+                            onChange={field.handleChange}
+                            onBlur={field.handleBlur}
+                            error={errorOf(field.state.meta.errors)}
+                            placeholder="main"
+                            className="w-32 shrink-0"
+                        />
+                    )}
+                </form.Field>
             )}
-            <label className="min-w-0 flex-1 text-[11px]">
-                <span className="mb-0.5 block text-muted-foreground">key（只写不回显）</span>
-                <input
-                    type="password"
-                    // 浏览器会把它当登录密码栏：不关掉会弹「保存密码」/自动填上一次的密码
-                    autoComplete="new-password"
-                    value={value}
-                    onChange={(event) => setValue(event.target.value)}
-                    placeholder="粘贴密钥"
-                    className="w-full rounded border border-border bg-background px-1.5 py-1 font-mono text-xs outline-none"
-                />
-            </label>
+            <form.Field
+                name="value"
+                validators={{
+                    onChange: ({ value }) => validSecret(value),
+                    onSubmit: ({ value }) => validSecret(value),
+                }}
+            >
+                {(field) => (
+                    <Field
+                        label="key（只写不回显）"
+                        value={field.state.value}
+                        onChange={field.handleChange}
+                        onBlur={field.handleBlur}
+                        error={errorOf(field.state.meta.errors)}
+                        placeholder="粘贴密钥"
+                        type="password"
+                        // 浏览器会把它当登录密码栏：不关掉会弹「保存密码」/自动填上一次的密码
+                        autoComplete="new-password"
+                        mono
+                        className="min-w-0 flex-1"
+                    />
+                )}
+            </form.Field>
             <button
                 type="submit"
                 disabled={busy}
-                className="rounded-md border border-ring bg-muted px-2.5 py-1 text-xs font-semibold hover:bg-muted/70 disabled:opacity-50"
+                className="mt-[18px] rounded-md border border-ring bg-muted px-2.5 py-1 text-xs font-semibold hover:bg-muted/70 disabled:opacity-50"
             >
                 保存
             </button>
@@ -786,6 +946,7 @@ function Models({
             {adding && provider.kind === 'custom' ? (
                 <AddModelForm
                     providerId={provider.id}
+                    existing={provider.models.map((model) => model.id)}
                     busy={busy}
                     onDone={() => setAdding(false)}
                     onRun={onRun}
@@ -843,60 +1004,157 @@ function Models({
 
 function AddModelForm({
     providerId,
+    existing,
     busy,
     onDone,
     onRun,
 }: {
     providerId: string;
+    /** 这家已经有的模型 id：撞了就是覆盖——得先告诉人，而不是默默改写一个现有模型 */
+    existing: readonly string[];
     busy: boolean;
     onDone: () => void;
     onRun: (action: () => Promise<ModelConfigSnapshot>) => Promise<boolean>;
 }) {
-    const [id, setId] = React.useState('');
-    const [name, setName] = React.useState('');
-    const [context, setContext] = React.useState('');
-    const [input, setInput] = React.useState('');
-    const [output, setOutput] = React.useState('');
+    const form = useForm({
+        defaultValues: { id: '', name: '', context: '', input: '', output: '' },
+        onSubmit: ({ value }) => {
+            const modelId = value.id.trim();
+            const contextWindow = value.context.trim() === '' ? undefined : Number(value.context);
+            const costInput = value.input.trim() === '' ? undefined : Number(value.input);
+            const costOutput = value.output.trim() === '' ? undefined : Number(value.output);
+            void onRun(() =>
+                modelConfig.saveProvider({
+                    providerId,
+                    models: {
+                        [modelId]: {
+                            ...(value.name.trim() === '' ? {} : { name: value.name.trim() }),
+                            ...(contextWindow === undefined ? {} : { contextWindow }),
+                            ...(costInput === undefined || costOutput === undefined
+                                ? {}
+                                : { cost: { input: costInput, output: costOutput } }),
+                        },
+                    },
+                }),
+                // 失败就留住输入（重打一遍 id 没意义）；成功才收工
+            ).then((ok) => {
+                if (!ok) return;
+                form.reset();
+                onDone();
+            });
+        },
+    });
+
+    /** 两项价格是「只能配对」：只填一半的话库里那个模型的价格就是假的 */
+    const pairError = (inputText: string, outputText: string): string | undefined =>
+        (inputText.trim() === '') !== (outputText.trim() === '')
+            ? 'input / output 要一起填（或都留空）'
+            : undefined;
 
     return (
         <form
             className="grid grid-cols-2 gap-2 rounded-lg border border-dashed border-border p-2"
             onSubmit={(event) => {
                 event.preventDefault();
-                const modelId = id.trim();
-                if (modelId === '') return;
-                const contextWindow = context.trim() === '' ? undefined : Number(context);
-                const costInput = input.trim() === '' ? undefined : Number(input);
-                const costOutput = output.trim() === '' ? undefined : Number(output);
-                void onRun(() =>
-                    modelConfig.saveProvider({
-                        providerId,
-                        models: {
-                            [modelId]: {
-                                ...(name.trim() === '' ? {} : { name: name.trim() }),
-                                ...(contextWindow === undefined ? {} : { contextWindow }),
-                                ...(costInput === undefined || costOutput === undefined
-                                    ? {}
-                                    : { cost: { input: costInput, output: costOutput } }),
-                            },
-                        },
-                    }),
-                ).then(() => {
-                    setId('');
-                    setName('');
-                    setContext('');
-                    setInput('');
-                    setOutput('');
-                    onDone();
-                });
+                event.stopPropagation();
+                void form.handleSubmit();
             }}
         >
-            <Field label="模型 id" value={id} onChange={setId} placeholder="gpt-6-astra" mono />
-            <Field label="显示名" value={name} onChange={setName} placeholder="GPT-6 Astra" />
-            <Field label="上下文 tokens" value={context} onChange={setContext} placeholder="1050000" />
+            <form.Field
+                name="id"
+                validators={{
+                    onChange: ({ value }) => validModelId(value, existing),
+                    onSubmit: ({ value }) => validModelId(value, existing),
+                }}
+            >
+                {(field) => (
+                    <Field
+                        label="模型 id"
+                        value={field.state.value}
+                        onChange={field.handleChange}
+                        onBlur={field.handleBlur}
+                        error={errorOf(field.state.meta.errors)}
+                        placeholder="gpt-6-astra"
+                        mono
+                    />
+                )}
+            </form.Field>
+            <form.Field name="name">
+                {(field) => (
+                    <Field
+                        label="显示名"
+                        value={field.state.value}
+                        onChange={field.handleChange}
+                        onBlur={field.handleBlur}
+                        placeholder="GPT-6 Astra"
+                    />
+                )}
+            </form.Field>
+            <form.Field
+                name="context"
+                validators={{
+                    onChange: ({ value }) =>
+                        validOptionalNumber(value, '上下文', { integer: true, min: 1 }),
+                    onSubmit: ({ value }) =>
+                        validOptionalNumber(value, '上下文', { integer: true, min: 1 }),
+                }}
+            >
+                {(field) => (
+                    <Field
+                        label="上下文 tokens"
+                        value={field.state.value}
+                        onChange={field.handleChange}
+                        onBlur={field.handleBlur}
+                        error={errorOf(field.state.meta.errors)}
+                        placeholder="1050000"
+                    />
+                )}
+            </form.Field>
             <div className="grid grid-cols-2 gap-2">
-                <Field label="input ($/1M)" value={input} onChange={setInput} placeholder="10" />
-                <Field label="output ($/1M)" value={output} onChange={setOutput} placeholder="50" />
+                <form.Field
+                    name="input"
+                    validators={{
+                        onChange: ({ value, fieldApi }) =>
+                            validOptionalNumber(value, 'input 价格', { min: 0 }) ??
+                            pairError(value, String(fieldApi.form.getFieldValue('output') ?? '')),
+                        onSubmit: ({ value, fieldApi }) =>
+                            validOptionalNumber(value, 'input 价格', { min: 0 }) ??
+                            pairError(value, String(fieldApi.form.getFieldValue('output') ?? '')),
+                    }}
+                >
+                    {(field) => (
+                        <Field
+                            label="input ($/1M)"
+                            value={field.state.value}
+                            onChange={field.handleChange}
+                            onBlur={field.handleBlur}
+                            error={errorOf(field.state.meta.errors)}
+                            placeholder="10"
+                        />
+                    )}
+                </form.Field>
+                <form.Field
+                    name="output"
+                    validators={{
+                        onChange: ({ value, fieldApi }) =>
+                            validOptionalNumber(value, 'output 价格', { min: 0 }) ??
+                            pairError(String(fieldApi.form.getFieldValue('input') ?? ''), value),
+                        onSubmit: ({ value, fieldApi }) =>
+                            validOptionalNumber(value, 'output 价格', { min: 0 }) ??
+                            pairError(String(fieldApi.form.getFieldValue('input') ?? ''), value),
+                    }}
+                >
+                    {(field) => (
+                        <Field
+                            label="output ($/1M)"
+                            value={field.state.value}
+                            onChange={field.handleChange}
+                            onBlur={field.handleBlur}
+                            error={errorOf(field.state.meta.errors)}
+                            placeholder="50"
+                        />
+                    )}
+                </form.Field>
             </div>
             <div className="col-span-2 flex justify-end gap-2">
                 <button type="button" onClick={onDone} className="rounded border border-border px-2 py-1 text-[11px]">
@@ -904,7 +1162,7 @@ function AddModelForm({
                 </button>
                 <button
                     type="submit"
-                    disabled={busy || id.trim() === ''}
+                    disabled={busy}
                     className="rounded-md border border-ring bg-muted px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50"
                 >
                     添加
@@ -914,30 +1172,54 @@ function AddModelForm({
     );
 }
 
+/**
+ * 一根输入 + 它的错误行。
+ *
+ * 为什么不直接把 `<input>` 铺在表单里：错误必须出现在**这一根**下面。
+ * 全挤到页头会变成「上面说错了，但你得自己找是哪根」——而这一页光凭据段就可能有三根输入。
+ */
 function Field({
     label,
     value,
     onChange,
+    onBlur,
+    error,
     placeholder,
     mono = false,
+    type = 'text',
+    autoComplete,
+    className = '',
 }: {
     label: string;
     value: string;
     onChange: (next: string) => void;
+    onBlur?: () => void;
+    /** 校验没过时的那句话（`undefined` = 没问题，边框回到常态） */
+    error?: string | undefined;
     placeholder?: string;
     mono?: boolean;
+    type?: 'text' | 'password';
+    autoComplete?: string;
+    className?: string;
 }) {
     return (
-        <label className="text-[11px]">
+        <label className={`block text-[11px] ${className}`}>
             <span className="mb-0.5 block text-muted-foreground">{label}</span>
             <input
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
+                onBlur={onBlur}
+                type={type}
+                autoComplete={autoComplete}
+                aria-invalid={error !== undefined}
                 placeholder={placeholder}
-                className={`w-full rounded border border-border bg-background px-1.5 py-1 text-xs outline-none ${
-                    mono ? 'font-mono' : ''
-                }`}
+                className={`w-full rounded border bg-background px-1.5 py-1 text-xs outline-none ${
+                    error === undefined ? 'border-border' : 'border-red-500/60'
+                } ${mono ? 'font-mono' : ''}`}
             />
+            {error === undefined ? null : (
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-red-300">{error}</span>
+            )}
         </label>
     );
 }
@@ -957,8 +1239,21 @@ function SpecForm({
     busy: boolean;
     onRun: (action: () => Promise<ModelConfigSnapshot>) => Promise<boolean>;
 }) {
-    const [api, setApi] = React.useState(provider.api ?? '');
-    const [npm, setNpm] = React.useState(provider.npm ?? '');
+    const form = useForm({
+        defaultValues: { api: provider.api ?? '', npm: provider.npm ?? '' },
+        onSubmit: ({ value }) => {
+            void onRun(() =>
+                modelConfig.saveProvider({
+                    providerId: provider.id,
+                    kind: 'custom',
+                    spec: {
+                        api: value.api.trim(),
+                        ...(value.npm.trim() === '' ? {} : { npm: value.npm.trim() }),
+                    },
+                }),
+            );
+        },
+    });
 
     if (provider.kind === 'std') {
         return (
@@ -985,41 +1280,57 @@ function SpecForm({
 
     return (
         <form
-            className="flex flex-wrap items-end gap-2"
+            className="flex flex-wrap items-start gap-2"
             onSubmit={(event) => {
                 event.preventDefault();
-                if (api.trim() === '') return;
-                void onRun(() =>
-                    modelConfig.saveProvider({
-                        providerId: provider.id,
-                        kind: 'custom',
-                        spec: { api: api.trim(), ...(npm.trim() === '' ? {} : { npm: npm.trim() }) },
-                    }),
-                );
+                event.stopPropagation();
+                void form.handleSubmit();
             }}
         >
-            <label className="min-w-0 flex-[2] text-[11px]">
-                <span className="mb-0.5 block text-muted-foreground">api 基址</span>
-                <input
-                    value={api}
-                    onChange={(event) => setApi(event.target.value)}
-                    placeholder="https://api.example.com/v1"
-                    className="w-full rounded border border-border bg-background px-1.5 py-1 font-mono text-xs outline-none"
-                />
-            </label>
-            <label className="min-w-0 flex-1 text-[11px]">
-                <span className="mb-0.5 block text-muted-foreground">npm（ai-sdk 包）</span>
-                <input
-                    value={npm}
-                    onChange={(event) => setNpm(event.target.value)}
-                    placeholder="@ai-sdk/openai-compatible"
-                    className="w-full rounded border border-border bg-background px-1.5 py-1 font-mono text-xs outline-none"
-                />
-            </label>
+            <form.Field
+                name="api"
+                validators={{
+                    onChange: ({ value }) => validBaseUrl(value),
+                    onSubmit: ({ value }) => validBaseUrl(value),
+                }}
+            >
+                {(field) => (
+                    <Field
+                        label="api 基址"
+                        value={field.state.value}
+                        onChange={field.handleChange}
+                        onBlur={field.handleBlur}
+                        error={errorOf(field.state.meta.errors)}
+                        placeholder="https://api.example.com/v1"
+                        mono
+                        className="min-w-0 flex-[2]"
+                    />
+                )}
+            </form.Field>
+            <form.Field
+                name="npm"
+                validators={{
+                    onChange: ({ value }) => validNpm(value),
+                    onSubmit: ({ value }) => validNpm(value),
+                }}
+            >
+                {(field) => (
+                    <Field
+                        label="npm（ai-sdk 包）"
+                        value={field.state.value}
+                        onChange={field.handleChange}
+                        onBlur={field.handleBlur}
+                        error={errorOf(field.state.meta.errors)}
+                        placeholder="@ai-sdk/openai-compatible"
+                        mono
+                        className="min-w-0 flex-1"
+                    />
+                )}
+            </form.Field>
             <button
                 type="submit"
-                disabled={busy || api.trim() === ''}
-                className="rounded-md border border-ring bg-muted px-2.5 py-1 text-xs font-semibold disabled:opacity-50"
+                disabled={busy}
+                className="mt-[18px] rounded-md border border-ring bg-muted px-2.5 py-1 text-xs font-semibold disabled:opacity-50"
             >
                 保存
             </button>
@@ -1030,19 +1341,41 @@ function SpecForm({
 // ── 添加自定义服务商 ──────────────────────────────────────────────────────────
 
 function AddCustomProvider({
+    known,
     busy,
     onRun,
     onAdded,
 }: {
+    /** 已经在目录 / 配置里的 id：再新建一家同名的不算新建，只会跟它的设置打架 */
+    known: readonly string[];
     busy: boolean;
     onRun: (action: () => Promise<ModelConfigSnapshot>) => Promise<boolean>;
     /** 加完就选中它 —— 否则新那家混进「全部服务商」的几百行里，人得自己找回来 */
     onAdded: (providerId: string) => void;
 }) {
     const [open, setOpen] = React.useState(false);
-    const [id, setId] = React.useState('');
-    const [api, setApi] = React.useState('');
-    const [npm, setNpm] = React.useState('@ai-sdk/openai-compatible');
+    const form = useForm({
+        defaultValues: { id: '', api: '', npm: '@ai-sdk/openai-compatible' },
+        onSubmit: ({ value }) => {
+            const providerId = value.id.trim();
+            void onRun(() =>
+                modelConfig.saveProvider({
+                    providerId,
+                    kind: 'custom',
+                    spec: {
+                        api: value.api.trim(),
+                        ...(value.npm.trim() === '' ? {} : { npm: value.npm.trim() }),
+                    },
+                }),
+            ).then((ok) => {
+                // 失败时保留输入（服务端那句错已经在页头，重打一遍 id 没意义）
+                if (!ok) return;
+                form.reset();
+                setOpen(false);
+                onAdded(providerId);
+            });
+        },
+    });
 
     if (!open) {
         return (
@@ -1062,38 +1395,78 @@ function AddCustomProvider({
             className="space-y-1.5 border-t border-border p-2"
             onSubmit={(event) => {
                 event.preventDefault();
-                const providerId = id.trim();
-                if (providerId === '' || api.trim() === '') return;
-                void onRun(() =>
-                    modelConfig.saveProvider({
-                        providerId,
-                        kind: 'custom',
-                        spec: { api: api.trim(), ...(npm.trim() === '' ? {} : { npm: npm.trim() }) },
-                    }),
-                ).then((ok) => {
-                    // 失败时保留输入（服务端那句错已经在页头，重打一遍 id 没意义）
-                    if (!ok) return;
-                    setId('');
-                    setApi('');
-                    setOpen(false);
-                    onAdded(providerId);
-                });
+                event.stopPropagation();
+                void form.handleSubmit();
             }}
         >
             <p className="text-[11px] leading-relaxed text-muted-foreground">
                 目录里没有的那家（自建 / 局域网网关）。规格写进{' '}
                 <code className="text-foreground">providers.custom.yaml</code>，模型要自己加。
             </p>
-            <Field label="id" value={id} onChange={setId} placeholder="my-gateway" mono />
-            <Field label="api 基址" value={api} onChange={setApi} placeholder="https://…/v1" mono />
-            <Field label="npm" value={npm} onChange={setNpm} placeholder="@ai-sdk/openai-compatible" mono />
+            <form.Field
+                name="id"
+                validators={{
+                    onChange: ({ value }) => validProviderId(value, known),
+                    onSubmit: ({ value }) => validProviderId(value, known),
+                }}
+            >
+                {(field) => (
+                    <Field
+                        label="id"
+                        value={field.state.value}
+                        onChange={field.handleChange}
+                        onBlur={field.handleBlur}
+                        error={errorOf(field.state.meta.errors)}
+                        placeholder="my-gateway"
+                        mono
+                    />
+                )}
+            </form.Field>
+            <form.Field
+                name="api"
+                validators={{
+                    onChange: ({ value }) => validBaseUrl(value),
+                    onSubmit: ({ value }) => validBaseUrl(value),
+                }}
+            >
+                {(field) => (
+                    <Field
+                        label="api 基址"
+                        value={field.state.value}
+                        onChange={field.handleChange}
+                        onBlur={field.handleBlur}
+                        error={errorOf(field.state.meta.errors)}
+                        placeholder="https://…/v1"
+                        mono
+                    />
+                )}
+            </form.Field>
+            <form.Field
+                name="npm"
+                validators={{
+                    onChange: ({ value }) => validNpm(value),
+                    onSubmit: ({ value }) => validNpm(value),
+                }}
+            >
+                {(field) => (
+                    <Field
+                        label="npm"
+                        value={field.state.value}
+                        onChange={field.handleChange}
+                        onBlur={field.handleBlur}
+                        error={errorOf(field.state.meta.errors)}
+                        placeholder="@ai-sdk/openai-compatible"
+                        mono
+                    />
+                )}
+            </form.Field>
             <div className="flex justify-end gap-2 pt-0.5">
                 <button type="button" onClick={() => setOpen(false)} className="rounded border border-border px-2 py-1 text-[11px]">
                     取消
                 </button>
                 <button
                     type="submit"
-                    disabled={busy || id.trim() === '' || api.trim() === ''}
+                    disabled={busy}
                     className="rounded-md border border-ring bg-muted px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50"
                 >
                     添加

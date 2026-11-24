@@ -20,17 +20,21 @@ import { Theme } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import {
     BotsOverlay,
+    navigate,
     needsYou,
     RoomDialogsProvider,
+    roomAddressOf,
     Sidebar,
+    useAddress,
     useBotRows,
     useLoaded,
     useModelSetup,
     useRoomDialogs,
     useRoomDialogsContext,
+    useRooms,
     useSelectedRoom,
 } from '@diy-agent/entity-chat';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import '../index.css';
 import '@astryxdesign/core/astryx.css';
@@ -42,7 +46,18 @@ import { usePageWorkbench, Workbench } from './AreaHost';
 import { BotGlyph, GearGlyph, NavGlyph } from './glyphs';
 import { type PageDef } from './model';
 import { pageFor, settingsPage, wbViews } from './pages';
+import { SETTINGS_ADDRESS, SETTINGS_PAGE } from './settings';
 import { useChrome, Window, type WindowContribution } from './window';
+
+// ── 设置：一页真页（有地址） ──────────────────────────────────────────────────
+//
+// 设置**曾经**是壳里的一个 `screen` 状态（对话 / 设置二选一）。那是错的：
+//   · 左边导航还在、房间还能点，点了却没反应 —— 地址说在看房间、界面还是设置；
+//   · 浏览器后退退不出去，链接贴不住，刷新回来又跳回对话。
+// 改成页类型 `settings` 之后，这些全部变成 store 本来就有的能力（`navigate` / popstate），
+// 而「点别的页就切不回去」这件事不再需要专门修：点房间 = 导航到房间地址，屏幕自然换了。
+//
+// 页的身份与地址在 `settings.ts`（那边也顺手把页注册进地址体系）。
 
 // ── 全局层：导航 ───────────────────────────────────────────────────────────────
 
@@ -161,17 +176,31 @@ function PageShell({
 }
 
 function Host() {
+    const address = useAddress();
     const room = useSelectedRoom();
+    const rooms = useRooms();
     const loaded = useLoaded();
     const dialogs = useRoomDialogs();
 
     /**
-     * 屏幕：对话 / 设置。**不是** `Room.type` 派生的页 —— 设置不属于任何房间。
+     * 看的是设置页还是某个房间 —— **从地址推**，不另存一份状态。
      *
-     * 为什么要有它：模型配置是「这个实例能不能开工」的前置，它必须在**没有房间**时也能进
-     * （全新数据根、model.yaml 还没写）。所以这条状态提到页之上，与「看哪个房间」正交。
+     * 为什么是关键点：模型配置是「这个实例能不能开工」的前置，它必须在**没有房间**时也能进
+     * （全新数据根、model.yaml 还没写），所以它是页、不是房间的附属物；
+     * 但又不能是壳里的私货状态，否则导航、后退、刷新三处都会跟它打架（见文件头）。
      */
-    const [screen, setScreen] = useState<'chat' | 'settings'>('chat');
+    const isSettings = address.page === SETTINGS_PAGE;
+
+    /**
+     * 在设置页时 `useSelectedRoom()` 是空的（地址不是 room 页）—— 齿轮要「返回对话」
+     * 就得知道**回到哪一间**。记最后一次真看过的房间；没有就落到第一个。
+     */
+    const lastRoomId = useRef<string>('');
+    const roomId = room?.id;
+    useEffect(() => {
+        if (roomId !== undefined) lastRoomId.current = roomId;
+    }, [roomId]);
+    const backTo = rooms.find((item) => item.id === lastRoomId.current) ?? rooms[0];
 
     // 导航的开关提到了壳这一层：标题栏左端要放它的按钮，而标题栏是整宽的一条
     const [open, setOpen] = useState(loadNavOpen);
@@ -230,21 +259,31 @@ function Host() {
                         // 同一颗按钮来回切：设置页里它显示为按下态，再点一下回对话。
                         // 房内「模型设置」对话框（选模型）仍然在侧栏/房间头，两件事不冲突：
                         // 那个改的是**这个房间**用哪个模型，这里改的是**这个实例**有什么可用。
-                        label: screen === 'settings' ? '返回对话' : '设置',
+                        label: isSettings ? '返回对话' : '设置',
                         glyph: <GearGlyph />,
-                        on: screen === 'settings',
+                        on: isSettings,
                         onClick: () => {
-                            setScreen((value) => (value === 'settings' ? 'chat' : 'settings'));
+                            // 来回切 = 两个不同的地址：设置页 ↔ 刚才那间房，走同一条导航
+                            if (isSettings) {
+                                if (backTo !== undefined) navigate(roomAddressOf(backTo));
+                                return;
+                            }
+                            navigate(SETTINGS_ADDRESS);
                         },
                     },
                 ],
             },
         ],
-        [open, toggle, dialogs, attention, screen],
+        [open, toggle, dialogs, attention, screen, isSettings, backTo],
     );
 
+    /** 去设置（横幅上的「去配置」）—— 同一件导航，不是另一条路 */
+    const openSettings = useCallback(() => {
+        navigate(SETTINGS_ADDRESS);
+    }, []);
+
     // 设置页：**没有房间也能进**（这正是「没配置 → 去配置」那条路）
-    if (screen === 'settings') {
+    if (isSettings) {
         return (
             <RoomDialogsProvider value={dialogs}>
                 <div className="wb-shell">
@@ -268,7 +307,7 @@ function Host() {
         return (
             <RoomDialogsProvider value={dialogs}>
                 <div className="wb-shell">
-                    <ModelConfigBanner onConfigure={() => setScreen('settings')} />
+                    <ModelConfigBanner onConfigure={openSettings} />
                     <Window contributions={global} chrome={chrome} onChromeChange={setChrome} />
                     <div className="wb-body">
                         <NavRail nav={nav} />
@@ -288,7 +327,7 @@ function Host() {
     return (
         <RoomDialogsProvider value={dialogs}>
             <div className="wb-shell">
-                <ModelConfigBanner onConfigure={() => setScreen('settings')} />
+                <ModelConfigBanner onConfigure={openSettings} />
                 <PageShell
                     key={page.type}
                     page={page}

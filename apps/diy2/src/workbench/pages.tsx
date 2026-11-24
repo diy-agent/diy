@@ -79,7 +79,10 @@ export const genericPage = definePage({
 /**
  * 设置页：**只办一件事**，所以只有 center（模型配置），没有四边。
  *
- * 它不由房间派生（`pageFor` 不认识它）—— 换页的是壳里的「屏幕」状态，不是 `Room.type`。
+ * 它不由房间派生（`pageFor` 不认识它）—— 但它是**真的页**，地址是 `/settings/model`
+ * （`registerPage('settings')` + `navigate`，见 `App.tsx` 文件头）。所以：
+ *   · 点左边导航里的房间 = 导航到房间地址，设置页自然就退出去了；
+ *   · 浏览器后退回得去，链接贴得住，刷新回到设置页而不是跳回对话。
  * 这条区分很重要：设置不属于任何房间，删掉房间也不该把它带走。
  */
 export const settingsPage = definePage({
