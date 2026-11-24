@@ -39,18 +39,16 @@ import {
 import type { BotLastTurn, CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
 import { diy2Api } from '@diy-agent/protocol';
+import { botOfRole, membersOfType } from '@diy-agent/protocol';
 import type {
     AskAnswer,
     AskQuestionAnswer,
-    AskRequest,
     Author,
     Bot,
-    BotRow,
-    BotState,
-    Item,
-    JobRunRow,
+    BotRole,
     ModelConfigSnapshot,
     Room,
+    RoomMember,
 } from '@diy-agent/protocol';
 import {
     availableProviders,
@@ -252,7 +250,8 @@ function actorOf(spec: Room): RoomActor {
         actor = new RoomActor({
             spec,
             store,
-            bots: () => store.listBots(),
+            // 房间向所有角色要身份：成员名单里只有该类型的角色，多给无害（members 按 spec 过滤）
+            bots: () => store.listRoles().map(botOfRole),
             emit: (event) => broadcast(spec.id, event),
             budget: config.compact,
             onCompact: (bot, event) => logCompact(spec.id, bot, event),
@@ -343,61 +342,61 @@ function roomTitleOf(room: Room): string {
 
 // ─── 种子：bot 落 sqlite；项目/任务先在内存 ────────────────────────
 
+/**
+ * 种子：角色进 `bot_roles`；示例容器（两个项目 + 一个任务）只在**全新数据根**里建。
+ *
+ * 角色是类型级的，所以这里只建「每类默认席位」，不建「每容器一个 bot」——
+ * 老库的 35 个 bot 已由 db.ts 的 migrateBots 折成角色，不会走到这里。
+ */
 function seed(): void {
-    let bots = store.listBots();
-    if (bots.length === 0) {
-        const create = (name: string, homeRoomId: string, persona: string): Bot => {
-            const bot: Bot = {
-                id: newEntityId(),
-                name,
-                color: COLORS[bots.length % COLORS.length]!,
-                persona,
-                homeRoomId,
-                modelKey: persistedDefaultModelKey(),
-            };
-            store.upsertBot(bot);
-            return bot;
-        };
-        const diy = create('diy', 'proj:diy', '项目 bot：工程视角，先结论后理由。');
-        const cops = create('cops', 'proj:cops', '项目 bot：产品视角，拆需求、写验收。');
-        const task = create('任务树与多会话', 'task:t-001', '任务 bot：运维视角，可观测性与回滚。');
-        const xiaoman = create('小满', 'proj:diy', '产品视角：拆需求、找边界、写验收。');
-        bots = [diy, cops, task, xiaoman];
+    if (store.listRoles().length === 0) {
+        newRole({
+            type: 'project',
+            name: '主程',
+            instructions: '工程视角：先结论后理由，改动要给影响面与回滚。',
+        });
+        newRole({ type: 'project', name: '产品', instructions: '产品视角：拆需求、找边界、写验收。' });
+        newRole({
+            type: 'task',
+            name: '任务助手',
+            instructions: '任务视角：可观测性与回滚，做完要能自己验。',
+        });
     }
 
-    const byName = (name: string): Bot | undefined => bots.find((bot) => bot.name === name);
     const specs: Room[] = [
         {
             id: 'proj:diy',
             type: 'project',
             data: { name: 'diy', dir: '~/git/diy/diy' },
-            members: [
-                { botId: byName('diy')?.id ?? bots[0]!.id, primary: true },
-                { botId: byName('小满')?.id ?? bots[0]!.id },
-            ],
+            members: membersOf('project'),
             modelKey: persistedDefaultModelKey(),
         },
         {
             id: 'proj:cops',
             type: 'project',
             data: { name: 'cops', dir: '~/git/cops' },
-            members: [{ botId: byName('cops')?.id ?? bots[1]!.id, primary: true }],
+            members: membersOf('project'),
             modelKey: persistedDefaultModelKey(),
         },
         {
             id: 'task:t-001',
             type: 'task',
             data: { title: '任务树与多会话', dir: '~/git/diy/diy', projectId: 'proj:diy', status: 'open' },
-            members: [{ botId: byName('任务树与多会话')?.id ?? bots[2]!.id, primary: true }],
+            members: membersOf('task'),
             modelKey: persistedDefaultModelKey(),
         },
     ];
 
-    // 恢复成员关系（重启后 @ 仍生效）
-    const saved = store.members();
+    // 先修一遍孤儿类型：某个类型的角色被删光（手改库 / 老库迁进来的自定义类型）时，
+    // 那类房间会零成员 —— 派生不出人，发消息没人应答。补一个默认角色把它救回来。
+    for (const room of store.listRooms()) {
+        if (membersOf(room.type).length === 0) newRole({ type: room.type, name: `${room.type} 助手` });
+    }
 
     // 1) 落库的容器优先：运行时新建的项目/任务，重启后原样回来
     for (const room of store.listRooms()) {
+        // 成员是派生的，库里的 room_members 只是历史（实体级覆盖留到以后）
+        const derived = membersOf(room.type);
         const index = specs.findIndex((spec) => spec.id === room.id);
         if (index >= 0) {
             const seedSpec = specs[index]!;
@@ -405,20 +404,19 @@ function seed(): void {
                 ...seedSpec,
                 ...room,
                 data: { ...seedSpec.data, ...room.data },
-                members: room.members.length > 0 ? room.members : seedSpec.members,
+                members: derived,
             };
         } else {
-            specs.push(room);
+            specs.push({ ...room, members: derived });
         }
     }
 
     for (const spec of specs) {
-        const members = saved[spec.id];
-        if (members !== undefined && members.length > 0) spec.members = members;
-        store.setMembers(spec.id, spec.members);
         store.saveRoom(spec);
-        // 只建容器，**不在这里续跑**：续跑会立刻发 LLM 请求，见 `resume()` 的注释
-        actorOf(spec);
+        // room_members 不是成员真源（成员是派生的），但它会被读：老库里留着「每个容器一个
+        // bot」的陈旧行，指向已被合并掉的 id。启动时用派生结果盖写一遍，让这张表与派生一致。
+        store.setMembers(spec.id, spec.members);
+        actorOf(spec).recover();
     }
 }
 
@@ -474,15 +472,67 @@ function tooLargeDraft(value: unknown): boolean {
     return serialized !== undefined && Buffer.byteLength(serialized, 'utf8') > 256 * 1024;
 }
 
-function newBot(name: string, homeRoomId: string, persona: string): Bot {
-    return {
+/**
+ * 新建一个角色。`primary` 缺省 = 「该类型还没有 primary」—— 第一个角色自动当默认应答，
+ * 之后新建的都是候补（用户可以在角色页改）。
+ */
+function newRole(input: {
+    type: string;
+    name: string;
+    instructions?: string;
+    color?: string;
+    modelKey?: string | null;
+    reasoningEffort?: string | null;
+    primary?: boolean;
+}): BotRole {
+    const roles = store.listRoles();
+    const existing = roles.filter((role) => role.type === input.type);
+    const now = Date.now();
+    const role: BotRole = {
         id: newEntityId(),
-        name,
-        color: COLORS[store.listBots().length % COLORS.length]!,
-        persona,
-        homeRoomId,
-        modelKey: persistedDefaultModelKey(),
+        type: input.type,
+        name: input.name,
+        color: input.color ?? COLORS[roles.length % COLORS.length]!,
+        instructions: input.instructions ?? '',
+        primary: input.primary ?? existing.every((entry) => !entry.primary),
+        // 空串 / null 都存 null：列里只存人选过的，缺省在发送时现算（见 persistedDefaultModelKey）
+        modelKey: input.modelKey === undefined || input.modelKey === '' ? null : input.modelKey,
+        reasoningEffort:
+            input.reasoningEffort === undefined || input.reasoningEffort === '' ? null : input.reasoningEffort,
+        createdAt: now,
+        updatedAt: now,
     };
+    store.upsertRole(role);
+    return role;
+}
+
+/** 一类房间的成员名单：**派生的**，不看 room_members（见 protocol 的 membersOfType） */
+function membersOf(type: string): RoomMember[] {
+    return membersOfType(store.listRoles(), type);
+}
+
+/**
+ * 角色变了 ⇒ 该类型所有房间的成员跟着换。
+ *
+ * 不这么做的话，新建的角色要等进程重启才出现在房间里（成员是启动时派生的），
+ * 而用户刚在角色页上点了「保存」。
+ */
+function refreshRoomsOf(type: string): void {
+    const members = membersOf(type);
+    for (const actor of rooms.values()) {
+        if (actor.spec.type !== type) continue;
+        if (!sameMembers(actor.spec.members, members)) actor.setMembers(members);
+        // 名单没变也要推：改名 / 改人格 / 换模型都发生在成员**身上**，不是名单里
+        actor.refreshIdentities();
+    }
+}
+
+function sameMembers(left: readonly RoomMember[], right: readonly RoomMember[]): boolean {
+    if (left.length !== right.length) return false;
+    return left.every((member, index) => {
+        const other = right[index];
+        return other !== undefined && member.botId === other.botId && member.primary === other.primary;
+    });
 }
 
 // ─── 路由 ─────────────────────────────────────────────────────────
@@ -631,8 +681,10 @@ export async function createDiy2App(opts: {
                     // `??` 挡不住空串（界面上的"没选"可能就是 ''）：空串按没填处理
                     const modelKey = input.modelKey || persistedDefaultModelKey();
                     const id = newEntityId();
-                    const bot = { ...newBot(input.name, id, `${type} bot`), modelKey };
-                    store.upsertBot(bot);
+                    // 成员是从角色表**派生**的：新任务建出来就自动有「任务助手」这类角色。
+                    // 类型是开放字符串，第一次见到某个类型时补一个默认角色 —— 否则新房间
+                    // 零成员，发消息没人应答，用户还得先去角色页建人。
+                    if (membersOf(type).length === 0) newRole({ type, name: `${type} 助手` });
                     const spec: Room = {
                         id,
                         type,
@@ -641,7 +693,7 @@ export async function createDiy2App(opts: {
                             type === 'task'
                                 ? { status: 'open', title: input.name, ...input.data }
                                 : { name: input.name, ...input.data },
-                        members: [{ botId: bot.id, primary: true }],
+                        members: membersOf(type),
                         modelKey,
                     };
                     store.setMembers(id, spec.members);
@@ -678,179 +730,58 @@ export async function createDiy2App(opts: {
                         store.deleteRoom(roomId);
                         broadcast(roomId, { kind: 'done' });
                     }
-                    const removed = new Set(victims);
-                    const referenced = new Set(
-                        [...rooms.values()].flatMap((entry) => entry.spec.members.map((m) => m.botId)),
-                    );
-                    for (const bot of store.listBots()) {
-                        if (removed.has(bot.homeRoomId) && !referenced.has(bot.id)) store.deleteBot(bot.id);
-                    }
                     return { id: input.id, deleted: victims };
                 },
-                addMember: async ({ input }) => {
-                    const actor = requireRoom(input.id);
-                    actor.addMember(input.botId);
-                    return actor.spec;
-                },
             },
-            bots: {
-                list: async () => store.listBots(),
-                /**
-                 * 每个 bot 一行状态（二级弹层 / 三级表格共用同一份）。
-                 *
-                 * 三处事实拼起来，每处都只说自己知道的：
-                 *   · 在跑 —— `actor.runningBots()`（内存，与广播同源）
-                 *   · 等回答 —— `pendingAskRequests()` 的 `owner`（提问人就那个 bot）
-                 *   · 上一轮结局 —— `store.lastItemPerBot()`（磁盘，判据在 bot-status.ts）
-                 *
-                 * 优先级在 `BotState` 的注释里：running > asking > needs-attention > idle。
-                 */
-                rows: async () => {
-                    const bots = new Map(store.listBots().map((bot) => [bot.id, bot]));
-                    const last = new Map<string, BotLastTurn>();
-                    for (const { roomId, item } of store.lastItemPerBot()) {
-                        const turn = botLastTurnOf(roomId, item);
-                        if (turn !== undefined) last.set(`${roomId}\u0000${turn.botId}`, turn);
-                    }
-                    // 轮级事实（不带 author 的 notice / error）只能单独认领：
-                    // 结局在它里面，不在 bot 自己那条最后的条目里（见 bot-status.ts 头部的论证）。
-                    // key 用 `owner`（= 事实自带的 botId，老数据退回 turnId）—— 一轮里 @all 的
-                    // 各 bot 共享 turnId，只按它查会把 A 的截断盖到 B 头上。
-                    const facts = new Map<string, Item>();
-                    for (const { roomId, owner, item } of store.lastFactPerTurn()) {
-                        facts.set(`${roomId}\u0000${owner}`, item);
-                    }
-                    const rows: BotRow[] = [];
-                    for (const actor of rooms.values()) {
-                        const spec = actor.spec;
-                        const running = new Set(actor.runningBots());
-                        const asking = new Map<string, AskRequest>();
-                        for (const request of actor.pendingAskRequests()) {
-                            // owner 缺省时（老数据 / 非成员发起）归不到具体 bot，就不进弹层
-                            if (request.owner !== undefined) asking.set(request.owner, request);
-                        }
-                        for (const member of spec.members) {
-                            const bot = bots.get(member.botId);
-                            const own = last.get(`${spec.id}\u0000${member.botId}`);
-                            const turn =
-                                own === undefined
-                                    ? undefined
-                                    : withTurnFact(
-                                          own,
-                                          // botId 命中优先（新数据），再退回 turnId（老数据）
-                                          facts.get(`${spec.id}\u0000${own.botId}`) ??
-                                              facts.get(`${spec.id}\u0000${own.turnId}`),
-                                      );
-                            const ask = asking.get(member.botId);
-                            const state: BotState = running.has(member.botId)
-                                ? 'running'
-                                : ask !== undefined
-                                  ? 'asking'
-                                  : turn !== undefined && turn.outcome !== 'done'
-                                    ? 'needs-attention'
-                                    : 'idle';
-                            rows.push({
-                                roomId: spec.id,
-                                roomTitle: roomTitleOf(spec),
-                                roomType: spec.type === 'project' ? 'project' : 'task',
-                                botId: member.botId,
-                                botName: bot?.name ?? member.botId,
-                                botColor: bot?.color ?? '#8b8b8b',
-                                state,
-                                ...(turn === undefined
-                                    ? {}
-                                    : {
-                                          outcome: turn.outcome,
-                                          ...(turn.message === undefined ? {} : { outcomeMessage: turn.message }),
-                                          lastTurnAt: turn.at,
-                                      }),
-                                ...(ask === undefined
-                                    ? {}
-                                    : { askId: ask.askId, askTitle: ask.questions[0]?.question ?? '' }),
-                            });
-                        }
-                    }
-                    return { rows };
-                },
-                /**
-                 * 批量重试：给选中的 (房间, bot) 各发一条「继续」。
-                 *
-                 * 这是**派活**不是重启进程 —— bot 没有 start/stop 状态机，它只是房间成员；
-                 * 「接着干」就是再给它一句话。所以走 `say` 的 recipients 定向，不新造一条
-                 * 控制面（否则「重试」和「发消息」会成为两套语义，迟早跑偏）。
-                 *
-                 * 同一房间选中的多个 bot 合成**一条**消息（recipients 多个）：这样「继续」
-                 * 在时间线上只出现一次，而各自的上下文各自接着跑。
-                 * 已在跑的跳过 —— 再发一条只会变成排队，不是用户按「重试」时想要的。
-                 *
-                 * 返回值里 `started` 的意思是**已派发**（`say` 已发起），不是「这一轮已经起来」：
-                 * 回包不等 turn 真正开跑（等它就是等整轮结束），所以 UI 文案说的是「已发」。
-                 * `say` 同步抛错时不改回包，只广播 error —— 那种错误（房间刚被删之类）
-                 * 用户马上在页面上就能看见，比在一句闪稿里报更准。
-                 */
-                retry: async ({ input }) => {
-                    const byRoom = new Map<string, string[]>();
-                    for (const target of input.targets) {
-                        const list = byRoom.get(target.roomId) ?? [];
-                        if (!list.includes(target.botId)) list.push(target.botId);
-                        byRoom.set(target.roomId, list);
-                    }
-                    const started: Array<{ roomId: string; botIds: string[] }> = [];
-                    const skipped: Array<{ roomId: string; botId: string; reason: string }> = [];
-                    for (const [roomId, botIds] of byRoom) {
-                        const actor = roomOf(roomId);
-                        if (actor === undefined) {
-                            for (const botId of botIds) skipped.push({ roomId, botId, reason: '房间不存在' });
-                            continue;
-                        }
-                        const members = new Set(actor.spec.members.map((member) => member.botId));
-                        const running = new Set(actor.runningBots());
-                        const targets = botIds.filter((botId) => {
-                            if (!members.has(botId)) {
-                                skipped.push({ roomId, botId, reason: '不是这个房间的成员' });
-                                return false;
-                            }
-                            if (running.has(botId)) {
-                                skipped.push({ roomId, botId, reason: '正在跑' });
-                                return false;
-                            }
-                            return true;
-                        });
-                        if (targets.length === 0) continue;
-                        started.push({ roomId, botIds: targets });
-                        void actor.say({ text: RETRY_TEXT, author: HUMAN, recipients: targets }).catch((error: unknown) => {
-                            broadcast(roomId, {
-                                kind: 'error',
-                                message: error instanceof Error ? error.message : String(error),
-                            });
-                        });
-                    }
-                    return { started, skipped };
-                },
+            roles: {
+                list: async () => store.listRoles(),
                 create: async ({ input }) => {
+                    const type = input.type.trim();
                     const name = input.name.trim();
+                    if (type === '') throw new Error('type required');
                     if (name === '') throw new Error('name required');
-                    const bot = newBot(name, input.homeRoomId ?? 'proj:diy', 'room 成员 bot');
-                    store.upsertBot({ ...bot, ...(input.modelKey === undefined ? {} : { modelKey: input.modelKey }) });
-                    roomOf(bot.homeRoomId)?.addMember(bot.id);
-                    return bot;
+                    // 同类型重名 = 界面上的两行分不清（@ 补全按名字选人）
+                    if (store.listRoles().some((role) => role.type === type && role.name === name)) {
+                        throw new Error(`「${type}」已经有叫「${name}」的角色`);
+                    }
+                    const role = newRole({ ...input, type, name });
+                    refreshRoomsOf(role.type);
+                    return role;
                 },
                 update: async ({ input }) => {
-                    const bot = store.listBots().find((entry) => entry.id === input.id);
-                    if (bot === undefined) throw new Error(`bot 不存在：${input.id}`);
-                    const next = {
-                        ...bot,
-                        ...(input.name === undefined ? {} : { name: input.name }),
+                    const role = store.listRoles().find((entry) => entry.id === input.id);
+                    if (role === undefined) throw new Error(`角色不存在：${input.id}`);
+                    const name = input.name === undefined ? role.name : input.name.trim();
+                    if (name === '') throw new Error('name required');
+                    const next: BotRole = {
+                        ...role,
+                        name,
                         ...(input.color === undefined ? {} : { color: input.color }),
-                        ...(input.persona === undefined ? {} : { persona: input.persona }),
-                        ...(input.modelKey === undefined ? {} : { modelKey: input.modelKey }),
-                        ...(input.homeRoomId === undefined ? {} : { homeRoomId: input.homeRoomId }),
+                        ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+                        // null 与空串同义：列里只存人选过的，缺省在发送时现算
+                        ...(input.modelKey === undefined
+                            ? {}
+                            : { modelKey: input.modelKey === '' ? null : input.modelKey }),
+                        ...(input.reasoningEffort === undefined
+                            ? {}
+                            : { reasoningEffort: input.reasoningEffort === '' ? null : input.reasoningEffort }),
+                        ...(input.primary === undefined ? {} : { primary: input.primary }),
+                        updatedAt: Date.now(),
                     };
-                    store.upsertBot(next);
+                    store.upsertRole(next);
+                    refreshRoomsOf(next.type);
                     return next;
                 },
                 remove: async ({ input }) => {
-                    store.deleteBot(input.id);
+                    const role = store.listRoles().find((entry) => entry.id === input.id);
+                    if (role === undefined) return { ok: true };
+                    // 每类至少留一个：成员是派生的，没有「再加入房间」这回事，
+                    // 删光了那类房间就永远没人应答（只能去角色页重建 + 重启才能回到房间）
+                    if (store.listRoles().filter((entry) => entry.type === role.type).length <= 1) {
+                        throw new Error(`「${role.type}」只剩这一个角色，删了那类房间就没人应答`);
+                    }
+                    store.deleteRole(role.id);
+                    refreshRoomsOf(role.type);
                     return { ok: true };
                 },
             },

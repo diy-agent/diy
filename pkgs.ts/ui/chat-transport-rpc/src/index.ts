@@ -10,7 +10,6 @@
 
 import type {
     AskAnswer,
-    Bot,
     ChatClient,
     Command,
     CompactOutcome,
@@ -23,7 +22,7 @@ import type {
 } from '@diy-agent/chat-core';
 
 import type {
-    BotRow,
+    BotRole,
     JobRunRow,
     ModelCatalogModel,
     ModelCatalogProvider,
@@ -50,6 +49,21 @@ export interface RpcChatClientOptions {
 
 /** 房间 → 话题名（与 server 的 `room:<id>` 一一对应） */
 const topicOf = (entityId: string): string => `room:${entityId}`;
+
+/**
+ * `roles.create` / `roles.update` 的可选字段（与 protocol 的 `rolesApi` 入参对齐）。
+ *
+ * `modelKey: null` 与 `''` 同义 = 清空 → 继续继承（房间 → 全局默认）。
+ */
+export interface RoleInput {
+    /** create 必填；update 缺省 = 不改名 */
+    name?: string;
+    color?: string;
+    instructions?: string;
+    modelKey?: string | null;
+    reasoningEffort?: string | null;
+    primary?: boolean;
+}
 
 /** 一条草稿（服务端 rooms/drafts 的返回项） */
 export interface DraftEntry {
@@ -102,31 +116,20 @@ export class RpcChatClient implements ChatClient {
             data?: Record<string, unknown>;
         }): Promise<Room> => this.call('rooms.update', input),
         remove: (id: string): Promise<{ deleted?: string[] }> => this.call('rooms.remove', { id }),
-        addMember: (id: string, botId: string): Promise<Room> => this.call('rooms.addMember', { id, botId }),
     };
 
-    readonly bots = {
-        list: (): Promise<Bot[]> => this.call('bots.list', {}),
-        /**
-         * 每 bot 一行状态（在跑 / 等回答 / 上一轮出错 / 空闲）—— 二级弹层与三级表格同源。
-         */
-        rows: (): Promise<{ rows: BotRow[] }> => this.call('bots.rows', {}),
-        /** 批量「继续」：已在跑的会被服务端跳过（回包里报原因） */
-        retry: (targets: Array<{ roomId: string; botId: string }>): Promise<{
-            started: Array<{ roomId: string; botIds: string[] }>;
-            skipped: Array<{ roomId: string; botId: string; reason: string }>;
-        }> => this.call('bots.retry', { targets }),
-        create: (input: { name: string; homeRoomId?: string; modelKey?: string }): Promise<Bot> =>
-            this.call('bots.create', input),
-        update: (input: {
-            id: string;
-            name?: string;
-            color?: string;
-            persona?: string;
-            modelKey?: string;
-            homeRoomId?: string;
-        }): Promise<Bot> => this.call('bots.update', input),
-        remove: (id: string): Promise<unknown> => this.call('bots.remove', { id }),
+    /**
+     * 角色（原来叫 bots）。
+     *
+     * 语义：成员是**从角色表派生**的（2026-11-24）—— 没有再“拉一个 bot 进房间”这个动作，
+     * 所以这里没有 addMember —— 改角色 = 该类型所有房间同时变。
+     */
+    readonly roles = {
+        list: (): Promise<BotRole[]> => this.call('roles.list', {}),
+        create: (input: RoleInput & { type: string; name: string }): Promise<BotRole> =>
+            this.call('roles.create', input),
+        update: (input: RoleInput & { id: string }): Promise<BotRole> => this.call('roles.update', input),
+        remove: (id: string): Promise<unknown> => this.call('roles.remove', { id }),
     };
 
     readonly drafts = {

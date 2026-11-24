@@ -1,7 +1,6 @@
 import * as React from 'react';
 
-import { DIR_SUGGESTIONS, roomTitle, roomTypeLabel, type Bot, type Room } from '../model';
-import { useStore } from '../store';
+import { DIR_SUGGESTIONS, roomTitle, type Room } from '../model';
 import { ModelPicker } from './ModelPicker';
 
 /**
@@ -226,101 +225,6 @@ export function ConfirmDeleteDialog({
                     className="rounded-lg bg-destructive px-3 py-1.5 text-sm text-white"
                 >
                     删除
-                </button>
-            </div>
-        </Modal>
-    );
-}
-
-export function AddMemberDialog({
-    room,
-    onClose,
-    onPickExisting,
-    onCreateNew,
-}: {
-    room: Room;
-    onClose: () => void;
-    onPickExisting: (botId: string) => void;
-    onCreateNew: (name: string) => void;
-}) {
-    const state = useStore();
-    const [name, setName] = React.useState('');
-
-    const available: Bot[] = Object.values(state.bots).filter(
-        (bot) => !room.members.some((member) => member.botId === bot.id),
-    );
-    const homeName = (bot: Bot): string => {
-        const home = state.rooms.find((item) => item.id === bot.homeRoomId);
-        if (home === undefined) return '?';
-        return `${roomTypeLabel(home.type)}「${roomTitle(home)}」`;
-    };
-
-    return (
-        <Modal title={`给「${roomTitle(room)}」添加成员`} onClose={onClose}>
-            <div className="space-y-4 text-sm">
-                <div>
-                    <div className="mb-1.5 text-xs text-muted-foreground">从现有成员里选</div>
-                    {available.length === 0 ? (
-                        <p className="rounded-lg border border-dashed px-2 py-2 text-xs text-muted-foreground">
-                            还没有其他成员，可以在下面新建一个。
-                        </p>
-                    ) : (
-                        <div className="max-h-48 space-y-1 overflow-y-auto">
-                            {available.map((bot) => (
-                                <button
-                                    key={bot.id}
-                                    onClick={() => {
-                                        onPickExisting(bot.id);
-                                        onClose();
-                                    }}
-                                    className="flex w-full items-center gap-2 rounded-lg border px-2 py-1.5 text-left hover:bg-muted"
-                                >
-                                    <span className="size-2 shrink-0 rounded-full" style={{ background: bot.color }} />
-                                    <span className="font-medium">{bot.name}</span>
-                                    <span className="ml-auto truncate text-[11px] text-muted-foreground">
-                                        来自 {homeName(bot)}
-                                    </span>
-                                </button>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                <div className="border-t pt-3">
-                    <div className="mb-1.5 text-xs text-muted-foreground">或者新建一个成员 bot</div>
-                    <div className="flex gap-2">
-                        <input
-                            value={name}
-                            onChange={(event) => setName(event.target.value)}
-                            placeholder="例如 小满"
-                            onKeyDown={(event) => {
-                                if (event.key === 'Enter' && name.trim() !== '') {
-                                    onCreateNew(name);
-                                    onClose();
-                                }
-                            }}
-                            className="flex-1 rounded-lg border bg-card px-2 py-1.5 outline-none"
-                        />
-                        <button
-                            disabled={name.trim() === ''}
-                            onClick={() => {
-                                onCreateNew(name);
-                                onClose();
-                            }}
-                            className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-40"
-                        >
-                            新建
-                        </button>
-                    </div>
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">
-                        新建的 bot 是当前容器的成员；@ 它才会说话，默认仍由「默认应答」回。
-                    </p>
-                </div>
-            </div>
-
-            <div className="mt-4 flex justify-end">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
-                    关闭
                 </button>
             </div>
         </Modal>

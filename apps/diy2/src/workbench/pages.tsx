@@ -15,11 +15,21 @@
 // 渲染一个非任务房间 —— 那一按保存就写 `title`、清 `desc`，把别的容器的数据改脏。
 // 未知类型只配一个只读信息卡。
 
-import { EntityChatApp, TaskPanel, useSelectedRoom, type Room } from '@diy-agent/entity-chat';
+import {
+    addressOf,
+    EntityChatApp,
+    navigate,
+    TaskPanel,
+    useAddress,
+    useSelectedRoom,
+    type Room,
+} from '@diy-agent/entity-chat';
 
 import { useWb } from './AreaHost';
 import { ModelConfigView } from './ModelConfigView';
 import { area, definePage, defineView, type PageDef } from './model';
+import { RolesView } from './RolesView';
+import { ROLES_ADDRESS, SETTINGS_PAGE, SETTINGS_SECTIONS, sectionOf } from './settings';
 
 // ── 页模板：位置写死，尺寸可拖 ───────────────────────────────────────────────────
 //
@@ -77,18 +87,21 @@ export const genericPage = definePage({
 });
 
 /**
- * 设置页：**只办一件事**，所以只有 center（模型配置），没有四边。
+ * 设置页：只有 center，没有四边 —— 它的内容是**按段**换的（模型 / 角色）。
  *
- * 它不由房间派生（`pageFor` 不认识它）—— 但它是**真的页**，地址是 `/settings/model`
+ * 它不由房间派生（`pageFor` 不认识它）—— 但它是**真的页**，地址是 `/settings/<段>`
  * （`registerPage('settings')` + `navigate`，见 `App.tsx` 文件头）。所以：
  *   · 点左边导航里的房间 = 导航到房间地址，设置页自然就退出去了；
  *   · 浏览器后退回得去，链接贴得住，刷新回到设置页而不是跳回对话。
  * 这条区分很重要：设置不属于任何房间，删掉房间也不该把它带走。
+ *
+ * 段不是新的一套骨架（那会让「模型」和「角色」各一份偏好键），而是**同一个中心区域**
+ * 里换内容：段在地址上（`SETTINGS_SECTIONS`），骨架不动。
  */
 export const settingsPage = definePage({
-    type: 'settings',
+    type: SETTINGS_PAGE,
     title: '设置',
-    center: area('models', { slot: 'center', title: '模型配置', size: 'fr', min: 480 }),
+    center: area('settings', { slot: 'center', title: '设置', size: 'fr', min: 480 }),
 });
 
 /**
@@ -105,11 +118,49 @@ export function pageFor(type: string): PageDef {
 
 // ── 视图 ────────────────────────────────────────────────────────────────────────
 
-/** 对话：只留主区。导航 / 详情 / 资产各归自己的区域 —— 一个布局只该有一个真源 */
+/**
+ * 对话：只留主区。导航 / 详情 / 资产各归自己的区域 —— 一个布局只该有一个真源。
+ *
+ * 房间头的「角色」按钮需要一个「去角色页」的动作：实体聊天包不认识设置页的地址，
+ * 所以由宿主（这一层）给 —— 这也让 `entity-chat` 保持「不知道自己被装在哪」。
+ */
 function ChatBody() {
     return (
         <div className="wb-chat">
-            <EntityChatApp sidebar={false} taskPanel={false} />
+            <EntityChatApp sidebar={false} taskPanel={false} onManageRoles={() => navigate(ROLES_ADDRESS)} />
+        </div>
+    );
+}
+
+/**
+ * 设置页的内容：按地址第二段换（`/settings/model` ↔ `/settings/roles`）。
+ *
+ * 段在**地址**上而不是组件状态里：切段 = 导航，于是后退 / 刷新 / 贴链接全都不用额外写。
+ * 顶上那排是段的入口（两个 tab），不是新壳 —— 骨架仍然是设置页那一个中心区域。
+ */
+function SettingsBody() {
+    const address = useAddress();
+    const section = sectionOf(address.id);
+    return (
+        <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+            <div className="flex items-center gap-1 border-b border-border px-3 py-1.5 text-xs">
+                {Object.values(SETTINGS_SECTIONS).map((item) => (
+                    <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => navigate(addressOf(SETTINGS_PAGE, item.id))}
+                        className={`rounded-md px-2 py-1 ${
+                            section === item.id ? 'bg-muted font-medium' : 'text-muted-foreground hover:bg-muted/60'
+                        }`}
+                    >
+                        {item.label}
+                    </button>
+                ))}
+                <span className="ml-auto text-[11px] text-muted-foreground">
+                    这个实例的设置（不随房间走）
+                </span>
+            </div>
+            <div className="min-h-0 flex-1">{section === 'roles' ? <RolesView /> : <ModelConfigView />}</div>
         </div>
     );
 }
@@ -302,12 +353,13 @@ export const wbViews = [
         },
         render: () => <DiagArea />,
     }),
-    // 设置页的模型配置（写面在 entity-chat 的 `modelConfig`，页面本体的观感照 demo）
+    // 设置页（写面在 entity-chat 的 `modelConfig` / `roles`，页面本体的观感照 demo）。
+    // 中心区域里按地址第二段换内容 —— 见 `SettingsBody`。
     defineView({
-        id: 'model-config',
-        title: '模型配置',
-        placement: { settings: { area: 'models' } },
-        render: () => <ModelConfigView />,
+        id: 'settings',
+        title: '设置',
+        placement: { [SETTINGS_PAGE]: { area: 'settings' } },
+        render: () => <SettingsBody />,
     }),
     defineView({
         id: 'guide',

@@ -10,7 +10,7 @@
 import { formatAddress, knownPage, parseAddress, sameAddress } from '@diy-agent/entity-chat';
 import { describe, expect, it } from 'vitest';
 
-import { SETTINGS_ADDRESS, SETTINGS_PAGE } from '../src/workbench/settings';
+import { ROLES_ADDRESS, sectionOf, SETTINGS_ADDRESS, SETTINGS_PAGE } from '../src/workbench/settings';
 
 describe('设置页地址', () => {
     it('页类型已注册（注册是 settings.ts 的模块级副作用）', () => {
@@ -33,5 +33,17 @@ describe('设置页地址', () => {
 
     it('「看哪一段」是地址的一部分：/settings/roles 与 /settings/model 不是同一处', () => {
         expect(sameAddress(parseAddress('/settings/roles'), SETTINGS_ADDRESS)).toBe(false);
+    });
+
+    it('角色段也是一个能贴的地址：/settings/roles', () => {
+        expect(formatAddress(ROLES_ADDRESS)).toBe('/settings/roles');
+        expect(sameAddress(parseAddress('/settings/roles'), ROLES_ADDRESS)).toBe(true);
+    });
+
+    it('不认识的段落到缺省段（手改地址 / 旧链接不炸）', () => {
+        expect(sectionOf('model')).toBe('model');
+        expect(sectionOf('roles')).toBe('roles');
+        expect(sectionOf('随便写的')).toBe('model');
+        expect(sectionOf('')).toBe('model');
     });
 });

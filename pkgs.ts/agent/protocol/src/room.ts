@@ -2,7 +2,40 @@
 //
 // 这里是唯一的实现点：后端路由、前端补全、UI 文案都从这里取，不再各写一份。
 
-import type { Bot, Room, RoomMember } from './types';
+import type { Bot, BotRole, Room, RoomMember } from './types';
+
+// ── 角色 → 成员（派生的唯一实现）─────────────────────────────────
+
+/**
+ * 一种类型的成员名单：`type` 相同的角色，primary 排头，其余按建得早的在前。
+ *
+ * 排序不能是随机的：侧栏、@ 补全、`primaryMemberOf` 都按「第一位成员」兜底，
+ * 顺序一变，同一个房间的默认应答就跟着变。
+ */
+export function membersOfType(roles: readonly BotRole[], type: string): RoomMember[] {
+    return roles
+        .filter((role) => role.type === type)
+        .sort((left, right) =>
+            left.primary === right.primary
+                ? left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+                : left.primary
+                  ? -1
+                  : 1,
+        )
+        .map((role) => ({ botId: role.id, ...(role.primary ? { primary: true } : {}) }));
+}
+
+/** 角色 → 房间里的化身（`persona` / `modelKey` 的落点，唯一转换处） */
+export function botOfRole(role: BotRole): Bot {
+    return {
+        id: role.id,
+        name: role.name,
+        color: role.color,
+        persona: role.instructions,
+        // 空串与 null 同义（没填），房间侧靠 `||` 继续往下继承
+        modelKey: role.modelKey ?? '',
+    };
+}
 
 // ── 成员 ──────────────────────────────────────────────────────
 

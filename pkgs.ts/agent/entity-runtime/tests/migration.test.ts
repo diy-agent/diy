@@ -143,7 +143,7 @@ describe('rooms → entities + tasks / projects', () => {
         }
     });
 
-    it('bots 补身份行；journal_entries 折成 events（<type>.journal）', () => {
+    it('bots 折成角色（bots_v0 留档）；journal_entries 折成 events（<type>.journal）', () => {
         const db = new DatabaseSync(file);
         db.exec(`
             CREATE TABLE rooms (
@@ -178,15 +178,126 @@ describe('rooms → entities + tasks / projects', () => {
 
         const store = openStore(file);
         try {
-            expect(store.entityOf('bot-1')).toMatchObject({ type: 'bot' });
+            // 单行组：id / 名字原样，类型取归属容器的类型（task-a 是任务 → task），
+            // persona 落进 instructions，model_key 落成角色自己的模型
+            expect(store.listRoles()).toEqual([
+                expect.objectContaining({
+                    id: 'bot-1',
+                    type: 'task',
+                    name: 'diy',
+                    instructions: 'p',
+                    primary: true,
+                    modelKey: 'm',
+                }),
+            ]);
             expect(store.journalOf('task-a')).toEqual([
                 { seq: expect.any(Number), at: 3_000, kind: 'decision', text: '选了 A' },
             ]);
             const names = tableNames(store);
+            expect(names).toContain('bots_v0');
+            expect(names).not.toContain('bots');
             expect(names).toContain('journal_entries_v0');
             expect(names).not.toContain('journal_entries');
         } finally {
             store.db.close();
+        }
+    });
+
+    it('同类型同人格的 bot 合成一个角色；会话键跟着改（旧列名 bot_id 也改过来）', () => {
+        const db = new DatabaseSync(file);
+        db.exec(`
+            CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT NOT NULL, created_at INTEGER NOT NULL);
+            CREATE TABLE bots (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL, persona TEXT NOT NULL,
+                home_entity_id TEXT NOT NULL, home_dir TEXT, model_key TEXT NOT NULL
+            );
+            CREATE TABLE session_state (
+                entity_id TEXT NOT NULL, bot_id TEXT NOT NULL, turn INTEGER NOT NULL,
+                collapsed INTEGER NOT NULL, entries TEXT NOT NULL, usage TEXT,
+                log_seq INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL,
+                PRIMARY KEY (entity_id, bot_id)
+            );
+        `);
+        for (const [id, name] of [
+            ['task:t1', '任务一'],
+            ['task:t2', '任务二'],
+        ] as const) {
+            db.prepare('INSERT INTO entities VALUES (?,?,?)').run(id, 'task', 1);
+            // 两份「每个任务一个 bot」：人格一模一样 —— 真库里 27 个 task bot 就是这样
+            db.prepare('INSERT INTO bots VALUES (?,?,?,?,?,?,?)').run(
+                `bot-${id}`,
+                name,
+                '#000',
+                '任务视角：做完要能自己验',
+                id,
+                null,
+                // 占位键：当年的「没配置」写法，迁移时必须落成 null
+                'none@none/none',
+            );
+        }
+        // 会话挂在被合并掉的那个 id 上（t2 的 bot）
+        db.prepare('INSERT INTO session_state VALUES (?,?,?,?,?,?,?,?)').run(
+            'task:t2',
+            'bot-task:t2',
+            3,
+            0,
+            JSON.stringify([]),
+            null,
+            0,
+            1,
+        );
+        db.close();
+
+        const store = openStore(file);
+        try {
+            const roles = store.listRoles();
+            expect(roles).toHaveLength(1);
+            // id 复用组内最早那行（会话键因此能原地改过去），名字用类型名
+            expect(roles[0]).toMatchObject({
+                id: 'bot-task:t1',
+                type: 'task',
+                name: '任务助手',
+                instructions: '任务视角：做完要能自己验',
+                primary: true,
+                // 当年的占位键 `none@none/none` 不该变成角色的模型：它必须落成 null（= 继续继承）
+                modelKey: null,
+            });
+            // 会话键从 bot-task:t2 改成了它合并后的角色 id
+            expect(store.loadSession('task:t2', 'bot-task:t1')?.turn).toBe(3);
+            // 列名也改过来了（新列名才是真源，旧名只在老库里出现）
+            const columns = (store.db.prepare('PRAGMA table_info(session_state)').all() as Array<{ name: string }>).map(
+                (row) => row.name,
+            );
+            expect(columns).toContain('bot_role_id');
+            expect(columns).not.toContain('bot_id');
+            const names = tableNames(store);
+            expect(names).toContain('bots_v0');
+            expect(names).not.toContain('bots');
+        } finally {
+            store.db.close();
+        }
+    });
+});
+
+describe('占位模型键 none@none/none', () => {
+    // 当年拿它表示「没配模型」，却被写进了库：界面上会拼成「none · none@none」看着像配好了，
+    // 发出去必失败。存量行要在打开库时清成空串，读的时候也要当空串（= 继续继承）。
+    it('存量行被清成空串，读出来也是空串', () => {
+        const first = openStore(file);
+        first.saveRoom({ id: 'proj:x', type: 'project', data: { name: 'x' }, members: [], modelKey: 'none@none/none' });
+        // 直接写进库（绕过任何上层归一），模拟当年那段代码留下的行
+        first.db.prepare("UPDATE projects SET model_key = 'none@none/none' WHERE id = 'proj:x'").run();
+        first.db.close();
+
+        const second = openStore(file);
+        try {
+            const row = second.db.prepare("SELECT model_key FROM projects WHERE id = 'proj:x'").get() as {
+                model_key: string;
+            };
+            expect(row.model_key).toBe('');
+            expect(second.listRooms().find((room) => room.id === 'proj:x')?.modelKey).toBe('');
+        } finally {
+            second.db.close();
         }
     });
 });

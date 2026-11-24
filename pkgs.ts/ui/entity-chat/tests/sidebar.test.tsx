@@ -64,7 +64,7 @@ beforeEach(async () => {
     // 命令面走 RPC：注入假客户端，喂一份固定的房间列表（目录为空 = 用服务端缺省模型）
     setDiy2Client({
         rooms: { list: async () => rooms },
-        bots: { list: async () => [] },
+        roles: { list: async () => [] },
         // 模型目录回包里的 `configured` / `snapshotMissing` 是真状态字段（横幅据此画），不是兼容字段
         models: { list: async () => ({ providers: [], configured: true, modelConfigPath: '', snapshotMissing: false }) },
         load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),

@@ -15,11 +15,29 @@ import { addressOf, registerPage } from '@diy-agent/entity-chat';
 export const SETTINGS_PAGE = 'settings';
 
 /**
- * 设置页的默认地址：看的是「模型」这一段。
+ * 设置页的两段。第二段就是地址里的 `id`（`parseAddress` 只认 `page + id` 两段）。
  *
- * 第二段（`model`）不是装饰 —— `parseAddress` 只认 `page + id` 两段，裸 `/settings`
- * 解析不出来。将来多一段主题就多一个地址（`/settings/roles`），不需要新增壳状态。
+ * 为什么是地址而不是壳里的 `screen` 状态：每一段都能刷新 / 后退 / 贴链接（2026-11-24 用户报的
+ * 「设置页点别的页切换不了」就是壳状态的病根）。多一段主题就多一个常量，不需要动壳。
  */
-export const SETTINGS_ADDRESS = addressOf(SETTINGS_PAGE, 'model');
+export const SETTINGS_SECTIONS = {
+    model: { id: 'model', label: '模型', address: addressOf(SETTINGS_PAGE, 'model') },
+    roles: { id: 'roles', label: '角色', address: addressOf(SETTINGS_PAGE, 'roles') },
+} as const;
+
+export type SettingsSection = keyof typeof SETTINGS_SECTIONS;
+
+/** 缺省段（齿轮 / 横幅「去配置」都落在这里） */
+export const SETTINGS_ADDRESS = SETTINGS_SECTIONS.model.address;
+
+/** 角色段：房间头「角色」按钮导航到这里 */
+export const ROLES_ADDRESS = SETTINGS_SECTIONS.roles.address;
+
+/**
+ * 地址的 `id` → 段。不认识的段（手改的地址、旧链接）落到缺省段，不报错也不落白屏。
+ */
+export function sectionOf(id: string): SettingsSection {
+    return id in SETTINGS_SECTIONS ? (id as SettingsSection) : 'model';
+}
 
 registerPage(SETTINGS_PAGE);

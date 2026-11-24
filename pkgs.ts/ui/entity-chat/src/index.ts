@@ -29,6 +29,10 @@ export type { NavContext, NavHost, NavSource } from './nav';
 // 这些部件自己不知道被装在哪里 —— 宽度 / 收起由外层 area 决定（`widthMode="fill"`），
 // 弹窗由宿主挂一次 `useRoomDialogs()`（整页 App 与工作台共用同一套状态）。
 export { Modal } from './components/Dialogs';
+// 三段式模型选择器（provider → account → model）：角色的「模型」字段复用它，
+// 空串 = 跟随房间 / 全局默认 —— 不让使用方自己再写一份 key 拼法
+export { ModelPicker } from './components/ModelPicker';
+export { modelLabel } from './models';
 export { Sidebar } from './components/Sidebar';
 export { TaskPanel } from './components/TaskPanel';
 // 作业卡片：两个 surface 共用（判据在 chat-core 的 `jobOf`）。导出是为了让
@@ -56,6 +60,13 @@ export type { RoomDialogs } from './useRoomDialogs';
  * 模型配置是这一轮的核心能力（没配置就发不出去），它需要一个写入口；别的写路径仍然不放。
  */
 export { modelConfig } from './modelConfig';
+
+/**
+ * 角色的写面（设置页「角色」那一段专用）—— 与 `modelConfig` 同一个理由：
+ * 成员是**从角色表派生**的，改角色 = 该类型所有房间同时变，它也需要一个写入口。
+ */
+export { roles } from './roles';
+export type { BotRole, RoleInput } from './roles';
 export type {
     ModelConfigAccount,
     ModelConfigModel,
@@ -76,6 +87,8 @@ export {
     useLoaded,
     useModelSetup,
     usePendingAskOf,
+    useProviders,
+    useRoles,
     useRooms,
     useSelectedRoom,
 } from './store';

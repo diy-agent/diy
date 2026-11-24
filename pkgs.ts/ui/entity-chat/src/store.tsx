@@ -1,6 +1,7 @@
 // store.tsx —— React 适配层：room / 选择（本包）+ 会话状态（chat-core 的 ConversationStore）。
 //
-// 词表：Room = 容器（项目/任务/股票…），Bot = 身份，BotSession = bot 在某个 room 里的对话（后端概念）。
+// 词表：Room = 容器（项目/任务/股票…），BotRole = 类型的固定席位（全局表），
+// Bot = 角色在某个房间里的化身（`botOfRole` 派生），BotSession = 它在那个房间里的对话。
 
 import {
     ConversationStore,
@@ -11,6 +12,7 @@ import {
     type SessionInfo,
 } from '@diy-agent/chat-core';
 import { RpcChatClient } from '@diy-agent/chat-transport-rpc';
+import { botOfRole, type BotRole } from '@diy-agent/protocol';
 import * as React from 'react';
 
 import {
@@ -82,6 +84,9 @@ export function conversationOf(roomId: string): ConversationStore {
 
 interface ShellState {
     rooms: Room[];
+    /** 角色表（真源 `bot_roles`）：成员由它与房间类型派生，界面上「谁在这个房间」靠它 */
+    roles: BotRole[];
+    /** 角色 id → 房间里的化身。派生的投影，让老代码（按 bot 查名字/颜色）不用改 */
     bots: Record<string, Bot>;
     /**
      * 「在看哪儿」的真相 —— 一个能写进地址栏的位置（`/room/task/t-001`）。
@@ -138,6 +143,7 @@ interface ShellState {
 
 let state: ShellState = {
     rooms: [],
+    roles: [],
     bots: {},
     // id 为空 = 「还没定」，首屏由 resolveAddress 从地址栏或第一个房间补上
     address: addressOf(DEFAULT_PAGE, ''),
@@ -210,6 +216,15 @@ export function useRooms(): Room[] {
         subscribeShell,
         () => state.rooms,
         () => state.rooms,
+    );
+}
+
+/** 只订阅角色表（设置页「角色」那一段用）。成员名单由它与房间类型派生。 */
+export function useRoles(): BotRole[] {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.roles,
+        () => state.roles,
     );
 }
 
@@ -536,10 +551,29 @@ export async function refreshCatalog(): Promise<void> {
     });
 }
 
+/**
+ * 重拉**角色表**（角色页写完调）：`roles` + 派生出来的 `bots` 一起换。
+ *
+ * 与 `refreshCatalog` 一个路数：不重拉 rooms、不动地址。房间头的成员胶囊读的是
+ * `bots`，所以两个字段必须同一笔 emit —— 分开写会有一帧「角色新了、名字还是旧的」。
+ */
+export async function refreshRoles(): Promise<void> {
+    const roles = await client.roles.list();
+    emit({
+        ...state,
+        roles,
+        bots: Object.fromEntries(roles.map((role) => [role.id, botOfRole(role)])),
+    });
+}
+
 async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     // 模型目录跟着同一趟回来（真源 model.yaml；界面不再自带 provider 表）：
     // 走 `diy2.models.list`，与 rooms / bots 共用同一条 RPC 连接
-    const [rooms, bots, catalog] = await Promise.all([client.rooms.list(), client.bots.list(), client.models.list()]);
+    const [rooms, roles, catalog] = await Promise.all([
+        client.rooms.list(),
+        client.roles.list(),
+        client.models.list(),
+    ]);
     // 侧栏 ✎ 的初始值：不用打开过房间；本端改过的 owner 由 drafts 自己说了算
     drafts.seed(rooms);
     // 「最后活动」跟着同一次列表请求回来，不逐房间查（那会是 N+1）
@@ -588,7 +622,9 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         lastActivity,
         pendingAsks,
         pendingAskTitles,
-        bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])),
+        roles,
+        // 化身从角色派生（名字 / 颜色 / 人格 / 模型唯一的转换点）：成员名单仍然按房间的 spec 过滤
+        bots: Object.fromEntries(roles.map((role) => [role.id, botOfRole(role)])),
         loaded: true,
         // 地址没变就沿用旧引用：`useAddress()` 的快照就是它，同值换新对象等于给整张侧栏
         // 发一次「变了」的信号。`pickAddress` 多数分支会给旧对象，但 fallback / 首屏那条
@@ -908,15 +944,6 @@ export const actions = {
             });
     },
 
-    addBot(roomId: string, name: string): void {
-        if (name.trim() === '') return;
-        void client.bots
-            .create({ name: name.trim(), homeRoomId: roomId, ...modelArg(state.defaultModelKey) })
-            .then((bot) => client.rooms.addMember(roomId, bot.id))
-            .then(() => refresh())
-            .catch(() => undefined);
-    },
-
     /** 拉一次某个房间的上下文概况（面板打开 / 定时刷新时用） */
     refreshSessions(roomId: string): void {
         if (client.sessions === undefined) return;
@@ -945,13 +972,6 @@ export const actions = {
     cancelCompact(roomId: string, compactId: string): Promise<boolean> {
         if (client.cancelCompact === undefined) return Promise.resolve(false);
         return client.cancelCompact(roomId, compactId).catch(() => false);
-    },
-
-    addExistingBot(roomId: string, botId: string): void {
-        void client.rooms
-            .addMember(roomId, botId)
-            .then(() => refresh())
-            .catch(() => undefined);
     },
 };
 

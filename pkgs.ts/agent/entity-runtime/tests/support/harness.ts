@@ -3,6 +3,7 @@
 // 这里不碰 HTTP、不碰 SSE、不碰真模型：用内存 sqlite + 脚本化 run。
 // 要锁的是「Room 这一个概念」：路由、回合、结论、投递、成员覆盖。
 
+import { botOfRole } from '@diy-agent/protocol';
 import { describe, expect, it } from 'vitest';
 
 import type { RunOptions } from '../../src/agent';
@@ -70,8 +71,22 @@ export function makeRoom(
     } = {},
 ): Harness {
     const store = options.store ?? openStore(':memory:');
-    const bots = [BOT_A, BOT_B];
-    for (const bot of bots) store.upsertBot(bot);
+    // 角色是类型级的（2026-11-24）：测试里两个 fixture 就是 project 类型的两个席位
+    const roles = [BOT_A, BOT_B];
+    for (const [index, bot] of roles.entries()) {
+        store.upsertRole({
+            id: bot.id,
+            type: 'project',
+            name: bot.name,
+            color: bot.color,
+            instructions: bot.persona,
+            primary: index === 0,
+            modelKey: bot.modelKey,
+            reasoningEffort: null,
+            createdAt: index,
+            updatedAt: index,
+        });
+    }
 
     const spec: Room = options.spec ?? {
         id: 'room:1',
@@ -121,7 +136,7 @@ export function makeRoom(
         spec,
         store,
         // 与 server 一致：每次实时读库（改名 / 换模型这类改动才看得见）
-        bots: () => store.listBots(),
+        bots: () => store.listRoles().map(botOfRole),
         emit: (event) => {
             events.push(event);
             for (const listener of listeners) listener(event);

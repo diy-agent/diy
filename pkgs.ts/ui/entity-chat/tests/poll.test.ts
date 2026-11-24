@@ -53,13 +53,13 @@ async function bootstrap(): Promise<typeof import('../src/store')> {
             },
             update: async () => ({}),
         },
-        bots: {
+        roles: {
             list: async () => {
-                calls.push('/bots');
+                calls.push('/roles');
                 return [];
             },
         },
-        // 模型目录与 rooms / bots 同一趟回来（真源 model.yaml；界面不自带 provider 表）
+        // 模型目录与 rooms / roles 同一趟回来（真源 model.yaml；界面不自带 provider 表）
         models: {
             list: async () => {
                 calls.push('/models');
@@ -69,13 +69,13 @@ async function bootstrap(): Promise<typeof import('../src/store')> {
         drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
     } as never);
     store.actions.bootstrap();
-    // 把首屏那次 refresh 的微任务跑完（rooms / bots / models 各一次）
+    // 把首屏那次 refresh 的微任务跑完（rooms / roles / models 各一次）
     await vi.advanceTimersByTimeAsync(0);
     return store;
 }
 
 describe('房间列表轮询', () => {
-    it('可见时每 30s 拉一次（rooms / bots / models 各一次）', async () => {
+    it('可见时每 30s 拉一次（rooms / roles / models 各一次）', async () => {
         installFakeEnv('visible');
         await bootstrap();
         expect(calls).toHaveLength(3);
@@ -126,7 +126,7 @@ describe('房间列表轮询', () => {
                     throw new Error('boom');
                 },
             },
-            bots: { list: async () => [], update: async () => ({}) },
+            roles: { list: async () => [], update: async () => ({}) },
             models: { list: async () => EMPTY_CATALOG },
             drafts: {
                 list: async () => ({ drafts: [] }),
@@ -155,7 +155,7 @@ describe('房间列表轮询', () => {
                 },
                 update: async () => ({}),
             },
-            bots: { list: async () => [] },
+            roles: { list: async () => [] },
             models: { list: async () => EMPTY_CATALOG },
             drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
         } as never);
@@ -172,9 +172,9 @@ describe('房间列表轮询', () => {
                 },
                 update: async () => ({}),
             },
-            bots: {
+            roles: {
                 list: async () => {
-                    calls.push('/bots');
+                    calls.push('/roles');
                     return [];
                 },
             },

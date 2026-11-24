@@ -44,12 +44,18 @@ export const roomsApi = RpcSchema.group({
         }),
         /** 返回 { id, deleted: string[] }（项目连带任务） */
         remove: RpcSchema.unary({ input: { id: Id }, output: Any }),
-        /** 把已有 bot 拉进房间（借用） */
-        addMember: RpcSchema.unary({ input: { id: Id, botId: Id }, output: Any }),
+        // 「把已有 bot 拉进房间」没了：成员 = 类型角色表（2026-11-24 裁）。
+        // 要往某类房间里加人 ⇒ 去角色页给那个类型建一个角色，该类所有房间同时生效。
     },
 });
 
-export const botsApi = RpcSchema.group({
+/**
+ * 角色（原 bots）：**全局表**，每行 = 某个工作对象类型上的固定席位。
+ *
+ * 改一个角色 ⇒ 该类型的所有房间同时变（成员是派生的，没有「加入/退出房间」这回事）。
+ * `modelKey` / `reasoningEffort` 传 null 表示「清空 → 继续继承」。
+ */
+export const rolesApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: {}, output: Any }),
         /**
@@ -63,21 +69,31 @@ export const botsApi = RpcSchema.group({
             output: Any,
         }),
         create: RpcSchema.unary({
-            input: { name: z.string().min(1), homeRoomId: z.string().optional(), modelKey: z.string().min(1).optional() },
-            output: Any,
-        }),
-        /** 改 bot（名字 / 人格 / 模型 / 归属） */
-        update: RpcSchema.unary({
             input: {
-                id: Id,
-                name: z.string().optional(),
-                color: z.string().optional(),
-                persona: z.string().optional(),
-                modelKey: z.string().min(1).optional(),
-                homeRoomId: z.string().optional(),
+                type: z.string().min(1),
+                name: z.string().min(1),
+                color: z.string().min(1).optional(),
+                instructions: z.string().optional(),
+                modelKey: z.string().nullable().optional(),
+                reasoningEffort: z.string().nullable().optional(),
+                primary: z.boolean().optional(),
             },
             output: Any,
         }),
+        /** 改角色；`type` 不改（改类型 = 换一套房间，等于新建一个再删掉旧的） */
+        update: RpcSchema.unary({
+            input: {
+                id: Id,
+                name: z.string().min(1).optional(),
+                color: z.string().min(1).optional(),
+                instructions: z.string().optional(),
+                modelKey: z.string().nullable().optional(),
+                reasoningEffort: z.string().nullable().optional(),
+                primary: z.boolean().optional(),
+            },
+            output: Any,
+        }),
+        /** 删角色；某类型最后一个角色不许删（否则那类房间没人应答） */
         remove: RpcSchema.unary({ input: { id: Id }, output: Any }),
     },
 });
@@ -249,7 +265,7 @@ export const diy2Api = RpcSchema.group({
     children: {
         info: RpcSchema.unary({ input: {}, output: Any }),
         rooms: roomsApi,
-        bots: botsApi,
+        roles: rolesApi,
         chat: chatApi,
         asks: asksApi,
         drafts: draftsApi,

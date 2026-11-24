@@ -136,8 +136,20 @@ describe('RoomActor', () => {
 
     it('崩溃恢复：未送达的投递重新投一遍', async () => {
         const store = openStore(':memory:');
-        const bots = [BOT_A, BOT_B];
-        for (const bot of bots) store.upsertBot(bot);
+        for (const [index, bot] of [BOT_A, BOT_B].entries()) {
+            store.upsertRole({
+                id: bot.id,
+                type: 'project',
+                name: bot.name,
+                color: bot.color,
+                instructions: bot.persona,
+                primary: index === 0,
+                modelKey: bot.modelKey,
+                reasoningEffort: null,
+                createdAt: index,
+                updatedAt: index,
+            });
+        }
         const userItem: Item = {
             id: 'u-crash-1',
             seq: 1,

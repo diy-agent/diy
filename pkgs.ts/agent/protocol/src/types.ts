@@ -7,10 +7,13 @@
 // ── 容器 / 参与者 ──────────────────────────────────────────────
 
 /**
- * 房间里的一名成员：bot 身份在房间里的绑定。
+ * 房间里的一名成员：角色在房间里的绑定。
  *
- * Bot 是全局身份（名字 / 颜色 / 归属），RoomMember 是它在这个房间里的那副面孔：
- * 可以覆盖模型与人格 —— 同一个 bot 在造价房间和实验房间里不是同一个人格。
+ * **成员由类型派生**（2026-11-24 裁，见 docs/plans/2026-11-24-bot-role.md）：房间
+ * 类型为 T 的房间，成员恒等于 `type = T` 的角色表，声明顺序 = (primary 优先, 建得早优先)。
+ * 所以 `botId` 里装的是**角色 id**，不是某个房间专属的 bot。
+ *
+ * `modelKey` / `persona` 两个覆盖字段留给「实体级覆盖」（本期不做，表里也没写）。
  */
 export interface RoomMember {
     botId: string;
@@ -47,13 +50,44 @@ export interface Room {
     modelKey: string;
 }
 
+/**
+ * 角色：一种工作对象类型（project / task / 任意插件类型）上的**固定席位**。
+ *
+ * 为什么不是「每个房间一个 bot」：真库 35 个 bot 与 35 个容器 1:1 同名、task 侧 27 个
+ * personas 全同 —— 那个「全局身份」既没被复用、又要每建一个容器复制一份。角色是类型级
+ * 的，新建任务自动出现在新任务房间里，一个房间一份会话（键 `(entity_id, 角色 id)`）。
+ */
+export interface BotRole {
+    id: string;
+    /** 归属的工作对象类型：project / task / 任意自定义（与 Room.type 同一个词表） */
+    type: string;
+    name: string;
+    color: string;
+    /** 人格段（原 persona）：拼进系统提示词；空 = 只有类型通用部分 */
+    instructions: string;
+    /** 该类型的默认应答（每类型至多一个，库里用唯一索引钉住） */
+    primary: boolean;
+    /** 模型限定名 `providerId/modelId`；null = 继承房间 → 全局默认 */
+    modelKey: string | null;
+    /** 推理强度（provider 支持的枚举值）；null = 用模型/服务商缺省 */
+    reasoningEffort: string | null;
+    createdAt: number;
+    updatedAt: number;
+}
+
+/**
+ * 角色在某个房间里的化身：运行时与前端补全实际消费的形状。
+ *
+ * 保留 `persona` 这个名字（而不是 `instructions`），因为房间侧的一切——成员解析、
+ * 三级模型继承、@ 补全——都按「这个房间里的人格」讲；`botOfRole` 是唯一的转换点。
+ */
 export interface Bot {
     id: string;
     name: string;
     color: string;
     persona: string;
-    /** 归属容器（创建它的地方；bot 可以被多个 room 借用） */
-    homeRoomId: string;
+    /** 归属容器（只在种子/清理逻辑里有用；派生的成员没有它） */
+    homeRoomId?: string;
     /** bot 自己的目录（可选） */
     homeDir?: string;
     modelKey: string;

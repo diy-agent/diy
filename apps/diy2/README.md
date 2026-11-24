@@ -153,12 +153,17 @@ UI 有两个可切换的表面（同一份时间线 + 同一个 store，只换�
 数据：`<数据根>/diy2.db`（node:sqlite；生产数据根 `~/.diy/diy2`，lab 见上表）。落盘的东西：
 
 - `rooms`：容器元数据（项目/任务的名字、type、data、modelKey）——重启后原样回来
-- `room_members`：成员关系（`@` 路由据此生效）
-- `bots`：bot 身份
+- `bot_roles`：**角色**（名字 / 颜色 / 人格 / 默认应答 / 模型 / 推理强度），一类房间共享一批
+- `room_members`：成员关系的**镜像**（真源是角色表 + 房间 type，启动时按派生结果盖写；
+  留着它只为了让「实体级覆盖」有个落点，本期不写）
 - `entity_items`：消息 / 工具条目（展示用时间线）
-- `room_entries`：房间公共日志（进各 bot 上下文的那份）
-- `session_state`：每个 bot 的上下文快照 + `log_seq` 回放水位
-- `deliveries`：每个 (message, bot) 的投递状态（queued → delivering → delivered/failed）
+- `room_entries`：房间公共日志（进各角色上下文的那份）
+- `session_state`：每个 (房间, 角色) 的上下文快照 + `log_seq` 回放水位
+- `deliveries`：每个 (message, 角色) 的投递状态（queued → delivering → delivered/failed）
+
+老库里的 `bots`（每个容器一个同名 bot）由启动时的 `migrateBots` 折成角色，旧表改名 `bots_v0`
+留档；会话键跟着改（`session_state.bot_id` → `bot_role_id`）。为什么这么折见
+`docs/plans/2026-11-24-bot-role.md`。
 
 聊天走真实模型，模型数据**只来自本数据根**的 `<home>/model.yaml`（+ `<home>/providers.custom.yaml`
 + `<home>/data/models.dev.json` 快照）。缺这份配置是一个**明确状态**：服务端照常起，界面上不出假模型，
@@ -166,39 +171,29 @@ UI 有两个可切换的表面（同一份时间线 + 同一个 store，只换�
 `~/.diy/model.yaml`」已删：那两条会让人在 `~/.diy/diy2` 用自己的库、发别人的账号）。
 工具：`read` / `write` / `edit` / `bash`（`--tools files` 可关掉 bash）+ `ask` 提问卡。
 
-多 agent（容器一个 primary）：
+多 agent（**一类房间共享一批角色**，每类一个 primary）：
 
 - 没有 @：**只有 primary 回复**
-- `@名字`：只让命中的 bot 回复（primary 也可以被 @）
+- `@名字`：只让命中的角色回复（primary 也可以被 @）
 - `@all`：全体回复
-- 输入框里打 `@` 会弹出本容器可 @ 的 bot 列表（primary 带标记）
+- 输入框里打 `@` 会弹出本房间可 @ 的列表（primary 带标记）
+- 成员是**派生的**：`type` 与该房间相同的角色全部在场，改一个角色 = 该类型所有房间同时变
+  （没有「把 bot 拉进房间」这个动作；设置页 `/settings/roles` 是它的编辑入口）
 - 同一轮内多个 bot 并行；轮次之间串行；运行中也能插话（发送不变成停止，
   停止在顶部 SpeakingBar，可按成员停）
 
-接口（`/api`，与 UI 同源同端口）：
+接口：**命令面走 RPC**（`/rpc` 的 WebSocket；方法树 = `@diy-agent/protocol` 的 `diy2Api`：
+`info` / `rooms` / `roles` / `chat` / `asks` / `drafts` / `journal` / `models` / `links`），
+HTTP 只剩探活 `GET /api/info`（`app` + `home` 是判据）。没有 REST、也没有 SSE。
 
-```
-GET    /api/info                       # 实例身份：app / pid / port / home / env / launch
-GET    /api/stream                     # **一个 app 一条** SSE：首帧 {$conn}，之后按话题推
-POST   /api/stream/subscribe           { conn, topic }        # topic = `room:<roomId>`
-POST   /api/stream/unsubscribe         { conn, topic }
-GET    /api/rooms
-POST   /api/rooms                      { type, name, modelKey?, data?: { dir?, projectId? } }
-PATCH  /api/rooms/:id                  { name?, modelKey? }
-POST   /api/rooms/:id/bots             { botId }              # 借用已有 bot
-GET    /api/bots
-POST   /api/bots                       { name, homeRoomId, modelKey? }
-GET    /api/rooms/:id/history?afterSeq=
-GET    /api/rooms/:id/deliveries
-GET    /api/rooms/:id/asks
-GET    /api/rooms/:id/sessions
-POST   /api/rooms/:id/sessions/:botId/compact   { keepTurns? }   # keepTurns = 保留最近几轮（0 = 压到头）
-POST   /api/rooms/:id/asks/:askId      { values?, fields?, text? }
-POST   /api/rooms/:id/chat             { text, recipients? } → { ok:true }（受理即返）
-POST   /api/rooms/:id/cancel           { botId? }             # 不传 = 停整个房间
-```
+`roles` 就是「谁在这类房间里说话」：一类房间共享同一批角色，成员由
+`membersOfType(roles, room.type)` 派生 —— 所以**没有** `rooms.addMember` 这个方法。
 
 ### 事件流：一条连接，多话题（##stream-mux）
+
+> 这一节写于 SSE 时代（2026-11-22 迁到 RPC/WS：订阅是 `/rpc` 上的 `room` 流，发送是
+> `chat.chat` 这类 unary 方法）。**纪律没变**：连接数 = 标签页数、房间是连接上的话题、
+> 受理即返；下面出现的 `POST /api/...` 与 SSE 只是当时的具体载体。
 
 **为什么要这样**：浏览器同源 HTTP/1.1 只有 6 条并发连接，且**按 profile 共用**。6 条常驻
 SSE 占满后，同 profile 下对这个源的**所有**请求永久排队 —— 连 `/api/rooms/:id/history`、

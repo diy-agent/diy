@@ -143,7 +143,7 @@ beforeEach(async () => {
             list: async () => rooms.map((room) => ({ ...room, data: { ...room.data } })),
             update: async () => ({}),
         },
-        bots: { list: async () => [] },
+        roles: { list: async () => [] },
         models: { list: async () => ({ providers: [], configured: true, modelConfigPath: '', snapshotMissing: false }) },
         load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
         watch: () => () => undefined,

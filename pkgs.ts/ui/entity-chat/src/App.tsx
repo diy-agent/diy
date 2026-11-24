@@ -58,13 +58,16 @@ function roomDir(room: Room): string | undefined {
  */
 const RoomHeader = React.memo(function RoomHeader({
     room,
-    onAddMember,
+    onManageRoles,
+    onPickModel,
     taskPanelOpen,
     taskPanelShown,
     onToggleTaskPanel,
 }: {
     room: Room;
-    onAddMember: () => void;
+    /** 去设置页的「角色」那一段。不传就不画那颗按钮（宿主自己决定有没有角色页） */
+    onManageRoles?: (() => void) | undefined;
+    onPickModel: () => void;
     taskPanelOpen: boolean;
     /** 宿主是否接管了右侧面板（接管后这个按钮不归本层画 —— 点了也没有本层面板可开） */
     taskPanelShown: boolean;
@@ -119,13 +122,16 @@ const RoomHeader = React.memo(function RoomHeader({
                             {bot.name}
                         </span>
                     ))}
-                    <button
-                        onClick={onAddMember}
-                        className="flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted"
-                    >
-                        <Plus className="size-3" />
-                        成员
-                    </button>
+                    {onManageRoles !== undefined && (
+                        <button
+                            onClick={onManageRoles}
+                            title="成员来自「角色表」：按房间类型共享，去设置里改名字 / 人格 / 模型"
+                            className="flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted"
+                        >
+                            <Plus className="size-3" />
+                            角色
+                        </button>
+                    )}
                     {taskPanelShown && room.type === 'task' && (
                         <button
                             onClick={onToggleTaskPanel}
@@ -159,7 +165,16 @@ const RoomHeader = React.memo(function RoomHeader({
  * `taskPanel: false` —— 宿主管右侧区域（把任务面板放进 dock 的 right area，
  *   尺寸/收起就是布局的一部分，不该在 view 内部再长一个自绘面板）。
  */
-export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; taskPanel?: boolean } = {}) {
+export function App({
+    sidebar = true,
+    taskPanel = true,
+    onManageRoles,
+}: {
+    sidebar?: boolean;
+    taskPanel?: boolean;
+    /** 房间头「角色」按钮：宿主给一个「去角色页」的动作（本包不认识设置页的地址） */
+    onManageRoles?: () => void;
+} = {}) {
     // 四个窄订阅。这层以前是 `useStore()`（整份快照），于是**每一条** `emit` ——
     // 别的房间来了消息、某个房间多了个待答提问、侧栏换了个高亮 —— 都会把整个 App
     // 连同侧栏、三个 nav 块一起重渲一遍。
@@ -194,12 +209,11 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
     // 传给侧栏的回调必须 stable：`Sidebar` 把它们放进 `useMemo` 的 host，再传给每一行；
     // 每次渲染新建一个函数，行上的 `React.memo` 就永远拦不住（props 比不等）。
     // useRoomDialogs 返回的动作本身已经是 useCallback，直接透传即可。
-    const { openProject, openTask, requestDelete, openSettings, openMember, openModel } = dialogs;
+    const { openProject, openTask, requestDelete, openSettings, openModel } = dialogs;
     const onCreateProject = openProject;
     const onCreateTask = openTask;
     const onRequestDelete = requestDelete;
     const onOpenSettings = openSettings;
-    const onAddMember = openMember;
     const onToggleTaskPanel = React.useCallback(() => setTaskPanelOpen((open) => !open), []);
     const onCloseTaskPanel = React.useCallback(() => setTaskPanelOpen(false), []);
     const roomId = room?.id;
@@ -274,7 +288,8 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
                         <>
                             <RoomHeader
                                 room={room}
-                                onAddMember={onAddMember}
+                                onManageRoles={onManageRoles}
+                                onPickModel={onPickModel}
                                 taskPanelOpen={taskPanelOpen}
                                 taskPanelShown={taskPanel}
                                 onToggleTaskPanel={onToggleTaskPanel}
