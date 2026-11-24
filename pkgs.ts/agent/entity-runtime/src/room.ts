@@ -27,7 +27,7 @@ import { ASK_DRAFT_PREFIX, type Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
 import { createRoomContext } from './system-context';
 import { buildRoomTools } from './tools/index';
-import { jobOwnerOf, type JobOwner } from './jobs';
+import { jobNoticeOf, jobOwnerOf, type JobOwner } from './jobs';
 import type { JobDoneEvent, RunRegistry } from '@diy-agent/jobs/node';
 import type { CompactEvent } from './compaction';
 import {
@@ -915,7 +915,9 @@ export class RoomActor {
             at: now,
             status: 'done',
             type: 'notice',
-            data: { text: event.text, kind: 'job-done' },
+            // 结构化事实一并落库：`text` 是给模型读的人话（分隔线上读不出状态/退出码），
+            // 界面拿这份画作业卡片（`JobNotice`，2026-11-23）
+            data: { text: event.text, kind: 'job-done', job: jobNoticeOf(event.notify) },
         };
         this.deps.emit({ kind: 'item', item: this.deps.store.appendItem(this.id, notice) });
         void this.sessionOf(bot).post({

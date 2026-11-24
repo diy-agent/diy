@@ -13,6 +13,7 @@ export {
 } from './mention';
 export { MockChatClient, type MockOptions } from './mock';
 export { applyEvent, emptyState, fromSnapshot, type ConversationState } from './reduce';
+export { jobOf, jobViewOfNotice, stripAnsi, type JobRow, type JobState, type JobView } from './job';
 export { ConversationStore, type ConversationModel } from './store';
 export { endFooterOf, type EndFooter } from './end-footer';
 export { buildTimeline, type TimelineDelivery, type TimelineEntry, type TimelinePart } from './timeline';

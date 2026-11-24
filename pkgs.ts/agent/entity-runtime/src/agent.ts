@@ -16,6 +16,7 @@ import { z } from 'zod';
 
 import { friendlyError } from './errors';
 import { maxOutputTokensOf, modelOf } from './providers';
+import { StallWatchdog, stallMessage, stallTimeoutsFromEnv, type StallInfo } from './stall-watchdog';
 import { clipModelMessage } from './tools/clip';
 import type { AgentEvent, Bot } from './types';
 
@@ -66,6 +67,11 @@ export interface RunOptions {
      * **不要省成 undefined 再指望服务端缺省**：那会让长回答被静默截断（见 `maxOutputTokensOf`）。
      */
     maxOutputTokens?: number;
+    /**
+     * 停摆判定的时长（首包 / 块间隔 / 工具执行）。不传 = 按环境读缺省（见 `stall-watchdog.ts`）。
+     * 测试用它把 3 分钟压成几毫秒。
+     */
+    stallTimeouts?: { firstMs: number; idleMs: number; toolMs: number };
     /**
      * 步数上限（工具循环）。不传 = `DEFAULT_MAX_STEPS`。
      *
@@ -138,11 +144,29 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     const maxOutputTokens = options.maxOutputTokens ?? maxOutputTokensOf(options.modelKey);
     const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
 
+    /**
+     * 自家中止开关：把两条来路了接到同一个 signal —— 调用方（用户点停止）与看门狗（上游停摆）。
+     * 合同：调用方的 abort 原样传递（SDK 照旧抛 AbortError），看门狗的中止由下面转成 `run.failed`。
+     */
+    const stall = new AbortController();
+    let stallInfo: StallInfo | undefined;
+    const forwardAbort = (): void => stall.abort();
+    if (options.signal.aborted) stall.abort();
+    else options.signal.addEventListener('abort', forwardAbort, { once: true });
+    const watchdog = new StallWatchdog({
+        ...(options.stallTimeouts ?? stallTimeoutsFromEnv()),
+        onStall: (info) => {
+            stallInfo = info;
+            stall.abort();
+        },
+    });
+    watchdog.start();
+
     const result = streamText({
         model:
             options.model ??
             modelOf(options.modelKey, { sessionId: options.sessionId ?? turnId }),
-        abortSignal: options.signal,
+        abortSignal: stall.signal,
         maxOutputTokens,
         instructions: instructionsOf({
             botName: options.bot.name,
@@ -190,6 +214,10 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
 
     try {
         for await (const part of result.stream) {
+            // 有数据 = 上游还活着；工具调用之后的等待算「工具在执行」而不是「上游在挂」
+            // （`ask` 可能要等用户很久、`job wait` 能等 10 分钟：那些不能当停摆掐掉）
+            if (part.type === 'tool-call') watchdog.toolStart();
+            else watchdog.touch();
             switch (part.type) {
                 case 'finish-step':
                     steps += 1;
@@ -253,7 +281,25 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
             }
         }
     } catch (error) {
+        watchdog.stop();
+        options.signal.removeEventListener('abort', forwardAbort);
+        // 看门狗掐的和用户按停的都会走到这里：**只有看门狗那条**要说成“停摆”（用户按停不能冤枉上游，
+        // 反之停摆也不该被当成人取消 —— 那样用户会以为是自己点错了）
+        if (stallInfo !== undefined && !options.signal.aborted) {
+            yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo) };
+            return;
+        }
         yield { seq: ++seq, type: 'run.failed', turnId, message: friendlyError(error) };
+        return;
+    } finally {
+        watchdog.stop();
+        options.signal.removeEventListener('abort', forwardAbort);
+    }
+
+    // 流在正常路径上结束（被 abort 时 ai-sdk 可能给一个 `abort` part 而不是抛）：
+    // 停摆仍要算失败 —— 不能因为“循环退出了”就把它当正常收尾
+    if (stallInfo !== undefined && !options.signal.aborted) {
+        yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo) };
         return;
     }
 

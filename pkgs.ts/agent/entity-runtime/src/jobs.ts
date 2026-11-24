@@ -8,7 +8,10 @@
 // 没有房间身份（CLI / 单测自己 new 的账本）时 `taskUri` 对不上，`parseJobOwner` 返回
 // undefined ⇒ 静默收口，不会误唤醒任何东西。
 
+import type { NotifyItem } from '@diy-agent/context/envelope';
 import { RunRegistry, type JobDoneEvent } from '@diy-agent/jobs/node';
+
+import type { JobNotice } from '@diy-agent/protocol';
 
 /** 归属串的分隔符：roomId 里不会有 `#`（id 是 uuid / `proj:xxx` 这类） */
 const SEP = '#';
@@ -16,6 +19,26 @@ const SEP = '#';
 export interface JobOwner {
     roomId: string;
     botId: string;
+}
+
+/**
+ * `job-done` 的 notify 信封 → 条目上的结构化事实（`Item.data.job`）。
+ *
+ * 只搬**排障要用**的几项，`text` 不重复带（条目自己的 `data.text` 就是它）。
+ * 缺 `run` 的信封不算 job-done（老宿主 / 别的 kind）：返回 undefined，界面退回分隔线。
+ */
+export function jobNoticeOf(notify: NotifyItem): JobNotice | undefined {
+    if (notify.kind !== 'job-done' || notify.run === undefined) return undefined;
+    return {
+        run: notify.run,
+        state: notify.state ?? 'exited',
+        ...(notify.exitCode === undefined ? {} : { exitCode: notify.exitCode }),
+        ...(notify.signal === undefined ? {} : { signal: notify.signal }),
+        ...(notify.durationMs === undefined ? {} : { durationMs: notify.durationMs }),
+        ...(notify.command === undefined ? {} : { command: notify.command }),
+        ...(notify.tail === undefined ? {} : { tail: notify.tail }),
+        ...(notify.truncatedBytes === undefined ? {} : { truncatedBytes: notify.truncatedBytes }),
+    };
 }
 
 export function jobOwnerOf(roomId: string, botId: string): string {

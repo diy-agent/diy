@@ -34,7 +34,7 @@ import {
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
 import { diy2Api } from '@diy-agent/protocol';
-import type { AskAnswer, AskQuestionAnswer, Author, Bot, Room } from '@diy-agent/protocol';
+import type { AskAnswer, AskQuestionAnswer, Author, Bot, JobRunRow, Room } from '@diy-agent/protocol';
 
 /**
  * 新房间的缺省模型：`model.yaml` 的 `defaultModel` 优先，没有才用这个写死的兜底。
@@ -177,6 +177,40 @@ function actorOf(spec: Room): RoomActor {
         adoptDerived(spec);
     }
     return actor;
+}
+
+/**
+ * 账本里的一条 → 界面画的那一条（`diy2.jobs.list` 的项）。
+ *
+ * 时间基准取**现在**：运行中的那条每次拉都该长一点（界面那个秒表靠它跳），
+ * 而终态的时长就定在 `endedAt` 上 —— 两者不是一个公式，不能图省事都传 startedAt。
+ */
+function jobRowOf(info: ReturnType<ReturnType<typeof createJobRegistry>['list']>[number]): JobRunRow {
+    const now = Date.now();
+    const end = info.endedAt ?? now;
+    return {
+        id: info.id,
+        state: info.state,
+        startedAt: info.startedAt,
+        ...(info.endedAt === undefined ? {} : { endedAt: info.endedAt }),
+        durationMs: Math.max(0, end - info.startedAt),
+        command: info.command,
+        ...(info.title === undefined ? {} : { title: info.title }),
+        cwd: info.cwd,
+        logPath: info.logPath,
+        ...(info.pid === undefined ? {} : { pid: info.pid }),
+        ...(info.exitCode === undefined ? {} : { exitCode: info.exitCode }),
+        ...(info.signal === undefined ? {} : { signal: info.signal }),
+        ...(info.error === undefined ? {} : { error: info.error }),
+        ...(info.origin === undefined
+            ? {}
+            : {
+                  origin: {
+                      taskUri: info.origin.taskUri,
+                      ...(info.origin.turnId === undefined ? {} : { turnId: info.origin.turnId }),
+                  },
+              }),
+    };
 }
 
 /** 压缩是一等事件：改预算前先看这行 */
@@ -586,6 +620,9 @@ export function createDiy2App(opts: {
                         deliveries: actor.deliveries(),
                         asks: actor.pendingAskRequests(),
                         answered: actor.answeredAskRequests(),
+                        // 服务端事实：谁还在跑。取房间自己的 `running` 集合（与广播同源），
+                        // 客户端不再靠「有没有流式条目」倒推 —— 卡在等上游的那一轮没有流式条目。
+                        speaking: actor.runningBots(),
                     };
                 },
                 chat: async ({ input }) => {
@@ -671,6 +708,22 @@ export function createDiy2App(opts: {
                     return { ok: true };
                 },
                 remove: async ({ input }) => ({ removed: store.unlink(input.id, input.to, input.kind) }),
+            },
+            /**
+             * run 表的**只读投影** + 停一个。
+             *
+             * 与 agent 的 `job list` / `job kill` 同一份账本、同一套语义（`visible` 在这里是
+             * 全部：一个实例一张表，界面看的就是这张表）。时长按**现在**算 —— 界面上那个
+             * 秒表要跳，不能等下一次 `job status` 回来才知道过去了多久。
+             */
+            jobs: {
+                list: async () => ({ rows: jobs.list().map(jobRowOf) }),
+                kill: async ({ input }) => ({ ok: jobs.kill(input.id) }),
+                /** 输出尾巴：与 agent 的 `job output` 同一个 `registry.tail`（同一套截断 / 去色） */
+                tail: async ({ input }) => {
+                    const tail = await jobs.tail(input.id, input.lines ?? 40);
+                    return tail === undefined ? { found: false } : { found: true, tail };
+                },
             },
         };
         server.use({ prefix: 'diy2', api: diy2Api, handlers });

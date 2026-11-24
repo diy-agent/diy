@@ -130,6 +130,29 @@ export const modelsApi = RpcSchema.group({
     },
 });
 
+/**
+ * 后台作业（run 表）：**「现在在跑什么」的唯一出口**。
+ *
+ * 在此之前这张表只能由 agent 通过 `job list` 工具问出来 —— 人看不见，只能等它说完。
+ * 界面要的是同一份事实，所以开一个只读投影 + 一个停：口径仍然只有 `job-tool` 那一套
+ * （`list` / `kill` 与工具同名同义，文案真源 `run-status.ts`）。
+ */
+export const jobsApi = RpcSchema.group({
+    children: {
+        /** 全部 run（活着的在前），带时长 / 命令 / 归属 */
+        list: RpcSchema.unary({ input: {}, output: Any }),
+        /** 按进程组停止（只有运行中的才可停；返回是否真的发了信号） */
+        kill: RpcSchema.unary({ input: { id: Id }, output: Any }),
+        /**
+         * 一条 run 的输出尾巴（与 `job output` 同一个 `tailOf`）。
+         *
+         * 界面「明细」里的那段输出用：列表行只够写「跑了多久、退出码几」，
+         * 「它到底说了什么」必须能翻 —— 否则出事时人还得回头求 agent 去调工具。
+         */
+        tail: RpcSchema.unary({ input: { id: Id, lines: z.number().int().positive().optional() }, output: Any }),
+    },
+});
+
 export const diy2Api = RpcSchema.group({
     desc: 'diy2 的全部浏览器 API（命令走 unary，房间事件走 /rpc 的 room 流）',
     children: {
@@ -142,5 +165,6 @@ export const diy2Api = RpcSchema.group({
         journal: journalApi,
         models: modelsApi,
         links: linksApi,
+        jobs: jobsApi,
     },
 });

@@ -23,11 +23,14 @@ import type {
 } from '@diy-agent/chat-core';
 
 import type {
+    JobRunRow,
     ModelCatalogModel,
     ModelCatalogProvider,
     ModelCatalogSnapshot,
     ModelCostView,
 } from '@diy-agent/protocol';
+
+export type { JobRunRow };
 
 import { StreamHub } from './hub';
 
@@ -132,6 +135,23 @@ export class RpcChatClient implements ChatClient {
         list: (): Promise<ModelCatalogSnapshot> => this.call('models.list', {}),
     };
 
+    /**
+     * 后台作业（run 表）：与 agent 的 `job list` / `job kill` 同一份账本。
+     *
+     * 界面拿它画「现在在跑什么」——在此之前这张表只存在于 agent 的对话里，
+     * 人看不见（只能等模型自己想起来调 `job status`）。
+     */
+    readonly jobs = {
+        list: (): Promise<{ rows: JobRunRow[] }> => this.call('jobs.list', {}),
+        kill: (id: string): Promise<{ ok: boolean }> => this.call('jobs.kill', { id }),
+        /** 一条 run 的输出尾巴（`found:false` = 账本里没这条了） */
+        tail: (
+            id: string,
+            lines?: number,
+        ): Promise<{ found: boolean; tail?: { text: string; lines: number; droppedBytes: number } }> =>
+            this.call('jobs.tail', { id, ...(lines === undefined ? {} : { lines }) }),
+    };
+
     readonly links = {
         list: (id: string): Promise<{ out: unknown[]; in: unknown[] }> => this.call('links.list', { id }),
         add: (id: string, to: string, kind: string): Promise<unknown> => this.call('links.add', { id, to, kind }),
@@ -147,12 +167,15 @@ export class RpcChatClient implements ChatClient {
             deliveries: Delivery[];
             asks: Snapshot['asks'];
             answered: Snapshot['answeredAsks'];
+            speaking?: Snapshot['speaking'];
         }>('chat.history', { id: entityId });
         return {
             items: history.items,
             deliveries: history.deliveries,
             asks: history.asks ?? [],
             answeredAsks: history.answered ?? [],
+            // 老服务端没有这个字段：留 undefined（客户端退回倒推，见 Snapshot.speaking）
+            ...(history.speaking === undefined ? {} : { speaking: history.speaking }),
         };
     }
 

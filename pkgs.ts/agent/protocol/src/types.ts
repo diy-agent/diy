@@ -84,9 +84,59 @@ interface ItemBase {
     author?: Author;
 }
 
+/**
+ * `job-done` 通知的**结构化事实**（与 `text` 同一件事，只是不拍平）。
+ *
+ * 为什么要在条目上带一份：`text` 是一段给模型读的人话（命令 + 输出尾部），当分隔线糊在
+ * 一行里既看不出状态也看不出退出码；而 `run` / `state` / `exitCode` / `tail` 本来就有，
+ * 只是没进条目。UI 据此画作业卡片（2026-11-23）。
+ */
+export interface JobNotice {
+    /** run id（`job status` / `job output` 的入参） */
+    run: string;
+    /** RunState：running / exited / killed / failed */
+    state: string;
+    exitCode?: number | null;
+    signal?: string | null;
+    durationMs?: number;
+    command?: string;
+    /** 输出尾部（已去过 ANSI 色码） */
+    tail?: string;
+    /** tail 之前被截掉的字节数 */
+    truncatedBytes?: number;
+}
+
+/**
+ * 一条 run 的**列表投影**（`diy2.jobs.list` 的回包项）：界面画「现在在跑什么」用的那一份。
+ *
+ * 为什么不直接发注册表的 `RunInfo`：那份是**账本内部形状**（`notified` / `awaitingGroup` /
+ * `hadSurvivingGroup` / `dir` …），界面一个都不用；界面要的是「哪条在跑、跑了多久、什么命令、
+ * 谁起的、日志在哪」。投影住协议里 ⇒ 服务端只挑一次，两个 surface 不再各猜一遍。
+ */
+export interface JobRunRow {
+    id: string;
+    /** RunState：running / exited / killed / failed */
+    state: string;
+    startedAt: number;
+    endedAt?: number;
+    /** 已跑时长（运行中 = 到现在；终态 = 收口时刻 − 起点） */
+    durationMs: number;
+    command: string;
+    /** 人话标题（缺省 = 命令首行） */
+    title?: string;
+    cwd: string;
+    logPath: string;
+    pid?: number;
+    exitCode?: number | null;
+    signal?: string | null;
+    error?: string;
+    /** 谁起的：`taskUri` 是 dsh 的实体地址（房间 / 任务），turnId 是那一轮 */
+    origin?: { taskUri: string; turnId?: string };
+}
+
 export type Item =
     | (ItemBase & { type: 'chat'; data: { text: string } })
-    | (ItemBase & { type: 'notice'; data: { text: string; kind: string } })
+    | (ItemBase & { type: 'notice'; data: { text: string; kind: string; job?: JobNotice } })
     | (ItemBase & {
           type: 'tool';
           data: { name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' };
@@ -275,6 +325,16 @@ export interface Snapshot {
     asks?: AskRequest[];
     /** 已经有结局的提问（最近的若干条）：刷新后卡片仍在，显示已选状态 */
     answeredAsks?: AnsweredAsk[];
+    /**
+     * **服务端事实**：这一刻还在跑的成员（= 房间的 `running` 集合，与运行中广播同源）。
+     *
+     * 为什么必须进快照：客户端原先靠「快照里有没有 `status:'streaming'` 的条目」倒推，
+     * 而一轮卡在**等上游**（还没吐第一个字）时一个流式条目都没有 —— 刷新之后既没有
+     * 「正在说话…」也没有停止按钮，用户看不出它在跑、更停不掉（2026-11-23 实测）。
+     *
+     * 缺省 `undefined` = 老服务端：客户端退回旧的倒推。空数组是**有意义**的（确实没人跑）。
+     */
+    speaking?: string[];
 }
 
 /** capabilities 决定 UI 显示哪些按钮（不要写 surfaceId 分支） */

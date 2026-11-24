@@ -19,6 +19,7 @@ export type {
     Room,
     Item,
     ItemStatus,
+    JobNotice,
     Snapshot,
     StreamEvent,
     TurnEndReason,

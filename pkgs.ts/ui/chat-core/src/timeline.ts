@@ -26,7 +26,17 @@
 //
 // surface 只做「时间线 → 自己的组件」，不再各写一遍分组，语义差异从结构上消失。
 
-import type { AnsweredAsk, AskRequest, Author, Bot, Delivery, DeliveryState, Item, TurnEndReason } from './types';
+import type {
+    AnsweredAsk,
+    AskRequest,
+    Author,
+    Bot,
+    Delivery,
+    DeliveryState,
+    Item,
+    JobNotice,
+    TurnEndReason,
+} from './types';
 
 export type TimelinePart =
     | { kind: 'text'; text: string }
@@ -81,6 +91,11 @@ export interface TimelineEntry {
     waiting?: boolean;
     /** 仅 user 条目：这条消息投给了谁、到没到 */
     deliveries: TimelineDelivery[];
+    /**
+     * 仅 `job-done` 通知：后台作业的结构化事实（界面画作业卡片，而不是一条分隔线）。
+     * 老数据没有这一项（当年只存了 `text`）⇒ 退回纯文本，见 surface 里的分支。
+     */
+    job?: JobNotice;
     at: number;
     /**
      * 这一轮的结局（`turn.end` 事件给的事实）。**只挂在同一轮的最后一段**上 ——
@@ -156,6 +171,7 @@ export function buildTimeline(
                 streaming: false,
                 deliveries: [],
                 at: item.at,
+                ...(item.data.job === undefined ? {} : { job: item.data.job }),
             });
             continue;
         }

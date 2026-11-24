@@ -20,11 +20,19 @@ import {
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
 import { ChatVirtualizer } from '@astryxdesign/lab';
 import type { ChatVirtualizerHandle } from '@astryxdesign/lab';
-import { buildTimeline, type MentionCandidate, type TimelineEntry, type TimelinePart } from '@diy-agent/chat-core';
+import {
+    buildTimeline,
+    jobOf,
+    jobViewOfNotice,
+    type MentionCandidate,
+    type TimelineEntry,
+    type TimelinePart,
+} from '@diy-agent/chat-core';
 import { ArrowDown } from 'lucide-react';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
 import { AskCard } from '../../components/AskCard';
 import { CopyButton } from '../../components/CopyButton';
+import { JobCard } from '../../components/JobCard';
 import { openLinkInNewWindow } from '../../links';
 import { BotAvatar } from '../../components/BotAvatar';
 import { EndFooterLine } from '../../components/EndFooterLine';
@@ -42,9 +50,59 @@ function TimeOf({ at }: { at: number }) {
     return <Timestamp value={Math.floor(at / 1000)} format="time" />;
 }
 
+/**
+ * 一组连续的工具调用：**后台作业单独成卡**（`job` / `bash(background)`），其余仍走工具行。
+ *
+ * 为什么不干脆全塞进 `ChatToolCalls`：`job` 的 args 里没有 command / path，只能退化成截断的
+ * JSON target —— run id、状态、退出码、输出全丢，而那些正是“它到底啥情况”的全部答案。
+ * 分组顺序不动（卡插在它原来那一格），所以「说一段 → 跑作业 → 再说一段」的时间顺序不变。
+ */
+function ToolRun({ tools, live }: { tools: (TimelinePart & { kind: 'tool' })[]; live?: boolean }) {
+    const blocks: React.ReactNode[] = [];
+    let pending: (TimelinePart & { kind: 'tool' })[] = [];
+    const flush = (): void => {
+        if (pending.length === 0) return;
+        blocks.push(
+            <ChatToolCalls
+                key={`g${blocks.length}`}
+                calls={pending.map((tool) => {
+                    const target = toolTargetOf(tool);
+                    return {
+                        key: tool.id,
+                        name: tool.name,
+                        status: TOOL_STATUS[tool.state],
+                        ...(target === undefined ? {} : { target }),
+                    };
+                })}
+            />,
+        );
+        pending = [];
+    };
+    for (const tool of tools) {
+        const job = jobOf(tool);
+        if (job === undefined) {
+            pending.push(tool);
+            continue;
+        }
+        flush();
+        blocks.push(<JobCard key={tool.id} view={job} live={live === true} />);
+    }
+    flush();
+    return <>{blocks}</>;
+}
+
 function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
     if (entry.kind === 'notice') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
+        // 后台作业收口：带结构化事实的当卡片画（run id / 状态 / 退出码 / 输出尾部）。
+        // 分隔线上那一段人话里三者都读不出来，而且 tail 还带着 ANSI 色码。
+        if (entry.job !== undefined) {
+            return (
+                <div key={entry.key} style={{ paddingBlock: 2 }}>
+                    <JobCard view={jobViewOfNotice(entry.job, text)} />
+                </div>
+            );
+        }
         return (
             <ChatSystemMessage key={entry.key} variant="divider">
                 {text}
@@ -164,18 +222,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                             {run.text}
                         </Markdown>
                     ) : (
-                        <ChatToolCalls
-                            key={`c${index}`}
-                            calls={run.tools.map((tool) => {
-                                const target = toolTargetOf(tool);
-                                return {
-                                    key: tool.id,
-                                    name: tool.name,
-                                    status: TOOL_STATUS[tool.state],
-                                    ...(target === undefined ? {} : { target }),
-                                };
-                            })}
-                        />
+                        <ToolRun key={`c${index}`} tools={run.tools} live={entry.waiting === true} />
                     );
                 })}
                 {/* 还在跑但没有流式内容（工具刚结束 / 等待下一段）：挂在正文末尾，
@@ -225,11 +272,14 @@ function AstryxComposer({
     roomId,
     triggers,
     placeholder,
+    extras,
 }: {
     conversation: ReturnType<typeof conversationOf>;
     roomId: string;
     triggers: React.ComponentProps<typeof ChatComposerInput>['triggers'];
     placeholder: string;
+    /** 底栏那一行（上下文 / 模型 / 作业）：壳层给，摆进设计系统 composer 的 footer 左侧 */
+    extras?: React.ReactNode;
 }) {
     const draft = useDraft(roomId, 'composer');
     const [submitting, setSubmitting] = React.useState(false);
@@ -258,6 +308,8 @@ function AstryxComposer({
                 // 运行中也保持"发送"态：插话是正常操作，停止在 SpeakingBar 上
                 onStop={() => conversation.cancel()}
                 isStopShown={false}
+                // 底栏左侧：上下文 / 模型 / 作业（发送键由设计系统摆在右侧）
+                footerActions={extras}
                 input={<ChatComposerInput triggers={triggers} label="Message input" placeholder={placeholder} />}
             />
         </>
@@ -277,7 +329,7 @@ function toSearchItems(candidates: MentionCandidate[]): SearchableItem<MentionCa
     return candidates.map((candidate) => ({ id: candidate.id, label: candidate.name, auxiliaryData: candidate }));
 }
 
-export function AstryxSurface({ targetId }: { targetId: string }) {
+export function AstryxSurface({ targetId, composerExtras }: { targetId: string; composerExtras?: React.ReactNode }) {
     const shell = useStore();
     const conversation = conversationOf(targetId);
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
@@ -462,6 +514,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                         roomId={targetId}
                         triggers={triggers}
                         placeholder="和这个实体对话…（@ 选 bot）"
+                        extras={composerExtras}
                     />
                 </div>
         </div>

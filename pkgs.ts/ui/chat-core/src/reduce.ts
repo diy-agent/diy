@@ -135,6 +135,7 @@ export function fromSnapshot(snapshot: {
     deliveries: Delivery[];
     asks?: AskRequest[];
     answeredAsks?: AnsweredAsk[];
+    speaking?: string[];
 }): ConversationState {
     // 同 id 只留最新一条（append-only 更新：重跑的 item 会以新 seq 再写一遍）
     const latest = new Map<string, Item>();
@@ -143,8 +144,12 @@ export function fromSnapshot(snapshot: {
         if (existing === undefined || item.seq >= existing.seq) latest.set(item.id, item);
     }
     const items = sortItems([...latest.values()]);
-    // 快照里没有 running 事件：从"还在流式的 bot 条目"倒推一个初值，后续以服务端事件为准
-    const speaking = [
+    // 谁在跑：**优先服务端事实**（`Snapshot.speaking`，与运行中广播同源）。
+    //
+    // 为什么不再只靠倒推：一轮卡在等上游首个字时没有任何流式条目 —— 刷新后倒推出
+    // 空列表，于是没有「正在说话…」、也没有停止按钮，用户看不出它在跑、更停不掉
+    // （2026-11-23 实测）。倒推只留给老服务端（快照不带 speaking）当兜底。
+    const speaking = snapshot.speaking ?? [
         ...new Set(items.filter((item) => item.status === 'streaming').map((item) => item.author?.id ?? '')),
     ].filter((id) => id !== '');
     return {
