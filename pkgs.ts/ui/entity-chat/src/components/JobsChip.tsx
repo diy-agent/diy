@@ -4,8 +4,9 @@
 // 简要卡，点开摘要可以看更细的半屏详情列表」。作业沿用同一套：
 //
 //   L1 收起态（就在输入框底栏，与 上下文 / 模型 同一行）：`◔ 作业 2 · 3m20s`
-//      —— 只给「有几条在跑、最久那条多久」。没有作业在跑时**整个 chip 不出现**：
-//         这个 chip 回答的是「现在在干什么」，没有在跑的就没有可答的。
+//      —— 只给「有几条在跑、最久那条多久」。**跑完的那一刻只失去「在动」，不失去位置**
+//         （2026-11-24 用户裁）：chip 常驻，0 条在跑时退化成空状态 `◔ 作业`（灰点、不跳、
+//         不写数字不写时长）—— 它的第二个职能是「进历史账本的入口」，一消失就进不去了。
 //   L2 hover 简要卡：每条约一行（状态点 · 标题 · 时长 · 短 id），卡顶右侧「明细 ›」。
 //      卡**向上**开（chip 在屏幕底部），鼠标从 chip 移到卡上不会关（160ms 宽限 + 指入取消）。
 //   L3 半屏抽屉：全宽贴顶、默认 2/3 屏、底边可拖动改高、可最大化、点遮罩 / ✕ 关。
@@ -172,7 +173,7 @@ function HoverCard({
                 <ListTree className="size-3 text-muted-foreground" />
                 <span className="text-[11px] font-medium">后台作业</span>
                 <span className="text-[10px] text-muted-foreground">
-                    {running.length === 0 ? '现在没有在跑的' : `${running.length} 个在跑`}
+                    {running.length === 0 ? '没有在跑的' : `${running.length} 个在跑`}
                 </span>
                 <button
                     onClick={onDetail}
@@ -186,7 +187,9 @@ function HoverCard({
                     <BriefRow key={row.id} row={row} now={now} />
                 ))}
                 {running.length === 0 && (
-                    <p className="px-3 py-2 text-[11px] text-muted-foreground">没有作业在跑（这是最近结束的）</p>
+                    <p className="px-3 py-2 text-[11px] text-muted-foreground">
+                        {finished.length === 0 ? '还没有作业记录' : '现在没有在跑的（下面是最近结束的）'}
+                    </p>
                 )}
                 {finished.length > 0 && (
                     <>
@@ -467,8 +470,10 @@ export function JobsChip() {
     const running = rows.filter(isRunning);
     const oldest = running.reduce<number>((longest, row) => Math.max(longest, now - row.startedAt), 0);
 
-    // 没有在跑的 ⇒ 这个 chip 不占位置（它答的是「现在在干什么」）
-    if (running.length === 0 && !drawerOpen) return null;
+    // 这台实例没有作业账本（老服务端）⇒ 整枚 chip 不出现；有账本就一直占着位置，
+    // 0 条在跑时是空状态（用户 2026-11-24：跑完别消失，留着能点进去看历史）
+    if (jobsApi() === undefined) return null;
+    const idle = running.length === 0;
 
     return (
         <>
@@ -479,15 +484,25 @@ export function JobsChip() {
                     setRect(null);
                     setDrawerOpen(true);
                 }}
-                title={error === null ? '后台作业：悬停看简要，点开看明细' : `作业账本拉取失败：${error}`}
+                title={
+                    error !== null
+                        ? `作业账本拉取失败：${error}`
+                        : idle
+                          ? `后台作业：现在没有在跑的，点开看历史（共 ${rows.length} 条）`
+                          : '后台作业：悬停看简要，点开看明细'
+                }
                 className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
             >
                 <span className="relative flex size-2 items-center justify-center">
-                    <span className="absolute size-2 animate-ping rounded-full bg-emerald-500/60" />
-                    <span className="size-1.5 rounded-full bg-emerald-500" />
+                    {!idle && <span className="absolute size-2 animate-ping rounded-full bg-emerald-500/60" />}
+                    <span
+                        className={
+                            idle ? 'size-1.5 rounded-full bg-muted-foreground/40' : 'size-1.5 rounded-full bg-emerald-500'
+                        }
+                    />
                 </span>
-                作业 {running.length}
-                <span className="tabular-nums opacity-60">{fmtDur(oldest)}</span>
+                作业{idle ? '' : ` ${running.length}`}
+                {!idle && <span className="tabular-nums opacity-60">{fmtDur(oldest)}</span>}
             </button>
 
             {rect !== null && (
