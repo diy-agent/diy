@@ -134,6 +134,8 @@ function BriefRow({ row, now }: { row: JobRunRow; now: number }) {
             <span className="truncate font-mono text-[11px]" title={row.command}>
                 {titleOf(row)}
             </span>
+            {/* 结局无人接：房间删了 / 成员退了，通知落空（run 目录里的 done.json 写着） */}
+            {row.delivered === false && <span className="size-1.5 shrink-0 rounded-full bg-amber-500" title="结局无人接" />}
             <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">{fmtDur(dur)}</span>
             <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70" title={row.id}>
                 {row.id.slice(-4)}
@@ -296,6 +298,15 @@ function DetailRow({ row, now, onKilled }: { row: JobRunRow; now: number; onKill
                 <span className="truncate font-mono text-[11px]" title={row.command}>
                     {titleOf(row)}
                 </span>
+                {/* 结局无人接：这条跑完了，但起它的房间已不在 —— 没人被叫醒，日志只能自己来翻 */}
+                {row.delivered === false && (
+                    <span
+                        title="结局无人接：起它的房间已删或成员已退 —— 作业跑完了，但没人收到通知（日志仍在）"
+                        className="shrink-0 rounded border border-amber-500/40 px-1 text-[10px] text-amber-600"
+                    >
+                        无人接
+                    </span>
+                )}
                 <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">
                     {fmtDur(dur)}
                     <span className="ml-1 opacity-60">{fmtAt(row.startedAt)}</span>
@@ -529,4 +540,29 @@ export function JobsChip() {
             )}
         </>
     );
+}
+
+/**
+ * 全局作业面板：**不挂在输入框上**，由外壳（标题栏那颗「作业 N」）打开。
+ *
+ * 为什么需要第二个入口：抽屉里的表本来就是实例级的（`jobs.list` 一个实例一张表），
+ * 但入口只在房间的输入框底栏 —— 而「结局无人接」恰恰发生在**房间被删之后**，
+ * 那时那个房间的会话面根本不存在，`delivered:false` 的标记就永远没人看见。
+ * 这份只负责「没有房间也能打开」，数据与抽屉组件和 chip 共用（不另算一套）。
+ *
+ * **由宿主条件挂载**（`{open && <JobsPanel … />}`）而不是自带 `open` 开关：`useJobs` 的
+ * 轮询是「拉了就一直拉」，关着不卸载就等于每 5s 白跑一趟 —— 账本不该为一张看不见的面板买账。
+ */
+export function JobsPanel({ onClose }: { onClose: () => void }) {
+    const { rows, reload } = useJobs(true);
+    const [now, setNow] = React.useState(() => Date.now());
+
+    // 秒表：与 chip 同一条规则（只在本机跳）
+    React.useEffect(() => {
+        if (!rows.some(isRunning)) return;
+        const timer = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+    }, [rows]);
+
+    return <JobsDrawer rows={rows} now={now} onClose={onClose} onKilled={reload} />;
 }

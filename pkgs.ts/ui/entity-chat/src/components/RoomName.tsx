@@ -189,24 +189,39 @@ export function StatusGlyph({
     room,
     className = '',
     iconClass = 'size-4',
+    running = false,
 }: {
     room: Room;
     className?: string;
     iconClass?: string;
+    /** 这个容器此刻真有成员在跑：呼吸一下（**不加新元素**，也不抢状态图标本身的颜色） */
+    running?: boolean;
 }) {
     if (room.type !== 'task') return null;
     const status = taskStatusOf(room);
     const meta = statusMeta(status);
     const Icon = STATUS_ICON[status];
     return (
-        <span className={`inline-flex shrink-0 ${meta.text} ${className}`} title={`状态：${meta.label}`}>
+        <span
+            className={`inline-flex shrink-0 ${meta.text} ${className} ${running ? 'animate-pulse' : ''}`}
+            title={`${running ? '正在运行 · ' : ''}状态：${meta.label}`}
+        >
             <Icon className={iconClass} strokeWidth={2.4} />
         </span>
     );
 }
 
 /** 只画图标（不画文字）：侧栏行展开态用。点一下 open ↔ closed */
-export function StatusIcon({ room, className = '' }: { room: Room; className?: string }) {
+export function StatusIcon({
+    room,
+    className = '',
+    running = false,
+}: {
+    room: Room;
+    className?: string;
+    /** 有成员在跑：图标呼吸（与 open / closed 那颗开关并排，但不合并 —— 那是人写的，这是事实） */
+    running?: boolean;
+}) {
     if (room.type !== 'task') return null;
     const status = taskStatusOf(room);
     const meta = statusMeta(status);
@@ -217,11 +232,11 @@ export function StatusIcon({ room, className = '' }: { room: Room; className?: s
                 event.stopPropagation();
                 void actions.setRoomStatus(room.id, next);
             }}
-            title={`${meta.label}（点击${next === 'closed' ? '关闭，并从项目树收起' : '重新打开'}）`}
+            title={`${running ? '正在运行 · ' : ''}${meta.label}（点击${next === 'closed' ? '关闭，并从项目树收起' : '重新打开'}）`}
             aria-label={`状态：${meta.label}（点击切换）`}
             className={`shrink-0 rounded p-0.5 hover:bg-muted ${className}`}
         >
-            <StatusGlyph room={room} iconClass="size-3.5" />
+            <StatusGlyph room={room} iconClass="size-3.5" running={running} />
         </button>
     );
 }

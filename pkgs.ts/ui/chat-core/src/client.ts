@@ -4,7 +4,7 @@
 //   现在：@diy-agent/chat-transport-rpc
 //   将来：@diy-agent/chat-transport-rpc（diy-rpc 落地后直接换实现，core 不动）
 
-import type { AskAnswer, Command, Snapshot, StreamEvent } from './types';
+import type { ActivityFrame, AskAnswer, Command, Snapshot, StreamEvent } from './types';
 
 export interface TokenUsage {
     inputTokens: number;
@@ -90,6 +90,14 @@ export interface ChatClient {
      * 话题；换成 rpc 时同样应该是一条连接 + 订阅。
      */
     watch?(entityId: string, onEvent: (event: StreamEvent) => void): () => void;
+
+    /**
+     * 可选：订阅**实例级活动**（谁在跑 / 几个作业在跑），首帧是当前快照。
+     *
+     * 与 `watch` 分工：那个管「这个房间怎么了」，这个管「整台实例现在有没有活在跑」——
+     * 侧栏每一行的呼吸态、标题栏那颗图标靠它，且**不随看的房间切换**（切页也不重订）。
+     */
+    subscribeActivity?(onFrame: (frame: ActivityFrame) => void): () => void;
 
     /**
      * 可选：回答一次挂起的提问（整批一次提交）。

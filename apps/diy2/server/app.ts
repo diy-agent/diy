@@ -34,7 +34,7 @@ import {
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
 import { diy2Api } from '@diy-agent/protocol';
-import type { AskAnswer, AskQuestionAnswer, Author, Bot, JobRunRow, Room } from '@diy-agent/protocol';
+import type { ActivityFrame, AskAnswer, AskQuestionAnswer, Author, Bot, JobRunRow, Room } from '@diy-agent/protocol';
 
 /**
  * 新房间的缺省模型：`model.yaml` 的 `defaultModel` 优先，没有才用这个写死的兜底。
@@ -107,6 +107,54 @@ function broadcast(roomId: string, payload: RoomFrame): void {
     for (const sink of subscribers.get(roomId) ?? []) sink(payload);
 }
 
+// ─── 全局活动（实例级，不属于任何房间）───────────────────────────
+
+/**
+ * 「谁在跑」的实例级订阅者。与 `subscribers` 分开：那张表按房间分，这张是全实例一条流。
+ */
+let activitySinks = new Set<(frame: ActivityFrame) => void>();
+/** 上一次推过的内容（序列化后）：running 与作业起停会撞在一起，内容没变就别发 */
+let lastActivityKey = '';
+
+/**
+ * 这一刻的活动快照：有成员在跑的房间 + 在跑的作业数。
+ *
+ * 两个真源都是**已经算好的**（`actor.runningBots()` / `jobs.list()`），这里不另算一套 ——
+ * 房间流与作业账本各说自己那半，这个函数只负责把它们汇成一条给标题栏的帧。
+ */
+function activityFrame(): ActivityFrame {
+    return {
+        kind: 'activity',
+        rooms: [...rooms.values()]
+            .map((actor) => ({ id: actor.spec.id, botIds: actor.runningBots() }))
+            .filter((row) => row.botIds.length > 0),
+        jobs: jobs.list().filter((run) => run.state === 'running').length,
+    };
+}
+
+/**
+ * 推一次全局活动。**没人订阅就算也不算**（不留 lastActivityKey，下次有人来时任它真值）。
+ *
+ * 新订阅者的首帧由 `attachActivity` 自己给，不依赖这里 —— 两条路才是「打开页面就有数」。
+ */
+function broadcastActivity(): void {
+    if (activitySinks.size === 0) return;
+    const frame = activityFrame();
+    const key = JSON.stringify(frame);
+    if (key === lastActivityKey) return;
+    lastActivityKey = key;
+    for (const sink of activitySinks) sink(frame);
+}
+
+function attachActivity(sink: (frame: ActivityFrame) => void): () => void {
+    // 首帧 = 当前快照：已经有一轮在跑时新开的页面不该等到下一次变化才亮
+    sink(activityFrame());
+    activitySinks.add(sink);
+    return () => {
+        activitySinks.delete(sink);
+    };
+}
+
 /** 房间的工作目录：自己的 data.dir，任务则继承所属项目 */
 function cwdOf(spec: Room): string | undefined {
     const own = spec.data['dir'];
@@ -160,7 +208,11 @@ function actorOf(spec: Room): RoomActor {
             spec,
             store,
             bots: () => store.listBots(),
-            emit: (event) => broadcast(spec.id, event),
+            emit: (event) => {
+                broadcast(spec.id, event);
+                // turn 起停 = 全实例「谁在跑」的开销点：标题栏那颗图标与侧栏每一行都靠这个
+                if (event.kind === 'running') broadcastActivity();
+            },
             budget: config.compact,
             onCompact: (bot, event) => logCompact(spec.id, bot, event),
             ...(cwd === undefined ? {} : { cwd }),
@@ -202,6 +254,8 @@ function jobRowOf(info: ReturnType<ReturnType<typeof createJobRegistry>['list']>
         ...(info.exitCode === undefined ? {} : { exitCode: info.exitCode }),
         ...(info.signal === undefined ? {} : { signal: info.signal }),
         ...(info.error === undefined ? {} : { error: info.error }),
+        // 只报「确实没人接」：true / undefined 都不写，界面只在能报警时才多一个标记
+        ...(info.delivered === false ? { delivered: false } : {}),
         ...(info.origin === undefined
             ? {}
             : {
@@ -457,6 +511,8 @@ export function createDiy2App(opts: {
     serveStatic = createStaticHandler(opts.webDir === null ? undefined : (opts.webDir ?? config.webDir));
     rooms = new Map();
     subscribers = new Map();
+    activitySinks = new Set();
+    lastActivityKey = '';
 
     mkdirSync(config.home, { recursive: true });
     store = openStore(config.dbPath);
@@ -465,7 +521,19 @@ export function createDiy2App(opts: {
     // 根目录 `<home>/log/job/runs`：与其余运行产物同根，清 home 就清干净。
     jobs = createJobRegistry({
         rootDir: join(config.home, 'log', 'job', 'runs'),
-        onDone: (event, owner) => rooms.get(owner.roomId)?.notifyJobDone(owner, event),
+        // 作业起停也要推活动：作业不属于任何房间流，标题栏那颗「作业 N」靠它亮
+        onChange: () => broadcastActivity(),
+        // 房间已删 / 成员已退 → 回报 false：账本把结局记成 `delivered:false`（盘上 `done.json`
+        // 的 `notified:false`），全局面板据此标「结局无人接」。用 `?.` 静默丢弃等于让这条活跑完
+        // 之后没人知道 —— 那正是用户报的「逃逸」之一。
+        onDone: (event, owner) => {
+            const actor = rooms.get(owner.roomId);
+            if (actor === undefined) {
+                console.warn(`[job] 结束通知无人接：房间 ${owner.roomId} 已不存在（run ${event.run.id}）`);
+                return false;
+            }
+            return actor.notifyJobDone(owner, event);
+        },
     });
 
     seed();
@@ -496,9 +564,13 @@ export function createDiy2App(opts: {
                         const at = lastItemAt[id];
                         const pendingRequests = actor.pendingAskRequests();
                         const pendingAsks = pendingRequests.length;
+                        // 在跑成员数：与全局活动帧同源（`runningBots`），这里只是「列表里顺带一份」，
+                        // 给那些还没建活动流的老客户端一个初值
+                        const running = actor.runningBots().length;
                         return {
                             ...actor.spec,
                             hasDraft: withInputDraft.has(id),
+                            ...(running === 0 ? {} : { running }),
                             ...(pendingAsks === 0 ? {} : { pendingAsks }),
                             // 带题干：侧栏 ? 的 tooltip 要说清「问的是什么」，只说个数进房间还得自己翻
                             ...(pendingAsks === 0
@@ -732,6 +804,7 @@ export function createDiy2App(opts: {
     // RPC 面：事件流（WS）+ 命令面。与 SSE 并存一段时间 —— 客户端切过去、验证稳定后再删 SSE。
     const rpc = createRpcSocket({
         attach,
+        attachActivity,
         hasRoom: (roomId) => roomOf(roomId) !== undefined,
         bind: bindDiy2Api,
     });
@@ -752,6 +825,7 @@ export function createDiy2App(opts: {
     const close = (): void => {
         rpc.close();
         subscribers.clear();
+        activitySinks.clear();
     };
 
     return { handle, handleUpgrade: rpc.handleUpgrade, rpcStreams: rpc.streams, info, close };

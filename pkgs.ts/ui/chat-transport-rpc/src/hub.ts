@@ -13,6 +13,7 @@
 import { ChannelClientBinding, type StreamHandle } from '@diy-agent/rpc';
 import { WsTransport, connectWs } from '@diy-agent/rpc/ws/browser';
 import type { StreamEvent } from '@diy-agent/chat-core';
+import type { ActivityFrame } from '@diy-agent/protocol';
 
 const RECONNECT = { baseMs: 500, maxMs: 30_000 } as const;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -27,6 +28,13 @@ export interface StreamHubOptions {
 const topicOfRoom = (roomId: string): string => `room:${roomId}`;
 const roomOfTopic = (topic: string): string => topic.slice('room:'.length);
 
+/**
+ * 实例级活动流的话题名（服务端 rpc.ts 的 `ACTIVITY_TOPIC` 必须同值）。
+ *
+ * 它不是房间：`openTopic` 据此改走 `activity` 那条 server-stream（不带房间参数）。
+ */
+const ACTIVITY_TOPIC = '@activity';
+
 function defaultRpcUrl(): string | undefined {
     const where = (globalThis as { location?: { protocol: string; host: string } }).location;
     if (where === undefined) return undefined;
@@ -37,8 +45,13 @@ export class StreamHub {
     /** undefined = 没有可推导的地址（SSR / 单测）：不连、也不报错 —— 事件流在这里不是必需品 */
     private readonly rpcUrl: string | undefined;
     private readonly timeoutMs: number;
-    /** 话题 → 监听者。连接断着也留着：重连后照这张表重开 */
-    private readonly topics = new Map<string, Set<(event: StreamEvent) => void>>();
+    /**
+     * 话题 → 监听者。连接断着也留着：重连后照这张表重开。
+     *
+     * 值是 `unknown`：房间话题送 `StreamEvent`、`@activity` 送 `ActivityFrame` —— 两条流的
+     * 帧型不同，但「按话题分发」这套机制一模一样，不为此分两个 hub。
+     */
+    private readonly topics = new Map<string, Set<(event: unknown) => void>>();
     /** 正在开的流（同一个话题可能被 watch 和 post 同时要，别开两遍） */
     private readonly starting = new Map<string, Promise<boolean>>();
     /** 话题 → 取消信号（stop 时 abort；rpc 会同时给服务端发 cancel 帧） */
@@ -65,6 +78,19 @@ export class StreamHub {
      * 已经连着会立刻开流；正在连 / 断着时只登记，等连上后由重连循环统一重开。
      */
     subscribe(topic: string, listener: (event: StreamEvent) => void): () => void {
+        return this.listen(topic, listener as (event: unknown) => void);
+    }
+
+    /**
+     * 订阅**实例级活动**（谁在跑 / 几个作业在跑）。首帧是当前快照，不是 `ready`。
+     *
+     * 与房间流同一条连接、同一套重连：断线重连后这张表里的活动话题也会被重开一遍。
+     */
+    subscribeActivity(listener: (frame: ActivityFrame) => void): () => void {
+        return this.listen(ACTIVITY_TOPIC, listener as (event: unknown) => void);
+    }
+
+    private listen(topic: string, listener: (event: unknown) => void): () => void {
         let set = this.topics.get(topic);
         if (set === undefined) {
             set = new Set();
@@ -200,11 +226,15 @@ export class StreamHub {
         const controller = new AbortController();
         let handle: StreamHandle<unknown>;
         try {
-            handle = await binding.serverStream(
-                'room',
-                { input: { room: roomOfTopic(topic) } },
-                { signal: controller.signal },
-            );
+            // 活动流不属任何房间：走 `activity` 那条 server-stream（入参为空）
+            handle =
+                topic === ACTIVITY_TOPIC
+                    ? await binding.serverStream('activity', { input: {} }, { signal: controller.signal })
+                    : await binding.serverStream(
+                          'room',
+                          { input: { room: roomOfTopic(topic) } },
+                          { signal: controller.signal },
+                      );
         } catch {
             return false;
         }
@@ -223,7 +253,7 @@ export class StreamHub {
     private async pump(topic: string, handle: StreamHandle<unknown>, controller: AbortController): Promise<void> {
         try {
             for await (const event of handle) {
-                for (const listener of this.topics.get(topic) ?? []) listener(event as StreamEvent);
+                for (const listener of this.topics.get(topic) ?? []) listener(event);
             }
         } catch {
             /* 连接断了 / 被 abort：交给 loop 重连后重开 */

@@ -17,6 +17,14 @@ import { z } from 'zod';
 /** WS 端点；与 HTTP 共用同一个 server（`upgrade` 分流） */
 export const RPC_PATH = '/rpc';
 
+/**
+ * 全局活动流在「这条连接在看什么」里的占位名（`streams()` 排查用）。
+ *
+ * **不是房间**：它只是一条实例级的流，客户端用同一个值发订阅（见 chat-transport-rpc 的
+ * `ACTIVITY_TOPIC`）—— 两边必须一致，改一处就要改另一处。
+ */
+export const ACTIVITY_TOPIC = '@activity';
+
 /** 与 `./stream.ts` 的帧同一形状：`RoomEvent | { kind: 'done' }` */
 type Frame = unknown;
 type Attach = (roomId: string, sink: (frame: Frame) => void) => () => void;
@@ -28,6 +36,11 @@ export const eventsApi = RpcSchema.group({
          * 客户端据此知道「从现在起事件连续了」，补拉一次快照填断线期间的空洞。
          */
         room: RpcSchema.serverStream({ input: { room: z.string() }, output: z.unknown() }),
+        /**
+         * 全局活动（实例级）：谁在跑 / 几个作业在跑。**不带房间号** —— 一条流汇报全实例，
+         * 首个帧就是当前快照（而 `ready` 只说明「往后连续」，不是数据）。
+         */
+        activity: RpcSchema.serverStream({ input: {}, output: z.unknown() }),
         /** 当前连接与它们在看的房间（dev app / 排查用） */
         streams: RpcSchema.unary({
             input: {},
@@ -51,6 +64,12 @@ interface ConnState {
 export interface RpcSocketOptions {
     /** 接到广播上（`app.ts` 的 `attach`）：返回 teardown */
     attach: Attach;
+    /**
+     * 接到**实例级活动**上：返回 teardown。
+     *
+     * 与 `attach` 分开是因为它不按房间分：一条流一个 sink，全实例的快照由宿主算好推。
+     */
+    attachActivity?: (sink: (frame: Frame) => void) => () => void;
     /** 房间当前是否存在（删掉的房间不该再被订阅） */
     hasRoom: (roomId: string) => boolean;
     /** 宿主在这里挂自己的 RPC 面（命令面：rooms / bots / chat / …） */
@@ -133,6 +152,23 @@ export function createRpcSocket(options: RpcSocketOptions): RpcSocket {
                 yield* roomFrames(room, signal, options.attach);
             } finally {
                 state.rooms.delete(room);
+            }
+        });
+
+        // 活动流：不校验房间（它不属于任何房间）。宿主没挂 attachActivity 就当成空流 ——
+        // 老装配（只房间）照样能跑，只是客户端拿不到全局帧
+        binding._on('activity', eventsApi.activity, async function* ({ signal }) {
+            const attachActivity = options.attachActivity;
+            if (attachActivity === undefined) {
+                yield await new Promise<never>(() => undefined);
+                return;
+            }
+            state.rooms.add(ACTIVITY_TOPIC);
+            try {
+                // 活动流没有「房间号」这个维度：包一层把 `Attach` 的 (roomId, sink) 适配成 sink
+                yield* roomFrames(ACTIVITY_TOPIC, signal, (_topic, sink) => attachActivity(sink));
+            } finally {
+                state.rooms.delete(ACTIVITY_TOPIC);
             }
         });
 

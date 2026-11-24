@@ -23,6 +23,7 @@ import type {
 } from '@diy-agent/chat-core';
 
 import type {
+    ActivityFrame,
     JobRunRow,
     ModelCatalogModel,
     ModelCatalogProvider,
@@ -62,6 +63,13 @@ export type RoomRow = Room & {
     pendingAsks?: number;
     pendingAskTitles?: string[];
     lastActivityAt?: number;
+    /**
+     * 在跑成员数（侧栏每一行的呼吸态）。0 不写 —— 与 `pendingAsks` 同一约定。
+     *
+     * 只当**初值**用：真正的更新走全局活动流（`ActivityFrame`），这条字段让首屏 / 断线
+     * 重连时不必等下一次 turn 起停才知道谁在跑。
+     */
+    running?: number;
 };
 
 export class RpcChatClient implements ChatClient {
@@ -182,6 +190,11 @@ export class RpcChatClient implements ChatClient {
     /** 常驻订阅：重连 / 退避 / `ready` 全在 StreamHub；这里只说「我要看哪个房间」 */
     watch(entityId: string, onEvent: (event: StreamEvent) => void): () => void {
         return this.hub.subscribe(topicOf(entityId), onEvent);
+    }
+
+    /** 实例级活动（谁在跑 / 几个作业在跑）：一条流汇报全实例，首帧就是当前快照 */
+    subscribeActivity(onFrame: (frame: ActivityFrame) => void): () => void {
+        return this.hub.subscribeActivity(onFrame);
     }
 
     async sessions(entityId: string): Promise<SessionInfo[]> {

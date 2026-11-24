@@ -19,6 +19,10 @@ import { LayerProvider } from '@astryxdesign/core/Layer';
 import { Theme } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import {
+    ActiveJobsGlyph,
+    ActiveSessionsGlyph,
+    JobsPanel,
+    jumpToFirstRunningRoom,
     RoomDialogsProvider,
     Sidebar,
     useLoaded,
@@ -142,6 +146,10 @@ function Host() {
     // 收起后的样子是**窗口**的偏好（跨页共享）；hook 在 window 里，壳只把它往下传
     const [chrome, setChrome] = useChrome();
 
+    // 全局作业面板：标题栏那颗「作业 N」打开的。不挂在任何页里 —— 它要能在**没有房间**时也打开
+    // （应用刚删完房间、或没人接的作业还在跑，正是需要看它的时候）
+    const [jobsOpen, setJobsOpen] = useState(false);
+
     // 全局层向标题栏**注册**的按钮：导航开关 + 设置。
     // 这两颗不属于任何一页，所以不该由页模板提供（那会让每页各写一份）。
     const global = useMemo<WindowContribution[]>(
@@ -159,6 +167,28 @@ function Host() {
                 ],
             },
             {
+                // 活动：两颗**并列**（用户 2026-11-24 裁），一个是「有轮次在跑」、一个是「有进程在跑」。
+                // 数字由组件自己订阅（全实例活动流）—— 宿主不跟着重渲，否则每有人开跑就要
+                // 把整页的根走一遍。
+                id: 'activity',
+                tools: [
+                    {
+                        id: 'sessions',
+                        label: '会话活动：有轮次在跑时呼吸，点击跳到第一个',
+                        glyph: <ActiveSessionsGlyph />,
+                        onClick: jumpToFirstRunningRoom,
+                    },
+                    {
+                        id: 'jobs',
+                        label: '后台作业：有作业在跑时呼吸，点击打开全局面板',
+                        glyph: <ActiveJobsGlyph />,
+                        onClick: () => {
+                            setJobsOpen(true);
+                        },
+                    },
+                ],
+            },
+            {
                 id: 'app',
                 tools: [
                     {
@@ -172,6 +202,8 @@ function Host() {
                 ],
             },
         ],
+        // `jumpToFirstRunning*` 是模块级命令（不依赖 props），所以不必进依赖表；
+        // `setJobsOpen` 是 setState（引用恒定），同理
         [open, toggle, dialogs],
     );
 
@@ -189,6 +221,7 @@ function Host() {
                     </div>
                 </div>
                 {dialogs.element}
+                {jobsOpen && <JobsPanel onClose={() => setJobsOpen(false)} />}
             </RoomDialogsProvider>
         );
     }
@@ -208,6 +241,7 @@ function Host() {
                 />
             </div>
             {dialogs.element}
+            {jobsOpen && <JobsPanel onClose={() => setJobsOpen(false)} />}
         </RoomDialogsProvider>
     );
 }

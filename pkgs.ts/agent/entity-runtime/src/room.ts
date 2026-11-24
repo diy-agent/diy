@@ -912,11 +912,13 @@ export class RoomActor {
      * 后台作业收口：宿主把 `JobDoneEvent` 按归属串路由回来，这里给起它的成员插一条 notice 并叫醒它。
      *
      * 不负责「告诉用户作业结束了」——UI 自己看账本；这里只解决模型的记忆：它起完活就去干别的了，
-     * 不叫醒就永远不会去取结果。归属串对不上（别的房间 / 已退出的成员）= 静默丢弃。
+     * 不叫醒就永远不会去取结果。归属串对不上（已退出的成员）= 丢弃，但**要回报 false**：
+     * 账本据此把这条 run 记成「结局无人接」（盘上 `done.json` 里 `notified: false`），
+     * 否则它跑完了、谁也不知道，只剩一堆没人认领的产物。
      */
-    notifyJobDone(owner: JobOwner, event: JobDoneEvent): void {
+    notifyJobDone(owner: JobOwner, event: JobDoneEvent): boolean {
         const bot = this.members().find((candidate) => candidate.id === owner.botId);
-        if (bot === undefined) return;
+        if (bot === undefined) return false;
         const turn = this.newTurn();
         const now = this.deps.now?.() ?? Date.now();
         const notice: Item = {
@@ -939,5 +941,6 @@ export class RoomActor {
             mode: 'next-turn',
             text: `[后台作业结束] ${event.text}`,
         });
+        return true;
     }
 }

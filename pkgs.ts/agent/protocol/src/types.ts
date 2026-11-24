@@ -132,6 +132,11 @@ export interface JobRunRow {
     error?: string;
     /** 谁起的：`taskUri` 是 dsh 的实体地址（房间 / 任务），turnId 是那一轮 */
     origin?: { taskUri: string; turnId?: string };
+    /**
+     * 结局有没有送到（`false` = 无人接：房间已删 / 成员已退）。
+     * 只在这种确定落空时才带 —— 没这个键 = 正常投递或还没收口。
+     */
+    delivered?: boolean;
 }
 
 export type Item =
@@ -351,6 +356,27 @@ export type StreamEvent =
 
 /** 房间自己会发的事件（`done` 属于传输层，不属于领域） */
 export type RoomEvent = Exclude<StreamEvent, { kind: 'done' }>;
+
+/**
+ * **全局活动帧**（实例级，不属于任何房间）：这一刻整个进程里有什么在跑。
+ *
+ * 为什么需要它：房间流只盖「你在看的那个房间」，而用户在别人的页 / 导航收起时
+ * 也想知道「现在有没有活在跑」（侧栏每一行、标题栏那颗图标）。三个选择里选了
+ * 「服务端推一条全量快照」而不是「调快 `rooms.list` 轮询」：轮询要算全部房间的
+ * 草稿 / 待答 / 末条时间，房间一多就白烧；而这里推的是**已算好的结果**，只在
+ * turn 起停 / 作业起停时发一次。
+ *
+ * 口径：`rooms` 只列**有在跑成员**的房间（空数组 = 都闲着），`jobs` 是在跑的
+ * 后台作业数（实例级账本）。两者都只有「数」和「谁在跑」—— 详情（命令 / 输出 / 卡在哪）
+ * 仍旧各回各家（房间流 / `diy2.jobs.list`），这里不当第二个真源。
+ */
+export interface ActivityFrame {
+    kind: 'activity';
+    /** 有成员在跑的房间：`botIds` 就是那个房间此刻的 running 集合 */
+    rooms: { id: string; botIds: string[] }[];
+    /** 在跑的后台作业数（一个实例一张表） */
+    jobs: number;
+}
 
 export interface Snapshot {
     items: Item[];

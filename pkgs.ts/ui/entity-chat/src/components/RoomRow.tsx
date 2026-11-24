@@ -10,7 +10,14 @@ import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
 import { formatActivityAgo, formatAtAbsolute, roomTitle, taskNumberOf, type Room } from '../model';
 import { pendingAskHintOf } from '../pendingAsk';
-import { actions, useIsCurrentRoom, useLastActivityOf, usePendingAskOf, usePendingAskTitlesOf } from '../store';
+import {
+    actions,
+    useIsCurrentRoom,
+    useLastActivityOf,
+    usePendingAskOf,
+    usePendingAskTitlesOf,
+    useRunningOf,
+} from '../store';
 import { isPlainLeftClick } from './link';
 import { EditableName, StatusGlyph, StatusIcon } from './RoomName';
 
@@ -91,6 +98,9 @@ export function RoomRowView({
     // 挂一个「—」只会多一列噪音。
     const activityAt = useLastActivityOf(room.id);
     const activityAgo = formatActivityAgo(activityAt);
+    // 这个容器此刻在跑几个人（全实例活动流；别的房间起停不重渲这一行）。
+    // **不加新元素**（用户 2026-11-24 裁）：呼吸 + 提亮就够，行里已经有三件标记了。
+    const running = useRunningOf(room.id) > 0;
     const [renaming, setRenaming] = React.useState(false);
     const isProject = room.type === 'project';
     /** 任务编号（非 task / 没编号 = undefined）。提出来是为了 narrow 后直接用 */
@@ -111,12 +121,16 @@ export function RoomRowView({
                     event.preventDefault();
                     actions.select(room.id);
                 }}
-                title={`${room.type}：${roomTitle(room)}${pendingAsk > 0 ? `（${askHint}）` : ''}`}
+                title={`${room.type}：${roomTitle(room)}${running ? '（正在运行）' : ''}${pendingAsk > 0 ? `（${askHint}）` : ''}`}
                 className={`relative flex w-full items-center justify-center rounded-lg py-2 ${
                     active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
                 }`}
             >
-                {isProject ? <Icon className="size-4 text-sky-400" /> : <StatusGlyph room={room} iconClass="size-4" />}
+                {isProject ? (
+                    <Icon className="size-4 text-sky-400" />
+                ) : (
+                    <StatusGlyph room={room} iconClass="size-4" running={running} />
+                )}
                 {hasDraft && (
                     <span
                         title="有未提交的草稿"
@@ -138,7 +152,8 @@ export function RoomRowView({
     return (
         <div
             className={`group relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
-                active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
+                // 在跑的容器文字提亮：一眼就能从一列灰字里挑出「哪个任务在干活」
+                active || running ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
             }`}
         >
             {/* 状态图标在**标题前**（用户：像 GitHub 的 open / closed）：行里唯一的前缀图标。
@@ -162,7 +177,11 @@ export function RoomRowView({
                 </button>
             )}
 
-            {isProject ? <Icon className="size-3.5 shrink-0 text-sky-400" /> : <StatusIcon room={room} />}
+            {isProject ? (
+                <Icon className="size-3.5 shrink-0 text-sky-400" />
+            ) : (
+                <StatusIcon room={room} running={running} />
+            )}
 
             {/* 任务编号（#14）：紧跟在状态图标后面 —— 它是这一行除了标题之外唯一的**身份**。
                 用户要认「#14 那个任务」，标题可能重名 / 被改；编号不会。 */}
