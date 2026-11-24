@@ -81,7 +81,7 @@ export type FactsCell = z.infer<typeof FactsCellSchema>;
  */
 const UNIT_REF = z.object({
   id: z.string().describe("unit id（任务内唯一，形如 u3）"),
-  title: z.string().describe("这一步做什么（一句可执行的话）"),
+  title: z.string().describe("这一件是什么产出（能被验收，不是动作：写「什么改好了」，不是「改哪个文件」）"),
   deps: z.array(z.string()).describe("前置 unit id：这些都 done 了才能做它（blocked 的原因就是它们）"),
 });
 

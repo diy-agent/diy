@@ -76,9 +76,14 @@ export function unitTools(host: UnitHost): ToolSet {
 
         unit_add: tool({
             description:
-                '往任务里加一批工作单元（原子步）。`deps` = 这些做完才能做新的（DAG 的边）：' +
+                '往任务里加一批工作单元。**一条 unit = 一件能被验收的产出**，不是一次动作 —— ' +
+                '判据：做完之后能拿什么东西给人看（新行为 / 新接口 / 改好的数据 / 一份能引用的结论）。' +
+                '反例（**别进图**）：读某文件、改某文件、跑测试、全量质检、扫尾翻新 —— 那些是你干活时的执行步骤，' +
+                '自己排就行，不需要图里的人看到。正例：「deleteRoom 事务化（中途失败不留半个删）」' +
+                '「unit 取消后下游进 blocked，且给得出被谁挡」。' +
+                '`deps` 是 DAG 的边，**必须写进 deps 参数**（写进 title / body 等于没连边）：' +
                 '可以写已有的 unit id（u3），也可以写同一批里**前面**某项的 key。' +
-                '一次能加几条就加几条（生长式规划）；title 写成一句可执行的话，body 写验收口径。',
+                '一次能加几条就加几条（生长式规划）；body 写验收口径。',
             inputSchema: z.object({
                 items: z
                     .array(
@@ -87,7 +92,7 @@ export function unitTools(host: UnitHost): ToolSet {
                                 .string()
                                 .optional()
                                 .describe('本批内的别名：后面的项可以在 deps 里用它引用这一项'),
-                            title: z.string().min(1).describe('一步做什么（一句话，可执行）'),
+                            title: z.string().min(1).describe('一件能被验收的产出（不是动作：写「什么改好了」，不是「改哪个文件」）'),
                             body: z.string().optional().describe('可选：验收口径 / 注意点'),
                             deps: z
                                 .array(z.string())
