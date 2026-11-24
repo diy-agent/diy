@@ -10,7 +10,7 @@
 import { formatAddress, knownPage, parseAddress, sameAddress } from '@diy-agent/entity-chat';
 import { describe, expect, it } from 'vitest';
 
-import { ROLES_ADDRESS, sectionOf, SETTINGS_ADDRESS, SETTINGS_PAGE } from '../src/workbench/settings';
+import { ROLES_ADDRESS, rolesAddressOf, rolesTypeOf, sectionOf, SETTINGS_ADDRESS, SETTINGS_PAGE } from '../src/workbench/settings';
 
 describe('设置页地址', () => {
     it('页类型已注册（注册是 settings.ts 的模块级副作用）', () => {
@@ -45,5 +45,25 @@ describe('设置页地址', () => {
         expect(sectionOf('roles')).toBe('roles');
         expect(sectionOf('随便写的')).toBe('model');
         expect(sectionOf('')).toBe('model');
+    });
+
+    it('角色深链：/settings/roles/task 是一个能贴的地址，且落到角色段', () => {
+        const address = rolesAddressOf('task');
+        expect(formatAddress(address)).toBe('/settings/roles/task');
+        const parsed = parseAddress('/settings/roles/task');
+        expect(sameAddress(parsed, address)).toBe(true);
+        // 贴进来 / 刷新都靠这两行：段还得是角色段，类型还得认得出来
+        expect(sectionOf(parsed!.id)).toBe('roles');
+        expect(rolesTypeOf(parsed!.id)).toBe('task');
+        expect(rolesTypeOf('roles:project')).toBe('project');
+    });
+
+    it('深链只做 task / project：其余类型回落整张列表', () => {
+        expect(formatAddress(rolesAddressOf('stock'))).toBe('/settings/roles');
+        expect(rolesTypeOf('roles')).toBeUndefined();
+        expect(rolesTypeOf('roles:stock')).toBeUndefined();
+        expect(rolesTypeOf('roles:task:extra')).toBeUndefined();
+        // 即便类型不认识，段依旧是角色段（不静默掉到模型段）
+        expect(sectionOf('roles:stock')).toBe('roles');
     });
 });

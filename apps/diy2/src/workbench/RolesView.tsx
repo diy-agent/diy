@@ -533,7 +533,7 @@ function RoleEditor({ role, onDeleted }: { role: BotRole; onDeleted: () => void 
 
 // ── 页面 ─────────────────────────────────────────────────────────────────────
 
-export function RolesView() {
+export function RolesView({ initialType }: { initialType?: string | undefined } = {}) {
     const all = useRoles();
     const [selected, setSelected] = React.useState('');
     const [creating, setCreating] = React.useState(false);
@@ -541,7 +541,13 @@ export function RolesView() {
     // 类型按首次出现的顺序（服务端已按 type / primary / createdAt 排好序）
     const types: string[] = [];
     for (const role of all) if (!types.includes(role.type)) types.push(role.type);
-    const current = all.find((role) => role.id === selected) ?? all[0];
+    // 选中顺序：用户点过的 → 深链类型的第一个（primary 优先）→ 整表第一个。
+    // 深链（`/settings/roles/task`）就靠中间那行落到它那类角色上；用户之后点别的角色，
+    // `selected` 有值就不再被地址抢回去。
+    const current =
+        all.find((role) => role.id === selected) ??
+        all.find((role) => initialType !== undefined && role.type === initialType) ??
+        all[0];
 
     return (
         <div className="grid h-full min-h-0 grid-cols-[minmax(232px,288px)_1fr] bg-background text-foreground">

@@ -9,7 +9,7 @@
 // entity-chat 的地址体系了。反过来，**忘了引**的后果是 `navigate('/settings/…')` 被判成
 // 坏地址、静默落到第一个房间 —— 所以别把这行挪进函数里。
 
-import { addressOf, registerPage } from '@diy-agent/entity-chat';
+import { addressOf, registerPage, type NavAddress } from '@diy-agent/entity-chat';
 
 /** 页类型。地址第一段就是它：`/settings/<段>` */
 export const SETTINGS_PAGE = 'settings';
@@ -30,13 +30,49 @@ export type SettingsSection = keyof typeof SETTINGS_SECTIONS;
 /** 缺省段（齿轮 / 横幅「去配置」都落在这里） */
 export const SETTINGS_ADDRESS = SETTINGS_SECTIONS.model.address;
 
-/** 角色段：房间头「角色」按钮导航到这里 */
+/** 角色段：房间头「角色」按钮导航到这里（整张列表，不带类型） */
 export const ROLES_ADDRESS = SETTINGS_SECTIONS.roles.address;
+
+/**
+ * 角色段能深链的类型。
+ *
+ * 只做 task / project 两类（2026-11-24 用户裁）：房间头那颗「角色」按钮知道自己在哪类
+ * 房间，点进来就该落在那类角色上；其余类型（stock 之类）以后再说，先回落整张列表。
+ */
+export const ROLES_TYPES = ['task', 'project'] as const;
+
+export type RolesType = (typeof ROLES_TYPES)[number];
+
+function isRolesType(type: string): type is RolesType {
+    return (ROLES_TYPES as readonly string[]).includes(type);
+}
+
+/**
+ * 角色段的深链地址：带类型写成 `/settings/roles/task`。
+ *
+ * 借的是 room 地址那套：id 写成 `roles:<type>`，`formatId` 会拆成 `roles/<type>`，
+ * 反过来 `parseAddress` 拼回 `roles:<type>` —— 与 `task:t-001` 同一套转义，
+ * 不给设置页另发明一套地址语法。**认不得的类型回落整张列表**，不做「猜一个最像的」。
+ */
+export function rolesAddressOf(type: string): NavAddress {
+    return isRolesType(type) ? addressOf(SETTINGS_PAGE, `${SETTINGS_SECTIONS.roles.id}:${type}`) : ROLES_ADDRESS;
+}
+
+/** 地址 id → 深链类型。`roles`（整表）/ 不认识的类型 / 非角色段 → undefined */
+export function rolesTypeOf(id: string): RolesType | undefined {
+    const prefix = `${SETTINGS_SECTIONS.roles.id}:`;
+    if (!id.startsWith(prefix)) return undefined;
+    const type = id.slice(prefix.length);
+    return isRolesType(type) ? type : undefined;
+}
 
 /**
  * 地址的 `id` → 段。不认识的段（手改的地址、旧链接）落到缺省段，不报错也不落白屏。
  */
 export function sectionOf(id: string): SettingsSection {
+    // 角色段带深链后缀（`roles:task`）时也算角色段 —— 否则贴进来 / 刷新的深链会静默
+    // 掉到「模型」段，表现成「从任务房间点角色，打开的是模型配置」
+    if (id === SETTINGS_SECTIONS.roles.id || id.startsWith(`${SETTINGS_SECTIONS.roles.id}:`)) return 'roles';
     return id in SETTINGS_SECTIONS ? (id as SettingsSection) : 'model';
 }
 

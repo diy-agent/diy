@@ -29,7 +29,7 @@ import { useWb } from './AreaHost';
 import { ModelConfigView } from './ModelConfigView';
 import { area, definePage, defineView, type PageDef } from './model';
 import { RolesView } from './RolesView';
-import { ROLES_ADDRESS, SETTINGS_PAGE, SETTINGS_SECTIONS, sectionOf } from './settings';
+import { rolesAddressOf, rolesTypeOf, SETTINGS_PAGE, SETTINGS_SECTIONS, sectionOf } from './settings';
 
 // ── 页模板：位置写死，尺寸可拖 ───────────────────────────────────────────────────
 //
@@ -123,11 +123,19 @@ export function pageFor(type: string): PageDef {
  *
  * 房间头的「角色」按钮需要一个「去角色页」的动作：实体聊天包不认识设置页的地址，
  * 所以由宿主（这一层）给 —— 这也让 `entity-chat` 保持「不知道自己被装在哪」。
+ *
+ * 深链带**房间类型**（`/settings/roles/task`）：从任务房间点进去就落在那类角色上，
+ * 项目房间落 `project`，其余类型由 `rolesAddressOf` 回落整表。入口不变，还是头部那颗 chip。
  */
 function ChatBody() {
+    const room = useSelectedRoom();
     return (
         <div className="wb-chat">
-            <EntityChatApp sidebar={false} taskPanel={false} onManageRoles={() => navigate(ROLES_ADDRESS)} />
+            <EntityChatApp
+                sidebar={false}
+                taskPanel={false}
+                onManageRoles={() => navigate(rolesAddressOf(room?.type ?? ''))}
+            />
         </div>
     );
 }
@@ -160,7 +168,16 @@ function SettingsBody() {
                     这个实例的设置（不随房间走）
                 </span>
             </div>
-            <div className="min-h-0 flex-1">{section === 'roles' ? <RolesView /> : <ModelConfigView />}</div>
+            <div className="min-h-0 flex-1">
+                {section === 'roles' ? (
+                    // `key` 按地址重置：从任务房间（`roles:task`）切到项目房间（`roles:project`）
+                    // 时组件类型不变、state 会留下 —— 不加 key 就会「进了 project 还选着 task 的角色」。
+                    // 同一地址（用户自己在左栏点选）不重挂载，选中不被地址抢回去。
+                    <RolesView key={address.id} initialType={rolesTypeOf(address.id)} />
+                ) : (
+                    <ModelConfigView />
+                )}
+            </div>
         </div>
     );
 }
