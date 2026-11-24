@@ -224,11 +224,98 @@ describe('unit 工具', () => {
         const history = (await toolOf(tools, 'unit_history').execute({ limit: 10 })) as {
             events: Array<{ event: string }>;
         };
-        expect(history.events.map((event) => event.event)).toEqual(['updated', 'added']);
+        // 前缀剥到 `task.` 后仍留 `unit.` / `batch.` 区分（unit 与批次同一条时间线）
+        expect(history.events.map((event) => event.event)).toEqual(['unit.updated', 'unit.added']);
     });
 
     it('不存在的 id 报错里带出路（先 unit_list）', async () => {
         const { tools } = setup();
         await expect(toolOf(tools, 'unit_get').execute({ id: 'nope' })).rejects.toThrow(/unit_list/);
+    });
+
+    describe('交付批次（batch_*）', () => {
+        type Brief = {
+            batches: Array<{ id: string; stage: string; progress: string; canStart?: string[]; waitingOn?: string[] }>;
+            unbatched?: { count: number; ids: string[] };
+        };
+        const brief = async (tools: ReturnType<typeof buildRoomTools>) =>
+            (await toolOf(tools, 'unit_list').execute({})) as Brief;
+
+        it('建批 + unit_add 时直接挂：阶段由成员派生，未分批的被点名', async () => {
+            const { tools } = setup();
+            await toolOf(tools, 'batch_add').execute({ items: [{ key: 'p1', title: '地基' }] });
+            await toolOf(tools, 'unit_add').execute({
+                items: [
+                    { key: 'a', title: '建表', batch: 'p1' },
+                    { key: 'b', title: '写工具', deps: ['a'], batch: 'p1' },
+                    { key: 'c', title: '散着的', },
+                ],
+            });
+
+            const got = await brief(tools);
+            expect(got.batches).toEqual([
+                { id: 'p1', title: '地基', stage: 'active', progress: '0/2', canStart: ['建表'] },
+            ]);
+            // 分解完了但还没说「哪些一起交付」= 常态，必须看得见
+            expect(got.unbatched).toEqual({ count: 1, ids: ['c'] });
+        });
+
+        it('挂 / 摘成员；验收要求成员全 done，验收后能撤销', async () => {
+            const { tools } = setup();
+            await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b' }] });
+            await toolOf(tools, 'batch_add').execute({ items: [{ key: 'p1', title: 'p1', units: ['a'] }] });
+            await toolOf(tools, 'batch_assign').execute({ batch: 'p1', units: ['b'] });
+            expect((await brief(tools)).batches[0]).toMatchObject({ progress: '0/2' });
+
+            await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'done' });
+            // 没做完不许验收（不静默放行）
+            await expect(toolOf(tools, 'batch_accept').execute({ batch: 'p1' })).rejects.toThrow(/没做完/);
+
+            await toolOf(tools, 'unit_update').execute({ id: 'b', status: 'done' });
+            await toolOf(tools, 'batch_accept').execute({ batch: 'p1' });
+            expect((await brief(tools)).batches[0].stage).toBe('accepted');
+
+            // 撤销验收 → 回 review；再摘成员 → 回 doing
+            await toolOf(tools, 'batch_accept').execute({ batch: 'p1', accepted: false });
+            expect((await brief(tools)).batches[0].stage).toBe('review');
+            await toolOf(tools, 'batch_assign').execute({ batch: null, units: ['b'] });
+            expect((await brief(tools)).batches[0]).toMatchObject({ progress: '1/1', stage: 'review' });
+            expect((await brief(tools)).unbatched).toEqual({ count: 1, ids: ['b'] });
+        });
+
+        it('删批次只释放成员，节点还在；事件留 title + reason', async () => {
+            const { store, tools } = setup();
+            await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }] });
+            await toolOf(tools, 'batch_add').execute({ items: [{ key: 'p1', title: '地基', units: ['a'] }] });
+            const out = (await toolOf(tools, 'batch_drop').execute({ batch: 'p1', reason: '这批太大，拆开' })) as {
+                released: string[];
+            };
+            expect(out.released).toEqual(['a']);
+            expect(store.listUnits('t1').map((unit) => unit.id)).toEqual(['a']);
+            expect(store.listBatches('t1')).toEqual([]);
+
+            const dropped = store.eventsOf('t1', 'task.batch.').find((event) => event.event === 'task.batch.dropped');
+            expect(dropped?.data).toMatchObject({ id: 'p1', title: '地基', reason: '这批太大，拆开', members: ['a'] });
+        });
+
+        it('批次与 unit 同一条时间线：unit_history 能查到建批', async () => {
+            const { tools } = setup();
+            await toolOf(tools, 'batch_add').execute({ items: [{ key: 'p1', title: 'p1' }] });
+            const history = (await toolOf(tools, 'unit_history').execute({ limit: 10 })) as {
+                events: Array<{ event: string }>;
+            };
+            expect(history.events.map((event) => event.event)).toContain('batch.added');
+        });
+
+        it('挂不存在的批次直接报错，不静默丢', async () => {
+            const { tools } = setup();
+            await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }] });
+            await expect(toolOf(tools, 'batch_assign').execute({ batch: 'nope', units: ['a'] })).rejects.toThrow(
+                /batch_add/,
+            );
+            await expect(
+                toolOf(tools, 'unit_add').execute({ items: [{ key: 'b', title: 'b', batch: 'nope' }] }),
+            ).rejects.toThrow(/batch_add/);
+        });
     });
 });

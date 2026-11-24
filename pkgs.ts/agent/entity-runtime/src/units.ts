@@ -20,7 +20,7 @@
  *
  * 「删节点 = 解锁后继」不在这里处理：边在删除时已经随节点删掉，这里只看现存事实。
  */
-import type { UnitDep, UnitRecord, UnitStatus } from './db';
+import type { BatchRecord, UnitDep, UnitRecord, UnitStatus } from './db';
 
 /** 一个节点 + 它在树上的位置 + 在依赖图上的位置 */
 export interface UnitBoardRow {
@@ -46,6 +46,8 @@ export interface UnitBoardRow {
     dependents: string[];
     /** 拓扑层（0 起）：按 `deps` 算，不是树的深度 —— 它回答「哪几条能同时做」 */
     layer: number;
+    /** 所属**交付批次**的 id；`null` = 未分批。与 parent / deps 正交，见 `UnitBatchView` */
+    batch: string | null;
 }
 
 export interface UnitBoard {
@@ -80,7 +82,7 @@ export interface UnitBoard {
 
 /** 只取算 board 要用的字段（测试里可以直接造这几项，不用凑齐 UnitRecord） */
 export type UnitFacts = Pick<UnitRecord, 'id' | 'title' | 'status' | 'seq'> &
-    Partial<Pick<UnitRecord, 'body' | 'parent' | 'taskId' | 'createdAt' | 'updatedAt'>>;
+    Partial<Pick<UnitRecord, 'body' | 'parent' | 'taskId' | 'batch' | 'createdAt' | 'updatedAt'>>;
 
 /**
  * 算一张 board。输入顺序不敏感；输出顺序稳定（树的先序 → 层 → 创建序 → id）。
@@ -285,6 +287,7 @@ export function unitBoard(units: readonly UnitFacts[], deps: readonly UnitDep[])
             deps: depsOf.get(id)!,
             dependents: dependentsOf.get(id)!,
             layer: layerOf.get(id)!,
+            batch: unit.batch ?? null,
         };
     });
 
@@ -329,4 +332,117 @@ export function unitTreeLines(board: UnitBoard, options?: { withBody?: boolean }
         if (options?.withBody === true && row.body !== '') tail.push(`body: ${row.body}`);
         return `${indent}- [${mark}] ${row.title} (${row.id})${tail.length === 0 ? '' : `  ${tail.join('  ')}`}`;
     });
+}
+
+// ── 交付批次（派发 / 验收的单位）──────────────────────────────────────
+
+/**
+ * 批次的**派生阶段**。注意它不是说「批次有状态」—— 批次自己只存 `acceptedAt` 一个事实，
+ * 其余全从成员推出来：
+ *
+ *   · `empty`    —— 还没挂成员（刚建的空批，只占个位子）
+ *   · `todo`     —— 有活但一个都开不了（整批被批外挡着，看 `waitingOn`）
+ *   · `active`   —— 有可做 / 正在做（**派发的最佳时机**：这时才有人有事干）
+ *   · `review`   —— 成员全做完、还没验收（该有人看一眼 diff 说「过」）
+ *   · `accepted` —— 验收通过
+ *
+ * `accepted` 反过来压过其他阶段：验收过再往里加活，阶段仍是 accepted，但会多出一个提醒（见视图）。
+ */
+export type UnitBatchStage = 'empty' | 'todo' | 'active' | 'review' | 'accepted';
+
+export interface UnitBatchView {
+    id: string;
+    title: string;
+    note: string;
+    acceptedAt: number | null;
+    stage: UnitBatchStage;
+    /** 成员（**树先序**，与 board.rows 一致）；容器也算 —— 整域划进来时容器就是这批的骨架 */
+    members: string[];
+    /** 成员里的叶子，按 ready / doing / blocked / done 分桶（容器只可能出现在 done） */
+    ready: string[];
+    doing: string[];
+    blocked: string[];
+    done: string[];
+    /** 挡住本批的**批外**节点（直接原因，去重、树先序）：这些不完成，本批开不了工 */
+    waitingOn: string[];
+    total: number;
+    doneCount: number;
+}
+
+/** 只取算批次视图要用的字段（测试里直接造这几项） */
+export type BatchFacts = Pick<BatchRecord, 'id' | 'title'> &
+    Partial<Pick<BatchRecord, 'note' | 'acceptedAt' | 'seq'>>;
+
+/**
+ * 把「批次 × 图」算成视图列表（纯函数）。不传批次就没有视图 —— **批次必须显式存在**，
+ * 不从树的形状推导（2026-11-24 用户裁）：域边界只是常见情形，真判据是「一次 diff 能不能看懂」。
+ *
+ * 顺序：先按批次自己的写入序，再按成员在树里第一次出现的位置 —— 全空批不会插到中间把人搞乱。
+ */
+export function unitBatchViews(board: UnitBoard, batches: readonly BatchFacts[]): UnitBatchView[] {
+    const ready = new Set(board.ready);
+    const doing = new Set(board.doing);
+    const blocked = new Set(board.blocked);
+    const done = new Set(board.done);
+    const position = new Map<string, number>();
+    board.rows.forEach((row, index) => position.set(row.id, index));
+
+    return batches
+        .map((batch) => {
+            const members = board.rows.filter((row) => row.batch === batch.id).map((row) => row.id);
+            const memberSet = new Set(members);
+            const of = (set: Set<string>): string[] => members.filter((id) => set.has(id));
+
+            // 批外挡路者：成员被挡住时，`heldBy` 指向批外 = 本批的入场券。只报直接原因（不追链）
+            const waitingOn: string[] = [];
+            for (const id of members) {
+                const holder = board.heldBy[id];
+                if (holder === undefined || memberSet.has(holder) || waitingOn.includes(holder)) continue;
+                waitingOn.push(holder);
+            }
+            // 只依赖批外节点、又没被 heldBy 点名的（比如 deps 指出去）也补上
+            for (const id of members) {
+                for (const dep of board.rows[position.get(id)!]!.deps) {
+                    if (memberSet.has(dep) || done.has(dep) || waitingOn.includes(dep)) continue;
+                    waitingOn.push(dep);
+                }
+            }
+            waitingOn.sort((a, b) => (position.get(a) ?? 0) - (position.get(b) ?? 0));
+
+            const readyOf = of(ready);
+            const doingOf = of(doing);
+            const blockedOf = of(blocked);
+            const doneOf = of(done);
+            const total = members.length;
+
+            let stage: UnitBatchStage;
+            if (batch.acceptedAt !== null && batch.acceptedAt !== undefined) stage = 'accepted';
+            else if (total === 0) stage = 'empty';
+            else if (doneOf.length === total) stage = 'review';
+            else if (readyOf.length + doingOf.length > 0) stage = 'active';
+            else stage = 'todo';
+
+            return {
+                id: batch.id,
+                title: batch.title,
+                note: batch.note ?? '',
+                acceptedAt: batch.acceptedAt ?? null,
+                stage,
+                members,
+                ready: readyOf,
+                doing: doingOf,
+                blocked: blockedOf,
+                done: doneOf,
+                waitingOn,
+                total,
+                doneCount: doneOf.length,
+            };
+        })
+        .sort((a, b) => {
+            const seqA = batches.find((batch) => batch.id === a.id)?.seq ?? 0;
+            const seqB = batches.find((batch) => batch.id === b.id)?.seq ?? 0;
+            const firstA = a.members.length === 0 ? Number.MAX_SAFE_INTEGER : (position.get(a.members[0]!) ?? 0);
+            const firstB = b.members.length === 0 ? Number.MAX_SAFE_INTEGER : (position.get(b.members[0]!) ?? 0);
+            return seqA - seqB || firstA - firstB || a.id.localeCompare(b.id);
+        });
 }

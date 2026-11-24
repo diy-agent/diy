@@ -143,17 +143,57 @@ export interface UnitRecord {
      * 先后串行 —— 于是树本身就是执行顺序的骨架，只有跨域才补边（见 `units.ts`）。
      */
     parent: string | null;
+    /**
+     * 所属**批次**的 id（一次交付 / 一次验收 / 一个 worktree 的单元集合）；`null` = 未分批。
+     *
+     * 与 parent / deps 三者正交（2026-11-24 用户裁）：树说「由什么组成」，边说「谁先谁后」，
+     * 批次说「哪些一起交付」。分解出 20 个原子点不代表验收 20 次 —— 验收次数 = 批次数。
+     * 批次**必须显式指定**（不从树的形状推导）：域边界只是常见情形，真判据是「一次 diff
+     * 能不能看懂」，那只有人（或领活的 agent）知道。
+     */
+    batch: string | null;
     /** 创建序：只用于稳定排序（同父兄弟的先后也按它），不随状态变化重排 */
     seq: number;
     createdAt: number;
     updatedAt: number;
 }
 
+/**
+ * 一个交付批次（`unit_batches` 一行）—— 同样是 task 私有。
+ *
+ * 它**不是节点**：不进树、不参与 ready —— 「一批做完了」是它成员的派生量，「验收通过」才是它自己的
+ * 唯一事实（`acceptedAt`）。把状态存在批次上会让「批内还有 3 条没做却显示已验收」成为可能。
+ */
+export interface BatchRecord {
+    taskId: string;
+    id: string;
+    title: string;
+    /** 这批为什么这样切 / 派给谁 / 注意什么（派发作业单会原样带上） */
+    note: string;
+    seq: number;
+    /** 验收通过的时刻；`null` = 还没验收（批内全 done 后该由人确认一次） */
+    acceptedAt: number | null;
+    createdAt: number;
+    updatedAt: number;
+}
+
+/** 写批次：`seq` / 时间戳缺省由 store 补 */
+export type BatchInput = Omit<BatchRecord, 'seq' | 'acceptedAt' | 'createdAt' | 'updatedAt'> & {
+    seq?: number;
+    acceptedAt?: number | null;
+    createdAt?: number;
+    updatedAt?: number;
+    /** 显式给的 id 允许是新的（同 `UnitInput.allowNewId`） */
+    allowNewId?: boolean;
+};
+
 /** 写 unit：`id` / `seq` / 时间戳缺省由 store 补（新 unit 的 id 走 counters，永不回收） */
-export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt'> & {
+export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'batch' | 'seq' | 'createdAt' | 'updatedAt'> & {
     id?: string;
     /** 父（功能域）；缺省 = 沿用库里已有的，库里也没有就是根 */
     parent?: string | null;
+    /** 所属批次；缺省 = 沿用库里已有的，库里也没有就是未分批 */
+    batch?: string | null;
     createdAt?: number;
     updatedAt?: number;
     /**
@@ -249,6 +289,15 @@ export interface Store {
      * `allowMissing` = 端点可以还没建（边先挂着，节点一出现就生效）。
      */
     linkUnits(taskId: string, from: string, to: string, options?: { allowMissing?: boolean }): UnitDep;
+
+    // ── 交付批次（unit_batches；不是节点，不进 ready）────────────
+    /** 某任务的全部批次（写入序） */
+    listBatches(taskId: string): BatchRecord[];
+    batchOf(taskId: string, batchId: string): BatchRecord | undefined;
+    /** upsert；显式给的 id 如果不存在要 `allowNewId`（同 `saveUnit`） */
+    saveBatch(batch: BatchInput): BatchRecord;
+    /** 删批次：成员**不删**，只把 `batch_id` 清空；返回是否真删了（幂等） */
+    removeBatch(taskId: string, batchId: string): boolean;
     unlinkUnits(taskId: string, from: string, to: string): boolean;
 
     // ── 关系（替代父子）──────────────────────────────────────
@@ -549,12 +598,27 @@ export function openStore(file: string): Store {
             status     TEXT NOT NULL DEFAULT 'open',
             -- 分解树上的父（功能域）。NULL = 根。**父子是「组成」，deps 是「先后」**，两者正交
             parent_id  TEXT,
+            -- 交付批次的 id（见 unit_batches）。NULL = 未分批。**批次必须显式指定**，不从树形状推导
+            batch_id   TEXT,
             seq        INTEGER NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (task_id, id)
         );
         CREATE INDEX IF NOT EXISTS task_units_task ON task_units(task_id, seq);
+        -- 交付批次：一次 diff / 一次验收 / 一个 worktree 的 unit 集合。**不是节点**：不进树、不参与
+        -- ready（「做完了」是成员的派生量），只存它自己的唯一事实 —— accepted_at（人验收通过）
+        CREATE TABLE IF NOT EXISTS unit_batches (
+            task_id     TEXT NOT NULL,
+            id          TEXT NOT NULL,
+            title       TEXT NOT NULL,
+            note        TEXT NOT NULL DEFAULT '',
+            seq         INTEGER NOT NULL,
+            accepted_at INTEGER,
+            created_at  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL,
+            PRIMARY KEY (task_id, id)
+        );
         -- unit 依赖：from 先做完，to 才能做。无环由 linkUnits 建边时挡（不成环就永远算得出层）
         CREATE TABLE IF NOT EXISTS unit_deps (
             task_id TEXT NOT NULL,
@@ -671,6 +735,8 @@ export function openStore(file: string): Store {
         ),
     );
     if (!unitColumns.has('parent_id')) db.exec('ALTER TABLE task_units ADD COLUMN parent_id TEXT');
+    // 老库补列：task_units.batch_id（交付批次）。历史行没有批次概念，一律未分批
+    if (!unitColumns.has('batch_id')) db.exec('ALTER TABLE task_units ADD COLUMN batch_id TEXT');
 
     /** room_members → roomId: members[]（members() 与 listRooms() 共用） */
     const readMembers = (): Record<string, RoomMember[]> => {
@@ -810,6 +876,7 @@ export function openStore(file: string): Store {
         body: String(row['body']),
         status: String(row['status']) as UnitStatus,
         parent: row['parent_id'] === null || row['parent_id'] === undefined ? null : String(row['parent_id']),
+        batch: row['batch_id'] === null || row['batch_id'] === undefined ? null : String(row['batch_id']),
         seq: Number(row['seq']),
         createdAt: Number(row['created_at']),
         updatedAt: Number(row['updated_at']),
@@ -881,15 +948,16 @@ export function openStore(file: string): Store {
             status: unit.status,
             // 缺省沿用（改 title 不该顺手把挂点抹掉）；新节点缺省 = 根
             parent: unit.parent === undefined ? (previous?.parent ?? null) : unit.parent,
+            batch: unit.batch === undefined ? (previous?.batch ?? null) : unit.batch,
             seq: previous?.seq ?? Number(nextSeq),
             createdAt: previous?.createdAt ?? unit.createdAt ?? now,
             updatedAt: unit.updatedAt ?? now,
         };
         if (record.parent === record.id) throw new Error(`unit 不能是自己的父：${record.id}`);
         db.prepare(
-            'INSERT INTO task_units (task_id, id, title, body, status, parent_id, seq, created_at, updated_at) ' +
-                'VALUES (?,?,?,?,?,?,?,?,?) ' +
-                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, status=?, parent_id=?, updated_at=?',
+            'INSERT INTO task_units (task_id, id, title, body, status, parent_id, batch_id, seq, created_at, updated_at) ' +
+                'VALUES (?,?,?,?,?,?,?,?,?,?) ' +
+                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, status=?, parent_id=?, batch_id=?, updated_at=?',
         ).run(
             record.taskId,
             record.id,
@@ -897,6 +965,7 @@ export function openStore(file: string): Store {
             record.body,
             record.status,
             record.parent,
+            record.batch,
             record.seq,
             record.createdAt,
             record.updatedAt,
@@ -904,6 +973,7 @@ export function openStore(file: string): Store {
             record.body,
             record.status,
             record.parent,
+            record.batch,
             record.updatedAt,
         );
         return record;
@@ -942,6 +1012,87 @@ export function openStore(file: string): Store {
         }
         db.prepare('INSERT OR IGNORE INTO unit_deps (task_id, from_id, to_id) VALUES (?,?,?)').run(taskId, from, to);
         return { from, to };
+    };
+
+    // ── 交付批次（unit_batches）────────────────────────────
+
+    const readBatchRow = (row: Record<string, unknown>): BatchRecord => ({
+        taskId: String(row['task_id']),
+        id: String(row['id']),
+        title: String(row['title']),
+        note: String(row['note']),
+        seq: Number(row['seq']),
+        acceptedAt: row['accepted_at'] === null || row['accepted_at'] === undefined ? null : Number(row['accepted_at']),
+        createdAt: Number(row['created_at']),
+        updatedAt: Number(row['updated_at']),
+    });
+
+    const readBatch = (taskId: string, batchId: string): BatchRecord | undefined => {
+        const row = db.prepare('SELECT * FROM unit_batches WHERE task_id = ? AND id = ?').get(taskId, batchId) as
+            | Record<string, unknown>
+            | undefined;
+        return row === undefined ? undefined : readBatchRow(row);
+    };
+
+    const writeBatch = (batch: BatchInput): BatchRecord => {
+        const title = batch.title.trim();
+        if (title === '') throw new Error('batch 的 title 不能为空');
+        const previous = readBatch(batch.taskId, batch.id);
+        if (previous === undefined && batch.allowNewId !== true) {
+            throw new Error(`batch 不存在：${batch.id}（新批次要显式声明 allowNewId）`);
+        }
+        const now = Date.now();
+        const nextSeq =
+            (db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM unit_batches WHERE task_id = ?').get(batch.taskId) as {
+                n: number;
+            }).n;
+        const record: BatchRecord = {
+            taskId: batch.taskId,
+            id: batch.id,
+            title,
+            note: batch.note,
+            seq: previous?.seq ?? batch.seq ?? Number(nextSeq),
+            // 验收时刻只能由显式写进来（推成员状态不会自动验收）
+            acceptedAt: batch.acceptedAt === undefined ? (previous?.acceptedAt ?? null) : batch.acceptedAt,
+            createdAt: previous?.createdAt ?? batch.createdAt ?? now,
+            updatedAt: batch.updatedAt ?? now,
+        };
+        db.prepare(
+            'INSERT INTO unit_batches (task_id, id, title, note, seq, accepted_at, created_at, updated_at) ' +
+                'VALUES (?,?,?,?,?,?,?,?) ' +
+                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, note=?, accepted_at=?, updated_at=?',
+        ).run(
+            record.taskId,
+            record.id,
+            record.title,
+            record.note,
+            record.seq,
+            record.acceptedAt,
+            record.createdAt,
+            record.updatedAt,
+            record.title,
+            record.note,
+            record.acceptedAt,
+            record.updatedAt,
+        );
+        return record;
+    };
+
+    /**
+     * 删批次：成员**不删**，只把它们的 `batch_id` 清空（回到未分批）。
+     * 反过来做（连带删 unit）就是「删个分组顺手删掉活」的笑话，而 `removeUnit` 已有 `unit_drop` 那条路。
+     */
+    const dropBatch = (taskId: string, batchId: string): boolean => {
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            db.prepare('UPDATE task_units SET batch_id = NULL WHERE task_id = ? AND batch_id = ?').run(taskId, batchId);
+            const result = db.prepare('DELETE FROM unit_batches WHERE task_id = ? AND id = ?').run(taskId, batchId);
+            db.exec('COMMIT');
+            return Number(result.changes) > 0;
+        } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
+        }
     };
 
     /** 内容是否真的变了（changed 才盖 updated_at、才重写 task.md） */
@@ -1324,6 +1475,7 @@ export function openStore(file: string): Store {
             // 发号游标一起清 —— 「号不回收」说的是同一个任务内，任务本身没了就没有「同任务内」了
             db.prepare('DELETE FROM task_units WHERE task_id = ?').run(roomId);
             db.prepare('DELETE FROM unit_deps WHERE task_id = ?').run(roomId);
+            db.prepare('DELETE FROM unit_batches WHERE task_id = ?').run(roomId);
             db.prepare('DELETE FROM counters WHERE scope = ?').run(`unit:${roomId}`);
             // 对话框草稿（synthetic scope，见 docs/drafts-design.md）挂在房间后面：
             // `dlg:<用途>:<roomId>`。删房间时一起清，不等 TTL
@@ -1413,6 +1565,21 @@ export function openStore(file: string): Store {
         },
         removeUnit(taskId: string, unitId: string): boolean {
             return dropUnit(taskId, unitId);
+        },
+        listBatches(taskId: string): BatchRecord[] {
+            const rows = db
+                .prepare('SELECT * FROM unit_batches WHERE task_id = ? ORDER BY seq ASC')
+                .all(taskId) as Array<Record<string, unknown>>;
+            return rows.map(readBatchRow);
+        },
+        batchOf(taskId: string, batchId: string): BatchRecord | undefined {
+            return readBatch(taskId, batchId);
+        },
+        saveBatch(batch: BatchInput): BatchRecord {
+            return writeBatch(batch);
+        },
+        removeBatch(taskId: string, batchId: string): boolean {
+            return dropBatch(taskId, batchId);
         },
         unitDepsOf(taskId: string): UnitDep[] {
             const rows = db

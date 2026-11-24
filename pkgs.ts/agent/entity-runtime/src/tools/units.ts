@@ -18,7 +18,7 @@ import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 
 import { UNIT_STATUSES, type Store, type UnitRecord } from '../db';
-import { unitBoard, unitTreeLines, type UnitBoard } from '../units';
+import { unitBatchViews, unitBoard, unitTreeLines, type UnitBoard } from '../units';
 
 /** 工具写入落点：只认 store + 一个 taskId（unit 是 task 私有的，id 只在该 task 内唯一） */
 export interface UnitHost {
@@ -34,9 +34,17 @@ const EVENT = {
     linked: 'task.unit.linked',
     unlinked: 'task.unit.unlinked',
     dropped: 'task.unit.dropped',
+    batchAdded: 'task.batch.added',
+    batchAssigned: 'task.batch.assigned',
+    batchAccepted: 'task.batch.accepted',
+    batchDropped: 'task.batch.dropped',
 } as const;
 
-const EVENT_PREFIX = 'task.unit.';
+/**
+ * 历史查询的前缀 = `task.`（unit 与 batch 同一条时间线）。
+ * 批次挂载也是「这张图怎么长成这样」的一部分 —— 分两个前缀查会让「先建批还是先建节点」看不出来。
+ */
+const EVENT_PREFIX = 'task.';
 
 /**
  * key 的合法形状：小写字母开头，小写英文 / 数字 / `-` / `_`。
@@ -52,8 +60,11 @@ const KEY_PATTERN = /^[a-z][a-z0-9_-]{0,23}$/;
  * 树行里已带 status / 「等谁」/ 跨域 deps，所以不再另给分层 JSON —— 那是同一份事实的第二份。
  * `ready` / `doing` 还点名一次：那是行动指令，值得重复。
  */
-function briefBoard(board: UnitBoard) {
+function briefBoard(host: UnitHost) {
+    const board = boardOf(host);
     const titleOf = (id: string): string => board.rows.find((row) => row.id === id)?.title ?? '';
+    const batches = unitBatchViews(board, host.store.listBatches(host.taskId));
+    const unbatched = board.rows.filter((row) => row.batch === null);
     return {
         ready: board.ready.map((id) => ({ id, title: titleOf(id) })),
         doing: board.doing.map((id) => ({ id, title: titleOf(id) })),
@@ -62,6 +73,21 @@ function briefBoard(board: UnitBoard) {
             doing: board.rows.filter((row) => row.status === 'doing').length,
             done: board.done.length,
         },
+        /** 交付批次（分批是**显式**画的：验收次数 = 批次数，不是节点数） */
+        batches: batches.map((batch) => ({
+            id: batch.id,
+            title: batch.title,
+            stage: batch.stage,
+            progress: `${batch.doneCount}/${batch.total}`,
+            ...(batch.ready.length === 0 ? {} : { canStart: batch.ready.map(titleOf) }),
+            ...(batch.waitingOn.length === 0
+                ? {}
+                : { waitingOn: batch.waitingOn.map((id) => `${id} ${titleOf(id)}`) }),
+        })),
+        /** 没挂批次的节点：分解完了但还没说「哪些一起交付」——这是**常态**，不是错 */
+        ...(unbatched.length === 0
+            ? {}
+            : { unbatched: { count: unbatched.length, ids: unbatched.map((row) => row.id) } }),
         tree: unitTreeLines(board),
         ...(board.cyclic ? { cyclic: '图里有环（数据异常）：环上的 unit 永远做不了，需要删边' } : {}),
         ...(board.danglingParents.length === 0
@@ -80,6 +106,23 @@ function need(host: UnitHost, id: string): UnitRecord {
     return unit;
 }
 
+function needBatch(host: UnitHost, id: string) {
+    const batch = host.store.batchOf(host.taskId, id);
+    if (batch === undefined) throw new Error(`批次不存在：${id}（先 batch_add 建它）`);
+    return batch;
+}
+
+/** 批次概览（工具回包用）：不回全图，只回「这批什么阶段 + 还差多少」 */
+function briefBatches(host: UnitHost) {
+    const board = boardOf(host);
+    return unitBatchViews(board, host.store.listBatches(host.taskId)).map((batch) => ({
+        id: batch.id,
+        title: batch.title,
+        stage: batch.stage,
+        progress: `${batch.doneCount}/${batch.total}`,
+    }));
+}
+
 function emit(host: UnitHost, event: string, data: unknown): void {
     host.store.appendEvent({ event, subject: host.taskId, data });
 }
@@ -95,7 +138,7 @@ export function unitTools(host: UnitHost): ToolSet {
                 '看这张任务分解的当前状态：`tree` 是缩进树（`x`=做完 / `>`=现在能做 / `~`=在做 / `.`=卡着，' +
                 '带「← 等 xxx」=被谁挡着），`ready` / `doing` 是行动指令。要改图之前先看它，拿准 id。',
             inputSchema: z.object({}),
-            execute: async () => briefBoard(boardOf(host)),
+            execute: async () => briefBoard(host),
         }),
 
         unit_add: tool({
@@ -134,6 +177,10 @@ export function unitTools(host: UnitHost): ToolSet {
                                 .array(z.string())
                                 .optional()
                                 .describe('可选：**跨域**前置的 key；域内的先后不用填（兄弟按书写顺序串行）'),
+                            batch: z
+                                .string()
+                                .optional()
+                                .describe('可选：挂进哪个交付批次（批次要先 batch_add 建好）；不填 = 未分批'),
                         }),
                     )
                     .min(1),
@@ -155,6 +202,9 @@ export function unitTools(host: UnitHost): ToolSet {
                     }
                     if (item.parent === item.key) throw new Error(`unit 不能是自己的父：${item.key}`);
                     if ((item.deps ?? []).includes(item.key)) throw new Error(`unit 不能依赖自己：${item.key}`);
+                    if (item.batch !== undefined && host.store.batchOf(host.taskId, item.batch) === undefined) {
+                        throw new Error(`批次不存在：${item.batch}（先 batch_add 建它，或先不带 batch）`);
+                    }
                 }
                 // 两轮：**先全部建节点（带 parent），再连边** —— 这样 parent / deps 都可以引用同批任意项
                 // （含后面那些），而端点没到位的边由 allowMissing 挂起（并行调用也能接上）。
@@ -167,9 +217,16 @@ export function unitTools(host: UnitHost): ToolSet {
                         body: item.body ?? '',
                         status: 'open',
                         parent: item.parent ?? null,
+                        batch: item.batch ?? null,
                     });
                 }
-                const added: Array<{ id: string; title: string; parent: string | null; deps: string[] }> = [];
+                const added: Array<{
+                    id: string;
+                    title: string;
+                    parent: string | null;
+                    deps: string[];
+                    batch?: string;
+                }> = [];
                 for (const item of items) {
                     const deps = [...new Set(item.deps ?? [])];
                     for (const dep of deps) {
@@ -180,8 +237,15 @@ export function unitTools(host: UnitHost): ToolSet {
                         title: item.title,
                         parent: item.parent ?? null,
                         deps,
+                        ...(item.batch === undefined ? {} : { batch: item.batch }),
                     });
-                    added.push({ id: item.key, title: item.title, parent: item.parent ?? null, deps });
+                    added.push({
+                        id: item.key,
+                        title: item.title,
+                        parent: item.parent ?? null,
+                        deps,
+                        ...(item.batch === undefined ? {} : { batch: item.batch }),
+                    });
                 }
                 const board = boardOf(host);
                 const known = new Set(host.store.listUnits(host.taskId).map((unit) => unit.id));
@@ -346,7 +410,170 @@ export function unitTools(host: UnitHost): ToolSet {
                     dependents: row?.dependents ?? [],
                     ...(board.heldBy[id] === undefined ? {} : { heldBy: board.heldBy[id] }),
                     layer: row?.layer ?? 0,
+                    batch: row?.batch ?? null,
                 };
+            },
+        }),
+
+        // ── 交付批次：一次 diff / 一次验收 / 一个 worktree ──────────────
+
+        batch_add: tool({
+            description: [
+                '画一个**交付批次**：这一批是一起交付 / 一起验收 / 一个 worktree 干完的那些 unit。',
+                '分解出 20 个原子点**不代表验收 20 次** —— 验收次数 = 批次数。',
+                '',
+                '· **必须显式画**（不从树的形状推导）：“哪些一起交付”的真判据是「一次 diff 能不能看懂」，',
+                '  那只有你（或人）知道；域边界只是常见情形。',
+                '· 常见切法：地基（数据结构 / 存储）→ 能力（工具 / RPC）→ 表面（UI）。',
+                '· `key` 就是批次 id，后面 batch_assign / unit_add 用它引用；可一次建多个（分阶段上线时）。',
+                '· 建批时就带上 `units` 成员最省事；没想好就空着，之后用 batch_assign 挂。',
+                '',
+                '注意：批次**不是节点** —— 不进树、不参与 ready；「这批做完了」是成员派生出来的。',
+            ].join('\n'),
+            inputSchema: z.object({
+                items: z
+                    .array(
+                        z.object({
+                            key: z
+                                .string()
+                                .regex(KEY_PATTERN, 'key 只能是小写字母开头的小写英文 / 数字 / - _，≤24 字符')
+                                .describe('批次 id（自起短名，如 p1-core / ui）'),
+                            title: z.string().min(1).describe('这批交付什么（一句话，给人看）'),
+                            note: z
+                                .string()
+                                .optional()
+                                .describe('可选：为什么这样切 / 派给谁 / 注意什么（派发作业单会原样带上）'),
+                            units: z
+                                .array(z.string())
+                                .optional()
+                                .describe('可选：这批包含哪些 unit（图上已有的 id）'),
+                        }),
+                    )
+                    .min(1),
+            }),
+            execute: async ({ items }) => {
+                const seen = new Set<string>();
+                for (const item of items) {
+                    if (!KEY_PATTERN.test(item.key)) {
+                        throw new Error(`key 只能是小写字母开头的小写英文 / 数字 / - _（≤24 字符）：${item.key}`);
+                    }
+                    if (seen.has(item.key)) throw new Error(`同批 key 重复：${item.key}`);
+                    seen.add(item.key);
+                    if (host.store.batchOf(host.taskId, item.key) !== undefined) {
+                        throw new Error(`批次已存在：${item.key}（要改成员用 batch_assign）`);
+                    }
+                    for (const unitId of item.units ?? []) need(host, unitId);
+                }
+                for (const item of items) {
+                    host.store.saveBatch({
+                        taskId: host.taskId,
+                        id: item.key,
+                        allowNewId: true,
+                        title: item.title,
+                        note: item.note ?? '',
+                    });
+                    for (const unitId of item.units ?? []) {
+                        const unit = need(host, unitId);
+                        host.store.saveUnit({
+                            taskId: host.taskId,
+                            id: unitId,
+                            title: unit.title,
+                            body: unit.body,
+                            status: unit.status,
+                            batch: item.key,
+                        });
+                    }
+                    emit(host, EVENT.batchAdded, {
+                        id: item.key,
+                        title: item.title,
+                        units: item.units ?? [],
+                    });
+                }
+                return { ok: true, batches: briefBatches(host) };
+            },
+        }),
+
+        batch_assign: tool({
+            description: [
+                '把 unit 挂进（或摘出）一个交付批次 —— 这是「同一批一起交付」的唯一写法。',
+                '· `batch` 传批次 id；传 null = 取消归属（回到未分批，节点不删）。',
+                '· 一个 unit 只属于一个批次（再挂别处就是搬过去）。',
+                '· 整域划进来时给功能域容器的 id 就行（它的子自然跟着一起交付）。',
+            ].join('\n'),
+            inputSchema: z.object({
+                batch: z.string().nullable().describe('批次 id；null = 取消归属'),
+                units: z.array(z.string()).min(1).describe('要挂的 unit id 列表'),
+            }),
+            execute: async ({ batch, units }) => {
+                if (batch !== null) needBatch(host, batch);
+                const moved: Array<{ id: string; from: string | null; to: string | null }> = [];
+                for (const unitId of units) {
+                    const unit = need(host, unitId);
+                    if (unit.batch === batch) continue;
+                    host.store.saveUnit({
+                        taskId: host.taskId,
+                        id: unitId,
+                        title: unit.title,
+                        body: unit.body,
+                        status: unit.status,
+                        batch,
+                    });
+                    moved.push({ id: unitId, from: unit.batch, to: batch });
+                }
+                if (moved.length > 0) emit(host, EVENT.batchAssigned, { batch, moved });
+                return { ok: true, moved, batches: briefBatches(host) };
+            },
+        }),
+
+        batch_accept: tool({
+            description: [
+                '验收一个批次（或撤销验收）。**只在人明确说这批过了之后**才调用 —— 验收是人的判断，',
+                '不是「成员都 done 了就自动过」。',
+                '· 验收前会检查：批内成员得全做完（没做完会报出来，不静默放行）。',
+                '· `accepted: false` = 撤销验收（回 review 阶段）。',
+                '· 验收过的批次再加活，会回到「待验收」状态。',
+            ].join('\n'),
+            inputSchema: z.object({
+                batch: z.string(),
+                accepted: z.boolean().optional().describe('缺省 true = 验收通过；false = 撤销验收'),
+            }),
+            execute: async ({ batch: batchId, accepted }) => {
+                const batch = needBatch(host, batchId);
+                const pass = accepted !== false;
+                if (pass) {
+                    const view = unitBatchViews(boardOf(host), [batch]).find((item) => item.id === batchId)!;
+                    const left = view.members.filter((id) => !view.done.includes(id));
+                    if (left.length > 0) {
+                        const titles = left.map((id) => `${id} ${host.store.unitOf(host.taskId, id)?.title ?? ''}`);
+                        throw new Error(`这批还有 ${left.length} 条没做完，不能验收：${titles.join('、')}`);
+                    }
+                }
+                const saved = host.store.saveBatch({
+                    ...batch,
+                    acceptedAt: pass ? (batch.acceptedAt ?? Date.now()) : null,
+                });
+                emit(host, EVENT.batchAccepted, { id: batchId, title: batch.title, accepted: pass });
+                return { ok: true, id: batchId, acceptedAt: saved.acceptedAt };
+            },
+        }),
+
+        batch_drop: tool({
+            description:
+                '删一个批次：**成员不删**，只回到未分批（要删活请用 unit_drop）。' +
+                '必须给 reason —— 事件里会留 title + reason。',
+            inputSchema: z.object({
+                batch: z.string(),
+                reason: z.string().min(1).describe('为什么拆掉这个批次（一句话）'),
+            }),
+            execute: async ({ batch: batchId, reason }) => {
+                const batch = needBatch(host, batchId);
+                const members = host.store
+                    .listUnits(host.taskId)
+                    .filter((unit) => unit.batch === batchId)
+                    .map((unit) => unit.id);
+                host.store.removeBatch(host.taskId, batchId);
+                emit(host, EVENT.batchDropped, { id: batchId, title: batch.title, reason, members });
+                return { ok: true, dropped: batchId, released: members };
             },
         }),
 

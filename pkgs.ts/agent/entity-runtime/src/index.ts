@@ -30,12 +30,24 @@ export {
     type TaskInput,
     type TaskRecord,
     UNIT_STATUSES,
+    type BatchInput,
+    type BatchRecord,
     type UnitDep,
     type UnitInput,
     type UnitRecord,
     type UnitStatus,
 } from './db';
-export { unitBoard, type UnitBoard, type UnitBoardRow, type UnitFacts } from './units';
+export {
+    unitBoard,
+    unitBatchViews,
+    unitTreeLines,
+    type BatchFacts,
+    type UnitBatchStage,
+    type UnitBatchView,
+    type UnitBoard,
+    type UnitBoardRow,
+    type UnitFacts,
+} from './units';
 export {
     CORE_TYPES,
     LINK_KINDS,
