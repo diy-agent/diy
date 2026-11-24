@@ -719,6 +719,11 @@ export function createDiy2App(opts: {
             jobs: {
                 list: async () => ({ rows: jobs.list().map(jobRowOf) }),
                 kill: async ({ input }) => ({ ok: jobs.kill(input.id) }),
+                /** 输出尾巴：与 agent 的 `job output` 同一个 `registry.tail`（同一套截断 / 去色） */
+                tail: async ({ input }) => {
+                    const tail = await jobs.tail(input.id, input.lines ?? 40);
+                    return tail === undefined ? { found: false } : { found: true, tail };
+                },
             },
         };
         server.use({ prefix: 'diy2', api: diy2Api, handlers });

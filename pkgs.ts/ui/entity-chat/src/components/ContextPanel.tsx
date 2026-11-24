@@ -1,6 +1,10 @@
 // ContextPanel —— 每个 bot 的上下文占了多少、什么时候压过、现在压一次。
 //
-// 位置在房间头部的元信息行：同一个组件给两个 surface 用（壳层，不在 surface 里）。
+// 位置：2026-11-24 起在**输入框底栏**（`ComposerBar`，与模型 / 作业同一行）——
+// 用户要的是其他 agent 那种形状：上下文、模型、作业都在输入框大框的最底下一行。
+// 因此chip 的弹层默认**向上**开（`side="up"`）：底栏在屏幕底部，向下开没有位置。
+//
+// 同一个组件给两个 surface 用（壳层，不在 surface 里）。
 
 import { Gauge, Scissors } from 'lucide-react';
 import * as React from 'react';
@@ -57,7 +61,7 @@ function Row({ session, busy, onCompact }: { session: SessionInfo; busy: boolean
     );
 }
 
-export function ContextPanel({ room }: { room: Room }) {
+export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 'down' }) {
     const state = useStore();
     const providers = useProviders();
     const sessions = state.sessions[room.id] ?? [];
@@ -105,7 +109,7 @@ export function ContextPanel({ room }: { room: Room }) {
     };
 
     return (
-        <span className="relative ml-2 inline-flex">
+        <span className="relative inline-flex">
             <button
                 onClick={() => setOpen((value) => !value)}
                 title="查看每个 bot 的上下文占用，手动压缩"
@@ -120,7 +124,11 @@ export function ContextPanel({ room }: { room: Room }) {
             {open && (
                 <>
                     <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-                    <div className="absolute left-0 top-full z-50 mt-1 w-[360px] rounded-md border bg-background shadow-lg">
+                    <div
+                        className={`absolute left-0 z-50 w-[360px] rounded-md border bg-background shadow-lg ${
+                            side === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
+                        }`}
+                    >
                         <div className="flex items-center gap-2 px-3 py-2">
                             <span className="text-[11px] font-medium">上下文</span>
                             <span className="text-[10px] text-muted-foreground">

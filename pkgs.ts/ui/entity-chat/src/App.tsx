@@ -1,41 +1,24 @@
-import { Bot as BotIcon, Cpu, Folder, ListTodo, PanelRight, Plus } from 'lucide-react';
+import { Bot as BotIcon, Folder, ListTodo, PanelRight, Plus } from 'lucide-react';
 import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
 import { EditableName, StatusChip } from './components/RoomName';
 import { SpeakingBar } from './components/SpeakingBar';
 import { PendingAskStrip } from './components/PendingAskStrip';
-import { ContextPanel } from './components/ContextPanel';
+import { ComposerBar } from './components/ComposerBar';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, primaryBotOf, roomTitle, roomTypeLabel, type Room } from './model';
-import { modelLabel } from './models';
 import {
     actions,
     useBots,
     useDefaultModelKey,
     useError,
     useLoaded,
-    useProviders,
     useRooms,
     useSelectedRoom,
 } from './store';
 import { useRoomDialogs } from './useRoomDialogs';
-
-function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
-    const providers = useProviders();
-    const label = modelLabel(providers, value);
-    return (
-        <button
-            onClick={onClick}
-            title={`${label} · 点击切换`}
-            className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted"
-        >
-            <Cpu className="size-3" />
-            {label.split(' · ')[0]}
-        </button>
-    );
-}
 
 function roomDir(room: Room): string | undefined {
     const dir = room.data['dir'];
@@ -49,14 +32,12 @@ function roomDir(room: Room): string | undefined {
 const RoomHeader = React.memo(function RoomHeader({
     room,
     onAddMember,
-    onPickModel,
     taskPanelOpen,
     taskPanelShown,
     onToggleTaskPanel,
 }: {
     room: Room;
     onAddMember: () => void;
-    onPickModel: () => void;
     taskPanelOpen: boolean;
     /** 宿主是否接管了右侧面板（接管后这个按钮不归本层画 —— 点了也没有本层面板可开） */
     taskPanelShown: boolean;
@@ -93,8 +74,6 @@ const RoomHeader = React.memo(function RoomHeader({
                         {dirOf(room, rooms)}
                     </span>
                 )}
-                <ModelChip value={room.modelKey} onClick={onPickModel} />
-
                 <span className="ml-auto flex flex-wrap items-center gap-1.5 text-xs">
                     <span className="text-muted-foreground">成员</span>
                     {primary !== undefined && (
@@ -139,7 +118,6 @@ const RoomHeader = React.memo(function RoomHeader({
                         ? '只有默认应答，没有 @ 时它自己回'
                         : `${bots.length} 个成员：@名字叫谁谁回，@all 全回（等于开会，token 按人数涨）`}
                 </span>
-                <ContextPanel room={room} />
             </div>
         </header>
     );
@@ -202,6 +180,16 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
         if (roomId !== undefined) openModel(roomId);
     }, [roomId, openModel]);
 
+    /**
+     * 输入框底栏那一行。**必须 memo**：它是 `SurfaceHost` 的 prop，而 `SurfaceHost` 是
+     * `React.memo` 的（切 tab 只有 `visible` 该变）—— 每次 App 重渲都新建一个元素，
+     * 那个 memo 就白写了，隐藏着的表面会跟着整块重画。
+     */
+    const composerExtras = React.useMemo(
+        () => (room === undefined ? undefined : <ComposerBar room={room} onPickModel={onPickModel} />),
+        [room, onPickModel],
+    );
+
     const toggleSidebar = React.useCallback(() => {
         setSidebarOpen((open) => {
             try {
@@ -260,7 +248,6 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
                             <RoomHeader
                                 room={room}
                                 onAddMember={onAddMember}
-                                onPickModel={onPickModel}
                                 taskPanelOpen={taskPanelOpen}
                                 taskPanelShown={taskPanel}
                                 onToggleTaskPanel={onToggleTaskPanel}
@@ -269,7 +256,11 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
                             <SpeakingBar roomId={room.id} />
                             {/* 待答条在壳层：房间的事实，三个表面共用（跳转按 surfaceId 找各自的 jumper） */}
                             <PendingAskStrip roomId={room.id} surfaceId={surfaceId} />
-                            <SurfaceViews surfaceId={surfaceId} targetId={room.id} />
+                            <SurfaceViews
+                                surfaceId={surfaceId}
+                                targetId={room.id}
+                                composerExtras={composerExtras}
+                            />
                         </>
                     )}
                     {loaded && error !== undefined && (
@@ -323,19 +314,29 @@ const SurfaceHost = React.memo(function SurfaceHost({
     visible,
     Component,
     targetId,
+    composerExtras,
 }: {
     visible: boolean;
-    Component: React.FC<{ targetId: string }>;
+    Component: React.FC<{ targetId: string; composerExtras?: React.ReactNode }>;
     targetId: string;
+    composerExtras?: React.ReactNode;
 }) {
     return (
         <div className={visible ? 'contents' : 'hidden'}>
-            <Component targetId={targetId} />
+            <Component targetId={targetId} composerExtras={composerExtras} />
         </div>
     );
 });
 
-function SurfaceViews({ surfaceId, targetId }: { surfaceId: string; targetId: string }) {
+function SurfaceViews({
+    surfaceId,
+    targetId,
+    composerExtras,
+}: {
+    surfaceId: string;
+    targetId: string;
+    composerExtras?: React.ReactNode;
+}) {
     const [visited, setVisited] = React.useState<ReadonlySet<string>>(() => new Set([surfaceId]));
     React.useEffect(() => {
         setVisited((current) => (current.has(surfaceId) ? current : new Set([...current, surfaceId])));
@@ -349,6 +350,7 @@ function SurfaceViews({ surfaceId, targetId }: { surfaceId: string; targetId: st
                     visible={surface.id === surfaceId}
                     Component={surface.Component}
                     targetId={targetId}
+                    composerExtras={composerExtras}
                 />
             ))}
         </>

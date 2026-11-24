@@ -317,10 +317,13 @@ function Composer({
     conversation,
     roomId,
     running,
+    extras,
 }: {
     conversation: ReturnType<typeof conversationOf>;
     roomId: string;
     running: boolean;
+    /** 输入框底栏那一行（上下文 / 模型 / 作业）—— 壳层给，surface 只负责摆位置 */
+    extras?: React.ReactNode;
 }) {
     const draft = useDraft(roomId, 'composer');
     const [submitting, setSubmitting] = React.useState(false);
@@ -379,7 +382,9 @@ function Composer({
                     草稿未保存：{draft.error ?? '网络错误'}（重试中，内容还在）
                 </div>
             )}
-            <div className="relative flex items-end gap-2 rounded-xl border bg-card px-3 py-2">
+            {/* 大框 = 输入行 + 底栏一行（上下文 / 模型 / 作业）。底栏在大框**内部**，
+                与「其他 agent」同一个形状：写字的地方和这轮用什么在一起，不再另占一条。 */}
+            <div className="relative rounded-xl border bg-card px-3 pb-1.5 pt-2">
                 {menuOpen && (
                     <MentionMenu
                         candidates={matches}
@@ -388,6 +393,8 @@ function Composer({
                         onHover={setActive}
                     />
                 )}
+                {/* 输入行：写字 + 发送键在右上（文字框自己撑高） */}
+                <div className="flex items-end gap-2">
                 <textarea
                     ref={textareaRef}
                     value={draft.text}
@@ -446,12 +453,14 @@ function Composer({
                         <Send className="size-4" />
                     </button>
                 )}
+                </div>
+                {extras !== undefined && <div className="mt-1.5 border-t pt-1.5">{extras}</div>}
             </div>
         </div>
     );
 }
 
-export function ShadcnSurface({ targetId }: { targetId: string }) {
+export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; composerExtras?: React.ReactNode }) {
     const shell = useStore();
     const conversation = conversationOf(targetId);
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
@@ -546,7 +555,12 @@ export function ShadcnSurface({ targetId }: { targetId: string }) {
                     </button>
                 )}
             </div>
-            <Composer conversation={conversation} roomId={targetId} running={state.running} />
+            <Composer
+                conversation={conversation}
+                roomId={targetId}
+                running={state.running}
+                extras={composerExtras}
+            />
         </div>
     );
 }

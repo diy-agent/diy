@@ -8,7 +8,7 @@
 //
 // 缺省是哪一面由壳层决定（App.tsx 取 'astryx'），这里不排序含义。
 
-import type { FC } from 'react';
+import type { FC, ReactNode } from 'react';
 
 import { AstryxSurface } from './astryx/Surface';
 import { ShadcnSurface } from './shadcn/Surface';
@@ -17,7 +17,13 @@ export interface ChatSurface {
     id: string;
     name: string;
     hint: string;
-    Component: FC<{ targetId: string }>;
+    /**
+     * `composerExtras` = 输入框底栏那一行（上下文 / 模型 / 作业）。
+     *
+     * 它由**壳层**渲染（`ComposerBar`：模型弹窗、上下文压缩都在壳里），surface 只把它摆进
+     * 自己 composer 的底栏 —— 两面各长一份就必然漂移，而这三个 chip 与「哪个 surface」无关。
+     */
+    Component: FC<{ targetId: string; composerExtras?: ReactNode }>;
 }
 
 export const SURFACES: ChatSurface[] = [

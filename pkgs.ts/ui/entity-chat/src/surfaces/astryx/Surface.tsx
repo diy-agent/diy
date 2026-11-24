@@ -272,11 +272,14 @@ function AstryxComposer({
     roomId,
     triggers,
     placeholder,
+    extras,
 }: {
     conversation: ReturnType<typeof conversationOf>;
     roomId: string;
     triggers: React.ComponentProps<typeof ChatComposerInput>['triggers'];
     placeholder: string;
+    /** 底栏那一行（上下文 / 模型 / 作业）：壳层给，摆进设计系统 composer 的 footer 左侧 */
+    extras?: React.ReactNode;
 }) {
     const draft = useDraft(roomId, 'composer');
     const [submitting, setSubmitting] = React.useState(false);
@@ -305,6 +308,8 @@ function AstryxComposer({
                 // 运行中也保持"发送"态：插话是正常操作，停止在 SpeakingBar 上
                 onStop={() => conversation.cancel()}
                 isStopShown={false}
+                // 底栏左侧：上下文 / 模型 / 作业（发送键由设计系统摆在右侧）
+                footerActions={extras}
                 input={<ChatComposerInput triggers={triggers} label="Message input" placeholder={placeholder} />}
             />
         </>
@@ -324,7 +329,7 @@ function toSearchItems(candidates: MentionCandidate[]): SearchableItem<MentionCa
     return candidates.map((candidate) => ({ id: candidate.id, label: candidate.name, auxiliaryData: candidate }));
 }
 
-export function AstryxSurface({ targetId }: { targetId: string }) {
+export function AstryxSurface({ targetId, composerExtras }: { targetId: string; composerExtras?: React.ReactNode }) {
     const shell = useStore();
     const conversation = conversationOf(targetId);
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
@@ -509,6 +514,7 @@ export function AstryxSurface({ targetId }: { targetId: string }) {
                         roomId={targetId}
                         triggers={triggers}
                         placeholder="和这个实体对话…（@ 选 bot）"
+                        extras={composerExtras}
                     />
                 </div>
         </div>

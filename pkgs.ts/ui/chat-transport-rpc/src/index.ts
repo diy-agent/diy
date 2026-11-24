@@ -144,6 +144,12 @@ export class RpcChatClient implements ChatClient {
     readonly jobs = {
         list: (): Promise<{ rows: JobRunRow[] }> => this.call('jobs.list', {}),
         kill: (id: string): Promise<{ ok: boolean }> => this.call('jobs.kill', { id }),
+        /** 一条 run 的输出尾巴（`found:false` = 账本里没这条了） */
+        tail: (
+            id: string,
+            lines?: number,
+        ): Promise<{ found: boolean; tail?: { text: string; lines: number; droppedBytes: number } }> =>
+            this.call('jobs.tail', { id, ...(lines === undefined ? {} : { lines }) }),
     };
 
     readonly links = {

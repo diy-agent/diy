@@ -143,6 +143,13 @@ export const jobsApi = RpcSchema.group({
         list: RpcSchema.unary({ input: {}, output: Any }),
         /** 按进程组停止（只有运行中的才可停；返回是否真的发了信号） */
         kill: RpcSchema.unary({ input: { id: Id }, output: Any }),
+        /**
+         * 一条 run 的输出尾巴（与 `job output` 同一个 `tailOf`）。
+         *
+         * 界面「明细」里的那段输出用：列表行只够写「跑了多久、退出码几」，
+         * 「它到底说了什么」必须能翻 —— 否则出事时人还得回头求 agent 去调工具。
+         */
+        tail: RpcSchema.unary({ input: { id: Id, lines: z.number().int().positive().optional() }, output: Any }),
     },
 });
 
