@@ -17,6 +17,7 @@ import { Spinner } from '@astryxdesign/core';
 import * as React from 'react';
 
 import { useBotProgress } from './useBotProgress';
+import { useNow } from './useNow';
 
 function useElapsedSeconds(since: number | undefined): number | undefined {
     const [elapsed, setElapsed] = React.useState<number | undefined>(undefined);
@@ -30,18 +31,6 @@ function useElapsedSeconds(since: number | undefined): number | undefined {
     }, [since]);
 
     return since === undefined ? undefined : elapsed;
-}
-
-/** 每秒一次的本地时钟（只在真有 progress 时跑 —— 否则就是白重渲） */
-function useNow(active: boolean): number {
-    const [now, setNow] = React.useState(() => Date.now());
-    React.useEffect(() => {
-        if (!active) return;
-        setNow(Date.now());
-        const timer = setInterval(() => setNow(Date.now()), 1000);
-        return () => clearInterval(timer);
-    }, [active]);
-    return now;
 }
 
 export function RunningIndicator({

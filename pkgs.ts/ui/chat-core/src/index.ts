@@ -14,7 +14,18 @@ export {
 export { MockChatClient, type MockOptions } from './mock';
 export { applyEvent, emptyState, fromSnapshot, type ConversationState } from './reduce';
 export { jobOf, jobViewOfNotice, stripAnsi, type JobRow, type JobState, type JobView } from './job';
-export { awaitingText, doingText, elapsedText, idleNowOf, progressLineOf, type BotProgress } from './progress';
+export {
+    awaitingText,
+    DELIVERY_QUIET_MS,
+    deliveryNoteOf,
+    doingText,
+    elapsedText,
+    idleNowOf,
+    progressLineOf,
+    WAIT_QUIET_MS,
+    waitTextOf,
+    type BotProgress,
+} from './progress';
 export { ConversationStore, type ConversationModel } from './store';
 export { endFooterOf, type EndFooter } from './end-footer';
 export { buildTimeline, type TimelineDelivery, type TimelineEntry, type TimelinePart } from './timeline';

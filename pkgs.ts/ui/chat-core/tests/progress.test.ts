@@ -8,7 +8,16 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { awaitingText, doingText, elapsedText, idleNowOf, progressLineOf, type BotProgress } from '../src/progress';
+import {
+    awaitingText,
+    deliveryNoteOf,
+    doingText,
+    elapsedText,
+    idleNowOf,
+    progressLineOf,
+    waitTextOf,
+    type BotProgress,
+} from '../src/progress';
 import { applyEvent, emptyState } from '../src/reduce';
 import type { StreamEvent } from '../src/types';
 
@@ -109,5 +118,46 @@ describe('progress：显示文案', () => {
             1_000_000,
         );
         expect(long).toBe('bash 运行中 · 有进展 6m40s前');
+    });
+});
+
+describe('waitTextOf —— 待答提问等了多久', () => {
+    it('按服务端提问时刻算（刷新页面也照样说「已等 27m」）', () => {
+        expect(waitTextOf(1_000_000 - 27 * 60_000, 1_000_000)).toBe('已等 27m00s');
+    });
+
+    it('刚发出几秒不说（噪音），缺时刻也不说', () => {
+        expect(waitTextOf(1_000_000 - 1_500, 1_000_000)).toBe('');
+        expect(waitTextOf(undefined, 1_000_000)).toBe('');
+    });
+
+    it('时钟漂移（at 在未来）不显示负数', () => {
+        expect(waitTextOf(1_000_000 + 60_000, 1_000_000)).toBe('');
+    });
+});
+
+describe('deliveryNoteOf —— 「发了没人理」的唯一可见信号', () => {
+    const base = { state: 'delivering' as const, updatedAt: 1_000_000 - 26 * 60_000, live: false, now: 1_000_000 };
+
+    it('投递挂着、没人动：说「未开跑」+ 多久', () => {
+        expect(deliveryNoteOf(base)).toBe('未开跑 26m00s');
+    });
+
+    it('还在队列里没轮到：说「排队」', () => {
+        expect(deliveryNoteOf({ ...base, state: 'queued' })).toBe('排队 26m00s');
+    });
+
+    it('bot 在动（live）就闭嘴 —— 那时行尾已有运行指示器，重复说会让人以为消息没发出去', () => {
+        expect(deliveryNoteOf({ ...base, live: true })).toBeUndefined();
+    });
+
+    it('没到 15s 不说话（正常开跑就是毫秒级，短等待说出来只是噪音）', () => {
+        expect(deliveryNoteOf({ ...base, updatedAt: 1_000_000 - 5_000 })).toBeUndefined();
+    });
+
+    it('已经落地 / 失败 / 跳过的不归它管（各有各的显示）', () => {
+        expect(deliveryNoteOf({ ...base, state: 'delivered' })).toBeUndefined();
+        expect(deliveryNoteOf({ ...base, state: 'failed' })).toBeUndefined();
+        expect(deliveryNoteOf({ ...base, state: 'skipped' })).toBeUndefined();
     });
 });

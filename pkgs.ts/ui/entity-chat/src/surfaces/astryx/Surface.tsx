@@ -305,7 +305,7 @@ function AstryxComposer({
                         .catch(() => undefined)
                         .finally(() => setSubmitting(false));
                 }}
-                // 运行中也保持"发送"态：插话是正常操作，停止在 SpeakingBar 上
+                // 运行中也保持"发送"态：插话是正常操作，停止在 RoomStatusBar 上
                 onStop={() => conversation.cancel()}
                 isStopShown={false}
                 // 底栏左侧：上下文 / 模型 / 作业（发送键由设计系统摆在右侧）
@@ -491,7 +491,7 @@ export function AstryxSurface({ targetId, composerExtras }: { targetId: string; 
                 )}
             </div>
                 <div style={{ flex: '0 0 auto', paddingBlock: 12 }}>
-                    {/* 停止按钮不在这里：壳层的 SpeakingBar 已经渲染（含「单停」与「全部停止」），
+                    {/* 停止按钮不在这里：壳层的 RoomStatusBar 已经渲染（含「单停」与「全部停止」），
                         而 astryx 的 composer 自己关掉了 isStopShown。这里原本还有一条自建的
                         「正在说话 + 停止」条（注释说「SpeakingBar 没渲染」——那是 surface 还没收进
                         SurfaceViews 时的事实），结果同屏两条、文案还不同步。已删。 */}
