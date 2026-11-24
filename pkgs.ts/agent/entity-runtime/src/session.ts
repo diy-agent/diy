@@ -28,6 +28,7 @@ import {
     type TranscriptEntry,
 } from './compaction';
 import { maxOutputTokensOf } from './providers';
+import { ProgressWatch, type ProgressPolicy } from './progress';
 import { Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
 import type { AgentEvent, Author, Bot, DeliveryState, Item, TurnEndReason } from './types';
@@ -132,6 +133,10 @@ export interface SessionDeps {
     maxOutputTokens?: number;
     /** 步数上限（缺省 `DEFAULT_MAX_STEPS`；到顶按 `max-steps` 收尾，不算失败） */
     maxSteps?: number;
+    /** 卡死看门狗的阈值（缺省见 progress.ts 的 `DEFAULT_PROGRESS_POLICY`）；测试可调小 */
+    progressPolicy?: Partial<ProgressPolicy>;
+    /** 看门狗判定间隔（缺省 5000ms）；测试可调小 */
+    progressTickMs?: number;
 }
 
 interface QueueItem {
@@ -443,9 +448,41 @@ export class BotSession {
         const abort = new AbortController();
         this.abort = abort;
 
+        // ── 看门狗 ──
+        // 下面那个 for-await **只有 SDK 肯退出时**才会走到 finally：网关连上了不吐字节、
+        // 流中途静默时，收尾判据（endReasonOf / endItems / turn.end）永远没机会跑 ——
+        // 用户看到的是「一直转圈」，而且关掉重开照样转（卡在调用里的人没人管）。
+        // 判据全在 progress.ts（假 clock 可测）；这里只负责「定时问一次、到点 abort」。
+        const watch = new ProgressWatch({
+            ...(this.deps.progressPolicy === undefined ? {} : { policy: this.deps.progressPolicy }),
+        });
+        watch.start(turn.turnId);
+        /** 这一轮是被看门狗收掉的（而不是人按的停）：收尾判据靠它区分 stalled / interrupted */
+        let stalledByWatchdog = false;
+        /**
+         * **abort 那一刻**的事实（在等谁 / 空了多久）。不能在 finally 里现取：
+         * abort 之后 run 还会吐 `run.failed`，`watch.apply` 会清空 pending（收尾不再判），
+         * 那时再问就只剩 undefined —— 真事实反而丢了。
+         */
+        let stallFact: { awaiting: string; idleMs: number } | undefined;
+        const watchdog = setInterval(() => {
+            if (abort.signal.aborted) return;
+            if (watch.evaluate().action !== 'abort') return;
+            stalledByWatchdog = true;
+            stallFact = watch.stall();
+            abort.abort();
+        }, this.deps.progressTickMs ?? 5_000);
+        // 别拖住进程退出（worktree 里跑测试时不至于挂住）
+        (watchdog as { unref?: () => void }).unref?.();
+
         // 开跑前先把已到的公共条目并进来，再按自己的预算压一次（压不压只看自己）
         this.drainPending();
-        await this.compact({ turn: turn.turn, turnId: turn.turnId });
+        watch.enter('compact');
+        try {
+            await this.compact({ turn: turn.turn, turnId: turn.turnId });
+        } finally {
+            watch.settle('compact');
+        }
 
         // 本轮要处理的用户消息直接作为 prompt 的一部分（不出现在别处，避免重复记账）
         const userEntries: TranscriptEntry[] = items
@@ -509,6 +546,7 @@ export class BotSession {
                     this.lastUsage = usage;
                 },
             })) {
+                watch.apply(event);
                 if (event.type === 'run.failed') {
                     failed = true;
                     failureMessage = event.message;
@@ -537,6 +575,7 @@ export class BotSession {
             failureMessage = friendlyError(error);
             this.emit({ type: 'error', message: failureMessage });
         } finally {
+            clearInterval(watchdog);
             // 本轮真正发生过的内容（含自己的 tool / reasoning）原样入账
             this.transcript.push(...userEntries, ...produced);
             // 到这一步本轮输入才**真的进了 transcript**（= 会被写进快照）。水位只能跟到这里：
@@ -554,6 +593,10 @@ export class BotSession {
             const endReason = endReasonOf({
                 failed,
                 aborted: abort.signal.aborted,
+                ...(abort.signal.aborted
+                    ? { abortedBy: stalledByWatchdog ? ('deadline' as const) : ('human' as const) }
+                    : {}),
+                ...(stallFact === undefined ? {} : { stall: stallFact }),
                 finished,
                 ...(finishReason === undefined ? {} : { finishReason }),
                 steps,

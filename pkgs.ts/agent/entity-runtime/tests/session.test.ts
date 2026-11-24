@@ -9,7 +9,7 @@ import type { RunOptions } from '../src/agent';
 import type { Compactor, TranscriptEntry } from '../src/compaction';
 import type { RoomEntry } from '../src/room-log';
 import { BotSession, type SessionDeps, type SessionEvent, type Turn } from '../src/session';
-import type { AgentEvent, Bot, Item } from '../src/types';
+import type { AgentEvent, Bot, Item, TurnEndReason } from '../src/types';
 
 const BOT_A: Bot = { id: 'bot:a', name: 'diy', color: '#111', persona: '', homeRoomId: 'room:1', modelKey: 'm' };
 const BOT_B: Bot = { id: 'bot:b', name: 'cops', color: '#222', persona: '', homeRoomId: 'room:1', modelKey: 'm' };
@@ -22,7 +22,7 @@ interface Harness {
     deliveries: string[];
     /** 每次开跑时真正喂给模型的上下文 */
     seen: RunOptions['messages'][];
-    ends: Array<{ turn: number; turnId: string; text: string; failed: boolean }>;
+    ends: Array<{ turn: number; turnId: string; text: string; failed: boolean; endReason: TurnEndReason }>;
     events: SessionEvent[];
 }
 
@@ -35,6 +35,9 @@ function makeSession(
         seed?: SessionDeps['seed'];
         budget?: SessionDeps['budget'];
         compactor?: Compactor;
+        /** 卡死看门狗：测试把它调成几十毫秒（默认 60s / 120s） */
+        progressPolicy?: SessionDeps['progressPolicy'];
+        progressTickMs?: SessionDeps['progressTickMs'];
     } = {},
 ): Harness {
     const bot = options.bot ?? BOT_A;
@@ -84,6 +87,8 @@ function makeSession(
         budget: options.budget,
         compactor: options.compactor,
         allocateTurn: (): Turn => ({ turn: ++turn, turnId: `turn-${turn}` }),
+        progressPolicy: options.progressPolicy,
+        progressTickMs: options.progressTickMs,
         run,
     });
     session.subscribe((event) => {
@@ -151,6 +156,38 @@ describe('BotSession', () => {
         expect(h.runs).toEqual(['turn-1']);
         expect(h.deliveries).toContain('m1:delivered');
         expect(h.deliveries).not.toContain('m1:failed');
+    });
+
+    it('模型流挂死：看门狗到点中止，结局是 stalled（不是 interrupted / unknown）', async () => {
+        const h = makeSession({
+            hangOnAbort: true,
+            progressPolicy: { streamSilenceMs: 20 },
+            progressTickMs: 5,
+        });
+        await h.session.post({ messageId: 'm1', text: '卡住' });
+
+        expect(h.ends).toHaveLength(1);
+        expect(h.ends[0]?.endReason.type).toBe('stalled');
+        expect(h.ends[0]?.endReason.awaiting).toBe('model-stream');
+        expect(h.ends[0]?.endReason.idleMs).toBeGreaterThanOrEqual(20);
+        // 说清「在等谁 / 空了多久」：一条 notice（假 run 的 abort 会额外吐 run.failed，
+        // 真 SDK 发的是 'abort' part —— 所以这里只锁 notice，不断言 error 条目的有无）
+        const notice = h.items.find((item) => item.type === 'notice');
+        expect(notice?.data.kind).toBe('stalled');
+        // 机器码在文案里被翻成人话（不能把 `model-stream` 直接甩给用户）
+        expect(String(notice?.data.text)).toContain('等模型回话时');
+        expect(String(notice?.data.text)).not.toContain('model-stream');
+    });
+
+    it('人按停仍然是 interrupted（deadline 与 human 必须分得开）', async () => {
+        const h = makeSession({ hangOnAbort: true, progressTickMs: 1_000 });
+        const running = h.session.post({ messageId: 'm1', text: '我会被按停' });
+        await sleep(2);
+        h.session.cancel();
+        await running;
+
+        expect(h.ends).toHaveLength(1);
+        expect(h.ends[0]?.endReason.type).toBe('interrupted');
     });
 
     it('cancel keepQueue：排队的 next-turn 不丢，取消这一轮后继续跑', async () => {

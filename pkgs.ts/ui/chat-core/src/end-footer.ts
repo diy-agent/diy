@@ -45,6 +45,9 @@ export function endFooterOf(reason: TurnEndReason | undefined): EndFooter | unde
             return { label: '被内容策略拦截', detail: '换个说法再问，或换个模型', tone: 'warn' };
         case 'tool-mismatch':
             return { label: '工具结果没回来', detail: '说「继续」重跑这一步', tone: 'warn' };
+        // 失联：我们**知道**在等谁、空了多久（与 `unknown` 区分：那个是不知道）
+        case 'stalled':
+            return { label: '本轮失联', detail: stalledDetail(reason), tone: 'bad' };
         case 'error':
             return { label: '本轮失败', detail: undefined, tone: 'bad' };
         case 'unknown':
@@ -52,6 +55,21 @@ export function endFooterOf(reason: TurnEndReason | undefined): EndFooter | unde
         default:
             return { label: '本轮结束（未知状态）', tone: 'bad' };
     }
+}
+
+/** 「等 X 时 N 秒没进展」——两件事都是运行时真的知道的（progress.ts） */
+function stalledDetail(reason: TurnEndReason): string {
+    const what = reason.awaiting === undefined ? '一路' : awaitingLabel(reason.awaiting);
+    const idle = reason.idleMs === undefined ? '' : ` ${Math.round(reason.idleMs / 1000)}s`;
+    return `${what}${idle} 没进展，已中止 —— 说「继续」重试；总在这一步断就查网关超时`;
+}
+
+/** 机器码 → 短标签（与 entity-runtime 的 `awaiting` 一一对应；两边不共享代码，只共享词汇） */
+function awaitingLabel(awaiting: string): string {
+    if (awaiting === 'model-stream') return '等模型回话';
+    if (awaiting === 'compact') return '压缩上下文';
+    if (awaiting.startsWith('tool:')) return `${awaiting.slice('tool:'.length)} 在跑`;
+    return awaiting;
 }
 
 function unknownDetail(reason: TurnEndReason): string {

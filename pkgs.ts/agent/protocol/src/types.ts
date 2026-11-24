@@ -367,6 +367,9 @@ export interface TurnEndReason {
      * `unknown` = 我们**不知道**为什么停（没收到收尾信号 / 上游给了不认识的收尾原因 /
      * 空产出就停）。它按错误处理：不发结论，时间线上一条错误。
      * 「没有证据」不等于「正常完成」（未知按错误处理，见 end-reason.ts）。
+     *
+     * `stalled` = 我们**非常知道**为什么停：看门狗发现某个 await 太久没进展（progress.ts），
+     * 主动 abort 了本轮。不能塞进 `unknown` —— 那是「不知道」，而 stall 知道在等谁、等了多久。
      */
     type:
         | 'completed'
@@ -375,6 +378,7 @@ export interface TurnEndReason {
         | 'filtered'
         | 'tool-mismatch'
         | 'interrupted'
+        | 'stalled'
         | 'unknown'
         | 'error';
     /** 上游的 `finishReason` 原文（`stop` / `length` / `tool-calls` / `error` / …） */
@@ -387,6 +391,10 @@ export interface TurnEndReason {
     maxSteps?: number;
     /** 本轮的 step 数（多轮工具循环时用于区分「说完了」和「刚到一半」） */
     steps?: number;
+    /** `stalled` 时：卡在哪个 await（`model-stream` / `tool:<name>` / `compact`） */
+    awaiting?: string;
+    /** `stalled` 时：多久没有进展（毫秒） */
+    idleMs?: number;
 }
 
 /** 模型运行的原始事件（seq 单调；投影成 Item 后 UI 才消费） */

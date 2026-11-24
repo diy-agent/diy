@@ -51,6 +51,21 @@ describe('endFooterOf', () => {
         expect(footer?.detail).not.toContain('接上');
     });
 
+    it('失联：说清在等谁、空了多久（不是「不知道」）', () => {
+        const footer = endFooterOf({ type: 'stalled', awaiting: 'model-stream', idleMs: 120_000 });
+        expect(footer?.label).toBe('本轮失联');
+        expect(footer?.tone).toBe('bad');
+        expect(footer?.detail).toContain('等模型回话');
+        expect(footer?.detail).toContain('120s');
+        // 机器码不能直接端给用户
+        expect(footer?.detail).not.toContain('model-stream');
+    });
+
+    it('失联在工具上：说哪个工具在跑', () => {
+        const footer = endFooterOf({ type: 'stalled', awaiting: 'tool:bash', idleMs: 300_000 });
+        expect(footer?.detail).toContain('bash 在跑');
+    });
+
     it('人按的停：中性色，不吓人', () => {
         const footer = endFooterOf({ type: 'interrupted', finishReason: 'aborted' });
         expect(footer?.tone).toBe('muted');
@@ -69,6 +84,7 @@ describe('endFooterOf', () => {
             { type: 'filtered' },
             { type: 'tool-mismatch' },
             { type: 'interrupted' },
+            { type: 'stalled' },
             { type: 'unknown', note: 'empty-output' },
             { type: 'unknown', note: 'finish=eos' },
             { type: 'error' },
