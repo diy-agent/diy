@@ -497,4 +497,20 @@ describe('unit（任务内部的 DAG 节点）', () => {
         // 删除幂等
         expect(store.removeUnit('t1', a)).toBe(false);
     });
+
+    it('deleteRoom 连带清掉节点 / 边 / 发号游标（unit 没有外键可跟，没人替它清）', () => {
+        const store = openStore(':memory:');
+        store.saveRoom(room);
+        const a = add(store, room.id, 'a').id;
+        const b = add(store, room.id, 'b').id;
+        store.linkUnits(room.id, a, b);
+
+        store.deleteRoom(room.id);
+
+        expect(store.listUnits(room.id)).toEqual([]);
+        expect(store.unitDepsOf(room.id)).toEqual([]);
+        // 游标一起清：「号不回收」说的是同一个任务内；任务本身没了就没有「同任务内」了
+        store.saveRoom(room);
+        expect(add(store, room.id, 'c').id).toBe('u1');
+    });
 });

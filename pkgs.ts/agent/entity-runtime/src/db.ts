@@ -1269,6 +1269,12 @@ export function openStore(file: string): Store {
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM asks WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM drafts WHERE owner_id = ?').run(roomId);
+            // unit 不是实体（没有外键可跟），删房间时**得自己清**：否则整张分解图留在库里当孤儿，
+            // 而它没有任何其他入口能被发现（侧栏看不见、任务没了、RPC 也不会再查它）。
+            // 发号游标一起清 —— 「号不回收」说的是同一个任务内，任务本身没了就没有「同任务内」了
+            db.prepare('DELETE FROM task_units WHERE task_id = ?').run(roomId);
+            db.prepare('DELETE FROM unit_deps WHERE task_id = ?').run(roomId);
+            db.prepare('DELETE FROM counters WHERE scope = ?').run(`unit:${roomId}`);
             // 对话框草稿（synthetic scope，见 docs/drafts-design.md）挂在房间后面：
             // `dlg:<用途>:<roomId>`。删房间时一起清，不等 TTL
             db.prepare("DELETE FROM drafts WHERE owner_id LIKE ? ESCAPE '\\'").run(`dlg:%:${likeEscape(roomId)}`);
