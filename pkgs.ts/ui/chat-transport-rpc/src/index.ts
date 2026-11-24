@@ -54,22 +54,40 @@ export interface UnitItem {
     id: string;
     title: string;
     body: string;
+    /** **有效**状态：叶子 = 落库值；功能域（有子）= 由子派生 */
     status: 'open' | 'doing' | 'done';
-    /** 前置：这些做完才能做它 */
+    /** 分解树上的父（功能域）；null = 根 */
+    parent: string | null;
+    /** 子节点（按书写顺序 = 兄弟先后） */
+    children: string[];
+    /** 有子 = 功能域容器（本身不执行） */
+    group: boolean;
+    /** 树深（根 = 0）：视图按它缩进 */
+    depth: number;
+    /** 前置：这些做完才能做它（只在跨域时才有边） */
     deps: string[];
     /** 后继：它做完才能做它们 */
     dependents: string[];
-    /** 拓扑层（0 起）：同层之间无依赖 */
+    /** 拓扑层（0 起）：按 deps 算，回答「哪几条能同时做」 */
     layer: number;
 }
 
-/** 任务内部拆分图（unit DAG）的视图快照；ready / doing / blocked / done 都是 id 集合 */
+/** 任务分解的视图快照：树（分解）+ ready/doing（执行） */
 export interface UnitBoardView {
+    /** **树的先序**（根按创建序，子同）：视图照这个顺序缩进就是树 */
     rows: UnitItem[];
+    /** 根节点 id（树的先序） */
+    roots: string[];
+    /** 现在能做的：只有叶子（功能域不进这里） */
     ready: string[];
     doing: string[];
     blocked: string[];
+    /** 派生状态为 done 的全部节点（含子都做完的功能域） */
     done: string[];
+    /** 功能域（有子）的 id */
+    groups: string[];
+    /** 叶子被谁挡着（兄弟串行也在这里报，它不是 deps 边） */
+    heldBy: Record<string, string>;
     layers: UnitItem[][];
     /** 图里有环（正常为 false；为 true 说明库被写脏了，界面该亮出来） */
     cyclic: boolean;

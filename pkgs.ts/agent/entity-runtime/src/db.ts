@@ -135,15 +135,25 @@ export interface UnitRecord {
     /** 这一步做什么 + 验收口径（不是任务方案全文：方案在 task.body） */
     body: string;
     status: UnitStatus;
-    /** 创建序：只用于稳定排序，不随状态变化重排 */
+    /**
+     * 分解树上的父（功能域）id；`null` = 根。
+     *
+     * 与 `unit_deps` 正交：父子是「这块功能由哪些子块组成」（人在分解需求时说的话），
+     * 依赖是「谁做完才能做谁」（跨功能域的先后约束才需要显式说）。同父兄弟默认按 `seq`
+     * 先后串行 —— 于是树本身就是执行顺序的骨架，只有跨域才补边（见 `units.ts`）。
+     */
+    parent: string | null;
+    /** 创建序：只用于稳定排序（同父兄弟的先后也按它），不随状态变化重排 */
     seq: number;
     createdAt: number;
     updatedAt: number;
 }
 
 /** 写 unit：`id` / `seq` / 时间戳缺省由 store 补（新 unit 的 id 走 counters，永不回收） */
-export type UnitInput = Omit<UnitRecord, 'id' | 'seq' | 'createdAt' | 'updatedAt'> & {
+export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt'> & {
     id?: string;
+    /** 父（功能域）；缺省 = 沿用库里已有的，库里也没有就是根 */
+    parent?: string | null;
     createdAt?: number;
     updatedAt?: number;
     /**
@@ -537,6 +547,8 @@ export function openStore(file: string): Store {
             title      TEXT NOT NULL,
             body       TEXT NOT NULL DEFAULT '',
             status     TEXT NOT NULL DEFAULT 'open',
+            -- 分解树上的父（功能域）。NULL = 根。**父子是「组成」，deps 是「先后」**，两者正交
+            parent_id  TEXT,
             seq        INTEGER NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
@@ -651,6 +663,14 @@ export function openStore(file: string): Store {
         db.exec('ALTER TABLE tasks ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
         db.exec('UPDATE tasks SET updated_at = created_at WHERE updated_at = 0');
     }
+
+    // 老库补列：task_units.parent_id（分解树）。历史行没有分解树概念，一律当根
+    const unitColumns = new Set(
+        (db.prepare('PRAGMA table_info(task_units)').all() as Array<Record<string, unknown>>).map((row) =>
+            String(row['name']),
+        ),
+    );
+    if (!unitColumns.has('parent_id')) db.exec('ALTER TABLE task_units ADD COLUMN parent_id TEXT');
 
     /** room_members → roomId: members[]（members() 与 listRooms() 共用） */
     const readMembers = (): Record<string, RoomMember[]> => {
@@ -789,6 +809,7 @@ export function openStore(file: string): Store {
         title: String(row['title']),
         body: String(row['body']),
         status: String(row['status']) as UnitStatus,
+        parent: row['parent_id'] === null || row['parent_id'] === undefined ? null : String(row['parent_id']),
         seq: Number(row['seq']),
         createdAt: Number(row['created_at']),
         updatedAt: Number(row['updated_at']),
@@ -858,26 +879,31 @@ export function openStore(file: string): Store {
             title,
             body: unit.body,
             status: unit.status,
+            // 缺省沿用（改 title 不该顺手把挂点抹掉）；新节点缺省 = 根
+            parent: unit.parent === undefined ? (previous?.parent ?? null) : unit.parent,
             seq: previous?.seq ?? Number(nextSeq),
             createdAt: previous?.createdAt ?? unit.createdAt ?? now,
             updatedAt: unit.updatedAt ?? now,
         };
+        if (record.parent === record.id) throw new Error(`unit 不能是自己的父：${record.id}`);
         db.prepare(
-            'INSERT INTO task_units (task_id, id, title, body, status, seq, created_at, updated_at) ' +
-                'VALUES (?,?,?,?,?,?,?,?) ' +
-                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, status=?, updated_at=?',
+            'INSERT INTO task_units (task_id, id, title, body, status, parent_id, seq, created_at, updated_at) ' +
+                'VALUES (?,?,?,?,?,?,?,?,?) ' +
+                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, status=?, parent_id=?, updated_at=?',
         ).run(
             record.taskId,
             record.id,
             record.title,
             record.body,
             record.status,
+            record.parent,
             record.seq,
             record.createdAt,
             record.updatedAt,
             record.title,
             record.body,
             record.status,
+            record.parent,
             record.updatedAt,
         );
         return record;

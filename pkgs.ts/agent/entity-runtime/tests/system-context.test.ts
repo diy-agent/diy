@@ -145,37 +145,36 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         expect(ctx.system).toBe(open.system);
     });
 
-    it('units：全量注入（ready / doing / blocked / 分层）→ 「现在能做哪几条」不用先调工具', () => {
+    it('units：全量注入缩进树 → 「现在能做哪几条 / 卡在谁身上」不用先调工具', () => {
         const repo = tmp();
         // 用真的纯函数算 board：注入与视图 / 工具是同一份派生量，别在测试里手捏形状
         const facts = [
-            { id: 'u1', title: '读现状', status: 'done' as const, seq: 1 },
-            { id: 'u2', title: '写领域函数', status: 'doing' as const, seq: 2 },
-            { id: 'u3', title: '加工具', status: 'open' as const, seq: 3 },
-            { id: 'u4', title: '注入上下文', status: 'open' as const, seq: 4 },
-        ];
-        const deps = [
-            { taskId: 'x', from: 'u1', to: 'u2' },
-            { taskId: 'x', from: 'u2', to: 'u3' },
+            { id: 'dom', title: '取消语义', status: 'open' as const, seq: 1, parent: null },
+            { id: 'a', title: '读现状', status: 'done' as const, seq: 2, parent: 'dom' },
+            { id: 'b', title: '写领域函数', status: 'open' as const, seq: 3, parent: 'dom' },
+            { id: 'view', title: '视图', status: 'open' as const, seq: 4, parent: null },
+            { id: 'c', title: '注入上下文', status: 'open' as const, seq: 5, parent: 'view' },
         ];
         const ctx = createRoomContext({
             spec: { id: 'task:t-1', type: 'task', data: { title: '任务一' } },
             cwd: repo,
             skillsRoot: join(tmp(), 'skills'),
-            units: () => unitBoard(facts, deps),
+            units: () => unitBoard(facts, []),
         });
         const system = ctx.open().system;
         expect(system).toContain('units:');
-        // ready 是「该做什么」的答案；blocked / done **不点名** —— open 且不在 ready 就是 blocked
+        // ready / doing 是行动指令；blocked / done 不点名 —— 树行里的标记就是答案
         expect(system).toContain('ready:');
-        expect(system).toContain('u4');
-        expect(system).toContain('doing:');
+        expect(system).toContain('b');
         expect(system).not.toContain('blocked:');
-        // 分层是全图的骨架（视图与上下文同一形状）：每条带 status + deps，blocked / done 由它读出来
-        expect(system).toContain('layers:');
-        expect(system).toContain('deps:');
-        // title 进上下文，body 不进（要全文用 unit_get）
-        expect(system).toContain('写领域函数');
+        expect(system).not.toContain('layers:');
+        // 树是缩进文本：一行一个节点，状态用标记，卡住的带「等谁」
+        expect(system).toContain('tree:');
+        expect(system).toContain('- [ ] 取消语义 (dom)');
+        expect(system).toContain('  - [x] 读现状 (a)');
+        expect(system).toContain('  - [>] 写领域函数 (b)');
+        // 第二个域要等第一个域（域间串行）：c 被整个 dom 挡着
+        expect(system).toContain('  - [.] 注入上下文 (c)  ← 等 dom');
     });
 
     it('units：空图整节缺席（不造空壳冒充）', () => {

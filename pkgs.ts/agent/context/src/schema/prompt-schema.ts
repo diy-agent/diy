@@ -308,8 +308,8 @@ export const AssembleGlobalsSchema = z.object({
     .describe("任务日志（append-only 的决策/踩坑/评审）：没有记录时整节缺席"),
   units: z
     .object({
-      ready: z.array(UNIT_HEAD).describe("现在能做的（前置都 done）——「该做什么」只看它"),
-      doing: z.array(UNIT_HEAD).describe("正在做（允许多条并行；不是单指针）"),
+      ready: z.array(UNIT_HEAD).describe("现在能做的叶子（前置 + 同父前序兄弟都做完了）——「该做什么」只看它"),
+      doing: z.array(UNIT_HEAD).describe("正在做的叶子（不是单指针；同父兄弟默认串行，所以通常只有 1 条）"),
       layers: z
         .array(
           z.array(
@@ -320,6 +320,14 @@ export const AssembleGlobalsSchema = z.object({
         )
         .optional()
         .describe("全图按依赖分层（同层之间没有依赖边）；图太大时整节缺席、只给 ready + counts"),
+      tree: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "分解树（缩进文本，一行一个节点）：`- [x] 标题 (id)` 的标记 x=做完 / >=现在能做 / ~=在做 / .=卡着；" +
+            "行尾「← 等 xxx」=被谁挡着。缩进 = 父子（父是功能域，不执行）；同父兄弟按书写顺序串行。" +
+            "树太大时整节缺席、只给 ready + counts",
+        ),
       counts: z
         .object({
           open: z.number().int(),
@@ -328,12 +336,12 @@ export const AssembleGlobalsSchema = z.object({
         })
         .optional()
         .describe("各状态条数（只有图溢出、不给全图时才出现）"),
-      note: z.string().optional().describe("溢出时的提示：全图用 unit_list 按需查"),
+      note: z.string().optional().describe("溢出时的提示：全树用 unit_list 按需查"),
     })
     .optional()
     .describe(
-      "任务内部拆解图（unit DAG）：现在能做的 + 按层摆的全图。blocked / done 不点名 —— " +
-        "「open 且不在 ready」就是 blocked，status=done 的就是 done，`layers` 里都有。空图整节缺席",
+      "任务的分解树（功能域 → 可验收的产出）：`tree` 是缩进文本的节点树，`ready` / `doing` 是行动指令。" +
+        "blocked / done 不点名 —— 树行里的标记就是答案。空树整节缺席",
     ),
   room: z
     .object({

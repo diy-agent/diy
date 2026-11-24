@@ -11,23 +11,40 @@
 // 服务端算好的层上（同层必然同 rank），同时也白拿了它的层内排序（降交叉）与折线路由。
 import { Graph, layout } from '@dagrejs/dagre';
 
-/** 一个 unit（与 `@diy-agent/entity-runtime` 的 `UnitBoardRow` 同形；UI 层不跨包拿类型） */
+/**
+ * 一个 unit（与 `@diy-agent/entity-runtime` 的 `UnitBoardRow` 同形；UI 层不跨包拿类型）。
+ *
+ * 两套位置字段并存，各管一件事（2026-11-24）：
+ *   · `parent` / `children` / `depth` = **分解树**（域 → 可验收的产出），列表视图按它缩进；
+ *   · `deps` / `layer` = **执行依赖**，图视图按层摆（同层可并行）。
+ */
 export interface UnitItem {
     id: string;
     title: string;
     body: string;
+    /** **有效**状态：叶子 = 落库值；功能域（有子）= 由子派生（全 done → done） */
     status: 'open' | 'doing' | 'done';
+    parent: string | null;
+    children: string[];
+    /** 有子 = 功能域容器（本身不执行，不进 ready） */
+    group: boolean;
+    depth: number;
     deps: string[];
     dependents: string[];
     layer: number;
 }
 
 export interface UnitBoard {
+    /** **树的先序**：照着顺序缩进就是树 */
     rows: UnitItem[];
+    roots: string[];
     ready: string[];
     doing: string[];
     blocked: string[];
     done: string[];
+    groups: string[];
+    /** 叶子被谁挡着（兄弟串行也在这里报，它不是 deps 边） */
+    heldBy: Record<string, string>;
     layers: UnitItem[][];
     cyclic: boolean;
 }

@@ -29,7 +29,7 @@ import { skillsOf } from '@diy-agent/skills';
 import { localISOString } from '@diy-agent/time';
 
 import type { JournalEntry } from './db';
-import type { UnitBoard } from './units';
+import { unitTreeLines, type UnitBoard } from './units';
 import { watchedValue } from './watch-cache';
 
 /** 房间上下文需要的 spec 形状（只读；与 `Room` 结构兼容） */
@@ -223,25 +223,23 @@ function journalProvider(get?: () => readonly JournalEntry[]): ContextProvider {
 }
 
 /**
- * 全量形态的硬线：过线就退化成摘要（只给「现在能做」+ 计数，全图按需 `unit_list`）。
+ * 全量形态的硬线：过线就退化成摘要（只给「现在能做」+ 计数，全树按需 `unit_list`）。
  *
- * 1.5 KB 的说法（原设计稿）在真实数据上太紧：一行真实 unit 约 120 字节，1.5 KB 只装得下
- * 十来条 —— 常见的 10~20 条图会**天天**走摘要，等于默认不给图。40 条 × 120 B ≈ 5 KB，
- * 取 4 KB 作字节线、40 条作条数线（两条各自兜住「条数少但标题很长」与「标题短但极多」）。
+ * 树行比原来的分层 JSON 省得多（一行一个节点，缩进即层级），所以线按**行数**给更直观：
+ * 40 行树 ≈ 3 KB，正好是「常见 10~20 条图天天读得起」的量级；超了才退摘要。
  */
 const UNITS_FULL_MAX_BYTES = 4096;
-const UNITS_FULL_MAX_COUNT = 40;
+const UNITS_FULL_MAX_LINES = 40;
 
 /**
- * 任务拆分图（unit DAG）。**全量注入**（2026-11-24 用户裁：先简单走）——
- * 于是「现在能做哪几条」不需要多一次工具调用，代价是图越长上下文越贵。
+ * 任务分解（树 + 执行约束）。**全量注入**（2026-11-24 用户裁：先简单走）——
+ * 于是「现在能做哪几条 / 为什么这条卡着」不需要多一次工具调用。
  *
- * 两条去冗余的规矩（##u6）：
- *   · **每个 unit 只出现一次**（在 `layers` 里，带 status + deps）；`ready` / `doing` 只点名
- *     「现在该干什么」，标题顺带给（那几条是行动指令，值得重复一次）。
- *   · **`blocked` / `done` 不点名**：`status` 与 `deps` 都在层里，`open` 且不在 `ready` =
- *     blocked、`done` 就是 status=done —— 再点名一遍是同一事实的第二份，模型读两遍还得自己核对。
- *     要看分档的完整清单，`unit_list` 一次给全（工具是按需的，不怕重复）。
+ * 格式是**缩进树文本**而不是嵌套 JSON（2026-11-24 用户裁：树比图信息密度高、也比 JSON 省）：
+ * 树的形状用缩进就表达完了，JSON 要为每层付 `{"children":[...]}` 的税。
+ *
+ * 去冗余：每个节点只在 `tree` 里出现一次（带状态 + 被谁挡）；`ready` / `doing` 再点名一次
+ * 是因为那是**行动指令**，值得重复。`blocked` / `done` 不点名 —— 树行里的标记就是答案。
  */
 function unitsProvider(get?: () => UnitBoard): ContextProvider {
     return {
@@ -250,28 +248,26 @@ function unitsProvider(get?: () => UnitBoard): ContextProvider {
             const board = get?.();
             if (board === undefined || board.rows.length === 0) return undefined;
             const titleOf = (id: string): string => board.rows.find((row) => row.id === id)?.title ?? '';
-            // 行动指令：只有「现在能做 / 在做」值得带标题（其余在 layers 里各有一行）
             const head = {
                 ready: board.ready.map((id) => ({ id, title: titleOf(id) })),
                 doing: board.doing.map((id) => ({ id, title: titleOf(id) })),
             };
-
-            const full = {
-                ...head,
-                layers: board.layers.map((layer) =>
-                    layer.map((row) => ({ id: row.id, title: row.title, status: row.status, deps: row.deps })),
-                ),
-            };
-            // 字节按实际注入值估（信封的 yaml 渲染只会更紧，不会更松）
-            if (board.rows.length <= UNITS_FULL_MAX_COUNT && JSON.stringify(full).length <= UNITS_FULL_MAX_BYTES) {
-                return full;
+            const tree = unitTreeLines(board);
+            const tooBig =
+                tree.length > UNITS_FULL_MAX_LINES || tree.join('\n').length > UNITS_FULL_MAX_BYTES;
+            if (!tooBig) {
+                return {
+                    ...head,
+                    tree,
+                    ...(board.cyclic ? { cyclic: '图里有环（数据异常）：环上的 unit 永远做不了' } : {}),
+                };
             }
             const count = (status: UnitBoard['rows'][number]['status']): number =>
                 board.rows.filter((row) => row.status === status).length;
             return {
                 ...head,
                 counts: { open: count('open'), doing: count('doing'), done: count('done') },
-                note: `图较大（${board.rows.length} 条），只给现在能做的；全图分层用 unit_list`,
+                note: `分解树较大（${board.rows.length} 条），只给现在能做的；全树用 unit_list`,
             };
         },
     };

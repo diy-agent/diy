@@ -61,11 +61,11 @@ describe('unit 工具', () => {
                 { key: 'schema', title: '状态与原因落库', deps: ['board'] },
                 { key: 'board', title: '派生量认取消' },
             ],
-        })) as { added: Array<{ id: string; title: string; deps: string[] }>; ready: string[] };
+        })) as { added: Array<{ id: string; title: string; parent: string | null; deps: string[] }>; ready: string[] };
 
         expect(added.added).toEqual([
-            { id: 'schema', title: '状态与原因落库', deps: ['board'] },
-            { id: 'board', title: '派生量认取消', deps: [] },
+            { id: 'schema', title: '状态与原因落库', parent: null, deps: ['board'] },
+            { id: 'board', title: '派生量认取消', parent: null, deps: [] },
         ]);
         // 边是 schema ← board：只有 board 可做
         expect(added.ready).toEqual(['board']);
@@ -83,23 +83,58 @@ describe('unit 工具', () => {
         const second = (await toolOf(tools, 'unit_add').execute({
             items: [{ key: 'state', title: 'cancelled 进状态词表' }],
         })) as { ready: string[] };
-        // state 到了，边立刻生效 → tool 被挡住
+        // state 到了，边立刻生效 → tool 被挡住；而 state 虽然后建（seq 更大），**不被兄弟序挡**：
+        // tool 显式依赖它，兄弟序在显式边面前让步（否则两个互等，谁也做不了）
         expect(second.ready).toEqual(['state']);
         expect(store.unitDepsOf('t1')).toEqual([{ from: 'state', to: 'tool' }]);
     });
 
-    it('全是孤立点会带警告（图退化成平列表时提醒连边）', async () => {
+    it('一堆平铺的顶层（既无 parent 也无边）会提醒拆功能域', async () => {
         const { tools } = setup();
         const added = (await toolOf(tools, 'unit_add').execute({
             items: [
                 { key: 'a', title: 'A' },
                 { key: 'b', title: 'B' },
+                { key: 'c', title: 'C' },
+                { key: 'd', title: 'D' },
             ],
         })) as { warning?: string };
-        expect(added.warning).toMatch(/孤立点/);
+        expect(added.warning).toMatch(/平铺/);
 
-        const linked = await toolOf(tools, 'unit_add').execute({ items: [{ key: 'c', title: 'C', deps: ['a'] }] });
-        expect((linked as { warning?: string }).warning).toBeUndefined();
+        // 有功能域就不提醒
+        const hosted = await toolOf(tools, 'unit_add').execute({
+            items: [
+                { key: 'dom2', title: '域' },
+                { key: 'e', title: 'E', parent: 'dom2' },
+            ],
+        });
+        expect((hosted as { warning?: string }).warning).toBeUndefined();
+    });
+
+    it('unit_add 带 parent：功能域不进 ready，子的顺序靠书写顺序', async () => {
+        const { tools } = setup();
+        const added = (await toolOf(tools, 'unit_add').execute({
+            items: [
+                { key: 'dom', title: '取消语义' },
+                { key: 'a', title: 'A', parent: 'dom' },
+                { key: 'b', title: 'B', parent: 'dom' },
+            ],
+        })) as { ready: string[] };
+        expect(added.ready).toEqual(['a']);
+
+        const listing = (await toolOf(tools, 'unit_list').execute({})) as { tree: string[] };
+        expect(listing.tree).toEqual(['- [ ] 取消语义 (dom)', '  - [>] A (a)', '  - [.] B (b)  ← 等 a']);
+    });
+
+    it('功能域不能直接推状态（由子派生）', async () => {
+        const { tools } = setup();
+        await toolOf(tools, 'unit_add').execute({
+            items: [
+                { key: 'dom', title: '域' },
+                { key: 'a', title: 'A', parent: 'dom' },
+            ],
+        });
+        await expect(toolOf(tools, 'unit_update').execute({ id: 'dom', status: 'done' })).rejects.toThrow(/功能域/);
     });
 
     it('key 不合格 / 重名 / 撞已有 id：整批拒绝，不半截写入', async () => {
@@ -133,8 +168,11 @@ describe('unit 工具', () => {
         await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b', deps: ['a'] }] });
 
         await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'doing' });
-        const listing = (await toolOf(tools, 'unit_list').execute({})) as { doing: string[]; ready: string[] };
-        expect(listing.doing).toEqual(['a']);
+        const listing = (await toolOf(tools, 'unit_list').execute({})) as {
+            doing: Array<{ id: string }>;
+            ready: Array<{ id: string }>;
+        };
+        expect(listing.doing.map((item) => item.id)).toEqual(['a']);
         expect(listing.ready).toEqual([]);
 
         const done = (await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'done' })) as { ready: string[] };
