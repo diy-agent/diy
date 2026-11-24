@@ -186,3 +186,39 @@ export function edgePath(points: ReadonlyArray<{ x: number; y: number }>, radius
     const last = points[points.length - 1];
     return `${d} L ${last.x} ${last.y}`;
 }
+
+/**
+ * 焦点节点 + 它的**全部祖先与后代**（hover 时最想问「这条链上是谁」）。
+ *
+ * 必须是有向的（向上只走 `deps`、向下只走 `dependents`）。第一版把 `deps` 和 `dependents`
+ * 混在一起做无向 BFS，结果从 u5 往上到 u4 就顺路走到了兄弟 u6/u7 —— 整张图连成一片，
+ * 高亮等于没做（真实图上实测出来的）。
+ */
+export function chainOf(rows: readonly UnitItem[], id: string): Set<string> {
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const seen = new Set<string>([id]);
+
+    const up = [id];
+    while (up.length > 0) {
+        const cur = byId.get(up.pop()!);
+        if (cur === undefined) continue;
+        for (const dep of cur.deps) {
+            if (seen.has(dep)) continue;
+            seen.add(dep);
+            up.push(dep);
+        }
+    }
+
+    const down = [id];
+    while (down.length > 0) {
+        const cur = byId.get(down.pop()!);
+        if (cur === undefined) continue;
+        for (const next of cur.dependents) {
+            if (seen.has(next)) continue;
+            seen.add(next);
+            down.push(next);
+        }
+    }
+
+    return seen;
+}

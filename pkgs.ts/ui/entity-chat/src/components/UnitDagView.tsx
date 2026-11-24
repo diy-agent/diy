@@ -12,7 +12,7 @@
 import * as React from 'react';
 
 import { roomTitle, type Room } from '../model';
-import { clipTitle, edgePath, layoutUnits, type UnitItem, type UnitLayout } from '../unitLayout';
+import { chainOf, clipTitle, edgePath, layoutUnits, type UnitItem, type UnitLayout } from '../unitLayout';
 import { useUnitBoard } from '../useUnitBoard';
 
 const MIN_K = 0.3;
@@ -37,23 +37,6 @@ function toneOf(unit: UnitItem, ready: Set<string>): (typeof TONE)[keyof typeof 
     if (unit.status === 'done') return TONE.done;
     if (unit.status === 'doing') return TONE.doing;
     return ready.has(unit.id) ? TONE.ready : TONE.blocked;
-}
-
-/** 焦点节点 + 它的全部祖先与后代（「这条链上是谁」——hover 时最想问的） */
-function chainOf(rows: readonly UnitItem[], id: string): Set<string> {
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    const seen = new Set<string>([id]);
-    const queue = [id];
-    while (queue.length > 0) {
-        const cur = byId.get(queue.pop()!);
-        if (cur === undefined) continue;
-        for (const next of [...cur.deps, ...cur.dependents]) {
-            if (seen.has(next)) continue;
-            seen.add(next);
-            queue.push(next);
-        }
-    }
-    return seen;
 }
 
 export function UnitDagView({ room }: { room: Room }) {

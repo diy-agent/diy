@@ -7,7 +7,7 @@
 // 这个文件把这三条钉成断言。
 import { describe, expect, it } from 'vitest';
 
-import { clipTitle, edgePath, layoutUnits, UNIT_NODE_H, UNIT_NODE_W, type UnitItem } from '../src/unitLayout';
+import { chainOf, clipTitle, edgePath, layoutUnits, UNIT_NODE_H, UNIT_NODE_W, type UnitItem } from '../src/unitLayout';
 
 /** 造一行 unit（只给布局用得上的字段；body 与 dependents 由 deps 反推） */
 function row(id: string, deps: string[], layer: number, title = `步骤 ${id}`): UnitItem {
@@ -134,6 +134,28 @@ describe('layoutUnits', () => {
                 expect(node.x + UNIT_NODE_W / 2).toBeLessThanOrEqual(band.x + band.width + 0.01);
             }
         }
+    });
+});
+
+describe('chainOf', () => {
+    /** 给真实图补上 dependents（布局不关心，链要高亮要用） */
+    const withDependents = REAL.map((item) => ({
+        ...item,
+        dependents: REAL.filter((other) => other.deps.includes(item.id)).map((other) => other.id),
+    }));
+
+    it('焦点节点 + 有向的祖先与后代，**不含兄弟分支**', () => {
+        // u5 的链 = 向上 u4 u3 u2 u1 + 自己 + 向下 u8 u9；u6/u7 是兄弟分支，不该亮
+        expect([...chainOf(withDependents, 'u5')].sort()).toEqual(['u1', 'u2', 'u3', 'u4', 'u5', 'u8', 'u9']);
+    });
+
+    it('源节点的链 = 它的整条下游；汇节点的链 = 整条上游', () => {
+        expect([...chainOf(withDependents, 'u1')].sort()).toEqual(REAL.map((item) => item.id).sort());
+        expect([...chainOf(withDependents, 'u9')].sort()).toEqual(REAL.map((item) => item.id).sort());
+    });
+
+    it('孤立节点只有自己', () => {
+        expect([...chainOf([...withDependents, row('solo', [], 0)], 'solo')]).toEqual(['solo']);
     });
 });
 
