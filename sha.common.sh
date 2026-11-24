@@ -82,6 +82,18 @@ _color_compose() {
     printf "\033[%s;%s;1m" "$1" "$2"
 }
 
+# --- 上色开关 ---
+# 只在「stdout 与 stderr 都是终端」时上色；管道 / 重定向 / CI / agent 日志一律给纯文本。
+# 原因：run() 的命令追踪行和三段彩色 info 行在非终端里没人解释 SGR，日志里就是
+# `[38;5;255;48;5;55;1m./sha.sh:54 _ws_run() ...` 这种乱码（`./sha.sh sync 2>&1 | tail` 现场）。
+# VSCode 的 cmd+点击跳转靠 `./sha.sh:106` 这段文本，不靠颜色 ⇒ 去色不损功能。
+# NO_COLOR=<任意非空值>（https://no-color.org）可在真终端里再强制关掉。
+_sha_color_on() {
+  if [[ -n "${NO_COLOR:-}" ]]; then return 1; fi
+  [[ -t 1 && -t 2 ]]
+}
+
+if _sha_color_on; then
 primary=$(_color_compose "$m3_on_primary" "$m3_primary")
 secondary=$(_color_compose "$m3_on_secondary" "$m3_secondary")
 tertiary=$(_color_compose "$m3_on_tertiary" "$m3_tertiary")
@@ -95,6 +107,11 @@ surface_variant=$(_color_compose "$m3_on_surface_variant" "$m3_surface_variant")
 inverse_surface=$(_color_compose "$m3_inverse_on_surface" "$m3_inverse_surface")
 outline="\033[${m3_outline}m"
 reset=$(printf '\033[0m')
+else
+primary=''; secondary=''; tertiary=''; success=''; error=''; warning=''; info=''
+surface=''; surface_container=''; surface_variant=''; inverse_surface=''
+outline=''; reset=''
+fi
 
 # 测试所有构造的颜色
 _test_colors() {
