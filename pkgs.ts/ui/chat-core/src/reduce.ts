@@ -2,6 +2,7 @@
 
 import { normalizeAskRequest } from '@diy-agent/protocol';
 
+import type { BotProgress } from './progress';
 import type { AnsweredAsk, AskRequest, Delivery, Item, StreamEvent, TurnEndReason } from './types';
 
 export interface ConversationState {
@@ -24,10 +25,27 @@ export interface ConversationState {
      * 需要解释的那几种在时间线上都有持久条目 —— 刷新后信息不会丢，只是页脚那行会消失。
      */
     turnEnds: Record<string, TurnEndReason>;
+    /**
+     * 每个成员此刻的进展（`progress` 事件给的事实：在等谁 / 多久没动 / 有无心跳）。
+     *
+     * ephemeral：快照里没有。刷新后最多 5 秒就会被下一条 tick 刷回来；
+     * 那一小段空白里 UI 退回旧的「执行中 Ns」（条目的 at 还在），不会更差。
+     */
+    progress: Record<string, BotProgress>;
 }
 
 export function emptyState(): ConversationState {
-    return { items: [], deliveries: [], asks: [], answered: [], seq: 0, running: false, speaking: [], turnEnds: {} };
+    return {
+        items: [],
+        deliveries: [],
+        asks: [],
+        answered: [],
+        seq: 0,
+        running: false,
+        speaking: [],
+        turnEnds: {},
+        progress: {},
+    };
 }
 
 const STATUS_RANK: Record<Item['status'], number> = { pending: 0, streaming: 1, done: 2, failed: 2 };
@@ -83,13 +101,33 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
         }
         case 'running':
             return { ...state, speaking: event.botIds, running: event.botIds.length > 0 };
-        case 'turn.end':
+        case 'progress':
+            return {
+                ...state,
+                progress: {
+                    ...state.progress,
+                    [event.botId]: {
+                        awaiting: event.awaiting,
+                        idleMs: event.idleMs,
+                        // 客户端收到时刻：自走从这里起算（不用服务端时钟）
+                        at: Date.now(),
+                        alive: event.alive,
+                        stage: event.stage,
+                    },
+                },
+            };
+        case 'turn.end': {
+            // 收尾后这一轮的进展事实就作废（不清的话，下一轮开始前 indicator 会闪一下旧文案）
+            const progress = { ...state.progress };
+            delete progress[event.botId];
             // key 必须带 botId：同一轮里多个 bot 各跑各的，只按 turnId 存会互相覆盖 ——
             // A 被截断、B 正常说完时，A 的页脚会显示成 B 的结局
             return {
                 ...state,
+                progress,
                 turnEnds: { ...state.turnEnds, [`${event.turnId}\u0000${event.botId}`]: event.reason },
             };
+        }
         case 'ask': {
             const exists = state.asks.some((entry) => entry.askId === event.request.askId);
             const asks = exists ? state.asks : [...state.asks, event.request];
@@ -119,7 +157,7 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
         case 'error':
             return { ...state, error: event.message, running: false };
         case 'done':
-            return { ...state, running: false, speaking: [] };
+            return { ...state, running: false, speaking: [], progress: {} };
         default:
             return state;
     }
@@ -167,5 +205,7 @@ export function fromSnapshot(snapshot: {
         speaking,
         // 快照不带 endReason：它是这一次连接里的事实，不是历史数据。
         turnEnds: {},
+        // 同理：进展事实也只在连接里活，刷完等第一条 tick（≤5s）再回来
+        progress: {},
     };
 }

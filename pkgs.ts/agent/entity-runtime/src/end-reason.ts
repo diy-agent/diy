@@ -233,6 +233,53 @@ function awaitText(awaiting: string): string {
     return `${awaiting} 处 `;
 }
 
+/**
+ * 进度提醒（**还没到动手线**的 warn）：落成一条 notice，让人知道"它还在等、已经等了多久"。
+ *
+ * 为什么要落**条目**而不是只靠 ephemeral 的 progress 事件：刷新页面后「刚才卡了 5 分钟」
+ * 这件事必须还在 —— 与 `stalled` 的条目同一个道理（`turn.end` 不进快照）。
+ * 只出一次：warn 的去重在 progress.ts 的 `warnOnce`（同一种 warn 不重复落条目）。
+ */
+export function progressNotice(
+    warn: { awaiting: string; idleMs: number; note: string },
+    ctx: EndItemContext,
+): Item {
+    const idle = formatIdle(warn.idleMs);
+    const data = (() => {
+        switch (warn.note) {
+            case 'no-first-byte':
+                return {
+                    text: `模型已经连上了，${idle}还没吐出第一个字 —— 再等一会仍无响应就会中止这一轮`,
+                    kind: 'progress:no-first-byte',
+                };
+            case 'tool-silent':
+                return {
+                    text: `${warn.awaiting.replace(/^tool:/, '')} 已经 ${idle}没有输出 —— 长任务可能正在跑，这一轮不会被中止`,
+                    kind: 'progress:tool-silent',
+                };
+            case 'compact-slow':
+                return { text: `压缩上下文已经 ${idle}没回，这一轮还在等它`, kind: 'progress:compact-slow' };
+            case 'turn-wall':
+                return {
+                    text: `这一轮已经跑了 ${idle}，每一步都还有动静 —— 不想等了就按停止`,
+                    kind: 'progress:turn-wall',
+                };
+            default:
+                return { text: `这一轮 ${awaitText(warn.awaiting)}${idle}没有进展`, kind: `progress:${warn.note}` };
+        }
+    })();
+    return {
+        seq: 0,
+        turn: ctx.turn,
+        turnId: ctx.turnId,
+        at: ctx.at ?? Date.now(),
+        status: 'done',
+        id: nextId('notice'),
+        type: 'notice',
+        data,
+    };
+}
+
 function formatIdle(ms: number): string {
     const seconds = Math.round(ms / 1000);
     if (seconds < 90) return `${seconds} 秒`;

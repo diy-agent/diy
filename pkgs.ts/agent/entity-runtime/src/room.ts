@@ -811,6 +811,19 @@ export class RoomActor {
                 // 否则它永远停在「我问了、等回答」（ask 不阻塞，没有 tool call 能回填）。
                 this.gate.expireFor(bot.id, `${bot.name} 已开启新一轮`);
                 return;
+            case 'progress':
+                // 即时事实只广播、不落库：刷新后它本来也会被新的 tick 重新刷回来（turn 还在跑），
+                // 而"卡过"这件事的持久说法在 notice 条目里（end-reason.ts 的 progressNotice）。
+                this.deps.emit({
+                    kind: 'progress',
+                    botId: bot.id,
+                    turnId: event.turnId,
+                    awaiting: event.awaiting,
+                    idleMs: event.idleMs,
+                    alive: event.alive,
+                    stage: event.stage,
+                });
+                return;
             case 'turn.end':
                 // 「这一轮是怎么停的」广播给客户端（消息页脚用它）。放在落库/发结论之前：
                 // 页脚比快照早到一点没影响，但顺序上它属于这一轮自己的事实。

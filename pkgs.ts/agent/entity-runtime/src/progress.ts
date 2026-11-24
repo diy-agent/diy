@@ -17,7 +17,7 @@
 // 为什么必须区分"首字节"和"流中静默"：慢模型 90s 才吐第一个字节是常事（首字节阈值宽一些、
 // 且先只提示），而流已经开始吐字后突然静默 120s，几乎一定是网关卡住 / 连接半死。
 
-import type { AgentEvent } from './types';
+import type { AgentEvent, ProgressStage } from './types';
 
 export interface ProgressPolicy {
     /** 模型连上了但一个字节都没吐：到这个点先在 UI 上提示（不杀） */
@@ -77,6 +77,37 @@ export type ProgressVerdict =
     | { action: 'wait' }
     | { action: 'warn'; awaiting: string; idleMs: number; note: string }
     | { action: 'abort'; awaiting: string; idleMs: number; note: string };
+
+/**
+ * 此刻的对外事实（= `progress` 事件的内容）。
+ *
+ * 为什么不用 `ProgressVerdict`：verdict 是「该动手了吗」的判断（wait/warn/abort，
+ * 自带去重），而 UI 要的是「现在卡在哪、多久没动」这个可每秒自走的数 —— 每 5s
+ * 都会变（idleMs 在涨），不能被 warnOnce 去重掉。
+ */
+export interface ProgressFact {
+    awaiting: string;
+    idleMs: number;
+    alive: boolean;
+}
+
+/**
+ * 按 awaiting 选阈值分档（`ProgressStage` 本身在 protocol：UI 要读它定样式）。
+ * 工具只到 `slow`：它可能合法长跑，永远不报 stalled。
+ */
+export function stageOf(
+    fact: { awaiting: string; idleMs: number },
+    policy: ProgressPolicy = DEFAULT_PROGRESS_POLICY,
+): ProgressStage {
+    if (fact.awaiting === 'model-stream') {
+        if (fact.idleMs >= policy.streamSilenceMs) return 'stalled';
+        if (fact.idleMs >= policy.firstByteMs) return 'slow';
+        return 'quiet';
+    }
+    if (fact.awaiting.startsWith('tool:') && fact.idleMs >= policy.toolSilenceMs) return 'slow';
+    if (fact.awaiting === 'compact' && fact.idleMs >= policy.compactMs) return 'slow';
+    return 'quiet';
+}
 
 export interface ProgressWatchOptions {
     policy?: Partial<ProgressPolicy>;
@@ -247,6 +278,24 @@ export class ProgressWatch {
     }
 
     /**
+     * 此刻的对外事实（`progress` 事件用）。与 `stall()` 的区别：那个是收尾时的「停在哪」（
+     * 只在 abort 那一刻问一次），这个是每 tick 都要的「还在动吗」（带 `alive`）。
+     */
+    fact(): ProgressFact | undefined {
+        const state = this.state;
+        if (state === null) return undefined;
+        const pending = state.pending[state.pending.length - 1];
+        if (pending === undefined) return undefined;
+        const at = this.now();
+        // 有心跳就从心跳算（「有进展 3s 前」必须是 3s，不能是「挂上这个 await 那一刻」）
+        const from =
+            pending.what === 'model-stream'
+                ? Math.max(pending.enteredAt, state.lastProgressAt)
+                : (pending.heartbeat?.at ?? pending.enteredAt);
+        return { awaiting: pending.what, idleMs: at - from, alive: pending.heartbeat !== null };
+    }
+
+    /**
      * 收尾前问一句"停在哪"：给 `endReasonOf` 的 `stall` 字段用。
      *
      * 不看阈值 —— 它只回答事实（在等谁 / 空了多久），该不该算 stall 由调用方决定。
@@ -257,7 +306,10 @@ export class ProgressWatch {
         const pending = state.pending[state.pending.length - 1];
         if (pending === undefined) return undefined;
         const at = this.now();
-        const from = pending.what === 'model-stream' ? Math.max(pending.enteredAt, state.lastProgressAt) : pending.enteredAt;
+        const from =
+            pending.what === 'model-stream'
+                ? Math.max(pending.enteredAt, state.lastProgressAt)
+                : (pending.heartbeat?.at ?? pending.enteredAt);
         return { awaiting: pending.what, idleMs: at - from };
     }
 
@@ -293,5 +345,39 @@ export class ProgressWatch {
         if (this.warned.has(key)) return { action: 'wait' };
         this.warned.add(key);
         return { action: 'warn', awaiting, idleMs, note };
+    }
+}
+
+/**
+ * `progress` 事件的节流：**只在事实变了时发一条**。
+ *
+ * 为什么不是每隔几秒打一条心跳：idleMs 是单调时间，客户端拿最后一条自走就能算出
+ * 当前秒数 —— 持续打点只会把「每 5s 一次的界面重渲」白送给所有订阅者。
+ * 三种变化值得发：换了一个 await（`awaiting`）、心跳有无翻转（`alive`）、跨了阈值档（`stage`）。
+ *
+ * 「最多每 5s 一条」由调用方的 tick 周期保证（session 里 `progressTickMs`）。
+ */
+export class ProgressBroadcast {
+    private readonly policy: ProgressPolicy;
+    private last: { awaiting: string; alive: boolean; stage: ProgressStage } | null = null;
+    private lastAt: number | null = null;
+
+    constructor(policy: Partial<ProgressPolicy> = {}) {
+        this.policy = { ...DEFAULT_PROGRESS_POLICY, ...policy };
+    }
+
+    /** 该发就返回这一条的 `stage`（调用方直接放进事件），不该发返回 null */
+    shouldSend(fact: ProgressFact, now: number = Date.now()): ProgressStage | null {
+        const stage = stageOf(fact, this.policy);
+        const last = this.last;
+        const changed =
+            last === null || last.awaiting !== fact.awaiting || last.alive !== fact.alive || last.stage !== stage;
+        // 有心跳时定期刷新一次基准：否则 UI 的「有进展 Ns 前」会跟着本地时钟一路涨
+        //（事件只在 alive 翻转时发的话，持续输出的工具看起来像在变慢）
+        const refreshAlive = fact.alive && this.lastAt !== null && now - this.lastAt >= 5_000;
+        this.last = { awaiting: fact.awaiting, alive: fact.alive, stage };
+        if (!changed && !refreshAlive) return null;
+        this.lastAt = now;
+        return stage;
     }
 }

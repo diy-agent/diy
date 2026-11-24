@@ -179,6 +179,35 @@ describe('BotSession', () => {
         expect(String(notice?.data.text)).not.toContain('model-stream');
     });
 
+    it('progress 事件：报「在等谁、多久没动」，且只在事实变了时发（不是每 tick 一条）', async () => {
+        const h = makeSession({
+            hangOnAbort: true,
+            // 首字节 15ms 就提示、5 秒才杀：这段区间里该有一条 warn，但绝不 abort
+            progressPolicy: { firstByteMs: 15, streamSilenceMs: 5_000 },
+            progressTickMs: 5,
+        });
+        const running = h.session.post({ messageId: 'm1', text: '慢慢等' });
+        await sleep(60);
+        h.session.cancel();
+        await running;
+
+        const progress = h.events.filter((event) => event.type === 'progress');
+        // 12 个 tick 里只发了一两条（awaiting/alive/stage 没变就不发）
+        expect(progress.length).toBeGreaterThan(0);
+        expect(progress.length).toBeLessThanOrEqual(3);
+        for (const event of progress) {
+            if (event.type !== 'progress') continue;
+            expect(event.awaiting).toBe('model-stream');
+            expect(event.turnId).toBe('turn-1');
+            expect(event.idleMs).toBeGreaterThanOrEqual(0);
+        }
+
+        // 跨过首字节线 ⇒ 落一条提醒条目（刷新后还在），且是还没杀的时候说的
+        const notice = h.items.find((item) => item.type === 'notice');
+        expect(notice?.type === 'notice' ? notice.data.kind : undefined).toBe('progress:no-first-byte');
+        expect(h.ends[0]?.endReason.type).toBe('interrupted');
+    });
+
     it('人按停仍然是 interrupted（deadline 与 human 必须分得开）', async () => {
         const h = makeSession({ hangOnAbort: true, progressTickMs: 1_000 });
         const running = h.session.post({ messageId: 'm1', text: '我会被按停' });

@@ -168,7 +168,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                 metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
             >
                 <div style={{ paddingBlock: 2 }}>
-                    <RunningIndicator since={entry.at} />
+                    <RunningIndicator since={entry.at} roomId={roomId} botId={entry.author?.id} />
                 </div>
             </ChatMessage>
         );
@@ -229,7 +229,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                     不再单独占列表底部一行 */}
                 {entry.waiting === true && (
                     <div style={{ paddingTop: 6 }}>
-                        <RunningIndicator since={entry.at} />
+                        <RunningIndicator since={entry.at} roomId={roomId} botId={entry.author?.id} />
                     </div>
                 )}
                 {/* 这一轮是怎么停的：正常收尾不占页脚（endFooterOf 对 completed 返回 undefined） */}
@@ -491,24 +491,10 @@ export function AstryxSurface({ targetId, composerExtras }: { targetId: string; 
                 )}
             </div>
                 <div style={{ flex: '0 0 auto', paddingBlock: 12 }}>
-                    {/* astryx 的 composer 关掉了自己的停止按钮（isStopShown=false），
-                        原本指望 SpeakingBar 兜底，但这套布局没渲染它 ⇒ 运行中完全找不到停的地方 */}
-                    {state.speaking.length > 0 && (
-                        <div
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingBottom: 8,
-                                fontSize: 11,
-                                opacity: 0.85,
-                            }}
-                        >
-                            <span className="size-2 animate-pulse rounded-full bg-current" />
-                            <span>{state.speaking.map((id) => shell.bots[id]?.name ?? id).join('、')} 正在说话…</span>
-                            <Button size="sm" label="停止" onClick={() => conversation.cancel()} />
-                        </div>
-                    )}
+                    {/* 停止按钮不在这里：壳层的 SpeakingBar 已经渲染（含「单停」与「全部停止」），
+                        而 astryx 的 composer 自己关掉了 isStopShown。这里原本还有一条自建的
+                        「正在说话 + 停止」条（注释说「SpeakingBar 没渲染」——那是 surface 还没收进
+                        SurfaceViews 时的事实），结果同屏两条、文案还不同步。已删。 */}
                     <AstryxComposer
                         conversation={conversation}
                         roomId={targetId}

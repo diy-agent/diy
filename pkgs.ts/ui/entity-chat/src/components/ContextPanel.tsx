@@ -13,6 +13,7 @@ import type { Room, SessionInfo } from '@diy-agent/chat-core';
 
 import { contextWindowOf } from '../models';
 import { actions, useProviders, useStore } from '../store';
+import { PendingTable } from './PendingTable';
 
 /** 实测：中文 + JSON 结构下约 0.78 token / 字符（diy2 实测 522 tok ↔ 674 chars） */
 const TOKENS_PER_CHAR = 0.78;
@@ -66,6 +67,7 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
     const providers = useProviders();
     const sessions = state.sessions[room.id] ?? [];
     const [open, setOpen] = React.useState(false);
+    const [showPending, setShowPending] = React.useState(false);
     const [busy, setBusy] = React.useState<string | null>(null);
     const [note, setNote] = React.useState<string | null>(null);
     /** 手动压缩用；默认跟随后端预算，改了只影响手动那一下 */
@@ -79,12 +81,16 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
     const used = sessions.reduce((sum, session) => sum + tokensOf(session.stats.chars), 0);
     const ratio = windowTokens === undefined || windowTokens === 0 ? undefined : used / windowTokens;
 
-    // 打开面板时拉一次，之后定时刷（后台还有 bot 在跑，推不动就轮询）
+    // 打开面板时拉一次，**只在展开时**定时刷（后台还有 bot 在跑，推不动就轮询）。
+    //
+    // 关着不轮询：以前 4s 一次的刷新在面板关着也照跑，而每次刷新都会 emit 一次整壳快照 →
+    // 所有订阅 shell 的地方跟着重渲。这正是「聊天性能」那批问题的源头之一（见任务日志）。
     React.useEffect(() => {
         actions.refreshSessions(room.id);
+        if (!open) return;
         const timer = setInterval(() => actions.refreshSessions(room.id), 4000);
         return () => clearInterval(timer);
-    }, [room.id]);
+    }, [room.id, open]);
 
     const compress = async (botId: string) => {
         setBusy(botId);
@@ -179,6 +185,19 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
                                 />
                             ))
                         )}
+
+                        {/*
+                          诊断面：默认折叠 —— 「一眼答出卡在哪」，不是日常信息（计划 5.3）。
+                          用按钮而不是 <details>：details 折叠时**内容仍然挂载**，那份订阅会继续
+                          每次 state 变化重渲（正是这个任务要治的病）。按钮控制才会真的卸载。
+                        */}
+                        <button
+                            onClick={() => setShowPending((value) => !value)}
+                            className="flex w-full items-center gap-1 border-t px-3 py-1.5 text-[10px] text-muted-foreground hover:bg-muted"
+                        >
+                            {showPending ? '▾' : '▸'} 进展（谁卡在哪）
+                        </button>
+                        {showPending && <PendingTable roomId={room.id} />}
 
                         {note !== null && (
                             <p className="border-t px-3 py-2 text-[10px] text-muted-foreground">{note}</p>

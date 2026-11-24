@@ -282,6 +282,14 @@ export interface AnsweredAsk {
     at: number;
 }
 
+/**
+ * 一轮的进展分档（UI 按它渐进揭示：quiet 与现在完全一致 → slow 灰字提示 → stalled 报警）。
+ *
+ * 为什么放在 protocol 而不在 UI 里算：阈值只有一份，就在 entity-runtime 的
+ * `DEFAULT_PROGRESS_POLICY`（60s / 120s / 300s）；UI 拿秒数再比一次就是第二份真源。
+ */
+export type ProgressStage = 'quiet' | 'slow' | 'stalled';
+
 /** 传输层回推给 UI 的事件流（目前是 SSE，将来可能是 diy-rpc 订阅） */
 export type StreamEvent =
     | { kind: 'item'; item: Item }
@@ -311,6 +319,32 @@ export type StreamEvent =
      * 本来也不需要页脚。
      */
     | { kind: 'turn.end'; botId: string; turnId: string; reason: TurnEndReason }
+    /**
+     * 这一轮**此刻在等什么、有多久没动**（即时事实，UI 的"还活着吗"用它）。
+     *
+     * 与 `running` 的分工：`running` 回答"谁在跑"（布尔级），这里回答"卡在哪"（诊断级）。
+     * 与 `turn.end` 一样是 ephemeral：**不进快照、不进 items** —— items 是给人和别的 bot
+     * 看的上下文，心跳污染它会让模型以为发生了什么事。
+     *
+     * 节流由服务端做（awaiting / alive 翻转、跨 60/120/300s 阈值才发，最多每 5s 一条）；
+     * 客户端拿 `idleMs` 做初值自走，不需要每秒钟效、也不需要时钟校准。
+     */
+    | {
+          kind: 'progress';
+          botId: string;
+          turnId: string;
+          /** 机器读短语：`model-stream` / `tool:<name>` / `ask` / `compact`（人读文案在 UI 拼） */
+          awaiting: string;
+          /** 距最后一次进展多少毫秒（服务端算，客户端从这点起自走） */
+          idleMs: number;
+          /** 这个 await 有没有活的证据（工具还在吐输出 / 模型还在吐字） */
+          alive: boolean;
+          /**
+           * 阈值分档，由服务端算（保证阈值只有一份：entity-runtime 的 `DEFAULT_PROGRESS_POLICY`）。
+           * UI 不要自己拿秒数比 —— 那是第二份阈值，注定了会漂。
+           */
+          stage: ProgressStage;
+      }
     /** 常驻流刚连上（含重连成功）：客户端据此补拉快照，填平断线期间丢的事件 */
     | { kind: 'ready' }
     | { kind: 'done' };

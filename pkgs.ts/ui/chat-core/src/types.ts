@@ -20,6 +20,7 @@ export type {
     Item,
     ItemStatus,
     JobNotice,
+    ProgressStage,
     Snapshot,
     StreamEvent,
     TurnEndReason,

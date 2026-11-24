@@ -15,7 +15,7 @@
 import { experimental_createSteering, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 
 import { runAgent, DEFAULT_MAX_STEPS, type RunOptions } from './agent';
-import { endItems, endReasonOf } from './end-reason';
+import { endItems, endReasonOf, progressNotice } from './end-reason';
 import { friendlyError } from './errors';
 import {
     DEFAULT_BUDGET,
@@ -28,10 +28,10 @@ import {
     type TranscriptEntry,
 } from './compaction';
 import { maxOutputTokensOf } from './providers';
-import { ProgressWatch, type ProgressPolicy } from './progress';
+import { ProgressBroadcast, ProgressWatch, type ProgressPolicy } from './progress';
 import { Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
-import type { AgentEvent, Author, Bot, DeliveryState, Item, TurnEndReason } from './types';
+import type { AgentEvent, Author, Bot, DeliveryState, Item, ProgressStage, TurnEndReason } from './types';
 
 export interface CompactOptions {
     keepLast?: number;
@@ -78,6 +78,11 @@ export type SessionEvent =
     | { type: 'compact'; event: CompactEvent }
     /** 运行失败（条目层面的失败会以 item 形式出现） */
     | { type: 'error'; message: string }
+    /**
+     * 此刻在等什么、多久没动（ephemeral，房间补上 botId 后当 `progress` 事件广播）。
+     * 只给 UI 看「还活着吗」，**不进 items、不进快照** —— 理由见 protocol 里的 `progress`。
+     */
+    | { type: 'progress'; turnId: string; awaiting: string; idleMs: number; alive: boolean; stage: ProgressStage }
     /** 开始 / 结束一轮（房间据此维护"谁在说话"） */
     | { type: 'busy'; busy: boolean };
 
@@ -457,6 +462,8 @@ export class BotSession {
             ...(this.deps.progressPolicy === undefined ? {} : { policy: this.deps.progressPolicy }),
         });
         watch.start(turn.turnId);
+        // `progress` 事件的节流器（只在事实变了时发，见 progress.ts 的 ProgressBroadcast）
+        const broadcast = new ProgressBroadcast(this.deps.progressPolicy ?? {});
         /** 这一轮是被看门狗收掉的（而不是人按的停）：收尾判据靠它区分 stalled / interrupted */
         let stalledByWatchdog = false;
         /**
@@ -467,7 +474,30 @@ export class BotSession {
         let stallFact: { awaiting: string; idleMs: number } | undefined;
         const watchdog = setInterval(() => {
             if (abort.signal.aborted) return;
-            if (watch.evaluate().action !== 'abort') return;
+            // 1. 先把「此刻在等什么」广播出去（UI 的"还活着吗"靠它；进 items 的只有下面第 2 步的 warn）
+            const fact = watch.fact();
+            const stage = fact === undefined ? null : broadcast.shouldSend(fact);
+            if (fact !== undefined && stage !== null) {
+                this.emit({
+                    type: 'progress',
+                    turnId: turn.turnId,
+                    awaiting: fact.awaiting,
+                    idleMs: fact.idleMs,
+                    alive: fact.alive,
+                    stage,
+                });
+            }
+            // 2. 再判该不该动手
+            const verdict = watch.evaluate();
+            if (verdict.action === 'warn') {
+                // 还没到斩杀线：落一条 notice 让人知道（刷新后也还在）
+                this.emit({
+                    type: 'item',
+                    item: progressNotice(verdict, { turn: turn.turn, turnId: turn.turnId }),
+                });
+                return;
+            }
+            if (verdict.action !== 'abort') return;
             stalledByWatchdog = true;
             stallFact = watch.stall();
             abort.abort();

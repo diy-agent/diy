@@ -181,7 +181,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                         </span>
                         <span className="text-[10px] text-muted-foreground">{timeOf(entry.at)}</span>
                     </div>
-                    <RunningIndicator since={entry.at} />
+                    <RunningIndicator since={entry.at} roomId={roomId} botId={entry.author?.id} />
                 </div>
             </div>
         );
@@ -231,7 +231,7 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                 <EndFooterLine reason={entry.endReason} />
                 {entry.waiting === true && (
                     <div className="mt-1.5">
-                        <RunningIndicator since={entry.at} />
+                        <RunningIndicator since={entry.at} roomId={roomId} botId={entry.author?.id} />
                     </div>
                 )}
             </div>

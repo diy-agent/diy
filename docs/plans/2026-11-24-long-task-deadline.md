@@ -146,8 +146,17 @@ run 还会吐 `run.failed`，`watch.apply` 会清空 pending，那时再问就�
   }
 ```
 
-**节流**：室内只在 `(awaiting 变化 | alive 翻转 | 跨越 60/120/300s 阈值)` 时发一条，
-最多每 5s 一条。客户端拿 `idleMs` 做初值 + `setInterval` 自增，不需要服务端每秒广播、也不需要时钟校准。
+**节流**：室内只在 `(awaiting 变化 | alive 翻转 | 跨越 60/120/300s 阈值 | 有心跳时每 5s 刷新基准)`
+时发一条，最多每 5s 一条。客户端拿 `idleMs` 做初值 + `setInterval` 自增，不需要服务端每秒广播、
+也不需要时钟校准。
+
+> **实现时补的一个字段**：事件还带 `stage: 'quiet' | 'slow' | 'stalled'`（`ProgressStage`，定义在
+> protocol）。理由：分档阈值只能有一份（`DEFAULT_PROGRESS_POLICY`），UI 拿秒数再比一次就是
+> 第二份真源，注定要漂。客户端自走只影响秒数显示，档位以服务端最近一条为准（最多差 5s）。
+>
+> **心跳为什么要定期刷新**：`alive` 只在翻转时发的话，持续输出的工具在客户端看起来
+> 「有进展 3s 前」会一路涨到 6m40s —— 那正好和卡死长得一样。所以 alive 为真时每 5s 补一条
+> 刷新基准（只影响输出活跃的工具，安静等待时仍然不发）。
 
 **绝不写进 `items`**：时间线是给人和别的 bot 看的上下文，心跳污染它会让模型以为发生了什么事。
 
@@ -215,8 +224,8 @@ run 还会吐 `run.failed`，`watch.apply` 会清空 pending，那时再问就�
 |---|---|---|---|
 | **1** ✅ | `progress.ts` + 判据表 + 单测（假 clock） | 上面 5 条测试绿；**不接 UI、不接协议** | ~3h |
 | **2** ✅ | `running` 接上 progress（服务端 abort 路径 + `stalled` 类型 + `endItemsOf`/`adviceOf`/`publishable`） | 卡死 120s 后时间线出现 notice（用假模型手测） | ~3h |
-| **3** | `progress` 事件 + `RunningIndicator` 三档 + `SpeakingBar` 文案 | demo 的三场景人工对照 | ~4h |
-| **4** | `PendingTable`（工作台 + ContextPanel 调试区） | 卡住时能读出 `what/since/heartbeat` | ~3h |
+| **3** ✅ | `progress` 事件 + `RunningIndicator` 三档 + `SpeakingBar` 文案 | 单测锁文案三档/自走/节流（真手测待做） | ~4h |
+| **4** ✅ | `PendingTable`（ContextPanel 折叠区；工作台侧栏未接，见下） | 卡住时能读出 `who/what/idle/heartbeat/stage` | ~3h |
 
 1、2 刀是"内核能自愈"，3、4 是"人看得见"。**1+2 不做，3+4 就是把假信号画得更漂亮。**
 
@@ -244,6 +253,30 @@ run 还会吐 `run.failed`，`watch.apply` 会清空 pending，那时再问就�
 ⚠️ `apps/diy-app` 那三个 switch 都**没有 default** —— 若哪天真把 `stalled` 塞进它的值域，`tsc`
 在 `noImplicitReturns` 下会报「缺少返回」，运行时则静默返回 `undefined`（轮尾一片空白）。留着这张表
 就是为了下次不让它被顺手「统一」掉。
+
+### 刀 3+4 实况（2026-11-24）
+
+**服务端**：`progress` 事件（ephemeral）+ `ProgressFact`/`stageOf`/`ProgressBroadcast`（节流在 progress.ts，
+纯函数可直测）；`session.ts` 的 watchdog 每 tick 先广播事实、再判 warn（**warn 也落 notice 条目** ——
+刷新后「刚才卡了 5 分钟」必须还在）/ abort。`end-reason.ts` 新增 `progressNotice()`，文案集中一处。
+
+**UI**：`chat-core/progress.ts` 只做「机器码 → 人话 / 自走 / 三档文案」；`RunningIndicator` 改成
+「有 progress 就显示多久没动、没有就退回旧的执行中 Ns」；`SpeakingBar` 说「正在调用 bash…」。
+`PendingTable` 拆成容器 + 纯表格（`PendingRows` 可 SSR 测），放 ContextPanel 一个**按钮控制的**折叠区。
+
+**三个刻意的小决定**：
+
+1. **节流按字段比较，不按对象**：`useBotProgress` 只订阅单个成员的切片，且 getSnapshot 逐字段比较后
+   返回旧引用 —— 否则每条 `text.delta` 都会让 useSyncExternalStore 认定「变了」而重渲。这正是本任务
+   起源的那类病（整壳快照 → 全列表重渲）。
+2. **`<details>` 换成按钮**：折叠的 `<details>` 内容仍然挂载，里面那份 conversation 订阅照旧每次
+   state 变化重渲 —— 诊断面不该在关着的时候烧 CPU。
+3. **顺手修了 ContextPanel 的 4s 轮询**：原来面板关着也每 4s 打一次 `refreshSessions`（每次 emit
+   整壳快照）；现在只在展开时轮询。这是任务日志里 P0 ① 的一半，改一行治一类病。
+
+**未做（有意）**：工作台侧栏那份 `PendingTable` —— 跨包（`pkgs.ts/ui/workbench`）接线，而它要回答的
+同一个问题在聊天面 ContextPanel 已经能答。等真的有人从工作台看聊天时再接，否则就是给没人的面板
+烧订阅。
 
 ## 8. 有意不做
 

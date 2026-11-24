@@ -9,7 +9,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_PROGRESS_POLICY, ProgressWatch } from '../src/progress';
+import { DEFAULT_PROGRESS_POLICY, ProgressBroadcast, ProgressWatch, stageOf } from '../src/progress';
+import { progressNotice } from '../src/end-reason';
 import type { AgentEvent } from '../src/types';
 
 /** 假时钟：`tick` 推进，`now` 给 ProgressWatch */
@@ -242,5 +243,107 @@ describe('progress：收尾', () => {
         expect(watch.evaluate().action).toBe('warn');
         fake.tick(10);
         expect(watch.evaluate().action).toBe('abort');
+    });
+});
+
+describe('progress：对外事实（progress 事件的内容）', () => {
+    it('fact：工具有心跳时 idleMs 从心跳算（不是从挂上那一刻）', () => {
+        const fake = clock();
+        const watch = new ProgressWatch({ now: fake.now });
+        watch.start('turn-1');
+        fake.tick(1_000);
+        watch.apply(toolStarted(2));
+        fake.tick(29_000);
+        watch.beat('tool:bash', 'tool-output'); // 30s 时吐了一行
+        fake.tick(3_000);
+        expect(watch.fact()).toEqual({ awaiting: 'tool:bash', idleMs: 3_000, alive: true });
+    });
+
+    it('fact 报 awaiting / idleMs / alive；未 start 或已收尾时为 undefined', () => {
+        const fake = clock();
+        const watch = new ProgressWatch({ now: fake.now });
+        expect(watch.fact()).toBeUndefined();
+
+        watch.start('turn-1');
+        fake.tick(5_000);
+        expect(watch.fact()).toEqual({ awaiting: 'model-stream', idleMs: 5_000, alive: false });
+
+        // 吐过字 = 有活的证据
+        watch.apply(textDelta(1));
+        expect(watch.fact()?.alive).toBe(true);
+        expect(watch.fact()?.idleMs).toBe(0);
+
+        // 收尾中（pending 已清）不报事实，UI 不该再显示「在执行」
+        watch.apply({
+            seq: 2,
+            type: 'run.finished',
+            turnId: 'turn-1',
+            finishReason: 'stop',
+            steps: 1,
+            maxOutputTokens: 8000,
+            maxSteps: 200,
+        });
+        expect(watch.fact()).toBeUndefined();
+    });
+
+    it('stageOf 分档：模型流 60s 进 slow、120s 进 stalled；工具只到 slow', () => {
+        expect(stageOf({ awaiting: 'model-stream', idleMs: 59_999 })).toBe('quiet');
+        expect(stageOf({ awaiting: 'model-stream', idleMs: 60_000 })).toBe('slow');
+        expect(stageOf({ awaiting: 'model-stream', idleMs: 120_000 })).toBe('stalled');
+        // 工具可能合法长跑 12 分钟：过了阈值也只提示，不报 stalled
+        expect(stageOf({ awaiting: 'tool:bash', idleMs: 119_000 })).toBe('quiet');
+        expect(stageOf({ awaiting: 'tool:bash', idleMs: 300_000 })).toBe('slow');
+    });
+
+    it('ProgressBroadcast：事实没变不发（否则每 5s 一次整壳重渲）', () => {
+        const broadcast = new ProgressBroadcast();
+        // 第一条：前 60s 完全安静也要先让 UI 知道「在等模型」
+        expect(broadcast.shouldSend({ awaiting: 'model-stream', idleMs: 0, alive: false })).toBe('quiet');
+        // 只是 idleMs 在涨：不发（null），客户端自走
+        expect(broadcast.shouldSend({ awaiting: 'model-stream', idleMs: 5_000, alive: false })).toBeNull();
+        // 跨档：值得说一句，且带上新档位（UI 不再自己比秒数）
+        expect(broadcast.shouldSend({ awaiting: 'model-stream', idleMs: 60_000, alive: false })).toBe('slow');
+        // 心跳翻转
+        expect(broadcast.shouldSend({ awaiting: 'model-stream', idleMs: 0, alive: true })).toBe('quiet');
+        // 换了一个 await
+        expect(broadcast.shouldSend({ awaiting: 'tool:bash', idleMs: 0, alive: false })).toBe('quiet');
+    });
+
+    it('有心跳时最多每 5s 刷新一次基准（否则「有进展 Ns 前」会跟着本地时钟涨）', () => {
+        const broadcast = new ProgressBroadcast();
+        expect(broadcast.shouldSend({ awaiting: 'tool:bash', idleMs: 0, alive: true }, 0)).toBe('quiet');
+        // 3s 后：不到刷新周期，不发
+        expect(broadcast.shouldSend({ awaiting: 'tool:bash', idleMs: 3_000, alive: true }, 3_000)).toBeNull();
+        // 5s 后：刷新一条（idleMs 被重置到 1s）
+        expect(broadcast.shouldSend({ awaiting: 'tool:bash', idleMs: 1_000, alive: true }, 5_000)).toBe('quiet');
+        // 心跳停了（alive 翻转）也要发，之后就不再刷新
+        expect(broadcast.shouldSend({ awaiting: 'tool:bash', idleMs: 6_000, alive: false }, 6_000)).not.toBeNull();
+        expect(broadcast.shouldSend({ awaiting: 'tool:bash', idleMs: 11_000, alive: false }, 11_000)).toBeNull();
+    });
+});
+
+describe('progress：提醒条目（warn → notice，刷新后还在）', () => {
+    const ctx = { turn: 3, turnId: 'turn-1', at: 123 };
+
+    it('首字节慢：说清「等了多久」与「再等就中止」', () => {
+        const item = progressNotice({ awaiting: 'model-stream', idleMs: 60_000, note: 'no-first-byte' }, ctx);
+        expect(item.type).toBe('notice');
+        expect(item.turn).toBe(3);
+        expect(item.turnId).toBe('turn-1');
+        if (item.type === 'notice') {
+            expect(item.data.kind).toBe('progress:no-first-byte');
+            expect(item.data.text).toContain('60 秒');
+            expect(item.data.text).toContain('第一个字');
+            expect(item.data.text).toContain('中止');
+        }
+    });
+
+    it('工具静默：点明「不会被中止」（免得人以为卡死了）', () => {
+        const item = progressNotice({ awaiting: 'tool:bash', idleMs: 300_000, note: 'tool-silent' }, ctx);
+        if (item.type === 'notice') {
+            expect(item.data.kind).toBe('progress:tool-silent');
+            expect(item.data.text).toContain('bash');
+            expect(item.data.text).toContain('不会被中止');
+        }
     });
 });

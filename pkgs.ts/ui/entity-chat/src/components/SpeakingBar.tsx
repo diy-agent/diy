@@ -4,6 +4,7 @@
 // 而"现在谁在生成"是房间级状态（服务端 running 事件），两者不能混。
 // 这里给每个在说话的成员一个独立的停止按钮；composer 的停止按钮仍然是"全停"。
 
+import { doingText } from '@diy-agent/chat-core';
 import { Square } from 'lucide-react';
 import * as React from 'react';
 
@@ -20,6 +21,8 @@ export function SpeakingBar({ roomId }: { roomId: string }) {
         <div className="flex flex-wrap items-center gap-2 border-b px-4 py-1.5 text-[11px] text-muted-foreground">
             {state.speaking.map((botId) => {
                 const bot = shell.bots[botId];
+                // 从进展事实拿「在干什么」：跑工具时说「正在调用 bash…」而不是笼统的「正在说话…」
+                const progress = state.progress[botId];
                 return (
                     <span key={botId} className="flex items-center gap-1.5 rounded-full border px-2 py-0.5">
                         <span
@@ -27,7 +30,7 @@ export function SpeakingBar({ roomId }: { roomId: string }) {
                             style={{ background: bot?.color ?? '#9ca3af' }}
                         />
                         <span>{bot?.name ?? botId}</span>
-                        <span>正在说话…</span>
+                        <span>{progress === undefined ? '正在说话…' : doingText(progress.awaiting)}</span>
                         <button
                             onClick={() => conversation.stop(botId)}
                             title={`只停 ${bot?.name ?? botId}`}
