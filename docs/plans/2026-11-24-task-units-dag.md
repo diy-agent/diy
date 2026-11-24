@@ -160,8 +160,48 @@ units:
   行内给：状态符号、`uN`、title、前置（`← u1`）、doing 高亮。只读（决定 3）。
 - 数据来源：RPC `units.list { id }`（与 `links.list` / `journal.list` 同一条路，走 `chat-transport-rpc`），
   服务端直接返回 `unitBoard(...)` 的视图快照；前端 5 秒轮询（与任务面板查 journal 同思路，不新开事件类型）。
-- 真正的图形连线（SVG）留到有 batch 之后再说 —— 那时节点才有「worktree / PR」这些重信息，
-  现在画线纯装饰。
+  两个视图共用 `useUnitBoard`（`entity-chat/src/useUnitBoard.ts`），否则会出现「一个 tab 刷新了、
+  另一个还是旧的」。
+
+### 7.1 第二个 view：`units-dag`（标题「依赖图」，2026-11-24 加）
+
+用户要「一个 dag 的 view」，于是同区再加一个 tab。两者是同一份数据的两种看法：
+列表信息密度高（一行一个 unit、带前置 id），图看得清方向、并行分支与跨层长边。
+
+**坐标系**：`unitLayout.ts` 里的纯函数 `layoutUnits(rows)` → 节点框 / 边折线 / 层带，可单测。
+
+**布局用 `@dagrejs/dagre`（3.1.3），但层不由它决定** —— 这是选型里唯一硬碰到的坑：
+
+- dagre 默认为了缩短边长会**自己重排 rank**。实测那张真实图（`u1→…→u4→{u5, u6→u7}→u8→u9`）
+  里，`u5`/`u6` 在 `unitBoard()` 里同属第 5 层（**都能在 u4 之后立刻做**），dagre 却把 `u6` 提到
+  `u5` 前面，因为 `u6` 有后继、缩短 `u6→u7→u8` 能让总边长更小。层被挪动，图就在骗人 ——
+  「同层 = 可并行」是这张图最要紧的一条信息。
+- 解法：给每条边设 `minlen = layer(to) - layer(from)`，把服务端算好的层钉进 dagre 的 rank 约束。
+  验证过 5 种形状（钻石 / 跳层边 / 多源 / 孤立节点 / 真实 9 节点），同层必然同 rank；同时白拿了
+  dagre 的层内排序（降交叉）与折线路由（跨层长边的拐点）。
+- 注意 dagre 的 rank 值是「布局单位」不是层号（每条边会插 dummy，1 层 = 2 个 rank），
+  拿它跟 `layer` 比数值会看错；要比的是**同层是否同 rank、层序是否单调**。
+
+**方向 TB（层从上往下），不是 LR**：这个 tab 挂在任务页 detail 区 —— 一块**窄高**面板
+（实测 320 × 991）。LR 的 8 层要横向铺开，适配后缩到 0.3 倍、字全糊；TB 的宽度只取决于
+「同层最多几个节点」（通常 1~3），高度靠适配/拖动，正好是面板的形状（实测 0.79 倍）。
+
+**渲染手写 SVG，不引 UI 库**（`UnitDagView.tsx`）：
+
+- 否决 `d3-dag`：拖 `quadprog` + `javascript-lp-solver` + `stringify-object` 做最优布局，
+  几十个节点是杀鸡用牛刀；
+- 否决 `@xyflow/react`：zustand + 自带 CSS，会和现有 tailwind / stylex 抢样式，而只读小图不需要
+  拖拽 / minimap / 节点内嵌组件那一整套；
+- 否决 `elkjs`：GWT 产物重、异步接口，收益只是更好的分层，而层已经由我们给定。
+
+**交互**（都实测过）：滚轮以光标为中心缩放、拖拽平移、hover 高亮整条依赖链（祖先∪后代）、
+点节点出详情卡（title / 层 / 前置 / 后继 / body）、「适配」一键回到全貌。
+
+两个踩到的坑（都已修，别再踩）：
+1. `setPointerCapture` 会把后续 pointer 事件重定向到容器 ⇒ 节点的 `onClick` 永远不来
+   （点节点不出详情卡）。改成 window 上监听 pointermove/pointerup。
+2. 滚轮 listener 的 effect 依赖不能是 `[]`：首帧 board 还是 null（组件提前 return「读取中…」，
+   wrap 没挂载、ref 是 null），只跑一次就永远绑不上（滚轮完全没反应）。依赖布局尺寸。
 
 ## 8. 阶段一的分步（每步可验证）
 
@@ -173,6 +213,9 @@ units:
 6. `pages.tsx` + 新组件：只读分层视图
 7. `./sha.sh check` + 相关包 vitest
 8. 文档收尾（`find/find` 或 `app/` 知识库补一条：unit 在哪、怎么用）
+
+**追加（2026-11-24，同一阶段内）**：第二个 view `units-dag`（依赖图，见 §7.1）
++ `unitLayout.ts` 纯函数与 12 条布局断言 + 依赖 `@dagrejs/dagre`。
 
 ## 9. 阶段二占位（本次不做，只留接口位）
 

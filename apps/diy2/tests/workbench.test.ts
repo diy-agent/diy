@@ -228,6 +228,15 @@ describe('pageFor：未知类型不许掉进任务页', () => {
         expect(genericPage.center.id).toBe('conversation');
     });
 
+    it('任务页的 detail 区同时住「依赖图」「分解」与「详情」= 自然变成 tab（不动骨架）', () => {
+        // unit DAG 是任务本体的一部分（与正文同级），而「详情」已经在那；
+        // 三个 view 同一区域 = 界面自己长 tab，不需要新增区域 / 改模板约束。
+        // 「依赖图」排在「分解」前：图先给全貌，列表再给细节（两者的默认选中 = 数组首位）。
+        expect(viewsIn(wbViews, 'task', 'detail').map((item) => item.id)).toEqual(['units-dag', 'units', 'detail']);
+        // 项目没有内部拆分（unit 是 task 私有的轻实体）
+        expect(viewsIn(wbViews, 'project', 'detail').map((item) => item.id)).toEqual(['detail']);
+    });
+
     it('每个模板的每个区域都有 view 落进去（否则那块永远是空白，且单 view 区域不给 ⋯）', () => {
         for (const def of [pageFor('task'), pageFor('project'), genericPage]) {
             for (const side of def.areas) {

@@ -4,34 +4,12 @@
 // 直接勾选会立刻产生「两边同时改图」的冲突语义（谁赢 / 怎么合并 / 撤销给谁看），而这件事
 // 目前没有任何真实需求。要改就在聊天里说一句，agent 改完这里 5 秒内自己变。
 //
-// 为什么按**层**排而不是画自由连线的图：层的判据（同层之间无依赖）就是 DAG 的骨架，
-// 一排排看下去天然回答了「现在卡在哪、下一步能并行做哪几条」；而节点上现在还没有
-// worktree / PR 这些重信息，自由布局的连线只是装饰。等 batch 出现再考虑真图形。
-import * as React from 'react';
-
+// 为什么这里按**层**排而不画连线：连线版在「依赖图」tab（`UnitDagView`）。两者是同一份
+// 数据的两种看法 —— 列表信息密度高（一行一个 unit，带前置 id），图看得清方向与并行分支。
+// 共用 `useUnitBoard` 与 `unitLayout` 的类型，所以层号与状态色必然一致。
 import { roomTitle, type Room } from '../model';
-import { diy2 } from '../store';
-
-/** 一个 unit（与 `@diy-agent/entity-runtime` 的 `UnitBoardRow` 同形；UI 层不跨包拿类型） */
-interface UnitItem {
-    id: string;
-    title: string;
-    body: string;
-    status: 'open' | 'doing' | 'done';
-    deps: string[];
-    dependents: string[];
-    layer: number;
-}
-
-interface UnitBoard {
-    rows: UnitItem[];
-    ready: string[];
-    doing: string[];
-    blocked: string[];
-    done: string[];
-    layers: UnitItem[][];
-    cyclic: boolean;
-}
+import type { UnitItem } from '../unitLayout';
+import { useUnitBoard } from '../useUnitBoard';
 
 /** 状态符号：done 打勾、doing 半实心、open 空心（ready 的行另外上色） */
 function markOf(unit: UnitItem, ready: Set<string>): string {
@@ -47,32 +25,7 @@ function rowClass(unit: UnitItem, ready: Set<string>): string {
 }
 
 export function UnitGraph({ room }: { room: Room }) {
-    const [board, setBoard] = React.useState<UnitBoard | null>(null);
-    const [error, setError] = React.useState<string | null>(null);
-
-    // 轮询（和任务面板查 journal 同思路）：unit 只有 agent 写，不值得为它新开一种事件类型
-    React.useEffect(() => {
-        let alive = true;
-        const load = (): void => {
-            void diy2.units
-                .list(room.id)
-                .then((body) => {
-                    if (alive) {
-                        setBoard(body as UnitBoard);
-                        setError(null);
-                    }
-                })
-                .catch((cause: unknown) => {
-                    if (alive) setError(cause instanceof Error ? cause.message : String(cause));
-                });
-        };
-        load();
-        const timer = setInterval(load, 5000);
-        return () => {
-            alive = false;
-            clearInterval(timer);
-        };
-    }, [room.id]);
+    const { board, error } = useUnitBoard(room.id);
 
     if (room.type !== 'task') {
         return <div className="p-3 text-xs text-zinc-500">只有任务有内部拆分。</div>;

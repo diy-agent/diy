@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { ChannelClientBinding } from '@diy-agent/rpc';
 import { WsTransport, connectWs } from '@diy-agent/rpc/ws/browser';
 import { StreamHub } from '@diy-agent/chat-transport-rpc';
+import { openStore, type UnitBoard } from '@diy-agent/entity-runtime';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createDiy2App, type Diy2App } from '../server/app';
@@ -184,6 +185,43 @@ describe('/rpc 房间事件流', () => {
                 input: { id: 'task:t-001', to: created.id, kind: 'related' },
             });
             expect(removed.removed).toBe(true);
+        } finally {
+            transport.close();
+        }
+    });
+
+    it('units.list：只读 board 的推导在服务端（空图也是同一形状）', async () => {
+        const transport = new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 }));
+        const binding = new ChannelClientBinding(transport);
+        try {
+            // 空图不能是 undefined / 404：界面直接画 `rows`，拿不到就会白屏
+            const empty = await binding.invoke<unknown, UnitBoard>('diy2.units.list', {
+                input: { id: 'task:t-001' },
+            });
+            expect(empty.rows).toEqual([]);
+            expect(empty.ready).toEqual([]);
+            expect(empty.cyclic).toBe(false);
+
+            // 种两个节点 + 一条边（写入口只有 agent 的工具，这里直接落库绕过模型）
+            const seed = openStore(join(home, 'diy2.db'));
+            let first = '';
+            let second = '';
+            try {
+                first = seed.saveUnit({ taskId: 'task:t-001', title: '第一步', body: '', status: 'done' }).id;
+                second = seed.saveUnit({ taskId: 'task:t-001', title: '第二步', body: '', status: 'open' }).id;
+                seed.linkUnits('task:t-001', first, second);
+            } finally {
+                seed.db.close();
+            }
+
+            // 服务端算的是 unitBoard（与 agent 工具 / 上下文注入同一份纯函数）：
+            // 这里只验「存进库 → RPC 回来」的这条链真的通，且分层与 ready 划分对
+            const board = await binding.invoke<unknown, UnitBoard>('diy2.units.list', {
+                input: { id: 'task:t-001' },
+            });
+            expect(board.layers.map((layer) => layer.map((row) => row.id))).toEqual([[first], [second]]);
+            expect(board.done).toEqual([first]);
+            expect(board.ready).toEqual([second]);
         } finally {
             transport.close();
         }
