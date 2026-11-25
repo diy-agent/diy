@@ -9,10 +9,11 @@
 // SSR 到字符串（仓库里 entity-chat 的既有姿势，没有 jsdom）：effect 不跑 ⇒ rows 恒为 []，
 // 正好就是「什么都没在跑」。
 
+import type { JobRunRow } from '@diy-agent/chat-transport-rpc';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { JobsChip } from '../src/components/JobsChip';
+import { belongsToRoom, JobsChip } from '../src/components/JobsChip';
 
 describe('作业 chip 的空状态', () => {
     it('没有作业在跑时仍然渲染（历史账本的入口不许跟着消失）', () => {
@@ -31,5 +32,43 @@ describe('作业 chip 的空状态', () => {
     it('title 说清「点开看的是历史」', () => {
         const html = renderToStaticMarkup(<JobsChip />);
         expect(html).toContain('现在没有在跑的');
+    });
+});
+
+// 房间入口（chip / 抽屉 `scope="room"`）只看本房间起的作业；标题栏的 JobsPanel 不滤。
+// 原来 chip 的 title 已经写着「本房间」但拉的是实例全量 —— 文案与数据不一致，这条锁住数据。
+describe('belongsToRoom —— 按 origin.taskUri 首段收窄', () => {
+    const roomId = '01a2091d-a9b0-7747-aacc-0b53dd48ee4c';
+
+    const rowOf = (origin?: { taskUri: string; turnId?: string }): JobRunRow => ({
+        id: 'r-1',
+        state: 'exited',
+        startedAt: 0,
+        durationMs: 1_000,
+        command: 'echo hi',
+        cwd: '/tmp',
+        logPath: '/tmp/out.log',
+        ...(origin === undefined ? {} : { origin }),
+    });
+
+    it('同房间（新 uuid 形态）→ 算本房间的', () => {
+        expect(belongsToRoom(rowOf({ taskUri: `${roomId}#bot-1` }), roomId)).toBe(true);
+    });
+
+    it('别的房间 → 不算（多任务并行时不看别人的活）', () => {
+        // 旧形态 `task-mwjddcy0` 同样是房间 id（在 rooms_v0 里查得到）
+        expect(belongsToRoom(rowOf({ taskUri: 'task-mwjddcy0#bot-2' }), roomId)).toBe(false);
+    });
+
+    it('# 后面的 bot id 不参与判定（同房间换个 bot 仍算）', () => {
+        expect(belongsToRoom(rowOf({ taskUri: `${roomId}#bot-anything` }), roomId)).toBe(true);
+    });
+
+    it('首屏还没定位到房间（roomId 空）→ 不滤，否则历史全没了', () => {
+        expect(belongsToRoom(rowOf({ taskUri: 'task-x#bot-1' }), '')).toBe(true);
+    });
+
+    it('没有 origin → 不滤（归属未知时宁可多显示）', () => {
+        expect(belongsToRoom(rowOf(), roomId)).toBe(true);
     });
 });
