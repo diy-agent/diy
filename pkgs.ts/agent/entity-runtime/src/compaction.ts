@@ -217,6 +217,9 @@ export function createSummaryCompactor(options: {
                     ({ text } = await generateText({
                         model: modelOf(options.modelKey(), { sessionId: options.sessionId }),
                         prompt,
+                        // 同 agent.ts：这一层不重试（SDK 的 3 次会把一次额度满拖成 3 倍等待，
+                        // 压缩是「压不动就算了」的活，失败就降级用旧摘要）。
+                        maxRetries: 0,
                         ...(input.signal === undefined ? {} : { abortSignal: input.signal }),
                     }));
                 }

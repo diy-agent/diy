@@ -19,6 +19,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSyn
 import { dirname, join } from 'node:path';
 
 import { APP_ID, realHomeDir } from './config';
+import { openLog } from './log';
+
+const log = openLog('registry');
 
 /** 一个父进程跳（`parents[0]` = 直接父亲） */
 export interface ParentHop {
@@ -309,7 +312,7 @@ export function announce(target: AnnounceTarget, port: number | null): void {
         );
         if (port !== null) updateRecord(dir, process.pid, { port });
     } catch (error) {
-        console.error(`[diy2] 注册表写入失败（${dir}）：${error instanceof Error ? error.message : String(error)}`);
+        log.error('注册表写入失败', { dir }, error);
     }
 }
 

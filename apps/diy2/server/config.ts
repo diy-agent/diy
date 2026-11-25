@@ -381,8 +381,9 @@ export function resolveConfig(opts?: {
 export function modelConfigHint(config: Diy2Config): string | null {
     if (config.modelConfigPath !== undefined) return null;
     const file = join(config.home, 'model.yaml');
+    // 不带 `[diy2]` 前缀（同 describeConfig：前缀由日志装配统一给）
     return (
-        `[diy2] 数据根里没有 model.yaml（${file}）` +
+        `数据根里没有 model.yaml（${file}）` +
         ` → 模型会报缺 key；填充：./scripts/seed-run-home.sh ${config.home}（在仓库根跑），` +
         '或 --model-config 显式指定'
     );
@@ -397,8 +398,10 @@ export function describeConfig(config: Diy2Config, actualPort?: number): string 
     // 实际监听端口可能不等于 config.port（0 = 内核分配、粘性端口被占后漂移）：
     // 自报以**实际**为准，否则这行日志在「到底连哪个端口」这件事上说谎。
     const shown = actualPort ?? config.port;
+    // 不带 `[diy2]` 前缀：终端那层前缀由日志装配（./log 的 source = `diy2:<模块>`）统一给，
+    // 调用点只交正文。抄两遍会打出 `[diy2:boot] [diy2] 生产/prod …`。
     return (
-        `[diy2] ${where}/${config.launch} home=${config.home} db=${config.dbPath} ` +
+        `${where}/${config.launch} home=${config.home} db=${config.dbPath} ` +
         `port=${shown === 0 ? '0(内核分配)' : shown}(${config.portSource})`
     );
 }

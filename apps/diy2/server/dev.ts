@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { createServer as createViteServer } from 'vite';
 
 import { describeConfig, isProdHome, modelConfigHint, resolveConfig } from './config';
+import { installAppLog } from './log';
 import { announce, retract } from './registry';
 import { createDiy2App } from './app';
 import { listenWithStickyPort } from './listen';
@@ -56,19 +57,24 @@ const config = resolveConfig({
     mode: options.input.mode,
     overrides: toOverrides(options.input),
 });
-for (const note of config.notes) console.warn(`[diy2] ${note}`);
+// dev 入口也装配日志：agent 的 onError 走 OTel 接口（默认 noop），不装就只有文件里看得见
+// —— 开发时反而更要看终端。装配在 config 之后（要 home）。
+const appLog = installAppLog({ home: config.home, level: process.env['DIY_LOG_LEVEL'] });
+const boot = appLog.open('dev');
+
+for (const note of config.notes) boot.warn(note);
 
 // dev 入口**不碰生产数据根**：即使有人显式 `--mode production`（或数据根本身在 `~/.diy` 下），
 // 也必须再加 --allow-prod-home 才放行 —— 一次实验就写脏真库的代价太大。
 if (isProdHome(config.home) && options.input.allowProdHome !== true) {
-    console.error(`[diy2] dev 入口拒绝使用生产数据根：${config.home}`);
-    console.error('[diy2] 请用 `./sha.sh dev`（数据根 run/diy2/lab），或加 --allow-prod-home');
+    boot.error(`dev 入口拒绝使用生产数据根：${config.home}`);
+    boot.error('请用 `./sha.sh dev`（数据根 run/diy2/lab），或加 --allow-prod-home');
     process.exit(1);
 }
 process.env['DIY_HOME'] ??= config.home;
 if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
 const hint = modelConfigHint(config);
-if (hint !== null) console.warn(hint);
+if (hint !== null) boot.warn(hint);
 
 const httpServer = createServer();
 const app = createDiy2App({
@@ -117,15 +123,15 @@ try {
     ({ port } = await listenWithStickyPort(config, httpServer));
 } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
-        console.error(`[diy2] 端口 ${config.port} 已被占用（显式指定的端口不会自动漂移）`);
-        console.error('[diy2] 换端口：--port <n> / --port 0；或先 ./sha.sh stop');
+        boot.error(`端口 ${config.port} 已被占用（显式指定的端口不会自动漂移）`);
+        boot.error('换端口：--port <n> / --port 0；或先 ./sha.sh stop');
         process.exit(1);
     }
-    console.error(`[diy2] 启动失败：${(error as Error).message}`);
+    boot.error('启动失败', {}, error);
     process.exit(1);
 }
-console.log(`${describeConfig(config, port)} → http://127.0.0.1:${port}`);
-console.log('[diy2] UI 走 vite（HMR 同端口）；改 server/ 或 entity-runtime 会自动重启，改 UI 不用');
+boot.info(`${describeConfig(config, port)} → http://127.0.0.1:${port}`);
+boot.info('UI 走 vite（HMR 同端口）；改 server/ 或 entity-runtime 会自动重启，改 UI 不用');
 announce(config, port);
 
 // ── 服务端代码变更 → 请看护循环重启 ──────────────────────────────
@@ -138,7 +144,7 @@ let timer: NodeJS.Timeout | undefined;
 const scheduleRestart = (file: string | null): void => {
     if (file !== null && /\.(d\.ts|tsbuildinfo)$/.test(file)) return;
     if (timer !== undefined) return; // 一次保存会连发多个事件：只认第一次，等它统一重启
-    console.log(`[diy2] 服务端代码变了${file === null ? '' : `（${file}）`} → 重启`);
+    boot.info(`服务端代码变了${file === null ? '' : `（${file}）`} → 重启`);
     timer = setTimeout(() => {
         app.close();
         retract();

@@ -12,6 +12,7 @@ import {
     type ModelMessage,
     type ToolSet,
 } from 'ai';
+import { logs, SeverityNumber } from '@opentelemetry/api-logs';
 import { z } from 'zod';
 
 import { friendlyError } from './errors';
@@ -19,6 +20,12 @@ import { maxOutputTokensOf, modelOf } from './providers';
 import { StallWatchdog, stallMessage, stallTimeoutsFromEnv, type StallInfo } from './stall-watchdog';
 import { clipModelMessage } from './tools/clip';
 import type { AgentEvent, Bot } from './types';
+
+/**
+ * 业务包的日志只走 OTel **接口**（##482：默认 noop，装配层设了 provider 才落地）。
+ * 这里唯一要说的事就是「SDK 把错误接住后我们怎么记」。
+ */
+const agentLog = logs.getLogger('entity-runtime:agent');
 
 export interface RunOptions {
     bot: Bot;
@@ -191,8 +198,32 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
             if (delta === '') return {};
             return { messages: [...messages, { role: 'user', content: delta }] };
         },
-        // 连接超时这类瞬时错误自动重试；不可重试的错误 SDK 自己会跳过
-        maxRetries: 2,
+        /**
+         * **这一层不重试**（2026-11-25 用户裁决）：SDK 内部重试把三次失败揉成一个
+         * `RetryError`，外面既看不到试了几次、也没法按自己的退避节奏来。要重试就加在外面
+         * （能观测的那层）。这里只跑一次。
+         */
+        maxRetries: 0,
+        /**
+         * SDK 的缺省 onError 是 `console.error(error)` —— 它用 util.inspect 展开整棵
+         * RetryError 树（每层带 responseBody / responseHeaders / 完整 messages 与 tools），
+         * 几百行，而且没进日志文件（重启即失）。接过来只记一行：可读话术 + 状态码，
+         * 原始错误的类型 / 消息 / 栈交给日志装配落 jsonl。
+         */
+        onError: ({ error }) => {
+            agentLog.emit({
+                severityNumber: SeverityNumber.WARN,
+                body: 'LLM 请求失败（不重试）',
+                attributes: {
+                    turnId,
+                    modelKey: options.modelKey,
+                    botId: options.bot.id,
+                    reason: friendlyError(error),
+                    ...(statusOf(error) === undefined ? {} : { status: statusOf(error) }),
+                    ...exceptionAttributesOf(error),
+                },
+            });
+        },
         ...(options.steering === undefined ? {} : { experimental_steering: options.steering }),
         onStepFinish: (step) => {
             // 这一步成功收尾 ⇒ 快照前移（失败 / 重试不进这里，下一轮会重新算同一份增量）
@@ -317,4 +348,33 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     yield { seq: ++seq, type: 'run.finished', turnId, finishReason, steps, maxOutputTokens, maxSteps };
     yield { seq: ++seq, type: 'message.completed', messageId };
     yield { seq: ++seq, type: 'run.completed', turnId };
+}
+
+/**
+ * HTTP 状态码：`APICallError` 自己带；`RetryError` 包在外面（`lastError`）。
+ * 不重试之后其实只剩前一种，但 SDK 换版本时这层不该脆。
+ */
+function statusOf(error: unknown): number | undefined {
+    const seen = new Set<unknown>();
+    let cur: unknown = error;
+    while (cur !== null && typeof cur === 'object' && !seen.has(cur)) {
+        seen.add(cur);
+        const status = (cur as { statusCode?: unknown }).statusCode;
+        if (typeof status === 'number') return status;
+        cur = (cur as { lastError?: unknown }).lastError ?? (cur as { cause?: unknown }).cause;
+    }
+    return undefined;
+}
+
+/**
+ * OTel 的异常约定（`exception.*`）：`@diy-agent/log` 的导出器认这几个 key，
+ * 会还原成 jsonl 里的 `err` 字段（带栈）；不按约定的自定义 key 会被当成普通 data。
+ */
+function exceptionAttributesOf(error: unknown): Record<string, unknown> {
+    if (!(error instanceof Error)) return { 'exception.message': String(error) };
+    return {
+        'exception.type': error.name,
+        'exception.message': error.message,
+        ...(error.stack === undefined ? {} : { 'exception.stacktrace': error.stack }),
+    };
 }

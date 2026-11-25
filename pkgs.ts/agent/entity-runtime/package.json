@@ -37,6 +37,7 @@
         "@diy-agent/skills": "*",
         "@diy-agent/time": "*",
         "@diy-agent/tools": "*",
+        "@opentelemetry/api-logs": "^0.223.0",
         "ai": "^7.0.173",
         "zod": "^4.2.0"
     },

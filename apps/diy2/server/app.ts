@@ -21,6 +21,7 @@ import type { Duplex } from 'node:stream';
 import { createStaticHandler } from './static';
 import { createRpcSocket, type RpcStreamInfo } from './rpc';
 import { APP_ID, type Diy2Config } from './config';
+import { openLog } from './log';
 
 import {
     JOURNAL_KINDS,
@@ -48,6 +49,9 @@ import type {
     JobRunRow,
     Room,
 } from '@diy-agent/protocol';
+
+/** 装配层（index / dev）已经装好 provider；这里取句柄。未装时是 noop，不报错。 */
+const log = openLog('app');
 
 /**
  * 新房间的缺省模型：`model.yaml` 的 `defaultModel` 优先，没有才用这个写死的兜底。
@@ -239,10 +243,16 @@ function logCompact(roomId: string, bot: Bot, event: CompactEvent): void {
     const before = `${event.before.entries}msgs/${event.before.chars}c`;
     const after = `${event.after.entries}msgs/${event.after.chars}c`;
     const usage = event.usage === undefined ? '' : ` usage=${event.usage.inputTokens}/${event.usage.outputTokens}`;
-    console.log(
-        `[compact] ${bot.name} @${roomId} turn=${event.turn} ${event.strategy} ${before} → ${after} ` +
-            `folded=${event.folded} dropped=${event.dropped} ${event.durationMs}ms${usage}`,
-    );
+    log.info(`压缩 ${bot.name} @${roomId}`, {
+        turn: event.turn,
+        strategy: event.strategy,
+        before,
+        after,
+        folded: event.folded,
+        dropped: event.dropped,
+        durationMs: event.durationMs,
+        ...(event.usage === undefined ? {} : { usage }),
+    });
 }
 
 function roomOf(id: string): RoomActor | undefined {
@@ -502,7 +512,7 @@ export function createDiy2App(opts: {
     // 对话框草稿的 owner 是 synthetic scope（`dlg:<用途>:<roomId>`）：删项目时已级联，
     // 剩下的（用户再也不打开那个对话框 / 房间 id 早就换掉）靠 TTL 收，别让库只增不减。
     const prunedDialogs = store.pruneDraftOwners('dlg:', Date.now() - DIALOG_DRAFT_TTL);
-    if (prunedDialogs > 0) console.log(`[drafts] 清掉 ${prunedDialogs} 条过期对话框草稿`);
+    if (prunedDialogs > 0) log.info('清掉过期对话框草稿', { count: prunedDialogs });
 
     /**
      * diy2 的**命令面**（RPC）：浏览器侧唯一的 API（REST 已删，只剩 `/api/info` 探活）。

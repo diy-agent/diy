@@ -15,6 +15,9 @@
 import type { Server } from 'node:http';
 
 import { writePortFile, type Diy2Config } from './config';
+import { openLog } from './log';
+
+const log = openLog('listen');
 
 export interface ListenResult {
     /** 实际监听端口（内核分配 / 漂移后都算准） */
@@ -74,7 +77,7 @@ export async function listenWithStickyPort(config: Diy2Config, server: Server): 
     const port = typeof address === 'object' && address !== null ? address.port : config.port;
     writePortFile(config.portFile, port);
     if (driftedFrom !== null) {
-        console.log(`[diy2] 端口 ${driftedFrom} 被占用 → 改用 ${port}（下次沿用；想固定就换掉占用者）`);
+        log.info(`端口 ${driftedFrom} 被占用 → 改用 ${port}（下次沿用；想固定就换掉占用者）`);
     }
     return { port, driftedFrom };
 }
