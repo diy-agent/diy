@@ -79,6 +79,11 @@ export interface RunOptions {
      */
     stallTimeouts?: { firstMs: number; idleMs: number; toolMs: number };
     /**
+     * 可以等任意久的工具（缺省 `['ask']`，见 `stall-watchdog.ts`）：这些不计入工具时段的上限。
+     * 传空数组 = 所有工具都受 `stallTimeouts.toolMs` 约束（排障时用）。
+     */
+    unboundedTools?: Iterable<string>;
+    /**
      * 步数上限（工具循环）。不传 = `DEFAULT_MAX_STEPS`。
      *
      * 为什么必须有：`stopWhen` 缺省**不限步数**时，唯一刹车是用户点停止 —— 手动对话没问题，
@@ -161,6 +166,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     else options.signal.addEventListener('abort', forwardAbort, { once: true });
     const watchdog = new StallWatchdog({
         ...(options.stallTimeouts ?? stallTimeoutsFromEnv()),
+        ...(options.unboundedTools === undefined ? {} : { unboundedTools: options.unboundedTools }),
         onStall: (info) => {
             stallInfo = info;
             stall.abort();
@@ -243,8 +249,8 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     try {
         for await (const part of result.stream) {
             // 有数据 = 上游还活着；工具调用之后的等待算「工具在执行」而不是「上游在挂」
-            // （`ask` 可能要等用户很久、`job wait` 能等 10 分钟：那些不能当停摆掐掉）
-            if (part.type === 'tool-call') watchdog.toolStart();
+            // （`ask` 等用户多久都行 —— 它在豁免名单里；其余工具受 `toolMs` 兑底，见 ##560）
+            if (part.type === 'tool-call') watchdog.toolStart(part.toolName);
             else watchdog.touch();
             switch (part.type) {
                 case 'finish-step':

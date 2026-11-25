@@ -240,7 +240,9 @@ function EntryView({
                     )}
                 </div>
                 <RunsView runs={runs} roomId={roomId} live={entry.waiting === true} />
-                {/* 轮次最下面一行：运行中「正在调用 bash… 44s / 已用 2m44s」，结束换成结算 */}
+                {/* 轮次最下面一行：运行中「正在调用 bash… 44s / 已用 2m44s」，结束换成结算
+                    （`EndFooterLine` 的「这一轮是怎么停的」已并进 TurnFooter 的 settle 标签，
+                    见 `chat-core/end-footer` 的 `endFooterOf`） */}
                 <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
             </div>
         </div>

@@ -102,4 +102,23 @@ describe("runBash（搬包后的行为，##515）", () => {
         expect(run.text).toContain("[命令未能启动]");
         expect(run.text).toContain("已尝试：/bin/bash");
     });
+
+    it("⑦ 孙进程握着写端：命令已退也要收尾（timeout=0 不许永挂，##560）", async () => {
+        // 后台作业继承 stdout/stderr 写端：命令自己退出了、它还活着 ⇒ 'close' 永不到。
+        // 老写法把结局全押在 'close' 或超时定时器上，而 `timeout: 0`（长任务）没有定时器 ⇒
+        // 两条路都永不到，Promise 永不 resolve（2026-11-24 实测 task-mwjddcy0 卡 15 分钟，
+        // agent 侧无任何错误 / 超时可察觉）。这里必须靠「孤儿断管宽限」自己收尾。
+        const t0 = Date.now();
+        const run = await runBash("sleep 3 & echo started", process.cwd(), limits(0));
+        const ms = Date.now() - t0;
+        // 1.5s 断管宽限 + 建进程开销；远小于 sleep 3 —— 超了就说明还是押在 'close' 上
+        expect(ms, `收尾耗时 ${ms}ms（应 ~1.5s 宽限，而非等孙进程）`).toBeLessThan(2_800);
+        const { head, body } = splitHead(run.text);
+        expect(head.exit_code).toBe("0"); // 命令本身确实 exit 0（不是超时、不是被杀）
+        expect(head.timed_out).toBe("false");
+        expect(run.outcome).toBe("ok");
+        // 断管必须**如实告诉模型**（否则它以为输出是全的）
+        expect(body).toContain("已断开后代进程");
+        expect(body).toContain("started"); // 已收到的输出一个字不丢
+    });
 });

@@ -8,7 +8,11 @@ import { describe, expect, it } from 'vitest';
 import type { CompactionResult, Compactor } from '../src/compaction';
 import { openStore } from '../src/db';
 import type { Item, Room } from '../src/types';
-import { BOT_A, BOT_B, HUMAN, makeRoom, sleep, waitFor } from './support/harness';
+import { BOT_A, BOT_B, HUMAN, makeRoom, sleep, waitFor, type Harness } from './support/harness';
+
+/** 房间里的「中断」轮级事实 */
+const interruptedOf = (h: Harness): Item[] =>
+    h.items().filter((item) => item.type === 'notice' && item.data.kind === 'interrupted');
 
 /** 任务房间：`status` / `desc` 是**任务域的真列**（项目没有这两个字段） */
 function taskSpec(): Room {
@@ -403,5 +407,117 @@ describe('中断的轮次', () => {
         const before = h.items().length;
         const restarted = h.rebuild();
         expect(restarted.items()).toHaveLength(before);
+    });
+
+    // 现实里最常见的那种「崩溃」其实是重启：diy2 恢复了会按原 turn 号重放还挂在
+    // queued / delivering 的投递（见 RoomActor.recover），那一轮马上就续跑了。
+    // 对它报「没跑完」会得到一条与自己后面内容矛盾的提示，而且因为续跑完成不产条目，
+    // 这条 notice 会永远坐在「该轮最后一条轮级事实」的位置上，把 bot 永久标成中断。
+    it('还挂着待重放投递的轮不算中断：不补事实、标记留给续跑收口', () => {
+        const h = makeRoom();
+        h.store.openTurn(h.spec.id, { botId: BOT_A.id, turn: 3, turnId: 'turn-resume', at: 1_700_000_000_000 });
+        h.store.setDelivery({
+            roomId: h.spec.id,
+            messageId: 'msg-resume',
+            botId: BOT_A.id,
+            state: 'delivering',
+            turn: 3,
+            turnId: 'turn-resume',
+        });
+        const restarted = h.rebuild();
+
+        expect(interruptedOf(restarted)).toHaveLength(0);
+        // 标记不销：由续跑的 turn.end 销；万一续跑没成（投递变 failed）就不在 pending 里了，
+        // 下次启动走正经分支 —— 真中断晚一个启动周期报，不会丢
+        expect(restarted.store.openTurns(h.spec.id).map((open) => open.turnId)).toEqual(['turn-resume']);
+    });
+
+    it('续跑的轮：上次启动误报的那条被撤掉', () => {
+        const h = makeRoom();
+        h.store.openTurn(h.spec.id, { botId: BOT_A.id, turn: 3, turnId: 'turn-resume', at: 1_700_000_000_000 });
+        h.store.appendItem(h.spec.id, {
+            id: 'n-stale',
+            seq: 0,
+            order: 1,
+            turn: 3,
+            turnId: 'turn-resume',
+            at: 1,
+            status: 'done',
+            type: 'notice',
+            data: { text: '上一段进程误报的', kind: 'interrupted', botId: BOT_A.id },
+        });
+        h.store.setDelivery({
+            roomId: h.spec.id,
+            messageId: 'msg-resume',
+            botId: BOT_A.id,
+            state: 'delivering',
+            turn: 3,
+            turnId: 'turn-resume',
+        });
+
+        expect(interruptedOf(h.rebuild())).toHaveLength(0);
+    });
+
+    // 最隐的那一种：标记已被上一段进程销掉（所以重启时 reportOpenTurns 根本看不到它），
+    // 但那条误报还在磁盘上——续跑跑到收尾时必须把它撤掉，否则结局永远是「中断」。
+    it('续跑跑到收尾：上一段进程留下的中断事实被撤掉', async () => {
+        const h = makeRoom();
+        h.store.appendItem(h.spec.id, {
+            id: 'msg-resume',
+            seq: 0,
+            order: 1,
+            turn: 3,
+            turnId: 'turn-resume',
+            at: 1,
+            status: 'done',
+            type: 'chat',
+            author: HUMAN,
+            data: { text: '原话' },
+        });
+        h.store.appendItem(h.spec.id, {
+            id: 'n-stale',
+            seq: 0,
+            order: 2,
+            turn: 3,
+            turnId: 'turn-resume',
+            at: 2,
+            status: 'done',
+            type: 'notice',
+            data: { text: '上一段进程误报的', kind: 'interrupted', botId: BOT_A.id },
+        });
+        h.store.setDelivery({
+            roomId: h.spec.id,
+            messageId: 'msg-resume',
+            botId: BOT_A.id,
+            state: 'delivering',
+            turn: 3,
+            turnId: 'turn-resume',
+        });
+
+        const restarted = h.rebuild();
+        restarted.room.recover();
+        await waitFor(() => restarted.room.deliveries().every((d) => d.state === 'delivered'));
+
+        expect(interruptedOf(restarted)).toHaveLength(0);
+        expect(restarted.store.openTurns(h.spec.id)).toEqual([]);
+    });
+
+    it('真中断的轮不会因为别的轮收尾被误删', async () => {
+        const h = makeRoom();
+        h.store.appendItem(h.spec.id, {
+            id: 'n-crashed',
+            seq: 0,
+            order: 1,
+            turn: 3,
+            turnId: 'turn-crashed',
+            at: 1,
+            status: 'done',
+            type: 'notice',
+            data: { text: '真的没跑完', kind: 'interrupted', botId: BOT_A.id },
+        });
+
+        // 下一轮正常跑完（不同 turnId）—— 上一轮的结局该留着
+        await h.room.say({ text: '再跑一轮', author: HUMAN });
+        expect(interruptedOf(h)).toHaveLength(1);
     });
 });

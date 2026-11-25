@@ -61,7 +61,14 @@ export function TurnFooter({
                                 停
                             </button>
                         )}
-                        <RunningIndicator roomId={roomId} botId={entry.author?.id} />
+                        {/* `since` / `stallable`：没有 progress 事实时（刚刷新）退到 180s 兜底；
+                            waiting 不给 stallable —— 它的起点含已推进的内容，会误报（见 stuckHintOf） */}
+                        <RunningIndicator
+                            roomId={roomId}
+                            botId={entry.author?.id}
+                            since={startedAt}
+                            stallable={entry.waiting !== true}
+                        />
                     </>
                 ) : (
                     <>
