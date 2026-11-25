@@ -10,11 +10,19 @@ import type { UnitTextView } from '@diy-agent/chat-transport-rpc';
 
 const POLL_MS = 5000;
 
-export function useUnitText(roomId: string): { view: UnitTextView | null; error: string | null } {
+/**
+ * `enabled=false` 时不拉取（保留上次结果）：源码形态是「按需看一眼」，
+ * 跟树的 5 秒轮询一起跑纯属白花 RPC 与 DOM 重排。
+ */
+export function useUnitText(
+    roomId: string,
+    enabled = true,
+): { view: UnitTextView | null; error: string | null } {
     const [view, setView] = React.useState<UnitTextView | null>(null);
     const [error, setError] = React.useState<string | null>(null);
 
     React.useEffect(() => {
+        if (!enabled) return;
         let alive = true;
         const load = (): void => {
             void diy2.units
@@ -34,7 +42,7 @@ export function useUnitText(roomId: string): { view: UnitTextView | null; error:
             alive = false;
             clearInterval(timer);
         };
-    }, [roomId]);
+    }, [roomId, enabled]);
 
     return { view, error };
 }

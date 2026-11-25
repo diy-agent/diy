@@ -18,8 +18,7 @@
 import {
     EntityChatApp,
     TaskPanel,
-    UnitGraph,
-    UnitTextView,
+    UnitBoardView,
     useSelectedRoom,
     type Room,
 } from '@diy-agent/entity-chat';
@@ -120,24 +119,18 @@ function TaskDetail({ room }: { room: Room }) {
     );
 }
 
-/** 分解：unit 列表（按层排的文字版；非任务房由组件自己说清楚） */
+/**
+ * 目标：需求账本树（缩进列表），带一个「看源码」开关切到模型读到的 YAML 原文。
+ *
+ * 为什么树和源码在同一个视图里而不是两个 tab（2026-11-25 用户裁）：它们是同一份数据的
+ * 两种读法 —— 一个是扫一眼，一个是核对模型输入。两个 tab 会让人以为有两份东西。
+ */
 function UnitsBody() {
     const room = useSelectedRoom();
     if (!room) return <Empty>没有选中房间</Empty>;
     return (
         <div className="wb-fill">
-            <UnitGraph room={room} />
-        </div>
-    );
-}
-
-/** 文本：模型实际读到的 `units` 节原文（与树 / 图同一份数据，不是第二份） */
-function UnitsTextBody() {
-    const room = useSelectedRoom();
-    if (!room) return <Empty>没有选中房间</Empty>;
-    return (
-        <div className="wb-fill">
-            <UnitTextView room={room} />
+            <UnitBoardView room={room} />
         </div>
     );
 }
@@ -281,19 +274,9 @@ function Empty({ children }: { children: string }) {
 export const wbViews = [
     defineView({
         id: 'units',
-        title: '分解',
+        title: '目标',
         placement: { task: { area: 'detail' } },
         render: () => <UnitsBody />,
-    }),
-    /**
-     * 模型读到的原文。与上面两个视图**同一份数据**（`units.list` / 同一节 `units`），
-     * 所以没有「树文本 / 图文本」两个版本 —— 加一个切换按钮只会让人以为有第二份。
-     */
-    defineView({
-        id: 'units-text',
-        title: '文本',
-        placement: { task: { area: 'detail' } },
-        render: () => <UnitsTextBody />,
     }),
     defineView({
         id: 'detail',
