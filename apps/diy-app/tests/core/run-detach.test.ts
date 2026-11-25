@@ -20,6 +20,31 @@ const limits = { bashTimeoutMs: 300 } as unknown as LocalAgentLimits;
 const origin = { taskUri: "projects/4/tasks/408", turnId: "t1", stepId: "t1_s1", toolCallId: "call-1" };
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 等日志文件写出期望内容（最多 5s）。
+ *
+ * 为什么需要：`reg.wait()` 的 resolve 与「最后一段输出刷进日志文件」是两条路 ——
+ * 收口事件先到、write 的 flush 后到，满载并行时会稳定地读到一个短文件。
+ * 这些例要钉的是**内容与顺序**，不是时序，所以等一等而不是立刻断言。
+ */
+async function waitForLog(path: string, ok: (text: string) => boolean): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    for (;;) {
+        let text = "";
+        try {
+            text = readFileSync(path, "utf8");
+        } catch {
+            // 文件还没建：继续等
+        }
+        if (ok(text)) return;
+        if (Date.now() > deadline) {
+            expect(text, `日志内容超时：${path}`).toSatisfy(ok);
+            return;
+        }
+        await sleep(20);
+    }
+}
+
 let root: string;
 let reg: RunRegistry;
 
@@ -31,7 +56,9 @@ beforeEach(() => {
 afterEach(() => {
     for (const p of reg.list()) if (p.state === "running") reg.kill(p.id);
     reg.clear();
-    rmSync(root, { recursive: true, force: true });
+    // 杀进程是异步的：刚 kill 完立刻 rm 会撞上「文件正在被写」（ENOTEMPTY）。
+    // 这几例的命令都很短，重试几次就干净了 —— 不为清理去加更复杂的等待
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 /** 起一条前台命令并拿控制句柄（`onControl` 在 executor 里同步调用，故返回时必有）。 */
@@ -74,7 +101,9 @@ describe("运行中转后台", () => {
         expect(done?.state).toBe("exited");
         expect(done?.exitCode).toBe(0);
         // ① 读端没关（关了 sleep 之后那次 echo 会因 EPIPE 丢）+ ⑥ 前半段没丢
-        expect(readFileSync(info.logPath, "utf8")).toBe("early\nlate\n");
+        // 等落齐（`wait` 的 resolve 与「最后一次 write 刷到文件」谁先谁后没有保证；
+        // 满载并行时实测偶发只看得到 `early`）—— 要钉的是「两段都在、且有序」，不是时机
+        await waitForLog(info.logPath, (text) => text === "early\nlate\n");
         // 交接之后本函数不再落 settle：工具调用的 Promise 永远不 resolve（归属权已交出）
         await sleep(50);
         expect(toolSettled).toBe(false);
@@ -89,7 +118,8 @@ describe("运行中转后台", () => {
         const done = await reg.wait(info.id, 10_000);
         expect(done?.state).toBe("exited");
         expect(done?.exitCode).toBe(0);
-        expect(readFileSync(info.logPath, "utf8")).toContain("alive");
+        // 同上：`alive` 是 close 之后才写进文件的，给它一点时间而不是立刻读
+        await waitForLog(info.logPath, (text) => text.includes("alive"));
     });
 
     it("④ 转后台后摘掉轮次 abort：用户点「停止本轮」不许带走刚转后台的活", async () => {
@@ -167,10 +197,13 @@ describe("运行中转后台", () => {
     });
 
     it("落盘成功时**不**误标日志不可用", async () => {
-        const { ctl } = startForeground("echo hi", { timeoutMs: 20_000 });
-        const info = await reg.adopt({ process: ctl, command: "echo hi", cwd: root });
+        // `sleep 0.2` 只是为了别让 echo 抢在 adopt 之前退出（那以后测的是「已结束的进程」）；
+        // 断言放在收口之后也成立：落盘可用是既成事实，不该随进程结束翻转
+        const { ctl } = startForeground("sleep 0.2; echo hi", { timeoutMs: 20_000 });
+        const info = await reg.adopt({ process: ctl, command: "sleep 0.2; echo hi", cwd: root });
         expect(reg.logUnavailable(info.id)).toBe(false);
         await reg.wait(info.id, 10_000);
+        expect(reg.logUnavailable(info.id)).toBe(false);
     });
 
     it("时长按命令真正起跑算（转后台的那一刻不是起点）", async () => {
