@@ -15,9 +15,6 @@ import { contextWindowOf } from '../models';
 import { actions, conversationOf, useProviders, useStore } from '../store';
 import { CopyButton } from './CopyButton';
 
-/** 实测：中文 + JSON 结构下约 0.78 token / 字符（diy2 实测 522 tok ↔ 674 chars） */
-const TOKENS_PER_CHAR = 0.78;
-
 /** 策略名 → 人话。后端枚举值不该原样进 UI */
 const STRATEGY_LABEL: Record<string, string> = {
     'summary-fold-drop': 'LLM 摘要',
@@ -40,10 +37,6 @@ function summaryStateOf(event: CompactEventInfo | undefined): string | undefined
     if (event.summarized) return `摘要 ${fmt((event.summary ?? '').length)} 字`;
     if (event.summary !== undefined) return `沿用上次摘要 ${fmt(event.summary.length)} 字`;
     return undefined;
-}
-
-function tokensOf(chars: number): number {
-    return Math.round(chars * TOKENS_PER_CHAR);
 }
 
 function fmt(value: number): string {
@@ -74,7 +67,7 @@ function Row({
     onCancel?: () => void;
 }) {
     const { stats } = session;
-    const used = tokensOf(stats.chars);
+    const used = stats.tokens;
     const lastEvent = session.compactions.at(-1);
     const summaryState = summaryStateOf(lastEvent);
     const [showSummary, setShowSummary] = React.useState(false);
@@ -109,8 +102,7 @@ function Row({
             </div>
             {runningProgress !== undefined && (
                 <div className="mt-0.5 text-[10px] text-amber-600">
-                    摘要中… 已跑 {elapsed}s · 保留最近 {runningProgress.budget.keepTurns} 轮 /{' '}
-                    上限 {fmt(runningProgress.budget.maxChars)} 字符
+                    摘要中… 已跑 {elapsed}s · 保留最近 {runningProgress.budget.keepTurns} 轮
                 </div>
             )}
             <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-muted-foreground">
@@ -165,10 +157,9 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
     const [keepTurns, setKeepTurns] = React.useState<number | null>(null);
     const serverBudget = sessions[0]?.stats.budget;
     const keep = keepTurns ?? serverBudget?.keepTurns ?? 2;
-    const limit = serverBudget?.maxChars ?? 24000;
 
     const windowTokens = contextWindowOf(providers, room.modelKey);
-    const used = sessions.reduce((sum, session) => sum + tokensOf(session.stats.chars), 0);
+    const used = sessions.reduce((sum, session) => sum + session.stats.tokens, 0);
     const ratio = windowTokens === undefined || windowTokens === 0 ? undefined : used / windowTokens;
 
     // 压缩进度来自事件流（不是 RPC）：点下去同一帧内就能亮起来
@@ -281,7 +272,7 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
                                 onChange={(event) => setKeepTurns(Number(event.target.value))}
                                 className="w-12 rounded border bg-transparent px-1 text-right"
                             />
-                            <span>轮 · 上限 {fmt(limit)} 字符（超了自动压）</span>
+                            <span>轮 · 自动压缩按窗口水位触发</span>
                         </div>
 
                         {sessions.length === 0 ? (

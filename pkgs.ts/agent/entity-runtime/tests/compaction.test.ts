@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createSummaryCompactor, keepFromOf, simpleCompactor, type TranscriptEntry } from '../src/compaction';
+import { createSummaryCompactor, retainTokensForTurns, simpleCompactor, type TranscriptEntry } from '../src/compaction';
 
 const entry = (turn: number, text: string): TranscriptEntry => ({
     message: { role: 'user', content: text },
@@ -8,60 +8,89 @@ const entry = (turn: number, text: string): TranscriptEntry => ({
     turn,
 });
 
-describe('keepTurns', () => {
-    it('从尾往前数轮；没有轮号的条目各自算一轮（否则永远压不动）', () => {
-        const entries = [entry(1, 'a'), entry(1, 'a2'), entry(2, 'b'), entry(3, 'c'), entry(3, 'c2')];
-        expect(keepFromOf(entries, 1)).toBe(3); // 只剩 turn 3
-        expect(keepFromOf(entries, 2)).toBe(2);
-        expect(keepFromOf(entries, 9)).toBe(0);
-        expect(keepFromOf(entries, 0)).toBe(entries.length);
+describe('retainTokensForTurns（手工压缩的保留量）', () => {
+    it('从尾往前数轮累加 token；没有轮号的条目各自算一轮', () => {
+        const entries = [entry(1, 'x'.repeat(400)), entry(1, 'x'.repeat(400)), entry(2, 'x'.repeat(400))];
+        // 保 1 轮 = 最后一条；保 2 轮再多 turn 2 那条
+        expect(retainTokensForTurns(entries, 1)).toBeLessThan(retainTokensForTurns(entries, 2));
+        // 要得比现有轮数多 = 全部（不会凭空加量）
+        expect(retainTokensForTurns(entries, 9)).toBe(retainTokensForTurns(entries, 2));
+        // 0 = 压到头：保留量给最小（不是 0，判据要求 > 0 才有意义）
+        expect(retainTokensForTurns(entries, 0)).toBe(1);
 
+        // 无轮号 ⇒ 各自算一轮，否则「保 2 轮」会变成「保住整段种子」
         const untagged: TranscriptEntry[] = [
-            { message: { role: 'user', content: 'x' }, origin: 'public' },
-            { message: { role: 'user', content: 'y' }, origin: 'public' },
+            { message: { role: 'user', content: 'x'.repeat(400) }, origin: 'public' },
+            { message: { role: 'user', content: 'y'.repeat(400) }, origin: 'public' },
         ];
-        expect(keepFromOf(untagged, 1)).toBe(1);
+        expect(retainTokensForTurns(untagged, 1)).toBeLessThan(retainTokensForTurns(untagged, 2));
     });
 });
 
-describe('simple compactor', () => {
-    it('压完仍超上限 ⇒ 不压（空转判据：不做净收益为负的压缩，也不白烧一次摘要）', () => {
-        const big = 'x'.repeat(400);
-        // turn 1 有可折的 tool，turn 2 是保留区（保 1 轮）且它本身就超预算
-        const entries: TranscriptEntry[] = [
-            entry(1, big),
-            {
-                message: {
-                    role: 'assistant',
-                    content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }],
-                },
-                origin: 'self',
-                turn: 1,
-            },
-            {
-                message: {
-                    role: 'tool',
-                    content: [
-                        { type: 'tool-result', toolCallId: 't1', toolName: 'read', output: { type: 'text', value: big } },
-                    ],
-                },
-                origin: 'self',
-                turn: 1,
-            },
-            entry(2, big.repeat(3)),
-        ];
+describe('simple compactor（判据来自 @diy-agent/compaction）', () => {
+    const turnOf = (turn: number, chars: number): TranscriptEntry => entry(turn, 'x'.repeat(chars));
 
-        // 折掉 turn 1 的 tool 也回不到 100 字符 ⇒ 宁可不压（否则下一轮还会再压一次）
-        expect(simpleCompactor.compact({ entries, budget: { keepTurns: 1, maxChars: 100 }, turn: 2, turnId: 't2' })).toBeNull();
+    it('窗口未知 ⇒ 自动不压（不猜数）', () => {
+        const entries = [turnOf(1, 800), turnOf(2, 800)];
+        expect(simpleCompactor.compact({ entries, budget: { keepTurns: 1 }, turn: 3, turnId: 't3' })).toBeNull();
+    });
 
-        // 预算给得下去时才真的压（同一条判定线，不是「一律不压」）
-        const loose = simpleCompactor.compact({
+    it('没到触发线 ⇒ 不压（不是「每轮都压一次」）', () => {
+        const entries = [turnOf(1, 800), turnOf(2, 800)];
+        expect(
+            simpleCompactor.compact({
+                entries,
+                budget: { keepTurns: 1 },
+                windowTokens: 1_000_000,
+                turn: 3,
+                turnId: 't3',
+            }),
+        ).toBeNull();
+    });
+
+    it('到触发线 ⇒ 从最老的整轮丢，切点落在轮首', () => {
+        // W=20000 ⇒ 触发线 4000 tok、保留 3200 tok；每轮 ≈ 200 tok，21 轮 ≈ 4200 tok
+        const entries = Array.from({ length: 21 }, (_, i) => turnOf(i + 1, 800));
+        const result = simpleCompactor.compact({
             entries,
-            budget: { keepTurns: 1, maxChars: 2000 },
-            turn: 2,
-            turnId: 't2',
+            budget: { keepTurns: 1 },
+            windowTokens: 20_000,
+            turn: 22,
+            turnId: 't22',
         });
-        expect(loose?.folded).toBeGreaterThan(0);
+        expect(result).not.toBeNull();
+        expect(result!.dropped).toBeGreaterThan(0);
+        // 整段丢：前后条数对得上，且保留区从某一轮的轮首开始（本例每轮一条）
+        expect(result!.entries.length + result!.dropped).toBe(entries.length);
+        expect(result!.entries[0]!.turn).toBe(result!.dropped + 1);
+    });
+
+    it('压完仍超触发线 ⇒ 不压（空转判据：不做净收益为负的压缩，也不白烧一次摘要）', () => {
+        // 最后一轮自己就超触发行：怎么切都还是超 ⇒ 宁可不压
+        const entries = [...Array.from({ length: 5 }, (_, i) => turnOf(i + 1, 800)), turnOf(6, 120_000)];
+        expect(
+            simpleCompactor.compact({
+                entries,
+                budget: { keepTurns: 1 },
+                windowTokens: 20_000,
+                turn: 7,
+                turnId: 't7',
+            }),
+        ).toBeNull();
+    });
+
+    it('手动 force：窗口未知也压，保留量按 keepTurns（0 = 压到头）', () => {
+        const entries = [turnOf(1, 800), turnOf(2, 800), turnOf(3, 800)];
+        const result = simpleCompactor.compact({
+            entries,
+            budget: { keepTurns: 1 },
+            turn: 4,
+            turnId: 't4',
+            force: true,
+        });
+        expect(result?.entries).toHaveLength(1);
+        expect(result?.entries[0]?.turn).toBe(3);
+        expect(result?.dropped).toBe(2);
     });
 });
 
@@ -80,7 +109,7 @@ describe('summary compactor', () => {
 
         const result = await compactor.compact({
             entries,
-            budget: { keepTurns: 1, maxChars: 1 },
+            budget: { keepTurns: 1 },
             turn: 4,
             turnId: 'turn-4',
             force: true,
@@ -111,7 +140,7 @@ describe('summary compactor', () => {
 
         const result = await compactor.compact({
             entries,
-            budget: { keepTurns: 1, maxChars: 20 },
+            budget: { keepTurns: 1 },
             turn: 3,
             turnId: 'turn-3',
             force: true,

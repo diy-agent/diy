@@ -21,6 +21,7 @@ import { friendlyError } from './errors';
 import {
     DEFAULT_BUDGET,
     estimateChars,
+    estimateTokens,
     createSummaryCompactor,
     type CompactEvent,
     type CompactionBudget,
@@ -29,7 +30,7 @@ import {
     type TokenUsage,
     type TranscriptEntry,
 } from './compaction';
-import { maxOutputTokensOf } from './providers';
+import { contextWindowOf, maxOutputTokensOf } from './providers';
 import { Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
 import type { AgentEvent, Author, Bot, DeliveryState, Item, TurnEndReason } from './types';
@@ -37,7 +38,6 @@ import type { AgentEvent, Author, Bot, DeliveryState, Item, TurnEndReason } from
 export interface CompactOptions {
     /** 手工压缩：保留最近几轮（0 = 压到头，与 diy1 的 keepRounds 同语义） */
     keepTurns?: number;
-    maxChars?: number;
     /** 本次压缩的 id（UI 用它取消 / 去重）；缺省自己生成一个 */
     compactId?: string;
     /** 取消信号：只中断摘要那次 LLM 调用，已折叠的边界不生效 */
@@ -96,8 +96,12 @@ export type SessionEvent =
 export interface SessionStats {
     entries: number;
     chars: number;
-    /** 当前生效的默认预算（自动压缩与手动压缩都用它，可被入参覆盖） */
+    /** 上下文 token 估算（压缩判据的同一口径；真实用量看 usage） */
+    tokens: number;
+    /** 手工压缩默认保留的轮数（自动压缩按窗口 × 0.16 算，不看它） */
     budget: CompactionBudget;
+    /** 当前模型窗口（token）；未知 = undefined（此时自动压缩不触发） */
+    windowTokens?: number;
     /** 历史累计丢弃条数 */
     collapsed: number;
     compactions: number;
@@ -134,6 +138,11 @@ export interface SessionDeps {
     /** 压缩策略；默认 simpleCompactor */
     compactor?: Compactor;
     budget?: CompactOptions;
+    /**
+     * 覆盖模型窗口（token）。缺省按 modelKey 去模型目录查；测试注入用 ——
+     * 不注入就无法让「窗口水位」在单测里成立。
+     */
+    windowTokens?: number;
     /** 房间装配的工具（不传 = 内置 get_time） */
     tools?: ToolSet;
     toolsHint?: string;
@@ -257,10 +266,13 @@ export class BotSession {
         // 待并入的公共条目也算"当前上下文"，否则长时间没跑的 bot 看起来是空的
         const entries = [...this.transcript, ...this.pending];
         const summary = this.currentSummary();
+        const windowTokens = this.windowTokensOf();
         return {
             entries: entries.length,
             chars: estimateChars(entries),
+            tokens: estimateTokens(entries),
             budget: this.budgetWith({}),
+            ...(windowTokens === undefined ? {} : { windowTokens }),
             collapsed: this.collapsed,
             compactions: this.events.length,
             ...(this.events.at(-1) === undefined ? {} : { lastCompactAt: this.events.at(-1)!.at }),
@@ -454,8 +466,17 @@ export class BotSession {
     private budgetWith(options: CompactOptions): CompactionBudget {
         return {
             keepTurns: options.keepTurns ?? this.deps.budget?.keepTurns ?? DEFAULT_BUDGET.keepTurns,
-            maxChars: options.maxChars ?? this.deps.budget?.maxChars ?? DEFAULT_BUDGET.maxChars,
         };
+    }
+
+    /**
+     * 当前模型的上下文窗口（token）。
+     *
+     * 自动压缩的**唯一输入**：水位、保留量、空转判据全由它派生（判据在 `@diy-agent/compaction`）。
+     * 未知 = 自动压缩不触发 —— 猜一个窗口的代价是「要么永不压、要么一压到底」。
+     */
+    private windowTokensOf(): number | undefined {
+        return this.deps.windowTokens ?? contextWindowOf(this.modelKey);
     }
 
     private async pump(): Promise<void> {
@@ -661,7 +682,7 @@ export class BotSession {
         signal?: AbortSignal;
     }): Promise<CompactEvent | null> {
         const budget = options.budget ?? this.budgetWith({});
-        const before = { entries: this.transcript.length, chars: estimateChars(this.transcript) };
+        const before = { entries: this.transcript.length, chars: estimateChars(this.transcript), tokens: estimateTokens(this.transcript) };
         const startedAt = Date.now();
         const compactId = options.compactId ?? `c-${startedAt.toString(36)}`;
         const visible = options.manual === true;
@@ -688,11 +709,13 @@ export class BotSession {
 
         let result: CompactionResult | null;
         try {
+            const windowTokens = this.windowTokensOf();
             result = await this.compactor.compact({
                 entries: this.transcript,
                 budget,
                 turn: options.turn,
                 turnId: options.turnId,
+                ...(windowTokens === undefined ? {} : { windowTokens }),
                 ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
                 ...(options.force === true ? { force: true } : {}),
                 ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -721,8 +744,11 @@ export class BotSession {
             durationMs: Date.now() - startedAt,
             budget,
             before,
-            after: { entries: this.transcript.length, chars: estimateChars(this.transcript) },
-            folded: result.folded,
+            after: {
+                entries: this.transcript.length,
+                chars: estimateChars(this.transcript),
+                tokens: estimateTokens(this.transcript),
+            },
             dropped: result.dropped,
             summarized: result.summarized,
             ...(result.summary === undefined ? {} : { summary: result.summary }),
@@ -734,7 +760,6 @@ export class BotSession {
         report('done', {
             durationMs: event.durationMs,
             after: event.after,
-            folded: event.folded,
             dropped: event.dropped,
             summarized: event.summarized,
             ...(event.summary === undefined ? {} : { summary: event.summary }),

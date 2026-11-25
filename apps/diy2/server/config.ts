@@ -99,8 +99,11 @@ export interface Diy2Config {
     modelConfigPath: string | undefined;
     /** 实例名（`--name`），多实例时人认得出的身份；缺省 null */
     name: string | null;
-    /** 压缩预算（**全局常量**，不来自 argv） */
-    compact: { keepTurns: number; maxChars: number };
+    /**
+     * 手工压缩默认保留的轮数（**全局常量**，不来自 argv）。
+     * 自动压缩不看它：判据是模型窗口水位（窗口 × 0.16 保留 / 窗口 − max(10%,16k) 触发）。
+     */
+    compact: { keepTurns: number };
     /** 工具面：shell = 带 bash；files = 只读文件工具（`--tools files`） */
     tools: 'shell' | 'files';
     /** 裁决过程中的「本该报却没报」的事（被拒的生产根等）：入口负责打出来 */

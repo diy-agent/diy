@@ -309,12 +309,12 @@ export interface CompactionProgress {
     startedAt: number;
     /** 终态才有（运行中让界面自己跑秒表） */
     durationMs?: number;
-    budget: { keepTurns: number; maxChars: number };
+    /** 手工压缩保留的轮数（自动压缩按模型窗口派生，不在这个预算里） */
+    budget: { keepTurns: number };
     /** 压缩前规模：start 就带上，界面立刻能显示「要压多少」 */
-    before: { entries: number; chars: number };
+    before: { entries: number; chars: number; tokens?: number };
     /** 终态才有；缺省 = 这次没压（没有可压的内容） */
-    after?: { entries: number; chars: number };
-    folded?: number;
+    after?: { entries: number; chars: number; tokens?: number };
     dropped?: number;
     /** 本次是否新生成摘要（沿用旧摘要 / 失败都是 false） */
     summarized?: boolean;

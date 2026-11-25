@@ -248,7 +248,6 @@ function logCompact(roomId: string, bot: Bot, event: CompactEvent): void {
         strategy: event.strategy,
         before,
         after,
-        folded: event.folded,
         dropped: event.dropped,
         durationMs: event.durationMs,
         ...(event.usage === undefined ? {} : { usage }),
