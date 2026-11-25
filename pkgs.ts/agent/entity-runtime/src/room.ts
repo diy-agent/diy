@@ -186,15 +186,37 @@ export class RoomActor {
      * 结局判据与 UI 都不用特殊化（只在 `NOTICE_OUTCOMES` 里加了一行）。
      *
      * 没有开着的轮时**一次查询就走**（不读 items）—— 正常重启不该为此付 ensureInit 的钱。
+     *
+     * ⚠️ 只有「**不会续跑**的开轮」才算中断。diy2 的恢复会按原 turn 号重放还挂在
+     * `queued` / `delivering` 的投递（见 `recover()`），那一轮马上就会重新 `turn.start` ——
+     * 对它报「没跑完」会落成一条与紧随其后的续跑内容自相矛盾的事实；更要紧的是续跑完成
+     * **不产条目**，于是这条 notice 永远是那一轮的最后一条轮级事实，bot 被永久误标成中断。
+     * 所以：还挂着待重放投递的轮，一句都不报、标记也不销。
      */
     private reportOpenTurns(): void {
         const opens = this.deps.store.openTurns(this.id);
         if (opens.length === 0) return;
+        // botId → 他名下会被续跑的 turnId（turnId 是房间级的，@all 时必须按 bot 分开认）
+        const replaying = new Map<string, Set<string>>();
+        for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
+            if (delivery.turnId === undefined) continue;
+            const turns = replaying.get(delivery.botId) ?? new Set<string>();
+            turns.add(delivery.turnId);
+            replaying.set(delivery.botId, turns);
+        }
         for (const open of opens) {
             const bot = this.member(open.botId);
             // 成员已经不在这个房间里（被移出）：没有可归属的事实，直接销标记
             if (bot === undefined) {
                 this.deps.store.closeTurn(this.id, open.botId);
+                continue;
+            }
+            if (replaying.get(open.botId)?.has(open.turnId) === true) {
+                // 不报、不销标记：留给续跑的 turn.start / turn.end 自己收口。
+                // 万一续跑没成（投递重放失败 → state 变 failed），它就不在 pending 里了，
+                // 下次启动会走下面那条正经分支 —— 真中断不会漏报，只是晚一个启动周期。
+                // 顺手把**上次启动已经报错落到磁盘**的那条撤掉（自愈旧误报）。
+                this.deps.store.deleteInterruptedFacts(this.id, open.turnId, open.botId);
                 continue;
             }
             const order = this.nextOrder();
@@ -920,6 +942,11 @@ export class RoomActor {
                 this.persistSession(bot.id);
                 // 快照落了才算收尾：销掉「开了没收尾」的标记再发结论
                 this.deps.store.closeTurn(this.id, bot.id);
+                // 这一轮带着「中断」事实却跑到收尾了 = 那条事实是重启时的误报（重启后按原 turn 号
+                // 续跑，见 reportOpenTurns），而续跑完成不产条目 —— 不撤掉它就是这一轮的最后一条
+                // 轮级事实，bot 会被永久显示成「中断」。真中断的轮根本走不到这里（进程已死）。
+                // 靠 items_interrupted 部分索引，没误报的轮就是一次空查。
+                this.deps.store.deleteInterruptedFacts(this.id, event.result.turnId, bot.id);
                 this.publishConclusion(bot, event.result);
                 return;
             case 'compact.progress':

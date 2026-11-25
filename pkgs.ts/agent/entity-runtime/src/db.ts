@@ -237,6 +237,18 @@ export interface Store {
     closeTurn(roomId: string, botId: string): void;
     /** 还挂着没收尾的轮（重启后非空 = 上次没跑完的那几个） */
     openTurns(roomId: string): OpenTurn[];
+    /**
+     * 撤掉某一轮的「中断」事实（那一轮其实还会续跑 / 续跑完了）。
+     *
+     * 误报的来路：重启时看到 `turn_open` 就报「没跑完」，但 diy2 的恢复会**按原 turn 号重放投递**
+     * （`deliveries.state='delivering'`），同一轮随即续跑 —— 于是磁盘上留下一条与后续内容
+     * 自相矛盾的事实，且因为「续跑完成不产条目」它会永远是该轮的最后一条轮级事实（结局被误标）。
+     *
+     * 为什么是 DELETE 而不是补条目：items 没有「更新 / 撤回」通道（事件只有 append 型 `item`），
+     * 补一条只会让消息流里多一条噪音。删库的代价是在线页面（只做增量）要刷新才消失 ——
+     * 这个调用点全在重启后，页面对应的那次重连本来就会重拉。
+     */
+    deleteInterruptedFacts(roomId: string, turnId: string, botId: string): number;
     appendRoomEntry(roomId: string, entry: RoomEntry): void;
     roomEntries(roomId: string): RoomEntry[];
     itemsOf(roomId: string, afterSeq?: number): Item[];
@@ -434,6 +446,14 @@ export function openStore(file: string): Store {
             seq
         ) WHERE json_extract(item, '$.author.id') IS NULL
             AND json_extract(item, '$.type') IN ('notice', 'error');
+        -- 「这一轮报过中断吗」与「续跑时要撤掉哪条」都按 (kind, turnId, botId) 定位。
+        -- 表里 kind='interrupted' 的行通常只有个位数，部分索引因此极小；
+        -- WHERE 必须与 deleteInterruptedFacts 的过滤条件逐字一致才命中。
+        CREATE INDEX IF NOT EXISTS items_interrupted ON entity_items(
+            entity_id,
+            json_extract(item, '$.turnId'),
+            json_extract(item, '$.data.botId')
+        ) WHERE json_extract(item, '$.data.kind') = 'interrupted';
         CREATE TABLE IF NOT EXISTS room_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_id TEXT NOT NULL,
@@ -1327,6 +1347,17 @@ export function openStore(file: string): Store {
                 turnId: String(row['turn_id']),
                 at: Number(row['at']),
             }));
+        },
+        deleteInterruptedFacts(roomId: string, turnId: string, botId: string): number {
+            const result = db
+                .prepare(
+                    "DELETE FROM entity_items WHERE entity_id = ? " +
+                        "AND json_extract(item, '$.data.kind') = 'interrupted' " +
+                        "AND json_extract(item, '$.turnId') = ? " +
+                        "AND json_extract(item, '$.data.botId') = ?",
+                )
+                .run(roomId, turnId, botId);
+            return Number(result.changes);
         },
         appendRoomEntry(roomId: string, entry: RoomEntry): void {
             db.prepare('INSERT INTO room_entries (entity_id, seq, at, entry) VALUES (?,?,?,?)').run(
