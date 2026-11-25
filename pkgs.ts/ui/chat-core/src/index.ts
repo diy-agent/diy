@@ -11,7 +11,7 @@ export {
     moveActive,
     type MentionCandidate,
 } from './mention';
-export { MockChatClient, type MockOptions } from './mock';
+export { MockChatClient, type MockOptions, type MockStep } from './mock';
 export { applyEvent, emptyState, fromSnapshot, type ConversationState } from './reduce';
 export { jobOf, jobViewOfNotice, stripAnsi, type JobRow, type JobState, type JobView } from './job';
 export {

@@ -6,6 +6,7 @@ import {
     ConversationStore,
     type AskAnswer,
     type Bot,
+    type ChatClient,
     type CompactOutcome,
     type Room,
     type SessionInfo,
@@ -25,7 +26,7 @@ import {
     sameAddress,
 } from './address';
 import type { NavAddress } from './address';
-import { drafts } from './drafts';
+import { drafts, type DraftsTransport } from './drafts';
 import { isClosed, type TaskStatus } from './model';
 import { firstUsableModelKey, type ModelCatalogPayload, type Provider } from './models';
 import { mergePendingAsks } from './pendingAsk';
@@ -38,10 +39,16 @@ let client = new RpcChatClient();
 export { client as diy2 };
 drafts.configure(client.drafts);
 
-/** 测试用：替换成假客户端（生产路径永远不调） */
-export function setDiy2Client(next: typeof client): void {
-    client = next;
-    drafts.configure(next.drafts);
+/**
+ * 替换传输层：dev 演示与测试用（生产路径永远不调）。
+ *
+ * 收 `ChatClient` 而不是 `RpcChatClient`：任何同契约实现都该能换进来 —— 内存版
+ * （chat-core 的 MockChatClient）没有 `drafts` 通道，草稿就保持原样不动。
+ */
+export function setDiy2Client(next: ChatClient): void {
+    client = next as typeof client;
+    const withDrafts = next as { drafts?: DraftsTransport };
+    if (withDrafts.drafts !== undefined) drafts.configure(withDrafts.drafts);
 }
 
 /** 本端缺省模型覆盖的存储键（`localStorage`；与 `model.yaml` 的 `defaultModel` 不是一回事） */

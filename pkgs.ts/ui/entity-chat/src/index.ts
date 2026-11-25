@@ -16,6 +16,10 @@ export type { ModelInfo, ModelKey, Provider } from './models';
 
 // ── 导航 ──────────────────────────────────────────────────────
 export { navigate } from './store';
+
+// dev / 测试用：把传输换成内存实现（`chat-core` 的 MockChatClient）。
+// 生产路径永远不调 —— 入口在 apps/diy2 的 `?mock=1` 后面。
+export { setDiy2Client } from './store';
 export { addressOf, formatAddress, knownPage, parseAddress, registerPage, roomAddressOf, sameAddress } from './address';
 export type { NavAddress } from './address';
 
