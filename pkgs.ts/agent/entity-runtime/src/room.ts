@@ -100,6 +100,14 @@ export interface RoomActorDeps {
 export class RoomActor {
     private readonly log: RoomLog;
     private readonly sessions = new Map<string, BotSession>();
+    /**
+     * 正在跑的手动压缩（compactId → 取消器）。
+     *
+     * 为什么需要：摘要是一次好几秒的 LLM 调用，用户点下去之后得能看见、能撤；
+     * 而压缩会**重写自己的 transcript**，同一成员并发压两次会拿着同一份旧上下文
+     * 算边界，后完成的那次把前一次的结果覆盖回去。
+     */
+    private readonly compacting = new Map<string, { botId: string; controller: AbortController }>();
     /** 展示顺序（跨 bot 稳定） */
     private order = 0;
     /** 回合号 */
@@ -500,11 +508,38 @@ export class RoomActor {
         });
     }
 
-    /** 手动压某个成员的上下文（只影响它自己） */
-    async compact(botId: string, options: CompactOptions = {}): Promise<ReturnType<BotSession['forceCompact']>> {
+    /** 手动压某个成员的上下文（只影响它自己）。返回 compactId：UI 拿它取消 */
+    async compact(
+        botId: string,
+        options: CompactOptions = {},
+    ): Promise<{ compactId: string; event: Awaited<ReturnType<BotSession['forceCompact']>> }> {
         const bot = this.member(botId);
         if (bot === undefined) throw new Error('bot not in room');
-        return this.sessionOf(bot).forceCompact(options);
+        const running = [...this.compacting.values()].find((entry) => entry.botId === botId);
+        if (running !== undefined) throw new Error(`${bot.name} 正在压缩，等它结束或先取消`);
+        // id 可以由调用方先给：RPC 要「受理即返」（否则 UI 得等到压完才拿到可取消的键）
+        const compactId = options.compactId ?? `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        const controller = new AbortController();
+        this.compacting.set(compactId, { botId, controller });
+        try {
+            const event = await this.sessionOf(bot).forceCompact({ ...options, compactId, signal: controller.signal });
+            return { compactId, event };
+        } finally {
+            this.compacting.delete(compactId);
+        }
+    }
+
+    /** 撤掉一次正在跑的压缩；false = 它已经跑完了（不是错误，手点慢了而己） */
+    cancelCompact(compactId: string): boolean {
+        const entry = this.compacting.get(compactId);
+        if (entry === undefined) return false;
+        entry.controller.abort();
+        return true;
+    }
+
+    /** 调试 / 测试：正在跑的手动压缩 id（检验 finally 有没有清干净） */
+    compactingIds(): string[] {
+        return [...this.compacting.keys()];
     }
 
     /** 调试 / 测试：某个成员当前的上下文快照 */
@@ -822,6 +857,10 @@ export class RoomActor {
                 });
                 this.persistSession(bot.id);
                 this.publishConclusion(bot, event.result);
+                return;
+            case 'compact.progress':
+                // 手动压缩的进度：直接转手给客户端（UI 靠它做「摘要中…」的即时反馈）
+                this.deps.emit({ kind: 'compact', compact: event.compact });
                 return;
             case 'compact':
                 this.persistSession(bot.id);

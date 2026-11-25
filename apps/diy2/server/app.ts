@@ -645,13 +645,36 @@ export function createDiy2App(opts: {
                     return { ok: true };
                 },
                 sessions: async ({ input }) => ({ sessions: requireRoom(input.id).sessionsInfo() }),
+                /**
+                 * **受理即返**（与 `chat.chat` 同一个口径）。
+                 *
+                 * 压缩的进展靠 `compact` 事件回推：它要等好几秒的 LLM 摘要，挂到 RPC 返回上
+                 * 等于用户点完只能盯一个禁用的按钮（2026-11-25 实测就是这个体验）。
+                 * 先返回 compactId，客户端立刻就能显示「摘要中…」并能按 id 取消；
+                 * 失败走 `error` 广播，跟发消息那条路一样。
+                 */
                 compact: async ({ input }) => {
                     const actor = requireRoom(input.id);
-                    const event = await actor.compact(input.botId, {});
-                    return {
-                        event,
-                        stats: actor.sessionsInfo().find((entry) => entry.botId === input.botId)?.stats,
-                    };
+                    const compactId = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+                    // 面板上传的「保留条数 / 预算」是真参数，别用空对象盖掉（否则手动压缩永远按启动配置压）
+                    void actor
+                        .compact(input.botId, {
+                            compactId,
+                            ...(typeof input.keepLast === 'number' ? { keepLast: input.keepLast } : {}),
+                            ...(typeof input.maxChars === 'number' ? { maxChars: input.maxChars } : {}),
+                        })
+                        .catch((error: unknown) => {
+                            // 正在压缩 / bot 不在房间里：让用户看得见，不能静默
+                            broadcast(input.id, {
+                                kind: 'error',
+                                message: error instanceof Error ? error.message : String(error),
+                            });
+                        });
+                    return { compactId };
+                },
+                cancelCompact: async ({ input }) => {
+                    // 已经跑完 / 不认识的 id → false（手点慢而己，不是错误）
+                    return { ok: requireRoom(input.id).cancelCompact(input.compactId) };
                 },
             },
             asks: {

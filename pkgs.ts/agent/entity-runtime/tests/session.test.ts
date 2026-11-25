@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { RunOptions } from '../src/agent';
-import type { Compactor, TranscriptEntry } from '../src/compaction';
+import { createSummaryCompactor, simpleCompactor, type Compactor } from '../src/compaction';
 import type { RoomEntry } from '../src/room-log';
 import { BotSession, type SessionDeps, type SessionEvent, type Turn } from '../src/session';
 import type { AgentEvent, Bot, Item } from '../src/types';
@@ -95,6 +95,42 @@ function makeSession(
 
     return { session, runs, items, deliveries, seen, ends, events };
 }
+
+/** 一份“确实能压出东西”的种子：早期一轮里有工具调用 + 大输出，压缩时会被拓掉 */
+const compressibleSeed = () => ({
+    entries: [
+        { message: { role: 'user' as const, content: '早期需求' }, origin: 'public' as const, turn: 1 },
+        {
+            message: {
+                role: 'assistant' as const,
+                content: [{ type: 'tool-call' as const, toolCallId: 't1', toolName: 'read', input: {} }],
+            },
+            origin: 'self' as const,
+            turn: 1,
+        },
+        {
+            message: {
+                role: 'tool' as const,
+                content: [
+                    {
+                        type: 'tool-result' as const,
+                        toolCallId: 't1',
+                        toolName: 'read',
+                        output: { type: 'text' as const, value: '工具输出'.repeat(200) },
+                    },
+                ],
+            },
+            origin: 'self' as const,
+            turn: 1,
+        },
+        {
+            message: { role: 'assistant' as const, content: [{ type: 'text' as const, text: '结论：已修复' }] },
+            origin: 'self' as const,
+            turn: 1,
+        },
+        { message: { role: 'user' as const, content: '最新一句' }, origin: 'public' as const, turn: 2 },
+    ],
+});
 
 const conclusion = (bot: Bot, seq: number, text: string): RoomEntry => ({
     kind: 'conclusion',
@@ -315,41 +351,7 @@ describe('BotSession', () => {
     });
 
     it('手动 forceCompact：只压自己、返回事件、不触发运行', async () => {
-        const long = '工具输出'.repeat(200);
-        const seed = () => ({
-            entries: [
-                { message: { role: 'user', content: '早期需求' }, origin: 'public' as const, turn: 1 },
-                {
-                    message: {
-                        role: 'assistant',
-                        content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'read', input: {} }],
-                    },
-                    origin: 'self' as const,
-                    turn: 1,
-                },
-                {
-                    message: {
-                        role: 'tool',
-                        content: [
-                            {
-                                type: 'tool-result',
-                                toolCallId: 't1',
-                                toolName: 'read',
-                                output: { type: 'text', value: long },
-                            },
-                        ],
-                    },
-                    origin: 'self' as const,
-                    turn: 1,
-                },
-                {
-                    message: { role: 'assistant', content: [{ type: 'text', text: '结论：已修复' }] },
-                    origin: 'self' as const,
-                    turn: 1,
-                },
-                { message: { role: 'user', content: '最新一句' }, origin: 'public' as const, turn: 2 },
-            ],
-        });
+        const seed = compressibleSeed;
         const h = makeSession({ seed });
 
         const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
@@ -362,6 +364,106 @@ describe('BotSession', () => {
         expect(JSON.stringify(h.session.context())).not.toContain('工具输出');
     });
 
+    it('手动压缩会广播进度：running 先到、done 带结果', async () => {
+        const compactor = createSummaryCompactor({
+            modelKey: () => 'm',
+            sessionId: 'bot:test',
+            generateSummary: async () => JSON.stringify({ conclusions: ['C'], changes: [], todos: [], open: [] }),
+        });
+        const h = makeSession({ seed: compressibleSeed, compactor });
+
+        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+
+        const progress = h.events.flatMap((entry) => (entry.type === 'compact.progress' ? [entry.compact] : []));
+        // UI 靠这条做「摘要中…」：必须**先**有 running（await LLM 之前），再有终态
+        expect(progress.map((entry) => entry.state)).toEqual(['running', 'done']);
+        expect(progress[0]?.compactId).toBe(progress[1]?.compactId);
+        expect(progress[0]?.manual).toBe(true);
+        expect(progress[1]?.folded).toBe(event?.folded);
+        expect(progress[1]?.after?.entries).toBe(h.session.stats().entries);
+        expect(progress[1]?.summarized).toBe(true);
+    });
+
+    it('取消手动压缩：报 cancelled、上下文原样、不产生压缩事件', async () => {
+        const controller = new AbortController();
+        const compactor = createSummaryCompactor({
+            modelKey: () => 'm',
+            sessionId: 'bot:test',
+            // 挂着等取消：真实场景里这正是那次要好几秒的 LLM 调用
+            generateSummary: (_prompt, signal) =>
+                new Promise((_resolve, reject) => {
+                    signal?.addEventListener('abort', () => reject(new Error('aborted')));
+                }),
+        });
+        const h = makeSession({ seed: compressibleSeed, compactor });
+        const before = JSON.stringify(h.session.context());
+
+        const pending = h.session.forceCompact({ maxChars: 120, keepLast: 1, signal: controller.signal });
+        await sleep(5);
+        controller.abort();
+        const event = await pending;
+
+        // 取消 = 这次不压：而不是「按新边界压了、只是没摘要」
+        expect(event).toBeNull();
+        expect(JSON.stringify(h.session.context())).toBe(before);
+        const states = h.events.flatMap((entry) => (entry.type === 'compact.progress' ? [entry.compact.state] : []));
+        expect(states).toEqual(['running', 'cancelled']);
+        expect(h.events.some((entry) => entry.type === 'compact')).toBe(false);
+    });
+
+    it('运行中也能手动压：本轮输入还在 pending，不参与这次压缩也不会丢', async () => {
+        const h = makeSession({ hangOnAbort: true, compactor: simpleCompactor });
+        const running = h.session.post({ messageId: 'm1', text: '你好' });
+        await sleep(1);
+
+        // 运行中不拦（回归 regressions.test.ts::F 就靠这条：压缩不得吞掉在跑的那一句）
+        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        expect(event).toBeNull(); // 已入账的 transcript 还没东西可压
+        h.session.cancel();
+        await running;
+        // 本轮输入收尾时照样入账：运行中那次压缩没有把它弄丢
+        expect(JSON.stringify(h.session.context())).toContain('你好');
+    });
+
+    it('压缩事件带上摘要正文，stats 也看得到（模型此刻的承接信息）', async () => {
+        const compactor = createSummaryCompactor({
+            modelKey: () => 'm',
+            sessionId: 'bot:test',
+            generateSummary: async () =>
+                JSON.stringify({ conclusions: ['保留结论'], changes: [], todos: [], open: [] }),
+        });
+        const h = makeSession({ seed: compressibleSeed, compactor });
+
+        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+
+        expect(event?.summarized).toBe(true);
+        expect(event?.summary).toContain('保留结论');
+        expect(event?.summaryError).toBeUndefined();
+        // stats.summary = 上下文首条说明里的正文（UI 读取处）
+        expect(h.session.stats().summary).toContain('保留结论');
+    });
+
+    it('摘要失败：压缩照常生效，事件如实标 summaryError', async () => {
+        const compactor = createSummaryCompactor({
+            modelKey: () => 'm',
+            sessionId: 'bot:test',
+            generateSummary: async () => {
+                throw new Error('401 Invalid API key');
+            },
+        });
+        const h = makeSession({ seed: compressibleSeed, compactor });
+
+        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+
+        // 压缩不能因为摘要失败而回滚：压不下去就直接超窗
+        expect(event).not.toBeNull();
+        expect(event?.folded ?? 0).toBeGreaterThan(0);
+        expect(JSON.stringify(h.session.context())).not.toContain('工具输出');
+        expect(event?.summarized).toBe(false);
+        expect(event?.summaryError).toContain('401');
+        expect(h.session.stats().summary).toBeUndefined();
+    });
+
     it('stats 反映当前规模与真实用量', async () => {
         const h = makeSession();
         await h.session.post({ messageId: 'm1', text: '你好' });
@@ -370,6 +472,6 @@ describe('BotSession', () => {
         expect(stats.entries).toBe(2);
         expect(stats.chars).toBeGreaterThan(0);
         expect(stats.compactions).toBe(0);
-        expect(stats.strategy).toBe('simple-fold-drop');
+        expect(stats.strategy).toBe('summary-fold-drop');
     });
 });
