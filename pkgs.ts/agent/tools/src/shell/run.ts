@@ -227,6 +227,10 @@ export function runBash(
         let offAbort: (() => void) | undefined;
         /** 超时定时器（settle 时清掉） */
         let timeoutId: NodeJS.Timeout | undefined;
+        /** 孤儿断管宽限定时器（settle 时清掉）：命令已退出、孙进程仍握着写端时的那一段等待 */
+        let orphanId: ReturnType<typeof setTimeout> | undefined;
+        /** 断管说明：settle 拼进正文最前面（`[退出码 …]` 之后），如实交代「输出被断开了」 */
+        let orphanNote: string | undefined;
         /** 起跑时刻（`duration_ms` 的起点）：放在 spawn 之前，含建进程的开销 */
         const startedAt = Date.now();
         /**
@@ -270,12 +274,18 @@ export function runBash(
                 clearTimeout(timeoutId);
                 timeoutId = undefined;
             }
+            if (orphanId) {
+                clearTimeout(orphanId);
+                orphanId = undefined;
+            }
             // 结案即刻**释放管道**（##419）：超时 / 取消时子进程可能还活着（后台作业换了
             // session/pgid ⇒ 组杀打空），它的子孙仍握着 stdout/stderr 写端 —— 不 destroy 就每挂
             // 一次泄 2 个 fd。`done` 闸门已挡住后续数据，destroy 只影响"谁还握着写端"。
             destroyPipes?.();
             destroyPipes = undefined;
-            const out = [stdout, stderr].filter(Boolean).join("\n");
+            const joined = [stdout, stderr].filter(Boolean).join("\n");
+            // 断管说明**只进正文、不进 dump**：head 之后第一眼就是它（模型据此知道「这不是干净收尾」）
+            const out = orphanNote === undefined ? joined : joined ? `${orphanNote}\n${joined}` : orphanNote;
             /** 结果头（##419）：字段名 / 顺序由 BASH_RESULT_HEAD_SCHEMA 派生，正文一律原文 */
             const head = (h: { ok: boolean; exitCode?: number; signal?: string | null }): string =>
                 renderBashHead({
@@ -437,6 +447,8 @@ export function runBash(
             // 然后收尾（`settle` 里的 `destroyPipes` 会把流关掉，孙进程再写就是 EPIPE，是它自己的事）。
             // 正常命令 'close' 几乎总是早于宽限到点 ⇒ `done` 已真，这里整个 no-op，语义不变。
             const EXIT_GRACE_MS = 200;
+            /** 孤儿断管宽限：命令已退、孙进程仍握着写端 ⇒ 最多再等这么久就断开读端（见下方） */
+            const ORPHAN_GRACE_MS = 1500;
             child.on("exit", (code, exitSignal) => {
                 if (logSink) return; // 已转后台：输出归 logSink，**不截断**
                 // ⚠️ **命令退出 ≠ 命令完成**（2026-11-04 修）：`cmd &` / setsid 起的孙进程继承了
@@ -449,7 +461,40 @@ export function runBash(
                 // 已经关了 ⇒ 这就是正常的「命令跑完」，宽限照旧（处理 exit 早于 close 的一瞬）。
                 const stdioStillOpen =
                     child.stdout?.readableEnded === false || child.stderr?.readableEnded === false;
-                if (stdioStillOpen) return;
+                if (stdioStillOpen) {
+                    // ── 孤儿断管宽限（##560）：这里**不能像以前那样直接 return** ──
+                    // 老写法把结局全押在 'close'（孙进程放手）或超时定时器上，而 `timeout: 0`
+                    // （长任务）时定时器根本不存在 ⇒ 两条路都永不到，Promise 永不 resolve：
+                    // 2026-11-24 实测 task-mwjddcy0 卡 15 分钟，且 agent 侧无任何错误 / 超时可察觉
+                    // （`cd X && nohup Y &` 的 `&` 作用在 and-list 上，子 shell 前台等常驻进程、
+                    //   同时握着工具的 stdout/stderr 写端）。
+                    //
+                    // 判据仍是「命令已退出 = 结局已定」：再给 ORPHAN_GRACE_MS 让「马上就要放手」的
+                    // 正常形态照旧走 'close'（不改变那条路的语义），到点还没关就断开读端收尾。
+                    // **不杀孙进程** —— 它是用户故意 nohup 出去的（lab / daemon），断的只是读端；
+                    // 其后输出若已重定向到文件，去文件看（note 里写给模型了）。
+                    if (orphanId !== undefined) return;
+                    orphanId = setTimeout(() => {
+                        orphanId = undefined;
+                        if (done || logSink) return; // 'close' 先到 / 已转后台：这轮 no-op
+                        orphanNote =
+                            `[已断开后代进程的输出] 命令已退出（退出码 ${code ?? "null"}），但仍有后代进程握着 stdout/stderr，` +
+                            `已关闭读端 —— 它们**其后**的输出不会出现在这里（它们没死，只是不接了）。` +
+                            `需要那些输出就去看命令自己重定向的日志文件。`;
+                        finish(
+                            code === 0
+                                ? null
+                                : { code, killed, message: `Command failed: ${shell.label} ${command}` },
+                            dump("out"),
+                            dump("err"),
+                            false,
+                            exitSignal ?? undefined,
+                        );
+                    }, ORPHAN_GRACE_MS);
+                    // 不拖住宿主退出（与下面 EXIT_GRACE_MS 的定时器同理）
+                    orphanId.unref?.();
+                    return;
+                }
                 const grace = setTimeout(() => {
                     if (done || logSink) return;
                     if (code === 0) finish(null, dump("out"), dump("err"));
