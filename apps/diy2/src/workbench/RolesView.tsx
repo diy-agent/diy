@@ -16,15 +16,7 @@
 // 「哪些角色在哪个房间」不在这里算：成员是 `membersOfType(roles, room.type)` 派生出来的，
 // 一个房间的成员名单 = 该类型的全部角色，所以这里没有「加入房间」按钮 —— 那不是漏了。
 
-import {
-    Modal,
-    modelLabel,
-    ModelPicker,
-    roles,
-    useProviders,
-    useRoles,
-    type BotRole,
-} from '@diy-agent/entity-chat';
+import { Modal, ModelPicker, roles, useRoles, type BotRole } from '@diy-agent/entity-chat';
 import { useForm } from '@tanstack/react-form';
 import * as React from 'react';
 
@@ -39,9 +31,6 @@ const TYPE_LABEL: Record<string, string> = { project: '项目', task: '任务' }
 function typeLabel(type: string): string {
     return TYPE_LABEL[type] ?? type;
 }
-
-/** 与 server 的 COLORS 同一套观感（不是真源：颜色本身存在角色行里，这里只是候选调色板） */
-const PALETTE = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8', '#fb7185', '#34d399'];
 
 /** 推理强度：空 = 用模型/服务商缺省（不是每个模型都支持，所以给「跟随」这一档） */
 const EFFORTS: ReadonlyArray<{ value: string; label: string }> = [
@@ -145,9 +134,6 @@ function CreateRoleDialog({
                                         <option key={type} value={type} />
                                     ))}
                                 </datalist>
-                                <span className="mt-1 block text-[11px] text-muted-foreground">
-                                    一类房间共享同一批角色：选 project 就同时出现在所有项目房间里
-                                </span>
                                 {error === undefined ? null : (
                                     <span className="mt-1 block text-[11px] text-destructive">{error}</span>
                                 )}
@@ -213,7 +199,6 @@ function CreateRoleDialog({
 
 function RoleEditor({ role, onDeleted }: { role: BotRole; onDeleted: () => void }) {
     const all = useRoles();
-    const providers = useProviders();
     const [error, setError] = React.useState<string>();
     const [busy, setBusy] = React.useState(false);
     const [confirming, setConfirming] = React.useState(false);
@@ -273,16 +258,10 @@ function RoleEditor({ role, onDeleted }: { role: BotRole; onDeleted: () => void 
     return (
         <div className="flex h-full min-h-0 flex-col">
             <header className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-                <span className="size-2.5 rounded-full" style={{ background: role.color }} />
                 <span className="text-sm font-semibold">{role.name}</span>
                 <span className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {typeLabel(role.type)} · 该类型全部房间共享
+                    {typeLabel(role.type)}
                 </span>
-                {role.primary ? (
-                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400">
-                        默认应答
-                    </span>
-                ) : null}
                 <span className="ml-auto flex items-center gap-2 text-xs">
                     {saved ? <span className="text-muted-foreground">已保存</span> : null}
                     <button
@@ -343,48 +322,12 @@ function RoleEditor({ role, onDeleted }: { role: BotRole; onDeleted: () => void 
                                         problem === undefined ? '' : 'border-destructive'
                                     }`}
                                 />
-                                <p className="mt-1 text-[11px] text-muted-foreground">
-                                    房间头的成员胶囊、@ 补全都用它 —— 改一次，该类型所有房间同时变
-                                </p>
                                 {problem === undefined ? null : (
                                     <span className="mt-1 block text-[11px] text-destructive">{problem}</span>
                                 )}
                             </section>
                         );
                     }}
-                </form.Field>
-
-                <form.Field name="color">
-                    {(field) => (
-                        <section className="border-b border-border/60 py-3">
-                            <div className="mb-1.5 text-xs text-muted-foreground">颜色</div>
-                            <div className="flex flex-wrap items-center gap-1.5">
-                                {PALETTE.map((color) => (
-                                    <button
-                                        key={color}
-                                        type="button"
-                                        aria-label={color}
-                                        onClick={() => {
-                                            field.handleChange(color);
-                                            setSaved(false);
-                                        }}
-                                        className={`size-5 rounded-full border-2 ${
-                                            field.state.value === color ? 'border-foreground' : 'border-transparent'
-                                        }`}
-                                        style={{ background: color }}
-                                    />
-                                ))}
-                                <input
-                                    value={field.state.value}
-                                    onChange={(event) => {
-                                        field.handleChange(event.target.value);
-                                        setSaved(false);
-                                    }}
-                                    className="ml-1 w-24 rounded border bg-card px-1.5 py-1 font-mono text-[11px] outline-none"
-                                />
-                            </div>
-                        </section>
-                    )}
                 </form.Field>
 
                 <form.Field
@@ -412,38 +355,12 @@ function RoleEditor({ role, onDeleted }: { role: BotRole; onDeleted: () => void 
                                         problem === undefined ? '' : 'border-destructive'
                                     }`}
                                 />
-                                <p className="mt-1 text-[11px] text-muted-foreground">
-                                    留空 = 只有类型的通用部分；改完从下一轮起生效（已发出的一轮不重发）
-                                </p>
                                 {problem === undefined ? null : (
                                     <span className="mt-1 block text-[11px] text-destructive">{problem}</span>
                                 )}
                             </section>
                         );
                     }}
-                </form.Field>
-
-                <form.Field name="primary">
-                    {(field) => (
-                        <section className="border-b border-border/60 py-3">
-                            <label className="flex items-center gap-2 text-xs">
-                                <input
-                                    type="checkbox"
-                                    checked={field.state.value}
-                                    onChange={(event) => {
-                                        field.handleChange(event.target.checked);
-                                        setSaved(false);
-                                    }}
-                                />
-                                <span>
-                                    该类型的<b>默认应答</b>
-                                    <span className="ml-1 text-muted-foreground">
-                                        （没 @ 谁时由它回；每类型至多一个，勾上会撤掉别人身上的旗）
-                                    </span>
-                                </span>
-                            </label>
-                        </section>
-                    )}
                 </form.Field>
 
                 <form.Field name="modelKey">
@@ -458,7 +375,6 @@ function RoleEditor({ role, onDeleted }: { role: BotRole; onDeleted: () => void 
                                 }}
                             />
                             <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                                <span>当前：{field.state.value === '' ? '跟随房间 / 全局默认' : modelLabel(providers, field.state.value)}</span>
                                 {field.state.value === '' ? null : (
                                     <button
                                         type="button"
@@ -472,9 +388,6 @@ function RoleEditor({ role, onDeleted }: { role: BotRole; onDeleted: () => void 
                                     </button>
                                 )}
                             </div>
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                                优先级：房间自己的模型 &gt; 这里的设定 &gt; model.yaml 的 defaultModel
-                            </p>
                         </section>
                     )}
                 </form.Field>
@@ -497,9 +410,6 @@ function RoleEditor({ role, onDeleted }: { role: BotRole; onDeleted: () => void 
                                     </option>
                                 ))}
                             </select>
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                                只有支持这个档位的模型才发得出去（不支持时服务端会报错，原样显示在上面）
-                            </p>
                         </section>
                     )}
                 </form.Field>
@@ -563,9 +473,6 @@ export function RolesView({ initialType }: { initialType?: string | undefined } 
                             ＋ 新建
                         </button>
                     </div>
-                    <p className="text-[11px] leading-relaxed text-muted-foreground">
-                        成员来自角色表：一类房间共享同一批角色，新建房间自动有它们。
-                    </p>
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -591,16 +498,7 @@ export function RolesView({ initialType }: { initialType?: string | undefined } 
                                                 current?.id === role.id ? 'bg-muted' : 'hover:bg-muted/60'
                                             }`}
                                         >
-                                            <span
-                                                className="size-2 shrink-0 rounded-full"
-                                                style={{ background: role.color }}
-                                            />
                                             <span className="truncate">{role.name}</span>
-                                            {role.primary ? (
-                                                <span className="ml-auto shrink-0 text-[10px] text-emerald-400">
-                                                    默认
-                                                </span>
-                                            ) : null}
                                         </button>
                                     ))}
                             </section>

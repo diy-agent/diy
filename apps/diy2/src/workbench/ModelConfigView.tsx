@@ -26,13 +26,6 @@ function messageOf(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-/** provider 的颜色点：由 id 稳定散列（不引主题变量，同一个 id 每次都是同一个颜色） */
-function colorOf(id: string): string {
-    let hash = 0;
-    for (let index = 0; index < id.length; index += 1) hash = (hash * 31 + id.charCodeAt(index)) % 360;
-    return `hsl(${hash} 62% 55%)`;
-}
-
 function accountsConfigured(provider: ModelConfigProvider): number {
     return provider.accounts.filter((account) => account.configured).length;
 }
@@ -147,6 +140,8 @@ export function ModelConfigView() {
     const [busy, setBusy] = React.useState(false);
     const [query, setQuery] = React.useState('');
     const [selected, setSelected] = React.useState('');
+    // 详情区的 tab 放顶层：切供应商时 ProviderDetail 会重挂载，tab 状态要留住
+    const [detailTab, setDetailTab] = React.useState<'accounts' | 'models'>('models');
 
     const load = React.useCallback(() => {
         modelConfig
@@ -227,7 +222,7 @@ export function ModelConfigView() {
                             ))}
                         </Group>
                     ) : null}
-                    <Group label={connected.length > 0 ? '全部服务商' : '服务商'} count={rest.filter(match).length}>
+                    <Group label={connected.length > 0 ? '未连接' : '服务商'} count={rest.filter(match).length}>
                         {rest.filter(match).map((provider) => (
                             <ProviderRow
                                 key={provider.id}
@@ -268,6 +263,8 @@ export function ModelConfigView() {
                         provider={current}
                         snapshot={snapshot}
                         busy={busy}
+                        tab={detailTab}
+                        onTab={setDetailTab}
                         onRun={run}
                         onRemoved={() => setSelected('')}
                     />
@@ -301,14 +298,17 @@ function ProviderRow({
     onSelect: () => void;
 }) {
     const accounts = accountsConfigured(provider);
+    // 没接账号的整行压到弱对比：它只是「还能接」的候选，不该跟已连接的抢注意力
+    const tint = selected
+        ? 'bg-muted font-semibold text-foreground'
+        : accounts > 0
+          ? 'text-foreground/90 hover:bg-muted/60'
+          : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground';
     return (
         <button
             onClick={onSelect}
-            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] ${
-                selected ? 'bg-muted font-semibold text-foreground' : 'text-foreground/90 hover:bg-muted/60'
-            }`}
+            className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] ${tint}`}
         >
-            <span className="size-1.5 shrink-0 rounded-full" style={{ background: colorOf(provider.id) }} />
             <span className="min-w-0 flex-1 truncate">{provider.name}</span>
             <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
                 {accounts > 0 ? `${String(accounts)} 账号` : `${String(provider.models.length)} 模型`}
@@ -402,12 +402,16 @@ function ProviderDetail({
     provider,
     snapshot,
     busy,
+    tab,
+    onTab,
     onRun,
     onRemoved,
 }: {
     provider: ModelConfigProvider;
     snapshot: ModelConfigSnapshot;
     busy: boolean;
+    tab: 'accounts' | 'models';
+    onTab: (next: 'accounts' | 'models') => void;
     onRun: (action: () => Promise<ModelConfigSnapshot>) => Promise<boolean>;
     onRemoved: () => void;
 }) {
@@ -420,18 +424,8 @@ function ProviderDetail({
     return (
         <div className="mx-auto max-w-3xl px-5 py-4">
             <header className="flex items-start gap-3 border-b border-border pb-3">
-                <span className="mt-1.5 size-2 rounded-full" style={{ background: colorOf(provider.id) }} />
                 <div className="min-w-0 flex-1">
                     <h2 className="truncate text-sm font-semibold">{provider.name}</h2>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                        <code>{provider.id}</code> · {String(provider.models.length)} 个模型 ·{' '}
-                        {provider.configured ? (
-                            <span className="text-emerald-400">已接入{accounts > 0 ? `（${String(accounts)} 账号）` : ''}</span>
-                        ) : (
-                            <span className="text-amber-400">未接入</span>
-                        )}
-                        {endpointMissing ? <span className="text-amber-400"> · 目录没给 api</span> : null}
-                    </p>
                 </div>
                 {provider.configured ? (
                     <button
@@ -472,43 +466,60 @@ function ProviderDetail({
                 </Modal>
             ) : null}
 
-            <Section title="凭据" note={accounts > 0 ? '密钥只写不回显' : '填了这家立刻上移到「已连接」'}>
-                <Accounts
-                    provider={provider}
-                    busy={busy}
-                    onRun={onRun}
-                />
-            </Section>
+            <div className="flex items-center gap-1 border-b border-border pt-2 text-xs">
+                <button
+                    type="button"
+                    onClick={() => onTab('accounts')}
+                    className={`rounded-md px-2 py-1 ${tab === 'accounts' ? 'bg-muted font-medium' : 'text-muted-foreground hover:bg-muted/60'}`}
+                >
+                    账号
+                </button>
+                <button
+                    type="button"
+                    onClick={() => onTab('models')}
+                    className={`rounded-md px-2 py-1 ${tab === 'models' ? 'bg-muted font-medium' : 'text-muted-foreground hover:bg-muted/60'}`}
+                >
+                    模型{accounts > 0 ? ` · 已启用 ${String(enabledCount)}/${String(provider.models.length)}` : ''}
+                </button>
+                <span className="ml-auto">
+                    <details className="group">
+                        <summary
+                            title="接口规格与配置写入位置"
+                            className="cursor-pointer rounded-md px-2 py-1 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                        >
+                            ? 接口与写入位置
+                        </summary>
+                        <div className="rounded-lg border border-border bg-card p-3 text-xs">
+                            <SpecForm provider={provider} busy={busy} onRun={onRun} />
+                            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                                写在哪：<code className="text-foreground">{snapshot.modelConfigPath}</code>
+                                {provider.kind === 'custom' ? (
+                                    <>
+                                        {' '}
+                                        · 这家的规格在{' '}
+                                        <code className="text-foreground">
+                                            {snapshot.home}/providers.custom.yaml
+                                        </code>
+                                    </>
+                                ) : null}
+                            </p>
+                        </div>
+                    </details>
+                </span>
+            </div>
 
-            <Section
-                title="模型"
-                note={
-                    endpointMissing
-                        ? '这家没 api · 勾了也发不出去'
-                        : accounts > 0
-                          ? `已启用 ${String(enabledCount)} / ${String(provider.models.length)}`
-                          : '未填 key · 可以先勾好'
-                }
-            >
-                <Models provider={provider} busy={busy} onRun={onRun} />
-            </Section>
-
-            <Section title="接口" note="来自目录快照，不用手填">
-                <SpecForm provider={provider} busy={busy} onRun={onRun} />
-            </Section>
-
-            <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
-                写在哪：<code className="text-foreground">{snapshot.modelConfigPath}</code>
-                {provider.kind === 'custom' ? (
-                    <>
-                        {' '}
-                        · 这家的规格在{' '}
-                        <code className="text-foreground">
-                            {snapshot.home}/providers.custom.yaml
-                        </code>
-                    </>
-                ) : null}
-            </p>
+            {tab === 'accounts' ? (
+                <Section title="凭据" note={accounts > 0 ? '密钥只写不回显' : ''}>
+                    <Accounts provider={provider} busy={busy} onRun={onRun} />
+                </Section>
+            ) : (
+                <Section
+                    title="模型"
+                    note={endpointMissing ? '这家没 api · 勾了也发不出去' : accounts > 0 ? `已启用 ${String(enabledCount)} / ${String(provider.models.length)}` : ''}
+                >
+                    <Models provider={provider} busy={busy} onRun={onRun} />
+                </Section>
+            )}
         </div>
     );
 }
@@ -542,6 +553,8 @@ function Accounts({
     const [renaming, setRenaming] = React.useState('');
     /** 待确认删除的账号名（空 = 没在问）—— 删 key 不可撤销，问一句 */
     const [removing, setRemoving] = React.useState('');
+    /** 测试账号的提示（本轮只占位：真探测要服务端加 RPC，见下方按钮 title） */
+    const [testHint, setTestHint] = React.useState('');
     const taken = provider.accounts.map((account) => account.name);
 
     return (
@@ -588,6 +601,14 @@ function Accounts({
                                     : '没填 key'}
                             </div>
                         </div>
+                        <button
+                            disabled={busy || !account.configured}
+                            title={account.configured ? '验证这个 key 能不能发出请求（探测 RPC 待接入）' : '先填 key 才能测试'}
+                            onClick={() => setTestHint(`账号「${account.name}」：自动探测尚未接入，先用它发一条消息验证。`)}
+                            className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-50"
+                        >
+                            测试
+                        </button>
                         <button
                             disabled={busy}
                             onClick={() => setRotating(rotating === account.name ? '' : account.name)}
@@ -678,6 +699,12 @@ function Accounts({
                         </button>
                     </div>
                 </Modal>
+            )}
+
+            {testHint === '' ? null : (
+                <p className="rounded border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
+                    {testHint}
+                </p>
             )}
         </div>
     );

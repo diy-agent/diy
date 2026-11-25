@@ -165,9 +165,7 @@ function SettingsBody() {
                         {item.label}
                     </button>
                 ))}
-                <span className="ml-auto text-[11px] text-muted-foreground">
-                    这个实例的设置（不随房间走）
-                </span>
+
             </div>
             <div className="min-h-0 flex-1">
                 {section === 'roles' ? (

@@ -22,7 +22,7 @@ export const SETTINGS_PAGE = 'settings';
  */
 export const SETTINGS_SECTIONS = {
     model: { id: 'model', label: '模型', address: addressOf(SETTINGS_PAGE, 'model') },
-    roles: { id: 'roles', label: '角色', address: addressOf(SETTINGS_PAGE, 'roles') },
+    roles: { id: 'roles', label: '机器人', address: addressOf(SETTINGS_PAGE, 'roles') },
 } as const;
 
 export type SettingsSection = keyof typeof SETTINGS_SECTIONS;
