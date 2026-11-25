@@ -35,11 +35,14 @@ describe('StatusGlyph —— 任务状态图标与运行提示分开表达', () 
         );
 
         expect(open).toContain('lucide-circle-dot');
-        expect(open).toContain('animate-pulse');
+        // 呼吸 = 扩散光晕（animate-ping）+ 一颗带背景环的点；两者都在，且不动状态图标的形状
+        expect(open).toContain('animate-ping');
+        expect(open).toContain('aria-label="正在运行"');
         expect(closed).toContain('lucide-circle-check');
-        expect(closed).toContain('animate-pulse');
+        expect(closed).toContain('animate-ping');
         const idle = renderToStaticMarkup(createElement(StatusGlyph, { room: room('idle', 'task', { status: 'open' }) }));
-        expect(idle).not.toContain('animate-pulse');
+        expect(idle).not.toContain('animate-ping');
+        expect(idle).not.toContain('aria-label="正在运行"');
     });
 });
 

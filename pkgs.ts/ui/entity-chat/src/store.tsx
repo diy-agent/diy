@@ -372,15 +372,6 @@ export function useRunningSessions(): number {
     );
 }
 
-/** 项目行的聚合状态：是否有任意子任务正在运行。 */
-export function useAnyRunningInRooms(roomIds: readonly string[]): boolean {
-    return React.useSyncExternalStore(
-        subscribeShell,
-        () => roomIds.some((id) => (state.running[id] ?? 0) > 0),
-        () => roomIds.some((id) => (state.running[id] ?? 0) > 0),
-    );
-}
-
 /**
  * 跳到**第一个在跑的房间**（标题栏那颗会话图标点一下）。
  *

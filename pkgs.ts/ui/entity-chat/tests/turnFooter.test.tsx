@@ -49,8 +49,11 @@ describe('TurnFooter', () => {
     });
 
     it('结束：结算片段 + 结束时刻，标签用页脚那套文案', () => {
-        const startedAt = new Date(2026, 10, 24, 22, 28).getTime();
-        const endedAt = startedAt + 192_000;
+        // 用**今天**的 22:28 起算：`formatClock` 当天只写 HH:MM、跳天会补日期，
+        // 固定写死 2026-11-24 的话，跑到第二天这条就变成「11-24 22:31」了（2026-11-25 真踩到）。
+        const startedAt = new Date();
+        startedAt.setHours(22, 28, 0, 0);
+        const endedAt = startedAt.getTime() + 192_000;
         const html = renderToStaticMarkup(
             <TurnFooter
                 entry={entry({

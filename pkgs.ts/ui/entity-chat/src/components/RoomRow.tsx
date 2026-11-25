@@ -45,8 +45,6 @@ export interface RoomRowProps {
     openTaskCount?: number;
     onToggleCollapse?: () => void;
     onCreateTask?: () => void;
-    /** 项目行可传入其子任务聚合运行态；否则读取本房间活动流 */
-    runningOverride?: boolean;
     onRequestDelete: (room: Room) => void;
 }
 
@@ -64,7 +62,6 @@ export function RoomRowView({
     openTaskCount,
     onToggleCollapse,
     onCreateTask,
-    runningOverride,
     onRequestDelete,
 }: RoomRowProps) {
     // 细粒度订阅：这一行只关心「是不是当前那一行」「自己的草稿 / 待答提问 / 最后活动」。
@@ -89,11 +86,13 @@ export function RoomRowView({
     const activityAt = useLastActivityOf(room.id);
     const activityAgo = formatActivityAgo(activityAt);
     // 这个容器此刻在跑几个人（全实例活动流；别的房间起停不重渲这一行）。
-    // **不加新元素**（用户 2026-11-24 裁）：呼吸 + 提亮就够，行里已经有三件标记了。
-    const roomRunning = useRunningOf(room.id) > 0;
-    const running = runningOverride ?? roomRunning;
-    const [renaming, setRenaming] = React.useState(false);
+    // 只画在**状态图标上**（呼吸点），**不动行的底色**：底色是「当前在看哪一行」的唯一
+    // 标记，两者共用一种底色时，一列里会有好几行看着都像被选中（2026-11-25 用户报
+    //「选中状态错乱」）。项目行不显示：项目是导航用的壳、自己没有会话 —— 聚合子任务的
+    // 运行态会让同一个状态在树上出现两次（子行自己会亮），也被读成「项目在跑」。
     const isProject = room.type === 'project';
+    const running = !isProject && useRunningOf(room.id) > 0;
+    const [renaming, setRenaming] = React.useState(false);
     /** 任务当前是 open（行尾显「关闭」还是「打开」—— 状态只有这一个判据） */
     const openTask = !isProject && taskStatusOf(room) === 'open';
     /** 任务编号（非 task / 没编号 = undefined）。提出来是为了 narrow 后直接用 */
@@ -120,9 +119,8 @@ export function RoomRowView({
                 }`}
             >
                 {isProject ? (
-                    <span className={`relative inline-flex ${running ? 'text-emerald-400' : 'text-sky-400'}`}>
+                    <span className="relative inline-flex text-sky-400">
                         <Icon className="size-4" />
-                        {running && <span aria-label="项目中有任务正在运行" className="absolute -bottom-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-emerald-400 ring-1 ring-background" />}
                     </span>
                 ) : (
                     <StatusGlyph room={room} iconClass="size-4" running={running} />
@@ -148,8 +146,9 @@ export function RoomRowView({
     return (
         <div
             className={`group relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
-                // 在跑的容器文字提亮：一眼就能从一列灰字里挑出「哪个任务在干活」
-                active || running ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
+                // 底色只表「当前在看哪一行」。**运行态不碰底色**（2026-11-25 用户报「选中状态错乱」：
+                // 两行共用 bg-accent，一列里看着都像选中）—— 运行只画在状态图标那颗呼吸点上。
+                active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
             }`}
         >
             {/* 状态图标在**标题前**（用户：像 GitHub 的 open / closed）：行里唯一的前缀图标。
@@ -174,9 +173,8 @@ export function RoomRowView({
             )}
 
             {isProject ? (
-                <span className={`relative inline-flex shrink-0 ${running ? 'text-emerald-400' : 'text-sky-400'}`} title={running ? '项目中有任务正在运行' : '项目'}>
+                <span className="relative inline-flex shrink-0 text-sky-400" title="项目">
                     <Icon className="size-3.5" />
-                    {running && <span aria-label="项目中有任务正在运行" className="absolute -bottom-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-emerald-400 ring-1 ring-background" />}
                 </span>
             ) : (
                 // 只画形状，不接点击：状态切换现在有行尾那颗**显式**的关闭/打开按钮。

@@ -10,7 +10,7 @@ import * as React from 'react';
 import { RoomRow } from '../components/RoomRow';
 import { roomTitle, visibleInTree, type Room } from '../model';
 import type { NavContext, NavSource } from '../nav';
-import { useAnyRunningInRooms, useRooms } from '../store';
+import { useRooms } from '../store';
 
 // 只存「收起了哪些」（而不是「展开了哪些」）：新项目默认展开才符合预期，
 // 而且这份名单会自愈 —— 项目删了只是多一个用不到的 id，不用清理。
@@ -104,8 +104,8 @@ const ProjectRow = React.memo(function ProjectRow({
     const { id } = project;
     // 树里只留未关闭的任务（用户：closed 的藏起来 —— 历史任务区才是它们的去处）
     const tasks = rooms.filter((room) => room.data['projectId'] === id && visibleInTree(room));
-    const runningTaskIds = tasks.filter((task) => task.type === 'task').map((task) => task.id);
-    const runningTasks = useAnyRunningInRooms(runningTaskIds);
+    // 项目行**不聚合**子任务的运行态（2026-11-25 用户报「空会话也有轮次中呼吸」）：
+    // 项目是导航用的壳，自己没有会话；子行自己会亮，聚合只会让同一个状态在树上出现两次。
     // 行上的回调要 stable：`RoomRow` 是 `memo` 的，props 每轮都新的话等于没包
     const toggle = React.useCallback(() => onToggleCollapse(id), [onToggleCollapse, id]);
     const create = React.useCallback(() => onCreateTask(id), [onCreateTask, id]);
@@ -118,7 +118,6 @@ const ProjectRow = React.memo(function ProjectRow({
                 compact={compact}
                 collapsed={!compact && collapsed}
                 openTaskCount={tasks.length}
-                runningOverride={runningTasks}
                 onToggleCollapse={compact ? undefined : toggle}
                 onCreateTask={create}
                 onRequestDelete={onRequestDelete}

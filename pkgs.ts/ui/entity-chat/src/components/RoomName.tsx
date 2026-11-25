@@ -210,10 +210,17 @@ export function StatusGlyph({
         >
             <Icon className={iconClass} strokeWidth={2.4} />
             {running && (
-                <span
-                    aria-label="正在运行"
-                    className="absolute -bottom-0.5 -right-0.5 size-1.5 animate-pulse rounded-full bg-emerald-400 ring-1 ring-background"
-                />
+                <>
+                    {/* 光晕：6px 的点在已经高亮（选中）的行上根本看不见（2026-11-25 用户报「新任务没有
+                        轮次中的效果」—— 点其实画了，只是没人看得见）。一个扩散的光环 + 一颗带背景环的点，
+                        不动行底色、不动图标形状，也不占行里新的格子。 */}
+                    <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 size-2 animate-ping rounded-full bg-emerald-400/70" />
+                    <span
+                        aria-label="正在运行"
+                        title="正在运行"
+                        className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-emerald-400 ring-2 ring-background"
+                    />
+                </>
             )}
         </span>
     );

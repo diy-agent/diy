@@ -60,6 +60,11 @@ function render(): string {
     return renderToStaticMarkup(<Sidebar {...HOST} />);
 }
 
+/** 从 SSR 出来的 HTML 里取一行：按行容器切段，找包含这个链接的那一段 */
+function rowOf(html: string, href: string): string {
+    return html.split('class="group relative flex w-full').find((row) => row.includes(`href="${href}"`)) ?? '';
+}
+
 beforeEach(async () => {
     // 命令面走 RPC：注入假客户端，喂一份固定的房间列表（目录为空 = 用服务端缺省模型）
     setDiy2Client({
@@ -90,7 +95,7 @@ describe('侧栏按注册表渲染', () => {
         expect(html).toContain('孤儿容器');
     });
 
-    it('项目行在任一打开的子任务运行时显示活动态', async () => {
+    it('运行态只画在任务行的状态图标上：项目行不聚合子任务，行底色只表选中', async () => {
         setDiy2Client({
             rooms: { list: async () => rooms.map((room) => ({ ...room, running: room.id === 'task:t-open' ? 1 : 0 })) },
             bots: { list: async () => [] },
@@ -103,7 +108,12 @@ describe('侧栏按注册表渲染', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         const html = render();
-        expect(html).toContain('项目中有任务正在运行');
+        // 在跑的那一行：状态图标上有呼吸点
+        expect(rowOf(html, '/room/task/t-open')).toContain('aria-label="正在运行"');
+        // 项目行不因子任务在跑而亮（项目是导航壳、自己没有会话；聚合会让同一个状态出现两次）
+        expect(rowOf(html, '/room/proj/diy')).not.toContain('aria-label="正在运行"');
+        // 底色只表「当前在看哪一行」：没选中这一行时，在跑的它也不带 bg-accent
+        expect(rowOf(html, '/room/task/t-open')).not.toContain('bg-accent');
     });
 
     it('每个项目行都在行上提供新建任务按钮，不依赖三点菜单或空项目占位', () => {
