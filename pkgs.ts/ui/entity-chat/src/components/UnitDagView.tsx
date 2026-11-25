@@ -33,12 +33,17 @@ interface Camera {
     ty: number;
 }
 
-/** 状态 → 配色。ready（可做）是派生的，不是 status，见 `toneOf` */
+/** 状态 → 配色。ready（可做）是派生的，不是 status，见 `toneOf`
+ *
+ * **只用语义 token + 半透明色**（`fill-card` / `stroke-border` / `fill-emerald-500/10`），
+ * 因为页面是深色主题：写死的浅色（`fill-white` / `fill-zinc-50`）在深底上会变成一块亮斑，
+ * 而浅灰的线压在近白的层带上对比度接近零 —— 看着就像「线段断了一截」。
+ */
 const TONE = {
-    done: { box: 'fill-zinc-100 stroke-zinc-300', text: 'fill-zinc-400', line: 'stroke-zinc-200' },
-    doing: { box: 'fill-sky-50 stroke-sky-400', text: 'fill-sky-700', line: 'stroke-sky-300' },
-    ready: { box: 'fill-emerald-50 stroke-emerald-500', text: 'fill-emerald-800', line: 'stroke-emerald-300' },
-    blocked: { box: 'fill-white stroke-zinc-300', text: 'fill-zinc-600', line: 'stroke-zinc-300' },
+    done: { box: 'fill-muted stroke-border', text: 'fill-muted-foreground' },
+    doing: { box: 'fill-sky-500/10 stroke-sky-500', text: 'fill-sky-500' },
+    ready: { box: 'fill-emerald-500/10 stroke-emerald-500', text: 'fill-emerald-500' },
+    blocked: { box: 'fill-card stroke-border', text: 'fill-muted-foreground' },
 } as const;
 
 function toneOf(unit: UnitItem, ready: Set<string>): (typeof TONE)[keyof typeof TONE] {
@@ -49,14 +54,16 @@ function toneOf(unit: UnitItem, ready: Set<string>): (typeof TONE)[keyof typeof 
 
 /**
  * 批次配色。为什么不是状态色那种「语义色」：批次没有好坏之分，只是分组，
- * 所以取几个与状态色（绿/蓝/灰）距离远的色相，按 batch id 排序后取模 ——
- * 同一批换了页面也是同一个颜色，不然每次刷新颜色跳来跳去，人就记不住。
+ * 所以取**页面自己的图表色板**（`--chart-1..5`，styles.css 里定义、随主题切换）——
+ * 用 violet/amber 这类写死的调色板会在深色主题里比周围亮一挡，看着像贴上去的。
+ * 按 batch id 排序后取模：同一批换了页面也是同一个颜色，不然刷一次就跳一个色，人记不住。
  */
 const BATCH_TONES = [
-    { hull: 'stroke-violet-400', tag: 'fill-violet-400', label: 'fill-violet-600' },
-    { hull: 'stroke-amber-400', tag: 'fill-amber-400', label: 'fill-amber-600' },
-    { hull: 'stroke-teal-400', tag: 'fill-teal-400', label: 'fill-teal-600' },
-    { hull: 'stroke-rose-400', tag: 'fill-rose-400', label: 'fill-rose-600' },
+    { hull: 'stroke-chart-1', tag: 'fill-chart-1', label: 'fill-chart-1' },
+    { hull: 'stroke-chart-2', tag: 'fill-chart-2', label: 'fill-chart-2' },
+    { hull: 'stroke-chart-3', tag: 'fill-chart-3', label: 'fill-chart-3' },
+    { hull: 'stroke-chart-4', tag: 'fill-chart-4', label: 'fill-chart-4' },
+    { hull: 'stroke-chart-5', tag: 'fill-chart-5', label: 'fill-chart-5' },
 ] as const;
 const batchTone = (index: number): (typeof BATCH_TONES)[number] => BATCH_TONES[index % BATCH_TONES.length];
 
@@ -135,15 +142,15 @@ export function UnitDagView({ room }: { room: Room }) {
     }, [width, height]);
 
     if (room.type !== 'task') {
-        return <div className="p-3 text-xs text-zinc-500">只有任务有内部拆分。</div>;
+        return <div className="p-3 text-xs text-muted-foreground">只有任务有内部拆分。</div>;
     }
     if (board === null || layout === null) {
-        return <div className="p-3 text-xs text-zinc-500">{error ?? '读取中…'}</div>;
+        return <div className="p-3 text-xs text-muted-foreground">{error ?? '读取中…'}</div>;
     }
     if (board.rows.length === 0) {
         return (
-            <div className="flex h-full flex-col gap-2 p-3 text-xs text-zinc-500">
-                <div className="font-medium text-zinc-600">还没有拆分</div>
+            <div className="flex h-full flex-col gap-2 p-3 text-xs text-muted-foreground">
+                <div className="font-medium text-foreground">还没有拆分</div>
                 <p className="leading-relaxed">
                     跟 agent 说「把这件事拆成几步」，图会长在这里：节点是原子步（unit），箭头是「做完才能做」。
                 </p>
@@ -162,37 +169,37 @@ export function UnitDagView({ room }: { room: Room }) {
 
     return (
         <div className="flex h-full flex-col">
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 pt-2 pb-1 text-[11px] text-zinc-500">
-                <span className="font-medium text-zinc-700">{roomTitle(room)}</span>
-                <span className="text-emerald-700">可做 {board.ready.length}</span>
-                <span className="text-sky-600">在做 {board.doing.length}</span>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 pt-2 pb-1 text-[11px] text-muted-foreground">
+                <span className="font-medium text-foreground">{roomTitle(room)}</span>
+                <span className="text-emerald-500">可做 {board.ready.length}</span>
+                <span className="text-sky-500">在做 {board.doing.length}</span>
                 <span>卡住 {board.blocked.length}</span>
-                <span className="text-zinc-400">完成 {board.done.length}</span>
-                {hulls.length > 0 && <span className="text-zinc-400">批次 {hulls.length}</span>}
+                <span className="text-muted-foreground/70">完成 {board.done.length}</span>
+                {hulls.length > 0 && <span className="text-muted-foreground/70">批次 {hulls.length}</span>}
                 <span className="ml-auto flex items-center gap-2 text-[10px]">
                     <span className="flex items-center gap-1">
-                        <span className="inline-block size-2 rounded-sm bg-emerald-100 ring-1 ring-emerald-500" />
+                        <span className="inline-block size-2 rounded-sm bg-emerald-500/10 ring-1 ring-emerald-500" />
                         可做
                     </span>
                     <span className="flex items-center gap-1">
-                        <span className="inline-block size-2 rounded-sm bg-sky-100 ring-1 ring-sky-400" />
+                        <span className="inline-block size-2 rounded-sm bg-sky-500/10 ring-1 ring-sky-500" />
                         在做
                     </span>
                     <span className="flex items-center gap-1">
-                        <span className="inline-block size-2 rounded-sm bg-zinc-100 ring-1 ring-zinc-300" />
+                        <span className="inline-block size-2 rounded-sm bg-muted ring-1 ring-border" />
                         完成
                     </span>
                     <button
                         type="button"
                         onClick={fit}
-                        className="rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] text-zinc-600 hover:bg-zinc-50"
+                        className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
                     >
                         适配
                     </button>
                 </span>
             </div>
             {board.cyclic && (
-                <div className="mx-3 mb-1 rounded bg-red-50 px-2 py-1 text-[11px] text-red-600">
+                <div className="mx-3 mb-1 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] text-red-500">
                     图里有环（数据异常）：环上的边按贪心临时反向画出，实际永远做不了。
                 </div>
             )}
@@ -213,7 +220,7 @@ export function UnitDagView({ room }: { room: Room }) {
                 >
                     <defs>
                         <marker id="unit-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-                            <path d="M 0 0 L 10 5 L 0 10 z" className="fill-zinc-300" />
+                            <path d="M 0 0 L 10 5 L 0 10 z" className="fill-muted-foreground/60" />
                         </marker>
                         <marker
                             id="unit-arrow-active"
@@ -238,10 +245,10 @@ export function UnitDagView({ room }: { room: Room }) {
                                     width={Math.max(layout.width - 8, 0)}
                                     height={band.height + 16}
                                     rx={4}
-                                    className="fill-zinc-50/80"
+                                    className="fill-foreground/[0.04]"
                                 />
                             )}
-                            <text x={8} y={band.y - 12} fontSize={9} className="fill-zinc-400">
+                            <text x={8} y={band.y - 12} fontSize={9} className="fill-muted-foreground/70">
                                 {band.layer + 1}
                             </text>
                         </g>
@@ -284,7 +291,7 @@ export function UnitDagView({ room }: { room: Room }) {
                                 fill="none"
                                 strokeWidth={active ? 1.6 : 1}
                                 markerEnd={`url(#${active ? 'unit-arrow-active' : 'unit-arrow'})`}
-                                className={active ? 'stroke-sky-400' : 'stroke-zinc-300'}
+                                className={active ? 'stroke-sky-500' : 'stroke-muted-foreground/40'}
                             />
                         );
                     })}
@@ -314,7 +321,7 @@ export function UnitDagView({ room }: { room: Room }) {
                                     strokeWidth={picked === node.id ? 2 : 1.4}
                                     className={tone.box}
                                 />
-                                <text x={-node.w / 2 + 10} y={-2} fontSize={9} className="fill-zinc-400 font-mono">
+                                <text x={-node.w / 2 + 10} y={-2} fontSize={9} className="fill-muted-foreground/80 font-mono">
                                     {node.id}
                                 </text>
                                 <text x={-node.w / 2 + 10} y={13} fontSize={11.5} className={tone.text}>
@@ -340,19 +347,19 @@ export function UnitDagView({ room }: { room: Room }) {
                 </svg>
 
                 {pickedRow !== null && (
-                    <div className="absolute right-2 bottom-2 w-64 rounded border border-zinc-200 bg-white/95 p-2 text-[11px] shadow-sm backdrop-blur">
+                    <div className="absolute right-2 bottom-2 w-64 rounded border border-border bg-popover/95 p-2 text-[11px] text-popover-foreground shadow-sm backdrop-blur">
                         <div className="flex items-baseline gap-1.5">
-                            <code className="text-[10px] text-zinc-400">{pickedRow.id}</code>
-                            <span className="font-medium text-zinc-700">{pickedRow.title}</span>
+                            <code className="text-[10px] text-muted-foreground">{pickedRow.id}</code>
+                            <span className="font-medium text-foreground">{pickedRow.title}</span>
                             <button
                                 type="button"
-                                className="ml-auto text-[10px] text-zinc-400 hover:text-zinc-600"
+                                className="ml-auto text-[10px] text-muted-foreground hover:text-foreground"
                                 onClick={() => setPicked(null)}
                             >
                                 关闭
                             </button>
                         </div>
-                        <div className="mt-1 text-[10px] text-zinc-500">
+                        <div className="mt-1 text-[10px] text-muted-foreground">
                             第 {pickedRow.layer + 1} 层 · {pickedRow.status === 'open' ? (ready.has(pickedRow.id) ? '可做' : '被挡') : pickedRow.status}
                             {' · '}
                             前置 {pickedRow.deps.length > 0 ? pickedRow.deps.join(' ') : '无'}
@@ -361,21 +368,21 @@ export function UnitDagView({ room }: { room: Room }) {
                             {pickedRow.batch !== null && (
                                 <>
                                     {' · '}批次{' '}
-                                    <code className="text-[10px] text-zinc-500">{pickedRow.batch}</code>{' '}
+                                    <code className="text-[10px] text-muted-foreground">{pickedRow.batch}</code>{' '}
                                     {batchTitle.get(pickedRow.batch) ?? ''}
                                 </>
                             )}
                         </div>
                         {pickedRow.body.trim() !== '' && (
-                            <p className="mt-1 max-h-32 overflow-auto leading-relaxed whitespace-pre-wrap text-zinc-600">
+                            <p className="mt-1 max-h-32 overflow-auto leading-relaxed whitespace-pre-wrap text-foreground/80">
                                 {pickedRow.body}
                             </p>
                         )}
-                        {pickedRow.body.trim() === '' && <p className="mt-1 text-zinc-400">（没有补充说明）</p>}
+                        {pickedRow.body.trim() === '' && <p className="mt-1 text-muted-foreground/70">（没有补充说明）</p>}
                     </div>
                 )}
                 {hover !== null && byId.get(hover) !== undefined && picked !== hover && (
-                    <div className="pointer-events-none absolute bottom-2 left-2 rounded bg-zinc-800/85 px-2 py-1 text-[10px] text-white">
+                    <div className="pointer-events-none absolute bottom-2 left-2 rounded bg-foreground/85 px-2 py-1 text-[10px] text-background">
                         {hover} · {byId.get(hover)!.title}
                     </div>
                 )}

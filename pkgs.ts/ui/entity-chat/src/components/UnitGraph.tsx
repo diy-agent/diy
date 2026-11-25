@@ -19,10 +19,11 @@ import { useUnitBoard } from '../useUnitBoard';
  * 那是唯一一个「不催就卡着」的阶段；`accepted` 退成灰色（已经过去了）。
  */
 function stageClass(stage: UnitBatchItem['stage']): string {
-    if (stage === 'review') return 'bg-amber-100 text-amber-800';
-    if (stage === 'active') return 'bg-sky-50 text-sky-700';
-    if (stage === 'accepted') return 'bg-zinc-100 text-zinc-400';
-    return 'bg-zinc-100 text-zinc-500';
+    // 半透明 + 语义 token：页面是深色主题，写死的 100 级底（浅色）会变成亮斑
+    if (stage === 'review') return 'border border-amber-500/40 bg-amber-500/10 text-amber-600';
+    if (stage === 'active') return 'border border-sky-500/40 bg-sky-500/10 text-sky-500';
+    if (stage === 'accepted') return 'bg-muted text-muted-foreground/70';
+    return 'bg-muted text-muted-foreground';
 }
 
 /** 状态符号：done 打勾、doing 半实心、功能域 ▾、open 可做实心 / 不可做空心 */
@@ -34,27 +35,27 @@ function markOf(unit: UnitItem, ready: Set<string>): string {
 }
 
 function rowClass(unit: UnitItem, ready: Set<string>): string {
-    if (unit.status === 'done') return 'text-zinc-400';
-    if (unit.status === 'doing') return 'text-sky-600';
-    if (unit.group) return 'text-zinc-700';
-    return ready.has(unit.id) ? 'text-emerald-700' : 'text-zinc-500';
+    if (unit.status === 'done') return 'text-muted-foreground/60';
+    if (unit.status === 'doing') return 'text-sky-500';
+    if (unit.group) return 'text-foreground';
+    return ready.has(unit.id) ? 'text-emerald-500' : 'text-muted-foreground';
 }
 
 export function UnitGraph({ room }: { room: Room }) {
     const { board, error } = useUnitBoard(room.id);
 
     if (room.type !== 'task') {
-        return <div className="p-3 text-xs text-zinc-500">只有任务有内部拆分。</div>;
+        return <div className="p-3 text-xs text-muted-foreground">只有任务有内部拆分。</div>;
     }
 
     if (board === null) {
-        return <div className="p-3 text-xs text-zinc-500">{error ?? '读取中…'}</div>;
+        return <div className="p-3 text-xs text-muted-foreground">{error ?? '读取中…'}</div>;
     }
 
     if (board.rows.length === 0) {
         return (
-            <div className="flex h-full flex-col gap-2 p-3 text-xs text-zinc-500">
-                <div className="font-medium text-zinc-600">还没有拆分</div>
+            <div className="flex h-full flex-col gap-2 p-3 text-xs text-muted-foreground">
+                <div className="font-medium text-foreground">还没有拆分</div>
                 <p className="leading-relaxed">
                     跟 agent 说「把这件事拆成几步」，树会长在这里：缩进是功能域 → 可验收的产出，
                     同一层按书写顺序推进。
@@ -70,22 +71,22 @@ export function UnitGraph({ room }: { room: Room }) {
     const unbatched = board.rows.filter((row) => row.batch === null).length;
     return (
         <div className="flex h-full flex-col gap-2 overflow-auto p-3 text-xs">
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-zinc-500">
-                <span className="font-medium text-zinc-700">{roomTitle(room)}</span>
-                <span className="text-emerald-700">可做 {board.ready.length}</span>
-                <span className="text-sky-600">在做 {board.doing.length}</span>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                <span className="font-medium text-foreground">{roomTitle(room)}</span>
+                <span className="text-emerald-500">可做 {board.ready.length}</span>
+                <span className="text-sky-500">在做 {board.doing.length}</span>
                 <span>卡住 {board.blocked.length}</span>
-                <span className="text-zinc-400">完成 {board.done.length}</span>
-                {board.groups.length > 0 && <span className="text-zinc-400">域 {board.groups.length}</span>}
+                <span className="text-muted-foreground/70">完成 {board.done.length}</span>
+                {board.groups.length > 0 && <span className="text-muted-foreground/70">域 {board.groups.length}</span>}
             </div>
             {board.cyclic && (
-                <div className="rounded bg-red-50 px-2 py-1 text-[11px] text-red-600">
+                <div className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] text-red-500">
                     图里有环（数据异常）：这些 unit 永远做不了，需要 agent 拆边。
                 </div>
             )}
             {batches.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1 text-[11px]">
-                    <span className="text-zinc-400">批次</span>
+                    <span className="text-muted-foreground/70">批次</span>
                     {batches.map((batch) => (
                         <span
                             key={batch.id}
@@ -99,7 +100,7 @@ export function UnitGraph({ room }: { room: Room }) {
                                 ` · 等 ${batch.waitingOn.map((id) => titleOf(id) || id).join('、')}`}
                         </span>
                     ))}
-                    {unbatched > 0 && <span className="text-zinc-400">未分批 {unbatched}</span>}
+                    {unbatched > 0 && <span className="text-muted-foreground/70">未分批 {unbatched}</span>}
                 </div>
             )}
             <div className="flex flex-col gap-0.5">
@@ -117,10 +118,10 @@ export function UnitGraph({ room }: { room: Room }) {
                             style={{ paddingLeft: `${unit.depth * 14}px` }}
                         >
                             <span className="w-3 shrink-0 text-center">{markOf(unit, ready)}</span>
-                            <code className="shrink-0 text-[10px] text-zinc-400">{unit.id}</code>
+                            <code className="shrink-0 text-[10px] text-muted-foreground/80">{unit.id}</code>
                             <span
                                 className={[
-                                    unit.status === 'done' ? 'line-through decoration-zinc-300' : '',
+                                    unit.status === 'done' ? 'line-through decoration-border' : '',
                                     unit.group ? 'font-medium' : '',
                                 ]
                                     .join(' ')
@@ -129,17 +130,17 @@ export function UnitGraph({ room }: { room: Room }) {
                                 {unit.title}
                             </span>
                             {unit.batch !== null && (
-                                <span className="shrink-0 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500">
+                                <span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
                                     {unit.batch}
                                 </span>
                             )}
                             {holder !== undefined && (
-                                <span className="ml-auto shrink-0 text-[10px] text-zinc-400">
+                                <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/70">
                                     ← 等 {titleOf(holder) || holder}
                                 </span>
                             )}
                             {holder === undefined && crossDeps.length > 0 && (
-                                <span className="ml-auto shrink-0 text-[10px] text-amber-600">
+                                <span className="ml-auto shrink-0 text-[10px] text-amber-500">
                                     ← 依赖 {crossDeps.map((id) => titleOf(id) || id).join('、')}
                                 </span>
                             )}
@@ -147,7 +148,7 @@ export function UnitGraph({ room }: { room: Room }) {
                     );
                 })}
             </div>
-            {error !== null && <div className="text-[11px] text-red-600">{error}</div>}
+            {error !== null && <div className="text-[11px] text-red-500">{error}</div>}
         </div>
     );
 }
