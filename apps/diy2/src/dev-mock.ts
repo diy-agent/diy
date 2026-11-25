@@ -50,6 +50,17 @@ export const MOCK_SEED: MockStep[] = [
     },
     { kind: 'error', message: '上游返回 429：这一轮被限流，等 30s 再试。' },
     { kind: 'chat', text: '并发这件事得你定，我一次问完。', author: 'bot' },
+    // 链接形态：裸 URL（GFM autolink）/ markdown 链接 / 站内路径 —— 三者行为不同，
+    // 验「能不能点、是不是开新窗口」就靠这条。
+    {
+        kind: 'chat',
+        author: 'bot',
+        text: [
+            '文档在 https://ui.shadcn.com/docs/helpers/ai-sdk 这里。',
+            '带标题的写法：[Message Scroller](https://ui.shadcn.com/docs/components/base/message-scroller)。',
+            '站内路径：/room/proj/cops 应该新窗口打开。',
+        ].join('\n\n'),
+    },
 ];
 
 /** 那一批提问（三题：多选 / 表单 / 单行文本 —— 正好验翻页与「一次提交整批」） */
