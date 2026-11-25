@@ -3,13 +3,14 @@
  *
  * 2026-11-23 起 --background / --ring / --border 等 23 个语义变量与 Border 基线
  * 都归 @diy-agent/ui-shadcn（组件在那边，变量跟着组件走才不会静默失效）。
- * 本文件只剩 entity-chat 特有的两件事：
- *   1. tw-shimmer —— 流式输出/运行指示的微光动画；
- *   2. 链接的 UA 兜底 —— 宿主刻意不引 Tailwind preflight（见 apps/diy2/src/index.css）。
+ * 本文件只剩一件 entity-chat 自己的事：链接的 UA 兜底 ——
+ * 宿主刻意不引 Tailwind preflight（见 apps/diy2/src/index.css）。
+ *
+ * （`tw-shimmer` 已随 assistant-ui 面一起清掉：2026-11-25 合回分支版本时它又溜进来一次，
+ *   而依赖早已删——症状是 `vite build` 报 Can't resolve 'tw-shimmer'。）
  */
 
 @import '@diy-agent/ui-shadcn/styles.css';
-@import 'tw-shimmer';
 
 @layer base {
     /*
