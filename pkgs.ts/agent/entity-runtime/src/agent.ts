@@ -18,7 +18,6 @@ import { z } from 'zod';
 import { friendlyError } from './errors';
 import { maxOutputTokensOf, modelOf } from './providers';
 import { StallWatchdog, stallMessage, stallTimeoutsFromEnv, type StallInfo } from './stall-watchdog';
-import { clipModelMessage } from './tools/clip';
 import type { AgentEvent, Bot } from './types';
 
 /**
@@ -229,11 +228,9 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
             // 这一步成功收尾 ⇒ 快照前移（失败 / 重试不进这里，下一轮会重新算同一份增量）
             options.commitDelta?.();
             if (options.onStepTranscript === undefined) return;
-            // 工具输出只裁"喂给模型"的那份；UI 的 tool-result 事件仍然是完整输出
-            options.onStepTranscript([
-                ...(step.experimental_steeringMessages ?? []),
-                ...step.response.messages.map((message) => clipModelMessage(message)),
-            ]);
+            // 工具输出已在**投递层**截过（`toModelOutput` → `tool-output.ts`）：这里拿到的
+            // `step.response.messages` 就是模型实际收到的版本，不需要再裁开。
+            options.onStepTranscript([...(step.experimental_steeringMessages ?? []), ...step.response.messages]);
         },
     });
 

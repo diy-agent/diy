@@ -22,8 +22,6 @@ import type { AskGate } from '../ask';
 import { askTool } from './ask';
 import { journalTool } from './journal';
 
-export { clipModelMessage, clipToolOutput, DEFAULT_CLIP, type ClipPolicy } from './clip';
-
 /**
  * 一条 bash 命令的缺省预算（毫秒）。
  *
@@ -55,8 +53,8 @@ export interface RoomToolsOptions {
     onJournal?: (input: { kind: import('../db').JournalKind; text: string }) => void;
     /** 后台作业；不传 = bash 没有 `background`、也没有 `job` 工具 */
     jobs?: RoomJobs;
-    /** 投递层截断（只改"发给模型的那一份"，execute 的返回值仍是全文） */
-    toModelOutput?: (text: string, toolCallId: string) => string;
+    /** 投递层截断（只改"发给模型的那一份"，execute 的返回值仍是全文）；可返回 Promise */
+    toModelOutput?: (text: string, toolCallId: string) => string | Promise<string>;
 }
 
 /** shell 能力探测只做一次（`DIY_SHELL` 是启动期环境事实，不是每房间一份） */

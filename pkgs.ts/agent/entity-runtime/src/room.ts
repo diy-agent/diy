@@ -27,6 +27,7 @@ import { ASK_DRAFT_PREFIX, type Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
 import { createRoomContext } from './system-context';
 import { buildRoomTools } from './tools/index';
+import { createToolOutputCapper } from './tool-output';
 import { jobNoticeOf, jobOwnerOf, type JobOwner } from './jobs';
 import type { JobDoneEvent, RunRegistry } from '@diy-agent/jobs/node';
 import type { CompactEvent } from './compaction';
@@ -710,6 +711,12 @@ export class RoomActor {
                           : { jobs: { registry: this.deps.jobs.registry, owner: jobOwnerOf(this.id, botId) } }),
                       ask: this.gate,
                       askOwner: botId,
+                      // 投递层截断：单条工具输出超 2000 行 / 50KB ⇒ 头尾 + marker，原文落
+                      // `<home>/toolout/`（模型不够自己 read 回取）。不接这一层 = 大输出的
+                      // 原文直接进这一轮请求，压缩（只管轮首）拦不住。
+                      toModelOutput: createToolOutputCapper(
+                          this.deps.home === undefined ? {} : { home: this.deps.home },
+                      ),
                       onJournal: (input) => {
                           this.deps.store.appendJournal(this.id, input);
                       },
