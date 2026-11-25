@@ -83,7 +83,23 @@ export const chatApi = RpcSchema.group({
             output: Any,
         }),
         sessions: RpcSchema.unary({ input: { id: Id }, output: Any }),
-        compact: RpcSchema.unary({ input: { id: Id, botId: Id }, output: Any }),
+        /** 手动压缩；keepLast / maxChars = 面板上的「保留条数 / 预算」（缺省用启动配置） */
+        compact: RpcSchema.unary({
+            input: {
+                id: Id,
+                botId: Id,
+                keepLast: z.number().int().min(1).optional(),
+                maxChars: z.number().int().min(1).optional(),
+            },
+            output: Any,
+        }),
+        /**
+         * 撤掉一次正在跑的压缩（摘要那个 LLM 调用挂 AbortSignal）。
+         *
+         * compactId 来自 `compact` 的返回或 `compact` 事件。已经跑完 / 没这个 id →
+         * `{ ok: false }` 而不报错：手点慢一点不该变成一条错误提示。
+         */
+        cancelCompact: RpcSchema.unary({ input: { id: Id, compactId: Id }, output: Any }),
     },
 });
 

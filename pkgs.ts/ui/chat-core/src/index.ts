@@ -30,6 +30,7 @@ export {
     type Bot,
     type Capabilities,
     type Command,
+    type CompactionProgress,
     type Delivery,
     type DeliveryState,
     type Room,

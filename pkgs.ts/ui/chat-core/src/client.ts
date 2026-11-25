@@ -21,7 +21,12 @@ export interface CompactEventInfo {
     after: { entries: number; chars: number };
     folded: number;
     dropped: number;
+    /** 本次是否新生成摘要（沿用旧摘要 / 失败都是 false） */
     summarized: boolean;
+    /** 最终落进压缩说明的摘要正文（新生成的，或沿用的旧摘要） */
+    summary?: string;
+    /** 摘要失败原因；undefined = 成功或没试。压缩本身仍算成功 */
+    summaryError?: string;
 }
 
 export interface SessionStats {
@@ -37,6 +42,8 @@ export interface SessionStats {
     lastCompactAt?: number;
     /** 正在用的压缩策略名 */
     strategy: string;
+    /** 当前上下文首条说明里带着的摘要正文；没有 = 未摘要 */
+    summary?: string;
     /** 上一轮实测用量 */
     usage?: TokenUsage;
 }
@@ -50,8 +57,11 @@ export interface SessionInfo {
 }
 
 export interface CompactOutcome {
-    event: CompactEventInfo | null;
-    stats: SessionStats;
+    /** 这次压缩的 id（也出现在 `compact` 事件里）；拿它取消 / 去重 */
+    compactId?: string;
+    /** 受理即返：这次不返回结果，进展看 `compact` 事件；老服务端仍会给 */
+    event?: CompactEventInfo | null;
+    stats?: SessionStats;
 }
 
 export interface ChatClient {
@@ -80,6 +90,13 @@ export interface ChatClient {
         botId: string,
         options?: { keepLast?: number; maxChars?: number },
     ): Promise<CompactOutcome>;
+
+    /**
+     * 可选：撤掉一次正在跑的压缩。
+     *
+     * 返回 false = 已经跑完 / 不认识这个 id —— 不抛错：手点慢一点不该弹错误条。
+     */
+    cancelCompact?(entityId: string, compactId: string): Promise<boolean>;
 
     /**
      * 可选：常驻订阅这个房间的事件（后台 bot 的回复、提问、投递状态都能实时看到）。

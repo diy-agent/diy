@@ -197,6 +197,11 @@ export class RpcChatClient implements ChatClient {
         return this.call<CompactOutcome>('chat.compact', { id: entityId, botId, ...options });
     }
 
+    async cancelCompact(entityId: string, compactId: string): Promise<boolean> {
+        const data = await this.call<{ ok: boolean }>('chat.cancelCompact', { id: entityId, compactId });
+        return data.ok === true;
+    }
+
     async answerAsk(entityId: string, askId: string, answer: AskAnswer): Promise<void> {
         await this.call('asks.answer', { id: entityId, askId, answer });
     }
