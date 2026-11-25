@@ -18,7 +18,6 @@
 import {
     EntityChatApp,
     TaskPanel,
-    UnitDagView,
     UnitGraph,
     UnitTextView,
     useSelectedRoom,
@@ -128,17 +127,6 @@ function UnitsBody() {
     return (
         <div className="wb-fill">
             <UnitGraph room={room} />
-        </div>
-    );
-}
-
-/** 依赖图：同一份 unit 数据的 SVG 版（可缩放、hover 高亮链、点节点看说明） */
-function UnitsDagBody() {
-    const room = useSelectedRoom();
-    if (!room) return <Empty>没有选中房间</Empty>;
-    return (
-        <div className="wb-fill">
-            <UnitDagView room={room} />
         </div>
     );
 }
@@ -291,16 +279,6 @@ function Empty({ children }: { children: string }) {
 }
 
 export const wbViews = [
-    /**
-     * 任务内部拆分图（unit DAG）。与「详情」同一个区域 → 自然变成 tab（不用动骨架）：
-     * 两者都是「任务本体」，只是一个是正文、一个是步骤图。只读（写入口只有 agent 的工具）。
-     */
-    defineView({
-        id: 'units-dag',
-        title: '依赖图',
-        placement: { task: { area: 'detail' } },
-        render: () => <UnitsDagBody />,
-    }),
     defineView({
         id: 'units',
         title: '分解',

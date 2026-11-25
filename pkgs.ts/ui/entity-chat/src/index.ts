@@ -34,7 +34,6 @@ export { TaskPanel } from './components/TaskPanel';
 // 选择型实验台能直接拿真组件摆样子 —— 别在 demo 里另画一份。
 export { JobCard } from './components/JobCard';
 export { UnitGraph } from './components/UnitGraph';
-export { UnitDagView } from './components/UnitDagView';
 export { UnitTextView } from './components/UnitTextView';
 export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';
 export type { RoomDialogs } from './useRoomDialogs';

@@ -5,7 +5,7 @@
 // 复刻：服务端 `unitsContextText()` 与上下文注入同一份代码（`unitsContextValue()` + `toYaml`），
 // 所以逐字节就是注入的那一段。
 //
-// 树和 DAG 是两个 tab、**不是两份文本**：两边都读 `units.list` 的同一份 board，模型读的
+// 「分解」和这里是两个 tab、**不是两份文本**：两边都读 `units.list` 的同一份树，模型读的
 // 也是同一节 `units`。所以这里只有一份原文，不需要「在树 / 图之间切换文本」的开关；
 // 页头点明这件事，省得以后有人再加一个假的切换。
 import { roomTitle, type Room } from '../model';
@@ -39,8 +39,7 @@ export function UnitTextView({ room }: { room: Room }) {
             </div>
             <p className="text-[11px] leading-relaxed text-muted-foreground">
                 这是每轮注入 system 的 <code className="text-[10px]">units</code> 节原文。
-                「分解」和「依赖图」画的是<b>同一份数据</b>，模型读的也是<b>同一段文本</b> ——
-                不是两份。
+                「分解」那棵树画的就是<b>这份数据</b>，模型读的也是<b>同一段文本</b> —— 不是两份。
             </p>
             {view.text === '' ? (
                 <div className="text-muted-foreground">还没有拆分：这一节不注入（整段缺席，不是空节）。</div>
