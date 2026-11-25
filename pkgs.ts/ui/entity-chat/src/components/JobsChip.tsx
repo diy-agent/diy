@@ -23,6 +23,8 @@ import * as React from 'react';
 
 import type { JobRunRow } from '@diy-agent/chat-transport-rpc';
 
+import { Button } from '@diy-agent/ui-shadcn';
+
 import { diy2 } from '../store';
 
 /** 在跑时的轮询间隔：秒表要跳得像个秒表，但也不必每帧拉一次 */
@@ -135,7 +137,9 @@ function BriefRow({ row, now }: { row: JobRunRow; now: number }) {
                 {titleOf(row)}
             </span>
             {/* 结局无人接：房间删了 / 成员退了，通知落空（run 目录里的 done.json 写着） */}
-            {row.delivered === false && <span className="size-1.5 shrink-0 rounded-full bg-amber-500" title="结局无人接" />}
+            {row.delivered === false && (
+                <span className="size-1.5 shrink-0 rounded-full bg-amber-500" title="结局无人接" />
+            )}
             <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">{fmtDur(dur)}</span>
             <span className="shrink-0 font-mono text-xs text-muted-foreground/70" title={row.id}>
                 {row.id.slice(-4)}
@@ -177,12 +181,9 @@ function HoverCard({
                 <span className="text-xs text-muted-foreground">
                     本房间 · {running.length === 0 ? '没有在跑的' : `${running.length} 个在跑`}
                 </span>
-                <button
-                    onClick={onDetail}
-                    className="ml-auto rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
-                >
+                <Button variant="ghost" size="xs" onClick={onDetail} className="ml-auto text-muted-foreground">
                     明细 ›
-                </button>
+                </Button>
             </div>
             <div className="py-1">
                 {running.map((row) => (
@@ -195,9 +196,7 @@ function HoverCard({
                 )}
                 {finished.length > 0 && (
                     <>
-                        <div className="mt-1 border-t px-3 pb-0.5 pt-1 text-xs text-muted-foreground">
-                            最近结束
-                        </div>
+                        <div className="mt-1 border-t px-3 pb-0.5 pt-1 text-xs text-muted-foreground">最近结束</div>
                         {finished.map((row) => (
                             <BriefRow key={row.id} row={row} now={now} />
                         ))}
@@ -223,9 +222,11 @@ function OutputTail({ row }: { row: JobRunRow }) {
                 .tail(row.id, 60)
                 .then((back) => {
                     if (!alive) return;
-                    setTail(back.found && back.tail !== undefined
-                        ? { text: back.tail.text, droppedBytes: back.tail.droppedBytes }
-                        : { text: '', droppedBytes: 0 });
+                    setTail(
+                        back.found && back.tail !== undefined
+                            ? { text: back.tail.text, droppedBytes: back.tail.droppedBytes }
+                            : { text: '', droppedBytes: 0 },
+                    );
                     setError(null);
                 })
                 .catch((err: unknown) => {
@@ -235,7 +236,10 @@ function OutputTail({ row }: { row: JobRunRow }) {
         };
         pull();
         // 在跑的那条输出还在长：跟着拉；终态拉一次就够
-        if (!isRunning(row)) return () => { alive = false; };
+        if (!isRunning(row))
+            return () => {
+                alive = false;
+            };
         const timer = setInterval(pull, 2000);
         return () => {
             alive = false;
@@ -311,22 +315,27 @@ function DetailRow({ row, now, onKilled }: { row: JobRunRow; now: number; onKill
                     {fmtDur(dur)}
                     <span className="ml-1 opacity-60">{fmtAt(row.startedAt)}</span>
                 </span>
-                <span className="w-[64px] shrink-0 truncate text-right font-mono text-xs text-muted-foreground/80" title={row.id}>
+                <span
+                    className="w-[64px] shrink-0 truncate text-right font-mono text-xs text-muted-foreground/80"
+                    title={row.id}
+                >
                     {row.id}
                 </span>
                 {running ? (
-                    <button
+                    <Button
+                        variant="outline"
+                        size="xs"
                         onClick={(event) => {
                             event.stopPropagation();
                             kill();
                         }}
                         disabled={killing}
                         title="按进程组停止（与 agent 的 job kill 同一入口）"
-                        className="flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-xs hover:bg-muted disabled:opacity-50"
+                        className="shrink-0 gap-1"
                     >
                         <Square className="size-2.5" />
                         {killing ? '停止中' : '停止'}
-                    </button>
+                    </Button>
                 ) : (
                     <span className="w-[42px] shrink-0" />
                 )}
@@ -359,7 +368,13 @@ function DetailRow({ row, now, onKilled }: { row: JobRunRow; now: number; onKill
     );
 }
 
-function JobsDrawer({ rows, now, onClose, onKilled, scope = 'room' }: {
+function JobsDrawer({
+    rows,
+    now,
+    onClose,
+    onKilled,
+    scope = 'room',
+}: {
     rows: JobRunRow[];
     now: number;
     onClose: () => void;
@@ -419,16 +434,18 @@ function JobsDrawer({ rows, now, onClose, onKilled, scope = 'room' }: {
                         {scope === 'instance' ? '本实例全部' : '本房间'} ·{' '}
                         {running.length === 0 ? '没有在跑的' : `${running.length} 个在跑`} · 共 {rows.length} 条
                     </span>
-                    <button
+                    <Button
+                        variant="ghost"
+                        size="icon-xs"
                         onClick={() => setMax((value) => !value)}
                         title={max ? '还原高度' : '最大化'}
-                        className="ml-auto rounded p-1 hover:bg-muted"
+                        className="ml-auto"
                     >
                         {max ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-                    </button>
-                    <button onClick={onClose} title="关闭" className="rounded p-1 hover:bg-muted">
+                    </Button>
+                    <Button variant="ghost" size="icon-xs" onClick={onClose} title="关闭">
                         <X className="size-3.5" />
-                    </button>
+                    </Button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto">
                     {rows.length === 0 ? (
@@ -466,9 +483,12 @@ export function JobsChip() {
         return () => clearInterval(timer);
     }, [rows]);
 
-    React.useEffect(() => () => {
-        if (closeTimer.current !== undefined) clearTimeout(closeTimer.current);
-    }, []);
+    React.useEffect(
+        () => () => {
+            if (closeTimer.current !== undefined) clearTimeout(closeTimer.current);
+        },
+        [],
+    );
 
     const cancelClose = () => {
         if (closeTimer.current !== undefined) {
@@ -498,6 +518,8 @@ export function JobsChip() {
 
     return (
         <>
+            {/* 保留手写 button：这颗 chip 与壳里「后台任务」按钮逐像素对齐（22px 高、
+                自定义 hover 提示），Button 的尺寸阶梯从 h-6 起，套上去会差 2px */}
             <button
                 onPointerEnter={(event) => openTip(event.currentTarget)}
                 onPointerLeave={closeSoon}
@@ -518,7 +540,9 @@ export function JobsChip() {
                     {!idle && <span className="absolute size-2 animate-ping rounded-full bg-emerald-500/60" />}
                     <span
                         className={
-                            idle ? 'size-1.5 rounded-full bg-muted-foreground/40' : 'size-1.5 rounded-full bg-emerald-500'
+                            idle
+                                ? 'size-1.5 rounded-full bg-muted-foreground/40'
+                                : 'size-1.5 rounded-full bg-emerald-500'
                         }
                     />
                 </span>
@@ -540,14 +564,7 @@ export function JobsChip() {
                 />
             )}
 
-            {drawerOpen && (
-                <JobsDrawer
-                    rows={rows}
-                    now={now}
-                    onClose={() => setDrawerOpen(false)}
-                    onKilled={reload}
-                />
-            )}
+            {drawerOpen && <JobsDrawer rows={rows} now={now} onClose={() => setDrawerOpen(false)} onKilled={reload} />}
         </>
     );
 }

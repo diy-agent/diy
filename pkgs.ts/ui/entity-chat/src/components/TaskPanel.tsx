@@ -11,6 +11,8 @@ import { roomTitle, type Room } from '../model';
 import { X } from 'lucide-react';
 import * as React from 'react';
 
+import { Button } from '@diy-agent/ui-shadcn';
+
 import { actions, diy2, useRooms } from '../store';
 
 function textOf(value: unknown): string {
@@ -191,13 +193,15 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                 )}
                 <span className="truncate text-xs text-muted-foreground">{roomTitle(room)}</span>
                 {onClose !== undefined && (
-                    <button
+                    <Button
+                        variant="ghost"
+                        size="icon-xs"
                         onClick={onClose}
                         title="收起"
-                        className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted"
+                        className="ml-auto text-muted-foreground"
                     >
                         <X className="size-3.5" />
-                    </button>
+                    </Button>
                 )}
             </header>
 
@@ -280,13 +284,14 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                                 </option>
                             ))}
                         </select>
-                        <button
+                        <Button
+                            variant="outline"
+                            size="xs"
                             onClick={() => void addLink()}
                             disabled={target === '' || linking}
-                            className="rounded border px-1.5 py-0.5 text-xs hover:bg-muted disabled:opacity-50"
                         >
                             {linking ? '…' : '＋'}
-                        </button>
+                        </Button>
                     </div>
                 </div>
 
@@ -322,13 +327,9 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
             </div>
 
             <footer className="flex items-center gap-2 border-t px-3 py-2">
-                <button
-                    onClick={() => void save()}
-                    disabled={!dirty || saving}
-                    className="rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
-                >
+                <Button variant="outline" size="sm" onClick={() => void save()} disabled={!dirty || saving}>
                     {saving ? '保存中…' : '保存'}
-                </button>
+                </Button>
                 <span className="text-xs text-muted-foreground">
                     {note ?? (dirty ? '有未保存改动' : '⌘/Ctrl+Enter 保存')}
                 </span>
@@ -352,12 +353,24 @@ function LinkRow({
         <li className="flex items-center gap-1 text-xs">
             <span className="text-muted-foreground">{mark}</span>
             <span className="rounded bg-muted px-1 text-xs">{kindLabel(link.kind)}</span>
-            <button onClick={onOpen} className="min-w-0 flex-1 truncate text-left hover:underline" title={link.label}>
+            <Button
+                variant="link"
+                size="xs"
+                onClick={onOpen}
+                className="h-auto min-w-0 flex-1 justify-start truncate p-0"
+                title={link.label}
+            >
                 {link.label}
-            </button>
-            <button onClick={onRemove} title="取消关联" className="rounded p-0.5 text-muted-foreground hover:bg-muted">
+            </Button>
+            <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={onRemove}
+                title="取消关联"
+                className="text-muted-foreground"
+            >
                 <X className="size-3" />
-            </button>
+            </Button>
         </li>
     );
 }
