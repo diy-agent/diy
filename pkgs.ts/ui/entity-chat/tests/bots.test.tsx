@@ -11,7 +11,14 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { needsYou, outcomeTextOf, sortRows } from '../src/bots';
+import {
+    attentionOf,
+    countByAttention,
+    needsYou,
+    outcomeTextOf,
+    sortRows,
+    visibleInOverlay,
+} from '../src/bots';
 import { BotsOverlay } from '../src/components/BotsOverlay';
 import type { BotRow } from '@diy-agent/chat-transport-rpc';
 
@@ -36,24 +43,64 @@ function render(rows: BotRow[], initialMode?: 'brief' | 'full'): string {
     );
 }
 
-describe('needsYou —— 二级浮层的唯一口径', () => {
-    it('空闲之外都要人看', () => {
-        expect(needsYou(row({ state: 'idle' }))).toBe(false);
+describe('visibleInOverlay —— 二级浮层列谁（非空闲）', () => {
+    it('空闲之外都要列（含在跑与排队）', () => {
+        expect(visibleInOverlay(row({ state: 'idle' }))).toBe(false);
         for (const state of ['running', 'asking', 'needs-attention'] as const) {
-            expect(needsYou(row({ state }))).toBe(true);
+            expect(visibleInOverlay(row({ state }))).toBe(true);
         }
+        expect(visibleInOverlay(row({ state: 'idle', queued: 2 }))).toBe(true);
+    });
+});
+
+describe('needsYou —— 只算「真要你动手」的（标题栏那颗红点）', () => {
+    it('出错 + 等你回答算，在跑 / 排队不算', () => {
+        expect(needsYou(row({ state: 'needs-attention' }))).toBe(true);
+        expect(needsYou(row({ state: 'asking' }))).toBe(true);
+        // 2026-11-25 用户报的「红 7」：在跑被算进去了
+        expect(needsYou(row({ state: 'running' }))).toBe(false);
+        expect(needsYou(row({ state: 'idle', queued: 3 }))).toBe(false);
+        expect(needsYou(row({ state: 'idle' }))).toBe(false);
+    });
+});
+
+describe('countByAttention —— 分类计数（点开一定对得上）', () => {
+    it('每行只归一类：错 + 等你 + 排队 + 在跑 + 空闲 = 总数', () => {
+        const rows = [
+            ...Array.from({ length: 4 }, (_, i) => row({ botId: `e${i}`, state: 'needs-attention' })),
+            ...Array.from({ length: 2 }, (_, i) => row({ botId: `q${i}`, state: 'asking' })),
+            row({ botId: 'r1', state: 'running' }),
+            row({ botId: 'i1', state: 'idle' }),
+        ];
+        const counts = countByAttention(rows);
+        // 用户报的那个场景：标题栏红 7，点开是 4 错 + 2 等 + 1 跑
+        expect(counts.broken).toBe(4);
+        expect(counts.blocked).toBe(2);
+        expect(counts.live).toBe(1);
+        expect(counts.idle).toBe(1);
+        expect(counts.needsYou).toBe(6); // 红点只数 4 + 2，不再把「在跑」染红
+        expect(counts.visible).toBe(7);
+        expect(counts.broken + counts.blocked + counts.queued + counts.live + counts.idle).toBe(rows.length);
+    });
+
+    it('排队单独数（在跑 + 排队不会互相吃掉）', () => {
+        const counts = countByAttention([row({ state: 'running', queued: 3 }), row({ state: 'idle', queued: 1 })]);
+        expect(counts.queued).toBe(2); // 每行只归一类：排队优先于在跑/空闲
+        expect(counts.live).toBe(0);
+        expect(attentionOf(row({ state: 'running', queued: 3 }))).toBe('queued');
     });
 });
 
 describe('sortRows —— 急的排前面', () => {
-    it('在跑 > 等回答 > 需要看 > 空闲', () => {
+    it('出错 > 等你 > 排队 > 在跑 > 空闲', () => {
         const rows = [
-            row({ botId: 'd', state: 'idle' }),
-            row({ botId: 'c', state: 'needs-attention' }),
+            row({ botId: 'e', state: 'idle' }),
+            row({ botId: 'd', state: 'running' }),
+            row({ botId: 'c', state: 'idle', queued: 2 }),
             row({ botId: 'b', state: 'asking' }),
-            row({ botId: 'a', state: 'running' }),
+            row({ botId: 'a', state: 'needs-attention' }),
         ];
-        expect(sortRows(rows).map((item) => item.botId)).toEqual(['a', 'b', 'c', 'd']);
+        expect(sortRows(rows).map((item) => item.botId)).toEqual(['a', 'b', 'c', 'd', 'e']);
     });
 
     it('同状态按最后动静新→旧，没有动静的垫底', () => {

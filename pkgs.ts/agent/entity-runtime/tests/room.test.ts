@@ -127,6 +127,41 @@ describe('RoomActor', () => {
         expect(JSON.stringify(second.room.contextOf(BOT_A.id) ?? [])).toContain('diy 的回复');
     });
 
+    it('queuedByBot：排队中的投递按成员计数（queued + delivering，给 UI 画「排队中」）', () => {
+        // 刀 2 的服务端那一半：以前 `deliveries` 的排队态在界面完全看不见，
+        // 重启后的待续跑尤其 —— 房间看着没事，其实排着队
+        const store = openStore(':memory:');
+        for (const bot of [BOT_A, BOT_B]) store.upsertBot(bot);
+        const item = (id: string, seq: number): Item => ({
+            id,
+            seq,
+            order: seq,
+            turn: seq,
+            turnId: `turn-${seq}`,
+            at: Date.now(),
+            status: 'done',
+            author: HUMAN,
+            type: 'chat',
+            data: { text: id },
+        });
+        store.appendItem('room:1', item('u-1', 1));
+        store.appendItem('room:1', item('u-2', 2));
+        store.appendItem('room:1', item('u-3', 3));
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'queued' });
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-2', botId: BOT_A.id, state: 'delivering' });
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-3', botId: BOT_B.id, state: 'queued' });
+        // 已送达的不算排队
+        store.appendItem('room:1', item('u-4', 4));
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-4', botId: BOT_B.id, state: 'delivered' });
+
+        const h = makeRoom({ store });
+        expect(Object.fromEntries(h.room.queuedByBot())).toEqual({ [BOT_A.id]: 2, [BOT_B.id]: 1 });
+
+        // 跑完一条就少一条（UI 的灰旋转跟着灭）
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'delivered' });
+        expect(Object.fromEntries(h.room.queuedByBot())).toEqual({ [BOT_A.id]: 1, [BOT_B.id]: 1 });
+    });
+
     it('崩溃恢复：未送达的投递重新投一遍', async () => {
         const store = openStore(':memory:');
         const bots = [BOT_A, BOT_B];

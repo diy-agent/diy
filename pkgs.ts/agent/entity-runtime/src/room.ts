@@ -462,6 +462,21 @@ export class RoomActor {
     }
 
     /**
+     * 还没开始跑的投递（`queued` / `delivering`），按成员计数。
+     *
+     * 「排队中」是**系统状态**而不是「要你动手」：重启后的待续跑（`recover()` 那条路）、
+     * 连发几条还没轮到它，都落在这里。以前 UI 完全看不见这一段 —— 房间看起来
+     * 「什么都没发生」，其实它排着队；反过来「红 N」里也混不进它们。
+     */
+    queuedByBot(): Map<string, number> {
+        const counts = new Map<string, number>();
+        for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
+            counts.set(delivery.botId, (counts.get(delivery.botId) ?? 0) + 1);
+        }
+        return counts;
+    }
+
+    /**
      * 在跑的那几轮的开始时刻（快照用）。
      *
      * 只给 `runningBots()` 里真在跑的成员：`turnStarts` 里的旧记录可能是上一轮的残留。

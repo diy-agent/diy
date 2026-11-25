@@ -20,9 +20,10 @@ import { Theme } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import {
     ActiveJobsGlyph,
+    AttentionCapsules,
     BotsOverlay,
+    countByAttention,
     JobsPanel,
-    needsYou,
     RoomDialogsProvider,
     Sidebar,
     useBotRows,
@@ -30,6 +31,7 @@ import {
     useRoomDialogs,
     useRoomDialogsContext,
     useSelectedRoom,
+    type Filter,
 } from '@diy-agent/entity-chat';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -40,7 +42,7 @@ import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
-import { BotGlyph, GearGlyph, NavGlyph } from './glyphs';
+import { GearGlyph, NavGlyph } from './glyphs';
 import { type PageDef } from './model';
 import { pageFor, wbViews } from './pages';
 import { useChrome, Window, type WindowContribution } from './window';
@@ -131,11 +133,24 @@ function Host() {
     // 导航的开关提到了壳这一层：标题栏左端要放它的按钮，而标题栏是整宽的一条
     const [open, setOpen] = useState(loadNavOpen);
 
-    // Bot 状态：标题栏那颗按钮的角标要计数，所以拉数据提到壳这一层，
-    // 浮层与按钮共用一份（不各拉一次，否则两边的数字会差一轮）
+    // Bot 状态：标题栏那排徽标要计数，所以拉数据提到壳这一层，
+    // 浮层与徽标共用一份（不各拉一次，否则两边的数字会差一轮）。
+    //
+    // `counts` 是**分类计数**（出错 / 等你 / 排队 / 在跑），不再是一个总数 ——
+    // 以前那个数混了三种语义（红 7 = 4 错 + 2 等 + 1 跑）。
     const [botsOpen, setBotsOpen] = useState(false);
+    /** 点分类徽标进来的预选（关掉就清，否则下次点开还是上一类） */
+    const [botsFilter, setBotsFilter] = useState<Filter | undefined>(undefined);
     const bots = useBotRows(botsOpen);
-    const attention = bots.rows.filter(needsYou).length;
+    const counts = countByAttention(bots.rows);
+    const openBots = useCallback((filter?: Filter): void => {
+        setBotsFilter(filter);
+        setBotsOpen(true);
+    }, []);
+    const closeBots = useCallback((): void => {
+        setBotsOpen(false);
+        setBotsFilter(undefined);
+    }, []);
 
     useEffect(() => {
         try {
@@ -200,10 +215,18 @@ function Host() {
                 tools: [
                     {
                         id: 'bots',
-                        label: attention === 0 ? 'Bot 状态' : `Bot 状态（${attention} 个要你看）`,
-                        glyph: <BotGlyph count={attention} />,
+                        label: 'Bot 状态',
+                        // 分类徽标本身就是入口：点某一颗 → 浮层预选那一类（点「出错 4」直接看到那 4 个）；
+                        // 点间隙 → 打开默认浮层。只有「出错」用红，其余各一色（`AttentionCapsules`）。
+                        glyph: (
+                            <AttentionCapsules
+                                counts={counts}
+                                onPick={(kind) => openBots(kind)}
+                                onOpen={() => openBots()}
+                            />
+                        ),
                         onClick: () => {
-                            setBotsOpen(true);
+                            openBots();
                         },
                     },
                     {
@@ -218,8 +241,10 @@ function Host() {
             },
         ],
         // `jumpToFirstRunning*` 是模块级命令（不依赖 props），所以不必进依赖表；
-        // `setJobsOpen` / `setBotsOpen` 是 setState（引用恒定），同理
-        [open, toggle, dialogs, attention],
+        // `setJobsOpen` / `setBotsOpen` 是 setState（引用恒定），同理。
+        // 计数列**具体数字**而不是 `counts` 对象：那个对象每 1.5s 轮询都新建一次，
+        // 放对象会让这个数组每 1.5s 重建（内容没变也重建）。数字不变 ⇒ 显示内容不变。
+        [open, toggle, dialogs, counts.broken, counts.blocked, counts.queued, counts.live, openBots],
     );
 
     // 没有房间时**也要**有导航：新建第一个房间的入口就在左栏，把它藏起来等于没法开工
@@ -237,7 +262,13 @@ function Host() {
                 </div>
                 {dialogs.element}
                 {jobsOpen && <JobsPanel onClose={() => setJobsOpen(false)} />}
-                {botsOpen ? <BotsOverlay {...bots} onClose={() => setBotsOpen(false)} /> : null}
+                {botsOpen ? (
+                    <BotsOverlay
+                        {...bots}
+                        {...(botsFilter === undefined ? {} : { initialFilter: botsFilter })}
+                        onClose={closeBots}
+                    />
+                ) : null}
             </RoomDialogsProvider>
         );
     }
@@ -258,7 +289,13 @@ function Host() {
             </div>
             {dialogs.element}
             {jobsOpen && <JobsPanel onClose={() => setJobsOpen(false)} />}
-            {botsOpen ? <BotsOverlay {...bots} onClose={() => setBotsOpen(false)} /> : null}
+            {botsOpen ? (
+                <BotsOverlay
+                    {...bots}
+                    {...(botsFilter === undefined ? {} : { initialFilter: botsFilter })}
+                    onClose={closeBots}
+                />
+            ) : null}
         </RoomDialogsProvider>
     );
 }

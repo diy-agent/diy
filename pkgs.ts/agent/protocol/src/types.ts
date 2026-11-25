@@ -614,6 +614,14 @@ export interface BotRow {
     /** `state === 'asking'`：在等回答的那道题 */
     askId?: string;
     askTitle?: string;
+    /**
+     * 还在排队里的投递数（`queued` / `delivering`）。
+     *
+     * 它**不是** `BotState` 的一档（那个是互斥单值，表达「此刻最要紧的一件事」）：
+     * 一个正在跑的成员可以同时排着下一条，重启后的待续跑也落在这里。
+     * UI 用它在行上多挂一颗灰色「排队中」，不进「要你看」的计数（2026-11-25）。
+     */
+    queued?: number;
 }
 
 /** 模型运行的原始事件（seq 单调；投影成 Item 后 UI 才消费） */

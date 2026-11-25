@@ -137,6 +137,14 @@ interface ShellState {
      * 「哪个任务在干活」—— 那正是用户要的（看得见的活）。
      */
     running: Record<string, number>;
+    /**
+     * 容器 id → 排队中的投递数（`queued` / `delivering`，含重启后的待续跑）。
+     *
+     * 与 `running` 同一约定（0 不占键）。它是**系统状态**不是“要你动手”：
+     * 侧栏用一颗灰旋转表达“排着队，马上轮到它”，不进标题栏那颗红点。
+     * 只有 `rooms.list` 一个来源（服务端每 30s 投影一次），没有活动流。
+     */
+    queued: Record<string, number>;
     /** 在跑的后台作业数（实例级账本；标题栏那颗「作业 N」用它，不进房间表） */
     activeJobs: number;
     error?: string;
@@ -157,6 +165,7 @@ let state: ShellState = {
     pendingAsks: {},
     pendingAskTitles: {},
     running: {},
+    queued: {},
     activeJobs: 0,
 };
 const listeners = new Set<() => void>();
@@ -332,6 +341,19 @@ export function useRunningOf(roomId: string): number {
         subscribeShell,
         () => state.running[roomId] ?? 0,
         () => state.running[roomId] ?? 0,
+    );
+}
+
+/**
+ * 只订阅一个房间的「还有几条投递在排队」（侧栏灰旋转）。
+ *
+ * 与 `useRunningOf` 同理：单个数字订阅，别的房间排队变化不会重渲这一行。
+ */
+export function useQueuedOf(roomId: string): number {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.queued[roomId] ?? 0,
+        () => state.queued[roomId] ?? 0,
     );
 }
 
@@ -653,6 +675,12 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         }
     }
     const pendingAskTitles: Record<string, string[]> = { ...serverAskTitles };
+    // 排队中的投递：**只有列表这一个来源**（30s 轮询，没有活动流）。慢一档但够看 ——
+    // 它表达的是“马上要动”，不是“正在动”（正在动的有活动流实时推）
+    const queued: Record<string, number> = {};
+    for (const room of rooms) {
+        if (typeof room.queued === 'number' && room.queued > 0) queued[room.id] = room.queued;
+    }
     // 当前房间的题干以流为准（服务端那份可能落后几十秒）
     const liveTitles = liveRoomId === '' ? undefined : state.pendingAskTitles[liveRoomId];
     if (liveRoomId !== '' && liveTitles !== undefined) pendingAskTitles[liveRoomId] = [...liveTitles];
@@ -669,6 +697,7 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         pendingAsks,
         pendingAskTitles,
         running,
+        queued,
         bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])),
         loaded: true,
         // 地址没变就沿用旧引用：`useAddress()` 的快照就是它，同值换新对象等于给整张侧栏
