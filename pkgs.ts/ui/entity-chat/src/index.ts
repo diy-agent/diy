@@ -32,6 +32,8 @@ export { Modal } from './components/Dialogs';
 // 三段式模型选择器（provider → account → model）：角色的「模型」字段复用它，
 // 空串 = 跟随房间 / 全局默认 —— 不让使用方自己再写一份 key 拼法
 export { ModelPicker } from './components/ModelPicker';
+// 三处同构的模型选择：默认模型配置 / bot 配置 / 聊天页配置共用这一份表格与胶囊
+export { ModelSelectPanel, ModelSelectButton } from './components/ModelSelectPanel';
 export { modelLabel } from './models';
 export { Sidebar } from './components/Sidebar';
 // 对话区那一条的两样（表面切换 / 房间菜单）：宿主可以把它们摆进自己的区域标题栏

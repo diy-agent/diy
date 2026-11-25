@@ -17,7 +17,7 @@
 //     为什么用库而不是手搓 `useState<string | undefined>`×5：四个表单加起来十几根输入，
 //     手搓就得自己管 touched / 提交时全量校验 / 失败后不清空输入，这些正是库白送的那部分。
 
-import { Modal, modelConfig, type ModelConfigProvider, type ModelConfigSnapshot } from '@diy-agent/entity-chat';
+import { Modal, ModelSelectButton, modelConfig, type ModelConfigProvider, type ModelConfigSnapshot } from '@diy-agent/entity-chat';
 import { useForm } from '@tanstack/react-form';
 import * as React from 'react';
 
@@ -334,11 +334,7 @@ function DefaultModelCard({
     busy: boolean;
     onPick: (modelKey: string | null) => void;
 }) {
-    const [open, setOpen] = React.useState(false);
     const value = snapshot.defaultModelKey ?? '';
-    const options = React.useMemo(() => defaultModelOptions(snapshot), [snapshot]);
-    const current = options.find((option) => option.key === value);
-    const missing = value !== '' && current === undefined;
 
     return (
         <div className="rounded-lg border border-border border-l-2 border-l-ring bg-card px-2.5 py-2">
@@ -354,226 +350,10 @@ function DefaultModelCard({
                     </button>
                 )}
             </div>
-            <button
-                onClick={() => setOpen(true)}
-                disabled={busy}
-                className="mt-1 w-full truncate rounded-md border border-border bg-background px-1.5 py-1 text-left font-mono text-[11px] hover:border-ring disabled:opacity-50"
-                title={value === '' ? '点开选择默认模型' : value}
-            >
-                {value === '' ? '（未设置 · 点开选择）' : missing ? `${value}（目录里没有）` : value}
-            </button>
-            {missing ? <p className="mt-1 text-[11px] text-amber-400">指向的模型已不在目录里 —— 点开换一个。</p> : null}
-            {open ? (
-                <DefaultModelPanel
-                    options={options}
-                    current={value}
-                    onPick={(key) => {
-                        setOpen(false);
-                        onPick(key);
-                    }}
-                    onClose={() => setOpen(false)}
-                />
-            ) : null}
-        </div>
-    );
-}
-
-/** 「真能发出去」的默认模型组合：账号填了 key、模型勾选过 */
-interface DefaultModelOption {
-    key: string;
-    providerId: string;
-    providerName: string;
-    account: string;
-    modelId: string;
-    modelName: string;
-    contextWindow?: number;
-    cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
-}
-
-function defaultModelOptions(snapshot: ModelConfigSnapshot): DefaultModelOption[] {
-    const out: DefaultModelOption[] = [];
-    for (const provider of snapshot.providers) {
-        for (const account of provider.accounts) {
-            if (!account.configured) continue;
-            for (const model of provider.models) {
-                if (!model.enabled) continue;
-                out.push({
-                    key: `${account.name}@${provider.id}/${model.id}`,
-                    providerId: provider.id,
-                    providerName: provider.name,
-                    account: account.name,
-                    modelId: model.id,
-                    modelName: model.name,
-                    contextWindow: model.contextWindow,
-                    cost: model.cost,
-                });
-            }
-        }
-    }
-    return out;
-}
-
-/**
- * 默认模型搜索面板：表格形式与配置页的模型表一致，多一列「供应商 / 账号」。
- * 已连接的账号作筛选（一个服务商可能有多个账号）。点一行 = 设为默认模型。
- */
-type SortKey = 'model' | 'account' | 'context' | 'input' | 'output' | 'cacheRead' | 'cacheWrite';
-
-function DefaultModelPanel({
-    options,
-    current,
-    onPick,
-    onClose,
-}: {
-    options: DefaultModelOption[];
-    current: string;
-    onPick: (key: string) => void;
-    onClose: () => void;
-}) {
-    const [query, setQuery] = React.useState('');
-    const [account, setAccount] = React.useState('');
-    const [sort, setSort] = React.useState<{ key: SortKey; desc: boolean }>({ key: 'model', desc: false });
-    const accounts = React.useMemo(() => {
-        const seen = new Set<string>();
-        const out: string[] = [];
-        for (const option of options) {
-            const key = `${option.account}@${option.providerId}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            out.push(key);
-        }
-        return out;
-    }, [options]);
-    const keyword = query.trim().toLowerCase();
-    const rows = React.useMemo(() => {
-        const filtered = options.filter(
-            (option) =>
-                (account === '' || `${option.account}@${option.providerId}` === account) &&
-                (keyword === '' ||
-                    option.modelId.toLowerCase().includes(keyword) ||
-                    option.modelName.toLowerCase().includes(keyword) ||
-                    option.providerName.toLowerCase().includes(keyword)),
-        );
-        const valueOf = (option: DefaultModelOption): string | number => {
-            switch (sort.key) {
-                case 'model': return option.modelId;
-                case 'account': return `${option.account}@${option.providerId}`;
-                case 'context': return option.contextWindow ?? -1;
-                case 'input': return option.cost?.input ?? -1;
-                case 'output': return option.cost?.output ?? -1;
-                case 'cacheRead': return option.cost?.cacheRead ?? -1;
-                case 'cacheWrite': return option.cost?.cacheWrite ?? -1;
-            }
-        };
-        return [...filtered].sort((a, b) => {
-            const av = valueOf(a);
-            const bv = valueOf(b);
-            const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
-            return sort.desc ? -cmp : cmp;
-        });
-    }, [options, account, keyword, sort]);
-    const toggleSort = (key: SortKey): void =>
-        setSort((prev) => (prev.key === key ? { key, desc: !prev.desc } : { key, desc: false }));
-    const sortMark = (key: SortKey): string => (sort.key === key ? (sort.desc ? ' ↓' : ' ↑') : '');
-    const money = (value: number | undefined): string => (value === undefined ? '—' : `$${value}`);
-
-    return (
-        <Modal title="选择默认模型" onClose={onClose} size="wide">
-            <div className="space-y-2">
-                <input
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="搜索模型 / 服务商"
-                    className="w-full rounded border border-border bg-card px-2 py-1 text-xs outline-none"
-                />
-                {/* 已连接账号作为筛选切片：一个个按钮，默认「全部」 */}
-                <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] text-muted-foreground">账号</span>
-                    <button
-                        type="button"
-                        aria-pressed={account === ''}
-                        onClick={() => setAccount('')}
-                        className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                            account === '' ? 'border-ring bg-muted font-medium' : 'border-border text-muted-foreground hover:bg-muted/60'
-                        }`}
-                    >
-                        全部
-                    </button>
-                    {accounts.map((key) => (
-                        <button
-                            key={key}
-                            type="button"
-                            aria-pressed={account === key}
-                            onClick={() => setAccount(key)}
-                            className={`rounded-full border px-2 py-0.5 font-mono text-[11px] ${
-                                account === key ? 'border-ring bg-muted font-medium' : 'border-border text-muted-foreground hover:bg-muted/60'
-                            }`}
-                        >
-                            {key}
-                        </button>
-                    ))}
-                </div>
-                {rows.length === 0 ? (
-                    <p className="py-2 text-xs text-muted-foreground">没有匹配的组合 —— 先在右边填 key、勾选模型。</p>
-                ) : (
-                    <div className="max-h-[54vh] overflow-auto rounded-lg border border-border">
-                        <table className="w-full min-w-[640px] text-left text-xs">
-                            <thead className="sticky top-0 bg-muted/80 text-[11px] text-muted-foreground backdrop-blur">
-                                <tr>
-                                    <th className="py-1.5 pl-2">
-                                        <button type="button" onClick={() => toggleSort('model')} className="hover:text-foreground">模型{sortMark('model')}</button>
-                                    </th>
-                                    <th className="py-1.5">
-                                        <button type="button" onClick={() => toggleSort('account')} className="hover:text-foreground">供应商 / 账号{sortMark('account')}</button>
-                                    </th>
-                                    <th className="py-1.5 text-right">
-                                        <button type="button" onClick={() => toggleSort('context')} className="hover:text-foreground">上下文{sortMark('context')}</button>
-                                    </th>
-                                    <th className="py-1.5 text-right">
-                                        <button type="button" onClick={() => toggleSort('input')} className="hover:text-foreground">in{sortMark('input')}</button>
-                                    </th>
-                                    <th className="py-1.5 text-right">
-                                        <button type="button" onClick={() => toggleSort('output')} className="hover:text-foreground">out{sortMark('output')}</button>
-                                    </th>
-                                    <th className="py-1.5 text-right">
-                                        <button type="button" onClick={() => toggleSort('cacheRead')} className="hover:text-foreground">缓存读{sortMark('cacheRead')}</button>
-                                    </th>
-                                    <th className="py-1.5 pr-2 text-right">
-                                        <button type="button" onClick={() => toggleSort('cacheWrite')} className="hover:text-foreground">缓存写{sortMark('cacheWrite')}</button>
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {rows.map((option) => (
-                                    <tr
-                                        key={option.key}
-                                        onClick={() => onPick(option.key)}
-                                        className={`cursor-pointer border-t border-border/60 hover:bg-muted/40 ${
-                                            option.key === current ? 'bg-muted' : ''
-                                        }`}
-                                    >
-                                        <td className="py-1 pl-2">
-                                            <div className="truncate font-medium">{option.modelName}</div>
-                                            <code className="text-[10.5px] text-muted-foreground">{option.modelId}</code>
-                                        </td>
-                                        <td className="py-1 font-mono text-[10.5px] text-muted-foreground">
-                                            {option.account}@{option.providerId}
-                                        </td>
-                                        <td className="py-1 text-right tabular-nums text-muted-foreground">
-                                            {contextLabel(option.contextWindow)}
-                                        </td>
-                                        <td className="py-1 text-right tabular-nums text-muted-foreground">{money(option.cost?.input)}</td>
-                                        <td className="py-1 text-right tabular-nums text-muted-foreground">{money(option.cost?.output)}</td>
-                                        <td className="py-1 text-right tabular-nums text-muted-foreground">{money(option.cost?.cacheRead)}</td>
-                                        <td className="py-1 pr-2 text-right tabular-nums text-muted-foreground">{money(option.cost?.cacheWrite)}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
+            <div className="mt-1" title={value}>
+                <ModelSelectButton value={value} onPick={(key) => onPick(key)} emptyText="（未设置 · 点开选择）" />
             </div>
-        </Modal>
+        </div>
     );
 }
 
