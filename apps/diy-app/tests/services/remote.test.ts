@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { discoverAll } from "@diy-agent/remote/node";
 import { RemoteService } from "../../src/main/services/remote";
 import { registryDir, removeRecord, writeRecord } from "../../src/main/core/instance-registry";
 
@@ -79,7 +80,7 @@ describe("RemoteService", () => {
         expect(svc.rename("c/mac").address).not.toContain("/diy-chat");
     });
 
-    it("discover 把本机实例列出来（local 路走注册表 pingPort），不自动连接", async () => {
+    it("local 路走注册表 pingPort 认得出本机这条记录；对外的 discover 不把自己列进「其他机器」（##507）", async () => {
         const home = tempHome();
         // 生产中这条记录由 main 启动时写（writeSelfRecord），单测里手动摆一条 ——
         // setSelfPingPort 是「读-改-写」，没有记录就什么都不做（不凭空造条目）
@@ -105,12 +106,16 @@ describe("RemoteService", () => {
         const svc = await startService(home);
         const self = svc.self();
 
+        // ① 发现的地基（不带「我是谁」的过滤）：注册表 → pingPort → /ping 拿回 id
+        const raw = await discoverAll({ sources: ["local"], mdnsTimeoutMs: 50 });
+        const listed = raw.items.find((r) => r.id === self.id);
+        expect(listed).toBeDefined();
+        expect(listed?.sources).toEqual(["local"]);
+
+        // ② 对外的 discover：自己归「我」那一栏（##507），候选里不该再有自己
         const result = await svc.discover({ sources: ["local"], mdnsTimeoutMs: 50 });
-        const mine = result.rows.find((r) => r.id === self.id);
-        expect(mine).toBeDefined();
-        expect(mine?.sources).toEqual(["local"]);
-        expect(result.text).toContain("发现到的 diy 实例：");
-        expect(result.text).toContain("(local)");
+        expect(result.rows.some((r) => r.id === self.id)).toBe(false);
+        expect(result.errors).toEqual([]);
     });
 
     it("ping 不通返回 ok:false（不抛）", async () => {
