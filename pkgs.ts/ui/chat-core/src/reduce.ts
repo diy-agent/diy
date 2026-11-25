@@ -2,7 +2,15 @@
 
 import { normalizeAskRequest } from '@diy-agent/protocol';
 
-import type { AnsweredAsk, AskRequest, Delivery, Item, StreamEvent, TurnEndReason } from './types';
+import type {
+    AnsweredAsk,
+    AskRequest,
+    CompactionProgress,
+    Delivery,
+    Item,
+    StreamEvent,
+    TurnEndReason,
+} from './types';
 
 export interface ConversationState {
     items: Item[];
@@ -24,13 +32,33 @@ export interface ConversationState {
      * 需要解释的那几种在时间线上都有持久条目 —— 刷新后信息不会丢，只是页脚那行会消失。
      */
     turnEnds: Record<string, TurnEndReason>;
+    /**
+     * 手动的压缩，按 compactId 归并（`running` 那条会被同 id 的终态覆盖）。
+     *
+     * 为什么存在会话状态里：压缩点下去要等好几秒，而 RPC 是同步等的 —— 反馈只能靠事件。
+     * 自动压缩不进这里（它是轮次里的内部动作，广播出来只是噪点）。
+     */
+    compactions: Record<string, CompactionProgress>;
 }
 
 export function emptyState(): ConversationState {
-    return { items: [], deliveries: [], asks: [], answered: [], seq: 0, running: false, speaking: [], turnEnds: {} };
+    return {
+        items: [],
+        deliveries: [],
+        asks: [],
+        answered: [],
+        seq: 0,
+        running: false,
+        speaking: [],
+        turnEnds: {},
+        compactions: {},
+    };
 }
 
 const STATUS_RANK: Record<Item['status'], number> = { pending: 0, streaming: 1, done: 2, failed: 2 };
+
+/** 压缩进度最多留几条（只有手动压缩会进来，面板也就看最近几次） */
+const MAX_COMPACTIONS = 8;
 
 /** 两条流（post 的 + 常驻的）都往这里送，乱序时别让旧事件把新状态回滚 */
 function isStale(current: Item, next: Item): boolean {
@@ -83,6 +111,15 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
         }
         case 'running':
             return { ...state, speaking: event.botIds, running: event.botIds.length > 0 };
+        case 'compact': {
+            // 同 id 覆盖：`running` → 终态是一条链，不是两条记录
+            const merged = { ...state.compactions, [event.compact.compactId]: event.compact };
+            const all = Object.values(merged);
+            if (all.length <= MAX_COMPACTIONS) return { ...state, compactions: merged };
+            // 长期开着页面底栏会累积：只留最近几条（running 的必然在最新里）
+            const kept = all.sort((a, b) => b.startedAt - a.startedAt).slice(0, MAX_COMPACTIONS);
+            return { ...state, compactions: Object.fromEntries(kept.map((entry) => [entry.compactId, entry])) };
+        }
         case 'turn.end':
             // key 必须带 botId：同一轮里多个 bot 各跑各的，只按 turnId 存会互相覆盖 ——
             // A 被截断、B 正常说完时，A 的页脚会显示成 B 的结局
@@ -167,5 +204,7 @@ export function fromSnapshot(snapshot: {
         speaking,
         // 快照不带 endReason：它是这一次连接里的事实，不是历史数据。
         turnEnds: {},
+        // 压缩进度同理：做完的那次已体现在 stats 里（摘要 / 折叠数），中途的那次刷新就没了
+        compactions: {},
     };
 }

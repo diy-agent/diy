@@ -31,6 +31,7 @@ import {
 import { ArrowDown } from 'lucide-react';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
 import { AskCard } from '../../components/AskCard';
+import { CompactCutBar } from '../../components/CompactCutBar';
 import { CopyButton } from '../../components/CopyButton';
 import { JobCard } from '../../components/JobCard';
 import { openLinkInNewWindow } from '../../links';
@@ -43,7 +44,7 @@ import * as React from 'react';
 
 import { useMentionCandidates } from '../../mentions';
 import { useDraft } from '../../drafts';
-import { conversationOf, useStore } from '../../store';
+import { actions, conversationOf, useStore } from '../../store';
 
 /** 时间戳（Astryx Timestamp 收秒或 ISO；我们的 at 是毫秒） */
 function TimeOf({ at }: { at: number }) {
@@ -345,6 +346,14 @@ export function AstryxSurface({ targetId, composerExtras }: { targetId: string; 
         [state.items, state.deliveries, shell.bots, state.speaking, state.asks, state.answered],
     );
 
+    // 上下文概况：顶部「已压缩」框要的折叠数 / 摘要正文。
+    // 只在一轮跑完时拉一次（自动压缩发生在那一步），不开轮询。
+    const sessions = shell.sessions[targetId] ?? [];
+    const running = state.running;
+    React.useEffect(() => {
+        actions.refreshSessions(targetId);
+    }, [targetId, running]);
+
     /**
      * 壳层待答条的跳转入口：astryx 长会话用的是 ChatVirtualizer（只渲染视口附近的行），
      * 所以「滚过去」= `anchorToKey` 把那一行钉到视口顶 —— 它只认**在当前 data 里的 key**，
@@ -419,6 +428,12 @@ export function AstryxSurface({ targetId, composerExtras }: { targetId: string; 
                     />
                 </div>
             )}
+            {/* 顶部常驻：描述的是「更早」，不跟消息一起滚走。
+                放在虚拟滚动容器**外面** —— ChatVirtualizer 的 attach 模式按 scrollTop 推算行位置，
+                在它前面插普通块会算错行。 */}
+            <div style={{ paddingInline: 24, paddingTop: 8 }}>
+                <CompactCutBar sessions={sessions} />
+            </div>
             {/* 长会话用官方 ChatVirtualizer：只渲染视口附近的条目（1 万条的 story 也是它） */}
             <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
                 <div

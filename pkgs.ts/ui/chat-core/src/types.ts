@@ -14,6 +14,7 @@ export type {
     Bot,
     Capabilities,
     Command,
+    CompactionProgress,
     Delivery,
     DeliveryState,
     Room,
