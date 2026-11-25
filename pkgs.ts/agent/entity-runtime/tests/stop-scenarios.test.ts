@@ -73,6 +73,19 @@ describe('停止场景样本', () => {
         expect(endReasonOf(facts).type).toBe('unknown');
     });
 
+    it('上游静默：带 stall 的 run.failed 判成 stalled，只出一条 notice（超时不是出错）', () => {
+        const scenario = STOP_SCENARIOS.find((item) => item.id === 'upstream-stall');
+        expect(scenario).toBeDefined();
+        const result = replay(scenario!);
+        expect(result.reason.type).toBe('stalled');
+        // 卡在哪个时段 / 等了多久：由杀它的那一层带上来
+        expect(result.reason.awaiting).toBe('model-stream');
+        expect(result.reason.idleMs).toBe(180_000);
+        // 同一件事不说两遍：不落 error 条目，只落一条 stalled notice
+        expect(result.items.some((item) => item.type === 'error')).toBe(false);
+        expect(result.items.some((item) => item.type === 'notice' && item.data.kind === 'stalled')).toBe(true);
+    });
+
     it('工具没结果时不留转圈的条目（tool 段必须收成 failed）', () => {
         const scenario = STOP_SCENARIOS.find((item) => item.id === 'tool-mismatch')!;
         const tools = replay(scenario).items.filter((item) => item.type === 'tool');

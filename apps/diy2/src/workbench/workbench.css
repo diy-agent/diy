@@ -760,6 +760,13 @@ body.wb-resizing-y * {
     background: var(--wb-tint);
 }
 
+/* 活动状态不是隐形图标：标题栏常显「会话 0 / 后台 0」，有活动时实时变绿呼吸。 */
+.wb-tb-activity {
+    width: auto;
+    min-width: 22px;
+    padding: 0 6px;
+}
+
 /* 展开态 = 亮起；收起态 = 暗着（点它才出现）—— 与「按钮是开关」的直觉一致 */
 .wb-tb-btn.on {
     color: var(--wb-fg);
@@ -818,4 +825,20 @@ body.wb-resizing-y * {
     height: 14px;
     margin: 0 4px;
     background: var(--wb-line);
+}
+
+/* 区域标题栏右端的宿主扩展（如对话区的「Astryx / shadcn」）。
+ * `margin-left: auto` 把它推到右端、紧邻 ⋯；高度随 bar（28px），内部用 flex 对齐。 */
+.wb-area-extra {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    /* 宿主件是设计系统的按钮（px/py 自带），这里把它压到 bar 的高度内 */
+    --wb-extra-scale: 0.92;
+}
+.wb-area-extra > * {
+    transform: scale(var(--wb-extra-scale));
+    transform-origin: right center;
 }

@@ -28,7 +28,7 @@ import {
 } from './address';
 import type { NavAddress } from './address';
 import { drafts } from './drafts';
-import type { TaskStatus } from './model';
+import { isClosed, type TaskStatus } from './model';
 import { firstUsableModelKey, type ModelCatalogPayload, type ModelSetup, type Provider } from './models';
 import { mergePendingAsks } from './pendingAsk';
 
@@ -138,6 +138,18 @@ interface ShellState {
      * 同样来自 `diy2.rooms.list` 的投影（服务端一次算好，别逐房间问）；当前房间由会话流同步更新。
      */
     pendingAskTitles: Record<string, string[]>;
+    /**
+     * 容器 id → 在跑成员数（侧栏每一行的呼吸态）。
+     *
+     * 两个来源：`rooms.list` 的 `running`（初值）与**全局活动流**（`ActivityFrame`，实时）。
+     * 在跑的房间才在表里 —— 与 `pendingAsks` 同一约定（0 不占键）。
+     *
+     * 为什么不从「当前房间的 speaking 快照」推：那只看得到一个房间，而侧栏是跨房间的
+     * 「哪个任务在干活」—— 那正是用户要的（看得见的活）。
+     */
+    running: Record<string, number>;
+    /** 在跑的后台作业数（实例级账本；标题栏那颗「作业 N」用它，不进房间表） */
+    activeJobs: number;
     error?: string;
 }
 
@@ -158,6 +170,8 @@ let state: ShellState = {
     lastActivity: {},
     pendingAsks: {},
     pendingAskTitles: {},
+    running: {},
+    activeJobs: 0,
 };
 const listeners = new Set<() => void>();
 
@@ -341,6 +355,77 @@ export function usePendingAskOf(roomId: string): number {
         subscribeShell,
         () => state.pendingAsks[roomId] ?? 0,
         () => state.pendingAsks[roomId] ?? 0,
+    );
+}
+
+/**
+ * 只订阅一个房间的「有几个成员在跑」（侧栏每一行的呼吸态）。
+ *
+ * 和 `usePendingAskOf` 同理：取到的是单个数字，别的房间起停不会重渲这一行。
+ */
+export function useRunningOf(roomId: string): number {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.running[roomId] ?? 0,
+        () => state.running[roomId] ?? 0,
+    );
+}
+
+/**
+ * 「一个房间算不算会话在跑」的**唯一判据** —— 标题栏那个数字与它弹出的列表共用一份。
+ *
+ * 各写一份必然走散：2026-11-25 出现过数字把 project 行也算进去、列表却排除，于是「会话 1」点开是空的。
+ * 三个条件都不能省：project 是导航用的壳（它自己没有会话）、closed 任务里的旧 turn 不算、0 不算。
+ */
+export function isRunningSession(room: Room, running: number): boolean {
+    return room.type !== 'project' && !isClosed(room) && running > 0;
+}
+
+/** 正在跑的会话房间（顺序同侧栏）。标题栏的数字就是这个数组的长度 */
+export function useRunningSessionRooms(): Room[] {
+    const rooms = useRooms();
+    const running = React.useSyncExternalStore(
+        subscribeShell,
+        () => state.running,
+        () => state.running,
+    );
+    return React.useMemo(
+        () => rooms.filter((room) => isRunningSession(room, running[room.id] ?? 0)),
+        [rooms, running],
+    );
+}
+
+/**
+ * 只订阅「全实例有几个会话房间在跑」（标题栏会话入口）。
+ *
+ * 数字与弹出的房间列表一一对应；同一房间多个成员运行仍只算一个会话。
+ */
+export function useRunningSessions(): number {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.rooms.reduce((total, room) => total + (isRunningSession(room, state.running[room.id] ?? 0) ? 1 : 0), 0),
+        () => state.rooms.reduce((total, room) => total + (isRunningSession(room, state.running[room.id] ?? 0) ? 1 : 0), 0),
+    );
+}
+
+/**
+ * 跳到**第一个在跑的房间**（标题栏那颗会话图标点一下）。
+ *
+ * 做成**命令**而不是 hook：它只在点击那一刻读一次快照（`shellSnapshot()`）。
+ * 写成订阅的话，每次有人起停都会把宿主往里重渲一遍 —— 而宿主是整页的根，
+ * 为了一个点击目标不值。
+ */
+export function jumpToFirstRunningRoom(): void {
+    const target = state.rooms.find((room) => (state.running[room.id] ?? 0) > 0)?.id;
+    if (target !== undefined) actions.select(target);
+}
+
+/** 只订阅「全实例有几个后台作业在跑」（标题栏那颗图标） */
+export function useActiveJobs(): number {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.activeJobs,
+        () => state.activeJobs,
     );
 }
 
@@ -566,6 +651,40 @@ export async function refreshRoles(): Promise<void> {
     });
 }
 
+/** 活动流已经报过帧（含首帧）⇒ 此后 `running` 以它为准，不再看 `rooms.list` 的初值 */
+let activityLive = false;
+let activityFeedUnsub: (() => void) | undefined;
+
+/** 逐项比「房间 → 人数」，相同就不 emit（标题栏 / 侧栏都是窄订阅，不该为无变化重渲） */
+function sameRunning(a: Record<string, number>, b: Record<string, number>): boolean {
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    for (const key of keys) if (a[key] !== b[key]) return false;
+    return true;
+}
+
+/**
+ * 订阅**实例级活动**（谁在跑 / 几个作业在跑）。
+ *
+ * 为什么不用轮询：`rooms.list` 要算全部房间的草稿 / 待答 / 末条时间，而这里只推已算好的
+ * 快照；而且 turn 起停本来就是一个事件（服务端 `syncRunning`），没理由让界面猜。
+ *
+ * 老传输层没有这个能力（`subscribeActivity` 可选）：那就只靠 `rooms.list` 的 `running`
+ * 初值 —— 图标会停在 30s 前的样子，但不会错到报警。
+ */
+function watchActivityFeed(): void {
+    if (activityFeedUnsub !== undefined) return;
+    const subscribe = client.subscribeActivity;
+    if (subscribe === undefined) return;
+    activityFeedUnsub = subscribe.call(client, (frame) => {
+        activityLive = true;
+        const running: Record<string, number> = {};
+        for (const row of frame.rooms) if (row.botIds.length > 0) running[row.id] = row.botIds.length;
+        if (sameRunning(state.running, running) && state.activeJobs === frame.jobs) return;
+        emit({ ...state, running, activeJobs: frame.jobs });
+    });
+}
+
 async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     // 模型目录跟着同一趟回来（真源 model.yaml；界面不再自带 provider 表）：
     // 走 `diy2.models.list`，与 rooms / bots 共用同一条 RPC 连接
@@ -601,6 +720,15 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         const titles = room.pendingAskTitles;
         if (Array.isArray(titles) && titles.length > 0) serverAskTitles[room.id] = titles;
     }
+    // 在跑成员数：活动流接过之后**以流为准**（它只在变化时发，但每次都是全实例快照）；
+    // 还没接上（首屏 / 老传输层）才用列表里那份初值 —— 否则每 30s 的刷新会把
+    // 流刚报的「刚开跑」盖回旧值
+    const running: Record<string, number> = activityLive ? state.running : {};
+    if (!activityLive) {
+        for (const room of rooms) {
+            if (typeof room.running === 'number' && room.running > 0) running[room.id] = room.running;
+        }
+    }
     const pendingAskTitles: Record<string, string[]> = { ...serverAskTitles };
     // 当前房间的题干以流为准（服务端那份可能落后几十秒）
     const liveTitles = liveRoomId === '' ? undefined : state.pendingAskTitles[liveRoomId];
@@ -622,6 +750,7 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         lastActivity,
         pendingAsks,
         pendingAskTitles,
+        running,
         roles,
         // 化身从角色派生（名字 / 颜色 / 人格 / 模型唯一的转换点）：成员名单仍然按房间的 spec 过滤
         bots: Object.fromEntries(roles.map((role) => [role.id, botOfRole(role)])),
@@ -669,6 +798,8 @@ async function runBootstrap(): Promise<void> {
         bootAttempt = 0;
         // 连上之后就开始盯着别的房间（只盖当前房间的是 watchActivity 那条 SSE）
         startRoomsPoll();
+        // 全实例「谁在跑 / 几个作业在跑」：一条流，切页 / 切房间都不重订
+        watchActivityFeed();
     } catch (error) {
         // loaded 保持 false：界面继续显示"连接中"并带上失败原因，而不是变成半死的空壳
         emit({ ...state, error: messageOf(error) });

@@ -180,7 +180,7 @@ UI 有两个可切换的表面（同一份时间线 + 同一个 store，只换�
 - 成员是**派生的**：`type` 与该房间相同的角色全部在场，改一个角色 = 该类型所有房间同时变
   （没有「把 bot 拉进房间」这个动作；设置页 `/settings/roles` 是它的编辑入口）
 - 同一轮内多个 bot 并行；轮次之间串行；运行中也能插话（发送不变成停止，
-  停止在顶部 SpeakingBar，可按成员停）
+  停止在顶部 RoomStatusBar，可按成员停）
 
 接口：**命令面走 RPC**（`/rpc` 的 WebSocket；方法树 = `@diy-agent/protocol` 的 `diy2Api`：
 `info` / `rooms` / `roles` / `chat` / `asks` / `drafts` / `journal` / `models` / `links`），

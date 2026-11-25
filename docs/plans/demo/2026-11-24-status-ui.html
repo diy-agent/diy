@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>会话 UI 重构 · 静态 demo（假数据）</title>
+<style>
+/* 只借 shadcn 亮色的一套变量，不引框架 —— 这个文件要能离线双击打开 */
+:root{
+  --background:#fff; --foreground:#18181b; --muted:#f4f4f5; --muted-2:#fafafa;
+  --muted-foreground:#71717a; --border:#e4e4e7; --accent:#f4f4f5;
+  --primary:#18181b; --primary-foreground:#fafafa; --destructive:#dc2626;
+  --amber:#f59e0b; --sky:#38bdf8; --emerald:#10b981; --violet:#8b5cf6;
+  --radius:10px;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  font:13px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC",system-ui,sans-serif;
+  color:var(--foreground); background:var(--background); overflow:hidden;
+}
+/* ── 整体骨架：顶栏 / 侧栏 / 主区 ───────────────────────── */
+.app{display:flex;flex-direction:column;height:100%}
+.titlebar{
+  display:flex;align-items:center;gap:10px;height:38px;padding:0 10px 0 12px;
+  border-bottom:1px solid var(--border);background:var(--muted-2);
+  -webkit-app-region:drag; user-select:none;
+}
+.dots{display:flex;gap:6px}
+.dots i{width:11px;height:11px;border-radius:50%;background:#e4e4e7;display:block}
+.brand{font-weight:600;font-size:12px;color:var(--muted-foreground);letter-spacing:.02em}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:6px;-webkit-app-region:no-drag}
+
+/* 活动图标（会话 / 作业）—— 顶栏常驻，带数字徽标 */
+.act{position:relative;display:flex;align-items:center;gap:5px;height:24px;padding:0 8px;
+  border:1px solid var(--border);border-radius:999px;background:#fff;cursor:pointer;
+  font-size:11px;color:var(--muted-foreground)}
+.act:hover{background:var(--muted)}
+.act .n{font-variant-numeric:tabular-nums;color:var(--foreground);font-weight:600}
+.act .live{width:6px;height:6px;border-radius:50%;background:var(--emerald);animation:breathe 1.6s infinite}
+.act[data-zero="1"]{opacity:.5}
+@keyframes breathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
+.pop{position:absolute;top:calc(100% + 6px);right:0;min-width:250px;background:#fff;
+  border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 24px rgba(0,0,0,.10);
+  padding:6px;z-index:50;display:none;-webkit-app-region:no-drag}
+.pop.on{display:block}
+.pop h4{margin:4px 8px 6px;font-size:10px;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--muted-foreground)}
+.pop a{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;
+  color:inherit;text-decoration:none;font-size:12px}
+.pop a:hover{background:var(--muted)}
+.pop .meta{margin-left:auto;font-size:10.5px;color:var(--muted-foreground);font-variant-numeric:tabular-nums}
+
+.body{display:flex;min-height:0;flex:1}
+
+/* ── 侧栏 ─────────────────────────────────────────────── */
+.side{width:268px;flex:0 0 268px;border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+.side-head{display:flex;align-items:center;gap:6px;padding:8px 10px 4px;font-size:10px;
+  font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.side-head .sp{margin-left:auto;display:flex;gap:2px}
+.iconbtn{display:grid;place-items:center;width:20px;height:20px;border:0;border-radius:5px;
+  background:none;color:var(--muted-foreground);cursor:pointer;font-size:13px;line-height:1}
+.iconbtn:hover{background:var(--muted);color:var(--foreground)}
+.tree{flex:1;overflow:auto;padding:0 6px 6px}
+.proj{display:flex;align-items:center;gap:5px;padding:4px 6px;color:var(--muted-foreground);
+  font-size:12px;border-radius:6px;cursor:pointer}
+.proj:hover{background:var(--muted-2)}
+.proj .tw{width:10px;color:var(--muted-foreground)}
+.proj .folder{color:var(--sky)}
+
+/* 一行任务：状态图标 · #编号 · 名字 · 相对时间 · [关闭/打开] [⋮]
+   两个按钮都常驻（用户：item 上暴露两个按钮），不再 hover 才浮出来 */
+.row{position:relative;display:flex;align-items:center;gap:6px;padding:5px 6px 5px 22px;
+  border-radius:6px;color:var(--muted-foreground);font-size:12.5px;cursor:pointer}
+.row:hover{background:var(--muted-2)}
+.row.on{background:var(--muted);color:var(--foreground)}
+.row .st{flex:0 0 14px;display:grid;place-items:center;font-size:11px}
+.row .st.open{color:var(--emerald)}
+.row .st.run{color:var(--emerald)}
+.row .st.closed{color:var(--violet)}
+.row .num{font-size:10.5px;color:#a1a1aa;font-variant-numeric:tabular-nums}
+.row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:inherit}
+.row.on .nm{font-weight:500}
+.row .ago{font-size:10px;color:#b4b4bb;font-variant-numeric:tabular-nums}
+.row .acts{display:flex;gap:1px;flex:0 0 auto}
+.row .acts .iconbtn{width:18px;height:18px;font-size:12px}
+/* 在跑的行：呼吸点（不加新元素，只在状态图标上提亮 + 呼吸） */
+.row .st.run::after{content:"";position:absolute;left:15px;top:50%;width:4px;height:4px;
+  margin-top:-2px;border-radius:50%;background:var(--emerald);opacity:.5;animation:breathe 1.8s infinite}
+
+/* 历史任务区 */
+.hist{margin:8px 6px 0;border-top:1px solid var(--border);padding-top:6px}
+.hist-head{display:flex;align-items:center;gap:6px;padding:2px 6px;font-size:11px;
+  color:var(--muted-foreground);cursor:pointer}
+.hist-head .cnt{margin-left:auto;border:1px solid var(--border);border-radius:999px;
+  padding:0 5px;font-size:9.5px;font-variant-numeric:tabular-nums}
+.side-foot{border-top:1px solid var(--border);padding:6px;display:flex;gap:4px}
+.side-foot .iconbtn{width:24px;height:24px}
+
+/* 二级菜单（⋮ 弹层） */
+.menu{position:absolute;z-index:60;min-width:150px;background:#fff;border:1px solid var(--border);
+  border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.10);padding:4px;display:none}
+.menu.on{display:block}
+.menu button{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;
+  border-radius:5px;background:none;font:inherit;font-size:12px;color:inherit;text-align:left;cursor:pointer}
+.menu button:hover{background:var(--muted)}
+.menu button.danger{color:var(--destructive)}
+.menu hr{border:0;border-top:1px solid var(--border);margin:4px 2px}
+
+/* ── 主区 ─────────────────────────────────────────────── */
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.roomhead{display:flex;align-items:center;gap:8px;padding:9px 16px;border-bottom:1px solid var(--border)}
+.roomhead .type{display:flex;align-items:center;gap:4px;padding:1px 6px;border:1px solid var(--border);
+  border-radius:5px;font-size:10.5px;color:var(--muted-foreground)}
+.roomhead .num{font-size:11px;color:#a1a1aa;font-variant-numeric:tabular-nums}
+.roomhead .ttl{font-size:13.5px;font-weight:600;max-width:24rem;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.roomhead .sp{margin-left:auto;display:flex;gap:4px}
+.tabs{display:flex;gap:14px;padding:0 16px;border-bottom:1px solid var(--border);font-size:11px;
+  color:var(--muted-foreground)}
+.tabs .t{padding:6px 0;border-bottom:2px solid transparent;cursor:pointer}
+.tabs .t.on{border-color:var(--foreground);color:var(--foreground);font-weight:500}
+
+.stream{flex:1;overflow:auto;padding:16px 20px 8px}
+/* 轮次容器：头（头像+名字+**绝对时间**+状态位）→ 内容 → 结算条。整段从生到死不换 DOM */
+.turn{margin-bottom:18px}
+.thead{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted-foreground);margin-bottom:6px}
+.thead .av{width:16px;height:16px;border-radius:50%;background:var(--sky);flex:0 0 16px}
+.thead .who{color:var(--foreground);font-weight:600;font-size:12px}
+.thead .at{font-variant-numeric:tabular-nums;color:#a1a1aa}
+/* 轮次底行：**唯一**一行状态 + 总耗时 + 结束时间。
+   进行中就在这行换档（位置永远在轮次最下），结束后定格成结算。
+   「正在调用 bash… 44s」只此一处 —— 头部和底部状态条都不许再重复它。 */
+.tfoot{display:flex;align-items:center;gap:6px;margin:8px 0 0 23px;padding-top:6px;
+  border-top:1px dashed var(--border);font-size:10.5px;color:var(--muted-foreground);
+  font-variant-numeric:tabular-nums;min-height:17px}
+.tfoot .k{color:#a1a1aa}
+.tfoot .v{color:var(--foreground)}
+.tfoot .sep{color:#d4d4d8}
+.tfoot .sp{margin-left:auto}
+.tfoot .pdot{width:5px;height:5px;border-radius:50%;background:currentColor;animation:breathe 1.4s infinite}
+.tfoot.live{color:#b45309}
+.tfoot.live.warn{color:#92400e}
+.tfoot.live.bad{color:var(--destructive)}
+/* 总耗时从第一秒就在这行右侧走字（事后推不出来：step 只记工具时段，段与段之间的空档没人记） */
+.tfoot .elapsed{color:#a1a1aa;font-variant-numeric:tabular-nums}
+.bubble{padding:2px 0 0 23px}
+.bubble p{margin:0 0 8px}
+.toolcard{margin:0 0 8px 23px;border:1px solid var(--border);border-radius:8px;background:var(--muted-2);
+  font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden}
+.toolcard .th{display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid var(--border);
+  color:var(--muted-foreground);font-family:inherit}
+.toolcard .th .ok{color:var(--emerald)}
+.toolcard pre{margin:0;padding:6px 8px;white-space:pre-wrap;color:#52525b}
+/* 结算条：轮次结束后替换状态位那一格，不再是历史里的一条消息 */
+/* 历史里的「结局」：只有这四类配出现在时间线上 */
+.settle{display:none}
+.ended{display:flex;align-items:center;gap:6px;margin:6px 0 0 23px;font-size:10.5px;color:var(--destructive)}
+.ended .warnbox{padding:1px 5px;border:1px solid rgba(220,38,38,.3);border-radius:4px;
+  background:rgba(220,38,38,.06)}
+.me{margin:16px 0 18px}
+.meh{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted-foreground);margin-bottom:5px}
+.meh .who{color:var(--foreground);font-weight:600;font-size:12px}
+.meh .at{font-variant-numeric:tabular-nums;color:#a1a1aa}
+.mebody{padding-left:23px}
+
+/* 房间状态条（底部一条，不是头部胶囊）：谁在跑 / 谁在等你 / 谁没动 */
+.statusbar{display:flex;align-items:center;gap:8px;padding:5px 16px;border-top:1px solid var(--border);
+  background:var(--muted-2);font-size:11px;color:var(--muted-foreground);flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;height:19px;border-radius:999px;
+  border:1px solid var(--border);background:#fff}
+.chip .live{width:5px;height:5px;border-radius:50%;background:var(--amber);animation:breathe 1.4s infinite}
+.chip.ask{border-color:rgba(56,189,248,.45);background:rgba(56,189,248,.08);color:#0369a1}
+.chip.stuck{border-color:rgba(220,38,38,.3);background:rgba(220,38,38,.05);color:var(--destructive)}
+.chip button{border:0;background:none;color:inherit;cursor:pointer;font:inherit;display:flex;align-items:center;gap:3px}
+.composer{border-top:1px solid var(--border);padding:10px 16px 12px;background:#fff}
+.composer .box{border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;
+  font-size:12.5px;color:#a1a1aa;min-height:46px}
+
+/* ── 旧模样（对比用）：散装状态 + 临时话进历史 ────────────── */
+#oldView{display:none}
+body[data-mode="old"] #newView{display:none}
+body[data-mode="old"] #oldView{display:flex}
+.oldchip{display:inline-flex;align-items:center;gap:4px;padding:0 8px;height:20px;border-radius:999px;
+  border:1px solid var(--border);font-size:10.5px;color:var(--muted-foreground)}
+.memchips{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted-foreground)}
+.memchips .c{display:flex;align-items:center;gap:4px;padding:0 7px;height:18px;
+  border:1px solid var(--border);border-radius:999px}
+.memchips .c i{width:6px;height:6px;border-radius:50%;background:var(--sky);display:block}
+.hint{font-size:10.5px;color:#a1a1aa;margin-top:4px}
+.notice{margin:6px 0 6px 23px;padding:4px 8px;border-left:2px solid var(--amber);
+  background:rgba(245,158,11,.07);font-size:11px;color:#92400e}
+.typing{display:flex;align-items:center;gap:6px;margin:6px 0 14px;font-size:11px;color:var(--muted-foreground)}
+.typing .d{width:5px;height:5px;border-radius:50%;background:#a1a1aa;animation:breathe 1.2s infinite}
+.oldtime{font-variant-numeric:tabular-nums;color:#a1a1aa}
+
+/* 顶部那条提示条：本文件是 demo，不是真界面 */
+.banner{display:flex;align-items:center;gap:10px;padding:5px 12px;background:#1e293b;color:#e2e8f0;
+  font-size:11px;flex-wrap:wrap}
+.banner b{color:#fff}
+.banner .sp{margin-left:auto;display:flex;gap:6px}
+.banner button{border:1px solid #475569;background:#0f172a;color:#e2e8f0;border-radius:6px;
+  padding:3px 9px;font:inherit;font-size:11px;cursor:pointer}
+.banner button.on{background:#e2e8f0;color:#0f172a;border-color:#e2e8f0}
+</style>
+</head>
+<body data-mode="new">
+<div class="app">
+
+  <!-- demo 提示条：真界面里没有这一行 -->
+  <div class="banner">
+    <b>静态 demo</b>（假数据，不连服务端）· 点得动：关任务 / 开任务 / ⋮ 菜单 / 顶栏活动图标
+    <span class="sp">
+      <button onclick="setMode('old')" id="btnOld">看旧样子</button>
+      <button onclick="setMode('new')" id="btnNew" class="on">看新样子</button>
+    </span>
+  </div>
+
+  <!-- 顶栏：只剩品牌 + 两个活动图标（点击展开活动清单） -->
+  <div class="titlebar">
+    <div class="dots"><i></i><i></i><i></i></div>
+    <span class="brand">diy2</span>
+    <div class="tb-right">
+      <!-- 会话图标：多少个容器在跑（任务/项目） -->
+      <div class="act" id="actRooms" onclick="togglePop('popRooms',event)">
+        <span class="live"></span><span>会话</span><span class="n">3</span>
+        <div class="pop" id="popRooms" onclick="event.stopPropagation()">
+          <h4>正在活动（3）</h4>
+          <a href="#"><span class="st" style="color:var(--emerald)">●</span>#14 梳理会话状态与外壳<span class="meta">2m</span></a>
+          <a href="#"><span class="st" style="color:var(--emerald)">●</span>#12 ask 卡片取消<span class="meta">6m</span></a>
+          <a href="#"><span class="st" style="color:var(--sky)">◇</span>diy（项目）· 1 个任务在跑<span class="meta">2m</span></a>
+        </div>
+      </div>
+      <!-- 后台任务图标：**本实例全部**（跨任务）—— 与房间内那个页签不是同一个口径 -->
+      <div class="act" id="actJobs" onclick="togglePop('popJobs',event)">
+        <span>后台任务</span><span class="n">1</span>
+        <div class="pop" id="popJobs" onclick="event.stopPropagation()">
+          <h4>本实例全部（1）</h4>
+          <a href="#"><span style="color:var(--amber)">◐</span>sha.sh check<span class="meta">1m12s</span></a>
+          <a href="#" style="color:var(--muted-foreground);font-size:11px">点开进「后台任务」面板：每条标注属于哪个任务</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- ═══ 侧栏 ═══ -->
+    <aside class="side">
+      <div class="side-head">任务
+        <span class="sp">
+          <button class="iconbtn" title="新建项目">＋</button>
+        </span>
+      </div>
+      <div class="tree">
+        <div class="proj" onclick="this.querySelector('.tw').textContent = this.querySelector('.tw').textContent.trim()==='▾' ? '▸' : '▾'">
+          <span class="tw">▾</span><span class="folder">▣</span>diy
+        </div>
+        <!-- 打开的任务：行上两个常驻按钮 -->
+        <div class="row on" id="row14">
+          <span class="st run">●</span><span class="num">#14</span>
+          <span class="nm">梳理会话状态与外壳</span><span class="ago">2m</span>
+          <span class="acts">
+            <button class="iconbtn" title="关闭这个任务" onclick="closeTask('row14','梳理会话状态与外壳',14,event)">⊘</button>
+            <button class="iconbtn" title="更多" onclick="openMenu('menu14',event)">⋮</button>
+          </span>
+          <div class="menu" id="menu14">
+            <button onclick="alert('重命名（demo）')">✎ 重命名</button>
+            <button onclick="alert('在这个项目下新建任务（demo）')">＋ 新建任务</button>
+            <hr />
+            <button class="danger" onclick="alert('删除任务（demo，会先确认）')">🗑 删除任务</button>
+          </div>
+        </div>
+        <div class="row" id="row12">
+          <span class="st open">○</span><span class="num">#12</span>
+          <span class="nm">ask 卡片上的取消撤不掉</span><span class="ago">6m</span>
+          <span class="acts">
+            <button class="iconbtn" title="关闭这个任务" onclick="closeTask('row12','ask 卡片上的取消撤不掉',12,event)">⊘</button>
+            <button class="iconbtn" title="更多" onclick="openMenu('menu12',event)">⋮</button>
+          </span>
+          <div class="menu" id="menu12">
+            <button onclick="alert('重命名（demo）')">✎ 重命名</button>
+            <button onclick="alert('新建任务（demo）')">＋ 新建任务</button>
+            <hr />
+            <button class="danger" onclick="alert('删除任务（demo）')">🗑 删除任务</button>
+          </div>
+        </div>
+        <div class="row" id="rowTable">
+          <span class="st open">○</span><span class="num">#11</span>
+          <span class="nm">总表只列生命周期独立的活动</span><span class="ago">1h</span>
+          <span class="acts">
+            <button class="iconbtn" title="关闭这个任务" onclick="closeTask('rowTable','总表只列生命周期独立的活动',11,event)">⊘</button>
+            <button class="iconbtn" title="更多" onclick="openMenu('menuTable',event)">⋮</button>
+          </span>
+        </div>
+
+        <!-- 历史任务：已关闭的收在这里，行上是「打开」 -->
+        <div class="hist">
+          <div class="hist-head" onclick="const b=document.getElementById('histBody'); b.style.display = b.style.display==='none'?'block':'none'">
+            <span>历史任务</span><span class="cnt">3</span>
+          </div>
+          <div id="histBody">
+            <div class="row" id="h9" style="padding-left:6px">
+              <span class="st closed">●</span><span class="num">#9</span>
+              <span class="nm">job 结局无人接</span>
+              <span class="acts">
+                <button class="iconbtn" title="打开（重开这个任务）" onclick="openTask('h9','job 结局无人接',9,event)">↩</button>
+                <button class="iconbtn" title="更多" onclick="openMenu('menuH9',event)">⋮</button>
+              </span>
+              <div class="menu" id="menuH9">
+                <button onclick="alert('重命名（demo）')">✎ 重命名</button>
+                <button onclick="alert('新建任务（demo）')">＋ 新建任务</button>
+                <hr />
+                <button class="danger" onclick="alert('删除任务（demo）')">🗑 删除任务</button>
+              </div>
+            </div>
+            <div class="row" id="h8" style="padding-left:6px">
+              <span class="st closed">●</span><span class="num">#8</span>
+              <span class="nm">截图里的空白轮次</span>
+              <span class="acts">
+                <button class="iconbtn" title="打开" onclick="openTask('h8','截图里的空白轮次',8,event)">↩</button>
+                <button class="iconbtn" title="更多" onclick="openMenu('menuH8',event)">⋮</button>
+              </span>
+            </div>
+            <div class="row" id="h7" style="padding-left:6px">
+              <span class="st closed">●</span><span class="num">#7</span>
+              <span class="nm">dev 启动器端口</span>
+              <span class="acts">
+                <button class="iconbtn" title="打开" onclick="openTask('h7','dev 启动器端口',7,event)">↩</button>
+                <button class="iconbtn" title="更多" onclick="openMenu('menuH7',event)">⋮</button>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="side-foot">
+        <button class="iconbtn" title="设置">⚙</button>
+        <button class="iconbtn" title="收起侧栏">«</button>
+      </div>
+    </aside>
+
+    <!-- ═══ 新样子 ═══ -->
+    <main class="main" id="newView">
+      <!-- 房间头：只留 类型 + #编号 + 标题 + ⋮（状态胶囊 / 目录 / 成员 chips / 成员说明行 全删） -->
+      <div class="roomhead">
+        <span class="type">☑ 任务</span>
+        <span class="num">#14</span>
+        <span class="ttl">梳理会话状态与外壳</span>
+        <span class="sp">
+          <button class="iconbtn" title="任务面板（描述 / 正文）">▤</button>
+          <button class="iconbtn" title="更多：加成员 / 换模型 / 设置">⋮</button>
+        </span>
+      </div>
+      <div class="tabs"><span class="t on">对话</span><span class="t">上下文</span><span class="t" title="当前这个任务的后台任务（顶栏图标是本实例全部）">后台任务</span></div>
+
+      <div class="stream">
+        <!-- 已结束的轮次：头 → 内容 → 结算（结算就在轮次里，不另起一条消息） -->
+        <div class="turn">
+          <div class="thead">
+            <span class="av"></span><span class="who">小满</span>
+            <span class="at">2026-11-24 22:17</span>
+          </div>
+          <div class="bubble">
+            <p>先把「哪些话会进历史」按判据过一遍：<b>过程</b>只进 ephemeral，<b>结局</b>才落 items。</p>
+          </div>
+          <div class="toolcard">
+            <div class="th"><span class="ok">✓</span>rg "progressNotice" -n<span style="margin-left:auto">0.4s</span></div>
+            <pre>chat-core/src/progress.ts:212
+chat-core/src/history.ts:88</pre>
+          </div>
+          <div class="tfoot">
+            <span class="k">完成</span><span class="sep">·</span>
+            <span class="v">3m12s</span><span class="sep">·</span>
+            <span class="v">12.4k tokens</span><span class="sep">·</span>
+            <span class="v">7 步</span><span class="sep">·</span>
+            <span class="v">2 次工具</span>
+            <span class="sp"></span>
+            <span>结束于 <span class="v">2026-11-24 22:20</span></span>
+          </div>
+        </div>
+
+        <!-- 唯一留在历史里的「过程类」：出过错、被中止 —— 因为它已经变成结局 -->
+        <div class="turn">
+          <div class="thead">
+            <span class="av"></span><span class="who">小满</span>
+            <span class="at">2026-11-24 22:21</span>
+          </div>
+          <div class="bubble"><p>我扫一下 lab 的历史条目数。</p></div>
+          <div class="ended">
+            <span class="warnbox">已中止</span>
+            <span>模型流静默 120s（上游停摆），自动中止</span>
+          </div>
+          <div class="tfoot">
+            <span class="k">未完成</span><span class="sep">·</span>
+            <span class="v">1m58s</span><span class="sep">·</span>
+            <span class="v">3.1k tokens</span><span class="sep">·</span>
+            <span class="v">2 步</span>
+            <span class="sp"></span>
+            <span>结束于 <span class="v">2026-11-24 22:23</span></span>
+          </div>
+        </div>
+
+        <!-- 正在跑的轮次：状态位在那条线上活着换档，DOM 不动 —— 所以不会「突然空白」 -->
+        <div class="turn">
+          <div class="thead">
+            <span class="av"></span><span class="who">小满</span>
+            <span class="at">2026-11-24 22:28</span>
+          </div>
+          <div class="bubble"><p>先跑一遍全量检查。</p></div>
+          <div class="toolcard">
+            <div class="th"><span style="color:var(--amber)">◐</span>./sha.sh check<span style="margin-left:auto">44s</span></div>
+            <pre>▸ tsc --noEmit
+  entity-runtime ... ok</pre>
+          </div>
+          <!-- 进行中：同一行位置换档 + 总耗时从第一秒走字；头部不出现状态 -->
+          <div class="tfoot live" id="footLive">
+            <span class="pdot"></span><span>正在调用 bash… 44s</span>
+            <span class="sp"></span><span class="elapsed">已用 2m44s</span>
+          </div>
+        </div>
+
+        <!-- 用户发言：时间同样是绝对时刻 -->
+        <div class="me">
+          <div class="meh"><span class="who">你</span><span class="at">2026-11-24 22:35</span></div>
+          <div class="mebody">好，就按这个来。</div>
+        </div>
+      </div>
+
+      <!-- 房间状态条：底部一条。三种事实有一种就在，都没有 → 不占位 -->
+      <div class="statusbar">
+        <span class="chip ask">◔ 小满 在等你答：要不要先推分支？· 已等 2m</span>
+        <span style="margin-left:auto;color:#a1a1aa">跑没跑在轮次底行看（这里不重复）· 1 个提问待答</span>
+      </div>
+      <div class="composer"><div class="box">输入消息…（@ 可以点名）</div></div>
+    </main>
+
+    <!-- ═══ 旧样子（对比） ═══ -->
+    <main class="main" id="oldView">
+      <div class="roomhead">
+        <span class="type">☑ 任务</span>
+        <span class="ttl">梳理会话状态与外壳</span>
+        <span class="oldchip">● 进行中</span>
+        <span class="oldchip" style="font-family:monospace">▣ ~/git/diy/diy</span>
+        <span class="sp">
+          <div class="memchips">
+            <span>成员</span>
+            <span class="c"><i style="background:var(--sky)"></i>小满 <span style="color:#a1a1aa">默认应答</span></span>
+            <span class="c"><i style="background:var(--violet)"></i>阿岚</span>
+            <span class="c">＋ 成员</span>
+          </div>
+          <button class="iconbtn" title="任务面板">▤</button>
+        </span>
+      </div>
+      <div class="hint" style="padding:0 16px 6px">2 个成员：@名字叫谁谁回，@all 全回（等于开会，token 按人数涨）</div>
+      <div class="tabs"><span class="t on">对话</span><span class="t">上下文</span><span class="t" title="当前这个任务的后台任务（顶栏图标是本实例全部）">后台任务</span></div>
+
+      <div class="stream">
+        <div class="turn">
+          <div class="thead"><span class="av"></span><span class="who">小满</span><span class="oldtime">5:17 PM</span></div>
+          <div class="bubble"><p>先把「哪些话会进历史」过一遍。</p></div>
+        </div>
+        <!-- 过程话被写成 notice → 永久留在历史里 -->
+        <div class="notice">模型流已经 44 秒没有新内容 —— 再等一会仍无响应就会被自动中止（不想等可以直接按停止）</div>
+        <div class="turn">
+          <div class="thead"><span class="av"></span><span class="who">小满</span><span class="oldtime">5:18 PM</span></div>
+          <div class="bubble"><p>继续，我跑一下检查。</p></div>
+        </div>
+        <div class="notice">工具 bash 已经跑了 3 分钟没有返回 —— 可能卡住了（可以按停止中止它）</div>
+        <div class="notice">模型流已经 61 秒没有吐出第一个字 —— 还在等上游</div>
+        <div class="turn">
+          <div class="thead"><span class="av"></span><span class="who">小满</span><span class="oldtime">5:29 PM</span></div>
+          <div class="bubble"><p>全量检查结果：</p></div>
+        </div>
+        <!-- typing 是独立条目：它一消失到正文出现之间，那一格是空的 -->
+        <div class="typing"><span class="d"></span>小满正在输入…<span style="color:#a1a1aa">（这一条消失、下一条还没来时 = 空白）</span></div>
+      </div>
+      <div class="composer"><div class="box">输入消息…（@ 可以点名）</div></div>
+    </main>
+  </div>
+</div>
+
+<script>
+/* ── 顶栏活动弹层 ───────────────────────────────────────── */
+function togglePop(id, ev){
+  ev.stopPropagation();
+  document.querySelectorAll('.pop').forEach(p => { if (p.id !== id) p.classList.remove('on'); });
+  document.getElementById(id).classList.toggle('on');
+}
+/* ── 行内 ⋮ 菜单：贴着按钮定位 ──────────────────────────── */
+function openMenu(id, ev){
+  ev.stopPropagation();
+  document.querySelectorAll('.menu').forEach(m => { if (m.id !== id) m.classList.remove('on'); });
+  const menu = document.getElementById(id);
+  if (!menu) return;
+  menu.classList.add('on');
+  const r = ev.currentTarget.getBoundingClientRect();
+  menu.style.position = 'fixed';
+  menu.style.left = Math.min(r.left, window.innerWidth - 170) + 'px';
+  menu.style.top = (r.bottom + 4) + 'px';
+}
+document.addEventListener('click', () => {
+  document.querySelectorAll('.menu,.pop').forEach(m => m.classList.remove('on'));
+});
+
+/* ── 关闭 / 打开任务：行真的在「项目树 ↔ 历史任务」之间搬家 ── */
+function closeTask(rowId, title, num, ev){
+  ev.stopPropagation();
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  document.getElementById('histBody').insertAdjacentHTML('afterbegin', `
+    <div class="row" id="${rowId}" style="padding-left:6px">
+      <span class="st closed">●</span><span class="num">#${num}</span>
+      <span class="nm">${title}</span>
+      <span class="acts">
+        <button class="iconbtn" title="打开（重开这个任务）" onclick="openTask('${rowId}','${title}',${num},event)">↩</button>
+        <button class="iconbtn" title="更多">⋮</button>
+      </span>
+    </div>`);
+  row.remove();
+  document.getElementById('histBody').style.display = 'block';
+  bumpHistCount(1);
+}
+function openTask(rowId, title, num, ev){
+  ev.stopPropagation();
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const first = document.querySelector('#row14, #row12, #rowTable');
+  const html = `
+    <div class="row" id="${rowId}">
+      <span class="st open">○</span><span class="num">#${num}</span>
+      <span class="nm">${title}</span><span class="ago">刚刚</span>
+      <span class="acts">
+        <button class="iconbtn" title="关闭这个任务" onclick="closeTask('${rowId}','${title}',${num},event)">⊘</button>
+        <button class="iconbtn" title="更多">⋮</button>
+      </span>
+    </div>`;
+  row.remove();
+  if (first) first.insertAdjacentHTML('beforebegin', html);
+  else document.querySelector('.proj').insertAdjacentHTML('afterend', html);
+  bumpHistCount(-1);
+}
+function bumpHistCount(delta){
+  const el = document.querySelector('.hist-head .cnt');
+  el.textContent = String(Math.max(0, Number(el.textContent) + delta));
+  const rows = document.querySelectorAll('#histBody .row');
+  if (rows.length === 0) document.getElementById('histBody').style.display = 'none';
+}
+
+/* ── 新旧切换 ───────────────────────────────────────────── */
+function setMode(mode){
+  document.body.dataset.mode = mode;
+  document.getElementById('btnOld').classList.toggle('on', mode === 'old');
+  document.getElementById('btnNew').classList.toggle('on', mode === 'new');
+}
+
+/* ── 状态位轮播：演示「一条线上换档，位置不动」 ───────────── */
+const PHASES = [
+  ['work', '正在调用 bash…', '44s'],
+  ['work', '正在等模型回第一个字…', '61s'],
+  ['warn', '模型流静默 44s', '44s'],
+  ['work', '正在压缩上下文…', '12s'],
+  ['wait', '正在输入…', ''],
+];
+let pi = 0;
+/* ── 轮次底行轮播：演示「同一行换档 + 总耗时一直走字」 ───────── */
+let elapsed = 164;
+function fmt(s){ const m = Math.floor(s / 60); return m > 0 ? m + 'm' + String(s % 60).padStart(2, '0') + 's' : s + 's'; }
+setInterval(() => {
+  const el = document.getElementById('footLive');
+  if (!el || document.body.dataset.mode !== 'new') return;
+  elapsed += 3;
+  pi = (pi + 1) % PHASES.length;
+  const [cls, text, time] = PHASES[pi];
+  el.className = 'tfoot live' + (cls === 'work' ? '' : ' ' + cls);
+  el.innerHTML = '<span class="pdot"></span><span>' + text + (time ? ' ' + time : '') + '</span>' +
+    '<span class="sp"></span><span class="elapsed">已用 ' + fmt(elapsed) + '</span>';
+}, 2600);
+</script>
+</body>
+</html>

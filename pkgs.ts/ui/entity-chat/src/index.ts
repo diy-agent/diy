@@ -34,10 +34,19 @@ export { Modal } from './components/Dialogs';
 export { ModelPicker } from './components/ModelPicker';
 export { modelLabel } from './models';
 export { Sidebar } from './components/Sidebar';
+// 对话区那一条的两样（表面切换 / 房间菜单）：宿主可以把它们摆进自己的区域标题栏
+// （工作台就是这么做的，`bar="host"` 时对话区不再自己画那一行）。
+export { RoomMenu, SurfaceTabs } from './components/ConversationBar';
 export { TaskPanel } from './components/TaskPanel';
 // 作业卡片：两个 surface 共用（判据在 chat-core 的 `jobOf`）。导出是为了让
 // 选择型实验台能直接拿真组件摆样子 —— 别在 demo 里另画一份。
 export { JobCard } from './components/JobCard';
+// 标题栏右端的两颗活动图标（会话 N / 作业 M）：壳只负责把它们摆进 tools，
+// 数字由组件自己订阅（全实例活动流）—— 宿主不会为「有人开跑」重渲一遍。
+export { ActiveJobsGlyph, ActiveSessionsGlyph } from './components/ActiveGlyphs';
+// 全局作业面板：房间内入口是输入框底栏的 `JobsChip`（抽屉），而「结局无人接」发生在
+// 房间被删之后 —— 那时没有会话面，只能从标题栏那颗「作业 N」打开这一份。
+export { JobsPanel } from './components/JobsChip';
 export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';
 export type { RoomDialogs } from './useRoomDialogs';
 
@@ -71,6 +80,7 @@ export type {
 
 export {
     bootstrapStore,
+    jumpToFirstRunningRoom,
     roomOf,
     shellSnapshot,
     useAddress,

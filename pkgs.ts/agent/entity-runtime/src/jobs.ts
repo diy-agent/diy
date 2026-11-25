@@ -56,8 +56,19 @@ export function parseJobOwner(owner: string | undefined): JobOwner | undefined {
 export interface RoomJobsHost {
     /** 运行产物根（账本的 `meta.json` / `out.log` 落这里；diy2 = `<home>/log/job/runs`） */
     rootDir: string;
-    /** 一条 run 收口之后去哪（房间自己决定是插话还是只留一条 notice） */
-    onDone: (event: JobDoneEvent, owner: JobOwner) => void;
+    /**
+     * 一条 run 收口之后去哪（房间自己决定是插话还是只留一条 notice）。
+     *
+     * **返回 false = 没人接**（房间已删 / 成员已退）：账本会把它记成
+     * `delivered: false` 并写进 run 目录的 `done.json` —— 否则结局静默消失，
+     * 只剩盘上一堆没人认领的产物。
+     */
+    onDone: (event: JobDoneEvent, owner: JobOwner) => boolean | void;
+    /**
+     * 账本变了（新起一条 / 收口一条）—— 给宿主的「全局活动」推导用。
+     * 不传 = 没人关心（agent 自己的 `job` 工具就是工具调用式的，不需要推）。
+     */
+    onChange?: () => void;
 }
 
 /**
@@ -69,10 +80,12 @@ export interface RoomJobsHost {
 export function createJobRegistry(host: RoomJobsHost): RunRegistry {
     return new RunRegistry({
         rootDir: host.rootDir,
+        ...(host.onChange === undefined ? {} : { onChange: host.onChange }),
         notifier: (event) => {
             const owner = parseJobOwner(event.taskUri);
-            if (owner === undefined) return;
-            host.onDone(event, owner);
+            // 归属串不是本形态（被别的宿主起的）：同样算「没人接」
+            if (owner === undefined) return false;
+            return host.onDone(event, owner);
         },
     });
 }

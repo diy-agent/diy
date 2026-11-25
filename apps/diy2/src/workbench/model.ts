@@ -79,6 +79,15 @@ export interface AreaDef {
     mode?: Mode;
     /** 允许的形态；缺省三种全允许，给一个值就是**锁定形态**（该区域不给切换按钮） */
     modes?: readonly Mode[];
+    /**
+     * 区域标题栏**右端**的宿主扩展（用户 2026-11-24：Astryx / shadcn 那两颗 tab
+     * 「上移为 view 级别」）。适用的是「这块区域换一种画法」这类**视图级**开关 ——
+     * 它不属于某个 view 内部（那会长在内容顶上多占一行），而是这一块区域本身的属性。
+     *
+     * 云节点由调用方自己给（本模块是纯数据，不碰状态）：对话区的这一颗在
+     * `ConversationAreaBar.tsx`，它自己从 store / dialogs 里取所需。
+     */
+    bar?: ReactNode;
 }
 
 export function area(

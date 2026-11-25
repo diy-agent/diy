@@ -7,7 +7,14 @@
 // 左栏「修复前」= 同一条流在旧逻辑下的下场（只分跑成/跑不成，没有收尾解释），
 // 右边「现在」= 现在会落什么条目、用户看得到什么、该做什么。
 
-import { buildTimeline, endFooterOf, type Item, type TimelineEntry, type TurnEndReason } from '@diy-agent/chat-core';
+import {
+    buildTimeline,
+    endFooterOf,
+    type Item,
+    type TimelineEntry,
+    type TurnEndReason,
+    type TurnFacts,
+} from '@diy-agent/chat-core';
 import {
     ROOM_SCENARIOS,
     replayRoom,
@@ -65,9 +72,15 @@ function ToolRow({ part }: { part: Extract<TimelineEntry['parts'][number], { kin
     );
 }
 
+/** lab 页只有「为什么停」，没有时刻 / 用量：包成 TurnFacts 的形状交给同一个 buildTimeline */
+function turnsOf(reasons: Record<string, TurnEndReason> | undefined): { turns?: Record<string, TurnFacts> } {
+    if (reasons === undefined) return {};
+    return { turns: Object.fromEntries(Object.entries(reasons).map(([key, reason]) => [key, { reason }])) };
+}
+
 function Timeline({ items, endReasons }: { items: readonly Item[]; endReasons?: Record<string, TurnEndReason> }) {
     // 与真实 UI 同一条路：turn.end 事实 → buildTimeline 挂到该轮最后一段 → endFooterOf 出文案
-    const entries = buildTimeline(items, [], {}, endReasons === undefined ? {} : { endReasons }).filter(
+    const entries = buildTimeline(items, [], {}, turnsOf(endReasons)).filter(
         (entry) => entry.kind !== 'user' && entry.kind !== 'typing',
     );
     if (entries.length === 0) return <p className="empty">（时间线上什么都不会多出来）</p>;
@@ -83,7 +96,7 @@ function Timeline({ items, endReasons }: { items: readonly Item[]; endReasons?: 
                                 <span>{entry.parts[0]?.kind === 'text' ? entry.parts[0].text : ''}</span>
                             </div>
                             {/* 这一轮没有 bot 消息时（空产出 / 直接失败），结局就挂在这条上 */}
-                            <EndFooter reason={entry.endReason} />
+                            <EndFooter reason={entry.turn?.reason} />
                         </div>
                     );
                 }
@@ -109,7 +122,7 @@ function Timeline({ items, endReasons }: { items: readonly Item[]; endReasons?: 
                                 ) : null,
                             )}
                             {entry.streaming ? <span className="empty">…（这条还在流式，没被收尾）</span> : null}
-                            <EndFooter reason={entry.endReason} />
+                            <EndFooter reason={entry.turn?.reason} />
                         </div>
                     </div>
                 );
@@ -118,7 +131,7 @@ function Timeline({ items, endReasons }: { items: readonly Item[]; endReasons?: 
     );
 }
 
-function EndFooter({ reason }: { reason: TimelineEntry['endReason'] }) {
+function EndFooter({ reason }: { reason: TurnEndReason | undefined }) {
     const footer = endFooterOf(reason);
     if (footer === undefined) return null;
     return (
@@ -207,12 +220,12 @@ function checkPlacement(result: RoomReplay, entries: TimelineEntry[]): Placement
         const mine = entries.filter((entry) => entry.turnId === expected.turnId);
         // 「有页脚」= 真的渲染出来那行字（`endFooterOf`）。`completed` 的结局事实也挂在条目上，
         // 只是按约定不显示 —— 事实和渲染是两件事，自检必须按**看得见的**那行算。
-        const withFooter = mine.filter((entry) => endFooterOf(entry.endReason) !== undefined);
+        const withFooter = mine.filter((entry) => endFooterOf(entry.turn?.reason) !== undefined);
         const footerKinds = withFooter.map((entry) => entry.kind);
         const lastBot = mine.filter((entry) => entry.kind !== 'notice' && entry.kind !== 'error').at(-1);
 
         if (expected.on === 'none') {
-            const factOnly = mine.some((entry) => entry.endReason !== undefined) && withFooter.length === 0;
+            const factOnly = mine.some((entry) => entry.turn?.reason !== undefined) && withFooter.length === 0;
             return {
                 turnId: expected.turnId,
                 on: expected.on,
@@ -253,7 +266,7 @@ function checkPlacement(result: RoomReplay, entries: TimelineEntry[]): Placement
 }
 
 function RoomCard({ index, result }: { index: number; result: RoomReplay }) {
-    const entries = buildTimeline(result.items, [], {}, { endReasons: result.endReasons });
+    const entries = buildTimeline(result.items, [], {}, turnsOf(result.endReasons));
     const placements = checkPlacement(result, entries);
     const broken = placements.filter((placement) => !placement.ok);
 
@@ -340,7 +353,7 @@ function RoomCard({ index, result }: { index: number; result: RoomReplay }) {
 function RoomSection() {
     const results = ROOM_SCENARIOS.map((scenario) => replayRoom(scenario));
     const broken = results.filter((result) => {
-        const entries = buildTimeline(result.items, [], {}, { endReasons: result.endReasons });
+        const entries = buildTimeline(result.items, [], {}, turnsOf(result.endReasons));
         return checkPlacement(result, entries).some((placement) => !placement.ok);
     });
 

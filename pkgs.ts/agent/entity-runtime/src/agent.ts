@@ -79,6 +79,11 @@ export interface RunOptions {
      */
     stallTimeouts?: { firstMs: number; idleMs: number; toolMs: number };
     /**
+     * 可以等任意久的工具（缺省 `['ask']`，见 `stall-watchdog.ts`）：这些不计入工具时段的上限。
+     * 传空数组 = 所有工具都受 `stallTimeouts.toolMs` 约束（排障时用）。
+     */
+    unboundedTools?: Iterable<string>;
+    /**
      * 步数上限（工具循环）。不传 = `DEFAULT_MAX_STEPS`。
      *
      * 为什么必须有：`stopWhen` 缺省**不限步数**时，唯一刹车是用户点停止 —— 手动对话没问题，
@@ -161,6 +166,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     else options.signal.addEventListener('abort', forwardAbort, { once: true });
     const watchdog = new StallWatchdog({
         ...(options.stallTimeouts ?? stallTimeoutsFromEnv()),
+        ...(options.unboundedTools === undefined ? {} : { unboundedTools: options.unboundedTools }),
         onStall: (info) => {
             stallInfo = info;
             stall.abort();
@@ -243,8 +249,8 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     try {
         for await (const part of result.stream) {
             // 有数据 = 上游还活着；工具调用之后的等待算「工具在执行」而不是「上游在挂」
-            // （`ask` 可能要等用户很久、`job wait` 能等 10 分钟：那些不能当停摆掐掉）
-            if (part.type === 'tool-call') watchdog.toolStart();
+            // （`ask` 等用户多久都行 —— 它在豁免名单里；其余工具受 `toolMs` 兑底，见 ##560）
+            if (part.type === 'tool-call') watchdog.toolStart(part.toolName);
             else watchdog.touch();
             switch (part.type) {
                 case 'finish-step':
@@ -314,7 +320,9 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         // 看门狗掐的和用户按停的都会走到这里：**只有看门狗那条**要说成“停摆”（用户按停不能冤枉上游，
         // 反之停摆也不该被当成人取消 —— 那样用户会以为是自己点错了）
         if (stallInfo !== undefined && !options.signal.aborted) {
-            yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo) };
+            // `stall` 把「卡在哪个时段 / 等了多久」带给上层：收尾判据靠它把这一轮落成
+            // `stalled` 而不是一般 `error`（杀它的这一层不说是哪个，上层就只剩猜测）
+            yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo), stall: stallInfo };
             return;
         }
         yield { seq: ++seq, type: 'run.failed', turnId, message: friendlyError(error) };
@@ -327,7 +335,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     // 流在正常路径上结束（被 abort 时 ai-sdk 可能给一个 `abort` part 而不是抛）：
     // 停摆仍要算失败 —— 不能因为“循环退出了”就把它当正常收尾
     if (stallInfo !== undefined && !options.signal.aborted) {
-        yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo) };
+        yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo), stall: stallInfo };
         return;
     }
 

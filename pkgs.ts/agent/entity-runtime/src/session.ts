@@ -31,9 +31,10 @@ import {
     type TranscriptEntry,
 } from './compaction';
 import { contextWindowOf, maxOutputTokensOf } from './providers';
+import { ProgressBroadcast, ProgressWatch, type ProgressPolicy } from './progress';
 import { Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
-import type { AgentEvent, Author, Bot, DeliveryState, Item, TurnEndReason } from './types';
+import type { AgentEvent, Author, Bot, DeliveryState, Item, ProgressStage, TurnEndReason } from './types';
 
 export interface CompactOptions {
     /** 手工压缩：保留最近几轮（0 = 压到头，与 diy1 的 keepRounds 同语义） */
@@ -56,8 +57,17 @@ export interface TurnResult extends Turn {
     /** 本轮产出的全部文本（房间层据此写"结论"条目） */
     text: string;
     failed: boolean;
-    /** 本轮实测用量（真实 token，可用于校准预算） */
+    /**
+     * 本轮实测用量（真实 token，可用于校准预算）。
+     *
+     * **是本轮的**，不是上一轮的：`lastUsage`（压缩判据用）在失败轮不会被刷新，直接用
+     * 它会把这轮的结算行写成上一轮的数字（失败轮最常见的就是拿不到 usage）。
+     */
     usage?: TokenUsage;
+    /** 这一轮的开始时刻（= `turn.start` 广播的那个值，同一个来源） */
+    startedAt?: number;
+    /** 这一轮的结束时刻 */
+    endedAt?: number;
     /**
      * 这一轮**为什么**结束。`max-tokens` / `tool-mismatch` / `interrupted` 都要能说出来 ——
      * 否则「被截断」和「说完了」在数据里没有区别（就是「执行一半停下」那个 bug）。
@@ -77,7 +87,7 @@ export type SessionEvent =
      * 为什么不复用 `busy: true`：一次 busy 期间可以连着跑好几轮（队列分几批），
      * 而"新的一轮"才是世界状态换代的时刻 —— 见 ask.ts 头部的寿命规则。
      */
-    | { type: 'turn.start'; turn: Turn }
+    | { type: 'turn.start'; turn: Turn; startedAt: number }
     /** 一轮结束（房间据此写结论） */
     | { type: 'turn.end'; result: TurnResult }
     /** 真压了一次 */
@@ -90,6 +100,11 @@ export type SessionEvent =
     | { type: 'compact.progress'; compact: CompactionProgress }
     /** 运行失败（条目层面的失败会以 item 形式出现） */
     | { type: 'error'; message: string }
+    /**
+     * 此刻在等什么、多久没动（ephemeral，房间补上 botId 后当 `progress` 事件广播）。
+     * 只给 UI 看「还活着吗」，**不进 items、不进快照** —— 理由见 protocol 里的 `progress`。
+     */
+    | { type: 'progress'; turnId: string; awaiting: string; idleMs: number; alive: boolean; stage: ProgressStage }
     /** 开始 / 结束一轮（房间据此维护"谁在说话"） */
     | { type: 'busy'; busy: boolean };
 
@@ -156,6 +171,10 @@ export interface SessionDeps {
     maxOutputTokens?: number;
     /** 步数上限（缺省 `DEFAULT_MAX_STEPS`；到顶按 `max-steps` 收尾，不算失败） */
     maxSteps?: number;
+    /** 卡死看门狗的阈值（缺省见 progress.ts 的 `DEFAULT_PROGRESS_POLICY`）；测试可调小 */
+    progressPolicy?: Partial<ProgressPolicy>;
+    /** 看门狗判定间隔（缺省 5000ms）；测试可调小 */
+    progressTickMs?: number;
 }
 
 interface QueueItem {
@@ -189,6 +208,8 @@ export class BotSession {
     private readonly events: CompactEvent[] = [];
     /** 上一轮实测用量：给策略做真实 token 判据 */
     private lastUsage: TokenUsage | undefined;
+    /** **本轮**实测用量：结算行（tokens）只用它，与本轮生命周期同起同落 */
+    private turnUsage: TokenUsage | undefined;
     /** 最近一次运行的轮次号（手动压缩时用它，不额外消耗轮次） */
     private turnNow = 0;
     /** 当前使用的模型：房间改模型时要能推下来（构造时的 deps.modelKey 只是初值） */
@@ -511,15 +532,68 @@ export class BotSession {
     private async runTurn(items: QueueItem[]): Promise<void> {
         const turn = items[0]?.turn ?? this.deps.allocateTurn();
         this.turnNow = turn.turn;
+        // 这一轮的起止时刻：**一个来源**（广播、turn.end、界面消息头 / 结算行全从这里来）。
+        // 不让客户端各自 `Date.now()`：跨刷新、跨 surface 的两个数字必须说的是同一件事。
+        const startedAt = Date.now();
+        this.turnUsage = undefined;
         // 先广播"这一轮开始了"：房间据此把上一个回合留下的未答提问判过期（ask.ts 的寿命规则）
-        this.emit({ type: 'turn.start', turn });
+        this.emit({ type: 'turn.start', turn, startedAt });
         const projector = new Projector(this.authorOf(), turn.turn);
         const abort = new AbortController();
         this.abort = abort;
 
+        // ── 看门狗 ──
+        // 下面那个 for-await **只有 SDK 肯退出时**才会走到 finally：网关连上了不吐字节、
+        // 流中途静默时，收尾判据（endReasonOf / endItems / turn.end）永远没机会跑 ——
+        // 用户看到的是「一直转圈」，而且关掉重开照样转（卡在调用里的人没人管）。
+        //
+        // **本层只说不杀**（2026-11-25 裁）：模型流的中止权归 agent 层的 StallWatchdog
+        //（它是「读流的人」，事实质量高一档）；这里负责「让人早点看见」 ——
+        // 按它的斩杀线派生提示档，另管它看不见的三样（工具 / compact / 整轮墙钟）。
+        const watch = new ProgressWatch({
+            ...(this.deps.progressPolicy === undefined ? {} : { policy: this.deps.progressPolicy }),
+        });
+        watch.start(turn.turnId);
+        // `progress` 事件的节流器（只在事实变了时发，见 progress.ts 的 ProgressBroadcast）
+        const broadcast = new ProgressBroadcast(this.deps.progressPolicy ?? {});
+        /**
+         * StallWatchdog 中止时的事实（在等谁 / 空了多久），从 `run.failed.stall` 取。
+         *
+         * 为什么不在本层算：中止那一刻本层的 `pending` 已经被 `run.failed` 清空了（收尾不再判），
+         * 现取只剩 undefined —— 真事实反而丢了。让杀它的那一层把事实带过来。
+         */
+        let stallFact: { awaiting: string; idleMs: number } | undefined;
+        const watchdog = setInterval(() => {
+            if (abort.signal.aborted) return;
+            // **只广播事实，不落条目**（用户 2026-11-24：「过程不该进历史」）。
+            // 这条 `progress` 事件是 ephemeral 的：刷新即失 —— 合理，下一秒 tick 又会把它
+            // 刷回来（轮次还在跑）。以前这里还多一步：把「该提醒了」翻成一条 notice 写进
+            // 永久时间线，于是“61 秒还没吐第一个字”“压缩已经 5 分钟没回”一天天堆着；
+            // 现在这些只活在这一刻的档位里（`stage`），真出事由 endItems 给一条结论。
+            const fact = watch.fact();
+            const stage = fact === undefined ? null : broadcast.shouldSend(fact);
+            if (fact !== undefined && stage !== null) {
+                this.emit({
+                    type: 'progress',
+                    turnId: turn.turnId,
+                    awaiting: fact.awaiting,
+                    idleMs: fact.idleMs,
+                    alive: fact.alive,
+                    stage,
+                });
+            }
+        }, this.deps.progressTickMs ?? 5_000);
+        // 别拖住进程退出（worktree 里跑测试时不至于挂住）
+        (watchdog as { unref?: () => void }).unref?.();
+
         // 开跑前先把已到的公共条目并进来，再按自己的预算压一次（压不压只看自己）
         this.drainPending();
-        await this.compact({ turn: turn.turn, turnId: turn.turnId });
+        watch.enter('compact');
+        try {
+            await this.compact({ turn: turn.turn, turnId: turn.turnId });
+        } finally {
+            watch.settle('compact');
+        }
 
         // 本轮要处理的用户消息直接作为 prompt 的一部分（不出现在别处，避免重复记账）
         const userEntries: TranscriptEntry[] = items
@@ -581,11 +655,21 @@ export class BotSession {
                 },
                 onUsage: (usage) => {
                     this.lastUsage = usage;
+                    this.turnUsage = usage;
                 },
             })) {
+                watch.apply(event);
                 if (event.type === 'run.failed') {
                     failed = true;
                     failureMessage = event.message;
+                    // agent 层看门狗杀的这一轮：把「在等谁 / 空了多久」拿过来（中止的事实只有它知道，
+                    // 见上面 `stallFact` 的注释）。有这个就是 `stalled`，不是一般失败。
+                    if (event.stall !== undefined) {
+                        stallFact = {
+                            awaiting: event.stall.phase === 'tool' ? 'tool' : 'model-stream',
+                            idleMs: event.stall.waitedMs,
+                        };
+                    }
                 }
                 if (event.type === 'run.finished') {
                     finished = true;
@@ -611,6 +695,7 @@ export class BotSession {
             failureMessage = friendlyError(error);
             this.emit({ type: 'error', message: failureMessage });
         } finally {
+            clearInterval(watchdog);
             // 本轮真正发生过的内容（含自己的 tool / reasoning）原样入账
             this.transcript.push(...userEntries, ...produced);
             // 到这一步本轮输入才**真的进了 transcript**（= 会被写进快照）。水位只能跟到这里：
@@ -625,9 +710,13 @@ export class BotSession {
             for (const item of projector.finalize()) this.emit({ type: 'item', item });
 
             // 为什么结束：判定只在 end-reason.ts（session / 房间 / 测试 / lab 页共用一份）。
-            const endReason = endReasonOf({
+            const verdict = endReasonOf({
                 failed,
                 aborted: abort.signal.aborted,
+                // 谁按的停：人按的（cancel）与看门狗杀的要分开 —— 后者是事实，不是故障。
+                // 看门狗的 stallFact 放后面：它优先（它自己开跑 abort，session 信号没被 abort）
+                ...(abort.signal.aborted ? { abortedBy: 'human' as const } : {}),
+                ...(stallFact === undefined ? {} : { abortedBy: 'deadline' as const, stall: stallFact }),
                 finished,
                 ...(finishReason === undefined ? {} : { finishReason }),
                 steps,
@@ -636,6 +725,9 @@ export class BotSession {
                 maxOutputTokens: reportedBudget ?? maxOutputTokens,
                 maxSteps: reportedStepCap ?? maxSteps,
             });
+            // 工具次数放进结算事实（`endReasonOf` 只判「为什么停」，不记次数）：
+            // 结算行要写「N 次工具」，而它只能从运行侧数得到。
+            const endReason = toolCalls === 0 ? verdict : { ...verdict, toolCalls };
 
             // 「怎么停的」必须说出来，否则数据里和正常收尾一模一样：
             // 截断 / 过滤 / 工具悬空 → notice；未知 / 失败 → 错误条目（未知按错误处理）。
@@ -663,7 +755,9 @@ export class BotSession {
                     text: text.trim(),
                     failed: endReason.type === 'error' || endReason.type === 'unknown',
                     endReason,
-                    ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
+                    startedAt,
+                    endedAt: Date.now(),
+                    ...(this.turnUsage === undefined ? {} : { usage: this.turnUsage }),
                 },
             });
 

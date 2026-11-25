@@ -84,6 +84,74 @@ describe('快照里的 running（服务端事实）', () => {
     });
 });
 
+describe('轮次时刻（消息头 + 结算行读它）', () => {
+    it('turn.start 先给开始时刻：不必等第一条内容到达', () => {
+        const state = applyEvent(emptyState(), {
+            kind: 'turn.start',
+            botId: 'b1',
+            turnId: 't1',
+            startedAt: 1_000,
+        });
+        expect(state.turns['t1\u0000b1']).toEqual({ startedAt: 1_000 });
+    });
+
+    it('turn.end 补齐结局 / 结束时刻 / 用量，开始时刻仍是同一个值', () => {
+        let state = applyEvent(emptyState(), {
+            kind: 'turn.start',
+            botId: 'b1',
+            turnId: 't1',
+            startedAt: 1_000,
+        });
+        state = applyEvent(state, {
+            kind: 'turn.end',
+            botId: 'b1',
+            turnId: 't1',
+            reason: { type: 'completed', steps: 3 },
+            startedAt: 1_000,
+            endedAt: 193_000,
+            usage: { inputTokens: 900, outputTokens: 100 },
+            toolCalls: 2,
+        });
+        const facts = state.turns['t1\u0000b1'];
+        expect(facts?.startedAt).toBe(1_000);
+        expect(facts?.endedAt).toBe(193_000);
+        expect(facts?.toolCalls).toBe(2);
+        expect(facts?.usage).toEqual({ inputTokens: 900, outputTokens: 100 });
+        expect(facts?.reason?.type).toBe('completed');
+    });
+
+    it('老服务端不给 startedAt 时沿用 turn.start 那个（不许把开始时刻抹掉）', () => {
+        let state = applyEvent(emptyState(), {
+            kind: 'turn.start',
+            botId: 'b1',
+            turnId: 't1',
+            startedAt: 1_000,
+        });
+        state = applyEvent(state, {
+            kind: 'turn.end',
+            botId: 'b1',
+            turnId: 't1',
+            reason: { type: 'completed' },
+        });
+        expect(state.turns['t1\u0000b1']?.startedAt).toBe(1_000);
+    });
+
+    it('刷新后：在跑的那几轮开始时刻来自快照（事件丢了，时间不能丢）', () => {
+        const state = fromSnapshot({
+            items: [item({ status: 'streaming' })],
+            deliveries: [],
+            speaking: ['b1'],
+            runningTurns: [{ botId: 'b1', turnId: 't1', startedAt: 1_700_000_000_000 }],
+        });
+        expect(state.turns['t1\u0000b1']?.startedAt).toBe(1_700_000_000_000);
+    });
+
+    it('老服务端没有 runningTurns：turns 为空（UI 退回条目时刻，不报错）', () => {
+        const state = fromSnapshot({ items: [item()], deliveries: [], speaking: ['b1'] });
+        expect(state.turns).toEqual({});
+    });
+});
+
 describe('compact（手动压缩的进度）', () => {
     const progress = (compactId: string, state: 'running' | 'done' | 'failed' | 'cancelled', startedAt = 0) => ({
         kind: 'compact' as const,

@@ -139,6 +139,14 @@ export class RoomActor {
     private readonly toolsByBot = new Map<string, ToolSet | undefined>();
     /** 正在跑一轮的成员（UI 的"谁在说话"用它，不由前端猜） */
     private readonly speaking = new Set<string>();
+    /**
+     * 在跑的那一轮从何时开始（botId → { turnId, startedAt }）。
+     *
+     * 存在理由：消息头要写「开始于 22:28」、滚动行要写「已用 2m44s」，这两个数字必须和
+     * 收轮时的 `turn.end.startedAt` 是**同一个值**。让客户端拿条目时刻去推，收轮时会跳一下。
+     * 进快照（`runningTurns`）：刷新后事件没了，但时间不变。
+     */
+    private readonly turnStarts = new Map<string, { turnId: string; startedAt: number }>();
     private lastRunningKey = '';
 
     constructor(private readonly deps: RoomActorDeps) {
@@ -186,15 +194,37 @@ export class RoomActor {
      * 直接以一条 notice 落盘，不需要新造事件类型。
      *
      * 没有开着的轮时**一次查询就走**（不读 items）—— 正常重启不该为此付 ensureInit 的钱。
+     *
+     * ⚠️ 只有「**不会续跑**的开轮」才算中断。diy2 的恢复会按原 turn 号重放还挂在
+     * `queued` / `delivering` 的投递（见 `recover()`），那一轮马上就会重新 `turn.start` ——
+     * 对它报「没跑完」会落成一条与紧随其后的续跑内容自相矛盾的事实；更要紧的是续跑完成
+     * **不产条目**，于是这条 notice 永远是那一轮的最后一条轮级事实，bot 被永久误标成中断。
+     * 所以：还挂着待重放投递的轮，一句都不报、标记也不销。
      */
     private reportOpenTurns(): void {
         const opens = this.deps.store.openTurns(this.id);
         if (opens.length === 0) return;
+        // botId → 他名下会被续跑的 turnId（turnId 是房间级的，@all 时必须按 bot 分开认）
+        const replaying = new Map<string, Set<string>>();
+        for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
+            if (delivery.turnId === undefined) continue;
+            const turns = replaying.get(delivery.botId) ?? new Set<string>();
+            turns.add(delivery.turnId);
+            replaying.set(delivery.botId, turns);
+        }
         for (const open of opens) {
             const bot = this.member(open.botId);
             // 成员已经不在这个房间里（被移出）：没有可归属的事实，直接销标记
             if (bot === undefined) {
                 this.deps.store.closeTurn(this.id, open.botId);
+                continue;
+            }
+            if (replaying.get(open.botId)?.has(open.turnId) === true) {
+                // 不报、不销标记：留给续跑的 turn.start / turn.end 自己收口。
+                // 万一续跑没成（投递重放失败 → state 变 failed），它就不在 pending 里了，
+                // 下次启动会走下面那条正经分支 —— 真中断不会漏报，只是晚一个启动周期。
+                // 顺手把**上次启动已经报错落到磁盘**的那条撤掉（自愈旧误报）。
+                this.deps.store.deleteInterruptedFacts(this.id, open.turnId, open.botId);
                 continue;
             }
             const order = this.nextOrder();
@@ -429,6 +459,18 @@ export class RoomActor {
         return this.members()
             .map((bot) => bot.id)
             .filter((botId) => this.speaking.has(botId));
+    }
+
+    /**
+     * 在跑的那几轮的开始时刻（快照用）。
+     *
+     * 只给 `runningBots()` 里真在跑的成员：`turnStarts` 里的旧记录可能是上一轮的残留。
+     */
+    runningTurns(): Array<{ botId: string; turnId: string; startedAt: number }> {
+        return this.runningBots().flatMap((botId) => {
+            const turn = this.turnStarts.get(botId);
+            return turn === undefined ? [] : [{ botId, ...turn }];
+        });
     }
 
     /** 用户的回答（整批一次提交）；返回结局（命中 / 已失效 / 答不全） */
@@ -894,6 +936,14 @@ export class RoomActor {
                 return;
             }
             case 'turn.start':
+                // 开始时刻先记下来再广播：消息头与「已用 Ns」要靠它，而快照（刷新）也读它。
+                this.turnStarts.set(bot.id, { turnId: event.turn.turnId, startedAt: event.startedAt });
+                this.deps.emit({
+                    kind: 'turn.start',
+                    botId: bot.id,
+                    turnId: event.turn.turnId,
+                    startedAt: event.startedAt,
+                });
                 // 这个成员开启了新的一轮：它已经读到新消息、可能已经重新提问 —— 上一张还没答的
                 // 提问依赖的世界状态没了（寿命规则见 ask.ts 头部）。过期要点明、要通知它本人，
                 // 否则它永远停在「我问了、等回答」（ask 不阻塞，没有 tool call 能回填）。
@@ -907,20 +957,50 @@ export class RoomActor {
                     at: this.deps.now?.() ?? Date.now(),
                 });
                 return;
-            case 'turn.end':
-                // 「这一轮是怎么停的」广播给客户端（消息页脚用它）。放在落库/发结论之前：
+            case 'progress':
+                // 即时事实只广播、不落库：刷新后它本来也会被新的 tick 重新刷回来（turn 还在跑），
+                // 而"卡过"这件事的持久说法在 notice 条目里（end-reason.ts 的 progressNotice）。
+                this.deps.emit({
+                    kind: 'progress',
+                    botId: bot.id,
+                    turnId: event.turnId,
+                    awaiting: event.awaiting,
+                    idleMs: event.idleMs,
+                    alive: event.alive,
+                    stage: event.stage,
+                });
+                return;
+            case 'turn.end': {
+                // 「这一轮是怎么停的」广播给客户端（消息页脚 / 结算行用它）。放在落库/发结论之前：
                 // 页脚比快照早到一点没影响，但顺序上它属于这一轮自己的事实。
+                //
+                // 起止时刻与用量一起带：结算行要写「耗时 + 结束于 + tokens」，而这三个数
+                // 只有运行侧知道（前端自己估会与消息头的开始时刻对不上）。
+                const { result } = event;
+                const turnCalls = result.endReason.toolCalls;
                 this.deps.emit({
                     kind: 'turn.end',
                     botId: bot.id,
-                    turnId: event.result.turnId,
-                    reason: event.result.endReason,
+                    turnId: result.turnId,
+                    reason: result.endReason,
+                    ...(result.startedAt === undefined ? {} : { startedAt: result.startedAt }),
+                    ...(result.endedAt === undefined ? {} : { endedAt: result.endedAt }),
+                    ...(result.usage === undefined ? {} : { usage: result.usage }),
+                    ...(turnCalls === undefined ? {} : { toolCalls: turnCalls }),
                 });
+                // 这一轮已经收了：开始时刻的使用者没了（留着只会在下一轮开始前被读到旧的）
+                if (this.turnStarts.get(bot.id)?.turnId === result.turnId) this.turnStarts.delete(bot.id);
                 this.persistSession(bot.id);
                 // 快照落了才算收尾：销掉「开了没收尾」的标记再发结论
                 this.deps.store.closeTurn(this.id, bot.id);
+                // 这一轮带着「中断」事实却跑到收尾了 = 那条事实是重启时的误报（重启后按原 turn 号
+                // 续跑，见 reportOpenTurns），而续跑完成不产条目 —— 不撤掉它就是这一轮的最后一条
+                // 轮级事实，bot 会被永久显示成「中断」。真中断的轮根本走不到这里（进程已死）。
+                // 靠 items_interrupted 部分索引，没误报的轮就是一次空查。
+                this.deps.store.deleteInterruptedFacts(this.id, event.result.turnId, bot.id);
                 this.publishConclusion(bot, event.result);
                 return;
+            }
             case 'compact.progress':
                 // 手动压缩的进度：直接转手给客户端（UI 靠它做「摘要中…」的即时反馈）
                 this.deps.emit({ kind: 'compact', compact: event.compact });
@@ -1001,11 +1081,13 @@ export class RoomActor {
      * 后台作业收口：宿主把 `JobDoneEvent` 按归属串路由回来，这里给起它的成员插一条 notice 并叫醒它。
      *
      * 不负责「告诉用户作业结束了」——UI 自己看账本；这里只解决模型的记忆：它起完活就去干别的了，
-     * 不叫醒就永远不会去取结果。归属串对不上（别的房间 / 已退出的成员）= 静默丢弃。
+     * 不叫醒就永远不会去取结果。归属串对不上（已退出的成员）= 丢弃，但**要回报 false**：
+     * 账本据此把这条 run 记成「结局无人接」（盘上 `done.json` 里 `notified: false`），
+     * 否则它跑完了、谁也不知道，只剩一堆没人认领的产物。
      */
-    notifyJobDone(owner: JobOwner, event: JobDoneEvent): void {
+    notifyJobDone(owner: JobOwner, event: JobDoneEvent): boolean {
         const bot = this.members().find((candidate) => candidate.id === owner.botId);
-        if (bot === undefined) return;
+        if (bot === undefined) return false;
         const turn = this.newTurn();
         const now = this.deps.now?.() ?? Date.now();
         const notice: Item = {
@@ -1028,5 +1110,6 @@ export class RoomActor {
             mode: 'next-turn',
             text: `[后台作业结束] ${event.text}`,
         });
+        return true;
     }
 }
