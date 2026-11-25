@@ -169,7 +169,8 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                 metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
             >
                 <div style={{ paddingBlock: 2 }}>
-                    <RunningIndicator since={entry.at} />
+                    {/* stallable：typing 的 at 是本轮起点，秒数 = 真实的无产出时长（见 stuckHintOf） */}
+                    <RunningIndicator since={entry.at} stallable />
                 </div>
             </ChatMessage>
         );
@@ -230,6 +231,8 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                     不再单独占列表底部一行 */}
                 {entry.waiting === true && (
                     <div style={{ paddingTop: 6 }}>
+                        {/* 故意不给 stallable：这里 since 是回复起点（含已推进的内容），
+                            按它报卡住会在每次段间空隙误报 —— 见 stuckHintOf */}
                         <RunningIndicator since={entry.at} />
                     </div>
                 )}

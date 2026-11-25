@@ -182,7 +182,8 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                         </span>
                         <span className="text-[10px] text-muted-foreground">{timeOf(entry.at)}</span>
                     </div>
-                    <RunningIndicator since={entry.at} />
+                    {/* stallable：typing 的 at 是本轮起点，秒数 = 真实的无产出时长（见 stuckHintOf） */}
+                    <RunningIndicator since={entry.at} stallable />
                 </div>
             </div>
         );
@@ -232,6 +233,8 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                 <EndFooterLine reason={entry.endReason} />
                 {entry.waiting === true && (
                     <div className="mt-1.5">
+                        {/* 故意不给 stallable：这里 since 是回复起点（含已推进的内容），
+                            按它报卡住会在每次段间空隙误报 —— 见 stuckHintOf */}
                         <RunningIndicator since={entry.at} />
                     </div>
                 )}

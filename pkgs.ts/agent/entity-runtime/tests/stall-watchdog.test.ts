@@ -6,7 +6,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_STALL, StallWatchdog, stallMessage, stallTimeoutsFromEnv, type StallInfo } from '../src/stall-watchdog';
+import {
+    DEFAULT_STALL,
+    StallWatchdog,
+    stallMessage,
+    stallTimeoutsFromEnv,
+    unboundedToolsFromEnv,
+    type StallInfo,
+} from '../src/stall-watchdog';
 
 /** 手动时钟：只测判据，不睡真时间（无需 fake timers，也不怕 --no-isolate 串味） */
 function fakeClock() {
@@ -40,7 +47,10 @@ function fakeClock() {
     };
 }
 
-function watchdogOf(clock: ReturnType<typeof fakeClock>, overrides: Partial<{ firstMs: number; idleMs: number; toolMs: number }> = {}) {
+function watchdogOf(
+    clock: ReturnType<typeof fakeClock>,
+    overrides: Partial<{ firstMs: number; idleMs: number; toolMs: number; unboundedTools: Iterable<string> }> = {},
+) {
     const stalls: StallInfo[] = [];
     const watchdog = new StallWatchdog({
         firstMs: 100,
@@ -91,7 +101,7 @@ describe('首包超时', () => {
 });
 
 describe('工具执行期', () => {
-    it('缺省不设上限：`job wait` 等 10 分钟、`ask` 等用户都不算停摆', () => {
+    it('toolMs 给 0 = 这一段不设上限（豁免名单外的长等待也放行）', () => {
         const clock = fakeClock();
         const { watchdog, stalls } = watchdogOf(clock);
         watchdog.start();
@@ -100,6 +110,28 @@ describe('工具执行期', () => {
         clock.advance(10 * 60 * 1000);
         expect(stalls).toEqual([]);
         expect(clock.live()).toBe(0); // 也不留一个悬着的定时器
+    });
+
+    // ##560：缺省 toolMs 原本是 0（不设）⇒ 工具自己永不返回时整轮无结局（实测卡 15 分钟、
+    // 无任何超时可察觉）。改成「缺省 30 分钟兑底 + 按名单豁免」。
+    it('缺省有上限：名单内（`ask`）不计，名单外受 toolMs 兑底并报出工具名', () => {
+        const clock = fakeClock();
+        const { watchdog, stalls } = watchdogOf(clock, { toolMs: 50 });
+        watchdog.start();
+
+        // 豁免名单里：`ask` 等用户多久都行（缺省名单就是它）
+        watchdog.toolStart('ask');
+        clock.advance(10 * 60 * 1000);
+        expect(stalls).toEqual([]);
+        expect(clock.live()).toBe(0);
+
+        // 名单外：受 toolMs 约束，且报出是哪个工具卡住（模型才知道去改哪一步）
+        const bounded = watchdogOf(clock, { toolMs: 50 });
+        bounded.watchdog.start();
+        bounded.watchdog.toolStart('bash');
+        clock.advance(50);
+        expect(bounded.stalls).toEqual([{ phase: 'tool', waitedMs: 50, toolName: 'bash' }]);
+        expect(stallMessage({ phase: 'tool', waitedMs: 50, toolName: 'bash' })).toContain('bash');
     });
 
     it('显式给了 toolMs 就按它算', () => {
@@ -155,6 +187,15 @@ describe('环境变量', () => {
                 DIY2_LLM_STALL_TOOL_MS: 'oops',
             }),
         ).toEqual({ firstMs: 10, idleMs: 0, toolMs: DEFAULT_STALL.toolMs });
+    });
+
+    it('豁免名单：未设置 = 缺省名单；显式给空串 = 没有豁免', () => {
+        expect([...unboundedToolsFromEnv({})]).toEqual(['ask']);
+        expect([...unboundedToolsFromEnv({ DIY2_LLM_STALL_TOOL_UNBOUNDED: '' })]).toEqual([]);
+        expect([...unboundedToolsFromEnv({ DIY2_LLM_STALL_TOOL_UNBOUNDED: 'ask, job wait' })]).toEqual([
+            'ask',
+            'job wait',
+        ]);
     });
 });
 
