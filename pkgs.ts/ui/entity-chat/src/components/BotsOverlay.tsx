@@ -13,6 +13,8 @@
 import { ChevronRight, Loader2, Play, X } from 'lucide-react';
 import * as React from 'react';
 
+import { Button } from '@diy-agent/ui-shadcn';
+
 import type { BotRow } from '@diy-agent/chat-transport-rpc';
 
 import { type BotRowsState, fmtAt, needsYou, outcomeTextOf, sortRows, STATE_TEXT } from '../bots';
@@ -79,13 +81,9 @@ function BriefRow({ row, onRetry }: { row: BotRow; onRetry: (row: BotRow) => voi
                 {row.state === 'needs-attention' ? outcomeTextOf(row) : STATE_TEXT[row.state]}
             </span>
             {canRetry ? (
-                <button
-                    onClick={() => onRetry(row)}
-                    title="发一条「继续」接着干"
-                    className="shrink-0 rounded p-0.5 hover:bg-muted"
-                >
+                <Button variant="ghost" size="icon-xs" onClick={() => onRetry(row)} title="发一条「继续」接着干">
                     <Play className="size-3" />
-                </button>
+                </Button>
             ) : null}
         </div>
     );
@@ -216,21 +214,25 @@ export function BotsOverlay({ rows, error, loaded, reload, onClose, initialMode 
                     {mode === 'full' ? (
                         <div className="ml-3 flex items-center gap-1">
                             {FILTERS.map((item) => (
-                                <button
+                                <Button
                                     key={item.id}
+                                    variant="ghost"
+                                    size="xs"
                                     onClick={() => setFilter(item.id)}
-                                    className={`rounded px-1.5 py-0.5 text-xs ${
-                                        filter === item.id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/60'
+                                    className={`${
+                                        filter === item.id
+                                            ? 'bg-muted text-foreground'
+                                            : 'text-muted-foreground hover:bg-muted/60'
                                     }`}
                                 >
                                     {item.label}
-                                </button>
+                                </Button>
                             ))}
                         </div>
                     ) : null}
-                    <button onClick={onClose} title="关闭" className="ml-auto rounded p-1 hover:bg-muted">
+                    <Button variant="ghost" size="icon-xs" onClick={onClose} title="关闭">
                         <X className="size-3.5" />
-                    </button>
+                    </Button>
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto">
@@ -266,30 +268,25 @@ export function BotsOverlay({ rows, error, loaded, reload, onClose, initialMode 
                 <div className="flex items-center gap-2 border-t border-border px-3 py-1.5">
                     {flash === null ? null : <span className="text-xs text-muted-foreground">{flash}</span>}
                     {mode === 'brief' ? (
-                        <button
-                            onClick={() => setMode('full')}
-                            className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-muted"
-                        >
+                        <Button variant="ghost" size="xs" onClick={() => setMode('full')}>
                             全部 Bot <ChevronRight className="size-3" />
-                        </button>
+                        </Button>
                     ) : (
                         <>
-                            <button
-                                onClick={() => setMode('brief')}
-                                className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-                            >
+                            <Button variant="ghost" size="xs" onClick={() => setMode('brief')}>
                                 ‹ 只看要看的
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                                variant="default"
+                                size="xs"
                                 onClick={() => {
                                     void retry(selected);
                                 }}
                                 disabled={selected.length === 0 || sending}
-                                className="ml-auto flex items-center gap-1 rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-40"
                             >
                                 {sending ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
                                 重试选中（{selected.length}）
-                            </button>
+                            </Button>
                         </>
                     )}
                 </div>
