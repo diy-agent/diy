@@ -6,7 +6,12 @@
 // 回到底部 / 空态都补齐），第三面 assistant-ui 已删（它 2491 行 registry 件里大半能力
 // 没有对应事实可接，见 docs/plans/2026-11-24-surface-parity.md）。
 //
-// 缺省是哪一面由壳层决定（App.tsx 取 'astryx'），这里不排序含义。
+// 2026-11-25 裁决（见 surface-parity 文档 §7）：**Astryx 面冻结为参考实现** ——
+// 不再追新功能、不进「每次 UI 改动双面验证」的门，只保编译通过与一条冒烟；
+// 缺省面改为 shadcn。翻回 Astryx 只为两件事：核对某个交互该长什么样，
+// 或者 canary 依赖炸了要临时换回。2~4 周真实使用后复查是否删除。
+//
+// 缺省是哪一面由壳层决定（现在取 'shadcn'），这里不排序含义。
 
 import type { FC, ReactNode } from 'react';
 
@@ -27,6 +32,16 @@ export interface ChatSurface {
 }
 
 export const SURFACES: ChatSurface[] = [
-    { id: 'astryx', name: 'Astryx', hint: '设计系统 Chat 组件 + chat-core', Component: AstryxSurface },
-    { id: 'shadcn', name: 'shadcn', hint: '原生 Tailwind + chat-core，无 chat 库', Component: ShadcnSurface },
+    {
+        id: 'astryx',
+        name: 'Astryx',
+        hint: '设计系统 Chat 组件 + chat-core',
+        Component: AstryxSurface,
+    },
+    {
+        id: 'shadcn',
+        name: 'shadcn',
+        hint: '原生 Tailwind + chat-core，无 chat 库',
+        Component: ShadcnSurface,
+    },
 ];

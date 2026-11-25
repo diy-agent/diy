@@ -121,3 +121,56 @@ context 取候选，删掉后成死件）。`useMentionCandidates` 两面都在�
 3. 需要**工具审批**→ 先定义 approval 协议；那 1121 行 `ToolFallback` 才有意义。
 
 在满足任一条之前，引第三方 chat 框架只会重演这一次：**为不消费的能力付 runtime 与依赖**。
+
+---
+
+## 7. 2026-11-25 裁决：Astryx 面冻结为参考实现（缺省面改 shadcn）
+
+### 为什么不再「双面同测」
+
+实验已经问不出新东西了：
+
+| 已确认 | 出处 |
+|---|---|
+| 能力已对齐（复制 / @ 补全 / 回底 / 空态 / console 零错误，逐项实机验过） | 本文 §5 |
+| 出错次数无差异：astryx 657 次调用错误率 1.8% / shadcn 587 次 1.5% | `diy-research/pkgs.ts/ui-shadcn/ASTRYX-VS-SHADCN.md` §1.5 |
+| UI 面 tsc 独立报错实例 4 : 4，全是编辑中途半成品（不是框架造成） | 同上 |
+| `Surface.tsx` 被 edit 31 : 28 次，按天分布一致 | 同上 |
+| 「astryx 强类型更防错」不成立：prop 轴两边都 tsc 挡、自由样式轴两边都裸奔 | 同上 §1.A |
+
+再双面同测只会重复产出同一个答案，成本是每次 UI 改动 double（11-24 当天 astryx 15 次 edit / shadcn 17 次）。
+
+### 为什么不是现在就删
+
+**硬风险**：三个 astryx 包全锁同一个 canary 构建（`0.7.17-canary.geeb3d7c`），而 `@astryxdesign/lab`
+的 `package.json` 自述「Published ONLY to the @canary dist-tag — never released as a stable (latest)
+version」—— 我们最看重的 `ChatVirtualizer` 恰好在这个**永不 stable** 的包里。
+但反过来说，正因为它是 canary，**保留一面能跑的实现**是升级打我们时的退路；且它是
+`ChatComposer` / `ChatVirtualizer` 的行为校准物（「这个交互该长什么样」有免费参考）。
+
+**另一件账**：删了 astryx 面就得自己接住长会话 —— 现在 shadcn 面是 `useWindowed`（38 行分页窗口，
+只渲染最近 30 条 + 滑到顶补一窗），不是真虚拟化。这活能干，但不必和「换缺省面」捆在一起做。
+
+### 冻结的具体含义
+
+| 维度 | 冻结后 |
+|---|---|
+| 缺省面 | **shadcn**（`surface.ts` 的 `load()` 缺省值） |
+| 新功能 | 只做在 shadcn 面；astryx 面不接 |
+| 验证门 | 不再要求「每次 UI 改动双面验证」；astryx 只要 `tsc` / lint 过 + 一条冒烟 |
+| 保留用途 | ①核对交互形态 ②canary 出问题时的临时退路 |
+| 复查时点 | 2~4 周真实使用后（不早于 2026-12-09）：若 shadcn 面没暴露出需要 astryx 补的交互，则删除 |
+| 删除时要补的 | `useWindowed` → 真虚拟化（或引 TanStack Virtual），否则长会话退回「分页窗口」 |
+
+### 判据（供复查时用）
+
+**继续冻结（不删）** 只要满足任一条：
+
+1. astryx 的 canary 升级还没打过来，退路仍有价值。
+2. shadcn 面出现了「只有 ChatComposer / ChatVirtualizer 才能解决的」交互问题。
+
+**可以删** 三条同时成立：
+
+1. shadcn 面连续 4 周没有出现需要翻回 astryx 才能定位的问题。
+2. `useWindowed` 已升级为真虚拟化（长会话 DOM 有界 + 滚动跟随实测通过）。
+3. astryx 三包在 `package.json` 里的依赖除 `surfaces/astryx/` 外零引用。
