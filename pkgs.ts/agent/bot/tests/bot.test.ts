@@ -211,11 +211,22 @@ describe("边界（判据 4）", () => {
         ]);
         for (const name of files) {
             const text = readFileSync(join(dir, name), "utf-8");
-            expect(text.toLowerCase()).not.toContain("room");
-            expect(text).not.toContain("electron");
-            expect(text).not.toContain("@diy-agent/task");
+            // 只查**代码**，不查注释：这条判据管的是「身份 / 存储有没有依赖会话内核」，
+            // 而注释里写个计划文件名（`2026-11-17-room-as-actor.md`）与依赖无关。
+            // 之前是拿原文直接 grep，docs 提交改了注释就把它弄红了（7487b746）——
+            // 红线绑在散文上，下一次修改文档又得回来改测试。
+            const code = text
+                .split("\n")
+                .filter((line) => {
+                    const trimmed = line.trim();
+                    return !trimmed.startsWith("//") && !trimmed.startsWith("*") && !trimmed.startsWith("/*");
+                })
+                .join("\n");
+            expect(code.toLowerCase()).not.toContain("room");
+            expect(code).not.toContain("electron");
+            expect(code).not.toContain("@diy-agent/task");
             if (conversational.has(name)) continue;
-            expect(text).not.toContain("@diy-agent/session");
+            expect(code).not.toContain("@diy-agent/session");
         }
     });
 });
