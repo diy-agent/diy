@@ -100,6 +100,7 @@ describe('侧栏按注册表渲染', () => {
         setDiy2Client({
             rooms: { list: async () => rooms.map((room) => ({ ...room, running: room.id === 'task:t-open' ? 1 : 0 })) },
             bots: { list: async () => [] },
+            roles: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,

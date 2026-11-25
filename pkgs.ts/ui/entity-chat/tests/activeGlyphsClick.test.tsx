@@ -36,6 +36,7 @@ beforeEach(async () => {
     setDiy2Client({
         rooms: { list: async () => rooms },
         bots: { list: async () => [] },
+        roles: { list: async () => [] },
         models: { list: async () => ({ providers: [] }) },
         subscribeActivity: () => () => undefined,
         drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
