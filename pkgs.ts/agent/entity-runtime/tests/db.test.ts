@@ -435,7 +435,7 @@ describe('提问（asks）持久化', () => {
     });
 });
 
-describe('unit（任务内部的 DAG 节点）', () => {
+describe('unit（需求账本树的节点）', () => {
     const add = (store: ReturnType<typeof openStore>, taskId: string, title: string) =>
         store.saveUnit({ taskId, title, body: '', status: 'open' });
 
@@ -468,47 +468,31 @@ describe('unit（任务内部的 DAG 节点）', () => {
         );
     });
 
-    it('linkUnits 校验存在 / 不自连 / 挡环；unlink 幂等', () => {
+    it('parent 挂点：改 parent 不动 seq / createdAt；不能挂成自己', () => {
         const store = openStore(':memory:');
-        const a = add(store, 't1', 'a').id;
-        const b = add(store, 't1', 'b').id;
-        const c = add(store, 't1', 'c').id;
-        store.linkUnits('t1', a, b);
-        store.linkUnits('t1', b, c);
-        expect(() => store.linkUnits('t1', c, a)).toThrow(/成环/);
-        expect(() => store.linkUnits('t1', a, a)).toThrow(/自己/);
-        expect(() => store.linkUnits('t1', a, 'u99')).toThrow(/不存在/);
-        expect(store.unitDepsOf('t1')).toEqual([
-            { from: a, to: b },
-            { from: b, to: c },
-        ]);
-        expect(store.unlinkUnits('t1', b, c)).toBe(true);
-        expect(store.unlinkUnits('t1', b, c)).toBe(false);
+        const dom = add(store, 't1', '母项');
+        const leaf = add(store, 't1', '叶');
+        const moved = store.saveUnit({ taskId: 't1', id: leaf.id, title: leaf.title, body: '', status: 'open', parent: dom.id });
+        expect(moved.parent).toBe(dom.id);
+        expect(moved.seq).toBe(leaf.seq);
+        expect(() =>
+            store.saveUnit({ taskId: 't1', id: dom.id, title: '母项', body: '', status: 'open', parent: dom.id }),
+        ).toThrow(/自己的父/);
+        // 删得幂等
+        expect(store.removeUnit('t1', leaf.id)).toBe(true);
+        expect(store.removeUnit('t1', leaf.id)).toBe(false);
     });
 
-    it('删前置连带删边 = 解锁后继（真删的自然语义）', () => {
-        const store = openStore(':memory:');
-        const a = add(store, 't1', 'a').id;
-        const b = add(store, 't1', 'b').id;
-        store.linkUnits('t1', a, b);
-        store.removeUnit('t1', a);
-        expect(store.unitDepsOf('t1')).toEqual([]);
-        expect(store.listUnits('t1').map((unit) => unit.id)).toEqual([b]);
-        // 删除幂等
-        expect(store.removeUnit('t1', a)).toBe(false);
-    });
-
-    it('deleteRoom 连带清掉节点 / 边 / 发号游标（unit 没有外键可跟，没人替它清）', () => {
+    it('deleteRoom 连带清掉节点 / 发号游标（unit 没有外键可跟，没人替它清）', () => {
         const store = openStore(':memory:');
         store.saveRoom(room);
         const a = add(store, room.id, 'a').id;
         const b = add(store, room.id, 'b').id;
-        store.linkUnits(room.id, a, b);
+        store.saveUnit({ taskId: room.id, id: b, title: 'b', body: '', status: 'open', parent: a });
 
         store.deleteRoom(room.id);
 
         expect(store.listUnits(room.id)).toEqual([]);
-        expect(store.unitDepsOf(room.id)).toEqual([]);
         // 游标一起清：「号不回收」说的是同一个任务内；任务本身没了就没有「同任务内」了
         store.saveRoom(room);
         expect(add(store, room.id, 'c').id).toBe('u1');

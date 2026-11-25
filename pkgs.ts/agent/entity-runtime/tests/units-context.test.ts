@@ -21,13 +21,13 @@ function unit(
 describe('unitsContextText：给模型看的那段文本', () => {
     it('空树 → 整节缺席（empty，text 为空串）', () => {
         const board = unitBoard([], []);
-        const out = unitsContextText(board, []);
+        const out = unitsContextText(board);
         expect(out).toEqual({ text: '', chars: 0, mode: 'empty', treeLines: 0 });
     });
 
     it('正常树 → YAML 的 units 节，行数与字符数对得上', () => {
         const board = unitBoard([unit('u1'), unit('u2')], []);
-        const out = unitsContextText(board, []);
+        const out = unitsContextText(board);
         expect(out.mode).toBe('full');
         expect(out.treeLines).toBe(2);
         expect(out.chars).toBe(out.text.length);
@@ -36,19 +36,20 @@ describe('unitsContextText：给模型看的那段文本', () => {
         expect(out.text).toContain('ready:');
         expect(out.text).toContain('tree:');
         // 值确实是同一份算法的产物（不是另写一遍）
-        const value = unitsContextValue(board, []);
+        const value = unitsContextValue(board);
         expect(out.text).toContain(`- [>] 标题 u1 (u1)`);
-        expect(value?.ready.map((head) => head.id)).toEqual(['u1']);
+        // 账本里「还没做的」都能挑：两条平行条目都在 ready，没有先后判定
+        expect(value?.ready.map((head) => head.id)).toEqual(['u1', 'u2']);
     });
 
     it('超过 40 行 → 退化成摘要，mode 说得出来', () => {
         const rows = Array.from({ length: 45 }, (_, index) => unit(`u${index + 1}`, 'open', index + 1));
         const board = unitBoard(rows, []);
-        const out = unitsContextText(board, []);
+        const out = unitsContextText(board);
         expect(out.mode).toBe('summary');
         expect(out.treeLines).toBe(0);
         expect(out.text).not.toContain('tree:');
         expect(out.text).toContain('counts:');
-        expect(out.text).toContain('只给现在能做的');
+        expect(out.text).toContain('只给现在能挑的');
     });
 });

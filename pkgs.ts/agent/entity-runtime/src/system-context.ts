@@ -28,7 +28,7 @@ import { foldKbIndex, globalKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
 import { skillsOf } from '@diy-agent/skills';
 import { localISOString } from '@diy-agent/time';
 
-import type { BatchRecord, JournalEntry } from './db';
+import type { JournalEntry } from './db';
 import { unitsContextValue, type UnitBoard } from './units';
 import { watchedValue } from './watch-cache';
 
@@ -61,8 +61,6 @@ export interface RoomContextOptions {
     readonly journal?: () => readonly JournalEntry[];
     /** 任务内部的拆分图（unit DAG）：宿主给取数函数；不传 = 不投 units 节 */
     readonly units?: () => UnitBoard;
-    /** 交付批次（`unit_batches`）：与 `units` 搭配；不传 = 只投树、不投批次 */
-    readonly unitBatches?: () => readonly BatchRecord[];
     /** 房间成员（@ 键 / 是否主人格）：不传 = 不投 room 节 */
     readonly members?: () => readonly { id: string; name: string; key: string; main: boolean }[];
 }
@@ -225,19 +223,18 @@ function journalProvider(get?: () => readonly JournalEntry[]): ContextProvider {
 }
 
 /**
- * 任务分解（树 + 执行约束）。**全量注入**（2026-11-24 用户裁：先简单走）——
- * 于是「现在能做哪几条 / 为什么这条卡着」不需要多一次工具调用。
+ * 任务的需求账本树。**全量注入**（2026-11-24 用户裁：先简单走）——
+ * 于是「现在能做哪几条」不需要多一次工具调用。
  *
  * 值的算法在 `unitsContextValue()`（`units.ts`）：界面「文本」tab 调同一个函数，
  * 所以「模型读到的」和「人看到的」不可能分叉。这里只负责挂 key。
  */
-function unitsProvider(get?: () => UnitBoard, batchesOf?: () => readonly BatchRecord[]): ContextProvider {
+function unitsProvider(get?: () => UnitBoard): ContextProvider {
     return {
         key: 'units',
         provide: () => {
             const board = get?.();
-            if (board === undefined) return undefined;
-            return unitsContextValue(board, batchesOf?.() ?? []);
+            return board === undefined ? undefined : unitsContextValue(board);
         },
     };
 }
@@ -350,7 +347,7 @@ export function roomProviders(opts: RoomContextOptions): ContextProvider[] {
         docsProvider(opts.cwd),
         roomProvider(opts),
         journalProvider(opts.journal),
-        unitsProvider(opts.units, opts.unitBatches),
+        unitsProvider(opts.units),
         taskProvider(opts.spec, opts.cwd),
     ];
 }

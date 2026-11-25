@@ -720,11 +720,11 @@ export class RoomActor {
     }
 
     /**
-     * 当前任务的 unit 图。工具与上下文走**同一个入口**：
+     * 当前任务的需求账本树。工具与上下文走**同一个入口**：
      * 不然「agent 改完看到的」与「注入 system 的」会各算一份，迟早不一致。
      */
     private unitBoardOf(): UnitBoard {
-        return unitBoard(this.deps.store.listUnits(this.id), this.deps.store.unitDepsOf(this.id));
+        return unitBoard(this.deps.store.listUnits(this.id));
     }
 
     /** 某个成员的上下文会话；没有 cwd 的房间不建（与工具同判据） */
@@ -738,12 +738,7 @@ export class RoomActor {
             cwd,
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
             journal: () => this.deps.store.journalOf(this.id),
-            ...(this.deps.spec.type === 'task'
-                ? {
-                      units: () => this.unitBoardOf(),
-                      unitBatches: () => this.deps.store.listBatches(this.id),
-                  }
-                : {}),
+            ...(this.deps.spec.type === 'task' ? { units: () => this.unitBoardOf() } : {}),
             members: () => {
                 const primary = this.primary();
                 return this.members().map((bot) => ({

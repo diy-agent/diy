@@ -1,7 +1,10 @@
-// unit-tools.test.ts —— 任务内部 DAG 的 agent 工具（`unit_*`）：图的生长、挡环、真删 + 留痕。
+// unit-tools.test.ts —— 任务「需求账本树」的 agent 工具（`unit_*`）：长树、改条目、真删 + 留痕。
 //
-// 只测这一层自己的契约：id 分配、依赖边、状态推进、事件落点。
-// board 的推导（ready / blocked / layers）在 `units.test.ts`，不在这里重复。
+// 只测这一层自己的契约：id 分配、树形（parent）、状态推进、事件落点。
+// board 的推导（ready / 母项派生）在 `units.test.ts`，不在这里重复。
+//
+// 2026-11-25 裁：账本不记执行规划 —— 依赖边（`unit_link`）与交付批次（`batch_*`）整体删掉，
+// 所以这里也不再有用例去钉「挡环」「批次阶段」那些行为；工具面从 12 个降到 6 个。
 
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -54,42 +57,30 @@ describe('unit 工具', () => {
         expect(tools['unit_list']).toBeUndefined();
     });
 
-    it('unit_add：key 就是 id，批内任意项都能引用（含后面的项）', async () => {
+    it('工具面只剩账本读写：没有 link / batch 这类排期工具', () => {
+        const { tools } = setup();
+        const names = Object.keys(tools).filter((name) => name.startsWith('unit_') || name.startsWith('batch_'));
+        expect(names.sort()).toEqual(['unit_add', 'unit_drop', 'unit_get', 'unit_history', 'unit_list', 'unit_update']);
+    });
+
+    it('unit_add：key 就是 id，同批任意项都能当 parent（含后面的项）', async () => {
         const { tools } = setup();
         const added = (await toolOf(tools, 'unit_add').execute({
             items: [
-                { key: 'schema', title: '状态与原因落库', deps: ['board'] },
-                { key: 'board', title: '派生量认取消' },
+                { key: 'leaf', title: '先写出来的那条', parent: 'dom' },
+                { key: 'dom', title: '母项' },
             ],
-        })) as { added: Array<{ id: string; title: string; parent: string | null; deps: string[] }>; ready: string[] };
+        })) as { added: Array<{ id: string; title: string; parent: string | null }>; ready: string[] };
 
         expect(added.added).toEqual([
-            { id: 'schema', title: '状态与原因落库', parent: null, deps: ['board'] },
-            { id: 'board', title: '派生量认取消', parent: null, deps: [] },
+            { id: 'leaf', title: '先写出来的那条', parent: 'dom' },
+            { id: 'dom', title: '母项', parent: null },
         ]);
-        // 边是 schema ← board：只有 board 可做
-        expect(added.ready).toEqual(['board']);
+        // 母项不执行 → 只有叶子能挑
+        expect(added.ready).toEqual(['leaf']);
     });
 
-    it('悬空边：引用还没建的 key 先挂着，它一出现图就成立（并行调用也能连上）', async () => {
-        const { store, tools } = setup();
-        const first = (await toolOf(tools, 'unit_add').execute({
-            items: [{ key: 'tool', title: 'unit_cancel 工具', deps: ['state'] }],
-        })) as { ready: string[]; dangling?: string[] };
-        // state 还不存在 → 边挂着，tool 没被挡（board 忽略悬空边）
-        expect(first.dangling).toEqual(['state']);
-        expect(first.ready).toEqual(['tool']);
-
-        const second = (await toolOf(tools, 'unit_add').execute({
-            items: [{ key: 'state', title: 'cancelled 进状态词表' }],
-        })) as { ready: string[] };
-        // state 到了，边立刻生效 → tool 被挡住；而 state 虽然后建（seq 更大），**不被兄弟序挡**：
-        // tool 显式依赖它，兄弟序在显式边面前让步（否则两个互等，谁也做不了）
-        expect(second.ready).toEqual(['state']);
-        expect(store.unitDepsOf('t1')).toEqual([{ from: 'state', to: 'tool' }]);
-    });
-
-    it('一堆平铺的顶层（既无 parent 也无边）会提醒拆功能域', async () => {
+    it('一堆平铺的顶层（没有 parent）会提醒拆母项', async () => {
         const { tools } = setup();
         const added = (await toolOf(tools, 'unit_add').execute({
             items: [
@@ -101,17 +92,17 @@ describe('unit 工具', () => {
         })) as { warning?: string };
         expect(added.warning).toMatch(/平铺/);
 
-        // 有功能域就不提醒
+        // 有母项就不提醒
         const hosted = await toolOf(tools, 'unit_add').execute({
             items: [
-                { key: 'dom2', title: '域' },
+                { key: 'dom2', title: '母项' },
                 { key: 'e', title: 'E', parent: 'dom2' },
             ],
         });
         expect((hosted as { warning?: string }).warning).toBeUndefined();
     });
 
-    it('unit_add 带 parent：功能域不进 ready，子的顺序靠书写顺序', async () => {
+    it('树形：母项不进 ready，缩进就是层级；树里没有「等谁」这种排期信息', async () => {
         const { tools } = setup();
         const added = (await toolOf(tools, 'unit_add').execute({
             items: [
@@ -120,21 +111,22 @@ describe('unit 工具', () => {
                 { key: 'b', title: 'B', parent: 'dom' },
             ],
         })) as { ready: string[] };
-        expect(added.ready).toEqual(['a']);
+        // 两条叶子都能挑：账本不定先后
+        expect(added.ready).toEqual(['a', 'b']);
 
         const listing = (await toolOf(tools, 'unit_list').execute({})) as { tree: string[] };
-        expect(listing.tree).toEqual(['- [ ] 取消语义 (dom)', '  - [>] A (a)', '  - [.] B (b)  ← 等 a']);
+        expect(listing.tree).toEqual(['- [ ] 取消语义 (dom)', '  - [>] A (a)', '  - [>] B (b)']);
     });
 
-    it('功能域不能直接推状态（由子派生）', async () => {
+    it('母项不能直接推状态（由子派生）', async () => {
         const { tools } = setup();
         await toolOf(tools, 'unit_add').execute({
             items: [
-                { key: 'dom', title: '域' },
+                { key: 'dom', title: '母项' },
                 { key: 'a', title: 'A', parent: 'dom' },
             ],
         });
-        await expect(toolOf(tools, 'unit_update').execute({ id: 'dom', status: 'done' })).rejects.toThrow(/功能域/);
+        await expect(toolOf(tools, 'unit_update').execute({ id: 'dom', status: 'done' })).rejects.toThrow(/母项/);
     });
 
     it('key 不合格 / 重名 / 撞已有 id：整批拒绝，不半截写入', async () => {
@@ -163,9 +155,9 @@ describe('unit 工具', () => {
         expect(store.listUnits('t1').map((unit) => unit.id)).toEqual(['keep']);
     });
 
-    it('update 推状态：doing / done 会让后继变可做', async () => {
+    it('update 推状态：doing / done 只影响自己那一格（不再牵动别的条目）', async () => {
         const { tools } = setup();
-        await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b', deps: ['a'] }] });
+        await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b' }] });
 
         await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'doing' });
         const listing = (await toolOf(tools, 'unit_list').execute({})) as {
@@ -173,43 +165,32 @@ describe('unit 工具', () => {
             ready: Array<{ id: string }>;
         };
         expect(listing.doing.map((item) => item.id)).toEqual(['a']);
-        expect(listing.ready).toEqual([]);
+        // b 一直都能挑：账本里没有「a 没做完所以 b 不能做」
+        expect(listing.ready.map((item) => item.id)).toEqual(['b']);
 
         const done = (await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'done' })) as { ready: string[] };
         expect(done.ready).toEqual(['b']);
     });
 
-    it('unit_link 挡环；unit_unlink 幂等', async () => {
-        const { tools } = setup();
-        await toolOf(tools, 'unit_add').execute({
-            items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b' }, { key: 'c', title: 'c' }],
-        });
-        await toolOf(tools, 'unit_link').execute({ from: 'a', to: 'b' });
-        await toolOf(tools, 'unit_link').execute({ from: 'b', to: 'c' });
-        await expect(toolOf(tools, 'unit_link').execute({ from: 'c', to: 'a' })).rejects.toThrow(/成环/);
-
-        expect(((await toolOf(tools, 'unit_unlink').execute({ from: 'b', to: 'c' })) as { removed: boolean }).removed).toBe(
-            true,
-        );
-        expect(((await toolOf(tools, 'unit_unlink').execute({ from: 'b', to: 'c' })) as { removed: boolean }).removed).toBe(
-            false,
-        );
-    });
-
-    it('unit_drop 真删图，但事件里留下 title + reason（取消可追溯）', async () => {
+    it('unit_drop 真删，母项的子提升到它的位置；事件里留下 title + reason', async () => {
         const { store, tools } = setup();
-        await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b', deps: ['a'] }] });
-        const dropped = (await toolOf(tools, 'unit_drop').execute({ id: 'a', reason: '方案改了，这步不需要' })) as {
-            ready: string[];
-        };
-        // 删前置 = 解锁后继
-        expect(dropped.ready).toEqual(['b']);
-        expect(store.listUnits('t1').map((unit) => unit.id)).toEqual(['b']);
-        expect(store.unitDepsOf('t1')).toEqual([]);
+        await toolOf(tools, 'unit_add').execute({
+            items: [
+                { key: 'dom', title: '母项' },
+                { key: 'a', title: 'A', parent: 'dom' },
+            ],
+        });
+        const dropped = (await toolOf(tools, 'unit_drop').execute({
+            id: 'dom',
+            reason: '这层分得太细，不需要母项了',
+        })) as { promoted: string[] };
+        expect(dropped.promoted).toEqual(['a']);
+        expect(store.listUnits('t1').map((unit) => unit.id)).toEqual(['a']);
+        // 子还在，并且升成顶层（不连带删除）
+        expect(store.unitOf('t1', 'a')?.parent).toBeNull();
 
-        const events = store.eventsOf('t1', 'task.unit.');
-        const removal = events.find((event) => event.event === 'task.unit.dropped');
-        expect(removal?.data).toMatchObject({ id: 'a', title: 'a', reason: '方案改了，这步不需要' });
+        const removal = store.eventsOf('t1', 'task.unit.').find((event) => event.event === 'task.unit.dropped');
+        expect(removal?.data).toMatchObject({ id: 'dom', title: '母项', reason: '这层分得太细，不需要母项了' });
     });
 
     it('unit_get 给全文；unit_history 按新→旧列事件', async () => {
@@ -224,98 +205,11 @@ describe('unit 工具', () => {
         const history = (await toolOf(tools, 'unit_history').execute({ limit: 10 })) as {
             events: Array<{ event: string }>;
         };
-        // 前缀剥到 `task.` 后仍留 `unit.` / `batch.` 区分（unit 与批次同一条时间线）
         expect(history.events.map((event) => event.event)).toEqual(['unit.updated', 'unit.added']);
     });
 
     it('不存在的 id 报错里带出路（先 unit_list）', async () => {
         const { tools } = setup();
         await expect(toolOf(tools, 'unit_get').execute({ id: 'nope' })).rejects.toThrow(/unit_list/);
-    });
-
-    describe('交付批次（batch_*）', () => {
-        type Brief = {
-            batches: Array<{ id: string; stage: string; progress: string; canStart?: string[]; waitingOn?: string[] }>;
-            unbatched?: { count: number; ids: string[] };
-        };
-        const brief = async (tools: ReturnType<typeof buildRoomTools>) =>
-            (await toolOf(tools, 'unit_list').execute({})) as Brief;
-
-        it('建批 + unit_add 时直接挂：阶段由成员派生，未分批的被点名', async () => {
-            const { tools } = setup();
-            await toolOf(tools, 'batch_add').execute({ items: [{ key: 'p1', title: '地基' }] });
-            await toolOf(tools, 'unit_add').execute({
-                items: [
-                    { key: 'a', title: '建表', batch: 'p1' },
-                    { key: 'b', title: '写工具', deps: ['a'], batch: 'p1' },
-                    { key: 'c', title: '散着的', },
-                ],
-            });
-
-            const got = await brief(tools);
-            expect(got.batches).toEqual([
-                { id: 'p1', title: '地基', stage: 'active', progress: '0/2', canStart: ['建表'] },
-            ]);
-            // 分解完了但还没说「哪些一起交付」= 常态，必须看得见
-            expect(got.unbatched).toEqual({ count: 1, ids: ['c'] });
-        });
-
-        it('挂 / 摘成员；验收要求成员全 done，验收后能撤销', async () => {
-            const { tools } = setup();
-            await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b' }] });
-            await toolOf(tools, 'batch_add').execute({ items: [{ key: 'p1', title: 'p1', units: ['a'] }] });
-            await toolOf(tools, 'batch_assign').execute({ batch: 'p1', units: ['b'] });
-            expect((await brief(tools)).batches[0]).toMatchObject({ progress: '0/2' });
-
-            await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'done' });
-            // 没做完不许验收（不静默放行）
-            await expect(toolOf(tools, 'batch_accept').execute({ batch: 'p1' })).rejects.toThrow(/没做完/);
-
-            await toolOf(tools, 'unit_update').execute({ id: 'b', status: 'done' });
-            await toolOf(tools, 'batch_accept').execute({ batch: 'p1' });
-            expect((await brief(tools)).batches[0].stage).toBe('accepted');
-
-            // 撤销验收 → 回 review；再摘成员 → 回 doing
-            await toolOf(tools, 'batch_accept').execute({ batch: 'p1', accepted: false });
-            expect((await brief(tools)).batches[0].stage).toBe('review');
-            await toolOf(tools, 'batch_assign').execute({ batch: null, units: ['b'] });
-            expect((await brief(tools)).batches[0]).toMatchObject({ progress: '1/1', stage: 'review' });
-            expect((await brief(tools)).unbatched).toEqual({ count: 1, ids: ['b'] });
-        });
-
-        it('删批次只释放成员，节点还在；事件留 title + reason', async () => {
-            const { store, tools } = setup();
-            await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }] });
-            await toolOf(tools, 'batch_add').execute({ items: [{ key: 'p1', title: '地基', units: ['a'] }] });
-            const out = (await toolOf(tools, 'batch_drop').execute({ batch: 'p1', reason: '这批太大，拆开' })) as {
-                released: string[];
-            };
-            expect(out.released).toEqual(['a']);
-            expect(store.listUnits('t1').map((unit) => unit.id)).toEqual(['a']);
-            expect(store.listBatches('t1')).toEqual([]);
-
-            const dropped = store.eventsOf('t1', 'task.batch.').find((event) => event.event === 'task.batch.dropped');
-            expect(dropped?.data).toMatchObject({ id: 'p1', title: '地基', reason: '这批太大，拆开', members: ['a'] });
-        });
-
-        it('批次与 unit 同一条时间线：unit_history 能查到建批', async () => {
-            const { tools } = setup();
-            await toolOf(tools, 'batch_add').execute({ items: [{ key: 'p1', title: 'p1' }] });
-            const history = (await toolOf(tools, 'unit_history').execute({ limit: 10 })) as {
-                events: Array<{ event: string }>;
-            };
-            expect(history.events.map((event) => event.event)).toContain('batch.added');
-        });
-
-        it('挂不存在的批次直接报错，不静默丢', async () => {
-            const { tools } = setup();
-            await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }] });
-            await expect(toolOf(tools, 'batch_assign').execute({ batch: 'nope', units: ['a'] })).rejects.toThrow(
-                /batch_add/,
-            );
-            await expect(
-                toolOf(tools, 'unit_add').execute({ items: [{ key: 'b', title: 'b', batch: 'nope' }] }),
-            ).rejects.toThrow(/batch_add/);
-        });
     });
 });

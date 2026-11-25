@@ -309,52 +309,16 @@ export const AssembleGlobalsSchema = z.object({
     .describe("任务日志（append-only 的决策/踩坑/评审）：没有记录时整节缺席"),
   units: z
     .object({
-      ready: z.array(UNIT_HEAD).describe("现在能做的叶子（前置 + 同父前序兄弟都做完了）——「该做什么」只看它"),
-      doing: z.array(UNIT_HEAD).describe("正在做的叶子（不是单指针；同父兄弟默认串行，所以通常只有 1 条）"),
-      layers: z
-        .array(
-          z.array(
-            UNIT_REF.extend({
-              status: z.enum(["open", "doing", "done"]).describe("open=待做 / doing=在做 / done=做完（没有 cancelled：取消就是真删）"),
-            }),
-          ),
-        )
-        .optional()
-        .describe("全图按依赖分层（同层之间没有依赖边）；图太大时整节缺席、只给 ready + counts"),
+      ready: z.array(UNIT_HEAD).describe("现在能挑的叶子（账本里「还没做的」就是可以挑的）——「该做什么」只看它"),
+      doing: z.array(UNIT_HEAD).describe("正在做的叶子（不是单指针：账本不规定一次做几条）"),
       tree: z
         .array(z.string())
         .optional()
         .describe(
-          "分解树（缩进文本，一行一个节点）：`- [x] 标题 (id)` 的标记 x=做完 / >=现在能做 / ~=在做 / .=卡着；" +
-            "行尾「← 等 xxx」=被谁挡着。缩进 = 父子（父是功能域，不执行）；同父兄弟按书写顺序串行。" +
+          "需求账本树（缩进文本，一行一个节点）：`- [x] 标题 (id)` 的标记 x=做完 / >=现在能挑 / ~=在做；" +
+            "缩进 = 父子（母项是分组，不执行）。树只记「要做成哪些东西」，先做哪个由模型每轮自己挑。" +
             "树太大时整节缺席、只给 ready + counts",
         ),
-      batches: z
-        .array(
-          z.object({
-            id: z.string().describe("批次 id"),
-            title: z.string().describe("这批一起交付什么（判据：一次 diff 能不能看懂）"),
-            stage: z
-              .enum(["empty", "todo", "active", "review", "accepted"])
-              .describe(
-                "todo=整批开不了工 / active=有可做或在做（派发时机）/ review=成员全做完待验收 / accepted=验收通过",
-              ),
-            progress: z.string().describe("做完 / 总数，如 2/4"),
-            canStart: z.array(z.string()).optional().describe("这批里现在能开工的（标题）"),
-            waitingOn: z.array(z.string()).optional().describe("整批被批外这些节点挡着（不完成开不了工）"),
-            note: z.string().optional().describe("这批为什么这样切 / 派给谁 / 注意什么"),
-          }),
-        )
-        .optional()
-        .describe("交付批次：验收次数 = 批次数，不是节点数。分批是**显式**画的，不从树的形状推导"),
-      unbatched: z
-        .object({
-          count: z.number().int(),
-          ids: z.array(z.string()).describe("还没挂批次的节点 id"),
-        })
-        .optional()
-        .describe("没挂批次的节点（分解完了但还没说「哪些一起交付」——这是常态，不是错）"),
-      cyclic: z.string().optional().describe("图里有环（数据异常）：环上的 unit 永远做不了"),
       counts: z
         .object({
           open: z.number().int(),
@@ -362,13 +326,13 @@ export const AssembleGlobalsSchema = z.object({
           done: z.number().int(),
         })
         .optional()
-        .describe("各状态条数（只有图溢出、不给全图时才出现）"),
+        .describe("各状态条数（只有树溢出、不给全树时才出现）"),
       note: z.string().optional().describe("溢出时的提示：全树用 unit_list 按需查"),
     })
     .optional()
     .describe(
-      "任务的分解树（功能域 → 可验收的产出）：`tree` 是缩进文本的节点树，`ready` / `doing` 是行动指令。" +
-        "blocked / done 不点名 —— 树行里的标记就是答案。空树整节缺席",
+      "任务的需求账本树（母项 → 可验收的产出）：`tree` 是缩进文本的节点树，`ready` / `doing` 是行动指令。" +
+        "done 不点名 —— 树行里的 `x` 就是答案。空树整节缺席",
     ),
   room: z
     .object({

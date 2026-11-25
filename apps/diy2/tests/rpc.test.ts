@@ -18,7 +18,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDiy2App, type Diy2App } from '../server/app';
 import { resolveConfig } from '../server/config';
 
-type UnitBoardWithBatches = UnitBoard & { batches: Array<Record<string, unknown>> };
 
 const moduleDir = join(import.meta.dirname, '..');
 let home = '';
@@ -197,52 +196,44 @@ describe('/rpc 房间事件流', () => {
         const transport = new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 }));
         const binding = new ChannelClientBinding(transport);
         try {
-            // 空图不能是 undefined / 404：界面直接画 `rows`，拿不到就会白屏
-            const empty = await binding.invoke<unknown, UnitBoardWithBatches>('diy2.units.list', {
+            // 空树不能是 undefined / 404：界面直接画 `rows`，拿不到就会白屏
+            const empty = await binding.invoke<unknown, UnitBoard>('diy2.units.list', {
                 input: { id: 'task:t-001' },
             });
             expect(empty.rows).toEqual([]);
             expect(empty.ready).toEqual([]);
-            expect(empty.cyclic).toBe(false);
-            expect(empty.batches).toEqual([]);
+            expect(empty.groups).toEqual([]);
 
-            // 种两个节点 + 一条边（写入口只有 agent 的工具，这里直接落库绕过模型）
+            // 种一棵两层树（写入口只有 agent 的工具，这里直接落库绕过模型）
             const seed = openStore(join(home, 'diy2.db'));
-            let first = '';
-            let second = '';
+            let parent = '';
+            let leaf = '';
             try {
-                seed.saveBatch({
+                parent = seed.saveUnit({ taskId: 'task:t-001', title: '一条需求', body: '', status: 'open' }).id;
+                leaf = seed.saveUnit({
                     taskId: 'task:t-001',
-                    id: 'b1',
-                    title: '首批交付',
-                    note: '先交付基础能力',
-                    allowNewId: true,
-                });
-                first = seed.saveUnit({ taskId: 'task:t-001', title: '第一步', body: '', status: 'done' }).id;
-                second = seed.saveUnit({
-                    taskId: 'task:t-001',
-                    title: '第二步',
+                    title: '它的第一步',
                     body: '',
-                    status: 'open',
-                    batch: 'b1',
+                    status: 'done',
+                    parent,
                 }).id;
-                seed.linkUnits('task:t-001', first, second);
             } finally {
                 seed.db.close();
             }
 
             // 服务端算的是 unitBoard（与 agent 工具 / 上下文注入同一份纯函数）：
-            // 这里只验「存进库 → RPC 回来」的这条链真的通，且分层与 ready 划分对
-            const board = await binding.invoke<unknown, UnitBoardWithBatches>('diy2.units.list', {
+            // 这里只验「存进库 → RPC 回来」的这条链真的通，且树形与 ready 划分对
+            const board = await binding.invoke<unknown, UnitBoard>('diy2.units.list', {
                 input: { id: 'task:t-001' },
             });
-            expect(board.layers.map((layer) => layer.map((row) => row.id))).toEqual([[first], [second]]);
-            expect(board.done).toEqual([first]);
-            expect(board.ready).toEqual([second]);
-            expect(board.rows.find((row) => row.id === second)?.batch).toBe('b1');
-            expect(board.batches).toMatchObject([
-                { id: 'b1', title: '首批交付', note: '先交付基础能力', stage: 'active', ready: [second], total: 1 },
+            expect(board.rows.map((row) => [row.id, row.depth, row.group])).toEqual([
+                [parent, 0, true],
+                [leaf, 1, false],
             ]);
+            expect(board.groups).toEqual([parent]);
+            expect(board.done).toEqual([parent, leaf]);
+            // 母项不执行，done 之后也不进 ready
+            expect(board.ready).toEqual([]);
         } finally {
             transport.close();
         }

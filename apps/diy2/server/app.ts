@@ -30,7 +30,6 @@ import {
     modelProviders,
     newEntityId,
     openStore,
-    unitBatchViews,
     unitBoard,
     unitsContextText,
 } from '@diy-agent/entity-runtime';
@@ -703,11 +702,7 @@ export function createDiy2App(opts: {
              * 界面是旁观者的窗口 —— 想改就在聊天里说。推导在 `unitBoard`（同一份纯函数）。
              */
             units: {
-                list: async ({ input }) => {
-                    const board = unitBoard(store.listUnits(input.id), store.unitDepsOf(input.id));
-                    // 批次与图一起给：界面要按批次显示「这次验收包含哪几条」，只给 id 不够
-                    return { ...board, batches: unitBatchViews(board, store.listBatches(input.id)) };
-                },
+                list: async ({ input }) => unitBoard(store.listUnits(input.id)),
                 /**
                  * 模型读到的 `units` 节原文。
                  *
@@ -715,10 +710,7 @@ export function createDiy2App(opts: {
                  * 两边迟早在溢出退化 / 批次行上分叉，而人看这一页恰恰是在核对
                  * 「模型到底读到了什么」。
                  */
-                text: async ({ input }) => {
-                    const board = unitBoard(store.listUnits(input.id), store.unitDepsOf(input.id));
-                    return unitsContextText(board, store.listBatches(input.id));
-                },
+                text: async ({ input }) => unitsContextText(unitBoard(store.listUnits(input.id))),
             },
             links: {
                 list: async ({ input }) => {
