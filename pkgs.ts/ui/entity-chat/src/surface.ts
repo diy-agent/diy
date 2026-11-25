@@ -23,8 +23,11 @@ function load(): string {
     } catch {
         /* 存储不可用：用缺省 */
     }
-    // 缺省 Astryx（虚拟化 + 自带代码高亮，长会话最稳）
-    return SURFACES.find((surface) => surface.id === 'astryx')?.id ?? SURFACES[0]!.id;
+    // 缺省 shadcn（2026-11-25 起）。此前是 Astryx：它自带虚拟化与代码高亮，长会话最稳；
+    // 但它三包全锁 canary（`ChatVirtualizer` 所在的 lab「永不发 stable」），且两面差异经实测
+    // 已无法分辨（日志里错误率 1.8% vs 1.5%、tsc 实例 4:4）。裁决与范围见
+    // docs/plans/2026-11-24-surface-parity.md §7。
+    return SURFACES.find((surface) => surface.id === 'shadcn')?.id ?? SURFACES[0]!.id;
 }
 
 let current = load();
