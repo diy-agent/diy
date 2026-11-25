@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { Button } from '@diy-agent/ui-shadcn';
+
 import { DIR_SUGGESTIONS, roomTitle, roomTypeLabel, type Bot, type Room } from '../model';
 import { useStore } from '../store';
 import { ModelPicker } from './ModelPicker';
@@ -90,19 +92,20 @@ export function CreateProjectDialog({
                 </p>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     取消
-                </button>
-                <button
+                </Button>
+                <Button
                     disabled={name.trim() === '' || dir.trim() === ''}
                     onClick={() => {
                         onSubmit({ name: name.trim(), dir: dir.trim() });
                         onClose();
                     }}
-                    className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-40"
+                    variant="default"
+                    size="lg"
                 >
                     创建
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -173,16 +176,12 @@ export function CreateTaskDialog({
                 </p>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     取消
-                </button>
-                <button
-                    disabled={name.trim() === '' || busy}
-                    onClick={submit}
-                    className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-40"
-                >
+                </Button>
+                <Button disabled={name.trim() === '' || busy} onClick={submit} variant="default" size="lg">
                     创建
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -218,9 +217,9 @@ export function ConfirmDeleteDialog({
                 </p>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     取消
-                </button>
+                </Button>
                 <button
                     onClick={() => {
                         onConfirm();
@@ -304,16 +303,17 @@ export function AddMemberDialog({
                             }}
                             className="flex-1 rounded-lg border bg-card px-2 py-1.5 outline-none"
                         />
-                        <button
+                        <Button
                             disabled={name.trim() === ''}
                             onClick={() => {
                                 onCreateNew(name);
                                 onClose();
                             }}
-                            className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-40"
+                            variant="default"
+                            size="lg"
                         >
                             新建
-                        </button>
+                        </Button>
                     </div>
                     <p className="mt-1.5 text-xs text-muted-foreground">
                         新建的 bot 是当前容器的成员；@ 它才会说话，默认仍由「默认应答」回。
@@ -322,9 +322,9 @@ export function AddMemberDialog({
             </div>
 
             <div className="mt-4 flex justify-end">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     关闭
-                </button>
+                </Button>
             </div>
         </Modal>
     );
