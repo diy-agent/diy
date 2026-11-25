@@ -217,7 +217,8 @@ run 还会吐 `run.failed`，`watch.apply` 会清空 pending，那时再问就�
 1. **挂死**：模型 `run.started` 后不吐字节 → 假 clock +60s 不杀、+120s 杀、`endReason.type === 'stalled'`、`awaiting==='model-stream'`、notice 落一条
 1b. **判定序**：stall 导致的 abort 断言 `type==='stalled'` 而**不是** `interrupted` / `unknown`；人按停断言 `interrupted`
 2. **不误杀长工具**（对应 demo 场景②）：`tool.started` 后每 30s 一次 job 输出心跳 → 假 clock +12min **不杀**，`alive===true`
-3. **工具无心跳**：300s → **只提示不杀**（断言 `abort` 未被调用）
+3. **工具无心跳**：300s → **只提示不杀**（断言 `abort` 未被调用）—— 这条锁的是 progress 层；
+   中止另由 StallWatchdog 的 `toolMs`（缺省 30 分钟，##560 起）管，别把这条读成「工具永不被杀」
 4. **正常说完不被干扰**：`text.delta` 持续 → 永不触发
 5. **步数耗尽不是 stall**：`max-steps` 的 notice 只有一条，不叠加 stalled
 6. UI：`RunningIndicator` 三档快照（< 60s 与现在逐像素一致）
@@ -344,8 +345,13 @@ main 新进了 `stall-watchdog.ts`（agent 层，`touch()` 挂在每个 part 上
 |---|---|---|---|
 | 首包没来 | 60s / 120s | 180s | StallWatchdog（`stalled`） |
 | 流中静默 | 40s / 80s | 120s | StallWatchdog（`stalled`） |
-| 工具无心跳 | 300s / — | 永不 | —（`job` 自己管） |
+| 工具无心跳 | 300s / — | 1800s（豁免名单内的如 `ask` 不设） | StallWatchdog（`stalled`） |
 | 整轮墙钟 | 1800s / — | 永不 | —（人自己按停） |
+
+> **2026-11-25 改**：「工具无心跳」那行原来是 `永不` / `—（job 自己管）`，因为当时
+> `DEFAULT_STALL.toolMs = 0`（不设）。##560 把它改成 30 分钟 —— 提示仍归 progress
+> （`toolSilenceMs` 300s，只提示不杀），中止改归 StallWatchdog。**两层不同、不冲突**：
+> progress 永远不为 tool 时段调 `abort`，杀只由 watchdog 做。
 
 ### 10.5 已知边界（写下来免得下次当 bug 查）
 
@@ -353,7 +359,10 @@ main 新进了 `stall-watchdog.ts`（agent 层，`touch()` 挂在每个 part 上
   但中止仍按 env 走（不影响正确性）。
 - `sawContent` 是本轮级的（不是每个 await 段级的）：工具返回后模型重新生成时，走「流中」那组
   阈值（更早提示、更早报 `stalled` 档）。因为只提示不杀，代价仅是提示偏早。
-- `tool` 时段的 `StallInfo.phase` 在收尾时映射成 `awaiting:'tool'`（缺省 `toolMs:0`，正常不会出现）。
+- `tool` 时段的 `StallInfo.phase` 在收尾时映射成 `awaiting:'tool'`。**2026-11-25 起缺省
+  `toolMs` 从 `0` 改成 30 分钟（##560）**，所以它不再是「正常不会出现」：工具跑满 30 分钟
+  没结局就会带 `awaiting:'tool'` 走到收尾。`DEFAULT_UNBOUNDED_TOOLS` 里的 `ask` 不受此限。
+  改这个值先读 `stall-watchdog.ts` 的 `DEFAULT_STALL` 注释（那里写了为什么是 30 分钟）。
 
 ## 附：demo
 
