@@ -18,7 +18,7 @@ export const Markdown = React.memo(function Markdown({
     onLinkClick?: (href: string, event: React.MouseEvent<HTMLAnchorElement>) => false | void;
 }) {
     return (
-        <div className="text-[13px] leading-relaxed break-words">
+        <div className="text-sm leading-relaxed break-words">
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
@@ -50,7 +50,7 @@ export const Markdown = React.memo(function Markdown({
                         const language = languageOf(className);
                         if (language === undefined) {
                             return (
-                                <code className="rounded bg-muted/70 px-1 py-0.5 font-mono text-[12px]">
+                                <code className="rounded bg-muted/70 px-1 py-0.5 font-mono text-xs">
                                     {children}
                                 </code>
                             );
@@ -58,7 +58,7 @@ export const Markdown = React.memo(function Markdown({
                         const code = String(children ?? '').replace(/\n$/, '');
                         return (
                             <div className="my-2 overflow-hidden rounded-md border border-border/60">
-                                <div className="flex items-center justify-between bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground">
+                                <div className="flex items-center justify-between bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
                                     <span className="lowercase">{language}</span>
                                     <button
                                         onClick={() => void navigator.clipboard?.writeText(code)}
@@ -67,7 +67,7 @@ export const Markdown = React.memo(function Markdown({
                                         复制
                                     </button>
                                 </div>
-                                <pre className="overflow-x-auto p-2.5 text-[12px] leading-relaxed">
+                                <pre className="overflow-x-auto p-2.5 text-xs leading-relaxed">
                                     <code
                                         className="hljs bg-transparent p-0"
                                         dangerouslySetInnerHTML={{ __html: highlightCode(code, language) }}
@@ -84,7 +84,7 @@ export const Markdown = React.memo(function Markdown({
                     ),
                     table: ({ children }) => (
                         <div className="my-2 overflow-x-auto">
-                            <table className="w-full border-collapse text-[12px]">{children}</table>
+                            <table className="w-full border-collapse text-xs">{children}</table>
                         </div>
                     ),
                     th: ({ children }) => (

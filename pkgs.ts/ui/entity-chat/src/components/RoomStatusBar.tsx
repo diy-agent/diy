@@ -55,7 +55,7 @@ export function StatusChips({ bots, asks, stuck, now, onJump }: StatusChipsProps
     if (asks.length === 0 && stuckLines.length === 0) return null;
 
     return (
-        <div className="flex flex-wrap items-center gap-2 border-b px-4 py-1.5 text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 border-b px-4 py-1.5 text-xs text-muted-foreground">
             {asks.map((request) => {
                 const owner = request.owner === undefined ? undefined : bots[request.owner];
                 const waited = waitTextOf(request.at, now);

@@ -26,8 +26,8 @@ function Glyph({ icon, label, count, title }: { icon: React.ReactNode; label: st
             title={title}
         >
             <span className={live ? 'animate-pulse' : ''}>{icon}</span>
-            <span className="text-[10px] leading-none">{label}</span>
-            <span className="text-[10px] tabular-nums leading-none">{count}</span>
+            <span className="text-xs leading-none">{label}</span>
+            <span className="text-xs tabular-nums leading-none">{count}</span>
         </span>
     );
 }
@@ -43,7 +43,7 @@ function RunningRoomRow({ room, onSelect }: { room: ReturnType<typeof useRunning
         >
             <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />
             <span className="min-w-0 flex-1 truncate">{roomTitle(room)}</span>
-            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{count} 个成员在跑</span>
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{count} 个成员在跑</span>
         </button>
     );
 }
@@ -86,14 +86,14 @@ export function ActiveSessionsGlyph() {
                 }}
             >
                 <span className={count > 0 ? 'animate-pulse' : ''}><MessageSquare className="size-3.5" /></span>
-                <span className="text-[10px] leading-none">Bot</span>
-                <span className="text-[10px] tabular-nums leading-none">{count}</span>
+                <span className="text-xs leading-none">Bot</span>
+                <span className="text-xs tabular-nums leading-none">{count}</span>
             </button>
             {anchor !== null && createPortal(
                 <>
                     <button aria-label="关闭 Bot 列表" className="fixed inset-0 z-[999] cursor-default" onClick={close} />
                     <div role="dialog" aria-label="正在运行的 Bot" className="fixed z-[1000] w-72 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 296)), top: anchor.bottom + 4 }}>
-                        <div className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground">正在运行的 Bot · {count}</div>
+                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">正在运行的 Bot · {count}</div>
                         {runningRooms.map((room) => <RunningRoomRow key={room.id} room={room} onSelect={() => { actions.select(room.id); close(); }} />)}
                         {count === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">当前没有运行中的 Bot</p>}
                     </div>

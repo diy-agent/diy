@@ -29,11 +29,11 @@ export function PendingRows({
     now: number;
 }) {
     if (rows.length === 0) {
-        return <p className="px-3 py-2 text-[10px] text-muted-foreground">现在没有正在跑的轮次</p>;
+        return <p className="px-3 py-2 text-xs text-muted-foreground">现在没有正在跑的轮次</p>;
     }
 
     return (
-        <table className="w-full border-t text-[10px]">
+        <table className="w-full border-t text-xs">
             <thead className="text-muted-foreground">
                 <tr>
                     <th className="px-3 py-1 text-left font-normal">成员</th>

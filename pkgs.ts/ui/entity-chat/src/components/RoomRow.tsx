@@ -185,7 +185,7 @@ export function RoomRowView({
             {/* 任务编号（#14）：紧跟在状态图标后面 —— 它是这一行除了标题之外唯一的**身份**。
                 用户要认「#14 那个任务」，标题可能重名 / 被改；编号不会。 */}
             {number !== undefined && (
-                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">#{number}</span>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">#{number}</span>
             )}
 
             <EditableName
@@ -215,7 +215,7 @@ export function RoomRowView({
             {isProject && collapsed && (openTaskCount ?? 0) > 0 && (
                 <span
                     title={`${openTaskCount} 个未关闭任务`}
-                    className="shrink-0 rounded-full border px-1.5 text-[10px] tabular-nums text-muted-foreground"
+                    className="shrink-0 rounded-full border px-1.5 text-xs tabular-nums text-muted-foreground"
                 >
                     {openTaskCount}
                 </span>
@@ -236,7 +236,7 @@ export function RoomRowView({
                     className="flex shrink-0 items-center gap-0.5 text-sky-400"
                 >
                     <HelpCircle className="size-3" />
-                    {pendingAsk > 1 && <span className="text-[10px] tabular-nums">{pendingAsk}</span>}
+                    {pendingAsk > 1 && <span className="text-xs tabular-nums">{pendingAsk}</span>}
                 </span>
             )}
 
@@ -250,7 +250,7 @@ export function RoomRowView({
                             ? '会话里还没有消息（这个任务没和 agent 说过话）'
                             : `最后活动 ${formatAtAbsolute(activityAt)}（${activityAgo}）`
                     }
-                    className="shrink-0 text-[10px] tabular-nums text-muted-foreground/60"
+                    className="shrink-0 text-xs tabular-nums text-muted-foreground/60"
                 >
                     {formatClock(activityAt) ?? '—'}
                 </span>

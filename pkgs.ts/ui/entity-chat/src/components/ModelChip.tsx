@@ -18,7 +18,7 @@ export function ModelChip({ value, onClick }: { value: string; onClick: () => vo
         <button
             onClick={onClick}
             title={`${label} · 点击切换`}
-            className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted"
+            className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-xs text-muted-foreground hover:bg-muted"
         >
             <Cpu className="size-3" />
             {label.split(' · ')[0]}

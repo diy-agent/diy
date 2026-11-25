@@ -79,14 +79,14 @@ function Row({
     return (
         <div className="border-t px-3 py-2 first:border-t-0">
             <div className="flex items-center gap-2">
-                <span className="text-[12px] font-medium">{session.name}</span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-xs font-medium">{session.name}</span>
+                <span className="text-xs text-muted-foreground">
                     {stats.entries} 条 · ≈{fmt(used)} tok
                 </span>
                 <button
                     onClick={onCompact}
                     disabled={active}
-                    className="ml-auto flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] hover:bg-muted disabled:opacity-50"
+                    className="ml-auto flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs hover:bg-muted disabled:opacity-50"
                 >
                     <Scissors className={`size-3 ${running ? 'animate-pulse' : ''}`} />
                     {active ? (isSummaryStrategy(stats.strategy) ? '摘要中…' : '压缩中…') : '压缩'}
@@ -95,18 +95,18 @@ function Row({
                     <button
                         onClick={onCancel}
                         title="撤掉这次压缩（已折叠的部分不生效）"
-                        className="rounded border px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
+                        className="rounded border px-1 py-0.5 text-xs text-muted-foreground hover:bg-muted"
                     >
                         取消
                     </button>
                 )}
             </div>
             {runningProgress !== undefined && (
-                <div className="mt-0.5 text-[10px] text-amber-600">
+                <div className="mt-0.5 text-xs text-amber-600">
                     摘要中… 已跑 {elapsed}s · 保留最近 {runningProgress.budget.keepTurns} 轮
                 </div>
             )}
-            <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-muted-foreground">
+            <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
                 <span>策略 {strategyLabel(stats.strategy)}</span>
                 <span>压过 {stats.compactions} 次</span>
                 {stats.collapsed > 0 && <span>已折叠 {stats.collapsed} 条</span>}
@@ -114,7 +114,7 @@ function Row({
                 {stats.usage !== undefined && <span>上轮实测 {fmt(stats.usage.inputTokens)} tok</span>}
             </div>
             {(summaryState !== undefined || stats.summary !== undefined) && (
-                <div className="mt-0.5 flex items-start gap-1.5 text-[10px] text-muted-foreground">
+                <div className="mt-0.5 flex items-start gap-1.5 text-xs text-muted-foreground">
                     {summaryState !== undefined && (
                         <span className={lastEvent?.summaryError === undefined ? '' : 'text-amber-600'}>· {summaryState}</span>
                     )}
@@ -122,7 +122,7 @@ function Row({
                         <>
                             <button
                                 onClick={() => setShowSummary((value) => !value)}
-                                className="ml-auto shrink-0 rounded border px-1 py-0.5 text-[10px] hover:bg-muted"
+                                className="ml-auto shrink-0 rounded border px-1 py-0.5 text-xs hover:bg-muted"
                             >
                                 {showSummary ? '收起摘要' : '看摘要'}
                             </button>
@@ -136,7 +136,7 @@ function Row({
                 </div>
             )}
             {showSummary && stats.summary !== undefined && (
-                <pre className="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-1.5 text-[10px] leading-snug whitespace-pre-wrap">
+                <pre className="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-1.5 text-xs leading-snug whitespace-pre-wrap">
                     {stats.summary}
                 </pre>
             )}
@@ -229,7 +229,7 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
             <button
                 onClick={() => setOpen((value) => !value)}
                 title="查看每个 bot 的上下文占用，手动压缩"
-                className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
             >
                 <Gauge className={`size-3 ${runningCount > 0 ? 'animate-pulse text-amber-600' : ''}`} />
                 {runningCount > 0 ? (
@@ -253,21 +253,21 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
                         }`}
                     >
                         <div className="flex items-center gap-2 px-3 py-2">
-                            <span className="text-[11px] font-medium">上下文</span>
-                            <span className="text-[10px] text-muted-foreground">
+                            <span className="text-xs font-medium">上下文</span>
+                            <span className="text-xs text-muted-foreground">
                                 {windowTokens === undefined ? '窗口未知' : `窗口 ${fmt(windowTokens)} tok`} · 各 bot
                                 独立压缩
                             </span>
                             <button
                                 onClick={compressAll}
                                 disabled={busy !== null || runningCount > 0 || sessions.length === 0}
-                                className="ml-auto rounded border px-1.5 py-0.5 text-[10px] hover:bg-muted disabled:opacity-50"
+                                className="ml-auto rounded border px-1.5 py-0.5 text-xs hover:bg-muted disabled:opacity-50"
                             >
                                 全部压缩
                             </button>
                         </div>
 
-                        <div className="flex items-center gap-1.5 border-t px-3 py-1.5 text-[10px] text-muted-foreground">
+                        <div className="flex items-center gap-1.5 border-t px-3 py-1.5 text-xs text-muted-foreground">
                             <span>保留最近</span>
                             <input
                                 type="number"
@@ -280,7 +280,7 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
                         </div>
 
                         {sessions.length === 0 ? (
-                            <p className="border-t px-3 py-3 text-[11px] text-muted-foreground">
+                            <p className="border-t px-3 py-3 text-xs text-muted-foreground">
                                 还没有会话（发一条消息再回来看）
                             </p>
                         ) : (
@@ -309,14 +309,14 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
                         */}
                         <button
                             onClick={() => setShowPending((value) => !value)}
-                            className="flex w-full items-center gap-1 border-t px-3 py-1.5 text-[10px] text-muted-foreground hover:bg-muted"
+                            className="flex w-full items-center gap-1 border-t px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"
                         >
                             {showPending ? '▾' : '▸'} 进展（谁卡在哪）
                         </button>
                         {showPending && <PendingTable roomId={room.id} />}
 
                         {note !== null && (
-                            <p className="border-t px-3 py-2 text-[10px] text-muted-foreground">{note}</p>
+                            <p className="border-t px-3 py-2 text-xs text-muted-foreground">{note}</p>
                         )}
                     </div>
                 </>

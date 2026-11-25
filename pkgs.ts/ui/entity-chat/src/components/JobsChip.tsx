@@ -131,13 +131,13 @@ function BriefRow({ row, now }: { row: JobRunRow; now: number }) {
     return (
         <div className="flex items-center gap-2 px-3 py-1">
             <span className={`size-1.5 shrink-0 rounded-full ${state.dot}`} />
-            <span className="truncate font-mono text-[11px]" title={row.command}>
+            <span className="truncate font-mono text-xs" title={row.command}>
                 {titleOf(row)}
             </span>
             {/* 结局无人接：房间删了 / 成员退了，通知落空（run 目录里的 done.json 写着） */}
             {row.delivered === false && <span className="size-1.5 shrink-0 rounded-full bg-amber-500" title="结局无人接" />}
-            <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">{fmtDur(dur)}</span>
-            <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70" title={row.id}>
+            <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">{fmtDur(dur)}</span>
+            <span className="shrink-0 font-mono text-xs text-muted-foreground/70" title={row.id}>
                 {row.id.slice(-4)}
             </span>
         </div>
@@ -173,13 +173,13 @@ function HoverCard({
         >
             <div className="flex items-center gap-2 border-b px-3 py-1.5">
                 <ListTree className="size-3 text-muted-foreground" />
-                <span className="text-[11px] font-medium">后台任务</span>
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-xs font-medium">后台任务</span>
+                <span className="text-xs text-muted-foreground">
                     本房间 · {running.length === 0 ? '没有在跑的' : `${running.length} 个在跑`}
                 </span>
                 <button
                     onClick={onDetail}
-                    className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
+                    className="ml-auto rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
                 >
                     明细 ›
                 </button>
@@ -189,13 +189,13 @@ function HoverCard({
                     <BriefRow key={row.id} row={row} now={now} />
                 ))}
                 {running.length === 0 && (
-                    <p className="px-3 py-2 text-[11px] text-muted-foreground">
+                    <p className="px-3 py-2 text-xs text-muted-foreground">
                         {finished.length === 0 ? '还没有后台任务记录' : '现在没有在跑的（下面是最近结束的）'}
                     </p>
                 )}
                 {finished.length > 0 && (
                     <>
-                        <div className="mt-1 border-t px-3 pb-0.5 pt-1 text-[10px] text-muted-foreground">
+                        <div className="mt-1 border-t px-3 pb-0.5 pt-1 text-xs text-muted-foreground">
                             最近结束
                         </div>
                         {finished.map((row) => (
@@ -243,19 +243,19 @@ function OutputTail({ row }: { row: JobRunRow }) {
         };
     }, [row.id, row.state]);
 
-    if (error !== null) return <p className="px-3 py-2 text-[11px] text-destructive">读输出失败：{error}</p>;
-    if (tail === null) return <p className="px-3 py-2 text-[11px] text-muted-foreground">读输出…</p>;
+    if (error !== null) return <p className="px-3 py-2 text-xs text-destructive">读输出失败：{error}</p>;
+    if (tail === null) return <p className="px-3 py-2 text-xs text-muted-foreground">读输出…</p>;
     return (
         <div className="px-3 pb-2">
-            <pre className="max-h-56 overflow-auto rounded border bg-muted/40 p-2 font-mono text-[10px] leading-relaxed">
+            <pre className="max-h-56 overflow-auto rounded border bg-muted/40 p-2 font-mono text-xs leading-relaxed">
                 {tail.text === '' ? '（没有输出）' : tail.text}
             </pre>
             {tail.droppedBytes > 0 && (
-                <p className="mt-1 text-[10px] text-muted-foreground">
+                <p className="mt-1 text-xs text-muted-foreground">
                     尾部之前还有 {tail.droppedBytes} 字节没显示（只留末尾 60 行）
                 </p>
             )}
-            <p className="mt-1 font-mono text-[10px] text-muted-foreground">日志 {row.logPath}</p>
+            <p className="mt-1 font-mono text-xs text-muted-foreground">日志 {row.logPath}</p>
         </div>
     );
 }
@@ -294,24 +294,24 @@ function DetailRow({ row, now, onKilled }: { row: JobRunRow; now: number; onKill
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-muted/40"
             >
                 <span className={`size-1.5 shrink-0 rounded-full ${state.dot}`} />
-                <span className={`w-[86px] shrink-0 text-[11px] ${state.text}`}>{state.label}</span>
-                <span className="truncate font-mono text-[11px]" title={row.command}>
+                <span className={`w-[86px] shrink-0 text-xs ${state.text}`}>{state.label}</span>
+                <span className="truncate font-mono text-xs" title={row.command}>
                     {titleOf(row)}
                 </span>
                 {/* 结局无人接：这条跑完了，但起它的房间已不在 —— 没人被叫醒，日志只能自己来翻 */}
                 {row.delivered === false && (
                     <span
                         title="结局无人接：起它的房间已删或成员已退 —— 后台任务跑完了，但没人收到通知（日志仍在）"
-                        className="shrink-0 rounded border border-amber-500/40 px-1 text-[10px] text-amber-600"
+                        className="shrink-0 rounded border border-amber-500/40 px-1 text-xs text-amber-600"
                     >
                         无人接
                     </span>
                 )}
-                <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
                     {fmtDur(dur)}
                     <span className="ml-1 opacity-60">{fmtAt(row.startedAt)}</span>
                 </span>
-                <span className="w-[64px] shrink-0 truncate text-right font-mono text-[10px] text-muted-foreground/80" title={row.id}>
+                <span className="w-[64px] shrink-0 truncate text-right font-mono text-xs text-muted-foreground/80" title={row.id}>
                     {row.id}
                 </span>
                 {running ? (
@@ -322,7 +322,7 @@ function DetailRow({ row, now, onKilled }: { row: JobRunRow; now: number; onKill
                         }}
                         disabled={killing}
                         title="按进程组停止（与 agent 的 job kill 同一入口）"
-                        className="flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] hover:bg-muted disabled:opacity-50"
+                        className="flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-xs hover:bg-muted disabled:opacity-50"
                     >
                         <Square className="size-2.5" />
                         {killing ? '停止中' : '停止'}
@@ -334,7 +334,7 @@ function DetailRow({ row, now, onKilled }: { row: JobRunRow; now: number; onKill
             </div>
             {open && (
                 <div className="border-t bg-muted/20">
-                    <div className="grid grid-cols-[auto_1fr] gap-x-3 px-3 py-1.5 text-[10px] text-muted-foreground">
+                    <div className="grid grid-cols-[auto_1fr] gap-x-3 px-3 py-1.5 text-xs text-muted-foreground">
                         <span>命令</span>
                         <span className="font-mono">{row.command}</span>
                         <span>目录</span>
@@ -413,8 +413,8 @@ function JobsDrawer({ rows, now, onClose, onKilled, scope = 'room' }: {
             >
                 <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
                     <ListTree className="size-3.5 text-muted-foreground" />
-                    <span className="text-[12px] font-medium">后台任务</span>
-                    <span className="text-[11px] text-muted-foreground">
+                    <span className="text-xs font-medium">后台任务</span>
+                    <span className="text-xs text-muted-foreground">
                         {/* 口径写在标题上：房间内 = 本房间；标题栏那颗 = 本实例全部 */}
                         {scope === 'instance' ? '本实例全部' : '本房间'} ·{' '}
                         {running.length === 0 ? '没有在跑的' : `${running.length} 个在跑`} · 共 {rows.length} 条
@@ -432,7 +432,7 @@ function JobsDrawer({ rows, now, onClose, onKilled, scope = 'room' }: {
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto">
                     {rows.length === 0 ? (
-                        <p className="px-4 py-6 text-[11px] text-muted-foreground">
+                        <p className="px-4 py-6 text-xs text-muted-foreground">
                             这张表还是空的 —— agent 起过 `bash` 的后台任务才会出现
                         </p>
                     ) : (
@@ -512,7 +512,7 @@ export function JobsChip() {
                           ? `后台任务（本房间）：现在没有在跑的，点开看历史（共 ${rows.length} 条）`
                           : '后台任务（本房间）：悬停看简要，点开看明细'
                 }
-                className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
+                className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
             >
                 <span className="relative flex size-2 items-center justify-center">
                     {!idle && <span className="absolute size-2 animate-ping rounded-full bg-emerald-500/60" />}

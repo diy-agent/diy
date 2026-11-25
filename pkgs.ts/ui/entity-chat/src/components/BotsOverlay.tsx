@@ -71,11 +71,11 @@ function BriefRow({ row, onRetry }: { row: BotRow; onRetry: (row: BotRow) => voi
     return (
         <div className="flex items-center gap-2 px-3 py-1.5">
             <StateDot state={row.state} />
-            <span className="truncate text-[11px] font-medium" style={{ color: row.botColor }}>
+            <span className="truncate text-xs font-medium" style={{ color: row.botColor }}>
                 {row.botName}
             </span>
-            <span className="truncate text-[11px] text-muted-foreground">{row.roomTitle}</span>
-            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+            <span className="truncate text-xs text-muted-foreground">{row.roomTitle}</span>
+            <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                 {row.state === 'needs-attention' ? outcomeTextOf(row) : STATE_TEXT[row.state]}
             </span>
             {canRetry ? (
@@ -112,22 +112,22 @@ function TableRow({
                 className="size-3"
             />
             <StateDot state={row.state} />
-            <span className="w-[92px] shrink-0 truncate text-[11px]" style={{ color: row.botColor }}>
+            <span className="w-[92px] shrink-0 truncate text-xs" style={{ color: row.botColor }}>
                 {row.botName}
             </span>
-            <span className="w-[200px] shrink-0 truncate text-[11px] text-muted-foreground" title={row.roomTitle}>
+            <span className="w-[200px] shrink-0 truncate text-xs text-muted-foreground" title={row.roomTitle}>
                 {row.roomTitle}
             </span>
-            <span className="w-[84px] shrink-0 text-[10px] text-muted-foreground">{STATE_TEXT[row.state]}</span>
+            <span className="w-[84px] shrink-0 text-xs text-muted-foreground">{STATE_TEXT[row.state]}</span>
             <span
-                className={`min-w-0 flex-1 truncate text-[11px] ${
+                className={`min-w-0 flex-1 truncate text-xs ${
                     row.outcome === undefined || row.outcome === 'done' ? 'text-muted-foreground' : 'text-rose-300'
                 }`}
                 title={outcomeTextOf(row)}
             >
                 {outcomeTextOf(row)}
             </span>
-            <span className="w-[86px] shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+            <span className="w-[86px] shrink-0 text-right font-mono text-xs text-muted-foreground">
                 {row.lastTurnAt === undefined ? '—' : fmtAt(row.lastTurnAt, now)}
             </span>
         </label>
@@ -208,18 +208,18 @@ export function BotsOverlay({ rows, error, loaded, reload, onClose, initialMode 
                 <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
                     <span className="text-xs font-medium">{mode === 'brief' ? 'Bot · 要你看的' : 'Bot · 全部'}</span>
                     {loaded ? (
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="text-xs text-muted-foreground">
                             {attention.length} 个要你看 / 共 {rows.length} 个
                         </span>
                     ) : null}
-                    {error === null ? null : <span className="text-[10px] text-rose-400">{error}</span>}
+                    {error === null ? null : <span className="text-xs text-rose-400">{error}</span>}
                     {mode === 'full' ? (
                         <div className="ml-3 flex items-center gap-1">
                             {FILTERS.map((item) => (
                                 <button
                                     key={item.id}
                                     onClick={() => setFilter(item.id)}
-                                    className={`rounded px-1.5 py-0.5 text-[10px] ${
+                                    className={`rounded px-1.5 py-0.5 text-xs ${
                                         filter === item.id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/60'
                                     }`}
                                 >
@@ -235,9 +235,9 @@ export function BotsOverlay({ rows, error, loaded, reload, onClose, initialMode 
 
                 <div className="min-h-0 flex-1 overflow-y-auto">
                     {!loaded ? (
-                        <p className="px-4 py-6 text-[11px] text-muted-foreground">正在读 bot 状态…</p>
+                        <p className="px-4 py-6 text-xs text-muted-foreground">正在读 bot 状态…</p>
                     ) : shown.length === 0 ? (
-                        <p className="px-4 py-6 text-[11px] text-muted-foreground">
+                        <p className="px-4 py-6 text-xs text-muted-foreground">
                             {mode === 'brief' ? '都闲着 —— 没有在跑的、也没有等你回答或出错的' : '这个筛选下没有 bot'}
                         </p>
                     ) : mode === 'brief' ? (
@@ -264,11 +264,11 @@ export function BotsOverlay({ rows, error, loaded, reload, onClose, initialMode 
                 </div>
 
                 <div className="flex items-center gap-2 border-t border-border px-3 py-1.5">
-                    {flash === null ? null : <span className="text-[10px] text-muted-foreground">{flash}</span>}
+                    {flash === null ? null : <span className="text-xs text-muted-foreground">{flash}</span>}
                     {mode === 'brief' ? (
                         <button
                             onClick={() => setMode('full')}
-                            className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-[11px] hover:bg-muted"
+                            className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-muted"
                         >
                             全部 Bot <ChevronRight className="size-3" />
                         </button>
@@ -276,7 +276,7 @@ export function BotsOverlay({ rows, error, loaded, reload, onClose, initialMode 
                         <>
                             <button
                                 onClick={() => setMode('brief')}
-                                className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
+                                className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
                             >
                                 ‹ 只看要看的
                             </button>
@@ -285,7 +285,7 @@ export function BotsOverlay({ rows, error, loaded, reload, onClose, initialMode 
                                     void retry(selected);
                                 }}
                                 disabled={selected.length === 0 || sending}
-                                className="ml-auto flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] text-primary-foreground disabled:opacity-40"
+                                className="ml-auto flex items-center gap-1 rounded bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-40"
                             >
                                 {sending ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
                                 重试选中（{selected.length}）

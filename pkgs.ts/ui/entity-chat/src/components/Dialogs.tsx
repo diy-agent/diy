@@ -78,14 +78,14 @@ export function CreateProjectDialog({
                             <button
                                 key={item}
                                 onClick={() => setDir(item)}
-                                className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                                className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
                             >
                                 {item}
                             </button>
                         ))}
                     </div>
                 </label>
-                <p className="rounded-lg border border-dashed px-2 py-1.5 text-[11px] text-muted-foreground">
+                <p className="rounded-lg border border-dashed px-2 py-1.5 text-xs text-muted-foreground">
                     会同时创建这个项目的 bot，名字 = 项目名（项目专属，不是全局 bot）
                 </p>
             </div>
@@ -163,11 +163,11 @@ export function CreateTaskDialog({
                     />
                 </label>
                 {error !== null && (
-                    <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px]">
+                    <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs">
                         {error}
                     </p>
                 )}
-                <p className="rounded-lg border border-dashed px-2 py-1.5 text-[11px] text-muted-foreground">
+                <p className="rounded-lg border border-dashed px-2 py-1.5 text-xs text-muted-foreground">
                     会自动建一个同名任务 bot；状态默认 open，点名字前的状态图标改成
                     closed，它就从项目树挪进「历史任务」。
                 </p>
@@ -213,7 +213,7 @@ export function ConfirmDeleteDialog({
                         它下面的 {taskCount} 个任务会一起删掉。
                     </p>
                 )}
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                     专属 bot 一并清掉；被其他容器借用的 bot 不动。仓库里的文件不删。
                 </p>
             </div>
@@ -280,7 +280,7 @@ export function AddMemberDialog({
                                 >
                                     <span className="size-2 shrink-0 rounded-full" style={{ background: bot.color }} />
                                     <span className="font-medium">{bot.name}</span>
-                                    <span className="ml-auto truncate text-[11px] text-muted-foreground">
+                                    <span className="ml-auto truncate text-xs text-muted-foreground">
                                         来自 {homeName(bot)}
                                     </span>
                                 </button>
@@ -315,7 +315,7 @@ export function AddMemberDialog({
                             新建
                         </button>
                     </div>
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    <p className="mt-1.5 text-xs text-muted-foreground">
                         新建的 bot 是当前容器的成员；@ 它才会说话，默认仍由「默认应答」回。
                     </p>
                 </div>
@@ -370,7 +370,7 @@ export function SettingsDialog({
                     <ModelPicker value={defaultModelKey} onChange={onChangeDefault} />
                 </div>
 
-                <div className="rounded-lg border border-dashed p-2 text-[11px] leading-relaxed text-muted-foreground">
+                <div className="rounded-lg border border-dashed p-2 text-xs leading-relaxed text-muted-foreground">
                     <p className="mb-1 font-medium text-foreground">当前目录（照 diy 的 provider 结构）</p>
                     <p>
                         provider = 端点 + 账户列表 + 模型目录；key = <code>account@provider/model</code>。

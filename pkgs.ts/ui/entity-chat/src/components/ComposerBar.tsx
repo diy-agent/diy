@@ -38,7 +38,7 @@ function StopAll({ roomId }: { roomId: string }) {
         <button
             onClick={() => conversation.cancel()}
             title="停掉这一轮的全部成员"
-            className="ml-auto flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="ml-auto flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
         >
             <Square className="size-2.5" />
             全部停止

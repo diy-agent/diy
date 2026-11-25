@@ -48,7 +48,7 @@ export function TurnFooter({
     const facts = settleFactsOf(entry.turn);
 
     return (
-        <div className="mt-2 flex items-center justify-between gap-3 border-t border-dashed pt-1.5 text-[12px] leading-4">
+        <div className="mt-2 flex items-center justify-between gap-3 border-t border-dashed pt-1.5 text-xs leading-4">
             <div className={`flex min-w-0 items-center gap-1.5 ${live ? 'text-muted-foreground' : TONE_CLASS[settle?.tone ?? 'muted']}`}>
                 {live ? (
                     <>
@@ -56,7 +56,7 @@ export function TurnFooter({
                             <button
                                 onClick={() => onStopBot(entry.author!.id)}
                                 title="停这一轮"
-                                className="shrink-0 rounded px-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                                className="shrink-0 rounded px-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                             >
                                 停
                             </button>

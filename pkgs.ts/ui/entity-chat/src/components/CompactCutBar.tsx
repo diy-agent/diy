@@ -36,7 +36,7 @@ export function CompactCutBar({ sessions }: { sessions: readonly SessionInfo[] }
             <button
                 onClick={() => setOpen((value) => !value)}
                 title="被压缩的历史对 bot 不再可见，这里是压缩留下的摘要"
-                className="flex w-full items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+                className="flex w-full items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
             >
                 <Scissors className="size-3" />
                 <span>{label}</span>
@@ -48,7 +48,7 @@ export function CompactCutBar({ sessions }: { sessions: readonly SessionInfo[] }
                 <div className="mt-1 space-y-1.5 rounded border bg-muted/30 px-2 py-1.5">
                     {compacted.map((session) => (
                         <div key={session.botId}>
-                            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <span className="font-medium text-foreground">{session.name}</span>
                                 <span>折叠 {session.stats.collapsed} 条</span>
                                 <span>压过 {session.stats.compactions} 次</span>
@@ -62,7 +62,7 @@ export function CompactCutBar({ sessions }: { sessions: readonly SessionInfo[] }
                                     />
                                 )}
                             </div>
-                            <pre className="mt-0.5 max-h-32 overflow-auto text-[10px] leading-snug whitespace-pre-wrap text-muted-foreground">
+                            <pre className="mt-0.5 max-h-32 overflow-auto text-xs leading-snug whitespace-pre-wrap text-muted-foreground">
                                 {session.stats.summary ?? '（这一份上下文里没有摘要，只有折叠计数）'}
                             </pre>
                         </div>

@@ -97,7 +97,7 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (key
                     </Select>
                 </label>
             </div>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
                 {model === undefined
                     ? '目录里没有模型'
                     : [

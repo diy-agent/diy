@@ -185,11 +185,11 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
     return (
         <aside className="flex w-[340px] shrink-0 flex-col border-l">
             <header className="flex items-center gap-2 border-b px-3 py-2">
-                <span className="text-[12px] font-medium">任务</span>
+                <span className="text-xs font-medium">任务</span>
                 {number !== undefined && (
-                    <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">#{number}</span>
+                    <span className="rounded bg-muted px-1 text-xs text-muted-foreground">#{number}</span>
                 )}
-                <span className="truncate text-[11px] text-muted-foreground">{roomTitle(room)}</span>
+                <span className="truncate text-xs text-muted-foreground">{roomTitle(room)}</span>
                 {onClose !== undefined && (
                     <button
                         onClick={onClose}
@@ -202,7 +202,7 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
             </header>
 
             <div className="flex-1 space-y-3 overflow-y-auto p-3">
-                <label className="block text-[11px] text-muted-foreground">
+                <label className="block text-xs text-muted-foreground">
                     标题（一句话：这个任务要做什么）
                     <input
                         value={title}
@@ -211,11 +211,11 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                             if (event.key === 'Enter') void save();
                         }}
                         placeholder="任务名；侧栏与项目树显示的就是这一句"
-                        className="mt-1 w-full rounded border bg-transparent p-2 text-[12px] text-foreground outline-none focus:border-ring"
+                        className="mt-1 w-full rounded border bg-transparent p-2 text-xs text-foreground outline-none focus:border-ring"
                     />
                 </label>
 
-                <label className="block text-[11px] text-muted-foreground">
+                <label className="block text-xs text-muted-foreground">
                     正文（方案 / 边界 / 验收口径）
                     <textarea
                         value={body}
@@ -223,18 +223,18 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                         onKeyDown={onKeyDown}
                         rows={14}
                         placeholder="长期信息写这里；改完保存，下一步 agent 只收到 task.body 增量"
-                        className="mt-1 w-full resize-y rounded border bg-transparent p-2 font-mono text-[12px] text-foreground outline-none focus:border-ring"
+                        className="mt-1 w-full resize-y rounded border bg-transparent p-2 font-mono text-xs text-foreground outline-none focus:border-ring"
                     />
                 </label>
 
                 <div className="border-t pt-2">
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>相关任务</span>
                         <span>{links.out.length + links.in.length} 条</span>
                     </div>
                     <ul className="mt-1 space-y-1">
                         {links.out.length + links.in.length === 0 && (
-                            <li className="text-[11px] text-muted-foreground">还没有关联</li>
+                            <li className="text-xs text-muted-foreground">还没有关联</li>
                         )}
                         {links.out.map((link) => (
                             <LinkRow
@@ -260,7 +260,7 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                         <select
                             value={target}
                             onChange={(event) => setTarget(event.target.value)}
-                            className="min-w-0 flex-1 rounded border bg-transparent px-1 py-0.5 text-[11px]"
+                            className="min-w-0 flex-1 rounded border bg-transparent px-1 py-0.5 text-xs"
                         >
                             <option value="">关联到…</option>
                             {others.map((item) => (
@@ -272,7 +272,7 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                         <select
                             value={kind}
                             onChange={(event) => setKind(event.target.value)}
-                            className="rounded border bg-transparent px-1 py-0.5 text-[11px]"
+                            className="rounded border bg-transparent px-1 py-0.5 text-xs"
                         >
                             {LINK_KINDS.map((item) => (
                                 <option key={item.value} value={item.value}>
@@ -283,14 +283,14 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                         <button
                             onClick={() => void addLink()}
                             disabled={target === '' || linking}
-                            className="rounded border px-1.5 py-0.5 text-[11px] hover:bg-muted disabled:opacity-50"
+                            className="rounded border px-1.5 py-0.5 text-xs hover:bg-muted disabled:opacity-50"
                         >
                             {linking ? '…' : '＋'}
                         </button>
                     </div>
                 </div>
 
-                <div className="space-y-1 text-[11px] text-muted-foreground">
+                <div className="space-y-1 text-xs text-muted-foreground">
                     <div>状态：{textOf(room.data['status']) || 'open'}</div>
                     <div>项目：{project === undefined ? '—' : roomTitle(project)}</div>
                     <div className="break-all" title={taskDir}>
@@ -300,20 +300,20 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                 </div>
 
                 <div className="border-t pt-2">
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>日志</span>
                         <span>{entries.length} 条</span>
                     </div>
                     <ul className="mt-1 space-y-1">
                         {entries.length === 0 && (
-                            <li className="text-[11px] text-muted-foreground">
+                            <li className="text-xs text-muted-foreground">
                                 还没有记录（agent 可用 journal 工具写决策 / 踩坑）
                             </li>
                         )}
                         {entries.map((entry) => (
-                            <li key={entry.seq} className="text-[11px] leading-snug">
+                            <li key={entry.seq} className="text-xs leading-snug">
                                 <span className="mr-1 text-muted-foreground">{timeOf(entry.at)}</span>
-                                <span className="mr-1 rounded bg-muted px-1 text-[10px]">{entry.kind}</span>
+                                <span className="mr-1 rounded bg-muted px-1 text-xs">{entry.kind}</span>
                                 <span>{entry.text}</span>
                             </li>
                         ))}
@@ -325,11 +325,11 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                 <button
                     onClick={() => void save()}
                     disabled={!dirty || saving}
-                    className="rounded border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-50"
+                    className="rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
                 >
                     {saving ? '保存中…' : '保存'}
                 </button>
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                     {note ?? (dirty ? '有未保存改动' : '⌘/Ctrl+Enter 保存')}
                 </span>
             </footer>
@@ -349,9 +349,9 @@ function LinkRow({
     onRemove: () => void;
 }) {
     return (
-        <li className="flex items-center gap-1 text-[11px]">
+        <li className="flex items-center gap-1 text-xs">
             <span className="text-muted-foreground">{mark}</span>
-            <span className="rounded bg-muted px-1 text-[10px]">{kindLabel(link.kind)}</span>
+            <span className="rounded bg-muted px-1 text-xs">{kindLabel(link.kind)}</span>
             <button onClick={onOpen} className="min-w-0 flex-1 truncate text-left hover:underline" title={link.label}>
                 {link.label}
             </button>
