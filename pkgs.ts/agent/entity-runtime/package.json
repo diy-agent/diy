@@ -28,6 +28,7 @@
         "@ai-sdk/openai-compatible": "^3.0.92",
         "@diy-agent/agents-chain": "*",
         "@diy-agent/context": "*",
+        "@diy-agent/compaction": "*",
         "@diy-agent/jobs": "*",
         "@diy-agent/kb": "*",
         "@diy-agent/llm-provider": "*",
@@ -36,6 +37,7 @@
         "@diy-agent/skills": "*",
         "@diy-agent/time": "*",
         "@diy-agent/tools": "*",
+        "@opentelemetry/api-logs": "^0.223.0",
         "ai": "^7.0.173",
         "zod": "^4.2.0"
     },

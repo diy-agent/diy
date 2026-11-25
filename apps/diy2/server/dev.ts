@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { createServer as createViteServer } from 'vite';
 
 import { describeConfig, isProdHome, modelConfigHint, resolveConfig } from './config';
+import { installAppLog } from './log';
 import { announce, retract } from './registry';
 import { createDiy2App } from './app';
 import { listenWithStickyPort } from './listen';
@@ -40,8 +41,6 @@ options:
       --mode <...>       运行环境（缺省 development；显式 production 需配 --allow-prod-home）
       --tools <shell|files>
                          工具面（缺省 shell）
-      --compact-keep <n> 压缩保留最近 n 条消息
-      --compact-chars <n> 压缩预算（字符）
       --web-dir <dir>    UI 产物目录（dev 不用：页面与 HMR 由挂进同一 server 的 vite 提供）
       --model-config <file>
                          model.yaml（缺省：<home>/model.yaml；只有生产数据根才回落 ~/.diy/model.yaml）
@@ -51,27 +50,32 @@ options:
 const options = parseEntryOptions(devOptions, process.argv.slice(2), USAGE);
 if (options.exit !== null) process.exit(options.exit);
 
-const config = resolveConfig({
+const config = await resolveConfig({
     moduleDir: import.meta.dirname,
     mode: options.input.mode,
     overrides: toOverrides(options.input),
 });
-for (const note of config.notes) console.warn(`[diy2] ${note}`);
+// dev 入口也装配日志：agent 的 onError 走 OTel 接口（默认 noop），不装就只有文件里看得见
+// —— 开发时反而更要看终端。装配在 config 之后（要 home）。
+const appLog = installAppLog({ home: config.home, level: process.env['DIY_LOG_LEVEL'] });
+const boot = appLog.open('dev');
+
+for (const note of config.notes) boot.warn(note);
 
 // dev 入口**不碰生产数据根**：即使有人显式 `--mode production`（或数据根本身在 `~/.diy` 下），
 // 也必须再加 --allow-prod-home 才放行 —— 一次实验就写脏真库的代价太大。
 if (isProdHome(config.home) && options.input.allowProdHome !== true) {
-    console.error(`[diy2] dev 入口拒绝使用生产数据根：${config.home}`);
-    console.error('[diy2] 请用 `./sha.sh dev`（数据根 run/diy2/lab），或加 --allow-prod-home');
+    boot.error(`dev 入口拒绝使用生产数据根：${config.home}`);
+    boot.error('请用 `./sha.sh dev`（数据根 run/diy2/lab），或加 --allow-prod-home');
     process.exit(1);
 }
 process.env['DIY_HOME'] ??= config.home;
 if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
 const hint = modelConfigHint(config);
-if (hint !== null) console.warn(hint);
+if (hint !== null) boot.warn(hint);
 
 const httpServer = createServer();
-const app = createDiy2App({
+const app = await createDiy2App({
     config,
     // dev 的页面来自 vite，不来自 build/prod/web（null = 明确不要，不是「按配置来」）
     webDir: null,
@@ -117,16 +121,19 @@ try {
     ({ port } = await listenWithStickyPort(config, httpServer));
 } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
-        console.error(`[diy2] 端口 ${config.port} 已被占用（显式指定的端口不会自动漂移）`);
-        console.error('[diy2] 换端口：--port <n> / --port 0；或先 ./sha.sh stop');
+        boot.error(`端口 ${config.port} 已被占用（显式指定的端口不会自动漂移）`);
+        boot.error('换端口：--port <n> / --port 0；或先 ./sha.sh stop');
         process.exit(1);
     }
-    console.error(`[diy2] 启动失败：${(error as Error).message}`);
+    boot.error('启动失败', {}, error);
     process.exit(1);
 }
-console.log(`${describeConfig(config, port)} → http://127.0.0.1:${port}`);
-console.log('[diy2] UI 走 vite（HMR 同端口）；改 server/ 或 entity-runtime 会自动重启，改 UI 不用');
-announce(config, port);
+boot.info(`${describeConfig(config, port)} → http://127.0.0.1:${port}`);
+boot.info('UI 走 vite（HMR 同端口）；改 server/ 或 entity-runtime 会自动重启，改 UI 不用');
+await announce(config, port);
+
+// 续跑同样排在监听之后（生产入口 `index.ts` 同一规矩）：先能连，再干活。
+app.resume();
 
 // ── 服务端代码变更 → 请看护循环重启 ──────────────────────────────
 // vite 的 HMR 只管浏览器侧模块图；`server/**` 与 `pkgs.ts/**`（工作区包源码）在服务端的
@@ -138,10 +145,10 @@ let timer: NodeJS.Timeout | undefined;
 const scheduleRestart = (file: string | null): void => {
     if (file !== null && /\.(d\.ts|tsbuildinfo)$/.test(file)) return;
     if (timer !== undefined) return; // 一次保存会连发多个事件：只认第一次，等它统一重启
-    console.log(`[diy2] 服务端代码变了${file === null ? '' : `（${file}）`} → 重启`);
+    boot.info(`服务端代码变了${file === null ? '' : `（${file}）`} → 重启`);
     timer = setTimeout(() => {
         app.close();
-        retract();
+        void retract();
         void vite.close().finally(() => httpServer.close(() => process.exit(RESTART_CODE)));
         // 长连接（SSE）可能挂住 close 回调：兜底硬退
         setTimeout(() => process.exit(RESTART_CODE), 1500).unref();
@@ -161,7 +168,7 @@ for (const root of watchRoots) {
 const shutdown = (): void => {
     // 刻意**不删** app.port：重启（看护循环 / Ctrl-C 再起）都还回同一个 URL。
     app.close();
-    retract();
+    void retract();
     void vite.close().finally(() => httpServer.close(() => process.exit(0)));
     setTimeout(() => process.exit(0), 1500).unref();
 };

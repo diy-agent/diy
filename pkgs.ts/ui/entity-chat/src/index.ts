@@ -42,6 +42,12 @@ export { ActiveJobsGlyph, ActiveSessionsGlyph } from './components/ActiveGlyphs'
 // 全局作业面板：房间内入口是输入框底栏的 `JobsChip`（抽屉），而「结局无人接」发生在
 // 房间被删之后 —— 那时没有会话面，只能从标题栏那颗「作业 N」打开这一份。
 export { JobsPanel } from './components/JobsChip';
+// Bot 状态（在跑 / 等回答 / 上一轮出错 / 空闲）：二级浮层 + 三级全量表格。
+//
+// 数据与口径都在 `bots.ts` 里（`useBotRows` + `needsYou`）：宿主只负责在标题栏摆一颗
+// 按钮、把计数画上去，然后挂 `BotsOverlay` —— 两处不各算一遍。
+export { BotsOverlay, type BotsOverlayProps } from './components/BotsOverlay';
+export { needsYou, outcomeTextOf, STATE_TEXT, useBotRows, type BotRowsState } from './bots';
 export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';
 export type { RoomDialogs } from './useRoomDialogs';
 

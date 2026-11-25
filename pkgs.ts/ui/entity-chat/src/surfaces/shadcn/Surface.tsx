@@ -27,13 +27,14 @@ import { BotAvatar } from '../../components/BotAvatar';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
 import { openLinkInNewWindow } from '../../links';
 import { ErrorBar } from '../../components/ErrorBar';
+import { CompactCutBar } from '../../components/CompactCutBar';
 import { JobCard } from '../../components/JobCard';
 import { Markdown } from '../../components/Markdown';
 import { TurnFooter } from '../../components/TurnFooter';
 import { useWindowed } from '../../components/useWindowed';
 import { useDraft } from '../../drafts';
 import { useMentionCandidates } from '../../mentions';
-import { conversationOf, useStore } from '../../store';
+import { actions, conversationOf, useStore } from '../../store';
 import { plainTextOf, runsOf, toolTargetOf, type Run } from '../shared';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
@@ -499,6 +500,14 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
 
     const windowed = useWindowed(entries);
 
+    // 上下文概况：时间线顶部那条「已压缩」框要的折叠数 / 摘要正文。
+    // 只在一轮跑完时拉一次（自动压缩发生在那一步），不开轮询。
+    const sessions = shell.sessions[targetId] ?? [];
+    const running = state.running;
+    React.useEffect(() => {
+        actions.refreshSessions(targetId);
+    }, [targetId, running]);
+
     /**
      * 壳层待答条的跳转入口：这套表面自己也窗口化（只渲染最近 N 条 + 滑到顶部补一窗），
      * 所以先 reveal 把那条纳入窗口，再等它真渲染出来闪一下。
@@ -534,6 +543,10 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
             {state.error !== undefined && state.error !== '' && (
                 <ErrorBar error={state.error} onRetry={conversation.reload} />
             )}
+            {/* 顶部常驻：描述的是「更早」，不跟消息一起滚走 —— 也免得干扰“滑到顶补一窗”的边界 */}
+            <div className="px-6 pt-2">
+                <CompactCutBar sessions={sessions} />
+            </div>
             <div className="relative min-h-0 flex-1">
                 <div
                     ref={scrollRef}

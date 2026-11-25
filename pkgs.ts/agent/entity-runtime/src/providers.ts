@@ -127,6 +127,19 @@ export function maxOutputTokensOf(
     return key === undefined ? DEFAULT_MAX_OUTPUT_TOKENS : effectiveMaxOutputTokens(catalogEntry(key, env), DEFAULT_MAX_OUTPUT_TOKENS);
 }
 
+/**
+ * 该模型的**上下文窗口**（token）。未知 = undefined（**不猜**）。
+ *
+ * 压缩判据的唯一输入：触发线与保留量都由它派生（见 compaction.ts）。猜一个窗口的后果是
+ * 「要么永远不触发、要么一上来就把历史压光」—— 两种都比不压更难查。
+ */
+export function contextWindowOf(modelKey: string, env: NodeJS.ProcessEnv = process.env): number | undefined {
+    const key = maybeParseModelKey(modelKey);
+    if (key === undefined) return undefined;
+    const window = catalogEntry(key, env)?.contextWindow;
+    return window !== undefined && window > 0 ? window : undefined;
+}
+
 /** `parseModelKey` 的容错版（算缺省值时用）：格式不对 = undefined，不抛 */
 function maybeParseModelKey(value: string): ParsedModelKey | undefined {
     try {

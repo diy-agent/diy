@@ -12,6 +12,7 @@
 //
 // 不做：路由、持久化、SSE —— 那些属于 RoomActor。
 
+import type { CompactionProgress } from '@diy-agent/protocol';
 import { experimental_createSteering, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 
 import { runAgent, DEFAULT_MAX_STEPS, type RunOptions } from './agent';
@@ -20,22 +21,28 @@ import { friendlyError } from './errors';
 import {
     DEFAULT_BUDGET,
     estimateChars,
-    simpleCompactor,
+    estimateTokens,
+    createSummaryCompactor,
     type CompactEvent,
     type CompactionBudget,
+    type CompactionResult,
     type Compactor,
     type TokenUsage,
     type TranscriptEntry,
 } from './compaction';
-import { maxOutputTokensOf } from './providers';
+import { contextWindowOf, maxOutputTokensOf } from './providers';
 import { ProgressBroadcast, ProgressWatch, type ProgressPolicy } from './progress';
 import { Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
 import type { AgentEvent, Author, Bot, DeliveryState, Item, ProgressStage, TurnEndReason } from './types';
 
 export interface CompactOptions {
-    keepLast?: number;
-    maxChars?: number;
+    /** 手工压缩：保留最近几轮（0 = 压到头，与 diy1 的 keepRounds 同语义） */
+    keepTurns?: number;
+    /** 本次压缩的 id（UI 用它取消 / 去重）；缺省自己生成一个 */
+    compactId?: string;
+    /** 取消信号：只中断摘要那次 LLM 调用，已折叠的边界不生效 */
+    signal?: AbortSignal;
 }
 
 /** @deprecated 用 DEFAULT_BUDGET；保留导出避免调用方一次改太多 */
@@ -85,6 +92,12 @@ export type SessionEvent =
     | { type: 'turn.end'; result: TurnResult }
     /** 真压了一次 */
     | { type: 'compact'; event: CompactEvent }
+    /**
+     * 一次手动压缩的**进度**（`running` → 终态）。与上面那条的分工：
+     * 这条是给人看的（房间转手广播给 UI），`compact` 是给账本看的（落库 + 统计日志）。
+     * 取消发生在 await LLM 的中途，那时根本没有 CompactEvent 可发。
+     */
+    | { type: 'compact.progress'; compact: CompactionProgress }
     /** 运行失败（条目层面的失败会以 item 形式出现） */
     | { type: 'error'; message: string }
     /**
@@ -98,13 +111,19 @@ export type SessionEvent =
 export interface SessionStats {
     entries: number;
     chars: number;
-    /** 当前生效的默认预算（自动压缩与手动压缩都用它，可被入参覆盖） */
+    /** 上下文 token 估算（压缩判据的同一口径；真实用量看 usage） */
+    tokens: number;
+    /** 手工压缩默认保留的轮数（自动压缩按窗口 × 0.16 算，不看它） */
     budget: CompactionBudget;
+    /** 当前模型窗口（token）；未知 = undefined（此时自动压缩不触发） */
+    windowTokens?: number;
     /** 历史累计丢弃条数 */
     collapsed: number;
     compactions: number;
     lastCompactAt?: number;
     strategy: string;
+    /** 当前上下文首条说明里带着的摘要正文（模型此刻看的承接信息）；没有 = 未摘要 */
+    summary?: string;
     usage?: TokenUsage;
 }
 
@@ -134,6 +153,11 @@ export interface SessionDeps {
     /** 压缩策略；默认 simpleCompactor */
     compactor?: Compactor;
     budget?: CompactOptions;
+    /**
+     * 覆盖模型窗口（token）。缺省按 modelKey 去模型目录查；测试注入用 ——
+     * 不注入就无法让「窗口水位」在单测里成立。
+     */
+    windowTokens?: number;
     /** 房间装配的工具（不传 = 内置 get_time） */
     tools?: ToolSet;
     toolsHint?: string;
@@ -262,16 +286,31 @@ export class BotSession {
     stats(): SessionStats {
         // 待并入的公共条目也算"当前上下文"，否则长时间没跑的 bot 看起来是空的
         const entries = [...this.transcript, ...this.pending];
+        const summary = this.currentSummary();
+        const windowTokens = this.windowTokensOf();
         return {
             entries: entries.length,
             chars: estimateChars(entries),
+            tokens: estimateTokens(entries),
             budget: this.budgetWith({}),
+            ...(windowTokens === undefined ? {} : { windowTokens }),
             collapsed: this.collapsed,
             compactions: this.events.length,
             ...(this.events.at(-1) === undefined ? {} : { lastCompactAt: this.events.at(-1)!.at }),
             strategy: this.compactor.name,
+            ...(summary === undefined ? {} : { summary }),
             ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
         };
+    }
+
+    /** 上下文首条说明里的摘要正文（压缩之后模型实际看到的承接信息） */
+    private currentSummary(): string | undefined {
+        const head = this.transcript[0];
+        if (head?.origin !== 'note') return undefined;
+        const content = head.message.content;
+        const text = typeof content === 'string' ? content : '';
+        const body = text.replace(COLLAPSED_PREFIX, '').trim();
+        return body === '' ? undefined : body;
     }
 
     compactions(): readonly CompactEvent[] {
@@ -327,8 +366,20 @@ export class BotSession {
 
     /** 手动压一次（只影响自己，不触发运行） */
     async forceCompact(options: CompactOptions = {}): Promise<CompactEvent | null> {
+        // 运行中不拦：transcript 只在一轮**结束时**才 push（本轮产出还在 pending 里，
+        // 不参与这次压缩），所以压完不丢东西 —— 回归 `regressions.test.ts::F` 就守这条。
+        // 真正要防的是**同一成员并发压两次**，那在 RoomActor.compact 里挡。
         const budget = this.budgetWith(options);
-        return this.compact({ force: true, turn: this.turnNow, turnId: `force-${Date.now().toString(36)}`, budget });
+        const now = Date.now();
+        return this.compact({
+            force: true,
+            turn: this.turnNow,
+            turnId: `force-${now.toString(36)}`,
+            budget,
+            manual: true,
+            compactId: options.compactId ?? `c-${now.toString(36)}`,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
     }
 
     /** 投一条消息；返回的 promise 在它所属 turn 结束时 resolve */
@@ -427,14 +478,26 @@ export class BotSession {
     private pendingResolvers: Array<() => void> = [];
 
     private get compactor(): Compactor {
-        return this.deps.compactor ?? simpleCompactor;
+        return (
+            this.deps.compactor ??
+            createSummaryCompactor({ modelKey: () => this.modelKey, sessionId: this.deps.bot.id })
+        );
     }
 
     private budgetWith(options: CompactOptions): CompactionBudget {
         return {
-            keepLast: options.keepLast ?? this.deps.budget?.keepLast ?? DEFAULT_BUDGET.keepLast,
-            maxChars: options.maxChars ?? this.deps.budget?.maxChars ?? DEFAULT_BUDGET.maxChars,
+            keepTurns: options.keepTurns ?? this.deps.budget?.keepTurns ?? DEFAULT_BUDGET.keepTurns,
         };
+    }
+
+    /**
+     * 当前模型的上下文窗口（token）。
+     *
+     * 自动压缩的**唯一输入**：水位、保留量、空转判据全由它派生（判据在 `@diy-agent/compaction`）。
+     * 未知 = 自动压缩不触发 —— 猜一个窗口的代价是「要么永不压、要么一压到底」。
+     */
+    private windowTokensOf(): number | undefined {
+        return this.deps.windowTokens ?? contextWindowOf(this.modelKey);
     }
 
     private async pump(): Promise<void> {
@@ -663,6 +726,8 @@ export class BotSession {
                     turn: turn.turn,
                     turnId: turn.turnId,
                     ...(failureMessage === undefined ? {} : { failureMessage }),
+                    // 结局归属：一轮里 @all 的各 bot 共享 turnId，只看 turnId 会张冠李戴
+                    botId: this.deps.bot.id,
                 },
                 { errorAlreadyReported: errorReported },
             )) {
@@ -704,24 +769,66 @@ export class BotSession {
         turnId: string;
         budget?: CompactionBudget;
         force?: boolean;
+        /** 手动那次才有：让外面按 id 取消 / 让 UI 去重 */
+        compactId?: string;
+        /** 仅手动：发进度事件（自动压缩是轮次里的内部动作，广播出去只会是噪点） */
+        manual?: boolean;
+        signal?: AbortSignal;
     }): Promise<CompactEvent | null> {
         const budget = options.budget ?? this.budgetWith({});
-        const before = { entries: this.transcript.length, chars: estimateChars(this.transcript) };
+        const before = { entries: this.transcript.length, chars: estimateChars(this.transcript), tokens: estimateTokens(this.transcript) };
         const startedAt = Date.now();
+        const compactId = options.compactId ?? `c-${startedAt.toString(36)}`;
+        const visible = options.manual === true;
+        const report = (state: CompactionProgress['state'], extra: Partial<CompactionProgress> = {}): void => {
+            if (!visible) return;
+            this.emit({
+                type: 'compact.progress',
+                compact: {
+                    compactId,
+                    botId: this.deps.bot.id,
+                    botName: this.deps.bot.name,
+                    state,
+                    startedAt,
+                    budget,
+                    before,
+                    manual: true,
+                    ...extra,
+                },
+            });
+        };
 
-        const result = await this.compactor.compact({
-            entries: this.transcript,
-            budget,
-            turn: options.turn,
-            turnId: options.turnId,
-            ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
-            ...(options.force === true ? { force: true } : {}),
-        });
-        if (result === null) return null;
+        // 先报「开始了」再 await LLM：这是用户点下去之后唯一会立刻发生的事
+        report('running');
+
+        let result: CompactionResult | null;
+        try {
+            const windowTokens = this.windowTokensOf();
+            result = await this.compactor.compact({
+                entries: this.transcript,
+                budget,
+                turn: options.turn,
+                turnId: options.turnId,
+                ...(windowTokens === undefined ? {} : { windowTokens }),
+                ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
+                ...(options.force === true ? { force: true } : {}),
+                ...(options.signal === undefined ? {} : { signal: options.signal }),
+            });
+        } catch (error) {
+            const cancelled = options.signal?.aborted === true;
+            report(cancelled ? 'cancelled' : 'failed', cancelled ? {} : { error: errorText(error) });
+            // 取消不是故障：不压这一次，上下文原样保留（compactor 抛错时还没动过 transcript）
+            if (cancelled) return null;
+            throw error;
+        }
+        if (result === null) {
+            report('done');
+            return null;
+        }
 
         this.transcript = result.entries;
         this.collapsed += result.dropped;
-        this.applyCollapsedNote();
+        this.applyCollapsedNote(result.summary);
 
         const event: CompactEvent = {
             at: Date.now(),
@@ -731,26 +838,47 @@ export class BotSession {
             durationMs: Date.now() - startedAt,
             budget,
             before,
-            after: { entries: this.transcript.length, chars: estimateChars(this.transcript) },
-            folded: result.folded,
+            after: {
+                entries: this.transcript.length,
+                chars: estimateChars(this.transcript),
+                tokens: estimateTokens(this.transcript),
+            },
             dropped: result.dropped,
             summarized: result.summarized,
+            ...(result.summary === undefined ? {} : { summary: result.summary }),
+            ...(result.summaryError === undefined ? {} : { summaryError: result.summaryError }),
             ...(this.lastUsage === undefined ? {} : { usage: this.lastUsage }),
         };
         this.events.push(event);
         if (this.events.length > 10) this.events.shift();
+        report('done', {
+            durationMs: event.durationMs,
+            after: event.after,
+            dropped: event.dropped,
+            summarized: event.summarized,
+            ...(event.summary === undefined ? {} : { summary: event.summary }),
+            ...(event.summaryError === undefined ? {} : { summaryError: event.summaryError }),
+        });
         this.emit({ type: 'compact', event });
         return event;
     }
 
-    /** 占位说明只保留一条，且始终在最前面 */
-    private applyCollapsedNote(): void {
-        if (this.collapsed === 0) return;
-        if (this.transcript[0]?.origin === 'note') this.transcript.shift();
-        this.transcript.unshift({
-            message: { role: 'user', content: `[更早的 ${this.collapsed} 条消息已折叠]` },
-            origin: 'note',
-        });
+    /** 压缩说明只保留一条，且始终在最前面；后续摘要由策略基于旧说明重新生成 */
+    private applyCollapsedNote(summary?: string): void {
+        if (this.collapsed === 0 && summary === undefined) return;
+        let previousSummary = '';
+        if (this.transcript[0]?.origin === 'note') {
+            const content = this.transcript.shift()!.message.content;
+            const text = typeof content === 'string' ? content : '';
+            previousSummary = text.replace(COLLAPSED_PREFIX, '').trim();
+        }
+        const content = [
+            ...(this.collapsed > 0 ? [collapsedLabel(this.collapsed)] : []),
+            summary ?? previousSummary,
+        ]
+            .filter((part): part is string => typeof part === 'string' && part.trim() !== '')
+            .join('\n\n');
+        this.transcript.unshift({ message: { role: 'user', content }, origin: 'note' });
     }
 
     private drainPending(): void {
@@ -764,6 +892,22 @@ export class BotSession {
     private authorOf(): Author {
         return { id: this.deps.bot.id, name: this.deps.bot.name, color: this.deps.bot.color, role: 'bot' };
     }
+}
+
+/**
+ * 压缩说明的前缀。`applyCollapsedNote` 写、`currentSummary` 读，**必须同一份**：
+ * 两处各写一份字面量时，改一边另一处会静默返回 undefined（摘要从 UI 上消失但没人报错）。
+ */
+const COLLAPSED_PREFIX = /^\[更早的 \d+ 条消息已折叠\]/;
+
+function collapsedLabel(count: number): string {
+    return `[更早的 ${String(count)} 条消息已折叠]`;
+}
+
+/** 失败原因留一行（别把整个 stack 塞进 UI 的那一行提示） */
+function errorText(error: unknown): string {
+    const text = error instanceof Error ? error.message : String(error);
+    return text.trim() === '' ? '压缩失败' : text.split('\n')[0]!;
 }
 
 function withResolve(): { promise: Promise<void>; resolve: () => void } {

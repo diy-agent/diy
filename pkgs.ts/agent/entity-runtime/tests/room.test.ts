@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import type { CompactionResult, Compactor } from '../src/compaction';
 import { openStore } from '../src/db';
 import type { Item, Room } from '../src/types';
 import { BOT_A, BOT_B, HUMAN, makeRoom, sleep, waitFor } from './support/harness';
@@ -292,5 +293,115 @@ describe('RoomActor', () => {
 
         // B 在第一次 say 时就建了 session 并 ingest 过，这里验证结论确实进去了
         expect(JSON.stringify(h.room.contextOf(BOT_B.id) ?? [])).toContain('[diy 的结论]');
+    });
+
+    describe('手动压缩（房间级）', () => {
+        /** 挂起直到被 abort：模拟那次要好几秒的 LLM 摘要 */
+        const hanging = (): Compactor => ({
+            name: 'test-hang',
+            compact: ({ signal }) =>
+                new Promise<CompactionResult | null>((_resolve, reject) => {
+                    signal?.addEventListener('abort', () => reject(new Error('aborted')));
+                }),
+        });
+
+        it('同一成员不许并发压两次；取消能 rescue 它，取消后不再残留', async () => {
+            const h = makeRoom({ compactor: hanging() });
+            const first = h.room.compact(BOT_A.id, { compactId: 'c1' });
+            await waitFor(() => h.room.compactingIds().includes('c1'));
+
+            // 并发会拿同一份旧上下文算边界，后完成的把前一次结果盖回去
+            await expect(h.room.compact(BOT_A.id)).rejects.toThrow('正在压缩');
+
+            expect(h.room.cancelCompact('c1')).toBe(true);
+            const { event } = await first;
+            // 取消 = 这次不压（不是「按新边界压了、只是没摘要」）
+            expect(event).toBeNull();
+            // 已结束 / 没这个 id：手点慢了，不是错误
+            expect(h.room.cancelCompact('c1')).toBe(false);
+            expect(h.room.cancelCompact('nope')).toBe(false);
+
+            const states = h.events
+                .filter((entry) => entry.kind === 'compact')
+                .map((entry) => entry.compact.state);
+            expect(states).toEqual(['running', 'cancelled']);
+            // 表里不能残留：否则这个成员从此永远「正在压缩」
+            expect(h.room.compactingIds()).toEqual([]);
+        });
+
+        it('取消之后能再压（不残留 = 还能重试）', async () => {
+            let calls = 0;
+            const compactor: Compactor = {
+                name: 'test-hang-once',
+                compact: ({ signal }) => {
+                    calls += 1;
+                    if (calls > 1) return null;
+                    return new Promise<CompactionResult | null>((_resolve, reject) => {
+                        signal?.addEventListener('abort', () => reject(new Error('aborted')));
+                    });
+                },
+            };
+            const h = makeRoom({ compactor });
+            const first = h.room.compact(BOT_A.id, { compactId: 'c1' });
+            await waitFor(() => h.room.compactingIds().includes('c1'));
+            h.room.cancelCompact('c1');
+            expect((await first).event).toBeNull();
+
+            const again = await h.room.compact(BOT_A.id);
+            expect(again.event).toBeNull();
+            expect(calls).toBe(2);
+        });
+    });
+});
+
+describe('中断的轮次', () => {
+    // 「这一轮开了、还没收尾」靠 turn_open 表记：turn.start 写一行、turn.end 销掉。
+    // 进程在这中间被杀，磁盘上就只剩那行标记 —— 重启时据此补一条轮级事实。
+    it('跑完一轮：turn_open 不留痕', async () => {
+        const h = makeRoom();
+        await h.room.say({ text: '一句话', author: HUMAN });
+        expect(h.store.openTurns(h.spec.id)).toEqual([]);
+    });
+
+    it('跑着的时候有标记，openTurns 能读到它', async () => {
+        const h = makeRoom({ hang: true });
+        void h.room.say({ text: '跑着', author: HUMAN });
+        await waitFor(() => h.store.openTurns(h.spec.id).length > 0);
+        const opens = h.store.openTurns(h.spec.id);
+        expect(opens.map((open) => open.botId)).toEqual([BOT_A.id]);
+        expect(opens[0]?.turnId).toBeTruthy();
+        h.room.cancel();
+    });
+
+    it('重启时残留的开轮补一条 interrupted 事实并销标记', () => {
+        const h = makeRoom();
+        h.store.openTurn(h.spec.id, { botId: BOT_A.id, turn: 3, turnId: 'turn-crashed', at: 1_700_000_000_000 });
+        const restarted = h.rebuild();
+
+        const facts = restarted.items().filter((it) => it.type === 'notice' && it.data.kind === 'interrupted');
+        expect(facts).toHaveLength(1);
+        // 四条性质：归那一轮的 turnId / 不带 author（轮级事实）/ 归属记在 botId / 标记已销
+        expect(facts[0]?.turnId).toBe('turn-crashed');
+        expect(facts[0]?.author).toBeUndefined();
+        expect(facts[0]?.type === 'notice' ? facts[0].data.botId : undefined).toBe(BOT_A.id);
+        // at 是「发现时刻」而非轮开始时刻：order 已经把它排在末尾，时间得跟位置一致
+        expect(facts[0]?.at).toBeGreaterThan(1_700_000_000_000);
+        expect(restarted.store.openTurns(h.spec.id)).toEqual([]);
+    });
+
+    it('成员已不在房间：只销标记，不补事实', () => {
+        const h = makeRoom();
+        h.store.openTurn(h.spec.id, { botId: 'bot:gone', turn: 1, turnId: 'turn-x', at: 1 });
+        const restarted = h.rebuild();
+
+        expect(restarted.items().filter((it) => it.type === 'notice' && it.data.kind === 'interrupted')).toHaveLength(0);
+        expect(restarted.store.openTurns(h.spec.id)).toEqual([]);
+    });
+
+    it('没有残留标记时重启不写任何事实', () => {
+        const h = makeRoom();
+        const before = h.items().length;
+        const restarted = h.rebuild();
+        expect(restarted.items()).toHaveLength(before);
     });
 });

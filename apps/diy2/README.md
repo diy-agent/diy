@@ -188,7 +188,7 @@ GET    /api/rooms/:id/history?afterSeq=
 GET    /api/rooms/:id/deliveries
 GET    /api/rooms/:id/asks
 GET    /api/rooms/:id/sessions
-POST   /api/rooms/:id/sessions/:botId/compact   { keepLast?, maxChars? }
+POST   /api/rooms/:id/sessions/:botId/compact   { keepTurns? }   # keepTurns = 保留最近几轮（0 = 压到头）
 POST   /api/rooms/:id/asks/:askId      { values?, fields?, text? }
 POST   /api/rooms/:id/chat             { text, recipients? } → { ok:true }（受理即返）
 POST   /api/rooms/:id/cancel           { botId? }             # 不传 = 停整个房间

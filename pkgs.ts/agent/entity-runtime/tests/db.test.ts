@@ -434,3 +434,49 @@ describe('提问（asks）持久化', () => {
         expect(store.asksOf(room.id)).toEqual([]);
     });
 });
+
+describe('分组查询走表达式索引', () => {
+    // 守的是「别把索引删了、或改得对不上查询」：没有它们就是逐行 json_extract 全表扫，
+    // 真实库 2.7 万行 / 118MB 实测 8.4s 与 3.5s；有索引是 25ms 与 54ms（见建表处的注释）。
+    // 下面两条 SQL 是 db.ts 里 lastItemPerBot / lastFactPerTurn 的逐字副本 ——
+    // 实现里的 SQL 改了这里要同步，否则断言会变成假绿。
+    const LAST_ITEM_PER_BOT =
+        "SELECT entity_id, MAX(seq) AS seq, item FROM entity_items WHERE json_extract(item, '$.author.id') IS NOT NULL GROUP BY entity_id, json_extract(item, '$.author.id')";
+    const LAST_FACT_PER_TURN =
+        "SELECT entity_id, COALESCE(json_extract(item, '$.data.botId'), json_extract(item, '$.turnId')) AS owner, MAX(seq) AS seq, item FROM entity_items WHERE json_extract(item, '$.author.id') IS NULL AND json_extract(item, '$.type') IN ('notice','error') GROUP BY entity_id, COALESCE(json_extract(item, '$.data.botId'), json_extract(item, '$.turnId'))";
+
+    /** 查询计划里命中了哪条索引（全表扫的 detail 里不会出现索引名） */
+    const planOf = (store: ReturnType<typeof openStore>, sql: string): string =>
+        (store.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as Array<Record<string, unknown>>)
+            .map((row) => String(row['detail']))
+            .join(' | ');
+
+    it('lastItemPerBot 走 items_author_seq', () => {
+        const store = openStore(':memory:');
+        store.appendItem(room.id, {
+            id: 'm1',
+            seq: 0,
+            turnId: 't1',
+            type: 'chat',
+            at: 1,
+            status: 'done',
+            author: { id: 'bot:1', name: 'b', color: '#000', role: 'bot' },
+            data: { text: 'hi' },
+        });
+        expect(planOf(store, LAST_ITEM_PER_BOT)).toContain('items_author_seq');
+    });
+
+    it('lastFactPerTurn 走 items_fact_owner_seq', () => {
+        const store = openStore(':memory:');
+        store.appendItem(room.id, {
+            id: 'n1',
+            seq: 0,
+            turnId: 't1',
+            type: 'notice',
+            at: 1,
+            status: 'done',
+            data: { text: '没跑完', kind: 'interrupted', botId: 'bot:1' },
+        });
+        expect(planOf(store, LAST_FACT_PER_TURN)).toContain('items_fact_owner_seq');
+    });
+});

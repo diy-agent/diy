@@ -1009,20 +1009,25 @@ export const actions = {
             .catch(() => undefined);
     },
 
-    /** 手动压一个 bot 的上下文：只影响它自己，不触发运行 */
+    /**
+     * 手动压一个 bot 的上下文：只影响它自己，不触发运行。
+     *
+     * 受理即返：这里**不刷 sessions** —— 压缩还没开始跑，刷也是旧数字。
+     * 进展与结果都从 `compact` 事件进（`ConversationState.compactions`）。
+     */
     compactSession(
         roomId: string,
         botId: string,
-        options: { keepLast?: number; maxChars?: number } = {},
+        options: { keepTurns?: number } = {},
     ): Promise<CompactOutcome | null> {
         if (client.compact === undefined) return Promise.resolve(null);
-        return client
-            .compact(roomId, botId, options)
-            .then((outcome) => {
-                actions.refreshSessions(roomId);
-                return outcome;
-            })
-            .catch(() => null);
+        return client.compact(roomId, botId, options).catch(() => null);
+    },
+
+    /** 撤掉一次正在跑的压缩；false = 已经结束（不弹错误条） */
+    cancelCompact(roomId: string, compactId: string): Promise<boolean> {
+        if (client.cancelCompact === undefined) return Promise.resolve(false);
+        return client.cancelCompact(roomId, compactId).catch(() => false);
     },
 
     addExistingBot(roomId: string, botId: string): void {

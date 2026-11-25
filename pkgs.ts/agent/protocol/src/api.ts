@@ -52,6 +52,16 @@ export const roomsApi = RpcSchema.group({
 export const botsApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: {}, output: Any }),
+        /**
+         * 每 bot 一行状态（在跑 / 等回答 / 上一轮出错 / 空闲）：
+         * 二级弹层与三级表格都读它 —— 两处一份数据，不会一个说有 3 个、一个说有 4 个。
+         */
+        rows: RpcSchema.unary({ input: {}, output: Any }),
+        /** 批量重试：给选中的 (房间, bot) 各发一条「继续」（已在跑的跳过） */
+        retry: RpcSchema.unary({
+            input: { targets: z.array(z.object({ roomId: Id, botId: Id })).min(1) },
+            output: Any,
+        }),
         create: RpcSchema.unary({
             input: { name: z.string().min(1), homeRoomId: z.string().optional(), modelKey: z.string().min(1).optional() },
             output: Any,
@@ -83,7 +93,27 @@ export const chatApi = RpcSchema.group({
             output: Any,
         }),
         sessions: RpcSchema.unary({ input: { id: Id }, output: Any }),
-        compact: RpcSchema.unary({ input: { id: Id, botId: Id }, output: Any }),
+        /**
+         * 手动压缩；`keepTurns` = 面板上的「保留最近几轮」（缺省 = 全局常量）。
+         *
+         * 没有 `maxChars`：压缩上限是全局常量，不由一次手工操作去动它
+         * （2026-11-25 对齐 diy1 的 keepRounds —— 用户能调的只有「留多少轮」）。
+         */
+        compact: RpcSchema.unary({
+            input: {
+                id: Id,
+                botId: Id,
+                keepTurns: z.number().int().min(0).optional(),
+            },
+            output: Any,
+        }),
+        /**
+         * 撤掉一次正在跑的压缩（摘要那个 LLM 调用挂 AbortSignal）。
+         *
+         * compactId 来自 `compact` 的返回或 `compact` 事件。已经跑完 / 没这个 id →
+         * `{ ok: false }` 而不报错：手点慢一点不该变成一条错误提示。
+         */
+        cancelCompact: RpcSchema.unary({ input: { id: Id, compactId: Id }, output: Any }),
     },
 });
 

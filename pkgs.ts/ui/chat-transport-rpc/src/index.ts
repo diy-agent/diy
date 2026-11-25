@@ -24,6 +24,7 @@ import type {
 
 import type {
     ActivityFrame,
+    BotRow,
     JobRunRow,
     ModelCatalogModel,
     ModelCatalogProvider,
@@ -31,7 +32,7 @@ import type {
     ModelCostView,
 } from '@diy-agent/protocol';
 
-export type { JobRunRow };
+export type { BotRow, JobRunRow };
 
 import { StreamHub } from './hub';
 
@@ -113,6 +114,15 @@ export class RpcChatClient implements ChatClient {
 
     readonly bots = {
         list: (): Promise<Bot[]> => this.call('bots.list', {}),
+        /**
+         * 每 bot 一行状态（在跑 / 等回答 / 上一轮出错 / 空闲）—— 二级弹层与三级表格同源。
+         */
+        rows: (): Promise<{ rows: BotRow[] }> => this.call('bots.rows', {}),
+        /** 批量「继续」：已在跑的会被服务端跳过（回包里报原因） */
+        retry: (targets: Array<{ roomId: string; botId: string }>): Promise<{
+            started: Array<{ roomId: string; botIds: string[] }>;
+            skipped: Array<{ roomId: string; botId: string; reason: string }>;
+        }> => this.call('bots.retry', { targets }),
         create: (input: { name: string; homeRoomId?: string; modelKey?: string }): Promise<Bot> =>
             this.call('bots.create', input),
         update: (input: {
@@ -208,9 +218,14 @@ export class RpcChatClient implements ChatClient {
     async compact(
         entityId: string,
         botId: string,
-        options: { keepLast?: number; maxChars?: number } = {},
+        options: { keepTurns?: number } = {},
     ): Promise<CompactOutcome> {
         return this.call<CompactOutcome>('chat.compact', { id: entityId, botId, ...options });
+    }
+
+    async cancelCompact(entityId: string, compactId: string): Promise<boolean> {
+        const data = await this.call<{ ok: boolean }>('chat.cancelCompact', { id: entityId, compactId });
+        return data.ok === true;
     }
 
     async answerAsk(entityId: string, askId: string, answer: AskAnswer): Promise<void> {

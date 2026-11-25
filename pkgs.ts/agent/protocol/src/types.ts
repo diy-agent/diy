@@ -141,12 +141,23 @@ export interface JobRunRow {
 
 export type Item =
     | (ItemBase & { type: 'chat'; data: { text: string } })
-    | (ItemBase & { type: 'notice'; data: { text: string; kind: string; job?: JobNotice } })
+    | (ItemBase & {
+          type: 'notice';
+          /**
+           * `botId`：这条轮级事实是**哪个 bot 的结局**（`endItems()` 由 per-bot 的 session 产出）。
+           *
+           * 为什么不用 `author`：`author` 有「这是那个 bot 说的话」的含义，UI 据此把它归进 bot 的
+           * 回复段（见 chat-core/timeline.ts）；而结局事实必须独立成条。两件事分开记：
+           * 条目位置（独立成条）看 `author` 在不在，结局归属看这个字段。
+           * 老数据没有它 —— 消费方按 `turnId` 退化处理（见 db.lastFactPerTurn）。
+           */
+          data: { text: string; kind: string; job?: JobNotice; botId?: string };
+      })
     | (ItemBase & {
           type: 'tool';
           data: { name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' };
       })
-    | (ItemBase & { type: 'error'; data: { message: string } });
+    | (ItemBase & { type: 'error'; data: { message: string; botId?: string } });
 
 // ── 投递（消息 → bot 的到达状态）────────────────────────────────
 
@@ -295,6 +306,40 @@ export interface AnsweredAsk {
  */
 export type ProgressStage = 'quiet' | 'slow' | 'stalled';
 
+/**
+ * 一次压缩的可见进度。
+ *
+ * 为什么不挂在 turn 上：压缩确实是一次 LLM 调用（摘要），但它**不是 agent 的对话轮次** ——
+ * 不进 transcript、不产生公开结论、别的 bot 也读不到。可它又是唯一一个「点了要等好几秒」
+ * 的操作，所以它是**房间级事件**（和 `running` 同级）：带 compactId，能取消、能去重、
+ * 状态从 `running` 走到终态。UI 靠它做「摘要中…」的就地反馈，不靠 RPC 的返回值。
+ */
+export interface CompactionProgress {
+    compactId: string;
+    botId: string;
+    botName?: string;
+    state: 'running' | 'done' | 'failed' | 'cancelled';
+    startedAt: number;
+    /** 终态才有（运行中让界面自己跑秒表） */
+    durationMs?: number;
+    /** 手工压缩保留的轮数（自动压缩按模型窗口派生，不在这个预算里） */
+    budget: { keepTurns: number };
+    /** 压缩前规模：start 就带上，界面立刻能显示「要压多少」 */
+    before: { entries: number; chars: number; tokens?: number };
+    /** 终态才有；缺省 = 这次没压（没有可压的内容） */
+    after?: { entries: number; chars: number; tokens?: number };
+    dropped?: number;
+    /** 本次是否新生成摘要（沿用旧摘要 / 失败都是 false） */
+    summarized?: boolean;
+    summary?: string;
+    /** 摘要没成的原因（压缩本身仍生效）；`failed` 才是整次压缩失败 */
+    summaryError?: string;
+    /** state='failed' 的失败原因 */
+    error?: string;
+    /** true = 用户手点的；false / 缺省 = 自动触发 */
+    manual?: boolean;
+}
+
 /** 传输层回推给 UI 的事件流（目前是 SSE，将来可能是 diy-rpc 订阅） */
 export type StreamEvent =
     | { kind: 'item'; item: Item }
@@ -313,6 +358,13 @@ export type StreamEvent =
       }
     /** 当前正在说话的成员（空数组 = 都停了）。谁是"说话中"由房间说了算，不由 UI 猜 */
     | { kind: 'running'; botIds: string[] }
+    /**
+     * 一次压缩的进度（`running` → `done` / `failed` / `cancelled`）。
+     *
+     * 手动压缩的反馈就靠它：点下去立刻收到 `running`，结束收到终态 —— 不走轮询、
+     * 也不等那条要挂好几秒的 RPC 返回（它只做兜底）。
+     */
+    | { kind: 'compact'; compact: CompactionProgress }
     /**
      * 某一轮结束了，以及**为什么**（`completed` / `max-tokens` / `interrupted` …）。
      *
@@ -507,6 +559,61 @@ export interface TurnEndReason {
     awaiting?: string;
     /** `stalled` 时：多久没有进展（毫秒） */
     idleMs?: number;
+}
+
+// ── bot 状态投影（`diy2.bots.rows`）────────────────────────────────
+
+/**
+ * 上一轮怎么结束的（磁盘侧判据见 entity-runtime/bot-status.ts）。
+ *
+ * `interrupted` 是唯一一个**不是** `endItems()` 产出的结局：进程崩在收尾前什么都来不及落，
+ * 靠 `turn_open` 表在下次启动时补一条 `notice(kind: 'interrupted')` 才认得出。
+ */
+export type BotOutcome =
+    | 'done'
+    | 'truncated'
+    | 'max-steps'
+    | 'filtered'
+    | 'tool-mismatch'
+    | 'failed'
+    | 'interrupted';
+
+/**
+ * 这个 bot 此刻要你干什么 —— **一个值，不是一组标志**。
+ *
+ * 优先级 running > asking > needs-attention > idle：在跑时哪怕上一轮是错的也不催你
+ * （它自己会接着干），跑完若还是错，下一轮才冒出来。
+ */
+export type BotState = 'running' | 'asking' | 'needs-attention' | 'idle';
+
+/**
+ * 一个 bot 在某个房间里的**一行状态**（`diy2.bots.rows` 的回包项）。
+ *
+ * 二级弹层（只要人动手的）与三级表格（全量可筛选）共用这一份 —— 两处不再各算一遍，
+ * 否则「弹层说有 3 个出错、表格说有 4 个」这种对不上就必然出现。
+ *
+ * **故意不带 `closed`**：任务开/关的判据是 UI 的 `isClosed()` 唯一真源（它还要归一
+ * 老数据的 `done`/`todo`，并且只对 `task` 成立）。服务端再算一份就会出现两个口径 ——
+ * 消费者需要关没关，就按 `roomId` 去查它本来就有的 room 列表。
+ */
+export interface BotRow {
+    roomId: string;
+    /** 房间标题（任务标题 / 项目名） */
+    roomTitle: string;
+    roomType: 'task' | 'project';
+    botId: string;
+    botName: string;
+    botColor: string;
+    state: BotState;
+    /** 上一轮结局；从没在这个房间跑过就没有 */
+    outcome?: BotOutcome;
+    /** `outcome === 'failed'` 时的原文 */
+    outcomeMessage?: string;
+    /** 上一轮最后动静的时刻 */
+    lastTurnAt?: number;
+    /** `state === 'asking'`：在等回答的那道题 */
+    askId?: string;
+    askTitle?: string;
 }
 
 /** 模型运行的原始事件（seq 单调；投影成 Item 后 UI 才消费） */

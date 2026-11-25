@@ -20,10 +20,12 @@ import { Theme } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import {
     ActiveJobsGlyph,
-    ActiveSessionsGlyph,
+    BotsOverlay,
     JobsPanel,
+    needsYou,
     RoomDialogsProvider,
     Sidebar,
+    useBotRows,
     useLoaded,
     useRoomDialogs,
     useRoomDialogsContext,
@@ -38,7 +40,7 @@ import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
-import { GearGlyph, NavGlyph } from './glyphs';
+import { BotGlyph, GearGlyph, NavGlyph } from './glyphs';
 import { type PageDef } from './model';
 import { pageFor, wbViews } from './pages';
 import { useChrome, Window, type WindowContribution } from './window';
@@ -129,6 +131,12 @@ function Host() {
     // 导航的开关提到了壳这一层：标题栏左端要放它的按钮，而标题栏是整宽的一条
     const [open, setOpen] = useState(loadNavOpen);
 
+    // Bot 状态：标题栏那颗按钮的角标要计数，所以拉数据提到壳这一层，
+    // 浮层与按钮共用一份（不各拉一次，否则两边的数字会差一轮）
+    const [botsOpen, setBotsOpen] = useState(false);
+    const bots = useBotRows(botsOpen);
+    const attention = bots.rows.filter(needsYou).length;
+
     useEffect(() => {
         try {
             localStorage.setItem(NAV_OPEN_KEY, open ? '1' : '0');
@@ -166,18 +174,15 @@ function Host() {
                 ],
             },
             {
-                // 活动：两颗**并列**（用户 2026-11-24 裁），一个是「有轮次在跑」、一个是「有进程在跑」。
-                // 数字由组件自己订阅（全实例活动流）—— 宿主不跟着重渲，否则每有人开跑就要
-                // 把整页的根走一遍。
+                // 活动：这颗 = **有进程在跑**（后台作业）。数字由组件自己订阅（全实例活动流）——
+                // 宿主不跟着重渲，否则每有人开跑就要把整页的根走一遍。
+                //
+                // 2026-11-25 合 main 时的取舍：旧的分支在这里还挂了一颗 `sessions`（"会话 N" / 改成
+                // "Bot" 的活动图标），而 main 的 PR #552 已把「在跑 / 等回答 / 上一轮出错 / 空闲」
+                // 统一收进 `bots` 那颗（BotsOverlay，二级浮层 + 三级全量表格）。两套入口会同时
+                // 显示两个 Bot，所以去掉了旧那颗，只留作业这颗。
                 id: 'activity',
                 activity: [
-                    {
-                        // 点击在 glyph 自己身上（要弹列表并拿按钮位置做锚点），壳只负责摆位置
-                        id: 'sessions',
-                        label: 'Bot 活动：查看正在运行的 Bot 列表',
-                        glyph: <ActiveSessionsGlyph />,
-                        standalone: true,
-                    },
                     {
                         id: 'jobs',
                         // 「后台任务」两个口径（用户 2026-11-24）：这颗 = **本实例全部**（跨房间）；
@@ -194,6 +199,14 @@ function Host() {
                 id: 'app',
                 tools: [
                     {
+                        id: 'bots',
+                        label: attention === 0 ? 'Bot 状态' : `Bot 状态（${attention} 个要你看）`,
+                        glyph: <BotGlyph count={attention} />,
+                        onClick: () => {
+                            setBotsOpen(true);
+                        },
+                    },
+                    {
                         id: 'settings',
                         label: '设置',
                         glyph: <GearGlyph />,
@@ -205,8 +218,8 @@ function Host() {
             },
         ],
         // `jumpToFirstRunning*` 是模块级命令（不依赖 props），所以不必进依赖表；
-        // `setJobsOpen` 是 setState（引用恒定），同理
-        [open, toggle, dialogs],
+        // `setJobsOpen` / `setBotsOpen` 是 setState（引用恒定），同理
+        [open, toggle, dialogs, attention],
     );
 
     // 没有房间时**也要**有导航：新建第一个房间的入口就在左栏，把它藏起来等于没法开工
@@ -224,6 +237,7 @@ function Host() {
                 </div>
                 {dialogs.element}
                 {jobsOpen && <JobsPanel onClose={() => setJobsOpen(false)} />}
+                {botsOpen ? <BotsOverlay {...bots} onClose={() => setBotsOpen(false)} /> : null}
             </RoomDialogsProvider>
         );
     }
@@ -244,6 +258,7 @@ function Host() {
             </div>
             {dialogs.element}
             {jobsOpen && <JobsPanel onClose={() => setJobsOpen(false)} />}
+            {botsOpen ? <BotsOverlay {...bots} onClose={() => setBotsOpen(false)} /> : null}
         </RoomDialogsProvider>
     );
 }

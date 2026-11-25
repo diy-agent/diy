@@ -151,3 +151,39 @@ describe('轮次时刻（消息头 + 结算行读它）', () => {
         expect(state.turns).toEqual({});
     });
 });
+
+describe('compact（手动压缩的进度）', () => {
+    const progress = (compactId: string, state: 'running' | 'done' | 'failed' | 'cancelled', startedAt = 0) => ({
+        kind: 'compact' as const,
+        compact: {
+            compactId,
+            botId: 'b1',
+            state,
+            startedAt,
+            budget: { keepTurns: 10 },
+            before: { entries: 20, chars: 900 },
+        },
+    });
+
+    it('同 id 的终态覆盖 running 那条，不会变成两条记录', () => {
+        let state = applyEvent(emptyState(), progress('c1', 'running'));
+        state = applyEvent(state, progress('c1', 'done'));
+        expect(Object.keys(state.compactions)).toEqual(['c1']);
+        expect(state.compactions['c1']?.state).toBe('done');
+    });
+
+    it('超过上限只留最近的几条（running 的必然在最新里）', () => {
+        let state = emptyState();
+        for (let i = 0; i < 12; i++) state = applyEvent(state, progress(`c${String(i)}`, 'done', i));
+        expect(Object.keys(state.compactions)).toHaveLength(8);
+        expect(state.compactions['c11']).toBeDefined();
+        expect(state.compactions['c0']).toBeUndefined();
+    });
+
+    it('快照不带压缩进度（刷新后已完成的那次只体现在 stats 里）', () => {
+        let state = applyEvent(emptyState(), progress('c1', 'done'));
+        expect(Object.keys(state.compactions)).toEqual(['c1']);
+        state = fromSnapshot({ items: [], deliveries: [], speaking: [] });
+        expect(state.compactions).toEqual({});
+    });
+});

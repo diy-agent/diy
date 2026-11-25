@@ -32,6 +32,9 @@ const SCAN_DIRS = [
   join(ROOT, "apps/diy-app/src/main"),
   join(ROOT, "apps/diy-app/src/shared"),
   join(ROOT, "apps/diy-app/src/preload"),
+  // diy2（##554 后续）：diy2 server 与 diy-app 主进程是同一类东西 —— 单线程 HTTP/WS + 事件流，
+  // 一次 `statSync` 挡住的是整页 UI 与所有 RPC。CLI（apps/diy2/src）不扫：一次性进程，没有并发可挡。
+  join(ROOT, "apps/diy2/server"),
 ];
 
 /**

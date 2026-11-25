@@ -48,7 +48,7 @@ export async function probe(port: number, home: string, timeoutMs = 1500): Promi
  * 结果当「端口空闲」用 —— 端口可能被别的实例占着，那是 probe 的 `other`。
  */
 export async function probeMine(config: Diy2Config): Promise<{ pid: number; port: number; home: string } | null> {
-    const port = readPortFile(config.portFile);
+    const port = await readPortFile(config.portFile);
     if (port === null) return null;
     const result = await probe(port, config.home);
     if (result.kind !== 'mine' || result.info === undefined) return null;
