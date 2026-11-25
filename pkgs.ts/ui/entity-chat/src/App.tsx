@@ -1,125 +1,67 @@
-import { Bot as BotIcon, Folder, ListTodo, PanelRight, Plus } from 'lucide-react';
+import { Bot as BotIcon, PanelRight } from 'lucide-react';
 import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
-import { EditableName, StatusChip } from './components/RoomName';
-import { SpeakingBar } from './components/SpeakingBar';
-import { PendingAskStrip } from './components/PendingAskStrip';
+import { RoomMenu, SurfaceTabs } from './components/ConversationBar';
+import { RoomStatusBar } from './components/RoomStatusBar';
 import { ComposerBar } from './components/ComposerBar';
+import { ContextPanel } from './components/ContextPanel';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
-import { botsOf, dirOf, primaryBotOf, roomTitle, roomTypeLabel, type Room } from './model';
-import {
-    actions,
-    useBots,
-    useDefaultModelKey,
-    useError,
-    useLoaded,
-    useRooms,
-    useSelectedRoom,
-} from './store';
+import { type Room } from './model';
+import { actions, useError, useLoaded, useSelectedRoom } from './store';
+import { useSurfaceId } from './surface';
 import { useRoomDialogs } from './useRoomDialogs';
 
-function roomDir(room: Room): string | undefined {
-    const dir = room.data['dir'];
-    return typeof dir === 'string' && dir !== '' ? dir : undefined;
-}
-
 /**
- * 头部。`memo` 的意义：`App` 因为「侧栏一行的高亮变了」这类原因重渲时，它不该跟着
- * 整块重画（里面还有成员胶囊、上下文面板）。
+ * 对话区的**唯一一行头**（用户 2026-11-24）：左侧表面切换，右侧能力入口。
+ *
+ * 删掉的两样（用户原话「项目、diy 这两个字符串删掉，三点操作按钮上移」）：
+ * · 类型标签（`☑ 项目`）—— 侧栏那行已经在用图标/位置说同一件事；
+ * · 大标题（`diy`）—— 侧栏高亮的行就是它，而顶部窗口标题栏也写着。
+ *
+ * 于是原来两行（头 + tabs）变成**一行**：表面切换上移到这里，kebab 也跟着上移。
+ * 少掉的那一行不是为了好看 —— 它站的位置是视线第一落点，常驻内容却没有任何可操作的东西。
+ *
+ * `bar="host"`：宿主（工作台的区域标题栏）已经画了表面切换和房间菜单，这一行整条不画。
+ *
+ * `memo` 的意义：`App` 因「侧栏一行的高亮变了」这类原因重渲时，它不该跟着整块重画。
  */
-const RoomHeader = React.memo(function RoomHeader({
+const ConversationBar = React.memo(function ConversationBar({
     room,
     onAddMember,
+    onOpenSettings,
     taskPanelOpen,
     taskPanelShown,
     onToggleTaskPanel,
 }: {
     room: Room;
     onAddMember: () => void;
+    onOpenSettings: () => void;
     taskPanelOpen: boolean;
     /** 宿主是否接管了右侧面板（接管后这个按钮不归本层画 —— 点了也没有本层面板可开） */
     taskPanelShown: boolean;
     onToggleTaskPanel: () => void;
 }) {
-    // 两个窄订阅：bot 表、房间列表（后者只用来把项目的 dir 继承下来）
-    const botMap = useBots();
-    const rooms = useRooms();
-    const bots = botsOf(room, botMap);
-    const primary = primaryBotOf(room, botMap);
-    const others = bots.filter((bot) => bot.id !== primary?.id);
-    const isProject = room.type === 'project';
-    const Icon = isProject ? Folder : ListTodo;
-
     return (
-        <header className="border-b px-5 py-3">
-            <div className="flex flex-wrap items-center gap-2">
-                <span className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                    <Icon className={`size-3 ${isProject ? 'text-sky-400' : 'text-emerald-400'}`} />
-                    {roomTypeLabel(room.type)}
-                </span>
-                <EditableName
-                    value={roomTitle(room)}
-                    mode="click"
-                    // 头部大标题：点了就改。侧栏收起来时这是唯一能看见名字的地方
-                    onCommit={(next) => void actions.renameRoom(room.id, next)}
-                    className="max-w-[22rem] truncate rounded px-1 text-left text-sm font-semibold hover:bg-muted/60"
-                    inputClassName="w-56 rounded border bg-background px-1 text-sm font-semibold outline-none"
-                />
-                <StatusChip room={room} />
-                {roomDir(room) !== undefined && (
-                    <span className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
-                        <Folder className="size-3" />
-                        {dirOf(room, rooms)}
-                    </span>
-                )}
-                <span className="ml-auto flex flex-wrap items-center gap-1.5 text-xs">
-                    <span className="text-muted-foreground">成员</span>
-                    {primary !== undefined && (
-                        <span className="flex items-center gap-1 rounded-full border px-2 py-0.5">
-                            <span className="size-2 rounded-full" style={{ background: primary.color }} />
-                            {primary.name}
-                            <span className="text-[10px] text-muted-foreground">默认应答</span>
-                        </span>
-                    )}
-                    {others.map((bot) => (
-                        <span
-                            key={bot.id}
-                            className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-muted-foreground"
-                        >
-                            <span className="size-2 rounded-full" style={{ background: bot.color }} />
-                            {bot.name}
-                        </span>
-                    ))}
+        <div className="flex items-center gap-1 border-b px-4 py-1.5">
+            <SurfaceTabs />
+            <span className="ml-auto flex shrink-0 items-center gap-1">
+                {taskPanelShown && room.type === 'task' && (
                     <button
-                        onClick={onAddMember}
-                        className="flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted"
+                        onClick={onToggleTaskPanel}
+                        title="任务描述与正文"
+                        aria-label="任务面板"
+                        className={`rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground ${
+                            taskPanelOpen ? 'bg-muted text-foreground' : ''
+                        }`}
                     >
-                        <Plus className="size-3" />
-                        成员
+                        <PanelRight className="size-3.5" />
                     </button>
-                    {taskPanelShown && room.type === 'task' && (
-                        <button
-                            onClick={onToggleTaskPanel}
-                            className={`flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted ${
-                                taskPanelOpen ? 'bg-muted' : ''
-                            }`}
-                        >
-                            <PanelRight className="size-3" />
-                            任务
-                        </button>
-                    )}
-                </span>
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                <span>
-                    {bots.length <= 1
-                        ? '只有默认应答，没有 @ 时它自己回'
-                        : `${bots.length} 个成员：@名字叫谁谁回，@all 全回（等于开会，token 按人数涨）`}
-                </span>
-            </div>
-        </header>
+                )}
+                <RoomMenu room={room} onAddMember={onAddMember} onOpenSettings={onOpenSettings} />
+            </span>
+        </div>
     );
 });
 
@@ -132,7 +74,22 @@ const RoomHeader = React.memo(function RoomHeader({
  * `taskPanel: false` —— 宿主管右侧区域（把任务面板放进 dock 的 right area，
  *   尺寸/收起就是布局的一部分，不该在 view 内部再长一个自绘面板）。
  */
-export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; taskPanel?: boolean } = {}) {
+export function App({
+    sidebar = true,
+    taskPanel = true,
+    bar = 'self',
+}: {
+    sidebar?: boolean;
+    taskPanel?: boolean;
+    /**
+     * 对话区顶部那条（表面切换 + 房间菜单）谁来画。
+     *
+     * `self`（缺省）= 这条组件自己画一行（整页形态）。
+     * `host` = 宿主已经画了（工作台把它摆进区域标题栏，跟「对话」那个名字同一行），
+     *   这里就**不再占一行** —— 宿主接管的好处正是「少掉一行常驻空白」。
+     */
+    bar?: 'self' | 'host';
+} = {}) {
     // 四个窄订阅。这层以前是 `useStore()`（整份快照），于是**每一条** `emit` ——
     // 别的房间来了消息、某个房间多了个待答提问、侧栏换了个高亮 —— 都会把整个 App
     // 连同侧栏、三个 nav 块一起重渲一遍。
@@ -146,10 +103,8 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
     // 弹窗（新建项目 / 建任务 / 加成员 / 设置 / 删房间 / 换模型）整体在 useRoomDialogs 里：
     // 工作台要用同一套，状态不能长在这一层。
     const dialogs = useRoomDialogs();
-    // 默认表面：Astryx（虚拟化 + 自带代码高亮，长会话最稳）
-    const [surfaceId, setSurfaceId] = React.useState<string>(
-        SURFACES.find((surface) => surface.id === 'astryx')?.id ?? SURFACES[0]!.id,
-    );
+    // 选哪一面：状态在 `surface.ts` 的模块 store（宿主也要画那几颗 tab，见那里的注释）
+    const [surfaceId] = useSurfaceId();
 
     React.useEffect(() => {
         actions.bootstrap();
@@ -245,17 +200,17 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
                         </div>
                     ) : (
                         <>
-                            <RoomHeader
+                            {bar === 'self' && (
+                            <ConversationBar
                                 room={room}
                                 onAddMember={onAddMember}
+                                onOpenSettings={onOpenSettings}
                                 taskPanelOpen={taskPanelOpen}
                                 taskPanelShown={taskPanel}
                                 onToggleTaskPanel={onToggleTaskPanel}
                             />
-                            <SurfaceTabs value={surfaceId} onChange={setSurfaceId} />
-                            <SpeakingBar roomId={room.id} />
-                            {/* 待答条在壳层：房间的事实，三个表面共用（跳转按 surfaceId 找各自的 jumper） */}
-                            <PendingAskStrip roomId={room.id} surfaceId={surfaceId} />
+                            )}
+                            <RoomStatusBar roomId={room.id} surfaceId={surfaceId} />
                             <SurfaceViews
                                 surfaceId={surfaceId}
                                 targetId={room.id}
@@ -280,26 +235,6 @@ export function App({ sidebar = true, taskPanel = true }: { sidebar?: boolean; t
                 <BotIcon className="size-3" />
                 diy2 · 切片
             </div>
-        </div>
-    );
-}
-
-function SurfaceTabs({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-    return (
-        <div className="flex items-center gap-1 border-b px-4 py-1.5">
-            {SURFACES.map((surface) => (
-                <button
-                    key={surface.id}
-                    onClick={() => onChange(surface.id)}
-                    title={surface.hint}
-                    className={`rounded-md px-2.5 py-1 text-xs ${
-                        value === surface.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
-                    }`}
-                >
-                    {surface.name}
-                </button>
-            ))}
-            <span className="ml-2 text-[10px] text-muted-foreground">同一份数据，两种表面</span>
         </div>
     );
 }

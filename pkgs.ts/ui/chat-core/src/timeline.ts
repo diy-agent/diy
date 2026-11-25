@@ -36,7 +36,26 @@ import type {
     Item,
     JobNotice,
     TurnEndReason,
+    TurnUsage,
 } from './types';
+
+/**
+ * 一轮的时间与结算事实（消息头 + 底部行只读它）。
+ *
+ * 为什么把四件东西放在一起：它们描述的是**同一段时间**，分开放就会出现「头像旁写 22:28、
+ * 底部行写耗时 3m12s、结束于 22:31」却不自洽的情况 —— startedAt / endedAt 永远成对来自服务端
+ * （`turn.start` 与 `turn.end`）。运行中只有 startedAt，结束那一刻 `endedAt` 才来。
+ */
+export interface TurnFacts {
+    startedAt?: number;
+    endedAt?: number;
+    /** 本轮实测用量（上游报的；没有 = 没拿到，不要用 0 充数） */
+    usage?: TurnUsage;
+    /** 本轮工具调用数（缺省 = 一次也没调） */
+    toolCalls?: number;
+    /** 这一轮为什么结束（运行中为 undefined，页脚 / 结算行靠它换档） */
+    reason?: TurnEndReason;
+}
 
 export type TimelinePart =
     | { kind: 'text'; text: string }
@@ -98,11 +117,11 @@ export interface TimelineEntry {
     job?: JobNotice;
     at: number;
     /**
-     * 这一轮的结局（`turn.end` 事件给的事实）。**只挂在同一轮的最后一段**上 ——
+     * 这一轮的时间与结局（`turn.start` / `turn.end` 给的事实）。**只挂在同一轮的最后一段**上 ——
      * 否则一段话被插话切成三段，"停在哪"会重复显示三遍。
      * 文案不在这一层（见 `end-footer.ts`）：这里只放事实。
      */
-    endReason?: TurnEndReason;
+    turn?: TurnFacts;
 }
 
 function partOf(item: Item): TimelinePart | undefined {
@@ -152,8 +171,13 @@ export function buildTimeline(
         speaking?: readonly string[];
         asks?: readonly AskRequest[];
         answered?: readonly AnsweredAsk[];
-        /** 某一轮的结局（turnId → 判定），挂在最后一段的页脚上 */
-        endReasons?: Record<string, TurnEndReason>;
+        /**
+         * 各轮的时间与结局，键是 `turnId\u0000botId`（老形状只按 turnId 也兼容）。
+         *
+         * 运行中的轮只有 `startedAt`（快照的 `runningTurns` 与 `turn.start` 都给），
+         * 结束后才补齐 `endedAt` / `usage` / `reason`。
+         */
+        turns?: Record<string, TurnFacts>;
     } = {},
 ): TimelineEntry[] {
     const entries: TimelineEntry[] = [];
@@ -362,22 +386,24 @@ export function buildTimeline(
             parts: [],
             streaming: true,
             deliveries: [],
-            at: startedAt,
+            // 位置用服务端给的开始时刻（有的话）：消息头写的就是这个时间，
+            // 拿条目时刻会与收轮后的结算行差几十毫秒到几秒（排队 / 唤醒）
+            at: options.turns?.[`${turnId}\u0000${botId}`]?.startedAt ?? startedAt,
         });
     }
 
-    attachEndReasons(entries, options.endReasons);
+    attachTurns(entries, options.turns);
     return entries;
 }
 
 /**
- * 把「这一轮为什么结束」挂到该轮**最后一条** bot 条目上。
+ * 把「这一轮的时刻与结局」挂到该轮**最后一条** bot 条目上。
  *
  * 为什么是最后一条：一轮可能被插话切成多条（text → tool → text），结局属于整轮，
  * 只该在末尾说一次；挂到每条上会让页脚重复，挂到第一条会让它出现在半句话下面。
  */
-function attachEndReasons(entries: TimelineEntry[], endReasons?: Record<string, TurnEndReason>): void {
-    if (endReasons === undefined) return;
+function attachTurns(entries: TimelineEntry[], turns?: Record<string, TurnFacts>): void {
+    if (turns === undefined) return;
     // 优先挂在 bot 的话上（页脚是"这条回复"的属性）；这一轮压根没有 bot 消息时
     // （空产出 / 直接失败）退到该轮最后一条 notice / error —— 否则那一轮的结局就没地方说了。
     const lastBot = new Map<string, number>();
@@ -391,29 +417,29 @@ function attachEndReasons(entries: TimelineEntry[], endReasons?: Record<string, 
     });
 
     const explained = new Set<string>();
-    // 结局按「轮 + 成员」精确取：同一轮里 A 被截断、B 正常说完，两人的页脚不能是同一个
-    const reasonOf = (turnId: string, botId?: string): TurnEndReason | undefined => {
+    // 按「轮 + 成员」精确取：同一轮里 A 被截断、B 正常说完，两人的页脚不能是同一个
+    const factsOf = (turnId: string, botId?: string): TurnFacts | undefined => {
         if (botId !== undefined) {
-            const exact = endReasons[`${turnId}\u0000${botId}`];
+            const exact = turns[`${turnId}\u0000${botId}`];
             if (exact !== undefined) return exact;
         }
-        // 老形状（只按 turnId 存）：兼容快照 / 外部构造的 endReasons
-        return endReasons[turnId];
+        // 老形状（只按 turnId 存）：兼容快照 / 外部构造的 turns
+        return turns[turnId];
     };
     for (const [key, index] of lastBot) {
         const [turnId = '', botId] = key.split('\u0000');
-        const reason = reasonOf(turnId, botId);
+        const facts = factsOf(turnId, botId);
         const entry = entries[index];
-        if (reason === undefined || entry === undefined) continue;
-        entries[index] = { ...entry, endReason: reason };
+        if (facts === undefined || entry === undefined) continue;
+        entries[index] = { ...entry, turn: facts };
         explained.add(turnId);
     }
     // 正主没有（这一轮没说话）：退到该轮最后一条条目上，别让结局无处可说
     for (const [turnId, index] of lastOfTurn) {
         if (explained.has(turnId)) continue;
-        const reason = reasonOf(turnId);
+        const facts = factsOf(turnId);
         const entry = entries[index];
-        if (reason === undefined || entry === undefined) continue;
-        entries[index] = { ...entry, endReason: reason };
+        if (facts === undefined || entry === undefined) continue;
+        entries[index] = { ...entry, turn: facts };
     }
 }

@@ -14,7 +14,6 @@ import {
     ChatSystemMessage,
     ChatToolCalls,
     Markdown,
-    Timestamp,
     type ChatMessageStatus,
 } from '@astryxdesign/core';
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
@@ -30,25 +29,50 @@ import {
 } from '@diy-agent/chat-core';
 import { ArrowDown } from 'lucide-react';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
+import { formatAtAbsolute, formatClock } from '../../model';
 import { AskCard } from '../../components/AskCard';
 import { CompactCutBar } from '../../components/CompactCutBar';
 import { CopyButton } from '../../components/CopyButton';
 import { JobCard } from '../../components/JobCard';
 import { openLinkInNewWindow } from '../../links';
 import { BotAvatar } from '../../components/BotAvatar';
-import { EndFooterLine } from '../../components/EndFooterLine';
 import { plainTextOf } from '../shared';
 import { deliveryFooterOf, deliveryStatusOf, runsOf, TOOL_STATUS, toolTargetOf } from './mapping';
-import { RunningIndicator } from '../../components/RunningIndicator';
+import { TurnFooter } from '../../components/TurnFooter';
 import * as React from 'react';
 
 import { useMentionCandidates } from '../../mentions';
 import { useDraft } from '../../drafts';
 import { actions, conversationOf, useStore } from '../../store';
 
-/** 时间戳（Astryx Timestamp 收秒或 ISO；我们的 at 是毫秒） */
+/** 消息头时刻：**绝对时间**（用户 2026-11-24 要的）：当天只写 `22:32`，跟天补日期。
+ *
+ * 不用 Astryx 的 `Timestamp`：它只有「相对 / 固定字段」两档，没有「今天省掉日期」这级精度。
+ * 全部时刻归 `formatClock` / `formatAtAbsolute` 一套，侧栏、历史、消息头才不会各写一种写法。 */
 function TimeOf({ at }: { at: number }) {
-    return <Timestamp value={Math.floor(at / 1000)} format="time" />;
+    return (
+        <span title={formatAtAbsolute(at)} className="tabular-nums">
+            {formatClock(at)}
+        </span>
+    );
+}
+
+/**
+ * 一条消息的头：**名字 + 开始时刻，同一行**。
+ *
+ * 为什么不把时间交给 `ChatMessageMetadata`：Astryx 的 metadata 槽只能渲染在气泡**下方**，
+ * 而用户要的时间在头上（demo 的 `.thead` 就是 头像 + 名字 + 时间 一行）。把时间放 metadata
+ * 的结果就是「21:54」单独跑到轮次底行下面一行去 —— 用户 2026-11-24 报的「跨行」。
+ *
+ * 宽度 `100%`：name 槽默认不撑满，不写的话时间会紧贴名字，不能靠右。
+ */
+function TurnHead({ name, at, color }: { name?: string; at: number; color?: string }) {
+    return (
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: 7, width: '100%', minWidth: 0 }}>
+            <span style={{ fontWeight: 600, ...(color === undefined ? {} : { color }) }}>{name ?? 'bot'}</span>
+            <TimeOf at={at} />
+        </span>
+    );
 }
 
 /**
@@ -92,7 +116,15 @@ function ToolRun({ tools, live }: { tools: (TimelinePart & { kind: 'tool' })[]; 
     return <>{blocks}</>;
 }
 
-function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) {
+function EntryView({
+    entry,
+    roomId,
+    onStopBot,
+}: {
+    entry: TimelineEntry;
+    roomId: string;
+    onStopBot?: (botId: string) => void;
+}) {
     if (entry.kind === 'notice') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
         // 后台作业收口：带结构化事实的当卡片画（run id / 状态 / 退出码 / 输出尾部）。
@@ -123,8 +155,8 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
             >
                 <ChatMessageBubble
                     variant="ghost"
-                    {...(entry.author === undefined ? {} : { name: entry.author.name })}
-                    metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
+                    width="100%"
+                    {...(entry.author === undefined ? {} : { name: <TurnHead name={entry.author.name} at={entry.at} color={entry.author.color} /> })}
                 >
                     <Banner status="error" container="section" collapsible={false} title={text} />
                 </ChatMessageBubble>
@@ -141,9 +173,11 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                 avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}
             >
                 <ChatMessageBubble
+                    variant="ghost"
+                    width="100%"
+                    name={<TurnHead name={entry.author?.name} at={entry.at} color={entry.author?.color} />}
                     metadata={
                         <ChatMessageMetadata
-                            timestamp={<TimeOf at={entry.at} />}
                             footer={deliveryFooterOf(entry.deliveries)}
                             status={deliveryStatusOf(entry.deliveries)}
                         />
@@ -165,12 +199,11 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                 key={entry.key}
                 sender="assistant"
                 avatar={<BotAvatar author={entry.author} roomId={roomId} size={24} />}
-                {...(entry.author === undefined ? {} : { name: entry.author.name })}
-                metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
+                name={<TurnHead name={entry.author?.name} at={entry.turn?.startedAt ?? entry.at} color={entry.author?.color} />}
             >
-                <div style={{ paddingBlock: 2 }}>
-                    {/* stallable：typing 的 at 是本轮起点，秒数 = 真实的无产出时长（见 stuckHintOf） */}
-                    <RunningIndicator since={entry.at} stallable />
+                {/* 还没吐字：占位的也是「这一轮最下面那一行」（正在调用… / 已用 Ns） */}
+                <div style={{ paddingBlock: 2, width: '100%' }}>
+                    <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                 </div>
             </ChatMessage>
         );
@@ -189,8 +222,8 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
         >
             <ChatMessageBubble
                 variant="ghost"
-                {...(entry.author === undefined ? {} : { name: entry.author.name })}
-                metadata={<ChatMessageMetadata timestamp={<TimeOf at={entry.at} />} />}
+                width="100%"
+                name={<TurnHead name={entry.author?.name} at={entry.turn?.startedAt ?? entry.at} color={entry.author?.color} />}
             >
                 {runs.map((run, index) => {
                     if (run.kind === 'error')
@@ -227,18 +260,13 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
                         <ToolRun key={`c${index}`} tools={run.tools} live={entry.waiting === true} />
                     );
                 })}
-                {/* 还在跑但没有流式内容（工具刚结束 / 等待下一段）：挂在正文末尾，
-                    不再单独占列表底部一行 */}
-                {entry.waiting === true && (
-                    <div style={{ paddingTop: 6 }}>
-                        {/* 故意不给 stallable：这里 since 是回复起点（含已推进的内容），
-                            按它报卡住会在每次段间空隙误报 —— 见 stuckHintOf */}
-                        <RunningIndicator since={entry.at} />
+                {/* 轮次最下面一行：运行中「正在调用 bash… 44s / 已用 2m44s」，
+                    结束换成结算（完成 · 耗时 · tokens · 步数 · 工具次数 + 结束于 HH:MM）。
+                    正文末尾不再另起一行运行指示 —— 同一轮的状态只在底部说一次。 */}
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, width: '100%' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                     </div>
-                )}
-                {/* 这一轮是怎么停的：正常收尾不占页脚（endFooterOf 对 completed 返回 undefined） */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <EndFooterLine reason={entry.endReason} />
                     {/* 复制这条回复的正文：与 shadcn 面同一个共用件（那一面是悬停浮现，
                         这里没有 group-hover 的容器，用低对比常驻） */}
                     {copyable !== '' && (
@@ -257,13 +285,21 @@ function EntryView({ entry, roomId }: { entry: TimelineEntry; roomId: string }) 
  * 消息列表单独 memo：输入框每敲一个字都会让 Surface 重渲染，
  * 但整棵消息树（含 Markdown 解析）不该跟着重算 —— 不 memo 的话长会话里输入会明显卡。
  */
-const MessageList = React.memo(function MessageList({ entries, roomId }: { entries: TimelineEntry[]; roomId: string }) {
+const MessageList = React.memo(function MessageList({
+    entries,
+    roomId,
+    onStopBot,
+}: {
+    entries: TimelineEntry[];
+    roomId: string;
+    onStopBot?: (botId: string) => void;
+}) {
     return (
         <>
             {entries.map((entry) => (
                 // content-visibility：离开视口的条目跳过布局/绘制
                 <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
-                    <EntryView entry={entry} roomId={roomId} />
+                    <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                 </div>
             ))}
         </>
@@ -309,7 +345,7 @@ function AstryxComposer({
                         .catch(() => undefined)
                         .finally(() => setSubmitting(false));
                 }}
-                // 运行中也保持"发送"态：插话是正常操作，停止在 SpeakingBar 上
+                // 运行中也保持"发送"态：插话是正常操作，停止在 RoomStatusBar 上
                 onStop={() => conversation.cancel()}
                 isStopShown={false}
                 // 底栏左侧：上下文 / 模型 / 作业（发送键由设计系统摆在右侧）
@@ -338,15 +374,27 @@ export function AstryxSurface({ targetId, composerExtras }: { targetId: string; 
     const conversation = conversationOf(targetId);
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
 
+    // 停某个成员：从房间状态条挪到「那一轮的底行」之后，入口由 surface 交给 EntryView
+    const stopBot = React.useCallback((botId: string) => conversation.stop(botId), [conversation]);
+
     const entries = React.useMemo(
         () =>
             buildTimeline(state.items, state.deliveries, shell.bots, {
                 speaking: state.speaking,
                 asks: state.asks,
                 answered: state.answered,
-                endReasons: state.turnEnds,
+                turns: state.turns,
             }),
-        [state.items, state.deliveries, shell.bots, state.speaking, state.asks, state.answered],
+        [
+            state.items,
+            state.deliveries,
+            shell.bots,
+            state.speaking,
+            state.asks,
+            state.answered,
+            // 轮次时刻 / 结算随 turns 变化：漏了它，收尾时底部行不会从「已用」换成结算
+            state.turns,
+        ],
     );
 
     // 上下文概况：顶部「已压缩」框要的折叠数 / 摘要正文。
@@ -476,7 +524,7 @@ export function AstryxSurface({ targetId, composerExtras }: { targetId: string; 
                             renderItem={({ item }) => (
                                 // 行距必须放在 renderItem 内部（容器 gap 不会被测量，行高会累计漂移）
                                 <div style={{ paddingBlock: 6 }}>
-                                    <EntryView entry={item} roomId={targetId} />
+                                    <EntryView entry={item} roomId={targetId} onStopBot={stopBot} />
                                 </div>
                             )}
                         />
@@ -509,24 +557,10 @@ export function AstryxSurface({ targetId, composerExtras }: { targetId: string; 
                 )}
             </div>
                 <div style={{ flex: '0 0 auto', paddingBlock: 12 }}>
-                    {/* astryx 的 composer 关掉了自己的停止按钮（isStopShown=false），
-                        原本指望 SpeakingBar 兜底，但这套布局没渲染它 ⇒ 运行中完全找不到停的地方 */}
-                    {state.speaking.length > 0 && (
-                        <div
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingBottom: 8,
-                                fontSize: 11,
-                                opacity: 0.85,
-                            }}
-                        >
-                            <span className="size-2 animate-pulse rounded-full bg-current" />
-                            <span>{state.speaking.map((id) => shell.bots[id]?.name ?? id).join('、')} 正在说话…</span>
-                            <Button size="sm" label="停止" onClick={() => conversation.cancel()} />
-                        </div>
-                    )}
+                    {/* 停止按钮不在这里：壳层的 RoomStatusBar 已经渲染（含「单停」与「全部停止」），
+                        而 astryx 的 composer 自己关掉了 isStopShown。这里原本还有一条自建的
+                        「正在说话 + 停止」条（注释说「SpeakingBar 没渲染」——那是 surface 还没收进
+                        SurfaceViews 时的事实），结果同屏两条、文案还不同步。已删。 */}
                     <AstryxComposer
                         conversation={conversation}
                         roomId={targetId}

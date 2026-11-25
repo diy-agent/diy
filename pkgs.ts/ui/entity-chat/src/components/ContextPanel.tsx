@@ -14,6 +14,7 @@ import type { CompactEventInfo, CompactionProgress, Room, SessionInfo } from '@d
 import { contextWindowOf } from '../models';
 import { actions, conversationOf, useProviders, useStore } from '../store';
 import { CopyButton } from './CopyButton';
+import { PendingTable } from './PendingTable';
 
 /** 策略名 → 人话。后端枚举值不该原样进 UI */
 const STRATEGY_LABEL: Record<string, string> = {
@@ -148,6 +149,7 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
     const providers = useProviders();
     const sessions = state.sessions[room.id] ?? [];
     const [open, setOpen] = React.useState(false);
+    const [showPending, setShowPending] = React.useState(false);
     const [busy, setBusy] = React.useState<string | null>(null);
     const [note, setNote] = React.useState<string | null>(null);
     /**
@@ -188,12 +190,14 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
         if (settled !== '') actions.refreshSessions(room.id);
     }, [settled]);
 
-    // 打开面板时拉一次，之后定时刷（后台还有 bot 在跑，推不动就轮询）
+    // 打开面板时拉一次，**只在展开时**定时刷（关着不轮询）：以前 4s 一次在面板关着也照跑，
+    // 每次刷新都会 emit 整壳快照 ⇒ 所有订阅 shell 的地方跟着重渲（「聊天性能」那批问题的源头之一）。
     React.useEffect(() => {
         actions.refreshSessions(room.id);
+        if (!open) return;
         const timer = setInterval(() => actions.refreshSessions(room.id), 4000);
         return () => clearInterval(timer);
-    }, [room.id]);
+    }, [room.id, open]);
 
     /**
      * 压缩是**受理即返**：这一下只负责把请求发出去。
@@ -297,6 +301,19 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
                                 );
                             })
                         )}
+
+                        {/*
+                          诊断面：默认折叠 —— 「一眼答出卡在哪」，不是日常信息（计划 5.3）。
+                          用按钮而不是 <details>：details 折叠时**内容仍然挂载**，那份订阅会继续
+                          每次 state 变化重渲（正是这个任务要治的病）。按钮控制才会真的卸载。
+                        */}
+                        <button
+                            onClick={() => setShowPending((value) => !value)}
+                            className="flex w-full items-center gap-1 border-t px-3 py-1.5 text-[10px] text-muted-foreground hover:bg-muted"
+                        >
+                            {showPending ? '▾' : '▸'} 进展（谁卡在哪）
+                        </button>
+                        {showPending && <PendingTable roomId={room.id} />}
 
                         {note !== null && (
                             <p className="border-t px-3 py-2 text-[10px] text-muted-foreground">{note}</p>

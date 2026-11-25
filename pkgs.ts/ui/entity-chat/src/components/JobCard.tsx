@@ -27,7 +27,7 @@ import type { JobView } from '@diy-agent/chat-core';
 const ACTION_LABEL: Record<JobView['action'], string> = {
     start: '转到后台',
     done: '收口通知',
-    list: '列作业',
+    list: '列后台任务',
     status: '查状态',
     output: '取输出',
     kill: '停止',
@@ -96,7 +96,7 @@ export function JobCard({
                     className={`inline-block size-1.5 shrink-0 rounded-full bg-current ${head.tone === 'running' ? 'animate-pulse' : ''} ${TONE_TEXT[head.tone]}`}
                     aria-hidden="true"
                 />
-                <span className="shrink-0 text-[11px] text-muted-foreground">作业</span>
+                <span className="shrink-0 text-[11px] text-muted-foreground">后台任务</span>
                 {view.id !== undefined && <code className="shrink-0 font-mono text-[12px]">{view.id}</code>}
                 <span className={TONE_TEXT[head.tone]}>{head.text}</span>
                 {view.duration !== undefined && (

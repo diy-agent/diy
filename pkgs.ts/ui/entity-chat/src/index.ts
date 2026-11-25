@@ -29,10 +29,19 @@ export type { NavContext, NavHost, NavSource } from './nav';
 // 这些部件自己不知道被装在哪里 —— 宽度 / 收起由外层 area 决定（`widthMode="fill"`），
 // 弹窗由宿主挂一次 `useRoomDialogs()`（整页 App 与工作台共用同一套状态）。
 export { Sidebar } from './components/Sidebar';
+// 对话区那一条的两样（表面切换 / 房间菜单）：宿主可以把它们摆进自己的区域标题栏
+// （工作台就是这么做的，`bar="host"` 时对话区不再自己画那一行）。
+export { RoomMenu, SurfaceTabs } from './components/ConversationBar';
 export { TaskPanel } from './components/TaskPanel';
 // 作业卡片：两个 surface 共用（判据在 chat-core 的 `jobOf`）。导出是为了让
 // 选择型实验台能直接拿真组件摆样子 —— 别在 demo 里另画一份。
 export { JobCard } from './components/JobCard';
+// 标题栏右端的两颗活动图标（会话 N / 作业 M）：壳只负责把它们摆进 tools，
+// 数字由组件自己订阅（全实例活动流）—— 宿主不会为「有人开跑」重渲一遍。
+export { ActiveJobsGlyph, ActiveSessionsGlyph } from './components/ActiveGlyphs';
+// 全局作业面板：房间内入口是输入框底栏的 `JobsChip`（抽屉），而「结局无人接」发生在
+// 房间被删之后 —— 那时没有会话面，只能从标题栏那颗「作业 N」打开这一份。
+export { JobsPanel } from './components/JobsChip';
 // Bot 状态（在跑 / 等回答 / 上一轮出错 / 空闲）：二级浮层 + 三级全量表格。
 //
 // 数据与口径都在 `bots.ts` 里（`useBotRows` + `needsYou`）：宿主只负责在标题栏摆一颗
@@ -52,6 +61,7 @@ export type { RoomDialogs } from './useRoomDialogs';
 // 设计语义（谁审、失败了怎么回滚），不适合顺手放出来当便利 API。
 export {
     bootstrapStore,
+    jumpToFirstRunningRoom,
     roomOf,
     shellSnapshot,
     useAddress,

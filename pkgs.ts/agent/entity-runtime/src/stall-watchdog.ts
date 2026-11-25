@@ -13,8 +13,10 @@
 //
 // 计时逻辑全在这里、定时器可注入：`agent.ts` 只负责接线（哪一刻是 first / stream / tool）。
 
-/** 当前处在哪个时段 */
-export type StallPhase = 'first' | 'stream' | 'tool';
+import type { StallPhase } from '@diy-agent/protocol';
+
+/** 当前处在哪个时段（类型定义在 protocol：`run.failed.stall` 也带它） */
+export type { StallPhase };
 
 export interface StallInfo {
     phase: StallPhase;

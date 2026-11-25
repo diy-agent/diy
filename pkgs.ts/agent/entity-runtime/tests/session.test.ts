@@ -9,7 +9,7 @@ import type { RunOptions } from '../src/agent';
 import { createSummaryCompactor, simpleCompactor, type Compactor } from '../src/compaction';
 import type { RoomEntry } from '../src/room-log';
 import { BotSession, type SessionDeps, type SessionEvent, type Turn } from '../src/session';
-import type { AgentEvent, Bot, Item } from '../src/types';
+import type { AgentEvent, Bot, Item, StallPhase, TurnEndReason } from '../src/types';
 
 const BOT_A: Bot = { id: 'bot:a', name: 'diy', color: '#111', persona: '', homeRoomId: 'room:1', modelKey: 'm' };
 const BOT_B: Bot = { id: 'bot:b', name: 'cops', color: '#222', persona: '', homeRoomId: 'room:1', modelKey: 'm' };
@@ -22,7 +22,7 @@ interface Harness {
     deliveries: string[];
     /** 每次开跑时真正喂给模型的上下文 */
     seen: RunOptions['messages'][];
-    ends: Array<{ turn: number; turnId: string; text: string; failed: boolean }>;
+    ends: Array<{ turn: number; turnId: string; text: string; failed: boolean; endReason: TurnEndReason }>;
     events: SessionEvent[];
 }
 
@@ -30,11 +30,21 @@ function makeSession(
     options: {
         bot?: Bot;
         hangOnAbort?: boolean;
+        /**
+         * 模拟 agent 层的 StallWatchdog：到点吐一条带 `stall` 的 `run.failed`。
+         *
+         * **session 自己不再杀**（2026-11-25：中止权归 agent 层），所以想要 "卡死" 场景
+         * 就必须把这个事实喂进来 —— 否则就是 hangOnAbort 到天荒地老。
+         */
+        stall?: { afterMs: number; phase: StallPhase; waitedMs: number };
         /** 第一次开跑就失败（`run.failed` 的原文），用来锁「同一句话不出现两次」 */
         fail?: string;
         seed?: SessionDeps['seed'];
         budget?: SessionDeps['budget'];
         compactor?: Compactor;
+        /** 卡死看门狗：测试把它调成几十毫秒（默认 60s / 120s） */
+        progressPolicy?: SessionDeps['progressPolicy'];
+        progressTickMs?: SessionDeps['progressTickMs'];
         /** 模型窗口（token）：不注入时 modelKey 'm' 查不到目录 ⇒ 自动压缩不触发 */
         windowTokens?: number;
     } = {},
@@ -56,6 +66,18 @@ function makeSession(
         await sleep(5);
         if (options.fail !== undefined && runs.length === 1) {
             yield { seq: 2, type: 'run.failed', turnId, message: options.fail };
+            return;
+        }
+        if (options.stall !== undefined && runs.length === 1) {
+            const stall = options.stall;
+            await sleep(stall.afterMs);
+            yield {
+                seq: 2,
+                type: 'run.failed',
+                turnId,
+                message: '上游停摆：请求发出后一直没有收到任何数据（已等 180s），本轮已中止',
+                stall: { phase: stall.phase, waitedMs: stall.waitedMs },
+            };
             return;
         }
         if (options.hangOnAbort === true && runs.length === 1) {
@@ -87,6 +109,8 @@ function makeSession(
         compactor: options.compactor,
         ...(options.windowTokens === undefined ? {} : { windowTokens: options.windowTokens }),
         allocateTurn: (): Turn => ({ turn: ++turn, turnId: `turn-${turn}` }),
+        progressPolicy: options.progressPolicy,
+        progressTickMs: options.progressTickMs,
         run,
     });
     session.subscribe((event) => {
@@ -190,6 +214,69 @@ describe('BotSession', () => {
         expect(h.runs).toEqual(['turn-1']);
         expect(h.deliveries).toContain('m1:delivered');
         expect(h.deliveries).not.toContain('m1:failed');
+    });
+
+    it('模型流挂死：agent 层 StallWatchdog 中止，结局是 stalled（不是 error / interrupted）', async () => {
+        const h = makeSession({
+            stall: { afterMs: 10, phase: 'first', waitedMs: 180_000 },
+            progressTickMs: 5,
+        });
+        await h.session.post({ messageId: 'm1', text: '卡住' });
+
+        expect(h.ends).toHaveLength(1);
+        expect(h.ends[0]?.endReason.type).toBe('stalled');
+        // 「在等谁 / 空了多久」由杀它的那一层带上来（session 自己不知道）
+        expect(h.ends[0]?.endReason.awaiting).toBe('model-stream');
+        expect(h.ends[0]?.endReason.idleMs).toBe(180_000);
+        const notice = h.items.find((item) => item.type === 'notice');
+        expect(notice?.type === 'notice' ? notice.data.kind : undefined).toBe('stalled');
+        // 机器码在文案里被翻成人话（不能把 `model-stream` 直接甩给用户）
+        expect(String(notice?.type === 'notice' ? notice.data.text : '')).toContain('等模型回话时');
+        // 超时不是「出错」：同一件事不能既落 error 又落 stalled notice
+        expect(h.items.some((item) => item.type === 'error')).toBe(false);
+    });
+
+    it('progress 事件：报「在等谁、多久没动」，且只在事实变了时发（不是每 tick 一条）', async () => {
+        const h = makeSession({
+            hangOnAbort: true,
+            // 首字节 15ms 就进 slow 档：这段区间里档位会变，但**永远不会 abort**（杀归 agent 层）
+            progressPolicy: { firstByteWarnMs: 15 },
+            progressTickMs: 5,
+        });
+        const running = h.session.post({ messageId: 'm1', text: '慢慢等' });
+        await sleep(60);
+        // 提示归提示，没人自己动手：这一轮还挂着（这才是「只说不杀」的证据）
+        expect(h.ends).toHaveLength(0);
+        h.session.cancel();
+        await running;
+
+        const progress = h.events.filter((event) => event.type === 'progress');
+        // 12 个 tick 里只发了一两条（awaiting/alive/stage 没变就不发）
+        expect(progress.length).toBeGreaterThan(0);
+        expect(progress.length).toBeLessThanOrEqual(3);
+        for (const event of progress) {
+            if (event.type !== 'progress') continue;
+            expect(event.awaiting).toBe('model-stream');
+            expect(event.turnId).toBe('turn-1');
+            expect(event.idleMs).toBeGreaterThanOrEqual(0);
+        }
+
+        // 跨过首字节线：**只把档位升到 slow，什么都不落库**（用户 2026-11-24：过程不进历史）。
+        // 以前这里会多一条 `progress:no-first-byte` notice，永久留在时间线上 —— 已删。
+        expect(progress.some((event) => event.type === 'progress' && event.stage === 'slow')).toBe(true);
+        expect(h.items.some((item) => item.type === 'notice')).toBe(false);
+        expect(h.ends[0]?.endReason.type).toBe('interrupted');
+    });
+
+    it('人按停仍然是 interrupted（deadline 与 human 必须分得开）', async () => {
+        const h = makeSession({ hangOnAbort: true, progressTickMs: 1_000 });
+        const running = h.session.post({ messageId: 'm1', text: '我会被按停' });
+        await sleep(2);
+        h.session.cancel();
+        await running;
+
+        expect(h.ends).toHaveLength(1);
+        expect(h.ends[0]?.endReason.type).toBe('interrupted');
     });
 
     it('cancel keepQueue：排队的 next-turn 不丢，取消这一轮后继续跑', async () => {
@@ -315,15 +402,19 @@ describe('BotSession', () => {
         // `endReason` 是这一轮**为什么**结束的收尾事实。脚本 run 现在也发 `run.finished`
         // （与真 agent 一致），所以这里是 completed + 上游原文 stop，不是"猜"出来的。
         // 没有它，「被截断」和「说完了」在数据里就没区别（见 intent.truncation.test.ts）
-        expect(h.ends).toEqual([
-            {
-                turn: 1,
-                turnId: 'turn-1',
-                text: 'reply-1',
-                failed: false,
-                endReason: { type: 'completed', finishReason: 'stop', steps: 1 },
-            },
-        ]);
+        // 起止时刻是本轮自己的事实（界面消息头 + 结算行都读它）：只断言它们存在且
+        // 时间不倒流，不断言具体毫秒值。
+        expect(h.ends).toHaveLength(1);
+        const end = h.ends[0]!;
+        expect(end).toMatchObject({
+            turn: 1,
+            turnId: 'turn-1',
+            text: 'reply-1',
+            failed: false,
+            endReason: { type: 'completed', finishReason: 'stop', steps: 1 },
+        });
+        expect(end.startedAt).toBeTypeOf('number');
+        expect(end.endedAt).toBeGreaterThanOrEqual(end.startedAt!);
     });
 
     it('运行失败只落一条错误条目（run.failed 的原文不重复）', async () => {

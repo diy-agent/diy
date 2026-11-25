@@ -214,6 +214,36 @@ describe('RoomActor', () => {
         expect(h.items().some((item) => item.type === 'notice')).toBe(true);
     });
 
+    it('开轮广播开始时刻，收轮给同一对时刻（消息头与结算行不许各算一次）', async () => {
+        const h = makeRoom();
+        await h.room.say({ text: '你好', author: HUMAN });
+
+        const start = h.events.find((event) => event.kind === 'turn.start') as
+            | { startedAt: number; turnId: string }
+            | undefined;
+        const end = h.events.find((event) => event.kind === 'turn.end') as
+            | { startedAt?: number; endedAt?: number; reason: { steps?: number } }
+            | undefined;
+        expect(start?.startedAt).toBeTypeOf('number');
+        // 同一轮：开始时刻必须是**同一个值**（不是各自 Date.now()）
+        expect(end?.startedAt).toBe(start?.startedAt);
+        expect(end?.endedAt).toBeGreaterThanOrEqual(start!.startedAt);
+    });
+
+    it('runningTurns 只用在跑的成员（收轮后不留残留）', async () => {
+        const h = makeRoom({ hang: true });
+        void h.room.say({ text: '跑一会', author: HUMAN });
+        await waitFor(() => h.room.runningBots().length > 0);
+
+        const live = h.room.runningTurns();
+        expect(live.length).toBeGreaterThan(0);
+        expect(live.every((row) => row.startedAt <= Date.now())).toBe(true);
+
+        h.room.cancel();
+        await waitFor(() => h.room.runningBots().length === 0);
+        expect(h.room.runningTurns()).toEqual([]);
+    });
+
     it('单会话取消：只停指定的成员，另一个继续', async () => {
         const h = makeRoom({ hang: true });
         const turn = h.room.say({ text: '@all 都说说', author: HUMAN });

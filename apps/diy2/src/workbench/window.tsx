@@ -44,7 +44,15 @@ export interface ButtonContribution {
     glyph: ReactNode;
     /** 有 `on` 才是开关（按 pressed 渲染）；缺省 = 中性按钮 */
     on?: boolean;
-    onClick: () => void;
+    /**
+     * 自带交互语义的 glyph（如含弹出列表的活动按钮），不再套一层 button。
+     *
+     * 这种 glyph 要自己保证外观与同排按钮一致（尺寸 / hover / 颜色），
+     * 并且点击事件也在自己身上 —— 所以 `onClick` 对它没有意义。
+     */
+    standalone?: boolean;
+    /** 缺省 = 纯展示（只有 standalone 才允许省） */
+    onClick?: () => void;
 }
 
 /**
@@ -58,6 +66,8 @@ export interface WindowContribution {
     id: string;
     /** 左端固定按钮 */
     leading?: readonly ButtonContribution[];
+    /** 全局活动入口（会话 / 后台任务），显示在区域布局按钮左侧 */
+    activity?: readonly ButtonContribution[];
     /** 区域开关 */
     areas?: readonly AreaContribution[];
     /** 右端工具按钮 */
@@ -69,6 +79,7 @@ export interface WindowContribution {
 /** 合并后的四组（渲染只认这个，不再看贡献边界） */
 export interface WindowParts {
     leading: ButtonContribution[];
+    activity: ButtonContribution[];
     areas: AreaContribution[];
     tools: ButtonContribution[];
     titles: ReactNode[];
@@ -76,9 +87,10 @@ export interface WindowParts {
 
 /** 把多份贡献摊平成四组 —— 顺序 = 注册顺序，不做去重 / 不做排序 */
 export function combineWindow(contributions: readonly WindowContribution[]): WindowParts {
-    const parts: WindowParts = { leading: [], areas: [], tools: [], titles: [] };
+    const parts: WindowParts = { leading: [], activity: [], areas: [], tools: [], titles: [] };
     for (const item of contributions) {
         if (item.leading !== undefined) parts.leading.push(...item.leading);
+        if (item.activity !== undefined) parts.activity.push(...item.activity);
         if (item.areas !== undefined) parts.areas.push(...item.areas);
         if (item.tools !== undefined) parts.tools.push(...item.tools);
         if (item.title !== undefined && item.title !== null) parts.titles.push(item.title);
@@ -104,11 +116,19 @@ export function useChrome(storage: Storage = localStorage): [Chrome, (chrome: Ch
 // ── 渲染 ──────────────────────────────────────────────────────────────────────
 
 /** 按钮：**只有图标**，文字全进 tooltip（标题栏是 28px 高的一条） */
-function TbButton({ item }: { item: ButtonContribution }) {
+function TbButton({ item, wide = false }: { item: ButtonContribution; wide?: boolean }) {
+    if (item.standalone) return <>{item.glyph}</>;
     return (
         <button
             type="button"
-            className={item.on === true ? 'wb-tb-btn on' : 'wb-tb-btn'}
+            className={[
+                'wb-tb-btn',
+                // 活动入口带常显文字与数字，宽度得跟着内容走（不靠按钮 id 认，免得加一个漏一个）
+                wide ? 'wb-tb-activity' : '',
+                item.on === true ? 'on' : '',
+            ]
+                .filter(Boolean)
+                .join(' ')}
             aria-pressed={item.on}
             title={item.label}
             aria-label={item.label}
@@ -176,6 +196,10 @@ export function Window({
             </div>
 
             <div className="wb-tb-group wb-tb-group-end">
+                {parts.activity.map((item) => (
+                    <TbButton key={item.id} item={item} wide />
+                ))}
+                {parts.activity.length > 0 && (parts.areas.length > 0 || parts.tools.length > 0) ? <Sep /> : null}
                 {parts.areas.map((item) => (
                     <TbArea key={item.id} item={item} />
                 ))}

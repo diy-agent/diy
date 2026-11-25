@@ -18,6 +18,7 @@
 import { EntityChatApp, TaskPanel, useSelectedRoom, type Room } from '@diy-agent/entity-chat';
 
 import { useWb } from './AreaHost';
+import { ConversationAreaBar } from './ConversationAreaBar';
 import { area, definePage, defineView, type PageDef } from './model';
 
 // ── 页模板：位置写死，尺寸可拖 ───────────────────────────────────────────────────
@@ -33,7 +34,16 @@ import { area, definePage, defineView, type PageDef } from './model';
  * 写成函数而不是常量：两个页模板各自拿一份**独立对象** —— 区域定义是模板的真源，
  * 共享同一份会让「以后某页给 center 加个字段」悄悄改到另一页。
  */
-const conversation = () => area('conversation', { slot: 'center', title: '对话', size: 'fr', min: 420 });
+const conversation = () =>
+    area('conversation', {
+        slot: 'center',
+        title: '对话',
+        size: 'fr',
+        min: 420,
+        // 表面切换（Astryx / shadcn）+ 房间菜单：用户要它们「上移为 view 级别」——
+        // 长在区域标题栏右端，而不是在对话内容顶上再占一行（见 ConversationAreaBar 注释）。
+        bar: <ConversationAreaBar />,
+    });
 
 const taskPage = definePage({
     type: 'task',
@@ -93,7 +103,7 @@ export function pageFor(type: string): PageDef {
 function ChatBody() {
     return (
         <div className="wb-chat">
-            <EntityChatApp sidebar={false} taskPanel={false} />
+            <EntityChatApp sidebar={false} taskPanel={false} bar="host" />
         </div>
     );
 }

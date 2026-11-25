@@ -81,6 +81,14 @@ export interface RunInfo extends RunLike {
     /** 结束通知是否已投递（防重复唤醒） */
     notified?: boolean;
     /**
+     * 结局**有没有真的送到**（`false` = 没人接：宿主房间已删 / 成员已退）。
+     *
+     * 与 `notified` 是两件事：那个是「别再发第二次」，这个是「发出去有没有人收」。
+     * 房间被删时通知必然落空，而盘上的产物还在 —— 界面要能指出来（否则这条 run
+     * 跑完了、谁也不知道，只能自己去翻 `log/job/runs`）。undefined = 还没到那一步。
+     */
+    delivered?: boolean;
+    /**
      * 根进程（我们 spawn 的 bash）已退出、但**进程组里还有活口** ⇒ 这条 run 仍在跑。
      * 用户口径：「通知时机 = 真正没人跑了那一刻（进程组空）」。
      */
@@ -155,6 +163,13 @@ export interface RunRegistryOptions {
     reapMs?: number;
     /** 内存表上限（缺省 `MAX_RUNS`；测试注入小值，避免真起数百个进程） */
     maxRuns?: number;
+    /**
+     * 表变了（新起一条 / 收口一条）时的回调 —— **只报「变了」，不带数据**。
+     *
+     * 给宿主做「全局活动」这类推导用（界面上的活跃作业数）：账本是进程级的，
+     * 而盯着它的界面在别的页也不该靠轮询才知道多了一条。不传 = 没人关心。
+     */
+    onChange?: () => void;
 }
 
 /**
@@ -269,7 +284,18 @@ export interface JobDoneEvent {
  * 调用方不会收到任何"已通知"的假象；`notifyMode` 会把这件事说出口，见 `RunRegistry.notifyMode`）。
  * diy-app 传的是「插话唤醒」（`wakeTaskWithSteer`）；bot 目前也不传（3b 用 `job wait` 同步等）。
  */
-export type JobNotifier = (event: JobDoneEvent) => void;
+/**
+ * 结束通知出口。
+ *
+ * **返回值是说「收到了没有」**：确定的 `false` = 宿主明确表示没人接（房间删了 / 成员退了），
+ * 于是这条 run 会被记成 `delivered: false` 并落进 `done.json`；其余（`void` / `true` / 别的东西）
+ * 都当「送到了」。
+ *
+ * 为什么不是 `boolean | void`：现有宿主 / 测试有拿返回值当计数器的写法（`(e) => count++`），
+ * 它们根本不关心送达 —— 把契约收紧成布尔只会逼着改一堆无关代码。这个字段的语义是
+ * 「**只有明确的 false 才否定**」，所以类型上也只对 false 负责。
+ */
+export type JobNotifier = (event: JobDoneEvent) => unknown;
 
 /** 探测不到 shell 时的哨兵（`missing` 让 `spawn` 在起进程前就收口，见 `spawn`）。 */
 const MISSING_SHELL: ShellSpec = { kind: "bash", file: "bash", label: "bash", missing: true, tried: [] };
@@ -395,6 +421,8 @@ export class RunRegistry {
      */
     private readonly logFailed = new Set<string>();
     private notifier?: JobNotifier;
+    /** 「表变了」的出口；回调里的异常不许把账本炸掉（观测是旁路） */
+    private onChange?: () => void;
     private readonly caps: JobOsCaps;
     private readonly shells: () => ShellSpec[];
 
@@ -407,6 +435,7 @@ export class RunRegistry {
         this.maxRuns = opts.maxRuns ?? MAX_RUNS;
         this.reapMs = opts.reapMs ?? 1000;
         this.notifier = opts.notifier;
+        this.onChange = opts.onChange;
         // 垃圾回收不挡启动：自有 Promise，失败静默（见 `pruneOldDirs`）
         void this.pruneOldDirs();
     }
@@ -451,6 +480,7 @@ export class RunRegistry {
         // 先登记再 spawn：spawn 同步抛（cwd 不存在等）时表里也要有一条 `failed`，
         // 否则"我起过它"这个事实凭空消失（用户会以为命令没发出去）。
         this.runs.set(id, info);
+        this.changed();
         // meta.json 写在 spawn **之前**：起不来的那条也要留下「我起过什么」。
         await this.writeMeta(info);
 
@@ -788,6 +818,15 @@ export class RunRegistry {
         this.deadlines.clear();
     }
 
+    /** 「表变了」：宿主挂了回调就叫一下，异常只留痕（观测不许把账本炸掉） */
+    private changed(): void {
+        try {
+            this.onChange?.();
+        } catch (e) {
+            console.warn("[run] onChange 回调失败", e);
+        }
+    }
+
     private signalGroup(pid: number, sig: NodeJS.Signals): void {
         // 平台差异（进程组 / taskkill）只在 os/ 里；这里只表达「收掉这棵由 pid 领头的树」
         this.caps.killOwned([{ pid }], sig);
@@ -809,6 +848,30 @@ export class RunRegistry {
         } catch (e) {
             // 落盘失败不许炸业务：run 照跑，只是"存储数据"tab 会空
             console.warn("[run] meta.json 写入失败", info.id, e);
+        }
+    }
+
+    /**
+     * `done.json`：这条 run 的**收尾**记录（`meta.json` 是开跑自述、写一次就冻结，
+     * 终态进不了那儿 —— 所以结局单独一份，谁要「这条活最后怎么样了」看这个）。
+     *
+     * `notified: false` 就是用户要的那句「结局无人接」：房间删了 / 成员退了，通知落空，
+     * 盘上还留着这条痕迹，全局面板据此报警。
+     */
+    private async writeDone(info: RunInfo): Promise<void> {
+        const done = {
+            id: info.id,
+            state: info.state,
+            ...(info.exitCode === undefined ? {} : { exitCode: info.exitCode }),
+            ...(info.signal === undefined ? {} : { signal: info.signal }),
+            endedAt: localISOString(new Date(info.endedAt ?? this.now())),
+            notified: info.delivered !== false,
+            ...(info.error === undefined ? {} : { error: info.error }),
+        };
+        try {
+            await writeFile(join(info.dir, "done.json"), `${JSON.stringify(done, null, 2)}\n`, "utf8"); // non-atomic-ok: run 的收尾只写一次，进程独占该目录
+        } catch (e) {
+            console.warn("[run] done.json 写入失败", info.id, e);
         }
     }
 
@@ -957,6 +1020,7 @@ export class RunRegistry {
         };
         const buffered = proc.handoff(write); // ← 已结束会在这里抛，原样冒给调用方
         this.runs.set(id, info);
+        this.changed();
         // ── ② 挂监听（紧跟交接，中间不许夹 await：`close` 可能就在下一 tick）──
         const child = proc.child;
         this.children.set(id, child);
@@ -1030,28 +1094,40 @@ export class RunRegistry {
             this.deadlines.delete(id);
         }
         this.evictOld();
+        this.changed();
         for (const w of this.waiters.get(id) ?? []) w(info);
         this.waiters.delete(id);
         // 谁该被叫醒：在这张表里的**都是后台 run**（前台不登记，用户 2026-10-24 定的口径），
         // 工具早就返回了、结局只能靠通知知道 ⇒ 只要不是我们杀的（`ours`）就叫一次。
         // 幂等由 `notified` 保证：进程组的生命周期里可能有多次收口尝试，唤醒只发一次。
         if (!ours) void this.notify(info);
+        // 我们杀的：没有「叫醒谁」这回事，但结局照样要落盘（面板 / 事后排查看的是这份）
+        else void this.writeDone(info);
     }
 
     private async notify(info: RunInfo): Promise<void> {
         if (info.notified) return;
         const taskUri = info.origin?.taskUri;
-        if (!taskUri || !this.notifier) return;
+        // 没归属锚点 / 宿主是静默模式：没有「叫人」这回事，但收尾记录照样要落
+        if (!taskUri || !this.notifier) {
+            await this.writeDone(info);
+            return;
+        }
         // 接管来的 run 的日志是我们自己写的：先等写链落干净，tail 才不是半截
         const pending = this.pendingFlush.get(info.id);
         if (pending) await pending.catch(() => undefined);
         info.notified = true;
         try {
             const notify = jobDoneNotify(info, tailOf(await this.readLogTail(info.logPath), 20));
-            this.notifier({ taskUri, text: notify.text ?? "", notify, run: { ...info } });
+            // 宿主说 false = 没人接（房间已删 / 成员已退）：落成 `delivered:false`，界面据此标出来
+            info.delivered =
+                this.notifier({ taskUri, text: notify.text ?? "", notify, run: { ...info } }) !== false;
+            if (!info.delivered) console.warn("[run] 结束通知无人接收", info.id, taskUri);
         } catch (e) {
             // 观测不许把业务炸掉：通知失败只留痕
+            info.delivered = false;
             console.warn("[run] 结束通知投递失败", info.id, e);
         }
+        await this.writeDone(info);
     }
 }
