@@ -23,6 +23,19 @@
 3. **不要**把双引号统一改成单引号 —— 会打断 `[&_svg:not([class*="size-"])]` 这类任意值
 4. 新增文件要加进 `src/index.ts` 的导出；跑 `oxfmt` 再 `tsc`
 
+## 已知坑（组件用法，不是包的 bug）
+
+| 坑 | 症状 | 怎么办 |
+|---|---|---|
+| `*MenuLabel` 放在 `*MenuGroup` 外 | tsc / build **全过**，浏览器一点开菜单就 `error in <MenuGroupLabel>`，**整页 React 树崩成白屏** | 永远包进 `*MenuGroup`（Base UI 相对 Radix 新增的隐式契约） |
+| `Select` 不给 `items`（Base UI 版） | 触发器里显示原始 value 而不是标签 | 传 `items`，或自己渲染 `SelectValue` 的子节点 |
+| 直接 `render={<Button/>}`（Radix 习惯） | 不生效，这是 Base UI | Base UI 用 `render` 属性 + `nativeButton={false}` 做「按钮外壳 + 链接语义」 |
+| 少了 `data-horizontal` / `data-vertical` 变体 | 分隔线永远竖着、`Tabs` 永远横排、滚动条方向错，**不报错** | 已在 `src/styles.css` 定义（2026-11-25 补），不要在消费方再定义一份 |
+
+## 方向变体为什么在包里
+
+`separator` / `tabs` / `scroll-area` 的类名里写着 `data-horizontal:*` / `data-vertical:*`，但 registry 的 base-nova 模板**不带这两个变体定义**。变体与组件分开维护，就是「不报错、只是不生成规则」这类 bug 的温床 —— 所以它们和语义变量一样，跟着组件走。
+
 ## 边界：这里只放「原样组件」
 
 `src/components/ui/*` 只放从 registry 落的**原样**组件 —— 它们要能被上面的脚本重跑覆盖。

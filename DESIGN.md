@@ -172,7 +172,7 @@ textarea.tsx  min-h-16（多行不跟这条）
 | 坑 | 症状 | 处置 |
 |---|---|---|
 | `DropdownMenuLabel` / `*MenuLabel` 放在 `*MenuGroup` 外 | tsc/build 全过，**一点开就整页 React 崩成白屏**（Base UI `MenuGroupLabel` 要求有 Group 上下文） | 永远包进 `*MenuGroup` |
-| base-nova 模板缺 `data-horizontal` / `data-vertical` variant | `Tabs` 永远横排，竖排 tab 在 375px 横向溢出 | 需要时在消费方 CSS 补 `@custom-variant`，或在 `Tabs` 上显式 `orientation` + `flex-col` |
+| base-nova 模板缺 `data-horizontal` / `data-vertical` variant | 分隔线永远竖着、`Tabs` 永远横排、滚动条方向错（**不报错**，规则压根不生成） | **已修**（2026-11-25）：变体定义进了 `pkgs.ts/ui/shadcn/src/styles.css`，消费方不要再定义一份 |
 | Base UI 的 `Tooltip` popup 无 `role="tooltip"` | 断言 `getByRole('tooltip')` 找不到 | 断言打 `[data-slot=tooltip-content]` |
 | `Command` 内联在页面里 | cmdk 挂载时把首项 `scrollIntoView`，整页被拽走 | 受控：`value={v} onValueChange={setV}`，初值 `'none'` |
 | Tailwind 缺 `--color-*` | 类名不报错、规则不生成，**静默失效** | 语义变量跟着组件走（已在 `ui-shadcn/styles.css`）；新组件先跑一遍变量比对 |

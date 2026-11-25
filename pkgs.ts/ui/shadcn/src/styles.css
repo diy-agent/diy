@@ -16,6 +16,19 @@
 @custom-variant data-open (&:where([data-state='open'], [data-open]:not([data-open='false'])));
 @custom-variant data-closed (&:where([data-state='closed'], [data-closed]:not([data-closed='false'])));
 
+/*
+ * 方向变体（2026-11-25 补，原先缺）。
+ *
+ * `separator` / `tabs` / `scroll-area` 里写着 `data-horizontal:h-px` / `data-vertical:w-px` /
+ * `group-data-horizontal/tabs:h-8` 这些类，但 registry 的 base-nova 模板**没带这两个变体的定义**
+ * ⇒ Tailwind 不生成规则、也不报错（静默失效）：分隔线永远竖着、`Tabs` 永远横排、
+ * 滚动条方向不对。实测发现（std-lab 的 Tabs 在竖排时 375px 横向溢出）。
+ *
+ * Base UI 用 `data-orientation`，另兼容直写的 `data-horizontal` / `data-vertical` 属性。
+ */
+@custom-variant data-horizontal (&:where([data-orientation='horizontal'], [data-horizontal]:not([data-horizontal='false'])));
+@custom-variant data-vertical (&:where([data-orientation='vertical'], [data-vertical]:not([data-vertical='false'])));
+
 /* 折叠动画的起止高度：Base UI 写 --collapsible-panel-height，radix 时代写 --radix-*，两个都认 */
 @theme inline {
     @keyframes collapsible-down {
