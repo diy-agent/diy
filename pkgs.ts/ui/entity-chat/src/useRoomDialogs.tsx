@@ -41,7 +41,7 @@ export interface RoomDialogs {
     openTask: (projectId: string) => void;
     openSettings: () => void;
     requestDelete: (room: Room) => void;
-    /** 换某个房间的模型（房间头 ModelChip 用它） */
+    /** 换某个房间的模型（房间级覆盖）。房间头胶囊改成开只读配置面板后 UI 暂不触发，能力保留给宿主 */
     openModel: (roomId: string) => void;
 }
 

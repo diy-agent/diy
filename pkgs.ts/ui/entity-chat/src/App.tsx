@@ -67,13 +67,10 @@ function ModelChip({ value, onClick, open }: { value: string; onClick: () => voi
  */
 function RoleConfigPanel({
     room,
-    onPickModel,
     onManageRoles,
     onClose,
 }: {
     room: Room;
-    /** 换模型：复用宿主已有的 ModelDialog（模型在这里就地改） */
-    onPickModel: () => void;
     /** 去设置页角色段（带房间类型深链）—— 面板的最后一步 */
     onManageRoles?: (() => void) | undefined;
     onClose: () => void;
@@ -108,9 +105,6 @@ function RoleConfigPanel({
                 <span className="flex items-center gap-1.5">
                     <Cpu className="size-3 text-muted-foreground" />
                     模型 <code className="font-mono">{modelText}</code>
-                    <button onClick={onPickModel} className="rounded border px-1.5 py-0.5 hover:bg-muted">
-                        换
-                    </button>
                 </span>
                 <span className="flex items-center gap-1.5">
                     推理 <code className="font-mono">{effortText}</code>
@@ -142,7 +136,6 @@ function roomDir(room: Room): string | undefined {
 const RoomHeader = React.memo(function RoomHeader({
     room,
     onManageRoles,
-    onPickModel,
     taskPanelOpen,
     taskPanelShown,
     onToggleTaskPanel,
@@ -150,8 +143,6 @@ const RoomHeader = React.memo(function RoomHeader({
     room: Room;
     /** 去设置页的「角色」那一段（配置面板里的「全部设置」用它）。不传就不画面板里那一步 */
     onManageRoles?: (() => void) | undefined;
-    /** 打开换模型对话框（配置面板里的「换」用它） */
-    onPickModel: () => void;
     taskPanelOpen: boolean;
     /** 宿主是否接管了右侧面板（接管后这个按钮不归本层画 —— 点了也没有本层面板可开） */
     taskPanelShown: boolean;
@@ -241,7 +232,6 @@ const RoomHeader = React.memo(function RoomHeader({
             {configOpen && (
                 <RoleConfigPanel
                     room={room}
-                    onPickModel={onPickModel}
                     onManageRoles={onManageRoles}
                     onClose={closeConfig}
                 />
@@ -310,17 +300,13 @@ export function App({
     // 传给侧栏的回调必须 stable：`Sidebar` 把它们放进 `useMemo` 的 host，再传给每一行；
     // 每次渲染新建一个函数，行上的 `React.memo` 就永远拦不住（props 比不等）。
     // useRoomDialogs 返回的动作本身已经是 useCallback，直接透传即可。
-    const { openProject, openTask, requestDelete, openSettings, openModel } = dialogs;
+    const { openProject, openTask, requestDelete, openSettings } = dialogs;
     const onCreateProject = openProject;
     const onCreateTask = openTask;
     const onRequestDelete = requestDelete;
     const onOpenSettings = openSettings;
     const onToggleTaskPanel = React.useCallback(() => setTaskPanelOpen((open) => !open), []);
     const onCloseTaskPanel = React.useCallback(() => setTaskPanelOpen(false), []);
-    const roomId = room?.id;
-    const onPickModel = React.useCallback(() => {
-        if (roomId !== undefined) openModel(roomId);
-    }, [roomId, openModel]);
 
     /**
      * 输入框底栏那一行。**必须 memo**：它是 `SurfaceHost` 的 prop，而 `SurfaceHost` 是
@@ -391,7 +377,6 @@ export function App({
                                 key={room.id}
                                 room={room}
                                 onManageRoles={onManageRoles}
-                                onPickModel={onPickModel}
                                 taskPanelOpen={taskPanelOpen}
                                 taskPanelShown={taskPanel}
                                 onToggleTaskPanel={onToggleTaskPanel}

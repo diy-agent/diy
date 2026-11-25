@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 // roleConfigPanel.test.tsx —— 房间头「二级配置面板」的交互（2026-11-24 用户定）。
 //
-// 三级披露：模型胶囊 / 角色按钮（L1）→ 配置面板（L2，模型 / 推理 / 全部设置）→
-// 设置页角色段（L3）。这里用真 App（sidebar/taskPanel 裁掉）+ 假客户端，数三件事：
+// 三级披露：模型胶囊 / 角色按钮（L1）→ 配置面板（L2，只读展示模型 / 推理 / 全部设置）→
+// 设置页角色段（L3）。这里用真 App（sidebar/taskPanel 裁掉）+ 假客户端，数四件事：
 //   ① 点模型胶囊开的是**面板**、不是直接跳设置页（「全部设置」才跳）；
 //   ② 面板里读的是该类型 primary 角色的模型 / 推理（不是某个房间私有 bot）；
-//   ③ 角色按钮与胶囊开同一张面板；关掉再点、切房间重挂载都成立。
+//   ③ 面板是只读的——没有「换」按钮就地改模型（改配置统一去 L3 角色页）；
+//   ④ 角色按钮与胶囊开同一张面板；关掉再点、切房间重挂载都成立。
 //
 // tsc / 纯函数测试盖不到「点了到底开面板还是跳页」，只有渲染层能验，所以这里必须真渲染。
 
@@ -147,6 +148,9 @@ describe('房间头二级配置面板', () => {
         expect(panel()!.textContent).toContain('deepseek-v3'); // primary 角色的模型
         expect(panel()!.textContent).toContain('high'); // primary 角色的推理强度
         expect(panel()!.textContent).toContain('全部设置');
+        // 面板只读：就地换模型的按钮已去掉，不暴露任何改模型入口
+        expect(panel()!.querySelector('button[aria-label="换模型"]')).toBeNull();
+        expect(Array.from(panel()!.querySelectorAll('button')).some((btn) => btn.textContent === '换')).toBe(false);
         // 开面板这一步绝不直接跳设置页
         expect(onManageRoles).not.toHaveBeenCalled();
     });
