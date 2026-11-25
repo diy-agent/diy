@@ -1,30 +1,23 @@
-feat(ui-shadcn): 落 shadcn 新版会话组件族（message-scroller / message / bubble / input-group）
+refactor(ui/entity-chat): shadcn 面的用户气泡与输入区换成官方 Message / Bubble / InputGroup
 
-对照官方 ai-elements（base）的会话形态，我们的 shadcn 面偏得很远：官方是
-MessageScrollerProvider(autoScroll) > Viewport > Content > Item(scrollAnchor) >
-Message > Bubble > BubbleContent + MessageFooter，输入是 InputGroup + InputGroupTextarea
-+ InputGroupAddon；我们是 useWindowed + 手写 div 气泡 + 手写 composer 外壳。
+接着 9db7ba46（把官方会话组件族落进包），这一步把 Surface 的「表现层」换过去。
+滚动层**没动**（仍是 useWindowed），因为 scroll-anchor 与窗口化在补窗时冲突，
+等定方案再改。
 
-这一步只把「官方那套件」落进包，Surface 的改写另开一步。
+- 用户消息：div.items-end + div.rounded-2xl.bg-muted
+  → Message align="end" > MessageContent > Bubble align="end" variant="muted" > BubbleContent
+- bot 消息：div.flex.gap-2.5 + div.w-6(BotAvatar) + div.flex-1
+  → Message > MessageAvatar + MessageContent > MessageHeader（名字/时间/CopyButton 那一行）
+- 输入区：div.flex.items-end + Textarea + 两个 Button
+  → InputGroup > InputGroupTextarea + InputGroupAddon align="block-end" > InputGroupButton
 
-组件（496 行，源自本地 registry 源 apps/v4/registry/bases/base/ui/，非网络）：
-- message-scroller.tsx  137 行 —— 滚动容器 + 回底按钮
-- message.tsx            93 行 —— 一个回合的骨架（Message/Content/Footer）
-- bubble.tsx            122 行 —— 气泡（variant: default/secondary/muted/tinted/outline/ghost/destructive）
-- input-group.tsx       151 行 —— 输入框组合（addon 四向对齐 + 圆形发送键）
+顺带的收益：气泡的最大宽度、圆角、内边距、以及「底部还有内容」的滚动渐隐
+（scroll-fade-b）都回到官方定义，不再各写一份。
 
-新增依赖 @shadcn/react ^0.3.1（56KB，只有 react peer）：滚动锚定与 follow 语义在它里面，
-不是我们该重写的那部分。
-
-样式层（关键）：新版 shadcn 把外观从组件里抽走了 —— 组件里只剩 cn-bubble-variant-muted
-这类占位类，真正的 @apply 在 registry/styles/style-nova.css。所以这次同时搬了它的会话段
-152 行（cn-input-group* / cn-bubble* / cn-message*）进包内 styles.css。
-它们只用了已有的语义变量（primary/secondary/muted/destructive/border/ring/card），不需要新变量。
-
-另补 scroll-fade-b（@property + keyframes + @utility）：message-scroller 的 viewport 用它做
-「底下还有内容」的渐隐，官方 tailwind.css 里是七个方向各 30 行，这里只搬用到的那一个。
-
-验证：./sha.sh check 全绿；diy2 dev 的 stylesheet 里 .cn-bubble-variant-muted 规则已生成（3 处命中）。
-
-未做（下一步）：Surface.tsx 改用这套件 —— 包括把 useWindowed 换成 message-scroller
-的 scroll-anchor 语义、用户气泡换 Bubble、输入区换 InputGroup。
+验证（diy2 lab :52137，实机）：
+- ./sha.sh check 全绿
+- DOM：[data-slot=input-group] 1 / input-group-control 1 / input-group-addon 1，
+  bubble 1 / bubble-content 1 / message 2；无横向溢出
+- 实发一条消息「你好」：渲染在气泡里、时间与 bot 头像行都对；
+  回复侧报「An active OpenCode Go subscription is required to use OpenCode Go models」
+  —— 是 lab 数据根里 model.yaml 的模型指向问题，与本次 UI 改动无关

@@ -29,7 +29,21 @@ import {
     type TimelinePart,
 } from '@diy-agent/chat-core';
 
-import { Alert, AlertDescription, Button, Textarea } from '@diy-agent/ui-shadcn';
+import {
+    Alert,
+    AlertDescription,
+    Bubble,
+    BubbleContent,
+    Button,
+    InputGroup,
+    InputGroupAddon,
+    InputGroupButton,
+    InputGroupTextarea,
+    Message,
+    MessageAvatar,
+    MessageContent,
+    MessageHeader,
+} from '@diy-agent/ui-shadcn';
 
 import { AskCard } from '../../components/AskCard';
 import { CopyButton } from '../../components/CopyButton';
@@ -208,17 +222,19 @@ function EntryView({
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
         const failed = entry.deliveries.filter((delivery) => delivery.state === 'failed');
         return (
-            <div className="my-3 flex flex-col items-end gap-1">
-                <div className="max-w-[85%] rounded-2xl bg-muted px-3.5 py-2 text-sm whitespace-pre-wrap break-words">
-                    {text}
-                </div>
-                <div className="flex items-center gap-2 pr-1 text-xs text-muted-foreground">
-                    {failed.length > 0 && (
-                        <span className="text-destructive">{failed.map((d) => `${d.name} 未送达`).join('、')}</span>
-                    )}
-                    <span>{timeOf(entry.at)}</span>
-                </div>
-            </div>
+            <Message align="end" className="my-3">
+                <MessageContent>
+                    <Bubble align="end" variant="muted">
+                        <BubbleContent className="whitespace-pre-wrap break-words">{text}</BubbleContent>
+                    </Bubble>
+                    <div className="flex items-center gap-2 self-end pr-1 text-xs text-muted-foreground">
+                        {failed.length > 0 && (
+                            <span className="text-destructive">{failed.map((d) => `${d.name} 未送达`).join('、')}</span>
+                        )}
+                        <span>{timeOf(entry.at)}</span>
+                    </div>
+                </MessageContent>
+            </Message>
         );
     }
 
@@ -226,12 +242,12 @@ function EntryView({
     const runs = runsOf(entry.parts);
     const copyable = plainTextOf(entry.parts);
     return (
-        <div className="group my-4 flex gap-2.5">
-            <div className="flex w-6 shrink-0 justify-center pt-0.5">
+        <Message className="group my-4">
+            <MessageAvatar className="size-[26px]">
                 <BotAvatar author={entry.author} roomId={roomId} size={26} />
-            </div>
-            <div className="min-w-0 flex-1">
-                <div className="mb-0.5 flex items-center gap-2 text-xs">
+            </MessageAvatar>
+            <MessageContent>
+                <MessageHeader className="mb-0.5">
                     <span className="font-medium" style={{ color: entry.author?.color }}>
                         {entry.author?.name ?? 'bot'}
                     </span>
@@ -245,14 +261,14 @@ function EntryView({
                             className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100"
                         />
                     )}
-                </div>
+                </MessageHeader>
                 <RunsView runs={runs} roomId={roomId} live={entry.waiting === true} />
                 {/* 轮次最下面一行：运行中「正在调用 bash… 44s / 已用 2m44s」，结束换成结算
                     （`EndFooterLine` 的「这一轮是怎么停的」已并进 TurnFooter 的 settle 标签，
                     见 `chat-core/end-footer` 的 `endFooterOf`） */}
                 <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
-            </div>
-        </div>
+            </MessageContent>
+        </Message>
     );
 }
 
@@ -412,9 +428,9 @@ function Composer({
                         onHover={setActive}
                     />
                 )}
-                {/* 输入行：写字 + 发送键在右上（文字框自己撑高） */}
-                <div className="flex items-end gap-2">
-                <Textarea
+                {/* 输入行：InputGroup = 官方所说的「输入框组合」（外框 + 内嵌按钮 + 底栏） */}
+                <InputGroup>
+                <InputGroupTextarea
                     ref={textareaRef}
                     value={draft.text}
                     onChange={(event) => {
@@ -452,24 +468,25 @@ function Composer({
                     }}
                     rows={1}
                     placeholder="和这个实体对话…（@ 选 bot，Enter 发送，Shift+Enter 换行）"
-                    className="max-h-40 min-h-0 flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
+                    className="max-h-40 min-h-0 px-3 py-2 text-sm"
                 />
-                {running ? (
-                    <Button variant="ghost" size="icon-sm" title="停止生成" onClick={() => conversation.cancel()}>
-                        <Square className="size-4" />
-                    </Button>
-                ) : (
-                    <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        title="发送"
-                        disabled={draft.text.trim() === '' || submitting}
-                        onClick={send}
-                    >
-                        <Send className="size-4" />
-                    </Button>
-                )}
-                </div>
+                <InputGroupAddon align="block-end" className="justify-end pr-1.5 pb-1">
+                    {running ? (
+                        <InputGroupButton size="icon-sm" title="停止生成" onClick={() => conversation.cancel()}>
+                            <Square className="size-4" />
+                        </InputGroupButton>
+                    ) : (
+                        <InputGroupButton
+                            size="icon-sm"
+                            title="发送"
+                            disabled={draft.text.trim() === '' || submitting}
+                            onClick={send}
+                        >
+                            <Send className="size-4" />
+                        </InputGroupButton>
+                    )}
+                </InputGroupAddon>
+                </InputGroup>
                 {extras !== undefined && <div className="mt-1.5 border-t pt-1.5">{extras}</div>}
             </div>
         </div>
