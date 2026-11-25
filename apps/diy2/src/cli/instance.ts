@@ -102,7 +102,7 @@ export interface InstanceDeps {
 }
 
 /** argv 选项 → 配置（instance 命令都在发布形态里跑，环境固定 production） */
-function configOf(moduleDir: string, input: Partial<ConfigOptions>): Diy2Config {
+async function configOf(moduleDir: string, input: Partial<ConfigOptions>): Promise<Diy2Config> {
     const overrides: ConfigOverrides = toOverrides(input);
     return resolveConfig({ moduleDir, mode: 'production', overrides });
 }
@@ -115,7 +115,7 @@ export function instanceHandlers(deps?: Partial<InstanceDeps>): {
             instances: ReturnType<typeof rowOf>[];
         }>;
         port: (req: { input: Partial<ConfigOptions> }) => Promise<number>;
-        home: (req: { input: Partial<ConfigOptions> }) => string;
+        home: (req: { input: Partial<ConfigOptions> }) => Promise<string>;
         web: ReturnType<typeof webHandler>;
     };
 } {
@@ -127,7 +127,7 @@ export function instanceHandlers(deps?: Partial<InstanceDeps>): {
         instance: {
             list: async () => ({ instances: (await readAppRecords(dir)).map(rowOf) }),
             stop: async ({ input }) => {
-                const config = configOf(moduleDir, input);
+                const config = await configOf(moduleDir, input);
                 const records = (await readAppRecords(dir)).filter((rec) => {
                     if (input.all === true) return true;
                     if (input.worktree !== undefined) {
@@ -168,11 +168,11 @@ export function instanceHandlers(deps?: Partial<InstanceDeps>): {
                 return { stopped: stopped.length, instances: stopped.map(rowOf) };
             },
             port: async ({ input }) => {
-                const mine = await probeIt(configOf(moduleDir, input));
+                const mine = await probeIt(await configOf(moduleDir, input));
                 if (mine === null) throw new Error('本数据根上没有在跑的实例');
                 return mine.port;
             },
-            home: ({ input }) => configOf(moduleDir, input).home,
+            home: async ({ input }) => (await configOf(moduleDir, input)).home,
             web: webHandler(moduleDir),
         },
     };

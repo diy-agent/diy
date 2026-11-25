@@ -43,27 +43,27 @@ afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function configOf(home: string, extra: { port?: number; launch?: string } = {}): Diy2Config {
+function configOf(home: string, extra: { port?: number; launch?: string } = {}): Promise<Diy2Config> {
     return resolveConfig({ moduleDir, mode: 'development', overrides: { home, ...extra } });
 }
 
 describe('listenWithStickyPort', () => {
     it('记录还空着 → 下次就用它（关掉 server 也不删记录）', async () => {
         const home = tmp();
-        const config = configOf(home);
+        const config = await configOf(home);
         const server = createServer();
         servers.push(server);
 
         const first = await listenWithStickyPort(config, server);
         expect(first.driftedFrom).toBeNull();
         expect(first.port).toBeGreaterThan(0);
-        expect(readPortFile(config.portFile)).toBe(first.port);
+        expect(await readPortFile(config.portFile)).toBe(first.port);
         // 退出（close）不动记录：它不是活体登记，删了下次就换成内核随机端口
         await new Promise<void>((resolve) => server.close(() => resolve()));
         servers.splice(servers.indexOf(server), 1);
-        expect(readPortFile(config.portFile)).toBe(first.port);
+        expect(await readPortFile(config.portFile)).toBe(first.port);
 
-        const next = configOf(home);
+        const next = await configOf(home);
         expect(next.port).toBe(first.port);
         expect(next.portSource).toBe('recorded');
     });
@@ -73,7 +73,7 @@ describe('listenWithStickyPort', () => {
         const taken = await occupy();
         await writePortFile(join(home, 'app.port'), taken);
 
-        const config = configOf(home);
+        const config = await configOf(home);
         expect(config.port).toBe(taken);
         expect(config.portSource).toBe('recorded');
 
@@ -83,21 +83,21 @@ describe('listenWithStickyPort', () => {
 
         expect(result.driftedFrom).toBe(taken);
         expect(result.port).not.toBe(taken);
-        expect(readPortFile(config.portFile)).toBe(result.port);
+        expect(await readPortFile(config.portFile)).toBe(result.port);
         // 再下一次启动就粘在新端口上
-        expect(configOf(home).port).toBe(result.port);
+        expect((await configOf(home)).port).toBe(result.port);
     });
 
     it('显式给的端口（--port）被占 → 不漂，原样抛 EADDRINUSE', async () => {
         const home = tmp();
         const taken = await occupy();
-        const config = configOf(home, { port: taken });
+        const config = await configOf(home, { port: taken });
         expect(config.portSource).toBe('cli');
 
         const server = createServer();
         servers.push(server);
         await expect(listenWithStickyPort(config, server)).rejects.toMatchObject({ code: 'EADDRINUSE' });
         // 启动失败不写记录：记录只记「监听成功过的端口」，失败没有东西可记
-        expect(readPortFile(config.portFile)).toBeNull();
+        expect(await readPortFile(config.portFile)).toBeNull();
     });
 });

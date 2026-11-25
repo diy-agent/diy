@@ -9,7 +9,7 @@
 // `bin/diy2` 只做三件事：找到这个产物、清掉继承来的 `DIY2_*`、把 argv 原样交过来。
 // 参数声明在 ./options（一份形状三处消费），裁决在 server/config.ts —— bin 里不再有解析器。
 
-import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { z } from 'zod';
@@ -31,11 +31,11 @@ const moduleDir = import.meta.dirname;
  * 版本号从 package.json 读（不再由 bin 塞进 `DIY2_CLI_VERSION` 环境变量）：
  * 产物在 `<appRoot>/build/prod/cli/`，向上找 appRoot 与发布形态/仓库形态都成立。
  */
-const version = ((): string => {
-    const appRoot = findAppRoot(moduleDir);
+const version = await (async (): Promise<string> => {
+    const appRoot = await findAppRoot(moduleDir);
     if (appRoot === undefined) return '';
     try {
-        const pkg = JSON.parse(readFileSync(join(appRoot, 'package.json'), 'utf8')) as { version?: string };
+        const pkg = JSON.parse(await readFile(join(appRoot, 'package.json'), 'utf8')) as { version?: string };
         return pkg.version ?? '';
     } catch {
         return '';

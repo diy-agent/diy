@@ -38,7 +38,7 @@ options:
 const options = parseEntryOptions(serverOptions, process.argv.slice(2), USAGE);
 if (options.exit !== null) process.exit(options.exit);
 
-const config = resolveConfig({
+const config = await resolveConfig({
     moduleDir: import.meta.dirname,
     mode: options.input.mode,
     overrides: toOverrides(options.input),

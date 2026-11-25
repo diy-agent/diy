@@ -25,8 +25,7 @@
 // 因为这三条都是「错了不会报错，只会静默用错数据」的类型。
 
 import { DEFAULT_BUDGET } from '@diy-agent/entity-runtime';
-import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -157,16 +156,31 @@ export function isProdHome(home: string): boolean {
     return samePath(home, join(real, '.diy')) || samePath(home, join(real, '.diy', 'diy2'));
 }
 
+/** 是不是一个存在的文件 / 目录（不存在 / 没权限 / 路径怪 = false，不抛） */
+async function isFile(path: string): Promise<boolean> {
+    try {
+        return (await stat(path)).isFile();
+    } catch {
+        return false;
+    }
+}
+
+async function isDir(path: string): Promise<boolean> {
+    try {
+        return (await stat(path)).isDirectory();
+    } catch {
+        return false;
+    }
+}
+
 /** 从某个目录向上找本包根（`package.json` 的 name 命中）—— 产物里也找得到 */
-export function findAppRoot(start: string): string | undefined {
+export async function findAppRoot(start: string): Promise<string | undefined> {
     let dir = resolve(start);
     for (let i = 0; i < 8; i++) {
         const manifest = join(dir, 'package.json');
-        // sync-io-ok: 启动期解析配置（listen 之前、一次性）；向上探测 ≤8 层小文件，没有并发可挡
-        // sync-io-ok: 改异步会把 `resolveConfig` 传染成 Promise，连累 CLI 的同步求值，好处只是少 8 次微任务
-        if (existsSync(manifest)) {
+        if (await isFile(manifest)) {
             try {
-                const pkg = JSON.parse(readFileSync(manifest, 'utf8')) as { name?: string }; // sync-io-ok: 同上
+                const pkg = JSON.parse(await readFile(manifest, 'utf8')) as { name?: string };
                 if (pkg.name === '@diy-agent/app-diy2') return dir;
             } catch {
                 /* 半截 / 坏 JSON：继续往上，不当致命错误 */
@@ -180,11 +194,10 @@ export function findAppRoot(start: string): string | undefined {
 }
 
 /** 从某个目录向上找 git worktree 根（`diy.yaml` + `apps/` 是仓库的心跳；发布形态没有） */
-export function findRepoRoot(start: string): string | undefined {
+export async function findRepoRoot(start: string): Promise<string | undefined> {
     let dir = resolve(start);
     for (let i = 0; i < 8; i++) {
-        // sync-io-ok: 同 findAppRoot（启动期一次性向上探测）
-        if (existsSync(join(dir, 'diy.yaml')) && existsSync(join(dir, 'apps'))) return dir;
+        if ((await isFile(join(dir, 'diy.yaml'))) && (await isDir(join(dir, 'apps')))) return dir;
         const parent = dirname(dir);
         if (parent === dir) return undefined;
         dir = parent;
@@ -275,10 +288,9 @@ export function resolvePort(opts: { mode: Diy2Env; cliPort?: number | undefined;
 }
 
 /** 读 `<home>/app.port`（**记录**，不是存活证据）；不存在 / 坏内容 / 非法端口 → null */
-export function readPortFile(file: string): number | null {
+export async function readPortFile(file: string): Promise<number | null> {
     try {
-        // sync-io-ok: 启动期读一次端口记录（listen 之前）；resolveConfig 是同步纯函数，readPortFile 跟着它走
-        const port = Number.parseInt(readFileSync(file, 'utf8').trim(), 10);
+        const port = Number.parseInt((await readFile(file, 'utf8')).trim(), 10);
         return Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
     } catch {
         return null;
@@ -297,20 +309,26 @@ export async function writePortFile(file: string, port: number): Promise<void> {
     await writeFile(file, `${port}\n`, 'utf8');
 }
 
-/** 组装运行配置（**唯一入口**：server / dev / bin 的 CLI 产物都从这拿）。 */
-export function resolveConfig(opts?: {
+/** 组装运行配置（**唯一入口**：server / dev / bin 的 CLI 产物都从这拿）。
+ *
+ * 异步：内部要探 `package.json` / `diy.yaml` / `app.port` / `model.yaml` / UI 产物目录，
+ * 这些读操作一律走 `fs/promises`（##408 sync-io 护栏；启动期「没有并发」不是留同步 IO 的理由 ——
+ * 全仓口径统一才不会有人照着抄一个进去）。
+ */
+export async function resolveConfig(opts?: {
     /** 调用方所在目录（用来向上找 appRoot / repoRoot）；发布形态给 bin 目录即可 */
     moduleDir?: string;
     /** 入口声明的环境（生产入口 production，dev 入口 development，测试 test） */
     mode?: Diy2Env;
     /** argv 解析后的参数（声明在 src/cli/options.ts） */
     overrides?: ConfigOverrides;
-}): Diy2Config {
+}): Promise<Diy2Config> {
     const mode: Diy2Env = opts?.mode ?? 'production';
     const overrides = opts?.overrides ?? {};
     const moduleDir = opts?.moduleDir ?? process.cwd();
-    const appRoot = findAppRoot(moduleDir) ?? findAppRoot(join(moduleDir, '..')) ?? resolve(moduleDir);
-    const repoRoot = findRepoRoot(appRoot) ?? null;
+    const appRoot =
+        (await findAppRoot(moduleDir)) ?? (await findAppRoot(join(moduleDir, '..'))) ?? resolve(moduleDir);
+    const repoRoot = (await findRepoRoot(appRoot)) ?? null;
 
     const notes: string[] = [];
     const { home } = resolveHome({
@@ -325,7 +343,7 @@ export function resolveConfig(opts?: {
         defaultLaunch(mode);
 
     const portFile = join(home, 'app.port');
-    const recordedPort = readPortFile(portFile);
+    const recordedPort = await readPortFile(portFile);
     const { port, source } = resolvePort({ mode, cliPort: overrides.port, recordedPort });
 
     const buildRoot = buildRootOf(appRoot);
@@ -334,26 +352,25 @@ export function resolveConfig(opts?: {
     const webDir =
         explicitWebDir !== undefined && explicitWebDir !== ''
             ? resolve(explicitWebDir)
-            : existsSync(defaultWebDir) // sync-io-ok: 启动期判一次 UI 产物目录
+            : (await isDir(defaultWebDir))
               ? defaultWebDir
               : undefined;
 
     // model.yaml：显式 `--model-config` > 本数据根 > **生产数据根才有的一档**（`~/.diy/model.yaml`）。
     // 最后那档按 home 位置判定（父目录就是生产根），不是按 mode 标签 —— 测试实例换到 run/
     // 之后天然拿不到它，不可能「隔离了 sqlite 却仍用生产 key」。
-    const modelConfigPath = (() => {
-        if (overrides.modelConfig !== undefined && overrides.modelConfig.trim() !== '') {
-            return resolve(overrides.modelConfig);
-        }
-        // sync-io-ok: 启动期判两处 model.yaml（listen 之前、一次性）
-        if (existsSync(join(home, 'model.yaml'))) return join(home, 'model.yaml');
+    const explicitModelConfig = overrides.modelConfig?.trim();
+    let modelConfigPath: string | undefined;
+    if (explicitModelConfig !== undefined && explicitModelConfig !== '') {
+        modelConfigPath = resolve(explicitModelConfig);
+    } else if (await isFile(join(home, 'model.yaml'))) {
+        modelConfigPath = join(home, 'model.yaml');
+    } else {
         const prodConfig = join(realHomeDir(), '.diy', 'model.yaml');
-        // sync-io-ok: 同上
-        if (samePath(dirname(home), join(realHomeDir(), '.diy')) && existsSync(prodConfig)) {
-            return prodConfig;
+        if (samePath(dirname(home), join(realHomeDir(), '.diy')) && (await isFile(prodConfig))) {
+            modelConfigPath = prodConfig;
         }
-        return undefined;
-    })();
+    }
 
     return {
         app: APP_ID,

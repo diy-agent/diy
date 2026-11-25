@@ -76,7 +76,7 @@ beforeEach(async () => {
     previousModelConfig = process.env['DIY_MODEL_CONFIG'];
     process.env['DIY_MODEL_CONFIG'] = join(home, 'model.yaml');
     app = await createDiy2App({
-        config: resolveConfig({ moduleDir, mode: 'development', overrides: { home } }),
+        config: await resolveConfig({ moduleDir, mode: 'development', overrides: { home } }),
         webDir: null,
     });
     server = createServer(app.handle);

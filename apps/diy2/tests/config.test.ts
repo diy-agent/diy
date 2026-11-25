@@ -126,21 +126,21 @@ describe('app.port 记录', () => {
     it('写 → 读；坏内容 / 非法端口 → null', async () => {
         const dir = tmp();
         const file = join(dir, 'app.port');
-        expect(readPortFile(file)).toBeNull();
+        expect(await readPortFile(file)).toBeNull();
         await writePortFile(file, 5301);
-        expect(readPortFile(file)).toBe(5301);
+        expect(await readPortFile(file)).toBe(5301);
 
         writeFileSync(file, 'abc');
-        expect(readPortFile(file)).toBeNull();
+        expect(await readPortFile(file)).toBeNull();
         writeFileSync(file, '99999');
-        expect(readPortFile(file)).toBeNull();
+        expect(await readPortFile(file)).toBeNull();
     });
 
     it('resolveConfig：非生产有记录就吃，并把记录单独暴露给探活', async () => {
         const home = tmp();
         await writePortFile(join(home, 'app.port'), 5306);
 
-        const config = resolveConfig({ moduleDir: APP_ROOT, mode: 'development', overrides: { home } });
+        const config = await resolveConfig({ moduleDir: APP_ROOT, mode: 'development', overrides: { home } });
         expect(config.port).toBe(5306);
         expect(config.portSource).toBe('recorded');
         expect(config.recordedPort).toBe(5306);
@@ -149,9 +149,9 @@ describe('app.port 记录', () => {
 });
 
 describe('resolveConfig', () => {
-    it('dev：环境 / 入口名 / 数据根 / 端口来源都从参数来', () => {
+    it('dev：环境 / 入口名 / 数据根 / 端口来源都从参数来', async () => {
         const home = tmp();
-        const config = resolveConfig({ moduleDir: APP_ROOT, mode: 'development', overrides: { home } });
+        const config = await resolveConfig({ moduleDir: APP_ROOT, mode: 'development', overrides: { home } });
         expect(config.env).toBe('development');
         expect(config.launch).toBe('lab');
         expect(config.home).toBe(home);
@@ -163,16 +163,16 @@ describe('resolveConfig', () => {
         expect(describeConfig(config)).toContain('/lab ');
     });
 
-    it('生产入口 + 沙箱数据根：自报不说「生产」，标签取数据根目录名（回归：`bin/diy2 web --home run/diy2/lab` 曾打出「生产/lab」「开发/prod」）', () => {
+    it('生产入口 + 沙箱数据根：自报不说「生产」，标签取数据根目录名（回归：`bin/diy2 web --home run/diy2/lab` 曾打出「生产/lab」「开发/prod」）', async () => {
         const home = join(tmp(), 'staging');
-        const config = resolveConfig({ moduleDir: APP_ROOT, mode: 'production', overrides: { home } });
+        const config = await resolveConfig({ moduleDir: APP_ROOT, mode: 'production', overrides: { home } });
         const line = describeConfig(config);
         expect(line).not.toContain('生产');
         expect(line).toContain(home);
         expect(config.launch).toBe('staging');
     });
 
-    it('**不读** DIY2_* 环境变量（回归：外层 shell 漏出来的变量不许改配置）', () => {
+    it('**不读** DIY2_* 环境变量（回归：外层 shell 漏出来的变量不许改配置）', async () => {
         const home = tmp();
         // 这个 home 里摆一条**记录端口 5402**：它既不同于 DIY2_PORT 的值、也不是生产门牌 5192，
         // 所以正确结果是走 recorded。断言端口来源而不是「端口不等于 5399」—— 记录里恰好写着
@@ -185,7 +185,7 @@ describe('resolveConfig', () => {
             process.env[key] = value;
         }
         try {
-            const config = resolveConfig({
+            const config = await resolveConfig({
                 moduleDir: APP_ROOT,
                 mode: 'development',
                 overrides: { launch: 'lab', home },
@@ -203,9 +203,9 @@ describe('resolveConfig', () => {
         }
     });
 
-    it('命令行端口优先级最高（--port 0 也能显式表达内核分配）', () => {
+    it('命令行端口优先级最高（--port 0 也能显式表达内核分配）', async () => {
         const home = tmp();
-        const config = resolveConfig({
+        const config = await resolveConfig({
             moduleDir: APP_ROOT,
             mode: 'development',
             overrides: { home, port: 5302 },
@@ -214,44 +214,48 @@ describe('resolveConfig', () => {
         expect(config.portSource).toBe('cli');
     });
 
-    it('被拒的生产根直接抛错（入口负责报出来，不静默回落）', () => {
-        expect(() =>
+    it('被拒的生产根直接抛错（入口负责报出来，不静默回落）', async () => {
+        await expect(
             resolveConfig({
                 moduleDir: APP_ROOT,
                 mode: 'development',
                 overrides: { home: prodHome() },
             }),
-        ).toThrow(/拒绝非生产入口使用生产数据根/);
+        ).rejects.toThrow(/拒绝非生产入口使用生产数据根/);
     });
 
-    it('webDir：产物在就有，不在就 undefined；--web-dir 优先', () => {
+    it('webDir：产物在就有，不在就 undefined；--web-dir 优先', async () => {
         const appRoot = tmp();
         // 造一个最小的包目录（findAppRoot 认 package.json 的 name）
         writeFileSync(join(appRoot, 'package.json'), JSON.stringify({ name: '@diy-agent/app-diy2' }));
         const home = tmp();
-        expect(resolveConfig({ moduleDir: appRoot, mode: 'development', overrides: { home } }).webDir).toBeUndefined();
+        expect(
+            (await resolveConfig({ moduleDir: appRoot, mode: 'development', overrides: { home } })).webDir,
+        ).toBeUndefined();
 
         mkdirSync(join(appRoot, 'build', 'prod', 'web'), { recursive: true });
-        expect(resolveConfig({ moduleDir: appRoot, mode: 'development', overrides: { home } }).webDir).toBe(
-            join(appRoot, 'build', 'prod', 'web'),
-        );
         expect(
-            resolveConfig({
-                moduleDir: appRoot,
-                mode: 'development',
-                overrides: { home, webDir: join(appRoot, 'elsewhere') },
-            }).webDir,
+            (await resolveConfig({ moduleDir: appRoot, mode: 'development', overrides: { home } })).webDir,
+        ).toBe(join(appRoot, 'build', 'prod', 'web'));
+        expect(
+            (
+                await resolveConfig({
+                    moduleDir: appRoot,
+                    mode: 'development',
+                    overrides: { home, webDir: join(appRoot, 'elsewhere') },
+                })
+            ).webDir,
         ).toBe(join(appRoot, 'elsewhere'));
     });
 
-    it('appRoot 找得到（从 tests/ 向上）、obj 里有 repoRoot', () => {
-        const config = resolveConfig({ moduleDir: APP_ROOT, mode: 'production' });
+    it('appRoot 找得到（从 tests/ 向上）、obj 里有 repoRoot', async () => {
+        const config = await resolveConfig({ moduleDir: APP_ROOT, mode: 'production' });
         expect(config.appRoot.endsWith(join('apps', 'diy2'))).toBe(true);
         expect(config.buildRoot).toBe(join(config.appRoot, 'build', 'prod'));
     });
 
-    it('tools 来自参数；压缩预算不再是参数（全局常量）', () => {
-        const config = resolveConfig({
+    it('tools 来自参数；压缩预算不再是参数（全局常量）', async () => {
+        const config = await resolveConfig({
             moduleDir: APP_ROOT,
             mode: 'development',
             overrides: { home: tmp(), tools: 'files' },
