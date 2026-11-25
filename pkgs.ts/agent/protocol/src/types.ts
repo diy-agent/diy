@@ -430,6 +430,49 @@ export interface TurnEndReason {
     steps?: number;
 }
 
+// ── bot 状态投影（`diy2.bots.rows`）────────────────────────────────
+
+/** 上一轮怎么结束的（磁盘侧判据见 entity-runtime/bot-status.ts） */
+export type BotOutcome = 'done' | 'truncated' | 'max-steps' | 'filtered' | 'tool-mismatch' | 'failed';
+
+/**
+ * 这个 bot 此刻要你干什么 —— **一个值，不是一组标志**。
+ *
+ * 优先级 running > asking > needs-attention > idle：在跑时哪怕上一轮是错的也不催你
+ * （它自己会接着干），跑完若还是错，下一轮才冒出来。
+ */
+export type BotState = 'running' | 'asking' | 'needs-attention' | 'idle';
+
+/**
+ * 一个 bot 在某个房间里的**一行状态**（`diy2.bots.rows` 的回包项）。
+ *
+ * 二级弹层（只要人动手的）与三级表格（全量可筛选）共用这一份 —— 两处不再各算一遍，
+ * 否则「弹层说有 3 个出错、表格说有 4 个」这种对不上就必然出现。
+ *
+ * **故意不带 `closed`**：任务开/关的判据是 UI 的 `isClosed()` 唯一真源（它还要归一
+ * 老数据的 `done`/`todo`，并且只对 `task` 成立）。服务端再算一份就会出现两个口径 ——
+ * 消费者需要关没关，就按 `roomId` 去查它本来就有的 room 列表。
+ */
+export interface BotRow {
+    roomId: string;
+    /** 房间标题（任务标题 / 项目名） */
+    roomTitle: string;
+    roomType: 'task' | 'project';
+    botId: string;
+    botName: string;
+    botColor: string;
+    state: BotState;
+    /** 上一轮结局；从没在这个房间跑过就没有 */
+    outcome?: BotOutcome;
+    /** `outcome === 'failed'` 时的原文 */
+    outcomeMessage?: string;
+    /** 上一轮最后动静的时刻 */
+    lastTurnAt?: number;
+    /** `state === 'asking'`：在等回答的那道题 */
+    askId?: string;
+    askTitle?: string;
+}
+
 /** 模型运行的原始事件（seq 单调；投影成 Item 后 UI 才消费） */
 export type AgentEvent =
     | { seq: number; type: 'run.started'; turnId: string; messageId: string }

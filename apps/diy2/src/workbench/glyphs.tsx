@@ -84,3 +84,36 @@ export function GearGlyph() {
         </svg>
     );
 }
+
+/**
+ * Bot 状态入口：方头 + 两点眼睛 + 一根天线 —— 「这些家伙在干什么」。
+ *
+ * 计数徽标画在右上角（`count` = 要你看的条数，0 时不画）：标题栏是 28px 的一条，
+ * 数字只能靠角标，不能另起一列宽度。
+ */
+export function BotGlyph({ count }: { count: number }) {
+    return (
+        <span className="relative inline-flex">
+            <svg className="wb-glyph" viewBox="0 0 14 14" aria-hidden="true">
+                <rect
+                    x="2"
+                    y="4.4"
+                    width="10"
+                    height="7.4"
+                    rx="2.4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeOpacity="0.55"
+                />
+                <circle cx="5.3" cy="7.9" r="1.05" fill="currentColor" />
+                <circle cx="8.7" cy="7.9" r="1.05" fill="currentColor" />
+                <path d="M7 2.4v1.6" stroke="currentColor" strokeOpacity="0.55" strokeLinecap="round" />
+            </svg>
+            {count > 0 ? (
+                <span className="absolute -right-1.5 -top-1 rounded-full bg-rose-500 px-1 text-[9px] leading-[12px] text-white">
+                    {count > 99 ? '99+' : count}
+                </span>
+            ) : null}
+        </span>
+    );
+}

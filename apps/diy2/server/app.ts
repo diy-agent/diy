@@ -25,16 +25,27 @@ import { APP_ID, type Diy2Config } from './config';
 import {
     JOURNAL_KINDS,
     RoomActor,
+    botLastTurnOf,
     createJobRegistry,
     defaultModelKeyOf,
     modelProviders,
     newEntityId,
     openStore,
 } from '@diy-agent/entity-runtime';
-import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
+import type { BotLastTurn, CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
 import { diy2Api } from '@diy-agent/protocol';
-import type { AskAnswer, AskQuestionAnswer, Author, Bot, JobRunRow, Room } from '@diy-agent/protocol';
+import type {
+    AskAnswer,
+    AskQuestionAnswer,
+    AskRequest,
+    Author,
+    Bot,
+    BotRow,
+    BotState,
+    JobRunRow,
+    Room,
+} from '@diy-agent/protocol';
 
 /**
  * 新房间的缺省模型：`model.yaml` 的 `defaultModel` 优先，没有才用这个写死的兜底。
@@ -52,6 +63,14 @@ const ASK_DRAFT_TTL = 30 * 60 * 1000;
 /** 对话框草稿：synthetic owner 不随房间级联删，超过这么久没人再来就清掉 */
 const DIALOG_DRAFT_TTL = 7 * 24 * 60 * 60 * 1000;
 const HUMAN: Author = { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
+
+/**
+ * 批量重试发的那句话。
+ *
+ * 跟 `endItems` 里给的 advice 同一措辞（「说「继续」接上」）—— 用户看到的建议和真的按下
+ * 去发出去的是同一句话，否则「它说让我说继续，我点重试，结果发了别的东西」。
+ */
+const RETRY_TEXT = '继续';
 const COLORS = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8'];
 
 /**
@@ -233,6 +252,14 @@ function requireRoom(id: string): RoomActor {
     const actor = roomOf(id);
     if (actor === undefined) throw new Error(`房间不存在：${id}`);
     return actor;
+}
+
+/** 房间的显示名：任务标题 / 项目名（Room 自己没有 name，见 protocol 里那段注释） */
+function roomTitleOf(room: Room): string {
+    const title = room.data['title'];
+    if (typeof title === 'string' && title !== '') return title;
+    const name = room.data['name'];
+    return typeof name === 'string' && name !== '' ? name : room.id;
 }
 
 // ─── 种子：bot 落 sqlite；项目/任务先在内存 ────────────────────────
@@ -585,6 +612,121 @@ export function createDiy2App(opts: {
             },
             bots: {
                 list: async () => store.listBots(),
+                /**
+                 * 每个 bot 一行状态（二级弹层 / 三级表格共用同一份）。
+                 *
+                 * 三处事实拼起来，每处都只说自己知道的：
+                 *   · 在跑 —— `actor.runningBots()`（内存，与广播同源）
+                 *   · 等回答 —— `pendingAskRequests()` 的 `owner`（提问人就那个 bot）
+                 *   · 上一轮结局 —— `store.lastItemPerBot()`（磁盘，判据在 bot-status.ts）
+                 *
+                 * 优先级在 `BotState` 的注释里：running > asking > needs-attention > idle。
+                 */
+                rows: async () => {
+                    const bots = new Map(store.listBots().map((bot) => [bot.id, bot]));
+                    const last = new Map<string, BotLastTurn>();
+                    for (const { roomId, item } of store.lastItemPerBot()) {
+                        const turn = botLastTurnOf(roomId, item);
+                        if (turn !== undefined) last.set(`${roomId}\u0000${turn.botId}`, turn);
+                    }
+                    const rows: BotRow[] = [];
+                    for (const actor of rooms.values()) {
+                        const spec = actor.spec;
+                        const running = new Set(actor.runningBots());
+                        const asking = new Map<string, AskRequest>();
+                        for (const request of actor.pendingAskRequests()) {
+                            // owner 缺省时（老数据 / 非成员发起）归不到具体 bot，就不进弹层
+                            if (request.owner !== undefined) asking.set(request.owner, request);
+                        }
+                        for (const member of spec.members) {
+                            const bot = bots.get(member.botId);
+                            const turn = last.get(`${spec.id}\u0000${member.botId}`);
+                            const ask = asking.get(member.botId);
+                            const state: BotState = running.has(member.botId)
+                                ? 'running'
+                                : ask !== undefined
+                                  ? 'asking'
+                                  : turn !== undefined && turn.outcome !== 'done'
+                                    ? 'needs-attention'
+                                    : 'idle';
+                            rows.push({
+                                roomId: spec.id,
+                                roomTitle: roomTitleOf(spec),
+                                roomType: spec.type === 'project' ? 'project' : 'task',
+                                botId: member.botId,
+                                botName: bot?.name ?? member.botId,
+                                botColor: bot?.color ?? '#8b8b8b',
+                                state,
+                                ...(turn === undefined
+                                    ? {}
+                                    : {
+                                          outcome: turn.outcome,
+                                          ...(turn.message === undefined ? {} : { outcomeMessage: turn.message }),
+                                          lastTurnAt: turn.at,
+                                      }),
+                                ...(ask === undefined
+                                    ? {}
+                                    : { askId: ask.askId, askTitle: ask.questions[0]?.question ?? '' }),
+                            });
+                        }
+                    }
+                    return { rows };
+                },
+                /**
+                 * 批量重试：给选中的 (房间, bot) 各发一条「继续」。
+                 *
+                 * 这是**派活**不是重启进程 —— bot 没有 start/stop 状态机，它只是房间成员；
+                 * 「接着干」就是再给它一句话。所以走 `say` 的 recipients 定向，不新造一条
+                 * 控制面（否则「重试」和「发消息」会成为两套语义，迟早跑偏）。
+                 *
+                 * 同一房间选中的多个 bot 合成**一条**消息（recipients 多个）：这样「继续」
+                 * 在时间线上只出现一次，而各自的上下文各自接着跑。
+                 * 已在跑的跳过 —— 再发一条只会变成排队，不是用户按「重试」时想要的。
+                 *
+                 * 返回值里 `started` 的意思是**已派发**（`say` 已发起），不是「这一轮已经起来」：
+                 * 回包不等 turn 真正开跑（等它就是等整轮结束），所以 UI 文案说的是「已发」。
+                 * `say` 同步抛错时不改回包，只广播 error —— 那种错误（房间刚被删之类）
+                 * 用户马上在页面上就能看见，比在一句闪稿里报更准。
+                 */
+                retry: async ({ input }) => {
+                    const byRoom = new Map<string, string[]>();
+                    for (const target of input.targets) {
+                        const list = byRoom.get(target.roomId) ?? [];
+                        if (!list.includes(target.botId)) list.push(target.botId);
+                        byRoom.set(target.roomId, list);
+                    }
+                    const started: Array<{ roomId: string; botIds: string[] }> = [];
+                    const skipped: Array<{ roomId: string; botId: string; reason: string }> = [];
+                    for (const [roomId, botIds] of byRoom) {
+                        const actor = roomOf(roomId);
+                        if (actor === undefined) {
+                            for (const botId of botIds) skipped.push({ roomId, botId, reason: '房间不存在' });
+                            continue;
+                        }
+                        const members = new Set(actor.spec.members.map((member) => member.botId));
+                        const running = new Set(actor.runningBots());
+                        const targets = botIds.filter((botId) => {
+                            if (!members.has(botId)) {
+                                skipped.push({ roomId, botId, reason: '不是这个房间的成员' });
+                                return false;
+                            }
+                            if (running.has(botId)) {
+                                skipped.push({ roomId, botId, reason: '正在跑' });
+                                return false;
+                            }
+                            return true;
+                        });
+                        if (targets.length === 0) continue;
+                        started.push({ roomId, botIds: targets });
+                        void actor.say({ text: RETRY_TEXT, author: HUMAN, recipients: targets }).catch((error: unknown) => {
+                            broadcast(roomId, {
+                                kind: 'error',
+                                message: error instanceof Error ? error.message : String(error),
+                            });
+                        });
+                    }
+                    return { started, skipped };
+                },
                 create: async ({ input }) => {
                     const name = input.name.trim();
                     if (name === '') throw new Error('name required');
