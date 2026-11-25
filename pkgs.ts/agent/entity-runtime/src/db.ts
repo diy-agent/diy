@@ -251,6 +251,18 @@ export interface Store {
      */
     lastItemAtByRoom(): Record<string, number>;
     /**
+     * 每个 bot 在给定房间里的**最后一条 item**（「上一轮怎么结束的」的唯一来源）。
+     *
+     * 一轮收尾时 `endItems()` 产出的 notice / error 就是该轮最后落盘的条目，
+     * 所以这一条既是「谁最后说话」也是「怎么停的」—— 判据在 `bot-status.ts`，
+     * 这里只负责把「每个 (房间, bot) 的最后一条」查出来（别在调用方循环 N 次读全量）。
+     *
+     * 不给 `roomIds` = 全实例一张表（三级面板用）；给了就只查这几个房间。
+     * 注意这是**磁盘侧**的结论：正在跑的轮次最后一条还是中途产出，会读成「正常」——
+     * 在跑 / 等回答由内存侧（`runningBots` / `pendingAsks`）覆盖。
+     */
+    lastItemPerBot(roomIds?: readonly string[]): Array<{ roomId: string; item: Item }>;
+    /**
      * 清掉「已经没有结局可言」的 ask 草稿：`ask:<id>` 不在 keepAskIds 里（时间线上不再等回答）
      * 且早于 olderThan。返回清掉的条数。
      *
@@ -1299,6 +1311,30 @@ export function openStore(file: string): Store {
             for (const row of rows) {
                 const at = Number(row['last']);
                 if (Number.isFinite(at) && at > 0) out[String(row['entity_id'])] = at;
+            }
+            return out;
+        },
+        lastItemPerBot(roomIds?: readonly string[]): Array<{ roomId: string; item: Item }> {
+            // 没有 author 的条目（system 之类）不属于任何 bot，SQL 里就排掉：
+            // 让它们自成一组只会给调用方多一份要过滤的垃圾。
+            const filter = "json_extract(item, '$.author.id') IS NOT NULL";
+            const sql =
+                'SELECT entity_id, MAX(seq) AS seq, item FROM entity_items ' +
+                (roomIds === undefined
+                    ? `WHERE ${filter} `
+                    : `WHERE entity_id IN (SELECT value FROM json_each(?)) AND ${filter} `) +
+                "GROUP BY entity_id, json_extract(item, '$.author.id')";
+            const rows = (
+                roomIds === undefined ? db.prepare(sql).all() : db.prepare(sql).all(JSON.stringify(roomIds))
+            ) as Array<Record<string, unknown>>;
+            const out: Array<{ roomId: string; item: Item }> = [];
+            for (const row of rows) {
+                try {
+                    const item = JSON.parse(String(row['item'])) as Item;
+                    out.push({ roomId: String(row['entity_id']), item: { ...item, seq: Number(row['seq']) } });
+                } catch {
+                    // 坏行不该让整张表都读不出来（与 itemsOf 同策）
+                }
             }
             return out;
         },

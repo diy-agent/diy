@@ -45,6 +45,7 @@ export {
     type PluginTypeParts,
 } from './id';
 export { adviceOf, endItems, endReasonOf, publishable, type EndFacts, type EndItemContext } from './end-reason';
+export { botLastTurnOf, needsHuman, outcomeText, type BotLastTurn } from './bot-status';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';
 export { buildRoomTools, type RoomJobs, type RoomToolsOptions } from './tools/index';
@@ -73,5 +74,18 @@ export {
     type ProviderView,
 } from './providers';
 export { factsOf, replay, STOP_SCENARIOS, type StopReplay, type StopScenario } from './stop-scenarios';
-export type { AgentEvent, Author, Bot, Delivery, Room, RoomMember, RoomEvent, InboxMode, Item } from './types';
+export type {
+    AgentEvent,
+    Author,
+    Bot,
+    BotOutcome,
+    BotRow,
+    BotState,
+    Delivery,
+    Room,
+    RoomMember,
+    RoomEvent,
+    InboxMode,
+    Item,
+} from './types';
 export { dayOf, renderTaskDoc, taskDirOf } from './task-dir';
