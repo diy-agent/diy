@@ -263,6 +263,8 @@ export function runBash(
             stderr: string,
             sig?: string | null,
             timedOut = false,
+            /** 命令自己退出了、但子孙还持着管道（且**没有超时可等**）：结局已定，按诚实档收 */
+            leftover?: { code: number | null; signal: string | null },
         ): void => {
             offAbort?.();
             offAbort = undefined;
@@ -297,7 +299,26 @@ export function runBash(
             //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
             //
             // `outcome` 只给 job 账本（##408 刀 5），**不参与** ✓/✗ 判定（`failed` 的判据见文件头）
-            if (err?.name === "AbortError")
+            if (leftover)
+                // ── 后台仍在跑（##454 × ##D4 的缺口）──
+                // 两件事都得占：① 不许永挂（##454：`bash -c 'sleep 999 &'` 实测挂到 4,953s）；
+                // ② 不许谎报 ok（42bc7020：命令退出 ≠ 命令完成）。能同时成立的唯一档是**说清楚**：
+                // 「命令退出了（退出码照给），但后台有进程还持着 stdout/stderr，输出到此为止」。
+                // 有超时的时候走不到这里（那条路更诚实：让超时到点报 timeout，见 exit 处理器）。
+                resolve({
+                    text:
+                        head({ ok: leftover.code === 0, exitCode: leftover.code ?? undefined, signal: leftover.signal }) +
+                        "[命令已退出，后台仍有进程持着输出]" +
+                        "（未设超时 ⇒ 等不到 'close'；管道已断开，它之后的输出不再收集。" +
+                        "要能查能管的常驻进程，请用 background 模式跑）\n" +
+                        (out || "(无输出)"),
+                    // ##353 同一条判据：非零退出 + 有错误输出才算失败（否则是「没查到」一类数据）
+                    failed: leftover.code !== 0 && stderr.trim().length > 0,
+                    outcome: "background",
+                    ...(leftover.code === null ? {} : { exitCode: leftover.code }),
+                    ...(leftover.signal === null ? {} : { signal: leftover.signal }),
+                });
+            else if (err?.name === "AbortError")
                 resolve({ text: head({ ok: false }) + "[已取消]", failed: false, outcome: "canceled" });
             else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
                 resolve({
@@ -382,10 +403,17 @@ export function runBash(
                 // 进程真被创建了才有"起跑时刻"（cwd 同步抛的那条走不到这里）
                 launchedAt = Date.now();
             }
-            const finish = (err: BashExecError, o: string, e: string, timedOut = false, sig?: string): void => {
+            const finish = (
+                err: BashExecError,
+                o: string,
+                e: string,
+                timedOut = false,
+                sig?: string,
+                leftover?: { code: number | null; signal: string | null },
+            ): void => {
                 if (done) return; // settle 内部（唯一落点）负责解绑 abort 监听与超时定时器
                 done = true;
-                settle(err, o, e, sig ?? child.signalCode, timedOut);
+                settle(err, o, e, sig ?? child.signalCode, timedOut, leftover);
             };
             /**
              * 转后台之后的写入口（`handoff` 设置）。
@@ -444,14 +472,26 @@ export function runBash(
                 // 「后台作业仍在跑」记成 `outcome: ok` —— 用户看到的是「命令成功了」，
                 // 实际有东西还在后台（后续输出全丢，且永远不会有人报错）。
                 //
-                // 判据：exit 时 stdio 是否**已经**全关。没关 ⇒ 不走宽限，让它落到
-                // 'close'（孙进程放手）或超时（定时器，outcome=timeout）—— 两者都比谎报 ok 诚实。
-                // 已经关了 ⇒ 这就是正常的「命令跑完」，宽限照旧（处理 exit 早于 close 的一瞬）。
+                // 判据：exit 时 stdio 是否**已经**全关。
+                // · 已经关了 ⇒ 正常「命令跑完」，宽限照旧（处理 exit 早于 close 的一瞬）；
+                // · 没关 + **有超时** ⇒ 不走宽限，让超时到点报 outcome=timeout（比谎报 ok 诚实）；
+                // · 没关 + **没超时**（前台缺省 timeout=0，##454 判据③）⇒ 两个可等的东西都不存在，
+                //   再等就是永挂（那正是 ##454 要治的 4,953s）。故宽限到点落 `background` 档：
+                //   命令的退出码照给，但明说「后台还有进程持着管道、输出到此为止」。
                 const stdioStillOpen =
                     child.stdout?.readableEnded === false || child.stderr?.readableEnded === false;
-                if (stdioStillOpen) return;
+                // 没关 + **有超时** ⇒ 让超时到点报（结果更诚实：真的有个东西被我们杀了）；没关 + 没超时
+                // ⇒ 只能自己收（见下面的宽限分支）——否则就是两边都想要、最后永远返回不了。
+                if (stdioStillOpen && effectiveTimeoutMs > 0) return;
                 const grace = setTimeout(() => {
                     if (done || logSink) return;
+                    if (stdioStillOpen) {
+                        finish(null, dump("out"), dump("err"), false, exitSignal ?? undefined, {
+                            code,
+                            signal: exitSignal ?? null,
+                        });
+                        return;
+                    }
                     if (code === 0) finish(null, dump("out"), dump("err"));
                     else
                         finish(

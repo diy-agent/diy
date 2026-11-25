@@ -9,8 +9,14 @@
 import { z } from "zod";
 import { fieldNames } from "@diy-agent/context/schema/schema-doc";
 
-/** 结局档（与宿主 `RunOutcome` 四值一一对应：ok / fail / canceled / timeout） */
-export type BashRunOutcome = "ok" | "fail" | "canceled" | "timeout";
+/**
+ * 结局档（与宿主 `RunOutcome` 四值一一对应：ok / fail / canceled / timeout）
+ *
+ * 多一个 `background`（##454 × ##D4）：**命令退出了，但子孙还持着管道，且没设超时**。
+ * 轮不到归 ok（42bc7020：谎报成功），也没法归 timeout（没超时、没人被杀）。
+ * 只在前台出现（后台模式不上走 runBash 的结局），所以宿主的 `RunOutcome` 不必同步加。
+ */
+export type BashRunOutcome = "ok" | "fail" | "canceled" | "timeout" | "background";
 
 
 /**

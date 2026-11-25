@@ -9,6 +9,10 @@ import type { LocalAgentLimits } from "../../src/main/services/local-agent";
  * 复现（修前实测 999s 挂死）：`bash -c "sleep 999 &"` —— 内层 sleep 继承了 stdout 写端，
  * 外层 bash 退出后它还在写，Node 的 'close'（stdio 全关之后）永远不到。修法是挂 'exit'：
  * 命令退出 = 结局已定，最多等 EXIT_GRACE_MS（200ms）就收尾。
+ *
+ * ⚠️ 结局档是 `background`，不是 `ok`（##454 × 42bc7020）：命令退出了但后台还在跑，
+ *    归 ok 就是「谎报成功」，归 timeout 又没人被杀 —— 只能单开一档说清楚。
+ *    有超时的情形仍归 timeout（`bash-run-timeout.test.ts` ④），那条路更诚实。
  */
 const limits = { bashTimeoutMs: 300_000 } as unknown as LocalAgentLimits;
 
@@ -22,8 +26,10 @@ describe("runBash 退出宽限（##454）", () => {
     it("`bash -c 'sleep 999 &'`（无显式 timeout）⇒ ≤1s 返回，不再挂 999s", async () => {
         const [run, ms] = await elapsed(runBash(`bash -c 'sleep 999 &'`, process.cwd(), limits, undefined, undefined, 0));
         expect(ms).toBeLessThan(1000);
-        expect(run.outcome).toBe("ok");
+        expect(run.outcome).toBe("background"); // 命令退了、后台还在跑 ⇒ 既不谎报 ok 也不假称 timeout
+        expect(run.failed).toBe(false); // 不是失败：命令本身正常退出了
         expect(run.text).toContain("timeout_ms: 0");
+        expect(run.text).toContain("后台仍有进程持着输出");
     }, 10_000);
 
     it("显式 timeout 被尊重：sleep 30 + timeout 800 ⇒ ~0.8s 返回 timed_out", async () => {
@@ -53,6 +59,6 @@ describe("runBash 退出宽限（##454）", () => {
     it("退出前的输出仍在：echo + 后台孙进程 ⇒ 文本含 echo 的内容", async () => {
         const [run] = await elapsed(runBash(`echo hello-t454; bash -c 'sleep 999 &'`, process.cwd(), limits, undefined, undefined, 0));
         expect(run.text).toContain("hello-t454");
-        expect(run.outcome).toBe("ok");
+        expect(run.outcome).toBe("background");
     }, 10_000);
 });
