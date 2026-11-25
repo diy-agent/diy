@@ -12,7 +12,15 @@
 import * as React from 'react';
 
 import { roomTitle, type Room } from '../model';
-import { chainOf, clipTitle, edgePath, layoutUnits, type UnitItem, type UnitLayout } from '../unitLayout';
+import {
+    batchHulls,
+    chainOf,
+    clipTitle,
+    edgePath,
+    layoutUnits,
+    type UnitItem,
+    type UnitLayout,
+} from '../unitLayout';
 import { useUnitBoard } from '../useUnitBoard';
 
 const MIN_K = 0.3;
@@ -39,6 +47,19 @@ function toneOf(unit: UnitItem, ready: Set<string>): (typeof TONE)[keyof typeof 
     return ready.has(unit.id) ? TONE.ready : TONE.blocked;
 }
 
+/**
+ * 批次配色。为什么不是状态色那种「语义色」：批次没有好坏之分，只是分组，
+ * 所以取几个与状态色（绿/蓝/灰）距离远的色相，按 batch id 排序后取模 ——
+ * 同一批换了页面也是同一个颜色，不然每次刷新颜色跳来跳去，人就记不住。
+ */
+const BATCH_TONES = [
+    { hull: 'stroke-violet-400', tag: 'fill-violet-400', label: 'fill-violet-600' },
+    { hull: 'stroke-amber-400', tag: 'fill-amber-400', label: 'fill-amber-600' },
+    { hull: 'stroke-teal-400', tag: 'fill-teal-400', label: 'fill-teal-600' },
+    { hull: 'stroke-rose-400', tag: 'fill-rose-400', label: 'fill-rose-600' },
+] as const;
+const batchTone = (index: number): (typeof BATCH_TONES)[number] => BATCH_TONES[index % BATCH_TONES.length];
+
 export function UnitDagView({ room }: { room: Room }) {
     const { board, error } = useUnitBoard(room.id);
     const layout: UnitLayout | null = React.useMemo(
@@ -46,6 +67,8 @@ export function UnitDagView({ room }: { room: Room }) {
         [board],
     );
 
+    // 批次虚框：跟着布局算（坐标只在这里算一次，组件里不再自己拼矩形）
+    const hulls = React.useMemo(() => (layout === null ? [] : batchHulls(layout.nodes)), [layout]);
     const [camera, setCamera] = React.useState<Camera>({ k: 1, tx: 0, ty: 0 });
     const [hover, setHover] = React.useState<string | null>(null);
     const [picked, setPicked] = React.useState<string | null>(null);
@@ -133,6 +156,9 @@ export function UnitDagView({ room }: { room: Room }) {
     const chain = focus === null ? null : chainOf(board.rows, focus);
     const pickedRow = picked === null ? null : (board.rows.find((row) => row.id === picked) ?? null);
     const byId = new Map(board.rows.map((row) => [row.id, row]));
+    const batchTitle = new Map((board.batches ?? []).map((batch) => [batch.id, batch.title]));
+    // 节点角标查颜色用（不能 findIndex：找不到时返回 -1 → BATCH_TONES[-1] 是 undefined）
+    const hullIndex = new Map(hulls.map((hull, index) => [hull.batch, index]));
 
     return (
         <div className="flex h-full flex-col">
@@ -142,6 +168,7 @@ export function UnitDagView({ room }: { room: Room }) {
                 <span className="text-sky-600">在做 {board.doing.length}</span>
                 <span>卡住 {board.blocked.length}</span>
                 <span className="text-zinc-400">完成 {board.done.length}</span>
+                {hulls.length > 0 && <span className="text-zinc-400">批次 {hulls.length}</span>}
                 <span className="ml-auto flex items-center gap-2 text-[10px]">
                     <span className="flex items-center gap-1">
                         <span className="inline-block size-2 rounded-sm bg-emerald-100 ring-1 ring-emerald-500" />
@@ -220,6 +247,34 @@ export function UnitDagView({ room }: { room: Room }) {
                         </g>
                     ))}
 
+                    {/* 批次虚框：画在边之下（线不能盖掉分组），标签贴框左上外侧（框内顶部是节点） */}
+                    {hulls.map((hull, index) => {
+                        const tone = batchTone(index);
+                        const title = batchTitle.get(hull.batch) ?? '';
+                        return (
+                            <g key={`batch-${hull.batch}`}>
+                                <rect
+                                    x={hull.x}
+                                    y={hull.y}
+                                    width={hull.width}
+                                    height={hull.height}
+                                    rx={10}
+                                    fill="none"
+                                    strokeWidth={1.2}
+                                    strokeDasharray="5 4"
+                                    className={tone.hull}
+                                >
+                                    <title>
+                                        {hull.batch} · {title}（{hull.members.length} 个 unit）
+                                    </title>
+                                </rect>
+                                <text x={hull.x + 2} y={hull.y - 3} fontSize={9} className={tone.label}>
+                                    {clipTitle(title === '' ? hull.batch : `${hull.batch} ${title}`, 22)}
+                                </text>
+                            </g>
+                        );
+                    })}
+
                     {layout.edges.map((edge) => {
                         const active = chain !== null && chain.has(edge.from) && chain.has(edge.to);
                         return (
@@ -237,6 +292,7 @@ export function UnitDagView({ room }: { room: Room }) {
                     {layout.nodes.map((node) => {
                         const tone = toneOf(node, ready);
                         const dim = chain !== null && !chain.has(node.id);
+                        const tagIndex = node.batch === null ? undefined : hullIndex.get(node.batch);
                         return (
                             <g
                                 key={node.id}
@@ -264,6 +320,17 @@ export function UnitDagView({ room }: { room: Room }) {
                                 <text x={-node.w / 2 + 10} y={13} fontSize={11.5} className={tone.text}>
                                     {clipTitle(node.title, 15)}
                                 </text>
+                                {tagIndex !== undefined && (
+                                    // 角标：框重叠时靠它认人（虚框可能互相套住）
+                                    <rect
+                                        x={node.w / 2 - 13}
+                                        y={-node.h / 2 + 6}
+                                        width={7}
+                                        height={7}
+                                        rx={2}
+                                        className={batchTone(tagIndex).tag}
+                                    />
+                                )}
                                 <title>
                                     {node.id} · {node.title}
                                 </title>
@@ -291,6 +358,13 @@ export function UnitDagView({ room }: { room: Room }) {
                             前置 {pickedRow.deps.length > 0 ? pickedRow.deps.join(' ') : '无'}
                             {' · '}
                             后继 {pickedRow.dependents.length > 0 ? pickedRow.dependents.join(' ') : '无'}
+                            {pickedRow.batch !== null && (
+                                <>
+                                    {' · '}批次{' '}
+                                    <code className="text-[10px] text-zinc-500">{pickedRow.batch}</code>{' '}
+                                    {batchTitle.get(pickedRow.batch) ?? ''}
+                                </>
+                            )}
                         </div>
                         {pickedRow.body.trim() !== '' && (
                             <p className="mt-1 max-h-32 overflow-auto leading-relaxed whitespace-pre-wrap text-zinc-600">

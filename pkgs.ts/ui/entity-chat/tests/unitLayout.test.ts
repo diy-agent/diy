@@ -7,7 +7,17 @@
 // 这个文件把这三条钉成断言。
 import { describe, expect, it } from 'vitest';
 
-import { chainOf, clipTitle, edgePath, layoutUnits, UNIT_NODE_H, UNIT_NODE_W, type UnitItem } from '../src/unitLayout';
+import {
+    BATCH_HULL_PAD,
+    batchHulls,
+    chainOf,
+    clipTitle,
+    edgePath,
+    layoutUnits,
+    UNIT_NODE_H,
+    UNIT_NODE_W,
+    type UnitItem,
+} from '../src/unitLayout';
 
 /** 造一行 unit（只给布局用得上的字段；body 与 dependents 由 deps 反推） */
 function row(id: string, deps: string[], layer: number, title = `步骤 ${id}`): UnitItem {
@@ -147,6 +157,43 @@ describe('layoutUnits', () => {
                 expect(node.x + UNIT_NODE_W / 2).toBeLessThanOrEqual(band.x + band.width + 0.01);
             }
         }
+    });
+});
+
+describe('batchHulls', () => {
+    /** 只给包围盒用得上的字段（坐标手造，不经 dagre） */
+    const node = (id: string, batch: string | null, x: number, y: number) => ({
+        ...row(id, [], 0),
+        batch,
+        x,
+        y,
+        w: UNIT_NODE_W,
+        h: UNIT_NODE_H,
+    });
+
+    it('同批节点圈成一个框，含 pad 外扩（不贴框）', () => {
+        const [hull] = batchHulls([node('a', 'b-1', 100, 50), node('b', 'b-1', 300, 150)]);
+        expect(hull).toBeDefined();
+        expect(hull!.members).toEqual(['a', 'b']);
+        // x: 100-80-pad .. 300+80+pad
+        expect(hull!.x).toBe(20 - BATCH_HULL_PAD);
+        expect(hull!.width).toBe(360 + BATCH_HULL_PAD * 2);
+        expect(hull!.y).toBe(50 - UNIT_NODE_H / 2 - BATCH_HULL_PAD);
+        expect(hull!.height).toBe(100 + UNIT_NODE_H + BATCH_HULL_PAD * 2);
+    });
+
+    it('未分批（null）不进框；全未分批 = 没有框', () => {
+        expect(batchHulls([node('a', null, 0, 0), node('b', null, 10, 10)])).toEqual([]);
+    });
+
+    it('多批按 batch id 排序（颜色按序号取模，顺序一变颜色就跳）', () => {
+        const hulls = batchHulls([node('a', 'b-2', 0, 0), node('b', 'b-1', 0, 0), node('c', 'b-2', 0, 40)]);
+        expect(hulls.map((hull) => hull.batch)).toEqual(['b-1', 'b-2']);
+        expect(hulls[1]!.members).toEqual(['a', 'c']);
+    });
+
+    it('单成员批次也画（一unit 一批也是一次交付）', () => {
+        expect(batchHulls([node('solo', 'b-9', 0, 0)])).toHaveLength(1);
     });
 });
 

@@ -109,6 +109,53 @@ export interface UnitLayout {
     bands: UnitLayerBand[];
 }
 
+/**
+ * 一个交付批次在图上的包围盒（画成虚框）。
+ *
+ * 为什么按 `batch` 画而不是按 `parent`：批次是**横切**分解树的（「一次 diff 能不能看懂」），
+ * 同一批的节点可能散在好几层、甚至不同子树下 —— 那正是图上才看得见、列表里看不出的信息。
+ */
+export interface UnitBatchHull {
+    batch: string;
+    /** 框进来的节点（按传入顺序） */
+    members: string[];
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+/** 虚框比节点外沿再放宽一点，不然线和框贴在一起像「节点加粗了」 */
+export const BATCH_HULL_PAD = 8;
+
+/**
+ * 把同 `batch` 的节点圈成包围盒（纯函数，`null` = 未分批不进框）。
+ *
+ * 用包围盒而不是凸包：成员会跨层，凸包在这种「竖直长条」形状下退化成近乎矩形，
+ * 多算的那点面积换不来可读性；而包围盒的边永远是横平竖直的，和层带对得上。
+ * 代价是**两个批次的节点交错时会互相套住**（框重叠）—— 所以节点上另有同色角标，
+ * 重叠时仍能认出每个节点属于哪一批。
+ */
+export function batchHulls(nodes: readonly UnitNode[], pad = BATCH_HULL_PAD): UnitBatchHull[] {
+    const groups = new Map<string, UnitNode[]>();
+    for (const node of nodes) {
+        if (node.batch === null || node.batch === '') continue;
+        const list = groups.get(node.batch);
+        if (list === undefined) groups.set(node.batch, [node]);
+        else list.push(node);
+    }
+    // 按 batch id 排序 = 颜色分配稳定（同一批次的颜色不该随数据顺序跳变）
+    return [...groups.entries()]
+        .sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+        .map(([batch, list]) => {
+            const minX = Math.min(...list.map((node) => node.x - node.w / 2)) - pad;
+            const maxX = Math.max(...list.map((node) => node.x + node.w / 2)) + pad;
+            const minY = Math.min(...list.map((node) => node.y - node.h / 2)) - pad;
+            const maxY = Math.max(...list.map((node) => node.y + node.h / 2)) + pad;
+            return { batch, members: list.map((node) => node.id), x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+        });
+}
+
 /** 节点框尺寸。标题宽度上限 = `UNIT_NODE_W - 内侧留白`，由 `clipTitle` 保证不溢出 */
 export const UNIT_NODE_W = 160;
 export const UNIT_NODE_H = 36;
