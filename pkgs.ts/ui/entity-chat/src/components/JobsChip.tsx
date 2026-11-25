@@ -23,11 +23,17 @@ import * as React from 'react';
 
 import type { JobRunRow } from '@diy-agent/chat-transport-rpc';
 
-import { diy2 } from '../store';
+import { diy2, useActiveJobs, useAddress } from '../store';
 
 /** 在跑时的轮询间隔：秒表要跳得像个秒表，但也不必每帧拉一次 */
 const POLL_RUNNING_MS = 1200;
-/** 闲时（只看得到历史）慢一点：这条表没有别的推送来源 */
+/**
+ * 闲时（只看得到历史）慢一点。
+ *
+ * **有推送来源了**（2026-11-25）：activity 流报的「在跑作业数」一变，`JobsChip` 立刻
+ * `reload()` 一次 —— 轮询因此退化成兕底（首屏 / 断流 / 本地改状态），不再是唯一通路。
+ * 秒表本来就是本地 `setInterval` 跳的，不靠这个间隔。
+ */
 const POLL_IDLE_MS = 5000;
 /** 指针离开 chip 到移进卡的宽限（照 diy1 `armHoverClose` 的 160ms） */
 const HOVER_CLOSE_MS = 160;
@@ -35,6 +41,25 @@ const HOVER_CLOSE_MS = 160;
 const CARD_W = 380;
 
 const isRunning = (row: JobRunRow): boolean => row.state === 'running';
+
+/**
+ * 这条作业是不是**本房间**起的 —— 房间入口（chip / 抽屉的 `scope="room"`）按它收窄，
+ * 标题栏那个 `JobsPanel` 不滤（它要看全实例，包括「结局无人接」那条）。
+ *
+ * 判据是 `origin.taskUri` 的首段：它是 `<房间id>#<botid>`，两种 id 形态都是房间 id
+ * （旧 `task-mwjddcy0` / 新 `01a2091d-…`，前者在 `rooms_v0` 里查得到）。
+ *
+ * 两个「不过滤」的兜底，都是为了不把历史藏起来：
+ *   · `roomId` 还是空（首屏还没定位到房间）—— 此时滤 = 全滤掉；
+ *   · 这条没有 `origin`（老数据 / 前台命令）—— 归属未知时宁可多显示。
+ * 实测 308 条 meta.json 全部带 `origin`，第二条分支基本不会走到。
+ */
+export function belongsToRoom(row: JobRunRow, roomId: string): boolean {
+    if (roomId === '') return true;
+    const uri = row.origin?.taskUri;
+    if (uri === undefined) return true;
+    return uri.split('#')[0] === roomId;
+}
 
 /**
  * run 账本的入口。**可能是空的**：老服务端没有 `jobs.*`，测试里的假客户端也只实现实际用到的几项。
@@ -457,7 +482,24 @@ export function JobsChip() {
     const [rect, setRect] = React.useState<DOMRect | null>(null);
     const [now, setNow] = React.useState(() => Date.now());
     const closeTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-    const { rows, error, reload } = useJobs(drawerOpen || rect !== null);
+    const { rows: allRows, error, reload } = useJobs(drawerOpen || rect !== null);
+    const activeJobs = useActiveJobs();
+    const { id: roomId } = useAddress();
+
+    // activity 流报的「在跑作业数」变了 ⇒ 立刻拉一次，别等轮询（1.2s / 5s 是兕底，不是主路）。
+    // 只在**真的变了**时拉：首帧与 useJobs 自己的首次 pull 重合时没必要多打一发。
+    const lastJobs = React.useRef(activeJobs);
+    React.useEffect(() => {
+        if (lastJobs.current === activeJobs) return;
+        lastJobs.current = activeJobs;
+        reload();
+    }, [activeJobs, reload]);
+
+    // 房间入口只看本房间起的（标题栏的 JobsPanel 不滤，它要看全实例）
+    const rows = React.useMemo(
+        () => allRows.filter((row) => belongsToRoom(row, roomId)),
+        [allRows, roomId],
+    );
 
     // 秒表：只在本机跳（服务端给的 durationMs 是「拉的那一刻」，两次拉之间靠它补）
     React.useEffect(() => {
