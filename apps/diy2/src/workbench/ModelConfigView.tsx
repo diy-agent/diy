@@ -921,6 +921,26 @@ function Models({
                         全部启用
                     </button>
                 ) : null}
+                {enabled > 0 ? (
+                    <button
+                        disabled={busy}
+                        onClick={() =>
+                            void onRun(() =>
+                                modelConfig.saveProvider({
+                                    providerId: provider.id,
+                                    ...(provider.configured ? {} : { kind: provider.kind }),
+                                    filter: {
+                                        include: null,
+                                        exclude: provider.models.map((model) => model.id),
+                                    },
+                                }),
+                            )
+                        }
+                        className="rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted disabled:opacity-50"
+                    >
+                        全部不选
+                    </button>
+                ) : null}
                 {provider.kind === 'custom' ? (
                     <button
                         onClick={() => setAdding((value) => !value)}

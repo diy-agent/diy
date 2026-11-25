@@ -8,7 +8,7 @@
 // 表格：搜索 + 已连接账号按钮筛选（默认「全部」）+ 各列可排序；显示 account@provider/model 全称。
 
 import { Modal } from './Dialogs';
-import { useProviders } from '../store';
+import { useDefaultModelKey, useProviders } from '../store';
 import * as React from 'react';
 
 type SortKey = 'model' | 'account' | 'context' | 'input' | 'output' | 'cacheRead' | 'cacheWrite';
@@ -203,22 +203,33 @@ export function ModelSelectPanel({
 export function ModelSelectButton({
     value,
     onPick,
-    emptyText = '跟随全局默认',
+    emptyText,
 }: {
     value: string;
     onPick: (key: string) => void;
+    /** 空值时的文案。不传 = 「跟随默认 · 当前值」；传了就用它（默认模型配置页用「未设置」）*/
     emptyText?: string;
 }) {
     const [open, setOpen] = React.useState(false);
+    const defaultKey = useDefaultModelKey();
+    // 空 = 跟随全局默认：把当前实际生效的默认值显示出来，别只说「跟随」让人猜
+    const shown =
+        value === ''
+            ? emptyText !== undefined
+                ? emptyText
+                : defaultKey === ''
+                  ? '跟随全局默认（还没配）'
+                  : `跟随默认 · ${defaultKey}`
+            : value;
     return (
         <>
             <button
                 type="button"
                 onClick={() => setOpen(true)}
-                title={value === '' ? emptyText : value}
+                title={value === '' ? `跟随全局默认：${defaultKey === '' ? '还没配' : defaultKey}` : value}
                 className="max-w-full truncate rounded border border-border px-2 py-0.5 text-left font-mono text-[11px] hover:border-ring hover:bg-muted"
             >
-                {value === '' ? emptyText : value}
+                {shown}
             </button>
             {open ? (
                 <ModelSelectPanel
