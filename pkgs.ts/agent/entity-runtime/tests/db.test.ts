@@ -435,6 +435,32 @@ describe('提问（asks）持久化', () => {
     });
 });
 
+describe('撤掉中断事实（deleteInterruptedFacts）', () => {
+    // 只撤「那一轮、那个 bot」的：turnId 是房间级的，@all 时两个 bot 共享一个 turnId
+    it('按 turnId + botId 精确删，不误伤同轮的别人、也不误伤别的轮', () => {
+        const store = openStore(':memory:');
+        const notice = (idi: string, turnId: string, botId: string) =>
+            store.appendItem(room.id, {
+                id: idi,
+                seq: 0,
+                turnId,
+                type: 'notice',
+                at: 1,
+                status: 'done',
+                data: { text: '没跑完', kind: 'interrupted', botId },
+            });
+        notice('n-a3', 't3', 'bot:a');
+        notice('n-b3', 't3', 'bot:b');
+        notice('n-a4', 't4', 'bot:a');
+
+        expect(store.deleteInterruptedFacts(room.id, 't3', 'bot:a')).toBe(1);
+        const left = store.itemsOf(room.id).map((item) => item.id);
+        expect(left.sort()).toEqual(['n-a4', 'n-b3']);
+        // 幂等：撤第二次是 0 条
+        expect(store.deleteInterruptedFacts(room.id, 't3', 'bot:a')).toBe(0);
+    });
+});
+
 describe('分组查询走表达式索引', () => {
     // 守的是「别把索引删了、或改得对不上查询」：没有它们就是逐行 json_extract 全表扫，
     // 真实库 2.7 万行 / 118MB 实测 8.4s 与 3.5s；有索引是 25ms 与 54ms（见建表处的注释）。
@@ -466,6 +492,9 @@ describe('分组查询走表达式索引', () => {
         expect(planOf(store, LAST_ITEM_PER_BOT)).toContain('items_author_seq');
     });
 
+    const DELETE_INTERRUPTED =
+        "DELETE FROM entity_items WHERE entity_id = ? AND json_extract(item, '$.data.kind') = 'interrupted' AND json_extract(item, '$.turnId') = ? AND json_extract(item, '$.data.botId') = ?";
+
     it('lastFactPerTurn 走 items_fact_owner_seq', () => {
         const store = openStore(':memory:');
         store.appendItem(room.id, {
@@ -478,5 +507,21 @@ describe('分组查询走表达式索引', () => {
             data: { text: '没跑完', kind: 'interrupted', botId: 'bot:1' },
         });
         expect(planOf(store, LAST_FACT_PER_TURN)).toContain('items_fact_owner_seq');
+    });
+
+    // 两条调用点（重启时不报误报、续跑收尾时撤掉旧误报）都在启动 / 每轮收尾的路径上，
+    // 全表扫 118MB 的 json 会让它们变成肉眼可见的卡顿；命中部分索引时表里只有个位数的行。
+    it('deleteInterruptedFacts 走 items_interrupted', () => {
+        const store = openStore(':memory:');
+        store.appendItem(room.id, {
+            id: 'n1',
+            seq: 0,
+            turnId: 't1',
+            type: 'notice',
+            at: 1,
+            status: 'done',
+            data: { text: '没跑完', kind: 'interrupted', botId: 'bot:1' },
+        });
+        expect(planOf(store, DELETE_INTERRUPTED)).toContain('items_interrupted');
     });
 });
