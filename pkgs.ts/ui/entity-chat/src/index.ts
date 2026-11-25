@@ -46,8 +46,24 @@ export { JobsPanel } from './components/JobsChip';
 //
 // 数据与口径都在 `bots.ts` 里（`useBotRows` + `needsYou`）：宿主只负责在标题栏摆一颗
 // 按钮、把计数画上去，然后挂 `BotsOverlay` —— 两处不各算一遍。
-export { BotsOverlay, type BotsOverlayProps } from './components/BotsOverlay';
-export { needsYou, outcomeTextOf, STATE_TEXT, useBotRows, type BotRowsState } from './bots';
+export { BotsOverlay, type BotsOverlayProps, type Filter } from './components/BotsOverlay';
+// 标题栏那排分类计数徽标（出错 / 等你 / 排队 / 在跑）：数字与浮层、筛选 tab 同源
+export { AttentionCapsules, type AttentionCapsulesProps } from './components/AttentionCapsules';
+export {
+    attentionOf,
+    countByAttention,
+    needsYou,
+    visibleInOverlay,
+    ATTENTION_DOT,
+    ATTENTION_INK,
+    ATTENTION_TEXT,
+    outcomeTextOf,
+    STATE_TEXT,
+    useBotRows,
+    type AttentionCounts,
+    type AttentionKind,
+    type BotRowsState,
+} from './bots';
 export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';
 export type { RoomDialogs } from './useRoomDialogs';
 

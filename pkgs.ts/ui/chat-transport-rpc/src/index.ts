@@ -71,6 +71,13 @@ export type RoomRow = Room & {
      * 重连时不必等下一次 turn 起停才知道谁在跑。
      */
     running?: number;
+    /**
+     * 排着队的投递数（本房间所有成员之和：`queued` / `delivering`）。
+     *
+     * 与 `running` 同一约定（0 不写）：侧栏用它画一颗灰色「排队中」—— 包括重启后
+     * 待续跑的那几条，以前这一段在界面完全看不见。
+     */
+    queued?: number;
 };
 
 export class RpcChatClient implements ChatClient {

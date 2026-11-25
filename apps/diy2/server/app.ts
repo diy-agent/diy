@@ -641,10 +641,14 @@ export async function createDiy2App(opts: {
                         // 在跑成员数：与全局活动帧同源（`runningBots`），这里只是「列表里顺带一份」，
                         // 给那些还没建活动流的老客户端一个初值
                         const running = actor.runningBots().length;
+                        // 排队中的投递（含重启后的待续跑）：以前列表里没有这个数，
+                        // 于是房间「看着没事、其实排着队」或「明明在干、只是还没轮到它」都看不见
+                        const queued = [...actor.queuedByBot().values()].reduce((sum, n) => sum + n, 0);
                         return {
                             ...actor.spec,
                             hasDraft: withInputDraft.has(id),
                             ...(running === 0 ? {} : { running }),
+                            ...(queued === 0 ? {} : { queued }),
                             ...(pendingAsks === 0 ? {} : { pendingAsks }),
                             // 带题干：侧栏 ? 的 tooltip 要说清「问的是什么」，只说个数进房间还得自己翻
                             ...(pendingAsks === 0
@@ -760,6 +764,7 @@ export async function createDiy2App(opts: {
                     for (const actor of rooms.values()) {
                         const spec = actor.spec;
                         const running = new Set(actor.runningBots());
+                        const queuedByBot = actor.queuedByBot();
                         const asking = new Map<string, AskRequest>();
                         for (const request of actor.pendingAskRequests()) {
                             // owner 缺省时（老数据 / 非成员发起）归不到具体 bot，就不进弹层
@@ -803,6 +808,11 @@ export async function createDiy2App(opts: {
                                 ...(ask === undefined
                                     ? {}
                                     : { askId: ask.askId, askTitle: ask.questions[0]?.question ?? '' }),
+                                // 排队数**不进 `state`**：`state` 是互斥单值（此刻最要紧的一件事），
+                                // 排队是可并存的系统状态，由 UI 多挂一颗灰 chip
+                                ...((queuedByBot.get(member.botId) ?? 0) === 0
+                                    ? {}
+                                    : { queued: queuedByBot.get(member.botId) }),
                             });
                         }
                     }

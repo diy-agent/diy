@@ -10,6 +10,7 @@ import {
     Folder,
     HelpCircle,
     ListPlus,
+    Loader2,
     Pencil,
     PenLine,
     RotateCcw,
@@ -27,6 +28,7 @@ import {
     useLastActivityOf,
     usePendingAskOf,
     usePendingAskTitlesOf,
+    useQueuedOf,
     useRunningOf,
 } from '../store';
 import { isPlainLeftClick } from './link';
@@ -92,6 +94,11 @@ export function RoomRowView({
     // 运行态会让同一个状态在树上出现两次（子行自己会亮），也被读成「项目在跑」。
     const isProject = room.type === 'project';
     const running = !isProject && useRunningOf(room.id) > 0;
+    /**
+     * 排队中的投递（含重启后的待续跑）。**无条件调 hook**（`running` 那行的短路写法
+     * 在项目/任务切换时会变 hook 数量）；项目行不显示 —— 项目自己没有会话。
+     */
+    const queued = useQueuedOf(room.id);
     const [renaming, setRenaming] = React.useState(false);
     /** 任务当前是 open（行尾显「关闭」还是「打开」—— 状态只有这一个判据） */
     const openTask = !isProject && taskStatusOf(room) === 'open';
@@ -113,7 +120,7 @@ export function RoomRowView({
                     event.preventDefault();
                     actions.select(room.id);
                 }}
-                title={`${room.type}：${roomTitle(room)}${running ? '（正在运行）' : ''}${pendingAsk > 0 ? `（${askHint}）` : ''}`}
+                title={`${room.type}：${roomTitle(room)}${running ? '（正在运行）' : ''}${queued > 0 ? `（排队 ${queued} 条）` : ''}${pendingAsk > 0 ? `（${askHint}）` : ''}`}
                 className={`relative flex w-full items-center justify-center rounded-lg py-2 ${
                     active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
                 }`}
@@ -124,6 +131,17 @@ export function RoomRowView({
                     </span>
                 ) : (
                     <StatusGlyph room={room} iconClass="size-4" running={running} />
+                )}
+                {/* 排队：灰 + 转 —— 跟绿色呼吸的「在跑」分开（它不是同一件事：
+                    在跑 = 已经在动；排队 = 马上要动，包括重启后的待续跑） */}
+                {queued > 0 && !isProject && (
+                    <span
+                        title={`排队中 ${queued} 条（含重启后的待续跑）`}
+                        aria-label="有投递在排队"
+                        className="absolute bottom-1 left-1"
+                    >
+                        <Loader2 className="size-2.5 animate-spin text-zinc-400" />
+                    </span>
                 )}
                 {hasDraft && (
                     <span
@@ -180,6 +198,16 @@ export function RoomRowView({
                 // 只画形状，不接点击：状态切换现在有行尾那颗**显式**的关闭/打开按钮。
                 // 一颗图标既当状态又当开关，双击误触就直接把任务关了（用户报过这个隐含交互）。
                 <StatusGlyph room={room} iconClass="size-3.5" running={running} />
+            )}
+            {/* 排队（与 compact 态同一颗：灰 + 转）—— 重启后待续跑的投递在这一行看得见了 */}
+            {queued > 0 && !isProject && (
+                <span
+                    title={`排队中 ${queued} 条（含重启后的待续跑）`}
+                    aria-label="有投递在排队"
+                    className="shrink-0"
+                >
+                    <Loader2 className="size-3.5 animate-spin text-zinc-400" />
+                </span>
             )}
 
             {/* 任务编号（#14）：紧跟在状态图标后面 —— 它是这一行除了标题之外唯一的**身份**。
