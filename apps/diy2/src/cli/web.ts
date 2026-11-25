@@ -21,7 +21,7 @@ import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { RpcSchema } from '@diy-agent/rpc';
 
-import { resolveConfig, serverEntryOf, webDirOf } from '../../server/config';
+import { resolveConfig, serverEntryOf, webDirOf, type Diy2Config } from '../../server/config';
 import { probeMine } from '../../server/probe';
 import { configShape, toArgv, toOverrides } from './options';
 import { stopOne } from './stop';
@@ -71,7 +71,7 @@ export const webProcedure = RpcSchema.unary({
 
 /** 后台实例就绪：端口未知（0 = 内核分配）只能靠探活等它自己写 app.port */
 async function waitForInstance(
-    config: ReturnType<typeof resolveConfig>,
+    config: Diy2Config,
     timeoutMs = READY_TIMEOUT_MS,
 ): Promise<{ pid: number; port: number; home: string } | null> {
     const startedAt = Date.now();
@@ -95,7 +95,7 @@ export function webHandler(moduleDir: string) {
         input: WebInput;
     }): Promise<{ port: number; pid: number; home: string; reused: boolean }> => {
         const overrides = toOverrides(input);
-        const config = resolveConfig({ moduleDir, mode: 'production', overrides });
+        const config = await resolveConfig({ moduleDir, mode: 'production', overrides });
         for (const note of config.notes) console.warn(`[diy2] ${note}`);
 
         const entry = serverEntryOf(config.appRoot);

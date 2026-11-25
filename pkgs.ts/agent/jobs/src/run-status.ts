@@ -19,10 +19,6 @@ export type RunState = "running" | "exited" | "killed" | "failed";
  *
  * 从 v1 的 `spawned-job.ts` 迁来（那个账本已删，用户 2026-10-24「清理废弃的实现」）——
  * `runBash` 的结局判据要用它，而它本身与"账本"无关。
- *
- * ⚠️ shell 包在此基础上多一个 **`background`**（命令退了、后台还持着管道且没超时可等，
- * 见 `@diy-agent/tools` 的 `BashRunOutcome`）：那个档只在前台 runBash 出现，不进账本，
- * 故本类型不加。
  */
 export type RunOutcome = "ok" | "fail" | "canceled" | "timeout";
 

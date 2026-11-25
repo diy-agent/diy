@@ -2,7 +2,9 @@
 
 import { normalizeAskRequest } from '@diy-agent/protocol';
 
-import type { AnsweredAsk, AskRequest, Delivery, Item, StreamEvent, TurnEndReason } from './types';
+import type { BotProgress } from './progress';
+import type { TurnFacts } from './timeline';
+import type { AnsweredAsk, AskRequest, CompactionProgress, Delivery, Item, StreamEvent } from './types';
 
 export interface ConversationState {
     items: Item[];
@@ -18,19 +20,50 @@ export interface ConversationState {
     /** 正在说话的成员 id（房间广播，按成员顺序） */
     speaking: string[];
     /**
-     * 某一轮**为什么**结束（turnId → 判定）。页脚用它显示结局。
+     * 各轮的时间与结局（`turnId\u0000botId` → 事实）。消息头写开始时刻、底部行写
+     * 「已用 / 结算」，两者读的都是它。
      *
-     * 只活在这一次连接里（快照里没有它）：`completed` 本来不需要页脚，
-     * 需要解释的那几种在时间线上都有持久条目 —— 刷新后信息不会丢，只是页脚那行会消失。
+     * 运行中的轮只有 `startedAt`（来自 `turn.start` 或快照的 `runningTurns`），
+     * 收尾时随 `turn.end` 补齐 `endedAt` / `usage` / `reason`。
+     *
+     * 会不会无限长大：每轮一条，与「这次连接里跑过多少轮」同阶；刷新即清。
      */
-    turnEnds: Record<string, TurnEndReason>;
+    turns: Record<string, TurnFacts>;
+    /**
+     * 每个成员此刻的进展（`progress` 事件给的事实：在等谁 / 多久没动 / 有无心跳）。
+     *
+     * ephemeral：快照里没有。刷新后最多 5 秒就会被下一条 tick 刷回来；
+     * 那一小段空白里 UI 退回旧的「执行中 Ns」（条目的 at 还在），不会更差。
+     */
+    progress: Record<string, BotProgress>;
+    /**
+     * 手动的压缩，按 compactId 归并（`running` 那条会被同 id 的终态覆盖）。
+     *
+     * 为什么存在会话状态里：压缩点下去要等好几秒，而 RPC 是同步等的 —— 反馈只能靠事件。
+     * 自动压缩不进这里（它是轮次里的内部动作，广播出来只是噪点）。
+     */
+    compactions: Record<string, CompactionProgress>;
 }
 
 export function emptyState(): ConversationState {
-    return { items: [], deliveries: [], asks: [], answered: [], seq: 0, running: false, speaking: [], turnEnds: {} };
+    return {
+        items: [],
+        deliveries: [],
+        asks: [],
+        answered: [],
+        seq: 0,
+        running: false,
+        speaking: [],
+        turns: {},
+        progress: {},
+        compactions: {},
+    };
 }
 
 const STATUS_RANK: Record<Item['status'], number> = { pending: 0, streaming: 1, done: 2, failed: 2 };
+
+/** 压缩进度最多留几条（只有手动压缩会进来，面板也就看最近几次） */
+const MAX_COMPACTIONS = 8;
 
 /** 两条流（post 的 + 常驻的）都往这里送，乱序时别让旧事件把新状态回滚 */
 function isStale(current: Item, next: Item): boolean {
@@ -83,13 +116,65 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
         }
         case 'running':
             return { ...state, speaking: event.botIds, running: event.botIds.length > 0 };
-        case 'turn.end':
-            // key 必须带 botId：同一轮里多个 bot 各跑各的，只按 turnId 存会互相覆盖 ——
-            // A 被截断、B 正常说完时，A 的页脚会显示成 B 的结局
+        case 'progress':
             return {
                 ...state,
-                turnEnds: { ...state.turnEnds, [`${event.turnId}\u0000${event.botId}`]: event.reason },
+                progress: {
+                    ...state.progress,
+                    [event.botId]: {
+                        awaiting: event.awaiting,
+                        idleMs: event.idleMs,
+                        // 客户端收到时刻：自走从这里起算（不用服务端时钟）
+                        at: Date.now(),
+                        alive: event.alive,
+                        stage: event.stage,
+                    },
+                },
             };
+        case 'compact': {
+            // 同 id 覆盖：`running` → 终态是一条链，不是两条记录
+            const merged = { ...state.compactions, [event.compact.compactId]: event.compact };
+            const all = Object.values(merged);
+            if (all.length <= MAX_COMPACTIONS) return { ...state, compactions: merged };
+            // 长期开着页面底栏会累积：只留最近几条（running 的必然在最新里）
+            const kept = all.sort((a, b) => b.startedAt - a.startedAt).slice(0, MAX_COMPACTIONS);
+            return { ...state, compactions: Object.fromEntries(kept.map((entry) => [entry.compactId, entry])) };
+        }
+        case 'turn.start':
+            // 开轮：先只记开始时刻。消息头与「已用 Ns」立刻有值，不必等第一条内容。
+            // key 必须带 botId：同一轮里多个 bot 各跑各的，只按 turnId 存会互相覆盖。
+            return {
+                ...state,
+                turns: {
+                    ...state.turns,
+                    [`${event.turnId}\u0000${event.botId}`]: {
+                        ...state.turns[`${event.turnId}\u0000${event.botId}`],
+                        startedAt: event.startedAt,
+                    },
+                },
+            };
+        case 'turn.end': {
+            // 收尾后这一轮的进展事实就作废（不清的话，下一轮开始前 indicator 会闪一下旧文案）
+            const progress = { ...state.progress };
+            delete progress[event.botId];
+            const key = `${event.turnId}\u0000${event.botId}`;
+            return {
+                ...state,
+                progress,
+                turns: {
+                    ...state.turns,
+                    [key]: {
+                        ...state.turns[key],
+                        // 服务端给的开始时刻优先；老服务端没给就沿用 turn.start 那个
+                        ...(event.startedAt === undefined ? {} : { startedAt: event.startedAt }),
+                        ...(event.endedAt === undefined ? {} : { endedAt: event.endedAt }),
+                        ...(event.usage === undefined ? {} : { usage: event.usage }),
+                        ...(event.toolCalls === undefined ? {} : { toolCalls: event.toolCalls }),
+                        reason: event.reason,
+                    },
+                },
+            };
+        }
         case 'ask': {
             const exists = state.asks.some((entry) => entry.askId === event.request.askId);
             const asks = exists ? state.asks : [...state.asks, event.request];
@@ -119,7 +204,7 @@ export function applyEvent(state: ConversationState, event: StreamEvent): Conver
         case 'error':
             return { ...state, error: event.message, running: false };
         case 'done':
-            return { ...state, running: false, speaking: [] };
+            return { ...state, running: false, speaking: [], progress: {} };
         default:
             return state;
     }
@@ -136,6 +221,7 @@ export function fromSnapshot(snapshot: {
     asks?: AskRequest[];
     answeredAsks?: AnsweredAsk[];
     speaking?: string[];
+    runningTurns?: Array<{ botId: string; turnId: string; startedAt: number }>;
 }): ConversationState {
     // 同 id 只留最新一条（append-only 更新：重跑的 item 会以新 seq 再写一遍）
     const latest = new Map<string, Item>();
@@ -165,7 +251,18 @@ export function fromSnapshot(snapshot: {
         seq: Math.max(0, ...snapshot.items.map((item) => item.seq)),
         running: speaking.length > 0,
         speaking,
-        // 快照不带 endReason：它是这一次连接里的事实，不是历史数据。
-        turnEnds: {},
+        // 刷新后 `turn.start` / `turn.end` 都丢了 —— 但**在跑的那几轮**的开始时刻不能丢
+        // （丢了消息头就没时间、走字也起不来）。已收的轮次不补：结算行靠时间线上的
+        // 持久条目（notice / error）说清了，这里的 turns 只是这一次连接里的活事实。
+        turns: Object.fromEntries(
+            (snapshot.runningTurns ?? []).map((turn) => [
+                `${turn.turnId}\u0000${turn.botId}`,
+                { startedAt: turn.startedAt } satisfies TurnFacts,
+            ]),
+        ),
+        // 同理：进展事实也只在连接里活，刷完等第一条 tick（≤5s）再回来
+        progress: {},
+        // 压缩进度同理：做完的那次已体现在 stats 里（摘要 / 折叠数），中途的那次刷新就没了
+        compactions: {},
     };
 }

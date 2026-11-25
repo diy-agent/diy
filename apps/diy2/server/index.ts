@@ -15,6 +15,7 @@ import { createServer } from 'node:http';
 
 import { createDiy2App } from './app';
 import { describeConfig, modelConfigHint, resolveConfig } from './config';
+import { installAppLog } from './log';
 import { announce, retract } from './registry';
 import { probe } from './probe';
 import { listenWithStickyPort } from './listen';
@@ -29,8 +30,6 @@ options:
       --home <dir>                       数据根（缺省：生产 ~/.diy/diy2；非生产**必须显式给**）
       --name <名字>                       实例名
       --tools <shell|files>              工具面
-      --compact-keep <n>                 压缩保留最近 n 条消息
-      --compact-chars <n>                压缩预算（字符）
       --web-dir <dir>                    UI 产物目录（缺省 <buildRoot>/web）
       --model-config <file>              model.yaml（缺省：<home>/model.yaml；只有生产数据根才回落 ~/.diy/model.yaml）
       --allow-prod-home                  显式放行生产数据根
@@ -39,21 +38,26 @@ options:
 const options = parseEntryOptions(serverOptions, process.argv.slice(2), USAGE);
 if (options.exit !== null) process.exit(options.exit);
 
-const config = resolveConfig({
+const config = await resolveConfig({
     moduleDir: import.meta.dirname,
     mode: options.input.mode,
     overrides: toOverrides(options.input),
 });
-for (const note of config.notes) console.warn(`[diy2] ${note}`);
+// 日志装配要在一切要说的话之前：此后本进程不再直接碰 console（一处写日志、两处落地）。
+// 级别只看 `DIY_LOG_LEVEL`（不是配置项，不进 argv —— 它是「这次怎么看日志」不是「应用怎么跑」）。
+const appLog = installAppLog({ home: config.home, level: process.env['DIY_LOG_LEVEL'] });
+const boot = appLog.open('boot');
+
+for (const note of config.notes) boot.warn(note);
 // entity-runtime 读 model.yaml 的路径（懒读：只在真发请求时用，所以此处设置即生效）。
 // 这是**出**：给它一个信号，不是我们自己读环境。
 // `DIY_HOME` 也一并交给它 —— 否则它拿不到数据根，只能回落 `~/.diy`（= 测试实例用了生产配置）。
 process.env['DIY_HOME'] ??= config.home;
 if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
 const hint = modelConfigHint(config);
-if (hint !== null) console.warn(hint);
+if (hint !== null) boot.warn(hint);
 
-const app = createDiy2App({
+const app = await createDiy2App({
     config,
     port: () => {
         const address = server.address();
@@ -82,8 +86,8 @@ async function alreadyRunning(): Promise<number | null> {
         const result = await probe(port, config.home);
         if (result.kind === 'mine') return port;
         if (result.kind === 'other') {
-            console.error(`[diy2] 端口 ${port} 被**另一个数据根**的实例占着（home=${result.info?.home}）`);
-            console.error('[diy2] 换端口：--port 0（或 --port <n>），或先 diy2 stop');
+            boot.error(`端口 ${port} 被**另一个数据根**的实例占着`, { port, otherHome: result.info?.home ?? null });
+            boot.error('换端口：--port 0（或 --port <n>），或先 diy2 stop');
             process.exit(1);
         }
     }
@@ -91,14 +95,15 @@ async function alreadyRunning(): Promise<number | null> {
 }
 
 const fatal = (error: Error): never => {
-    console.error(`[diy2] 启动失败：${error.message}`);
+    boot.error('启动失败', { err: error.message }, error);
     process.exit(1);
 };
 
 const reused = await alreadyRunning();
 if (reused !== null) {
-    console.log(`[diy2] 这个数据根已有实例在监听 http://127.0.0.1:${reused}（home=${config.home}）`);
-    console.log('[diy2] 要重启：先 `diy2 stop`（或 `diy2 web --restart`），不要直接起第二个进程');
+    boot.info(`这个数据根已有实例在监听 http://127.0.0.1:${reused}`, { home: config.home });
+    boot.info('要重启：先 `diy2 stop`（或 `diy2 web --restart`），不要直接起第二个进程');
+    await appLog.shutdown();
     process.exit(0);
 }
 
@@ -106,8 +111,8 @@ if (reused !== null) {
 // 回落到内核分配，见 ./listen），而常驻 error 监听器会在第一次 EADDRINUSE 时就把进程抬走。
 function badStartup(error: NodeJS.ErrnoException): never {
     if (error.code === 'EADDRINUSE') {
-        console.error(`[diy2] 端口 ${config.port} 已被占用（own home=${config.home}）`);
-        console.error('[diy2] 换端口：--port 0（内核分配）/ --port <n>；或先 diy2 stop');
+        boot.error(`端口 ${config.port} 已被占用`, { home: config.home });
+        boot.error('换端口：--port 0（内核分配）/ --port <n>；或先 diy2 stop');
         process.exit(1);
     }
     return fatal(error);
@@ -118,18 +123,24 @@ const { port } = await listenWithStickyPort(config, server).catch(badStartup);
 // 监听成功之后的运行期错误：没有恢复手段，直提失败
 server.on('error', (error: NodeJS.ErrnoException) => fatal(error));
 
-console.log(`${describeConfig(config, port)} → http://127.0.0.1:${port}`);
-if (config.webDir !== undefined) console.log(`[diy2] UI: ${config.webDir}`);
-else console.log('[diy2] 未找到 UI 产物（只提供 /api）—— 开发请用 `./sha.sh dev`');
+boot.info(`${describeConfig(config, port)} → http://127.0.0.1:${port}`);
+if (config.webDir !== undefined) boot.info('UI 产物', { dir: config.webDir });
+else boot.warn('未找到 UI 产物（只提供 /api）—— 开发请用 `./sha.sh dev`');
 
 // 实例自报（dev 启动器 / workbench / remote 靠它看见本实例）
-announce(config, port);
+await announce(config, port);
+
+// 续跑排在**监听之后**（##554）：它一调就会发 LLM 请求。放在这里的意思是「门先打开，
+// 重活再慢慢做」—— 用户在 UI 里看到的是实例已经可用，而不是一屏启动期错误日志。
+app.resume();
 
 const shutdown = (signal: string): void => {
-    console.log(`[diy2] ${signal} → 关闭`);
+    boot.info(`${signal} → 关闭`);
+    // flush 日志：BatchLogRecordProcessor 有缓冲，不 flush 会丢掉最后几条（正好是关闭前那几条）
+    void appLog.shutdown();
     // 刻意**不删** app.port：它记的是「下次用哪个端口」，删了下次就换成内核随机端口。
     app.close();
-    retract();
+    void retract();
     server.close(() => process.exit(0));
     // 长连接（SSE）可能挂住 close 回调：兜底硬退
     setTimeout(() => process.exit(0), 1500).unref();

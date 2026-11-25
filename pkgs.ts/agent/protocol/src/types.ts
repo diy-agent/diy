@@ -132,16 +132,32 @@ export interface JobRunRow {
     error?: string;
     /** 谁起的：`taskUri` 是 dsh 的实体地址（房间 / 任务），turnId 是那一轮 */
     origin?: { taskUri: string; turnId?: string };
+    /**
+     * 结局有没有送到（`false` = 无人接：房间已删 / 成员已退）。
+     * 只在这种确定落空时才带 —— 没这个键 = 正常投递或还没收口。
+     */
+    delivered?: boolean;
 }
 
 export type Item =
     | (ItemBase & { type: 'chat'; data: { text: string } })
-    | (ItemBase & { type: 'notice'; data: { text: string; kind: string; job?: JobNotice } })
+    | (ItemBase & {
+          type: 'notice';
+          /**
+           * `botId`：这条轮级事实是**哪个 bot 的结局**（`endItems()` 由 per-bot 的 session 产出）。
+           *
+           * 为什么不用 `author`：`author` 有「这是那个 bot 说的话」的含义，UI 据此把它归进 bot 的
+           * 回复段（见 chat-core/timeline.ts）；而结局事实必须独立成条。两件事分开记：
+           * 条目位置（独立成条）看 `author` 在不在，结局归属看这个字段。
+           * 老数据没有它 —— 消费方按 `turnId` 退化处理（见 db.lastFactPerTurn）。
+           */
+          data: { text: string; kind: string; job?: JobNotice; botId?: string };
+      })
     | (ItemBase & {
           type: 'tool';
           data: { name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' };
       })
-    | (ItemBase & { type: 'error'; data: { message: string } });
+    | (ItemBase & { type: 'error'; data: { message: string; botId?: string } });
 
 // ── 投递（消息 → bot 的到达状态）────────────────────────────────
 
@@ -282,6 +298,48 @@ export interface AnsweredAsk {
     at: number;
 }
 
+/**
+ * 一轮的进展分档（UI 按它渐进揭示：quiet 与现在完全一致 → slow 灰字提示 → stalled 报警）。
+ *
+ * 为什么放在 protocol 而不在 UI 里算：阈值只有一份，就在 entity-runtime 的
+ * `DEFAULT_PROGRESS_POLICY`（60s / 120s / 300s）；UI 拿秒数再比一次就是第二份真源。
+ */
+export type ProgressStage = 'quiet' | 'slow' | 'stalled';
+
+/**
+ * 一次压缩的可见进度。
+ *
+ * 为什么不挂在 turn 上：压缩确实是一次 LLM 调用（摘要），但它**不是 agent 的对话轮次** ——
+ * 不进 transcript、不产生公开结论、别的 bot 也读不到。可它又是唯一一个「点了要等好几秒」
+ * 的操作，所以它是**房间级事件**（和 `running` 同级）：带 compactId，能取消、能去重、
+ * 状态从 `running` 走到终态。UI 靠它做「摘要中…」的就地反馈，不靠 RPC 的返回值。
+ */
+export interface CompactionProgress {
+    compactId: string;
+    botId: string;
+    botName?: string;
+    state: 'running' | 'done' | 'failed' | 'cancelled';
+    startedAt: number;
+    /** 终态才有（运行中让界面自己跑秒表） */
+    durationMs?: number;
+    /** 手工压缩保留的轮数（自动压缩按模型窗口派生，不在这个预算里） */
+    budget: { keepTurns: number };
+    /** 压缩前规模：start 就带上，界面立刻能显示「要压多少」 */
+    before: { entries: number; chars: number; tokens?: number };
+    /** 终态才有；缺省 = 这次没压（没有可压的内容） */
+    after?: { entries: number; chars: number; tokens?: number };
+    dropped?: number;
+    /** 本次是否新生成摘要（沿用旧摘要 / 失败都是 false） */
+    summarized?: boolean;
+    summary?: string;
+    /** 摘要没成的原因（压缩本身仍生效）；`failed` 才是整次压缩失败 */
+    summaryError?: string;
+    /** state='failed' 的失败原因 */
+    error?: string;
+    /** true = 用户手点的；false / 缺省 = 自动触发 */
+    manual?: boolean;
+}
+
 /** 传输层回推给 UI 的事件流（目前是 SSE，将来可能是 diy-rpc 订阅） */
 export type StreamEvent =
     | { kind: 'item'; item: Item }
@@ -301,6 +359,13 @@ export type StreamEvent =
     /** 当前正在说话的成员（空数组 = 都停了）。谁是"说话中"由房间说了算，不由 UI 猜 */
     | { kind: 'running'; botIds: string[] }
     /**
+     * 一次压缩的进度（`running` → `done` / `failed` / `cancelled`）。
+     *
+     * 手动压缩的反馈就靠它：点下去立刻收到 `running`，结束收到终态 —— 不走轮询、
+     * 也不等那条要挂好几秒的 RPC 返回（它只做兜底）。
+     */
+    | { kind: 'compact'; compact: CompactionProgress }
+    /**
      * 某一轮结束了，以及**为什么**（`completed` / `max-tokens` / `interrupted` …）。
      *
      * 这是**事实广播**，不是错误：页面用它显示消息页脚的结局（"这一轮是怎么停的"），
@@ -310,13 +375,85 @@ export type StreamEvent =
      * 刷新后不带回来（它不在快照里）：ephemeral 的结局靠条目持久，`completed`
      * 本来也不需要页脚。
      */
-    | { kind: 'turn.end'; botId: string; turnId: string; reason: TurnEndReason }
+    | {
+          kind: 'turn.end';
+          botId: string;
+          turnId: string;
+          reason: TurnEndReason;
+          /**
+           * 这一轮的起止时刻（epoch ms）—— 与 `turn.start` 的 `startedAt` 是**同一个值**。
+           *
+           * 为什么必须由服务端成对给出：消息头写开始时刻、底部结算行写「耗时 + 结束于」，
+           * 前端拿 `Date.now()` 或条目时间自己估，两个数字会各算各的（跨刷新更明显）。
+           */
+          startedAt?: number;
+          endedAt?: number;
+          /** 本轮实测用量（模型给的，不是估算）：结算行写 tokens 用它 */
+          usage?: TurnUsage;
+          /** 本轮发起的工具调用数（结算行的「N 次工具」；缺省 = 这一轮没调工具） */
+          toolCalls?: number;
+      }
+    /**
+     * 一轮**开始**了（ephemeral）：带着服务端认定的开始时刻，供消息头与「已用 Ns」走字。
+     *
+     * 没有它，运行中的耗时只能从「本轮第一条条目」倒推 —— 那条通常是用户消息，看起来
+     * 等价，但它是**落库**时刻而不是**开跑**时刻（排队、唤醒都有几十毫秒到几秒的差），
+     * 而且收轮时 `turn.end` 给的 startedAt 会把它改掉，界面上的秒数会跳一下。
+     */
+    | { kind: 'turn.start'; botId: string; turnId: string; startedAt: number }
+    /**
+     * 这一轮**此刻在等什么、有多久没动**（即时事实，UI 的"还活着吗"用它）。
+     *
+     * 与 `running` 的分工：`running` 回答"谁在跑"（布尔级），这里回答"卡在哪"（诊断级）。
+     * 与 `turn.end` 一样是 ephemeral：**不进快照、不进 items** —— items 是给人和别的 bot
+     * 看的上下文，心跳污染它会让模型以为发生了什么事。
+     *
+     * 节流由服务端做（awaiting / alive 翻转、跨 60/120/300s 阈值才发，最多每 5s 一条）；
+     * 客户端拿 `idleMs` 做初值自走，不需要每秒钟效、也不需要时钟校准。
+     */
+    | {
+          kind: 'progress';
+          botId: string;
+          turnId: string;
+          /** 机器读短语：`model-stream` / `tool:<name>` / `ask` / `compact`（人读文案在 UI 拼） */
+          awaiting: string;
+          /** 距最后一次进展多少毫秒（服务端算，客户端从这点起自走） */
+          idleMs: number;
+          /** 这个 await 有没有活的证据（工具还在吐输出 / 模型还在吐字） */
+          alive: boolean;
+          /**
+           * 阈值分档，由服务端算（保证阈值只有一份：entity-runtime 的 `DEFAULT_PROGRESS_POLICY`）。
+           * UI 不要自己拿秒数比 —— 那是第二份阈值，注定了会漂。
+           */
+          stage: ProgressStage;
+      }
     /** 常驻流刚连上（含重连成功）：客户端据此补拉快照，填平断线期间丢的事件 */
     | { kind: 'ready' }
     | { kind: 'done' };
 
 /** 房间自己会发的事件（`done` 属于传输层，不属于领域） */
 export type RoomEvent = Exclude<StreamEvent, { kind: 'done' }>;
+
+/**
+ * **全局活动帧**（实例级，不属于任何房间）：这一刻整个进程里有什么在跑。
+ *
+ * 为什么需要它：房间流只盖「你在看的那个房间」，而用户在别人的页 / 导航收起时
+ * 也想知道「现在有没有活在跑」（侧栏每一行、标题栏那颗图标）。三个选择里选了
+ * 「服务端推一条全量快照」而不是「调快 `rooms.list` 轮询」：轮询要算全部房间的
+ * 草稿 / 待答 / 末条时间，房间一多就白烧；而这里推的是**已算好的结果**，只在
+ * turn 起停 / 作业起停时发一次。
+ *
+ * 口径：`rooms` 只列**有在跑成员**的房间（空数组 = 都闲着），`jobs` 是在跑的
+ * 后台作业数（实例级账本）。两者都只有「数」和「谁在跑」—— 详情（命令 / 输出 / 卡在哪）
+ * 仍旧各回各家（房间流 / `diy2.jobs.list`），这里不当第二个真源。
+ */
+export interface ActivityFrame {
+    kind: 'activity';
+    /** 有成员在跑的房间：`botIds` 就是那个房间此刻的 running 集合 */
+    rooms: { id: string; botIds: string[] }[];
+    /** 在跑的后台作业数（一个实例一张表） */
+    jobs: number;
+}
 
 export interface Snapshot {
     items: Item[];
@@ -335,6 +472,14 @@ export interface Snapshot {
      * 缺省 `undefined` = 老服务端：客户端退回旧的倒推。空数组是**有意义**的（确实没人跑）。
      */
     speaking?: string[];
+    /**
+     * 还在跑的那几轮的**开始时刻**（botId → epoch ms）：给消息头与「已用 Ns」走字。
+     *
+     * 只装 `speaking` 里那些 bot 的 turn；刷新后 `turn.start` 事件丢了，但时间不会变 ——
+     * 所以它是快照事实，不是事件重放。缺省 / 缺某个 bot = 老服务端或数据没到，
+     * 客户端退回用条目时刻（只会差几十毫秒，不会空白）。
+     */
+    runningTurns?: Array<{ botId: string; turnId: string; startedAt: number }>;
 }
 
 /** capabilities 决定 UI 显示哪些按钮（不要写 surfaceId 分支） */
@@ -355,6 +500,12 @@ export const DEFAULT_CAPABILITIES: Capabilities = {
 
 // ── 运行时事件（模型 → 投影层）───────────────────────────────────
 
+/** 一轮的实测用量（上游报的，非估算）。`inputTokens` 含缓存读，与上游口径一致 */
+export interface TurnUsage {
+    inputTokens: number;
+    outputTokens: number;
+}
+
 /**
  * 一轮为什么结束。**只说事实，不猜原因**（判据在 runtime，文案在 UI）。
  *
@@ -367,6 +518,10 @@ export interface TurnEndReason {
      * `unknown` = 我们**不知道**为什么停（没收到收尾信号 / 上游给了不认识的收尾原因 /
      * 空产出就停）。它按错误处理：不发结论，时间线上一条错误。
      * 「没有证据」不等于「正常完成」（未知按错误处理，见 end-reason.ts）。
+     *
+     * `stalled` = 我们**非常知道**为什么停：模型流太久没进展，agent 层的 StallWatchdog
+     * （`stall-watchdog.ts`）主动 abort 了本轮，并随 `run.failed.stall` 把「卡在哪 / 等了多久」带上来。
+     * 不能塞进 `unknown` —— 那是「不知道」，而 stall 知道在等谁、等了多久。
      */
     type:
         | 'completed'
@@ -375,6 +530,7 @@ export interface TurnEndReason {
         | 'filtered'
         | 'tool-mismatch'
         | 'interrupted'
+        | 'stalled'
         | 'unknown'
         | 'error';
     /** 上游的 `finishReason` 原文（`stop` / `length` / `tool-calls` / `error` / …） */
@@ -387,6 +543,77 @@ export interface TurnEndReason {
     maxSteps?: number;
     /** 本轮的 step 数（多轮工具循环时用于区分「说完了」和「刚到一半」） */
     steps?: number;
+    /**
+     * 本轮发起的工具调用数（结算行的「N 次工具」）。
+     *
+     * 与 `steps` 分开：一步可以零次工具（纯思考）、也可以并行几次；用户看「跑了多久 /
+     * 用了多少 token / 调了几次工具」比看 step 数有意义。缺省 = 一次也没调。
+     */
+    toolCalls?: number;
+    /**
+     * `stalled` 时：卡在哪个 await（`model-stream` / `tool` / `tool:<name>` / `compact`）。
+     *
+     * `tool`（无名字）来自 StallWatchdog 的 `phase:'tool'`（缺省 `toolMs:0`，正常不会出现）；
+     * `tool:<name>` 是 session 层自己的写法（它知道工具名）。
+     */
+    awaiting?: string;
+    /** `stalled` 时：多久没有进展（毫秒） */
+    idleMs?: number;
+}
+
+// ── bot 状态投影（`diy2.bots.rows`）────────────────────────────────
+
+/**
+ * 上一轮怎么结束的（磁盘侧判据见 entity-runtime/bot-status.ts）。
+ *
+ * `interrupted` 是唯一一个**不是** `endItems()` 产出的结局：进程崩在收尾前什么都来不及落，
+ * 靠 `turn_open` 表在下次启动时补一条 `notice(kind: 'interrupted')` 才认得出。
+ */
+export type BotOutcome =
+    | 'done'
+    | 'truncated'
+    | 'max-steps'
+    | 'filtered'
+    | 'tool-mismatch'
+    | 'failed'
+    | 'interrupted';
+
+/**
+ * 这个 bot 此刻要你干什么 —— **一个值，不是一组标志**。
+ *
+ * 优先级 running > asking > needs-attention > idle：在跑时哪怕上一轮是错的也不催你
+ * （它自己会接着干），跑完若还是错，下一轮才冒出来。
+ */
+export type BotState = 'running' | 'asking' | 'needs-attention' | 'idle';
+
+/**
+ * 一个 bot 在某个房间里的**一行状态**（`diy2.bots.rows` 的回包项）。
+ *
+ * 二级弹层（只要人动手的）与三级表格（全量可筛选）共用这一份 —— 两处不再各算一遍，
+ * 否则「弹层说有 3 个出错、表格说有 4 个」这种对不上就必然出现。
+ *
+ * **故意不带 `closed`**：任务开/关的判据是 UI 的 `isClosed()` 唯一真源（它还要归一
+ * 老数据的 `done`/`todo`，并且只对 `task` 成立）。服务端再算一份就会出现两个口径 ——
+ * 消费者需要关没关，就按 `roomId` 去查它本来就有的 room 列表。
+ */
+export interface BotRow {
+    roomId: string;
+    /** 房间标题（任务标题 / 项目名） */
+    roomTitle: string;
+    roomType: 'task' | 'project';
+    botId: string;
+    botName: string;
+    botColor: string;
+    state: BotState;
+    /** 上一轮结局；从没在这个房间跑过就没有 */
+    outcome?: BotOutcome;
+    /** `outcome === 'failed'` 时的原文 */
+    outcomeMessage?: string;
+    /** 上一轮最后动静的时刻 */
+    lastTurnAt?: number;
+    /** `state === 'asking'`：在等回答的那道题 */
+    askId?: string;
+    askTitle?: string;
 }
 
 /** 模型运行的原始事件（seq 单调；投影成 Item 后 UI 才消费） */
@@ -418,7 +645,22 @@ export type AgentEvent =
           maxSteps?: number;
       }
     | { seq: number; type: 'run.completed'; turnId: string }
-    | { seq: number; type: 'run.failed'; turnId: string; message: string };
+    | {
+          seq: number;
+          type: 'run.failed';
+          turnId: string;
+          message: string;
+          /**
+           * 上游静默、被 StallWatchdog 判超时中止时带上「卡在哪个时段 / 等了多久」。
+           *
+           * 有这个字段 = 这是**超时判定**（收尾判据落成 `stalled`），不是一般失败：
+           * 中止的事实只有杀它的那一层知道，不带上来就只能报成 `error`。
+           */
+          stall?: { phase: StallPhase; waitedMs: number };
+      };
+
+/** 停摆看门狗的时段（`first` / `stream` / `tool`；三段的判据与时长各不同） */
+export type StallPhase = 'first' | 'stream' | 'tool';
 
 // ── 模型目录的视图（`diy2.models.list` 的回包）────────────────────
 //

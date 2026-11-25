@@ -169,7 +169,7 @@ UI 有两个可切换的表面（同一份时间线 + 同一个 store，只换�
 - `@all`：全体回复
 - 输入框里打 `@` 会弹出本容器可 @ 的 bot 列表（primary 带标记）
 - 同一轮内多个 bot 并行；轮次之间串行；运行中也能插话（发送不变成停止，
-  停止在顶部 SpeakingBar，可按成员停）
+  停止在顶部 RoomStatusBar，可按成员停）
 
 接口（`/api`，与 UI 同源同端口）：
 
@@ -188,7 +188,7 @@ GET    /api/rooms/:id/history?afterSeq=
 GET    /api/rooms/:id/deliveries
 GET    /api/rooms/:id/asks
 GET    /api/rooms/:id/sessions
-POST   /api/rooms/:id/sessions/:botId/compact   { keepLast?, maxChars? }
+POST   /api/rooms/:id/sessions/:botId/compact   { keepTurns? }   # keepTurns = 保留最近几轮（0 = 压到头）
 POST   /api/rooms/:id/asks/:askId      { values?, fields?, text? }
 POST   /api/rooms/:id/chat             { text, recipients? } → { ok:true }（受理即返）
 POST   /api/rooms/:id/cancel           { botId? }             # 不传 = 停整个房间

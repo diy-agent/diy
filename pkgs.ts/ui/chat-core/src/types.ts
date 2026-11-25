@@ -3,6 +3,7 @@
 // 真正的定义在 @diy-agent/protocol：后端 runtime 与前端消费的是同一份类型。
 
 export type {
+    ActivityFrame,
     AnsweredAsk,
     AskAnswer,
     AskField,
@@ -14,14 +15,17 @@ export type {
     Bot,
     Capabilities,
     Command,
+    CompactionProgress,
     Delivery,
     DeliveryState,
     Room,
     Item,
     ItemStatus,
     JobNotice,
+    ProgressStage,
     Snapshot,
     StreamEvent,
     TurnEndReason,
+    TurnUsage,
 } from '@diy-agent/protocol';
 export { DEFAULT_CAPABILITIES } from '@diy-agent/protocol';

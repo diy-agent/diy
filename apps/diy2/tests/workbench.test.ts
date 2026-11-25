@@ -21,6 +21,7 @@ import {
     type PageState,
 } from '../src/workbench/model';
 import { genericPage, pageFor, wbViews } from '../src/workbench/pages';
+import { combineWindow } from '../src/workbench/window';
 
 /** 最小可用的假 Storage：能种数据、也能模拟「隐私模式 / 配额满」 */
 function fakeStorage(seed: Record<string, string> = {}, throwOn?: 'get' | 'set'): Storage {
@@ -59,6 +60,22 @@ const page = definePage({
 
 const view = (id: string, placement: Record<string, { area: string }>) =>
     defineView({ id, title: id, placement, render: () => null });
+
+describe('标题栏的活动入口', () => {
+    it('两种全局活动入口都存在且并列排列，避免退化成无标签图标', () => {
+        const parts = combineWindow([
+            {
+                id: 'global-activity',
+                activity: [
+                    { id: 'sessions', label: '会话活动', glyph: '会话 0', standalone: true, onClick: () => undefined },
+                    { id: 'jobs', label: '后台任务', glyph: '后台 0', onClick: () => undefined },
+                ],
+            },
+        ]);
+        expect(parts.activity.map((item) => item.id)).toEqual(['sessions', 'jobs']);
+        expect(parts.activity.map((item) => item.glyph)).toEqual(['会话 0', '后台 0']);
+    });
+});
 
 describe('definePage：模板硬约束在定义期就检掉', () => {
     it('合法模板的 areas = [center, ...sides]', () => {

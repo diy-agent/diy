@@ -11,6 +11,9 @@ export type {
     AskRequest,
     Author,
     Bot,
+    BotOutcome,
+    BotRow,
+    BotState,
     Delivery,
     DeliveryState,
     Room,
@@ -19,5 +22,7 @@ export type {
     Item,
     ItemStatus,
     InboxMode,
+    ProgressStage,
+    StallPhase,
     TurnEndReason,
 } from '@diy-agent/protocol';

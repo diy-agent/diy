@@ -20,8 +20,16 @@ import type { Item, TurnEndReason } from './types';
 export interface EndFacts {
     /** 运行真的失败了（抛异常 / SDK 的 error part） */
     failed?: boolean;
-    /** 人按了停 */
+    /** 这一轮被 abort 了（人按停 / 看门狗到点） */
     aborted?: boolean;
+    /**
+     * 谁按的停：`human` = 用户点了停止（事实，不是故障）；`deadline` = agent 层的
+     * StallWatchdog 判模型流失联、主动收（见 stall-watchdog.ts；`stall` 事实随
+     * `run.failed.stall` 带上来）。缺省当 `human`：历史上只有人会按。
+     */
+    abortedBy?: 'human' | 'deadline';
+    /** 看门狗收尾时的事实：卡在哪个 await、空了多久（`abortedBy === 'deadline'` 才有） */
+    stall?: { awaiting: string; idleMs: number };
     /** 收到过 `run.finished` 吗 —— 缺它 = 流没正常收尾 */
     finished: boolean;
     /** 上游 finishReason 原文（`stop` / `length` / `tool-calls` / `error` / …） */
@@ -56,8 +64,20 @@ export function endReasonOf(facts: EndFacts): TurnEndReason {
         ...(facts.maxSteps === undefined ? {} : { maxSteps: facts.maxSteps }),
     };
 
-    if (facts.failed === true) return { type: 'error', ...base };
+    // 看门狗到点（deadline）优先于 failed：abort 之后 SDK 可能抛 AbortError，
+    // 那是**我们杀的后果**，不是独立故障。把它说成 error 就把「失联 120s」这个真事实丢了。
+    if (facts.abortedBy === 'deadline') {
+        return {
+            type: 'stalled',
+            ...(facts.stall === undefined ? {} : { awaiting: facts.stall.awaiting, idleMs: facts.stall.idleMs }),
+            ...base,
+        };
+    }
+    // 人按停是**事实，不是故障**：abort 之后 SDK 抛 AbortError / 工具报被中断，都很常见，
+    // 那些 failed 是我们杀出来的后果。说成 `error` 等于把「用户按了停」这个确定性事实
+    // 降级成「可能出错了」。所以 aborted(human) 排在 failed 之前。
     if (facts.aborted === true) return { type: 'interrupted', ...base };
+    if (facts.failed === true) return { type: 'error', ...base };
     // 流结束了却没给收尾信号：网关掐断 / 上游静默关闭 / 传输层断了。**这是错误**。
     if (!facts.finished) return { type: 'unknown', note: 'no-finish', ...base };
 
@@ -92,6 +112,13 @@ export interface EndItemContext {
     at?: number;
     /** 运行时给的失败原文（`run.failed.message`）：`error` 类带上它，别把话丢了 */
     failureMessage?: string;
+    /**
+     * 这一轮是**哪个 bot** 的（session 是 per-bot 的，调用方一定有这个信息）。
+     *
+     * 必须带上：`turnId` 是**房间级**的（一轮里 @all 的各 bot 共享同一个），只按它归属结局
+     * 会把 A 的截断算到 B 头上。见 protocol 的 `Item.notice.data.botId` 注释。
+     */
+    botId?: string;
 }
 
 /**
@@ -120,6 +147,8 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
         at: ctx.at ?? Date.now(),
         status: 'done' as const,
     };
+    /** 结局归属：有 botId 就记上，让消费方能在共享 turnId 的一轮里认出是谁的结局 */
+    const who = ctx.botId === undefined ? {} : { botId: ctx.botId };
 
     switch (reason.type) {
         case 'max-tokens':
@@ -131,6 +160,7 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     data: {
                         text: `这次回复被输出上限截断（max_tokens=${reason.maxOutputTokens ?? '?'}），说「继续」可接上`,
                         kind: 'max-tokens',
+                        ...who,
                     },
                 },
             ];
@@ -143,6 +173,7 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     data: {
                         text: `这一轮撞到步数上限（${reason.maxSteps ?? reason.steps ?? '?'} 步）先停下 —— 说「继续」接着干；反复撞就把它拆小`,
                         kind: 'max-steps',
+                        ...who,
                     },
                 },
             ];
@@ -152,7 +183,7 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     ...base,
                     id: nextId('notice'),
                     type: 'notice',
-                    data: { text: '这次回复被上游内容策略拦截（content-filter）', kind: 'content-filter' },
+                    data: { text: '这次回复被上游内容策略拦截（content-filter）', kind: 'content-filter', ...who },
                 },
             ];
         case 'tool-mismatch':
@@ -164,7 +195,17 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     data: {
                         text: '工具结果没回来，这一轮被迫停下了（finish=tool-calls），说「继续」可以接着跑',
                         kind: 'tool-mismatch',
+                        ...who,
                     },
+                },
+            ];
+        case 'stalled':
+            return [
+                {
+                    ...base,
+                    id: nextId('notice'),
+                    type: 'notice',
+                    data: { text: stalledText(reason), kind: 'stalled' },
                 },
             ];
         case 'unknown':
@@ -173,7 +214,7 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     ...base,
                     id: nextId('error'),
                     type: 'error',
-                    data: { message: unknownText(reason) },
+                    data: { message: unknownText(reason), ...who },
                 },
             ];
         case 'error':
@@ -182,12 +223,40 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     ...base,
                     id: nextId('error'),
                     type: 'error',
-                    data: { message: ctx.failureMessage ?? '本轮运行失败' },
+                    data: { message: ctx.failureMessage ?? '本轮运行失败', ...who },
                 },
             ];
         default:
             return [];
     }
+}
+
+/** 「失联」说清两件事：在等谁、空了多久（都是我们真的知道的） */
+function stalledText(reason: TurnEndReason): string {
+    const what = reason.awaiting === undefined ? '' : awaitText(reason.awaiting);
+    const idle = reason.idleMs === undefined ? '很久' : formatIdle(reason.idleMs);
+    return `这一轮失联了：${what}${idle}没有进展，已中止 —— 说「继续」重试；总在这一步断就查网关超时`;
+}
+
+/** 机器码 → 人话（与 progress.ts 的 `what` 一一对应） */
+function awaitText(awaiting: string): string {
+    if (awaiting === 'model-stream') return '等模型回话时 ';
+    if (awaiting === 'tool') return '工具执行时 ';
+    if (awaiting === 'compact') return '压缩上下文时 ';
+    if (awaiting.startsWith('tool:')) return `${awaiting.slice('tool:'.length)} 在跑时 `;
+    return `${awaiting} 处 `;
+}
+
+// **这里没有「进度提醒」了**（用户 2026-11-24）：`progressNotice` 已删 —— 它就是那句
+// “61 秒还没吐出第一个字”，被当成结局条目写进了 append-only 的时间线。
+// 过程只活在 ephemeral 的 `progress` 事件里（progress.ts 的 `stageOf` 分档），
+// 只有**结局**在这里成条目：stalled / error / max-steps / max-tokens / 用户停止。
+
+function formatIdle(ms: number): string {
+    const seconds = Math.round(ms / 1000);
+    if (seconds < 90) return `${seconds} 秒`;
+    const minutes = Math.round(seconds / 60);
+    return `${minutes} 分钟`;
 }
 
 function unknownText(reason: TurnEndReason): string {
@@ -227,6 +296,8 @@ export function adviceOf(reason: TurnEndReason): string {
             return '说「继续」重跑这一步；反复出现说明某个工具在挂';
         case 'interrupted':
             return '你按的停 —— 说「继续」接着来';
+        case 'stalled':
+            return '说「继续」重试；总在这一步断就查网关超时 / 把这一步拆小';
         case 'unknown':
             if (reason.note === 'no-finish') return '重试；总在这一步断就查 SSE / 网关超时';
             if (reason.note === 'empty-output') return '重试；连续空产出先查模型与额度';

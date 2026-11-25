@@ -28,8 +28,8 @@ let rpcUrl = '';
 
 beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'diy2-rpc-'));
-    app = createDiy2App({
-        config: resolveConfig({ moduleDir, mode: 'development', overrides: { home } }),
+    app = await createDiy2App({
+        config: await resolveConfig({ moduleDir, mode: 'development', overrides: { home } }),
         webDir: null,
     });
     server = createServer(app.handle);

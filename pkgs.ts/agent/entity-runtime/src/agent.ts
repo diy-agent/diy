@@ -12,13 +12,19 @@ import {
     type ModelMessage,
     type ToolSet,
 } from 'ai';
+import { logs, SeverityNumber } from '@opentelemetry/api-logs';
 import { z } from 'zod';
 
 import { friendlyError } from './errors';
 import { maxOutputTokensOf, modelOf } from './providers';
 import { StallWatchdog, stallMessage, stallTimeoutsFromEnv, type StallInfo } from './stall-watchdog';
-import { clipModelMessage } from './tools/clip';
 import type { AgentEvent, Bot } from './types';
+
+/**
+ * 业务包的日志只走 OTel **接口**（##482：默认 noop，装配层设了 provider 才落地）。
+ * 这里唯一要说的事就是「SDK 把错误接住后我们怎么记」。
+ */
+const agentLog = logs.getLogger('entity-runtime:agent');
 
 export interface RunOptions {
     bot: Bot;
@@ -72,6 +78,11 @@ export interface RunOptions {
      * 测试用它把 3 分钟压成几毫秒。
      */
     stallTimeouts?: { firstMs: number; idleMs: number; toolMs: number };
+    /**
+     * 可以等任意久的工具（缺省 `['ask']`，见 `stall-watchdog.ts`）：这些不计入工具时段的上限。
+     * 传空数组 = 所有工具都受 `stallTimeouts.toolMs` 约束（排障时用）。
+     */
+    unboundedTools?: Iterable<string>;
     /**
      * 步数上限（工具循环）。不传 = `DEFAULT_MAX_STEPS`。
      *
@@ -155,6 +166,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     else options.signal.addEventListener('abort', forwardAbort, { once: true });
     const watchdog = new StallWatchdog({
         ...(options.stallTimeouts ?? stallTimeoutsFromEnv()),
+        ...(options.unboundedTools === undefined ? {} : { unboundedTools: options.unboundedTools }),
         onStall: (info) => {
             stallInfo = info;
             stall.abort();
@@ -191,18 +203,40 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
             if (delta === '') return {};
             return { messages: [...messages, { role: 'user', content: delta }] };
         },
-        // 连接超时这类瞬时错误自动重试；不可重试的错误 SDK 自己会跳过
-        maxRetries: 2,
+        /**
+         * **这一层不重试**（2026-11-25 用户裁决）：SDK 内部重试把三次失败揉成一个
+         * `RetryError`，外面既看不到试了几次、也没法按自己的退避节奏来。要重试就加在外面
+         * （能观测的那层）。这里只跑一次。
+         */
+        maxRetries: 0,
+        /**
+         * SDK 的缺省 onError 是 `console.error(error)` —— 它用 util.inspect 展开整棵
+         * RetryError 树（每层带 responseBody / responseHeaders / 完整 messages 与 tools），
+         * 几百行，而且没进日志文件（重启即失）。接过来只记一行：可读话术 + 状态码，
+         * 原始错误的类型 / 消息 / 栈交给日志装配落 jsonl。
+         */
+        onError: ({ error }) => {
+            agentLog.emit({
+                severityNumber: SeverityNumber.WARN,
+                body: 'LLM 请求失败（不重试）',
+                attributes: {
+                    turnId,
+                    modelKey: options.modelKey,
+                    botId: options.bot.id,
+                    reason: friendlyError(error),
+                    ...(statusOf(error) === undefined ? {} : { status: statusOf(error) }),
+                    ...exceptionAttributesOf(error),
+                },
+            });
+        },
         ...(options.steering === undefined ? {} : { experimental_steering: options.steering }),
         onStepFinish: (step) => {
             // 这一步成功收尾 ⇒ 快照前移（失败 / 重试不进这里，下一轮会重新算同一份增量）
             options.commitDelta?.();
             if (options.onStepTranscript === undefined) return;
-            // 工具输出只裁"喂给模型"的那份；UI 的 tool-result 事件仍然是完整输出
-            options.onStepTranscript([
-                ...(step.experimental_steeringMessages ?? []),
-                ...step.response.messages.map((message) => clipModelMessage(message)),
-            ]);
+            // 工具输出已在**投递层**截过（`toModelOutput` → `tool-output.ts`）：这里拿到的
+            // `step.response.messages` 就是模型实际收到的版本，不需要再裁开。
+            options.onStepTranscript([...(step.experimental_steeringMessages ?? []), ...step.response.messages]);
         },
     });
 
@@ -215,8 +249,8 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     try {
         for await (const part of result.stream) {
             // 有数据 = 上游还活着；工具调用之后的等待算「工具在执行」而不是「上游在挂」
-            // （`ask` 可能要等用户很久、`job wait` 能等 10 分钟：那些不能当停摆掐掉）
-            if (part.type === 'tool-call') watchdog.toolStart();
+            // （`ask` 等用户多久都行 —— 它在豁免名单里；其余工具受 `toolMs` 兑底，见 ##560）
+            if (part.type === 'tool-call') watchdog.toolStart(part.toolName);
             else watchdog.touch();
             switch (part.type) {
                 case 'finish-step':
@@ -286,7 +320,9 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         // 看门狗掐的和用户按停的都会走到这里：**只有看门狗那条**要说成“停摆”（用户按停不能冤枉上游，
         // 反之停摆也不该被当成人取消 —— 那样用户会以为是自己点错了）
         if (stallInfo !== undefined && !options.signal.aborted) {
-            yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo) };
+            // `stall` 把「卡在哪个时段 / 等了多久」带给上层：收尾判据靠它把这一轮落成
+            // `stalled` 而不是一般 `error`（杀它的这一层不说是哪个，上层就只剩猜测）
+            yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo), stall: stallInfo };
             return;
         }
         yield { seq: ++seq, type: 'run.failed', turnId, message: friendlyError(error) };
@@ -299,7 +335,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     // 流在正常路径上结束（被 abort 时 ai-sdk 可能给一个 `abort` part 而不是抛）：
     // 停摆仍要算失败 —— 不能因为“循环退出了”就把它当正常收尾
     if (stallInfo !== undefined && !options.signal.aborted) {
-        yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo) };
+        yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo), stall: stallInfo };
         return;
     }
 
@@ -317,4 +353,33 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     yield { seq: ++seq, type: 'run.finished', turnId, finishReason, steps, maxOutputTokens, maxSteps };
     yield { seq: ++seq, type: 'message.completed', messageId };
     yield { seq: ++seq, type: 'run.completed', turnId };
+}
+
+/**
+ * HTTP 状态码：`APICallError` 自己带；`RetryError` 包在外面（`lastError`）。
+ * 不重试之后其实只剩前一种，但 SDK 换版本时这层不该脆。
+ */
+function statusOf(error: unknown): number | undefined {
+    const seen = new Set<unknown>();
+    let cur: unknown = error;
+    while (cur !== null && typeof cur === 'object' && !seen.has(cur)) {
+        seen.add(cur);
+        const status = (cur as { statusCode?: unknown }).statusCode;
+        if (typeof status === 'number') return status;
+        cur = (cur as { lastError?: unknown }).lastError ?? (cur as { cause?: unknown }).cause;
+    }
+    return undefined;
+}
+
+/**
+ * OTel 的异常约定（`exception.*`）：`@diy-agent/log` 的导出器认这几个 key，
+ * 会还原成 jsonl 里的 `err` 字段（带栈）；不按约定的自定义 key 会被当成普通 data。
+ */
+function exceptionAttributesOf(error: unknown): Record<string, unknown> {
+    if (!(error instanceof Error)) return { 'exception.message': String(error) };
+    return {
+        'exception.type': error.name,
+        'exception.message': error.message,
+        ...(error.stack === undefined ? {} : { 'exception.stacktrace': error.stack }),
+    };
 }

@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { RunOptions } from '../../src/agent';
+import type { Compactor } from '../../src/compaction';
 import { openStore, type Store } from '../../src/db';
 import { RoomActor } from '../../src/room';
 import type { AgentEvent, Bot, Item, Room, RoomEvent } from '../../src/types';
@@ -64,6 +65,8 @@ export function makeRoom(
         run?: (input: RunOptions) => AsyncIterable<AgentEvent>;
         /** 给了才有工具集（ask 工具需要在工具集里） */
         cwd?: string;
+        /** 压缩策略（测手动压缩的并发 / 取消用，缺省走真摘要策略） */
+        compactor?: Compactor;
     } = {},
 ): Harness {
     const store = options.store ?? openStore(':memory:');
@@ -125,6 +128,7 @@ export function makeRoom(
         },
         run,
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+        ...(options.compactor === undefined ? {} : { compactor: options.compactor }),
     });
 
     return {

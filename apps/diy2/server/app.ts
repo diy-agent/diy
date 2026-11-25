@@ -13,18 +13,20 @@
 // 监听由调用方做：`server/index.ts`（生产）、`server/dev.ts`（单端口 dev）、`bin/diy2`（全局命令）。
 
 import { type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdirSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 
-import { createStaticHandler } from './static';
+import { createStaticHandler, type StaticHandler } from './static';
 import { createRpcSocket, type RpcStreamInfo } from './rpc';
 import { APP_ID, type Diy2Config } from './config';
+import { openLog } from './log';
 
 import {
     JOURNAL_KINDS,
     RoomActor,
+    botLastTurnOf,
     createJobRegistry,
     defaultModelKeyOf,
     modelProviders,
@@ -32,11 +34,27 @@ import {
     openStore,
     unitBoard,
     unitsContextText,
+    withTurnFact,
 } from '@diy-agent/entity-runtime';
-import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
+import type { BotLastTurn, CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
 import { diy2Api } from '@diy-agent/protocol';
-import type { AskAnswer, AskQuestionAnswer, Author, Bot, JobRunRow, Room } from '@diy-agent/protocol';
+import type {
+    ActivityFrame,
+    AskAnswer,
+    AskQuestionAnswer,
+    AskRequest,
+    Author,
+    Bot,
+    BotRow,
+    BotState,
+    Item,
+    JobRunRow,
+    Room,
+} from '@diy-agent/protocol';
+
+/** 装配层（index / dev）已经装好 provider；这里取句柄。未装时是 noop，不报错。 */
+const log = openLog('app');
 
 /**
  * 新房间的缺省模型：`model.yaml` 的 `defaultModel` 优先，没有才用这个写死的兜底。
@@ -54,6 +72,14 @@ const ASK_DRAFT_TTL = 30 * 60 * 1000;
 /** 对话框草稿：synthetic owner 不随房间级联删，超过这么久没人再来就清掉 */
 const DIALOG_DRAFT_TTL = 7 * 24 * 60 * 60 * 1000;
 const HUMAN: Author = { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
+
+/**
+ * 批量重试发的那句话。
+ *
+ * 跟 `endItems` 里给的 advice 同一措辞（「说「继续」接上」）—— 用户看到的建议和真的按下
+ * 去发出去的是同一句话，否则「它说让我说继续，我点重试，结果发了别的东西」。
+ */
+const RETRY_TEXT = '继续';
 const COLORS = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8'];
 
 /**
@@ -63,7 +89,7 @@ const COLORS = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8'
  */
 let config: Diy2Config;
 let store: ReturnType<typeof openStore>;
-let serveStatic: ReturnType<typeof createStaticHandler>;
+let serveStatic: StaticHandler | undefined;
 /** `/api/info` 的回包工厂（由 `createDiy2App` 装配：端口要问调用方，模块层答不出） */
 let info: () => Diy2AppInfo;
 
@@ -107,6 +133,54 @@ function attach(roomId: string, sink: Sink): () => void {
 
 function broadcast(roomId: string, payload: RoomFrame): void {
     for (const sink of subscribers.get(roomId) ?? []) sink(payload);
+}
+
+// ─── 全局活动（实例级，不属于任何房间）───────────────────────────
+
+/**
+ * 「谁在跑」的实例级订阅者。与 `subscribers` 分开：那张表按房间分，这张是全实例一条流。
+ */
+let activitySinks = new Set<(frame: ActivityFrame) => void>();
+/** 上一次推过的内容（序列化后）：running 与作业起停会撞在一起，内容没变就别发 */
+let lastActivityKey = '';
+
+/**
+ * 这一刻的活动快照：有成员在跑的房间 + 在跑的作业数。
+ *
+ * 两个真源都是**已经算好的**（`actor.runningBots()` / `jobs.list()`），这里不另算一套 ——
+ * 房间流与作业账本各说自己那半，这个函数只负责把它们汇成一条给标题栏的帧。
+ */
+function activityFrame(): ActivityFrame {
+    return {
+        kind: 'activity',
+        rooms: [...rooms.values()]
+            .map((actor) => ({ id: actor.spec.id, botIds: actor.runningBots() }))
+            .filter((row) => row.botIds.length > 0),
+        jobs: jobs.list().filter((run) => run.state === 'running').length,
+    };
+}
+
+/**
+ * 推一次全局活动。**没人订阅就算也不算**（不留 lastActivityKey，下次有人来时任它真值）。
+ *
+ * 新订阅者的首帧由 `attachActivity` 自己给，不依赖这里 —— 两条路才是「打开页面就有数」。
+ */
+function broadcastActivity(): void {
+    if (activitySinks.size === 0) return;
+    const frame = activityFrame();
+    const key = JSON.stringify(frame);
+    if (key === lastActivityKey) return;
+    lastActivityKey = key;
+    for (const sink of activitySinks) sink(frame);
+}
+
+function attachActivity(sink: (frame: ActivityFrame) => void): () => void {
+    // 首帧 = 当前快照：已经有一轮在跑时新开的页面不该等到下一次变化才亮
+    sink(activityFrame());
+    activitySinks.add(sink);
+    return () => {
+        activitySinks.delete(sink);
+    };
 }
 
 /** 房间的工作目录：自己的 data.dir，任务则继承所属项目 */
@@ -162,7 +236,11 @@ function actorOf(spec: Room): RoomActor {
             spec,
             store,
             bots: () => store.listBots(),
-            emit: (event) => broadcast(spec.id, event),
+            emit: (event) => {
+                broadcast(spec.id, event);
+                // turn 起停 = 全实例「谁在跑」的开销点：标题栏那颗图标与侧栏每一行都靠这个
+                if (event.kind === 'running') broadcastActivity();
+            },
             budget: config.compact,
             onCompact: (bot, event) => logCompact(spec.id, bot, event),
             ...(cwd === undefined ? {} : { cwd }),
@@ -204,6 +282,8 @@ function jobRowOf(info: ReturnType<ReturnType<typeof createJobRegistry>['list']>
         ...(info.exitCode === undefined ? {} : { exitCode: info.exitCode }),
         ...(info.signal === undefined ? {} : { signal: info.signal }),
         ...(info.error === undefined ? {} : { error: info.error }),
+        // 只报「确实没人接」：true / undefined 都不写，界面只在能报警时才多一个标记
+        ...(info.delivered === false ? { delivered: false } : {}),
         ...(info.origin === undefined
             ? {}
             : {
@@ -220,10 +300,15 @@ function logCompact(roomId: string, bot: Bot, event: CompactEvent): void {
     const before = `${event.before.entries}msgs/${event.before.chars}c`;
     const after = `${event.after.entries}msgs/${event.after.chars}c`;
     const usage = event.usage === undefined ? '' : ` usage=${event.usage.inputTokens}/${event.usage.outputTokens}`;
-    console.log(
-        `[compact] ${bot.name} @${roomId} turn=${event.turn} ${event.strategy} ${before} → ${after} ` +
-            `folded=${event.folded} dropped=${event.dropped} ${event.durationMs}ms${usage}`,
-    );
+    log.info(`压缩 ${bot.name} @${roomId}`, {
+        turn: event.turn,
+        strategy: event.strategy,
+        before,
+        after,
+        dropped: event.dropped,
+        durationMs: event.durationMs,
+        ...(event.usage === undefined ? {} : { usage }),
+    });
 }
 
 function roomOf(id: string): RoomActor | undefined {
@@ -235,6 +320,14 @@ function requireRoom(id: string): RoomActor {
     const actor = roomOf(id);
     if (actor === undefined) throw new Error(`房间不存在：${id}`);
     return actor;
+}
+
+/** 房间的显示名：任务标题 / 项目名（Room 自己没有 name，见 protocol 里那段注释） */
+function roomTitleOf(room: Room): string {
+    const title = room.data['title'];
+    if (typeof title === 'string' && title !== '') return title;
+    const name = room.data['name'];
+    return typeof name === 'string' && name !== '' ? name : room.id;
 }
 
 // ─── 种子：bot 落 sqlite；项目/任务先在内存 ────────────────────────
@@ -329,8 +422,20 @@ function seed(): void {
         if (members !== undefined && members.length > 0) spec.members = members;
         store.setMembers(spec.id, spec.members);
         store.saveRoom(spec);
-        actorOf(spec).recover();
+        // 只建容器，**不在这里续跑**：续跑会立刻发 LLM 请求，见 `resume()` 的注释
+        actorOf(spec);
     }
+}
+
+/**
+ * 续跑所有房间的未投递消息（`RoomActor.recover()`）。
+ *
+ * 拆出来是因为**时机**：以前它在 `seed()` 末尾、`listen()` 之前跟着跑，于是「端口还没人
+ * 能连」时三个房间的续跑已经各自 await compact() → 主请求，UI 一打开看到的就是一屏
+ * 429 / 压缩日志。现在由入口在 listen 成功后调（生产 `index.ts`、dev `dev.ts`）。
+ */
+function resume(): void {
+    for (const actor of rooms.values()) actor.recover();
 }
 
 // 装配动作（seed + 草稿清理）在 `createDiy2App` 里做：顶层语句等于「import 即启动」，
@@ -387,7 +492,7 @@ function newBot(name: string, homeRoomId: string, persona: string): Bot {
 
 // ─── 路由 ─────────────────────────────────────────────────────────
 
-const handle = (req: IncomingMessage, res: ServerResponse): void => {
+const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const parts = url.pathname.split('/').filter(Boolean);
 
@@ -401,7 +506,7 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
 
         // 静态资源 / SPA 路由：/api 之外的 GET 交给 UI 产物
         if (req.method === 'GET' && !url.pathname.startsWith('/api') && serveStatic !== undefined) {
-            if (serveStatic(url.pathname, res)) return;
+            if (await serveStatic(url.pathname, res)) return;
         }
 
         json(res, 404, { error: `unknown ${req.method ?? '?'} ${url.pathname}` });
@@ -427,7 +532,15 @@ export interface Diy2AppInfo {
 }
 
 export interface Diy2App {
-    handle: (req: IncomingMessage, res: ServerResponse) => void;
+    /** 静态资源要 await 磁盘，所以是 Promise —— 错误已在内部 try/catch 收掉，不会 reject */
+    handle: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+    /**
+     * 续跑：把各房间没投递完的消息重新点着（`recover()`）。
+     *
+     * **必须在监听之后调**（##554 后续）：它一调就会发 LLM 请求，而在监听之前点火等于
+     * 「UI 还没人能连上，模型配额已经开始烧」—— 启动顺序里最贵的这一步不该抢在门打开之前。
+     */
+    resume: () => void;
     /**
      * 处理一条 HTTP upgrade（`/rpc` 归这里，返回 true；其余返回 false 交给别人 ——
      * dev 里 vite 的 HMR 也走 upgrade 通道，**不要动不是自己的 socket**）。
@@ -447,27 +560,41 @@ export interface Diy2App {
  * @param opts.webDir 静态服务目录：`null` = 明确不要（dev 交给 vite）；`undefined` = 用 config 的
  * @param opts.port   实际监听端口（`() => server.address().port`；dev 单端口时由调用方给）
  */
-export function createDiy2App(opts: {
+export async function createDiy2App(opts: {
     config: Diy2Config;
     webDir?: string | null | undefined;
     port?: () => number | null;
-}): Diy2App {
+}): Promise<Diy2App> {
     config = opts.config;
     // null 与 undefined 是两件事：null = 「我明确不要静态服务」（dev 的页面来自 vite），
     // undefined = 「按配置来」（生产）。写成 `??` 会让 dev 在 build/prod/web 存在时**悄悄**
     // 拿到上一轮的旧壳子 —— 那种 bug 只能靠肉眼分辨「为什么改了 UI 没变」。
-    serveStatic = createStaticHandler(opts.webDir === null ? undefined : (opts.webDir ?? config.webDir));
+    serveStatic = await createStaticHandler(opts.webDir === null ? undefined : (opts.webDir ?? config.webDir));
     rooms = new Map();
     subscribers = new Map();
+    activitySinks = new Set();
+    lastActivityKey = '';
 
-    mkdirSync(config.home, { recursive: true });
+    await mkdir(config.home, { recursive: true });
     store = openStore(config.dbPath);
 
     // 作业账本要在 `seed()` / 首个房间之前建好：`actorOf` 装配工具时要用它。
     // 根目录 `<home>/log/job/runs`：与其余运行产物同根，清 home 就清干净。
     jobs = createJobRegistry({
         rootDir: join(config.home, 'log', 'job', 'runs'),
-        onDone: (event, owner) => rooms.get(owner.roomId)?.notifyJobDone(owner, event),
+        // 作业起停也要推活动：作业不属于任何房间流，标题栏那颗「作业 N」靠它亮
+        onChange: () => broadcastActivity(),
+        // 房间已删 / 成员已退 → 回报 false：账本把结局记成 `delivered:false`（盘上 `done.json`
+        // 的 `notified:false`），全局面板据此标「结局无人接」。用 `?.` 静默丢弃等于让这条活跑完
+        // 之后没人知道 —— 那正是用户报的「逃逸」之一。
+        onDone: (event, owner) => {
+            const actor = rooms.get(owner.roomId);
+            if (actor === undefined) {
+                console.warn(`[job] 结束通知无人接：房间 ${owner.roomId} 已不存在（run ${event.run.id}）`);
+                return false;
+            }
+            return actor.notifyJobDone(owner, event);
+        },
     });
 
     seed();
@@ -475,7 +602,7 @@ export function createDiy2App(opts: {
     // 对话框草稿的 owner 是 synthetic scope（`dlg:<用途>:<roomId>`）：删项目时已级联，
     // 剩下的（用户再也不打开那个对话框 / 房间 id 早就换掉）靠 TTL 收，别让库只增不减。
     const prunedDialogs = store.pruneDraftOwners('dlg:', Date.now() - DIALOG_DRAFT_TTL);
-    if (prunedDialogs > 0) console.log(`[drafts] 清掉 ${prunedDialogs} 条过期对话框草稿`);
+    if (prunedDialogs > 0) log.info('清掉过期对话框草稿', { count: prunedDialogs });
 
     /**
      * diy2 的**命令面**（RPC）：浏览器侧唯一的 API（REST 已删，只剩 `/api/info` 探活）。
@@ -498,9 +625,13 @@ export function createDiy2App(opts: {
                         const at = lastItemAt[id];
                         const pendingRequests = actor.pendingAskRequests();
                         const pendingAsks = pendingRequests.length;
+                        // 在跑成员数：与全局活动帧同源（`runningBots`），这里只是「列表里顺带一份」，
+                        // 给那些还没建活动流的老客户端一个初值
+                        const running = actor.runningBots().length;
                         return {
                             ...actor.spec,
                             hasDraft: withInputDraft.has(id),
+                            ...(running === 0 ? {} : { running }),
                             ...(pendingAsks === 0 ? {} : { pendingAsks }),
                             // 带题干：侧栏 ? 的 tooltip 要说清「问的是什么」，只说个数进房间还得自己翻
                             ...(pendingAsks === 0
@@ -587,6 +718,138 @@ export function createDiy2App(opts: {
             },
             bots: {
                 list: async () => store.listBots(),
+                /**
+                 * 每个 bot 一行状态（二级弹层 / 三级表格共用同一份）。
+                 *
+                 * 三处事实拼起来，每处都只说自己知道的：
+                 *   · 在跑 —— `actor.runningBots()`（内存，与广播同源）
+                 *   · 等回答 —— `pendingAskRequests()` 的 `owner`（提问人就那个 bot）
+                 *   · 上一轮结局 —— `store.lastItemPerBot()`（磁盘，判据在 bot-status.ts）
+                 *
+                 * 优先级在 `BotState` 的注释里：running > asking > needs-attention > idle。
+                 */
+                rows: async () => {
+                    const bots = new Map(store.listBots().map((bot) => [bot.id, bot]));
+                    const last = new Map<string, BotLastTurn>();
+                    for (const { roomId, item } of store.lastItemPerBot()) {
+                        const turn = botLastTurnOf(roomId, item);
+                        if (turn !== undefined) last.set(`${roomId}\u0000${turn.botId}`, turn);
+                    }
+                    // 轮级事实（不带 author 的 notice / error）只能单独认领：
+                    // 结局在它里面，不在 bot 自己那条最后的条目里（见 bot-status.ts 头部的论证）。
+                    // key 用 `owner`（= 事实自带的 botId，老数据退回 turnId）—— 一轮里 @all 的
+                    // 各 bot 共享 turnId，只按它查会把 A 的截断盖到 B 头上。
+                    const facts = new Map<string, Item>();
+                    for (const { roomId, owner, item } of store.lastFactPerTurn()) {
+                        facts.set(`${roomId}\u0000${owner}`, item);
+                    }
+                    const rows: BotRow[] = [];
+                    for (const actor of rooms.values()) {
+                        const spec = actor.spec;
+                        const running = new Set(actor.runningBots());
+                        const asking = new Map<string, AskRequest>();
+                        for (const request of actor.pendingAskRequests()) {
+                            // owner 缺省时（老数据 / 非成员发起）归不到具体 bot，就不进弹层
+                            if (request.owner !== undefined) asking.set(request.owner, request);
+                        }
+                        for (const member of spec.members) {
+                            const bot = bots.get(member.botId);
+                            const own = last.get(`${spec.id}\u0000${member.botId}`);
+                            const turn =
+                                own === undefined
+                                    ? undefined
+                                    : withTurnFact(
+                                          own,
+                                          // botId 命中优先（新数据），再退回 turnId（老数据）
+                                          facts.get(`${spec.id}\u0000${own.botId}`) ??
+                                              facts.get(`${spec.id}\u0000${own.turnId}`),
+                                      );
+                            const ask = asking.get(member.botId);
+                            const state: BotState = running.has(member.botId)
+                                ? 'running'
+                                : ask !== undefined
+                                  ? 'asking'
+                                  : turn !== undefined && turn.outcome !== 'done'
+                                    ? 'needs-attention'
+                                    : 'idle';
+                            rows.push({
+                                roomId: spec.id,
+                                roomTitle: roomTitleOf(spec),
+                                roomType: spec.type === 'project' ? 'project' : 'task',
+                                botId: member.botId,
+                                botName: bot?.name ?? member.botId,
+                                botColor: bot?.color ?? '#8b8b8b',
+                                state,
+                                ...(turn === undefined
+                                    ? {}
+                                    : {
+                                          outcome: turn.outcome,
+                                          ...(turn.message === undefined ? {} : { outcomeMessage: turn.message }),
+                                          lastTurnAt: turn.at,
+                                      }),
+                                ...(ask === undefined
+                                    ? {}
+                                    : { askId: ask.askId, askTitle: ask.questions[0]?.question ?? '' }),
+                            });
+                        }
+                    }
+                    return { rows };
+                },
+                /**
+                 * 批量重试：给选中的 (房间, bot) 各发一条「继续」。
+                 *
+                 * 这是**派活**不是重启进程 —— bot 没有 start/stop 状态机，它只是房间成员；
+                 * 「接着干」就是再给它一句话。所以走 `say` 的 recipients 定向，不新造一条
+                 * 控制面（否则「重试」和「发消息」会成为两套语义，迟早跑偏）。
+                 *
+                 * 同一房间选中的多个 bot 合成**一条**消息（recipients 多个）：这样「继续」
+                 * 在时间线上只出现一次，而各自的上下文各自接着跑。
+                 * 已在跑的跳过 —— 再发一条只会变成排队，不是用户按「重试」时想要的。
+                 *
+                 * 返回值里 `started` 的意思是**已派发**（`say` 已发起），不是「这一轮已经起来」：
+                 * 回包不等 turn 真正开跑（等它就是等整轮结束），所以 UI 文案说的是「已发」。
+                 * `say` 同步抛错时不改回包，只广播 error —— 那种错误（房间刚被删之类）
+                 * 用户马上在页面上就能看见，比在一句闪稿里报更准。
+                 */
+                retry: async ({ input }) => {
+                    const byRoom = new Map<string, string[]>();
+                    for (const target of input.targets) {
+                        const list = byRoom.get(target.roomId) ?? [];
+                        if (!list.includes(target.botId)) list.push(target.botId);
+                        byRoom.set(target.roomId, list);
+                    }
+                    const started: Array<{ roomId: string; botIds: string[] }> = [];
+                    const skipped: Array<{ roomId: string; botId: string; reason: string }> = [];
+                    for (const [roomId, botIds] of byRoom) {
+                        const actor = roomOf(roomId);
+                        if (actor === undefined) {
+                            for (const botId of botIds) skipped.push({ roomId, botId, reason: '房间不存在' });
+                            continue;
+                        }
+                        const members = new Set(actor.spec.members.map((member) => member.botId));
+                        const running = new Set(actor.runningBots());
+                        const targets = botIds.filter((botId) => {
+                            if (!members.has(botId)) {
+                                skipped.push({ roomId, botId, reason: '不是这个房间的成员' });
+                                return false;
+                            }
+                            if (running.has(botId)) {
+                                skipped.push({ roomId, botId, reason: '正在跑' });
+                                return false;
+                            }
+                            return true;
+                        });
+                        if (targets.length === 0) continue;
+                        started.push({ roomId, botIds: targets });
+                        void actor.say({ text: RETRY_TEXT, author: HUMAN, recipients: targets }).catch((error: unknown) => {
+                            broadcast(roomId, {
+                                kind: 'error',
+                                message: error instanceof Error ? error.message : String(error),
+                            });
+                        });
+                    }
+                    return { started, skipped };
+                },
                 create: async ({ input }) => {
                     const name = input.name.trim();
                     if (name === '') throw new Error('name required');
@@ -625,6 +888,9 @@ export function createDiy2App(opts: {
                         // 服务端事实：谁还在跑。取房间自己的 `running` 集合（与广播同源），
                         // 客户端不再靠「有没有流式条目」倒推 —— 卡在等上游的那一轮没有流式条目。
                         speaking: actor.runningBots(),
+                        // 在跑的那几轮从何时开始：刷新后消息头 / 「已用 Ns」靠它，
+                        // 不能由客户端拿条目时刻去估（收轮时会跟 turn.end 给的 startedAt 跳一下）
+                        runningTurns: actor.runningTurns(),
                     };
                 },
                 chat: async ({ input }) => {
@@ -647,13 +913,35 @@ export function createDiy2App(opts: {
                     return { ok: true };
                 },
                 sessions: async ({ input }) => ({ sessions: requireRoom(input.id).sessionsInfo() }),
+                /**
+                 * **受理即返**（与 `chat.chat` 同一个口径）。
+                 *
+                 * 压缩的进展靠 `compact` 事件回推：它要等好几秒的 LLM 摘要，挂到 RPC 返回上
+                 * 等于用户点完只能盯一个禁用的按钮（2026-11-25 实测就是这个体验）。
+                 * 先返回 compactId，客户端立刻就能显示「摘要中…」并能按 id 取消；
+                 * 失败走 `error` 广播，跟发消息那条路一样。
+                 */
                 compact: async ({ input }) => {
                     const actor = requireRoom(input.id);
-                    const event = await actor.compact(input.botId, {});
-                    return {
-                        event,
-                        stats: actor.sessionsInfo().find((entry) => entry.botId === input.botId)?.stats,
-                    };
+                    const compactId = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+                    // 面板上的「保留最近几轮」是真参数，别用空对象盖掉（否则手动压缩永远按常量压）
+                    void actor
+                        .compact(input.botId, {
+                            compactId,
+                            ...(typeof input.keepTurns === 'number' ? { keepTurns: input.keepTurns } : {}),
+                        })
+                        .catch((error: unknown) => {
+                            // 正在压缩 / bot 不在房间里：让用户看得见，不能静默
+                            broadcast(input.id, {
+                                kind: 'error',
+                                message: error instanceof Error ? error.message : String(error),
+                            });
+                        });
+                    return { compactId };
+                },
+                cancelCompact: async ({ input }) => {
+                    // 已经跑完 / 不认识的 id → false（手点慢而己，不是错误）
+                    return { ok: requireRoom(input.id).cancelCompact(input.compactId) };
                 },
             },
             asks: {
@@ -749,6 +1037,7 @@ export function createDiy2App(opts: {
     // RPC 面：事件流（WS）+ 命令面。与 SSE 并存一段时间 —— 客户端切过去、验证稳定后再删 SSE。
     const rpc = createRpcSocket({
         attach,
+        attachActivity,
         hasRoom: (roomId) => roomOf(roomId) !== undefined,
         bind: bindDiy2Api,
     });
@@ -769,7 +1058,8 @@ export function createDiy2App(opts: {
     const close = (): void => {
         rpc.close();
         subscribers.clear();
+        activitySinks.clear();
     };
 
-    return { handle, handleUpgrade: rpc.handleUpgrade, rpcStreams: rpc.streams, info, close };
+    return { handle, resume, handleUpgrade: rpc.handleUpgrade, rpcStreams: rpc.streams, info, close };
 }

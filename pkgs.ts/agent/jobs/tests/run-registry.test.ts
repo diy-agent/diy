@@ -241,6 +241,62 @@ describe("RunRegistry（抽包后的行为，##515 3a）", () => {
         }
     });
 
+    // ⑪ 宿主说「没人接」：房间删了 / 成员退了。快照里要能读到 delivered:false，
+    //    盘上 done.json 写 notified:false —— 否则这条活跑完就静默消失在没人认领的产物里。
+    it("⑪ 宿主回报 false（无人接）⇒ delivered:false + done.json 的 notified:false", async () => {
+        const rootDir = tmpRoot("undelivered");
+        const reg = new RunRegistry({ rootDir, notifier: () => false });
+        try {
+            const info = await reg.spawn({ command: "echo orphan", cwd: process.cwd(), origin: { taskUri: "t/11" } });
+            const done = await reg.wait(info.id, 10_000);
+            await sleep(150); // notify + writeDone 都是异步的
+            expect(done?.delivered).toBe(false);
+            // notified 仍是「已尝试过」，与「有人收」是两件事
+            expect(reg.get(info.id)?.notified).toBe(true);
+            const doneJson = JSON.parse(readFileSync(join(done!.dir, "done.json"), "utf8")) as Record<string, unknown>;
+            expect(doneJson["notified"]).toBe(false);
+            expect(doneJson["state"]).toBe("exited");
+            expect(doneJson["exitCode"]).toBe(0);
+        } finally {
+            reg.clear();
+            rmSync(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    it("⑪b 正常投递 ⇒ delivered:true，done.json 的 notified:true", async () => {
+        const rootDir = tmpRoot("delivered");
+        const reg = new RunRegistry({ rootDir, notifier: () => true });
+        try {
+            const info = await reg.spawn({ command: "echo ok", cwd: process.cwd(), origin: { taskUri: "t/11b" } });
+            const done = await reg.wait(info.id, 10_000);
+            await sleep(150);
+            expect(done?.delivered).toBe(true);
+            const doneJson = JSON.parse(readFileSync(join(done!.dir, "done.json"), "utf8")) as Record<string, unknown>;
+            expect(doneJson["notified"]).toBe(true);
+        } finally {
+            reg.clear();
+            rmSync(rootDir, { recursive: true, force: true });
+        }
+    });
+
+    // ⑫ onChange：只在「表变了」时叫（起一条 / 收口一条）—— 标题栏那颗作业数靠它推活动帧
+    it("⑫ onChange 在起与收口时各叫一次（不轮询）", async () => {
+        const rootDir = tmpRoot("onchange");
+        let changes = 0;
+        const reg = new RunRegistry({ rootDir, onChange: () => (changes += 1) });
+        try {
+            const info = await reg.spawn({ command: "echo x", cwd: process.cwd() });
+            expect(changes).toBeGreaterThanOrEqual(1); // 起
+            await reg.wait(info.id, 10_000);
+            const afterSpawn = changes;
+            await sleep(50);
+            expect(changes).toBeGreaterThan(afterSpawn); // 收口
+        } finally {
+            reg.clear();
+            rmSync(rootDir, { recursive: true, force: true });
+        }
+    });
+
     it("⑩ 数据根口径：`defaultHome` / `runRoot`（`$DIY_HOME` → `log/job/runs`）", () => {
         expect(defaultHome({ DIY_HOME: "/tmp/x" })).toBe("/tmp/x");
         expect(defaultHome({}).endsWith(".diy")).toBe(true);

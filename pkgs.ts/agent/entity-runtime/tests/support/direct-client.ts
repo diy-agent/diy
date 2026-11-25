@@ -24,6 +24,7 @@ export class DirectRoomClient implements ChatClient {
             asks: this.harness.room.pendingAskRequests(),
             // 与线上 `chat.history` 对齐：谁在跑是**服务端事实**，不由客户端倒推
             speaking: this.harness.room.runningBots(),
+            runningTurns: this.harness.room.runningTurns(),
         });
     }
 
@@ -62,7 +63,7 @@ export class DirectRoomClient implements ChatClient {
         return this.maybe(this.harness.room.sessionsInfo() as unknown as SessionInfo[]);
     }
 
-    async compact(botId: string, options: { keepLast?: number; maxChars?: number } = {}): Promise<CompactOutcome> {
+    async compact(botId: string, options: { keepTurns?: number } = {}): Promise<CompactOutcome> {
         const event = await this.harness.room.compact(botId, options);
         const stats = this.harness.room.sessionsInfo().find((info) => info.botId === botId)?.stats;
         return this.maybe({ event, stats } as unknown as CompactOutcome);

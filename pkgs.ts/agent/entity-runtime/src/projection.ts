@@ -209,6 +209,13 @@ export class Projector {
                     this.items.set(id, closed);
                     ops.push(closed);
                 }
+                // 带 `stall` 的失败是**看门狗的超时判定**：话由收尾判据说
+                //（`end-reason.ts` 的 `stalled` → 一条 notice，带「在等谁 / 空了多久」）。
+                // 这里再落一条 error 就是同一件事说两遍，而且把「超时」说成了「出错」。
+                if (event.stall !== undefined) {
+                    this.pending = null;
+                    return ops;
+                }
                 const err: Item = {
                     id: nextId('err'),
                     seq,

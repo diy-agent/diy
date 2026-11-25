@@ -1,4 +1,4 @@
-// jobsChip.test.tsx —— 底栏那枚「作业」chip 的空状态（用户 2026-11-24 裁）。
+// jobsChip.test.tsx —— 底栏那枚「后台任务」chip 的空状态（用户 2026-11-24 裁）。
 //
 // 用户原话：「作业跑完了需要消失，只需要 0 空状态即可，这样还能点进去看历史」——
 // 前半句说的是**那个跳动的绿点**要消失，不是整枚 chip。所以钉住两件事：
@@ -17,7 +17,8 @@ import { JobsChip } from '../src/components/JobsChip';
 describe('作业 chip 的空状态', () => {
     it('没有作业在跑时仍然渲染（历史账本的入口不许跟着消失）', () => {
         const html = renderToStaticMarkup(<JobsChip />);
-        expect(html).toContain('作业');
+        // 2026-11-24 改名：「作业」→「后台任务」，并写清口径（本房间 / 本实例全部）
+        expect(html).toContain('后台任务');
         expect(html).toContain('<button');
     });
 

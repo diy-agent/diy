@@ -23,6 +23,8 @@ import type {
 } from '@diy-agent/chat-core';
 
 import type {
+    ActivityFrame,
+    BotRow,
     JobRunRow,
     ModelCatalogModel,
     ModelCatalogProvider,
@@ -30,7 +32,7 @@ import type {
     ModelCostView,
 } from '@diy-agent/protocol';
 
-export type { JobRunRow };
+export type { BotRow, JobRunRow };
 
 import { StreamHub } from './hub';
 
@@ -119,6 +121,13 @@ export type RoomRow = Room & {
     pendingAsks?: number;
     pendingAskTitles?: string[];
     lastActivityAt?: number;
+    /**
+     * 在跑成员数（侧栏每一行的呼吸态）。0 不写 —— 与 `pendingAsks` 同一约定。
+     *
+     * 只当**初值**用：真正的更新走全局活动流（`ActivityFrame`），这条字段让首屏 / 断线
+     * 重连时不必等下一次 turn 起停才知道谁在跑。
+     */
+    running?: number;
 };
 
 export class RpcChatClient implements ChatClient {
@@ -162,6 +171,15 @@ export class RpcChatClient implements ChatClient {
 
     readonly bots = {
         list: (): Promise<Bot[]> => this.call('bots.list', {}),
+        /**
+         * 每 bot 一行状态（在跑 / 等回答 / 上一轮出错 / 空闲）—— 二级弹层与三级表格同源。
+         */
+        rows: (): Promise<{ rows: BotRow[] }> => this.call('bots.rows', {}),
+        /** 批量「继续」：已在跑的会被服务端跳过（回包里报原因） */
+        retry: (targets: Array<{ roomId: string; botId: string }>): Promise<{
+            started: Array<{ roomId: string; botIds: string[] }>;
+            skipped: Array<{ roomId: string; botId: string; reason: string }>;
+        }> => this.call('bots.retry', { targets }),
         create: (input: { name: string; homeRoomId?: string; modelKey?: string }): Promise<Bot> =>
             this.call('bots.create', input),
         update: (input: {
@@ -235,6 +253,7 @@ export class RpcChatClient implements ChatClient {
             asks: Snapshot['asks'];
             answered: Snapshot['answeredAsks'];
             speaking?: Snapshot['speaking'];
+            runningTurns?: Snapshot['runningTurns'];
         }>('chat.history', { id: entityId });
         return {
             items: history.items,
@@ -243,12 +262,19 @@ export class RpcChatClient implements ChatClient {
             answeredAsks: history.answered ?? [],
             // 老服务端没有这个字段：留 undefined（客户端退回倒推，见 Snapshot.speaking）
             ...(history.speaking === undefined ? {} : { speaking: history.speaking }),
+            // 同上：老服务端没有 runningTurns 时客户端退回用条目时刻
+            ...(history.runningTurns === undefined ? {} : { runningTurns: history.runningTurns }),
         };
     }
 
     /** 常驻订阅：重连 / 退避 / `ready` 全在 StreamHub；这里只说「我要看哪个房间」 */
     watch(entityId: string, onEvent: (event: StreamEvent) => void): () => void {
         return this.hub.subscribe(topicOf(entityId), onEvent);
+    }
+
+    /** 实例级活动（谁在跑 / 几个作业在跑）：一条流汇报全实例，首帧就是当前快照 */
+    subscribeActivity(onFrame: (frame: ActivityFrame) => void): () => void {
+        return this.hub.subscribeActivity(onFrame);
     }
 
     async sessions(entityId: string): Promise<SessionInfo[]> {
@@ -259,9 +285,14 @@ export class RpcChatClient implements ChatClient {
     async compact(
         entityId: string,
         botId: string,
-        options: { keepLast?: number; maxChars?: number } = {},
+        options: { keepTurns?: number } = {},
     ): Promise<CompactOutcome> {
         return this.call<CompactOutcome>('chat.compact', { id: entityId, botId, ...options });
+    }
+
+    async cancelCompact(entityId: string, compactId: string): Promise<boolean> {
+        const data = await this.call<{ ok: boolean }>('chat.cancelCompact', { id: entityId, compactId });
+        return data.ok === true;
     }
 
     async answerAsk(entityId: string, askId: string, answer: AskAnswer): Promise<void> {

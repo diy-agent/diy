@@ -24,7 +24,8 @@
 // 纯函数尽量多：端口裁决 / 数据根裁决 / 生产根判据都有单测（tests/config.test.ts），
 // 因为这三条都是「错了不会报错，只会静默用错数据」的类型。
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { DEFAULT_BUDGET } from '@diy-agent/entity-runtime';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -58,8 +59,8 @@ export interface ConfigOverrides {
     maxSteps?: number | undefined;
     /** 单条 bash 命令的超时（`--bash-timeout-ms`）；缺省 = 内核 300s */
     bashTimeoutMs?: number | undefined;
-    compactKeep?: number | undefined;
-    compactChars?: number | undefined;
+    // 压缩预算不再是运行参数：上限是全局常量（`DEFAULT_BUDGET`），
+    // 手工压缩在 UI 上按「保留最近几轮」调（2026-11-25 对齐 diy1 的 keepRounds）。
     /** 显式放行生产数据根（只给 dev 入口用；生产入口不需要） */
     allowProdHome?: boolean | undefined;
     /** 显式 UI 产物目录（调试用；缺省 `<buildRoot>/web`，不存在 = 不提供静态） */
@@ -97,8 +98,11 @@ export interface Diy2Config {
     modelConfigPath: string | undefined;
     /** 实例名（`--name`），多实例时人认得出的身份；缺省 null */
     name: string | null;
-    /** 压缩预算 */
-    compact: { keepLast: number; maxChars: number };
+    /**
+     * 手工压缩默认保留的轮数（**全局常量**，不来自 argv）。
+     * 自动压缩不看它：判据是模型窗口水位（窗口 × 0.16 保留 / 窗口 − max(10%,16k) 触发）。
+     */
+    compact: { keepTurns: number };
     /** 工具面：shell = 带 bash；files = 只读文件工具（`--tools files`） */
     tools: 'shell' | 'files';
     /** 裁决过程中的「本该报却没报」的事（被拒的生产根等）：入口负责打出来 */
@@ -152,14 +156,31 @@ export function isProdHome(home: string): boolean {
     return samePath(home, join(real, '.diy')) || samePath(home, join(real, '.diy', 'diy2'));
 }
 
+/** 是不是一个存在的文件 / 目录（不存在 / 没权限 / 路径怪 = false，不抛） */
+async function isFile(path: string): Promise<boolean> {
+    try {
+        return (await stat(path)).isFile();
+    } catch {
+        return false;
+    }
+}
+
+async function isDir(path: string): Promise<boolean> {
+    try {
+        return (await stat(path)).isDirectory();
+    } catch {
+        return false;
+    }
+}
+
 /** 从某个目录向上找本包根（`package.json` 的 name 命中）—— 产物里也找得到 */
-export function findAppRoot(start: string): string | undefined {
+export async function findAppRoot(start: string): Promise<string | undefined> {
     let dir = resolve(start);
     for (let i = 0; i < 8; i++) {
         const manifest = join(dir, 'package.json');
-        if (existsSync(manifest)) {
+        if (await isFile(manifest)) {
             try {
-                const pkg = JSON.parse(readFileSync(manifest, 'utf8')) as { name?: string };
+                const pkg = JSON.parse(await readFile(manifest, 'utf8')) as { name?: string };
                 if (pkg.name === '@diy-agent/app-diy2') return dir;
             } catch {
                 /* 半截 / 坏 JSON：继续往上，不当致命错误 */
@@ -173,10 +194,10 @@ export function findAppRoot(start: string): string | undefined {
 }
 
 /** 从某个目录向上找 git worktree 根（`diy.yaml` + `apps/` 是仓库的心跳；发布形态没有） */
-export function findRepoRoot(start: string): string | undefined {
+export async function findRepoRoot(start: string): Promise<string | undefined> {
     let dir = resolve(start);
     for (let i = 0; i < 8; i++) {
-        if (existsSync(join(dir, 'diy.yaml')) && existsSync(join(dir, 'apps'))) return dir;
+        if ((await isFile(join(dir, 'diy.yaml'))) && (await isDir(join(dir, 'apps')))) return dir;
         const parent = dirname(dir);
         if (parent === dir) return undefined;
         dir = parent;
@@ -267,9 +288,9 @@ export function resolvePort(opts: { mode: Diy2Env; cliPort?: number | undefined;
 }
 
 /** 读 `<home>/app.port`（**记录**，不是存活证据）；不存在 / 坏内容 / 非法端口 → null */
-export function readPortFile(file: string): number | null {
+export async function readPortFile(file: string): Promise<number | null> {
     try {
-        const port = Number.parseInt(readFileSync(file, 'utf8').trim(), 10);
+        const port = Number.parseInt((await readFile(file, 'utf8')).trim(), 10);
         return Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
     } catch {
         return null;
@@ -283,25 +304,31 @@ export function readPortFile(file: string): number | null {
  * 别再给它加"删除入口" —— 删了就是每次都换内核随机端口（书签失效）；
  * 也别拿它的存在当存活证据 —— 那是探活的活。
  */
-export function writePortFile(file: string, port: number): void {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${port}\n`, 'utf8');
+export async function writePortFile(file: string, port: number): Promise<void> {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, `${port}\n`, 'utf8');
 }
 
-/** 组装运行配置（**唯一入口**：server / dev / bin 的 CLI 产物都从这拿）。 */
-export function resolveConfig(opts?: {
+/** 组装运行配置（**唯一入口**：server / dev / bin 的 CLI 产物都从这拿）。
+ *
+ * 异步：内部要探 `package.json` / `diy.yaml` / `app.port` / `model.yaml` / UI 产物目录，
+ * 这些读操作一律走 `fs/promises`（##408 sync-io 护栏；启动期「没有并发」不是留同步 IO 的理由 ——
+ * 全仓口径统一才不会有人照着抄一个进去）。
+ */
+export async function resolveConfig(opts?: {
     /** 调用方所在目录（用来向上找 appRoot / repoRoot）；发布形态给 bin 目录即可 */
     moduleDir?: string;
     /** 入口声明的环境（生产入口 production，dev 入口 development，测试 test） */
     mode?: Diy2Env;
     /** argv 解析后的参数（声明在 src/cli/options.ts） */
     overrides?: ConfigOverrides;
-}): Diy2Config {
+}): Promise<Diy2Config> {
     const mode: Diy2Env = opts?.mode ?? 'production';
     const overrides = opts?.overrides ?? {};
     const moduleDir = opts?.moduleDir ?? process.cwd();
-    const appRoot = findAppRoot(moduleDir) ?? findAppRoot(join(moduleDir, '..')) ?? resolve(moduleDir);
-    const repoRoot = findRepoRoot(appRoot) ?? null;
+    const appRoot =
+        (await findAppRoot(moduleDir)) ?? (await findAppRoot(join(moduleDir, '..'))) ?? resolve(moduleDir);
+    const repoRoot = (await findRepoRoot(appRoot)) ?? null;
 
     const notes: string[] = [];
     const { home } = resolveHome({
@@ -316,7 +343,7 @@ export function resolveConfig(opts?: {
         defaultLaunch(mode);
 
     const portFile = join(home, 'app.port');
-    const recordedPort = readPortFile(portFile);
+    const recordedPort = await readPortFile(portFile);
     const { port, source } = resolvePort({ mode, cliPort: overrides.port, recordedPort });
 
     const buildRoot = buildRootOf(appRoot);
@@ -325,24 +352,25 @@ export function resolveConfig(opts?: {
     const webDir =
         explicitWebDir !== undefined && explicitWebDir !== ''
             ? resolve(explicitWebDir)
-            : existsSync(defaultWebDir)
+            : (await isDir(defaultWebDir))
               ? defaultWebDir
               : undefined;
 
     // model.yaml：显式 `--model-config` > 本数据根 > **生产数据根才有的一档**（`~/.diy/model.yaml`）。
     // 最后那档按 home 位置判定（父目录就是生产根），不是按 mode 标签 —— 测试实例换到 run/
     // 之后天然拿不到它，不可能「隔离了 sqlite 却仍用生产 key」。
-    const modelConfigPath = (() => {
-        if (overrides.modelConfig !== undefined && overrides.modelConfig.trim() !== '') {
-            return resolve(overrides.modelConfig);
-        }
-        if (existsSync(join(home, 'model.yaml'))) return join(home, 'model.yaml');
+    const explicitModelConfig = overrides.modelConfig?.trim();
+    let modelConfigPath: string | undefined;
+    if (explicitModelConfig !== undefined && explicitModelConfig !== '') {
+        modelConfigPath = resolve(explicitModelConfig);
+    } else if (await isFile(join(home, 'model.yaml'))) {
+        modelConfigPath = join(home, 'model.yaml');
+    } else {
         const prodConfig = join(realHomeDir(), '.diy', 'model.yaml');
-        if (samePath(dirname(home), join(realHomeDir(), '.diy')) && existsSync(prodConfig)) {
-            return prodConfig;
+        if (samePath(dirname(home), join(realHomeDir(), '.diy')) && (await isFile(prodConfig))) {
+            modelConfigPath = prodConfig;
         }
-        return undefined;
-    })();
+    }
 
     return {
         app: APP_ID,
@@ -360,10 +388,7 @@ export function resolveConfig(opts?: {
         webDir,
         modelConfigPath,
         name: overrides.name?.trim() || null,
-        compact: {
-            keepLast: overrides.compactKeep ?? 12,
-            maxChars: overrides.compactChars ?? 24000,
-        },
+        compact: { ...DEFAULT_BUDGET },
         tools: overrides.tools === 'files' ? 'files' : 'shell',
         notes,
         // 没给 = 用内核缺省；正数才覆盖（0 步 = 每轮直接掐停，不是想要的语义，故下限 1）
@@ -381,8 +406,9 @@ export function resolveConfig(opts?: {
 export function modelConfigHint(config: Diy2Config): string | null {
     if (config.modelConfigPath !== undefined) return null;
     const file = join(config.home, 'model.yaml');
+    // 不带 `[diy2]` 前缀（同 describeConfig：前缀由日志装配统一给）
     return (
-        `[diy2] 数据根里没有 model.yaml（${file}）` +
+        `数据根里没有 model.yaml（${file}）` +
         ` → 模型会报缺 key；填充：./scripts/seed-run-home.sh ${config.home}（在仓库根跑），` +
         '或 --model-config 显式指定'
     );
@@ -397,8 +423,10 @@ export function describeConfig(config: Diy2Config, actualPort?: number): string 
     // 实际监听端口可能不等于 config.port（0 = 内核分配、粘性端口被占后漂移）：
     // 自报以**实际**为准，否则这行日志在「到底连哪个端口」这件事上说谎。
     const shown = actualPort ?? config.port;
+    // 不带 `[diy2]` 前缀：终端那层前缀由日志装配（./log 的 source = `diy2:<模块>`）统一给，
+    // 调用点只交正文。抄两遍会打出 `[diy2:boot] [diy2] 生产/prod …`。
     return (
-        `[diy2] ${where}/${config.launch} home=${config.home} db=${config.dbPath} ` +
+        `${where}/${config.launch} home=${config.home} db=${config.dbPath} ` +
         `port=${shown === 0 ? '0(内核分配)' : shown}(${config.portSource})`
     );
 }

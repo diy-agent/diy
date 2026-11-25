@@ -8,8 +8,7 @@
 import { CircleCheck, CircleDot } from 'lucide-react';
 import * as React from 'react';
 
-import { statusMeta, taskStatusOf, toggleTaskStatus, type Room } from '../model';
-import { actions } from '../store';
+import { statusMeta, taskStatusOf, type Room } from '../model';
 import { isPlainLeftClick } from './link';
 
 /**
@@ -176,8 +175,11 @@ export function EditableName({
  * 侧栏行里原来的「彩色圆点 + 文字胶囊 + 默认应答色点」三件套占满了行尾，
  * 用户报「信息太多」。图标只占 14px，且**放到标题前面**（GitHub 列表的读法：状态在左）。
  *
- * 形状与颜色都只在这里定义：侧栏行（StatusIcon）与头部胶囊（StatusChip）共用，
- * 不会出现「同一个状态两处画法不同」。颜色取值出自 `model.ts` 的 TASK_STATUSES。
+ * 形状与颜色都只在这里定义（侧栏行、历史行共用），不会出现「同一个状态两处画法不同」。
+ * 颜色取值出自 `model.ts` 的 TASK_STATUSES。
+ *
+ * **这里只有“画”，没有“切”**（用户 2026-11-24）：切换是行尾那颗显式的「关闭 / 打开」按钮的事。
+ * 一颗图标既当状态又当开关，等于把能力藏起来（没人知道它能点），工具里还容易误触。
  */
 const STATUS_ICON = {
     open: CircleDot,
@@ -189,76 +191,38 @@ export function StatusGlyph({
     room,
     className = '',
     iconClass = 'size-4',
+    running = false,
 }: {
     room: Room;
     className?: string;
     iconClass?: string;
+    /** 这个容器此刻真有成员在跑：呼吸一下（**不加新元素**，也不抢状态图标本身的颜色） */
+    running?: boolean;
 }) {
     if (room.type !== 'task') return null;
     const status = taskStatusOf(room);
     const meta = statusMeta(status);
     const Icon = STATUS_ICON[status];
     return (
-        <span className={`inline-flex shrink-0 ${meta.text} ${className}`} title={`状态：${meta.label}`}>
+        <span
+            className={`relative inline-flex shrink-0 ${meta.text} ${className}`}
+            title={`${running ? '正在运行 · ' : ''}状态：${meta.label}`}
+        >
             <Icon className={iconClass} strokeWidth={2.4} />
+            {running && (
+                <>
+                    {/* 光晕：6px 的点在已经高亮（选中）的行上根本看不见（2026-11-25 用户报「新任务没有
+                        轮次中的效果」—— 点其实画了，只是没人看得见）。一个扩散的光环 + 一颗带背景环的点，
+                        不动行底色、不动图标形状，也不占行里新的格子。 */}
+                    <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 size-2 animate-ping rounded-full bg-emerald-400/70" />
+                    <span
+                        aria-label="正在运行"
+                        title="正在运行"
+                        className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-emerald-400 ring-2 ring-background"
+                    />
+                </>
+            )}
         </span>
     );
 }
 
-/** 只画图标（不画文字）：侧栏行展开态用。点一下 open ↔ closed */
-export function StatusIcon({ room, className = '' }: { room: Room; className?: string }) {
-    if (room.type !== 'task') return null;
-    const status = taskStatusOf(room);
-    const meta = statusMeta(status);
-    const next = toggleTaskStatus(status);
-    return (
-        <button
-            onClick={(event) => {
-                event.stopPropagation();
-                void actions.setRoomStatus(room.id, next);
-            }}
-            title={`${meta.label}（点击${next === 'closed' ? '关闭，并从项目树收起' : '重新打开'}）`}
-            aria-label={`状态：${meta.label}（点击切换）`}
-            className={`shrink-0 rounded p-0.5 hover:bg-muted ${className}`}
-        >
-            <StatusGlyph room={room} iconClass="size-3.5" />
-        </button>
-    );
-}
-
-/**
- * 图标 + 文字胶囊（头部标题用：那里空间够，文字帮得上忙）。
- * `compact` = 只要图标，与 StatusIcon 同一个形状（收起态 rail 装不下文字）。
- */
-export function StatusChip({
-    room,
-    compact = false,
-    className = '',
-}: {
-    room: Room;
-    compact?: boolean;
-    className?: string;
-}) {
-    if (room.type !== 'task') return null;
-    const status = taskStatusOf(room);
-    const meta = statusMeta(status);
-    const Icon = STATUS_ICON[status];
-    return (
-        <button
-            onClick={(event) => {
-                event.stopPropagation();
-                void actions.setRoomStatus(room.id, toggleTaskStatus(status));
-            }}
-            title={`${meta.label}（点击${toggleTaskStatus(status) === 'closed' ? '关闭' : '重新打开'}）`}
-            aria-label={`状态：${meta.label}（点击切换）`}
-            className={
-                compact
-                    ? `shrink-0 rounded p-0.5 hover:bg-muted ${meta.text} ${className}`
-                    : `flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] hover:bg-muted ${className}`
-            }
-        >
-            <Icon className={compact ? 'size-3.5' : 'size-3'} strokeWidth={2.4} />
-            {!compact && <span className={meta.text}>{meta.label}</span>}
-        </button>
-    );
-}

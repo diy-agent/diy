@@ -14,11 +14,18 @@
 // 生命周期：启动写 → 就绪回填 port → 退出删。**退出清理不保证执行**（SIGKILL / 崩溃），
 // 故读侧一律按 pid 存活过滤，并顺手删死条目 —— 「关掉就不再出现」靠这条，不靠退出钩子。
 
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { APP_ID, realHomeDir } from './config';
+import { openLog } from './log';
+
+const log = openLog('registry');
+
+/** `ps` 的异步版：`snapshotParents` 在启停路径上，不再用 `execFileSync` 把整个事件循环 fork 停 */
+const execFileAsync = promisify(execFile);
 
 /** 一个父进程跳（`parents[0]` = 直接父亲） */
 export interface ParentHop {
@@ -131,11 +138,13 @@ export function parseRecord(raw: unknown): InstanceRecord | null {
 }
 
 /** 取一个进程的一跳（POSIX 的 `ps`；拿不到就 null，不要为了注册表把启动搞崩） */
-export function processHop(pid: number): { hop: ParentHop; ppid: number } | null {
+export async function processHop(pid: number): Promise<{ hop: ParentHop; ppid: number } | null> {
     if (!Number.isFinite(pid) || pid <= 1) return null;
     try {
-        const out = execFileSync('ps', ['-o', 'ppid=,command=', '-p', String(pid)], { encoding: 'utf8' });
-        const line = out.trim();
+        const { stdout } = await execFileAsync('ps', ['-o', 'ppid=,command=', '-p', String(pid)], {
+            encoding: 'utf8',
+        });
+        const line = stdout.trim();
         if (line === '') return null;
         const match = /^(\d+)\s+(.*)$/s.exec(line);
         if (match === null) return null;
@@ -149,15 +158,15 @@ export function processHop(pid: number): { hop: ParentHop; ppid: number } | null
 export const PARENT_DEPTH = 4;
 
 /** 快照父进程链（**启动瞬间**才有意义）；`lookup` 可注入，便于单测喂假表 */
-export function snapshotParents(
+export async function snapshotParents(
     ppid: number = process.ppid,
-    lookup: (pid: number) => { hop: ParentHop; ppid: number } | null = processHop,
+    lookup: (pid: number) => Promise<{ hop: ParentHop; ppid: number } | null> = processHop,
     depth: number = PARENT_DEPTH,
-): ParentHop[] {
+): Promise<ParentHop[]> {
     const out: ParentHop[] = [];
     let cur = ppid;
     for (let i = 0; i < depth && cur > 1; i++) {
-        const got = lookup(cur);
+        const got = await lookup(cur);
         if (got === null) break;
         out.push(got.hop);
         if (got.ppid === cur) break;
@@ -167,48 +176,48 @@ export function snapshotParents(
 }
 
 /** 原子写：临时文件 + rename（读侧与本进程并发，不能让它看到半截 JSON） */
-function writeAtomic(file: string, text: string): void {
-    mkdirSync(dirname(file), { recursive: true });
+async function writeAtomic(file: string, text: string): Promise<void> {
+    await mkdir(dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;
-    writeFileSync(tmp, text, 'utf8');
-    renameSync(tmp, file);
+    await writeFile(tmp, text, 'utf8');
+    await rename(tmp, file);
 }
 
 /** 写一条记录 */
-export function writeRecord(dir: string, rec: InstanceRecord): void {
-    writeAtomic(recordPath(dir, rec.pid), `${JSON.stringify(rec, null, 2)}\n`);
+export async function writeRecord(dir: string, rec: InstanceRecord): Promise<void> {
+    await writeAtomic(recordPath(dir, rec.pid), `${JSON.stringify(rec, null, 2)}\n`);
 }
 
 /** 读一条记录；不存在 / 坏 JSON / 字段不合格 → null */
-export function readRecord(dir: string, pid: number): InstanceRecord | null {
+export async function readRecord(dir: string, pid: number): Promise<InstanceRecord | null> {
     try {
-        return parseRecord(JSON.parse(readFileSync(recordPath(dir, pid), 'utf8')));
+        return parseRecord(JSON.parse(await readFile(recordPath(dir, pid), 'utf8')));
     } catch {
         return null;
     }
 }
 
 /** 局部更新（读-改-写）；记录不在则什么都不做（**不凭空造一条**） */
-export function updateRecord(dir: string, pid: number, patch: Partial<InstanceRecord>): void {
-    const current = readRecord(dir, pid);
+export async function updateRecord(dir: string, pid: number, patch: Partial<InstanceRecord>): Promise<void> {
+    const current = await readRecord(dir, pid);
     if (current === null) return;
-    writeRecord(dir, { ...current, ...patch, updatedAt: new Date().toISOString() });
+    await writeRecord(dir, { ...current, ...patch, updatedAt: new Date().toISOString() });
 }
 
 /** 删记录；不存在不算错 */
-export function removeRecord(dir: string, pid: number = process.pid): void {
+export async function removeRecord(dir: string, pid: number = process.pid): Promise<void> {
     try {
-        unlinkSync(recordPath(dir, pid));
+        await unlink(recordPath(dir, pid));
     } catch {
         /* 已不在 */
     }
 }
 
 /** 读全表 + 按存活过滤，**顺手删死条目**；目录不存在 → 空表（第一次跑的正常态） */
-export function readRecords(dir: string, alive: (pid: number) => boolean = isPidAlive): InstanceRecord[] {
+export async function readRecords(dir: string, alive: (pid: number) => boolean = isPidAlive): Promise<InstanceRecord[]> {
     let names: string[];
     try {
-        names = readdirSync(dir);
+        names = await readdir(dir);
     } catch {
         return [];
     }
@@ -217,10 +226,10 @@ export function readRecords(dir: string, alive: (pid: number) => boolean = isPid
         if (!name.endsWith('.json')) continue;
         const pid = Number.parseInt(name.slice(0, -'.json'.length), 10);
         if (!Number.isFinite(pid)) continue;
-        const rec = readRecord(dir, pid);
+        const rec = await readRecord(dir, pid);
         if (rec === null || !alive(rec.pid)) {
             try {
-                unlinkSync(join(dir, name));
+                await unlink(join(dir, name));
             } catch {
                 /* 删不掉就算了 */
             }
@@ -232,14 +241,14 @@ export function readRecords(dir: string, alive: (pid: number) => boolean = isPid
 }
 
 /** 只留本 app 的记录（注册表是跨 app 共享的，`app` 字段是唯一判据） */
-export function readAppRecords(dir: string, app: string = APP_ID): InstanceRecord[] {
-    return readRecords(dir).filter(
+export async function readAppRecords(dir: string, app: string = APP_ID): Promise<InstanceRecord[]> {
+    return (await readRecords(dir)).filter(
         (rec) => rec.app === app || (rec.app === null && rec.argv.some((a) => a.includes('diy2'))),
     );
 }
 
 /** 本进程的记录骨架（`port` 先给 null，监听成功后 `updateRecord` 回填） */
-export function currentRecord(opts: {
+export async function currentRecord(opts: {
     app: typeof APP_ID;
     launch: string | null;
     name: string | null;
@@ -249,7 +258,7 @@ export function currentRecord(opts: {
     variant: string;
     env: string;
     argv?: string[];
-}): InstanceRecord {
+}): Promise<InstanceRecord> {
     const now = new Date().toISOString();
     return {
         pid: process.pid,
@@ -267,13 +276,8 @@ export function currentRecord(opts: {
         cwd: process.cwd(),
         startedAt: now,
         updatedAt: now,
-        parents: snapshotParents(),
+        parents: await snapshotParents(),
     };
-}
-
-/** 注册表目录是否存在（诊断用；写侧自己会 mkdir） */
-export function registryExists(dir: string): boolean {
-    return existsSync(dir);
 }
 
 /** 自报所需的配置切片（`Diy2Config` 结构上满足它；这里不 import 是为了不让注册表依赖配置全貌） */
@@ -291,12 +295,12 @@ export interface AnnounceTarget {
  * 自报本进程（启动即写，拿到端口后回填）。**失败只告警**：注册表写不进去
  * （只读家目录 / 权限）不该让一个能干活的服务起不来。
  */
-export function announce(target: AnnounceTarget, port: number | null): void {
+export async function announce(target: AnnounceTarget, port: number | null): Promise<void> {
     const dir = registryDir();
     try {
-        writeRecord(
+        await writeRecord(
             dir,
-            currentRecord({
+            await currentRecord({
                 app: target.app,
                 launch: target.launch,
                 name: target.name,
@@ -307,16 +311,16 @@ export function announce(target: AnnounceTarget, port: number | null): void {
                 env: target.env,
             }),
         );
-        if (port !== null) updateRecord(dir, process.pid, { port });
+        if (port !== null) await updateRecord(dir, process.pid, { port });
     } catch (error) {
-        console.error(`[diy2] 注册表写入失败（${dir}）：${error instanceof Error ? error.message : String(error)}`);
+        log.error('注册表写入失败', { dir }, error);
     }
 }
 
 /** 撤销自报（退出时）；失败无声 —— 读侧本来就按 pid 存活过滤 */
-export function retract(): void {
+export async function retract(): Promise<void> {
     try {
-        removeRecord(registryDir());
+        await removeRecord(registryDir());
     } catch {
         /* 忽略 */
     }

@@ -103,8 +103,8 @@ describe('P0 回归', () => {
             const turnId = input.turnId ?? 'turn';
             const messageId = `msg-${calls}`;
             yield { seq: 1, type: 'run.started', turnId, messageId };
-            if (calls === 2) {
-                // 第二轮挂住：让“这一轮正在跑”的状态持续到我们落完整快照
+            if (calls === 3) {
+                // 第三轮挂住：让“这一轮正在跑”的状态持续到我们落完整快照
                 while (!input.signal.aborted) await sleep(2);
                 yield { seq: 2, type: 'run.failed', turnId, message: 'aborted' };
                 return;
@@ -118,14 +118,17 @@ describe('P0 回归', () => {
         } as (input: RunOptions) => AsyncIterable<AgentEvent>;
 
         const h = makeRoom({ run });
+        // 先跑两轮：上下文里至少要有两轮，压缩切点才可能落在某轮的轮首（判据要求 cut > 0，
+        // 只有一轮时只能切到第一条 user ⇒ 压不动）
+        await h.room.say({ text: '第零轮', author: HUMAN });
         await h.room.say({ text: '第一轮', author: HUMAN });
 
-        // 第二轮：这句话已经进了公共日志，但这一轮还没跑完（既没入 transcript、也没跑完）
+        // 第三轮：这句话已经进了公共日志，但这一轮还没跑完（既没入 transcript、也没跑完）
         void h.room.say({ text: '第二轮：这句话不能被吞', author: HUMAN }).catch(() => undefined);
         await waitFor(() => h.room.busy());
 
         // 在跑的当口压一次 ⇒ 触发落快照；旧写法会把水位推到房间末尾（含正在跑的那条）
-        await h.room.compact(BOT_A.id, { keepLast: 0, maxChars: 1 });
+        await h.room.compact(BOT_A.id, { keepTurns: 0 });
 
         const target = h.store
             .roomEntries(h.spec.id)
@@ -138,7 +141,7 @@ describe('P0 回归', () => {
         const restarted = h.rebuild();
         restarted.room.recover();
         // 判据用 calls 而不是 h.runs：这里注入的是自定义 run，只有 harness 的脚本 run 才往 runs 里记
-        await waitFor(() => calls >= 3);
+        await waitFor(() => calls >= 4);
         await waitFor(() => !restarted.room.busy());
 
         expect(countIn(restarted.room.contextOf(BOT_A.id) ?? [], '第二轮：这句话不能被吞')).toBe(1);
