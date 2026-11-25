@@ -59,7 +59,7 @@ export interface RoomContextOptions {
     readonly skillsRoot?: string;
     /** 任务日志（append-only）：由宿主给取数函数；不传 = 不投 journal 节 */
     readonly journal?: () => readonly JournalEntry[];
-    /** 任务内部的拆分图（unit DAG）：宿主给取数函数；不传 = 不投 units 节 */
+    /** 任务的需求账本树：宿主给取数函数；不传 = 不投 units 节 */
     readonly units?: () => UnitBoard;
     /** 房间成员（@ 键 / 是否主人格）：不传 = 不投 room 节 */
     readonly members?: () => readonly { id: string; name: string; key: string; main: boolean }[];
@@ -226,7 +226,7 @@ function journalProvider(get?: () => readonly JournalEntry[]): ContextProvider {
  * 任务的需求账本树。**全量注入**（2026-11-24 用户裁：先简单走）——
  * 于是「现在能做哪几条」不需要多一次工具调用。
  *
- * 值的算法在 `unitsContextValue()`（`units.ts`）：界面「文本」tab 调同一个函数，
+ * 值的算法在 `unitsContextValue()`（`units.ts`）：界面「目标」视图的源码形态调同一个函数，
  * 所以「模型读到的」和「人看到的」不可能分叉。这里只负责挂 key。
  */
 function unitsProvider(get?: () => UnitBoard): ContextProvider {

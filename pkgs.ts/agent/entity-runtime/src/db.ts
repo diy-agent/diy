@@ -243,7 +243,7 @@ export interface Store {
     projectOf(id: string): ProjectRecord | undefined;
     saveProject(project: ProjectInput): ProjectRecord;
 
-    // ── 任务的工作单元（task 私有的 DAG 节点）──────────────────
+    // ── 任务的需求账本树（task 私有；只有 parent 一条关系）──────
     /** 某任务的全部 unit（创建序）。**不是实体**：没有 number / 不进侧栏 */
     listUnits(taskId: string): UnitRecord[];
     unitOf(taskId: string, unitId: string): UnitRecord | undefined;
@@ -868,11 +868,11 @@ export function openStore(file: string): Store {
         return row === undefined ? undefined : readTaskRow(row);
     };
 
-    // ── unit（任务私有的 DAG 节点）────────────────────────────
+    // ── unit（任务私有的需求账本树）──────────────────────────
     //
-    // 与 entity_links 的 blocks 是**两套图**：实体图（task ↔ task）和任务内部的 unit 图。
+    // 与 entity_links 是**两套结构**：实体关系图（task ↔ task，有外键）和任务内部的父子树。
     // 不复用 entity_links 是因为 unit 不是实体（无 identity 行 / 不进侧栏 / 不占 #号）——
-    // 而 entity_links 有 `REFERENCES entities(id)` 外键。挡环算法照搬上面那份。
+    // 而 entity_links 有 `REFERENCES entities(id)` 外键。
 
     const readUnitRow = (row: Record<string, unknown>): UnitRecord => ({
         taskId: String(row['task_id']),
@@ -967,8 +967,9 @@ export function openStore(file: string): Store {
      * 删一条 unit。
      *
      * 有子节点的母项也能删（树是账本，不是外键）：`task_units` 上父只是个 id 字符串，
-     * 删掉母项不会连带删子项 —— 那些子项会**升成根**（`unitBoard` 把找不到的父当根，
-     * 与「悬空父不制造幽灵节点」同一条判据）。要连子一起删，调方自己逐条删。
+     * 删掉母项不会连带删子项 —— 那些子项就成了「悬空父」，`unitBoard` 按根处理
+     * （与「悬空父不制造幽灵节点」同一条判据）。要连子一起删，调方自己逐条删；
+     * `unit_drop` 工具会顺手把它们提到上一级，比留成悬空更好读。
      */
     const dropUnit = (taskId: string, unitId: string): boolean => {
         const result = db.prepare('DELETE FROM task_units WHERE task_id = ? AND id = ?').run(taskId, unitId);

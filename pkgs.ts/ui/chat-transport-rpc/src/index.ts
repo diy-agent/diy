@@ -228,7 +228,7 @@ export class RpcChatClient implements ChatClient {
     };
 
     /**
-     * 任务内部的拆分图（unit DAG）。**只读**：writer 只有 agent 的 `unit_*` 工具，
+     * 任务的需求账本树。**只读**：writer 只有 agent 的 `unit_*` 工具，
      * 界面是旁观窗口 —— 想改就在聊天里说。
      */
     readonly units = {

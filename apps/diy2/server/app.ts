@@ -986,7 +986,7 @@ export async function createDiy2App(opts: {
                 list: async () => ({ providers: modelProviders(), defaultModelKey: defaultModelKey() }),
             },
             /**
-             * 任务内部的拆分图（unit DAG）。只读：writer 只有 agent 的工具（2026-11-24 裁），
+             * 任务的**需求账本树**（只读）。writer 只有 agent 的 `unit_*` 工具，
              * 界面是旁观者的窗口 —— 想改就在聊天里说。推导在 `unitBoard`（同一份纯函数）。
              */
             units: {
@@ -995,7 +995,7 @@ export async function createDiy2App(opts: {
                  * 模型读到的 `units` 节原文。
                  *
                  * 与上下文注入**同一份代码**（`unitsContextText()`）：界面若自己再拼一遍文本，
-                 * 两边迟早在溢出退化 / 批次行上分叉，而人看这一页恰恰是在核对
+                 * 两边迟早在溢出退化 / 哪些条目点名上分叉，而人看这一页恰恰是在核对
                  * 「模型到底读到了什么」。
                  */
                 text: async ({ input }) => unitsContextText(unitBoard(store.listUnits(input.id))),

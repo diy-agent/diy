@@ -55,7 +55,7 @@ export interface RoomToolsOptions {
     /** 任务日志写入口；不传 = 没有 journal 工具 */
     onJournal?: (input: { kind: import('../db').JournalKind; text: string }) => void;
     /**
-     * 任务内部的 unit DAG（读写）；不传 = 没有 `unit_*` 工具。
+     * 任务的需求账本树（读写）；不传 = 没有 `unit_*` 工具。
      * 非 task 房间不该传：unit 是 task 私有的，没有任务就没有图。
      */
     units?: UnitHost;

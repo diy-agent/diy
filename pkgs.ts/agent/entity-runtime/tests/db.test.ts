@@ -496,6 +496,9 @@ describe('unit（需求账本树的节点）', () => {
         // 游标一起清：「号不回收」说的是同一个任务内；任务本身没了就没有「同任务内」了
         store.saveRoom(room);
         expect(add(store, room.id, 'c').id).toBe('u1');
+    });
+});
+
 describe('撤掉中断事实（deleteInterruptedFacts）', () => {
     // 只撤「那一轮、那个 bot」的：turnId 是房间级的，@all 时两个 bot 共享一个 turnId
     it('按 turnId + botId 精确删，不误伤同轮的别人、也不误伤别的轮', () => {
