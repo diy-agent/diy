@@ -29,6 +29,24 @@ const topicOfRoom = (roomId: string): string => `room:${roomId}`;
 const roomOfTopic = (topic: string): string => topic.slice('room:'.length);
 
 /**
+ * 活动流上「什么算数据」：只有 `{ kind: 'activity' }` 那一帧。
+ *
+ * 服务端的 `roomFrames` 对**每条** server-stream 都先发一条 `{ kind: 'ready' }`（「从现在起
+ * 事件连续」），活动流也照发。而 `ActivityFrame` 里没有这个 kind —— 不挡掉的话，监听者按
+ * `frame.rooms` 取值就炸在 `undefined` 上，异常从 `pump` 的 for-await 里逃出来、把整条流
+ * 判死：此后**再也不会有活动帧**，界面上就是「运行状态不更新，刷新页面才好」。
+ *
+ * 挡住的地方放在这里（话题语义的拥有者），不是每个监听者各写一遍 `if`。
+ */
+export function activityFrameOf(value: unknown): ActivityFrame | undefined {
+    if (value === null || typeof value !== 'object') return undefined;
+    const frame = value as { kind?: unknown; rooms?: unknown; jobs?: unknown };
+    if (frame.kind !== 'activity') return undefined;
+    if (!Array.isArray(frame.rooms) || typeof frame.jobs !== 'number') return undefined;
+    return value as ActivityFrame;
+}
+
+/**
  * 实例级活动流的话题名（服务端 rpc.ts 的 `ACTIVITY_TOPIC` 必须同值）。
  *
  * 它不是房间：`openTopic` 据此改走 `activity` 那条 server-stream（不带房间参数）。
@@ -52,6 +70,8 @@ export class StreamHub {
      * 帧型不同，但「按话题分发」这套机制一模一样，不为此分两个 hub。
      */
     private readonly topics = new Map<string, Set<(event: unknown) => void>>();
+    /** 话题 → 单条流意外结束后重开的次数（成功收到帧就归零）：退避用 */
+    private readonly streamAttempts = new Map<string, number>();
     /** 正在开的流（同一个话题可能被 watch 和 post 同时要，别开两遍） */
     private readonly starting = new Map<string, Promise<boolean>>();
     /** 话题 → 取消信号（stop 时 abort；rpc 会同时给服务端发 cancel 帧） */
@@ -253,13 +273,45 @@ export class StreamHub {
     private async pump(topic: string, handle: StreamHandle<unknown>, controller: AbortController): Promise<void> {
         try {
             for await (const event of handle) {
-                for (const listener of this.topics.get(topic) ?? []) listener(event);
+                const value = topic === ACTIVITY_TOPIC ? activityFrameOf(event) : event;
+                // 活动流上的 `ready` / 认不出的帧：既不是数据，也不是终态，跳过就是了
+                if (value === undefined) continue;
+                this.streamAttempts.delete(topic);
+                for (const listener of this.topics.get(topic) ?? []) {
+                    // 单个监听者抛错不能带走整条流：一条流喂多个监听者，谁炸谁负责
+                    try {
+                        listener(value);
+                    } catch (error) {
+                        console.error(`[StreamHub] 监听者抛错（${topic}）：`, error);
+                    }
+                }
             }
         } catch {
             /* 连接断了 / 被 abort：交给 loop 重连后重开 */
         } finally {
-            if (this.controllers.get(topic) === controller) this.controllers.delete(topic);
+            // 不是我们主动停的（stopTopic 先删 controllers 再 abort）⇒ 这条流自己结束了
+            if (this.controllers.get(topic) === controller) {
+                this.controllers.delete(topic);
+                this.reopen(topic);
+            }
         }
+    }
+
+    /**
+     * 单条流意外结束（服务端关流 / 这条流报错）时把它重开。
+     *
+     * 不重开就等于**静默死亡**：`topics` 里还留着监听者，连接也还活着，所以整条连接的重连
+     * 逻辑不会介入 —— 页面上表现为「状态卡住，刷新才好」。退避与整连接重连同参。
+     */
+    private reopen(topic: string): void {
+        if (this.closed || !this.topics.has(topic)) return;
+        const attempt = this.streamAttempts.get(topic) ?? 0;
+        this.streamAttempts.set(topic, attempt + 1);
+        const wait = Math.min(RECONNECT.maxMs, RECONNECT.baseMs * 2 ** Math.min(attempt, 6));
+        void sleep(wait).then(() => {
+            if (this.closed || !this.topics.has(topic) || this.controllers.has(topic)) return;
+            void this.ensure(topic);
+        });
     }
 
     private stopTopic(topic: string): void {
