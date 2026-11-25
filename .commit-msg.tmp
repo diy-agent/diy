@@ -1,23 +1,31 @@
-refactor(ui/entity-chat): shadcn 面的用户气泡与输入区换成官方 Message / Bubble / InputGroup
+refactor(ui/entity-chat): 滚动层交给 MessageScroller，删掉手写的贴底跟随与补窗
 
-接着 9db7ba46（把官方会话组件族落进包），这一步把 Surface 的「表现层」换过去。
-滚动层**没动**（仍是 useWindowed），因为 scroll-anchor 与窗口化在补窗时冲突，
-等定方案再改。
+这是「对齐官方会话形态」的最后一块：滚动的谁说了算，从我们的 40 行 state+ref
+换成 @shadcn/react 的 MessageScroller。
 
-- 用户消息：div.items-end + div.rounded-2xl.bg-muted
-  → Message align="end" > MessageContent > Bubble align="end" variant="muted" > BubbleContent
-- bot 消息：div.flex.gap-2.5 + div.w-6(BotAvatar) + div.flex-1
-  → Message > MessageAvatar + MessageContent > MessageHeader（名字/时间/CopyButton 那一行）
-- 输入区：div.flex.items-end + Textarea + 两个 Button
-  → InputGroup > InputGroupTextarea + InputGroupAddon align="block-end" > InputGroupButton
+换掉的（全部删除）：
+- scrollRef / stickRef / atBottom 三个 state/ref
+- onScroll 里「距底 < 80 就算贴底」的判定
+- onScroll 里「scrollTop < 48 就补一窗 + 把新增高度加回 scrollTop」的补窗把戏
+- scrollToBottom 回调与手写的回底按钮
+- useWindowed（只渲染最近 N 条）—— 由此带来的 windowed.reveal 也没了
 
-顺带的收益：气泡的最大宽度、圆角、内边距、以及「底部还有内容」的滚动渐隐
-（scroll-fade-b）都回到官方定义，不再各写一份。
+换上的：
+- MessageScrollerProvider autoScroll（人在底部才跟随，上翻不打扰）
+- defaultScrollPosition="last-anchor"（进来先定位到最后一条用户消息）
+- MessageScrollerItem scrollAnchor={entry.kind === 'user'}（用户回合是锚点：
+  新问题落顶部、回复在它下面流式长出）
+- MessageScrollerButton（显隐与位移动画由 data-active 驱动，不用自己算）
+- 待答跳转：windowed.reveal(...) → scroller.scrollToMessage(entry.key, { align: 'center' })
 
-验证（diy2 lab :52137，实机）：
-- ./sha.sh check 全绿
-- DOM：[data-slot=input-group] 1 / input-group-control 1 / input-group-addon 1，
-  bubble 1 / bubble-content 1 / message 2；无横向溢出
-- 实发一条消息「你好」：渲染在气泡里、时间与 bot 头像行都对；
-  回复侧报「An active OpenCode Go subscription is required to use OpenCode Go models」
-  —— 是 lab 数据根里 model.yaml 的模型指向问题，与本次 UI 改动无关
+两点留痕：
+1. 每个 item 里仍保留 content-visibility:auto + contain-intrinsic-size
+   （DOM 不全渲染不可能，但离屏条目跳过布局/绘制，长会话的实际开销接近虚拟化）。
+2. useWindowed 文件没删。若将来长会话真卡，正确的加窗口化方式是官方的
+   Viewport preserveScrollOnPrepend（专门处理「往前插内容时保住滚动位置」）+ 
+   useMessageScrollerVisibility().visibleMessageIds，不必自己写补窗。
+
+验证（diy2 lab :52137）：./sha.sh check 全绿；
+[data-slot=message-scroller] 1 / viewport 1 / content 1 / item 2，无横向溢出；
+console 干净（期间出现过 useWindowed/scrollRef is not defined，是 HMR 抓住了编辑中间态，
+reload 后不再复现）。

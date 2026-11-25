@@ -5,15 +5,18 @@
 // components/ 里的业务件（AskCard / BotAvatar / Markdown / RunningIndicator …），
 // 差别只在「用谁的组件拼外壳」。
 //
-// 2026-11-25：从「全裸 Tailwind」收敛到组件层 —— 按钮/输入/错误条走 `Button` / `Textarea` /
-// `Alert`，字号回到 `text-xs` / `text-sm` 两档（不再 `text-[13px]` 这种任意值）。
+// 2026-11-25：从「全裸 Tailwind」收敛到官方会话形态 ——
+//   · 消息 → `Message` / `MessageAvatar` / `MessageHeader`，气泡 → `Bubble`；
+//   · 输入区 → `InputGroup` / `InputGroupTextarea` / `InputGroupAddon`；
+//   · 滚动 → `MessageScroller`（autoScroll + scrollAnchor），**不再是手写的贴底跟随 + 补窗**；
+//   · 字号回到 `text-xs` / `text-sm` 两档（不再 `text-[13px]` 这种任意值）。
 // 规范见仓根 `DESIGN.md`；改这里之前先看它。
 //
 // 唯一保留的手写元素是 `MentionMenu` 的 `<ul>/<li>/<button role="option">`：
 // 它是 listbox 语义（role=option + aria-selected + 键盘上下选），而 `Button` 自带 role/样式
 // 会与 option 语义打架；这里手写是为了可访问性，不是因为组件层不够用。
 
-import { AlertTriangle, ArrowDown, ChevronDown, Send, Square } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Send, Square } from 'lucide-react';
 import * as React from 'react';
 
 import {
@@ -43,6 +46,13 @@ import {
     MessageAvatar,
     MessageContent,
     MessageHeader,
+    MessageScroller,
+    MessageScrollerButton,
+    MessageScrollerContent,
+    MessageScrollerItem,
+    MessageScrollerProvider,
+    MessageScrollerViewport,
+    useMessageScroller,
 } from '@diy-agent/ui-shadcn';
 
 import { AskCard } from '../../components/AskCard';
@@ -55,7 +65,6 @@ import { CompactCutBar } from '../../components/CompactCutBar';
 import { JobCard } from '../../components/JobCard';
 import { Markdown } from '../../components/Markdown';
 import { TurnFooter } from '../../components/TurnFooter';
-import { useWindowed } from '../../components/useWindowed';
 import { useDraft } from '../../drafts';
 import { useMentionCandidates } from '../../mentions';
 import { actions, conversationOf, useStore } from '../../store';
@@ -288,14 +297,66 @@ const MessageList = React.memo(function MessageList({
     return (
         <>
             {entries.map((entry) => (
-                // content-visibility：离开视口的条目跳过布局/绘制
-                <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
-                    <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
-                </div>
+                // scrollAnchor 挂在用户回合：新问题落在顶部、回复在它下面流式长出
+                <MessageScrollerItem key={entry.key} messageId={entry.key} scrollAnchor={entry.kind === 'user'}>
+                    {/* content-visibility：离开视口的条目跳过布局/绘制 */}
+                    <div style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
+                        <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
+                    </div>
+                </MessageScrollerItem>
             ))}
         </>
     );
 });
+
+/**
+ * 视口 + 内容。必须在 MessageScrollerProvider 内部才拿得到 useMessageScroller。
+ *
+ * 「跳到某条待答卡」以前靠窗口化的 reveal（先把那条纳入窗口再闪一下）；
+ * 现在直接 scrollToMessage —— 消息全在 DOM 里，不需要先让它存在。
+ */
+function ThreadViewport({
+    entries,
+    roomId,
+    onStopBot,
+}: {
+    entries: readonly TimelineEntry[];
+    roomId: string;
+    onStopBot?: (botId: string) => void;
+}) {
+    const scroller = useMessageScroller();
+
+    React.useEffect(() => {
+        registerAskJumper('shadcn', (askId) => {
+            const hit = entries.find((entry) =>
+                entry.parts.some((part) => part.kind === 'ask' && part.request.askId === askId),
+            );
+            if (hit !== undefined) scroller.scrollToMessage(hit.key, { align: 'center' });
+            flashAskCardWhenRendered(askId);
+        });
+        return () => registerAskJumper('shadcn', undefined);
+    }, [entries, scroller]);
+
+    return (
+        <MessageScrollerViewport
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions text"
+            preserveScrollOnPrepend
+            className="px-6 py-4"
+        >
+            <MessageScrollerContent>
+                {entries.length === 0 ? (
+                    <div className="mt-16 text-center text-sm text-muted-foreground">
+                        还没有消息。发一句，或 @ 一个 bot。
+                    </div>
+                ) : (
+                    <MessageList entries={entries} roomId={roomId} onStopBot={onStopBot} />
+                )}
+            </MessageScrollerContent>
+        </MessageScrollerViewport>
+    );
+}
 
 /** @ 候选浮层：键盘可达（上下选、Enter/Tab 确认、Esc 关），鼠标也能点 */
 function MentionMenu({
@@ -521,8 +582,6 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
         ],
     );
 
-    const windowed = useWindowed(entries);
-
     // 上下文概况：时间线顶部那条「已压缩」框要的折叠数 / 摘要正文。
     // 只在一轮跑完时拉一次（自动压缩发生在那一步），不开轮询。
     const sessions = shell.sessions[targetId] ?? [];
@@ -530,36 +589,6 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
     React.useEffect(() => {
         actions.refreshSessions(targetId);
     }, [targetId, running]);
-
-    /**
-     * 壳层待答条的跳转入口：这套表面自己也窗口化（只渲染最近 N 条 + 滑到顶部补一窗），
-     * 所以先 reveal 把那条纳入窗口，再等它真渲染出来闪一下。
-     */
-    React.useEffect(() => {
-        registerAskJumper('shadcn', (askId) => {
-            windowed.reveal((entry) => entry.parts.some((part) => part.kind === 'ask' && part.request.askId === askId));
-            flashAskCardWhenRendered(askId);
-        });
-        return () => registerAskJumper('shadcn', undefined);
-    }, [windowed]);
-
-    // 贴底跟随：只有"本来就在底部"时才自动滚，用户上翻就不打扰
-    const scrollRef = React.useRef<HTMLDivElement | null>(null);
-    const stickRef = React.useRef(true);
-    const [atBottom, setAtBottom] = React.useState(true);
-    React.useEffect(() => {
-        const element = scrollRef.current;
-        if (element === null || !stickRef.current) return;
-        element.scrollTop = element.scrollHeight;
-    }, [entries]);
-
-    const scrollToBottom = React.useCallback(() => {
-        const element = scrollRef.current;
-        if (element === null) return;
-        element.scrollTop = element.scrollHeight;
-        stickRef.current = true;
-        setAtBottom(true);
-    }, []);
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -570,50 +599,20 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
             <div className="px-6 pt-2">
                 <CompactCutBar sessions={sessions} />
             </div>
-            <div className="relative min-h-0 flex-1">
-                <div
-                    ref={scrollRef}
-                    onScroll={(event) => {
-                        const element = event.currentTarget;
-                        const stuck = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-                        stickRef.current = stuck;
-                        setAtBottom(stuck);
-                        // 滑到顶部就补一窗（保持视口位置：把新增内容的高度加回 scrollTop）
-                        if (element.scrollTop < 48 && windowed.hidden > 0) {
-                            const before = element.scrollHeight;
-                            windowed.showMore();
-                            requestAnimationFrame(() => {
-                                element.scrollTop += element.scrollHeight - before;
-                            });
-                        }
-                    }}
-                    role="log"
-                    aria-live="polite"
-                    aria-relevant="additions text"
-                    className="h-full overflow-y-auto px-6 py-4"
-                >
-                    {entries.length === 0 ? (
-                        <div className="mt-16 text-center text-sm text-muted-foreground">
-                            还没有消息。发一句，或 @ 一个 bot。
-                        </div>
-                    ) : (
-                        <MessageList entries={windowed.visible} roomId={targetId} onStopBot={stopBot} />
-                    )}
-                </div>
-                {!atBottom && entries.length > 0 && (
-                    // 上翻看历史时「回到底部」：新消息不断到达却没有入口，只能拖滚动条
-                    <Button
-                        variant="outline"
-                        size="icon-sm"
-                        onClick={scrollToBottom}
-                        title="回到最新"
-                        aria-label="回到最新"
-                        className="absolute right-5 bottom-3 rounded-full bg-background shadow-md"
-                    >
-                        <ArrowDown className="size-3.5" />
-                    </Button>
-                )}
-            </div>
+            {/*
+             * 滚动的「谁说了算」交给 MessageScroller：
+             *   · autoScroll —— 人在底部时跟随新内容，上翻就不打扰；
+             *   · defaultScrollPosition="last-anchor" —— 进来先定位到最后一条用户消息；
+             *   · scrollAnchor 挂在用户回合上（见 MessageList）—— 新问题落顶部、回复在它下面长。
+             * 以前这套（贴底跟随 + 回底按钮 + 补窗）是手写的 40 行 state + ref。
+             */}
+            <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor">
+                <MessageScroller className="relative min-h-0 flex-1">
+                    <ThreadViewport entries={entries} roomId={targetId} onStopBot={stopBot} />
+                    {/* 上翻看历史时的「回到最新」：显隐与位移动画自己管（data-active） */}
+                    <MessageScrollerButton className="rounded-full" />
+                </MessageScroller>
+            </MessageScrollerProvider>
             <Composer
                 conversation={conversation}
                 roomId={targetId}
