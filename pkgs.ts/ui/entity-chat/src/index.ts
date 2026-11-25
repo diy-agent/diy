@@ -33,6 +33,12 @@ export { TaskPanel } from './components/TaskPanel';
 // 作业卡片：两个 surface 共用（判据在 chat-core 的 `jobOf`）。导出是为了让
 // 选择型实验台能直接拿真组件摆样子 —— 别在 demo 里另画一份。
 export { JobCard } from './components/JobCard';
+// Bot 状态（在跑 / 等回答 / 上一轮出错 / 空闲）：二级浮层 + 三级全量表格。
+//
+// 数据与口径都在 `bots.ts` 里（`useBotRows` + `needsYou`）：宿主只负责在标题栏摆一颗
+// 按钮、把计数画上去，然后挂 `BotsOverlay` —— 两处不各算一遍。
+export { BotsOverlay, type BotsOverlayProps } from './components/BotsOverlay';
+export { needsYou, outcomeTextOf, STATE_TEXT, useBotRows, type BotRowsState } from './bots';
 export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';
 export type { RoomDialogs } from './useRoomDialogs';
 

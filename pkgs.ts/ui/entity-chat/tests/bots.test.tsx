@@ -1,0 +1,122 @@
+// bots.test.tsx —— 「Bot 状态」两级披露的口径（用户 2026-11-25 定的形状）。
+//
+// 钉住的三件事，都是「两处各算一遍」会立刻出错的地方：
+//   1. 二级浮层只列**要人看见的**（非 idle）；全空闲时写「都闲着」而不是空白一片；
+//   2. 三级抽屉的**默认筛选与二级一致**（点进去看到的是同一批，只是多了列和批量动作）；
+//   3. 结局文案由 `outcomeTextOf` 一处给：出错的行在二级就能读出「为什么」。
+//
+// SSR 到字符串（entity-chat 的既有姿势，没有 jsdom）：effect 不跑 ⇒ 数据全从 props 来，
+// 正好测「给定这批行，画出来是什么样」。
+
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
+
+import { needsYou, outcomeTextOf, sortRows } from '../src/bots';
+import { BotsOverlay } from '../src/components/BotsOverlay';
+import type { BotRow } from '@diy-agent/chat-transport-rpc';
+
+const noop = () => undefined;
+
+function row(extra: Partial<BotRow>): BotRow {
+    return {
+        roomId: 'r1',
+        roomTitle: '任务一',
+        roomType: 'task',
+        closed: false,
+        botId: 'b1',
+        botName: '小满',
+        botColor: '#7cc4ff',
+        state: 'idle',
+        ...extra,
+    };
+}
+
+function render(rows: BotRow[], initialMode?: 'brief' | 'full'): string {
+    return renderToStaticMarkup(
+        <BotsOverlay rows={rows} error={null} loaded reload={noop} onClose={noop} initialMode={initialMode} />,
+    );
+}
+
+describe('needsYou —— 二级浮层的唯一口径', () => {
+    it('空闲之外都要人看', () => {
+        expect(needsYou(row({ state: 'idle' }))).toBe(false);
+        for (const state of ['running', 'asking', 'needs-attention'] as const) {
+            expect(needsYou(row({ state }))).toBe(true);
+        }
+    });
+});
+
+describe('sortRows —— 急的排前面', () => {
+    it('在跑 > 等回答 > 需要看 > 空闲', () => {
+        const rows = [
+            row({ botId: 'd', state: 'idle' }),
+            row({ botId: 'c', state: 'needs-attention' }),
+            row({ botId: 'b', state: 'asking' }),
+            row({ botId: 'a', state: 'running' }),
+        ];
+        expect(sortRows(rows).map((item) => item.botId)).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    it('同状态按最后动静新→旧，没有动静的垫底', () => {
+        const rows = [
+            row({ botId: 'old', state: 'idle', lastTurnAt: 1000 }),
+            row({ botId: 'none', state: 'idle' }),
+            row({ botId: 'new', state: 'idle', lastTurnAt: 3000 }),
+        ];
+        expect(sortRows(rows).map((item) => item.botId)).toEqual(['new', 'old', 'none']);
+    });
+});
+
+describe('outcomeTextOf', () => {
+    it('失败说原文，其余给固定说法', () => {
+        expect(outcomeTextOf(row({ outcome: 'failed', outcomeMessage: '网关 500' }))).toBe('网关 500');
+        expect(outcomeTextOf(row({ outcome: 'failed' }))).toBe('运行失败');
+        expect(outcomeTextOf(row({ outcome: 'truncated' }))).toBe('被输出上限截断');
+        expect(outcomeTextOf(row({}))).toBe('还没跑过');
+    });
+});
+
+describe('二级浮层', () => {
+    it('只列要人看见的，空闲的不出现', () => {
+        const html = render([
+            row({ botName: '在跑的', state: 'running' }),
+            row({ roomTitle: '空闲房间', botName: '闲着的', state: 'idle' }),
+        ]);
+        expect(html).toContain('在跑的');
+        expect(html).not.toContain('闲着的');
+        expect(html).not.toContain('空闲房间');
+    });
+
+    it('出错的二级就能读出为什么 + 有「继续」', () => {
+        const html = render([row({ state: 'needs-attention', outcome: 'failed', outcomeMessage: '网关 500' })]);
+        expect(html).toContain('网关 500');
+        expect(html).toContain('发一条「继续」接着干');
+    });
+
+    it('全空闲写「都闲着」，不是空白', () => {
+        const html = render([row({ state: 'idle' })]);
+        expect(html).toContain('都闲着');
+    });
+
+    it('还没拉到数据时写「正在读」', () => {
+        const html = renderToStaticMarkup(
+            <BotsOverlay rows={[]} error={null} loaded={false} reload={noop} onClose={noop} />,
+        );
+        expect(html).toContain('正在读 bot 状态');
+    });
+});
+
+describe('三级表格', () => {
+    it('默认筛选与二级一致：空闲的不出现', () => {
+        const html = render([row({ botName: '在跑的', state: 'running' }), row({ botName: '闲着的', state: 'idle' })], 'full');
+        expect(html).toContain('要看的');
+        expect(html).toContain('在跑的');
+        expect(html).not.toContain('闲着的');
+    });
+
+    it('带批量入口与「只看要看的」回退', () => {
+        const html = render([row({ state: 'needs-attention' })], 'full');
+        expect(html).toContain('重试选中（0）');
+        expect(html).toContain('只看要看的');
+    });
+});
