@@ -31,7 +31,7 @@ import type {
     ModelCostView,
 } from '@diy-agent/protocol';
 
-export type { BotRow, JobRunRow };
+export type { JobRunRow };
 
 import { StreamHub } from './hub';
 

@@ -300,13 +300,19 @@ export function App({
     // 传给侧栏的回调必须 stable：`Sidebar` 把它们放进 `useMemo` 的 host，再传给每一行；
     // 每次渲染新建一个函数，行上的 `React.memo` 就永远拦不住（props 比不等）。
     // useRoomDialogs 返回的动作本身已经是 useCallback，直接透传即可。
-    const { openProject, openTask, requestDelete, openSettings } = dialogs;
+    const { openProject, openTask, requestDelete, openSettings, openModel } = dialogs;
     const onCreateProject = openProject;
     const onCreateTask = openTask;
     const onRequestDelete = requestDelete;
     const onOpenSettings = openSettings;
     const onToggleTaskPanel = React.useCallback(() => setTaskPanelOpen((open) => !open), []);
     const onCloseTaskPanel = React.useCallback(() => setTaskPanelOpen(false), []);
+    // 底栏模型行（ComposerBar）点开房间级换模型对话框 —— 与房间头的只读面板是两回事：
+    // 这里改的就是 room.modelKey（房间级），真源一致。
+    const roomId = room?.id;
+    const onPickModel = React.useCallback(() => {
+        if (roomId !== undefined) openModel(roomId);
+    }, [roomId, openModel]);
 
     /**
      * 输入框底栏那一行。**必须 memo**：它是 `SurfaceHost` 的 prop，而 `SurfaceHost` 是

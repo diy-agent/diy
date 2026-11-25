@@ -19,14 +19,11 @@ import { LayerProvider } from '@astryxdesign/core/Layer';
 import { Theme } from '@astryxdesign/core/theme';
 import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import {
-    BotsOverlay,
     navigate,
-    needsYou,
     RoomDialogsProvider,
     roomAddressOf,
     Sidebar,
     useAddress,
-    useBotRows,
     useLoaded,
     useModelSetup,
     useRoomDialogs,
@@ -43,7 +40,7 @@ import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
-import { BotGlyph, GearGlyph, NavGlyph } from './glyphs';
+import { GearGlyph, NavGlyph } from './glyphs';
 import { type PageDef } from './model';
 import { pageFor, settingsPage, wbViews } from './pages';
 import { SETTINGS_ADDRESS, SETTINGS_PAGE } from './settings';
@@ -205,12 +202,6 @@ function Host() {
     // 导航的开关提到了壳这一层：标题栏左端要放它的按钮，而标题栏是整宽的一条
     const [open, setOpen] = useState(loadNavOpen);
 
-    // Bot 状态：标题栏那颗按钮的角标要计数，所以拉数据提到壳这一层，
-    // 浮层与按钮共用一份（不各拉一次，否则两边的数字会差一轮）
-    const [botsOpen, setBotsOpen] = useState(false);
-    const bots = useBotRows(botsOpen);
-    const attention = bots.rows.filter(needsYou).length;
-
     useEffect(() => {
         try {
             localStorage.setItem(NAV_OPEN_KEY, open ? '1' : '0');
@@ -247,14 +238,6 @@ function Host() {
                 id: 'app',
                 tools: [
                     {
-                        id: 'bots',
-                        label: attention === 0 ? 'Bot 状态' : `Bot 状态（${attention} 个要你看）`,
-                        glyph: <BotGlyph count={attention} />,
-                        onClick: () => {
-                            setBotsOpen(true);
-                        },
-                    },
-                    {
                         id: 'settings',
                         // 同一颗按钮来回切：设置页里它显示为按下态，再点一下回对话。
                         // 房内「模型设置」对话框（选模型）仍然在侧栏/房间头，两件事不冲突：
@@ -274,7 +257,7 @@ function Host() {
                 ],
             },
         ],
-        [open, toggle, dialogs, attention, screen, isSettings, backTo],
+        [open, toggle, dialogs, screen, isSettings, backTo],
     );
 
     /** 去设置（横幅上的「去配置」）—— 同一件导航，不是另一条路 */
@@ -317,7 +300,6 @@ function Host() {
                     </div>
                 </div>
                 {dialogs.element}
-                {botsOpen ? <BotsOverlay {...bots} onClose={() => setBotsOpen(false)} /> : null}
             </RoomDialogsProvider>
         );
     }
@@ -338,7 +320,6 @@ function Host() {
                 />
             </div>
             {dialogs.element}
-            {botsOpen ? <BotsOverlay {...bots} onClose={() => setBotsOpen(false)} /> : null}
         </RoomDialogsProvider>
     );
 }

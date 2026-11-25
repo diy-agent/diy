@@ -58,16 +58,6 @@ export const roomsApi = RpcSchema.group({
 export const rolesApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: {}, output: Any }),
-        /**
-         * 每 bot 一行状态（在跑 / 等回答 / 上一轮出错 / 空闲）：
-         * 二级弹层与三级表格都读它 —— 两处一份数据，不会一个说有 3 个、一个说有 4 个。
-         */
-        rows: RpcSchema.unary({ input: {}, output: Any }),
-        /** 批量重试：给选中的 (房间, bot) 各发一条「继续」（已在跑的跳过） */
-        retry: RpcSchema.unary({
-            input: { targets: z.array(z.object({ roomId: Id, botId: Id })).min(1) },
-            output: Any,
-        }),
         create: RpcSchema.unary({
             input: {
                 type: z.string().min(1),

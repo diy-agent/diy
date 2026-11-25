@@ -27,16 +27,14 @@ import { openLog } from './log';
 import {
     JOURNAL_KINDS,
     RoomActor,
-    botLastTurnOf,
     createJobRegistry,
     defaultModelKeyOf,
     modelProviders,
     newEntityId,
     openStore,
     snapshotPath,
-    withTurnFact,
 } from '@diy-agent/entity-runtime';
-import type { BotLastTurn, CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
+import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
 import { diy2Api } from '@diy-agent/protocol';
 import { botOfRole, membersOfType } from '@diy-agent/protocol';
@@ -46,6 +44,7 @@ import type {
     Author,
     Bot,
     BotRole,
+    JobRunRow,
     ModelConfigSnapshot,
     Room,
     RoomMember,
@@ -88,7 +87,7 @@ function modelConfigView(): ModelConfigSnapshot {
     return {
         home: config.home,
         modelConfigPath: config.modelConfigPath,
-        snapshotMissing: !existsSync(snapshotPath(config.home)),
+        snapshotMissing: !existsSync(snapshotPath(config.home)), // sync-io-ok: 同步自报「快照在不在」，只判文件存在与否
         ...(defaultModelKey === undefined ? {} : { defaultModelKey }),
         providers: availableProviders(config.home).map((provider) => ({
             id: provider.providerId,
@@ -893,9 +892,9 @@ export async function createDiy2App(opts: {
                 list: async () => ({
                     providers: modelProviders(),
                     defaultModelKey: defaultModelKeyOf(),
-                    configured: existsSync(config.modelConfigPath),
+                    configured: existsSync(config.modelConfigPath), // sync-io-ok: 模型配置状态自报，只判文件存在与否；与启动期 modelConfigHint 同源
                     modelConfigPath: config.modelConfigPath,
-                    snapshotMissing: !existsSync(snapshotPath(config.home)),
+                    snapshotMissing: !existsSync(snapshotPath(config.home)), // sync-io-ok: 同上，判断目录快照在不在
                 }),
                 // ── 配置页（写侧）──────────────────────────────────────────
                 //

@@ -37,7 +37,7 @@ export interface SessionSnapshot {
  * 「一轮开了头、还没收尾」的标记（`turn_open`，一行一 bot）。
  *
  * 存在的理由：`completed` / `interrupted` 都不产条目，进程崩在那一段时磁盘上没留下
- * 任何「这轮开始过」的痕迹 —— 结局判据只能读成「正常结束」（见 bot-status.ts 的局限说明）。
+ * 任何「这轮开始过」的痕迹 —— 否则结局判据只能读成「正常结束」。
  * 轮开始写一行、收尾删一行；进程重启后还留着 = 上一轮没走到收尾。
  */
 export interface OpenTurn {
@@ -275,7 +275,7 @@ export interface Store {
      * 每个 bot 在给定房间里的**最后一条 item**（「上一轮怎么结束的」的唯一来源）。
      *
      * 一轮收尾时 `endItems()` 产出的 notice / error 就是该轮最后落盘的条目，
-     * 所以这一条既是「谁最后说话」也是「怎么停的」—— 判据在 `bot-status.ts`，
+     * 所以这一条既是「谁最后说话」也是「怎么停的」；
      * 这里只负责把「每个 (房间, bot) 的最后一条」查出来（别在调用方循环 N 次读全量）。
      *
      * 不给 `roomIds` = 全实例一张表（三级面板用）；给了就只查这几个房间。
@@ -286,7 +286,7 @@ export interface Store {
     /**
      * 每条**轮级事实**（不带 author 的 notice / error）的最后一条，按归属分组。
      *
-     * `lastItemPerBot` 按 `author.id` 分组，恰好把结局事实排除了（见 bot-status.ts 的论证）。
+     * `lastItemPerBot` 按 `author.id` 分组，恰好把结局事实排除了（结局事实不带 author）。
      * 它们只能单独认领，所以单独一条查询：调用方先拿到 bot 最后一轮，再从这里取那一轮的结局。
      *
      * `owner` = 事实自带的 `data.botId`，没有就退回 `turnId`：
@@ -480,6 +480,15 @@ export function openStore(file: string): Store {
             settled_at INTEGER
         );
         CREATE INDEX IF NOT EXISTS asks_entity ON asks(entity_id, at);
+        -- 开了头没收尾的轮（一 bot 一行）：崩溃/被杀后重启靠它认出「那一轮没跑完」
+        CREATE TABLE IF NOT EXISTS turn_open (
+            entity_id TEXT NOT NULL,
+            bot_id TEXT NOT NULL,
+            turn INTEGER NOT NULL,
+            turn_id TEXT NOT NULL,
+            at INTEGER NOT NULL,
+            PRIMARY KEY (entity_id, bot_id)
+        );
         -- 会话键 =（容器, 角色）。列名 2026-11-24 从 bot_id 改为 bot_role_id：
         -- 同名的旧列会被 ALTER TABLE ... RENAME COLUMN 改过来（见老库补列）
         CREATE TABLE IF NOT EXISTS session_state (

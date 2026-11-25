@@ -181,9 +181,9 @@ export class RoomActor {
      * 上次没收尾的轮（进程崩溃 / 被杀）→ 补一条轮级事实，然后销标记。
      *
      * 为什么必须补：`turn.end` 在 session 的 finally 里发，进程死在那一步之前就什么都没落，
-     * 磁盘上那一轮与「正常说完」完全同形（见 bot-status.ts 的局限说明）。
+     * 磁盘上那一轮与「正常说完」完全同形。
      * 补成 `notice(kind: 'interrupted')` 是最省的那条路：走的是已有的轮级事实通道，
-     * 结局判据与 UI 都不用特殊化（只在 `NOTICE_OUTCOMES` 里加了一行）。
+     * 直接以一条 notice 落盘，不需要新造事件类型。
      *
      * 没有开着的轮时**一次查询就走**（不读 items）—— 正常重启不该为此付 ensureInit 的钱。
      */
@@ -210,7 +210,7 @@ export class RoomActor {
                 at: Date.now(),
                 status: 'done',
                 type: 'notice',
-                // 不带 author：轮级事实（见 bot-status.ts 的论证），UI 据此让它独立成条；
+                // 不带 author：轮级事实，UI 据此让它独立成条；
                 // 归属记在 data.botId（turnId 是房间级的，@all 时认不出是谁）
                 data: {
                     text: `${bot.name} 的上一轮没跑完（进程中断），结论可能不完整`,

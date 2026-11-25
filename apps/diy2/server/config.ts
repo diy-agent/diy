@@ -406,6 +406,7 @@ export async function resolveConfig(opts?: {
  * UI 顶部挂横幅，唯一出路是在那份路径上写配置。
  */
 export function modelConfigHint(config: Diy2Config): string | null {
+    // sync-io-ok: 启动期同步自报「配置在不在」（只判存在、不读内容）；调用方在 async 上下文之外，改异步会把启动链全变 async
     if (existsSync(config.modelConfigPath)) return null;
     return (
         `[diy2] 没有模型配置：${config.modelConfigPath}（不会去别处找）→ 模型面不可用，UI 顶部有横幅；` +
