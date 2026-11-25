@@ -211,11 +211,20 @@ describe("边界（判据 4）", () => {
         ]);
         for (const name of files) {
             const text = readFileSync(join(dir, name), "utf-8");
-            expect(text.toLowerCase()).not.toContain("room");
-            expect(text).not.toContain("electron");
-            expect(text).not.toContain("@diy-agent/task");
+            // 整行注释不算依赖：这条护栏查的是**代码**认不认识这些词，注释里引用文档路径
+            // 是合法的 —— 2026-11-17 给 aggregate.ts 标「参考实现」时引了
+            // `2026-11-17-room-as-actor.md`，就把这条护栏破了、在 main 上红了 8 天
+            // （7487b746，当时没碰测试文件）。行尾注释与字符串字面量**仍算**：
+            // 那才是真的写在代码里的东西，剥多了护栏就只剩摆设。
+            const code = text
+                .split("\n")
+                .filter((line) => !line.trimStart().startsWith("//"))
+                .join("\n");
+            expect(code.toLowerCase()).not.toContain("room");
+            expect(code).not.toContain("electron");
+            expect(code).not.toContain("@diy-agent/task");
             if (conversational.has(name)) continue;
-            expect(text).not.toContain("@diy-agent/session");
+            expect(code).not.toContain("@diy-agent/session");
         }
     });
 });
