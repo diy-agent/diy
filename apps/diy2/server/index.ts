@@ -132,7 +132,8 @@ await announce(config, port);
 
 // 续跑排在**监听之后**（##554）：它一调就会发 LLM 请求。放在这里的意思是「门先打开，
 // 重活再慢慢做」—— 用户在 UI 里看到的是实例已经可用，而不是一屏启动期错误日志。
-app.resume();
+// 后台跑、不 await：它是串行背景活（可能跑很久），启动不等它
+void app.resume();
 
 const shutdown = (signal: string): void => {
     boot.info(`${signal} → 关闭`);

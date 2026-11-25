@@ -431,9 +431,23 @@ function seed(): void {
  * 拆出来是因为**时机**：以前它在 `seed()` 末尾、`listen()` 之前跟着跑，于是「端口还没人
  * 能连」时三个房间的续跑已经各自 await compact() → 主请求，UI 一打开看到的就是一屏
  * 429 / 压缩日志。现在由入口在 listen 成功后调（生产 `index.ts`、dev `dev.ts`）。
+ *
+ * **串行**（2026-11-25）：房间一个一个续，前一个跑到收尾（`recover()` 的 Promise 在
+ * 那一轮结束时 resolve）再放下一个。以前一口气全排出去，房间一多就是同一秒里十几个
+ * 请求撞网关（turn 180 实测：三次启动压缩 5.8s / 6.5s / 17.3s，前两次压完仍超预算）。
+ * 串行的代价是「最后一个房间要等前面都跑完」—— 但这是背景活，界面在 listen 之后
+ * 就已经可用，不存在“等它才看到 UI”。
+ *
+ * 单个房间抛错不阻断后面：`recover()` 内部已经逐条兜住，这里再兜一层房间级的。
  */
-function resume(): void {
-    for (const actor of rooms.values()) actor.recover();
+async function resume(): Promise<void> {
+    for (const [roomId, actor] of rooms) {
+        try {
+            await actor.recover();
+        } catch (error) {
+            log.warn('续跑房间失败，继续下一个', { roomId, error: (error as Error).message });
+        }
+    }
 }
 
 // 装配动作（seed + 草稿清理）在 `createDiy2App` 里做：顶层语句等于「import 即启动」，
@@ -538,7 +552,8 @@ export interface Diy2App {
      * **必须在监听之后调**（##554 后续）：它一调就会发 LLM 请求，而在监听之前点火等于
      * 「UI 还没人能连上，模型配额已经开始烧」—— 启动顺序里最贵的这一步不该抢在门打开之前。
      */
-    resume: () => void;
+    /** 串行续跑所有房间（拿到 Promise 是为了测试 / 优雅关闭能等它）；入口不必 await */
+    resume: () => Promise<void>;
     /**
      * 处理一条 HTTP upgrade（`/rpc` 归这里，返回 true；其余返回 false 交给别人 ——
      * dev 里 vite 的 HMR 也走 upgrade 通道，**不要动不是自己的 socket**）。

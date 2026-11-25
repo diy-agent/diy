@@ -393,8 +393,15 @@ export class RoomActor {
     /**
      * 崩溃恢复：把还没送达的投递重新投一遍。
      * `delivering` 视为未送到（进程中途挂了，模型回复也没落盘）。
+     *
+     * **返回 Promise 且内部串行**（2026-11-25）：以前是 `void post()` 一口气全排出去，
+     * 于是启动时十几个房间同时向网关发请求 —— 一屏 429，再加上各自的压缩，UI 一打开
+     * 就是灾难（## turn 180 的实测）。现在一个投递跑到收尾（post 的 Promise 在轮结束时
+     * resolve）再放下一个；卡住的轮有 StallWatchdog 兜住，不会把后面永久堵死。
+     *
+     * 单个投递失败不中断其余：失败已经在 session 里落成事实，这里只记一行。
      */
-    recover(): void {
+    async recover(): Promise<void> {
         for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
             const bot = this.member(delivery.botId);
             if (bot === undefined) continue;
@@ -418,7 +425,26 @@ export class RoomActor {
             const entry = this.log
                 .all()
                 .find((item) => item.kind === 'say' && item.messageId === delivery.messageId);
-            void this.sessionOf(bot).post({
+            await this.postOrWarn(bot, delivery, text, entry, turn);
+        }
+    }
+
+    /**
+     * 续跑一条投递，失败只留一行线索（不拖住后面）。
+     *
+     * 为什么不在 `recover` 里内联 try/catch：那段已经有 5 个可空参数，再套一层就别想读了。
+     * post 自己会把失败落成事实（delivery `state: failed` + notice）—— 这里只是不把
+     * 「一条坏消息」升缆成「整台实例后面的房间都不续跑」。
+     */
+    private async postOrWarn(
+        bot: Bot,
+        delivery: ReturnType<Store['pendingDeliveries']>[number],
+        text: string,
+        entry: RoomEntry | undefined,
+        turn: Turn | undefined,
+    ): Promise<void> {
+        try {
+            await this.sessionOf(bot).post({
                 messageId: delivery.messageId,
                 text,
                 mode: delivery.mode ?? 'next-step',
@@ -427,6 +453,8 @@ export class RoomActor {
                 ...(entry === undefined ? {} : { entry }),
                 ...(turn === undefined ? {} : { turn }),
             });
+        } catch (error) {
+            console.warn(`[room:${this.id}] 续跑投递失败：${(error as Error).message}`);
         }
     }
 
