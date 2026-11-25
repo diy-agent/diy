@@ -75,7 +75,7 @@ export async function listenWithStickyPort(config: Diy2Config, server: Server): 
 
     const address = server.address();
     const port = typeof address === 'object' && address !== null ? address.port : config.port;
-    writePortFile(config.portFile, port);
+    await writePortFile(config.portFile, port);
     if (driftedFrom !== null) {
         log.info(`端口 ${driftedFrom} 被占用 → 改用 ${port}（下次沿用；想固定就换掉占用者）`);
     }

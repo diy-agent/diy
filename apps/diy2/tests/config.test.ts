@@ -121,11 +121,11 @@ describe('产物目录（固定 build/prod，不跟 launch 走）', () => {
 });
 
 describe('app.port 记录', () => {
-    it('写 → 读；坏内容 / 非法端口 → null', () => {
+    it('写 → 读；坏内容 / 非法端口 → null', async () => {
         const dir = tmp();
         const file = join(dir, 'app.port');
         expect(readPortFile(file)).toBeNull();
-        writePortFile(file, 5301);
+        await writePortFile(file, 5301);
         expect(readPortFile(file)).toBe(5301);
 
         writeFileSync(file, 'abc');
@@ -134,9 +134,9 @@ describe('app.port 记录', () => {
         expect(readPortFile(file)).toBeNull();
     });
 
-    it('resolveConfig：非生产有记录就吃，并把记录单独暴露给探活', () => {
+    it('resolveConfig：非生产有记录就吃，并把记录单独暴露给探活', async () => {
         const home = tmp();
-        writePortFile(join(home, 'app.port'), 5306);
+        await writePortFile(join(home, 'app.port'), 5306);
 
         const config = resolveConfig({ moduleDir: APP_ROOT, mode: 'development', overrides: { home } });
         expect(config.port).toBe(5306);

@@ -77,7 +77,7 @@ const hint = modelConfigHint(config);
 if (hint !== null) boot.warn(hint);
 
 const httpServer = createServer();
-const app = createDiy2App({
+const app = await createDiy2App({
     config,
     // dev 的页面来自 vite，不来自 build/prod/web（null = 明确不要，不是「按配置来」）
     webDir: null,
@@ -132,7 +132,10 @@ try {
 }
 boot.info(`${describeConfig(config, port)} → http://127.0.0.1:${port}`);
 boot.info('UI 走 vite（HMR 同端口）；改 server/ 或 entity-runtime 会自动重启，改 UI 不用');
-announce(config, port);
+await announce(config, port);
+
+// 续跑同样排在监听之后（生产入口 `index.ts` 同一规矩）：先能连，再干活。
+app.resume();
 
 // ── 服务端代码变更 → 请看护循环重启 ──────────────────────────────
 // vite 的 HMR 只管浏览器侧模块图；`server/**` 与 `pkgs.ts/**`（工作区包源码）在服务端的
@@ -147,7 +150,7 @@ const scheduleRestart = (file: string | null): void => {
     boot.info(`服务端代码变了${file === null ? '' : `（${file}）`} → 重启`);
     timer = setTimeout(() => {
         app.close();
-        retract();
+        void retract();
         void vite.close().finally(() => httpServer.close(() => process.exit(RESTART_CODE)));
         // 长连接（SSE）可能挂住 close 回调：兜底硬退
         setTimeout(() => process.exit(RESTART_CODE), 1500).unref();
@@ -167,7 +170,7 @@ for (const root of watchRoots) {
 const shutdown = (): void => {
     // 刻意**不删** app.port：重启（看护循环 / Ctrl-C 再起）都还回同一个 URL。
     app.close();
-    retract();
+    void retract();
     void vite.close().finally(() => httpServer.close(() => process.exit(0)));
     setTimeout(() => process.exit(0), 1500).unref();
 };

@@ -71,7 +71,7 @@ describe('listenWithStickyPort', () => {
     it('记录的端口被占用 → 换一个空闲端口，并重写记录', async () => {
         const home = tmp();
         const taken = await occupy();
-        writePortFile(join(home, 'app.port'), taken);
+        await writePortFile(join(home, 'app.port'), taken);
 
         const config = configOf(home);
         expect(config.port).toBe(taken);

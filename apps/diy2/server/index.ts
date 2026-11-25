@@ -59,7 +59,7 @@ if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= co
 const hint = modelConfigHint(config);
 if (hint !== null) boot.warn(hint);
 
-const app = createDiy2App({
+const app = await createDiy2App({
     config,
     port: () => {
         const address = server.address();
@@ -130,7 +130,11 @@ if (config.webDir !== undefined) boot.info('UI 产物', { dir: config.webDir });
 else boot.warn('未找到 UI 产物（只提供 /api）—— 开发请用 `./sha.sh dev`');
 
 // 实例自报（dev 启动器 / workbench / remote 靠它看见本实例）
-announce(config, port);
+await announce(config, port);
+
+// 续跑排在**监听之后**（##554）：它一调就会发 LLM 请求。放在这里的意思是「门先打开，
+// 重活再慢慢做」—— 用户在 UI 里看到的是实例已经可用，而不是一屏启动期错误日志。
+app.resume();
 
 const shutdown = (signal: string): void => {
     boot.info(`${signal} → 关闭`);
@@ -138,7 +142,7 @@ const shutdown = (signal: string): void => {
     void appLog.shutdown();
     // 刻意**不删** app.port：它记的是「下次用哪个端口」，删了下次就换成内核随机端口。
     app.close();
-    retract();
+    void retract();
     server.close(() => process.exit(0));
     // 长连接（SSE）可能挂住 close 回调：兜底硬退
     setTimeout(() => process.exit(0), 1500).unref();

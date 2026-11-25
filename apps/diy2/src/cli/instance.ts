@@ -109,7 +109,7 @@ function configOf(moduleDir: string, input: Partial<ConfigOptions>): Diy2Config 
 
 export function instanceHandlers(deps?: Partial<InstanceDeps>): {
     instance: {
-        list: () => { instances: ReturnType<typeof rowOf>[] };
+        list: () => Promise<{ instances: ReturnType<typeof rowOf>[] }>;
         stop: (req: { input: { all?: boolean; worktree?: string } & Partial<ConfigOptions> }) => Promise<{
             stopped: number;
             instances: ReturnType<typeof rowOf>[];
@@ -125,10 +125,10 @@ export function instanceHandlers(deps?: Partial<InstanceDeps>): {
 
     return {
         instance: {
-            list: () => ({ instances: readAppRecords(dir).map(rowOf) }),
+            list: async () => ({ instances: (await readAppRecords(dir)).map(rowOf) }),
             stop: async ({ input }) => {
                 const config = configOf(moduleDir, input);
-                const records = readAppRecords(dir).filter((rec) => {
+                const records = (await readAppRecords(dir)).filter((rec) => {
                     if (input.all === true) return true;
                     if (input.worktree !== undefined) {
                         return rec.worktree !== null && samePath(rec.worktree, input.worktree);

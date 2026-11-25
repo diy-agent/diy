@@ -24,7 +24,8 @@
 // 纯函数尽量多：端口裁决 / 数据根裁决 / 生产根判据都有单测（tests/config.test.ts），
 // 因为这三条都是「错了不会报错，只会静默用错数据」的类型。
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -157,9 +158,11 @@ export function findAppRoot(start: string): string | undefined {
     let dir = resolve(start);
     for (let i = 0; i < 8; i++) {
         const manifest = join(dir, 'package.json');
+        // sync-io-ok: 启动期解析配置（listen 之前、一次性）；向上探测 ≤8 层小文件，没有并发可挡
+        // sync-io-ok: 改异步会把 `resolveConfig` 传染成 Promise，连累 CLI 的同步求值，好处只是少 8 次微任务
         if (existsSync(manifest)) {
             try {
-                const pkg = JSON.parse(readFileSync(manifest, 'utf8')) as { name?: string };
+                const pkg = JSON.parse(readFileSync(manifest, 'utf8')) as { name?: string }; // sync-io-ok: 同上
                 if (pkg.name === '@diy-agent/app-diy2') return dir;
             } catch {
                 /* 半截 / 坏 JSON：继续往上，不当致命错误 */
@@ -176,6 +179,7 @@ export function findAppRoot(start: string): string | undefined {
 export function findRepoRoot(start: string): string | undefined {
     let dir = resolve(start);
     for (let i = 0; i < 8; i++) {
+        // sync-io-ok: 同 findAppRoot（启动期一次性向上探测）
         if (existsSync(join(dir, 'diy.yaml')) && existsSync(join(dir, 'apps'))) return dir;
         const parent = dirname(dir);
         if (parent === dir) return undefined;
@@ -269,6 +273,7 @@ export function resolvePort(opts: { mode: Diy2Env; cliPort?: number | undefined;
 /** 读 `<home>/app.port`（**记录**，不是存活证据）；不存在 / 坏内容 / 非法端口 → null */
 export function readPortFile(file: string): number | null {
     try {
+        // sync-io-ok: 启动期读一次端口记录（listen 之前）；resolveConfig 是同步纯函数，readPortFile 跟着它走
         const port = Number.parseInt(readFileSync(file, 'utf8').trim(), 10);
         return Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
     } catch {
@@ -283,9 +288,9 @@ export function readPortFile(file: string): number | null {
  * 别再给它加"删除入口" —— 删了就是每次都换内核随机端口（书签失效）；
  * 也别拿它的存在当存活证据 —— 那是探活的活。
  */
-export function writePortFile(file: string, port: number): void {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${port}\n`, 'utf8');
+export async function writePortFile(file: string, port: number): Promise<void> {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, `${port}\n`, 'utf8');
 }
 
 /** 组装运行配置（**唯一入口**：server / dev / bin 的 CLI 产物都从这拿）。 */
@@ -325,7 +330,7 @@ export function resolveConfig(opts?: {
     const webDir =
         explicitWebDir !== undefined && explicitWebDir !== ''
             ? resolve(explicitWebDir)
-            : existsSync(defaultWebDir)
+            : existsSync(defaultWebDir) // sync-io-ok: 启动期判一次 UI 产物目录
               ? defaultWebDir
               : undefined;
 
@@ -336,8 +341,10 @@ export function resolveConfig(opts?: {
         if (overrides.modelConfig !== undefined && overrides.modelConfig.trim() !== '') {
             return resolve(overrides.modelConfig);
         }
+        // sync-io-ok: 启动期判两处 model.yaml（listen 之前、一次性）
         if (existsSync(join(home, 'model.yaml'))) return join(home, 'model.yaml');
         const prodConfig = join(realHomeDir(), '.diy', 'model.yaml');
+        // sync-io-ok: 同上
         if (samePath(dirname(home), join(realHomeDir(), '.diy')) && existsSync(prodConfig)) {
             return prodConfig;
         }

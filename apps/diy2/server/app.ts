@@ -13,12 +13,12 @@
 // 监听由调用方做：`server/index.ts`（生产）、`server/dev.ts`（单端口 dev）、`bin/diy2`（全局命令）。
 
 import { type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdirSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 
-import { createStaticHandler } from './static';
+import { createStaticHandler, type StaticHandler } from './static';
 import { createRpcSocket, type RpcStreamInfo } from './rpc';
 import { APP_ID, type Diy2Config } from './config';
 import { openLog } from './log';
@@ -86,7 +86,7 @@ const COLORS = ['#7cc4ff', '#f7b267', '#a3e635', '#f472b6', '#c084fc', '#38bdf8'
  */
 let config: Diy2Config;
 let store: ReturnType<typeof openStore>;
-let serveStatic: ReturnType<typeof createStaticHandler>;
+let serveStatic: StaticHandler | undefined;
 /** `/api/info` 的回包工厂（由 `createDiy2App` 装配：端口要问调用方，模块层答不出） */
 let info: () => Diy2AppInfo;
 
@@ -366,8 +366,20 @@ function seed(): void {
         if (members !== undefined && members.length > 0) spec.members = members;
         store.setMembers(spec.id, spec.members);
         store.saveRoom(spec);
-        actorOf(spec).recover();
+        // 只建容器，**不在这里续跑**：续跑会立刻发 LLM 请求，见 `resume()` 的注释
+        actorOf(spec);
     }
+}
+
+/**
+ * 续跑所有房间的未投递消息（`RoomActor.recover()`）。
+ *
+ * 拆出来是因为**时机**：以前它在 `seed()` 末尾、`listen()` 之前跟着跑，于是「端口还没人
+ * 能连」时三个房间的续跑已经各自 await compact() → 主请求，UI 一打开看到的就是一屏
+ * 429 / 压缩日志。现在由入口在 listen 成功后调（生产 `index.ts`、dev `dev.ts`）。
+ */
+function resume(): void {
+    for (const actor of rooms.values()) actor.recover();
 }
 
 // 装配动作（seed + 草稿清理）在 `createDiy2App` 里做：顶层语句等于「import 即启动」，
@@ -424,7 +436,7 @@ function newBot(name: string, homeRoomId: string, persona: string): Bot {
 
 // ─── 路由 ─────────────────────────────────────────────────────────
 
-const handle = (req: IncomingMessage, res: ServerResponse): void => {
+const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const parts = url.pathname.split('/').filter(Boolean);
 
@@ -438,7 +450,7 @@ const handle = (req: IncomingMessage, res: ServerResponse): void => {
 
         // 静态资源 / SPA 路由：/api 之外的 GET 交给 UI 产物
         if (req.method === 'GET' && !url.pathname.startsWith('/api') && serveStatic !== undefined) {
-            if (serveStatic(url.pathname, res)) return;
+            if (await serveStatic(url.pathname, res)) return;
         }
 
         json(res, 404, { error: `unknown ${req.method ?? '?'} ${url.pathname}` });
@@ -464,7 +476,15 @@ export interface Diy2AppInfo {
 }
 
 export interface Diy2App {
-    handle: (req: IncomingMessage, res: ServerResponse) => void;
+    /** 静态资源要 await 磁盘，所以是 Promise —— 错误已在内部 try/catch 收掉，不会 reject */
+    handle: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+    /**
+     * 续跑：把各房间没投递完的消息重新点着（`recover()`）。
+     *
+     * **必须在监听之后调**（##554 后续）：它一调就会发 LLM 请求，而在监听之前点火等于
+     * 「UI 还没人能连上，模型配额已经开始烧」—— 启动顺序里最贵的这一步不该抢在门打开之前。
+     */
+    resume: () => void;
     /**
      * 处理一条 HTTP upgrade（`/rpc` 归这里，返回 true；其余返回 false 交给别人 ——
      * dev 里 vite 的 HMR 也走 upgrade 通道，**不要动不是自己的 socket**）。
@@ -484,20 +504,20 @@ export interface Diy2App {
  * @param opts.webDir 静态服务目录：`null` = 明确不要（dev 交给 vite）；`undefined` = 用 config 的
  * @param opts.port   实际监听端口（`() => server.address().port`；dev 单端口时由调用方给）
  */
-export function createDiy2App(opts: {
+export async function createDiy2App(opts: {
     config: Diy2Config;
     webDir?: string | null | undefined;
     port?: () => number | null;
-}): Diy2App {
+}): Promise<Diy2App> {
     config = opts.config;
     // null 与 undefined 是两件事：null = 「我明确不要静态服务」（dev 的页面来自 vite），
     // undefined = 「按配置来」（生产）。写成 `??` 会让 dev 在 build/prod/web 存在时**悄悄**
     // 拿到上一轮的旧壳子 —— 那种 bug 只能靠肉眼分辨「为什么改了 UI 没变」。
-    serveStatic = createStaticHandler(opts.webDir === null ? undefined : (opts.webDir ?? config.webDir));
+    serveStatic = await createStaticHandler(opts.webDir === null ? undefined : (opts.webDir ?? config.webDir));
     rooms = new Map();
     subscribers = new Map();
 
-    mkdirSync(config.home, { recursive: true });
+    await mkdir(config.home, { recursive: true });
     store = openStore(config.dbPath);
 
     // 作业账本要在 `seed()` / 首个房间之前建好：`actorOf` 装配工具时要用它。
@@ -948,5 +968,5 @@ export function createDiy2App(opts: {
         subscribers.clear();
     };
 
-    return { handle, handleUpgrade: rpc.handleUpgrade, rpcStreams: rpc.streams, info, close };
+    return { handle, resume, handleUpgrade: rpc.handleUpgrade, rpcStreams: rpc.streams, info, close };
 }

@@ -76,48 +76,48 @@ describe('parseRecord', () => {
 });
 
 describe('readRecords', () => {
-    it('按 pid 存活过滤，并顺手删死条目', () => {
+    it('按 pid 存活过滤，并顺手删死条目', async () => {
         const dir = tmp();
-        writeRecord(dir, record({ pid: 111 }));
-        writeRecord(dir, record({ pid: 222 }));
+        await writeRecord(dir, record({ pid: 111 }));
+        await writeRecord(dir, record({ pid: 222 }));
         const alive = (pid: number) => pid === 111;
-        const records = readRecords(dir, alive);
+        const records = await readRecords(dir, alive);
         expect(records.map((rec) => rec.pid)).toEqual([111]);
         expect(readdirSync(dir)).toEqual(['111.json']);
     });
 
-    it('目录不存在 → 空表（第一次跑的正常态）', () => {
-        expect(readRecords(join(tmp(), 'nope'))).toEqual([]);
+    it('目录不存在 → 空表（第一次跑的正常态）', async () => {
+        expect(await readRecords(join(tmp(), 'nope'))).toEqual([]);
     });
 
-    it('坏 JSON 顺手清掉', () => {
+    it('坏 JSON 顺手清掉', async () => {
         const dir = tmp();
         writeFileSync(recordPath(dir, 333), '{半截');
-        expect(readRecords(dir, () => true)).toEqual([]);
+        expect(await readRecords(dir, () => true)).toEqual([]);
         expect(readdirSync(dir)).toEqual([]);
     });
 });
 
 describe('updateRecord', () => {
-    it('回填端口；记录不在则什么都不做（不凭空造一条）', () => {
+    it('回填端口；记录不在则什么都不做（不凭空造一条）', async () => {
         const dir = tmp();
-        writeRecord(dir, record({ pid: 7, port: null }));
-        updateRecord(dir, 7, { port: 5310 });
-        expect(readRecords(dir, () => true)[0]!.port).toBe(5310);
+        await writeRecord(dir, record({ pid: 7, port: null }));
+        await updateRecord(dir, 7, { port: 5310 });
+        expect((await readRecords(dir, () => true))[0]!.port).toBe(5310);
 
-        updateRecord(dir, 8, { port: 5311 });
+        await updateRecord(dir, 8, { port: 5311 });
         expect(readdirSync(dir)).toEqual(['7.json']);
     });
 });
 
 describe('snapshotParents', () => {
-    it('逐级上溯到 depth / pid ≤ 1 / 拿不到为止（注入 lookup，不真跑 ps）', () => {
+    it('逐级上溯到 depth / pid ≤ 1 / 拿不到为止（注入 lookup，不真跑 ps）', async () => {
         const table: Record<number, { hop: { pid: number; command: string }; ppid: number }> = {
             100: { hop: { pid: 100, command: 'node dev.ts' }, ppid: 50 },
             50: { hop: { pid: 50, command: 'bash sha.sh' }, ppid: 1 },
         };
-        const hops = snapshotParents(100, (pid) => table[pid] ?? null);
+        const hops = await snapshotParents(100, async (pid) => table[pid] ?? null);
         expect(hops.map((hop) => hop.command)).toEqual(['node dev.ts', 'bash sha.sh']);
-        expect(snapshotParents(1, (pid) => table[pid] ?? null)).toEqual([]);
+        expect(await snapshotParents(1, async (pid) => table[pid] ?? null)).toEqual([]);
     });
 });
