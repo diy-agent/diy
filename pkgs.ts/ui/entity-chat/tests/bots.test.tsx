@@ -22,7 +22,6 @@ function row(extra: Partial<BotRow>): BotRow {
         roomId: 'r1',
         roomTitle: '任务一',
         roomType: 'task',
-        closed: false,
         botId: 'b1',
         botName: '小满',
         botColor: '#7cc4ff',

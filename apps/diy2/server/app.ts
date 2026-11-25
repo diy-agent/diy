@@ -653,7 +653,6 @@ export function createDiy2App(opts: {
                                 roomId: spec.id,
                                 roomTitle: roomTitleOf(spec),
                                 roomType: spec.type === 'project' ? 'project' : 'task',
-                                closed: spec.data['status'] === 'closed',
                                 botId: member.botId,
                                 botName: bot?.name ?? member.botId,
                                 botColor: bot?.color ?? '#8b8b8b',
@@ -683,6 +682,11 @@ export function createDiy2App(opts: {
                  * 同一房间选中的多个 bot 合成**一条**消息（recipients 多个）：这样「继续」
                  * 在时间线上只出现一次，而各自的上下文各自接着跑。
                  * 已在跑的跳过 —— 再发一条只会变成排队，不是用户按「重试」时想要的。
+                 *
+                 * 返回值里 `started` 的意思是**已派发**（`say` 已发起），不是「这一轮已经起来」：
+                 * 回包不等 turn 真正开跑（等它就是等整轮结束），所以 UI 文案说的是「已发」。
+                 * `say` 同步抛错时不改回包，只广播 error —— 那种错误（房间刚被删之类）
+                 * 用户马上在页面上就能看见，比在一句闪稿里报更准。
                  */
                 retry: async ({ input }) => {
                     const byRoom = new Map<string, string[]>();
