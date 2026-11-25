@@ -41,12 +41,17 @@ export {
     unitBoard,
     unitBatchViews,
     unitTreeLines,
+    unitsContextValue,
+    unitsContextText,
     type BatchFacts,
     type UnitBatchStage,
     type UnitBatchView,
     type UnitBoard,
     type UnitBoardRow,
     type UnitFacts,
+    type UnitHead,
+    type UnitsContextText,
+    type UnitsContextValue,
 } from './units';
 export {
     CORE_TYPES,

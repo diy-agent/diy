@@ -15,7 +15,15 @@
 // 渲染一个非任务房间 —— 那一按保存就写 `title`、清 `desc`，把别的容器的数据改脏。
 // 未知类型只配一个只读信息卡。
 
-import { EntityChatApp, TaskPanel, UnitDagView, UnitGraph, useSelectedRoom, type Room } from '@diy-agent/entity-chat';
+import {
+    EntityChatApp,
+    TaskPanel,
+    UnitDagView,
+    UnitGraph,
+    UnitTextView,
+    useSelectedRoom,
+    type Room,
+} from '@diy-agent/entity-chat';
 
 import { useWb } from './AreaHost';
 import { area, definePage, defineView, type PageDef } from './model';
@@ -131,6 +139,17 @@ function UnitsDagBody() {
     return (
         <div className="wb-fill">
             <UnitDagView room={room} />
+        </div>
+    );
+}
+
+/** 文本：模型实际读到的 `units` 节原文（与树 / 图同一份数据，不是第二份） */
+function UnitsTextBody() {
+    const room = useSelectedRoom();
+    if (!room) return <Empty>没有选中房间</Empty>;
+    return (
+        <div className="wb-fill">
+            <UnitTextView room={room} />
         </div>
     );
 }
@@ -287,6 +306,16 @@ export const wbViews = [
         title: '分解',
         placement: { task: { area: 'detail' } },
         render: () => <UnitsBody />,
+    }),
+    /**
+     * 模型读到的原文。与上面两个视图**同一份数据**（`units.list` / 同一节 `units`），
+     * 所以没有「树文本 / 图文本」两个版本 —— 加一个切换按钮只会让人以为有第二份。
+     */
+    defineView({
+        id: 'units-text',
+        title: '文本',
+        placement: { task: { area: 'detail' } },
+        render: () => <UnitsTextBody />,
     }),
     defineView({
         id: 'detail',

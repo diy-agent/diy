@@ -32,6 +32,7 @@ import {
     openStore,
     unitBatchViews,
     unitBoard,
+    unitsContextText,
 } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
@@ -706,6 +707,17 @@ export function createDiy2App(opts: {
                     const board = unitBoard(store.listUnits(input.id), store.unitDepsOf(input.id));
                     // 批次与图一起给：界面要按批次显示「这次验收包含哪几条」，只给 id 不够
                     return { ...board, batches: unitBatchViews(board, store.listBatches(input.id)) };
+                },
+                /**
+                 * 模型读到的 `units` 节原文。
+                 *
+                 * 与上下文注入**同一份代码**（`unitsContextText()`）：界面若自己再拼一遍文本，
+                 * 两边迟早在溢出退化 / 批次行上分叉，而人看这一页恰恰是在核对
+                 * 「模型到底读到了什么」。
+                 */
+                text: async ({ input }) => {
+                    const board = unitBoard(store.listUnits(input.id), store.unitDepsOf(input.id));
+                    return unitsContextText(board, store.listBatches(input.id));
                 },
             },
             links: {

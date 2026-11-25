@@ -35,6 +35,7 @@ export { TaskPanel } from './components/TaskPanel';
 export { JobCard } from './components/JobCard';
 export { UnitGraph } from './components/UnitGraph';
 export { UnitDagView } from './components/UnitDagView';
+export { UnitTextView } from './components/UnitTextView';
 export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';
 export type { RoomDialogs } from './useRoomDialogs';
 

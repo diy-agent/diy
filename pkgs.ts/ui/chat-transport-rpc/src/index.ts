@@ -93,6 +93,22 @@ export interface UnitBoardView {
     cyclic: boolean;
 }
 
+/**
+ * `units` 节原文（模型读到的就是它）。
+ *
+ * `mode` 说明服务端走的是哪条路：`full` 给全树，`summary` 是超过硬线后退成的摘要 ——
+ * 界面要能把「为什么我看得到全树、模型只看到 ready」说清楚，否则容易以为上下文丢了。
+ */
+export interface UnitTextView {
+    /** 原文（空字符串 = 这个任务还没有拆分，整节缺席） */
+    text: string;
+    /** 字符数（界面上标「≈ 多少 tok」用，与 ContextPanel 同一口径 *0.78） */
+    chars: number;
+    mode: 'full' | 'summary' | 'empty';
+    /** 树行数（`full` 时才有意义；摘要形态是 0） */
+    treeLines: number;
+}
+
 /** 一条草稿（服务端 rooms/drafts 的返回项） */
 export interface DraftEntry {
     field: string;
@@ -202,6 +218,8 @@ export class RpcChatClient implements ChatClient {
      */
     readonly units = {
         list: (id: string): Promise<UnitBoardView> => this.call('units.list', { id }),
+        /** 模型实际读到的 `units` 节原文（YAML）：树视图与图视图共用这一段，不是两份 */
+        text: (id: string): Promise<UnitTextView> => this.call('units.text', { id }),
     };
 
     readonly links = {

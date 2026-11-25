@@ -20,6 +20,8 @@
  *
  * 「删节点 = 解锁后继」不在这里处理：边在删除时已经随节点删掉，这里只看现存事实。
  */
+import { toYaml } from '@diy-agent/context';
+
 import type { BatchRecord, UnitDep, UnitRecord, UnitStatus } from './db';
 
 /** 一个节点 + 它在树上的位置 + 在依赖图上的位置 */
@@ -453,4 +455,137 @@ export function unitBatchViews(board: UnitBoard, batches: readonly BatchFacts[])
             const firstB = b.members.length === 0 ? Number.MAX_SAFE_INTEGER : (position.get(b.members[0]!) ?? 0);
             return seqA - seqB || firstA - firstB || a.id.localeCompare(b.id);
         });
+}
+
+// ── 进 system 上下文的 `units` 节（模型读的文本由它决定）───────────────
+
+/**
+ * 全量形态的硬线：过线就退化成摘要（只给「现在能做」+ 计数，全树按需 `unit_list`）。
+ *
+ * 树行比原来的分层 JSON 省得多（一行一个节点，缩进即层级），所以线按**行数**给更直观：
+ * 40 行树 ≈ 3 KB，正好是「常见 10~20 条图天天读得起」的量级；超了才退摘要。
+ */
+const UNITS_FULL_MAX_BYTES = 4096;
+const UNITS_FULL_MAX_LINES = 40;
+
+/** `units` 节里一个「可做 / 在做」条目的形状（`UNIT_HEAD`） */
+export interface UnitHead {
+    id: string;
+    title: string;
+    batch?: string;
+}
+
+/** `units` 节的**值**（= 模型在上下文树里看到的那一节） */
+export interface UnitsContextValue {
+    ready: UnitHead[];
+    doing: UnitHead[];
+    tree?: string[];
+    batches?: Array<{
+        id: string;
+        title: string;
+        stage: UnitBatchStage;
+        progress: string;
+        canStart?: string[];
+        waitingOn?: string[];
+        note?: string;
+    }>;
+    unbatched?: { count: number; ids: string[] };
+    cyclic?: string;
+    counts?: { open: number; doing: number; done: number };
+    note?: string;
+}
+
+/**
+ * `units` 节的**唯一**算法：模型读的上下文、界面的「文本」tab 都调这一个函数。
+ *
+ * 为什么单独抽出来：它是「同一份事实只设计一次」的落点 —— 界面若自己再拼一遍文本，
+ * 两边迟早在某个开关（溢出退化、批次行、unbatched 的 ids）上分叉，而人看界面时
+ * 恰恰是在核对「模型到底读到了什么」。空树返回 `undefined`（= 整节缺席）。
+ *
+ * 去冗余：每个节点只在 `tree` 里出现一次（带状态 + 被谁挡）；`ready` / `doing` 再点名一次
+ * 是因为那是**行动指令**，值得重复。`blocked` / `done` 不点名 —— 树行里的标记就是答案。
+ */
+export function unitsContextValue(
+    board: UnitBoard,
+    batches: readonly BatchRecord[],
+): UnitsContextValue | undefined {
+    if (board.rows.length === 0) return undefined;
+    const rowOf = new Map(board.rows.map((row) => [row.id, row] as const));
+    const titleOf = (id: string): string => rowOf.get(id)?.title ?? '';
+    const head = (ids: string[]): UnitHead[] =>
+        ids.map((id) => {
+            const batch = rowOf.get(id)?.batch ?? null;
+            return { id, title: titleOf(id), ...(batch === null ? {} : { batch }) };
+        });
+    // 批次与工具回包（`unit_list` 的 briefBoard）**同形状**：同一份事实只设计一次
+    const views = unitBatchViews(board, batches);
+    const batchLines = views.map((batch) => ({
+        id: batch.id,
+        title: batch.title,
+        stage: batch.stage,
+        progress: `${batch.doneCount}/${batch.total}`,
+        ...(batch.ready.length === 0 ? {} : { canStart: batch.ready.map(titleOf) }),
+        ...(batch.waitingOn.length === 0
+            ? {}
+            : { waitingOn: batch.waitingOn.map((id) => `${id} ${titleOf(id)}`) }),
+        ...(batch.note === '' ? {} : { note: batch.note }),
+    }));
+    const unbatched = board.rows.filter((row) => row.batch === null);
+    const tree = unitTreeLines(board, { withBatch: true });
+    const tooBig = tree.length > UNITS_FULL_MAX_LINES || tree.join('\n').length > UNITS_FULL_MAX_BYTES;
+    const tail = {
+        ...(batchLines.length === 0 ? {} : { batches: batchLines }),
+        ...(unbatched.length === 0
+            ? {}
+            : {
+                  unbatched: {
+                      count: unbatched.length,
+                      // 溢出时只给计数：几十个 id 会把摘要撑得比树还大
+                      ids: tooBig ? [] : unbatched.map((row) => row.id),
+                  },
+              }),
+        ...(board.cyclic ? { cyclic: '图里有环（数据异常）：环上的 unit 永远做不了' } : {}),
+    };
+    if (!tooBig) {
+        return { ready: head(board.ready), doing: head(board.doing), tree, ...tail };
+    }
+    const count = (status: UnitStatus): number => board.rows.filter((row) => row.status === status).length;
+    return {
+        ready: head(board.ready),
+        doing: head(board.doing),
+        counts: { open: count('open'), doing: count('doing'), done: count('done') },
+        note: `分解树较大（${board.rows.length} 条），只给现在能做的；全树用 unit_list`,
+        ...tail,
+    };
+}
+
+/**
+ * `units` 节**落成文本**（YAML）。界面「文本」tab 与 writer 的调试入口都调它。
+ *
+ * 为什么不留下调用方自己 `toYaml`：文本与值必须同一份 —— 值这边一变（比如给
+ * `unbatched` 加字段），文本自动跟上；否则「界面显示的和模型读的」会静默分叉。
+ *
+ * `mode` 区分 `full` / `summary`（超过硬线退化）/ `empty`（还没拆分，整节缺席）：
+ * 界面要能说清「为什么我看得到全树、模型只看到 ready」，不然容易被当成上下文丢了。
+ */
+export interface UnitsContextText {
+    text: string;
+    chars: number;
+    mode: 'full' | 'summary' | 'empty';
+    treeLines: number;
+}
+
+export function unitsContextText(
+    board: UnitBoard,
+    batches: readonly BatchRecord[],
+): UnitsContextText {
+    const value = unitsContextValue(board, batches);
+    if (value === undefined) return { text: '', chars: 0, mode: 'empty', treeLines: 0 };
+    const text = toYaml({ units: value });
+    return {
+        text,
+        chars: text.length,
+        mode: value.tree === undefined ? 'summary' : 'full',
+        treeLines: value.tree?.length ?? 0,
+    };
 }

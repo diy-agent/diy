@@ -29,7 +29,7 @@ import { skillsOf } from '@diy-agent/skills';
 import { localISOString } from '@diy-agent/time';
 
 import type { BatchRecord, JournalEntry } from './db';
-import { unitBatchViews, unitTreeLines, type UnitBoard } from './units';
+import { unitsContextValue, type UnitBoard } from './units';
 import { watchedValue } from './watch-cache';
 
 /** 房间上下文需要的 spec 形状（只读；与 `Room` 结构兼容） */
@@ -225,79 +225,19 @@ function journalProvider(get?: () => readonly JournalEntry[]): ContextProvider {
 }
 
 /**
- * 全量形态的硬线：过线就退化成摘要（只给「现在能做」+ 计数，全树按需 `unit_list`）。
- *
- * 树行比原来的分层 JSON 省得多（一行一个节点，缩进即层级），所以线按**行数**给更直观：
- * 40 行树 ≈ 3 KB，正好是「常见 10~20 条图天天读得起」的量级；超了才退摘要。
- */
-const UNITS_FULL_MAX_BYTES = 4096;
-const UNITS_FULL_MAX_LINES = 40;
-
-/**
  * 任务分解（树 + 执行约束）。**全量注入**（2026-11-24 用户裁：先简单走）——
  * 于是「现在能做哪几条 / 为什么这条卡着」不需要多一次工具调用。
  *
- * 格式是**缩进树文本**而不是嵌套 JSON（2026-11-24 用户裁：树比图信息密度高、也比 JSON 省）：
- * 树的形状用缩进就表达完了，JSON 要为每层付 `{"children":[...]}` 的税。
- *
- * 去冗余：每个节点只在 `tree` 里出现一次（带状态 + 被谁挡）；`ready` / `doing` 再点名一次
- * 是因为那是**行动指令**，值得重复。`blocked` / `done` 不点名 —— 树行里的标记就是答案。
+ * 值的算法在 `unitsContextValue()`（`units.ts`）：界面「文本」tab 调同一个函数，
+ * 所以「模型读到的」和「人看到的」不可能分叉。这里只负责挂 key。
  */
 function unitsProvider(get?: () => UnitBoard, batchesOf?: () => readonly BatchRecord[]): ContextProvider {
     return {
         key: 'units',
         provide: () => {
             const board = get?.();
-            if (board === undefined || board.rows.length === 0) return undefined;
-            const rowOf = new Map(board.rows.map((row) => [row.id, row] as const));
-            const titleOf = (id: string): string => rowOf.get(id)?.title ?? '';
-            const head = (ids: string[]): Array<{ id: string; title: string; batch?: string }> =>
-                ids.map((id) => {
-                    const batch = rowOf.get(id)?.batch ?? null;
-                    return { id, title: titleOf(id), ...(batch === null ? {} : { batch }) };
-                });
-            // 批次与工具回包（`unit_list` 的 briefBoard）**同形状**：同一份事实只设计一次
-            const views = unitBatchViews(board, batchesOf?.() ?? []);
-            const batchLines = views.map((batch) => ({
-                id: batch.id,
-                title: batch.title,
-                stage: batch.stage,
-                progress: `${batch.doneCount}/${batch.total}`,
-                ...(batch.ready.length === 0 ? {} : { canStart: batch.ready.map(titleOf) }),
-                ...(batch.waitingOn.length === 0
-                    ? {}
-                    : { waitingOn: batch.waitingOn.map((id) => `${id} ${titleOf(id)}`) }),
-                ...(batch.note === '' ? {} : { note: batch.note }),
-            }));
-            const unbatched = board.rows.filter((row) => row.batch === null);
-            const tree = unitTreeLines(board, { withBatch: true });
-            const tooBig =
-                tree.length > UNITS_FULL_MAX_LINES || tree.join('\n').length > UNITS_FULL_MAX_BYTES;
-            const tail = {
-                ...(batchLines.length === 0 ? {} : { batches: batchLines }),
-                ...(unbatched.length === 0
-                    ? {}
-                    : {
-                          unbatched: {
-                              count: unbatched.length,
-                              // 溢出时只给计数：几十个 id 会把摘要撑得比树还大
-                              ids: tooBig ? [] : unbatched.map((row) => row.id),
-                          },
-                      }),
-                ...(board.cyclic ? { cyclic: '图里有环（数据异常）：环上的 unit 永远做不了' } : {}),
-            };
-            if (!tooBig) {
-                return { ready: head(board.ready), doing: head(board.doing), tree, ...tail };
-            }
-            const count = (status: UnitBoard['rows'][number]['status']): number =>
-                board.rows.filter((row) => row.status === status).length;
-            return {
-                ready: head(board.ready),
-                doing: head(board.doing),
-                counts: { open: count('open'), doing: count('doing'), done: count('done') },
-                note: `分解树较大（${board.rows.length} 条），只给现在能做的；全树用 unit_list`,
-                ...tail,
-            };
+            if (board === undefined) return undefined;
+            return unitsContextValue(board, batchesOf?.() ?? []);
         },
     };
 }
