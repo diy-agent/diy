@@ -174,7 +174,7 @@ function Host() {
                     {
                         // 点击在 glyph 自己身上（要弹列表并拿按钮位置做锚点），壳只负责摆位置
                         id: 'sessions',
-                        label: '会话活动：查看正在运行的会话列表',
+                        label: 'Bot 活动：查看正在运行的 Bot 列表',
                         glyph: <ActiveSessionsGlyph />,
                         standalone: true,
                     },

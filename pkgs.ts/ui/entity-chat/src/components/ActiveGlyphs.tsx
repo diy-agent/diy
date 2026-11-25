@@ -1,14 +1,14 @@
-// ActiveGlyphs.tsx —— 标题栏右端的两颗**活动**图标：会话 N / 作业 M。
+// ActiveGlyphs.tsx —— 标题栏右端的两颗**活动**图标：Bot N / 作业 M。
 //
 // 用户 2026-11-24 裁：**两颗并列，不合并**。它们是两种不同的活动（一轮对话 vs 一个后台进程），
 // 合并成一个数之后「为什么亮」说不清，点进去也不知道该看哪儿。
 //
 // 为什么放在这里而不是壳（apps/diy2）：它读的是 entity-chat 的 store（全实例活动流），
-// 壳不该认识「会话」这个概念 —— 壳只负责把贡献摆进标题栏（见 workbench/window.tsx）。
+// 壳不该认识「Bot」这个概念 —— 壳只负责把贡献摆进标题栏（见 workbench/window.tsx）。
 //
 // 标题栏里要一眼可认：不用 hover 才知道这是什么，也不用看空图标猜它是不是坏了。
 // 所以两颗都带固定文字与数字（包括 0）；有活动时亮绿并呼吸，无活动时灰显。
-// 会话入口弹出运行中房间列表；后台任务入口打开全局面板。
+// Bot 入口弹出运行中房间列表；后台任务入口打开全局面板。
 
 import { MessageSquare, SquareTerminal } from 'lucide-react';
 import * as React from 'react';
@@ -49,9 +49,9 @@ function RunningRoomRow({ room, onSelect }: { room: ReturnType<typeof useRunning
 }
 
 /**
- * 「会话」入口：点击弹出正在运行的房间列表。
+ * 「Bot」入口：点击弹出正在运行的房间列表。
  *
- * 数字与列表**同源**（`useRunningSessionRooms`）——各算一份就会出现「会话 1、点开是空的」。
+ * 数字与列表**同源**（`useRunningSessionRooms`）——各算一份就会出现「Bot 1、点开是空的」。
  */
 export function ActiveSessionsGlyph() {
     const runningRooms = useRunningSessionRooms();
@@ -64,7 +64,7 @@ export function ActiveSessionsGlyph() {
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
     }, [anchor, close]);
-    const title = count === 0 ? '没有会话在跑' : `${count} 个会话在跑，点击查看列表`;
+    const title = count === 0 ? '没有 Bot 在跑' : `${count} 个 Bot 在跑，点击查看列表`;
     return (
         <>
             <button
@@ -75,23 +75,27 @@ export function ActiveSessionsGlyph() {
                     count > 0 ? 'text-emerald-400' : 'text-muted-foreground/70',
                 ].join(' ')}
                 title={title}
-                aria-label={`会话 ${count}，查看正在运行的会话`}
+                aria-label={`Bot ${count}，查看正在运行的 Bot`}
                 onClick={(event) => {
                     event.stopPropagation();
-                    setAnchor((current) => current === null ? event.currentTarget.getBoundingClientRect() : null);
+                    // 必须在这里就把 rect 取出来：updater 是在**下次渲染时**才执行的，
+                    // 那时 React 已把事件对象的 currentTarget 置空 → 取矩形会抛
+                    // 「null.getBoundingClientRect」→ 整棵组件树崩掉（2026-11-25 实测：点一下黑屏）。
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setAnchor((current) => (current === null ? rect : null));
                 }}
             >
                 <span className={count > 0 ? 'animate-pulse' : ''}><MessageSquare className="size-3.5" /></span>
-                <span className="text-[10px] leading-none">会话</span>
+                <span className="text-[10px] leading-none">Bot</span>
                 <span className="text-[10px] tabular-nums leading-none">{count}</span>
             </button>
             {anchor !== null && createPortal(
                 <>
-                    <button aria-label="关闭会话列表" className="fixed inset-0 z-[999] cursor-default" onClick={close} />
-                    <div role="dialog" aria-label="正在运行的会话" className="fixed z-[1000] w-72 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 296)), top: anchor.bottom + 4 }}>
-                        <div className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground">正在运行的会话 · {count}</div>
+                    <button aria-label="关闭 Bot 列表" className="fixed inset-0 z-[999] cursor-default" onClick={close} />
+                    <div role="dialog" aria-label="正在运行的 Bot" className="fixed z-[1000] w-72 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 296)), top: anchor.bottom + 4 }}>
+                        <div className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground">正在运行的 Bot · {count}</div>
                         {runningRooms.map((room) => <RunningRoomRow key={room.id} room={room} onSelect={() => { actions.select(room.id); close(); }} />)}
-                        {count === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">当前没有运行中的会话</p>}
+                        {count === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">当前没有运行中的 Bot</p>}
                     </div>
                 </>,
                 document.body,

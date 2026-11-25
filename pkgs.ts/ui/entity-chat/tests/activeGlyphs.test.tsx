@@ -9,18 +9,19 @@ import { bootstrapStore, isRunningSession, setDiy2Client } from '../src/store';
 import { ActiveJobsGlyph, ActiveSessionsGlyph } from '../src/components/ActiveGlyphs';
 
 describe('标题栏活动指示器', () => {
-    it('空闲时仍显示会话与后台任务名称及 0，不退化成两个无标签图标；会话入口带列表语义', () => {
+    it('空闲时仍显示 Bot 与后台任务名称及 0，不退化成两个无标签图标；Bot 入口带列表语义', () => {
         const sessions = renderToStaticMarkup(<ActiveSessionsGlyph />);
         const jobs = renderToStaticMarkup(<ActiveJobsGlyph />);
 
-        expect(sessions).toContain('会话');
+        // 用户 2026-11-25 裁：这一颗叫「Bot」（「会话」与侧栏/房间的说法混淆）
+        expect(sessions).toContain('Bot');
         expect(sessions).toContain('>0</span>');
-        expect(sessions).toContain('查看正在运行的会话');
+        expect(sessions).toContain('查看正在运行的 Bot');
         expect(jobs).toContain('后台任务');
         expect(jobs).toContain('>0</span>');
     });
 
-    it('会话计数按运行房间计，与弹出列表项目一致', async () => {
+    it('Bot 计数按运行房间计，与弹出列表项目一致', async () => {
         const rooms: Room[] = [
             { id: 'task:one', type: 'task', modelKey: 'm', data: { title: '一号', status: 'open' }, botIds: [] },
             { id: 'task:closed', type: 'task', modelKey: 'm', data: { title: '已关闭', status: 'closed' }, botIds: [] },
@@ -39,17 +40,17 @@ describe('标题栏活动指示器', () => {
         } as never);
         bootstrapStore();
         await new Promise((resolve) => setTimeout(resolve, 0));
-        // proj:one 自己也报「在跑」——project 行是导航壳，不该进会话数，否则数字比列表多一行
+        // proj:one 自己也报「在跑」——project 行是导航壳，不该进这个数，否则数字比列表多一行
         listener?.({
             rooms: [{ id: 'task:one', botIds: ['a', 'b'] }, { id: 'task:closed', botIds: ['c'] }, { id: 'proj:one', botIds: ['x'] }],
             jobs: 0,
         } as never);
 
         const sessions = renderToStaticMarkup(<ActiveSessionsGlyph />);
-        expect(sessions).toContain('aria-label="会话 1，查看正在运行的会话"');
+        expect(sessions).toContain('aria-label="Bot 1，查看正在运行的 Bot"');
     });
 
-    it('「算不算会话在跑」只有一个判据：project / closed / 0 都不算', () => {
+    it('「算不算 Bot 在跑」只有一个判据：project / closed / 0 都不算', () => {
         const room = (type: Room['type'], status?: string): Room =>
             ({ id: `${type}:x`, type, modelKey: 'm', data: { title: 'x', status }, botIds: [] }) as Room;
 
