@@ -173,6 +173,53 @@ export class RoomActor {
         this.human = this.deps.human ?? { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
         // 成员的 session 一开始就建好：上下文、统计、恢复都不需要等第一条消息
         for (const bot of this.members()) this.sessionOf(bot);
+        this.reportOpenTurns();
+    }
+
+    /**
+     * 上次没收尾的轮（进程崩溃 / 被杀）→ 补一条轮级事实，然后销标记。
+     *
+     * 为什么必须补：`turn.end` 在 session 的 finally 里发，进程死在那一步之前就什么都没落，
+     * 磁盘上那一轮与「正常说完」完全同形（见 bot-status.ts 的局限说明）。
+     * 补成 `notice(kind: 'interrupted')` 是最省的那条路：走的是已有的轮级事实通道，
+     * 结局判据与 UI 都不用特殊化（只在 `NOTICE_OUTCOMES` 里加了一行）。
+     *
+     * 没有开着的轮时**一次查询就走**（不读 items）—— 正常重启不该为此付 ensureInit 的钱。
+     */
+    private reportOpenTurns(): void {
+        const opens = this.deps.store.openTurns(this.id);
+        if (opens.length === 0) return;
+        for (const open of opens) {
+            const bot = this.member(open.botId);
+            // 成员已经不在这个房间里（被移出）：没有可归属的事实，直接销标记
+            if (bot === undefined) {
+                this.deps.store.closeTurn(this.id, open.botId);
+                continue;
+            }
+            const order = this.nextOrder();
+            const notice: Item = {
+                id: `n-${open.at.toString(36)}-${order}`,
+                seq: this.deps.store.seqOf(this.id) + 1,
+                order,
+                turn: open.turn,
+                turnId: open.turnId,
+                // 用「发现时刻」而不是 open.at：时间线的位置按 order（出现时刻）排，
+                // 这条排在末尾却标着昨晚的时间会让人以为消息被插错了地方 ——
+                // 事实内容（哪一轮没跑完）由 turnId 与文案表达，不需要 at 来冒充
+                at: Date.now(),
+                status: 'done',
+                type: 'notice',
+                // 不带 author：轮级事实（见 bot-status.ts 的论证），UI 据此让它独立成条；
+                // 归属记在 data.botId（turnId 是房间级的，@all 时认不出是谁）
+                data: {
+                    text: `${bot.name} 的上一轮没跑完（进程中断），结论可能不完整`,
+                    kind: 'interrupted',
+                    botId: open.botId,
+                },
+            };
+            this.deps.emit({ kind: 'item', item: this.deps.store.appendItem(this.id, notice) });
+            this.deps.store.closeTurn(this.id, open.botId);
+        }
     }
 
     get id(): string {
@@ -845,6 +892,14 @@ export class RoomActor {
                 // 提问依赖的世界状态没了（寿命规则见 ask.ts 头部）。过期要点明、要通知它本人，
                 // 否则它永远停在「我问了、等回答」（ask 不阻塞，没有 tool call 能回填）。
                 this.gate.expireFor(bot.id, `${bot.name} 已开启新一轮`);
+                // 落一行「这一轮开了、还没收尾」：进程若在这里被杀，磁盘上就留得住这个事实
+                // （`completed` / `interrupted` 不产条目，靠 items 是看不出「开始过」的）。
+                this.deps.store.openTurn(this.id, {
+                    botId: bot.id,
+                    turn: event.turn.turn,
+                    turnId: event.turn.turnId,
+                    at: this.deps.now?.() ?? Date.now(),
+                });
                 return;
             case 'turn.end':
                 // 「这一轮是怎么停的」广播给客户端（消息页脚用它）。放在落库/发结论之前：
@@ -856,6 +911,8 @@ export class RoomActor {
                     reason: event.result.endReason,
                 });
                 this.persistSession(bot.id);
+                // 快照落了才算收尾：销掉「开了没收尾」的标记再发结论
+                this.deps.store.closeTurn(this.id, bot.id);
                 this.publishConclusion(bot, event.result);
                 return;
             case 'compact.progress':

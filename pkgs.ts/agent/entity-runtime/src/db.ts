@@ -33,6 +33,20 @@ export interface SessionSnapshot {
     logSeq?: number;
 }
 
+/**
+ * 「一轮开了头、还没收尾」的标记（`turn_open`，一行一 bot）。
+ *
+ * 存在的理由：`completed` / `interrupted` 都不产条目，进程崩在那一段时磁盘上没留下
+ * 任何「这轮开始过」的痕迹 —— 结局判据只能读成「正常结束」（见 bot-status.ts 的局限说明）。
+ * 轮开始写一行、收尾删一行；进程重启后还留着 = 上一轮没走到收尾。
+ */
+export interface OpenTurn {
+    botId: string;
+    turn: number;
+    turnId: string;
+    at: number;
+}
+
 /** 一条草稿：某个容器里某个字段尚未提交的输入（value 由消费方解释） */
 export interface Draft {
     field: string;
@@ -217,6 +231,12 @@ export interface Store {
     textOf(roomId: string, messageId: string): string | undefined;
     saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void;
     loadSession(roomId: string, botId: string): SessionSnapshot | undefined;
+    /** 记下「这个成员开始了第 turn 轮、还没收尾」（轮开始时写，收尾时删） */
+    openTurn(roomId: string, record: OpenTurn): void;
+    /** 这一轮走到收尾了，销掉标记 */
+    closeTurn(roomId: string, botId: string): void;
+    /** 还挂着没收尾的轮（重启后非空 = 上次没跑完的那几个） */
+    openTurns(roomId: string): OpenTurn[];
     appendRoomEntry(roomId: string, entry: RoomEntry): void;
     roomEntries(roomId: string): RoomEntry[];
     itemsOf(roomId: string, afterSeq?: number): Item[];
@@ -262,6 +282,18 @@ export interface Store {
      * 在跑 / 等回答由内存侧（`runningBots` / `pendingAsks`）覆盖。
      */
     lastItemPerBot(roomIds?: readonly string[]): Array<{ roomId: string; item: Item }>;
+    /**
+     * 每条**轮级事实**（不带 author 的 notice / error）的最后一条，按归属分组。
+     *
+     * `lastItemPerBot` 按 `author.id` 分组，恰好把结局事实排除了（见 bot-status.ts 的论证）。
+     * 它们只能单独认领，所以单独一条查询：调用方先拿到 bot 最后一轮，再从这里取那一轮的结局。
+     *
+     * `owner` = 事实自带的 `data.botId`，没有就退回 `turnId`：
+     *   · 新数据带 botId —— `turnId` 是房间级的（@all 各 bot 共享），只按它归属会张冠李戴；
+     *   · 老数据没有 botId，只能按轮认（实测历史数据里带结局的轮全部只有一个 bot，所以安全）。
+     * 调用方先看 botId 命中、再看 turnId 命中，新数据自动优先。
+     */
+    lastFactPerTurn(roomIds?: readonly string[]): Array<{ roomId: string; owner: string; item: Item }>;
     /**
      * 清掉「已经没有结局可言」的 ask 草稿：`ask:<id>` 不在 keepAskIds 里（时间线上不再等回答）
      * 且早于 olderThan。返回清掉的条数。
@@ -389,6 +421,19 @@ export function openStore(file: string): Store {
         -- 「每个容器最后一条 item 的时间」要 GROUP BY entity_id 取 MAX(at)：
         -- 没有这条覆盖索引就是全表扫（6409 条实测 15.6ms，随历史线性涨），有了是 0.7ms。
         CREATE INDEX IF NOT EXISTS items_entity_at ON entity_items(entity_id, at);
+        -- 「每个 bot 最后一条 item」与「每轮最后一条结局事实」都在 json 里分组：
+        -- author.id、归属 = COALESCE(data.botId, turnId)。没有下面两条表达式索引就是
+        -- 全表扫 118MB 的 json（实测 2.7 万行：8.4s / 3.5s），有了是 25ms / 54ms。
+        -- 部分索引让体积停在 1.3MB / 0.02MB；WHERE 必须与查询里的过滤条件逐字一致才命中。
+        CREATE INDEX IF NOT EXISTS items_author_seq ON entity_items(
+            entity_id, json_extract(item, '$.author.id'), seq
+        ) WHERE json_extract(item, '$.author.id') IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS items_fact_owner_seq ON entity_items(
+            entity_id,
+            COALESCE(json_extract(item, '$.data.botId'), json_extract(item, '$.turnId')),
+            seq
+        ) WHERE json_extract(item, '$.author.id') IS NULL
+            AND json_extract(item, '$.type') IN ('notice', 'error');
         CREATE TABLE IF NOT EXISTS room_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_id TEXT NOT NULL,
@@ -409,6 +454,15 @@ export function openStore(file: string): Store {
             settled_at INTEGER
         );
         CREATE INDEX IF NOT EXISTS asks_entity ON asks(entity_id, at);
+        -- 开了头没收尾的轮（一 bot 一行）：崩溃/被杀后重启靠它认出「那一轮没跑完」
+        CREATE TABLE IF NOT EXISTS turn_open (
+            entity_id TEXT NOT NULL,
+            bot_id TEXT NOT NULL,
+            turn INTEGER NOT NULL,
+            turn_id TEXT NOT NULL,
+            at INTEGER NOT NULL,
+            PRIMARY KEY (entity_id, bot_id)
+        );
         CREATE TABLE IF NOT EXISTS session_state (
             entity_id TEXT NOT NULL,
             bot_id TEXT NOT NULL,
@@ -1013,6 +1067,7 @@ export function openStore(file: string): Store {
             db.prepare('DELETE FROM entity_items WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM room_entries WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM session_state WHERE entity_id = ?').run(roomId);
+            db.prepare('DELETE FROM turn_open WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM deliveries WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM asks WHERE entity_id = ?').run(roomId);
@@ -1244,6 +1299,35 @@ export function openStore(file: string): Store {
                     : { logSeq: Number(row['log_seq']) }),
             };
         },
+        openTurn(roomId: string, record: OpenTurn): void {
+            db.prepare(
+                'INSERT INTO turn_open (entity_id, bot_id, turn, turn_id, at) VALUES (?,?,?,?,?) ' +
+                    'ON CONFLICT(entity_id, bot_id) DO UPDATE SET turn=?, turn_id=?, at=?',
+            ).run(
+                roomId,
+                record.botId,
+                record.turn,
+                record.turnId,
+                record.at,
+                record.turn,
+                record.turnId,
+                record.at,
+            );
+        },
+        closeTurn(roomId: string, botId: string): void {
+            db.prepare('DELETE FROM turn_open WHERE entity_id = ? AND bot_id = ?').run(roomId, botId);
+        },
+        openTurns(roomId: string): OpenTurn[] {
+            const rows = db
+                .prepare('SELECT bot_id, turn, turn_id, at FROM turn_open WHERE entity_id = ? ORDER BY at ASC')
+                .all(roomId) as Array<Record<string, unknown>>;
+            return rows.map((row) => ({
+                botId: String(row['bot_id']),
+                turn: Number(row['turn']),
+                turnId: String(row['turn_id']),
+                at: Number(row['at']),
+            }));
+        },
         appendRoomEntry(roomId: string, entry: RoomEntry): void {
             db.prepare('INSERT INTO room_entries (entity_id, seq, at, entry) VALUES (?,?,?,?)').run(
                 roomId,
@@ -1334,6 +1418,32 @@ export function openStore(file: string): Store {
                     out.push({ roomId: String(row['entity_id']), item: { ...item, seq: Number(row['seq']) } });
                 } catch {
                     // 坏行不该让整张表都读不出来（与 itemsOf 同策）
+                }
+            }
+            return out;
+        },
+        lastFactPerTurn(roomIds?: readonly string[]): Array<{ roomId: string; owner: string; item: Item }> {
+            const owner = "COALESCE(json_extract(item, '$.data.botId'), json_extract(item, '$.turnId'))";
+            const sql =
+                `SELECT entity_id, ${owner} AS owner, MAX(seq) AS seq, item FROM entity_items ` +
+                "WHERE json_extract(item, '$.author.id') IS NULL " +
+                "AND json_extract(item, '$.type') IN ('notice','error') " +
+                (roomIds === undefined ? '' : 'AND entity_id IN (SELECT value FROM json_each(?)) ') +
+                `GROUP BY entity_id, ${owner}`;
+            const rows = (
+                roomIds === undefined ? db.prepare(sql).all() : db.prepare(sql).all(JSON.stringify(roomIds))
+            ) as Array<Record<string, unknown>>;
+            const out: Array<{ roomId: string; owner: string; item: Item }> = [];
+            for (const row of rows) {
+                try {
+                    const item = JSON.parse(String(row['item'])) as Item;
+                    out.push({
+                        roomId: String(row['entity_id']),
+                        owner: String(row['owner']),
+                        item: { ...item, seq: Number(row['seq']) },
+                    });
+                } catch {
+                    // 坏行不该让整张表都读不出来（与 itemsOf / lastItemPerBot 同策）
                 }
             }
             return out;

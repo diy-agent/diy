@@ -40,6 +40,8 @@ export function outcomeTextOf(row: BotRow): string {
             return '被内容策略拦截';
         case 'tool-mismatch':
             return '工具结果没回来';
+        case 'interrupted':
+            return '中断（上一轮没跑完）';
         case 'failed':
             return row.outcomeMessage === undefined || row.outcomeMessage === ''
                 ? '运行失败'

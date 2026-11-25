@@ -612,6 +612,8 @@ export class BotSession {
                     turn: turn.turn,
                     turnId: turn.turnId,
                     ...(failureMessage === undefined ? {} : { failureMessage }),
+                    // 结局归属：一轮里 @all 的各 bot 共享 turnId，只看 turnId 会张冠李戴
+                    botId: this.deps.bot.id,
                 },
                 { errorAlreadyReported: errorReported },
             )) {

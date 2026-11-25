@@ -92,6 +92,13 @@ export interface EndItemContext {
     at?: number;
     /** 运行时给的失败原文（`run.failed.message`）：`error` 类带上它，别把话丢了 */
     failureMessage?: string;
+    /**
+     * 这一轮是**哪个 bot** 的（session 是 per-bot 的，调用方一定有这个信息）。
+     *
+     * 必须带上：`turnId` 是**房间级**的（一轮里 @all 的各 bot 共享同一个），只按它归属结局
+     * 会把 A 的截断算到 B 头上。见 protocol 的 `Item.notice.data.botId` 注释。
+     */
+    botId?: string;
 }
 
 /**
@@ -120,6 +127,8 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
         at: ctx.at ?? Date.now(),
         status: 'done' as const,
     };
+    /** 结局归属：有 botId 就记上，让消费方能在共享 turnId 的一轮里认出是谁的结局 */
+    const who = ctx.botId === undefined ? {} : { botId: ctx.botId };
 
     switch (reason.type) {
         case 'max-tokens':
@@ -131,6 +140,7 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     data: {
                         text: `这次回复被输出上限截断（max_tokens=${reason.maxOutputTokens ?? '?'}），说「继续」可接上`,
                         kind: 'max-tokens',
+                        ...who,
                     },
                 },
             ];
@@ -143,6 +153,7 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     data: {
                         text: `这一轮撞到步数上限（${reason.maxSteps ?? reason.steps ?? '?'} 步）先停下 —— 说「继续」接着干；反复撞就把它拆小`,
                         kind: 'max-steps',
+                        ...who,
                     },
                 },
             ];
@@ -152,7 +163,7 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     ...base,
                     id: nextId('notice'),
                     type: 'notice',
-                    data: { text: '这次回复被上游内容策略拦截（content-filter）', kind: 'content-filter' },
+                    data: { text: '这次回复被上游内容策略拦截（content-filter）', kind: 'content-filter', ...who },
                 },
             ];
         case 'tool-mismatch':
@@ -164,6 +175,7 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     data: {
                         text: '工具结果没回来，这一轮被迫停下了（finish=tool-calls），说「继续」可以接着跑',
                         kind: 'tool-mismatch',
+                        ...who,
                     },
                 },
             ];
@@ -173,7 +185,7 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     ...base,
                     id: nextId('error'),
                     type: 'error',
-                    data: { message: unknownText(reason) },
+                    data: { message: unknownText(reason), ...who },
                 },
             ];
         case 'error':
@@ -182,7 +194,7 @@ function endItemsOf(reason: TurnEndReason, ctx: EndItemContext): Item[] {
                     ...base,
                     id: nextId('error'),
                     type: 'error',
-                    data: { message: ctx.failureMessage ?? '本轮运行失败' },
+                    data: { message: ctx.failureMessage ?? '本轮运行失败', ...who },
                 },
             ];
         default:
