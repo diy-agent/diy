@@ -6,6 +6,7 @@ import { EditableName, StatusChip } from './components/RoomName';
 import { SpeakingBar } from './components/SpeakingBar';
 import { PendingAskStrip } from './components/PendingAskStrip';
 import { ComposerBar } from './components/ComposerBar';
+import { ModelPicker } from './components/ModelPicker';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
 import { botsOf, dirOf, primaryBotOf, roomTitle, roomTypeLabel, type Room } from './model';
@@ -22,6 +23,16 @@ import {
     useSelectedRoom,
 } from './store';
 import { useRoomDialogs } from './useRoomDialogs';
+import { roles } from './roles';
+
+/** 推理强度固定档位（模型配置页同款；effort 候选数据未进契约前先用这张表） */
+const EFFORTS: ReadonlyArray<{ value: string; label: string }> = [
+    { value: '', label: '跟随全局' },
+    { value: 'minimal', label: 'minimal' },
+    { value: 'low', label: 'low' },
+    { value: 'medium', label: 'medium' },
+    { value: 'high', label: 'high' },
+];
 
 /**
  * 房间头部那个模型胶囊。
@@ -76,17 +87,52 @@ function RoleConfigPanel({
     onClose: () => void;
 }) {
     const defaultKey = useDefaultModelKey();
-    const roles = useRoles();
-    // 当前类型、primary 优先的那个角色（面板说的是「这类 bot 的配置」，不是某个房间私有 bot）
-    const role = roles.find((item) => item.type === room.type && item.primary) ?? roles.find((item) => item.type === room.type);
+    const allRoles = useRoles();
+    // 当前类型、primary 优先的那个角色（面板改的是「这类 bot 的全局配置」，不是某个房间私有 bot）
+    const role = allRoles.find((item) => item.type === room.type && item.primary) ?? allRoles.find((item) => item.type === room.type);
     const modelValue = role?.modelKey?.trim() ?? '';
     const inherited = modelValue === '';
     const shown = inherited ? (defaultKey ?? '') : modelValue;
     // 会话页只显模型 id（`account@provider/model` 的 `/` 后一段），不显全称与价目。
     const modelId = shown.split('/').pop() ?? '';
     const modelText = shown.trim() === '' ? '未配置' : inherited ? `默认 · ${modelId}` : modelId;
-    const effort = role?.reasoningEffort?.trim();
-    const effortText = effort === undefined || effort === '' ? '跟随全局' : effort;
+    const effort = role?.reasoningEffort?.trim() ?? '';
+
+    /** 模型 / effort 就地改：直接写回该类型的角色（= 任务 bot 全局），不绕房间级、不跳配置页 */
+    const [editingModel, setEditingModel] = React.useState(false);
+    const [busy, setBusy] = React.useState(false);
+    const [error, setError] = React.useState<string>();
+
+    const saveModel = React.useCallback(
+        async (key: string): Promise<void> => {
+            if (role === undefined) return;
+            setBusy(true);
+            setError(undefined);
+            try {
+                await roles.update({ id: role.id, modelKey: key });
+            } catch (cause) {
+                setError(cause instanceof Error ? cause.message : String(cause));
+            } finally {
+                setBusy(false);
+            }
+        },
+        [role],
+    );
+    const saveEffort = React.useCallback(
+        async (value: string): Promise<void> => {
+            if (role === undefined) return;
+            setBusy(true);
+            setError(undefined);
+            try {
+                await roles.update({ id: role.id, reasoningEffort: value === '' ? null : value });
+            } catch (cause) {
+                setError(cause instanceof Error ? cause.message : String(cause));
+            } finally {
+                setBusy(false);
+            }
+        },
+        [role],
+    );
 
     return (
         <div
@@ -102,15 +148,56 @@ function RoleConfigPanel({
                     <X className="size-3" />
                 </button>
             </div>
+
+            {error === undefined ? null : (
+                <p className="mb-2 text-[11px] text-destructive">{error}</p>
+            )}
+
+            {/* 模型：点名字就地展开选择器（L2 内的细项），选完写回该类型角色 */}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                 <span className="flex items-center gap-1.5">
                     <Cpu className="size-3 text-muted-foreground" />
-                    模型 <code className="font-mono">{modelText}</code>
+                    模型
+                    <button
+                        type="button"
+                        disabled={busy || role === undefined}
+                        onClick={() => setEditingModel((value) => !value)}
+                        aria-expanded={editingModel}
+                        title="点开选择模型"
+                        className="rounded border border-border px-1 py-0.5 font-mono hover:bg-muted disabled:opacity-50"
+                    >
+                        {modelText}
+                    </button>
                 </span>
-                <span className="flex items-center gap-1.5">
-                    推理 <code className="font-mono">{effortText}</code>
-                </span>
+                {/* effort 与模型分开放，方便各改各的 */}
+                <label className="flex items-center gap-1.5">
+                    推理
+                    <select
+                        aria-label="推理强度"
+                        value={effort}
+                        disabled={busy || role === undefined}
+                        onChange={(event) => void saveEffort(event.target.value)}
+                        className="rounded border border-border bg-card px-1 py-0.5 text-[11px] outline-none disabled:opacity-50"
+                    >
+                        {EFFORTS.map((item) => (
+                            <option key={item.value} value={item.value}>
+                                {item.label}
+                            </option>
+                        ))}
+                    </select>
+                </label>
             </div>
+
+            {editingModel && role !== undefined ? (
+                <div className="mt-2 border-t pt-2">
+                    <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">选择模型（改完对该类型所有房间生效）</div>
+                    <ModelPicker
+                        value={modelValue}
+                        onChange={(key) => void saveModel(key)}
+                    />
+                </div>
+            ) : null}
+
             {onManageRoles !== undefined && (
                 <div className="mt-2.5 border-t pt-2">
                     <button

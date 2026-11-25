@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 // roleConfigPanel.test.tsx —— 房间头「二级配置面板」的交互（2026-11-24 用户定）。
 //
-// 三级披露：模型胶囊 / 角色按钮（L1）→ 配置面板（L2，只读展示模型 / 推理 / 全部设置）→
+// 三级披露：模型胶囊 / 角色按钮（L1）→ 配置面板（L2，就地改模型 / 推理 + 全部设置）→
 // 设置页角色段（L3）。这里用真 App（sidebar/taskPanel 裁掉）+ 假客户端，数四件事：
 //   ① 点模型胶囊开的是**面板**、不是直接跳设置页（「全部设置」才跳）；
 //   ② 面板里读的是该类型 primary 角色的模型 / 推理（不是某个房间私有 bot）；
-//   ③ 面板是只读的——没有「换」按钮就地改模型（改配置统一去 L3 角色页）；
+//   ③ 面板就地可编辑：点模型名展开选择器、推理是下拉，改完直接写回该类型角色（bot 全局）；
 //   ④ 角色按钮与胶囊开同一张面板；关掉再点、切房间重挂载都成立。
 //
 // tsc / 纯函数测试盖不到「点了到底开面板还是跳页」，只有渲染层能验，所以这里必须真渲染。
@@ -58,6 +58,18 @@ const roles: BotRole[] = [
 ];
 
 const onManageRoles = vi.fn();
+const rolesUpdate = vi.fn(async (input: { id: string; modelKey?: string | null; reasoningEffort?: string | null }) => ({
+    id: input.id,
+    type: 'task',
+    name: '执行',
+    color: '#7cc4ff',
+    instructions: '',
+    primary: true,
+    modelKey: input.modelKey === undefined ? 'deepseek@deepseek/deepseek-v3' : input.modelKey,
+    reasoningEffort: input.reasoningEffort === undefined ? 'high' : input.reasoningEffort,
+    createdAt: 1,
+    updatedAt: 2,
+}));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -104,7 +116,7 @@ beforeEach(async () => {
     onManageRoles.mockClear();
     setDiy2Client({
         rooms: { list: async () => rooms.map((room) => ({ ...room, data: { ...room.data } })) },
-        roles: { list: async () => roles.slice() },
+        roles: { list: async () => roles.slice(), update: rolesUpdate },
         models: {
             list: async () => ({
                 providers: [],
@@ -130,6 +142,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+    rolesUpdate.mockClear();
     act(() => root.unmount());
     container.remove();
     vi.unstubAllGlobals();
@@ -148,11 +161,28 @@ describe('房间头二级配置面板', () => {
         expect(panel()!.textContent).toContain('deepseek-v3'); // primary 角色的模型
         expect(panel()!.textContent).toContain('high'); // primary 角色的推理强度
         expect(panel()!.textContent).toContain('全部设置');
-        // 面板只读：就地换模型的按钮已去掉，不暴露任何改模型入口
-        expect(panel()!.querySelector('button[aria-label="换模型"]')).toBeNull();
-        expect(Array.from(panel()!.querySelectorAll('button')).some((btn) => btn.textContent === '换')).toBe(false);
+        // 就地可编辑：模型名是可点按钮，推理是下拉
+        expect(Array.from(panel()!.querySelectorAll('button')).some((btn) => btn.textContent === 'deepseek-v3')).toBe(true);
+        expect(panel()!.querySelector('select')).not.toBeNull();
         // 开面板这一步绝不直接跳设置页
         expect(onManageRoles).not.toHaveBeenCalled();
+    });
+
+    it('改推理强度直接写回该类型角色（bot 全局）', async () => {
+        await clickModelChip();
+        // 改推理强度 → roles.update 写到 primary 角色（不是房间私有 bot）
+        const select = panel()!.querySelector('select[aria-label="推理强度"]')!;
+        await act(async () => {
+            select.value = 'low';
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        expect(rolesUpdate).toHaveBeenCalledWith({ id: 'r-task-1', reasoningEffort: 'low' });
+    });
+
+    it('点模型名展开选择器', async () => {
+        await clickModelChip();
+        await clickText('deepseek-v3');
+        expect(panel()!.textContent).toContain('选择模型');
     });
 
     it('点「全部设置」才触发深链回调', async () => {
