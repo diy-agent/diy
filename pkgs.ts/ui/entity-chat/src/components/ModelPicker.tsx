@@ -89,21 +89,7 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (key
                     </select>
                 </label>
             </div>
-            {inherited && (
-                <p className="text-[10px] text-muted-foreground">
-                    没显式选过 ⇒ 跟随 model.yaml 的 defaultModel（改一下就变成这条的专属选择）
-                </p>
-            )}
-            <p className="text-[10px] text-muted-foreground">
-                {model === undefined
-                    ? '目录里没有模型'
-                    : [model.contextWindow === undefined ? '窗口未知' : `${Math.round(model.contextWindow / 1024)}k 上下文`,
-                       model.cost === undefined ? null : `$${model.cost.input}/$${model.cost.output} 每百万 token`,
-                       `${provider.api}`,
-                      ]
-                          .filter((part): part is string => part !== null)
-                          .join(' · ')}
-            </p>
+
         </div>
     );
 }
