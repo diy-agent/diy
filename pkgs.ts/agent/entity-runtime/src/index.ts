@@ -24,6 +24,7 @@ export {
     type JournalEntry,
     type JournalKind,
     type LinkSets,
+    type OpenTurn,
     type ProjectInput,
     type ProjectRecord,
     type Store,
@@ -45,7 +46,14 @@ export {
     type PluginTypeParts,
 } from './id';
 export { adviceOf, endItems, endReasonOf, publishable, type EndFacts, type EndItemContext } from './end-reason';
-export { botLastTurnOf, needsHuman, outcomeText, type BotLastTurn } from './bot-status';
+export {
+    botLastTurnOf,
+    needsHuman,
+    outcomeOfFact,
+    outcomeText,
+    withTurnFact,
+    type BotLastTurn,
+} from './bot-status';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';
 export { buildRoomTools, type RoomJobs, type RoomToolsOptions } from './tools/index';

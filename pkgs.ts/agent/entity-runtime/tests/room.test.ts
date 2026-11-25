@@ -323,3 +323,55 @@ describe('RoomActor', () => {
         });
     });
 });
+
+describe('中断的轮次', () => {
+    // 「这一轮开了、还没收尾」靠 turn_open 表记：turn.start 写一行、turn.end 销掉。
+    // 进程在这中间被杀，磁盘上就只剩那行标记 —— 重启时据此补一条轮级事实。
+    it('跑完一轮：turn_open 不留痕', async () => {
+        const h = makeRoom();
+        await h.room.say({ text: '一句话', author: HUMAN });
+        expect(h.store.openTurns(h.spec.id)).toEqual([]);
+    });
+
+    it('跑着的时候有标记，openTurns 能读到它', async () => {
+        const h = makeRoom({ hang: true });
+        void h.room.say({ text: '跑着', author: HUMAN });
+        await waitFor(() => h.store.openTurns(h.spec.id).length > 0);
+        const opens = h.store.openTurns(h.spec.id);
+        expect(opens.map((open) => open.botId)).toEqual([BOT_A.id]);
+        expect(opens[0]?.turnId).toBeTruthy();
+        h.room.cancel();
+    });
+
+    it('重启时残留的开轮补一条 interrupted 事实并销标记', () => {
+        const h = makeRoom();
+        h.store.openTurn(h.spec.id, { botId: BOT_A.id, turn: 3, turnId: 'turn-crashed', at: 1_700_000_000_000 });
+        const restarted = h.rebuild();
+
+        const facts = restarted.items().filter((it) => it.type === 'notice' && it.data.kind === 'interrupted');
+        expect(facts).toHaveLength(1);
+        // 四条性质：归那一轮的 turnId / 不带 author（轮级事实）/ 归属记在 botId / 标记已销
+        expect(facts[0]?.turnId).toBe('turn-crashed');
+        expect(facts[0]?.author).toBeUndefined();
+        expect(facts[0]?.type === 'notice' ? facts[0].data.botId : undefined).toBe(BOT_A.id);
+        // at 是「发现时刻」而非轮开始时刻：order 已经把它排在末尾，时间得跟位置一致
+        expect(facts[0]?.at).toBeGreaterThan(1_700_000_000_000);
+        expect(restarted.store.openTurns(h.spec.id)).toEqual([]);
+    });
+
+    it('成员已不在房间：只销标记，不补事实', () => {
+        const h = makeRoom();
+        h.store.openTurn(h.spec.id, { botId: 'bot:gone', turn: 1, turnId: 'turn-x', at: 1 });
+        const restarted = h.rebuild();
+
+        expect(restarted.items().filter((it) => it.type === 'notice' && it.data.kind === 'interrupted')).toHaveLength(0);
+        expect(restarted.store.openTurns(h.spec.id)).toEqual([]);
+    });
+
+    it('没有残留标记时重启不写任何事实', () => {
+        const h = makeRoom();
+        const before = h.items().length;
+        const restarted = h.rebuild();
+        expect(restarted.items()).toHaveLength(before);
+    });
+});

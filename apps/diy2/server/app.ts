@@ -31,6 +31,7 @@ import {
     modelProviders,
     newEntityId,
     openStore,
+    withTurnFact,
 } from '@diy-agent/entity-runtime';
 import type { BotLastTurn, CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
@@ -43,6 +44,7 @@ import type {
     Bot,
     BotRow,
     BotState,
+    Item,
     JobRunRow,
     Room,
 } from '@diy-agent/protocol';
@@ -629,6 +631,14 @@ export function createDiy2App(opts: {
                         const turn = botLastTurnOf(roomId, item);
                         if (turn !== undefined) last.set(`${roomId}\u0000${turn.botId}`, turn);
                     }
+                    // 轮级事实（不带 author 的 notice / error）只能单独认领：
+                    // 结局在它里面，不在 bot 自己那条最后的条目里（见 bot-status.ts 头部的论证）。
+                    // key 用 `owner`（= 事实自带的 botId，老数据退回 turnId）—— 一轮里 @all 的
+                    // 各 bot 共享 turnId，只按它查会把 A 的截断盖到 B 头上。
+                    const facts = new Map<string, Item>();
+                    for (const { roomId, owner, item } of store.lastFactPerTurn()) {
+                        facts.set(`${roomId}\u0000${owner}`, item);
+                    }
                     const rows: BotRow[] = [];
                     for (const actor of rooms.values()) {
                         const spec = actor.spec;
@@ -640,7 +650,16 @@ export function createDiy2App(opts: {
                         }
                         for (const member of spec.members) {
                             const bot = bots.get(member.botId);
-                            const turn = last.get(`${spec.id}\u0000${member.botId}`);
+                            const own = last.get(`${spec.id}\u0000${member.botId}`);
+                            const turn =
+                                own === undefined
+                                    ? undefined
+                                    : withTurnFact(
+                                          own,
+                                          // botId 命中优先（新数据），再退回 turnId（老数据）
+                                          facts.get(`${spec.id}\u0000${own.botId}`) ??
+                                              facts.get(`${spec.id}\u0000${own.turnId}`),
+                                      );
                             const ask = asking.get(member.botId);
                             const state: BotState = running.has(member.botId)
                                 ? 'running'

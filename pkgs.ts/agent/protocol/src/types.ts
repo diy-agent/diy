@@ -136,12 +136,23 @@ export interface JobRunRow {
 
 export type Item =
     | (ItemBase & { type: 'chat'; data: { text: string } })
-    | (ItemBase & { type: 'notice'; data: { text: string; kind: string; job?: JobNotice } })
+    | (ItemBase & {
+          type: 'notice';
+          /**
+           * `botId`：这条轮级事实是**哪个 bot 的结局**（`endItems()` 由 per-bot 的 session 产出）。
+           *
+           * 为什么不用 `author`：`author` 有「这是那个 bot 说的话」的含义，UI 据此把它归进 bot 的
+           * 回复段（见 chat-core/timeline.ts）；而结局事实必须独立成条。两件事分开记：
+           * 条目位置（独立成条）看 `author` 在不在，结局归属看这个字段。
+           * 老数据没有它 —— 消费方按 `turnId` 退化处理（见 db.lastFactPerTurn）。
+           */
+          data: { text: string; kind: string; job?: JobNotice; botId?: string };
+      })
     | (ItemBase & {
           type: 'tool';
           data: { name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' };
       })
-    | (ItemBase & { type: 'error'; data: { message: string } });
+    | (ItemBase & { type: 'error'; data: { message: string; botId?: string } });
 
 // ── 投递（消息 → bot 的到达状态）────────────────────────────────
 
@@ -432,8 +443,20 @@ export interface TurnEndReason {
 
 // ── bot 状态投影（`diy2.bots.rows`）────────────────────────────────
 
-/** 上一轮怎么结束的（磁盘侧判据见 entity-runtime/bot-status.ts） */
-export type BotOutcome = 'done' | 'truncated' | 'max-steps' | 'filtered' | 'tool-mismatch' | 'failed';
+/**
+ * 上一轮怎么结束的（磁盘侧判据见 entity-runtime/bot-status.ts）。
+ *
+ * `interrupted` 是唯一一个**不是** `endItems()` 产出的结局：进程崩在收尾前什么都来不及落，
+ * 靠 `turn_open` 表在下次启动时补一条 `notice(kind: 'interrupted')` 才认得出。
+ */
+export type BotOutcome =
+    | 'done'
+    | 'truncated'
+    | 'max-steps'
+    | 'filtered'
+    | 'tool-mismatch'
+    | 'failed'
+    | 'interrupted';
 
 /**
  * 这个 bot 此刻要你干什么 —— **一个值，不是一组标志**。

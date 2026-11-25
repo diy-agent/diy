@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { botLastTurnOf, needsHuman, outcomeText } from '../src/bot-status';
+import { botLastTurnOf, needsHuman, outcomeOfFact, outcomeText, withTurnFact } from '../src/bot-status';
+import { endItems } from '../src/end-reason';
 import { openStore } from '../src/db';
 import type { Item } from '../src/types';
 
@@ -99,10 +100,99 @@ describe('botLastTurnOf', () => {
     });
 });
 
+describe('outcomeOfFact / withTurnFact', () => {
+    it('轮级事实自成结局，不看 author', () => {
+        expect(outcomeOfFact(item({ type: 'error', data: { message: '网关 500' } }))).toEqual({
+            outcome: 'failed',
+            message: '网关 500',
+        });
+        expect(outcomeOfFact(notice('max-tokens'))?.outcome).toBe('truncated');
+        expect(outcomeOfFact(notice('interrupted'))?.outcome).toBe('interrupted');
+    });
+
+    it('不是结局的条目返回 undefined', () => {
+        expect(outcomeOfFact(chat())).toBeUndefined();
+        expect(outcomeOfFact(notice('job-done'))).toBeUndefined();
+    });
+
+    it('把那一轮的事实盖到 bot 的结局上', () => {
+        const done = botLastTurnOf('r1', chat('a'));
+        expect(done?.outcome).toBe('done');
+        expect(withTurnFact(done!, notice('max-tokens')).outcome).toBe('truncated');
+        // 没有事实 / 事实不是结局 → 原样，不能把「正常结束」洗成别的
+        expect(withTurnFact(done!, undefined).outcome).toBe('done');
+        expect(withTurnFact(done!, notice('job-done')).outcome).toBe('done');
+    });
+
+    it('error 事实把原文带到 message', () => {
+        const turn = withTurnFact(botLastTurnOf('r1', chat('a'))!, item({ type: 'error', data: { message: '网关 500' } }));
+        expect(turn).toMatchObject({ outcome: 'failed', message: '网关 500' });
+    });
+
+    it('endItems 落的结局带 botId（归属不丢，UI 仍独立成条）', () => {
+        const [fact] = endItems({ type: 'max-tokens', maxOutputTokens: 100 }, { turn: 1, turnId: 'turn-1', botId: 'bot:a' });
+        expect(fact?.type).toBe('notice');
+        // 不带 author：UI 据此让它独立成条（timeline 的分组看 author 在不在）
+        expect(fact?.author).toBeUndefined();
+        expect(fact?.type === 'notice' ? fact.data.botId : undefined).toBe('bot:a');
+    });
+});
+
+describe('lastFactPerTurn', () => {
+    // 轮级事实（endItems 落的 notice / error）不带 author —— 这正是它进不了
+    // `lastItemPerBot` 的原因，也是这里必须按 turnId 单独查一圈的原因。
+    it('同一轮多条只取最后一条', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', notice('max-tokens'));
+        store.appendItem('r1', item({ type: 'notice', data: { text: 'later', kind: 'job-done' } }));
+        const rows = store.lastFactPerTurn(['r1']);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.item.data).toEqual({ text: 'later', kind: 'job-done' });
+    });
+
+    it('按 turnId 分开，不跨轮', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', notice('max-tokens'));
+        store.appendItem('r1', item({ type: 'error', data: { message: 'boom' }, turnId: 'turn-2' }));
+        const rows = store.lastFactPerTurn(['r1']).sort((x, y) => x.item.seq - y.item.seq);
+        expect(rows.map((row) => row.item.turnId)).toEqual(['turn-1', 'turn-2']);
+    });
+
+    it('带 author 的 notice 不算轮级事实（那是 bot 自己的话）', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', notice('max-tokens', 'a'));
+        expect(store.lastFactPerTurn(['r1'])).toHaveLength(0);
+    });
+
+    it('不给房间 = 全实例一张表', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', notice('max-tokens'));
+        store.appendItem('r2', notice('interrupted'));
+        expect(new Set(store.lastFactPerTurn().map((row) => row.roomId))).toEqual(new Set(['r1', 'r2']));
+    });
+
+    // turnId 是**房间级**的（@all 的各 bot 共享一个），所以归属不能只靠它。
+    it('带 botId 时按 bot 分组：同一轮的两个 bot 各认各的', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', item({ type: 'notice', data: { text: 'A 截断', kind: 'max-tokens', botId: 'a' } }));
+        store.appendItem('r1', item({ type: 'notice', data: { text: 'B 步数', kind: 'max-steps', botId: 'b' } }));
+        const rows = store.lastFactPerTurn(['r1']).sort((x, y) => x.owner.localeCompare(y.owner));
+        // 两条都是 turn-1；只按 turnId 分会塌成一条，就是张冠李戴的开始
+        expect(rows.map((row) => row.owner)).toEqual(['a', 'b']);
+        expect(rows.map((row) => row.item.data.kind)).toEqual(['max-tokens', 'max-steps']);
+    });
+
+    it('老数据没有 botId：owner 退回 turnId', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', notice('max-tokens'));
+        expect(store.lastFactPerTurn(['r1'])[0]?.owner).toBe('turn-1');
+    });
+});
+
 describe('needsHuman / outcomeText', () => {
     it('只有 done 不需要人动手', () => {
         expect(needsHuman('done')).toBe(false);
-        for (const outcome of ['truncated', 'max-steps', 'filtered', 'tool-mismatch', 'failed'] as const) {
+        for (const outcome of ['truncated', 'max-steps', 'filtered', 'tool-mismatch', 'interrupted', 'failed'] as const) {
             expect(needsHuman(outcome)).toBe(true);
         }
     });
@@ -111,5 +201,6 @@ describe('needsHuman / outcomeText', () => {
         expect(outcomeText('failed', '网关 500')).toBe('失败：网关 500');
         expect(outcomeText('failed')).toBe('运行失败');
         expect(outcomeText('truncated')).toBe('被输出上限截断');
+        expect(outcomeText('interrupted')).toBe('中断（上一轮没跑完）');
     });
 });
