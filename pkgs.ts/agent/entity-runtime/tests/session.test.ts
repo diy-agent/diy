@@ -35,6 +35,8 @@ function makeSession(
         seed?: SessionDeps['seed'];
         budget?: SessionDeps['budget'];
         compactor?: Compactor;
+        /** 模型窗口（token）：不注入时 modelKey 'm' 查不到目录 ⇒ 自动压缩不触发 */
+        windowTokens?: number;
     } = {},
 ): Harness {
     const bot = options.bot ?? BOT_A;
@@ -83,6 +85,7 @@ function makeSession(
         seed: options.seed,
         budget: options.budget,
         compactor: options.compactor,
+        ...(options.windowTokens === undefined ? {} : { windowTokens: options.windowTokens }),
         allocateTurn: (): Turn => ({ turn: ++turn, turnId: `turn-${turn}` }),
         run,
     });
@@ -236,7 +239,10 @@ describe('BotSession', () => {
         expect(roles.at(-1)).toContain('跑的过程中来的结论');
     });
 
-    it('压缩只压自己：a 的 tool 被折叠，b 的上下文一条不少', async () => {
+    it('压缩只压自己：a 的旧历史被整段丢，b 的上下文一条不少', async () => {
+        // 判据来自 @diy-agent/compaction（窗口水位 + 切点吸附 user/轮首）：
+        // W=20000 ⇒ 触发线 4000 tok、保留 3200 tok。最后那条 3600 tok 吃下保留量 ⇒
+        // 切点落在它（用户消息）上 ⇒ 只丢前一轮。
         const long = '工具输出'.repeat(200);
         const seed = () => ({
             entries: [
@@ -269,20 +275,21 @@ describe('BotSession', () => {
                     origin: 'self' as const,
                     turn: 1,
                 },
-                { message: { role: 'user', content: '人: 最新一句' }, origin: 'public' as const, turn: 2 },
+                { message: { role: 'user', content: '人: '.concat('最新一句'.repeat(900)) }, origin: 'public' as const, turn: 2 },
             ],
         });
-        const a = makeSession({ seed, budget: { keepLast: 2, maxChars: 200 } });
-        const b = makeSession({ bot: BOT_B, seed, budget: { keepLast: 2, maxChars: 200 } });
+        const a = makeSession({ seed, windowTokens: 20_000 });
+        const b = makeSession({ bot: BOT_B, seed, windowTokens: 20_000 });
 
         await a.session.post({ messageId: 'm1', text: '继续' });
 
         const sent = a.seen[0]!;
         const text = JSON.stringify(sent);
+        // 整段丢（不折条）：前一轮的 tool 与结论一起走，最后一句原样保留
         expect(text).not.toContain('工具输出');
         expect(text).not.toContain('tool-result');
-        expect(text).toContain('结论：已修复并提交');
-        expect(text).toContain('麻烦修改 bug 并提交');
+        expect(text).not.toContain('麻烦修改 bug 并提交');
+        expect(text).toContain('最新一句');
 
         // b 没跑过，也没被 a 的压缩影响
         expect(JSON.stringify(b.session.context())).toContain('工具输出');
@@ -354,11 +361,10 @@ describe('BotSession', () => {
         const seed = compressibleSeed;
         const h = makeSession({ seed });
 
-        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        const event = await h.session.forceCompact({ keepTurns: 1 });
 
         expect(h.runs).toEqual([]);
         expect(event).not.toBeNull();
-        expect(event?.folded ?? 0).toBeGreaterThan(0);
         expect(event?.dropped ?? 0).toBeGreaterThan(0);
         expect(h.session.stats().collapsed).toBe(event?.dropped);
         expect(JSON.stringify(h.session.context())).not.toContain('工具输出');
@@ -372,14 +378,14 @@ describe('BotSession', () => {
         });
         const h = makeSession({ seed: compressibleSeed, compactor });
 
-        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        const event = await h.session.forceCompact({ keepTurns: 1 });
 
         const progress = h.events.flatMap((entry) => (entry.type === 'compact.progress' ? [entry.compact] : []));
         // UI 靠这条做「摘要中…」：必须**先**有 running（await LLM 之前），再有终态
         expect(progress.map((entry) => entry.state)).toEqual(['running', 'done']);
         expect(progress[0]?.compactId).toBe(progress[1]?.compactId);
         expect(progress[0]?.manual).toBe(true);
-        expect(progress[1]?.folded).toBe(event?.folded);
+        expect(progress[1]?.dropped).toBe(event?.dropped);
         expect(progress[1]?.after?.entries).toBe(h.session.stats().entries);
         expect(progress[1]?.summarized).toBe(true);
     });
@@ -398,7 +404,7 @@ describe('BotSession', () => {
         const h = makeSession({ seed: compressibleSeed, compactor });
         const before = JSON.stringify(h.session.context());
 
-        const pending = h.session.forceCompact({ maxChars: 120, keepLast: 1, signal: controller.signal });
+        const pending = h.session.forceCompact({ keepTurns: 1, signal: controller.signal });
         await sleep(5);
         controller.abort();
         const event = await pending;
@@ -417,7 +423,7 @@ describe('BotSession', () => {
         await sleep(1);
 
         // 运行中不拦（回归 regressions.test.ts::F 就靠这条：压缩不得吞掉在跑的那一句）
-        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        const event = await h.session.forceCompact({ keepTurns: 1 });
         expect(event).toBeNull(); // 已入账的 transcript 还没东西可压
         h.session.cancel();
         await running;
@@ -434,7 +440,7 @@ describe('BotSession', () => {
         });
         const h = makeSession({ seed: compressibleSeed, compactor });
 
-        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        const event = await h.session.forceCompact({ keepTurns: 1 });
 
         expect(event?.summarized).toBe(true);
         expect(event?.summary).toContain('保留结论');
@@ -453,11 +459,10 @@ describe('BotSession', () => {
         });
         const h = makeSession({ seed: compressibleSeed, compactor });
 
-        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        const event = await h.session.forceCompact({ keepTurns: 1 });
 
         // 压缩不能因为摘要失败而回滚：压不下去就直接超窗
         expect(event).not.toBeNull();
-        expect(event?.folded ?? 0).toBeGreaterThan(0);
         expect(JSON.stringify(h.session.context())).not.toContain('工具输出');
         expect(event?.summarized).toBe(false);
         expect(event?.summaryError).toContain('401');

@@ -75,8 +75,8 @@ beforeEach(async () => {
     // 目录真源 = `model.yaml`（与生产同一档：server 装配时也是设这个变量）
     previousModelConfig = process.env['DIY_MODEL_CONFIG'];
     process.env['DIY_MODEL_CONFIG'] = join(home, 'model.yaml');
-    app = createDiy2App({
-        config: resolveConfig({ moduleDir, mode: 'development', overrides: { home } }),
+    app = await createDiy2App({
+        config: await resolveConfig({ moduleDir, mode: 'development', overrides: { home } }),
         webDir: null,
     });
     server = createServer(app.handle);

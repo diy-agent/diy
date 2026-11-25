@@ -93,13 +93,17 @@ export const chatApi = RpcSchema.group({
             output: Any,
         }),
         sessions: RpcSchema.unary({ input: { id: Id }, output: Any }),
-        /** 手动压缩；keepLast / maxChars = 面板上的「保留条数 / 预算」（缺省用启动配置） */
+        /**
+         * 手动压缩；`keepTurns` = 面板上的「保留最近几轮」（缺省 = 全局常量）。
+         *
+         * 没有 `maxChars`：压缩上限是全局常量，不由一次手工操作去动它
+         * （2026-11-25 对齐 diy1 的 keepRounds —— 用户能调的只有「留多少轮」）。
+         */
         compact: RpcSchema.unary({
             input: {
                 id: Id,
                 botId: Id,
-                keepLast: z.number().int().min(1).optional(),
-                maxChars: z.number().int().min(1).optional(),
+                keepTurns: z.number().int().min(0).optional(),
             },
             output: Any,
         }),

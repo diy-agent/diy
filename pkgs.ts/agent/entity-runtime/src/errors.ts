@@ -21,6 +21,14 @@ export function friendlyError(error: unknown): string {
     if (/\b401\b|Unauthorized|invalid api key/i.test(raw)) {
         return '模型网关拒绝了请求：API key 无效或过期。';
     }
+    // 额度用尽不是「限流」：429 里夹着 usage limit / quota 的一律先认出来，
+    // 并把网关自己给的「多久后重置」抄进话术 —— 那是用户唯一能行动的信息
+    // （2026-11-25：一轮 turn 撞 OpenCode Go 月度额度，界面上只说「稍后重试」）。
+    if (/usage limit|quota exceeded|insufficient_quota|GoUsageLimitError/i.test(`${raw} ${cause}`)) {
+        const reset = /resets? in ([^."]+)/i.exec(`${raw} ${cause}`)?.[1]?.trim();
+        const tail = reset === undefined ? '' : `，${reset} 后重置`;
+        return `模型额度已用尽${tail}。换一个模型，或等它重置（这一轮不会再自动重试）。`;
+    }
     if (/\b429\b|rate limit/i.test(raw)) {
         return '模型网关限流（429），稍后重试。';
     }

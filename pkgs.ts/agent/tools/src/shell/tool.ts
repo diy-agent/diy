@@ -82,8 +82,10 @@ export interface ShellToolHost {
     readonly onControl?: (ctl: BashControl, call: ShellCallInfo) => void;
     /** 前台执行结束（正常 / 异常都调；宿主摘登记、释放进程组名册） */
     readonly onEnd?: (info: ShellCallInfo & { pid?: number }) => void;
-    /** 投递层截断（##127）：不传 = 原样 */
-    readonly toModelOutput?: (text: string, toolCallId: string) => string;
+    /**
+     * 投递层截断（##127）：不传 = 原样。可返回 Promise（原文落盘是 IO）。
+     */
+    readonly toModelOutput?: (text: string, toolCallId: string) => string | Promise<string>;
     /**
      * 后台模式（##408 刀 8）：**不传 = 本宿主没有 job 账本 ⇒ 不开放 `background`**
      * （参数与描述里那一句一起消失，免得告诉模型一个必然失败的选择）。
@@ -175,9 +177,10 @@ export function makeShellTool(spec: ShellSpec, host: ShellToolHost) {
         // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
         // （超 2000 行 / 50KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
         // 仍是全文（落进 ops 的原文永不动）。截断实现归宿主（见 services/tool-output.ts）。
-        toModelOutput: ({ toolCallId, output }) => {
+        toModelOutput: async ({ toolCallId, output }) => {
             const text = String(output);
-            return { type: "text" as const, value: host.toModelOutput ? host.toModelOutput(text, toolCallId) : text };
+            const value = host.toModelOutput === undefined ? text : await host.toModelOutput(text, toolCallId);
+            return { type: "text" as const, value };
         },
         execute: async ({ command, timeout, background }, opts) => {
             const execOpts = opts as { abortSignal?: AbortSignal; toolCallId?: string } | undefined;

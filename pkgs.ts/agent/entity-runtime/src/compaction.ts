@@ -1,14 +1,28 @@
 // compaction.ts —— 压缩策略接口 + 默认的摘要压缩实现。
 //
 // 设计目标：**算法可换**。session 只负责"什么时候压、压完记账"，怎么压交给策略对象。
-//   · `simpleCompactor` 提供确定性的折叠 / 整轮丢弃边界
-//   · 默认 `createSummaryCompactor` 在同一边界上摘要将被移除的内容
+//   · `simpleCompactor` 只算边界（丢哪一段），判据来自 `@diy-agent/compaction` —— 与 diy1 同一份
+//   · 默认 `createSummaryCompactor` 在同一边界上摘要被丢弃的内容
 //
-// 老库的判据只需要三样东西：`tokens / isUser / turn`。
-// 所以数据结构上的要求只有一个：每条消息能回答"我属于哪一轮" —— 这就是 TranscriptEntry 里的 turn。
+// 判据（2026-11-25 用户拍板「直接复用 @diy-agent/compaction」）：
+//   · 触发线 = 窗口 − max(10%W, 16k)；保留量 = 窗口 × 0.16；切点吸附 user + 轮首
+//   · 压完仍超触发线 ⇒ 不压（空转判据）；手工 force 跳过它
+// 这里**不再有第二个旋钮**：原先的 `maxChars`（字符上限）已删 —— 字符与 token 在中英文之间
+// 差 4 倍，同一个 24000 在中英会话里含义不同，等于一个没人能自圆其说的常量。
+//
+// 数据结构上只有一个要求：每条消息能回答"我属于哪一轮" —— TranscriptEntry 的 turn。
 
 import { generateText, type ModelMessage } from 'ai';
-import { parseSummary, renderSummaryFallback, summaryExtractionPrompt, type SummaryData } from '@diy-agent/compaction';
+import {
+    estimateTokensOf,
+    parseSummary,
+    renderSummaryFallback,
+    selectCompactableRange,
+    summaryExtractionPrompt,
+    triggerTokensOf,
+    type CompactableMessage,
+    type SummaryData,
+} from '@diy-agent/compaction';
 
 /** 上下文里的一条：消息 + 它从哪来 + 属于哪一轮 */
 export interface TranscriptEntry {
@@ -35,10 +49,11 @@ export interface TokenUsage {
 }
 
 export interface CompactionBudget {
-    /** 原样保留的最近消息数 */
-    keepLast: number;
-    /** 估算字符预算 */
-    maxChars: number;
+    /**
+     * **手工压缩**保留的最近**轮数**（0 = 压到头）。自动压缩不看它：自动判据是 token 水位
+     * （窗口 × 0.16），与 diy1 一致 —— 两个判据各自回答不同的问题，不该共用一个数。
+     */
+    keepTurns: number;
 }
 
 export interface CompactionInput {
@@ -46,6 +61,11 @@ export interface CompactionInput {
     budget: CompactionBudget;
     turn: number;
     turnId: string;
+    /**
+     * 模型上下文窗口（token）—— 自动压缩的**唯一输入**（触发线与保留量都由它派生）。
+     * 未知 = 不压：猜一个窗口会让「要么永远不触发、要么一上来就压光历史」。
+     */
+    windowTokens?: number;
     /** 上一轮的实测用量（真实 token）；刚启动 / 首轮没有 */
     usage?: TokenUsage;
     /** 手动触发：跳过"其实不用压"的早退 */
@@ -59,11 +79,9 @@ export interface CompactionInput {
 
 export interface CompactionResult {
     entries: TranscriptEntry[];
-    /** 折掉几条（工具消息 / 纯工具调用的 assistant） */
-    folded: number;
-    /** 整条丢弃几条 */
+    /** 整段丢弃几条（判据只整轮丢，不折条） */
     dropped: number;
-    /** 被折叠或整轮丢弃的条目，用于摘要提取（兼容自定义策略可省略） */
+    /** 被丢弃的条目，用于摘要提取（自定义策略可省略） */
     removedEntries?: TranscriptEntry[];
     /** 摘要正文；session 会将其并入压缩说明。可能来自本次生成，也可能沿用旧摘要 */
     summary?: string;
@@ -86,9 +104,8 @@ export interface CompactEvent {
     turnId: string;
     durationMs: number;
     budget: CompactionBudget;
-    before: { entries: number; chars: number };
-    after: { entries: number; chars: number };
-    folded: number;
+    before: { entries: number; chars: number; tokens: number };
+    after: { entries: number; chars: number; tokens: number };
     dropped: number;
     /** 本次是否新生成摘要 */
     summarized: boolean;
@@ -99,7 +116,32 @@ export interface CompactEvent {
     usage?: TokenUsage;
 }
 
-export const DEFAULT_BUDGET: CompactionBudget = { keepLast: 12, maxChars: 24000 };
+export const DEFAULT_BUDGET: CompactionBudget = { keepTurns: 2 };
+
+/**
+ * 尾部 `keepTurns` 轮的 token 估算 —— **手工压缩**的保留量。
+ *
+ * 手工压缩不是「按水位压」，是「人指定留最近几轮」；换算成 token 后仍交给同一份判据
+ * （`selectCompactableRange` 的 `retainTokens` 覆盖），切在哪一步不许自己另算。
+ * 无轮号的条目各自算一轮，否则「保 2 轮」会变成「保住整段种子」。
+ */
+export function retainTokensForTurns(entries: readonly TranscriptEntry[], keepTurns: number): number {
+    let acc = 0;
+    let seen = 0;
+    let last: number | undefined;
+    let started = false;
+    for (let i = entries.length - 1; i >= 0; i--) {
+        const turn = entries[i]!.turn;
+        if (!started || turn === undefined || turn !== last) {
+            started = true;
+            seen += 1;
+            last = turn;
+            if (seen > keepTurns) break;
+        }
+        acc += estimateTokensOf(JSON.stringify(entries[i]!.message.content ?? ''));
+    }
+    return Math.max(1, acc);
+}
 
 export function estimateChars(entries: readonly TranscriptEntry[]): number {
     let total = 0;
@@ -107,66 +149,56 @@ export function estimateChars(entries: readonly TranscriptEntry[]): number {
     return total;
 }
 
+/** 当前上下文的 token 估算（与判据同一口径：CJK 感知的粗估） */
+export function estimateTokens(entries: readonly TranscriptEntry[]): number {
+    let total = 0;
+    for (const entry of entries) total += estimateTokensOf(JSON.stringify(entry.message.content ?? ''));
+    return total;
+}
+
 /**
- * 确定性压缩基线：折叠私有过程 → 还超预算就从最老的**整轮**丢。
- *   · 公共层（人话 / 别人的结论）不折叠，只可能被整轮丢弃
- *   · 切点吸附到轮首：不会把一轮里的工具调用和结果拆开
- *   · 不负责生成摘要，由 `createSummaryCompactor` 包装
+ * 确定性压缩基线：把判据直接交给 `@diy-agent/compaction` 的 `selectCompactableRange`
+ * （diy1 同一份：触发线 / 保留量 / 吸附 user+轮首 / 空转判据全在那里）。
+ *
+ * 本函数只负责两件事：把 `TranscriptEntry[]` 映射成判据要的三样（role / content / turn），
+ * 以及把「丢哪一段」翻译成结果。**不自己算边界** —— 两份判据是 diy2 之前最大的分叉来源。
+ *
+ * 不负责生成摘要，由 `createSummaryCompactor` 包装。
  */
 export const simpleCompactor: Compactor = {
-    name: 'simple-fold-drop',
+    name: 'simple-drop',
 
-    compact({ entries, budget, force = false }): CompactionResult | null {
-        if (!force && estimateChars(entries) <= budget.maxChars) return null;
-
-        const keepFrom = Math.max(0, entries.length - budget.keepLast);
-        const next: TranscriptEntry[] = [];
-        let folded = 0;
-        const removedEntries: TranscriptEntry[] = [];
-
-        for (let i = 0; i < entries.length; i++) {
-            const entry = entries[i]!;
-            if (i >= keepFrom || entry.origin !== 'self') {
-                next.push(entry);
-                continue;
-            }
-            if (entry.message.role === 'tool') {
-                removedEntries.push(entry);
-                folded += 1;
-                continue;
-            }
-            if (entry.message.role === 'assistant') {
-                const parts = Array.isArray(entry.message.content) ? entry.message.content : [];
-                const kept = parts.filter((part) => part.type === 'text');
-                if (kept.length === 0) {
-                    removedEntries.push(entry);
-                    folded += 1;
-                    continue;
-                }
-                if (kept.length !== parts.length) {
-                    removedEntries.push(entry);
-                    folded += 1;
-                }
-                next.push({ ...entry, message: { role: 'assistant', content: kept } });
-                continue;
-            }
-            next.push(entry);
+    compact({ entries, budget, windowTokens, usage, force = false }): CompactionResult | null {
+        if (entries.length === 0) return null;
+        // ① 什么时候压：没到触发线就不动（diy1 同一判据：实测用量或上下文估算超过
+        //    窗口 − max(10%, 16k) 才压）。窗口未知 ⇒ 自动不压（不猜数）。
+        //    取两者较大值：估算只看 transcript（不含 tools / system），实测是上一轮的，
+        //    宁可早压一次也不赌「下一条工具结果刚好不超」。
+        const triggerTokens = windowTokens === undefined ? 0 : triggerTokensOf(windowTokens);
+        if (!force) {
+            if (!(triggerTokens > 0)) return null;
+            const used = Math.max(usage?.inputTokens ?? 0, estimateTokens(entries));
+            if (used < triggerTokens) return null;
         }
-
-        let dropped = 0;
-        while (estimateChars(next) > budget.maxChars && next.length > budget.keepLast) {
-            // 整轮丢：切点落在轮首，工具对不会被拆开
-            const turn = next[0]!.turn;
-            let cut = 1;
-            while (cut < next.length && next[cut]!.turn === turn) cut += 1;
-            if (next.length - cut < budget.keepLast) break;
-            const droppedEntries = next.splice(0, cut);
-            removedEntries.push(...droppedEntries);
-            dropped += cut;
-        }
-
-        if (folded === 0 && dropped === 0) return null;
-        return { entries: next, folded, dropped, removedEntries, summarized: false };
+        // ② 压到哪：判据全在 `selectCompactableRange`（保留量 / 吸附 user + 轮首 / 空转判据）。
+        //    手工 force 时把「留最近几轮」换成 token 覆盖同一个判据 —— 切点仍由它吸，不另算。
+        const messages: CompactableMessage[] = entries.map((entry) => ({
+            role: entry.message.role,
+            content: entry.message.content,
+            ...(entry.turn === undefined ? {} : { turn: String(entry.turn) }),
+        }));
+        const range = selectCompactableRange(messages, {
+            windowTokens: windowTokens ?? 0,
+            force,
+            ...(force ? { retainTokens: retainTokensForTurns(entries, budget.keepTurns) } : {}),
+        });
+        if (range === null || range.cut <= 0) return null;
+        return {
+            entries: entries.slice(range.cut),
+            dropped: range.cut,
+            removedEntries: entries.slice(0, range.cut),
+            summarized: false,
+        };
     },
 };
 
@@ -217,6 +249,9 @@ export function createSummaryCompactor(options: {
                     ({ text } = await generateText({
                         model: modelOf(options.modelKey(), { sessionId: options.sessionId }),
                         prompt,
+                        // 同 agent.ts：这一层不重试（SDK 的 3 次会把一次额度满拖成 3 倍等待，
+                        // 压缩是「压不动就算了」的活，失败就降级用旧摘要）。
+                        maxRetries: 0,
                         ...(input.signal === undefined ? {} : { abortSignal: input.signal }),
                     }));
                 }

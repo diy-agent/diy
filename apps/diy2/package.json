@@ -14,8 +14,11 @@
         "@diy-agent/chat-transport-rpc": "*",
         "@diy-agent/entity-chat": "*",
         "@diy-agent/entity-runtime": "*",
+        "@diy-agent/log": "*",
         "@diy-agent/protocol": "*",
         "@diy-agent/rpc": "*",
+        "@opentelemetry/api-logs": "^0.223.0",
+        "@opentelemetry/sdk-logs": "^3.0.0",
         "react": "^19.3.1",
         "react-dom": "^19.3.1",
         "ws": "^8.21.0"

@@ -51,8 +51,6 @@ export const configShape = {
         placeholder: 'ms',
         desc: '单条 bash 命令的超时毫秒（缺省 = 内核 300s）',
     }),
-    compactKeep: z.number().int().min(1).optional().cliOption({ placeholder: 'n', desc: '压缩保留最近 n 条消息' }),
-    compactChars: z.number().int().min(1000).optional().cliOption({ placeholder: 'n', desc: '压缩预算（字符）' }),
     allowProdHome: z.boolean().optional().cliOption({ desc: '显式放行生产数据根（只给 dev 入口用）' }),
     webDir: z.string().optional().cliOption({
         placeholder: 'dir',
@@ -94,8 +92,6 @@ export function toOverrides(input: Partial<ConfigOptions>): ConfigOverrides {
         tools: input.tools,
         maxSteps: input.maxSteps,
         bashTimeoutMs: input.bashTimeoutMs,
-        compactKeep: input.compactKeep,
-        compactChars: input.compactChars,
         allowProdHome: input.allowProdHome === true ? true : undefined,
         webDir: input.webDir,
         modelConfig: input.modelConfig,
@@ -121,8 +117,6 @@ export function toArgv(overrides: ConfigOverrides): string[] {
     push('--tools', overrides.tools);
     push('--max-steps', overrides.maxSteps);
     push('--bash-timeout-ms', overrides.bashTimeoutMs);
-    push('--compact-keep', overrides.compactKeep);
-    push('--compact-chars', overrides.compactChars);
     push('--web-dir', overrides.webDir);
     push('--model-config', overrides.modelConfig);
     if (overrides.allowProdHome === true) out.push('--allow-prod-home');

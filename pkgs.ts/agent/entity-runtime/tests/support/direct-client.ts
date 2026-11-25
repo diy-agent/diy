@@ -62,7 +62,7 @@ export class DirectRoomClient implements ChatClient {
         return this.maybe(this.harness.room.sessionsInfo() as unknown as SessionInfo[]);
     }
 
-    async compact(botId: string, options: { keepLast?: number; maxChars?: number } = {}): Promise<CompactOutcome> {
+    async compact(botId: string, options: { keepTurns?: number } = {}): Promise<CompactOutcome> {
         const event = await this.harness.room.compact(botId, options);
         const stats = this.harness.room.sessionsInfo().find((info) => info.botId === botId)?.stats;
         return this.maybe({ event, stats } as unknown as CompactOutcome);
