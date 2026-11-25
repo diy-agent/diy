@@ -83,7 +83,10 @@ export function TurnFooter({
                     ? `已用 ${elapsedText(Math.max(0, now - startedAt))}`
                     : entry.turn?.endedAt === undefined
                       ? ''
-                      : `结束于 ${formatClock(entry.turn.endedAt, now)}`}
+                      : // 基准时间就用 `endedAt` 自己：`useNow(false)` 不起定时器、`now` 是
+                        // 「挂载那一刻」的值 —— 拿它判跨天，跨过零点后还在开着的页面会把
+                        // 本该写「22:20」的写成「11-24 22:20」。
+                        `结束于 ${formatClock(entry.turn.endedAt, entry.turn.endedAt)}`}
             </span>
         </div>
     );

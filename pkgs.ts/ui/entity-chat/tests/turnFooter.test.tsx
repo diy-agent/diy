@@ -10,7 +10,7 @@
 // 「已用」取初始值，正好可以直接断言文案形状。
 
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TimelineEntry } from '@diy-agent/chat-core';
 
@@ -89,5 +89,26 @@ describe('TurnFooter', () => {
 
     it('既没在跑且没有结算事实：这一行不占位置', () => {
         expect(renderToStaticMarkup(<TurnFooter entry={entry({})} roomId="r1" />)).toBe('');
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('跨过零点还开着的页面：结束时刻仍写 HH:MM，不因为「现在」是次日就补日期', () => {
+        // 旧实现拿 `useNow(false)` 的值当基准 —— 它停在挂载那一刻，跨天后判「不是今天」
+        // 于是把「22:31」写成「11-24 22:31」。基准只能是 endedAt 自己。
+        const endedAt = new Date(2026, 10, 24, 22, 31, 0).getTime();
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(2026, 10, 25, 9, 0, 0));
+        const html = renderToStaticMarkup(
+            <TurnFooter
+                entry={entry({ turn: { startedAt: endedAt - 192_000, endedAt, reason: { type: 'completed', steps: 1 } } })}
+                roomId="r1"
+            />,
+        );
+        expect(html).toContain('结束于 22:31');
+        // 注意只看**可见文案**：`title` 里的绝对时间（2026-11-24 22:31）本来就该带日期
+        expect(html).not.toContain('结束于 11-24');
     });
 });
