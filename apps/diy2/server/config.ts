@@ -24,6 +24,7 @@
 // 纯函数尽量多：端口裁决 / 数据根裁决 / 生产根判据都有单测（tests/config.test.ts），
 // 因为这三条都是「错了不会报错，只会静默用错数据」的类型。
 
+import { DEFAULT_BUDGET } from '@diy-agent/entity-runtime';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
@@ -59,8 +60,8 @@ export interface ConfigOverrides {
     maxSteps?: number | undefined;
     /** 单条 bash 命令的超时（`--bash-timeout-ms`）；缺省 = 内核 300s */
     bashTimeoutMs?: number | undefined;
-    compactKeep?: number | undefined;
-    compactChars?: number | undefined;
+    // 压缩预算不再是运行参数：上限是全局常量（`DEFAULT_BUDGET`），
+    // 手工压缩在 UI 上按「保留最近几轮」调（2026-11-25 对齐 diy1 的 keepRounds）。
     /** 显式放行生产数据根（只给 dev 入口用；生产入口不需要） */
     allowProdHome?: boolean | undefined;
     /** 显式 UI 产物目录（调试用；缺省 `<buildRoot>/web`，不存在 = 不提供静态） */
@@ -98,8 +99,8 @@ export interface Diy2Config {
     modelConfigPath: string | undefined;
     /** 实例名（`--name`），多实例时人认得出的身份；缺省 null */
     name: string | null;
-    /** 压缩预算 */
-    compact: { keepLast: number; maxChars: number };
+    /** 压缩预算（**全局常量**，不来自 argv） */
+    compact: { keepTurns: number; maxChars: number };
     /** 工具面：shell = 带 bash；files = 只读文件工具（`--tools files`） */
     tools: 'shell' | 'files';
     /** 裁决过程中的「本该报却没报」的事（被拒的生产根等）：入口负责打出来 */
@@ -367,10 +368,7 @@ export function resolveConfig(opts?: {
         webDir,
         modelConfigPath,
         name: overrides.name?.trim() || null,
-        compact: {
-            keepLast: overrides.compactKeep ?? 12,
-            maxChars: overrides.compactChars ?? 24000,
-        },
+        compact: { ...DEFAULT_BUDGET },
         tools: overrides.tools === 'files' ? 'files' : 'shell',
         notes,
         // 没给 = 用内核缺省；正数才覆盖（0 步 = 每轮直接掐停，不是想要的语义，故下限 1）

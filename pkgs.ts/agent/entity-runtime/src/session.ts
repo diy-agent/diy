@@ -35,7 +35,8 @@ import { toMessage, type RoomEntry } from './room-log';
 import type { AgentEvent, Author, Bot, DeliveryState, Item, TurnEndReason } from './types';
 
 export interface CompactOptions {
-    keepLast?: number;
+    /** 手工压缩：保留最近几轮（0 = 压到头，与 diy1 的 keepRounds 同语义） */
+    keepTurns?: number;
     maxChars?: number;
     /** 本次压缩的 id（UI 用它取消 / 去重）；缺省自己生成一个 */
     compactId?: string;
@@ -452,7 +453,7 @@ export class BotSession {
 
     private budgetWith(options: CompactOptions): CompactionBudget {
         return {
-            keepLast: options.keepLast ?? this.deps.budget?.keepLast ?? DEFAULT_BUDGET.keepLast,
+            keepTurns: options.keepTurns ?? this.deps.budget?.keepTurns ?? DEFAULT_BUDGET.keepTurns,
             maxChars: options.maxChars ?? this.deps.budget?.maxChars ?? DEFAULT_BUDGET.maxChars,
         };
     }

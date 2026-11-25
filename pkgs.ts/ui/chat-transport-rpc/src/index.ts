@@ -202,7 +202,7 @@ export class RpcChatClient implements ChatClient {
     async compact(
         entityId: string,
         botId: string,
-        options: { keepLast?: number; maxChars?: number } = {},
+        options: { keepTurns?: number } = {},
     ): Promise<CompactOutcome> {
         return this.call<CompactOutcome>('chat.compact', { id: entityId, botId, ...options });
     }

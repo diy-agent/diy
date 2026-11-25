@@ -10,6 +10,8 @@ import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { DEFAULT_BUDGET } from '@diy-agent/entity-runtime';
+
 import {
     PROD_DEFAULT_PORT,
     buildRootOf,
@@ -248,13 +250,13 @@ describe('resolveConfig', () => {
         expect(config.buildRoot).toBe(join(config.appRoot, 'build', 'prod'));
     });
 
-    it('tools / 压缩预算来自参数', () => {
+    it('tools 来自参数；压缩预算不再是参数（全局常量）', () => {
         const config = resolveConfig({
             moduleDir: APP_ROOT,
             mode: 'development',
-            overrides: { home: tmp(), tools: 'files', compactKeep: 3, compactChars: 5000 },
+            overrides: { home: tmp(), tools: 'files' },
         });
         expect(config.tools).toBe('files');
-        expect(config.compact).toEqual({ keepLast: 3, maxChars: 5000 });
+        expect(config.compact).toEqual(DEFAULT_BUDGET);
     });
 });

@@ -92,7 +92,7 @@ describe('compact（手动压缩的进度）', () => {
             botId: 'b1',
             state,
             startedAt,
-            budget: { keepLast: 10, maxChars: 1000 },
+            budget: { keepTurns: 10, maxChars: 1000 },
             before: { entries: 20, chars: 900 },
         },
     });

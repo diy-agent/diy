@@ -847,12 +847,11 @@ export async function createDiy2App(opts: {
                 compact: async ({ input }) => {
                     const actor = requireRoom(input.id);
                     const compactId = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-                    // 面板上传的「保留条数 / 预算」是真参数，别用空对象盖掉（否则手动压缩永远按启动配置压）
+                    // 面板上的「保留最近几轮」是真参数，别用空对象盖掉（否则手动压缩永远按常量压）
                     void actor
                         .compact(input.botId, {
                             compactId,
-                            ...(typeof input.keepLast === 'number' ? { keepLast: input.keepLast } : {}),
-                            ...(typeof input.maxChars === 'number' ? { maxChars: input.maxChars } : {}),
+                            ...(typeof input.keepTurns === 'number' ? { keepTurns: input.keepTurns } : {}),
                         })
                         .catch((error: unknown) => {
                             // 正在压缩 / bot 不在房间里：让用户看得见，不能静默

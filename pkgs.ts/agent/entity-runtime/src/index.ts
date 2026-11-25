@@ -4,6 +4,7 @@ export { runAgent, type RunOptions } from './agent';
 export {
     DEFAULT_BUDGET,
     estimateChars,
+    keepFromOf,
     simpleCompactor,
     type CompactEvent,
     type CompactionBudget,

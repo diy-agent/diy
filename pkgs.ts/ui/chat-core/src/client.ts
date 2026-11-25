@@ -34,8 +34,8 @@ export interface SessionStats {
     entries: number;
     /** 估算字符数（≈ token × 1.3） */
     chars: number;
-    /** 当前生效的默认预算（自动压缩用它） */
-    budget: { keepLast: number; maxChars: number };
+    /** 当前生效的默认预算（自动压缩用它；上限是全局常量，keepTurns 是保留轮数） */
+    budget: { keepTurns: number; maxChars: number };
     /** 历史累计丢弃条数 */
     collapsed: number;
     compactions: number;
@@ -88,7 +88,7 @@ export interface ChatClient {
     compact?(
         entityId: string,
         botId: string,
-        options?: { keepLast?: number; maxChars?: number },
+        options?: { keepTurns?: number },
     ): Promise<CompactOutcome>;
 
     /**

@@ -73,7 +73,7 @@ describe.each(transports)('ChatClient 端口 / %s', (_name, makeClient) => {
         expect(sessions.map((session) => session.name)).toContain('diy');
         expect(sessions[0]?.stats.budget.maxChars).toBeGreaterThan(0);
 
-        const outcome = await client.compact!(BOT_A.id, { maxChars: 1, keepLast: 1 });
+        const outcome = await client.compact!(BOT_A.id, { keepTurns: 1 });
         expect(outcome.event).not.toBeNull();
     });
 

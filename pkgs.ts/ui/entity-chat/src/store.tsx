@@ -887,7 +887,7 @@ export const actions = {
     compactSession(
         roomId: string,
         botId: string,
-        options: { keepLast?: number; maxChars?: number } = {},
+        options: { keepTurns?: number } = {},
     ): Promise<CompactOutcome | null> {
         if (client.compact === undefined) return Promise.resolve(null);
         return client.compact(roomId, botId, options).catch(() => null);

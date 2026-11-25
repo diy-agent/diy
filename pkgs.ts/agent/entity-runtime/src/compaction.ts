@@ -35,9 +35,16 @@ export interface TokenUsage {
 }
 
 export interface CompactionBudget {
-    /** 原样保留的最近消息数 */
-    keepLast: number;
-    /** 估算字符预算 */
+    /**
+     * 原样保留的最近**轮数**（不是条数 —— 一轮里工具消息多寡不定，按条数保会让
+     * 「保留 12 条」在有两种工具调用的轮里只盖住一轮；2026-11-25 用户对比 diy1 的
+     * keepRounds 后统一成轮）。手工压缩时可以调它。
+     */
+    keepTurns: number;
+    /**
+     * 上下文字符上限 —— **用户可见的唯一一个压缩上限**，全局固定常量。
+     * 以前还有 `keepLast`（条数）与它并列，两个旋钮各自能动、组合无意义。
+     */
     maxChars: number;
 }
 
@@ -99,7 +106,33 @@ export interface CompactEvent {
     usage?: TokenUsage;
 }
 
-export const DEFAULT_BUDGET: CompactionBudget = { keepLast: 12, maxChars: 24000 };
+export const DEFAULT_BUDGET: CompactionBudget = { keepTurns: 2, maxChars: 24000 };
+
+/**
+ * 从尾部往前数 `keepTurns` 轮，返回保留区起点下标（这条及之后原样保留）。
+ *
+ * `turn` 缺失（种子 / 老数据）的条目各自算一轮 —— 否则「没有轮号」会变成
+ * 「永远保留」，整个上下文就压不动了。
+ */
+export function keepFromOf(entries: readonly TranscriptEntry[], keepTurns: number): number {
+    if (!(keepTurns > 0)) return entries.length;
+    let seen = 0;
+    let last: number | undefined;
+    let started = false;
+    for (let i = entries.length - 1; i >= 0; i--) {
+        const turn = entries[i]!.turn;
+        // 无轮号的条目各自算一轮：否则一串 undefined 会被当成「同一轮」，
+        // 「保 2 轮」变成「保住整个种子段」，永远压不动
+        const boundary = !started || turn === undefined || turn !== last;
+        if (boundary) {
+            started = true;
+            seen += 1;
+            last = turn;
+            if (seen > keepTurns) return i + 1;
+        }
+    }
+    return 0;
+}
 
 export function estimateChars(entries: readonly TranscriptEntry[]): number {
     let total = 0;
@@ -119,7 +152,7 @@ export const simpleCompactor: Compactor = {
     compact({ entries, budget, force = false }): CompactionResult | null {
         if (!force && estimateChars(entries) <= budget.maxChars) return null;
 
-        const keepFrom = Math.max(0, entries.length - budget.keepLast);
+        const keepFrom = keepFromOf(entries, budget.keepTurns);
         const next: TranscriptEntry[] = [];
         let folded = 0;
         const removedEntries: TranscriptEntry[] = [];
@@ -154,16 +187,23 @@ export const simpleCompactor: Compactor = {
         }
 
         let dropped = 0;
-        while (estimateChars(next) > budget.maxChars && next.length > budget.keepLast) {
-            // 整轮丢：切点落在轮首，工具对不会被拆开
+        // 保留区是「最近 keepTurns 轮」：丢的时候也按轮整块丢，工具对不会被拆开
+        while (estimateChars(next) > budget.maxChars) {
+            const cut = keepFromOf(next, budget.keepTurns);
+            if (cut <= 0) break;
             const turn = next[0]!.turn;
-            let cut = 1;
-            while (cut < next.length && next[cut]!.turn === turn) cut += 1;
-            if (next.length - cut < budget.keepLast) break;
-            const droppedEntries = next.splice(0, cut);
+            let end = 1;
+            while (end < cut && next[end]!.turn === turn) end += 1;
+            const droppedEntries = next.splice(0, end);
             removedEntries.push(...droppedEntries);
-            dropped += cut;
+            dropped += end;
         }
+
+        // 空转判据（diy1 select-kept-boundary 的第 ③ 步）：压到保留区了还超上限，
+        // 说明剩下的都是「不许动」的部分 —— 此时不该造一次「压了没效果」的事件，
+        // 更不该让下一轮再花一次 LLM 摘要（2026-11-25 实测：34,816c 压完 34,812c，
+        // 连续两轮各烧一次摘要）。手工 force 跳过（用户就是要看到结果）。
+        if (!force && estimateChars(next) > budget.maxChars) return null;
 
         if (folded === 0 && dropped === 0) return null;
         return { entries: next, folded, dropped, removedEntries, summarized: false };

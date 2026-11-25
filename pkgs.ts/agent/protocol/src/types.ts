@@ -309,7 +309,7 @@ export interface CompactionProgress {
     startedAt: number;
     /** 终态才有（运行中让界面自己跑秒表） */
     durationMs?: number;
-    budget: { keepLast: number; maxChars: number };
+    budget: { keepTurns: number; maxChars: number };
     /** 压缩前规模：start 就带上，界面立刻能显示「要压多少」 */
     before: { entries: number; chars: number };
     /** 终态才有；缺省 = 这次没压（没有可压的内容） */

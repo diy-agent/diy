@@ -272,8 +272,10 @@ describe('BotSession', () => {
                 { message: { role: 'user', content: '人: 最新一句' }, origin: 'public' as const, turn: 2 },
             ],
         });
-        const a = makeSession({ seed, budget: { keepLast: 2, maxChars: 200 } });
-        const b = makeSession({ bot: BOT_B, seed, budget: { keepLast: 2, maxChars: 200 } });
+        // keepTurns: 1 —— 种子有两轮（turn 1 带 tool、turn 2 是最后一句），
+        // 保 1 轮才轮得到折叠 turn 1 的 tool（保 2 轮 = 全保留，什么也压不动）
+        const a = makeSession({ seed, budget: { keepTurns: 1, maxChars: 200 } });
+        const b = makeSession({ bot: BOT_B, seed, budget: { keepTurns: 1, maxChars: 200 } });
 
         await a.session.post({ messageId: 'm1', text: '继续' });
 
@@ -354,7 +356,7 @@ describe('BotSession', () => {
         const seed = compressibleSeed;
         const h = makeSession({ seed });
 
-        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        const event = await h.session.forceCompact({ maxChars: 120, keepTurns: 1 });
 
         expect(h.runs).toEqual([]);
         expect(event).not.toBeNull();
@@ -372,7 +374,7 @@ describe('BotSession', () => {
         });
         const h = makeSession({ seed: compressibleSeed, compactor });
 
-        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        const event = await h.session.forceCompact({ maxChars: 120, keepTurns: 1 });
 
         const progress = h.events.flatMap((entry) => (entry.type === 'compact.progress' ? [entry.compact] : []));
         // UI 靠这条做「摘要中…」：必须**先**有 running（await LLM 之前），再有终态
@@ -398,7 +400,7 @@ describe('BotSession', () => {
         const h = makeSession({ seed: compressibleSeed, compactor });
         const before = JSON.stringify(h.session.context());
 
-        const pending = h.session.forceCompact({ maxChars: 120, keepLast: 1, signal: controller.signal });
+        const pending = h.session.forceCompact({ maxChars: 120, keepTurns: 1, signal: controller.signal });
         await sleep(5);
         controller.abort();
         const event = await pending;
@@ -417,7 +419,7 @@ describe('BotSession', () => {
         await sleep(1);
 
         // 运行中不拦（回归 regressions.test.ts::F 就靠这条：压缩不得吞掉在跑的那一句）
-        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        const event = await h.session.forceCompact({ maxChars: 120, keepTurns: 1 });
         expect(event).toBeNull(); // 已入账的 transcript 还没东西可压
         h.session.cancel();
         await running;
@@ -434,7 +436,7 @@ describe('BotSession', () => {
         });
         const h = makeSession({ seed: compressibleSeed, compactor });
 
-        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        const event = await h.session.forceCompact({ maxChars: 120, keepTurns: 1 });
 
         expect(event?.summarized).toBe(true);
         expect(event?.summary).toContain('保留结论');
@@ -453,7 +455,7 @@ describe('BotSession', () => {
         });
         const h = makeSession({ seed: compressibleSeed, compactor });
 
-        const event = await h.session.forceCompact({ maxChars: 120, keepLast: 1 });
+        const event = await h.session.forceCompact({ maxChars: 120, keepTurns: 1 });
 
         // 压缩不能因为摘要失败而回滚：压不下去就直接超窗
         expect(event).not.toBeNull();

@@ -109,8 +109,8 @@ function Row({
             </div>
             {runningProgress !== undefined && (
                 <div className="mt-0.5 text-[10px] text-amber-600">
-                    摘要中… 已跑 {elapsed}s · 目标保留 {runningProgress.budget.keepLast} 条 /{' '}
-                    {fmt(runningProgress.budget.maxChars)} 字符
+                    摘要中… 已跑 {elapsed}s · 保留最近 {runningProgress.budget.keepTurns} 轮 /{' '}
+                    上限 {fmt(runningProgress.budget.maxChars)} 字符
                 </div>
             )}
             <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-muted-foreground">
@@ -158,12 +158,14 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
     const [open, setOpen] = React.useState(false);
     const [busy, setBusy] = React.useState<string | null>(null);
     const [note, setNote] = React.useState<string | null>(null);
-    /** 手动压缩用；默认跟随后端预算，改了只影响手动那一下 */
-    const [keepLast, setKeepLast] = React.useState<number | null>(null);
-    const [maxChars, setMaxChars] = React.useState<number | null>(null);
+    /**
+     * 手动压缩用：**只调「保留最近几轮」**（2026-11-25 对齐 diy1 的 keepRounds）。
+     * 上限是全局常量，面板上只展示不可改 —— 两个旋钮各自能动时组合没有意义。
+     */
+    const [keepTurns, setKeepTurns] = React.useState<number | null>(null);
     const serverBudget = sessions[0]?.stats.budget;
-    const keep = keepLast ?? serverBudget?.keepLast ?? 12;
-    const chars = maxChars ?? serverBudget?.maxChars ?? 24000;
+    const keep = keepTurns ?? serverBudget?.keepTurns ?? 2;
+    const limit = serverBudget?.maxChars ?? 24000;
 
     const windowTokens = contextWindowOf(providers, room.modelKey);
     const used = sessions.reduce((sum, session) => sum + tokensOf(session.stats.chars), 0);
@@ -212,7 +214,7 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
     const compress = async (botId: string) => {
         setBusy(botId);
         setNote(null);
-        const outcome = await actions.compactSession(room.id, botId, { keepLast: keep, maxChars: chars });
+        const outcome = await actions.compactSession(room.id, botId, { keepTurns: keep });
         setBusy(null);
         if (outcome === null) setNote('压缩没发出去（后端未响应）');
     };
@@ -271,24 +273,15 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
                         </div>
 
                         <div className="flex items-center gap-1.5 border-t px-3 py-1.5 text-[10px] text-muted-foreground">
-                            <span>保留</span>
+                            <span>保留最近</span>
                             <input
                                 type="number"
-                                min={1}
+                                min={0}
                                 value={keep}
-                                onChange={(event) => setKeepLast(Number(event.target.value))}
+                                onChange={(event) => setKeepTurns(Number(event.target.value))}
                                 className="w-12 rounded border bg-transparent px-1 text-right"
                             />
-                            <span>条 · 预算</span>
-                            <input
-                                type="number"
-                                min={100}
-                                step={100}
-                                value={chars}
-                                onChange={(event) => setMaxChars(Number(event.target.value))}
-                                className="w-20 rounded border bg-transparent px-1 text-right"
-                            />
-                            <span>字符（超了自动压）</span>
+                            <span>轮 · 上限 {fmt(limit)} 字符（超了自动压）</span>
                         </div>
 
                         {sessions.length === 0 ? (

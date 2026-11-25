@@ -125,7 +125,7 @@ describe('P0 回归', () => {
         await waitFor(() => h.room.busy());
 
         // 在跑的当口压一次 ⇒ 触发落快照；旧写法会把水位推到房间末尾（含正在跑的那条）
-        await h.room.compact(BOT_A.id, { keepLast: 0, maxChars: 1 });
+        await h.room.compact(BOT_A.id, { keepTurns: 0 });
 
         const target = h.store
             .roomEntries(h.spec.id)
