@@ -16,6 +16,8 @@
 import { elapsedText, settleFactsOf, turnSettleOf, type TimelineEntry } from '@diy-agent/chat-core';
 import * as React from 'react';
 
+import { Button } from '@diy-agent/ui-shadcn';
+
 import { formatAtAbsolute, formatClock } from '../model';
 import { RunningIndicator } from './RunningIndicator';
 import { useNow } from './useNow';
@@ -53,13 +55,15 @@ export function TurnFooter({
                 {live ? (
                     <>
                         {onStopBot !== undefined && entry.author !== undefined && (
-                            <button
+                            <Button
+                                variant="ghost"
+                                size="xs"
                                 onClick={() => onStopBot(entry.author!.id)}
                                 title="停这一轮"
-                                className="shrink-0 rounded px-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                                className="h-5 shrink-0 px-1 text-muted-foreground"
                             >
                                 停
-                            </button>
+                            </Button>
                         )}
                         {/* `since` / `stallable`：没有 progress 事实时（刚刷新）退到 180s 兜底；
                             waiting 不给 stallable —— 它的起点含已推进的内容，会误报（见 stuckHintOf） */}

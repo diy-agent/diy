@@ -19,7 +19,17 @@ import * as React from 'react';
 
 import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
-import { formatActivityAgo, formatAtAbsolute, formatClock, roomTitle, taskNumberOf, taskStatusOf, type Room } from '../model';
+import {
+    formatActivityAgo,
+    formatAtAbsolute,
+    formatClock,
+    roomTitle,
+    taskNumberOf,
+    taskStatusOf,
+    type Room,
+} from '../model';
+import { Button } from '@diy-agent/ui-shadcn';
+
 import { pendingAskHintOf } from '../pendingAsk';
 import {
     actions,
@@ -158,7 +168,9 @@ export function RoomRowView({
             {/* 项目行最前面是折叠箭头：它在**行首**而不是行尾 —— 这里表示的是「下面那一堆子项」，
                 和 GitHub / 文件树一个读法。收起时行尾补一个未关闭任务数，否则看不出里面还有东西。 */}
             {isProject && onToggleCollapse !== undefined && (
-                <button
+                <Button
+                    variant="ghost"
+                    size="icon-xs"
                     onClick={(event) => {
                         event.stopPropagation();
                         onToggleCollapse();
@@ -166,10 +178,10 @@ export function RoomRowView({
                     title={collapsed ? '展开这个项目的任务' : '收起这个项目的任务'}
                     aria-label={collapsed ? '展开' : '收起'}
                     aria-expanded={!collapsed}
-                    className="-ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted"
+                    className="shrink-0 -ml-1 text-muted-foreground hover:bg-muted"
                 >
                     {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-                </button>
+                </Button>
             )}
 
             {isProject ? (
@@ -199,17 +211,19 @@ export function RoomRowView({
             />
 
             {isProject && onCreateTask !== undefined && (
-                <button
+                <Button
+                    variant="ghost"
+                    size="icon-xs"
                     onClick={(event) => {
                         event.stopPropagation();
                         onCreateTask();
                     }}
                     title={`在「${roomTitle(room)}」下新建任务`}
                     aria-label={`在「${roomTitle(room)}」下新建任务`}
-                    className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    className="shrink-0 text-muted-foreground"
                 >
                     <ListPlus className="size-3.5" />
-                </button>
+                </Button>
             )}
 
             {isProject && collapsed && (openTaskCount ?? 0) > 0 && (
@@ -259,17 +273,19 @@ export function RoomRowView({
             {/* 任务行尾两个常驻按钮：关闭/打开与 ⋮；项目行的「新建任务」是行内独立按钮，
                 不藏在菜单里。低频的重命名 / 删除留在菜单。 */}
             {!isProject && (
-                <button
+                <Button
+                    variant="ghost"
+                    size="icon-xs"
                     onClick={(event) => {
                         event.stopPropagation();
                         void actions.setRoomStatus(room.id, openTask ? 'closed' : 'open');
                     }}
                     title={openTask ? '关闭这个任务（收进历史，不再挂在项目树下）' : '重新打开这个任务'}
                     aria-label={openTask ? '关闭任务' : '打开任务'}
-                    className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    className="shrink-0 text-muted-foreground"
                 >
                     {openTask ? <CheckCircle2 className="size-3.5" /> : <RotateCcw className="size-3.5" />}
-                </button>
+                </Button>
             )}
 
             <MenuButton

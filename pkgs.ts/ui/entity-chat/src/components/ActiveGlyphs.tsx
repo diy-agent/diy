@@ -14,6 +14,8 @@ import { MessageSquare, SquareTerminal } from 'lucide-react';
 import * as React from 'react';
 import { createPortal } from 'react-dom';
 
+import { Button } from '@diy-agent/ui-shadcn';
+
 import { roomTitle } from '../model';
 import { actions, useActiveJobs, useRunningOf, useRunningSessionRooms } from '../store';
 
@@ -36,15 +38,17 @@ function RunningRoomRow({ room, onSelect }: { room: ReturnType<typeof useRunning
     const count = useRunningOf(room.id);
     if (count === 0) return null;
     return (
-        <button
+        <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onSelect}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+            className="h-auto w-full justify-start gap-2 px-2 py-1.5 text-left text-xs"
         >
             <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />
             <span className="min-w-0 flex-1 truncate">{roomTitle(room)}</span>
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{count} 个成员在跑</span>
-        </button>
+        </Button>
     );
 }
 
@@ -67,6 +71,8 @@ export function ActiveSessionsGlyph() {
     const title = count === 0 ? '没有 Bot 在跑' : `${count} 个 Bot 在跑，点击查看列表`;
     return (
         <>
+            {/* 保留手写 button：22px 高是为了与壳里那颗「后台任务」逐像素对齐，
+                Button 的尺寸阶梯从 h-6(24) 起，套上去会差 2px */}
             <button
                 type="button"
                 className={[
