@@ -1,9 +1,17 @@
-// Surface.tsx —— 第二个表面：**原生 Tailwind**，不引任何 chat 框架的 runtime。
+// Surface.tsx —— shadcn 面：**不引 chat 框架的 runtime**，只用 @diy-agent/ui-shadcn 的组件层。
 //
 // 分组语义在 chat-core.buildTimeline、状态在 ConversationStore；这里只写「怎么画」。
 // 与 astryx 面的关系：两面共用 shared.ts 的纯映射（工具行 target / parts 分组）与
 // components/ 里的业务件（AskCard / BotAvatar / Markdown / RunningIndicator …），
-// 差别只在「用谁的组件拼外壳」——这一面全裸 Tailwind，一个组件库都不依赖。
+// 差别只在「用谁的组件拼外壳」。
+//
+// 2026-11-25：从「全裸 Tailwind」收敛到组件层 —— 按钮/输入/错误条走 `Button` / `Textarea` /
+// `Alert`，字号回到 `text-xs` / `text-sm` 两档（不再 `text-[13px]` 这种任意值）。
+// 规范见仓根 `DESIGN.md`；改这里之前先看它。
+//
+// 唯一保留的手写元素是 `MentionMenu` 的 `<ul>/<li>/<button role="option">`：
+// 它是 listbox 语义（role=option + aria-selected + 键盘上下选），而 `Button` 自带 role/样式
+// 会与 option 语义打架；这里手写是为了可访问性，不是因为组件层不够用。
 
 import { AlertTriangle, ArrowDown, ChevronDown, Send, Square } from 'lucide-react';
 import * as React from 'react';
@@ -20,6 +28,8 @@ import {
     type TimelineEntry,
     type TimelinePart,
 } from '@diy-agent/chat-core';
+
+import { Alert, AlertDescription, Button, Textarea } from '@diy-agent/ui-shadcn';
 
 import { AskCard } from '../../components/AskCard';
 import { CopyButton } from '../../components/CopyButton';
@@ -52,13 +62,10 @@ function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool'
     }
     return (
         <div className="my-1">
-            <button
-                onClick={() => setOpen((value) => !value)}
-                className="flex items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground"
-            >
+            <Button variant="ghost" size="xs" className="text-xs text-muted-foreground" onClick={() => setOpen((value) => !value)}>
                 <ChevronDown className={`size-3 transition-transform ${open ? '' : '-rotate-90'}`} />
                 工具调用 <span className="tabular-nums">({tools.length})</span>
-            </button>
+            </Button>
             {open && (
                 <div className="mt-1 border-l border-border pl-3">
                     {tools.map((tool) => (
@@ -80,7 +87,7 @@ function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: 
     const mark = status === 'running' ? '◌' : status === 'ok' ? '✓' : '✗';
     return (
         <div
-            className={`flex items-center gap-1.5 py-0.5 text-[12px] ${status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}
+            className={`flex items-center gap-1.5 py-0.5 text-xs ${status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}
         >
             <span>{mark}</span>
             <span className="font-mono">{tool.name}</span>
@@ -91,10 +98,10 @@ function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: 
 
 function ErrorBox({ text }: { text: string }) {
     return (
-        <div className="my-1.5 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+        <Alert variant="destructive" className="my-1.5 px-3 py-2 text-xs">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-            <span className="min-w-0 break-words">{text}</span>
-        </div>
+            <AlertDescription className="min-w-0 break-words text-xs">{text}</AlertDescription>
+        </Alert>
     );
 }
 
@@ -146,7 +153,7 @@ function EntryView({
         // 后台作业收口：带结构化事实的画卡片（run id / 状态 / 退出码 / 输出尾部）
         if (entry.job !== undefined) return <JobCard view={jobViewOfNotice(entry.job, text)} />;
         return (
-            <div className="my-1 flex items-center gap-3 text-[11px] text-muted-foreground">
+            <div className="my-1 flex items-center gap-3 text-xs text-muted-foreground">
                 <span className="h-px flex-1 bg-border" />
                 <span>{text}</span>
                 <span className="h-px flex-1 bg-border" />
@@ -183,11 +190,11 @@ function EntryView({
                     <BotAvatar author={entry.author} roomId={roomId} size={26} />
                 </div>
                 <div className="min-w-0 flex-1">
-                    <div className="mb-0.5 flex items-center gap-2 text-[12px]">
+                    <div className="mb-0.5 flex items-center gap-2 text-xs">
                         <span className="font-medium" style={{ color: entry.author?.color }}>
                             {entry.author?.name ?? 'bot'}
                         </span>
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="text-xs text-muted-foreground">
                             {timeOf(entry.turn?.startedAt ?? entry.at)}
                         </span>
                     </div>
@@ -202,10 +209,10 @@ function EntryView({
         const failed = entry.deliveries.filter((delivery) => delivery.state === 'failed');
         return (
             <div className="my-3 flex flex-col items-end gap-1">
-                <div className="max-w-[85%] rounded-2xl bg-muted px-3.5 py-2 text-[13px] whitespace-pre-wrap break-words">
+                <div className="max-w-[85%] rounded-2xl bg-muted px-3.5 py-2 text-sm whitespace-pre-wrap break-words">
                     {text}
                 </div>
-                <div className="flex items-center gap-2 pr-1 text-[10px] text-muted-foreground">
+                <div className="flex items-center gap-2 pr-1 text-xs text-muted-foreground">
                     {failed.length > 0 && (
                         <span className="text-destructive">{failed.map((d) => `${d.name} 未送达`).join('、')}</span>
                     )}
@@ -220,15 +227,15 @@ function EntryView({
     const copyable = plainTextOf(entry.parts);
     return (
         <div className="group my-4 flex gap-2.5">
-            <div className="flex w-[26px] shrink-0 justify-center pt-0.5">
+            <div className="flex w-6 shrink-0 justify-center pt-0.5">
                 <BotAvatar author={entry.author} roomId={roomId} size={26} />
             </div>
             <div className="min-w-0 flex-1">
-                <div className="mb-0.5 flex items-center gap-2 text-[12px]">
+                <div className="mb-0.5 flex items-center gap-2 text-xs">
                     <span className="font-medium" style={{ color: entry.author?.color }}>
                         {entry.author?.name ?? 'bot'}
                     </span>
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                         {timeOf(entry.turn?.startedAt ?? entry.at)}
                     </span>
                     {copyable !== '' && (
@@ -288,7 +295,7 @@ function MentionMenu({
 }) {
     if (candidates.length === 0) {
         return (
-            <div className="absolute bottom-full left-0 mb-1 rounded-md border bg-popover px-2.5 py-1.5 text-[11px] text-muted-foreground shadow-md">
+            <div className="absolute bottom-full left-0 mb-1 rounded-md border bg-popover px-2.5 py-1.5 text-xs text-muted-foreground shadow-md">
                 没有匹配的成员
             </div>
         );
@@ -309,14 +316,14 @@ function MentionMenu({
                             event.preventDefault();
                             onPick(candidate.name);
                         }}
-                        className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12px] ${
+                        className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs ${
                             index === activeIndex ? 'bg-accent text-foreground' : 'hover:bg-muted/60'
                         }`}
                     >
                         <span className="size-1.5 rounded-full" style={{ background: candidate.color }} />
                         <span className="truncate">{candidate.name}</span>
                         {candidate.isOwner && (
-                            <span className="ml-auto text-[10px] text-muted-foreground">owner</span>
+                            <span className="ml-auto text-xs text-muted-foreground">owner</span>
                         )}
                     </button>
                 </li>
@@ -390,7 +397,7 @@ function Composer({
     return (
         <div className="border-t bg-background px-4 py-3">
             {draft.status === 'error' && (
-                <div className="pb-1 text-[10px] text-destructive">
+                <div className="pb-1 text-xs text-destructive">
                     草稿未保存：{draft.error ?? '网络错误'}（重试中，内容还在）
                 </div>
             )}
@@ -407,7 +414,7 @@ function Composer({
                 )}
                 {/* 输入行：写字 + 发送键在右上（文字框自己撑高） */}
                 <div className="flex items-end gap-2">
-                <textarea
+                <Textarea
                     ref={textareaRef}
                     value={draft.text}
                     onChange={(event) => {
@@ -445,25 +452,22 @@ function Composer({
                     }}
                     rows={1}
                     placeholder="和这个实体对话…（@ 选 bot，Enter 发送，Shift+Enter 换行）"
-                    className="max-h-40 min-h-6 flex-1 resize-none bg-transparent text-[13px] outline-none"
+                    className="max-h-40 min-h-0 flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
                 />
                 {running ? (
-                    <button
-                        onClick={() => conversation.cancel()}
-                        title="停止生成"
-                        className="rounded-lg p-1.5 hover:bg-muted"
-                    >
+                    <Button variant="ghost" size="icon-sm" title="停止生成" onClick={() => conversation.cancel()}>
                         <Square className="size-4" />
-                    </button>
+                    </Button>
                 ) : (
-                    <button
-                        onClick={send}
-                        disabled={draft.text.trim() === '' || submitting}
+                    <Button
+                        variant="ghost"
+                        size="icon-sm"
                         title="发送"
-                        className="rounded-lg p-1.5 hover:bg-muted disabled:opacity-40"
+                        disabled={draft.text.trim() === '' || submitting}
+                        onClick={send}
                     >
                         <Send className="size-4" />
-                    </button>
+                    </Button>
                 )}
                 </div>
                 {extras !== undefined && <div className="mt-1.5 border-t pt-1.5">{extras}</div>}
@@ -572,7 +576,7 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
                     className="h-full overflow-y-auto px-6 py-4"
                 >
                     {entries.length === 0 ? (
-                        <div className="mt-16 text-center text-[13px] text-muted-foreground">
+                        <div className="mt-16 text-center text-sm text-muted-foreground">
                             还没有消息。发一句，或 @ 一个 bot。
                         </div>
                     ) : (
@@ -581,14 +585,16 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
                 </div>
                 {!atBottom && entries.length > 0 && (
                     // 上翻看历史时「回到底部」：新消息不断到达却没有入口，只能拖滚动条
-                    <button
+                    <Button
+                        variant="outline"
+                        size="icon-sm"
                         onClick={scrollToBottom}
                         title="回到最新"
                         aria-label="回到最新"
-                        className="absolute right-5 bottom-3 rounded-full border bg-background p-1.5 text-muted-foreground shadow-md hover:text-foreground"
+                        className="absolute right-5 bottom-3 rounded-full bg-background shadow-md"
                     >
                         <ArrowDown className="size-3.5" />
-                    </button>
+                    </Button>
                 )}
             </div>
             <Composer
