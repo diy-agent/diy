@@ -1,4 +1,4 @@
-import { Bot as BotIcon, Cpu, Folder, ListTodo, PanelRight, Plus } from 'lucide-react';
+import { Bot as BotIcon, ChevronRight, Cpu, Folder, ListTodo, PanelRight, Plus, X } from 'lucide-react';
 import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
@@ -17,6 +17,7 @@ import {
     useError,
     useLoaded,
     useProviders,
+    useRoles,
     useRooms,
     useSelectedRoom,
 } from './store';
@@ -27,8 +28,11 @@ import { useRoomDialogs } from './useRoomDialogs';
  *
  * 房间**没选过**模型时（空串）跟着目录的 `defaultModel` 走：显示成「默认 · <模型名>」。
  * 这比显示空白或占位 key 强 —— 一眼看得出「它会用哪个」且「我没显式选过」。
+ *
+ * 点它不是「原地换模型」，而是展开下面的 `RoleConfigPanel`（2026-11-24 用户定）：
+ * 这颗胶囊是「当前类型 bot 配置」的入口，换模型 / 调推理 / 改人格都在那张面板里。
  */
-function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
+function ModelChip({ value, onClick, open }: { value: string; onClick: () => void; open: boolean }) {
     const providers = useProviders();
     const defaultKey = useDefaultModelKey();
     const inherited = value.trim() === '';
@@ -38,12 +42,91 @@ function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
     return (
         <button
             onClick={onClick}
-            title={inherited ? `跟随默认：${label} · 点击切换` : `${label} · 点击切换`}
-            className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted"
+            aria-expanded={open}
+            title={inherited ? `跟随默认：${label} · 点击查看配置` : `${label} · 点击查看配置`}
+            className={`flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted ${
+                open ? 'bg-muted' : ''
+            }`}
         >
             <Cpu className="size-3" />
             {inherited && shown.trim() !== '' ? `默认 · ${short}` : short}
         </button>
+    );
+}
+
+/**
+ * 模型胶囊 / 「角色」按钮点开的**二级配置面板**（2026-11-24 用户定，三级披露的中间一层）。
+ *
+ * L1 = 头部那颗胶囊（只看当前用啥）；L2 = 这张面板（当前类型 bot 的**重要**配置：
+ * 模型 / 推理 + 一句「当前类型」的说明）；L3 = 设置页角色段（改名字 / 人格等全部属性，
+ * 深链 `/settings/roles/<type>` 定位到这一类型）。
+ *
+ * 为什么只放模型 + 推理：用户明确「去掉那些乱七八糟的信息描述，简要为主」—— 优先级说明、
+ * 价格、上下文窗口那一大段都归 L3 的角色页，这里只留在房间最常要看的两项。
+ * 面板显示的是**该类型角色的配置**（成员由类型派生，改一处全类型生效），不是某个具体 bot。
+ */
+function RoleConfigPanel({
+    room,
+    onPickModel,
+    onManageRoles,
+    onClose,
+}: {
+    room: Room;
+    /** 换模型：复用宿主已有的 ModelDialog（模型在这里就地改） */
+    onPickModel: () => void;
+    /** 去设置页角色段（带房间类型深链）—— 面板的最后一步 */
+    onManageRoles?: (() => void) | undefined;
+    onClose: () => void;
+}) {
+    const providers = useProviders();
+    const defaultKey = useDefaultModelKey();
+    const roles = useRoles();
+    // 当前类型、primary 优先的那个角色（面板说的是「这类 bot 的配置」，不是某个房间私有 bot）
+    const role = roles.find((item) => item.type === room.type && item.primary) ?? roles.find((item) => item.type === room.type);
+    const modelValue = role?.modelKey?.trim() ?? '';
+    const inherited = modelValue === '';
+    const shown = inherited ? (defaultKey ?? '') : modelValue;
+    const modelText = shown.trim() === '' ? '未配置' : inherited ? `默认 · ${modelLabel(providers, shown).split(' · ')[0]}` : modelLabel(providers, shown);
+    const effort = role?.reasoningEffort?.trim();
+    const effortText = effort === undefined || effort === '' ? '跟随全局' : effort;
+
+    return (
+        <div
+            className="mt-2 rounded-md border bg-popover p-2.5 text-xs text-popover-foreground shadow-md"
+            role="dialog"
+            aria-label="当前类型配置"
+        >
+            <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">
+                    {roomTypeLabel(room.type)}类型 · 所有{roomTypeLabel(room.type)}共享
+                </span>
+                <button onClick={onClose} aria-label="关闭配置" className="rounded p-0.5 hover:bg-muted">
+                    <X className="size-3" />
+                </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                <span className="flex items-center gap-1.5">
+                    <Cpu className="size-3 text-muted-foreground" />
+                    模型 <code className="font-mono">{modelText}</code>
+                    <button onClick={onPickModel} className="rounded border px-1.5 py-0.5 hover:bg-muted">
+                        换
+                    </button>
+                </span>
+                <span className="flex items-center gap-1.5">
+                    推理 <code className="font-mono">{effortText}</code>
+                </span>
+            </div>
+            {onManageRoles !== undefined && (
+                <div className="mt-2.5 border-t pt-2">
+                    <button
+                        onClick={onManageRoles}
+                        className="flex items-center gap-1 rounded px-1 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                        全部设置 <ChevronRight className="size-3" />
+                    </button>
+                </div>
+            )}
+        </div>
     );
 }
 
@@ -65,8 +148,9 @@ const RoomHeader = React.memo(function RoomHeader({
     onToggleTaskPanel,
 }: {
     room: Room;
-    /** 去设置页的「角色」那一段。不传就不画那颗按钮（宿主自己决定有没有角色页） */
+    /** 去设置页的「角色」那一段（配置面板里的「全部设置」用它）。不传就不画面板里那一步 */
     onManageRoles?: (() => void) | undefined;
+    /** 打开换模型对话框（配置面板里的「换」用它） */
     onPickModel: () => void;
     taskPanelOpen: boolean;
     /** 宿主是否接管了右侧面板（接管后这个按钮不归本层画 —— 点了也没有本层面板可开） */
@@ -81,6 +165,10 @@ const RoomHeader = React.memo(function RoomHeader({
     const others = bots.filter((bot) => bot.id !== primary?.id);
     const isProject = room.type === 'project';
     const Icon = isProject ? Folder : ListTodo;
+    // 二级配置面板的开关。模型胶囊与「角色」按钮都开同一张面板；切换房间时由 key 重挂载关掉。
+    const [configOpen, setConfigOpen] = React.useState(false);
+    const toggleConfig = React.useCallback(() => setConfigOpen((open) => !open), []);
+    const closeConfig = React.useCallback(() => setConfigOpen(false), []);
 
     return (
         <header className="border-b px-5 py-3">
@@ -104,6 +192,8 @@ const RoomHeader = React.memo(function RoomHeader({
                         {dirOf(room, rooms)}
                     </span>
                 )}
+                <ModelChip value={room.modelKey} onClick={toggleConfig} open={configOpen} />
+
                 <span className="ml-auto flex flex-wrap items-center gap-1.5 text-xs">
                     <span className="text-muted-foreground">成员</span>
                     {primary !== undefined && (
@@ -124,9 +214,12 @@ const RoomHeader = React.memo(function RoomHeader({
                     ))}
                     {onManageRoles !== undefined && (
                         <button
-                            onClick={onManageRoles}
-                            title="成员来自「角色表」：按房间类型共享，去设置里改名字 / 人格 / 模型"
-                            className="flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted"
+                            onClick={toggleConfig}
+                            aria-expanded={configOpen}
+                            title="成员来自「角色表」：按房间类型共享，展开面板看配置"
+                            className={`flex items-center gap-1 rounded-full border px-2 py-0.5 hover:bg-muted ${
+                                configOpen ? 'bg-muted' : ''
+                            }`}
                         >
                             <Plus className="size-3" />
                             角色
@@ -145,6 +238,14 @@ const RoomHeader = React.memo(function RoomHeader({
                     )}
                 </span>
             </div>
+            {configOpen && (
+                <RoleConfigPanel
+                    room={room}
+                    onPickModel={onPickModel}
+                    onManageRoles={onManageRoles}
+                    onClose={closeConfig}
+                />
+            )}
             <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                 <span>
                     {bots.length <= 1
@@ -172,7 +273,7 @@ export function App({
 }: {
     sidebar?: boolean;
     taskPanel?: boolean;
-    /** 房间头「角色」按钮：宿主给一个「去角色页」的动作（本包不认识设置页的地址） */
+    /** 房间头配置面板里的「全部设置」：宿主给一个「去角色页」的动作（本包不认识设置页的地址） */
     onManageRoles?: () => void;
 } = {}) {
     // 四个窄订阅。这层以前是 `useStore()`（整份快照），于是**每一条** `emit` ——
@@ -287,6 +388,7 @@ export function App({
                     ) : (
                         <>
                             <RoomHeader
+                                key={room.id}
                                 room={room}
                                 onManageRoles={onManageRoles}
                                 onPickModel={onPickModel}

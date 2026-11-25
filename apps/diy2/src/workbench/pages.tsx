@@ -121,11 +121,12 @@ export function pageFor(type: string): PageDef {
 /**
  * 对话：只留主区。导航 / 详情 / 资产各归自己的区域 —— 一个布局只该有一个真源。
  *
- * 房间头的「角色」按钮需要一个「去角色页」的动作：实体聊天包不认识设置页的地址，
+ * 房间头模型胶囊 /「角色」按钮点开的是二级配置面板（实体聊天包内），面板最后一步
+ * 「全部设置 →」需要一个「去角色页」的动作：实体聊天包不认识设置页的地址，
  * 所以由宿主（这一层）给 —— 这也让 `entity-chat` 保持「不知道自己被装在哪」。
  *
- * 深链带**房间类型**（`/settings/roles/task`）：从任务房间点进去就落在那类角色上，
- * 项目房间落 `project`，其余类型由 `rolesAddressOf` 回落整表。入口不变，还是头部那颗 chip。
+ * 深链带**房间类型**（`/settings/roles/task`）：从任务房间的面板点进去就落在那类角色上，
+ * 项目房间落 `project`，其余类型由 `rolesAddressOf` 回落整表。
  */
 function ChatBody() {
     const room = useSelectedRoom();
