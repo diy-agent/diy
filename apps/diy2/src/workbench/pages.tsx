@@ -30,7 +30,7 @@ import { ConversationAreaBar } from './ConversationAreaBar';
 import { ModelConfigView } from './ModelConfigView';
 import { area, definePage, defineView, type PageDef } from './model';
 import { RolesView } from './RolesView';
-import { rolesTypeOf, SETTINGS_PAGE, SETTINGS_SECTIONS, sectionOf } from './settings';
+import { rolesAddressOf, rolesTypeOf, SETTINGS_PAGE, SETTINGS_SECTIONS, sectionOf } from './settings';
 
 // ── 页模板：位置写死，尺寸可拖 ───────────────────────────────────────────────────
 //
@@ -139,9 +139,15 @@ export function pageFor(type: string): PageDef {
  * 项目房间落 `project`，其余类型由 `rolesAddressOf` 回落整表。
  */
 function ChatBody() {
+    const room = useSelectedRoom();
     return (
         <div className="wb-chat">
-            <EntityChatApp sidebar={false} taskPanel={false} bar="host" />
+            <EntityChatApp
+                sidebar={false}
+                taskPanel={false}
+                bar="host"
+                onManageRoles={() => navigate(rolesAddressOf(room?.type ?? ''))}
+            />
         </div>
     );
 }

@@ -11,16 +11,16 @@ import { Square } from 'lucide-react';
 import * as React from 'react';
 
 import { conversationOf } from '../store';
+import { BotConfigChip } from './BotConfigChip';
 import { ContextPanel } from './ContextPanel';
 import { JobsChip } from './JobsChip';
-import { ModelChip } from './ModelChip';
 import type { Room } from '../model';
 
-export function ComposerBar({ room, onPickModel }: { room: Room; onPickModel: () => void }) {
+export function ComposerBar({ room, onManageRoles }: { room: Room; onManageRoles?: () => void }) {
     return (
         <div className="flex flex-wrap items-center gap-1.5">
             <ContextPanel room={room} side="up" />
-            <ModelChip value={room.modelKey} onClick={onPickModel} />
+            <BotConfigChip room={room} onManageRoles={onManageRoles} />
             <JobsChip />
             {/* 「全部停止」暂驻在这里（用户 2026-11-24）：房间状态条不再说「谁在跑」，
                 但停的能力不能跟着消失 —— 单停在这一轮的底行，全停在这里。 */}

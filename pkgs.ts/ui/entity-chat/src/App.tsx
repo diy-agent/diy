@@ -78,9 +78,12 @@ export function App({
     sidebar = true,
     taskPanel = true,
     bar = 'self',
+    onManageRoles,
 }: {
     sidebar?: boolean;
     taskPanel?: boolean;
+    /** 底栏机器人配置面板里的「去配置页」：宿主给一个带房间类型深链的动作 */
+    onManageRoles?: () => void;
     /**
      * 对话区顶部那条（表面切换 + 房间菜单）谁来画。
      *
@@ -122,17 +125,13 @@ export function App({
     // 传给侧栏的回调必须 stable：`Sidebar` 把它们放进 `useMemo` 的 host，再传给每一行；
     // 每次渲染新建一个函数，行上的 `React.memo` 就永远拦不住（props 比不等）。
     // useRoomDialogs 返回的动作本身已经是 useCallback，直接透传即可。
-    const { openProject, openTask, requestDelete, openSettings, openModel } = dialogs;
+    const { openProject, openTask, requestDelete, openSettings } = dialogs;
     const onCreateProject = openProject;
     const onCreateTask = openTask;
     const onRequestDelete = requestDelete;
     const onOpenSettings = openSettings;
     const onToggleTaskPanel = React.useCallback(() => setTaskPanelOpen((open) => !open), []);
     const onCloseTaskPanel = React.useCallback(() => setTaskPanelOpen(false), []);
-    const roomId = room?.id;
-    const onPickModel = React.useCallback(() => {
-        if (roomId !== undefined) openModel(roomId);
-    }, [roomId, openModel]);
 
     /**
      * 输入框底栏那一行。**必须 memo**：它是 `SurfaceHost` 的 prop，而 `SurfaceHost` 是
@@ -140,8 +139,8 @@ export function App({
      * 那个 memo 就白写了，隐藏着的表面会跟着整块重画。
      */
     const composerExtras = React.useMemo(
-        () => (room === undefined ? undefined : <ComposerBar room={room} onPickModel={onPickModel} />),
-        [room, onPickModel],
+        () => (room === undefined ? undefined : <ComposerBar room={room} onManageRoles={onManageRoles} />),
+        [room, onManageRoles],
     );
 
     const toggleSidebar = React.useCallback(() => {
