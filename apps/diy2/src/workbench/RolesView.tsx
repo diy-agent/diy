@@ -20,6 +20,8 @@ import { Modal, ModelPicker, roles, useRoles, type BotRole } from '@diy-agent/en
 import { useForm } from '@tanstack/react-form';
 import * as React from 'react';
 
+import { ROLES_TYPES } from './settings';
+
 /** 服务端的话原样带出来（「只剩这一个角色」比「保存失败」有用得多） */
 function messageOf(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -64,11 +66,9 @@ function validName(name: string, taken: readonly string[]): string | undefined {
 // ── 新建角色（弹窗）──────────────────────────────────────────────────────────
 
 function CreateRoleDialog({
-    types,
     onClose,
     onDone,
 }: {
-    types: readonly string[];
     onClose: () => void;
     onDone: (role: BotRole) => void;
 }) {
@@ -77,7 +77,7 @@ function CreateRoleDialog({
     const [busy, setBusy] = React.useState(false);
 
     const form = useForm({
-        defaultValues: { type: types[0] ?? 'project', name: '' },
+        defaultValues: { type: ROLES_TYPES[0] as string, name: '' },
         onSubmit: async ({ value }) => {
             const type = value.type.trim();
             const name = value.name.trim();
@@ -112,7 +112,8 @@ function CreateRoleDialog({
                 <form.Field
                     name="type"
                     validators={{
-                        onChange: ({ value }) => (value.trim() === '' ? '类型不能空（project / task / 自定义）' : undefined),
+                        onChange: ({ value }) =>
+                            (ROLES_TYPES as readonly string[]).includes(value) ? undefined : '只能选项目或任务',
                     }}
                 >
                     {(field) => {
@@ -120,20 +121,18 @@ function CreateRoleDialog({
                         return (
                             <label className="block">
                                 <span className="mb-1 block text-xs text-muted-foreground">归属类型</span>
-                                <input
+                                <select
                                     value={field.state.value}
                                     onChange={(event) => field.handleChange(event.target.value)}
                                     onBlur={field.handleBlur}
-                                    list="role-types"
-                                    className={`w-full rounded-lg border bg-card px-2 py-1.5 outline-none ${
-                                        error === undefined ? '' : 'border-destructive'
-                                    }`}
-                                />
-                                <datalist id="role-types">
-                                    {types.map((type) => (
-                                        <option key={type} value={type} />
+                                    className="w-full rounded-lg border bg-card px-2 py-1.5 outline-none"
+                                >
+                                    {ROLES_TYPES.map((type) => (
+                                        <option key={type} value={type}>
+                                            {typeLabel(type)}
+                                        </option>
                                     ))}
-                                </datalist>
+                                </select>
                                 {error === undefined ? null : (
                                     <span className="mt-1 block text-[11px] text-destructive">{error}</span>
                                 )}
@@ -366,15 +365,8 @@ function RoleEditor({ role, onDeleted }: { role: BotRole; onDeleted: () => void 
                 <form.Field name="modelKey">
                     {(field) => (
                         <section className="border-b border-border/60 py-3">
-                            <div className="mb-1.5 text-xs text-muted-foreground">模型</div>
-                            <ModelPicker
-                                value={field.state.value}
-                                onChange={(key) => {
-                                    field.handleChange(key);
-                                    setSaved(false);
-                                }}
-                            />
-                            <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                            <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
+                                <span>模型</span>
                                 {field.state.value === '' ? null : (
                                     <button
                                         type="button"
@@ -382,12 +374,22 @@ function RoleEditor({ role, onDeleted }: { role: BotRole; onDeleted: () => void 
                                             field.handleChange('');
                                             setSaved(false);
                                         }}
-                                        className="rounded border px-1.5 py-0.5 hover:bg-muted"
+                                        className="rounded border px-1.5 py-0.5 text-[11px] hover:bg-muted"
                                     >
                                         改回跟随
                                     </button>
                                 )}
                             </div>
+                            <div className="mb-1.5 truncate font-mono text-[11px] text-foreground" title={field.state.value}>
+                                {field.state.value === '' ? '跟随全局默认' : field.state.value}
+                            </div>
+                            <ModelPicker
+                                value={field.state.value}
+                                onChange={(key) => {
+                                    field.handleChange(key);
+                                    setSaved(false);
+                                }}
+                            />
                         </section>
                     )}
                 </form.Field>
@@ -464,7 +466,7 @@ export function RolesView({ initialType }: { initialType?: string | undefined } 
             <aside className="flex min-h-0 flex-col border-r border-border">
                 <div className="space-y-1 border-b border-border p-3">
                     <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">角色</span>
+                        <span className="text-sm font-medium">机器人</span>
                         <button
                             type="button"
                             onClick={() => setCreating(true)}
@@ -518,7 +520,6 @@ export function RolesView({ initialType }: { initialType?: string | undefined } 
 
             {creating ? (
                 <CreateRoleDialog
-                    types={types}
                     onClose={() => setCreating(false)}
                     onDone={(role) => {
                         setCreating(false);

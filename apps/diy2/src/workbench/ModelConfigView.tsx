@@ -334,24 +334,11 @@ function DefaultModelCard({
     busy: boolean;
     onPick: (modelKey: string | null) => void;
 }) {
-    const options = React.useMemo(() => {
-        const out: Array<{ key: string; label: string }> = [];
-        for (const provider of snapshot.providers) {
-            const account = provider.accounts.find((item) => item.configured);
-            if (account === undefined) continue;
-            for (const model of provider.models) {
-                if (!model.enabled) continue;
-                out.push({
-                    key: `${account.name}@${provider.id}/${model.id}`,
-                    label: `${model.name} · ${provider.name}`,
-                });
-            }
-        }
-        return out;
-    }, [snapshot]);
-
+    const [open, setOpen] = React.useState(false);
     const value = snapshot.defaultModelKey ?? '';
-    const missing = value !== '' && !options.some((option) => option.key === value);
+    const options = React.useMemo(() => defaultModelOptions(snapshot), [snapshot]);
+    const current = options.find((option) => option.key === value);
+    const missing = value !== '' && current === undefined;
 
     return (
         <div className="rounded-lg border border-border border-l-2 border-l-ring bg-card px-2.5 py-2">
@@ -367,32 +354,169 @@ function DefaultModelCard({
                     </button>
                 )}
             </div>
-            {options.length === 0 ? (
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    还没有可用的组合 —— 先在右边填一家服务的 key，再勾选模型。
-                </p>
-            ) : (
-                <select
-                    value={value}
-                    disabled={busy}
-                    onChange={(event) => onPick(event.target.value === '' ? null : event.target.value)}
-                    className="mt-1 w-full rounded-md border border-border bg-background px-1.5 py-1 text-xs outline-none"
-                >
-                    <option value="">（没设 · 发送时才知道用什么）</option>
-                    {options.map((option) => (
-                        <option key={option.key} value={option.key}>
-                            {option.label}
-                        </option>
-                    ))}
-                    {missing ? <option value={value}>{value}（目录里没有）</option> : null}
-                </select>
-            )}
-            {missing ? (
-                <p className="mt-1 text-[11px] text-amber-400">
-                    现在指向的模型在目录里不存在了 —— 换一个，或清空。
-                </p>
+            <button
+                onClick={() => setOpen(true)}
+                disabled={busy}
+                className="mt-1 w-full truncate rounded-md border border-border bg-background px-1.5 py-1 text-left font-mono text-[11px] hover:border-ring disabled:opacity-50"
+                title={value === '' ? '点开选择默认模型' : value}
+            >
+                {value === '' ? '（未设置 · 点开选择）' : missing ? `${value}（目录里没有）` : value}
+            </button>
+            {missing ? <p className="mt-1 text-[11px] text-amber-400">指向的模型已不在目录里 —— 点开换一个。</p> : null}
+            {open ? (
+                <DefaultModelPanel
+                    options={options}
+                    current={value}
+                    onPick={(key) => {
+                        setOpen(false);
+                        onPick(key);
+                    }}
+                    onClose={() => setOpen(false)}
+                />
             ) : null}
         </div>
+    );
+}
+
+/** 「真能发出去」的默认模型组合：账号填了 key、模型勾选过 */
+interface DefaultModelOption {
+    key: string;
+    providerId: string;
+    providerName: string;
+    account: string;
+    modelId: string;
+    modelName: string;
+    contextWindow?: number;
+    cost?: { input: number; output: number };
+}
+
+function defaultModelOptions(snapshot: ModelConfigSnapshot): DefaultModelOption[] {
+    const out: DefaultModelOption[] = [];
+    for (const provider of snapshot.providers) {
+        for (const account of provider.accounts) {
+            if (!account.configured) continue;
+            for (const model of provider.models) {
+                if (!model.enabled) continue;
+                out.push({
+                    key: `${account.name}@${provider.id}/${model.id}`,
+                    providerId: provider.id,
+                    providerName: provider.name,
+                    account: account.name,
+                    modelId: model.id,
+                    modelName: model.name,
+                    contextWindow: model.contextWindow,
+                    cost: model.cost,
+                });
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * 默认模型搜索面板：表格形式与配置页的模型表一致，多一列「供应商 / 账号」。
+ * 已连接的账号作筛选（一个服务商可能有多个账号）。点一行 = 设为默认模型。
+ */
+function DefaultModelPanel({
+    options,
+    current,
+    onPick,
+    onClose,
+}: {
+    options: DefaultModelOption[];
+    current: string;
+    onPick: (key: string) => void;
+    onClose: () => void;
+}) {
+    const [query, setQuery] = React.useState('');
+    const [account, setAccount] = React.useState('');
+    const accounts = React.useMemo(() => {
+        const seen = new Set<string>();
+        const out: Array<{ key: string; label: string }> = [];
+        for (const option of options) {
+            const key = `${option.account}@${option.providerId}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push({ key, label: key });
+        }
+        return out;
+    }, [options]);
+    const keyword = query.trim().toLowerCase();
+    const rows = options.filter(
+        (option) =>
+            (account === '' || `${option.account}@${option.providerId}` === account) &&
+            (keyword === '' ||
+                option.modelId.toLowerCase().includes(keyword) ||
+                option.modelName.toLowerCase().includes(keyword) ||
+                option.providerName.toLowerCase().includes(keyword)),
+    );
+
+    return (
+        <Modal title="选择默认模型" onClose={onClose}>
+            <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                    <input
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder="搜索模型 / 服务商"
+                        className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-1 text-xs outline-none"
+                    />
+                    <select
+                        value={account}
+                        onChange={(event) => setAccount(event.target.value)}
+                        className="rounded border border-border bg-card px-2 py-1 text-xs outline-none"
+                    >
+                        <option value="">全部账号</option>
+                        {accounts.map((item) => (
+                            <option key={item.key} value={item.key}>
+                                {item.label}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+                {rows.length === 0 ? (
+                    <p className="py-2 text-xs text-muted-foreground">没有匹配的组合 —— 先在右边填 key、勾选模型。</p>
+                ) : (
+                    <div className="max-h-[52vh] overflow-auto rounded-lg border border-border">
+                        <table className="w-full text-left text-xs">
+                            <thead className="sticky top-0 bg-muted/80 text-[11px] text-muted-foreground backdrop-blur">
+                                <tr>
+                                    <th className="py-1.5 pl-2">模型</th>
+                                    <th className="py-1.5">供应商 / 账号</th>
+                                    <th className="w-16 py-1.5 text-right">上下文</th>
+                                    <th className="w-28 py-1.5 pr-2 text-right">价目 (in/out)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((option) => (
+                                    <tr
+                                        key={option.key}
+                                        onClick={() => onPick(option.key)}
+                                        className={`cursor-pointer border-t border-border/60 hover:bg-muted/40 ${
+                                            option.key === current ? 'bg-muted' : ''
+                                        }`}
+                                    >
+                                        <td className="py-1 pl-2">
+                                            <div className="truncate font-medium">{option.modelName}</div>
+                                            <code className="text-[10.5px] text-muted-foreground">{option.modelId}</code>
+                                        </td>
+                                        <td className="py-1 font-mono text-[10.5px] text-muted-foreground">
+                                            {option.account}@{option.providerId}
+                                        </td>
+                                        <td className="py-1 text-right tabular-nums text-muted-foreground">
+                                            {contextLabel(option.contextWindow)}
+                                        </td>
+                                        <td className="py-1 pr-2 text-right tabular-nums text-muted-foreground">
+                                            {costLabel(option.cost)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+        </Modal>
     );
 }
 

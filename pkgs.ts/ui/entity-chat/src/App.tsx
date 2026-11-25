@@ -75,7 +75,6 @@ function RoleConfigPanel({
     onManageRoles?: (() => void) | undefined;
     onClose: () => void;
 }) {
-    const providers = useProviders();
     const defaultKey = useDefaultModelKey();
     const roles = useRoles();
     // 当前类型、primary 优先的那个角色（面板说的是「这类 bot 的配置」，不是某个房间私有 bot）
@@ -83,7 +82,9 @@ function RoleConfigPanel({
     const modelValue = role?.modelKey?.trim() ?? '';
     const inherited = modelValue === '';
     const shown = inherited ? (defaultKey ?? '') : modelValue;
-    const modelText = shown.trim() === '' ? '未配置' : inherited ? `默认 · ${modelLabel(providers, shown).split(' · ')[0]}` : modelLabel(providers, shown);
+    // 会话页只显模型 id（`account@provider/model` 的 `/` 后一段），不显全称与价目。
+    const modelId = shown.split('/').pop() ?? '';
+    const modelText = shown.trim() === '' ? '未配置' : inherited ? `默认 · ${modelId}` : modelId;
     const effort = role?.reasoningEffort?.trim();
     const effortText = effort === undefined || effort === '' ? '跟随全局' : effort;
 
