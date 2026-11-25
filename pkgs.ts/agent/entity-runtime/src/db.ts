@@ -421,6 +421,19 @@ export function openStore(file: string): Store {
         -- 「每个容器最后一条 item 的时间」要 GROUP BY entity_id 取 MAX(at)：
         -- 没有这条覆盖索引就是全表扫（6409 条实测 15.6ms，随历史线性涨），有了是 0.7ms。
         CREATE INDEX IF NOT EXISTS items_entity_at ON entity_items(entity_id, at);
+        -- 「每个 bot 最后一条 item」与「每轮最后一条结局事实」都在 json 里分组：
+        -- author.id、归属 = COALESCE(data.botId, turnId)。没有下面两条表达式索引就是
+        -- 全表扫 118MB 的 json（实测 2.7 万行：8.4s / 3.5s），有了是 25ms / 54ms。
+        -- 部分索引让体积停在 1.3MB / 0.02MB；WHERE 必须与查询里的过滤条件逐字一致才命中。
+        CREATE INDEX IF NOT EXISTS items_author_seq ON entity_items(
+            entity_id, json_extract(item, '$.author.id'), seq
+        ) WHERE json_extract(item, '$.author.id') IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS items_fact_owner_seq ON entity_items(
+            entity_id,
+            COALESCE(json_extract(item, '$.data.botId'), json_extract(item, '$.turnId')),
+            seq
+        ) WHERE json_extract(item, '$.author.id') IS NULL
+            AND json_extract(item, '$.type') IN ('notice', 'error');
         CREATE TABLE IF NOT EXISTS room_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_id TEXT NOT NULL,
