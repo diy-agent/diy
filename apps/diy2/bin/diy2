@@ -41,5 +41,12 @@ if (!existsSync(cliEntry)) {
 }
 
 // CLI 产物顶层自己做 `process.exit(code)`；这里的 exitCode 只是「万一它没退」的兜底
-const loaded = await import(pathToFileURL(cliEntry).href);
-process.exitCode = loaded?.exitCode ?? process.exitCode ?? 0;
+// 不用顶层 await：Node 22 对未 settle 的顶层 await 会打 Warning（diy2 web --restart 现场）
+void import(pathToFileURL(cliEntry).href)
+    .then((loaded) => {
+        process.exitCode = loaded?.exitCode ?? process.exitCode ?? 0;
+    })
+    .catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });

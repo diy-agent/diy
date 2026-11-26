@@ -24,7 +24,7 @@ import { z } from 'zod';
 import { RpcSchema } from '@diy-agent/rpc';
 
 import { resolveConfig, serverEntryOf, webDirOf, type Diy2Config } from '../../server/config';
-import { probeMine } from '../../server/probe';
+import { probe, probeMine } from '../../server/probe';
 import { closeDetachLog, detachLogPath, openDetachLog } from './detach-log';
 import { configShape, toArgv, toOverrides } from './options';
 import { stopOne } from './stop';
@@ -86,6 +86,41 @@ async function waitForInstance(
     }
 }
 
+/** 在多个候选端口里找本数据根的实例（restart 要能找到漂移后的端口） */
+async function findMine(
+    config: Diy2Config,
+): Promise<{ pid: number; port: number; home: string } | null> {
+    const candidates = [...new Set([config.recordedPort, config.port])].filter(
+        (p): p is number => p !== null && p !== 0,
+    );
+    for (const port of candidates) {
+        const result = await probe(port, config.home);
+        if (result.kind === 'mine' && result.info !== undefined && result.info.port !== null) {
+            return { pid: result.info.pid, port: result.info.port, home: result.info.home };
+        }
+    }
+    // 回落：app.port 可能是 0 或已漂移，兜底再按 probeMine 扫一次
+    return probeMine(config);
+}
+
+/** 等端口真正释放（pid 已死但 server.close 仍可能占着端口） */
+async function waitForPortFree(port: number, timeoutMs = 3000): Promise<void> {
+    const startedAt = Date.now();
+    for (;;) {
+        try {
+            const response = await fetch(`http://127.0.0.1:${port}/api/info`, {
+                signal: AbortSignal.timeout(500),
+            });
+            // 还能连上 → 还没释放
+            void response.body?.cancel?.();
+        } catch {
+            return;
+        }
+        if (Date.now() - startedAt > timeoutMs) return;
+        await delay(100);
+    }
+}
+
 /**
  * web 命令的 handler。
  *
@@ -112,11 +147,33 @@ export function webHandler(moduleDir: string) {
             console.warn(`[diy2] 没有 UI 产物（${webDirOf(config.appRoot)}）：这次只提供 /api`);
         }
 
-        let mine = await probeMine(config);
+        let mine = await findMine(config);
         if (mine !== null && input.restart === true) {
+            const freedPort = mine.port;
             await stopOne(mine.pid);
-            // 端口记录还在（退出不删），所以停完要重新探；探不到才算真的没了
-            mine = null;
+            // 端口记录还在（退出不删），但 pid 已死后仍需等端口释放，否则新进程 listen 直接 EADDRINUSE
+            await waitForPortFree(freedPort);
+            // 再探一次确认真的没了（避免记录仍指旧端口但进程已换）
+            mine = await findMine(config);
+            if (mine !== null) {
+                // 还在，两种情形別混着处理：
+                //   · **同一个端口** → 旧实例没杀掉。这时闷头起新实例必然撞端口，
+                //     而且报错发生在 listen 阶段，把「停不掉」这个真因盖掉了
+                //     （现场：用户看到「端口 5192 已被占用」，以为 --restart 没生效）。
+                //     明确抛出来，让人去手动处理。
+                //   · **换了端口**（旧实例在 stopping 期间又 listen 到了别的端口）→
+                //     原端口已空，可以正常起新的。
+                if (mine.port === freedPort) {
+                    throw new Error(
+                        `停不掉旧实例（pid=${mine.pid}，端口 ${mine.port} 仍被占用）。` +
+                            `先手动处理：diy2 stop 或 kill ${mine.pid}，然后再 --restart`,
+                    );
+                }
+                await waitForPortFree(mine.port);
+                mine = null;
+            } else {
+                mine = null;
+            }
         }
         if (mine !== null) {
             console.log(`diy2 已在运行：${urlOf(mine.port)}（pid=${mine.pid} home=${mine.home}）`);
