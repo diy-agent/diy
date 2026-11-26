@@ -16,7 +16,16 @@
 // 它是 listbox 语义（role=option + aria-selected + 键盘上下选），而 `Button` 自带 role/样式
 // 会与 option 语义打架；这里手写是为了可访问性，不是因为组件层不够用。
 
-import { AlertTriangle, ChevronDown, Loader2, Send, Square, Terminal as TerminalIcon, X as XIcon } from 'lucide-react';
+import {
+    AlertTriangle,
+    ChevronDown,
+    Loader2,
+    Paperclip,
+    Send,
+    Square,
+    Terminal as TerminalIcon,
+    X as XIcon,
+} from 'lucide-react';
 import * as React from 'react';
 
 import {
@@ -541,6 +550,7 @@ function Composer({
     const candidates = useMentionCandidates(roomId);
     // 粘贴 / 拖拽 / 选图：上传在**发送之前**（失败的图还能重试，不会变成气泡里的裂图）
     const attachments = useComposerAttachments(conversation, roomId);
+    const fileInputRef = React.useRef<HTMLInputElement | null>(null);
     // 贴了图、但当前模型不收图 —— 发之前就说清楚，别等上游 400（服务端也会兜一层）
     const rooms = useRooms();
     const providers = useProviders();
@@ -710,6 +720,29 @@ function Composer({
                     工具条原先在框外单独一行，现在回到框内 —— 这也是用户 2026-11-24 的原话。 */}
                     <InputGroupAddon align="block-end" className="gap-1 pr-1.5 pb-1">
                         {extras}
+                        {/* 选图 / 选文件：粘贴与拖拽之外的第三条入口 ——
+                            它也是唯一能被自动化测到的入口（拖拽要构造 DataTransfer） */}
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => {
+                                const files = Array.from(event.target.files ?? []);
+                                if (files.length > 0) attachments.addFiles(files);
+                                // 清空 value：同一个文件连选两次也要能再触发一次 change
+                                event.target.value = '';
+                            }}
+                        />
+                        <InputGroupButton
+                            size="icon-sm"
+                            className={running ? undefined : 'ml-auto'}
+                            disabled={!attachments.supported || submitting}
+                            title={attachments.supported ? '添加附件（也可以直接粘贴 / 拖进来）' : '当前后端不支持附件'}
+                            onClick={() => fileInputRef.current?.click()}
+                        >
+                            <Paperclip className="size-4" />
+                        </InputGroupButton>
                         {running ? (
                             <InputGroupButton
                                 size="icon-sm"
