@@ -178,16 +178,26 @@ name/limit/cost，<b>把 reasoning_options 丢了</b>，所以 UI 硬编码 5 �
 </div>
 
 <div class="card wide" style="margin-top:14px">
-  <h2 style="margin-top:0">关键规则（待你拍板后实现）</h2>
+  <h2 style="margin-top:0">dsh 怎么做 & 我们怎么"全内化"</h2>
+  <p class="hint" style="margin-top:0">dsh（deepseek-harness，源码 <code>~/git-ref/deepseek-harness</code>）把模型推理能力建模成
+    <code>LlmModelReasoningInfo { efforts[], defaultEffort? }</code>，UI 只列选项。那个"缺省"就是下面这条规则：</p>
+  <pre><span class="c">// dsh: packages/acp/acp/src/model-control.ts（简化）</span>
+options = info.reasoning.defaultEffort === <span class="k">undefined</span>
+  ? [{ value: <span class="s">''</span>, name: <span class="s">'Provider default'</span> }, ...efforts]  <span class="c">// 没声明默认 → 多一项"交给服务商"</span>
+  : [...efforts]                                                       <span class="c">// 有默认 → 不显示，已内化进某个 effort</span>
+<span class="c">// 选 "Provider default" ⇒ reasoningEffort 字段整个不传（undefined）</span></pre>
   <div class="rule">
-    <b>换模型默认取第一个 effort：</b>选 effort 型模型 → 自动写 <code>values[0]</code>（如 gpt-5.6 是 none、gpt-oss 是 low）。
-    toggle / budget_tokens / 空 / 无 → 没有"第一个 effort"，默认存 null（不带参数）。
+    <b>dsh 的"缺省" = "Provider default"：</b>只有模型<b>没声明</b> defaultEffort 时才出现，选中 = 不带该参数交给 provider。
+    deepseek 自己声明了默认（high/low/max/off），所以它的选项里<b>没有</b>这一项。effort 档位每个模型不同，全从模型信息来。
   </div>
   <div class="rule">
-    <b>没有"跟随"档：</b>去掉当前 UI 里的"跟随"按钮。旧描述"跟随模型缺省"语义上 = 存 null，但不再单独占一档 —— 非 effort 模型直接不显示推理强度控件。
+    <b>我们要的"简化为只有选项、其余内化"：</b>比 dsh 再进一步 —— 连 "Provider default" 那一项也不给用户。
+    模型信息里解析出 <code>efforts[]</code> 和一个 <code>defaultEffort</code>（有就用它，没有就取 efforts[0]）；
+    UI <b>只列具体 effort</b>，换模型时自动写成该模型的 defaultEffort。toggle/budget/空/无推理 → 不显示推理强度控件，存 null。
   </div>
   <div class="rule">
-    <b>旧值处理：</b>已存的 medium/low/high 保留不删；UI 显示时若该值不在当前模型候选里，高亮让用户重选（不擅自改库）。
+    <b>存储不变 + 旧值校验：</b>仍是 <code>bot_roles.reasoning_effort TEXT</code> 一个字符串，不加表。旧值保留；
+    若当前模型 efforts 里没有这个值，面板里高亮提示重选（不擅自改库）。
   </div>
 </div>
 
