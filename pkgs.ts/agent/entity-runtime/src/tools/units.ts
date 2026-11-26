@@ -26,6 +26,11 @@ export interface UnitHost {
      * 的描述。不传 = 不提醒（实验里的 `off` / `a` / `b` 档）。
      */
     remind?: RemindMode;
+    /**
+     * 这条需求来自哪句人话（**宿主盖章**）。模型根本看不到 message id，让它填只会编错 ——
+     * 所以由房间在「本轮触发消息」上取，`unit_add` 落库时自动带上。
+     */
+    sourceOf?: () => string | undefined;
 }
 
 /** 事件名（`<type>.<verb>`，与 `task.journal` 同一套命名） */
@@ -173,6 +178,8 @@ export function unitTools(host: UnitHost): ToolSet {
                         title: item.title,
                         body: item.body ?? '',
                         accept: item.accept ?? '',
+                        // 来源自动盖章：只认宿主给的「本轮触发消息」，模型填不了也没必要填
+                        ...(host.sourceOf?.() === undefined ? {} : { source: host.sourceOf() }),
                         status: 'open',
                         parent: item.parent ?? null,
                     });
@@ -301,8 +308,8 @@ export function unitTools(host: UnitHost): ToolSet {
 
         unit_get: tool({
             description:
-                '看一条 unit 的全文（title / body / accept / 母项 / 子 / 状态）。' +
-                '`accept` = 怎么算做完；空串表示还没写（该补）。',
+                '看一条 unit 的全文（title / body / accept / source / 母项 / 子 / 状态）。' +
+                '`accept` = 怎么算做完（空串 = 还没写，该补）；`source` = 这条需求来自哪句人话。',
             inputSchema: z.object({ id: z.string() }),
             execute: async ({ id }) => {
                 const unit = need(host, id);
@@ -312,6 +319,8 @@ export function unitTools(host: UnitHost): ToolSet {
                     title: unit.title,
                     body: unit.body,
                     accept: unit.accept,
+                    // 来源由宿主盖章（模型看不到 message id，不该由它填）
+                    source: unit.source,
                     status: row?.status ?? unit.status,
                     parent: row?.parent ?? null,
                     children: row?.children ?? [],

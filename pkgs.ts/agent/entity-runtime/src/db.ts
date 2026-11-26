@@ -159,6 +159,15 @@ export interface UnitRecord {
      * 空串 = 还没写（不假装有）。
      */
     accept: string;
+    /**
+     * 这条需求来自**哪句人话**（`entity_items.id`，形如 `u-mwwtvgiy-1`）；空串 = 不知道
+     * （老数据 / 非人类触发）。
+     *
+     * 为什么要它（2026-11-26 用户）：人核对账本时第一个问题永远是「这是我要的吗」，
+     * 而现在只能翻聊天记录去猜。由宿主在**本轮触发消息**上自动盖章 —— 不靠模型填
+     * （模型根本看不到消息 id，让它编只会编错）。
+     */
+    source: string;
     status: UnitStatus;
     /**
      * 树上的父（功能域 / 母项）id；`null` = 根。
@@ -174,13 +183,21 @@ export interface UnitRecord {
 }
 
 /** 写 unit：`id` / `seq` / 时间戳缺省由 store 补（新 unit 的 id 走 counters，永不回收） */
-export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt' | 'accept'> & {
+export type UnitInput = Omit<
+    UnitRecord,
+    'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt' | 'accept' | 'source'
+> & {
     id?: string;
     /**
      * 「怎么算做完」。缺省 = 沿用库里已有的（更新时）；新建缺省就是空串 = 还没写。
      * **不做成必填**：老代码 / 老数据里没有这一栏，逼着所有调用点补一遍只会让人随手写个占位串。
      */
     accept?: string;
+    /**
+     * 来自哪句人话（`entity_items.id`）。缺省沿用库里已有的；新建缺省空串。
+     * 同样**不设成必填**：宿主盖章是锦上添花，缺了不该让写入失败。
+     */
+    source?: string;
     /** 父（功能域）；缺省 = 沿用库里已有的，库里也没有就是根 */
     parent?: string | null;
     createdAt?: number;
@@ -662,6 +679,8 @@ export function openStore(file: string): Store {
             body       TEXT NOT NULL DEFAULT '',
             -- 「怎么算做完」：空串 = 还没写（界面会标出来）
             accept     TEXT NOT NULL DEFAULT '',
+            -- 来自哪句人话（entity_items.id）：宿主按「本轮触发的那条消息」自动盖章
+            source_message_id TEXT NOT NULL DEFAULT '',
             status     TEXT NOT NULL DEFAULT 'open',
             -- 树上的父（母项）。NULL = 根
             parent_id  TEXT,
@@ -794,6 +813,9 @@ export function openStore(file: string): Store {
     // 老库补列：accept（「怎么算做完」）。历史行一律空串 = 还没写 —— 界面会标「未写验收」，
     // 不假装有（拿 body 去兜底等于把「没写」藏起来，人就没法靠它挑活）。
     if (!unitColumns.has('accept')) db.exec("ALTER TABLE task_units ADD COLUMN accept TEXT NOT NULL DEFAULT ''");
+    // 老库补列：source（这条需求来自哪句话）。历史行一律空串 = 不知道 —— 界面不编造来源。
+    if (!unitColumns.has('source_message_id'))
+        db.exec("ALTER TABLE task_units ADD COLUMN source_message_id TEXT NOT NULL DEFAULT ''");
     // 2026-11-25：依赖边与交付批次整体退役（只留需求账本树）。旧库里的两张表直接删 ——
     // 它们是纯派生侧的记录，删掉不丢「要做什么」。task_units.batch_id 是老库的死列：
     // SQLite 不能删列，代码也再不读写它，留着不影响任何判据。
@@ -937,6 +959,7 @@ export function openStore(file: string): Store {
         title: String(row['title']),
         body: String(row['body']),
         accept: row['accept'] === null || row['accept'] === undefined ? '' : String(row['accept']),
+        source: row['source_message_id'] === null || row['source_message_id'] === undefined ? '' : String(row['source_message_id']),
         status: String(row['status']) as UnitStatus,
         parent: row['parent_id'] === null || row['parent_id'] === undefined ? null : String(row['parent_id']),
         seq: Number(row['seq']),
@@ -992,6 +1015,8 @@ export function openStore(file: string): Store {
             body: unit.body,
             // 缺省沿用（改标题不该把已写好的验收口径抹掉）
             accept: unit.accept ?? previous?.accept ?? '',
+            // 来源同理：只在显式给的时候覆盖（重跑一遍 unit_add 不会把来源抹成空）
+            source: unit.source ?? previous?.source ?? '',
             status: unit.status,
             // 缺省沿用（改 title 不该顺手把挂点抹掉）；新节点缺省 = 根
             parent: unit.parent === undefined ? (previous?.parent ?? null) : unit.parent,
@@ -1001,15 +1026,16 @@ export function openStore(file: string): Store {
         };
         if (record.parent === record.id) throw new Error(`unit 不能是自己的父：${record.id}`);
         db.prepare(
-            'INSERT INTO task_units (task_id, id, title, body, accept, status, parent_id, seq, created_at, updated_at) ' +
-                'VALUES (?,?,?,?,?,?,?,?,?,?) ' +
-                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, accept=?, status=?, parent_id=?, updated_at=?',
+            'INSERT INTO task_units (task_id, id, title, body, accept, source_message_id, status, parent_id, seq, created_at, updated_at) ' +
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?) ' +
+                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, accept=?, source_message_id=?, status=?, parent_id=?, updated_at=?',
         ).run(
             record.taskId,
             record.id,
             record.title,
             record.body,
             record.accept,
+            record.source,
             record.status,
             record.parent,
             record.seq,
@@ -1018,6 +1044,7 @@ export function openStore(file: string): Store {
             record.title,
             record.body,
             record.accept,
+            record.source,
             record.status,
             record.parent,
             record.updatedAt,

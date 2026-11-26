@@ -385,15 +385,22 @@ export class RoomActor {
         // 变量增量不在这里算：它属于**模型步**（session 的 prepareStep 每步取一次），
         // 这样 say / 恢复重投 / agent 间结论走的是同一条路，不会有「时机不同就漏一把」。
         await Promise.all(
-            recipients.map((bot) =>
-                this.sessionOf(bot).post({
-                    messageId: saved.id,
-                    text,
-                    mode: input.mode ?? 'next-step',
-                    turn,
-                    entry,
-                }),
-            ),
+            recipients.map(async (bot) => {
+                // 盖章：这一轮是这个成员被**这条消息**叫醒的（unit_add 靠它记来源）
+                this.turnSources.set(bot.id, saved.id);
+                try {
+                    await this.sessionOf(bot).post({
+                        messageId: saved.id,
+                        text,
+                        mode: input.mode ?? 'next-step',
+                        turn,
+                        entry,
+                    });
+                } finally {
+                    // 收尾就撤：来源只对「这一轮」有效，留着会让下一轮的条目认错爹
+                    if (this.turnSources.get(bot.id) === saved.id) this.turnSources.delete(bot.id);
+                }
+            }),
         );
     }
 
@@ -451,6 +458,7 @@ export class RoomActor {
         turn: Turn | undefined,
     ): Promise<void> {
         try {
+            this.turnSources.set(bot.id, delivery.messageId);
             await this.sessionOf(bot).post({
                 messageId: delivery.messageId,
                 text,
@@ -462,6 +470,8 @@ export class RoomActor {
             });
         } catch (error) {
             console.warn(`[room:${this.id}] 续跑投递失败：${(error as Error).message}`);
+        } finally {
+            if (this.turnSources.get(bot.id) === delivery.messageId) this.turnSources.delete(bot.id);
         }
     }
 
@@ -826,7 +836,15 @@ export class RoomActor {
                       },
                       // unit 是 task 私有的：非任务房间不给这套工具（它们没有图，也没有 #号可挂）
                       ...(this.deps.spec.type === 'task'
-                          ? { units: { store: this.deps.store, taskId: this.id, remind: this.remindMode } }
+                          ? {
+                                units: {
+                                    store: this.deps.store,
+                                    taskId: this.id,
+                                    remind: this.remindMode,
+                                    // 「这条需求来自哪句话」：由宿主按**本轮触发消息**盖章
+                                    sourceOf: () => this.turnSources.get(botId),
+                                },
+                            }
                           : {}),
                   });
         this.toolsByBot.set(botId, tools);
@@ -849,6 +867,14 @@ export class RoomActor {
         return this.remindModeCache;
     }
     private remindModeCache?: RemindMode;
+
+    /**
+     * 每个成员**这一轮**是被哪条消息叫醒的（`entity_items.id`）。
+     *
+     * 用途：`unit_add` 落条目时自动盖「来源」（模型看不到 message id，让它填只会编错）。
+     * 为什么按成员分表而不是一个字段：多个 bot 可以同时被不同消息叫醒，一个字段会互相覆盖。
+     */
+    private readonly turnSources = new Map<string, string>();
 
     /**
      * B 档的判据：账本是否空 / 上次账本变更之后有没有人发言。

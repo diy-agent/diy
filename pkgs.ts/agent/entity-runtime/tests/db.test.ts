@@ -487,6 +487,24 @@ describe('unit（需求账本树的节点）', () => {
         expect(store.listUnits('t1').map((row) => row.accept)).toEqual([fixed.accept]);
     });
 
+    it('source（来自哪句人话）落库；缺省空串，更新时不会被抹掉', () => {
+        const store = openStore(':memory:');
+        const unit = store.saveUnit({
+            taskId: 't1',
+            title: '导出可用',
+            body: '',
+            status: 'open',
+            source: 'u-mwwtvgiy-1',
+        });
+        expect(unit.source).toBe('u-mwwtvgiy-1');
+        // 不带 source 的更新（改状态）不能让来源丢掉
+        const done = store.saveUnit({ taskId: 't1', id: unit.id, title: unit.title, body: '', status: 'done' });
+        expect(done.source).toBe('u-mwwtvgiy-1');
+        // 没有来源的条目（老数据 / 非人类触发）一律空串，别编
+        const bare = store.saveUnit({ taskId: 't1', title: 'b', body: '', status: 'open' });
+        expect(bare.source).toBe('');
+    });
+
     it('显式 id 但不存在 → 抛（新号只能由 counters 发）', () => {
         const store = openStore(':memory:');
         expect(() => store.saveUnit({ taskId: 't1', id: 'u9', title: 'x', body: '', status: 'open' })).toThrow(

@@ -68,6 +68,11 @@ export interface UnitItem {
      * 人也没法一眼核对；拆成字段之后「没写」是**看得见**的。
      */
     accept: string;
+    /**
+     * 这条需求来自哪句人话（消息 id，如 `u-mwwtvgiy-1`）；空串 = 不知道（老数据）。
+     * 界面用它回答「这是我要的吗」—— 点一下能回到那条消息（后续做跳转，先给 tooltip）。
+     */
+    source: string;
     /** **有效**状态：叶子 = 落库值；母项（有子）= 由子派生（全 done → done） */
     status: 'open' | 'doing' | 'done';
     /** 树上的父（母项）；null = 根 */

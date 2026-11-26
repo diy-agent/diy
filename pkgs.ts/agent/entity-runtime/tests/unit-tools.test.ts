@@ -32,7 +32,7 @@ afterAll(async () => {
 });
 
 /** 一个挂在上面的任务房间工具集（taskId = 任务房间 id） */
-function setup(taskId = 't1') {
+function setup(taskId = 't1', extra: { sourceOf?: () => string | undefined } = {}) {
     const store = openStore(':memory:');
     // events.subject 有外键到 entities：任务必须先是实体（生产里房间本来就有身份行）
     store.saveTask({
@@ -46,7 +46,7 @@ function setup(taskId = 't1') {
         closedAt: null,
         modelKey: 'm',
     });
-    const tools = buildRoomTools({ cwd: dir, shell: false, units: { store, taskId } });
+    const tools = buildRoomTools({ cwd: dir, shell: false, units: { store, taskId, ...extra } });
     return { store, tools };
 }
 
@@ -116,6 +116,15 @@ describe('unit 工具', () => {
 
         const listing = (await toolOf(tools, 'unit_list').execute({})) as { tree: string[] };
         expect(listing.tree).toEqual(['- [ ] 取消语义 (dom)', '  - [>] A (a)', '  - [>] B (b)']);
+    });
+
+    it('unit_add 自动盖「来自哪句话」（宿主给的触发消息），模型不用也不能填', async () => {
+        const { tools } = setup('t1', { sourceOf: () => 'u-mwwtvgiy-7' });
+        const added = (await toolOf(tools, 'unit_add').execute({
+            items: [{ key: 'a', title: '导出可用', accept: '点一下真落文件' }],
+        })) as { added: Array<{ id: string }> };
+        const got = (await toolOf(tools, 'unit_get').execute({ id: added.added[0]!.id })) as { source: string };
+        expect(got.source).toBe('u-mwwtvgiy-7');
     });
 
     it('母项不能直接推状态（由子派生）', async () => {

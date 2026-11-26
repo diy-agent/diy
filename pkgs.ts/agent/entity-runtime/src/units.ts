@@ -34,6 +34,8 @@ export interface UnitBoardRow {
     body: string;
     /** 「怎么算做完」（空串 = 还没写；界面与上下文都靠它标出来，别拿 body 兜底） */
     accept: string;
+    /** 来自哪句人话（`entity_items.id`；空串 = 不知道 —— 不编造来源） */
+    source: string;
     /**
      * **有效**状态：叶子 = 落库值；容器 = 由子派生（全 done → done，否则 open）。
      * 容器落库的 status 不参与判断 —— 只有叶子能被勾 done。
@@ -70,7 +72,7 @@ export interface UnitBoard {
 
 /** 只取算 board 要用的字段（测试里可以直接造这几项，不用凑齐 UnitRecord） */
 export type UnitFacts = Pick<UnitRecord, 'id' | 'title' | 'status' | 'seq'> &
-    Partial<Pick<UnitRecord, 'body' | 'accept' | 'parent' | 'taskId' | 'createdAt' | 'updatedAt'>>;
+    Partial<Pick<UnitRecord, 'body' | 'accept' | 'source' | 'parent' | 'taskId' | 'createdAt' | 'updatedAt'>>;
 
 /**
  * 算一张 board。输入顺序不敏感；输出顺序稳定（树的先序 → 创建序 → id）。
@@ -168,6 +170,7 @@ export function unitBoard(units: readonly UnitFacts[]): UnitBoard {
             title: unit.title,
             body: unit.body ?? '',
             accept: unit.accept ?? '',
+            source: unit.source ?? '',
             status: statusOf.get(id)!,
             parent: parentOf.get(id) ?? null,
             children: childrenOf.get(id) ?? [],

@@ -129,6 +129,7 @@ export function UnitBoardView({ room }: { room: Room }) {
                                         unit.title,
                                         (unit.body ?? '').trim() === '' ? '' : `背景：${unit.body}`,
                                         (unit.accept ?? '').trim() === '' ? '还没写「怎么算做完」' : `验收：${unit.accept}`,
+                                        (unit.source ?? '') === '' ? '' : `来自消息：${unit.source}`,
                                     ]
                                         .filter((part) => part !== '')
                                         .join('\n')}
@@ -149,6 +150,16 @@ export function UnitBoardView({ room }: { room: Room }) {
                                     {/* 缺「怎么算做完」= 这条没法被验收：标出来，别让人以为它是完整的
                                         （用户 2026-11-26：「需求是可以验收的，步骤很难验收」）。
                                         母项不标 —— 它的验收由子派生。 */}
+                                    {/* 有来源就点一个小圆点：说明这条需求是**某句人话**提出来的
+                                        （不是 bot 自己编的），hover 看是哪条消息。没有来源的老数据不乱标。 */}
+                                    {(unit.source ?? '') !== '' && (
+                                        <span
+                                            className="shrink-0 rounded-full bg-sky-500/40 px-1 text-[9px] leading-4 text-sky-700 dark:text-sky-300"
+                                            title={`来自消息 ${unit.source}`}
+                                        >
+                                            ↩
+                                        </span>
+                                    )}
                                     {!unit.group && (unit.accept ?? '').trim() === '' && (
                                         <span
                                             className="shrink-0 rounded border border-amber-500/30 px-1 text-[10px] text-amber-600"
