@@ -553,6 +553,17 @@ export function openStore(file: string): Store {
             seq
         ) WHERE json_extract(item, '$.author.id') IS NULL
             AND json_extract(item, '$.type') IN ('notice', 'error');
+        -- 未读计数（unreadByRoom）：按 (entity_id, type, role) 筛出 chat 再 GROUP BY。
+        -- 没有这条索引 = 全表 3.5 万行逐行 json_extract（**实测 926ms**），而 rooms.list
+        -- 首屏必经、每 30s 一次 —— 用户 2026-11-26 报“页面很慢”就是它。建完走覆盖索引
+        -- **2.2ms**（420 倍）。部分索引只收 chat 行（体积小）；
+        -- WHERE 必须与查询里的 json_extract(i.item, '$.type') = 'chat' 逐字一致才命中。
+        CREATE INDEX IF NOT EXISTS items_chat_role ON entity_items(
+            entity_id,
+            json_extract(item, '$.type'),
+            json_extract(item, '$.author.role'),
+            seq
+        ) WHERE json_extract(item, '$.type') = 'chat';
         -- 「这一轮报过中断吗」与「续跑时要撤掉哪条」都按 (kind, turnId, botId) 定位。
         -- 表里 kind='interrupted' 的行通常只有个位数，部分索引因此极小；
         -- WHERE 必须与 deleteInterruptedFacts 的过滤条件逐字一致才命中。
