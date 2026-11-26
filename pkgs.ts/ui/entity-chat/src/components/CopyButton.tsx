@@ -9,6 +9,8 @@
 import { Check, Copy } from 'lucide-react';
 import * as React from 'react';
 
+import { Button } from '@diy-agent/ui-shadcn';
+
 export function useCopyFeedback(): { copied: boolean; copy: (text: string) => void } {
     const [copied, setCopied] = React.useState(false);
     const timer = React.useRef<number | undefined>(undefined);
@@ -40,14 +42,16 @@ export function CopyButton({
 }) {
     const { copied, copy } = useCopyFeedback();
     return (
-        <button
+        <Button
             type="button"
+            variant="ghost"
+            size="icon-xs"
             onClick={() => copy(text)}
             title={copied ? '已复制' : title}
             aria-label={copied ? '已复制' : title}
             className={className}
         >
             {copied ? <Check className={iconClassName} /> : <Copy className={iconClassName} />}
-        </button>
+        </Button>
     );
 }

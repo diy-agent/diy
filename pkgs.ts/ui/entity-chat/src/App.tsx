@@ -5,13 +5,13 @@ import { SURFACES } from './surfaces/registry';
 import { RoomMenu, SurfaceTabs } from './components/ConversationBar';
 import { RoomStatusBar } from './components/RoomStatusBar';
 import { ComposerBar } from './components/ComposerBar';
-import { ContextPanel } from './components/ContextPanel';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
 import { type Room } from './model';
 import { actions, useError, useLoaded, useMarkRoomRead, useSelectedRoom } from './store';
 import { useSurfaceId } from './surface';
 import { useRoomDialogs } from './useRoomDialogs';
+import { Button } from '@diy-agent/ui-shadcn';
 
 /**
  * 对话区的**唯一一行头**（用户 2026-11-24）：左侧表面切换，右侧能力入口。
@@ -48,16 +48,18 @@ const ConversationBar = React.memo(function ConversationBar({
             <SurfaceTabs />
             <span className="ml-auto flex shrink-0 items-center gap-1">
                 {taskPanelShown && room.type === 'task' && (
-                    <button
+                    <Button
+                        variant="ghost"
+                        size="icon-xs"
                         onClick={onToggleTaskPanel}
                         title="任务描述与正文"
                         aria-label="任务面板"
-                        className={`rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground ${
-                            taskPanelOpen ? 'bg-muted text-foreground' : ''
-                        }`}
+                        // 展开态靠 variant 的 aria-expanded 样式（不用再手拼 bg-muted）
+                        aria-expanded={taskPanelOpen}
+                        className="text-muted-foreground"
                     >
                         <PanelRight className="size-3.5" />
-                    </button>
+                    </Button>
                 )}
                 <RoomMenu room={room} onAddMember={onAddMember} onOpenSettings={onOpenSettings} />
             </span>
@@ -206,21 +208,17 @@ export function App({
                     ) : (
                         <>
                             {bar === 'self' && (
-                            <ConversationBar
-                                room={room}
-                                onAddMember={onAddMember}
-                                onOpenSettings={onOpenSettings}
-                                taskPanelOpen={taskPanelOpen}
-                                taskPanelShown={taskPanel}
-                                onToggleTaskPanel={onToggleTaskPanel}
-                            />
+                                <ConversationBar
+                                    room={room}
+                                    onAddMember={onAddMember}
+                                    onOpenSettings={onOpenSettings}
+                                    taskPanelOpen={taskPanelOpen}
+                                    taskPanelShown={taskPanel}
+                                    onToggleTaskPanel={onToggleTaskPanel}
+                                />
                             )}
                             <RoomStatusBar roomId={room.id} surfaceId={surfaceId} />
-                            <SurfaceViews
-                                surfaceId={surfaceId}
-                                targetId={room.id}
-                                composerExtras={composerExtras}
-                            />
+                            <SurfaceViews surfaceId={surfaceId} targetId={room.id} composerExtras={composerExtras} />
                         </>
                     )}
                     {loaded && error !== undefined && (

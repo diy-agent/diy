@@ -2,6 +2,18 @@
 //
 // 与 shadcn surface 的分工完全一致：分组在 chat-core.buildTimeline，
 // 这里只做「时间线条目 → Astryx 组件」的映射，不碰状态机、不碰传输。
+//
+// @deprecated 2026-11-26 用户裁：本面**已废弃**（上一轮的说法是「冻结」，现在正式标废弃）。
+// 删它的前置条件只剩一条：`useWindowed` 升级成真虚拟化（见 surface-parity §7）。
+// 新代码请照着 surfaces/shadcn/ 写，不要往这里加东西。
+//
+// ⚠️ 2026-11-25 起**冻结为参考实现**（不是缺省面）：
+//  - 不再接新功能（新交互只做在 shadcn 面）
+//  - 不进「每次 UI 改动双面验证」的门，只保 tsc / lint 与一条冒烟
+//  - 保留它的理由：①核对交互该长什么样（ChatComposer / ChatVirtualizer 是免费校准物）；
+//    ②三个 astryx 包全锁 canary（lab「永不发 stable」），炸了要能临时换回
+//  裁决与复查时点见 docs/plans/2026-11-24-surface-parity.md §7。
+//  改这里之前先问：这个改动是 shadcn 面画不出来，还是单纯「这边顺手」？后者不改。
 
 import {
     Banner,
@@ -14,7 +26,6 @@ import {
     ChatSystemMessage,
     ChatToolCalls,
     Markdown,
-    type ChatMessageStatus,
 } from '@astryxdesign/core';
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
 import { ChatVirtualizer } from '@astryxdesign/lab';
@@ -280,31 +291,6 @@ function EntryView({
         </ChatMessage>
     );
 }
-
-/**
- * 消息列表单独 memo：输入框每敲一个字都会让 Surface 重渲染，
- * 但整棵消息树（含 Markdown 解析）不该跟着重算 —— 不 memo 的话长会话里输入会明显卡。
- */
-const MessageList = React.memo(function MessageList({
-    entries,
-    roomId,
-    onStopBot,
-}: {
-    entries: TimelineEntry[];
-    roomId: string;
-    onStopBot?: (botId: string) => void;
-}) {
-    return (
-        <>
-            {entries.map((entry) => (
-                // content-visibility：离开视口的条目跳过布局/绘制
-                <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
-                    <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
-                </div>
-            ))}
-        </>
-    );
-});
 
 /** 输入框独立成组件：draft 状态关在里面，敲字只重渲染输入框本身 */
 function AstryxComposer({

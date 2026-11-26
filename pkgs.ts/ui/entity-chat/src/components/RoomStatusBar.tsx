@@ -15,13 +15,7 @@
 //   · 谁没动   —— 投递还挂着但那个 bot 没有任何在动的证据（进程重启 / 队列丢了）
 // 两件都没有 → 返回 null（不占位、不起时钟）。
 
-import {
-    deliveryNoteOf,
-    waitTextOf,
-    type AskRequest,
-    type Bot,
-    type Delivery,
-} from '@diy-agent/chat-core';
+import { deliveryNoteOf, waitTextOf, type AskRequest, type Bot, type Delivery } from '@diy-agent/chat-core';
 import { AlertTriangle, HelpCircle } from 'lucide-react';
 import * as React from 'react';
 
@@ -29,6 +23,7 @@ import { jumpToAsk } from '../askJump';
 import { askChipOf, askChipTitleOf } from '../pendingAsk';
 import { conversationOf, useStore } from '../store';
 import { useNow } from './useNow';
+import { Button } from '@diy-agent/ui-shadcn';
 
 /** 一条 chip 的公共外形：两种状态只换颜色，不换骨架 */
 const CHIP = 'flex items-center gap-1.5 rounded-full border px-2 py-0.5';
@@ -55,7 +50,7 @@ export function StatusChips({ bots, asks, stuck, now, onJump }: StatusChipsProps
     if (asks.length === 0 && stuckLines.length === 0) return null;
 
     return (
-        <div className="flex flex-wrap items-center gap-2 border-b px-4 py-1.5 text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 border-b px-4 py-1.5 text-xs text-muted-foreground">
             {asks.map((request) => {
                 const owner = request.owner === undefined ? undefined : bots[request.owner];
                 const waited = waitTextOf(request.at, now);
@@ -69,12 +64,14 @@ export function StatusChips({ bots, asks, stuck, now, onJump }: StatusChipsProps
                         <span className="shrink-0">{owner?.name ?? '有成员'} 等你回答</span>
                         <span className="max-w-[18rem] truncate">{askChipOf(request.questions)}</span>
                         {waited !== '' && <span className="shrink-0 opacity-80">· {waited}</span>}
-                        <button
+                        <Button
+                            variant="ghost"
+                            size="xs"
                             onClick={() => onJump(request.askId)}
-                            className="ml-0.5 shrink-0 rounded px-1 font-medium underline-offset-2 hover:bg-amber-500/20"
+                            className="ml-0.5 h-auto shrink-0 px-1 font-medium"
                         >
                             去回答
-                        </button>
+                        </Button>
                     </span>
                 );
             })}

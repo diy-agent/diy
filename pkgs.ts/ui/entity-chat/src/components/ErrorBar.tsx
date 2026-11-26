@@ -3,6 +3,8 @@
 // state.error 之前两个表面都没人渲染：请求失败时界面"什么都没发生"。
 // 这个条是 surface 无关的，两边共用，位置固定在消息区顶部。
 
+import { Button } from '@diy-agent/ui-shadcn';
+
 export function ErrorBar({ error, onRetry }: { error?: string; onRetry?: () => void }) {
     if (error === undefined || error === '') return null;
 
@@ -13,13 +15,15 @@ export function ErrorBar({ error, onRetry }: { error?: string; onRetry?: () => v
         >
             <span className="min-w-0 flex-1 break-words">{error}</span>
             {onRetry !== undefined && (
-                <button
+                <Button
                     type="button"
+                    variant="outline"
+                    size="xs"
                     onClick={onRetry}
-                    className="shrink-0 rounded border border-red-400/30 px-1.5 py-0.5 hover:bg-red-500/15"
+                    className="shrink-0 border-destructive/40 text-destructive hover:bg-destructive/15"
                 >
                     重试
-                </button>
+                </Button>
             )}
         </div>
     );

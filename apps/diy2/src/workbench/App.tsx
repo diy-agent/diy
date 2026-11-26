@@ -33,6 +33,7 @@ import {
     useSelectedRoom,
     type Filter,
 } from '@diy-agent/entity-chat';
+import { Menu, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import '../index.css';
@@ -42,7 +43,7 @@ import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
-import { BotGlyph, GearGlyph, NavGlyph } from './glyphs';
+import { BotGlyph } from './glyphs';
 import { type PageDef } from './model';
 import { pageFor, wbViews } from './pages';
 import { useChrome, Window, type WindowContribution } from './window';
@@ -182,7 +183,7 @@ function Host() {
                     {
                         id: 'nav',
                         label: open ? '收起导航' : '展开导航',
-                        glyph: <NavGlyph />,
+                        glyph: <Menu className="wb-glyph" />,
                         on: open,
                         onClick: toggle,
                     },
@@ -243,7 +244,7 @@ function Host() {
                     {
                         id: 'settings',
                         label: '设置',
-                        glyph: <GearGlyph />,
+                        glyph: <Settings className="wb-glyph" />,
                         onClick: () => {
                             dialogs.openSettings();
                         },

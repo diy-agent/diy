@@ -59,6 +59,8 @@ pkgs.ts/**/*.d.ts
 .DS_Store
 
 tmp*
+# 提交信息临时文件（配合 git commit -F 用，别进仓）
+.commit-msg.tmp
 
 # 日志
 logs/

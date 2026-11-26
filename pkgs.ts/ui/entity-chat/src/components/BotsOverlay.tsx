@@ -13,6 +13,8 @@
 import { ChevronRight, Loader2, Play, X } from 'lucide-react';
 import * as React from 'react';
 
+import { Button, Input, Sheet, SheetContent } from '@diy-agent/ui-shadcn';
+
 import type { BotRow } from '@diy-agent/chat-transport-rpc';
 
 import {
@@ -27,7 +29,6 @@ import {
     fmtAt,
     outcomeTextOf,
     sortRows,
-    STATE_TEXT,
     visibleInOverlay,
 } from '../bots';
 import { diy2 } from '../store';
@@ -97,19 +98,15 @@ function BriefRow({ row, onRetry }: { row: BotRow; onRetry: (row: BotRow) => voi
     return (
         <div className="flex items-center gap-2 px-3 py-1.5">
             <StateDot row={row} />
-            <span className="truncate text-[11px] font-medium" style={{ color: row.botColor }}>
+            <span className="truncate text-xs font-medium" style={{ color: row.botColor }}>
                 {row.botName}
             </span>
-            <span className="truncate text-[11px] text-muted-foreground">{row.roomTitle}</span>
-            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{detail}</span>
+            <span className="truncate text-xs text-muted-foreground">{row.roomTitle}</span>
+            <span className="ml-auto shrink-0 text-xs text-muted-foreground">{detail}</span>
             {canRetry ? (
-                <button
-                    onClick={() => onRetry(row)}
-                    title="发一条「继续」接着干"
-                    className="shrink-0 rounded p-0.5 hover:bg-muted"
-                >
+                <Button variant="ghost" size="icon-xs" onClick={() => onRetry(row)} title="发一条「继续」接着干">
                     <Play className="size-3" />
-                </button>
+                </Button>
             ) : null}
         </div>
     );
@@ -129,7 +126,7 @@ function TableRow({
 }) {
     return (
         <label className="flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-1.5 hover:bg-muted/40">
-            <input
+            <Input
                 type="checkbox"
                 checked={checked}
                 onChange={(event) => onCheck(row, event.target.checked)}
@@ -138,25 +135,25 @@ function TableRow({
             <StateDot row={row} />
             {/* bot 名带 `@`：它与右边的房间名**可能字字相同**（用户 2026-11-26 看到
                 两行一样的「聊天性能问题...」分不清谁是谁）。`@` 就是对话里叫它的写法。 */}
-            <span className="w-[92px] shrink-0 truncate text-[11px]" style={{ color: row.botColor }}>
+            <span className="w-[92px] shrink-0 truncate text-xs" style={{ color: row.botColor }}>
                 @{row.botName}
             </span>
-            <span className="w-[200px] shrink-0 truncate text-[11px] text-muted-foreground" title={row.roomTitle}>
+            <span className="w-[200px] shrink-0 truncate text-xs text-muted-foreground" title={row.roomTitle}>
                 {row.roomTitle}
             </span>
-            <span className="w-[92px] shrink-0 text-[10px] text-muted-foreground">{attentionLabelOf(row)}</span>
+            <span className="w-[92px] shrink-0 text-xs text-muted-foreground">{attentionLabelOf(row)}</span>
             {/* 结局是**上一轮**怎么结束的，与左边那列「此刻」不是同一个时间点 ——
                 不写明时态就会被读成同一件事（用户 2026-11-26 看到的「排队中 + 中断」：
                 其实是一个正在跑的成员，上一轮被进程中断过）。 */}
             <span
-                className={`min-w-0 flex-1 truncate text-[11px] ${
+                className={`min-w-0 flex-1 truncate text-xs ${
                     row.outcome === undefined || row.outcome === 'done' ? 'text-muted-foreground' : 'text-rose-300'
                 }`}
                 title={`上一轮：${outcomeTextOf(row)}`}
             >
                 上轮 · {outcomeTextOf(row)}
             </span>
-            <span className="w-[86px] shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+            <span className="w-[86px] shrink-0 text-right font-mono text-xs text-muted-foreground">
                 {row.lastTurnAt === undefined ? '—' : fmtAt(row.lastTurnAt, now)}
             </span>
         </label>
@@ -254,20 +251,21 @@ export function BotsOverlay({
         });
     };
 
+    // 遮罩 / Esc / 焦点陷阱交给官方 Sheet(side=top)；两种形态只是高度不同
     return (
-        <div className="fixed inset-0 z-50" role="dialog" aria-label="Bot 状态">
-            <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-            <div
-                className={`absolute inset-x-0 top-0 flex flex-col border-b border-border bg-background shadow-xl ${
-                    mode === 'full' ? 'h-[70vh]' : 'max-h-[60vh]'
-                }`}
+        <Sheet open onOpenChange={(next) => !next && onClose()}>
+            <SheetContent
+                side="top"
+                showCloseButton={false}
+                aria-label="Bot 状态"
+                className={`h-auto gap-0 p-0 ${mode === 'full' ? 'h-[70vh]' : 'max-h-[60vh]'}`}
             >
                 <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
                     <span className="text-xs font-medium">{mode === 'brief' ? 'Bot · 要你看的' : 'Bot · 全部'}</span>
                     {loaded ? (
                         // 分类小计：**与标题栏那排徽标同一个数**（都来自 `countByAttention`），
                         // 所以「红 4 + 等你 2 + 在跑 1」在这两处一定对得上
-                        <span className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-2 text-xs text-muted-foreground">
                             {(['broken', 'blocked', 'queued', 'live'] as const)
                                 .filter((kind) => counts[kind] > 0)
                                 .map((kind) => (
@@ -279,14 +277,16 @@ export function BotsOverlay({
                             <span className="text-muted-foreground/70">/ 共 {rows.length}</span>
                         </span>
                     ) : null}
-                    {error === null ? null : <span className="text-[10px] text-rose-400">{error}</span>}
+                    {error === null ? null : <span className="text-xs text-rose-400">{error}</span>}
                     {mode === 'full' ? (
                         <div className="ml-3 flex items-center gap-1">
                             {filterItems(counts).map((item) => (
-                                <button
+                                <Button
                                     key={item.id}
+                                    variant="ghost"
+                                    size="xs"
                                     onClick={() => setFilter(item.id)}
-                                    className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] ${
+                                    className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-xs ${
                                         filter === item.id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/60'
                                     }`}
                                 >
@@ -294,20 +294,20 @@ export function BotsOverlay({
                                         <span className={`size-1.5 rounded-full ${item.dot}`} />
                                     )}
                                     {item.label}
-                                </button>
+                                </Button>
                             ))}
                         </div>
                     ) : null}
-                    <button onClick={onClose} title="关闭" className="ml-auto rounded p-1 hover:bg-muted">
+                    <Button variant="ghost" size="icon-xs" onClick={onClose} title="关闭">
                         <X className="size-3.5" />
-                    </button>
+                    </Button>
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto">
                     {!loaded ? (
-                        <p className="px-4 py-6 text-[11px] text-muted-foreground">正在读 bot 状态…</p>
+                        <p className="px-4 py-6 text-xs text-muted-foreground">正在读 bot 状态…</p>
                     ) : shown.length === 0 ? (
-                        <p className="px-4 py-6 text-[11px] text-muted-foreground">
+                        <p className="px-4 py-6 text-xs text-muted-foreground">
                             {mode === 'brief'
                                 ? '都闲着 —— 没有在跑的、排队的、等你回答或出错的'
                                 : '这个筛选下没有 bot'}
@@ -352,36 +352,31 @@ export function BotsOverlay({
                 </div>
 
                 <div className="flex items-center gap-2 border-t border-border px-3 py-1.5">
-                    {flash === null ? null : <span className="text-[10px] text-muted-foreground">{flash}</span>}
+                    {flash === null ? null : <span className="text-xs text-muted-foreground">{flash}</span>}
                     {mode === 'brief' ? (
-                        <button
-                            onClick={() => setMode('full')}
-                            className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-[11px] hover:bg-muted"
-                        >
+                        <Button variant="ghost" size="xs" onClick={() => setMode('full')}>
                             全部 Bot <ChevronRight className="size-3" />
-                        </button>
+                        </Button>
                     ) : (
                         <>
-                            <button
-                                onClick={() => setMode('brief')}
-                                className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
-                            >
+                            <Button variant="ghost" size="xs" onClick={() => setMode('brief')}>
                                 ‹ 只看活动的
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                                variant="default"
+                                size="xs"
                                 onClick={() => {
                                     void retry(selected);
                                 }}
                                 disabled={selected.length === 0 || sending}
-                                className="ml-auto flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] text-primary-foreground disabled:opacity-40"
                             >
                                 {sending ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
                                 重试选中（{selected.length}）
-                            </button>
+                            </Button>
                         </>
                     )}
                 </div>
-            </div>
-        </div>
+            </SheetContent>
+        </Sheet>
     );
 }
