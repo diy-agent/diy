@@ -23,7 +23,7 @@ import * as React from 'react';
 
 import type { JobRunRow } from '@diy-agent/chat-transport-rpc';
 
-import { Button, HoverCard, HoverCardContent, HoverCardTrigger } from '@diy-agent/ui-shadcn';
+import { Button, HoverCard, HoverCardContent, HoverCardTrigger, Sheet, SheetContent } from '@diy-agent/ui-shadcn';
 
 import { diy2 } from '../store';
 
@@ -347,22 +347,16 @@ function JobsDrawer({
         window.addEventListener('pointerup', onUp);
     };
 
-    React.useEffect(() => {
-        const onKey = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') onClose();
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
-    // 贴顶全宽（diy1 TrafficDrawer / UsageDrawer 同款）：抽屉不挡输入框与刚发的那条消息
+    // 贴顶全宽（diy1 TrafficDrawer / UsageDrawer 同款）：抽屉不挡输入框与刚发的那条消息。
+    // 遮罩 / Esc / 焦点还原交给官方 Sheet（side=top），高度与拖拽手势仍归我们自己 ——
+    // 官方的 Sheet 没有「拖动改标高」这件事，那是这套界面的定制需求。
     return (
-        <div className="fixed inset-0 z-50 flex flex-col" onClick={onClose}>
-            <div className="absolute inset-0 bg-black/30" />
-            <div
-                className="relative flex min-h-0 flex-col overflow-hidden border-b bg-background shadow-2xl"
+        <Sheet open onOpenChange={(next) => !next && onClose()}>
+            <SheetContent
+                side="top"
+                showCloseButton={false}
+                className="h-auto gap-0 overflow-hidden p-0"
                 style={{ height: max ? '100vh' : `${height}vh` }}
-                onClick={(event) => event.stopPropagation()}
             >
                 <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
                     <ListTree className="size-3.5 text-muted-foreground" />
@@ -400,8 +394,8 @@ function JobsDrawer({
                     title="拖动调整高度"
                     onPointerDown={startDrag}
                 />
-            </div>
-        </div>
+            </SheetContent>
+        </Sheet>
     );
 }
 
