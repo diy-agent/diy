@@ -508,6 +508,43 @@ function newBot(name: string, homeRoomId: string, persona: string): Bot {
     };
 }
 
+// ─── 回包瘦身 ────────────────────────────────────────────
+
+/**
+ * `chat.history` 回包里 **tool 条目的 result 上限（字符）**。
+ *
+ * 2026-11-26 实测（CDP tracing + WebSocket 字节统计）：一个 6183 条的房间回包是
+ * **28 MB**，其中 tool 条目占 **27.4 MB**（最长一条 9.5 MB）—— 前端 JSON.parse +
+ * 渲染要 **2.9~3.3 秒**，每次切房间都重来；tracing 里就是一个匿名函数连跑 2.9s，
+ * 用户点输入框得给它让路（“点输入框几秒钟”）。
+ *
+ * 工具输出是**过程**：时间线上看的是“跑了什么、成不成、大概什么结果”，
+ * 不需要把 9.5MB 的 stdout 发到浏览器。完整原文仍在库里（`toolout/` + items），
+ * 要全文从服务端取 —— 截断处会写明原文多少字，不假装这就是全部。
+ *
+ * 只裁 **history 这一条路**（侧栏 / `bots.rows` 不碰它）。
+ */
+const HISTORY_TOOL_RESULT_CHARS = 2000;
+
+/**
+ * 把历史里的超大 tool 结果裁到 `HISTORY_TOOL_RESULT_CHARS`（不改变其他条目）。
+ * 导出只为了能被单测钉住（它是回包体积的唯一闸门）。
+ */
+export function trimToolResults(items: Item[]): Item[] {
+    return items.map((item) => {
+        if (item.type !== 'tool') return item;
+        const result = item.data.result;
+        if (typeof result !== 'string' || result.length <= HISTORY_TOOL_RESULT_CHARS) return item;
+        return {
+            ...item,
+            data: {
+                ...item.data,
+                result: `${result.slice(0, HISTORY_TOOL_RESULT_CHARS)}\n\n…（历史里只带前 ${HISTORY_TOOL_RESULT_CHARS} 字，原文 ${result.length} 字）`,
+            },
+        };
+    });
+}
+
 // ─── 路由 ─────────────────────────────────────────────────────────
 
 const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -947,7 +984,7 @@ export async function createDiy2App(opts: {
                 history: async ({ input }) => {
                     const actor = requireRoom(input.id);
                     return {
-                        items: actor.items(0),
+                        items: trimToolResults(actor.items(0)),
                         deliveries: actor.deliveries(),
                         asks: actor.pendingAskRequests(),
                         answered: actor.answeredAskRequests(),
