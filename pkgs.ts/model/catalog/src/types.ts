@@ -32,7 +32,18 @@ export interface ModelCatalogEntry {
     readonly maxOutputTokens?: number;
     /** 单价（$ / 1M tokens）；无价目 = 缺省（不算钱） */
     readonly cost?: ModelCatalogCost;
+    /**
+     * 这个模型收哪些模态**输入**（models.dev 的 `modalities.input` / `attachment` 投影而来）。
+     *
+     * **缺省 = 不知道**（不是「不收」）：快照里没这两字段的模型就落不到头条目，于是不写。
+     * 想判「能不能发图」用 `canSeeImages(entry)`，它把「不知道」当否 —— 宁可先按文字发，
+     * 也比往一个不收图的上游塞 image part 吃一个 400 强。
+     */
+    readonly input?: readonly ModelInputModality[];
 }
+
+/** 输入模态（与 models.dev 的 `modalities.input` 同一套词；多出来的丢） */
+export type ModelInputModality = 'text' | 'image' | 'audio' | 'video' | 'pdf';
 
 /** 目录里的价目（camelCase；与 model.yaml 的 snake_case 解耦） */
 export interface ModelCatalogCost {

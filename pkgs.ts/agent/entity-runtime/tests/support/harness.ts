@@ -9,6 +9,7 @@ import type { RunOptions } from '../../src/agent';
 import type { Compactor } from '../../src/compaction';
 import { openStore, type Store } from '../../src/db';
 import { RoomActor } from '../../src/room';
+import type { AttachmentReader } from '../../src/session-images';
 import type { AgentEvent, Bot, Item, Room, RoomEvent } from '../../src/types';
 
 export const BOT_A: Bot = {
@@ -67,6 +68,10 @@ export function makeRoom(
         cwd?: string;
         /** 压缩策略（测手动压缩的并发 / 取消用，缺省走真摘要策略） */
         compactor?: Compactor;
+        /** 附件读法（缺省没有 —— 图上不了模型，正文后会带一行「未送达」） */
+        readAttachment?: AttachmentReader;
+        /** 「这个模型收不收图」（缺省查模型目录；测试里给常量，免得依赖真目录） */
+        acceptsImages?: (modelKey: string) => boolean;
     } = {},
 ): Harness {
     const store = options.store ?? openStore(':memory:');
@@ -129,6 +134,8 @@ export function makeRoom(
         run,
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
         ...(options.compactor === undefined ? {} : { compactor: options.compactor }),
+        ...(options.readAttachment === undefined ? {} : { readAttachment: options.readAttachment }),
+        ...(options.acceptsImages === undefined ? {} : { acceptsImages: options.acceptsImages }),
     });
 
     return {

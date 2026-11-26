@@ -17,6 +17,7 @@ import type {
     CatalogOptions,
     ModelCatalogCost,
     ModelCatalogEntry,
+    ModelInputModality,
     ProviderAccounts,
 } from "./types.js";
 
@@ -43,6 +44,9 @@ interface RawModelOverride {
     readonly name?: string;
     readonly limit?: { readonly context?: number; readonly output?: number };
     readonly cost?: RawCost;
+    /** 手写能力位：这个模型收不收图（custom provider 只能手写 —— models.dev 里没有它） */
+    readonly attachment?: boolean;
+    readonly modalities?: { readonly input?: readonly string[] };
 }
 
 interface RawProviderConfig {
@@ -60,6 +64,10 @@ interface RawSpecModel {
     readonly name?: string;
     readonly limit?: { readonly context?: number; readonly output?: number };
     readonly cost?: RawCost;
+    /** models.dev 的写法：`attachment: true` = 收图 */
+    readonly attachment?: boolean;
+    /** models.dev 的写法：`modalities: { input: [text, image] }` */
+    readonly modalities?: { readonly input?: readonly string[] };
 }
 
 interface RawSpecProvider {
@@ -287,6 +295,7 @@ function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined
         const contextWindow = override?.limit?.context ?? spec?.limit?.context;
         const maxOutput = override?.limit?.output ?? spec?.limit?.output;
         const cost = override?.cost !== undefined ? costOf(override.cost) : costOf(spec?.cost);
+        const inputModalities = inputOf(override, spec);
         out.push({
             providerId: input.providerId,
             modelId,
@@ -296,9 +305,39 @@ function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined
             ...(typeof contextWindow === "number" ? { contextWindow } : {}),
             ...(typeof maxOutput === "number" ? { maxOutputTokens: maxOutput } : {}),
             ...(cost === undefined ? {} : { cost }),
+            ...(inputModalities === undefined ? {} : { input: inputModalities }),
         });
     }
     return out;
+}
+
+/** 认识的输入模态（其余字符串丢掉，不报错：快照是外部数据，多一种模态不该让整个目录炸） */
+const INPUT_MODALITIES: readonly ModelInputModality[] = ["text", "image", "audio", "video", "pdf"];
+
+/**
+ * 一个模型的输入模态 —— 两份来源按优先顺序：
+ *   ① 配置层手写（`model.yaml` / `providers.custom.yaml` 的 `models.<id>`）—— 人能改的最终说法
+ *   ② spec 层的 `modalities.input`
+ *   ③ spec 层的 `attachment`（models.dev 的简写：true 就收图）
+ *   ④ 都没有 ⇒ **undefined（不知道）**，不是「不收」
+ */
+function inputOf(
+    override: RawModelOverride | undefined,
+    spec: RawSpecModel | undefined,
+): readonly ModelInputModality[] | undefined {
+    const declared = override?.modalities?.input ?? spec?.modalities?.input;
+    if (declared !== undefined) return normalizeModalities(declared);
+    const attachment = override?.attachment ?? spec?.attachment;
+    if (attachment === undefined) return undefined;
+    return attachment ? ["text", "image"] : ["text"];
+}
+
+function normalizeModalities(raw: readonly string[]): readonly ModelInputModality[] {
+    const out = raw.filter((item): item is ModelInputModality =>
+        INPUT_MODALITIES.includes(item as ModelInputModality),
+    );
+    // 上游偶尔只写 ["image"]：任何模型都收文字，补齐后再返回（否则 UI 会以为它不吃人类的话）
+    return out.includes("text") ? out : ["text", ...out];
 }
 
 /**
@@ -444,4 +483,15 @@ function expandEnv(
         );
     }
     return out;
+}
+
+/**
+ * 这个模型能不能收图（吃 image part）。
+ *
+ * 判据故意是「明确写了 image 才算」：`input` 缺省 = **数据里没有这条信息**，
+ * 而当「不收」处理 —— 往一个不收图的上游塞 image part 换回来的是 400，
+ * 与其赌一把不如先按文字发（UI 该在贴图前就拿这个判据挡住，见 vision-guard）。
+ */
+export function canSeeImages(entry: Pick<ModelCatalogEntry, "input"> | undefined): boolean {
+    return entry?.input?.includes("image") === true;
 }

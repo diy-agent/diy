@@ -2,6 +2,8 @@
 //
 // surface 只拿它渲染 + 发意图；不直接碰 client / fetch。
 
+import type { AttachmentRef } from '@diy-agent/protocol';
+
 import type { ChatClient } from './client';
 import { applyEvent, emptyState, fromSnapshot, type ConversationState } from './reduce';
 import { DEFAULT_CAPABILITIES, type Capabilities, type Command } from './types';
@@ -16,7 +18,18 @@ export interface ConversationModel {
     subscribe(listener: () => void): () => void;
     readonly capabilities: Capabilities;
     /** 发送一条消息。resolve = 后端已受理（首条事件/建流成功），UI 据此清草稿；reject = 压根没发出去 */
-    send(text: string): Promise<void>;
+    send(text: string, attachments?: readonly AttachmentRef[]): Promise<void>;
+    /**
+     * 把一份字节传进附件库，拿回 ref（粘贴 / 拖拽 / 选图）。
+     *
+     * 不存在 = 后端不支持附件（老服务端）：界面据此禁用贴图，而不是让人贴完再发现发不出去。
+     */
+    putAttachment?(input: {
+        readonly name?: string;
+        readonly mime?: string;
+        readonly bytes: Uint8Array;
+        readonly source?: 'paste' | 'drop' | 'pick' | 'tool';
+    }): Promise<AttachmentRef>;
     cancel(): void;
     /** 只停某个成员（开会时用） */
     stop(botId?: string): void;
@@ -147,10 +160,38 @@ export class ConversationStore implements ConversationModel {
         });
 
     /** 运行中也允许发：后端决定它在哪个边界生效（next-step 默认） */
-    send = (text: string): Promise<void> => {
+    send = (text: string, attachments?: readonly AttachmentRef[]): Promise<void> => {
         const trimmed = text.trim();
-        if (trimmed === '') return Promise.resolve();
-        return this.post({ kind: 'send', text: trimmed });
+        // 空正文 + 有附件是合法的（贴一张图什么都不打）—— 两样都空才是空消息
+        if (trimmed === '' && (attachments === undefined || attachments.length === 0)) return Promise.resolve();
+        return this.post({
+            kind: 'send',
+            text: trimmed,
+            ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
+        });
+    };
+
+    /**
+     * 上传一份附件（粘贴 / 拖拽 / 选图）。
+     *
+     * 为什么在「发送之前」就上传：一次可能带几张图，任何一张失败都该在发送前报出来
+     * （用户还看得见它、还能重试），而不是发出去之后在气泡里出现一个裂图。
+     */
+    putAttachment = async (input: {
+        name?: string;
+        mime?: string;
+        bytes: Uint8Array;
+        source?: 'paste' | 'drop' | 'pick' | 'tool';
+    }): Promise<AttachmentRef> => {
+        const client = this.client;
+        if (client.putAttachment === undefined) throw new Error('当前后端不支持附件');
+        return client.putAttachment(input);
+    };
+
+    readAttachment = async (ref: AttachmentRef): Promise<{ base64: string; mime: string }> => {
+        const client = this.client;
+        if (client.readAttachment === undefined) throw new Error('当前后端不支持附件');
+        return client.readAttachment(ref);
     };
 
     cancel = (): void => {

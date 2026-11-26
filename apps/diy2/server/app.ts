@@ -13,7 +13,7 @@
 // 监听由调用方做：`server/index.ts`（生产）、`server/dev.ts`（单端口 dev）、`bin/diy2`（全局命令）。
 
 import { type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
@@ -39,6 +39,7 @@ import {
 } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
+import { createBlobStore, parseAttachmentRef, parseAttachmentRefs } from '@diy-agent/attachment';
 import { diy2Api } from '@diy-agent/protocol';
 import type {
     ActivityFrame,
@@ -686,6 +687,18 @@ export async function createDiy2App(opts: {
      */
     type Diy2Handlers = HandlersOf<typeof diy2Api>;
 
+    /**
+     * 附件库（懒建一次）：`<home>/blobs`。
+     *
+     * 与 entity-runtime 里 `defaultAttachmentReader` 写的是同一个路径 —— 上传落这里、
+     * 模型侧从这里读。分叉过一次就等着「能上传但模型看不着」那种怪事。
+     */
+    let blobStore: ReturnType<typeof createBlobStore> | null = null;
+    const blobs = (): ReturnType<typeof createBlobStore> => {
+        blobStore ??= createBlobStore({ root: join(config.home, 'blobs') });
+        return blobStore;
+    };
+
     const bindDiy2Api = (server: ChannelServerBinding): void => {
         const handlers: Diy2Handlers = {
             info: async () => info(),
@@ -1003,8 +1016,12 @@ export async function createDiy2App(opts: {
                 chat: async ({ input }) => {
                     const actor = requireRoom(input.id);
                     const text = input.text.trim();
-                    if (text === '') throw new Error('text required');
-                    void actor.say({ text, author: HUMAN }).catch((error: unknown) => {
+                    // 附件在 zod 层已验过形状；这里再走一遍真源校验（防“zod 宽了、ref 却不对”）
+                    // —— 网络边界上是最后一道，宁可炸在发消息时，也不要存进 db 后才发现。
+                    const attachments =
+                        input.attachments === undefined ? [] : parseAttachmentRefs(input.attachments, 'chat.attachments');
+                    if (text === '' && attachments.length === 0) throw new Error('text or attachments required');
+                    void actor.say({ text, author: HUMAN, attachments }).catch((error: unknown) => {
                         broadcast(input.id, {
                             kind: 'error',
                             message: error instanceof Error ? error.message : String(error),
@@ -1135,6 +1152,29 @@ export async function createDiy2App(opts: {
              * 全部：一个实例一张表，界面看的就是这张表）。时长按**现在**算 —— 界面上那个
              * 秒表要跳，不能等下一次 `job status` 回来才知道过去了多久。
              */
+            /**
+             * 附件：字节进（粘贴 / 拖拽 → blobs）/ 字节出（界面显示缩略图）。
+             *
+             * blobs 根与 room 的附件读法**同一个约定**（`<home>/blobs`，见 entity-runtime 的
+             * `defaultAttachmentReader`）—— 上传落一份、模型侧读同一份，不复制真相。
+             */
+            attachment: {
+                put: async ({ input }) => {
+                    const bytes = Buffer.from(input.base64, 'base64');
+                    if (bytes.byteLength === 0) throw new Error('附件内容为空');
+                    return blobs().putBytes({
+                        bytes,
+                        source: input.source ?? 'paste',
+                        ...(input.name === undefined ? {} : { name: input.name }),
+                        ...(input.mime === undefined ? {} : { mime: input.mime }),
+                    });
+                },
+                get: async ({ input }) => {
+                    const ref = parseAttachmentRef(input.ref, 'attachment.get');
+                    const bytes = ref.type === 'stored' ? await blobs().read(ref) : await readFile(ref.path);
+                    return { base64: Buffer.from(bytes).toString('base64'), mime: ref.mime };
+                },
+            },
             jobs: {
                 list: async () => ({ rows: jobs.list().map(jobRowOf) }),
                 kill: async ({ input }) => ({ ok: jobs.kill(input.id) }),

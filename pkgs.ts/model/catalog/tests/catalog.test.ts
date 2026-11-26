@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CatalogError, listAccounts, loadCatalog, readAccountValue } from "../src/index.js";
+import { canSeeImages, CatalogError, listAccounts, loadCatalog, readAccountValue } from "../src/index.js";
 import type { ModelCatalogEntry } from "../src/index.js";
 
 /** 造一个临时 home：model.yaml / providers.custom.yaml / data/models.dev.json 按需写 */
@@ -120,6 +120,109 @@ describe("loadCatalog", () => {
         expect(big.cost).toEqual({ input: 1, output: 3 });
         const extra = entries.find((entry) => entry.modelId === "extra-1") as ModelCatalogEntry;
         expect([extra.name, extra.baseURL, extra.contextWindow]).toEqual(["额外模型", "https://acme.example/v1", undefined]);
+    });
+
+    describe("能力位：谁能看图", () => {
+        it("models.dev 写 attachment: true ⇒ 落成 input: [text, image]", () => {
+            const home = makeHome({
+                model: `stdProviders:
+  acme:
+    accounts:
+      - type: apiKey
+        data:
+          value: x
+    filter:
+      include: [vision-1, text-1, unknown-1]
+`,
+                snapshot: {
+                    acme: {
+                        id: "acme",
+                        name: "Acme",
+                        npm: "@ai-sdk/openai-compatible",
+                        api: "https://acme.example/v1",
+                        models: {
+                            "vision-1": { name: "Vision", attachment: true },
+                            "text-1": { name: "Text only", attachment: false },
+                            "unknown-1": { name: "Unknown" },
+                        },
+                    },
+                },
+            });
+            const entries = loadCatalog(home);
+            const of = (id: string) => entries.find((entry) => entry.modelId === id) as ModelCatalogEntry;
+            expect(of("vision-1").input).toEqual(["text", "image"]);
+            expect(of("text-1").input).toEqual(["text"]);
+            // 缺省 = 不知道（**不落字段**），不是「不收」
+            expect(of("unknown-1")).not.toHaveProperty("input");
+            expect(canSeeImages(of("vision-1"))).toBe(true);
+            expect(canSeeImages(of("text-1"))).toBe(false);
+            expect(canSeeImages(of("unknown-1"))).toBe(false);
+        });
+
+        it("modalities.input 原样用（只写 image 时补上 text，不认识的模态丢掉）", () => {
+            const home = makeHome({
+                model: `customProviders:
+  goat:
+    accounts:
+      - type: apiKey
+        name: a
+        data:
+          value: x
+    filter:
+      include: [m1, m2]
+`,
+                custom: `goat:
+  id: goat
+  api: https://api.goat.example/v1
+  models:
+    m1:
+      name: M1
+      modalities:
+        input: [image]
+    m2:
+      name: M2
+      modalities:
+        input: [text, image, pdf, hologram]
+`,
+            });
+            const entries = loadCatalog(home);
+            const of = (id: string) => entries.find((entry) => entry.modelId === id) as ModelCatalogEntry;
+            expect(of("m1").input).toEqual(["text", "image"]);
+            expect(of("m2").input).toEqual(["text", "image", "pdf"]);
+        });
+
+        it("model.yaml 手写覆盖 spec（custom provider 只能手写 —— models.dev 里没有它）", () => {
+            const home = makeHome({
+                model: `customProviders:
+  goat:
+    accounts:
+      - type: apiKey
+        name: a
+        data:
+          value: x
+    models:
+      gpt-x:
+        attachment: true
+      vision-1:
+        attachment: false
+`,
+                custom: `goat:
+  id: goat
+  api: https://api.goat.example/v1
+  models:
+    gpt-x:
+      name: GPT X
+    vision-1:
+      name: V1
+      attachment: true
+`,
+            });
+            const entries = loadCatalog(home);
+            const of = (id: string) => entries.find((entry) => entry.modelId === id) as ModelCatalogEntry;
+            expect(of("gpt-x").input).toEqual(["text", "image"]);
+            // 手写 false 能推翻 spec 的 true
+            expect(of("vision-1").input).toEqual(["text"]);
+        });
     });
 
     it("filter.exclude 优先于 include；两者都空 = 全开", () => {
