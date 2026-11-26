@@ -13,7 +13,7 @@
 import { ChevronRight, Loader2, Play, X } from 'lucide-react';
 import * as React from 'react';
 
-import { Button } from '@diy-agent/ui-shadcn';
+import { Button, Input } from '@diy-agent/ui-shadcn';
 
 import type { BotRow } from '@diy-agent/chat-transport-rpc';
 
@@ -103,7 +103,7 @@ function TableRow({
 }) {
     return (
         <label className="flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-1.5 hover:bg-muted/40">
-            <input
+            <Input
                 type="checkbox"
                 checked={checked}
                 onChange={(event) => onCheck(row, event.target.checked)}

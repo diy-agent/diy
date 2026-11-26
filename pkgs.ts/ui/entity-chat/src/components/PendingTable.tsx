@@ -49,7 +49,9 @@ export function PendingRows({
                         <td className="px-3 py-1">{bots[botId]?.name ?? botId}</td>
                         <td className="px-1 py-1 font-mono">{awaitingText(progress.awaiting)}</td>
                         <td className="px-1 py-1 text-right tabular-nums">{elapsedText(idleNowOf(progress, now))}</td>
-                        <td className="px-1 py-1">{progress.alive ? <span className="text-emerald-600">有</span> : '—'}</td>
+                        <td className="px-1 py-1">
+                            {progress.alive ? <span className="text-emerald-600">有</span> : '—'}
+                        </td>
                         <td className="px-3 py-1">{STAGE_TEXT[progress.stage]}</td>
                     </tr>
                 ))}

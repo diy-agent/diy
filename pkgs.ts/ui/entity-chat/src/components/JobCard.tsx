@@ -149,7 +149,11 @@ export function JobCard({
                                                   : 'text-red-400'
                                         }`}
                                     >
-                                        {row.state === 'running' ? '在跑' : row.state === 'exited' ? '已结束' : '已停止'}
+                                        {row.state === 'running'
+                                            ? '在跑'
+                                            : row.state === 'exited'
+                                              ? '已结束'
+                                              : '已停止'}
                                     </span>
                                     <code className="shrink-0 font-mono">{row.id}</code>
                                     <span className="shrink-0 tabular-nums text-muted-foreground">{row.duration}</span>

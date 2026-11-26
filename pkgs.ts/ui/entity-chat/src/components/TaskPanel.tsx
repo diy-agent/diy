@@ -11,7 +11,7 @@ import { roomTitle, type Room } from '../model';
 import { X } from 'lucide-react';
 import * as React from 'react';
 
-import { Button } from '@diy-agent/ui-shadcn';
+import { Button, Input, Textarea } from '@diy-agent/ui-shadcn';
 
 import { actions, diy2, useRooms } from '../store';
 
@@ -208,7 +208,7 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
             <div className="flex-1 space-y-3 overflow-y-auto p-3">
                 <label className="block text-xs text-muted-foreground">
                     标题（一句话：这个任务要做什么）
-                    <input
+                    <Input
                         value={title}
                         onChange={(event) => setTitle(event.target.value)}
                         onKeyDown={(event) => {
@@ -221,7 +221,7 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
 
                 <label className="block text-xs text-muted-foreground">
                     正文（方案 / 边界 / 验收口径）
-                    <textarea
+                    <Textarea
                         value={body}
                         onChange={(event) => setBody(event.target.value)}
                         onKeyDown={onKeyDown}

@@ -59,7 +59,12 @@ export function RoomMenu({
             title="房间操作"
             items={[
                 { key: 'member', label: '加成员', icon: <Plus className="size-3.5" />, onClick: onAddMember },
-                { key: 'settings', label: '房间设置', icon: <Settings className="size-3.5" />, onClick: onOpenSettings },
+                {
+                    key: 'settings',
+                    label: '房间设置',
+                    icon: <Settings className="size-3.5" />,
+                    onClick: onOpenSettings,
+                },
                 ...(openTask
                     ? [
                           {

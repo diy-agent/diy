@@ -50,9 +50,7 @@ export const Markdown = React.memo(function Markdown({
                         const language = languageOf(className);
                         if (language === undefined) {
                             return (
-                                <code className="rounded bg-muted/70 px-1 py-0.5 font-mono text-xs">
-                                    {children}
-                                </code>
+                                <code className="rounded bg-muted/70 px-1 py-0.5 font-mono text-xs">{children}</code>
                             );
                         }
                         const code = String(children ?? '').replace(/\n$/, '');

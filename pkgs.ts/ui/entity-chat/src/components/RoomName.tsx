@@ -10,6 +10,7 @@ import * as React from 'react';
 
 import { statusMeta, taskStatusOf, type Room } from '../model';
 import { isPlainLeftClick } from './link';
+import { Input } from '@diy-agent/ui-shadcn';
 
 /**
  * 就地改名的文本。`mode`：
@@ -99,7 +100,7 @@ export function EditableName({
 
     if (editing) {
         return (
-            <input
+            <Input
                 autoFocus
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
@@ -225,4 +226,3 @@ export function StatusGlyph({
         </span>
     );
 }
-

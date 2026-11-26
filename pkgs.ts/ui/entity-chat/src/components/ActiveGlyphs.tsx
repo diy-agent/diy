@@ -34,7 +34,13 @@ function Glyph({ icon, label, count, title }: { icon: React.ReactNode; label: st
     );
 }
 
-function RunningRoomRow({ room, onSelect }: { room: ReturnType<typeof useRunningSessionRooms>[number]; onSelect: () => void }) {
+function RunningRoomRow({
+    room,
+    onSelect,
+}: {
+    room: ReturnType<typeof useRunningSessionRooms>[number];
+    onSelect: () => void;
+}) {
     const count = useRunningOf(room.id);
     if (count === 0) return null;
     return (
@@ -64,7 +70,9 @@ export function ActiveSessionsGlyph() {
     const close = React.useCallback(() => setAnchor(null), []);
     React.useEffect(() => {
         if (anchor === null) return;
-        const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') close();
+        };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
     }, [anchor, close]);
@@ -91,21 +99,49 @@ export function ActiveSessionsGlyph() {
                     setAnchor((current) => (current === null ? rect : null));
                 }}
             >
-                <span className={count > 0 ? 'animate-pulse' : ''}><MessageSquare className="size-3.5" /></span>
+                <span className={count > 0 ? 'animate-pulse' : ''}>
+                    <MessageSquare className="size-3.5" />
+                </span>
                 <span className="text-xs leading-none">Bot</span>
                 <span className="text-xs tabular-nums leading-none">{count}</span>
             </button>
-            {anchor !== null && createPortal(
-                <>
-                    <button aria-label="关闭 Bot 列表" className="fixed inset-0 z-[999] cursor-default" onClick={close} />
-                    <div role="dialog" aria-label="正在运行的 Bot" className="fixed z-[1000] w-72 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 296)), top: anchor.bottom + 4 }}>
-                        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">正在运行的 Bot · {count}</div>
-                        {runningRooms.map((room) => <RunningRoomRow key={room.id} room={room} onSelect={() => { actions.select(room.id); close(); }} />)}
-                        {count === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">当前没有运行中的 Bot</p>}
-                    </div>
-                </>,
-                document.body,
-            )}
+            {anchor !== null &&
+                createPortal(
+                    <>
+                        <button
+                            aria-label="关闭 Bot 列表"
+                            className="fixed inset-0 z-[999] cursor-default"
+                            onClick={close}
+                        />
+                        <div
+                            role="dialog"
+                            aria-label="正在运行的 Bot"
+                            className="fixed z-[1000] w-72 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg"
+                            style={{
+                                left: Math.max(8, Math.min(anchor.left, window.innerWidth - 296)),
+                                top: anchor.bottom + 4,
+                            }}
+                        >
+                            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                                正在运行的 Bot · {count}
+                            </div>
+                            {runningRooms.map((room) => (
+                                <RunningRoomRow
+                                    key={room.id}
+                                    room={room}
+                                    onSelect={() => {
+                                        actions.select(room.id);
+                                        close();
+                                    }}
+                                />
+                            ))}
+                            {count === 0 && (
+                                <p className="px-2 py-3 text-xs text-muted-foreground">当前没有运行中的 Bot</p>
+                            )}
+                        </div>
+                    </>,
+                    document.body,
+                )}
         </>
     );
 }
@@ -118,11 +154,7 @@ export function ActiveJobsGlyph() {
             icon={<SquareTerminal className="size-3.5" />}
             label="后台任务"
             count={count}
-            title={
-                count === 0
-                    ? '没有后台任务在跑'
-                    : `${count} 个后台任务在跑（本实例全部，点击看全部）`
-            }
+            title={count === 0 ? '没有后台任务在跑' : `${count} 个后台任务在跑（本实例全部，点击看全部）`}
         />
     );
 }

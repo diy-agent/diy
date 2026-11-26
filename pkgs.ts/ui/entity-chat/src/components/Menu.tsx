@@ -73,7 +73,8 @@ export function MenuButton({
         const above = anchor.top;
         // 估算高度：菜单项 24px + 上下 padding；估高了会误翻转，估低了会溢出
         const height = items.length * 26 + 8;
-        const top = below >= height + GAP || below >= above ? anchor.bottom + GAP : Math.max(GAP, anchor.top - height - GAP);
+        const top =
+            below >= height + GAP || below >= above ? anchor.bottom + GAP : Math.max(GAP, anchor.top - height - GAP);
         const left = Math.max(GAP, Math.min(anchor.right - WIDTH, window.innerWidth - WIDTH - GAP));
         return { top, left, width: WIDTH };
     }, [anchor, items.length]);
@@ -102,33 +103,35 @@ export function MenuButton({
             >
                 <MoreHorizontal className="size-3.5" />
             </button>
-            {open && anchor !== null && createPortal(
-                <div
-                    ref={menu}
-                    role="menu"
-                    className="fixed z-[1000] overflow-hidden rounded-md border bg-popover py-1 shadow-md"
-                    style={style}
-                >
-                    {items.map((item) => (
-                        <button
-                            key={item.key}
-                            role="menuitem"
-                            onClick={(event) => {
-                                event.stopPropagation();
-                                close();
-                                item.onClick();
-                            }}
-                            className={`flex w-full items-center gap-2 px-2 py-1 text-left text-xs hover:bg-muted ${
-                                item.danger === true ? 'text-destructive' : ''
-                            }`}
-                        >
-                            {item.icon}
-                            {item.label}
-                        </button>
-                    ))}
-                </div>,
-                document.body,
-            )}
+            {open &&
+                anchor !== null &&
+                createPortal(
+                    <div
+                        ref={menu}
+                        role="menu"
+                        className="fixed z-[1000] overflow-hidden rounded-md border bg-popover py-1 shadow-md"
+                        style={style}
+                    >
+                        {items.map((item) => (
+                            <button
+                                key={item.key}
+                                role="menuitem"
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    close();
+                                    item.onClick();
+                                }}
+                                className={`flex w-full items-center gap-2 px-2 py-1 text-left text-xs hover:bg-muted ${
+                                    item.danger === true ? 'text-destructive' : ''
+                                }`}
+                            >
+                                {item.icon}
+                                {item.label}
+                            </button>
+                        ))}
+                    </div>,
+                    document.body,
+                )}
         </div>
     );
 }

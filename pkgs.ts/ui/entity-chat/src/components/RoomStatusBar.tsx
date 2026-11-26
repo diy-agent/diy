@@ -15,13 +15,7 @@
 //   · 谁没动   —— 投递还挂着但那个 bot 没有任何在动的证据（进程重启 / 队列丢了）
 // 两件都没有 → 返回 null（不占位、不起时钟）。
 
-import {
-    deliveryNoteOf,
-    waitTextOf,
-    type AskRequest,
-    type Bot,
-    type Delivery,
-} from '@diy-agent/chat-core';
+import { deliveryNoteOf, waitTextOf, type AskRequest, type Bot, type Delivery } from '@diy-agent/chat-core';
 import { AlertTriangle, HelpCircle } from 'lucide-react';
 import * as React from 'react';
 

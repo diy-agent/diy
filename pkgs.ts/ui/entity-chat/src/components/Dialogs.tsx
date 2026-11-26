@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { Button } from '@diy-agent/ui-shadcn';
+import { Button, Input } from '@diy-agent/ui-shadcn';
 
 import { DIR_SUGGESTIONS, roomTitle, roomTypeLabel, type Bot, type Room } from '../model';
 import { useStore } from '../store';
@@ -60,7 +60,7 @@ export function CreateProjectDialog({
             <div className="space-y-3 text-sm">
                 <label className="block">
                     <span className="mb-1 block text-xs text-muted-foreground">项目名</span>
-                    <input
+                    <Input
                         autoFocus
                         value={name}
                         onChange={(event) => setName(event.target.value)}
@@ -70,7 +70,7 @@ export function CreateProjectDialog({
                 </label>
                 <label className="block">
                     <span className="mb-1 block text-xs text-muted-foreground">目录</span>
-                    <input
+                    <Input
                         value={dir}
                         onChange={(event) => setDir(event.target.value)}
                         className="w-full rounded-lg border bg-card px-2 py-1.5 font-mono text-xs outline-none"
@@ -153,7 +153,7 @@ export function CreateTaskDialog({
             <div className="space-y-3 text-sm">
                 <label className="block">
                     <span className="mb-1 block text-xs text-muted-foreground">任务名（一句话：这个任务要做什么）</span>
-                    <input
+                    <Input
                         autoFocus
                         value={name}
                         onChange={(event) => setName(event.target.value)}
@@ -291,7 +291,7 @@ export function AddMemberDialog({
                 <div className="border-t pt-3">
                     <div className="mb-1.5 text-xs text-muted-foreground">或者新建一个成员 bot</div>
                     <div className="flex gap-2">
-                        <input
+                        <Input
                             value={name}
                             onChange={(event) => setName(event.target.value)}
                             placeholder="例如 小满"

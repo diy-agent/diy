@@ -29,7 +29,7 @@ import { Check, Clock, HelpCircle, MinusCircle } from 'lucide-react';
 import * as React from 'react';
 
 import type { AskAnswer, AskQuestion, AskRequest } from '@diy-agent/chat-core';
-import { Button } from '@diy-agent/ui-shadcn';
+import { Button, Input, Textarea } from '@diy-agent/ui-shadcn';
 
 import {
     answerOf,
@@ -212,9 +212,7 @@ export function AskCard({
                             {!done && optionals > 0 && (
                                 <span className="text-xs text-muted-foreground">{optionals} 题可选</span>
                             )}
-                            {!done && expanded && (
-                                <span className="text-xs text-muted-foreground">一次提交就行</span>
-                            )}
+                            {!done && expanded && <span className="text-xs text-muted-foreground">一次提交就行</span>}
                             {!done && (
                                 // 展开是为了「对比着答」，翻页是为了「一次只想一题」—— 两种都要
                                 <Button
@@ -360,7 +358,12 @@ export function AskCard({
                                     </Button>
                                 )}
                                 {paging && current < last && (
-                                    <Button variant="outline" size="xs" onClick={() => setPage(current + 1)} disabled={busy}>
+                                    <Button
+                                        variant="outline"
+                                        size="xs"
+                                        onClick={() => setPage(current + 1)}
+                                        disabled={busy}
+                                    >
                                         下一题
                                     </Button>
                                 )}
@@ -480,7 +483,7 @@ function QuestionBlock({
                                                 )}
                                             </span>
                                             {field.type === 'textarea' ? (
-                                                <textarea
+                                                <Textarea
                                                     readOnly={done}
                                                     disabled={done}
                                                     value={
@@ -503,7 +506,7 @@ function QuestionBlock({
                                                     className="rounded border bg-background px-2 py-1 text-xs outline-none"
                                                 />
                                             ) : (
-                                                <input
+                                                <Input
                                                     type={field.type === 'number' ? 'number' : 'text'}
                                                     readOnly={done}
                                                     disabled={done}
@@ -550,7 +553,7 @@ function QuestionBlock({
                                                     done ? '' : 'cursor-pointer hover:bg-muted'
                                                 } ${skin}`}
                                             >
-                                                <input
+                                                <Input
                                                     type={multiple ? 'checkbox' : 'radio'}
                                                     // 同名 radio 会把整批的题连成一组（只能选一个），必须按题分组；
                                                     // 带上 askId 才是**跨卡片**唯一 —— 单题卡题 id 恒为 q1（见 radioGroupName）
@@ -583,7 +586,7 @@ function QuestionBlock({
                                                 </div>
                                             )
                                         ) : (
-                                            <input
+                                            <Input
                                                 value={draft.text}
                                                 onChange={(event) =>
                                                     onChange((previous) =>
@@ -603,7 +606,7 @@ function QuestionBlock({
                                         {answeredText.trim() === '' ? '（空）' : answeredText}
                                     </div>
                                 ) : (
-                                    <textarea
+                                    <Textarea
                                         value={draft.text}
                                         onChange={(event) =>
                                             onChange((previous) => setText(previous, question.id, event.target.value))

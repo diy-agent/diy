@@ -11,7 +11,7 @@ import * as React from 'react';
 
 import type { CompactEventInfo, CompactionProgress, Room, SessionInfo } from '@diy-agent/chat-core';
 
-import { Button } from '@diy-agent/ui-shadcn';
+import { Button, Input } from '@diy-agent/ui-shadcn';
 
 import { contextWindowOf } from '../models';
 import { actions, conversationOf, useProviders, useStore } from '../store';
@@ -278,7 +278,7 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
 
                         <div className="flex items-center gap-1.5 border-t px-3 py-1.5 text-xs text-muted-foreground">
                             <span>保留最近</span>
-                            <input
+                            <Input
                                 type="number"
                                 min={0}
                                 value={keep}

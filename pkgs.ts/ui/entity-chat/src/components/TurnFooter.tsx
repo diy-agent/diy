@@ -51,7 +51,9 @@ export function TurnFooter({
 
     return (
         <div className="mt-2 flex items-center justify-between gap-3 border-t border-dashed pt-1.5 text-xs leading-4">
-            <div className={`flex min-w-0 items-center gap-1.5 ${live ? 'text-muted-foreground' : TONE_CLASS[settle?.tone ?? 'muted']}`}>
+            <div
+                className={`flex min-w-0 items-center gap-1.5 ${live ? 'text-muted-foreground' : TONE_CLASS[settle?.tone ?? 'muted']}`}
+            >
                 {live ? (
                     <>
                         {onStopBot !== undefined && entry.author !== undefined && (
@@ -83,9 +85,7 @@ export function TurnFooter({
                         <span className="shrink-0" title={settle?.detail ?? settle?.label}>
                             {settle?.label}
                         </span>
-                        {facts.length > 0 && (
-                            <span className="truncate opacity-80">· {facts.join(' · ')}</span>
-                        )}
+                        {facts.length > 0 && <span className="truncate opacity-80">· {facts.join(' · ')}</span>}
                     </>
                 )}
             </div>
