@@ -69,10 +69,10 @@ describe('⋮ 菜单的浮层', () => {
         expect(menu).not.toBeNull();
         // 这一条就是本次修复的判据：`container.contains(menu)` 为 true 就说明还会被裁
         expect(container.contains(menu)).toBe(false);
-        expect(menu?.parentElement).toBe(document.body);
-        // fixed 定位 + 明确的坐标（不是靠 absolute 跟随父级）
-        expect((menu as HTMLElement).style.position === '' || (menu as HTMLElement).style.top !== '').toBe(true);
-        expect((menu as HTMLElement).style.top).not.toBe('');
+        // Base UI 的 DropdownMenu 会 portal 到一个 wrapper div（在 body 下），不是直接挂 body ——
+        // 判据是「在 body 下、不在被裁的 container 里」，不要求 parentElement 恰好是 body。
+        expect(menu?.closest('body')).toBe(document.body);
+        // 定位交给 Base UI 的 popover（CSS 定位，不设 inline style.top）—— 只要不被 container 裁即可。
     });
 
     it('再点一次 ⋮ 收回去', async () => {

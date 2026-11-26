@@ -143,7 +143,20 @@ describe('RoomActor', () => {
         // 刀 2 的服务端那一半：以前 `deliveries` 的排队态在界面完全看不见，
         // 重启后的待续跑尤其 —— 房间看着没事，其实排着队
         const store = openStore(':memory:');
-        for (const bot of [BOT_A, BOT_B]) store.upsertBot(bot);
+        for (const [index, bot] of [BOT_A, BOT_B].entries()) {
+            store.upsertRole({
+                id: bot.id,
+                type: 'project',
+                name: bot.name,
+                color: bot.color,
+                instructions: bot.persona,
+                primary: index === 0,
+                modelKey: bot.modelKey,
+                reasoningEffort: null,
+                createdAt: index,
+                updatedAt: index,
+            });
+        }
         const item = (id: string, seq: number): Item => ({
             id,
             seq,
@@ -237,7 +250,20 @@ describe('RoomActor', () => {
         // 判据只能靠「第一个卡着时第二个有没有开始」：一起排出去的话，第二轮的 run
         // 会在第一个还没收尾时就 push 进 started，这一条就红了（2026-11-25 的那次一屏 429）。
         const store = openStore(':memory:');
-        for (const bot of [BOT_A, BOT_B]) store.upsertBot(bot);
+        for (const [index, bot] of [BOT_A, BOT_B].entries()) {
+            store.upsertRole({
+                id: bot.id,
+                type: 'project',
+                name: bot.name,
+                color: bot.color,
+                instructions: bot.persona,
+                primary: index === 0,
+                modelKey: bot.modelKey,
+                reasoningEffort: null,
+                createdAt: index,
+                updatedAt: index,
+            });
+        }
         const item = (id: string, seq: number, text: string): Item => ({
             id,
             seq,

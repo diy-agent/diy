@@ -93,6 +93,23 @@ export interface Bot {
     modelKey: string;
 }
 
+/**
+ * 上一轮怎么结束的（磁盘侧判据见 entity-runtime/bot-status.ts）。
+ *
+ * `interrupted` 是唯一一个**不是** `endItems()` 产出的结局：进程崩在收尾前什么都来不及落，
+ * 靠 `turn_open` 表在下次启动时补一条 `notice(kind: 'interrupted')` 才认得出。
+ *
+ * 侧栏图标变红（`rooms.list` 的 `broken`）靠它，所以它不属于 bot-overview 专属，保留。
+ */
+export type BotOutcome =
+    | 'done'
+    | 'truncated'
+    | 'max-steps'
+    | 'filtered'
+    | 'tool-mismatch'
+    | 'failed'
+    | 'interrupted';
+
 export type Author = {
     id: string;
     name: string;

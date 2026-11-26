@@ -11,6 +11,7 @@ export type {
     AskRequest,
     Author,
     Bot,
+    BotOutcome,
     BotRole,
     Delivery,
     DeliveryState,
