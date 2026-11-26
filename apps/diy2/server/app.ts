@@ -20,6 +20,7 @@ import type { Duplex } from 'node:stream';
 
 import { createStaticHandler, type StaticHandler } from './static';
 import { createRpcSocket, type RpcStreamInfo } from './rpc';
+import { configureSlowLog, startLoopLag, timed, type LoopLagMonitor } from './loop-lag';
 import { APP_ID, type Diy2Config } from './config';
 import { openLog } from './log';
 
@@ -91,6 +92,8 @@ let store: ReturnType<typeof openStore>;
 let serveStatic: StaticHandler | undefined;
 /** `/api/info` 的回包工厂（由 `createDiy2App` 装配：端口要问调用方，模块层答不出） */
 let info: () => Diy2AppInfo;
+/** 事件循环延迟监控（./loop-lag）：`/api/metrics` 读它，close 时停 */
+let lagMonitor: LoopLagMonitor | undefined;
 
 // ─── 房间装配 ─────────────────────────────────────────────────────
 
@@ -519,6 +522,14 @@ const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> 
             return;
         }
 
+        // GET /api/metrics —— 事件循环延迟快照（2026-11-26：页面慢时先看这里）。
+        // 为什么单独一个端点而不是塞进 /api/info：探活每几秒打一次 info，
+        // 而 lag 是排障用的低频读，混进去只会让探活回包变大。
+        if (req.method === 'GET' && url.pathname === '/api/metrics') {
+            json(res, 200, { lag: lagMonitor?.snapshot() ?? null });
+            return;
+        }
+
         // 静态资源 / SPA 路由：/api 之外的 GET 交给 UI 产物
         if (req.method === 'GET' && !url.pathname.startsWith('/api') && serveStatic !== undefined) {
             if (await serveStatic(url.pathname, res)) return;
@@ -591,6 +602,12 @@ export async function createDiy2App(opts: {
     // undefined = 「按配置来」（生产）。写成 `??` 会让 dev 在 build/prod/web 存在时**悄悄**
     // 拿到上一轮的旧壳子 —— 那种 bug 只能靠肉眼分辨「为什么改了 UI 没变」。
     serveStatic = await createStaticHandler(opts.webDir === null ? undefined : (opts.webDir ?? config.webDir));
+    // 事件循环延迟监控（./loop-lag）：从装配开始记，`/api/metrics` 读快照。
+    // 重复装配（测试 / dev 重建）先把上一个停掉，不然会留两个采样器。
+    // 日志出口走 appLog（本进程不直接碰 console，见 ./log）。
+    lagMonitor?.stop();
+    lagMonitor = startLoopLag({ log: (line) => log.warn(line) });
+    configureSlowLog((line) => log.warn(line));
     rooms = new Map();
     subscribers = new Map();
     activitySinks = new Set();
@@ -638,14 +655,16 @@ export async function createDiy2App(opts: {
             info: async () => info(),
             rooms: {
                 list: async () => {
+                    // 打点：这三条是侧栏每次刷新都要跑的同步 SQL（实测冷库里 lastItemPerBot
+                    // 529ms、其余几十 ms），卡住时日志里必须看得见是谁（./loop-lag）
                     const draftOwners = store.draftOwnersByKind();
                     const withInputDraft = new Set(draftOwners.input);
-                    const lastItemAt = store.lastItemAtByRoom();
+                    const lastItemAt = timed('rooms.list.lastItemAtByRoom', () => store.lastItemAtByRoom());
                     // 未读：一次算完全实例（一条 GROUP BY），不逐房间问
-                    const unread = store.unreadByRoom();
+                    const unread = timed('rooms.list.unreadByRoom', () => store.unreadByRoom());
                     // 「上一轮出错的成员」：侧栏图标要变红（用户 2026-11-26：表格说「出错」而侧栏
                     // 图标没变，两处不一致）。数据与 `bots.rows` 同源（`turnLookupOf`），不各算一份。
-                    const turnOf = createTurnLookup(store);
+                    const turnOf = timed('rooms.list.createTurnLookup', () => createTurnLookup(store));
                     return [...rooms.values()].map((actor) => {
                         const id = actor.spec.id;
                         const at = lastItemAt[id];
@@ -781,7 +800,8 @@ export async function createDiy2App(opts: {
                  */
                 rows: async () => {
                     const bots = new Map(store.listBots().map((bot) => [bot.id, bot]));
-                    const turnOf = createTurnLookup(store);
+                    // 与 rooms.list 同一条重查询（两条全表 json 分组，实测 529ms + 39ms）
+                    const turnOf = timed('bots.rows.createTurnLookup', () => createTurnLookup(store));
                     const rows: BotRow[] = [];
                     for (const actor of rooms.values()) {
                         const spec = actor.spec;
@@ -1092,6 +1112,8 @@ export async function createDiy2App(opts: {
     });
 
     const close = (): void => {
+        lagMonitor?.stop();
+        lagMonitor = undefined;
         rpc.close();
         subscribers.clear();
         activitySinks.clear();
