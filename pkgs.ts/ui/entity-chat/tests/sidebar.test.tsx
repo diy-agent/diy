@@ -165,6 +165,49 @@ describe('侧栏按注册表渲染', () => {
         expect(html.match(/aria-label="有未读消息"/g) ?? []).toHaveLength(1);
     });
 
+    it('上一轮出错时侧栏任务图标变红（与三级表格同一份事实）', async () => {
+        setDiy2Client({
+            rooms: {
+                list: async () => rooms.map((room) => ({ ...room, broken: room.id === 'task:t-open' ? 1 : 0 })),
+            },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const html = render();
+        expect(rowOf(html, '/room/task/t-open')).toContain('text-rose-400');
+        expect(rowOf(html, '/room/task/t-open')).toContain('上一轮出错');
+        expect(html.match(/text-rose-400/g) ?? []).toHaveLength(1);
+    });
+
+    it('最后活动用紧凑相对式（刚才 / 5m / 1d），绝对时刻进 tooltip', async () => {
+        const fiveMinutesAgo = Date.now() - 5 * 60_000;
+        setDiy2Client({
+            rooms: {
+                list: async () =>
+                    rooms.map((room) =>
+                        room.id === 'task:t-open' ? { ...room, lastActivityAt: fiveMinutesAgo } : room,
+                    ),
+            },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const row = rowOf(render(), '/room/task/t-open');
+        expect(row).toContain('>5m<'); // 用户 2026-11-26：改回 1m / 1d 这种紧凑式
+        expect(row).toContain('最后活动 20'); // tooltip 里是绝对时刻
+    });
+
     it('每个项目行都在行上提供新建任务按钮，不依赖三点菜单或空项目占位', () => {
         const html = render();
         expect(html).toContain('aria-label="在「diy」下新建任务"');

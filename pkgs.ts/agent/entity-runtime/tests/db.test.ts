@@ -613,13 +613,23 @@ describe('未读水位（room_read）', () => {
         data: { text: '这一轮被截断了', kind: 'max-tokens' },
     });
 
-    it('未读 = 非我发的条目；我自己说的话不算', () => {
+    it('未读只数**结论**（bot 的发言）：我自己说的、工具步骤、轮级事实都不算', () => {
         const store = openStore(':memory:');
-        store.appendItem(room.id, chat('h1', 'human')); // 我发的
-        store.appendItem(room.id, chat('b1', 'bot'));
-        store.appendItem(room.id, notice('n1'));
-        // 没读过 ⇒ 从 0 起算：bot 的 1 条 + notice 的 1 条 = 2
-        expect(store.unreadByRoom()).toEqual({ [room.id]: 2 });
+        store.appendItem(room.id, chat('h1', 'human')); // 我发的 → 不算
+        store.appendItem(room.id, chat('b1', 'bot')); // 结论 → 算
+        store.appendItem(room.id, notice('n1')); // 轮级事实 → 不算（是“过程”）
+        store.appendItem(room.id, {
+            id: 't1',
+            seq: 0,
+            turn: 1,
+            turnId: 't1',
+            at: Date.now(),
+            status: 'done',
+            author: { id: 'b1', name: 'b', color: '#fff', role: 'bot' },
+            type: 'tool',
+            data: { name: 'bash' },
+        }); // 工具步骤 → 不算（一个 turn 会几十条，按它数会炸到几千）
+        expect(store.unreadByRoom()).toEqual({ [room.id]: 1 });
     });
 
     it('markRead 不传 seq = 推到最后一条，清零', () => {

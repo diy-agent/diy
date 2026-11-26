@@ -375,10 +375,13 @@ export interface Store {
     /** 这个房间最后一条 item 的 seq（没有 = undefined） */
     maxSeqOf(roomId: string): number | undefined;
     /**
-     * 每个房间的**未读条数**：`seq > 已读水位` 且「不是我发的」。
+     * 每个房间的**未读结论数**：`seq > 已读水位` 且 `type = 'chat'` 且「不是我发的」。
      *
-     * 算进来的：bot 的发言、轮级事实（notice / error，没有 author）、system。
-     * 不算的：我自己发的话（`author.role === 'human'`）—— 那是我刚打的，不必提醒我。
+     * 只数**发言**（结论），不数事件 —— 用户 2026-11-26 的原话：“按 room 的结论数统计，
+     * 而不是事件数，不然几千的很多”。一个 turn 里几十条 tool 调用、几条 notice 都算进去，
+     * 侧栏角标就不再是“还有几条没看”，而是“这个房间历史上跑过多少步”。
+     *
+     * 不算的还有我自己发的话（`author.role === 'human'`）—— 那是我刚打的，不必提醒我。
      * 没读过的房间从 0 起算（第一次打开前全是未读）。0 不占键。
      */
     unreadByRoom(): Record<string, number>;
@@ -1777,8 +1780,8 @@ export function openStore(file: string): Store {
         },
         unreadByRoom(): Record<string, number> {
             // 一条 GROUP BY 算完（侧栏一次就够，别逐房间问）。
-            // 「不是我发的」在 SQL 里判：`author.role` 要么 human（排除）、要么 bot/system，
-            // 要么整条没有 author（notice / error 是**轮级事实**，它们正是“有结果了”的信号，算未读）。
+            // **只数 `chat`**：tool / notice / error 都是“过程”，按它们计数会炸成几千
+            // （用户 2026-11-26 报的）；`author.role <> 'human'` 排掉我自己刚打的。
             // 量级：2.7 万条 items 实测几十 ms，且只有 rooms.list（30s 一次）会调它。
             const rows = db
                 .prepare(
@@ -1786,6 +1789,7 @@ export function openStore(file: string): Store {
                        FROM entity_items i
                        LEFT JOIN room_read r ON r.entity_id = i.entity_id
                       WHERE i.seq > COALESCE(r.last_read_seq, 0)
+                        AND json_extract(i.item, '$.type') = 'chat'
                         AND COALESCE(json_extract(i.item, '$.author.role'), '') <> 'human'
                       GROUP BY i.entity_id`,
                 )

@@ -152,6 +152,8 @@ interface ShellState {
      * 不是“卡住了” —— 不进标题栏那颗红点，只在侧栏行上画一颗蓝点。
      */
     unread: Record<string, number>;
+    /** 容器 id → 上一轮出错的成员数（侧栏任务图标变红用；在跑的不算） */
+    broken: Record<string, number>;
     /** 在跑的后台作业数（实例级账本；标题栏那颗「作业 N」用它，不进房间表） */
     activeJobs: number;
     error?: string;
@@ -174,6 +176,7 @@ let state: ShellState = {
     running: {},
     queued: {},
     unread: {},
+    broken: {},
     activeJobs: 0,
 };
 const listeners = new Set<() => void>();
@@ -375,6 +378,15 @@ export function useUnreadOf(roomId: string): number {
         subscribeShell,
         () => state.unread[roomId] ?? 0,
         () => state.unread[roomId] ?? 0,
+    );
+}
+
+/** 只订阅一个房间的「上一轮有几个成员出错」（侧栏图标颜色） */
+export function useBrokenOf(roomId: string): number {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.broken[roomId] ?? 0,
+        () => state.broken[roomId] ?? 0,
     );
 }
 
@@ -767,6 +779,11 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     for (const room of rooms) {
         if (typeof room.unread === 'number' && room.unread > 0) unread[room.id] = room.unread;
     }
+    // 上一轮出错的成员数：侧栏图标变红（与三级表格同源，不自己再算）
+    const broken: Record<string, number> = {};
+    for (const room of rooms) {
+        if (typeof room.broken === 'number' && room.broken > 0) broken[room.id] = room.broken;
+    }
     // 当前房间的题干以流为准（服务端那份可能落后几十秒）
     const liveTitles = liveRoomId === '' ? undefined : state.pendingAskTitles[liveRoomId];
     if (liveRoomId !== '' && liveTitles !== undefined) pendingAskTitles[liveRoomId] = [...liveTitles];
@@ -785,6 +802,7 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         running,
         queued,
         unread,
+        broken,
         bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])),
         loaded: true,
         // 地址没变就沿用旧引用：`useAddress()` 的快照就是它，同值换新对象等于给整张侧栏
