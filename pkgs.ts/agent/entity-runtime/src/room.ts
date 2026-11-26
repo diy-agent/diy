@@ -503,9 +503,21 @@ export class RoomActor {
      * 「什么都没发生」，其实它排着队；反过来「红 N」里也混不进它们。
      */
     queuedByBot(): Map<string, number> {
+        // 「排队」= 还没轮到它。**正在跑的那个成员手上握着一条投递**（`queued` 或 `delivering`
+        // 都实测见过），那条是它此刻这一轮，不是排队 —— 不排除它，界面就会出现
+        // 「在跑却写排队中」（用户 2026-11-26 报的就是这个）。
+        // 判据只看「在不在跑」，不看投递状态：状态机里 `delivering` 只在部分路径打，
+        // 靠它区分会把在跑的那条当成排队。
         const counts = new Map<string, number>();
         for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
             counts.set(delivery.botId, (counts.get(delivery.botId) ?? 0) + 1);
+        }
+        // 在跑的成员减一（它手上那条）：剩多少条才是真排着的
+        for (const botId of this.runningBots()) {
+            const n = counts.get(botId);
+            if (n === undefined) continue;
+            if (n <= 1) counts.delete(botId);
+            else counts.set(botId, n - 1);
         }
         return counts;
     }

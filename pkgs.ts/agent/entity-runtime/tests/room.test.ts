@@ -149,6 +149,7 @@ describe('RoomActor', () => {
         store.appendItem('room:1', item('u-2', 2));
         store.appendItem('room:1', item('u-3', 3));
         store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'queued' });
+        // BOT_A 不在跑 —— 这条 delivering 是**重启残留**（待续跑），要算排队
         store.setDelivery({ roomId: 'room:1', messageId: 'u-2', botId: BOT_A.id, state: 'delivering' });
         store.setDelivery({ roomId: 'room:1', messageId: 'u-3', botId: BOT_B.id, state: 'queued' });
         // 已送达的不算排队
@@ -161,6 +162,18 @@ describe('RoomActor', () => {
         // 跑完一条就少一条（UI 的灰旋转跟着灭）
         store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'delivered' });
         expect(Object.fromEntries(h.room.queuedByBot())).toEqual({ [BOT_A.id]: 1, [BOT_B.id]: 1 });
+    });
+
+    it('正在跑的那条 delivering 不算排队（“在跑”不该被写成“排队中”）', async () => {
+        // 用户 2026-11-26 报的表里一行：状态写「排队中」、结局写「中断（上一轮没跑完）」。
+        // 原因：该 bot 正在跑（投递 = delivering），而 `queuedByBot` 把 delivering 也算排队。
+        const h = makeRoom({ hang: true });
+        void h.room.say({ text: '跑着', author: HUMAN });
+        await waitFor(() => h.room.runningBots().length > 0);
+        const runner = h.room.runningBots()[0];
+        expect(runner).toBeDefined();
+        expect(h.room.queuedByBot().get(runner!) ?? 0).toBe(0);
+        h.room.cancel();
     });
 
     it('崩溃恢复：未送达的投递重新投一遍', async () => {

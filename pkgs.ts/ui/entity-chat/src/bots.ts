@@ -79,16 +79,31 @@ export const ATTENTION_INK: Readonly<Record<AttentionKind, string>> = {
 /**
  * 一行 → 关注度。
  *
- * 优先序：出错 > 等你 > 排队 > 在跑 > 空闲。两个「能并存」的事实里取更能让人动的那一个
- * （一个正在跑、却上一轮出错的成员，行上先报「出错」）；但**计数不过滤** ——
- * `countByAttention` 会把排队单独数出来，所以「在跑 + 排着 3 条」不会消失。
+ * 优先序：出错 > 等你 > **在跑** > 排队 > 空闲。
+ *
+ * 「在跑」排在「排队」前面是 2026-11-26 修的：一个正在跑的成员手上就是这一轮，
+ * 它后面还可能排着几条 —— 把这种行归成「排队中」（原来的顺序）会让人以为它没在干活，
+ * 用户看到的就是「排队中 + 上轮中断」那种读不通的组合。
+ * 排队数并没有丢：`attentionLabelOf` 会在在跑的行上补一句「在跑 · 排 3」。
  */
 export function attentionOf(row: BotRow): AttentionKind {
     if (row.state === 'needs-attention') return 'broken';
     if (row.state === 'asking') return 'blocked';
-    if ((row.queued ?? 0) > 0) return 'queued';
     if (row.state === 'running') return 'live';
+    if ((row.queued ?? 0) > 0) return 'queued';
     return 'idle';
+}
+
+/**
+ * 行上那个「状态」字样：在跑且排着队时两个都说（`在跑 · 排 3`）。
+ *
+ * 分类（`attentionOf`）必须互斥才能计数，但**一行可以同时是在跑和排着** ——
+ * 所以展示层不能直接用分类名，否则总有一个事实被吞掉。
+ */
+export function attentionLabelOf(row: BotRow): string {
+    const queued = row.queued ?? 0;
+    if (row.state === 'running' && queued > 0) return `在跑 · 排 ${queued}`;
+    return ATTENTION_TEXT[attentionOf(row)];
 }
 
 export interface AttentionCounts {
