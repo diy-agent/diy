@@ -8,78 +8,78 @@ import { describe, it, expect } from "vitest";
 import { DEFAULT_STEER_MODE, normalizeSteerMode, steerModeLabel, steerModeTip } from "../../src/shared/steer-mode";
 
 describe("normalizeSteerMode", () => {
-  it("历史枚举名 step/turn → 现值 next-step/next-turn", () => {
-    expect(normalizeSteerMode("step")).toBe("next-step");
-    expect(normalizeSteerMode("turn")).toBe("next-turn");
-  });
+    it("历史枚举名 step/turn → 现值 next-step/next-turn", () => {
+        expect(normalizeSteerMode("step")).toBe("next-step");
+        expect(normalizeSteerMode("turn")).toBe("next-turn");
+    });
 
-  it("现值原样返回（幂等）", () => {
-    expect(normalizeSteerMode("next-step")).toBe("next-step");
-    expect(normalizeSteerMode("next-turn")).toBe("next-turn");
-  });
+    it("现值原样返回（幂等）", () => {
+        expect(normalizeSteerMode("next-step")).toBe("next-step");
+        expect(normalizeSteerMode("next-turn")).toBe("next-turn");
+    });
 
-  it("认不出的值原样呈现（不猜、不默认成某一侧）", () => {
-    // 猜错的代价是把"下一步"显示成"下一轮"——比显示一个怪名字更糟
-    expect(normalizeSteerMode("step-x")).toBe("step-x");
-    expect(normalizeSteerMode("")).toBe("");
-    expect(normalizeSteerMode("Step")).toBe("Step");
-  });
+    it("认不出的值原样呈现（不猜、不默认成某一侧）", () => {
+        // 猜错的代价是把"下一步"显示成"下一轮"——比显示一个怪名字更糟
+        expect(normalizeSteerMode("step-x")).toBe("step-x");
+        expect(normalizeSteerMode("")).toBe("");
+        expect(normalizeSteerMode("Step")).toBe("Step");
+    });
 });
 
 describe("steerModeLabel", () => {
-  it("说出投递时机本身，而不是内部枚举名", () => {
-    expect(steerModeLabel("next-step")).toBe("下一步");
-    expect(steerModeLabel("next-turn")).toBe("下一轮");
-  });
+    it("说出投递时机本身，而不是内部枚举名", () => {
+        expect(steerModeLabel("next-step")).toBe("下一步");
+        expect(steerModeLabel("next-turn")).toBe("下一轮");
+    });
 
-  it("历史值同样归一到人话（改名前的日志也要读得懂）", () => {
-    expect(steerModeLabel("step")).toBe("下一步");
-    expect(steerModeLabel("turn")).toBe("下一轮");
-  });
+    it("历史值同样归一到人话（改名前的日志也要读得懂）", () => {
+        expect(steerModeLabel("step")).toBe("下一步");
+        expect(steerModeLabel("turn")).toBe("下一轮");
+    });
 
-  it("认不出的值原样显示（难看但不说谎）", () => {
-    expect(steerModeLabel("weird")).toBe("weird");
-  });
+    it("认不出的值原样显示（难看但不说谎）", () => {
+        expect(steerModeLabel("weird")).toBe("weird");
+    });
 });
 
 describe("steerModeTip", () => {
-  it("next-step 的说明点出降级（本轮已收尾 → 成为下一轮开场）", () => {
-    const tip = steerModeTip("next-step");
-    expect(tip).toContain("下一步");
-    expect(tip).toContain("本轮已收尾");
-  });
+    it("next-step 的说明点出降级（本轮已收尾 → 成为下一轮开场）", () => {
+        const tip = steerModeTip("next-step");
+        expect(tip).toContain("下一步");
+        expect(tip).toContain("本轮已收尾");
+    });
 
-  it("next-turn 的说明是「本轮跑完接着开新一轮」", () => {
-    expect(steerModeTip("next-turn")).toContain("新一轮");
-  });
+    it("next-turn 的说明是「本轮跑完接着开新一轮」", () => {
+        expect(steerModeTip("next-turn")).toContain("新一轮");
+    });
 
-  it("历史值与现值给同一份说明（不会因日志新旧而说法不同）", () => {
-    expect(steerModeTip("step")).toBe(steerModeTip("next-step"));
-    expect(steerModeTip("turn")).toBe(steerModeTip("next-turn"));
-  });
+    it("历史值与现值给同一份说明（不会因日志新旧而说法不同）", () => {
+        expect(steerModeTip("step")).toBe(steerModeTip("next-step"));
+        expect(steerModeTip("turn")).toBe(steerModeTip("next-turn"));
+    });
 
-  it("认不出的值不给说明（不编造不存在的时机）", () => {
-    expect(steerModeTip("weird")).toBe("");
-  });
+    it("认不出的值不给说明（不编造不存在的时机）", () => {
+        expect(steerModeTip("weird")).toBe("");
+    });
 });
 
 // ##360：缺省时机本身是契约（用户经验 95% 的插话是"立刻补一句"，故缺省从 next-turn 改成 next-step）。
 // 断言必须钉在常量上：UI / main 的**两个入口**都 import 它，改错这里等于把两处一起改错。
 describe("DEFAULT_STEER_MODE（缺省投递时机）", () => {
-  it("缺省是 next-step（下一步）—— 不是 next-turn", () => {
-    expect(DEFAULT_STEER_MODE).toBe("next-step");
-  });
+    it("缺省是 next-step（下一步）—— 不是 next-turn", () => {
+        expect(DEFAULT_STEER_MODE).toBe("next-step");
+    });
 
-  it("仍在枚举内（不是手写的野值）", () => {
-    expect(["next-step", "next-turn"]).toContain(DEFAULT_STEER_MODE);
-  });
+    it("仍在枚举内（不是手写的野值）", () => {
+        expect(["next-step", "next-turn"]).toContain(DEFAULT_STEER_MODE);
+    });
 
-  it("缺省值直接可读 →「下一步」（横条上的缺省显示）", () => {
-    expect(steerModeLabel(DEFAULT_STEER_MODE)).toBe("下一步");
-  });
+    it("缺省值直接可读 →「下一步」（横条上的缺省显示）", () => {
+        expect(steerModeLabel(DEFAULT_STEER_MODE)).toBe("下一步");
+    });
 
-  it("next-turn 仍是可选时机（切回下一轮照常工作）", () => {
-    expect(steerModeLabel("next-turn")).toBe("下一轮");
-    expect(steerModeTip("next-turn")).toContain("新一轮");
-  });
+    it("next-turn 仍是可选时机（切回下一轮照常工作）", () => {
+        expect(steerModeLabel("next-turn")).toBe("下一轮");
+        expect(steerModeTip("next-turn")).toContain("新一轮");
+    });
 });

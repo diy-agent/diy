@@ -11,12 +11,31 @@
  * 字段类型在 SCHEMA 声明，wire 不携带类型。
  */
 
-export type JSONVal = string | number | boolean | null | JSONVal[] | { [k: string]: JSONVal };
+export type JSONVal =
+  | string
+  | number
+  | boolean
+  | null
+  | JSONVal[]
+  | { [k: string]: JSONVal };
 
-export type BlockKind = "turn" | "step" | "text" | "think" | "tool" | "plan" | "error";
+export type BlockKind =
+  | "turn"
+  | "step"
+  | "text"
+  | "think"
+  | "tool"
+  | "plan"
+  | "error";
 
 export type Op =
-  | { op: "start"; id: string; kind: BlockKind; parent?: string | null; meta?: Record<string, JSONVal> }
+  | {
+      op: "start";
+      id: string;
+      kind: BlockKind;
+      parent?: string | null;
+      meta?: Record<string, JSONVal>;
+    }
   | { op: "delta"; id: string; fields: Record<string, JSONVal> }
   | { op: "patch"; id: string; fields: Record<string, JSONVal> }
   | { op: "stop"; id: string };
@@ -35,11 +54,25 @@ export interface Block {
 type FieldKind = "Text" | "List" | "Flag";
 
 const SCHEMA: Record<BlockKind, Record<string, FieldKind>> = {
-  turn: { usage: "Flag", status: "Flag", notice: "Flag", reasoningEffort: "Flag", durationMs: "Flag", endReason: "Flag" },
+  turn: {
+    usage: "Flag",
+    status: "Flag",
+    notice: "Flag",
+    reasoningEffort: "Flag",
+    durationMs: "Flag",
+    endReason: "Flag",
+  },
   step: { model: "Flag", usage: "Flag", status: "Flag" },
   text: { role: "Flag", content: "Text", steer: "Flag", steerId: "Flag" },
   think: { content: "Text" },
-  tool: { tool: "Flag", title: "Flag", status: "Flag", input: "Text", args: "Flag", output: "Text" },
+  tool: {
+    tool: "Flag",
+    title: "Flag",
+    status: "Flag",
+    input: "Text",
+    args: "Flag",
+    output: "Text",
+  },
   plan: { items: "List" },
   error: { source: "Flag", message: "Text" },
 };
@@ -75,7 +108,13 @@ export class BlockStore {
         if (parent !== undefined && !this.blocks.has(parent)) {
           this.issues.push({ op, reason: `parent 不存在: ${parent}` });
         }
-        const b: Block = { id: op.id, kind: op.kind, children: [], stopped: false, touched: 0 };
+        const b: Block = {
+          id: op.id,
+          kind: op.kind,
+          children: [],
+          stopped: false,
+          touched: 0,
+        };
         if (parent !== undefined && this.blocks.has(parent)) {
           b.parent = parent;
           this.blocks.get(parent)!.children.push(op.id);
@@ -114,7 +153,9 @@ export class BlockStore {
         for (const [path, val] of Object.entries(op.fields ?? {})) {
           const decl = path === "children" ? undefined : SCHEMA[b.kind]?.[path];
           if (op.op === "patch") {
-            const cur = path.includes(".") ? getPath(b, path) : (b as Record<string, unknown>)[path];
+            const cur = path.includes(".")
+              ? getPath(b, path)
+              : (b as Record<string, unknown>)[path];
             if (jsonEqual(cur, val)) continue;
             if (path.includes(".")) setPath(b, path, val);
             else (b as Record<string, unknown>)[path] = val;
@@ -122,16 +163,24 @@ export class BlockStore {
             continue;
           }
           if (decl === undefined) {
-            this.issues.push({ op, reason: `未知字段 ${b.kind}.${path}，delta 降级为 patch` });
+            this.issues.push({
+              op,
+              reason: `未知字段 ${b.kind}.${path}，delta 降级为 patch`,
+            });
             setPath(b, path, val);
             changed = true;
             continue;
           }
           if (decl === "Flag") {
-            this.issues.push({ op, reason: `Flag 字段 ${b.kind}.${path} 不接受 delta，忽略` });
+            this.issues.push({
+              op,
+              reason: `Flag 字段 ${b.kind}.${path} 不接受 delta，忽略`,
+            });
             continue;
           }
-          const cur = path.includes(".") ? getPath(b, path) : (b as Record<string, unknown>)[path];
+          const cur = path.includes(".")
+            ? getPath(b, path)
+            : (b as Record<string, unknown>)[path];
           if (decl === "Text") {
             const next = `${typeof cur === "string" ? cur : ""}${typeof val === "string" ? val : JSON.stringify(val)}`;
             if (path.includes(".")) setPath(b, path, next);
@@ -174,11 +223,20 @@ export function compactOps(store: BlockStore): Op[] {
     out.push({ op: "start", id: b.id, kind: b.kind, parent: b.parent ?? null });
     const fields: Record<string, JSONVal> = {};
     for (const [k, v] of Object.entries(b)) {
-      if (k === "id" || k === "kind" || k === "parent" || k === "children" || k === "stopped" || k === "touched") continue;
+      if (
+        k === "id" ||
+        k === "kind" ||
+        k === "parent" ||
+        k === "children" ||
+        k === "stopped" ||
+        k === "touched"
+      )
+        continue;
       if (v === undefined) continue;
       fields[k] = v as JSONVal;
     }
-    if (Object.keys(fields).length > 0) out.push({ op: "patch", id: b.id, fields });
+    if (Object.keys(fields).length > 0)
+      out.push({ op: "patch", id: b.id, fields });
     for (const c of b.children) emit(c);
     if (b.stopped) out.push({ op: "stop", id: b.id });
   };
@@ -209,7 +267,13 @@ function setPath(obj: unknown, path: string, val: unknown): void {
 
 function jsonEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  if (
+    a === null ||
+    b === null ||
+    typeof a !== "object" ||
+    typeof b !== "object"
+  )
+    return false;
   if (Array.isArray(a) !== Array.isArray(b)) return false;
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return false;
@@ -221,7 +285,13 @@ function jsonEqual(a: unknown, b: unknown): boolean {
   if (ka.length !== kb.length) return false;
   for (const k of ka) {
     if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
-    if (!jsonEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false;
+    if (
+      !jsonEqual(
+        (a as Record<string, unknown>)[k],
+        (b as Record<string, unknown>)[k],
+      )
+    )
+      return false;
   }
   return true;
 }
@@ -257,14 +327,30 @@ function sameNodes(a: readonly BlockNode[], b: readonly BlockNode[]): boolean {
   return true;
 }
 
-function buildNode(store: BlockStore, rootId: string, cache: Map<string, TreeCache>): BlockNode {
+function buildNode(
+  store: BlockStore,
+  rootId: string,
+  cache: Map<string, TreeCache>,
+): BlockNode {
   const b = store.blocks.get(rootId);
   if (!b) {
-    return { tag: "error", id: rootId, stopped: true, touched: 0, attrs: {}, children: [] };
+    return {
+      tag: "error",
+      id: rootId,
+      stopped: true,
+      touched: 0,
+      attrs: {},
+      children: [],
+    };
   }
   const children = b.children.map((c) => buildNode(store, c, cache));
   const prev = cache.get(rootId)?.node;
-  if (prev && prev.touched === b.touched && prev.stopped === b.stopped && sameNodes(prev.children, children)) {
+  if (
+    prev &&
+    prev.touched === b.touched &&
+    prev.stopped === b.stopped &&
+    sameNodes(prev.children, children)
+  ) {
     return prev;
   }
   const { id, kind, children: _kids, stopped, touched, ...attrs } = b;

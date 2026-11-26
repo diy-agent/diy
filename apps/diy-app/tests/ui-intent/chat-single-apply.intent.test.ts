@@ -136,7 +136,13 @@ function readOps(): Array<Record<string, unknown>> {
 }
 /** 盘上 assistant 正文 = 该块各 delta 的逐条拼接（权威原文） */
 function assistantTextOnDisk(): { text: string; deltas: number } {
-    const ops = readOps() as Array<{ op?: string; kind?: string; id?: string; meta?: Record<string, unknown>; fields?: Record<string, unknown> }>;
+    const ops = readOps() as Array<{
+        op?: string;
+        kind?: string;
+        id?: string;
+        meta?: Record<string, unknown>;
+        fields?: Record<string, unknown>;
+    }>;
     const ids = new Set(
         ops
             .filter((o) => o.op === "start" && o.kind === "text" && o.meta?.["role"] === "assistant")

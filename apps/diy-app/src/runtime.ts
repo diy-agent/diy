@@ -38,24 +38,24 @@ export type DiyEnv = "production" | "development" | "test";
 
 /** 从 DIY_ENV 原始值解析；无法识别的值一律按 production（宁可少开能力，不可误开） */
 export function parseDiyEnv(raw: string | undefined): DiyEnv {
-  return raw === "development" || raw === "test" ? raw : "production";
+    return raw === "development" || raw === "test" ? raw : "production";
 }
 
 export interface RuntimeConfig {
-  /** 数据根（state/task/app.port） */
-  home: string;
-  /** 当前生效的 CLI 入口绝对路径（入口脚本注入；提示词模版 100-diy 消费） */
-  cli?: string;
-  /** 首选端口（入口注入；缺省时不固定，由 app.port 文件 / defaultPort(env) 决定） */
-  port?: number;
-  /** 运行环境（能力开关的唯一判据；用法 cfg.env === "test"，不设 isDev/isProd helper） */
-  env: DiyEnv;
-  /** dev 时 GUI 加载的 Vite URL */
-  devServerUrl?: string;
-  /** 禁止 CLI 自动拉起 app（测试注入，防实例逃逸） */
-  noLaunch: boolean;
-  /** 初始种入开关；undefined = 未显式声明（由变体决定，见 core/seed.autoSeedEnabled） */
-  seed?: boolean;
+    /** 数据根（state/task/app.port） */
+    home: string;
+    /** 当前生效的 CLI 入口绝对路径（入口脚本注入；提示词模版 100-diy 消费） */
+    cli?: string;
+    /** 首选端口（入口注入；缺省时不固定，由 app.port 文件 / defaultPort(env) 决定） */
+    port?: number;
+    /** 运行环境（能力开关的唯一判据；用法 cfg.env === "test"，不设 isDev/isProd helper） */
+    env: DiyEnv;
+    /** dev 时 GUI 加载的 Vite URL */
+    devServerUrl?: string;
+    /** 禁止 CLI 自动拉起 app（测试注入，防实例逃逸） */
+    noLaunch: boolean;
+    /** 初始种入开关；undefined = 未显式声明（由变体决定，见 core/seed.autoSeedEnabled） */
+    seed?: boolean;
 }
 
 /**
@@ -63,25 +63,25 @@ export interface RuntimeConfig {
  * 与 DiyEnv 同一套「宁可少开能力」的取向：只认明确的真/假词，其余一律当未声明。
  */
 export function parseSeedFlag(raw: string | undefined): boolean | undefined {
-  const v = (raw ?? "").trim().toLowerCase();
-  if (v === "0" || v === "false" || v === "off") return false;
-  if (v === "1" || v === "true" || v === "on") return true;
-  return undefined;
+    const v = (raw ?? "").trim().toLowerCase();
+    if (v === "0" || v === "false" || v === "off") return false;
+    if (v === "1" || v === "true" || v === "on") return true;
+    return undefined;
 }
 
 export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
-  const home = env.DIY_HOME ?? join(homedir(), ".diy");
-  const portRaw = env.DIY_PORT;
-  const port = portRaw !== undefined && portRaw !== "" ? Number(portRaw) : undefined;
-  return {
-    home,
-    cli: env.DIY_CLI || undefined,
-    port: port !== undefined && Number.isFinite(port) ? port : undefined,
-    env: parseDiyEnv(env.DIY_ENV),
-    devServerUrl: env.DIY_DEV_SERVER_URL || undefined,
-    noLaunch: env.DIY_NO_LAUNCH === "1",
-    seed: parseSeedFlag(env.DIY_SEED),
-  };
+    const home = env.DIY_HOME ?? join(homedir(), ".diy");
+    const portRaw = env.DIY_PORT;
+    const port = portRaw !== undefined && portRaw !== "" ? Number(portRaw) : undefined;
+    return {
+        home,
+        cli: env.DIY_CLI || undefined,
+        port: port !== undefined && Number.isFinite(port) ? port : undefined,
+        env: parseDiyEnv(env.DIY_ENV),
+        devServerUrl: env.DIY_DEV_SERVER_URL || undefined,
+        noLaunch: env.DIY_NO_LAUNCH === "1",
+        seed: parseSeedFlag(env.DIY_SEED),
+    };
 }
 
 /**
@@ -103,15 +103,15 @@ export const PROD_DEFAULT_PORT = 18888;
  * 实例的实际端口始终由 `<DIY_HOME>/app.port` 记录，CLI 据此找到它（与端口是否固定无关）。
  */
 export function defaultPort(env: DiyEnv): number {
-  return env === "production" ? PROD_DEFAULT_PORT : 0;
+    return env === "production" ? PROD_DEFAULT_PORT : 0;
 }
 
 /** `resolvePort` 的端口来源（调用方据此拼启动日志，纯函数本身不碰文件系统/环境） */
 export type PortSource = "cli" | "recorded" | "default";
 
 export interface PortResolution {
-  port: number;
-  source: PortSource;
+    port: number;
+    source: PortSource;
 }
 
 /**
@@ -124,17 +124,16 @@ export interface PortResolution {
  * 抽成纯函数是因为「怎么选端口」是本策略的核心决策，却原本内联在 Electron 启动函数里，测不到。
  */
 export function resolvePort(opts: {
-  env: DiyEnv;
-  /** 入口注入的首选端口（DIY_PORT） */
-  cliPort?: number;
-  /** `<DIY_HOME>/app.port` 里的记录（无记录 = null/undefined） */
-  recordedPort?: number | null;
+    env: DiyEnv;
+    /** 入口注入的首选端口（DIY_PORT） */
+    cliPort?: number;
+    /** `<DIY_HOME>/app.port` 里的记录（无记录 = null/undefined） */
+    recordedPort?: number | null;
 }): PortResolution {
-  const { env, cliPort, recordedPort } = opts;
-  if (cliPort !== undefined) return { port: cliPort, source: "cli" };
-  const recorded = recordedPort ?? null;
-  const inherited =
-    env !== "production" && recorded === PROD_DEFAULT_PORT ? null : recorded;
-  if (inherited !== null) return { port: inherited, source: "recorded" };
-  return { port: defaultPort(env), source: "default" };
+    const { env, cliPort, recordedPort } = opts;
+    if (cliPort !== undefined) return { port: cliPort, source: "cli" };
+    const recorded = recordedPort ?? null;
+    const inherited = env !== "production" && recorded === PROD_DEFAULT_PORT ? null : recorded;
+    if (inherited !== null) return { port: inherited, source: "recorded" };
+    return { port: defaultPort(env), source: "default" };
 }

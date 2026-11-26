@@ -10,10 +10,10 @@
 `evidence.at: e05fa9c3:pkgs.ts/core/rpc/AGENTS.md:<行>` —— rev 钉住版本，本文件瘦身后行号仍可核）。
 本文件 2.0 KB → 1.3 KB。
 
-| 主题 | 是什么 | 条数 |
-|---|---|---|
-| `rpc.find` | 包内定位：根入口与子路径 exports / 核 `src/core` / 传输三件套 / CLI 桥 / 发布形态 | 5 |
-| `rpc.rule` | 硬约束：ESM `.js` 扩展名 / **浏览器安全边界（核安全、传输不承诺）** / 发布流程 | 3 |
+| 主题       | 是什么                                                                            | 条数 |
+| ---------- | --------------------------------------------------------------------------------- | ---- |
+| `rpc.find` | 包内定位：根入口与子路径 exports / 核 `src/core` / 传输三件套 / CLI 桥 / 发布形态 | 5    |
+| `rpc.rule` | 硬约束：ESM `.js` 扩展名 / **浏览器安全边界（核安全、传输不承诺）** / 发布流程    | 3    |
 
 **取法**：
 
@@ -21,6 +21,6 @@
 - `diy facts get 'rpc.rule#browser'` — 单条完整值
 - `diy facts brief 'rpc.*'` — 全包一次拿
 
-⚠️ **改 `src/core/**` 前至少 brief 一次 `rpc.rule`**。最容易破的是两条：
-`browser`（Node API 只准进 `transport/**` 与 `cli/**` —— `check-browser` **不覆盖传输层**，写错了它不报）
-和 `esm-ext`（相对 import 漏 `.js` 时 vite/vitest 绿、`tsc -p tsconfig.build.json` 才红）。
+⚠️ **改 `src/core/**`前至少 brief 一次`rpc.rule`**。最容易破的是两条：
+`browser`（Node API 只准进 `transport/**`与`cli/**`——`check-browser`**不覆盖传输层**，写错了它不报）
+和`esm-ext`（相对 import 漏 `.js` 时 vite/vitest 绿、`tsc -p tsconfig.build.json` 才红）。

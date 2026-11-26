@@ -9,7 +9,7 @@
 /** 工具执行审计事件（**宿主决定写去哪**：diy-app 落 agent-bash.jsonl，bot 可不传） */
 export interface ToolAuditEvent {
     /** 阶段（与宿主审计词表对齐：file-write / file-edit-start / file-edit-end） */
-    readonly phase: "file-write" | "file-edit-start" | "file-edit-end";
+    readonly phase: 'file-write' | 'file-edit-start' | 'file-edit-end';
     /** 执行时的项目目录 */
     readonly cwd: string;
     /** 目标文件（相对 cwd） */

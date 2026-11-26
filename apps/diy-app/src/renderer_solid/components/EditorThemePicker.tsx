@@ -7,7 +7,13 @@
 // 分区回答"自动 vs 暗/亮"：自动 = 跟随应用主题（app 切主题时编辑器跟着变）；
 // 一旦选了具体配色就是显式选择，**不再跟随**（VS Code 同款行为），下面一行状态会说明。
 import { For } from "solid-js";
-import { EDITOR_THEMES, currentEditorTheme, editorThemeKey, setEditorTheme, type EditorTheme } from "../lib/editor-theme";
+import {
+    EDITOR_THEMES,
+    currentEditorTheme,
+    editorThemeKey,
+    setEditorTheme,
+    type EditorTheme,
+} from "../lib/editor-theme";
 import { themeSignal } from "../lib/theme";
 
 /** 分区：自动 / 暗色 / 亮色（三块同时平铺可见，不是三级菜单） */

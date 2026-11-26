@@ -13,11 +13,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-    loadInputLimitChars,
-    saveInputLimitChars,
-    inputLimitConfigFile,
-} from "../../src/main/core/input-limit-config";
+import { loadInputLimitChars, saveInputLimitChars, inputLimitConfigFile } from "../../src/main/core/input-limit-config";
 import { DEFAULT_INPUT_LIMIT_CHARS, sanitizeInputLimitChars } from "../../src/shared/context/input-limit";
 
 describe("sanitizeInputLimitChars", () => {

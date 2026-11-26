@@ -18,11 +18,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect, beforeAll } from "vitest";
-import type {
-    LanguageModelV3StreamPart,
-    LanguageModelV3StreamResult,
-    LanguageModelV3Usage,
-} from "@ai-sdk/provider";
+import type { LanguageModelV3StreamPart, LanguageModelV3StreamResult, LanguageModelV3Usage } from "@ai-sdk/provider";
 import { MockLanguageModelV3 } from "ai/test";
 import type { LanguageModel } from "ai";
 import { join } from "node:path";
@@ -80,7 +76,11 @@ function stubModel(replies: LanguageModelV3StreamResult[]): MockLanguageModelV3 
 }
 
 /** 跑一轮，返回 { ops, elapsedMs } */
-async function runTurn(uri: string, message: string, model: MockLanguageModelV3): Promise<{ ops: Op[]; elapsedMs: number }> {
+async function runTurn(
+    uri: string,
+    message: string,
+    model: MockLanguageModelV3,
+): Promise<{ ops: Op[]; elapsedMs: number }> {
     const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
     const t0 = Date.now();
     const ops: Op[] = [];
@@ -99,7 +99,10 @@ describe("冷缓存等待（##486）—— 账上能证明，且正常路径零�
         const c = await runTurn(uri, "三", model);
 
         const rows = readStepUsages(uri);
-        expect(rows.map((r) => r.step), "每轮一步 ⇒ 三行账").toEqual([1, 1, 1]);
+        expect(
+            rows.map((r) => r.step),
+            "每轮一步 ⇒ 三行账",
+        ).toEqual([1, 1, 1]);
         const [ra, rb, rc] = rows as [(typeof rows)[0], (typeof rows)[0], (typeof rows)[0]];
 
         // 判据 1/3：轮 A 是首次请求（没有上一步）⇒ 不等、也没有 waitedMs 这个键
@@ -157,7 +160,10 @@ describe("冷缓存等待（##486）—— 账上能证明，且正常路径零�
         await runTurn(uri, "一", model);
         await runTurn(uri, "二", model);
         const rows = readStepUsages(uri);
-        expect(rows.every((r) => r.waitedMs === undefined), "小请求不启用等待").toBe(true);
+        expect(
+            rows.every((r) => r.waitedMs === undefined),
+            "小请求不启用等待",
+        ).toBe(true);
     });
 
     it("DIY_NO_WARM_WAIT=1 ⇒ 全冷也不等", async () => {
@@ -171,6 +177,9 @@ describe("冷缓存等待（##486）—— 账上能证明，且正常路径零�
             delete process.env["DIY_NO_WARM_WAIT"];
         }
         const rows = readStepUsages(uri);
-        expect(rows.every((r) => r.waitedMs === undefined), "开关关掉后一律不等").toBe(true);
+        expect(
+            rows.every((r) => r.waitedMs === undefined),
+            "开关关掉后一律不等",
+        ).toBe(true);
     });
 });

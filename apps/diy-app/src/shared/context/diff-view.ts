@@ -54,8 +54,7 @@ export function numberDiff(diff: readonly DiffLine[]): NumberedDiffLine[] {
     });
 }
 
-export const gapId = (fromIdx: number, truncated = false): string =>
-    `gap:${fromIdx}${truncated ? ":trunc" : ""}`;
+export const gapId = (fromIdx: number, truncated = false): string => `gap:${fromIdx}${truncated ? ":trunc" : ""}`;
 
 /**
  * 折成 hunk：改动行各留 ±`context` 行上下文，其余折成 `gap`。
@@ -64,10 +63,7 @@ export const gapId = (fromIdx: number, truncated = false): string =>
  * `maxLines` 兜住渲染量：系统上下文几千行时，一张展开的 diff 会把页面拖死 —
  * 超了就截断并留一个 `truncated` 的 gap（读侧一眼知道"后面还有，别看漏"）。
  */
-export function foldDiff(
-    diff: readonly DiffLine[],
-    opts: { context?: number; maxLines?: number } = {},
-): DiffRow[] {
+export function foldDiff(diff: readonly DiffLine[], opts: { context?: number; maxLines?: number } = {}): DiffRow[] {
     const ctx = Math.max(0, opts.context ?? 3);
     const numbered = numberDiff(diff);
     const changed: number[] = [];

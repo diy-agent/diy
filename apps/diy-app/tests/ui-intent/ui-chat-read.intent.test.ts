@@ -119,9 +119,10 @@ afterAll(async () => {
 
 /** 一轮的 ops：user 一问 + 助理一段 8 行正文（撑高度；turnId 内嵌毫秒 = 时间真源） */
 function turnOps(turnId: string, i: number): string[] {
-    const body = [`第 ${i} 轮正文开头。`, ...Array.from({ length: 8 }, (_, k) => `第 ${i} 轮第 ${k + 1} 行 padding padding padding`)].join(
-        "\n",
-    );
+    const body = [
+        `第 ${i} 轮正文开头。`,
+        ...Array.from({ length: 8 }, (_, k) => `第 ${i} 轮第 ${k + 1} 行 padding padding padding`),
+    ].join("\n");
     const o = (v: unknown) => JSON.stringify(v);
     return [
         o({ op: "start", id: turnId, kind: "turn", meta: { model: "mimo-v2.6-flash" } }),
@@ -165,7 +166,14 @@ async function openTask(u: string, marker: string): Promise<void> {
 
 /** 滚动容器与「视口顶部那一块」的几何探针（不含块身份，供 ③ 每次现取） */
 const chatProbe = () =>
-    ui.query<{ cTop: number; cBottom: number; scrollTop: number; scrollHeight: number; clientHeight: number; turns: number }>(
+    ui.query<{
+        cTop: number;
+        cBottom: number;
+        scrollTop: number;
+        scrollHeight: number;
+        clientHeight: number;
+        turns: number;
+    }>(
         `(() => { const el = document.querySelector('.diy-chat'); const r = el.getBoundingClientRect();` +
             ` return { cTop: Math.round(r.top), cBottom: Math.round(r.bottom), scrollTop: Math.round(el.scrollTop),` +
             ` scrollHeight: Math.round(el.scrollHeight), clientHeight: Math.round(el.clientHeight),` +
@@ -281,7 +289,9 @@ describe("##331 聊天页阅读体验", () => {
         await new Promise((r) => setTimeout(r, 900));
         const after = await chatProbe();
         const top = await topTurnProbe();
-        console.error(`[##331 ③R1] 锚点=${JSON.stringify(anchor)} 用户跳顶后=${JSON.stringify(after)} 顶部块=${JSON.stringify(top)}`);
+        console.error(
+            `[##331 ③R1] 锚点=${JSON.stringify(anchor)} 用户跳顶后=${JSON.stringify(after)} 顶部块=${JSON.stringify(top)}`,
+        );
         expect(after.scrollTop).toBeLessThanOrEqual(2); // 用户到顶了（不是被拽回 75% 处）
         expect(top!.id).not.toBe(anchor!.id); // 也没停在锚点那一轮
     }, 120_000);

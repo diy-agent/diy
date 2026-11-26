@@ -73,7 +73,15 @@ export function _buildRouteTree(
     // `Object.entries('r')` → `[['0','r']]` → 同一个字符串无限递归（实测栈溢出）。
   }
 
-  const node: _RouterNode = { kind: 'router', name, path, desc, title: (desc ?? '').split('\n')[0]?.trim() ?? '', children, parent };
+  const node: _RouterNode = {
+    kind: 'router',
+    name,
+    path,
+    desc,
+    title: (desc ?? '').split('\n')[0]?.trim() ?? '',
+    children,
+    parent,
+  };
   for (const c of children) (c as { parent: _RouterNode }).parent = node;
   return node;
 }
@@ -89,10 +97,7 @@ export function _routeLeaves(root: _RouterNode): _ProcNode[] {
 }
 
 /** @internal */
-export function _routeResolve(
-  root: _RouterNode,
-  args: string[],
-): _ProcNode | _RouterNode | null {
+export function _routeResolve(root: _RouterNode, args: string[]): _ProcNode | _RouterNode | null {
   if (args.length === 0) return root;
   const key = args[0]!;
   const child = root.children.find((c) => c.name === key);
@@ -103,10 +108,7 @@ export function _routeResolve(
 }
 
 /** @internal */
-export function _routeWalk(
-  root: _RouterNode,
-  visitor: (node: _RouteNode) => void,
-): void {
+export function _routeWalk(root: _RouterNode, visitor: (node: _RouteNode) => void): void {
   for (const c of root.children) {
     visitor(c);
     if (c.kind === 'router') _routeWalk(c, visitor);
@@ -119,9 +121,10 @@ export function _flattenRouter(r: _Router | _AnyProcedureMeta): Record<string, _
   // group meta 当根时（2026-11-06 起允许）：它自己的键混着元字段（desc / title / ...）
   // 和摊平的子节点，直接从它遍历会把 `children` 也当成一层命名空间（路径变成 `children.math.add`）。
   // 所以取它的 `children` —— 那才是纯 router。
-  const root = _isProcedure(r) && (r as _AnyProcedureMeta)._streamMode === 'group'
-    ? ((r as unknown as { children: _Router }).children)
-    : (r as _Router);
+  const root =
+    _isProcedure(r) && (r as _AnyProcedureMeta)._streamMode === 'group'
+      ? (r as unknown as { children: _Router }).children
+      : (r as _Router);
   const result: Record<string, _AnyProcedureMeta> = {};
   for (const { path, def } of _routeLeaves(_buildRouteTree(root))) {
     result[path] = def;

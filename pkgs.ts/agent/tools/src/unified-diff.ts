@@ -9,7 +9,7 @@
 //
 // 纯函数、零 fs、零依赖。
 
-export type DiffOpKind = "eq" | "del" | "add";
+export type DiffOpKind = 'eq' | 'del' | 'add';
 
 export interface DiffOp {
     kind: DiffOpKind;
@@ -22,26 +22,26 @@ export const DEFAULT_PATCH_CONTEXT = 3;
 /** 中间区段 LCS 的规模上限（cells）——超过就退化成「整段删 + 整段加」，保证不卡住主进程。 */
 const LCS_MAX_CELLS = 4_000_000;
 
-const BOM = "\uFEFF";
+const BOM = '\uFEFF';
 
 /** 按 `\n` 切行（不保留行尾符；文件末尾无换行的最后一行也保留；BOM 不算内容） */
 export function splitDiffLines(s: string): string[] {
     const body = s.startsWith(BOM) ? s.slice(1) : s;
-    if (body === "") return [];
-    const lines = body.split("\n");
-    if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+    if (body === '') return [];
+    const lines = body.split('\n');
+    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
     return lines;
 }
 
 /** 单行展示：去掉行尾 `\r`（CRLF 文件不让 diff 里挂一根看不见的控制符） */
 export function displayDiffLine(line: string): string {
-    return line.endsWith("\r") ? line.slice(0, -1) : line;
+    return line.endsWith('\r') ? line.slice(0, -1) : line;
 }
 
 /** 规模超限返回 null（调用方退化成「整段删 + 整段加」）—— 用返回值而不是异常：这不是错误场景。 */
 function lcsOps(a: string[], b: string[]): DiffOp[] | null {
-    if (a.length === 0) return b.map((text) => ({ kind: "add" as const, text }));
-    if (b.length === 0) return a.map((text) => ({ kind: "del" as const, text }));
+    if (a.length === 0) return b.map((text) => ({ kind: 'add' as const, text }));
+    if (b.length === 0) return a.map((text) => ({ kind: 'del' as const, text }));
     if (a.length * b.length > LCS_MAX_CELLS) return null;
     const n = a.length;
     const m = b.length;
@@ -58,19 +58,19 @@ function lcsOps(a: string[], b: string[]): DiffOp[] | null {
     let j = 0;
     while (i < n && j < m) {
         if (a[i] === b[j]) {
-            out.push({ kind: "eq", text: a[i] });
+            out.push({ kind: 'eq', text: a[i] });
             i++;
             j++;
         } else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) {
-            out.push({ kind: "del", text: a[i] });
+            out.push({ kind: 'del', text: a[i] });
             i++;
         } else {
-            out.push({ kind: "add", text: b[j] });
+            out.push({ kind: 'add', text: b[j] });
             j++;
         }
     }
-    while (i < n) out.push({ kind: "del", text: a[i++] });
-    while (j < m) out.push({ kind: "add", text: b[j++] });
+    while (i < n) out.push({ kind: 'del', text: a[i++] });
+    while (j < m) out.push({ kind: 'add', text: b[j++] });
     return out;
 }
 
@@ -90,11 +90,14 @@ export function diffLines(before: string[], after: string[]): DiffOp[] {
     const b = after.slice(head, after.length - tail);
     const middle =
         lcsOps(a, b) ??
-        ([...a.map((text) => ({ kind: "del" as const, text })), ...b.map((text) => ({ kind: "add" as const, text }))] as DiffOp[]);
+        ([
+            ...a.map((text) => ({ kind: 'del' as const, text })),
+            ...b.map((text) => ({ kind: 'add' as const, text })),
+        ] as DiffOp[]);
     return [
-        ...before.slice(0, head).map((text) => ({ kind: "eq" as const, text })),
+        ...before.slice(0, head).map((text) => ({ kind: 'eq' as const, text })),
         ...middle,
-        ...before.slice(before.length - tail).map((text) => ({ kind: "eq" as const, text })),
+        ...before.slice(before.length - tail).map((text) => ({ kind: 'eq' as const, text })),
     ];
 }
 
@@ -109,12 +112,12 @@ export function renderUnifiedHunks(ops: DiffOp[], context: number, fileLabel: st
     let newNo = 0;
     const rows = ops.map((op) => {
         const row = { kind: op.kind, text: op.text, oldBefore: oldNo, newBefore: newNo };
-        if (op.kind !== "add") oldNo++;
-        if (op.kind !== "del") newNo++;
+        if (op.kind !== 'add') oldNo++;
+        if (op.kind !== 'del') newNo++;
         return row;
     });
 
-    const changeIdx = rows.map((r, i) => (r.kind === "eq" ? -1 : i)).filter((i) => i >= 0);
+    const changeIdx = rows.map((r, i) => (r.kind === 'eq' ? -1 : i)).filter((i) => i >= 0);
     if (changeIdx.length === 0) return [];
     const hunks: Array<{ start: number; end: number }> = [];
     for (const idx of changeIdx) {
@@ -131,14 +134,14 @@ export function renderUnifiedHunks(ops: DiffOp[], context: number, fileLabel: st
         const from = Math.max(0, h.start - context);
         const to = Math.min(rows.length - 1, h.end + context);
         const slice = rows.slice(from, to + 1);
-        const oldCount = slice.filter((r) => r.kind !== "add").length;
-        const newCount = slice.filter((r) => r.kind !== "del").length;
+        const oldCount = slice.filter((r) => r.kind !== 'add').length;
+        const newCount = slice.filter((r) => r.kind !== 'del').length;
         // 与 git 同一约定：count = 0 时起点写「前一行」，否则写 hunk 首行行号
         const oldStart = oldCount === 0 ? slice[0].oldBefore : slice[0].oldBefore + 1;
         const newStart = newCount === 0 ? slice[0].newBefore : slice[0].newBefore + 1;
         out.push(`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`);
         for (const r of slice) {
-            out.push(`${r.kind === "eq" ? " " : r.kind === "del" ? "-" : "+"}${displayDiffLine(r.text)}`);
+            out.push(`${r.kind === 'eq' ? ' ' : r.kind === 'del' ? '-' : '+'}${displayDiffLine(r.text)}`);
         }
     }
     return out;
@@ -157,8 +160,13 @@ export interface PatchOptions {
  * @param after 变更后全文（LF）
  * @returns 无差异时返回 ""
  */
-export function generateUnifiedPatch(fileLabel: string, before: string, after: string, opts: PatchOptions = {}): string {
-    if (before === after) return "";
+export function generateUnifiedPatch(
+    fileLabel: string,
+    before: string,
+    after: string,
+    opts: PatchOptions = {},
+): string {
+    if (before === after) return '';
     const ops = diffLines(splitDiffLines(before), splitDiffLines(after));
-    return renderUnifiedHunks(ops, opts.context ?? DEFAULT_PATCH_CONTEXT, fileLabel).join("\n");
+    return renderUnifiedHunks(ops, opts.context ?? DEFAULT_PATCH_CONTEXT, fileLabel).join('\n');
 }

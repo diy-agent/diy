@@ -107,13 +107,19 @@ describe("changesOf：原子单元 diff（不下钻数组）", () => {
 describe("entryToRows：记录 → UI 行", () => {
     it("baseline 无 changes；changed 展开", () => {
         const base: CtxLogEntry = {
-            seq: 0, type: "baseline", ts: "t", model: "m", wireVersion: "w",
+            seq: 0,
+            type: "baseline",
+            ts: "t",
+            model: "m",
+            wireVersion: "w",
             ref: { turnId: "t1", stepId: "t1_s1", step: 1 },
             data: { tree: stateOf({}) },
         };
         expect(entryToRows(base)).toEqual([]);
         const changed: CtxLogEntry = {
-            ...base, seq: 1, type: "changed",
+            ...base,
+            seq: 1,
+            type: "changed",
             data: { changes: [{ type: "update", path: "chain", data: { before: "a", after: "b", truncated: true } }] },
         };
         expect(entryToRows(changed)).toEqual([{ kind: "update", path: "chain", before: "a", after: "b" }]);
@@ -130,7 +136,11 @@ describe("文件层：append-only + seq 续写 + 坏行出声跳过", () => {
             expect(hasV2CtxLog(uri)).toBe(false);
             expect(lastCtxLogSeq(uri)).toBe(-1);
             const mk = (seq: number, type: "baseline" | "changed"): CtxLogEntry => ({
-                seq, type, ts: "t", model: "m", wireVersion: "w",
+                seq,
+                type,
+                ts: "t",
+                model: "m",
+                wireVersion: "w",
                 ref: { turnId: "t1", stepId: `t1_s${seq + 1}`, step: seq + 1 },
                 data: type === "baseline" ? { tree: stateOf({}) } : { changes: [] },
             });
@@ -159,14 +169,21 @@ describe("文件层：append-only + seq 续写 + 坏行出声跳过", () => {
         try {
             const uri = "projects/1/tasks/1";
             const legacy = {
-                ts: "t", turnId: "t1", model: "m", wireVersion: "w",
+                ts: "t",
+                turnId: "t1",
+                model: "m",
+                wireVersion: "w",
                 ops: [{ kind: "update", path: "chain", preview: "…" }],
             };
             writeFileSync(ctxLogFile(uri), `${JSON.stringify(legacy)}\n`, "utf-8");
             expect(readCtxLog(uri).length).toBe(1); // 文件不空
             expect(hasV2CtxLog(uri)).toBe(false); // 但没有起点
             appendCtxLog(uri, {
-                seq: 0, type: "baseline", ts: "t", model: "m", wireVersion: "w",
+                seq: 0,
+                type: "baseline",
+                ts: "t",
+                model: "m",
+                wireVersion: "w",
                 ref: { turnId: "t2", stepId: "t2_s1", step: 1 },
                 data: { tree: stateOf({}) },
             });
@@ -181,12 +198,29 @@ describe("文件层：append-only + seq 续写 + 坏行出声跳过", () => {
 
 describe("foldCtxTree：从变更日志重放「上一次真发时的值树」（跨重启播种用）", () => {
     const base = (tree: ContextTreeState, seq: number): CtxLogEntry => ({
-        seq, type: "baseline", ts: "t", model: "m", wireVersion: "w1",
+        seq,
+        type: "baseline",
+        ts: "t",
+        model: "m",
+        wireVersion: "w1",
         ref: { turnId: `t${seq}`, stepId: `t${seq}_s1`, step: 1 },
         data: { tree },
     });
-    const changed = (seq: number, changes: CtxLogEntry extends never ? never : Array<{ type: "update" | "add" | "remove"; path: string; data: { before: string | null; after: string | null } }>): CtxLogEntry => ({
-        seq, type: "changed", ts: "t", model: "m", wireVersion: "w1",
+    const changed = (
+        seq: number,
+        changes: CtxLogEntry extends never
+            ? never
+            : Array<{
+                  type: "update" | "add" | "remove";
+                  path: string;
+                  data: { before: string | null; after: string | null };
+              }>,
+    ): CtxLogEntry => ({
+        seq,
+        type: "changed",
+        ts: "t",
+        model: "m",
+        wireVersion: "w1",
         ref: { turnId: `t${seq}`, stepId: `t${seq}_s1`, step: 1 },
         data: { changes },
     });

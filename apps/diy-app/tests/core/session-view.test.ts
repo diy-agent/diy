@@ -48,7 +48,12 @@ describe("session-view —— 假阳性：自己点停止后按钮卡死", () =>
     });
 
     it("宽限期内：停止中，且不算卡住", () => {
-        const v = sessionView({ sending: false, remoteActive: true, stopRequestedAt: NOW, now: NOW + STOP_GRACE_MS - 1 });
+        const v = sessionView({
+            sending: false,
+            remoteActive: true,
+            stopRequestedAt: NOW,
+            now: NOW + STOP_GRACE_MS - 1,
+        });
         expect(v.stopping).toBe(true);
         expect(v.stoppingStuck).toBe(false);
         expect(v.busy).toBe(false);

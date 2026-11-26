@@ -121,7 +121,11 @@ export const botsApi = RpcSchema.group({
             output: Any,
         }),
         create: RpcSchema.unary({
-            input: { name: z.string().min(1), homeRoomId: z.string().optional(), modelKey: z.string().min(1).optional() },
+            input: {
+                name: z.string().min(1),
+                homeRoomId: z.string().optional(),
+                modelKey: z.string().min(1).optional(),
+            },
             output: Any,
         }),
         /** 改 bot（名字 / 人格 / 模型 / 归属） */
@@ -294,7 +298,10 @@ export const attachmentApi = RpcSchema.group({
                  * base64 内容。**上限 12 MB 的 base64**（≈ 9 MB 原图）：
                  * 再大就该走 `adopt`（引用路径）而不是塞进一次 RPC。
                  */
-                base64: z.string().min(1).max(12 * 1024 * 1024),
+                base64: z
+                    .string()
+                    .min(1)
+                    .max(12 * 1024 * 1024),
                 source: z.enum(['paste', 'drop', 'pick', 'tool']).optional(),
             },
             output: Any,

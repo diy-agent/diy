@@ -41,10 +41,7 @@ export function pathPattern(path: string): RegExp {
  * 一个结构树 path 在行号映射里的**所有**匹配区间（按行号升序、已合并连片）。
  * 无匹配返回空数组（调用方据此决定"要不要显示导航条"）。
  */
-export function matchRanges(
-    lines: Record<string, LineRange>,
-    path: string,
-): LineRange[] {
+export function matchRanges(lines: Record<string, LineRange>, path: string): LineRange[] {
     const exact = lines[path];
     if (exact) return [exact];
     // 两条模式：整条 key / 它的后代（前缀）—— 都按"元素名段通配"展开，

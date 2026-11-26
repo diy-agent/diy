@@ -23,30 +23,30 @@ export const NAV_SEARCH_LIMIT = 12;
  * 正文恒最后：它是"内容里碰巧提到"，一条正文长的任务几乎必然命中，排前面会淹掉真目标。
  */
 export const NAV_HIT_RANK = {
-  numExact: 0,
-  numPrefix: 1,
-  titlePrefix: 2,
-  titleSub: 3,
-  field: 4,
-  body: 5,
+    numExact: 0,
+    numPrefix: 1,
+    titlePrefix: 2,
+    titleSub: 3,
+    field: 4,
+    body: 5,
 } as const;
 
 export interface NavHit<T extends TaskListNode = TaskListNode> {
-  node: T;
-  /**
-   * 结果项要打开的任务 URI —— **必填**（不是 node.uri 的裸拷贝）。
-   *
-   * 为什么单独收窄成 string：`TaskListNode.uri` 是可选的（结构类型，项目节点就没有），
-   * 但**没有 uri 的任务压根打不开会话** —— 它不该出现在结果里。搜索时直接把它滤掉、
-   * 并把 uri 提升成必填，调用方（NavSearch）就不必写 `hit.node.uri!`（那断言在真缺
-   * uri 时会静默把 undefined 送进 openTaskRun → `keyOf(pageId, undefined)`）。
-   * 类型诚实：**能出现在结果里的，一定有 uri**。
-   */
-  uri: string;
-  /** 命中强度（见 NAV_HIT_RANK） */
-  rank: number;
-  /** 正文命中片段（仅 rank = body 时有值） */
-  snippet: SearchSnippet | null;
+    node: T;
+    /**
+     * 结果项要打开的任务 URI —— **必填**（不是 node.uri 的裸拷贝）。
+     *
+     * 为什么单独收窄成 string：`TaskListNode.uri` 是可选的（结构类型，项目节点就没有），
+     * 但**没有 uri 的任务压根打不开会话** —— 它不该出现在结果里。搜索时直接把它滤掉、
+     * 并把 uri 提升成必填，调用方（NavSearch）就不必写 `hit.node.uri!`（那断言在真缺
+     * uri 时会静默把 undefined 送进 openTaskRun → `keyOf(pageId, undefined)`）。
+     * 类型诚实：**能出现在结果里的，一定有 uri**。
+     */
+    uri: string;
+    /** 命中强度（见 NAV_HIT_RANK） */
+    rank: number;
+    /** 正文命中片段（仅 rank = body 时有值） */
+    snippet: SearchSnippet | null;
 }
 
 /**
@@ -56,15 +56,15 @@ export interface NavHit<T extends TaskListNode = TaskListNode> {
  * 故**不对"根恒为项目"作假设**（review3 R3-4）—— 顶层若直接挂 task 也照样能搜到。
  */
 export function flattenTasks<T extends TaskListNode>(nodes: T[]): T[] {
-  const out: T[] = [];
-  const walk = (ns: T[]) => {
-    for (const n of ns) {
-      if (n.kind === "task") out.push(n);
-      walk((n.children ?? []) as T[]);
-    }
-  };
-  walk(nodes);
-  return out;
+    const out: T[] = [];
+    const walk = (ns: T[]) => {
+        for (const n of ns) {
+            if (n.kind === "task") out.push(n);
+            walk((n.children ?? []) as T[]);
+        }
+    };
+    walk(nodes);
+    return out;
 }
 
 /**
@@ -74,23 +74,21 @@ export function flattenTasks<T extends TaskListNode>(nodes: T[]): T[] {
  * 命中（荒谬）；而搜 "1" 时 #1 / #12 / #199 排前面正是用户要的。
  */
 function rankOf(node: TaskListNode, q: string): { rank: number; snippet: SearchSnippet | null } | null {
-  const num = (node.num ?? "").toLowerCase();
-  const title = (node.title ?? "").toLowerCase();
-  const digitQ = q.startsWith("#") ? q.slice(1) : q;
-  const numish = digitQ.length > 0 && /^\d+$/.test(digitQ);
+    const num = (node.num ?? "").toLowerCase();
+    const title = (node.title ?? "").toLowerCase();
+    const digitQ = q.startsWith("#") ? q.slice(1) : q;
+    const numish = digitQ.length > 0 && /^\d+$/.test(digitQ);
 
-  if (numish && num === digitQ) return { rank: NAV_HIT_RANK.numExact, snippet: null };
-  if (numish && num.startsWith(digitQ)) return { rank: NAV_HIT_RANK.numPrefix, snippet: null };
-  if (title.startsWith(q)) return { rank: NAV_HIT_RANK.titlePrefix, snippet: null };
-  if (title.includes(q)) return { rank: NAV_HIT_RANK.titleSub, snippet: null };
+    if (numish && num === digitQ) return { rank: NAV_HIT_RANK.numExact, snippet: null };
+    if (numish && num.startsWith(digitQ)) return { rank: NAV_HIT_RANK.numPrefix, snippet: null };
+    if (title.startsWith(q)) return { rank: NAV_HIT_RANK.titlePrefix, snippet: null };
+    if (title.includes(q)) return { rank: NAV_HIT_RANK.titleSub, snippet: null };
 
-  // 其余字段 / 正文：直接问 matchTask（口径与任务管理页搜索同源）——
-  // 它返回的 snippet 是否为 null 正是「字段命中」与「正文命中」的分界。
-  const m = matchTask(node, q);
-  if (!m) return null;
-  return m.snippet
-    ? { rank: NAV_HIT_RANK.body, snippet: m.snippet }
-    : { rank: NAV_HIT_RANK.field, snippet: null };
+    // 其余字段 / 正文：直接问 matchTask（口径与任务管理页搜索同源）——
+    // 它返回的 snippet 是否为 null 正是「字段命中」与「正文命中」的分界。
+    const m = matchTask(node, q);
+    if (!m) return null;
+    return m.snippet ? { rank: NAV_HIT_RANK.body, snippet: m.snippet } : { rank: NAV_HIT_RANK.field, snippet: null };
 }
 
 /**
@@ -102,7 +100,7 @@ function rankOf(node: TaskListNode, q: string): { rank: number; snippet: SearchS
  * 那种包装无人消费（review2 R2-3，已删以减面）。
  */
 export function searchTaskHits<T extends TaskListNode>(nodes: T[], query: string): NavHit<T>[] {
-  return searchTasksOf(flattenTasks(nodes), query);
+    return searchTasksOf(flattenTasks(nodes), query);
 }
 
 /**
@@ -125,28 +123,28 @@ export function searchTaskHits<T extends TaskListNode>(nodes: T[], query: string
  * 真源里 num 恒为数字串，但这里是 shared/ 的通用纯函数，不靠调用方纪律成立。
  */
 function numOrLast(raw: string | undefined): number {
-  const s = (raw ?? "").trim();
-  if (!s) return Number.MAX_SAFE_INTEGER;
-  const v = Number(s);
-  return Number.isFinite(v) ? v : Number.MAX_SAFE_INTEGER;
+    const s = (raw ?? "").trim();
+    if (!s) return Number.MAX_SAFE_INTEGER;
+    const v = Number(s);
+    return Number.isFinite(v) ? v : Number.MAX_SAFE_INTEGER;
 }
 
 export function searchTasksOf<T extends TaskListNode>(flat: T[], query: string): NavHit<T>[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
-  const hits: NavHit<T>[] = [];
-  for (const node of flat) {
-    const uri = node.uri;
-    if (!uri) continue; // 无 uri = 打不开，不是候选
-    const r = rankOf(node, q);
-    if (r) hits.push({ node, uri, rank: r.rank, snippet: r.snippet });
-  }
-  hits.sort((a, b) => {
-    if (a.rank !== b.rank) return a.rank - b.rank;
-    const au = a.node.updated ?? "";
-    const bu = b.node.updated ?? "";
-    if (au !== bu) return bu.localeCompare(au); // 新在前；空串自然落最后
-    return numOrLast(a.node.num) - numOrLast(b.node.num);
-  });
-  return hits;
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const hits: NavHit<T>[] = [];
+    for (const node of flat) {
+        const uri = node.uri;
+        if (!uri) continue; // 无 uri = 打不开，不是候选
+        const r = rankOf(node, q);
+        if (r) hits.push({ node, uri, rank: r.rank, snippet: r.snippet });
+    }
+    hits.sort((a, b) => {
+        if (a.rank !== b.rank) return a.rank - b.rank;
+        const au = a.node.updated ?? "";
+        const bu = b.node.updated ?? "";
+        if (au !== bu) return bu.localeCompare(au); // 新在前；空串自然落最后
+        return numOrLast(a.node.num) - numOrLast(b.node.num);
+    });
+    return hits;
 }

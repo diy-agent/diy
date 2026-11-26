@@ -127,9 +127,7 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
     const countText = () => {
         const shown = hits().length;
         if (shown === 0) return "";
-        return hiddenCount() > 0
-            ? `显示 ${shown} / 共 ${allHits().length} 条 · 继续输入缩小范围`
-            : `${shown} 条`;
+        return hiddenCount() > 0 ? `显示 ${shown} / 共 ${allHits().length} 条 · 继续输入缩小范围` : `${shown} 条`;
     };
 
     /**
@@ -159,7 +157,7 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
         const list = hits();
         const n = list.length;
         if (n === 0) return;
-        const next = ((activeIndex() + delta) % n + n) % n;
+        const next = (((activeIndex() + delta) % n) + n) % n;
         setActiveUri(list[next]!.uri);
     };
 
@@ -330,10 +328,7 @@ function Panel(props: { onClose: () => void; onPick: (uri: string) => void }) {
                         </For>
                     </Show>
                 </ul>
-                <div
-                    data-testid="nav-search-footer"
-                    class="border-t border-base-300 px-3 py-1 text-caption opacity-50"
-                >
+                <div data-testid="nav-search-footer" class="border-t border-base-300 px-3 py-1 text-caption opacity-50">
                     {/* R2-4：计数段与快捷键段用同一模板串拼接（无计数时不留下前导 `·`）。
                         RV-4：被截断时说清"还有更多"，不让用户以为总共就这些。
                         R6-4：计数自己在 countText 里算一次，不在这里反复调 hits()/allHits()。 */}

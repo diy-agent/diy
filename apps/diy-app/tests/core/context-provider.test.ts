@@ -31,7 +31,10 @@ function minimalProviders(): ContextProvider[] {
                 dir: "",
             }),
         },
-        { key: "cwd", provide: () => ({ path: "/tmp", note: "", isFallback: false, isTaskDir: false, isAppDir: false }) },
+        {
+            key: "cwd",
+            provide: () => ({ path: "/tmp", note: "", isFallback: false, isTaskDir: false, isAppDir: false }),
+        },
         { key: "chain", provide: () => [] },
         { key: "skills", provide: () => [] },
         { key: "identity", provide: () => "" },

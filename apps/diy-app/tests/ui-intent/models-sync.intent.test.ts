@@ -63,7 +63,11 @@ beforeAll(async () => {
         DIY_MODELS_STARTUP_REFRESH: "0",
     });
     const HOME = electron.home;
-    fx = { electron, HOME, sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }) };
+    fx = {
+        electron,
+        HOME,
+        sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
+    };
     ui = await makeUiDriver(electron.cdpUrl, async () => {
         const r = await fx.sh.getJson("./diy.sh ui inspect");
         return ((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.tree as never;
@@ -77,7 +81,9 @@ afterAll(async () => {
 
 const doctor = async () => {
     const r = await fx.sh.getJson("./diy.sh doctor");
-    return (r as any).data?.data as { models: { path: string; source: string; providers: number; models: number } | null };
+    return (r as any).data?.data as {
+        models: { path: string; source: string; providers: number; models: number } | null;
+    };
 };
 
 const syncModels = async () => {

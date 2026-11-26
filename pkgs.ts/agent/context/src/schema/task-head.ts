@@ -19,14 +19,14 @@
 
 /** 任务头字段（key = 文件 frontmatter 里的键；desc = 上下文变量 schema 的描述） */
 export const TASK_HEAD_FIELDS = [
-  { key: "title", desc: "标题" },
-  { key: "state", desc: "状态" },
-  { key: "parent", desc: "父任务 URI（空 = 无父）" },
-  { key: "created", desc: "创建时间（ISO）" },
-  { key: "updated", desc: "最后编辑时间（ISO）——任何一次编辑都会刷新" },
-  { key: "change_type", desc: "变更性质（feat/fix/…；空 = 未设置）" },
-  { key: "module", desc: "模块（可 `/` 分层；空 = 未设置）" },
-  { key: "priority", desc: "优先级 P0-P3（空 = 未定级）" },
-  { key: "persona", desc: "绑定的人物 id（空 = 跟随缺省人物）" },
+    { key: 'title', desc: '标题' },
+    { key: 'state', desc: '状态' },
+    { key: 'parent', desc: '父任务 URI（空 = 无父）' },
+    { key: 'created', desc: '创建时间（ISO）' },
+    { key: 'updated', desc: '最后编辑时间（ISO）——任何一次编辑都会刷新' },
+    { key: 'change_type', desc: '变更性质（feat/fix/…；空 = 未设置）' },
+    { key: 'module', desc: '模块（可 `/` 分层；空 = 未设置）' },
+    { key: 'priority', desc: '优先级 P0-P3（空 = 未定级）' },
+    { key: 'persona', desc: '绑定的人物 id（空 = 跟随缺省人物）' },
 ] as const;
-export type TaskHeadField = (typeof TASK_HEAD_FIELDS)[number]["key"];
+export type TaskHeadField = (typeof TASK_HEAD_FIELDS)[number]['key'];

@@ -30,17 +30,17 @@ import { z } from "zod";
  *   `bug` 属于上面说的任务类型（"这是个缺陷报告"），将来进 type 字段。
  */
 export const CHANGE_TYPES = [
-  "feat",
-  "fix",
-  "docs",
-  "style",
-  "refactor",
-  "perf",
-  "test",
-  "chore",
-  "build",
-  "ci",
-  "revert",
+    "feat",
+    "fix",
+    "docs",
+    "style",
+    "refactor",
+    "perf",
+    "test",
+    "chore",
+    "build",
+    "ci",
+    "revert",
 ] as const;
 
 export const ChangeTypeSchema = z.enum(CHANGE_TYPES);
@@ -78,23 +78,23 @@ export const PrioritySchema = z.enum(PRIORITIES);
  * 清单是**从真实用法长出来的**，不是先验设计。
  */
 export const MODULES = [
-  "agent",
-  "agent/ui",
-  "agent/context",
-  "agent/tool",
-  "agent/local",
-  "agent/security",
-  "task",
-  "task/ui",
-  "task/tree",
-  "ui",
-  "nav",
-  "llm",
-  "cli",
-  "arch",
-  "core",
-  "test",
-  "docs",
+    "agent",
+    "agent/ui",
+    "agent/context",
+    "agent/tool",
+    "agent/local",
+    "agent/security",
+    "task",
+    "task/ui",
+    "task/tree",
+    "ui",
+    "nav",
+    "llm",
+    "cli",
+    "arch",
+    "core",
+    "test",
+    "docs",
 ] as const;
 
 /** module 最大长度（自由字符串，但要挡住粘贴整篇文章这类误用） */

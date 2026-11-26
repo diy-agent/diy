@@ -40,18 +40,21 @@ describe("advanceLastSeen（水位前移）", () => {
     });
 
     // POSIX 权限位在 Windows 上不存在（chmod 0o555 不阻止写入）⇒ 这条"写失败"构造不出来，跳过
-    it.skipIf(process.platform === "win32")("② 写失败 ⇒ resolve（不 reject）—— P1：水位失败不许挂死投递流", async () => {
-        ensureRoom("t2");
-        // 目录只读 ⇒ `writeFileAtomic` 在目标同目录建 tmp 时 EACCES
-        chmodSync(roomDir("t2"), 0o555);
-        try {
-            await expect(advanceLastSeen("t2", { "human:chen56": "e-2" })).resolves.toBeUndefined();
-        } finally {
-            chmodSync(roomDir("t2"), 0o755);
-        }
-        // 写没成，水位没动 —— 但**调用方拿到的是 resolve**，`input.done` 会被执行
-        expect(readRoom("t2")?.lastSeen["human:chen56"]).toBeUndefined();
-    });
+    it.skipIf(process.platform === "win32")(
+        "② 写失败 ⇒ resolve（不 reject）—— P1：水位失败不许挂死投递流",
+        async () => {
+            ensureRoom("t2");
+            // 目录只读 ⇒ `writeFileAtomic` 在目标同目录建 tmp 时 EACCES
+            chmodSync(roomDir("t2"), 0o555);
+            try {
+                await expect(advanceLastSeen("t2", { "human:chen56": "e-2" })).resolves.toBeUndefined();
+            } finally {
+                chmodSync(roomDir("t2"), 0o755);
+            }
+            // 写没成，水位没动 —— 但**调用方拿到的是 resolve**，`input.done` 会被执行
+            expect(readRoom("t2")?.lastSeen["human:chen56"]).toBeUndefined();
+        },
+    );
 
     it("③ 失败之后链仍可用：下一次前移照常成功", async () => {
         ensureRoom("t3");

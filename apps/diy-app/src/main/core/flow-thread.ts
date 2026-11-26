@@ -25,7 +25,17 @@
 //   (c) **升级人裁决** —— `postThread(..., type: "escalate")`（一条升级发言，`actor` 写清是谁升的）；
 //       它的**领域侧落点**是走到 `actor: 'human'` 的节点（如 dev 定义的 `approve`），由人宣布。
 
-import { flowFile, anchorKey, parseAnchorKey, readPosts, appendPost, requirePostText, type FlowAnchor, type FlowPost, type FlowPostType } from "./flow-store";
+import {
+    flowFile,
+    anchorKey,
+    parseAnchorKey,
+    readPosts,
+    appendPost,
+    requirePostText,
+    type FlowAnchor,
+    type FlowPost,
+    type FlowPostType,
+} from "./flow-store";
 import { loadInstance } from "./flow";
 import { randomUUID } from "node:crypto";
 import type { FlowState, WorkflowDef } from "@diy-agent/flow";

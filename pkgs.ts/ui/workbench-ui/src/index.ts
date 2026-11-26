@@ -5,12 +5,12 @@
 //   registerPage(myPageView);                       // 每个页面插件各来一行
 //   await mountWorkbench(document.getElementById('app')!, window.bridge);
 
-export { registerPage, getPage, registeredPages, resetPages } from "./registry.js";
-export { mountWorkbench } from "./frame.js";
-export type { MountOptions } from "./frame.js";
-export { createSplitPane, clampPaneWidth } from "./split.js";
-export type { SplitPane, SplitPaneOptions } from "./split.js";
-export { WorkbenchUiError } from "./errors.js";
-export type { PageContext, PageInfo, PageView, WorkbenchFrame, WorkbenchGateway } from "./contract.js";
+export { registerPage, getPage, registeredPages, resetPages } from './registry.js';
+export { mountWorkbench } from './frame.js';
+export type { MountOptions } from './frame.js';
+export { createSplitPane, clampPaneWidth } from './split.js';
+export type { SplitPane, SplitPaneOptions } from './split.js';
+export { WorkbenchUiError } from './errors.js';
+export type { PageContext, PageInfo, PageView, WorkbenchFrame, WorkbenchGateway } from './contract.js';
 // B2：意图测试钩子（renderer 侧执行端）。生产不调 = 零开销。
-export { installTestHooks } from "./testing.js";
+export { installTestHooks } from './testing.js';

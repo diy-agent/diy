@@ -92,9 +92,7 @@ export function buildModelsSnapshot(raw: unknown): SnapshotBuild {
     }
     const providers = Object.keys(snapshot).length;
     if (providers === 0) {
-        invalid(
-            `白名单（${MODELS_DEV_NPM_ALLOW.join(" / ")}）过滤后一家 provider 都不剩`,
-        );
+        invalid(`白名单（${MODELS_DEV_NPM_ALLOW.join(" / ")}）过滤后一家 provider 都不剩`);
     }
     return { snapshot, providers, models };
 }
@@ -126,7 +124,10 @@ export interface SnapshotDiff {
 }
 
 /** 旧快照 → 新快照的差异（无旧快照 = 全算新增） */
-export function diffSnapshot(prev: Record<string, SpecProvider> | null, next: Record<string, SpecProvider>): SnapshotDiff {
+export function diffSnapshot(
+    prev: Record<string, SpecProvider> | null,
+    next: Record<string, SpecProvider>,
+): SnapshotDiff {
     const prevIds = prev ? Object.keys(prev) : [];
     const nextIds = Object.keys(next);
     const prevSet = new Set(prevIds);

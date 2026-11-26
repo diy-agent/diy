@@ -9,192 +9,192 @@
 //   5. machineLabel / sourceLabel：显示名兜底链与 mDNS 标注
 import { describe, it, expect } from "vitest";
 import {
-  PAIR_ACTIONS,
-  joinUrlFor,
-  machineLabel,
-  pairingAllowed,
-  sourceLabel,
-  webAccessUrl,
+    PAIR_ACTIONS,
+    joinUrlFor,
+    machineLabel,
+    pairingAllowed,
+    sourceLabel,
+    webAccessUrl,
 } from "../../src/shared/remote-nav";
 
 describe("webAccessUrl", () => {
-  it("http endpoint → https 根地址（换 scheme、去路径、补斜杠）", () => {
-    expect(webAccessUrl("http://192.168.1.5:9400")).toBe("https://192.168.1.5:9400/");
-    expect(webAccessUrl("http://c-mac.gute-fish.ts.net:9400/ping?x=1")).toBe(
-      "https://c-mac.gute-fish.ts.net:9400/",
-    );
-  });
+    it("http endpoint → https 根地址（换 scheme、去路径、补斜杠）", () => {
+        expect(webAccessUrl("http://192.168.1.5:9400")).toBe("https://192.168.1.5:9400/");
+        expect(webAccessUrl("http://c-mac.gute-fish.ts.net:9400/ping?x=1")).toBe(
+            "https://c-mac.gute-fish.ts.net:9400/",
+        );
+    });
 
-  it("已是 https 也归一成根地址", () => {
-    expect(webAccessUrl("https://example.com/hub")).toBe("https://example.com/");
-  });
+    it("已是 https 也归一成根地址", () => {
+        expect(webAccessUrl("https://example.com/hub")).toBe("https://example.com/");
+    });
 
-  it("无 scheme 时按 https 补", () => {
-    expect(webAccessUrl("192.168.1.5:9400")).toBe("https://192.168.1.5:9400/");
-  });
+    it("无 scheme 时按 https 补", () => {
+        expect(webAccessUrl("192.168.1.5:9400")).toBe("https://192.168.1.5:9400/");
+    });
 
-  it("空串 / 非 http(s) / 解析不了 → null", () => {
-    expect(webAccessUrl("")).toBeNull();
-    expect(webAccessUrl("   ")).toBeNull();
-    expect(webAccessUrl("ftp://x/")).toBeNull();
-    expect(webAccessUrl("not a url ::")).toBeNull();
-  });
+    it("空串 / 非 http(s) / 解析不了 → null", () => {
+        expect(webAccessUrl("")).toBeNull();
+        expect(webAccessUrl("   ")).toBeNull();
+        expect(webAccessUrl("ftp://x/")).toBeNull();
+        expect(webAccessUrl("not a url ::")).toBeNull();
+    });
 });
 
 describe("pairingAllowed", () => {
-  it("mDNS（source 或 sources 含）不可配对", () => {
-    expect(pairingAllowed({ source: "mdns", sources: ["mdns"] })).toBe(false);
-    expect(pairingAllowed({ source: "local", sources: ["local", "mdns"] })).toBe(false);
-  });
+    it("mDNS（source 或 sources 含）不可配对", () => {
+        expect(pairingAllowed({ source: "mdns", sources: ["mdns"] })).toBe(false);
+        expect(pairingAllowed({ source: "local", sources: ["local", "mdns"] })).toBe(false);
+    });
 
-  it("tailscale / local / manual 可配对", () => {
-    expect(pairingAllowed({ source: "tailscale", sources: ["tailscale"] })).toBe(true);
-    expect(pairingAllowed({ source: "local", sources: ["local"] })).toBe(true);
-    expect(pairingAllowed({ source: "manual", sources: ["manual"] })).toBe(true);
-  });
+    it("tailscale / local / manual 可配对", () => {
+        expect(pairingAllowed({ source: "tailscale", sources: ["tailscale"] })).toBe(true);
+        expect(pairingAllowed({ source: "local", sources: ["local"] })).toBe(true);
+        expect(pairingAllowed({ source: "manual", sources: ["manual"] })).toBe(true);
+    });
 });
 
 describe("PAIR_ACTIONS（判据 4：两个方向都要存在）", () => {
-  it("invite → host 屏（我当主控建邀请）", () => {
-    const invite = PAIR_ACTIONS.find((a) => a.key === "invite");
-    expect(invite).toBeDefined();
-    expect(invite!.tab).toBe("host");
-    expect(invite!.label).toBe("添加为卫星节点");
-  });
+    it("invite → host 屏（我当主控建邀请）", () => {
+        const invite = PAIR_ACTIONS.find((a) => a.key === "invite");
+        expect(invite).toBeDefined();
+        expect(invite!.tab).toBe("host");
+        expect(invite!.label).toBe("添加为卫星节点");
+    });
 
-  it("join → join 屏（我当卫星连它）", () => {
-    const join = PAIR_ACTIONS.find((a) => a.key === "join");
-    expect(join).toBeDefined();
-    expect(join!.tab).toBe("join");
-    expect(join!.label).toBe("申请成为它的卫星");
-  });
+    it("join → join 屏（我当卫星连它）", () => {
+        const join = PAIR_ACTIONS.find((a) => a.key === "join");
+        expect(join).toBeDefined();
+        expect(join!.tab).toBe("join");
+        expect(join!.label).toBe("申请成为它的卫星");
+    });
 
-  it("恰好两个方向，不多不少", () => {
-    expect(PAIR_ACTIONS.map((a) => a.key)).toEqual(["invite", "join"]);
-  });
+    it("恰好两个方向，不多不少", () => {
+        expect(PAIR_ACTIONS.map((a) => a.key)).toEqual(["invite", "join"]);
+    });
 });
 
 describe("joinUrlFor", () => {
-  it("与 HubPage.pickDiscover 同款：去尾斜杠 + /hub/pair?inv=", () => {
-    expect(joinUrlFor("http://192.168.1.5:9400")).toBe("http://192.168.1.5:9400/hub/pair?inv=");
-    expect(joinUrlFor("http://192.168.1.5:9400/")).toBe("http://192.168.1.5:9400/hub/pair?inv=");
-  });
+    it("与 HubPage.pickDiscover 同款：去尾斜杠 + /hub/pair?inv=", () => {
+        expect(joinUrlFor("http://192.168.1.5:9400")).toBe("http://192.168.1.5:9400/hub/pair?inv=");
+        expect(joinUrlFor("http://192.168.1.5:9400/")).toBe("http://192.168.1.5:9400/hub/pair?inv=");
+    });
 });
 
 describe("machineLabel / sourceLabel", () => {
-  it("displayName 优先，空则退回 host", () => {
-    expect(machineLabel({ displayName: "c-mac", endpoint: "http://10.0.0.1:9400" })).toBe("c-mac");
-    expect(machineLabel({ displayName: null, endpoint: "http://10.0.0.1:9400" })).toBe("10.0.0.1:9400");
-    expect(machineLabel({ displayName: "  ", endpoint: "http://10.0.0.1:9400" })).toBe("10.0.0.1:9400");
-  });
+    it("displayName 优先，空则退回 host", () => {
+        expect(machineLabel({ displayName: "c-mac", endpoint: "http://10.0.0.1:9400" })).toBe("c-mac");
+        expect(machineLabel({ displayName: null, endpoint: "http://10.0.0.1:9400" })).toBe("10.0.0.1:9400");
+        expect(machineLabel({ displayName: "  ", endpoint: "http://10.0.0.1:9400" })).toBe("10.0.0.1:9400");
+    });
 
-  it("mDNS 标注「局域网」，其余用 source", () => {
-    expect(sourceLabel({ source: "mdns", sources: ["mdns"] })).toBe("mDNS（局域网）");
-    expect(sourceLabel({ source: "tailscale", sources: ["tailscale"] })).toBe("tailscale");
-  });
+    it("mDNS 标注「局域网」，其余用 source", () => {
+        expect(sourceLabel({ source: "mdns", sources: ["mdns"] })).toBe("mDNS（局域网）");
+        expect(sourceLabel({ source: "tailscale", sources: ["tailscale"] })).toBe("tailscale");
+    });
 });
 
 // ── ##511：设备列表合并（一台机器一行 / 按状态分组 / 行上只有一个值） ──
 import { DEVICE_GROUPS, mergeDevices, devicePairingAllowed } from "../../src/shared/remote-nav";
 
 const member = (over: Partial<Parameters<typeof mergeDevices>[0]> extends never ? never : any = {}) => ({
-  nodeId: "diy-mac01",
-  displayName: "c-mac",
-  status: "active",
-  online: 0,
-  createdAt: "2026-11-01T00:00:00.000Z",
-  ...over,
+    nodeId: "diy-mac01",
+    displayName: "c-mac",
+    status: "active",
+    online: 0,
+    createdAt: "2026-11-01T00:00:00.000Z",
+    ...over,
 });
 
 const found = (over: any = {}) => ({
-  id: null,
-  displayName: "c-mac",
-  endpoint: "http://10.0.0.9:9400",
-  source: "tailscale",
-  sources: ["tailscale"],
-  ...over,
+    id: null,
+    displayName: "c-mac",
+    endpoint: "http://10.0.0.9:9400",
+    source: "tailscale",
+    sources: ["tailscale"],
+    ...over,
 });
 
 describe("mergeDevices（判据 4：同一台机器只出现一行）", () => {
-  it("发现行带 id 且等于 member.nodeId → 合并成一行（不是两行）", () => {
-    const rows = mergeDevices({
-      members: [member({ online: 1 })],
-      discovered: [found({ id: "diy-mac01" })],
+    it("发现行带 id 且等于 member.nodeId → 合并成一行（不是两行）", () => {
+        const rows = mergeDevices({
+            members: [member({ online: 1 })],
+            discovered: [found({ id: "diy-mac01" })],
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.key).toBe("node:diy-mac01");
+        expect(rows[0]!.member).toBeTruthy();
+        expect(rows[0]!.discovered).toBeTruthy();
+        expect(rows[0]!.group).toBe("connected");
     });
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.key).toBe("node:diy-mac01");
-    expect(rows[0]!.member).toBeTruthy();
-    expect(rows[0]!.discovered).toBeTruthy();
-    expect(rows[0]!.group).toBe("connected");
-  });
 
-  it("发现行没有 id 时按 link 的 host 对齐（同一个主控只一行）", () => {
-    const rows = mergeDevices({
-      discovered: [found({ endpoint: "http://c-mac.gute-fish.ts.net:9400" })],
-      link: { hubNodeId: "diy-hub01", hubEndpoint: "https://c-mac.gute-fish.ts.net/hub" },
-      connection: "online",
+    it("发现行没有 id 时按 link 的 host 对齐（同一个主控只一行）", () => {
+        const rows = mergeDevices({
+            discovered: [found({ endpoint: "http://c-mac.gute-fish.ts.net:9400" })],
+            link: { hubNodeId: "diy-hub01", hubEndpoint: "https://c-mac.gute-fish.ts.net/hub" },
+            connection: "online",
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.key).toBe("node:diy-hub01");
+        expect(rows[0]!.group).toBe("connected");
+        expect(rows[0]!.status).toBe("已连接");
     });
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.key).toBe("node:diy-hub01");
-    expect(rows[0]!.group).toBe("connected");
-    expect(rows[0]!.status).toBe("已连接");
-  });
 
-  it("没 id 也没 host 匹配的发现行各自成行（未配对）", () => {
-    const rows = mergeDevices({
-      members: [member()],
-      discovered: [found({ displayName: "c-win", endpoint: "http://10.0.0.10:9400" })],
+    it("没 id 也没 host 匹配的发现行各自成行（未配对）", () => {
+        const rows = mergeDevices({
+            members: [member()],
+            discovered: [found({ displayName: "c-win", endpoint: "http://10.0.0.10:9400" })],
+        });
+        expect(rows).toHaveLength(2);
+        expect(rows.map((r) => r.group)).toEqual(["paired", "available"]);
     });
-    expect(rows).toHaveLength(2);
-    expect(rows.map((r) => r.group)).toEqual(["paired", "available"]);
-  });
 });
 
 describe("mergeDevices（状态口径：未连接不是离线）", () => {
-  it("link 有但没 Token → 未连接（判据 3）", () => {
-    const rows = mergeDevices({
-      link: { hubNodeId: "diy-hub01", hubEndpoint: "https://hub.example.ts.net/hub" },
-      connection: "no-token",
+    it("link 有但没 Token → 未连接（判据 3）", () => {
+        const rows = mergeDevices({
+            link: { hubNodeId: "diy-hub01", hubEndpoint: "https://hub.example.ts.net/hub" },
+            connection: "no-token",
+        });
+        expect(rows[0]!.group).toBe("paired");
+        expect(rows[0]!.status).toBe("未连接");
     });
-    expect(rows[0]!.group).toBe("paired");
-    expect(rows[0]!.status).toBe("未连接");
-  });
 
-  it("link 在线 / 掉线 / 撤销 三种说法分开", () => {
-    const link = { hubNodeId: "diy-hub01", hubEndpoint: "https://hub.example.ts.net/hub" };
-    expect(mergeDevices({ link, connection: "online" })[0]!.status).toBe("已连接");
-    expect(mergeDevices({ link, connection: "offline" })[0]!.status).toBe("离线");
-    expect(mergeDevices({ link, connection: "revoked" })[0]!.status).toBe("已撤销");
-  });
-
-  it("member 有活连接 → 已连接，条数作为行上那个值", () => {
-    expect(mergeDevices({ members: [member({ online: 2 })] })[0]!.status).toBe("2 条连接");
-    expect(mergeDevices({ members: [member({ online: 1 })] })[0]!.status).toBe("已连接");
-    expect(mergeDevices({ members: [member({ online: 0 })] })[0]!.status).toBe("离线");
-    expect(mergeDevices({ members: [member({ status: "revoked" })] })[0]!.status).toBe("已撤销");
-  });
-
-  it("分组恒定按 已连接 → 已配对 → 未配对 排序", () => {
-    const rows = mergeDevices({
-      members: [member({ nodeId: "a", displayName: "a", online: 1 }), member({ nodeId: "b", displayName: "b" })],
-      discovered: [found({ id: "c", displayName: "c", endpoint: "http://10.0.0.8:9400" })],
+    it("link 在线 / 掉线 / 撤销 三种说法分开", () => {
+        const link = { hubNodeId: "diy-hub01", hubEndpoint: "https://hub.example.ts.net/hub" };
+        expect(mergeDevices({ link, connection: "online" })[0]!.status).toBe("已连接");
+        expect(mergeDevices({ link, connection: "offline" })[0]!.status).toBe("离线");
+        expect(mergeDevices({ link, connection: "revoked" })[0]!.status).toBe("已撤销");
     });
-    expect(rows.map((r) => r.group)).toEqual(["connected", "paired", "available"]);
-    expect(DEVICE_GROUPS.map((g) => g.key)).toEqual(["connected", "paired", "available"]);
-  });
 
-  it("mDNS 发现行不能配对（与 HubPage 判据 22 同源）", () => {
-    const [row] = mergeDevices({ discovered: [found({ id: "x", source: "mdns", sources: ["mdns"] })] });
-    expect(devicePairingAllowed(row!)).toBe(false);
-  });
-
-  it("已撤销的成员不再给配对动作", () => {
-    const [row] = mergeDevices({
-      members: [member({ status: "revoked" })],
-      discovered: [found({ id: "diy-mac01" })],
+    it("member 有活连接 → 已连接，条数作为行上那个值", () => {
+        expect(mergeDevices({ members: [member({ online: 2 })] })[0]!.status).toBe("2 条连接");
+        expect(mergeDevices({ members: [member({ online: 1 })] })[0]!.status).toBe("已连接");
+        expect(mergeDevices({ members: [member({ online: 0 })] })[0]!.status).toBe("离线");
+        expect(mergeDevices({ members: [member({ status: "revoked" })] })[0]!.status).toBe("已撤销");
     });
-    expect(devicePairingAllowed(row!)).toBe(false);
-  });
+
+    it("分组恒定按 已连接 → 已配对 → 未配对 排序", () => {
+        const rows = mergeDevices({
+            members: [member({ nodeId: "a", displayName: "a", online: 1 }), member({ nodeId: "b", displayName: "b" })],
+            discovered: [found({ id: "c", displayName: "c", endpoint: "http://10.0.0.8:9400" })],
+        });
+        expect(rows.map((r) => r.group)).toEqual(["connected", "paired", "available"]);
+        expect(DEVICE_GROUPS.map((g) => g.key)).toEqual(["connected", "paired", "available"]);
+    });
+
+    it("mDNS 发现行不能配对（与 HubPage 判据 22 同源）", () => {
+        const [row] = mergeDevices({ discovered: [found({ id: "x", source: "mdns", sources: ["mdns"] })] });
+        expect(devicePairingAllowed(row!)).toBe(false);
+    });
+
+    it("已撤销的成员不再给配对动作", () => {
+        const [row] = mergeDevices({
+            members: [member({ status: "revoked" })],
+            discovered: [found({ id: "diy-mac01" })],
+        });
+        expect(devicePairingAllowed(row!)).toBe(false);
+    });
 });
 
 /**
@@ -292,7 +292,10 @@ describe("显示地址与 pid", () => {
     });
 
     it("非 local 源 ⇒ 不拼地址（不知道对方登录名，填本机会误导）", () => {
-        const rows = mergeDevices({ user: "ccc", discovered: [local({ source: "tailscale", sources: ["tailscale"] })] });
+        const rows = mergeDevices({
+            user: "ccc",
+            discovered: [local({ source: "tailscale", sources: ["tailscale"] })],
+        });
         expect(rows[0]!.address).toBeUndefined();
     });
 

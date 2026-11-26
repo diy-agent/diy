@@ -17,23 +17,23 @@ import { isAbsolute } from "node:path";
  * 故 `./sha.sh build` 必须先 `build-pkgs`（顺序见根 sha.sh）。
  */
 export const WORKSPACE_TS_DEPS = [
-  "@diy-agent/time",
-  "@diy-agent/rpc",
-  "@diy-agent/remote",
-  "@diy-agent/bot",
-  "@diy-agent/template",
-  "@diy-agent/flow",
-  "@diy-agent/talk",
-  "@diy-agent/facts",
-  "@diy-agent/persistence",
-  "@diy-agent/context",
-  "@diy-agent/llm-provider",
-  "@diy-agent/compaction",
-  // ##514：工具层内核（read / write / edit + 文件原语）
-  "@diy-agent/tools",
-  "@diy-agent/ui-kit",
-  // ##500：主进程 services/hub.ts 直接 import —— 漏了会在产物里留裸 import
-  "@diy-agent/hub",
+    "@diy-agent/time",
+    "@diy-agent/rpc",
+    "@diy-agent/remote",
+    "@diy-agent/bot",
+    "@diy-agent/template",
+    "@diy-agent/flow",
+    "@diy-agent/talk",
+    "@diy-agent/facts",
+    "@diy-agent/persistence",
+    "@diy-agent/context",
+    "@diy-agent/llm-provider",
+    "@diy-agent/compaction",
+    // ##514：工具层内核（read / write / edit + 文件原语）
+    "@diy-agent/tools",
+    "@diy-agent/ui-kit",
+    // ##500：主进程 services/hub.ts 直接 import —— 漏了会在产物里留裸 import
+    "@diy-agent/hub",
 ];
 
 /** 产物根：**固定** `build/prod`（变体轴已废：一份产物跑所有实例，数据根由 --home 决定） */
@@ -52,11 +52,11 @@ const RUNTIME_EXTERNALS = ["electron", ...builtinModules, ...builtinModules.map(
  * 其余裸 id（真第三方依赖）→ 外置；`./` `../` 与绝对路径 → 打包。
  */
 export function isExternal(id: string, pkgDeps: readonly string[] = WORKSPACE_TS_DEPS): boolean {
-  return pkgDeps.some((p) => id === p || id.startsWith(`${p}/`))
-    ? false
-    : RUNTIME_EXTERNALS.some((e) => id === e || id.startsWith(`${e}/`))
-      ? true
-      : isAbsPath(id)
+    return pkgDeps.some((p) => id === p || id.startsWith(`${p}/`))
         ? false
-        : !/^[./]/.test(id);
+        : RUNTIME_EXTERNALS.some((e) => id === e || id.startsWith(`${e}/`))
+          ? true
+          : isAbsPath(id)
+            ? false
+            : !/^[./]/.test(id);
 }

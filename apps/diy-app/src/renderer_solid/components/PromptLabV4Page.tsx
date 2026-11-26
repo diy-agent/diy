@@ -132,9 +132,7 @@ function DirRow(props: {
                 <button
                     // 选中行自带 hover 色：否则 hover 的中性灰会盖掉选中背景（与表格里同一个坑）
                     class={`flex w-full items-center gap-1 px-2 py-1 text-left ${
-                        props.selPath === props.node.path
-                            ? "bg-primary/25 hover:bg-primary/40"
-                            : "hover:bg-base-300"
+                        props.selPath === props.node.path ? "bg-primary/25 hover:bg-primary/40" : "hover:bg-base-300"
                     }`}
                     style={{ "padding-left": `${10 + props.depth * 16}px` }}
                     onClick={() => props.onPick(props.node.path)}
@@ -263,7 +261,6 @@ function fmtBytes(n: number): string {
     return `${(n / 1024).toFixed(1)} KB`;
 }
 
-
 /**
  * 变量定义 view 的一行（名字 + 说明）
  */
@@ -311,9 +308,7 @@ function TraceRows(props: {
                             // 选中行必须自己给 hover 色：否则 hover 的 bg 会盖掉选中背景，
                             // 看起来"选中的行"和"随便划过的行"一个样（曾因此误判选中没生效）
                             class={`cursor-pointer ${
-                                props.pickedKey === key
-                                    ? "bg-primary/25 hover:bg-primary/40"
-                                    : "hover:bg-base-300/40"
+                                props.pickedKey === key ? "bg-primary/25 hover:bg-primary/40" : "hover:bg-base-300/40"
                             } ${skipped() ? "opacity-40" : ""}`}
                             onClick={() => props.onPick(n, props.file, key)}
                             title="点一下：高亮模版里这段源码与预览里这段产出"
@@ -388,8 +383,7 @@ function ValueTree(props: {
                 const key = `${props.path}/${i()}`;
                 const isIndex = /^\[\d+\]$/.test(n.name);
                 const full = () => (props.path ? `${props.path}.${n.name}` : n.name);
-                const selKey = () =>
-                    isIndex ? `iter:${props.path}:${n.name}` : `var:${props.path || n.name}`;
+                const selKey = () => (isIndex ? `iter:${props.path}:${n.name}` : `var:${props.path || n.name}`);
                 const kids = () => n.children ?? [];
                 const hasKids = () => kids().length > 0;
                 const isOpen = () => props.open[key] ?? true;
@@ -397,9 +391,7 @@ function ValueTree(props: {
                     <>
                         <tr
                             class={`cursor-pointer ${
-                                props.picked === selKey()
-                                    ? "bg-primary/25 hover:bg-primary/40"
-                                    : "hover:bg-base-300/40"
+                                props.picked === selKey() ? "bg-primary/25 hover:bg-primary/40" : "hover:bg-base-300/40"
                             }`}
                             title={
                                 isIndex
@@ -496,9 +488,7 @@ function VarTree(props: {
                     <>
                         <tr
                             class={`cursor-pointer ${
-                                props.picked === selKey()
-                                    ? "bg-primary/25 hover:bg-primary/40"
-                                    : "hover:bg-base-300/40"
+                                props.picked === selKey() ? "bg-primary/25 hover:bg-primary/40" : "hover:bg-base-300/40"
                             }`}
                             title={
                                 isElement
@@ -576,7 +566,6 @@ function VarGroup(props: { title: string; children: unknown }) {
         </>
     );
 }
-
 
 export function PromptLabV4Page() {
     const [entries, setEntries] = createSignal<PromptEntry[]>([]);
@@ -669,7 +658,9 @@ export function PromptLabV4Page() {
         const hit = (p: string) => p === arrayPath || p.startsWith(`${arrayPath}.`);
         const names = a.loops.filter((l) => hit(l.source)).map((l) => l.as);
         if (names.length === 0) return false;
-        return a.paths.some((p) => p.scope === "dynamic" && names.some((as) => p.path.startsWith(`.${as}.`) || p.path === `.${as}`));
+        return a.paths.some(
+            (p) => p.scope === "dynamic" && names.some((as) => p.path.startsWith(`.${as}.`) || p.path === `.${as}`),
+        );
     };
 
     /** 模版侧：选中的"这一段"在所属模版里的所有出现处（区间） */
@@ -816,8 +807,7 @@ export function PromptLabV4Page() {
     ) => {
         const cur = hlSel();
         const same =
-            cur?.kind === sel.kind &&
-            JSON.stringify({ ...cur, kind: "" }) === JSON.stringify({ ...sel, kind: "" });
+            cur?.kind === sel.kind && JSON.stringify({ ...cur, kind: "" }) === JSON.stringify({ ...sel, kind: "" });
         setHlSel(same ? null : sel);
     };
 
@@ -882,8 +872,13 @@ export function PromptLabV4Page() {
         }
     });
     /** globals 引用按 namespace 分组：namespace → 该 namespace 下的完整路径（去重） */
-    const globalPathsOf = (ns: string, paths: Array<{ path: string; scope: string }>): string[] =>
-        [...new Set(paths.filter((p) => p.scope === "global" && (p.path === ns || p.path.startsWith(`${ns}.`))).map((p) => p.path))];
+    const globalPathsOf = (ns: string, paths: Array<{ path: string; scope: string }>): string[] => [
+        ...new Set(
+            paths
+                .filter((p) => p.scope === "global" && (p.path === ns || p.path.startsWith(`${ns}.`)))
+                .map((p) => p.path),
+        ),
+    ];
 
     async function load() {
         const pid = project();
@@ -1002,385 +997,428 @@ export function PromptLabV4Page() {
     /** 请求预览的内容（树 / 原文切换）—— 作为右栏折叠块之一，不再自带标题栏 */
     const reqBodyPane = () => (
         <div class="flex min-h-0 flex-1 flex-col">
-<div class={`flex shrink-0 items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-body`}>
-    <span class="opacity-60">{preview()?.requestNote ?? "随任务场景生成"}</span>
-    <span class="ml-auto join join-horizontal">
-        <button
-            class={`btn btn-xs join-item ${reqMode() === "tree" ? "btn-active" : "btn-ghost"}`}
-            onClick={() => setReqMode("tree")}
-        >
-            树
-        </button>
-        <button
-            class={`btn btn-xs join-item ${reqMode() === "raw" ? "btn-active" : "btn-ghost"}`}
-            onClick={() => setReqMode("raw")}
-        >
-            原文
-        </button>
-    </span>
-</div>
-<div class="min-h-0 flex-1 overflow-auto bg-base-200 p-2">
-    <Show when={preview()?.requestBody} fallback={<div class="text-body opacity-60">随任务场景生成…</div>}>
-        {(b) => (
-            <>
-                {/* 树常驻（hidden 藏），切原文不卸载 → 折叠态保留 */}
-                <div classList={{ hidden: reqMode() !== "tree" }}>
-                    <JsonTree data={b()} />
-                </div>
-                <Show when={reqMode() === "raw"}>
-                    <pre class="whitespace-pre-wrap break-all rounded bg-base-200 p-2 font-mono text-body leading-relaxed">
-                        {JSON.stringify(b(), null, 1)}
-                    </pre>
-                </Show>
-            </>
-        )}
-    </Show>
-</div>
+            <div class={`flex shrink-0 items-center gap-2 border-b px-3 ${VIEW_BAR_H} text-body`}>
+                <span class="opacity-60">{preview()?.requestNote ?? "随任务场景生成"}</span>
+                <span class="ml-auto join join-horizontal">
+                    <button
+                        class={`btn btn-xs join-item ${reqMode() === "tree" ? "btn-active" : "btn-ghost"}`}
+                        onClick={() => setReqMode("tree")}
+                    >
+                        树
+                    </button>
+                    <button
+                        class={`btn btn-xs join-item ${reqMode() === "raw" ? "btn-active" : "btn-ghost"}`}
+                        onClick={() => setReqMode("raw")}
+                    >
+                        原文
+                    </button>
+                </span>
             </div>
+            <div class="min-h-0 flex-1 overflow-auto bg-base-200 p-2">
+                <Show when={preview()?.requestBody} fallback={<div class="text-body opacity-60">随任务场景生成…</div>}>
+                    {(b) => (
+                        <>
+                            {/* 树常驻（hidden 藏），切原文不卸载 → 折叠态保留 */}
+                            <div classList={{ hidden: reqMode() !== "tree" }}>
+                                <JsonTree data={b()} />
+                            </div>
+                            <Show when={reqMode() === "raw"}>
+                                <pre class="whitespace-pre-wrap break-all rounded bg-base-200 p-2 font-mono text-body leading-relaxed">
+                                    {JSON.stringify(b(), null, 1)}
+                                </pre>
+                            </Show>
+                        </>
+                    )}
+                </Show>
+            </div>
+        </div>
     );
 
     /** area → 内容。四个 area 的内容都在本闭包内，共享全部状态（不拆 context） */
     const parts: Record<string, () => JSX.Element> = {
         "lab.inspector": () => (
             <>
-<div class="h-full overflow-x-auto overflow-y-auto text-body p-1 space-y-1">
-    <div class="border border-base-300 rounded-lg">
-        {viewHeader(
-            "tree",
-            "模板",
-            `${entries().length} 份 · ${entries().filter((e) => e.locked).length} 只读`,
-        )}
-        <Show when={views()["tree"]}>
-            <div class="bg-base-200 px-1 py-1">
-            <For each={buildTree(entries())}>
-                {(n) => (
-                    <DirRow
-                        node={n}
-                        depth={0}
-                        selPath={selPath()}
-                        onPick={setSelPath}
-                        dirty={dirtyOf}
-                        dirOpen={dirOpen}
-                        onToggleDir={(p) => setOpenDirs((o) => ({ ...o, [p]: !dirOpen(p) }))}
-                        hov={hov}
-                    />
-                )}
-            </For>
-            </div>
-        </Show>
-    </div>
-    {/* 模版结构树 view：与预览同源的 trace（节点 | 参数 | 值 | 字节） */}
-    <div class="border border-base-300 rounded-lg">
-        {viewHeader(
-            "trace",
-            "模版结构树",
-            preview()?.trace ? `${preview()!.trace!.length} 顶层节点` : "随预览重算",
-        )}
-        <Show when={views()["trace"]}>
-            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-body">
-                <Show when={preview()?.trace} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
-                    {(tr) => (
-                        <table class="table table-xs table-fixed" style={{ width: tableW(cols.trace) }}>
-                            <colgroup>
-                                <For each={cols.trace.w()}>
-                                    {(w) => <col style={{ width: `${w}px` }} />}
+                <div class="h-full overflow-x-auto overflow-y-auto text-body p-1 space-y-1">
+                    <div class="border border-base-300 rounded-lg">
+                        {viewHeader(
+                            "tree",
+                            "模板",
+                            `${entries().length} 份 · ${entries().filter((e) => e.locked).length} 只读`,
+                        )}
+                        <Show when={views()["tree"]}>
+                            <div class="bg-base-200 px-1 py-1">
+                                <For each={buildTree(entries())}>
+                                    {(n) => (
+                                        <DirRow
+                                            node={n}
+                                            depth={0}
+                                            selPath={selPath()}
+                                            onPick={setSelPath}
+                                            dirty={dirtyOf}
+                                            dirOpen={dirOpen}
+                                            onToggleDir={(p) => setOpenDirs((o) => ({ ...o, [p]: !dirOpen(p) }))}
+                                            hov={hov}
+                                        />
+                                    )}
                                 </For>
-                            </colgroup>
-                            <thead>
-                                <tr>
-                                    <Th label="节点" cols={cols.trace} index={0} />
-                                    <Th label="参数" cols={cols.trace} index={1} />
-                                    <Th label="值" cols={cols.trace} index={2} />
-                                    <Th label="字节" cols={cols.trace} index={3} right />
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <TraceRows
-                                    nodes={tr()!}
-                                    depth={0}
-                                    path=""
-                                    file="_system.md"
-                                    pickedKey={hlSel()?.kind === "node" ? (hlSel() as { key: string }).key : undefined}
-                                    onPick={pickTrace}
-                                    open={traceOpen()}
-                                    onToggle={(k, open) => setTraceOpen((o) => ({ ...o, [k]: !open }))}
-                                />
-                            </tbody>
-                        </table>
-                    )}
-                </Show>
-            </div>
-        </Show>
-    </div>
-
-    {/* 变量定义 view：本模版引用的变量/循环/条件/include + lint（renderer 侧实时分析草稿） */}
-    <div class="border border-base-300 rounded-lg">
-        {viewHeader("vars", "变量定义", sel() ? sel()!.relpath : "未选模版")}
-        <Show when={views()["vars"]}>
-            <div class="bg-base-300/40 px-2 py-0.5 text-caption opacity-70">
-                <span class="text-info">●</span> = 本模版用到；点整行 = 高亮它的所有出现处；点
-                <span class="font-mono">[类型]</span> 行 = 高亮用到该类型的文本
-            </div>
-        </Show>
-        <Show when={views()["vars"]}>
-            <div class="overflow-x-auto bg-base-200 px-0 py-1 font-mono text-body">
-                <Show when={analysis()} fallback={<div class="px-2 py-1 opacity-60">左侧点开一份模版</div>}>
-                    {(an) => (
-                        <Show when={an().a} fallback={<div class="px-2 py-1 text-error">{an().error}</div>}>
-                            {(a) => (
-                                <>
-                                    <VarGroup title="宿主提供（变量契约，树形展开）">
-                                        {/* 列宽固定（px，可拖）：拖动左栏不改列宽；表更宽时左栏横向滚动 */}
-                                        <table class="table table-xs table-fixed" style={{ width: tableW(cols.vars) }}>
+                            </div>
+                        </Show>
+                    </div>
+                    {/* 模版结构树 view：与预览同源的 trace（节点 | 参数 | 值 | 字节） */}
+                    <div class="border border-base-300 rounded-lg">
+                        {viewHeader(
+                            "trace",
+                            "模版结构树",
+                            preview()?.trace ? `${preview()!.trace!.length} 顶层节点` : "随预览重算",
+                        )}
+                        <Show when={views()["trace"]}>
+                            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-body">
+                                <Show
+                                    when={preview()?.trace}
+                                    fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}
+                                >
+                                    {(tr) => (
+                                        <table class="table table-xs table-fixed" style={{ width: tableW(cols.trace) }}>
                                             <colgroup>
-                                                <For each={cols.vars.w()}>
+                                                <For each={cols.trace.w()}>
                                                     {(w) => <col style={{ width: `${w}px` }} />}
                                                 </For>
                                             </colgroup>
                                             <thead>
                                                 <tr>
-                                                    <Th label="变量" cols={cols.vars} index={0} />
-                                                    <Th label="说明" cols={cols.vars} index={1} />
+                                                    <Th label="节点" cols={cols.trace} index={0} />
+                                                    <Th label="参数" cols={cols.trace} index={1} />
+                                                    <Th label="值" cols={cols.trace} index={2} />
+                                                    <Th label="字节" cols={cols.trace} index={3} right />
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                <VarTree
-                                                    nodes={VAR_TREE}
-                                                    path=""
-                                                    onPick={pickVarRow}
-                                                    usedItem={usedItem}
-                                                    picked={(() => {
-                                                        const cur = hlSel();
-                                                        if (cur?.kind === "var") return `var:${cur.path}`;
-                                                        if (cur?.kind === "item")
-                                                            return `item:${cur.arrayPath}:${cur.elName}`;
-                                                        return undefined;
-                                                    })()}
-                                                    used={(path) =>
-                                                        a().paths.some(
-                                                            (pp) =>
-                                                                pp.path === path ||
-                                                                pp.path.startsWith(`${path}.`),
-                                                        )
-                                                    }
-                                                    open={varsOpen()}
-                                                    onToggle={(k, open) =>
-                                                        setVarsOpen((o) => ({ ...o, [k]: !open }))
-                                                    }
+                                                <TraceRows
+                                                    nodes={tr()!}
                                                     depth={0}
+                                                    path=""
+                                                    file="_system.md"
+                                                    pickedKey={
+                                                        hlSel()?.kind === "node"
+                                                            ? (hlSel() as { key: string }).key
+                                                            : undefined
+                                                    }
+                                                    onPick={pickTrace}
+                                                    open={traceOpen()}
+                                                    onToggle={(k, open) => setTraceOpen((o) => ({ ...o, [k]: !open }))}
                                                 />
                                             </tbody>
                                         </table>
-                                    </VarGroup>
-                                    <Show when={a().globals.length > 0} fallback={<VarGroup title="引用 globals"><div class="px-2 opacity-60">（无）</div></VarGroup>}>
-                                        <VarGroup title="引用 globals">
-                                            <For each={a().globals}>
-                                                {(ns) => (
-                                                    <VarRow name={`${ns}.*`} note={globalPathsOf(ns, a().paths).join(" ")} />
-                                                )}
-                                            </For>
-                                        </VarGroup>
-                                    </Show>
-                                    <Show when={a().dynamics.length > 0}>
-                                        <VarGroup title="动态名（:for 信封 / include 参数）">
-                                            <VarRow name={a().dynamics.map((d) => `.${d}`).join(" ")} />
-                                        </VarGroup>
-                                    </Show>
-                                    <Show when={a().loops.length > 0}>
-                                        <VarGroup title="循环">
-                                            <For each={a().loops}>
-                                                {(l) => <VarRow name={`:for={{${l.source}}}`} note={`:as="${l.as}"`} />}
-                                            </For>
-                                        </VarGroup>
-                                    </Show>
-                                    <Show when={a().conditions.length > 0}>
-                                        <VarGroup title="条件">
-                                            <For each={a().conditions}>
-                                                {(c) => <VarRow name={`${c.negate ? ":if-not" : ":if"}({{${c.path}}})`} />}
-                                            </For>
-                                        </VarGroup>
-                                    </Show>
-                                    <Show when={a().includes.length > 0}>
-                                        <VarGroup title="include">
-                                            <For each={a().includes}>
-                                                {(inc) => (
-                                                    <VarRow
-                                                        name={inc.relpath}
-                                                        note={inc.args.length > 0 ? inc.args.map((g) => g.name).join(" ") : "无参数"}
-                                                    />
-                                                )}
-                                            </For>
-                                        </VarGroup>
-                                    </Show>
-                                    <Show when={a().lint.length > 0}>
-                                        <VarGroup title="lint">
-                                            <For each={a().lint}>
-                                                {(is) => (
-                                                    <div class="px-2 py-0.5 text-warning">
-                                                        {is.loc.line}:{is.loc.col} {is.message}
-                                                    </div>
-                                                )}
-                                            </For>
-                                        </VarGroup>
-                                    </Show>
-                                </>
-                            )}
+                                    )}
+                                </Show>
+                            </div>
                         </Show>
-                    )}
-                </Show>
-            </div>
-        </Show>
-    </div>
-    {/* 变量值 view：本次**实际注入**的 globals（值随任务/草稿变化；结构来自契约） */}
-    <div class="border border-base-300 rounded-lg">
-        {viewHeader("vals", "变量值", "本次注入的实际值（随任务变化）")}
-        <Show when={views()["vals"]}>
-            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-body">
-                <Show
-                    when={preview()}
-                    fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}
-                >
-                    <table class="table table-xs table-fixed" style={{ width: tableW(cols.vals) }}>
-                        <colgroup>
-                            <For each={cols.vals.w()}>
-                                {(w) => <col style={{ width: `${w}px` }} />}
-                            </For>
-                        </colgroup>
-                        <thead>
-                            <tr>
-                                <Th label="变量" cols={cols.vals} index={0} />
-                                <Th label="值" cols={cols.vals} index={1} />
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <ValueTree
-                                nodes={valueTree()}
-                                path=""
-                                onPick={pickVarRow}
-                                picked={(() => {
-                                    const cur = hlSel();
-                                    if (cur?.kind === "var") return `var:${cur.path}`;
-                                    if (cur?.kind === "iter")
-                                        return `iter:${cur.arrayPath}:[${cur.index}]`;
-                                    return undefined;
-                                })()}
-                                open={valsOpen()}
-                                onToggle={(k, open) => setValsOpen((o) => ({ ...o, [k]: !open }))}
-                                depth={0}
-                            />
-                        </tbody>
-                    </table>
-                </Show>
-            </div>
-        </Show>
-    </div>
-</div>
+                    </div>
+
+                    {/* 变量定义 view：本模版引用的变量/循环/条件/include + lint（renderer 侧实时分析草稿） */}
+                    <div class="border border-base-300 rounded-lg">
+                        {viewHeader("vars", "变量定义", sel() ? sel()!.relpath : "未选模版")}
+                        <Show when={views()["vars"]}>
+                            <div class="bg-base-300/40 px-2 py-0.5 text-caption opacity-70">
+                                <span class="text-info">●</span> = 本模版用到；点整行 = 高亮它的所有出现处；点
+                                <span class="font-mono">[类型]</span> 行 = 高亮用到该类型的文本
+                            </div>
+                        </Show>
+                        <Show when={views()["vars"]}>
+                            <div class="overflow-x-auto bg-base-200 px-0 py-1 font-mono text-body">
+                                <Show
+                                    when={analysis()}
+                                    fallback={<div class="px-2 py-1 opacity-60">左侧点开一份模版</div>}
+                                >
+                                    {(an) => (
+                                        <Show
+                                            when={an().a}
+                                            fallback={<div class="px-2 py-1 text-error">{an().error}</div>}
+                                        >
+                                            {(a) => (
+                                                <>
+                                                    <VarGroup title="宿主提供（变量契约，树形展开）">
+                                                        {/* 列宽固定（px，可拖）：拖动左栏不改列宽；表更宽时左栏横向滚动 */}
+                                                        <table
+                                                            class="table table-xs table-fixed"
+                                                            style={{ width: tableW(cols.vars) }}
+                                                        >
+                                                            <colgroup>
+                                                                <For each={cols.vars.w()}>
+                                                                    {(w) => <col style={{ width: `${w}px` }} />}
+                                                                </For>
+                                                            </colgroup>
+                                                            <thead>
+                                                                <tr>
+                                                                    <Th label="变量" cols={cols.vars} index={0} />
+                                                                    <Th label="说明" cols={cols.vars} index={1} />
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                <VarTree
+                                                                    nodes={VAR_TREE}
+                                                                    path=""
+                                                                    onPick={pickVarRow}
+                                                                    usedItem={usedItem}
+                                                                    picked={(() => {
+                                                                        const cur = hlSel();
+                                                                        if (cur?.kind === "var")
+                                                                            return `var:${cur.path}`;
+                                                                        if (cur?.kind === "item")
+                                                                            return `item:${cur.arrayPath}:${cur.elName}`;
+                                                                        return undefined;
+                                                                    })()}
+                                                                    used={(path) =>
+                                                                        a().paths.some(
+                                                                            (pp) =>
+                                                                                pp.path === path ||
+                                                                                pp.path.startsWith(`${path}.`),
+                                                                        )
+                                                                    }
+                                                                    open={varsOpen()}
+                                                                    onToggle={(k, open) =>
+                                                                        setVarsOpen((o) => ({ ...o, [k]: !open }))
+                                                                    }
+                                                                    depth={0}
+                                                                />
+                                                            </tbody>
+                                                        </table>
+                                                    </VarGroup>
+                                                    <Show
+                                                        when={a().globals.length > 0}
+                                                        fallback={
+                                                            <VarGroup title="引用 globals">
+                                                                <div class="px-2 opacity-60">（无）</div>
+                                                            </VarGroup>
+                                                        }
+                                                    >
+                                                        <VarGroup title="引用 globals">
+                                                            <For each={a().globals}>
+                                                                {(ns) => (
+                                                                    <VarRow
+                                                                        name={`${ns}.*`}
+                                                                        note={globalPathsOf(ns, a().paths).join(" ")}
+                                                                    />
+                                                                )}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
+                                                    <Show when={a().dynamics.length > 0}>
+                                                        <VarGroup title="动态名（:for 信封 / include 参数）">
+                                                            <VarRow
+                                                                name={a()
+                                                                    .dynamics.map((d) => `.${d}`)
+                                                                    .join(" ")}
+                                                            />
+                                                        </VarGroup>
+                                                    </Show>
+                                                    <Show when={a().loops.length > 0}>
+                                                        <VarGroup title="循环">
+                                                            <For each={a().loops}>
+                                                                {(l) => (
+                                                                    <VarRow
+                                                                        name={`:for={{${l.source}}}`}
+                                                                        note={`:as="${l.as}"`}
+                                                                    />
+                                                                )}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
+                                                    <Show when={a().conditions.length > 0}>
+                                                        <VarGroup title="条件">
+                                                            <For each={a().conditions}>
+                                                                {(c) => (
+                                                                    <VarRow
+                                                                        name={`${c.negate ? ":if-not" : ":if"}({{${c.path}}})`}
+                                                                    />
+                                                                )}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
+                                                    <Show when={a().includes.length > 0}>
+                                                        <VarGroup title="include">
+                                                            <For each={a().includes}>
+                                                                {(inc) => (
+                                                                    <VarRow
+                                                                        name={inc.relpath}
+                                                                        note={
+                                                                            inc.args.length > 0
+                                                                                ? inc.args.map((g) => g.name).join(" ")
+                                                                                : "无参数"
+                                                                        }
+                                                                    />
+                                                                )}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
+                                                    <Show when={a().lint.length > 0}>
+                                                        <VarGroup title="lint">
+                                                            <For each={a().lint}>
+                                                                {(is) => (
+                                                                    <div class="px-2 py-0.5 text-warning">
+                                                                        {is.loc.line}:{is.loc.col} {is.message}
+                                                                    </div>
+                                                                )}
+                                                            </For>
+                                                        </VarGroup>
+                                                    </Show>
+                                                </>
+                                            )}
+                                        </Show>
+                                    )}
+                                </Show>
+                            </div>
+                        </Show>
+                    </div>
+                    {/* 变量值 view：本次**实际注入**的 globals（值随任务/草稿变化；结构来自契约） */}
+                    <div class="border border-base-300 rounded-lg">
+                        {viewHeader("vals", "变量值", "本次注入的实际值（随任务变化）")}
+                        <Show when={views()["vals"]}>
+                            <div class="overflow-x-auto bg-base-200 px-0 py-1 text-body">
+                                <Show when={preview()} fallback={<div class="px-2 py-1 opacity-60">渲染中…</div>}>
+                                    <table class="table table-xs table-fixed" style={{ width: tableW(cols.vals) }}>
+                                        <colgroup>
+                                            <For each={cols.vals.w()}>{(w) => <col style={{ width: `${w}px` }} />}</For>
+                                        </colgroup>
+                                        <thead>
+                                            <tr>
+                                                <Th label="变量" cols={cols.vals} index={0} />
+                                                <Th label="值" cols={cols.vals} index={1} />
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <ValueTree
+                                                nodes={valueTree()}
+                                                path=""
+                                                onPick={pickVarRow}
+                                                picked={(() => {
+                                                    const cur = hlSel();
+                                                    if (cur?.kind === "var") return `var:${cur.path}`;
+                                                    if (cur?.kind === "iter")
+                                                        return `iter:${cur.arrayPath}:[${cur.index}]`;
+                                                    return undefined;
+                                                })()}
+                                                open={valsOpen()}
+                                                onToggle={(k, open) => setValsOpen((o) => ({ ...o, [k]: !open }))}
+                                                depth={0}
+                                            />
+                                        </tbody>
+                                    </table>
+                                </Show>
+                            </div>
+                        </Show>
+                    </div>
+                </div>
             </>
         ),
         "lab.editor": () => (
             <>
-{/* 中央编辑器 */}
-<div class="flex-1 flex flex-col min-w-0">
-    <Show when={sel()} fallback={<div class="p-4 opacity-60 text-prose">左侧模板树点开一份</div>}>
-        {(s) => (
-            <>
-                {/* 标题栏：文件名 + dirty + 右侧动作图标 */}
-                <div class={`flex items-center gap-1 border-b px-3 ${VIEW_BAR_H} text-body shrink-0`}>
-                    <span class="font-mono font-semibold">
-                        {s().relpath}
-                        <Show when={dirtyOf(s())}>
-                            <span class="text-info"> •</span>
-                        </Show>
-                    </span>
-                    <span class="opacity-50">
-                        {s().title} v{s().version}
-                    </span>
-                    <div class="ml-auto flex items-center gap-1">
-                        <button
-                            class={`btn btn-xs ${mode() === "diff" ? "btn-active" : "btn-ghost"}`}
-                            title="普通 / diff 模式切换"
-                            onClick={() => setMode((m) => (m === "diff" ? "normal" : "diff"))}
-                        >
-                            ⇄
-                        </button>
-                        <button
-                            class="btn btn-xs btn-ghost"
-                            title={s().locked ? s().lockTip : `保存 ${s().relpath} 的覆盖`}
-                            disabled={s().locked || !dirtyOf(s())}
-                            onClick={() => void save(s().relpath)}
-                        >
-                            💾
-                        </button>
-                        <button
-                            class="btn btn-xs btn-ghost"
-                            disabled={s().status !== "overridden"}
-                            title={s().status === "overridden" ? "删除覆盖，回退内置" : "无可撤销的内容"}
-                            onClick={() => void restore(s().relpath)}
-                        >
-                            ↩
-                        </button>
-                        <EditorThemePicker />
-                    </div>
-                </div>
-                {/* 锁卡说明条（不可编辑时顶置，不用悬浮找原因） */}
-                <Show when={s().locked}>
-                    <div class="alert alert-warning mx-3 mt-2 px-3 py-1.5 text-body shrink-0">
-                        <span>🔒</span>
-                        <span>{s().lockTip}</span>
-                    </div>
-                </Show>
-                {/* 内容：普通（CodeMirror，内部滚动） / diff */}
-                <div class="flex min-h-0 flex-1 flex-col p-3">
-                    <Show
-                        when={mode() === "diff"}
-                        fallback={
-                            <div class="min-h-0 flex-1 overflow-hidden rounded border border-base-300">
-                                <Show when={hlLabel() && hlSrc().length > 0}>
-                                    <DynamicBar
-                                        label={hlLabel()!}
-                                        count={hlSrc().length}
-                                        index={Math.min(focusAt().src, Math.max(0, hlSrc().length - 1))}
-                                        onPrev={() => step("src", -1, hlSrc().length)}
-                                        onNext={() => step("src", 1, hlSrc().length)}
-                                        onClear={() => setHlSel(null)}
-                                    />
+                {/* 中央编辑器 */}
+                <div class="flex-1 flex flex-col min-w-0">
+                    <Show when={sel()} fallback={<div class="p-4 opacity-60 text-prose">左侧模板树点开一份</div>}>
+                        {(s) => (
+                            <>
+                                {/* 标题栏：文件名 + dirty + 右侧动作图标 */}
+                                <div class={`flex items-center gap-1 border-b px-3 ${VIEW_BAR_H} text-body shrink-0`}>
+                                    <span class="font-mono font-semibold">
+                                        {s().relpath}
+                                        <Show when={dirtyOf(s())}>
+                                            <span class="text-info"> •</span>
+                                        </Show>
+                                    </span>
+                                    <span class="opacity-50">
+                                        {s().title} v{s().version}
+                                    </span>
+                                    <div class="ml-auto flex items-center gap-1">
+                                        <button
+                                            class={`btn btn-xs ${mode() === "diff" ? "btn-active" : "btn-ghost"}`}
+                                            title="普通 / diff 模式切换"
+                                            onClick={() => setMode((m) => (m === "diff" ? "normal" : "diff"))}
+                                        >
+                                            ⇄
+                                        </button>
+                                        <button
+                                            class="btn btn-xs btn-ghost"
+                                            title={s().locked ? s().lockTip : `保存 ${s().relpath} 的覆盖`}
+                                            disabled={s().locked || !dirtyOf(s())}
+                                            onClick={() => void save(s().relpath)}
+                                        >
+                                            💾
+                                        </button>
+                                        <button
+                                            class="btn btn-xs btn-ghost"
+                                            disabled={s().status !== "overridden"}
+                                            title={
+                                                s().status === "overridden" ? "删除覆盖，回退内置" : "无可撤销的内容"
+                                            }
+                                            onClick={() => void restore(s().relpath)}
+                                        >
+                                            ↩
+                                        </button>
+                                        <EditorThemePicker />
+                                    </div>
+                                </div>
+                                {/* 锁卡说明条（不可编辑时顶置，不用悬浮找原因） */}
+                                <Show when={s().locked}>
+                                    <div class="alert alert-warning mx-3 mt-2 px-3 py-1.5 text-body shrink-0">
+                                        <span>🔒</span>
+                                        <span>{s().lockTip}</span>
+                                    </div>
                                 </Show>
-                                <MdEditor
-                                    value={draftOf(s())}
-                                    editable={!s().locked}
-                                    onChange={(v) => patchDrafts(project(), (d) => ({ ...d, [s().relpath]: v }))}
-                                    highlight={
-                                        (picked()?.file ?? selPath()) === s().relpath ? srcHl() : null
-                                    }
-                                    tags={knownTags()}
-                                />
-                            </div>
-                        }
-                    >
-                        <div class="min-h-0 flex-1 overflow-auto rounded bg-base-200 p-2 font-mono text-body leading-relaxed">
-                            <For each={lineDiff(s().builtin, draftOf(s()))}>
-                                {(l) => (
-                                    <div
-                                        class={
-                                            l.t === "-"
-                                                ? "bg-error/20"
-                                                : l.t === "+"
-                                                  ? "bg-success/20"
-                                                  : ""
+                                {/* 内容：普通（CodeMirror，内部滚动） / diff */}
+                                <div class="flex min-h-0 flex-1 flex-col p-3">
+                                    <Show
+                                        when={mode() === "diff"}
+                                        fallback={
+                                            <div class="min-h-0 flex-1 overflow-hidden rounded border border-base-300">
+                                                <Show when={hlLabel() && hlSrc().length > 0}>
+                                                    <DynamicBar
+                                                        label={hlLabel()!}
+                                                        count={hlSrc().length}
+                                                        index={Math.min(focusAt().src, Math.max(0, hlSrc().length - 1))}
+                                                        onPrev={() => step("src", -1, hlSrc().length)}
+                                                        onNext={() => step("src", 1, hlSrc().length)}
+                                                        onClear={() => setHlSel(null)}
+                                                    />
+                                                </Show>
+                                                <MdEditor
+                                                    value={draftOf(s())}
+                                                    editable={!s().locked}
+                                                    onChange={(v) =>
+                                                        patchDrafts(project(), (d) => ({ ...d, [s().relpath]: v }))
+                                                    }
+                                                    highlight={
+                                                        (picked()?.file ?? selPath()) === s().relpath ? srcHl() : null
+                                                    }
+                                                    tags={knownTags()}
+                                                />
+                                            </div>
                                         }
                                     >
-                                        <span class="opacity-50 mr-1">{l.t}</span>
-                                        {l.s || " "}
-                                    </div>
-                                )}
-                            </For>
-                        </div>
+                                        <div class="min-h-0 flex-1 overflow-auto rounded bg-base-200 p-2 font-mono text-body leading-relaxed">
+                                            <For each={lineDiff(s().builtin, draftOf(s()))}>
+                                                {(l) => (
+                                                    <div
+                                                        class={
+                                                            l.t === "-"
+                                                                ? "bg-error/20"
+                                                                : l.t === "+"
+                                                                  ? "bg-success/20"
+                                                                  : ""
+                                                        }
+                                                    >
+                                                        <span class="opacity-50 mr-1">{l.t}</span>
+                                                        {l.s || " "}
+                                                    </div>
+                                                )}
+                                            </For>
+                                        </div>
+                                    </Show>
+                                </div>
+                            </>
+                        )}
                     </Show>
                 </div>
-            </>
-        )}
-    </Show>
-</div>
             </>
         ),
         "lab.preview": () => (
@@ -1391,66 +1429,75 @@ export function PromptLabV4Page() {
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
                 {/* 展开的块 flex-1（独占剩余高度）并保底 160px；都展开时外层滚动，
                     不把每块压成一条 —— 这正是"tab 每块太小"要解决的问题 */}
-                <div class="flex min-h-0 flex-col rounded-lg border border-base-300" classList={{ "flex-1 min-h-[160px]": !!views()["sysctx"] }}>
+                <div
+                    class="flex min-h-0 flex-col rounded-lg border border-base-300"
+                    classList={{ "flex-1 min-h-[160px]": !!views()["sysctx"] }}
+                >
                     {viewHeader("sysctx", "_system.md", sysSize())}
                     <Show when={views()["sysctx"]}>
                         <div class="flex flex-col h-full min-h-0">
-{/* 右：视图区 = 一个编辑器 view（与中间完全同构：标题栏 + 编辑器本体，只是只读）。
+                            {/* 右：视图区 = 一个编辑器 view（与中间完全同构：标题栏 + 编辑器本体，只是只读）。
     结构化观察在左栏；请求体在「请求预览」tab */}
-<div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-    <div class={`flex items-center gap-1 border-b px-3 ${VIEW_BAR_H} text-body shrink-0`}>
-        <span class="font-mono font-semibold">_system.md</span>
-        <span class="opacity-50">（预览）</span>
-        <span class="ml-auto font-mono text-caption opacity-60">
-            <Show when={preview()} fallback="渲染中…">
-                {(p) => `${(new TextEncoder().encode(p().system).length / 1024).toFixed(1)} KB`}
-            </Show>
-        </span>
-        <EditorThemePicker />
-    </div>
-    <Show when={hlLabel() && hlOut().length > 0}>
-        <DynamicBar
-            label={hlLabel()!}
-            count={hlOut().length}
-            index={Math.min(focusAt().out, Math.max(0, hlOut().length - 1))}
-            onPrev={() => step("out", -1, hlOut().length)}
-            onNext={() => step("out", 1, hlOut().length)}
-            onClear={() => setHlSel(null)}
-        />
-    </Show>
-    <Show when={preview()} fallback={<div class="p-3 text-body opacity-60">渲染中…</div>}>
-        {(p) => (
-            <div class="flex min-h-0 flex-1 flex-col">
-                <Show when={p().overBudget}>
-                    <div class="alert alert-error m-2 shrink-0 text-body py-1">
-                        超出预算：{(p().overBudget!.used / 1024).toFixed(1)} KB /{" "}
-                        {(p().overBudget!.budget / 1024).toFixed(0)} KB —— 不会发送，请精简模版
-                    </div>
-                </Show>
-                <Show when={p().warnings.length > 0}>
-                    <div class="alert alert-warning m-2 shrink-0 text-body py-1">
-                        {p().warnings.map((w) => (
-                            <span>⚠️ {w}</span>
-                        ))}
-                    </div>
-                </Show>
-                <div class="min-h-0 flex-1">
-                    <MdEditor
-                        value={p().system}
-                        editable={false}
-                        onChange={() => {}}
-                        highlight={outHl()}
-                        tags={knownTags()}
-                    />
-                </div>
-            </div>
-        )}
-    </Show>
-</div>
+                            <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+                                <div class={`flex items-center gap-1 border-b px-3 ${VIEW_BAR_H} text-body shrink-0`}>
+                                    <span class="font-mono font-semibold">_system.md</span>
+                                    <span class="opacity-50">（预览）</span>
+                                    <span class="ml-auto font-mono text-caption opacity-60">
+                                        <Show when={preview()} fallback="渲染中…">
+                                            {(p) =>
+                                                `${(new TextEncoder().encode(p().system).length / 1024).toFixed(1)} KB`
+                                            }
+                                        </Show>
+                                    </span>
+                                    <EditorThemePicker />
+                                </div>
+                                <Show when={hlLabel() && hlOut().length > 0}>
+                                    <DynamicBar
+                                        label={hlLabel()!}
+                                        count={hlOut().length}
+                                        index={Math.min(focusAt().out, Math.max(0, hlOut().length - 1))}
+                                        onPrev={() => step("out", -1, hlOut().length)}
+                                        onNext={() => step("out", 1, hlOut().length)}
+                                        onClear={() => setHlSel(null)}
+                                    />
+                                </Show>
+                                <Show when={preview()} fallback={<div class="p-3 text-body opacity-60">渲染中…</div>}>
+                                    {(p) => (
+                                        <div class="flex min-h-0 flex-1 flex-col">
+                                            <Show when={p().overBudget}>
+                                                <div class="alert alert-error m-2 shrink-0 text-body py-1">
+                                                    超出预算：{(p().overBudget!.used / 1024).toFixed(1)} KB /{" "}
+                                                    {(p().overBudget!.budget / 1024).toFixed(0)} KB ——
+                                                    不会发送，请精简模版
+                                                </div>
+                                            </Show>
+                                            <Show when={p().warnings.length > 0}>
+                                                <div class="alert alert-warning m-2 shrink-0 text-body py-1">
+                                                    {p().warnings.map((w) => (
+                                                        <span>⚠️ {w}</span>
+                                                    ))}
+                                                </div>
+                                            </Show>
+                                            <div class="min-h-0 flex-1">
+                                                <MdEditor
+                                                    value={p().system}
+                                                    editable={false}
+                                                    onChange={() => {}}
+                                                    highlight={outHl()}
+                                                    tags={knownTags()}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </Show>
+                            </div>
                         </div>
                     </Show>
                 </div>
-                <div class="flex min-h-0 flex-col rounded-lg border border-base-300" classList={{ "flex-1 min-h-[160px]": !!views()["reqbody"] }}>
+                <div
+                    class="flex min-h-0 flex-col rounded-lg border border-base-300"
+                    classList={{ "flex-1 min-h-[160px]": !!views()["reqbody"] }}
+                >
                     {viewHeader("reqbody", "请求预览", preview()?.requestNote ?? "随任务场景生成")}
                     <Show when={views()["reqbody"]}>
                         <div class="min-h-0 flex-1">{reqBodyPane()}</div>
@@ -1458,7 +1505,6 @@ export function PromptLabV4Page() {
                 </div>
             </div>
         ),
-
     };
 
     return (
@@ -1489,7 +1535,8 @@ export function PromptLabV4Page() {
                         {entries().filter((e) => e.status === "overridden").length} 份覆盖
                         <Show when={entries().some((e) => dirtyOf(e))}>
                             <span class="text-info font-semibold">
-                                {" "}· {entries().filter((e) => dirtyOf(e)).length} 未保存
+                                {" "}
+                                · {entries().filter((e) => dirtyOf(e)).length} 未保存
                             </span>
                         </Show>
                     </span>
@@ -1504,7 +1551,9 @@ export function PromptLabV4Page() {
                         ctx={taskUri()}
                         layout={LAB_PAGE.layout}
                         binding={layoutStore.bindingFor(LAB_PAGE, taskUri())}
-                        renderView={(viewId) => parts[viewId]?.() ?? <div class="p-3 text-body opacity-60">未注册的 view: {viewId}</div>}
+                        renderView={(viewId) =>
+                            parts[viewId]?.() ?? <div class="p-3 text-body opacity-60">未注册的 view: {viewId}</div>
+                        }
                     />
                 </div>
             </Show>

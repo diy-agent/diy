@@ -134,9 +134,9 @@ describe("任务 → 人物解析（personaForTask）", () => {
 
 describe("定义校验（写入前拦住非法配置）", () => {
     it("未知模型被拒", () => {
-        expect(() => assertPersonaDef({ name: "x", model: "不存在的模型", reasoningEffort: "none", instructions: "" })).toThrow(
-            /未知模型/,
-        );
+        expect(() =>
+            assertPersonaDef({ name: "x", model: "不存在的模型", reasoningEffort: "none", instructions: "" }),
+        ).toThrow(/未知模型/);
     });
 
     it("档位不在该模型支持集内被拒（各模型词表不同）", () => {

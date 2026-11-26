@@ -15,26 +15,26 @@
  * 否则锁文件已经建在缺省 userData 里了（Chromium 建锁发生在第一次取 app 状态时）。
  */
 
-import { join } from "node:path";
-import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from "./single-instance.js";
+import { join } from 'node:path';
+import { SINGLETON_LOCK, classifyLock, lockAdvice, readLock } from './single-instance.js';
 
 /** Electron 需要的两个方法（只取用得到的，便于测试里注入假的） */
 export interface ElectronAppLike {
-    setPath(name: "userData", path: string): void;
+    setPath(name: 'userData', path: string): void;
     requestSingleInstanceLock(): boolean;
     quit(): void;
-    getPath(name: "userData"): string;
+    getPath(name: 'userData'): string;
 }
 
 /** `<home>/electron_user_data`：与 diy-app 同口径（它的 `AppConfig.electronUserData` 也是这个） */
 export function userDataDirOf(home: string): string {
-    return join(home, "electron_user_data");
+    return join(home, 'electron_user_data');
 }
 
 /** 把 userData 落到数据根下（**必须在 requestSingleInstanceLock / whenReady 之前调**） */
 export function configureUserData(app: ElectronAppLike, home: string): string {
     const dir = userDataDirOf(home);
-    app.setPath("userData", dir);
+    app.setPath('userData', dir);
     return dir;
 }
 
@@ -52,7 +52,7 @@ export interface AcquireOptions {
 export function acquireSingleInstance(app: ElectronAppLike, options: AcquireOptions = {}): boolean {
     const log = options.log ?? ((line: string) => console.warn(line));
     if (app.requestSingleInstanceLock()) return true;
-    const lockPath = join(app.getPath("userData"), SINGLETON_LOCK);
+    const lockPath = join(app.getPath('userData'), SINGLETON_LOCK);
     log(`[instance] 这个数据根上已经有一个实例在跑：${lockAdvice(classifyLock(readLock(lockPath)), lockPath)}`);
     return false;
 }

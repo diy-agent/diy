@@ -172,7 +172,13 @@ export function TaskFieldSelect(props: {
 export function TaskModuleInput(props: { value?: string; saving: boolean; onSave: (v: string) => void }) {
     const [draft, setDraft] = createSignal(props.value ?? "");
     // 任务切换/外部更新时同步（props.value 是真相源；用户正在输入时不覆盖）
-    createEffect(on(() => props.value, (v) => setDraft(v ?? ""), { defer: true }));
+    createEffect(
+        on(
+            () => props.value,
+            (v) => setDraft(v ?? ""),
+            { defer: true },
+        ),
+    );
     const commit = () => {
         if (draft().trim() === (props.value ?? "")) return;
         props.onSave(draft().trim());

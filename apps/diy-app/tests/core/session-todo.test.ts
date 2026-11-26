@@ -92,10 +92,7 @@ describe("todoKindOf：一个会话该不该找你（四类，有先后）", () 
 
 describe("todoOf：行集与行序", () => {
     it("开着 tab 的会话不进本区（已在眼前，再列一遍是噪声）", () => {
-        const rows = [
-            row({ uri: "a", unread: 9, opened: true }),
-            row({ uri: "b", unread: 1 }),
-        ];
+        const rows = [row({ uri: "a", unread: 9, opened: true }), row({ uri: "b", unread: 1 })];
         expect(todoOf(rows).map((i) => i.row.uri)).toEqual(["b"]);
     });
 
@@ -110,11 +107,7 @@ describe("todoOf：行集与行序", () => {
     });
 
     it("同类之间：条数多的在前，再同则按 uri（顺序稳定，不随刷新抖动）", () => {
-        const rows = [
-            row({ uri: "b", unread: 2 }),
-            row({ uri: "a", unread: 2 }),
-            row({ uri: "c", unread: 7 }),
-        ];
+        const rows = [row({ uri: "b", unread: 2 }), row({ uri: "a", unread: 2 }), row({ uri: "c", unread: 7 })];
         expect(todoOf(rows).map((i) => i.row.uri)).toEqual(["c", "a", "b"]);
     });
 

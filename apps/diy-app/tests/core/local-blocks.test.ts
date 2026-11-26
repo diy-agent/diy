@@ -229,9 +229,7 @@ describe("replay 与 blocksToMessages", () => {
         expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
         const tool = msgs[2]!;
         expect(Array.isArray(tool.content)).toBe(true);
-        expect((tool.content as Array<{ type: string; toolCallId?: string }>)[0]!.toolCallId).toBe(
-            "call_1",
-        );
+        expect((tool.content as Array<{ type: string; toolCallId?: string }>)[0]!.toolCallId).toBe("call_1");
     });
 });
 
@@ -363,14 +361,14 @@ describe("think 块 → assistant 的 reasoning part（##371）", () => {
 });
 
 describe("收尾幂等（服务端 finally 补 close 的安全网）", () => {
-  it("重复 stop 不记 issue、不抛异常", () => {
-    const s = new BlockStore();
-    s.apply({ op: "start", id: "t1", kind: "turn" });
-    s.apply({ op: "stop", id: "t1" });
-    s.apply({ op: "stop", id: "t1" });
-    expect(s.issues).toEqual([]);
-    expect(s.blocks.get("t1")!.stopped).toBe(true);
-  });
+    it("重复 stop 不记 issue、不抛异常", () => {
+        const s = new BlockStore();
+        s.apply({ op: "start", id: "t1", kind: "turn" });
+        s.apply({ op: "stop", id: "t1" });
+        s.apply({ op: "stop", id: "t1" });
+        expect(s.issues).toEqual([]);
+        expect(s.blocks.get("t1")!.stopped).toBe(true);
+    });
 });
 
 describe("touched 序号（turn 内当前进度）", () => {
@@ -456,7 +454,10 @@ describe("turn 顶层不变式（被打断后不能嵌套）", () => {
             { op: "delta", id: "t2_u", fields: { content: "新的一轮" } },
             { op: "stop", id: "t2_u" },
         );
-        const roots = s.roots().filter((b) => b.kind === "turn").map((b) => b.id);
+        const roots = s
+            .roots()
+            .filter((b) => b.kind === "turn")
+            .map((b) => b.id);
         expect(roots).toEqual(["t1", "t2"]);
         // 旧日志兼容：重放时按新规则折叠，嵌套 turn 自动回到根
         expect(s.blocks.get("t2")!.parent).toBeUndefined();
@@ -469,8 +470,13 @@ describe("中断 tool 的显式终态收敛（防止重载后重复发起）", (
     const seq = (): Op[] => [
         { op: "start", id: "t1", kind: "turn" },
         { op: "start", id: "t1_s1", kind: "step", parent: "t1" },
-        { op: "start", id: "call_kill", kind: "tool", parent: "t1_s1",
-          meta: { tool: "bash", args: { command: "pkill -9 -f electron" }, status: "running" } },
+        {
+            op: "start",
+            id: "call_kill",
+            kind: "tool",
+            parent: "t1_s1",
+            meta: { tool: "bash", args: { command: "pkill -9 -f electron" }, status: "running" },
+        },
         // 到这里进程被 SIGKILL：call_kill / t1_s1 / t1 全部没收到 stop
     ];
 
@@ -478,8 +484,11 @@ describe("中断 tool 的显式终态收敛（防止重载后重复发起）", (
         const s = ops(...seq());
         const patches = interruptedToolPatches(s);
         expect(patches).toHaveLength(2);
-        expect(patches[0]).toMatchObject({ op: "patch", id: "call_kill",
-            fields: { status: INTERRUPTED_STATUS, output: INTERRUPTED_TOOL_NOTICE } });
+        expect(patches[0]).toMatchObject({
+            op: "patch",
+            id: "call_kill",
+            fields: { status: INTERRUPTED_STATUS, output: INTERRUPTED_TOOL_NOTICE },
+        });
         expect(patches[1]).toMatchObject({ op: "stop", id: "call_kill" });
         expect(INTERRUPTED_TOOL_NOTICE).not.toContain("重新发起");
         expect(INTERRUPTED_TOOL_NOTICE).toContain("不要重试");
@@ -572,9 +581,7 @@ describe("blocksToMessages 投递选项（压缩落点）", () => {
         const m = blocksToMessages(s, { transformToolResult: () => "改掉了" });
         // 按 toolCallId 精确定位中断块（不能拿第一个 tool —— t1_r 是正常输出，会被裁）
         const tool = m.find(
-            (x) =>
-                x.role === "tool" &&
-                (x.content as Array<{ toolCallId: string }>)[0]!.toolCallId === "t3_r",
+            (x) => x.role === "tool" && (x.content as Array<{ toolCallId: string }>)[0]!.toolCallId === "t3_r",
         )!;
         const value = (tool.content as Array<{ output: { value: string } }>)[0]!.output.value;
         expect(value).toBe(INTERRUPTED_TOOL_NOTICE);
@@ -598,9 +605,7 @@ describe("中断 tool 的投递恒定性（回归：收敛动作不得改变投�
     it("已收敛的中断块（output 已写契约文案）仍不被裁剪 —— 否则本地补的错误信息被当历史投递", () => {
         const s = interruptedTurn();
         for (const op of interruptedToolPatches(s)) s.apply(op); // 模拟 main 的落盘收敛
-        expect(valueOf(blocksToMessages(s, { transformToolResult: () => "改掉了" }))).toBe(
-            INTERRUPTED_TOOL_NOTICE,
-        );
+        expect(valueOf(blocksToMessages(s, { transformToolResult: () => "改掉了" }))).toBe(INTERRUPTED_TOOL_NOTICE);
     });
 
     it("收敛前后投递**逐字一致**（D1「stop 即定稿」的结构前提）", () => {
@@ -690,7 +695,12 @@ describe("danglingStopPatches：崩溃残留块补 stop + 轮级结束原因", (
             {
                 op: "patch",
                 id: `t${1700000000000}`,
-                fields: { endReason: { type: "interrupted", data: { why: "app-exit:SIGTERM", evidence: `/h/log/app-exit.jsonl#t${1700000000000}` } } },
+                fields: {
+                    endReason: {
+                        type: "interrupted",
+                        data: { why: "app-exit:SIGTERM", evidence: `/h/log/app-exit.jsonl#t${1700000000000}` },
+                    },
+                },
             },
             { op: "stop", id: `t${1700000000000}` },
         ]);
@@ -755,7 +765,8 @@ describe("tool-result 的失败形状 error-text（##329 的 b）", () => {
     // 成败只剩 `[读取失败] ` 文案前缀可辨，等于把机器判据押在用户可见文案上。
     // 本组锁：成败落在**结构位**（判别键），且途中任何一环都不许把它压回 text。
     const toolParts = (m: ReturnType<typeof blocksToMessages>) =>
-        m.filter((x) => x.role === "tool")
+        m
+            .filter((x) => x.role === "tool")
             .map((x) => (x.content as Array<{ output: ToolResultOutput; origin?: ToolResultOrigin }>)[0]!);
 
     /** 一轮三块 tool，终态分别为 done / error / interrupted */

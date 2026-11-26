@@ -131,7 +131,11 @@ export function InboxBell(props: {
 
                 <Show
                     when={rows().length > 0}
-                    fallback={<div class="px-3 py-6 text-center text-body opacity-60">还没有通知。跑完 / 超支 / 有人留言都会落在这里。</div>}
+                    fallback={
+                        <div class="px-3 py-6 text-center text-body opacity-60">
+                            还没有通知。跑完 / 超支 / 有人留言都会落在这里。
+                        </div>
+                    }
                 >
                     <ul class="menu max-h-[70vh] w-full flex-nowrap overflow-y-auto px-1 py-1">
                         <For each={rows()}>
@@ -141,24 +145,35 @@ export function InboxBell(props: {
                                         {/* 一行 = 时刻 · kind · 任务 · 一句话结论（块 2 的硬要求） */}
                                         <div class="flex items-baseline gap-2 text-body">
                                             <Show when={isNew(e)}>
-                                                <span class="badge badge-primary badge-xs" title="未读">新</span>
+                                                <span class="badge badge-primary badge-xs" title="未读">
+                                                    新
+                                                </span>
                                             </Show>
                                             <span class="opacity-60 tabular-nums">{formatClock(Date.parse(e.ts))}</span>
                                             <span class="badge badge-ghost badge-sm">{INBOX_KIND_LABEL[e.kind]}</span>
                                             {/* 人 / 机器（##435 的判据在 main 侧算好，这里只读）：人署名的
                                                 那条才是"真的有人在等你回复"，机器写的只落条目不催人 */}
                                             <Show when={e.data?.["senderKind"] === "human"}>
-                                                <span class="badge badge-warning badge-xs" title="人署名（真的有人在等你）">
+                                                <span
+                                                    class="badge badge-warning badge-xs"
+                                                    title="人署名（真的有人在等你）"
+                                                >
                                                     人
                                                 </span>
                                             </Show>
                                             <Show when={e.data?.["senderKind"] === "self"}>
-                                                <span class="badge badge-ghost badge-xs" title="你自己发的：不催你，但回看时也在账上">
+                                                <span
+                                                    class="badge badge-ghost badge-xs"
+                                                    title="你自己发的：不催你，但回看时也在账上"
+                                                >
                                                     你自己
                                                 </span>
                                             </Show>
                                             <Show when={e.data?.["senderKind"] === "machine"}>
-                                                <span class="badge badge-ghost badge-xs" title="job / agent / 无署名：机器写的，无需你回复">
+                                                <span
+                                                    class="badge badge-ghost badge-xs"
+                                                    title="job / agent / 无署名：机器写的，无需你回复"
+                                                >
                                                     自动
                                                 </span>
                                             </Show>
@@ -172,7 +187,9 @@ export function InboxBell(props: {
 
                                         {/* 展开 = 三件套 + 结构化数字 + 原文（块 2 的直接解药） */}
                                         <details class="text-caption">
-                                            <summary class="cursor-pointer opacity-60 hover:opacity-100">详情 / 原文</summary>
+                                            <summary class="cursor-pointer opacity-60 hover:opacity-100">
+                                                详情 / 原文
+                                            </summary>
                                             <div class="mt-1 space-y-1 whitespace-pre-wrap break-words pl-2">
                                                 <div>
                                                     <span class="opacity-60">来源：</span>
@@ -198,7 +215,12 @@ export function InboxBell(props: {
                                                         </For>
                                                     </div>
                                                 </Show>
-                                                <Show when={typeof e.data?.["raw"] === "string" && (e.data["raw"] as string).length > 0}>
+                                                <Show
+                                                    when={
+                                                        typeof e.data?.["raw"] === "string" &&
+                                                        (e.data["raw"] as string).length > 0
+                                                    }
+                                                >
                                                     <div class="mt-1 border-t border-base-300 pt-1">
                                                         <div class="opacity-60">原文（未截断）：</div>
                                                         <pre class="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-words bg-base-200/60 p-2 text-caption">

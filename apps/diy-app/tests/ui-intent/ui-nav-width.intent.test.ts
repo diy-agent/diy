@@ -30,7 +30,7 @@ const navWidth = () => ui.query<number>(`${SIDEBAR}.getBoundingClientRect().widt
 
 /** 手柄中心点（拖拽起点） */
 const gripCenter = () =>
-  ui.query<{ x: number; y: number } | null>(`(() => {
+    ui.query<{ x: number; y: number } | null>(`(() => {
     const el = document.querySelector(${JSON.stringify(GRIP)});
     if (!el) return null;
     const r = el.getBoundingClientRect();
@@ -39,88 +39,88 @@ const gripCenter = () =>
 
 /** 等 renderer 就绪（应用是异步挂载的，首条命令可能早于 DOM） */
 async function waitAppReady(): Promise<void> {
-  for (let i = 0; i < 60; i++) {
-    if (await ui.query<boolean>(`!!${SIDEBAR}`)) return;
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error("[nav-width] 等侧栏渲染超时");
+    for (let i = 0; i < 60; i++) {
+        if (await ui.query<boolean>(`!!${SIDEBAR}`)) return;
+        await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error("[nav-width] 等侧栏渲染超时");
 }
 
 /** 锁定展开（手柄只在展开态存在；收起态直接点 pin 点不响，见 nav-helper） */
 async function pinOpen(): Promise<void> {
-  await lockNavOpen(ui);
+    await lockNavOpen(ui);
 }
 
 beforeAll(async () => {
-  const electron = await startElectronTest();
-  const HOME = electron.home;
-  fx = {
-    electron,
-    HOME,
-    sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
-  };
-  ui = await makeUiDriver(electron.cdpUrl, async () => {
-    const r = await fx.sh.getJson("./diy.sh ui inspect");
-    return (r.data as any)?.data?.tree;
-  });
-  await waitAppReady();
-  await pinOpen();
+    const electron = await startElectronTest();
+    const HOME = electron.home;
+    fx = {
+        electron,
+        HOME,
+        sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
+    };
+    ui = await makeUiDriver(electron.cdpUrl, async () => {
+        const r = await fx.sh.getJson("./diy.sh ui inspect");
+        return (r.data as any)?.data?.tree;
+    });
+    await waitAppReady();
+    await pinOpen();
 }, 60000);
 
 afterAll(async () => {
-  ui?.close();
-  await fx?.electron?.stop();
+    ui?.close();
+    await fx?.electron?.stop();
 });
 
 describe("侧栏宽度：可调 + 持久化", () => {
-  it("默认 224px，拖右缘变宽并落盘 localStorage", async () => {
-    // 前置：必须已**锁定**展开。只靠 hover 展开是不够的 —— 下面会把鼠标拖到侧栏之外
-    // （那正是在拖宽度），鼠标一离开 hover 态就被 mouseleave 收拢成 rail。先断言这一点，
-    // 免得「没锁上」表现为后面莫名其妙的宽度断言失败（曾把排查方向带偏）。
-    expect(await navLocked(ui)).toBe(true);
-    expect(await navWidth()).toBeCloseTo(224, 0);
+    it("默认 224px，拖右缘变宽并落盘 localStorage", async () => {
+        // 前置：必须已**锁定**展开。只靠 hover 展开是不够的 —— 下面会把鼠标拖到侧栏之外
+        // （那正是在拖宽度），鼠标一离开 hover 态就被 mouseleave 收拢成 rail。先断言这一点，
+        // 免得「没锁上」表现为后面莫名其妙的宽度断言失败（曾把排查方向带偏）。
+        expect(await navLocked(ui)).toBe(true);
+        expect(await navWidth()).toBeCloseTo(224, 0);
 
-    const grip = await gripCenter();
-    expect(grip).not.toBeNull();
-    await ui.drag(grip!, { x: 420, y: grip!.y }, 10);
-    await new Promise((r) => setTimeout(r, 300));
+        const grip = await gripCenter();
+        expect(grip).not.toBeNull();
+        await ui.drag(grip!, { x: 420, y: grip!.y }, 10);
+        await new Promise((r) => setTimeout(r, 300));
 
-    const w = await navWidth();
-    expect(w).toBeGreaterThan(380);
-    expect(await ui.query<string | null>(`localStorage.getItem('diy_nav_width')`)).toBe(String(Math.round(w)));
-  });
+        const w = await navWidth();
+        expect(w).toBeGreaterThan(380);
+        expect(await ui.query<string | null>(`localStorage.getItem('diy_nav_width')`)).toBe(String(Math.round(w)));
+    });
 
-  it("重载后恢复用户宽度（不是默认值）", async () => {
-    const before = await navWidth();
-    await ui.eval(`location.reload()`);
-    await new Promise((r) => setTimeout(r, 2500));
-    await waitAppReady();
-    await pinOpen();
-    expect(await navWidth()).toBeCloseTo(before, 0);
-  });
+    it("重载后恢复用户宽度（不是默认值）", async () => {
+        const before = await navWidth();
+        await ui.eval(`location.reload()`);
+        await new Promise((r) => setTimeout(r, 2500));
+        await waitAppReady();
+        await pinOpen();
+        expect(await navWidth()).toBeCloseTo(before, 0);
+    });
 
-  it("拖动越界被 clamp 在 160-640", async () => {
-    const grip = await gripCenter();
-    await ui.drag(grip!, { x: 2000, y: grip!.y }, 6);
-    await new Promise((r) => setTimeout(r, 200));
-    expect(await navWidth()).toBeLessThanOrEqual(640);
+    it("拖动越界被 clamp 在 160-640", async () => {
+        const grip = await gripCenter();
+        await ui.drag(grip!, { x: 2000, y: grip!.y }, 6);
+        await new Promise((r) => setTimeout(r, 200));
+        expect(await navWidth()).toBeLessThanOrEqual(640);
 
-    const grip2 = await gripCenter();
-    await ui.drag(grip2!, { x: 10, y: grip2!.y }, 6);
-    await new Promise((r) => setTimeout(r, 200));
-    expect(await navWidth()).toBeGreaterThanOrEqual(160);
-  });
+        const grip2 = await gripCenter();
+        await ui.drag(grip2!, { x: 10, y: grip2!.y }, 6);
+        await new Promise((r) => setTimeout(r, 200));
+        expect(await navWidth()).toBeGreaterThanOrEqual(160);
+    });
 
-  it("双击手柄复位默认宽度", async () => {
-    // 双击走 DOM 派发：ui-drive 目前只有 CDP 原生单击（clickCount=1），
-    // 不足以合成 dblclick。命中性已由上面的 clickSelector/drag 覆盖。
-    await ui.eval(`(() => {
+    it("双击手柄复位默认宽度", async () => {
+        // 双击走 DOM 派发：ui-drive 目前只有 CDP 原生单击（clickCount=1），
+        // 不足以合成 dblclick。命中性已由上面的 clickSelector/drag 覆盖。
+        await ui.eval(`(() => {
       const el = document.querySelector(${JSON.stringify(GRIP)});
       el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
       return true;
     })()`);
-    await new Promise((r) => setTimeout(r, 300));
-    expect(await navWidth()).toBeCloseTo(224, 0);
-    expect(await ui.query<string | null>(`localStorage.getItem('diy_nav_width')`)).toBe("224");
-  });
+        await new Promise((r) => setTimeout(r, 300));
+        expect(await navWidth()).toBeCloseTo(224, 0);
+        expect(await ui.query<string | null>(`localStorage.getItem('diy_nav_width')`)).toBe("224");
+    });
 });

@@ -40,7 +40,15 @@ export interface RunsSnapshot {
     readonly scanOk: boolean;
 }
 
-const EMPTY: RunsSnapshot = { runs: [], untracked: [], procsByRun: {}, running: 0, total: 0, scanAt: null, scanOk: false };
+const EMPTY: RunsSnapshot = {
+    runs: [],
+    untracked: [],
+    procsByRun: {},
+    running: 0,
+    total: 0,
+    scanAt: null,
+    scanOk: false,
+};
 
 const [snap, setSnap] = createSignal<RunsSnapshot>(EMPTY);
 const [error, setError] = createSignal<string | null>(null);
@@ -159,7 +167,9 @@ export const jobRunsStore = {
     /** 反应式读取（会话页 effect 用它；不改状态） */
     get pendingNav(): JobNavTarget | null {
         const p = chatNavStore.pending;
-        return p && p.origin === "job" && p.turnId && p.blockId ? { taskUri: p.taskUri, turnId: p.turnId, blockId: p.blockId } : null;
+        return p && p.origin === "job" && p.turnId && p.blockId
+            ? { taskUri: p.taskUri, turnId: p.turnId, blockId: p.blockId }
+            : null;
     },
     /**
      * 取走属于该任务的待导航请求（取走即清）。

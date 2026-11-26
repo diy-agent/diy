@@ -139,7 +139,16 @@ describe("聚合等价性（turn / persona / session 都由 step 加出来）", 
         const t1 = turnRows.find((r) => r.key === "t1");
         const t1Steps = stepRows.filter((r) => String(field(r, "turnId")) === "t1");
 
-        for (const key of ["noCacheTokens", "cacheReadTokens", "textTokens", "reasoningTokens", "inputTotalTokens", "outputTotalTokens", "totalTokens", "stepTimeMs"]) {
+        for (const key of [
+            "noCacheTokens",
+            "cacheReadTokens",
+            "textTokens",
+            "reasoningTokens",
+            "inputTotalTokens",
+            "outputTotalTokens",
+            "totalTokens",
+            "stepTimeMs",
+        ]) {
             expect(field(t1, key), key).toBe(sumOrNull(t1Steps, key));
         }
         expect(field(t1, "stepCount")).toBe(t1Steps.length);
@@ -150,9 +159,7 @@ describe("聚合等价性（turn / persona / session 都由 step 加出来）", 
         const personaRows = aggregateUsage(rows, "persona");
         const p1 = personaRows.find((r) => r.key === "p1");
         const p1Steps = stepRows.filter((r) => field(r, "persona") === "p1");
-        expect(field(p1, "totalTokens")).toBe(
-            p1Steps.reduce((n, r) => n + (field(r, "totalTokens") as number), 0),
-        );
+        expect(field(p1, "totalTokens")).toBe(p1Steps.reduce((n, r) => n + (field(r, "totalTokens") as number), 0));
         expect(field(p1, "stepCount")).toBe(2);
     });
 
@@ -164,7 +171,13 @@ describe("聚合等价性（turn / persona / session 都由 step 加出来）", 
         const sessionRows = aggregateUsage(rows, "session");
 
         expect(sessionRows).toHaveLength(1);
-        for (const key of ["noCacheTokens", "cacheReadTokens", "totalTokens", "inputTotalTokens", "outputTotalTokens"]) {
+        for (const key of [
+            "noCacheTokens",
+            "cacheReadTokens",
+            "totalTokens",
+            "inputTotalTokens",
+            "outputTotalTokens",
+        ]) {
             expect(field(sessionRows[0], key), key).toBe(sum(stepRows, key));
             expect(sum(turnRows, key), key).toBe(sum(stepRows, key));
         }
@@ -313,7 +326,14 @@ describe("粒度归属（不可聚合列在高层缺席，不是 0）", () => {
 
     it("ttftMs / rate / stepNo / 构成 只在 step 出现", () => {
         const turn = aggregateUsage(rows, "turn")[0]!;
-        for (const key of ["ttftMs", "rate", "stepNo", "contextParts.system", "contextParts.toolsShare", "deliveryCompact"]) {
+        for (const key of [
+            "ttftMs",
+            "rate",
+            "stepNo",
+            "contextParts.system",
+            "contextParts.toolsShare",
+            "deliveryCompact",
+        ]) {
             expect(key in turn.fields, key).toBe(false);
         }
         const step = aggregateUsage(rows, "step")[0]!;
@@ -399,15 +419,17 @@ describe("过滤与下钻", () => {
     });
 
     it("下钻后**合计行**也走同一过滤（session 粒度 + filter = 该轮之和，不是会话总和）", () => {
-    const steps = aggregateUsage(rows, "step", { field: "turnId", value: "t1" });
-    const session = aggregateUsage(rows, "session", { field: "turnId", value: "t1" })[0]!;
-    expect(sumOrNull(steps, "totalTokens")).toBe(session.fields["totalTokens"]);
-    expect(session.fields["stepCount"]).toBe(2);
-    // 未过滤的会话合计必然更大 —— 证明不是"碰巧相等"
-    expect(aggregateUsage(rows, "session")[0]!.fields["totalTokens"]).toBeGreaterThan(session.fields["totalTokens"] as number);
-  });
+        const steps = aggregateUsage(rows, "step", { field: "turnId", value: "t1" });
+        const session = aggregateUsage(rows, "session", { field: "turnId", value: "t1" })[0]!;
+        expect(sumOrNull(steps, "totalTokens")).toBe(session.fields["totalTokens"]);
+        expect(session.fields["stepCount"]).toBe(2);
+        // 未过滤的会话合计必然更大 —— 证明不是"碰巧相等"
+        expect(aggregateUsage(rows, "session")[0]!.fields["totalTokens"]).toBeGreaterThan(
+            session.fields["totalTokens"] as number,
+        );
+    });
 
-  it("persona 行 → turn + persona 过滤", () => {
+    it("persona 行 → turn + persona 过滤", () => {
         const drill = aggregateUsage(rows, "turn", { field: "persona", value: "p2" });
         expect(drill.map((r) => r.key)).toEqual(["t2"]);
     });
@@ -441,7 +463,11 @@ describe("USAGE_FIELDS（列定义只有一份）", () => {
 
     it("聚合结果里的字段集合 == 该粒度声明的列（不多不少）", () => {
         const row = aggregateUsage([rec({ turnId: "t1", step: 1 })], "turn")[0]!;
-        expect(Object.keys(row.fields).sort()).toEqual(columnsFor("turn").map((c) => c.key).sort());
+        expect(Object.keys(row.fields).sort()).toEqual(
+            columnsFor("turn")
+                .map((c) => c.key)
+                .sort(),
+        );
     });
 
     it("未注入的压缩事件列恒 null（不编 0），边界列不属于四级粒度", () => {

@@ -108,9 +108,7 @@ export function TaskDetailPanel() {
                 />
                 {/* 卡片头部：URI + 试验场 + 关闭 */}
                 <div class={`flex items-center justify-between px-4 ${VIEW_BAR_H} border-b shrink-0`}>
-                    <span class="text-body font-mono opacity-60 truncate max-w-[300px]">
-                        {taskStore.selectedUri}
-                    </span>
+                    <span class="text-body font-mono opacity-60 truncate max-w-[300px]">{taskStore.selectedUri}</span>
                     <div class="flex items-center gap-1">
                         <button class="btn btn-ghost btn-xs" onClick={() => taskStore.selectTask(null)}>
                             ✕
@@ -128,33 +126,33 @@ export function TaskDetailPanel() {
                         if (u) localChatStore.setDetailScroll(u, e.currentTarget.scrollTop);
                     }}
                 >
-                        {/* keyed：每个任务一个内容组件实例。
+                    {/* keyed：每个任务一个内容组件实例。
                             非 keyed 时组件实例会被复用到下一个任务，而编辑态/草稿是在构造时
                             初始化的 —— 表现为「切回后显示上一个任务的标题」。
                             代价：改状态会重取任务并重建面板，但编辑态由草稿驱动
                             （draftStore.hasAny），只要用户改过内容就会自动恢复，无内容损失。
                             内容本体与任务执行页左栏 / nav 悬停覆盖层**同一个组件**：
                             这里宽度够（默认 560px），流式布局自动排成两列。 */}
-                        {/* 三态：已就绪 → 内容；判明不存在 → 终态 + 出路（##361）；其余 → 加载中。
+                    {/* 三态：已就绪 → 内容；判明不存在 → 终态 + 出路（##361）；其余 → 加载中。
                             不存在态**不能**回退成「加载中…」：面板是「选中任务即打开」，
                             任务被删后这里曾是永远转圈的空白（无终态无出路）。 */}
-                        <Show
-                            when={taskStore.selectedTask}
-                            keyed
-                            fallback={
-                                <Show
-                                    when={taskStore.selectedMissing}
-                                    fallback={<div class="opacity-60 text-prose">加载中…</div>}
-                                >
-                                    <TaskMissingNotice
-                                        uri={taskStore.selectedUri ?? ""}
-                                        onRefresh={() => void taskStore.selectTask(taskStore.selectedUri)}
-                                    />
-                                </Show>
-                            }
-                        >
-                            {(t) => <TaskDetailContent uri={t.uri} task={t} host="manage" />}
-                        </Show>
+                    <Show
+                        when={taskStore.selectedTask}
+                        keyed
+                        fallback={
+                            <Show
+                                when={taskStore.selectedMissing}
+                                fallback={<div class="opacity-60 text-prose">加载中…</div>}
+                            >
+                                <TaskMissingNotice
+                                    uri={taskStore.selectedUri ?? ""}
+                                    onRefresh={() => void taskStore.selectTask(taskStore.selectedUri)}
+                                />
+                            </Show>
+                        }
+                    >
+                        {(t) => <TaskDetailContent uri={t.uri} task={t} host="manage" />}
+                    </Show>
                 </div>
 
                 {/* 大 FAB：一键进入任务执行页（= 打开这个任务的对话）。
@@ -178,4 +176,3 @@ export function TaskDetailPanel() {
         </Show>
     );
 }
-

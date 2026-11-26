@@ -132,7 +132,11 @@ export function reasoningFromSpec(
     // 反例：明示了 toggle/budget（非 effort 语义）→ 不当成有档位，交平台默认。
     const declaredNonEffort = (options ?? []).length > 0;
     if (reasoning === true && !declaredNonEffort) {
-        return { supported: [DEFAULT_EFFORT, ...GENERIC_REASONING_EFFORTS], default: GENERIC_REASONING_DEFAULT, declared: false };
+        return {
+            supported: [DEFAULT_EFFORT, ...GENERIC_REASONING_EFFORTS],
+            default: GENERIC_REASONING_DEFAULT,
+            declared: false,
+        };
     }
     // 其余（reasoning:false / 明示非 effort / 缺字段）→ 只有平台默认。
     return { supported: [DEFAULT_EFFORT], default: DEFAULT_EFFORT, declared: false };
@@ -468,7 +472,8 @@ export type CostSource = z.infer<typeof CostSourceSchema>;
  * （`toTierWhens` 返回空数组），所以宁可在入口拒收，也不留一条"看起来写了其实没用"的档。
  */
 export const TierWriteSchema = CostTierSchema.refine((t) => t.tier !== undefined, {
-    message: "每条档必须给 tier 触发条件，如 tier:{type:'utc-range', data:{window:'deepseek-peak'}} 或 data:{start,end,calendar,label}",
+    message:
+        "每条档必须给 tier 触发条件，如 tier:{type:'utc-range', data:{window:'deepseek-peak'}} 或 data:{start,end,calendar,label}",
 });
 export type TierWrite = z.infer<typeof TierWriteSchema>;
 
@@ -598,11 +603,11 @@ export type DataFileSource = z.infer<typeof DataFileSourceSchema>;
 
 /** 「现在读的是哪一份快照」—— 诊断出口（`diy doctor`）必须能说清（##338 / ##372 同族病） */
 export const ModelsSnapshotInfoSchema = z.object({
-  /** 实际命中/写入的绝对路径 */
-  path: z.string(),
-  source: DataFileSourceSchema,
-  providers: z.number().int().nonnegative(),
-  models: z.number().int().nonnegative(),
+    /** 实际命中/写入的绝对路径 */
+    path: z.string(),
+    source: DataFileSourceSchema,
+    providers: z.number().int().nonnegative(),
+    models: z.number().int().nonnegative(),
 });
 export type ModelsSnapshotInfo = z.infer<typeof ModelsSnapshotInfoSchema>;
 
@@ -615,24 +620,24 @@ export type ModelsSnapshotInfo = z.infer<typeof ModelsSnapshotInfoSchema>;
  *   · 失败       → `!ok` + `error`（本地文件逐字不变，见 §3.4 fail-soft）
  */
 export const ModelsRefreshResultSchema = z.object({
-  ok: z.boolean(),
-  changed: z.boolean(),
-  /** 本次检查时刻（ISO；定时任务据此看「上次同步是什么时候」） */
-  checkedAt: z.string(),
-  /** 写入目标：`$DIY_HOME/data/models.dev.json` */
-  path: z.string(),
-  /** 抓取源（URL 或本地文件路径）*/
-  origin: z.string(),
-  /** 刷新后（失败时 = 仍生效的）provider 数 / 模型数 */
-  providers: z.number().int().nonnegative(),
-  models: z.number().int().nonnegative(),
-  addedProviders: z.array(z.string()),
-  removedProviders: z.array(z.string()),
-  addedModels: z.number().int().nonnegative(),
-  removedModels: z.number().int().nonnegative(),
-  /** 刷新前实际生效的那份（null = 之前一份都没有） */
-  previous: ModelsSnapshotInfoSchema.nullable(),
-  error: z.string().nullable(),
+    ok: z.boolean(),
+    changed: z.boolean(),
+    /** 本次检查时刻（ISO；定时任务据此看「上次同步是什么时候」） */
+    checkedAt: z.string(),
+    /** 写入目标：`$DIY_HOME/data/models.dev.json` */
+    path: z.string(),
+    /** 抓取源（URL 或本地文件路径）*/
+    origin: z.string(),
+    /** 刷新后（失败时 = 仍生效的）provider 数 / 模型数 */
+    providers: z.number().int().nonnegative(),
+    models: z.number().int().nonnegative(),
+    addedProviders: z.array(z.string()),
+    removedProviders: z.array(z.string()),
+    addedModels: z.number().int().nonnegative(),
+    removedModels: z.number().int().nonnegative(),
+    /** 刷新前实际生效的那份（null = 之前一份都没有） */
+    previous: ModelsSnapshotInfoSchema.nullable(),
+    error: z.string().nullable(),
 });
 export type ModelsRefreshResult = z.infer<typeof ModelsRefreshResultSchema>;
 

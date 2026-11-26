@@ -46,5 +46,9 @@ export async function deleteTaskViaUi(uri: string, title?: string): Promise<void
 export async function removeProjectViaUi(id: string, label?: string): Promise<void> {
     await diyService.diy.project.remove({ id });
     await afterRemoval();
-    notificationStore.addToast("success", `已删除项目${label ? `「${label}」` : ` #${id}`}`, projectRemovedNotice({ id, label }));
+    notificationStore.addToast(
+        "success",
+        `已删除项目${label ? `「${label}」` : ` #${id}`}`,
+        projectRemovedNotice({ id, label }),
+    );
 }

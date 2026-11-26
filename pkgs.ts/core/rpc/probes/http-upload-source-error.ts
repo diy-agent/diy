@@ -2,9 +2,11 @@ import { z } from 'zod';
 import { RpcSchema, createTypedClient } from '../src/index';
 import { httpHarness } from '../test/harness';
 
-const api = RpcSchema.group({ children: {
-  collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.number() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.number() }),
+  },
+});
 
 async function* brokenChunks() {
   yield 1;
@@ -14,7 +16,7 @@ async function* brokenChunks() {
 async function main() {
   const { binding, client, dispose } = await httpHarness.start();
   const cli = createTypedClient(client, api);
-  binding._on("collect", api.collect, async ({ stream }) => {
+  binding._on('collect', api.collect, async ({ stream }) => {
     let count = 0;
     for await (const _ of stream) count++;
     return count;
@@ -27,7 +29,12 @@ async function main() {
       outcome = { code: error?.code, message: error?.message };
     }
     console.log('[http-upload-source-error]', outcome);
-    if (typeof outcome === 'number' || (outcome && typeof outcome === 'object' && !(outcome as any).message?.includes('upload-source-failed'))) {
+    if (
+      typeof outcome === 'number' ||
+      (outcome &&
+        typeof outcome === 'object' &&
+        !(outcome as any).message?.includes('upload-source-failed'))
+    ) {
       console.error('FAIL: upload AsyncIterable error was swallowed or converted to success');
       process.exitCode = 1;
     } else {

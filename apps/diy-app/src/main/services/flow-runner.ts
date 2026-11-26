@@ -44,7 +44,15 @@
 //   不是真源 —— 关掉它、杀掉 CLI，状态文件照样是权威（`rule.core-log`）。
 
 import type { FlowView } from "../core/flow";
-import { advanceFlow, appendBounceOpinion, bounceFlow, finishFlow, putArtifact, showFlow, stepFlow } from "../core/flow";
+import {
+    advanceFlow,
+    appendBounceOpinion,
+    bounceFlow,
+    finishFlow,
+    putArtifact,
+    showFlow,
+    stepFlow,
+} from "../core/flow";
 import { readArtifacts } from "../core/flow-store";
 import { diyHome } from "../core/state";
 import { personaByIdOrName } from "../core/persona";
@@ -182,7 +190,16 @@ export async function runFlow(uri: string, opts: RunOptions = {}): Promise<RunRe
             const r = await stepFlow(uri, opts.deps ?? {});
             if (r.status !== "moved") return stop("stuck", `进入入口失败：${r.reason}`, steps);
             const entered = r.to ?? view.entry;
-            emit({ kind: "step", node: entered, nodeName: nodeNameOf(view.workflowId, entered), mode: "entry", outcome: "moved", to: r.to, moveKind: r.kind, reason: "" });
+            emit({
+                kind: "step",
+                node: entered,
+                nodeName: nodeNameOf(view.workflowId, entered),
+                mode: "entry",
+                outcome: "moved",
+                to: r.to,
+                moveKind: r.kind,
+                reason: "",
+            });
             continue;
         }
 
@@ -195,7 +212,11 @@ export async function runFlow(uri: string, opts: RunOptions = {}): Promise<RunRe
         // ① 人工审批点：停下等人
         if (route.kind === "human") {
             const next = view.next.edges.map((edge) => edge.to).join(" / ") || "（无）";
-            return stop("human", `停在人工审批点「${node.name}（${node.id}）」：批了就 \`diy flow advance ${uri} --to <下一节点>\`（可走：${next}），然后再 \`diy flow run\``, steps);
+            return stop(
+                "human",
+                `停在人工审批点「${node.name}（${node.id}）」：批了就 \`diy flow advance ${uri} --to <下一节点>\`（可走：${next}），然后再 \`diy flow run\``,
+                steps,
+            );
         }
 
         // ② 系统推（`pred:` / `action:`）—— 「绿线」的路径
@@ -203,23 +224,54 @@ export async function runFlow(uri: string, opts: RunOptions = {}): Promise<RunRe
             const r = await stepFlow(uri, opts.deps ?? {});
             if (r.status === "moved") {
                 persistSystemFacts(uri, node.id, view, r.facts);
-                emit({ kind: "step", node: node.id, nodeName: node.name, mode: "system", outcome: "moved", to: r.to, moveKind: r.kind, reason: r.reason });
+                emit({
+                    kind: "step",
+                    node: node.id,
+                    nodeName: node.name,
+                    mode: "system",
+                    outcome: "moved",
+                    to: r.to,
+                    moveKind: r.kind,
+                    reason: r.reason,
+                });
                 continue;
             }
             // 走完 / 停在边上也**发一帧**：系统推是全自动的那条路，人不在场 ——
             // 「它求了什么值、为什么没推」只能从这里与审计流看（少一帧就是少一处证据）。
             persistSystemFacts(uri, node.id, view, r.facts);
             if (r.status === "done") {
-                emit({ kind: "step", node: node.id, nodeName: node.name, mode: "system", outcome: "done", to: null, moveKind: null, reason: r.reason });
+                emit({
+                    kind: "step",
+                    node: node.id,
+                    nodeName: node.name,
+                    mode: "system",
+                    outcome: "done",
+                    to: null,
+                    moveKind: null,
+                    reason: r.reason,
+                });
                 return stop("done", `系统求值全过，「${node.name}」没有 next 出边 ⇒ 工作流走完`, steps);
             }
-            emit({ kind: "step", node: node.id, nodeName: node.name, mode: "system", outcome: "stuck", to: null, moveKind: null, reason: r.reason });
+            emit({
+                kind: "step",
+                node: node.id,
+                nodeName: node.name,
+                mode: "system",
+                outcome: "stuck",
+                to: null,
+                moveKind: null,
+                reason: r.reason,
+            });
             return stop("stuck", `${node.name} 这一步没走成：${r.reason}`, steps);
         }
 
         // `actor: system` + 不可观测 guard 这种自相矛盾的定义在组合期就被内核拒了，走不到这里
         if (route.kind === "inert-system") {
-            return stop("stuck", `节点「${node.id}」的执行者是 system，但当前是 actor 模式（含不可观测 guard）：驱动环不替人宣布`, steps);
+            return stop(
+                "stuck",
+                `节点「${node.id}」的执行者是 system，但当前是 actor 模式（含不可观测 guard）：驱动环不替人宣布`,
+                steps,
+            );
         }
 
         // ③ agent 节点：起一轮、收结论、落产物、按判据推进（`route` 只剩 `agent` 这一支）
@@ -230,11 +282,16 @@ export async function runFlow(uri: string, opts: RunOptions = {}): Promise<RunRe
         const turn = await runNodeTurn(uri, view, actor, opts);
         if (turn.aborted) return stop("aborted", "agent 轮次被中断", steps);
         if (turn.busy) {
-            return stop("session-busy", `任务会话正忙（有人 / 有别的轮次在跑）：没有**替用户**插话，「${node.name}」这一步没跑 —— 等人跑完再 \`diy flow run\``, steps);
+            return stop(
+                "session-busy",
+                `任务会话正忙（有人 / 有别的轮次在跑）：没有**替用户**插话，「${node.name}」这一步没跑 —— 等人跑完再 \`diy flow run\``,
+                steps,
+            );
         }
         if (turn.error !== null) return stop("turn-error", `起 agent 轮次失败：${turn.error}`, steps);
         const conclusion = turn.text.trim();
-        if (conclusion === "") return stop("empty-conclusion", `「${node.name}」这一轮没有产出结论（空正文）：不拿空结论推进`, steps);
+        if (conclusion === "")
+            return stop("empty-conclusion", `「${node.name}」这一轮没有产出结论（空正文）：不拿空结论推进`, steps);
 
         // 结论落袋：**落不进去不挡这一轮**（##341 review1 P3-4）。
         // 产物是派生数据（`rule.domain-first`），而结论（领域判据）已经出来了 —— 一份渲染不出来的
@@ -248,14 +305,32 @@ export async function runFlow(uri: string, opts: RunOptions = {}): Promise<RunRe
         const verdict = verdictOf(conclusion);
         const bounceEdge = view.next.edges.find((edge) => edge.kind === "bounce");
         const nextEdge = view.next.edges.find((edge) => edge.kind === "next");
-        emit({ kind: "turn", node: node.id, nodeName: node.name, agent: actor.agent, verdict: verdict.kind, chars: conclusion.length, artifactError });
+        emit({
+            kind: "turn",
+            node: node.id,
+            nodeName: node.name,
+            agent: actor.agent,
+            verdict: verdict.kind,
+            chars: conclusion.length,
+            artifactError,
+        });
 
         if (bounceEdge && verdict.kind === "bounce") {
             const limit = bounceLimitOf(view);
             if (limit !== null && view.bounces + 1 > limit) {
-                return stop("bounce-limit", `打回已达上限（${limit} 次）：停在这里等人决定（产物与意见都在袋里与审计流里）`, steps);
+                return stop(
+                    "bounce-limit",
+                    `打回已达上限（${limit} 次）：停在这里等人决定（产物与意见都在袋里与审计流里）`,
+                    steps,
+                );
             }
-            const bounced = bounceFlow(uri, bounceEdge.to, [refArg(actor.agent)], verdict.reason || "打回", actor.agent);
+            const bounced = bounceFlow(
+                uri,
+                bounceEdge.to,
+                [refArg(actor.agent)],
+                verdict.reason || "打回",
+                actor.agent,
+            );
             // ##342：把**评审意见正文**（判据那行括号里的原因）一等落进讨论流，锚点 = 这次打回的落点驻留。
             // 讨论是**旁注**（`rule.core-log`）：写不进去只警告，不作废这一步（与产物落袋同一立场）。
             // 整段结论仍在产物袋里（`review#seq`）—— 讨论流记一句意见，袋里存全文，一短一全。
@@ -292,7 +367,12 @@ interface TurnResult {
  * 复用 `LocalAgentManager.chat`（就是 CLI `diy agent local chat` 那条链）：**会话 = 任务自己的会话**
  * ——于是工作流的每一轮都落在任务页上，用户**看得见** agent 在干什么（用户的原话是「我只要观察」）。
  */
-async function runNodeTurn(uri: string, view: FlowView, exec: Extract<NodeExecutor, { kind: "agent" }>, opts: RunOptions): Promise<TurnResult> {
+async function runNodeTurn(
+    uri: string,
+    view: FlowView,
+    exec: Extract<NodeExecutor, { kind: "agent" }>,
+    opts: RunOptions,
+): Promise<TurnResult> {
     const agent = (await import("./local-agent")).getLocalAgent();
     // **还没起轮就已被中断** ⇒ 什么都别起、更别停（老实现在这里调 `cancel(uri)` ——
     // 那会掐掉**用户自己**正在跑的轮次，见 file 头「可停」与 `session-busy`）。
@@ -367,8 +447,15 @@ async function runNodeTurn(uri: string, view: FlowView, exec: Extract<NodeExecut
     }
     if (opts.signal?.aborted) return { text: "", aborted: true, error: null, busy: false };
     // 结论 = **最后一段**非空 assistant 正文（多步轮次里，收尾那一段才是结论）
-    const assistant = [...texts.values()].filter((b) => b.role === "assistant" && b.text.trim() !== "").sort((a, b) => a.order - b.order);
-    return { text: assistant.length > 0 ? assistant[assistant.length - 1]!.text : "", aborted: false, error: null, busy: false };
+    const assistant = [...texts.values()]
+        .filter((b) => b.role === "assistant" && b.text.trim() !== "")
+        .sort((a, b) => a.order - b.order);
+    return {
+        text: assistant.length > 0 ? assistant[assistant.length - 1]!.text : "",
+        aborted: false,
+        error: null,
+        busy: false,
+    };
 }
 
 /**
@@ -377,7 +464,11 @@ async function runNodeTurn(uri: string, view: FlowView, exec: Extract<NodeExecut
  * 五段：角色 / 节点 / 上游 / 本步产物 / 交付约定。**节点提示词取自 `FlowView.node.hint`**
  * （内核 `renderHint` 已插值 `${参数}`，与 `diy flow prompt` 同一个来源）—— 不另拼一份。
  */
-export function composeTurnMessage(uri: string, view: FlowView, exec: Extract<NodeExecutor, { kind: "agent" }>): string {
+export function composeTurnMessage(
+    uri: string,
+    view: FlowView,
+    exec: Extract<NodeExecutor, { kind: "agent" }>,
+): string {
     const parts: string[] = [];
     if (exec.role !== "") parts.push(`【角色】${exec.role}`);
     parts.push(`【当前节点】${view.workflowName} · ${view.node?.name ?? ""}（${view.node?.id ?? "?"}）`);
@@ -385,7 +476,9 @@ export function composeTurnMessage(uri: string, view: FlowView, exec: Extract<No
     const upstream = upstreamContext(uri, view);
     if (upstream !== "") parts.push(`【上游】\n${upstream}`);
     if (view.art?.raw) parts.push(`【本步产物】${view.art.raw}`);
-    parts.push("【交付约定】正文照常写；**末行**必须是「结论：通过」或「结论：打回（原因…）」—— 驱动环按它决定走下一步还是打回。");
+    parts.push(
+        "【交付约定】正文照常写；**末行**必须是「结论：通过」或「结论：打回（原因…）」—— 驱动环按它决定走下一步还是打回。",
+    );
     return parts.join("\n\n");
 }
 
@@ -432,12 +525,22 @@ function postBounceOpinionQuietly(uri: string, view: FlowView, text: string, aut
  * 读不到 ⇒ 按通过（不误打回）。
  */
 export function verdictOf(conclusion: string): { kind: "pass" | "bounce"; reason: string } {
-    const lines = conclusion.split("\n").map((line) => line.trim()).filter((line) => line !== "");
+    const lines = conclusion
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line !== "");
     const last = lines.length > 0 ? lines[lines.length - 1]! : "";
     const m = /结论\s*[:：]\s*(通过|打回|驳回|放行|批准)(.*)$/.exec(last);
     if (!m) return { kind: "pass", reason: "" };
     const word = m[1]!;
-    if (word === "打回" || word === "驳回") return { kind: "bounce", reason: m[2]!.replace(/^[（(]/, "").replace(/[）)]$/, "").trim() };
+    if (word === "打回" || word === "驳回")
+        return {
+            kind: "bounce",
+            reason: m[2]!
+                .replace(/^[（(]/, "")
+                .replace(/[）)]$/, "")
+                .trim(),
+        };
     return { kind: "pass", reason: "" };
 }
 
@@ -462,7 +565,12 @@ function personaModelOf(persona: string | undefined): string | undefined {
  * 先落袋再判「推没推」不重要：袋是派生数据（`rule.domain-first`），与位置无关；这一步只补
  * 「系统那一步真跑了什么」。节点没声明 `art` ⇒ 不落（不编产物）。
  */
-function persistSystemFacts(uri: string, nodeId: string, view: FlowView, facts: Readonly<Record<string, CommandFact>>): void {
+function persistSystemFacts(
+    uri: string,
+    nodeId: string,
+    view: FlowView,
+    facts: Readonly<Record<string, CommandFact>>,
+): void {
     if (!view.art) return;
     const withOutput = Object.values(facts).find((fact) => fact.output.trim() !== "");
     if (!withOutput) return;

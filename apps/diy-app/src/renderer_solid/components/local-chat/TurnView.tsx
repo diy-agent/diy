@@ -13,10 +13,44 @@ import type { ReasoningEffort } from "../../../main/services/local-agent";
 import { reasoningEffortLabel } from "../../../shared/reasoning-effort";
 import { clampLines, countLines } from "../../lib/chat-text";
 import type { BlockNode } from "../../../main/services/local-blocks";
-import { collapsedRows, composeTail, degradedOf, endLeafTip, endReasonOf, isFailedTool, isReceiptTurn, historyOpenOf, leadUsers, linesFromDrag, liveTailOf, planOfLevel, tailOf, turnEndNote, turnFoldTip, turnRows, type TurnLevel, type TurnRow } from "../../lib/chat-fold";
+import {
+    collapsedRows,
+    composeTail,
+    degradedOf,
+    endLeafTip,
+    endReasonOf,
+    isFailedTool,
+    isReceiptTurn,
+    historyOpenOf,
+    leadUsers,
+    linesFromDrag,
+    liveTailOf,
+    planOfLevel,
+    tailOf,
+    turnEndNote,
+    turnFoldTip,
+    turnRows,
+    type TurnLevel,
+    type TurnRow,
+} from "../../lib/chat-fold";
 import { steerModeLabel, steerModeTip } from "../../../shared/steer-mode";
 import { DEGRADED_DANGLING_TEXT } from "../../../shared/degraded-history";
-import { DisclosureHead, EndLeafBox, ErrorBox, HISTORY_TEXT_FOLD_LINES, MarkdownText, PlainText, ProcessRow, TailBox, hasAssistantContent, leafById, reuseRows, str, summaryOf, turnById } from "./MessageStream";
+import {
+    DisclosureHead,
+    EndLeafBox,
+    ErrorBox,
+    HISTORY_TEXT_FOLD_LINES,
+    MarkdownText,
+    PlainText,
+    ProcessRow,
+    TailBox,
+    hasAssistantContent,
+    leafById,
+    reuseRows,
+    str,
+    summaryOf,
+    turnById,
+} from "./MessageStream";
 
 /** 该轮耗时（main 收尾 patch 写入的 `durationMs`）；没写（旧日志 / 崩溃轮）→ null，不编 0 */
 function turnDurationMs(t: BlockNode): number | null {
@@ -259,10 +293,8 @@ function TextRow(props: {
                 style={
                     cut()
                         ? {
-                              "mask-image":
-                                  "linear-gradient(to bottom, #000 45%, rgba(0,0,0,0) 100%)",
-                              "-webkit-mask-image":
-                                  "linear-gradient(to bottom, #000 45%, rgba(0,0,0,0) 100%)",
+                              "mask-image": "linear-gradient(to bottom, #000 45%, rgba(0,0,0,0) 100%)",
+                              "-webkit-mask-image": "linear-gradient(to bottom, #000 45%, rgba(0,0,0,0) 100%)",
                           }
                         : undefined
                 }
@@ -278,7 +310,8 @@ function TextRow(props: {
                     class="mt-0.5 text-caption opacity-60 hover:opacity-100 hover:text-primary"
                     onClick={fire}
                 >
-                    ⋯ 已折叠 {view().exact ? "" : "≥"}{view().omitted} 行 · 点击展开全部正文
+                    ⋯ 已折叠 {view().exact ? "" : "≥"}
+                    {view().omitted} 行 · 点击展开全部正文
                 </button>
             </Show>
             {/* 1 级「摘要结论」下缘拖条：往下拖 = 这一块画更多行（免在 1/2 级间来回切）。
@@ -329,7 +362,10 @@ function UserBubble(props: { node: BlockNode }) {
                     那条 user 块看起来就是这个任务自己的发言。标记只写来源（房间短名），不写原因。 */}
                 <Show when={deliveryNote()}>
                     {(n) => (
-                        <div class="mb-0.5 flex items-center gap-1.5 text-caption opacity-70" data-user-room={roomOrigin()?.roomId}>
+                        <div
+                            class="mb-0.5 flex items-center gap-1.5 text-caption opacity-70"
+                            data-user-room={roomOrigin()?.roomId}
+                        >
                             <span class="shrink-0">🫧</span>
                             <span class="font-medium">{n()}</span>
                         </div>
@@ -488,22 +524,14 @@ function PartRow(props: {
     const b = props.node;
     if (b.tag === "think" || b.tag === "tool") {
         return (
-            <ProcessRow
-                node={b}
-                turn={props.turn}
-                pin={props.pin}
-                onToggle={props.onToggle}
-                onFull={props.onFull}
-            />
+            <ProcessRow node={b} turn={props.turn} pin={props.pin} onToggle={props.onToggle} onFull={props.onFull} />
         );
     }
     if (b.tag === "plan") {
         return (
             <div class="text-body opacity-70">
                 📋 计划：
-                <For each={(b.attrs.items as unknown[]) ?? []}>
-                    {(it) => <div>• {str(it)}</div>}
-                </For>
+                <For each={(b.attrs.items as unknown[]) ?? []}>{(it) => <div>• {str(it)}</div>}</For>
             </div>
         );
     }
@@ -596,7 +624,12 @@ export function TurnView(props: {
         return p === undefined ? plan().midExpanded : p;
     };
     return (
-        <div class="space-y-1.5" data-turn-id={t().id} data-turn-level={props.level} data-hist-open={props.histOpen ? "1" : "0"}>
+        <div
+            class="space-y-1.5"
+            data-turn-id={t().id}
+            data-turn-level={props.level}
+            data-hist-open={props.histOpen ? "1" : "0"}
+        >
             {/* 轮首用户发言**先出**：IM 直觉是"用户先说、对方再接"。
                 轮次头（助理身份行）压在用户消息上面 = 看着像助理先开口（2026-10-11 反馈）。 */}
             <For each={lead()}>{(n) => <UserBubble node={n} />}</For>
@@ -623,45 +656,45 @@ export function TurnView(props: {
             >
                 <div class="space-y-1.5" data-chat-list>
                     <For each={rows()}>
-                    {(row) => {
-                        if (row.kind === "user") return <UserBubble node={row.node} />;
-                        if (row.kind === "error")
+                        {(row) => {
+                            if (row.kind === "user") return <UserBubble node={row.node} />;
+                            if (row.kind === "error")
+                                return (
+                                    <ErrorBox
+                                        node={row.node}
+                                        receiptSteerId={
+                                            isReceiptTurn(t()) && typeof t().attrs.steerId === "string"
+                                                ? (t().attrs.steerId as string)
+                                                : ""
+                                        }
+                                    />
+                                );
+                            if (row.kind === "text")
+                                return (
+                                    <TextRow
+                                        node={row.node}
+                                        lines={HISTORY_TEXT_FOLD_LINES}
+                                        defaultOpen={true}
+                                        pin={props.pin}
+                                        onToggle={props.onToggle}
+                                        md={props.md}
+                                    />
+                                );
                             return (
-                                <ErrorBox
-                                    node={row.node}
-                                    receiptSteerId={
-                                        isReceiptTurn(t()) && typeof t().attrs.steerId === "string"
-                                            ? (t().attrs.steerId as string)
-                                            : ""
-                                    }
-                                />
-                            );
-                        if (row.kind === "text")
-                            return (
-                                <TextRow
-                                    node={row.node}
-                                    lines={HISTORY_TEXT_FOLD_LINES}
-                                    defaultOpen={true}
-                                    pin={props.pin}
-                                    onToggle={props.onToggle}
-                                    md={props.md}
-                                />
-                            );
-                        return (
-                            <ProcBar
-                                parts={row.parts}
-                                turn={t()}
-                                open={rowOpen(row.key)}
-                                /* **显式**给反值：`pin` 缺省时翻转出来是 `!undefined = true`，
+                                <ProcBar
+                                    parts={row.parts}
+                                    turn={t()}
+                                    open={rowOpen(row.key)}
+                                    /* **显式**给反值：`pin` 缺省时翻转出来是 `!undefined = true`，
                                    而 4 级这行**默认就是展开** —— 不显式传 force 的话第一次点
                                    毫无变化（要连点两下才收起）。与 TailBox 同一个坑，见 togglePin。 */
-                                onToggle={() => props.onToggle(`row:${row.key}`, !rowOpen(row.key))}
-                                pin={props.pin}
-                                onToggleProc={props.onToggle}
-                                onFull={props.onFull}
-                            />
-                        );
-                    }}
+                                    onToggle={() => props.onToggle(`row:${row.key}`, !rowOpen(row.key))}
+                                    pin={props.pin}
+                                    onToggleProc={props.onToggle}
+                                    onFull={props.onFull}
+                                />
+                            );
+                        }}
                     </For>
                 </div>
             </Show>

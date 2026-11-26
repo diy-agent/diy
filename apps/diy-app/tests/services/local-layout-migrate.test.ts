@@ -9,7 +9,14 @@ import { dirname, join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { keyOf, legacySessionFile, localDir, resolveSessionFile, sessionDir, sessionFile } from "../../src/main/core/local-paths";
+import {
+    keyOf,
+    legacySessionFile,
+    localDir,
+    resolveSessionFile,
+    sessionDir,
+    sessionFile,
+} from "../../src/main/core/local-paths";
 import { migrateLocalLayout } from "../../src/main/services/local-layout-migrate";
 
 // 每条用例从**空 local/ 目录**起步：`migrateLocalLayout` 是全盘扫描，断言 `moved/conflicts`
@@ -126,7 +133,10 @@ describe("中途失败：截断副本不可见（##266 review1 R1）", () => {
         // 新实现不再**产生**截断目标；但盘上可能已有旧版本留下的残迹。若只报 conflict「留原地」，
         // 读侧双认仍会优先认领那份截断的 ⇒ 历史依旧腰斩。判据：正常迁移只产生「等大」目标，
         // 故「目标 < 源」只可能是截断残迹 ⇒ 备份后重做（源零丢失）。
-        const uri = createTask({ title: "迁移-截断目标", project: createProject(join(diyHome(), "migrate-truncated-target")) });
+        const uri = createTask({
+            title: "迁移-截断目标",
+            project: createProject(join(diyHome(), "migrate-truncated-target")),
+        });
         const text = Array.from({ length: 50 }, (_, i) => `{"op":"append","i":${i}}`).join("\n") + "\n";
         const legacy = writeLegacy(uri, "ops", text);
         const to = sessionFile(uri, "ops");

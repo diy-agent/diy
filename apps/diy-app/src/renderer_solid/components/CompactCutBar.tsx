@@ -70,7 +70,7 @@ export function CompactCutBar(props: {
     const total = (): number => view()?.total ?? 0;
     const appliedKept = (): number => view()?.keptCount ?? 0;
     const keptCount = (): number => Math.min(total(), Math.max(0, Math.round(keep() ?? appliedKept())));
-    const lo = (): number => total() - keptCount();                    // 保留起点（第几轮开始留）
+    const lo = (): number => total() - keptCount(); // 保留起点（第几轮开始留）
     const dirty = (): boolean => keptCount() !== appliedKept();
 
     const keptTokens = createMemo(() => {
@@ -118,10 +118,7 @@ export function CompactCutBar(props: {
     }
 
     return (
-        <section
-            class={card() ? "min-w-0" : "min-w-0 space-y-1"}
-            data-compact-cut-bar={card() ? "card" : "panel"}
-        >
+        <section class={card() ? "min-w-0" : "min-w-0 space-y-1"} data-compact-cut-bar={card() ? "card" : "panel"}>
             {/* 滑杆 */}
             <div class="flex items-center gap-2">
                 <span class={card() ? "text-caption opacity-70" : "text-body font-bold tracking-wide opacity-80"}>
@@ -175,7 +172,9 @@ export function CompactCutBar(props: {
                                         data-cut-row={r.label}
                                         title={`${r.label}${r.title ? `：${r.title}` : ""}（${fmtTokens(r.tokens)}）`}
                                     >
-                                        <span class={`font-mono text-[11px] ${r.kept ? "opacity-70" : "text-error/70 line-through"}`}>
+                                        <span
+                                            class={`font-mono text-[11px] ${r.kept ? "opacity-70" : "text-error/70 line-through"}`}
+                                        >
                                             {r.label}
                                         </span>
                                         <span
@@ -183,7 +182,9 @@ export function CompactCutBar(props: {
                                         >
                                             {r.title || "（无正文摘要）"}
                                         </span>
-                                        <span class="text-right font-mono text-[11px] opacity-60">{fmtTokens(r.tokens)}</span>
+                                        <span class="text-right font-mono text-[11px] opacity-60">
+                                            {fmtTokens(r.tokens)}
+                                        </span>
                                     </div>
                                 </>
                             )}
@@ -212,7 +213,10 @@ export function CompactCutBar(props: {
                                 {usd(p().afterUsd)}
                             </span>
                             <span class="opacity-60">（现在 {usd(p().nowUsd)}）</span>
-                            <span class="ml-auto opacity-45" title={`按 ${p().basis} 的价目：输入 $${p().perMInput}/M、输出 $${p().perMOutput}/M`}>
+                            <span
+                                class="ml-auto opacity-45"
+                                title={`按 ${p().basis} 的价目：输入 $${p().perMInput}/M、输出 $${p().perMOutput}/M`}
+                            >
                                 未计缓存折扣 · {p().basis}
                             </span>
                         </div>
@@ -222,7 +226,8 @@ export function CompactCutBar(props: {
                 <div class="flex items-center gap-2">
                     <span class="text-caption opacity-70" data-cut-summary>
                         丢 {lo()} 轮（{fmtTokens(droppedTokens())}）· 留 {keptCount()} 轮（{fmtTokens(keptTokens())}）
-                    </span>                    <button
+                    </span>{" "}
+                    <button
                         type="button"
                         class="btn btn-primary btn-xs ml-auto"
                         disabled={busy() || !dirty()}
@@ -231,7 +236,6 @@ export function CompactCutBar(props: {
                     >
                         {busy() ? "压缩中…" : dirty() ? "压缩" : "已生效"}
                     </button>
-                
                 </div>
 
                 <Show when={keptCount() === 0}>
@@ -254,9 +258,15 @@ function CutLine(props: { dropped: number; kept: number; allKept?: boolean }) {
     return (
         <div class="relative h-0 border-t-2 border-dashed border-error" data-cut>
             <span class="absolute -top-2 left-1 rounded bg-base-100 px-0.5 text-caption text-error">✂️</span>
-            <span class="absolute -top-2 left-6 rounded bg-base-100 px-1 text-[10.5px] font-mono text-error">压缩点</span>
+            <span class="absolute -top-2 left-6 rounded bg-base-100 px-1 text-[10.5px] font-mono text-error">
+                压缩点
+            </span>
             <span class="absolute -top-2.5 right-1.5 rounded bg-error px-1.5 text-[10.5px] font-mono font-bold text-error-content">
-                {props.allKept ? "不压缩（全留）" : props.kept === 0 ? "全清（一轮不留）" : `丢 ${props.dropped} 轮 / 留 ${props.kept} 轮`}
+                {props.allKept
+                    ? "不压缩（全留）"
+                    : props.kept === 0
+                      ? "全清（一轮不留）"
+                      : `丢 ${props.dropped} 轮 / 留 ${props.kept} 轮`}
             </span>
         </div>
     );

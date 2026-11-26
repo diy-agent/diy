@@ -60,9 +60,7 @@ describe("seedHome", () => {
         expect(Object.keys(cfg.stdProviders)).toEqual(["opencode-go"]);
         expect(cfg.stdProviders["opencode-go"]!.accounts[0]!.data.value).toBe("$OPENCODE_API_KEY");
 
-        expect(loadPersonas(home).personas[loadPersonas(home).default]!.model).toBe(
-            seedPersonaModel(),
-        );
+        expect(loadPersonas(home).personas[loadPersonas(home).default]!.model).toBe(seedPersonaModel());
 
         // 任务形态：active 有一条，且有一条子任务挂在它下面
         const active = r.tasks.find((u) => getTask(u)!.state === "active")!;
@@ -74,9 +72,7 @@ describe("seedHome", () => {
     it("无可用 env → 仍写 $VAR 引用占位（形状完整，UI 标红提示）", () => {
         const r = seedHome(home, {});
         expect(r.model).toBe("placeholder");
-        expect(loadModelConfig(home).stdProviders["opencode-go"]!.accounts[0]!.data.value).toBe(
-            "$OPENCODE_API_KEY",
-        );
+        expect(loadModelConfig(home).stdProviders["opencode-go"]!.accounts[0]!.data.value).toBe("$OPENCODE_API_KEY");
     });
 
     it("生产数据根永不种入（即使被显式指到生产根）", () => {

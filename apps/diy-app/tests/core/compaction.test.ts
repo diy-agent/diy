@@ -53,7 +53,17 @@ const lines = (n: number): string => Array.from({ length: n }, (_, i) => `line $
 describe("clipToolResult", () => {
     // 工具输出策略：三轴形状（参数收进分支）
     const pol = (mode: "asis" | "headtail" | "callpath", ht = DEFAULT_HEADTAIL) =>
-        toolResultOf(normalizePolicy({ toolResult: mode, headtail: { headLines: ht.headLines, tailLines: ht.tailLines, maxLineChars: ht.maxLineChars, maxKeepBytes: ht.maxKeepBytes } }))!;
+        toolResultOf(
+            normalizePolicy({
+                toolResult: mode,
+                headtail: {
+                    headLines: ht.headLines,
+                    tailLines: ht.tailLines,
+                    maxLineChars: ht.maxLineChars,
+                    maxKeepBytes: ht.maxKeepBytes,
+                },
+            }),
+        )!;
 
     it("asis：逐字符返回原文", () => {
         const t = lines(1000);
@@ -208,10 +218,7 @@ describe("parseCompactLog / resolveBoundary", () => {
     });
 
     it("全部被 undo → 回到全量（null）", () => {
-        const evs = [
-            compactEvent("a", "t1"),
-            { kind: "undo", v: 1 as const, ref: "a", ts: "u" } as const,
-        ];
+        const evs = [compactEvent("a", "t1"), { kind: "undo", v: 1 as const, ref: "a", ts: "u" } as const];
         expect(resolveBoundary(evs)).toBeNull();
     });
 });

@@ -142,8 +142,7 @@ const panelBox = () =>
            };
          })()`,
     );
-const inFullscreen = () =>
-    ui.query<boolean>("!!document.querySelector('.cm-editor')?.closest('.rounded-field.fixed')");
+const inFullscreen = () => ui.query<boolean>("!!document.querySelector('.cm-editor')?.closest('.rounded-field.fixed')");
 
 /**
  * 每轮的**两行**（v4 契约，##253「身份上移」+ 轮尾状态行）：一轮各一处，同序（文档序 = 时间序）。
@@ -217,99 +216,97 @@ const turnRows = () =>
 // 写成 `it` 时 `-t` 过滤会把它跳过 —— 后面 R5 / R6 的用例拿到的就是空 uri（##433 同款假红）。
 // R6 也用它，故挂在**文件级** hook；describe 级 hook 在只跑 R6 时不会执行。
 beforeAll(async () => {
-        const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/composer --label Composer`);
-        const pid = String((p.data as any)?.data?.id);
-        const t = await fx.sh.getJson(`./diy.sh task create "输入框高度 + 消息时间" ${pid}`);
-        uri = String((t.data as any)?.data?.uri);
-        expect(uri).toMatch(/^projects\/.+\/tasks\/.+$/);
+    const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/composer --label Composer`);
+    const pid = String((p.data as any)?.data?.id);
+    const t = await fx.sh.getJson(`./diy.sh task create "输入框高度 + 消息时间" ${pid}`);
+    uri = String((t.data as any)?.data?.uri);
+    expect(uri).toMatch(/^projects\/.+\/tasks\/.+$/);
 
-        const file = join(fx.HOME, sessionFileRel(uri, "ops"));
-        mkdirSync(dirname(file), { recursive: true });
-        const ops = [
-            // ① 真实毫秒 turnId：有时间
-            { op: "start", id: `t${STAMP_MS}`, kind: "turn", meta: { model: "test-model" } },
-            { op: "start", id: `t${STAMP_MS}_u`, kind: "text", parent: `t${STAMP_MS}`, meta: { role: "user" } },
-            { op: "delta", id: `t${STAMP_MS}_u`, fields: { content: "第一句" } },
-            { op: "stop", id: `t${STAMP_MS}_u` },
-            { op: "start", id: `t${STAMP_MS}_a1`, kind: "text", parent: `t${STAMP_MS}`, meta: { role: "assistant" } },
-            { op: "delta", id: `t${STAMP_MS}_a1`, fields: { content: "第一轮回复" } },
-            { op: "stop", id: `t${STAMP_MS}_a1` },
-            // 用量补丁：让 turn 底 bar 上屏 —— 用来钉住"它也不再重复时刻"（review2-3）
-            {
-                op: "patch",
-                id: `t${STAMP_MS}`,
-                fields: {
-                    usage: {
-                        inputTotal: 100,
-                        outputTotal: 20,
-                        cacheRead: 0,
-                        noCache: 100,
-                        cacheWrite: null,
-                        text: 20,
-                        reasoning: 0,
-                        total: 120,
-                        windowTotal: 120,
-                        lastInputTotal: 100,
-                        lastOutputTotal: 20,
-                        steps: 1,
-                        contextLimit: 200000,
-                        cost: null,
-                    },
+    const file = join(fx.HOME, sessionFileRel(uri, "ops"));
+    mkdirSync(dirname(file), { recursive: true });
+    const ops = [
+        // ① 真实毫秒 turnId：有时间
+        { op: "start", id: `t${STAMP_MS}`, kind: "turn", meta: { model: "test-model" } },
+        { op: "start", id: `t${STAMP_MS}_u`, kind: "text", parent: `t${STAMP_MS}`, meta: { role: "user" } },
+        { op: "delta", id: `t${STAMP_MS}_u`, fields: { content: "第一句" } },
+        { op: "stop", id: `t${STAMP_MS}_u` },
+        { op: "start", id: `t${STAMP_MS}_a1`, kind: "text", parent: `t${STAMP_MS}`, meta: { role: "assistant" } },
+        { op: "delta", id: `t${STAMP_MS}_a1`, fields: { content: "第一轮回复" } },
+        { op: "stop", id: `t${STAMP_MS}_a1` },
+        // 用量补丁：让 turn 底 bar 上屏 —— 用来钉住"它也不再重复时刻"（review2-3）
+        {
+            op: "patch",
+            id: `t${STAMP_MS}`,
+            fields: {
+                usage: {
+                    inputTotal: 100,
+                    outputTotal: 20,
+                    cacheRead: 0,
+                    noCache: 100,
+                    cacheWrite: null,
+                    text: 20,
+                    reasoning: 0,
+                    total: 120,
+                    windowTotal: 120,
+                    lastInputTotal: 100,
+                    lastOutputTotal: 20,
+                    steps: 1,
+                    contextLimit: 200000,
+                    cost: null,
                 },
             },
-            { op: "stop", id: `t${STAMP_MS}` },
-            // ② 旧形状 turnId（迁移前日志）：解析不出 —— 不显示时间，也不编一个出来
-            { op: "start", id: "t1", kind: "turn", meta: { model: "legacy-model" } },
-            { op: "start", id: "t1_u", kind: "text", parent: "t1", meta: { role: "user" } },
-            { op: "delta", id: "t1_u", fields: { content: "第二句" } },
-            { op: "stop", id: "t1_u" },
-            { op: "start", id: "t1_a1", kind: "text", parent: "t1", meta: { role: "assistant" } },
-            { op: "delta", id: "t1_a1", fields: { content: "第二轮回复" } },
-            { op: "stop", id: "t1_a1" },
-            { op: "stop", id: "t1" },
-            // ③ 长模型名的轮次：窄栏下署名行必须截断，而不是换行/顶破容器（review2-1）
-            { op: "start", id: `t${STAMP3_MS}`, kind: "turn", meta: { model: LONG_MODEL } },
-            { op: "start", id: `t${STAMP3_MS}_u`, kind: "text", parent: `t${STAMP3_MS}`, meta: { role: "user" } },
-            { op: "delta", id: `t${STAMP3_MS}_u`, fields: { content: "第三句" } },
-            { op: "stop", id: `t${STAMP3_MS}_u` },
-            { op: "start", id: `t${STAMP3_MS}_a1`, kind: "text", parent: `t${STAMP3_MS}`, meta: { role: "assistant" } },
-            { op: "delta", id: `t${STAMP3_MS}_a1`, fields: { content: "第三轮回复" } },
-            { op: "stop", id: `t${STAMP3_MS}_a1` },
-            // 用量补丁：轮尾状态行（时刻 + 统计 + 用量）要 `usage` 或"直播中"才渲染，
-            // 真实轮次必有（main 在 finish-step 下发）；不给的话这轮连时刻都看不到
-            {
-                op: "patch",
-                id: `t${STAMP3_MS}`,
-                fields: {
-                    usage: {
-                        inputTotal: 100,
-                        outputTotal: 20,
-                        cacheRead: 0,
-                        noCache: 100,
-                        cacheWrite: null,
-                        text: 20,
-                        reasoning: 0,
-                        total: 120,
-                        windowTotal: 120,
-                        lastInputTotal: 100,
-                        lastOutputTotal: 20,
-                        steps: 1,
-                        contextLimit: 200000,
-                        cost: null,
-                    },
+        },
+        { op: "stop", id: `t${STAMP_MS}` },
+        // ② 旧形状 turnId（迁移前日志）：解析不出 —— 不显示时间，也不编一个出来
+        { op: "start", id: "t1", kind: "turn", meta: { model: "legacy-model" } },
+        { op: "start", id: "t1_u", kind: "text", parent: "t1", meta: { role: "user" } },
+        { op: "delta", id: "t1_u", fields: { content: "第二句" } },
+        { op: "stop", id: "t1_u" },
+        { op: "start", id: "t1_a1", kind: "text", parent: "t1", meta: { role: "assistant" } },
+        { op: "delta", id: "t1_a1", fields: { content: "第二轮回复" } },
+        { op: "stop", id: "t1_a1" },
+        { op: "stop", id: "t1" },
+        // ③ 长模型名的轮次：窄栏下署名行必须截断，而不是换行/顶破容器（review2-1）
+        { op: "start", id: `t${STAMP3_MS}`, kind: "turn", meta: { model: LONG_MODEL } },
+        { op: "start", id: `t${STAMP3_MS}_u`, kind: "text", parent: `t${STAMP3_MS}`, meta: { role: "user" } },
+        { op: "delta", id: `t${STAMP3_MS}_u`, fields: { content: "第三句" } },
+        { op: "stop", id: `t${STAMP3_MS}_u` },
+        { op: "start", id: `t${STAMP3_MS}_a1`, kind: "text", parent: `t${STAMP3_MS}`, meta: { role: "assistant" } },
+        { op: "delta", id: `t${STAMP3_MS}_a1`, fields: { content: "第三轮回复" } },
+        { op: "stop", id: `t${STAMP3_MS}_a1` },
+        // 用量补丁：轮尾状态行（时刻 + 统计 + 用量）要 `usage` 或"直播中"才渲染，
+        // 真实轮次必有（main 在 finish-step 下发）；不给的话这轮连时刻都看不到
+        {
+            op: "patch",
+            id: `t${STAMP3_MS}`,
+            fields: {
+                usage: {
+                    inputTotal: 100,
+                    outputTotal: 20,
+                    cacheRead: 0,
+                    noCache: 100,
+                    cacheWrite: null,
+                    text: 20,
+                    reasoning: 0,
+                    total: 120,
+                    windowTotal: 120,
+                    lastInputTotal: 100,
+                    lastOutputTotal: 20,
+                    steps: 1,
+                    contextLimit: 200000,
+                    cost: null,
                 },
             },
-            { op: "stop", id: `t${STAMP3_MS}` },
-        ];
-        writeFileSync(file, ops.map((o) => JSON.stringify(o)).join("\n") + "\n", "utf-8");
+        },
+        { op: "stop", id: `t${STAMP3_MS}` },
+    ];
+    writeFileSync(file, ops.map((o) => JSON.stringify(o)).join("\n") + "\n", "utf-8");
 
-        await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
-        await waitUntil(
-            a11yText,
-            (t) => t.includes("第一轮回复") && t.includes("第二轮回复") && t.includes("第三轮回复"),
-            { label: "三轮对话上屏" },
-        );
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await waitUntil(a11yText, (t) => t.includes("第一轮回复") && t.includes("第二轮回复") && t.includes("第三轮回复"), {
+        label: "三轮对话上屏",
     });
+});
 
 describe("R5 聊天输入框高度：一行起、随内容长、整个输入区 view 1/3 封顶", () => {
     it("空输入：就一行高（不再是 72px 起）", async () => {
@@ -500,7 +497,9 @@ describe("R6 对话消息显示时间：真源 = turnId 内嵌毫秒", () => {
             //    但**时刻不是被挤成 0**，而是拿到整行去截断 —— 定住这条，免得日后有人
             //    用一句 `overflow-hidden` 把病灶盖掉（"看不见"≠"修好了"）。
             expect(narrow.timeW).toBeGreaterThanOrEqual(8);
-            expect(await ui.query<boolean>("!!document.querySelector('[data-turn-status] [data-turn-clock]')")).toBe(true);
+            expect(await ui.query<boolean>("!!document.querySelector('[data-turn-status] [data-turn-clock]')")).toBe(
+                true,
+            );
 
             // ── 日常窄栏：窗口 700px（内容列 ~368px）——状态行的下限档 ────────────
             await ui.setViewport(700, 720);

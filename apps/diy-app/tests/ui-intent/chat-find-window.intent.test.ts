@@ -119,7 +119,11 @@ describe("【现状固化】会话页 ⌘F 只覆盖已渲染的 DOM（虚拟窗
     it("前提：数据全在（文件里有窗口外轮的哨兵词），但 DOM 只挂一部分轮", async () => {
         await ui.bringToFront();
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
-        await waitUntil(() => domTurnIds(), (ids) => ids.length > 0, { label: "会话首载上屏", timeoutMs: 20_000 });
+        await waitUntil(
+            () => domTurnIds(),
+            (ids) => ids.length > 0,
+            { label: "会话首载上屏", timeoutMs: 20_000 },
+        );
 
         // 数据确实存在（这是"搜不到"的可信前提：不是没有数据，是没挂 DOM）
         const raw = readFileSync(fp, "utf-8");

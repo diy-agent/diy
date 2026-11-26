@@ -47,7 +47,10 @@ describe("step diff", () => {
     });
 
     it("值 hash 有增删（path 出现/消失）也算变化", () => {
-        const d = diffSteps(rec(), rec({ valueHashes: { diy: "h1" }, systemText: 'help:\n  about: x\nvars:\n  diy:\n    cli: /repo' }));
+        const d = diffSteps(
+            rec(),
+            rec({ valueHashes: { diy: "h1" }, systemText: "help:\n  about: x\nvars:\n  diy:\n    cli: /repo" }),
+        );
         expect(d.changed).toEqual(["task.body"]);
     });
 

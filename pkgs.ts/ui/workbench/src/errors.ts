@@ -4,7 +4,7 @@ export class WorkbenchError extends Error {
 
     constructor(code: string, message: string) {
         super(message);
-        this.name = "WorkbenchError";
+        this.name = 'WorkbenchError';
         this.code = code;
     }
 }

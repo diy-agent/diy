@@ -34,105 +34,105 @@ let fx: { sh: ShellTest; HOME: string; electron: ElectronTest };
 let ui: UiDriver;
 
 beforeAll(async () => {
-  const electron = await startElectronTest();
-  const HOME = electron.home;
-  fx = {
-    electron,
-    HOME,
-    sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
-  };
-  ui = await makeUiDriver(electron.cdpUrl, async () => undefined);
+    const electron = await startElectronTest();
+    const HOME = electron.home;
+    fx = {
+        electron,
+        HOME,
+        sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
+    };
+    ui = await makeUiDriver(electron.cdpUrl, async () => undefined);
 }, 60000);
 
 afterAll(async () => {
-  ui?.close();
-  await fx?.electron?.stop();
+    ui?.close();
+    await fx?.electron?.stop();
 });
 
 interface AppInfo {
-  diyHome: string;
-  diyHomeDisplay: string;
-  repoDisplay: string;
-  env: string;
-  branch: string;
-  port: number;
-  pid: number;
+    diyHome: string;
+    diyHomeDisplay: string;
+    repoDisplay: string;
+    env: string;
+    branch: string;
+    port: number;
+    pid: number;
 }
 
 /** getAppInfo 的 data */
 async function appInfo(): Promise<AppInfo> {
-  const r = await fx.sh.getJson("./diy.sh app info");
-  return (r as any).data; // 壳是 { ok, data }（单层）
+    const r = await fx.sh.getJson("./diy.sh app info");
+    return (r as any).data; // 壳是 { ok, data }（单层）
 }
 
 describe("getAppInfo：数据根展示形式 + 环境 + 分支 + 端口 + PID", () => {
-  it("隔离实例的数据根照实显示绝对路径，不缩成 `~`", async () => {
-    const i = await appInfo();
-    expect(i.diyHome).toBe(fx.HOME);
-    // 隔离 HOME 就是 DIY_HOME → 用 $HOME 当缩写基准会得到 `~`（本 bug 的现场）；
-    // 基准是真实家目录（getpwuid）时它只是个不在家目录下的绝对路径
-    expect(i.diyHomeDisplay).toBe(fx.HOME);
-    expect(i.diyHomeDisplay).not.toBe("~");
-    expect(i.env).toBe("test"); // setup.ts 声明 DIY_ENV=test
-  });
+    it("隔离实例的数据根照实显示绝对路径，不缩成 `~`", async () => {
+        const i = await appInfo();
+        expect(i.diyHome).toBe(fx.HOME);
+        // 隔离 HOME 就是 DIY_HOME → 用 $HOME 当缩写基准会得到 `~`（本 bug 的现场）；
+        // 基准是真实家目录（getpwuid）时它只是个不在家目录下的绝对路径
+        expect(i.diyHomeDisplay).toBe(fx.HOME);
+        expect(i.diyHomeDisplay).not.toBe("~");
+        expect(i.env).toBe("test"); // setup.ts 声明 DIY_ENV=test
+    });
 
-  it("回出运行代码所在 git 分支（/tmp 数据根靠它判断来源）", async () => {
-    const i = await appInfo();
-    expect(i.branch).toBeTruthy();
-    expect(i.branch).not.toBe("HEAD"); // detached 会兜成 `<短 sha>(detached)`
-  });
+    it("回出运行代码所在 git 分支（/tmp 数据根靠它判断来源）", async () => {
+        const i = await appInfo();
+        expect(i.branch).toBeTruthy();
+        expect(i.branch).not.toBe("HEAD"); // detached 会兜成 `<短 sha>(detached)`
+    });
 
-  it("回出真实端口与 PID（标题的 `:<port>` / `pid <PID>` 段来源）", async () => {
-    const i = await appInfo();
-    expect(i.port).toBeGreaterThan(0);
-    expect(i.pid).toBeGreaterThan(0);
-  });
+    it("回出真实端口与 PID（标题的 `:<port>` / `pid <PID>` 段来源）", async () => {
+        const i = await appInfo();
+        expect(i.port).toBeGreaterThan(0);
+        expect(i.pid).toBeGreaterThan(0);
+    });
 });
 
 describe("renderer 的 document.title = 实例标识", () => {
-  it("标题 = 仓库 + 数据根 + port + pid", async () => {
-    const info = await appInfo();
-    const expected = instanceTitle({
-      repoDisplay: info.repoDisplay,
-      homeDisplay: info.diyHomeDisplay,
-      env: info.env,
-      branch: info.branch,
-      port: info.port,
-      pid: info.pid,
+    it("标题 = 仓库 + 数据根 + port + pid", async () => {
+        const info = await appInfo();
+        const expected = instanceTitle({
+            repoDisplay: info.repoDisplay,
+            homeDisplay: info.diyHomeDisplay,
+            env: info.env,
+            branch: info.branch,
+            port: info.port,
+            pid: info.pid,
+        });
+
+        const title = await waitUntil(
+            () => ui.eval<string>("document.title"),
+            (t) => t.includes("port:"),
+            { label: "标题由 renderer 设上" },
+        );
+        expect(title).toBe(expected);
+        // 逐段确认（同源同格式之外，还要真的"内容够充分"）
+        expect(title).toContain(info.repoDisplay); // 哪份代码（worktree 各有自己的路径）
+        expect(title).toContain(info.diyHomeDisplay); // 具体目录，不是 `~`
+        expect(title).toContain(`port:${info.port}`);
+        expect(title).toContain(`pid:${info.pid}`);
+        expect(title).not.toContain("diy solid");
     });
 
-    const title = await waitUntil(
-      () => ui.eval<string>("document.title"),
-      (t) => t.includes("port:"),
-      { label: "标题由 renderer 设上" },
-    );
-    expect(title).toBe(expected);
-    // 逐段确认（同源同格式之外，还要真的"内容够充分"）
-    expect(title).toContain(info.repoDisplay); // 哪份代码（worktree 各有自己的路径）
-    expect(title).toContain(info.diyHomeDisplay); // 具体目录，不是 `~`
-    expect(title).toContain(`port:${info.port}`);
-    expect(title).toContain(`pid:${info.pid}`);
-    expect(title).not.toContain("diy solid");
-  });
+    it("main 侧设成了同一个标题，且带端口（证明端口就绪后重设过原生标题）", async () => {
+        const info = await appInfo();
+        const expected = instanceTitle({
+            repoDisplay: info.repoDisplay,
+            homeDisplay: info.diyHomeDisplay,
+            env: info.env,
+            branch: info.branch,
+            port: info.port,
+            pid: info.pid,
+        });
 
-  it("main 侧设成了同一个标题，且带端口（证明端口就绪后重设过原生标题）", async () => {
-    const info = await appInfo();
-    const expected = instanceTitle({
-      repoDisplay: info.repoDisplay,
-      homeDisplay: info.diyHomeDisplay,
-      env: info.env,
-      branch: info.branch,
-      port: info.port,
-      pid: info.pid,
+        const logPath = join(fx.HOME, "log", "main.log");
+        const log = await waitUntil(
+            () => Promise.resolve(existsSync(logPath) ? readFileSync(logPath, "utf-8") : ""),
+            (txt) => txt.includes(`[diy] 窗口标题: ${expected}`),
+            { label: "main.log 里出现最终窗口标题" },
+        );
+        expect(log).toContain(`[diy] 窗口标题: ${expected}`);
+        expect(log).toContain(`:${info.port}`); // 端口段真的进了原生标题
     });
-
-    const logPath = join(fx.HOME, "log", "main.log");
-    const log = await waitUntil(
-      () => Promise.resolve(existsSync(logPath) ? readFileSync(logPath, "utf-8") : ""),
-      (txt) => txt.includes(`[diy] 窗口标题: ${expected}`),
-      { label: "main.log 里出现最终窗口标题" },
-    );
-    expect(log).toContain(`[diy] 窗口标题: ${expected}`);
-    expect(log).toContain(`:${info.port}`); // 端口段真的进了原生标题
-  });
 });

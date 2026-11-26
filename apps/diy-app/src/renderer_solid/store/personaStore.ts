@@ -104,10 +104,7 @@ async function setForTask(taskUri: string, id: string): Promise<boolean> {
         return true;
     } catch (e) {
         console.error(`[persona] 换绑失败 ${taskUri} → ${id}:`, e);
-        notificationStore.addToastLegacy(
-            "error",
-            `切换人物失败：${e instanceof Error ? e.message : String(e)}`,
-        );
+        notificationStore.addToastLegacy("error", `切换人物失败：${e instanceof Error ? e.message : String(e)}`);
         return false;
     }
 }
@@ -137,10 +134,7 @@ async function save(patch: {
     } catch (e) {
         // 失败必须发声（如未知模型/档位不支持）：静默会让用户以为改成功了
         console.error(`[persona] 保存失败 ${patch.id ?? "(新建)"}:`, e);
-        notificationStore.addToastLegacy(
-            "error",
-            `保存人物失败：${e instanceof Error ? e.message : String(e)}`,
-        );
+        notificationStore.addToastLegacy("error", `保存人物失败：${e instanceof Error ? e.message : String(e)}`);
         return null;
     }
 }
@@ -155,10 +149,7 @@ async function setDefault(id: string): Promise<boolean> {
         return true;
     } catch (e) {
         console.error("[persona] setDefault 失败:", e);
-        notificationStore.addToastLegacy(
-            "error",
-            `设置缺省人物失败：${e instanceof Error ? e.message : String(e)}`,
-        );
+        notificationStore.addToastLegacy("error", `设置缺省人物失败：${e instanceof Error ? e.message : String(e)}`);
         return false;
     }
 }
@@ -298,11 +289,7 @@ export const personaStore = {
             return false;
         }
         const ok = await setForTask(uri, "");
-        if (ok)
-            notificationStore.addToastLegacy(
-                "success",
-                "已改为跟随缺省人物（缺省改变时本任务下一轮跟着变）",
-            );
+        if (ok) notificationStore.addToastLegacy("success", "已改为跟随缺省人物（缺省改变时本任务下一轮跟着变）");
         return ok;
     },
 };

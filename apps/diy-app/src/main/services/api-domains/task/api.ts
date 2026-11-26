@@ -72,24 +72,18 @@ export const taskRoutes = RpcSchema.group({
                         inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
                         desc: "任务内容（**内联正文**，不是文件路径：值形如单行路径会被拒）",
                     }),
-                bodyText: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        placeholder: "<text>",
-                        desc: "任务内容（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）",
-                    }),
+                bodyText: z.string().optional().cliOption({
+                    placeholder: "<text>",
+                    desc: "任务内容（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）",
+                }),
                 bodyFile: z.string().optional().cliOption({
                     placeholder: "<file|->",
                     readFile: true,
                     desc: "任务内容：从**文件**读（`-` = stdin；相对路径按当前目录解析）—— **不剥 frontmatter**（新建任务无头可覆盖，传整份文件会把头写进正文）",
                 }),
-                persona: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        desc: "agent 人物 id（不传 = 跟随缺省；传值 = 固定绑定，人物决定模型/参数/行为指令）",
-                    }),
+                persona: z.string().optional().cliOption({
+                    desc: "agent 人物 id（不传 = 跟随缺省；传值 = 固定绑定，人物决定模型/参数/行为指令）",
+                }),
                 change_type: ChangeTypeSchema.optional().cliOption({
                     desc: "变更性质（feat/fix/docs/…，见 conventional commits）",
                 }),
@@ -189,13 +183,10 @@ export const taskRoutes = RpcSchema.group({
                                 inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
                                 desc: "内容草稿（空串=清除；**内联正文**，不是文件路径：值形如单行路径会被拒）",
                             }),
-                        bodyText: z
-                            .string()
-                            .optional()
-                            .cliOption({
-                                placeholder: "<text>",
-                                desc: "内容草稿（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）",
-                            }),
+                        bodyText: z.string().optional().cliOption({
+                            placeholder: "<text>",
+                            desc: "内容草稿（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）",
+                        }),
                         bodyFile: z.string().optional().cliOption({
                             placeholder: "<file|->",
                             readFile: true,
@@ -255,13 +246,10 @@ export const taskRoutes = RpcSchema.group({
                         inlineText: { fileOpt: "--body-file", textOpt: "--body-text" },
                         desc: "新内容，整篇覆盖（**内联正文**，不是文件路径：值形如单行路径会被拒；至少 10 字符；传整份文件自动剥头）",
                     }),
-                bodyText: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        placeholder: "<text>",
-                        desc: "新内容，整篇覆盖（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）",
-                    }),
+                bodyText: z.string().optional().cliOption({
+                    placeholder: "<text>",
+                    desc: "新内容，整篇覆盖（显式内联文本：与 `--body` 同义，但不做「形如路径」护栏）",
+                }),
                 bodyFile: z.string().optional().cliOption({
                     placeholder: "<file|->",
                     readFile: true,
@@ -277,13 +265,10 @@ export const taskRoutes = RpcSchema.group({
                     readFile: true,
                     desc: "追加内容：文件路径（`-` = stdin）—— 与 `--append-body` 同义，是同一件事的显式名",
                 }),
-                appendBodyText: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        placeholder: "<text>",
-                        desc: "追加内容：**内联文本**（`--append-body` 的对称项：追加也能直接给文本，不必先落盘）",
-                    }),
+                appendBodyText: z.string().optional().cliOption({
+                    placeholder: "<text>",
+                    desc: "追加内容：**内联文本**（`--append-body` 的对称项：追加也能直接给文本，不必先落盘）",
+                }),
                 parent: z.string().optional().cliOption({ desc: "父任务 URI（空字符串=取消父子关系）" }),
                 // 三态：不传=保持原绑定 / `default`（或空串）=**跟随缺省**（取消固定绑定）/ 值=换绑到该人物。
                 // 换绑是续聊（会话与上下文不动），新模型**下一轮**生效。
@@ -314,7 +299,6 @@ export const taskRoutes = RpcSchema.group({
         }),
     },
 });
-
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

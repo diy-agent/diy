@@ -31,7 +31,9 @@ afterAll(async () => {
 async function createFresh(name: string): Promise<string> {
     const repo = join(home, `it-${name}`);
     mkdirSync(repo, { recursive: true });
-    const r = (await rpc.diy.ui.project.create({ path: repo, label: name } as never)) as { id?: string } | { data?: { id?: string } };
+    const r = (await rpc.diy.ui.project.create({ path: repo, label: name } as never)) as
+        | { id?: string }
+        | { data?: { id?: string } };
     const id = (r as { id?: string }).id ?? (r as { data?: { id?: string } }).data?.id;
     if (!id) throw new Error(`建项目失败: ${JSON.stringify(r).slice(0, 300)}`);
     return String(id);

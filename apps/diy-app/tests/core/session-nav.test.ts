@@ -80,21 +80,39 @@ function row(patch: Partial<NavRow> & { uri: string }): NavRow {
         sessionStateOf({
             entry: entry({
                 turnCount: 1,
-                lastEndReason: patch.abnormal
-                    ? { type: "interrupted", data: {} }
-                    : { type: "completed", data: {} },
+                lastEndReason: patch.abnormal ? { type: "interrupted", data: {} } : { type: "completed", data: {} },
                 queue: patch.queue ?? 0,
             }),
             hasSession: true,
             unread: patch.unread ?? 0,
             now: NOW,
         });
-    return { label: patch.uri, state, running: false, stalled: false, abnormal: false, unread: 0, queue: 0, queueHuman: 0, opened: false, lastTs: null, ...patch };
+    return {
+        label: patch.uri,
+        state,
+        running: false,
+        stalled: false,
+        abnormal: false,
+        unread: 0,
+        queue: 0,
+        queueHuman: 0,
+        opened: false,
+        lastTs: null,
+        ...patch,
+    };
 }
 
 describe("navRowOf：判据全部出自 session-overview（不另写一套）", () => {
     it("在跑的轮次 → running；心跳超阈值 → stalled（同一条 STALL_MS）", () => {
-        const fresh = navRowOf({ uri: "u", label: "u", opened: false, entry: running(0), seenTurns: null, maxSteps: 200, now: NOW });
+        const fresh = navRowOf({
+            uri: "u",
+            label: "u",
+            opened: false,
+            entry: running(0),
+            seenTurns: null,
+            maxSteps: 200,
+            now: NOW,
+        });
         expect(fresh.running).toBe(true);
         expect(fresh.stalled).toBe(false);
 
@@ -113,10 +131,28 @@ describe("navRowOf：判据全部出自 session-overview（不另写一套）", 
     it("未读 = 跨启动总轮次 − 水位（1 轮 = 1 条，**不是步数**）", () => {
         // totalSteps=99 是干扰项：它绝不能进未读
         const e = finished({ totalSteps: 99 });
-        const r = navRowOf({ uri: "u", label: "u", opened: false, entry: e, seenTurns: 3, totalTurns: 5, maxSteps: 200, now: NOW });
+        const r = navRowOf({
+            uri: "u",
+            label: "u",
+            opened: false,
+            entry: e,
+            seenTurns: 3,
+            totalTurns: 5,
+            maxSteps: 200,
+            now: NOW,
+        });
         expect(r.unread).toBe(2);
         // 传了 totalTurns 就要压过注册表的本进程计数（重启归零那把错尺子）
-        const r2 = navRowOf({ uri: "u", label: "u", opened: false, entry: e, seenTurns: 3, totalTurns: 9, maxSteps: 200, now: NOW });
+        const r2 = navRowOf({
+            uri: "u",
+            label: "u",
+            opened: false,
+            entry: e,
+            seenTurns: 3,
+            totalTurns: 9,
+            maxSteps: 200,
+            now: NOW,
+        });
         expect(r2.unread).toBe(6);
     });
 
@@ -132,7 +168,15 @@ describe("navRowOf：判据全部出自 session-overview（不另写一套）", 
         });
         expect(bad.abnormal).toBe(true);
 
-        const q = navRowOf({ uri: "u", label: "u", opened: false, entry: entry({ turnCount: 1, queue: 2 }), seenTurns: 0, maxSteps: 200, now: NOW });
+        const q = navRowOf({
+            uri: "u",
+            label: "u",
+            opened: false,
+            entry: entry({ turnCount: 1, queue: 2 }),
+            seenTurns: 0,
+            maxSteps: 200,
+            now: NOW,
+        });
         expect(q.queue).toBe(2);
     });
 });
@@ -171,7 +215,10 @@ describe("heroBadgeOf：同一时刻只出一个主角标", () => {
     });
 
     it("异常未读 → 归因色（不是写死红）+ `+N`", () => {
-        const b = heroBadgeOf([row({ uri: "a", unread: 3, abnormal: true }), row({ uri: "b", unread: 4, abnormal: true })]);
+        const b = heroBadgeOf([
+            row({ uri: "a", unread: 3, abnormal: true }),
+            row({ uri: "b", unread: 4, abnormal: true }),
+        ]);
         // 颜色 = 归因（##393）：`interrupted` → `unknown`（紫，"等你裁定"），不再是"红=异常"
         expect(b).toMatchObject({ key: "error", tone: "violet", text: "+7", short: "+7" });
         expect(b!.tip).toContain("未识别异常");

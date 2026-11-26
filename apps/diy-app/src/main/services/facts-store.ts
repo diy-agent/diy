@@ -144,8 +144,15 @@ function crossRepoWarning(target: FactsTarget, callerCwd?: string): DtoProblem |
     };
 }
 
-function plainProblems(list: readonly { level: "error" | "warning"; code: string; detail: string; facts?: readonly string[] }[]): DtoProblem[] {
-    return list.map((p) => ({ level: p.level, code: p.code, detail: p.detail, ...(p.facts ? { facts: [...p.facts] } : {}) }));
+function plainProblems(
+    list: readonly { level: "error" | "warning"; code: string; detail: string; facts?: readonly string[] }[],
+): DtoProblem[] {
+    return list.map((p) => ({
+        level: p.level,
+        code: p.code,
+        detail: p.detail,
+        ...(p.facts ? { facts: [...p.facts] } : {}),
+    }));
 }
 type DtoScope = NonNullable<DtoFact["scope"]>;
 
@@ -161,8 +168,14 @@ function plainScope(s: Scope): DtoScope {
 
 function plainRef(r: Ref): z.infer<typeof RefSchema> {
     return r.rel === "depends-on"
-        ? { rel: "depends-on", data: { toClaim: r.data.toClaim, ...(r.data.when ? { when: plainScope(r.data.when) } : {}) } }
-        : { rel: "supersedes", data: { toFactId: r.data.toFactId, ...(r.data.within ? { within: plainScope(r.data.within) } : {}) } };
+        ? {
+              rel: "depends-on",
+              data: { toClaim: r.data.toClaim, ...(r.data.when ? { when: plainScope(r.data.when) } : {}) },
+          }
+        : {
+              rel: "supersedes",
+              data: { toFactId: r.data.toFactId, ...(r.data.within ? { within: plainScope(r.data.within) } : {}) },
+          };
 }
 
 function plainFact(f: Fact, file: string): DtoFact & { file: string } {
@@ -483,10 +496,14 @@ export function status(opts: { dir?: string; in?: string } = {}) {
     });
     // 暴露档：**按库**解析（每个库各读自己的 `expose.yaml`，各按库类型缺省档回落）。
     // 曾合并成一张表 —— 那会让"项目库声明了一条 expose"顺手把任务库的结论降级（##5 第 8 轮）。
-    const libKind = opts.in !== undefined && opts.in.startsWith("task:") ? "task" : opts.in === "global" ? "global" : "project";
+    const libKind =
+        opts.in !== undefined && opts.in.startsWith("task:") ? "task" : opts.in === "global" ? "global" : "project";
     const libExpose = new Map<string, { map: ExposeMap; kind: string }>();
     for (const d of [...extraDirs, kb]) {
-        libExpose.set(path.resolve(d), { map: readExpose(d), kind: path.resolve(d) === path.resolve(kb) ? libKind : "global" });
+        libExpose.set(path.resolve(d), {
+            map: readExpose(d),
+            kind: path.resolve(d) === path.resolve(kb) ? libKind : "global",
+        });
     }
     const libOf = (f: Fact): { map: ExposeMap; kind: string } => {
         const origin = path.resolve(repo.origin.get(f.id) ?? kb);
@@ -503,7 +520,8 @@ export function status(opts: { dir?: string; in?: string } = {}) {
               { budget: DEFAULT_FULL_BUDGET },
           )
         : [];
-    for (const p of exposeProblems) problems.push({ level: "error", code: p.code, detail: p.detail, ...(p.facts ? { facts: [...p.facts] } : {}) });
+    for (const p of exposeProblems)
+        problems.push({ level: "error", code: p.code, detail: p.detail, ...(p.facts ? { facts: [...p.facts] } : {}) });
     for (const p of crossLibDups(repo, kb, extraDirs)) problems.push(p);
 
     // 按 subject 的字节账：预算的单位是**字节**，而 status 原本只给 claims 数 ——
@@ -513,7 +531,9 @@ export function status(opts: { dir?: string; in?: string } = {}) {
     // 的档位（`weightsOf` 已按字节降序，这里只借它挑代表库）。档位是给人看的提示，
     // 真正的判据在投影里逐库解析。
     const bySubject = weights.map((w) => {
-        const first = repo.facts.find((f) => f.subject === w.subject && f.lifecycle === "active" && f.review === "accepted");
+        const first = repo.facts.find(
+            (f) => f.subject === w.subject && f.lifecycle === "active" && f.review === "accepted",
+        );
         const lib = first === undefined ? { map: {} as ExposeMap, kind: libKind } : libOf(first);
         return { ...w, expose: exposeOf(lib.map, w.subject, defaultExposeOf(lib.kind)) };
     });
@@ -530,7 +550,10 @@ export function status(opts: { dir?: string; in?: string } = {}) {
         /** 按 subject 的权重表（bytes = 可用事实的 value 字节和；按字节降序） */
         bySubject,
         /** `full` 档字节和 / 预算（>limit ⇒ problems 里有 `facts/expose-budget`） */
-        exposeBudget: { used: bySubject.filter((s) => s.expose === "full").reduce((n, s) => n + s.bytes, 0), limit: DEFAULT_FULL_BUDGET },
+        exposeBudget: {
+            used: bySubject.filter((s) => s.expose === "full").reduce((n, s) => n + s.bytes, 0),
+            limit: DEFAULT_FULL_BUDGET,
+        },
         problems: plainProblems(problems),
     };
 }
@@ -545,7 +568,10 @@ export function status(opts: { dir?: string; in?: string } = {}) {
  *
  * 判据只有一条：**路径必须能直接 `open`**。去掉"你得先知道自己在哪个目录"这个隐含前提。
  */
-function displayFile(repo: { readonly root: string; readonly origin: ReadonlyMap<string, string> }, id: string): string {
+function displayFile(
+    repo: { readonly root: string; readonly origin: ReadonlyMap<string, string> },
+    id: string,
+): string {
     const abs = repo.origin.get(id) ?? "";
     return abs === "" ? "" : path.resolve(abs);
 }
@@ -572,7 +598,10 @@ export function get(
     const repo = loadRepo(kb, targetOpts(target));
     // schema 坏到解读不出事实时，`get` 不能"猜着答"：报错退出比给出可能错的值好
     if (repo.schemaIssues.length > 0) {
-        throw new FactsStoreError("agent/facts-schema", `真源有 schema 问题（先跑 \`diy facts status\`）：${repo.schemaIssues[0]?.detail ?? ""}`);
+        throw new FactsStoreError(
+            "agent/facts-schema",
+            `真源有 schema 问题（先跑 \`diy facts status\`）：${repo.schemaIssues[0]?.detail ?? ""}`,
+        );
     }
     const ctx = {
         ...(opts.env === undefined ? {} : { env: opts.env }),
@@ -717,7 +746,11 @@ function briefOne(
         // 空不是错误（可能拼错）。给"相近主题"让其自纠 —— 只说"没有"等于让人重敲一次。
         const all = [...new Set(repo.facts.map((f) => f.subject))];
         const near = all.filter((s) => s.includes(subject) || subject.includes(s)).slice(0, 5);
-        notes.push(near.length > 0 ? `没这个 subject；相近的有：${near.join(", ")}` : "没这个 subject（`diy facts status` 看全部主题）");
+        notes.push(
+            near.length > 0
+                ? `没这个 subject；相近的有：${near.join(", ")}`
+                : "没这个 subject（`diy facts status` 看全部主题）",
+        );
         return { subject, desc, claims: 0, facts: 0, entries: [], notes };
     }
     const max = opts.maxChars ?? 80;
@@ -789,9 +822,12 @@ export function expandSubjects(list: readonly string[], all: readonly string[]):
         const glob = raw.endsWith(".*") ? raw.slice(0, -2) : null;
         const prefix = glob ?? raw;
         // 裸前缀本体算组内（与索引折叠同口径：`dev.*` 展开要能看到 `dev` 自己）
-        const hits = [...known].filter((s) => s === prefix || s.startsWith(`${prefix}.`)).sort((a, b) => a.localeCompare(b));
+        const hits = [...known]
+            .filter((s) => s === prefix || s.startsWith(`${prefix}.`))
+            .sort((a, b) => a.localeCompare(b));
         if (glob !== null || (!known.has(raw) && hits.length > 0)) {
-            if (hits.length === 0) out.push(raw); // 一个都没展开 ⇒ 照旧交给 briefOne 报"没这个 subject + 相近的"
+            if (hits.length === 0)
+                out.push(raw); // 一个都没展开 ⇒ 照旧交给 briefOne 报"没这个 subject + 相近的"
             else out.push(...hits);
             continue;
         }
@@ -829,15 +865,22 @@ export function brief(
         .map((x) => x.trim())
         .filter((x) => x !== "");
     if (list.length === 0) {
-        throw new FactsStoreError("agent/facts-brief-arg", "brief 需要 subject（如 `diy facts brief find`，多个用逗号）");
+        throw new FactsStoreError(
+            "agent/facts-brief-arg",
+            "brief 需要 subject（如 `diy facts brief find`，多个用逗号）",
+        );
     }
     const max = opts.maxChars ?? 80;
     // 通配展开（##5 第 9 轮）：索引折叠后 `app.*` 只剩一行，展开必须**一次调用**能完成 ——
     // 否则折叠省下的索引用途变成了"省了字节、断了去路"。
     const target = resolveFactsTarget(opts);
     const repo = loadRepo(target.dir, targetOpts(target));
-    const subjects = expandSubjects(list, repo.facts.map((f) => f.subject));
-    const build = (chars: number): BriefResult[] => subjects.map((s) => briefOne(s, { ...opts, maxChars: chars }, repo));
+    const subjects = expandSubjects(
+        list,
+        repo.facts.map((f) => f.subject),
+    );
+    const build = (chars: number): BriefResult[] =>
+        subjects.map((s) => briefOne(s, { ...opts, maxChars: chars }, repo));
     const limit = opts.budget;
     const full = build(max);
     if (limit === undefined || limit <= 0) return { subjects: full };
@@ -864,7 +907,14 @@ export function brief(
             let acc: BriefResult | null = null;
             for (const e of s.entries) {
                 if (acc === null) {
-                    acc = { subject: s.subject, desc: s.desc, claims: 0, facts: s.facts, entries: [], notes: [...s.notes] };
+                    acc = {
+                        subject: s.subject,
+                        desc: s.desc,
+                        claims: 0,
+                        facts: s.facts,
+                        entries: [],
+                        notes: [...s.notes],
+                    };
                     if (s.file !== undefined) acc.file = s.file;
                     out.push(acc);
                 }
@@ -951,7 +1001,10 @@ export function brief(
     };
 }
 
-export function find(keywordIn: string, opts: { dir?: string; in?: string; limit?: number; maxChars?: number } = {}): FindResult {
+export function find(
+    keywordIn: string,
+    opts: { dir?: string; in?: string; limit?: number; maxChars?: number } = {},
+): FindResult {
     const keyword = keywordIn.trim();
     const terms = splitList(keyword).map((t) => t.toLowerCase());
     if (terms.length === 0) {
@@ -1008,7 +1061,8 @@ export function find(keywordIn: string, opts: { dir?: string; in?: string; limit
     const hits = scored.slice(0, limit).map((s) => s.hit);
     const notes: string[] = [];
     if (scored.length === 0) notes.push(`没有命中「${keyword}」（换更短的词，或 \`diy facts status\` 看主题表）`);
-    else if (scored.length > hits.length) notes.push(`共 ${scored.length} 条命中，显示前 ${hits.length}（--limit 调整）`);
+    else if (scored.length > hits.length)
+        notes.push(`共 ${scored.length} 条命中，显示前 ${hits.length}（--limit 调整）`);
     return { keyword, hits, total: scored.length, notes };
 }
 
@@ -1045,18 +1099,33 @@ export function parseSubmitPayload(text: string): SubmitPayload {
     }
     if (Array.isArray(doc)) return { facts: doc, subjects: [], drop: [], dropSubjects: [] };
     if (doc === null || typeof doc !== "object") {
-        throw new FactsStoreError("agent/facts-payload-shape", "载荷期望 { facts: [...], subjects?: [...], drop?: [...] } 或裸数组");
+        throw new FactsStoreError(
+            "agent/facts-payload-shape",
+            "载荷期望 { facts: [...], subjects?: [...], drop?: [...] } 或裸数组",
+        );
     }
-    const obj = doc as { facts?: unknown[]; subjects?: SubjectDef[]; drop?: unknown[]; dropSubjects?: unknown[]; expose?: unknown };
+    const obj = doc as {
+        facts?: unknown[];
+        subjects?: SubjectDef[];
+        drop?: unknown[];
+        dropSubjects?: unknown[];
+        expose?: unknown;
+    };
     const drop = (obj.drop ?? []).map((id) => {
         if (typeof id !== "string" || id.trim() === "") {
-            throw new FactsStoreError("agent/facts-payload-shape", `drop 只收 fact id 字符串，实际收到：${JSON.stringify(id)}`);
+            throw new FactsStoreError(
+                "agent/facts-payload-shape",
+                `drop 只收 fact id 字符串，实际收到：${JSON.stringify(id)}`,
+            );
         }
         return id.trim();
     });
     const dropSubjects = (obj.dropSubjects ?? []).map((key) => {
         if (typeof key !== "string" || key.trim() === "") {
-            throw new FactsStoreError("agent/facts-payload-shape", `dropSubjects 只收 subject key 字符串，实际收到：${JSON.stringify(key)}`);
+            throw new FactsStoreError(
+                "agent/facts-payload-shape",
+                `dropSubjects 只收 subject key 字符串，实际收到：${JSON.stringify(key)}`,
+            );
         }
         return key.trim();
     });
@@ -1090,7 +1159,10 @@ function parseSubjects(raw: unknown): SubjectDef[] {
     }
     return raw.map((item, i) => {
         if (item === null || typeof item !== "object" || Array.isArray(item)) {
-            throw new FactsStoreError("agent/facts-payload-shape", `subjects[${i}] 期望对象，实际收到：${JSON.stringify(item)}`);
+            throw new FactsStoreError(
+                "agent/facts-payload-shape",
+                `subjects[${i}] 期望对象，实际收到：${JSON.stringify(item)}`,
+            );
         }
         const rec = item as Record<string, unknown>;
         for (const k of Object.keys(rec)) {
@@ -1129,7 +1201,10 @@ function parseSubjects(raw: unknown): SubjectDef[] {
 function parseExpose(raw: unknown): Record<string, ExposeLevel> | undefined {
     if (raw === undefined) return undefined;
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-        throw new FactsStoreError("agent/facts-payload-shape", `expose 期望 { subject: level } 对象，实际收到：${JSON.stringify(raw)}`);
+        throw new FactsStoreError(
+            "agent/facts-payload-shape",
+            `expose 期望 { subject: level } 对象，实际收到：${JSON.stringify(raw)}`,
+        );
     }
     if (Object.keys(raw).length === 0) return undefined;
     const out: Record<string, ExposeLevel> = {};
@@ -1166,18 +1241,26 @@ export function submitPayload(
     // 判据：`facts` 的 schema 错属于**载荷错误**，不是"部分可用"——整批退，让它重提。
     if (issues.length > 0) {
         return {
-            report: plainReport({
-                dryRun: opts.dryRun === true,
-                added: [],
-                updated: [],
-                unchanged: [],
-                newSubjects: [],
-                droppedSubjects: [],
-                files: [],
-                dropped: [],
-            }, landing),
+            report: plainReport(
+                {
+                    dryRun: opts.dryRun === true,
+                    added: [],
+                    updated: [],
+                    unchanged: [],
+                    newSubjects: [],
+                    droppedSubjects: [],
+                    files: [],
+                    dropped: [],
+                },
+                landing,
+            ),
             problems: plainProblems([
-                ...issues.map((i) => ({ level: "error" as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) })),
+                ...issues.map((i) => ({
+                    level: "error" as const,
+                    code: i.code,
+                    detail: i.detail,
+                    ...(i.facts ? { facts: i.facts } : {}),
+                })),
                 ...(crossRepo === null ? [] : [crossRepo]),
             ]),
         };
@@ -1195,7 +1278,12 @@ export function submitPayload(
         targetOpts(target, true),
     );
     // zod 之外的语义问题由内核给（这里只把"形状都解析不出"的情况补上）
-    const schemaProblems = issues.map((i) => ({ level: "error" as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) }));
+    const schemaProblems = issues.map((i) => ({
+        level: "error" as const,
+        code: i.code,
+        detail: i.detail,
+        ...(i.facts ? { facts: i.facts } : {}),
+    }));
     // 写成功后库才真的在：以**写后**的磁盘状态为准（写失败会抛，走不到这里）
     const created = willCreate && existsSync(path.join(kb, "facts")) ? { dir: kb } : undefined;
     return {
@@ -1234,8 +1322,13 @@ export function raw(opts: { dir?: string; in?: string } = {}) {
     // 只给一份会让人看串（"任务只用了 1 个 subject"的错觉），所以都列、由 name 标明来源。
     const localSubjects = path.join(kb, "subjects.yaml");
     const subjects: { name: string; text: string }[] = [];
-    if (existsSync(localSubjects)) subjects.push({ name: "subjects.yaml（本地）", text: readFileSync(localSubjects, "utf8") });
-    if (target.subjectsFallback !== undefined && target.subjectsFallback !== localSubjects && existsSync(target.subjectsFallback)) {
+    if (existsSync(localSubjects))
+        subjects.push({ name: "subjects.yaml（本地）", text: readFileSync(localSubjects, "utf8") });
+    if (
+        target.subjectsFallback !== undefined &&
+        target.subjectsFallback !== localSubjects &&
+        existsSync(target.subjectsFallback)
+    ) {
         subjects.push({ name: "subjects.yaml（继承仓库）", text: readFileSync(target.subjectsFallback, "utf8") });
     }
     return { dir: kb, in: opts.in ?? "global", exists: files.length > 0, files, subjects };
@@ -1248,7 +1341,16 @@ export function raw(opts: { dir?: string; in?: string } = {}) {
  * （`global` 库 = 设备级 `~/.diy/facts/`，尚无真源，暂不认。）
  */
 export function projectFacts(
-    opts: { dir?: string; in?: string; algorithm?: "yaml-nested" | "flat-gid" | "md-list"; maxBytes?: number; env?: Env; paths?: string[]; task?: string; includeProposed?: boolean } = {},
+    opts: {
+        dir?: string;
+        in?: string;
+        algorithm?: "yaml-nested" | "flat-gid" | "md-list";
+        maxBytes?: number;
+        env?: Env;
+        paths?: string[];
+        task?: string;
+        includeProposed?: boolean;
+    } = {},
 ) {
     const target = resolveFactsTarget(opts);
     const kb = target.dir;
@@ -1256,7 +1358,9 @@ export function projectFacts(
     // 这行注释是**护栏**，别把「没库」当错误加回来 —— 那会让空库上 `status` 不可用，
     // 而 `submit --dry-run` 又偷偷把库建出来，两边自相矛盾。
     const { repo } = checkRepo(kb, targetOpts(target));
-    const ns: Ns = opts.in?.startsWith("task:") ? { kind: "task", taskUri: opts.in.slice("task:".length) } : { kind: "project" };
+    const ns: Ns = opts.in?.startsWith("task:")
+        ? { kind: "task", taskUri: opts.in.slice("task:".length) }
+        : { kind: "project" };
     const out = project({
         entries: repo.facts.map((fact) => ({ ns, fact })),
         ctx: {
@@ -1276,6 +1380,10 @@ export function projectFacts(
         shown: [...out.shown],
         omitted: [...out.omitted],
         skipped: [...out.skipped],
-        problems: out.problems.map((p) => ({ gid: p.gid, code: p.code, ...(p.detail === undefined ? {} : { detail: p.detail }) })),
+        problems: out.problems.map((p) => ({
+            gid: p.gid,
+            code: p.code,
+            ...(p.detail === undefined ? {} : { detail: p.detail }),
+        })),
     };
 }

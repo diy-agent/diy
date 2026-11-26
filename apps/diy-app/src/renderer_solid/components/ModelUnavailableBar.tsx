@@ -12,7 +12,10 @@
  * "不要 block 实验"）。文案三件事：**哪个模型**（model）+ **哪个任务/人物在用** +
  * **上游原话**（upstream）—— 少了任何一件，用户都得自己去翻日志才知道发生了什么。
  */
-import { MODEL_UNAVAILABLE_KIND_LABEL as KIND_LABEL, type ModelUnavailableNotice } from "../../shared/model-unavailable";
+import {
+    MODEL_UNAVAILABLE_KIND_LABEL as KIND_LABEL,
+    type ModelUnavailableNotice,
+} from "../../shared/model-unavailable";
 import { remedyOf, type Remedy } from "../../shared/error-remedy";
 import { Show } from "solid-js";
 import { NoticeDetail } from "./NoticeDetail";

@@ -7,28 +7,28 @@
 
 ## 有什么
 
-| 文件 | 是什么 |
-|---|---|
+| 文件              | 是什么                                                                                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `run-registry.ts` | run 表：`spawn` / `adopt` / `list` / `get` / `tail` / `kill` / `wait` / `shutdown` / `pruneOldDirs`。输出直落 `$DIY_HOME/log/job/runs/<日期>/<id>/out.log`，`meta.json` 自述 |
-| `run-status.ts` | 纯函数判据：四态 / 结局（`RunOutcome`）/ 时长 / tail 截断 / 结束通知文案（零 IO） |
-| `job-tool.ts` | `job` 工具面：list / status / output / kill / wait（用户可见文案在这） |
+| `run-status.ts`   | 纯函数判据：四态 / 结局（`RunOutcome`）/ 时长 / tail 截断 / 结束通知文案（零 IO）                                                                                            |
+| `job-tool.ts`     | `job` 工具面：list / status / output / kill / wait（用户可见文案在这）                                                                                                       |
 
 ## 宿主必须注入的三样（**不注入就没有这些能力**）
 
 ```ts
-import { RunRegistry, makeJobTool, defaultJobCaps } from "@diy-agent/jobs";
+import { RunRegistry, makeJobTool, defaultJobCaps } from '@diy-agent/jobs';
 
 const registry = new RunRegistry({
-    rootDir: join(home, "log", "job", "runs"), // 数据根由宿主配置
-    caps: defaultJobCaps,                      // 或宿主自己 os 策略的 5 个能力位
-    shells: () => detectShells(),              // shell 探测是 OS 策略
-    notifier: (event) => wake(event),          // 不传 = silent（见下）
+    rootDir: join(home, 'log', 'job', 'runs'), // 数据根由宿主配置
+    caps: defaultJobCaps, // 或宿主自己 os 策略的 5 个能力位
+    shells: () => detectShells(), // shell 探测是 OS 策略
+    notifier: (event) => wake(event), // 不传 = silent（见下）
 });
 
 const job = makeJobTool({
     registry,
     visible: (r) => r.origin?.taskUri === taskUri, // 越权边界；不传 = 全都可见
-    scopeLabel: "本任务",                          // bot 可传"本 bot"
+    scopeLabel: '本任务', // bot 可传"本 bot"
 });
 ```
 
@@ -60,6 +60,7 @@ nohup ./long-task > /tmp/x.log 2>&1 &
 ```
 
 差别不只是"能不能活"：
+
 - 裸 `&`：谁起的、还活着没、说了什么、怎么停 —— **全都没有**
 - job：`list` / `status` / `output` / `kill` / `wait` 都有，收口还会通知
 
@@ -76,5 +77,5 @@ nohup ./long-task > /tmp/x.log 2>&1 &
 ## 测试
 
 `./sha.sh test`（真起 `bash`，不 mock 子进程）：抽包语义 12 条 + 工具面 9 条。
-diy-app 原有的 4 个 run-* 测试文件仍从 `src/main/services/run-registry` / `src/shared/run-status`
+diy-app 原有的 4 个 run-\* 测试文件仍从 `src/main/services/run-registry` / `src/shared/run-status`
 导入（那两个文件现在是转发），一共 85 条继续兜底。

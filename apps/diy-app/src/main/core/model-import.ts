@@ -15,12 +15,7 @@
 //   3. **不覆盖已有**：provider 已配置、或该密钥值已被现有账号使用 → 一律标跳过。
 //      「同一个 key 不用配两遍」是用户的硬要求，也是本模块存在的理由。
 
-import type {
-    Account,
-    EnvImportCandidate,
-    ModelConfigFile,
-    ScanEnvResult,
-} from "../../shared/model-config";
+import type { Account, EnvImportCandidate, ModelConfigFile, ScanEnvResult } from "../../shared/model-config";
 import { loadModelConfig, saveModelConfig } from "./model-config";
 import { expandEnvValue, snapshotProviders } from "./model-registry";
 
@@ -32,16 +27,11 @@ function existingKeyOwners(file: ModelConfigFile, env: NodeJS.ProcessEnv): Map<s
             const raw = a.data.value.trim();
             if (raw === "") return; // 空 = 还没填，不算已用
             const { value } = expandEnvValue(raw, env);
-            if (value)
-                out.set(
-                    value,
-                    `${a.name ?? String(i)}@${kind === "custom" ? `custom:${key}` : key}`,
-                );
+            if (value) out.set(value, `${a.name ?? String(i)}@${kind === "custom" ? `custom:${key}` : key}`);
         });
     };
     for (const [key, cfg] of Object.entries(file.stdProviders)) collect("std", key, cfg.accounts);
-    for (const [key, cfg] of Object.entries(file.customProviders))
-        collect("custom", key, cfg.accounts);
+    for (const [key, cfg] of Object.entries(file.customProviders)) collect("custom", key, cfg.accounts);
     return out;
 }
 
@@ -49,15 +39,9 @@ function existingKeyOwners(file: ModelConfigFile, env: NodeJS.ProcessEnv): Map<s
  * 列出「可由环境变量导入」的 provider（含被跳过的及原因，UI/CLI 自行决定展示哪些）。
  * 一家 provider 只认**第一个命中的** env 变量（models.dev 的 env 是候选顺序，不是并列）。
  */
-export function scanEnvCandidates(
-    home: string,
-    env: NodeJS.ProcessEnv = process.env,
-): EnvImportCandidate[] {
+export function scanEnvCandidates(home: string, env: NodeJS.ProcessEnv = process.env): EnvImportCandidate[] {
     const file = loadModelConfig(home);
-    const configured = new Set([
-        ...Object.keys(file.stdProviders),
-        ...Object.keys(file.customProviders),
-    ]);
+    const configured = new Set([...Object.keys(file.stdProviders), ...Object.keys(file.customProviders)]);
     const keyOwners = existingKeyOwners(file, env);
     // 候选间同源去重：多家 provider 声明同一个 env（opencode / opencode-go 都吃 OPENCODE_API_KEY）
     // 时，只有第一家算可导入，其余标「同源」——否则「全部导入」会写两个用同一把钥匙的 provider。
@@ -93,9 +77,7 @@ export function scanEnvCandidates(
         }
     }
     // 可导入的排前面（UI 一眼看到能干什么），其余按原顺序
-    return out.sort(
-        (a, b) => Number(b.status === "importable") - Number(a.status === "importable"),
-    );
+    return out.sort((a, b) => Number(b.status === "importable") - Number(a.status === "importable"));
 }
 
 /**

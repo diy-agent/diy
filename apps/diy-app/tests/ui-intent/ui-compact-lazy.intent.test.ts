@@ -87,175 +87,197 @@ let prevNodeOptions: string | undefined;
 let prevCountFile: string | undefined;
 
 beforeAll(async () => {
-  // 探针必须在 **Electron 启动之前**注入环境（electron-test 用 ...process.env 起子进程）
-  hookDir = mkdtempSync(join(tmpdir(), "diy-t321-rpc-hook-"));
-  const hookPath = join(hookDir, "rpc-count.cjs");
-  rpcLog = join(hookDir, "rpc.log");
-  writeFileSync(hookPath, HOOK_SRC, "utf-8");
-  prevNodeOptions = process.env["NODE_OPTIONS"];
-  prevCountFile = process.env["DIY_RPC_COUNT_FILE"];
-  process.env["NODE_OPTIONS"] = `${prevNodeOptions ?? ""} --require "${hookPath}"`.trim();
-  process.env["DIY_RPC_COUNT_FILE"] = rpcLog;
+    // 探针必须在 **Electron 启动之前**注入环境（electron-test 用 ...process.env 起子进程）
+    hookDir = mkdtempSync(join(tmpdir(), "diy-t321-rpc-hook-"));
+    const hookPath = join(hookDir, "rpc-count.cjs");
+    rpcLog = join(hookDir, "rpc.log");
+    writeFileSync(hookPath, HOOK_SRC, "utf-8");
+    prevNodeOptions = process.env["NODE_OPTIONS"];
+    prevCountFile = process.env["DIY_RPC_COUNT_FILE"];
+    process.env["NODE_OPTIONS"] = `${prevNodeOptions ?? ""} --require "${hookPath}"`.trim();
+    process.env["DIY_RPC_COUNT_FILE"] = rpcLog;
 
-  const electron = await startElectronTest();
-  const HOME = electron.home;
-  fx = {
-    electron,
-    HOME,
-    sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
-  };
-  ui = await makeUiDriver(electron.cdpUrl, async () => {
-    const r = await fx.sh.getJson("./diy.sh ui inspect");
-    return (r.data as any)?.data?.tree as A11yNode | undefined;
-  });
+    const electron = await startElectronTest();
+    const HOME = electron.home;
+    fx = {
+        electron,
+        HOME,
+        sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
+    };
+    ui = await makeUiDriver(electron.cdpUrl, async () => {
+        const r = await fx.sh.getJson("./diy.sh ui inspect");
+        return (r.data as any)?.data?.tree as A11yNode | undefined;
+    });
 });
 
 afterAll(async () => {
-  ui?.close();
-  await fx?.electron?.stop();
-  // 还原环境变量（同 worker 后续测试文件不该继承探针）+ 清临时目录
-  if (prevNodeOptions === undefined) delete process.env["NODE_OPTIONS"];
-  else process.env["NODE_OPTIONS"] = prevNodeOptions;
-  if (prevCountFile === undefined) delete process.env["DIY_RPC_COUNT_FILE"];
-  else process.env["DIY_RPC_COUNT_FILE"] = prevCountFile;
-  rmSync(hookDir, { recursive: true, force: true });
+    ui?.close();
+    await fx?.electron?.stop();
+    // 还原环境变量（同 worker 后续测试文件不该继承探针）+ 清临时目录
+    if (prevNodeOptions === undefined) delete process.env["NODE_OPTIONS"];
+    else process.env["NODE_OPTIONS"] = prevNodeOptions;
+    if (prevCountFile === undefined) delete process.env["DIY_RPC_COUNT_FILE"];
+    else process.env["DIY_RPC_COUNT_FILE"] = prevCountFile;
+    rmSync(hookDir, { recursive: true, force: true });
 });
 
 // ── 观测：主进程收到的 RPC 流水 ────────────────────────────────
 const rpcLines = (): string[] => {
-  try {
-    return readFileSync(rpcLog, "utf-8").split("\n").filter((l) => l.trim() !== "");
-  } catch {
-    return [];
-  }
+    try {
+        return readFileSync(rpcLog, "utf-8")
+            .split("\n")
+            .filter((l) => l.trim() !== "");
+    } catch {
+        return [];
+    }
 };
 /** 帧位（= 当前已记条数）；断言只看它之后的条目 */
 const mark = (): number => rpcLines().length;
 const callsSince = (from: number, method = PREVIEW_METHOD): { uri: string | null }[] =>
-  rpcLines()
-    .slice(from)
-    .filter((l) => l.includes(method))
-    .map((l) => ({ uri: (JSON.parse(l) as { p?: { input?: { taskUri?: string } } }).p?.input?.taskUri ?? null }));
+    rpcLines()
+        .slice(from)
+        .filter((l) => l.includes(method))
+        .map((l) => ({ uri: (JSON.parse(l) as { p?: { input?: { taskUri?: string } } }).p?.input?.taskUri ?? null }));
 
 /** 造一段会话（每轮一个可辨识文本 + 一条工具输出）—— 只验"算没算"，不追求大文件 */
 function seedSession(uri: string, tag: string, turns = 6): void {
-  const file = join(fx.HOME, sessionFileRel(uri, "ops"));
-  mkdirSync(dirname(file), { recursive: true });
-  const ops: Array<Record<string, unknown>> = [];
-  for (let i = 1; i <= turns; i++) {
-    const tn = `t${tag}${100 + i}`;
-    ops.push({ op: "start", id: tn, kind: "turn", meta: { model: "test" } });
-    ops.push({ op: "start", id: `${tn}_u`, kind: "text", parent: tn, meta: { role: "user" } });
-    ops.push({ op: "delta", id: `${tn}_u`, fields: { content: `【${tag}】第${i}轮问题` } });
-    ops.push({ op: "stop", id: `${tn}_u` });
-    ops.push({ op: "start", id: `${tn}_a`, kind: "text", parent: tn, meta: { role: "assistant" } });
-    ops.push({ op: "delta", id: `${tn}_a`, fields: { content: `【${tag}】第${i}轮回复。` } });
-    ops.push({ op: "stop", id: `${tn}_a` });
-    ops.push({ op: "start", id: `${tn}_r`, kind: "tool", parent: tn, meta: { tool: "bash" } });
-    ops.push({ op: "patch", id: `${tn}_r`, fields: { args: { command: "rg -n x" }, status: "done", title: "rg -n x" } });
-    ops.push({ op: "delta", id: `${tn}_r`, fields: { output: Array.from({ length: 30 }, (_, k) => `row ${k}`).join(NL) } });
-    ops.push({ op: "stop", id: `${tn}_r` });
-    ops.push({ op: "stop", id: tn });
-  }
-  writeFileSync(file, ops.map((o) => JSON.stringify(o)).join(NL) + NL, "utf-8");
+    const file = join(fx.HOME, sessionFileRel(uri, "ops"));
+    mkdirSync(dirname(file), { recursive: true });
+    const ops: Array<Record<string, unknown>> = [];
+    for (let i = 1; i <= turns; i++) {
+        const tn = `t${tag}${100 + i}`;
+        ops.push({ op: "start", id: tn, kind: "turn", meta: { model: "test" } });
+        ops.push({ op: "start", id: `${tn}_u`, kind: "text", parent: tn, meta: { role: "user" } });
+        ops.push({ op: "delta", id: `${tn}_u`, fields: { content: `【${tag}】第${i}轮问题` } });
+        ops.push({ op: "stop", id: `${tn}_u` });
+        ops.push({ op: "start", id: `${tn}_a`, kind: "text", parent: tn, meta: { role: "assistant" } });
+        ops.push({ op: "delta", id: `${tn}_a`, fields: { content: `【${tag}】第${i}轮回复。` } });
+        ops.push({ op: "stop", id: `${tn}_a` });
+        ops.push({ op: "start", id: `${tn}_r`, kind: "tool", parent: tn, meta: { tool: "bash" } });
+        ops.push({
+            op: "patch",
+            id: `${tn}_r`,
+            fields: { args: { command: "rg -n x" }, status: "done", title: "rg -n x" },
+        });
+        ops.push({
+            op: "delta",
+            id: `${tn}_r`,
+            fields: { output: Array.from({ length: 30 }, (_, k) => `row ${k}`).join(NL) },
+        });
+        ops.push({ op: "stop", id: `${tn}_r` });
+        ops.push({ op: "stop", id: tn });
+    }
+    writeFileSync(file, ops.map((o) => JSON.stringify(o)).join(NL) + NL, "utf-8");
 }
 
 /** a11y 文本（判"会话上屏了"） */
 async function a11yText(): Promise<string> {
-  const res = await fx.sh.getJson("./diy.sh ui inspect");
-  const acc: string[] = [];
-  const walk = (n: any) => {
-    if (n?.text) acc.push(String(n.text));
-    for (const c of n?.children ?? []) walk(c);
-  };
-  walk((res.data as any)?.data?.tree);
-  return acc.join(NL);
+    const res = await fx.sh.getJson("./diy.sh ui inspect");
+    const acc: string[] = [];
+    const walk = (n: any) => {
+        if (n?.text) acc.push(String(n.text));
+        for (const c of n?.children ?? []) walk(c);
+    };
+    walk((res.data as any)?.data?.tree);
+    return acc.join(NL);
 }
 
 /** 打开会话页并等它上屏（用该会话独有的文本作判据，避免"打开的是上一个"） */
 async function openSession(uri: string, marker: string): Promise<void> {
-  await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
-  await waitUntil(a11yText, (t) => t.includes(marker), { label: `会话上屏 ${marker}` });
+    await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
+    await waitUntil(a11yText, (t) => t.includes(marker), { label: `会话上屏 ${marker}` });
 }
 
 /** 点窗口占用环 → 开「窗口构成」抽屉（合成 click：hover 卡的 pointerenter 会盖住环） */
 async function openDrawer(): Promise<void> {
-  await ui.query<string>(
-    `(() => { const b=[...document.querySelectorAll('button')].find(x=>(x.getAttribute('aria-label')||'').startsWith('窗口占用')); if(!b) return 'no'; b.click(); return 'ok'; })()`,
-  );
-  await waitUntil(a11yText, (t) => t.includes("窗口构成"), { label: "窗口构成抽屉打开" });
+    await ui.query<string>(
+        `(() => { const b=[...document.querySelectorAll('button')].find(x=>(x.getAttribute('aria-label')||'').startsWith('窗口占用')); if(!b) return 'no'; b.click(); return 'ok'; })()`,
+    );
+    await waitUntil(a11yText, (t) => t.includes("窗口构成"), { label: "窗口构成抽屉打开" });
 }
 
 async function closeDrawer(): Promise<void> {
-  await ui.clickSelector('[aria-label="关闭窗口构成"]');
-  await waitUntil(
-    () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
-    (v) => v === false,
-    { label: "抽屉已关" },
-  );
+    await ui.clickSelector('[aria-label="关闭窗口构成"]');
+    await waitUntil(
+        () => ui.query<boolean>(`!!document.querySelector('input[aria-label="历史上限token"]')`),
+        (v) => v === false,
+        { label: "抽屉已关" },
+    );
 }
 
 /** 让"没发生"的断言有落点：正事件（该发生的）已出现 + 静置一段，再断言"不该发生的没发生" */
 const settle = (ms = 600) => new Promise((r) => setTimeout(r, ms));
 
 describe("##321 压缩预览懒算：抽屉关着 = main 零成本", () => {
-  // 夹具（##434）：两个会话各自落盘 + 主进程探针生效 + 先把 B 打开。
-  // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例的 `uriA`/`uriB`/探针路径都是空（##433 同款）。
-  beforeAll(async () => {
-    const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/lazy --label 懒算`);
-    const pid = String((p.data as any)?.data?.id);
-    const a = await fx.sh.getJson(`./diy.sh task create "懒算 A" ${pid}`);
-    const b = await fx.sh.getJson(`./diy.sh task create "懒算 B" ${pid}`);
-    uriA = String((a.data as any)?.data?.uri);
-    uriB = String((b.data as any)?.data?.uri);
-    expect(uriA).toMatch(new RegExp("^projects/.+/tasks/.+$"));
-    seedSession(uriA, "A");
-    seedSession(uriB, "B");
-    // 探针自检（**正向控制**，否则后面所有"零条"都是假绿）：hook 必须打过点，且渲染端 RPC
-    // 必须真的被记下来 —— 触发手段 = 打开一个会话页（这必然产生若干 renderer→main 的 RPC）。
-    await waitUntil(() => Promise.resolve(rpcLines()), (l) => l.some((x) => x.includes("<patched>")), {
-      label: "主进程 RPC 探针生效",
+    // 夹具（##434）：两个会话各自落盘 + 主进程探针生效 + 先把 B 打开。
+    // 写成 `it` 时 `-t` 过滤会跳过它 ⇒ 后续用例的 `uriA`/`uriB`/探针路径都是空（##433 同款）。
+    beforeAll(async () => {
+        const p = await fx.sh.getJson(`./diy.sh project create "${fx.HOME}"/lazy --label 懒算`);
+        const pid = String((p.data as any)?.data?.id);
+        const a = await fx.sh.getJson(`./diy.sh task create "懒算 A" ${pid}`);
+        const b = await fx.sh.getJson(`./diy.sh task create "懒算 B" ${pid}`);
+        uriA = String((a.data as any)?.data?.uri);
+        uriB = String((b.data as any)?.data?.uri);
+        expect(uriA).toMatch(new RegExp("^projects/.+/tasks/.+$"));
+        seedSession(uriA, "A");
+        seedSession(uriB, "B");
+        // 探针自检（**正向控制**，否则后面所有"零条"都是假绿）：hook 必须打过点，且渲染端 RPC
+        // 必须真的被记下来 —— 触发手段 = 打开一个会话页（这必然产生若干 renderer→main 的 RPC）。
+        await waitUntil(
+            () => Promise.resolve(rpcLines()),
+            (l) => l.some((x) => x.includes("<patched>")),
+            {
+                label: "主进程 RPC 探针生效",
+            },
+        );
+        await openSession(uriB, "【B】第6轮问题");
+        const seen = await waitUntil(
+            () => Promise.resolve(rpcLines()),
+            (l) => l.some((x) => x.includes('"m":"diy.')),
+            {
+                label: "探针记到 renderer RPC",
+            },
+        );
+        expect(seen.some((l) => l.includes("<patched>"))).toBe(true);
+        expect(seen.some((l) => l.includes('"m":"diy.'))).toBe(true);
     });
-    await openSession(uriB, "【B】第6轮问题");
-    const seen = await waitUntil(() => Promise.resolve(rpcLines()), (l) => l.some((x) => x.includes('"m":"diy.')), {
-      label: "探针记到 renderer RPC",
+
+    it("打开会话页（抽屉关着）→ **一次 compactPreview 都不打**", async () => {
+        const from = mark();
+        await openSession(uriA, "【A】第6轮问题");
+        await settle();
+        expect(callsSince(from).map((c) => c.uri)).toEqual([]);
     });
-    expect(seen.some((l) => l.includes("<patched>"))).toBe(true);
-    expect(seen.some((l) => l.includes('"m":"diy.'))).toBe(true);
-  });
 
-  it("打开会话页（抽屉关着）→ **一次 compactPreview 都不打**", async () => {
-    const from = mark();
-    await openSession(uriA, "【A】第6轮问题");
-    await settle();
-    expect(callsSince(from).map((c) => c.uri)).toEqual([]);
-  });
+    it("抽屉真打开 → 才算一次，且算的是**本页**的 uri（不是上一个会话、也不是两次）", async () => {
+        const from = mark();
+        await openDrawer();
+        await waitUntil(
+            () => Promise.resolve(callsSince(from).length),
+            (n) => n >= 1,
+            { label: "预览开算" },
+        );
+        await settle(); // 等"第二发"（若有）现形
+        expect(callsSince(from).map((c) => c.uri)).toEqual([uriA]);
+        await closeDrawer();
+    });
 
-  it("抽屉真打开 → 才算一次，且算的是**本页**的 uri（不是上一个会话、也不是两次）", async () => {
-    const from = mark();
-    await openDrawer();
-    await waitUntil(() => Promise.resolve(callsSince(from).length), (n) => n >= 1, { label: "预览开算" });
-    await settle(); // 等"第二发"（若有）现形
-    expect(callsSince(from).map((c) => c.uri)).toEqual([uriA]);
-    await closeDrawer();
-  });
+    it("抽屉关着切到别的会话 → 不重算（新页零成本）", async () => {
+        const from = mark();
+        await openSession(uriB, "【B】第6轮问题");
+        await settle();
+        expect(callsSince(from).map((c) => c.uri)).toEqual([]);
+    });
 
-  it("抽屉关着切到别的会话 → 不重算（新页零成本）", async () => {
-    const from = mark();
-    await openSession(uriB, "【B】第6轮问题");
-    await settle();
-    expect(callsSince(from).map((c) => c.uri)).toEqual([]);
-  });
-
-  it("抽屉关着从 B 切回 A（大会话场景）→ **不再重算上一个会话**", async () => {
-    let from = mark();
-    await openSession(uriA, "【A】第6轮问题");
-    await settle();
-    expect(callsSince(from).map((c) => c.uri)).toEqual([]);
-    // 反向再切一次：切页本身不该有任何压缩预览成本
-    from = mark();
-    await openSession(uriB, "【B】第6轮问题");
-    await settle();
-    expect(callsSince(from).map((c) => c.uri)).toEqual([]);
-  });
+    it("抽屉关着从 B 切回 A（大会话场景）→ **不再重算上一个会话**", async () => {
+        let from = mark();
+        await openSession(uriA, "【A】第6轮问题");
+        await settle();
+        expect(callsSince(from).map((c) => c.uri)).toEqual([]);
+        // 反向再切一次：切页本身不该有任何压缩预览成本
+        from = mark();
+        await openSession(uriB, "【B】第6轮问题");
+        await settle();
+        expect(callsSince(from).map((c) => c.uri)).toEqual([]);
+    });
 });

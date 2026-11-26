@@ -108,7 +108,11 @@ describe("##436 顺带洞：结案任务里没人取的留言（kind=lost）", (
     function makeTask(uri: string, state: string, steers: string): void {
         const dir = join(home, uri);
         mkdirSync(join(dir, ".diy"), { recursive: true });
-        writeFileSync(join(dir, "AGENTS.md"), `---\ntitle: 任务\nstate: ${state}\n---\n正文正文正文正文正文\n`, "utf-8");
+        writeFileSync(
+            join(dir, "AGENTS.md"),
+            `---\ntitle: 任务\nstate: ${state}\n---\n正文正文正文正文正文\n`,
+            "utf-8",
+        );
         writeFileSync(join(dir, ".diy", "drafts.yaml"), draftsOf(uri, steers), "utf-8");
     }
 
@@ -146,7 +150,11 @@ describe("##436 顺带洞：结案任务里没人取的留言（kind=lost）", (
         let i = 0;
         for (const state of ["cancelled", "closed", "shelved"]) {
             const uri = `projects/4/tasks/${450 + i++}`;
-            makeTask(uri, state, `  - id: st-${i}\n    mode: next-turn\n    text: 躺着\n    created: "2026-10-25T12:00:00.000Z"\n`);
+            makeTask(
+                uri,
+                state,
+                `  - id: st-${i}\n    mode: next-turn\n    text: 躺着\n    created: "2026-10-25T12:00:00.000Z"\n`,
+            );
         }
         expect(await sweepStuckSteers()).toBe(3);
         expect((await inboxHub.list()).map((r) => r.taskUri).sort()).toEqual([
@@ -159,7 +167,11 @@ describe("##436 顺带洞：结案任务里没人取的留言（kind=lost）", (
     it("非结案任务**不动**（用户随时可能点跑，猜错就是假警报）", async () => {
         const { sweepStuckSteers } = await import("../../src/main/services/inbox-sweep");
         const uri = "projects/4/tasks/439";
-        makeTask(uri, "active", '  - id: st-2\n    mode: next-turn\n    text: 待投\n    created: "2026-10-25T12:00:00.000Z"\n');
+        makeTask(
+            uri,
+            "active",
+            '  - id: st-2\n    mode: next-turn\n    text: 待投\n    created: "2026-10-25T12:00:00.000Z"\n',
+        );
         expect(await sweepStuckSteers()).toBe(0);
     });
 

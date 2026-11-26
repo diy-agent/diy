@@ -18,8 +18,6 @@ export type GetTaskVerdict = "ok" | "missing";
  * 保守取「必须显式 ok 且有载荷」：将来 main 新增别的 status 时，旧 renderer 会落到
  * 「不存在」这条可见的终态（有出路），而不是退回「永远加载中」（无出路）。
  */
-export function getTaskVerdict(
-  r: { status?: string; data?: unknown } | null | undefined,
-): GetTaskVerdict {
-  return r && r.status === "ok" && r.data != null ? "ok" : "missing";
+export function getTaskVerdict(r: { status?: string; data?: unknown } | null | undefined): GetTaskVerdict {
+    return r && r.status === "ok" && r.data != null ? "ok" : "missing";
 }

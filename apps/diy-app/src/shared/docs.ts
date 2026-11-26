@@ -15,9 +15,15 @@ export const DocsEntrySchema = z.object({
     path: z.string().describe("仓库相对路径（`diy tool read <path>` 读它）"),
     title: z.string().describe("首个 `# ` 标题（去掉尾部日期括注），缺失写 `(无 H1)`"),
     size: z.number().describe("字节数的 KB 取整（0 = 小于 1 KB）"),
-    docDate: z.string().optional().describe("文档**自述**日期（`YY-MM-DD`，取自文件名 / 标题）。与 `touched` 不一致 = 值得点开看看"),
+    docDate: z
+        .string()
+        .optional()
+        .describe("文档**自述**日期（`YY-MM-DD`，取自文件名 / 标题）。与 `touched` 不一致 = 值得点开看看"),
     touched: z.string().optional().describe("git 最后一次改动日（`YY-MM-DD`）；非 git 仓库 / 未提交过则缺席"),
-    status: z.string().optional().describe("开篇引用块里的「状态：…」（启发式，≤20 字）。**抽不到就不给** —— 编出来的状态比没有更坏"),
+    status: z
+        .string()
+        .optional()
+        .describe("开篇引用块里的「状态：…」（启发式，≤20 字）。**抽不到就不给** —— 编出来的状态比没有更坏"),
 });
 
 /** 全量索引（`diy docs index` 的返回；也是页面渲染的数据源） */

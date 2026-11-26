@@ -47,7 +47,10 @@ describe("resumeOf：最近活动过、眼下没事的会话（按最后活动�
     });
 
     it("lastTs 为空（没聊过 / 账本没读到）→ 不进本区", () => {
-        const v = resumeOf([row({ uri: "never", lastTs: null }), row({ uri: "talked", lastTs: "2026-10-15T10:00:00.000Z" })], []);
+        const v = resumeOf(
+            [row({ uri: "never", lastTs: null }), row({ uri: "talked", lastTs: "2026-10-15T10:00:00.000Z" })],
+            [],
+        );
         expect(v.items.map((r) => r.uri)).toEqual(["talked"]);
     });
 

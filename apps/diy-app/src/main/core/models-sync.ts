@@ -17,7 +17,12 @@
 //   · 定时（24h）与任务级 job 的管理 / 可见性归 **##408** —— 它要调的就是本文件的
 //     `refreshModelsOnce`（一次 tick），所以这个函数必须保持**无定时器、无全局状态**。
 import { readFileSync } from "node:fs";
-import { MODELS_DEV_FILE, type ModelsRefreshResult, type ModelsSnapshotInfo, type SpecProvider } from "../../shared/model-config";
+import {
+    MODELS_DEV_FILE,
+    type ModelsRefreshResult,
+    type ModelsSnapshotInfo,
+    type SpecProvider,
+} from "../../shared/model-config";
 import { writeFileAtomic } from "./atomic-write";
 import { dataFileHit, dataHomeFile, type DataFileHit } from "./data-file";
 import { buildModelsSnapshot, diffSnapshot, snapshotCounts } from "./models-snapshot";

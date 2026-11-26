@@ -22,20 +22,24 @@ export const NAV_RAIL_W = 40;
 
 /** 侧栏当前渲染宽度（px）；展开态是用户宽度，收起态是 40px rail */
 export const navWidth = (ui: UiDriver): Promise<number> =>
-  ui.query<number>(`Math.round(document.querySelector(${JSON.stringify(NAV_MENU_SEL)}).getBoundingClientRect().width)`);
+    ui.query<number>(
+        `Math.round(document.querySelector(${JSON.stringify(NAV_MENU_SEL)}).getBoundingClientRect().width)`,
+    );
 
 /** 是否已锁定展开（pin 处于「取消锁定」态） */
 export const navLocked = (ui: UiDriver): Promise<boolean> =>
-  ui.query<boolean>(`!!document.querySelector('.drawer-side button[title*="取消锁定"]')`);
+    ui.query<boolean>(`!!document.querySelector('.drawer-side button[title*="取消锁定"]')`);
 
 /** 是否处于可锁定的展开态（pin 处于「锁定展开」态） */
 const pinOffered = (ui: UiDriver): Promise<boolean> =>
-  ui.query<boolean>(`!!document.querySelector('.drawer-side button[title="锁定展开"]')`);
+    ui.query<boolean>(`!!document.querySelector('.drawer-side button[title="锁定展开"]')`);
 
 /** 当前按钮区状态，用于报错时还原现场 */
 async function navState(ui: UiDriver): Promise<string> {
-  return `宽度=${await navWidth(ui)}px, 锁定=${(await navLocked(ui)) ? "是" : "否"}, ` +
-    `pin=${(await pinOffered(ui)) ? "锁定展开" : "（无）"}`;
+    return (
+        `宽度=${await navWidth(ui)}px, 锁定=${(await navLocked(ui)) ? "是" : "否"}, ` +
+        `pin=${(await pinOffered(ui)) ? "锁定展开" : "（无）"}`
+    );
 }
 
 /**
@@ -45,12 +49,16 @@ async function navState(ui: UiDriver): Promise<string> {
  * 态改掉，重试时必须重新建立这个前提，否则重试毫无意义。
  */
 export async function hoverOpenNav(ui: UiDriver): Promise<void> {
-  if (!(await ui.hoverSelector(NAV_MENU_SEL))) {
-    throw new Error(`[nav-helper] 没找到侧栏: ${NAV_MENU_SEL}`);
-  }
-  await waitUntil(() => navWidth(ui), (w) => w > 100, { label: "侧栏 hover 展开", timeoutMs: 3000 });
-  const w = await navWidth(ui);
-  if (w <= 100) throw new Error(`[nav-helper] 侧栏未 hover 展开：${await navState(ui)}`);
+    if (!(await ui.hoverSelector(NAV_MENU_SEL))) {
+        throw new Error(`[nav-helper] 没找到侧栏: ${NAV_MENU_SEL}`);
+    }
+    await waitUntil(
+        () => navWidth(ui),
+        (w) => w > 100,
+        { label: "侧栏 hover 展开", timeoutMs: 3000 },
+    );
+    const w = await navWidth(ui);
+    if (w <= 100) throw new Error(`[nav-helper] 侧栏未 hover 展开：${await navState(ui)}`);
 }
 
 /**
@@ -62,13 +70,20 @@ export async function hoverOpenNav(ui: UiDriver): Promise<void> {
  * （避免把「其实已经锁上、只是校验慢了」误判成失败后**再点一次把它解锁**）。
  */
 export async function lockNavOpen(ui: UiDriver, attempts = 3): Promise<void> {
-  for (let i = 0; i < attempts; i++) {
-    await hoverOpenNav(ui);
-    if (await navLocked(ui)) return;
-    await ui.clickSelector('button[title="锁定展开"]');
-    if (await waitUntil(() => navLocked(ui), (v) => v, { label: "侧栏进入锁定态", timeoutMs: 1500 })) return;
-  }
-  throw new Error(`[nav-helper] 锁定侧栏失败（试了 ${attempts} 次）：${await navState(ui)}`);
+    for (let i = 0; i < attempts; i++) {
+        await hoverOpenNav(ui);
+        if (await navLocked(ui)) return;
+        await ui.clickSelector('button[title="锁定展开"]');
+        if (
+            await waitUntil(
+                () => navLocked(ui),
+                (v) => v,
+                { label: "侧栏进入锁定态", timeoutMs: 1500 },
+            )
+        )
+            return;
+    }
+    throw new Error(`[nav-helper] 锁定侧栏失败（试了 ${attempts} 次）：${await navState(ui)}`);
 }
 
 /**
@@ -78,11 +93,18 @@ export async function lockNavOpen(ui: UiDriver, attempts = 3): Promise<void> {
  * 用真实点击（不派发 DOM click）—— 否则绕开命中测试，测不出「按钮其实被遮住/移走」。
  */
 export async function unlockNav(ui: UiDriver, attempts = 3): Promise<void> {
-  for (let i = 0; i < attempts; i++) {
-    await hoverOpenNav(ui);
-    if (!(await navLocked(ui))) return; // 已解锁（pin 回到「锁定展开」）
-    await ui.clickSelector('button[title*="取消锁定"]');
-    if (await waitUntil(() => pinOffered(ui), (v) => v, { label: "侧栏退出锁定态", timeoutMs: 1500 })) return;
-  }
-  throw new Error(`[nav-helper] 取消锁定失败（试了 ${attempts} 次）：${await navState(ui)}`);
+    for (let i = 0; i < attempts; i++) {
+        await hoverOpenNav(ui);
+        if (!(await navLocked(ui))) return; // 已解锁（pin 回到「锁定展开」）
+        await ui.clickSelector('button[title*="取消锁定"]');
+        if (
+            await waitUntil(
+                () => pinOffered(ui),
+                (v) => v,
+                { label: "侧栏退出锁定态", timeoutMs: 1500 },
+            )
+        )
+            return;
+    }
+    throw new Error(`[nav-helper] 取消锁定失败（试了 ${attempts} 次）：${await navState(ui)}`);
 }

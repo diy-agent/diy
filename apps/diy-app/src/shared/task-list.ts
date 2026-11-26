@@ -23,21 +23,21 @@ import { TASK_STATES } from "../main/core/task-state";
  * 也不该依赖 main 的域类型。泛型参数让调用方拿回自己的具体类型（见 sortTasks / buildTaskRows）。
  */
 export interface TaskListNode {
-  kind: "project" | "task";
-  uri?: string;
-  num?: string;
-  title?: string;
-  state?: string;
-  change_type?: string;
-  module?: string;
-  priority?: string;
-  created?: string;
-  updated?: string;
-  body?: string;
-  project?: string;
-  project_path?: string;
-  project_label?: string;
-  children: TaskListNode[];
+    kind: "project" | "task";
+    uri?: string;
+    num?: string;
+    title?: string;
+    state?: string;
+    change_type?: string;
+    module?: string;
+    priority?: string;
+    created?: string;
+    updated?: string;
+    body?: string;
+    project?: string;
+    project_path?: string;
+    project_label?: string;
+    children: TaskListNode[];
 }
 
 // ═══════════════════════════════════════
@@ -45,19 +45,19 @@ export interface TaskListNode {
 // ═══════════════════════════════════════
 
 export type SortKey =
-  | "created"
-  | "updated"
-  | "num"
-  | "title"
-  | "state"
-  | "change_type"
-  | "module"
-  | "priority"
-  // 会话侧（##358）：任务 : 会话 = 1 : 1，故这几列是**任务属性**的延伸（用户原话第 4 条）
-  | "session"
-  | "tokens"
-  | "cost"
-  | "lastActivity";
+    | "created"
+    | "updated"
+    | "num"
+    | "title"
+    | "state"
+    | "change_type"
+    | "module"
+    | "priority"
+    // 会话侧（##358）：任务 : 会话 = 1 : 1，故这几列是**任务属性**的延伸（用户原话第 4 条）
+    | "session"
+    | "tokens"
+    | "cost"
+    | "lastActivity";
 
 /**
  * 会话侧的排序值 —— 由 renderer 现算后**注入**（本模块不认识 SessionEntry，也不认识账本）。
@@ -71,21 +71,21 @@ export type SortKey =
  * 缺值一律用 `undefined`（= 未设置，`cmpField` 语义：**恒排最后**，与升/降序无关）。
  */
 export interface SessionSortValues {
-  /** 该不该先看（越小越前）；无注册表条目 → undefined */
-  attention?: number;
-  /** 会话累计 token（账本跨启动，与注册表取大）；两源都无 → undefined */
-  tokens?: number;
-  /** 最后消息时刻 ISO（账本跨启动，与注册表取大）；两源都无 → undefined */
-  lastActivity?: string;
-  /** 账本累计消费（$）；未读到 / 账本无价 → undefined（"未知"不该混进 0 里） */
-  cost?: number;
+    /** 该不该先看（越小越前）；无注册表条目 → undefined */
+    attention?: number;
+    /** 会话累计 token（账本跨启动，与注册表取大）；两源都无 → undefined */
+    tokens?: number;
+    /** 最后消息时刻 ISO（账本跨启动，与注册表取大）；两源都无 → undefined */
+    lastActivity?: string;
+    /** 账本累计消费（$）；未读到 / 账本无价 → undefined（"未知"不该混进 0 里） */
+    cost?: number;
 }
 
 export type SortDir = "asc" | "desc";
 
 export interface SortSpec {
-  key: SortKey;
-  dir: SortDir;
+    key: SortKey;
+    dir: SortDir;
 }
 
 /**
@@ -94,38 +94,38 @@ export interface SortSpec {
  * 不能因为标题列还兼着展开按钮/点击进详情就不给它排序入口。
  */
 export const SORT_KEYS: readonly { key: SortKey; label: string; title: string }[] = [
-  { key: "title", label: "标题", title: "标题（按拼音/字母）" },
-  { key: "change_type", label: "类型", title: "变更性质（feat/fix/…）" },
-  { key: "module", label: "模块", title: "模块" },
-  { key: "priority", label: "优先级", title: "优先级（未定级排最后）" },
-  { key: "state", label: "状态", title: "状态" },
-  { key: "num", label: "编号", title: "任务号（项目内自增）" },
-  { key: "created", label: "创建", title: "创建时间" },
-  { key: "updated", label: "修改", title: "最后修改时间" },
-  // 会话侧四列（##358，追加在右端，不动既有列序以免打乱肌肉记忆）
-  { key: "session", label: "会话", title: "会话状态（运行中 / 异常终止 / 未读 / 待投递 / 已开始）" },
-  { key: "tokens", label: "token", title: "会话累计 token（读账本 usage.jsonl 现算，跨启动；与注册表取大）" },
-  { key: "cost", label: "消费", title: "任务会话累计消费（$；读账本 usage.jsonl 现算，跨启动）" },
-  { key: "lastActivity", label: "最后消息", title: "会话最后一次消息时间（账本跨启动，与注册表取大）" },
+    { key: "title", label: "标题", title: "标题（按拼音/字母）" },
+    { key: "change_type", label: "类型", title: "变更性质（feat/fix/…）" },
+    { key: "module", label: "模块", title: "模块" },
+    { key: "priority", label: "优先级", title: "优先级（未定级排最后）" },
+    { key: "state", label: "状态", title: "状态" },
+    { key: "num", label: "编号", title: "任务号（项目内自增）" },
+    { key: "created", label: "创建", title: "创建时间" },
+    { key: "updated", label: "修改", title: "最后修改时间" },
+    // 会话侧四列（##358，追加在右端，不动既有列序以免打乱肌肉记忆）
+    { key: "session", label: "会话", title: "会话状态（运行中 / 异常终止 / 未读 / 待投递 / 已开始）" },
+    { key: "tokens", label: "token", title: "会话累计 token（读账本 usage.jsonl 现算，跨启动；与注册表取大）" },
+    { key: "cost", label: "消费", title: "任务会话累计消费（$；读账本 usage.jsonl 现算，跨启动）" },
+    { key: "lastActivity", label: "最后消息", title: "会话最后一次消息时间（账本跨启动，与注册表取大）" },
 ];
 
 /** 默认排序：创建时间升序 = 任务号顺序 = 稳定时间线（用户选定的默认，勿随意改） */
 export const DEFAULT_SORT: SortSpec = { key: "created", dir: "asc" };
 
-/** 认识的排序键 = 清单本身（曾经额外手工塞了一个 `title`，因为 title 不在清单里 —— 
+/** 认识的排序键 = 清单本身（曾经额外手工塞了一个 `title`，因为 title 不在清单里 ——
  *  "清单"与"可用键"两个真相源，早晚对不上；现在只有清单一个源。 */
 const SORT_KEY_SET = new Set<string>(SORT_KEYS.map((s) => s.key));
 
 /** `"created:asc"` → SortSpec；形状不对或不认识的键 → 回落默认（未知键不报错） */
 export function parseSort(raw: string | undefined): SortSpec {
-  if (!raw) return DEFAULT_SORT;
-  const [key, dir] = raw.split(":");
-  if (!key || !SORT_KEY_SET.has(key)) return DEFAULT_SORT;
-  return { key: key as SortKey, dir: dir === "desc" ? "desc" : "asc" };
+    if (!raw) return DEFAULT_SORT;
+    const [key, dir] = raw.split(":");
+    if (!key || !SORT_KEY_SET.has(key)) return DEFAULT_SORT;
+    return { key: key as SortKey, dir: dir === "desc" ? "desc" : "asc" };
 }
 
 export function formatSort(s: SortSpec): string {
-  return `${s.key}:${s.dir}`;
+    return `${s.key}:${s.dir}`;
 }
 
 /**
@@ -143,8 +143,8 @@ export function formatSort(s: SortSpec): string {
  * 注释写着"先看 P0 在前"，代码给出 P3 在前 —— 方向反了，这是被 175 的 review 抓出来的。
  */
 export function toggleSort(cur: SortSpec, key: SortKey): SortSpec {
-  if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
-  return { key, dir: DEFAULT_DESC_KEYS.has(key) ? "desc" : "asc" };
+    if (cur.key === key) return { key, dir: cur.dir === "asc" ? "desc" : "asc" };
+    return { key, dir: DEFAULT_DESC_KEYS.has(key) ? "desc" : "asc" };
 }
 
 /**
@@ -166,30 +166,30 @@ const DEFAULT_DESC_KEYS = new Set<SortKey>(["updated", "lastActivity", "tokens",
  * 所以"想先看到 P0"必须用**升序**（`PRIORITIES` 里 P0 位次最小），降序是 P3 在前。
  */
 function cmpField<T>(
-  a: T | undefined,
-  b: T | undefined,
-  sign: number,
-  cmp: (x: T, y: T) => number,
-  rank?: (v: T) => number,
+    a: T | undefined,
+    b: T | undefined,
+    sign: number,
+    cmp: (x: T, y: T) => number,
+    rank?: (v: T) => number,
 ): number {
-  if (a === undefined || b === undefined) {
-    return a === b ? 0 : a === undefined ? 1 : -1;
-  }
-  if (rank) {
-    const d = rank(a) - rank(b);
-    if (d !== 0) return sign * d;
-  }
-  return sign * cmp(a, b);
+    if (a === undefined || b === undefined) {
+        return a === b ? 0 : a === undefined ? 1 : -1;
+    }
+    if (rank) {
+        const d = rank(a) - rank(b);
+        if (d !== 0) return sign * d;
+    }
+    return sign * cmp(a, b);
 }
 
 /** 取枚举里的位次；不在表内（历史手写值）→ 排到已知值之后 */
 function enumRank(list: readonly string[], v: string): number {
-  const i = list.indexOf(v);
-  return i === -1 ? list.length : i;
+    const i = list.indexOf(v);
+    return i === -1 ? list.length : i;
 }
 
 function cmpText(a: string, b: string): number {
-  return a.localeCompare(b, "zh");
+    return a.localeCompare(b, "zh");
 }
 
 /**
@@ -197,60 +197,62 @@ function cmpText(a: string, b: string): number {
  * 只在**同一父级的兄弟之间**使用 —— 跨层级排序会破坏父子结构（树是分类与分解的表达）。
  */
 export function taskComparator<T extends TaskListNode>(
-  spec: SortSpec,
-  /** 会话侧取值（可缺省：没有会话的表单/单测照样能排任务侧列） */
-  sessionOf?: (n: T) => SessionSortValues | null,
+    spec: SortSpec,
+    /** 会话侧取值（可缺省：没有会话的表单/单测照样能排任务侧列） */
+    sessionOf?: (n: T) => SessionSortValues | null,
 ): (a: T, b: T) => number {
-  const sign = spec.dir === "asc" ? 1 : -1;
-  const { key } = spec;
-  const sess = (n: T): SessionSortValues | null => (sessionOf ? sessionOf(n) : null);
-  return (a, b) => {
-    switch (key) {
-      case "num":
-        // 任务号是自增数字，必须按数值比 —— 字典序会把 #9 排到 #100 之后（真实故障）
-        return cmpField(numValue(a), numValue(b), sign, (x, y) => x - y);
-      case "created":
-      case "updated":
-        // ISO 8601（带 Z）字典序 == 时间序，无需 Date 解析
-        return cmpField(a[key], b[key], sign, (x, y) => (x < y ? -1 : x > y ? 1 : 0));
-      case "state":
-        return cmpField(a.state, b.state, sign, cmpText, (v) => enumRank(TASK_STATES, v));
-      case "priority":
-        return cmpField(a.priority, b.priority, sign, cmpText, (v) => enumRank(PRIORITIES, v));
-      case "change_type":
-        return cmpField(a.change_type, b.change_type, sign, cmpText);
-      case "module":
-        return cmpField(a.module, b.module, sign, cmpText);
-      case "title":
-        return cmpField(a.title, b.title, sign, cmpText);
-      // 会话侧：没有会话（本次启动没活动过）→ undefined ⇒ 未设置恒排最后（cmpField 语义）
-      case "session":
-        return cmpField(sess(a)?.attention, sess(b)?.attention, sign, (x, y) => x - y);
-      case "tokens":
-        return cmpField(sess(a)?.tokens, sess(b)?.tokens, sign, (x, y) => x - y);
-      // 账本消费：`undefined`（未知）恒排最后 —— 任务表里"没花过钱/没读到"不该混进排序前列
-      case "cost":
-        return cmpField(sess(a)?.cost, sess(b)?.cost, sign, (x, y) => x - y);
-      case "lastActivity":
-        return cmpField(sess(a)?.lastActivity, sess(b)?.lastActivity, sign, (x, y) => (x < y ? -1 : x > y ? 1 : 0));
-    }
-  };
+    const sign = spec.dir === "asc" ? 1 : -1;
+    const { key } = spec;
+    const sess = (n: T): SessionSortValues | null => (sessionOf ? sessionOf(n) : null);
+    return (a, b) => {
+        switch (key) {
+            case "num":
+                // 任务号是自增数字，必须按数值比 —— 字典序会把 #9 排到 #100 之后（真实故障）
+                return cmpField(numValue(a), numValue(b), sign, (x, y) => x - y);
+            case "created":
+            case "updated":
+                // ISO 8601（带 Z）字典序 == 时间序，无需 Date 解析
+                return cmpField(a[key], b[key], sign, (x, y) => (x < y ? -1 : x > y ? 1 : 0));
+            case "state":
+                return cmpField(a.state, b.state, sign, cmpText, (v) => enumRank(TASK_STATES, v));
+            case "priority":
+                return cmpField(a.priority, b.priority, sign, cmpText, (v) => enumRank(PRIORITIES, v));
+            case "change_type":
+                return cmpField(a.change_type, b.change_type, sign, cmpText);
+            case "module":
+                return cmpField(a.module, b.module, sign, cmpText);
+            case "title":
+                return cmpField(a.title, b.title, sign, cmpText);
+            // 会话侧：没有会话（本次启动没活动过）→ undefined ⇒ 未设置恒排最后（cmpField 语义）
+            case "session":
+                return cmpField(sess(a)?.attention, sess(b)?.attention, sign, (x, y) => x - y);
+            case "tokens":
+                return cmpField(sess(a)?.tokens, sess(b)?.tokens, sign, (x, y) => x - y);
+            // 账本消费：`undefined`（未知）恒排最后 —— 任务表里"没花过钱/没读到"不该混进排序前列
+            case "cost":
+                return cmpField(sess(a)?.cost, sess(b)?.cost, sign, (x, y) => x - y);
+            case "lastActivity":
+                return cmpField(sess(a)?.lastActivity, sess(b)?.lastActivity, sign, (x, y) =>
+                    x < y ? -1 : x > y ? 1 : 0,
+                );
+        }
+    };
 }
 
 /** 任务号 → 数字（缺失/非数字 → undefined，排最后） */
 function numValue(n: TaskListNode): number | undefined {
-  if (!n.num) return undefined;
-  const v = Number(n.num);
-  return Number.isFinite(v) ? v : undefined;
+    if (!n.num) return undefined;
+    const v = Number(n.num);
+    return Number.isFinite(v) ? v : undefined;
 }
 
 /** 同级排序（返回新数组，不改入参） */
 export function sortTasks<T extends TaskListNode>(
-  nodes: T[],
-  spec: SortSpec,
-  sessionOf?: (n: T) => SessionSortValues | null,
+    nodes: T[],
+    spec: SortSpec,
+    sessionOf?: (n: T) => SessionSortValues | null,
 ): T[] {
-  return [...nodes].sort(taskComparator<T>(spec, sessionOf));
+    return [...nodes].sort(taskComparator<T>(spec, sessionOf));
 }
 
 // ═══════════════════════════════════════
@@ -259,17 +261,17 @@ export function sortTasks<T extends TaskListNode>(
 
 /** 正文片段：命中处前后各截一段，供行内第二行展示 */
 export interface SearchSnippet {
-  before: string;
-  /** 命中原文（保留大小写，只有比较时忽略大小写） */
-  match: string;
-  after: string;
-  /** 正文里命中的总处数（>1 时行内显示 `+N 处`） */
-  count: number;
+    before: string;
+    /** 命中原文（保留大小写，只有比较时忽略大小写） */
+    match: string;
+    after: string;
+    /** 正文里命中的总处数（>1 时行内显示 `+N 处`） */
+    count: number;
 }
 
 export interface TaskMatch {
-  /** 片段（正文命中才有；标题等字段命中时为 null） */
-  snippet: SearchSnippet | null;
+    /** 片段（正文命中才有；标题等字段命中时为 null） */
+    snippet: SearchSnippet | null;
 }
 
 /** 片段上下文长度（命中处前后各取多少个字符） */
@@ -283,25 +285,25 @@ const SNIPPET_CONTEXT = 30;
  * （不在原始文本上算下标再映射，避免两套下标体系）。
  */
 export function buildSnippet(text: string, query: string, context = SNIPPET_CONTEXT): SearchSnippet | null {
-  const flat = text.replace(/\s+/g, " ").trim();
-  const q = query.trim();
-  if (!flat || !q) return null;
-  const lower = flat.toLowerCase();
-  const qLower = q.toLowerCase();
-  const idx = lower.indexOf(qLower);
-  if (idx === -1) return null;
+    const flat = text.replace(/\s+/g, " ").trim();
+    const q = query.trim();
+    if (!flat || !q) return null;
+    const lower = flat.toLowerCase();
+    const qLower = q.toLowerCase();
+    const idx = lower.indexOf(qLower);
+    if (idx === -1) return null;
 
-  let count = 0;
-  for (let at = idx; at !== -1; at = lower.indexOf(qLower, at + qLower.length)) count++;
+    let count = 0;
+    for (let at = idx; at !== -1; at = lower.indexOf(qLower, at + qLower.length)) count++;
 
-  const from = Math.max(0, idx - context);
-  const to = Math.min(flat.length, idx + q.length + context);
-  return {
-    before: (from > 0 ? "…" : "") + flat.slice(from, idx),
-    match: flat.slice(idx, idx + q.length),
-    after: flat.slice(idx + q.length, to) + (to < flat.length ? "…" : ""),
-    count,
-  };
+    const from = Math.max(0, idx - context);
+    const to = Math.min(flat.length, idx + q.length + context);
+    return {
+        before: (from > 0 ? "…" : "") + flat.slice(from, idx),
+        match: flat.slice(idx, idx + q.length),
+        after: flat.slice(idx + q.length, to) + (to < flat.length ? "…" : ""),
+        count,
+    };
 }
 
 /**
@@ -319,24 +321,24 @@ export function buildSnippet(text: string, query: string, context = SNIPPET_CONT
  * 不是查询语言；真需要复杂查询时，应该走将来的过滤/扩展字段机制，而不是在这里堆语法。
  */
 export function matchTask(node: TaskListNode, query: string): TaskMatch | null {
-  const q = query.trim().toLowerCase();
-  if (!q) return null;
+    const q = query.trim().toLowerCase();
+    if (!q) return null;
 
-  const num = node.num ?? "";
-  const haystack = [
-    node.title ?? "",
-    num,
-    `#${num}`,
-    node.uri ?? "",
-    node.module ?? "",
-    node.change_type ?? "",
-    node.priority ?? "",
-    node.state ?? "",
-  ];
-  if (haystack.some((h) => h.toLowerCase().includes(q))) return { snippet: null };
+    const num = node.num ?? "";
+    const haystack = [
+        node.title ?? "",
+        num,
+        `#${num}`,
+        node.uri ?? "",
+        node.module ?? "",
+        node.change_type ?? "",
+        node.priority ?? "",
+        node.state ?? "",
+    ];
+    if (haystack.some((h) => h.toLowerCase().includes(q))) return { snippet: null };
 
-  const snippet = node.body ? buildSnippet(node.body, q) : null;
-  return snippet ? { snippet } : null;
+    const snippet = node.body ? buildSnippet(node.body, q) : null;
+    return snippet ? { snippet } : null;
 }
 
 // ═══════════════════════════════════════
@@ -345,33 +347,33 @@ export function matchTask(node: TaskListNode, query: string): TaskMatch | null {
 
 /** 一行扁平结果（TaskTree 依此渲染）。泛型参数让调用方拿回自己的节点类型（见文件头） */
 export interface TaskListRow<T extends TaskListNode = TaskListNode> {
-  node: T;
-  depth: number;
-  /** 搜索态下的命中信息；非搜索态或未命中（祖先行）为 null */
-  match: TaskMatch | null;
+    node: T;
+    depth: number;
+    /** 搜索态下的命中信息；非搜索态或未命中（祖先行）为 null */
+    match: TaskMatch | null;
 }
 
 /** 行/拖拽节点的稳定 key：project → `proj:<id>`，task → uri */
 export function taskRowKey(node: TaskListNode): string {
-  return node.kind === "project" ? `proj:${node.project ?? ""}` : node.uri ?? "";
+    return node.kind === "project" ? `proj:${node.project ?? ""}` : (node.uri ?? "");
 }
 
 export interface BuildRowsOptions {
-  sort: SortSpec;
-  /** 搜索词（空 = 非搜索态：不剪枝，按展开状态展示） */
-  query: string;
-  /** 展开判定（由调用方给：项目的展开语义与任务相反，且有持久化视图 cache） */
-  isExpanded: (node: TaskListNode) => boolean;
-  /** 会话侧排序取值（可缺省；见 SortKey 里的会话四列） */
-  sessionOf?: (node: TaskListNode) => SessionSortValues | null;
+    sort: SortSpec;
+    /** 搜索词（空 = 非搜索态：不剪枝，按展开状态展示） */
+    query: string;
+    /** 展开判定（由调用方给：项目的展开语义与任务相反，且有持久化视图 cache） */
+    isExpanded: (node: TaskListNode) => boolean;
+    /** 会话侧排序取值（可缺省；见 SortKey 里的会话四列） */
+    sessionOf?: (node: TaskListNode) => SessionSortValues | null;
 }
 
 interface CollectCtx {
-  query: string;
-  searching: boolean;
-  sort: SortSpec;
-  isExpanded: (node: TaskListNode) => boolean;
-  sessionOf?: (node: TaskListNode) => SessionSortValues | null;
+    query: string;
+    searching: boolean;
+    sort: SortSpec;
+    isExpanded: (node: TaskListNode) => boolean;
+    sessionOf?: (node: TaskListNode) => SessionSortValues | null;
 }
 
 /**
@@ -379,23 +381,23 @@ interface CollectCtx {
  * 返回值 `hit` 表示本子树是否含命中 —— 父级据此决定自己是否保留。
  */
 function collect<T extends TaskListNode>(
-  kids: T[],
-  depth: number,
-  ctx: CollectCtx,
-  prune: boolean,
+    kids: T[],
+    depth: number,
+    ctx: CollectCtx,
+    prune: boolean,
 ): { rows: TaskListRow<T>[]; hit: boolean } {
-  const rows: TaskListRow<T>[] = [];
-  let hit = false;
-  for (const node of sortTasks<T>(kids, ctx.sort, ctx.sessionOf)) {
-    const match = ctx.searching ? matchTask(node, ctx.query) : null;
-    const sub = collect<T>(node.children as T[], depth + 1, ctx, prune);
-    if (match || sub.hit) hit = true;
-    if (prune && !match && !sub.hit) continue; // 搜索态：只保留命中链（命中行 + 其祖先）
-    rows.push({ node, depth, match });
-    // 搜索态**强制展开**：命中项若被折叠状态挡住，搜索结果就是"看不见的"，等于没搜到
-    if (ctx.searching || ctx.isExpanded(node)) rows.push(...sub.rows);
-  }
-  return { rows, hit };
+    const rows: TaskListRow<T>[] = [];
+    let hit = false;
+    for (const node of sortTasks<T>(kids, ctx.sort, ctx.sessionOf)) {
+        const match = ctx.searching ? matchTask(node, ctx.query) : null;
+        const sub = collect<T>(node.children as T[], depth + 1, ctx, prune);
+        if (match || sub.hit) hit = true;
+        if (prune && !match && !sub.hit) continue; // 搜索态：只保留命中链（命中行 + 其祖先）
+        rows.push({ node, depth, match });
+        // 搜索态**强制展开**：命中项若被折叠状态挡住，搜索结果就是"看不见的"，等于没搜到
+        if (ctx.searching || ctx.isExpanded(node)) rows.push(...sub.rows);
+    }
+    return { rows, hit };
 }
 
 /**
@@ -407,32 +409,32 @@ function collect<T extends TaskListNode>(
  *   展示其全部任务（搜项目名 = 想看这个项目下的东西）。
  */
 export function buildTaskRows<T extends TaskListNode>(nodes: T[], opts: BuildRowsOptions): TaskListRow<T>[] {
-  const searching = opts.query.trim().length > 0;
-  const ctx: CollectCtx = {
-    query: opts.query,
-    searching,
-    sort: opts.sort,
-    isExpanded: opts.isExpanded,
-    sessionOf: opts.sessionOf,
-  };
-  const rows: TaskListRow<T>[] = [];
+    const searching = opts.query.trim().length > 0;
+    const ctx: CollectCtx = {
+        query: opts.query,
+        searching,
+        sort: opts.sort,
+        isExpanded: opts.isExpanded,
+        sessionOf: opts.sessionOf,
+    };
+    const rows: TaskListRow<T>[] = [];
 
-  for (const project of nodes) {
-    if (project.kind !== "project") continue;
-    const projectHit = searching && matchesProject(project, opts.query);
-    const sub = collect<T>(project.children as T[], 1, ctx, searching && !projectHit);
-    if (searching && !projectHit && sub.rows.length === 0) continue;
-    rows.push({ node: project, depth: 0, match: null });
-    if (searching || opts.isExpanded(project)) rows.push(...sub.rows);
-  }
-  return rows;
+    for (const project of nodes) {
+        if (project.kind !== "project") continue;
+        const projectHit = searching && matchesProject(project, opts.query);
+        const sub = collect<T>(project.children as T[], 1, ctx, searching && !projectHit);
+        if (searching && !projectHit && sub.rows.length === 0) continue;
+        rows.push({ node: project, depth: 0, match: null });
+        if (searching || opts.isExpanded(project)) rows.push(...sub.rows);
+    }
+    return rows;
 }
 
 /** 项目节点本身是否命中（名称 / 路径） */
 function matchesProject(project: TaskListNode, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return false;
-  return [project.title ?? "", project.project_path ?? "", project.project_label ?? ""].some((h) =>
-    h.toLowerCase().includes(q),
-  );
+    const q = query.trim().toLowerCase();
+    if (!q) return false;
+    return [project.title ?? "", project.project_path ?? "", project.project_label ?? ""].some((h) =>
+        h.toLowerCase().includes(q),
+    );
 }

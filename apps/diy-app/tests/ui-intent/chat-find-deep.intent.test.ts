@@ -192,14 +192,18 @@ describe("①② 会话数据层面板：窗口外命中可搜，点击能定位
         await waitUntil(panelPresent, (v) => v, { label: "再开面板" });
 
         // 工具输出（默认开）
-        await ui.query(`(() => { const i = document.querySelector('[data-chat-find] input[type=search]'); i.value=''; i.dispatchEvent(new Event('input',{bubbles:true})); return true; })()`);
+        await ui.query(
+            `(() => { const i = document.querySelector('[data-chat-find] input[type=search]'); i.value=''; i.dispatchEvent(new Event('input',{bubbles:true})); return true; })()`,
+        );
         await ui.type("toolneedle-05");
         const toolHits = await waitUntil(panelHitTexts, (v) => v.length > 0, { label: "工具输出命中" });
         expect(toolHits[0]).toContain("toolneedle-05");
         expect(toolHits[0]).toContain("跑冒烟"); // 结果项标的是工具标题（认得出是哪次调用）
 
         // 推理（默认关）：同样的词 ⇒ 没有命中
-        await ui.query(`(() => { const i = document.querySelector('[data-chat-find] input[type=search]'); i.value=''; i.dispatchEvent(new Event('input',{bubbles:true})); return true; })()`);
+        await ui.query(
+            `(() => { const i = document.querySelector('[data-chat-find] input[type=search]'); i.value=''; i.dispatchEvent(new Event('input',{bubbles:true})); return true; })()`,
+        );
         await ui.type("thinkneedle-06");
         await sleep(600); // 防抖 120ms + RPC：等它跑完再看"没有结果"
         expect(await panelHitTexts()).toHaveLength(0);
@@ -290,7 +294,9 @@ describe("②③ 桥接：⌘F 0/0 且数据层有命中所才出现", () => {
         expect(await bridgeText()).toBe("");
 
         // ② 两边都没有 ⇒ 也不出（不许"可能有更多"敷衍）
-        await ui.query(`(() => { const i=document.querySelector('input[placeholder*="页面内查找"]'); i.value=''; i.dispatchEvent(new Event('input',{bubbles:true})); return true; })()`);
+        await ui.query(
+            `(() => { const i=document.querySelector('input[placeholder*="页面内查找"]'); i.value=''; i.dispatchEvent(new Event('input',{bubbles:true})); return true; })()`,
+        );
         await ui.type("zzz-不存在的东西");
         await sleep(900); // 防抖 + RPC：等探针回来
         expect(await bridgeText()).toBe("");
@@ -374,7 +380,10 @@ describe("⑤ 段跳：目标轮不在已加载段里（>4MB 会话）", () => {
         // 否则会追加成 "marker-01far-needle"（实测踩过，一次就够）
         await ui.press("Meta+A");
         await ui.type("far-needle");
-        const hits = await waitUntil(panelHitTexts, (v) => v.length > 0, { label: "大会话里搜到首轮", timeoutMs: 20_000 });
+        const hits = await waitUntil(panelHitTexts, (v) => v.length > 0, {
+            label: "大会话里搜到首轮",
+            timeoutMs: 20_000,
+        });
         expect(hits[0]).toContain("far-needle");
 
         await clickFirstHit();
@@ -387,7 +396,7 @@ describe("⑤ 段跳：目标轮不在已加载段里（>4MB 会话）", () => {
         );
 
         // 回到最新：尾部重新加载，历史条消失
-        await ui.clickSelector('[data-chat-detached] button');
+        await ui.clickSelector("[data-chat-detached] button");
         await waitUntil(
             () => ui.query<boolean>(`!!document.querySelector('[data-chat-detached]')`),
             (v) => !v,

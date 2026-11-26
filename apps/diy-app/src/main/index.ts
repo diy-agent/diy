@@ -21,14 +21,18 @@ import { setDefaultResultOrder } from "node:dns";
 // 实测 setDefaultAutoSelectFamily(false) 后恢复。只改地址选择策略，不改协议。
 // 全局行为变更必须留痕：启动日志明示，便于排查「为什么网络行为不同」。
 setDefaultAutoSelectFamily(false);
-console.log("[net] 已关闭 Happy Eyeballs（setDefaultAutoSelectFamily(false)）：本机双栈竞态致公网 HTTPS 超时，改回单地址顺序连接");
+console.log(
+    "[net] 已关闭 Happy Eyeballs（setDefaultAutoSelectFamily(false)）：本机双栈竞态致公网 HTTPS 超时，改回单地址顺序连接",
+);
 // ⚠️ 与上一条配套（关掉 Happy Eyeballs 后只连 DNS 返回的第一个地址，顺序就成了单点故障）：
 // 本机没有 IPv6 出口（ping6 不通），而 opencode.ai 的 AAAA（2606:4700:78::/48）在解析结果里
 // 一直存在。默认顺序 verbatim 跟随解析器返回序，一旦 AAAA 排头就必连 ENETUNREACH、3 次重试
 // 全废：09-13~09-15 共 12 次，agent 表现为「突然聊不动了」，且与上下文大小无关，极易误判。
 // 钉死 v4 优先消除这个依赖；纯 v6 网络下没有 A 记录会自动回退 AAAA，不会因此断网。
 setDefaultResultOrder("ipv4first");
-console.log('[net] 已钉死 IPv4 优先（setDefaultResultOrder("ipv4first")）：本机无 IPv6 出口，避免 AAAA 排头时 ENETUNREACH');
+console.log(
+    '[net] 已钉死 IPv4 优先（setDefaultResultOrder("ipv4first")）：本机无 IPv6 出口，避免 AAAA 排头时 ENETUNREACH',
+);
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
 import type { ServerBinding } from "@diy-agent/rpc";
@@ -87,15 +91,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cfg = readRuntimeConfig();
 const home = cfg.home;
 if (app.isPackaged) {
-  // 日志必须收在 if 里：`bin/diy` 会注入 `DIY_CLI=$0` 并被 CLI spawn 继承，
-  // 那时它已经注入过，再喊「未注入」就是假日志（日志在 `||=` 之外）。
-  if (!process.env["DIY_CLI"]) {
-    process.env["DIY_CLI"] = "diy";
-    console.log('[runtime] 打包模式未注入 DIY_CLI：显式回落为 PATH 上的 "diy"');
-  }
+    // 日志必须收在 if 里：`bin/diy` 会注入 `DIY_CLI=$0` 并被 CLI spawn 继承，
+    // 那时它已经注入过，再喊「未注入」就是假日志（日志在 `||=` 之外）。
+    if (!process.env["DIY_CLI"]) {
+        process.env["DIY_CLI"] = "diy";
+        console.log('[runtime] 打包模式未注入 DIY_CLI：显式回落为 PATH 上的 "diy"');
+    }
 } else {
-  const repoRoot = findRepoRoot(__dirname);
-  if (repoRoot) process.env["DIY_CLI"] ||= cliEntryForRepo(repoRoot, home);
+    const repoRoot = findRepoRoot(__dirname);
+    if (repoRoot) process.env["DIY_CLI"] ||= cliEntryForRepo(repoRoot, home);
 }
 // dev GUI 加载 URL 由入口注入（electron-dev.mts），缺省 → loadFile 编译产物
 const devUrlArg = cfg.devServerUrl ?? "";
@@ -106,7 +110,7 @@ const isDev = !!devUrlArg;
 // 同时把 Electron 的 userData/cache 也指向该根，实现锁隔离。
 appConfig = AppConfig.fromRuntime(cfg);
 for (const p of [appConfig.electronUserData, appConfig.cache, appConfig.diyHome]) {
-  mkdirSync(p, { recursive: true });
+    mkdirSync(p, { recursive: true });
 }
 app.setPath("userData", appConfig.electronUserData);
 app.setPath("cache", appConfig.cache);
@@ -129,19 +133,21 @@ installCrashReporting(appConfig.diyHome);
 // 端口未就绪，先记 null，startRpcPort 成功后回填（setSelfPort）。
 // 失败不阻断启动：注册表只服务「实例大盘」，不该成为起不来的理由。
 try {
-  writeSelfRecord({
-    diyHome: appConfig.diyHome,
-    variant: process.env["DIY_VARIANT"] ?? "prod",
-    env: cfg.env,
-  });
+    writeSelfRecord({
+        diyHome: appConfig.diyHome,
+        variant: process.env["DIY_VARIANT"] ?? "prod",
+        env: cfg.env,
+    });
 } catch (e) {
-  console.warn("[diy] 实例注册表写入失败（不影响启动）:", e);
+    console.warn("[diy] 实例注册表写入失败（不影响启动）:", e);
 }
 
 // GPU 防御性开关：诊断设施就绪后再探测，保证 [gpu] 日志进 main.log。仍在 ready 之前，appendSwitch 有效。
 try {
-  if (detectGpu().shouldUseAngle) app.commandLine.appendSwitch("use-gl", "angle");
-} catch { /* GPU 探测失败就跳过，不挡启动 */ }
+    if (detectGpu().shouldUseAngle) app.commandLine.appendSwitch("use-gl", "angle");
+} catch {
+    /* GPU 探测失败就跳过，不挡启动 */
+}
 
 // ── 系统信息 ──
 console.log("═══════════════════════════════════════");
@@ -156,7 +162,7 @@ console.log(`  Hostname:     ${hostname()}`);
 console.log(`  User:         ${process.env["USER"] ?? "?"}`);
 console.log(`  Home:         ${homedir()}`);
 console.log(
-  `  Memory:       ${(totalmem() / 1024 / 1024 / 1024).toFixed(1)} GB total, ${(freemem() / 1024 / 1024 / 1024).toFixed(1)} GB free`,
+    `  Memory:       ${(totalmem() / 1024 / 1024 / 1024).toFixed(1)} GB total, ${(freemem() / 1024 / 1024 / 1024).toFixed(1)} GB free`,
 );
 console.log(`  PID:          ${process.pid}`);
 console.log(`  CWD:          ${process.cwd()}`);
@@ -172,20 +178,20 @@ const gotLock = app.requestSingleInstanceLock();
 console.log(`  SingleInstanceLock: ${gotLock ? "acquired" : "failed (second instance, quitting)"}`);
 
 if (!gotLock) {
-  // 「被锁拒」不再沉默：告诉用户是谁占着、下一步干什么（诊断见 core/single-instance.ts）
-  const lockPath = path.join(appConfig.electronUserData, SINGLETON_LOCK);
-  console.error(`[diy] ${lockAdvice(classifyLock(readLock(lockPath)), lockPath)}`);
-  app.quit();
+    // 「被锁拒」不再沉默：告诉用户是谁占着、下一步干什么（诊断见 core/single-instance.ts）
+    const lockPath = path.join(appConfig.electronUserData, SINGLETON_LOCK);
+    console.error(`[diy] ${lockAdvice(classifyLock(readLock(lockPath)), lockPath)}`);
+    app.quit();
 } else {
-  // 工具面漂移预报（##519）：只在**拿到锁之后**跑 —— 标记是进程级的，写它的必须是真正的那个实例
-  reportToolsSurfaceDrift();
+    // 工具面漂移预报（##519）：只在**拿到锁之后**跑 —— 标记是进程级的，写它的必须是真正的那个实例
+    reportToolsSurfaceDrift();
 
-  // 撞到第二个实例 = 用户想看到它（多半是「窗口已关 + 再启动一次」）。activate 与本处
-  // 同一个诉求：把窗口请出来。抽成 ensureWindow()，两条路共用（见其定义）。
-  app.on("second-instance", () => {
-    console.log(`[diy] 收到 second-instance（再启动一次）→ ensureWindow()`);
-    ensureWindow();
-  });
+    // 撞到第二个实例 = 用户想看到它（多半是「窗口已关 + 再启动一次」）。activate 与本处
+    // 同一个诉求：把窗口请出来。抽成 ensureWindow()，两条路共用（见其定义）。
+    app.on("second-instance", () => {
+        console.log(`[diy] 收到 second-instance（再启动一次）→ ensureWindow()`);
+        ensureWindow();
+    });
 }
 
 // ── 工具面漂移预报（##519）──
@@ -200,24 +206,22 @@ if (!gotLock) {
  * 不阻断启动：它只是账务预报，buildTools 在此环境下出任何意外都只降级为"没预报"。
  */
 function reportToolsSurfaceDrift(): void {
-  try {
-    const hash = currentToolsSurfaceHash();
-    const drift = toolsSurfaceDriftOf(appConfig.diyHome, hash);
-    if (drift.changed && drift.previous) {
-      // 不只 log：进通知信箱（`app.notice.inbox`）—— 用户不在终端前也得看得见（顶栏铃铛 / `diy notice inbox`）
-      noteInbox(
-        toolsSurfaceEntryOf({ hash, previousHash: drift.previous.hash, previousAt: drift.previous.at }),
-      );
-      console.warn(
-        `[tools-surface] 工具面已变（${drift.previous.hash.slice(0, 8)} → ${hash.slice(0, 8)}，` +
-          `上次启动 ${drift.previous.at || "未知"}）：每个任务的**首个请求**都会按全价计费` +
-          `（≈ 该任务上下文 × 单价）。要知道差在哪：npx vitest run tests/services/tools-surface-golden.test.ts`,
-      );
+    try {
+        const hash = currentToolsSurfaceHash();
+        const drift = toolsSurfaceDriftOf(appConfig.diyHome, hash);
+        if (drift.changed && drift.previous) {
+            // 不只 log：进通知信箱（`app.notice.inbox`）—— 用户不在终端前也得看得见（顶栏铃铛 / `diy notice inbox`）
+            noteInbox(toolsSurfaceEntryOf({ hash, previousHash: drift.previous.hash, previousAt: drift.previous.at }));
+            console.warn(
+                `[tools-surface] 工具面已变（${drift.previous.hash.slice(0, 8)} → ${hash.slice(0, 8)}，` +
+                    `上次启动 ${drift.previous.at || "未知"}）：每个任务的**首个请求**都会按全价计费` +
+                    `（≈ 该任务上下文 × 单价）。要知道差在哪：npx vitest run tests/services/tools-surface-golden.test.ts`,
+            );
+        }
+        writeToolsSurfaceRecord(appConfig.diyHome, hash);
+    } catch (e) {
+        console.warn("[tools-surface] 启动判定跳过（不影响启动）:", e);
     }
-    writeToolsSurfaceRecord(appConfig.diyHome, hash);
-  } catch (e) {
-    console.warn("[tools-surface] 启动判定跳过（不影响启动）:", e);
-  }
 }
 
 // ── 窗口 ──
@@ -237,52 +241,49 @@ const WINDOW_MIN_HEIGHT = 320;
  * 仅当非 production（dev/test 就地判 cfg.env）时生效；检测不到合适副屏则回退空对象（默认主屏定位）。
  * 返回窗口 options 子集（width/height/x/y），尺寸自动适配目标屏 workArea。
  */
-function mirrorWindowPos(
-  width: number,
-  height: number,
-): Record<string, number> {
-  if (cfg.env === "production") return {};
-  try {
-    const displays = screen.getAllDisplays();
-    const primaryId = screen.getPrimaryDisplay().id;
-    // 目标 = 非主屏：优先 Sidecar iPad（macOS），否则第一个非主屏（跨平台，内外置均可）。
-    // 「非主屏」是避开主工作屏的唯一可靠信号——主工作屏可能就是外接屏，故不按 internal 判断。
-    const target =
-      displays.find((d) => d.id !== primaryId && d.label.toLowerCase().includes("sidecar")) ??
-      displays.find((d) => d.id !== primaryId) ??
-      null;
-    if (!target) return {}; // 单屏：只有主屏，回退默认定位
-    const { x, y, width: w, height: h } = target.workArea;
-    const fitW = Math.min(width, w);
-    const fitH = Math.min(height, h);
-    // 尺寸恰好 = workArea 会被 macOS 判为「出生即已 zoom」（双击标题栏 → 塌成最小值，##87），
-    // 命中时统一内缩一点，让窗口出生就是普通窗口。
-    // ⚠️ 宽度**不**内缩，只内缩高度（##297）：宽度一旦掉到 Tailwind 的 lg 断点（1024）以下，
-    // App 根节点的 `lg:drawer-open`（App.tsx）就失效 → DaisyUI 抽屉关闭、侧栏被挪到画面外
-    // （实测 x=-224 / visibility:hidden）。宽 1024 的屏上 dev/lab 窗口正好 1024−48=976，
-    // 掉进去 —— 当时侧栏**没有任何可见的打开入口**，7 个 nav 意图测试全红。
-    // 窄窗本身已有兜底（##297：`.diy-nav-rail` 让 rail 常驻占列 + ◉ 点开浮层，见 index.css
-    // 与 App.tsx 的 NARROW_MQ），但窄窗终究只剩 40px rail，不如完整侧栏 —— 宽度没必要牺牲。
-    // 高度内缩已足以避免「出生即已 zoom」：macOS 的标准帧 = 工作区**整块**，高度不同即不等。
-    const winW = fitW;
-    const winH = fitH === h ? Math.max(WINDOW_MIN_HEIGHT, h - ZOOM_INSET) : fitH;
-    return {
-      width: winW,
-      height: winH,
-      x: x + Math.max(0, Math.floor((w - winW) / 2)),
-      y: y + Math.max(0, Math.floor((h - winH) / 2)),
-    };
-  } catch {
-    return {}; // screen 不可用（如无显示器）时回退默认
-  }
+function mirrorWindowPos(width: number, height: number): Record<string, number> {
+    if (cfg.env === "production") return {};
+    try {
+        const displays = screen.getAllDisplays();
+        const primaryId = screen.getPrimaryDisplay().id;
+        // 目标 = 非主屏：优先 Sidecar iPad（macOS），否则第一个非主屏（跨平台，内外置均可）。
+        // 「非主屏」是避开主工作屏的唯一可靠信号——主工作屏可能就是外接屏，故不按 internal 判断。
+        const target =
+            displays.find((d) => d.id !== primaryId && d.label.toLowerCase().includes("sidecar")) ??
+            displays.find((d) => d.id !== primaryId) ??
+            null;
+        if (!target) return {}; // 单屏：只有主屏，回退默认定位
+        const { x, y, width: w, height: h } = target.workArea;
+        const fitW = Math.min(width, w);
+        const fitH = Math.min(height, h);
+        // 尺寸恰好 = workArea 会被 macOS 判为「出生即已 zoom」（双击标题栏 → 塌成最小值，##87），
+        // 命中时统一内缩一点，让窗口出生就是普通窗口。
+        // ⚠️ 宽度**不**内缩，只内缩高度（##297）：宽度一旦掉到 Tailwind 的 lg 断点（1024）以下，
+        // App 根节点的 `lg:drawer-open`（App.tsx）就失效 → DaisyUI 抽屉关闭、侧栏被挪到画面外
+        // （实测 x=-224 / visibility:hidden）。宽 1024 的屏上 dev/lab 窗口正好 1024−48=976，
+        // 掉进去 —— 当时侧栏**没有任何可见的打开入口**，7 个 nav 意图测试全红。
+        // 窄窗本身已有兜底（##297：`.diy-nav-rail` 让 rail 常驻占列 + ◉ 点开浮层，见 index.css
+        // 与 App.tsx 的 NARROW_MQ），但窄窗终究只剩 40px rail，不如完整侧栏 —— 宽度没必要牺牲。
+        // 高度内缩已足以避免「出生即已 zoom」：macOS 的标准帧 = 工作区**整块**，高度不同即不等。
+        const winW = fitW;
+        const winH = fitH === h ? Math.max(WINDOW_MIN_HEIGHT, h - ZOOM_INSET) : fitH;
+        return {
+            width: winW,
+            height: winH,
+            x: x + Math.max(0, Math.floor((w - winW) / 2)),
+            y: y + Math.max(0, Math.floor((h - winH) / 2)),
+        };
+    } catch {
+        return {}; // screen 不可用（如无显示器）时回退默认
+    }
 }
 
 function loadMainApp(): void {
-  if (isDev && devUrlArg) {
-    mainWindow?.loadURL(devUrlArg);
-  } else {
-    mainWindow?.loadFile(path.join(__dirname, "../renderer/index.html"));
-  }
+    if (isDev && devUrlArg) {
+        mainWindow?.loadURL(devUrlArg);
+    } else {
+        mainWindow?.loadFile(path.join(__dirname, "../renderer/index.html"));
+    }
 }
 
 /**
@@ -290,19 +291,19 @@ function loadMainApp(): void {
  * 端口未知时传 null（创建窗口那一刻 RPC 端口还没绑定）。
  */
 function windowTitle(port: number | null): string {
-  return instanceTitle({
-    repoDisplay: repoDisplayOf(),
-    homeDisplay: homeDisplayOf(appConfig.diyHome),
-    env: cfg.env,
-    port,
-    pid: process.pid,
-    // 与 dev 启动器 / 外壳同一口径：`diy://<instance-id>/diy-app.<launch>`
-    uri: instanceUriOf(
-      readInstanceId(appConfig.diyHome),
-      "diy-app",
-      selfLaunch(process.env["DIY_VARIANT"] ?? "prod"),
-    ),
-  });
+    return instanceTitle({
+        repoDisplay: repoDisplayOf(),
+        homeDisplay: homeDisplayOf(appConfig.diyHome),
+        env: cfg.env,
+        port,
+        pid: process.pid,
+        // 与 dev 启动器 / 外壳同一口径：`diy://<instance-id>/diy-app.<launch>`
+        uri: instanceUriOf(
+            readInstanceId(appConfig.diyHome),
+            "diy-app",
+            selfLaunch(process.env["DIY_VARIANT"] ?? "prod"),
+        ),
+    });
 }
 
 /**
@@ -312,93 +313,93 @@ function windowTitle(port: number | null): string {
  * 不起眼地失效了没人发现。落进 main.log 后，意图测试能直接断言「main 真的设成了什么」。
  */
 function applyWindowTitle(): void {
-  const title = windowTitle(httpPort || null);
-  mainWindow?.setTitle(title);
-  console.log(`[diy] 窗口标题: ${title}`);
+    const title = windowTitle(httpPort || null);
+    mainWindow?.setTitle(title);
+    console.log(`[diy] 窗口标题: ${title}`);
 }
 
 function createWindow(): { binding: ServerBinding; ipcTransport: import("@diy-agent/rpc").EnvelopeTransport } {
-  const WIDTH = 1200;
-  const HEIGHT = 800;
-  // 窗口标题 = 实例标识（`diy(<数据根>) [dev|test] <分支> :<端口> pid <PID>`）。
-  // 放在 main 而非只靠 renderer：renderer 崩溃/加载失败时标题仍要能告诉你这是哪个实例
-  // —— 那正是最需要它的时候。此刻端口尚未绑定，故先不带端口段，就绪后 applyWindowTitle() 补。
-  const title = windowTitle(httpPort || null);
-  mainWindow = new BrowserWindow({
-    width: WIDTH,
-    height: HEIGHT,
-    // 最小尺寸兜底：macOS un-zoom（双击标题栏）曾把窗口塌成 1×29，无此下限则不可用（##87）。
-    minWidth: WINDOW_MIN_WIDTH,
-    minHeight: WINDOW_MIN_HEIGHT,
-    title,
-    show: false,
-    ...mirrorWindowPos(WIDTH, HEIGHT),
-    webPreferences: {
-      preload: path.join(__dirname, "../preload/index.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  // 页面里的 <title>（静态的 "diy"）会在加载完成后把上面的窗口标题顶掉 ——
-  // 这里拦掉：「本窗口属于哪个实例」由 main 决定，不随页面内容变。
-  // （renderer 自己也设一份 document.title，同源同值：serve 模式的浏览器标签、
-  //   以及 CDP 断言都读它。此处拦掉的只是「页面 → 窗口标题」这条通路。）
-  mainWindow.on("page-title-updated", (e) => e.preventDefault());
-
-  // 几何留痕（##87）：出生 / 可见 / zoom 切换各记一行，便于事后从 main.log 还原现场。
-  traceWindowState(mainWindow);
-
-  // RPC Server — 渲染进程 ↔ 主进程通信
-  const ipcTransport = createMainTransport(() => mainWindow!.webContents);
-  const binding = bindApi(ipcTransport);
-
-  // test：只渲染窗口不激活 app —— 测试实例不能抢走正在运行的生产 app 的焦点。
-  // dev/prod：保持 show()，用户自己起的窗口应当被激活。
-  // DIY_NO_FOCUS=1：dev 启动器拉起实例时同理（起来即副屏，当前窗口不失焦）。
-  mainWindow.once("ready-to-show", () => {
-    if (cfg.env === "test" || process.env["DIY_NO_FOCUS"] === "1") mainWindow?.showInactive();
-    else mainWindow?.show();
-  });
-
-  // ── 渲染进程 console 捕获 ──
-  // renderer 是独立上下文，未捕获异常 / console.error 不会进主进程诊断日志。
-  // 挂 console-message 只收 error/warning 级（节流 500ms），转写到 main.log。
-  //
-  // Electron 43 起旧签名 `(event, level, msg, line, sourceId)` 已废弃（启动就打一行 deprecated），
-  // 改成单个事件对象：level 也从数字 0~3 变成字符串 `info|warning|error|debug`。
-  // 判据不变：只留 warning / error（verbose/info/debug 进日志只会淹掉真问题）。
-  //
-  // 已知良性噪音**不静默丢弃**（##522）：登记表在 services/log-noise.ts，首次带原文 + 解释，
-  // 其后只计数、按窗口汇总成一行，退出前 flush —— 既不刷屏，也留得下「出现过多少次」的证据。
-  let _lastRendererLog = 0;
-  mainWindow.webContents.on("console-message", (details) => {
-    if (details.level !== "warning" && details.level !== "error") return;
-    const noise = classifyRendererNoise(details.message);
-    if (noise) {
-      rendererNoise.note(noise, details.message);
-      return;
-    }
-    const now = Date.now();
-    if (now - _lastRendererLog < 500) return; // 节流：避免洪水
-    _lastRendererLog = now;
-    const tag = details.level === "error" ? "ERROR" : "WARN";
-    console.error(`[renderer:${tag}] ${details.message} (${details.sourceId}:${details.lineNumber})`);
-  });
-
-  // 渲染进程崩溃/无响应诊断（render-process-gone 已在 crash-reporting 挂了，
-  // 这里补 unresponsive —— 长时间 JS 阻塞触发，通常意味着内存/GC 风暴）
-  mainWindow.webContents.on("unresponsive", () => {
-    console.error("[renderer] 进程无响应 (unresponsive) —— 可能 JS 长时间阻塞或 GC 风暴");
-  });
-  if (isDev) {
-    mainWindow.webContents.on("before-input-event", (_, input) => {
-      if (input.key === "F12") mainWindow?.webContents.toggleDevTools();
-      if (input.key === "r" && (input.meta || input.control)) mainWindow?.reload();
+    const WIDTH = 1200;
+    const HEIGHT = 800;
+    // 窗口标题 = 实例标识（`diy(<数据根>) [dev|test] <分支> :<端口> pid <PID>`）。
+    // 放在 main 而非只靠 renderer：renderer 崩溃/加载失败时标题仍要能告诉你这是哪个实例
+    // —— 那正是最需要它的时候。此刻端口尚未绑定，故先不带端口段，就绪后 applyWindowTitle() 补。
+    const title = windowTitle(httpPort || null);
+    mainWindow = new BrowserWindow({
+        width: WIDTH,
+        height: HEIGHT,
+        // 最小尺寸兜底：macOS un-zoom（双击标题栏）曾把窗口塌成 1×29，无此下限则不可用（##87）。
+        minWidth: WINDOW_MIN_WIDTH,
+        minHeight: WINDOW_MIN_HEIGHT,
+        title,
+        show: false,
+        ...mirrorWindowPos(WIDTH, HEIGHT),
+        webPreferences: {
+            preload: path.join(__dirname, "../preload/index.js"),
+            contextIsolation: true,
+            nodeIntegration: false,
+        },
     });
-  }
 
-  return { binding, ipcTransport };
+    // 页面里的 <title>（静态的 "diy"）会在加载完成后把上面的窗口标题顶掉 ——
+    // 这里拦掉：「本窗口属于哪个实例」由 main 决定，不随页面内容变。
+    // （renderer 自己也设一份 document.title，同源同值：serve 模式的浏览器标签、
+    //   以及 CDP 断言都读它。此处拦掉的只是「页面 → 窗口标题」这条通路。）
+    mainWindow.on("page-title-updated", (e) => e.preventDefault());
+
+    // 几何留痕（##87）：出生 / 可见 / zoom 切换各记一行，便于事后从 main.log 还原现场。
+    traceWindowState(mainWindow);
+
+    // RPC Server — 渲染进程 ↔ 主进程通信
+    const ipcTransport = createMainTransport(() => mainWindow!.webContents);
+    const binding = bindApi(ipcTransport);
+
+    // test：只渲染窗口不激活 app —— 测试实例不能抢走正在运行的生产 app 的焦点。
+    // dev/prod：保持 show()，用户自己起的窗口应当被激活。
+    // DIY_NO_FOCUS=1：dev 启动器拉起实例时同理（起来即副屏，当前窗口不失焦）。
+    mainWindow.once("ready-to-show", () => {
+        if (cfg.env === "test" || process.env["DIY_NO_FOCUS"] === "1") mainWindow?.showInactive();
+        else mainWindow?.show();
+    });
+
+    // ── 渲染进程 console 捕获 ──
+    // renderer 是独立上下文，未捕获异常 / console.error 不会进主进程诊断日志。
+    // 挂 console-message 只收 error/warning 级（节流 500ms），转写到 main.log。
+    //
+    // Electron 43 起旧签名 `(event, level, msg, line, sourceId)` 已废弃（启动就打一行 deprecated），
+    // 改成单个事件对象：level 也从数字 0~3 变成字符串 `info|warning|error|debug`。
+    // 判据不变：只留 warning / error（verbose/info/debug 进日志只会淹掉真问题）。
+    //
+    // 已知良性噪音**不静默丢弃**（##522）：登记表在 services/log-noise.ts，首次带原文 + 解释，
+    // 其后只计数、按窗口汇总成一行，退出前 flush —— 既不刷屏，也留得下「出现过多少次」的证据。
+    let _lastRendererLog = 0;
+    mainWindow.webContents.on("console-message", (details) => {
+        if (details.level !== "warning" && details.level !== "error") return;
+        const noise = classifyRendererNoise(details.message);
+        if (noise) {
+            rendererNoise.note(noise, details.message);
+            return;
+        }
+        const now = Date.now();
+        if (now - _lastRendererLog < 500) return; // 节流：避免洪水
+        _lastRendererLog = now;
+        const tag = details.level === "error" ? "ERROR" : "WARN";
+        console.error(`[renderer:${tag}] ${details.message} (${details.sourceId}:${details.lineNumber})`);
+    });
+
+    // 渲染进程崩溃/无响应诊断（render-process-gone 已在 crash-reporting 挂了，
+    // 这里补 unresponsive —— 长时间 JS 阻塞触发，通常意味着内存/GC 风暴）
+    mainWindow.webContents.on("unresponsive", () => {
+        console.error("[renderer] 进程无响应 (unresponsive) —— 可能 JS 长时间阻塞或 GC 风暴");
+    });
+    if (isDev) {
+        mainWindow.webContents.on("before-input-event", (_, input) => {
+            if (input.key === "F12") mainWindow?.webContents.toggleDevTools();
+            if (input.key === "r" && (input.meta || input.control)) mainWindow?.reload();
+        });
+    }
+
+    return { binding, ipcTransport };
 }
 
 /** 渲染进程已知噪音的计量器：首次带解释，其后计数汇总（见 services/log-noise.ts） */
@@ -409,137 +410,137 @@ const rendererNoise = createNoiseMeter();
 // 后 Electron 不会自动重建 → 窗口永久白屏（用户说的"app 挂了"）。这里节流重载。
 const reloadStamps: number[] = [];
 app.on("render-process-gone", (_event, webContents, details) => {
-  if (!mainWindow || webContents !== mainWindow.webContents) return; // 窗口已关闭：没什么可自愈
-  const now = Date.now();
-  while (reloadStamps.length > 0 && now - (reloadStamps[0] ?? 0) > 60_000) reloadStamps.shift();
-  if (reloadStamps.length >= 3) {
-    console.error("[renderer] 60s 内已重建 3 次，暂停自愈（疑似崩溃循环）");
-    return;
-  }
-  reloadStamps.push(now);
-  console.error(`[renderer] 进程消亡 reason=${details.reason}，500ms 后重载自愈`);
-  setTimeout(() => {
-    try {
-      mainWindow?.reload();
-    } catch (e) {
-      console.error("[renderer] 自愈重载失败:", e);
+    if (!mainWindow || webContents !== mainWindow.webContents) return; // 窗口已关闭：没什么可自愈
+    const now = Date.now();
+    while (reloadStamps.length > 0 && now - (reloadStamps[0] ?? 0) > 60_000) reloadStamps.shift();
+    if (reloadStamps.length >= 3) {
+        console.error("[renderer] 60s 内已重建 3 次，暂停自愈（疑似崩溃循环）");
+        return;
     }
-  }, 500);
+    reloadStamps.push(now);
+    console.error(`[renderer] 进程消亡 reason=${details.reason}，500ms 后重载自愈`);
+    setTimeout(() => {
+        try {
+            mainWindow?.reload();
+        } catch (e) {
+            console.error("[renderer] 自愈重载失败:", e);
+        }
+    }, 500);
 });
 
 // ── RPC 端口服务（外部 CLI 接入） ──
 
 async function startRpcPort(ipcTransport: import("@diy-agent/rpc").EnvelopeTransport): Promise<boolean> {
-  // 裁决逻辑（含「非生产不沿用记录里的 18888」）在 runtime.ts::resolvePort —— 纯函数、可单测。
-  const resolved = resolvePort({
-    env: cfg.env,
-    cliPort: cfg.port,
-    recordedPort: appConfig.readPort(),
-  });
-  const preferredPort = resolved.port;
-  const portSource =
-    resolved.source === "cli"
-      ? `DIY_PORT=${resolved.port}`
-      : resolved.source === "recorded"
-        ? `from ${appConfig.diyHome}/app.port`
-        : `${cfg.env} 缺省`;
-  console.log(`  Port:         ${preferredPort === 0 ? "auto(随机)" : preferredPort} (${portSource})`);
+    // 裁决逻辑（含「非生产不沿用记录里的 18888」）在 runtime.ts::resolvePort —— 纯函数、可单测。
+    const resolved = resolvePort({
+        env: cfg.env,
+        cliPort: cfg.port,
+        recordedPort: appConfig.readPort(),
+    });
+    const preferredPort = resolved.port;
+    const portSource =
+        resolved.source === "cli"
+            ? `DIY_PORT=${resolved.port}`
+            : resolved.source === "recorded"
+              ? `from ${appConfig.diyHome}/app.port`
+              : `${cfg.env} 缺省`;
+    console.log(`  Port:         ${preferredPort === 0 ? "auto(随机)" : preferredPort} (${portSource})`);
 
-  rpcPort = new RpcPortService();
+    rpcPort = new RpcPortService();
 
-  try {
-    await rpcPort.start(bindAppHandlers, appConfig, preferredPort, ipcTransport);
-    httpPort = rpcPort.port;
-    setRpcPort(httpPort); // getAppInfo 走 RPC，端口需回填给 api-impl
-    setSelfPort(httpPort); // 注册表回填端口：CLI / 别的实例据此找到我（##366）
-    return true;
-  } catch (err: any) {
-    if (err?.code === "EADDRINUSE") {
-      console.log(`  ⚠ Port ${preferredPort} 被占`);
-    }
-    // TODO(端口竞争)：热重启时旧 Electron 刚被 kill、socket 还没完全释放，新实例首次 bind
-    //   就 EADDRINUSE，于是**立刻**回落到随机端口。开发态已无所谓（缺省本来就是随机，见
-    //   runtime.ts::defaultPort）—— 但 production（18888）与显式 DIY_PORT 仍值得几轮短重试
-    //   （如 5 × 200ms）再回落，别把「真的端口冲突」也拖成慢启动。
-    console.log("  → 尝试随机端口...");
     try {
-      await rpcPort.start(bindAppHandlers, appConfig, 0, ipcTransport);
-      httpPort = rpcPort.port;
-      setRpcPort(httpPort);
-      setSelfPort(httpPort);
-      console.log(`  RPC Port:     http://127.0.0.1:${httpPort} (random)`);
-      return true;
-    } catch (e) {
-      console.error("  RPC Port:     FAILED", e);
-      return false;
+        await rpcPort.start(bindAppHandlers, appConfig, preferredPort, ipcTransport);
+        httpPort = rpcPort.port;
+        setRpcPort(httpPort); // getAppInfo 走 RPC，端口需回填给 api-impl
+        setSelfPort(httpPort); // 注册表回填端口：CLI / 别的实例据此找到我（##366）
+        return true;
+    } catch (err: any) {
+        if (err?.code === "EADDRINUSE") {
+            console.log(`  ⚠ Port ${preferredPort} 被占`);
+        }
+        // TODO(端口竞争)：热重启时旧 Electron 刚被 kill、socket 还没完全释放，新实例首次 bind
+        //   就 EADDRINUSE，于是**立刻**回落到随机端口。开发态已无所谓（缺省本来就是随机，见
+        //   runtime.ts::defaultPort）—— 但 production（18888）与显式 DIY_PORT 仍值得几轮短重试
+        //   （如 5 × 200ms）再回落，别把「真的端口冲突」也拖成慢启动。
+        console.log("  → 尝试随机端口...");
+        try {
+            await rpcPort.start(bindAppHandlers, appConfig, 0, ipcTransport);
+            httpPort = rpcPort.port;
+            setRpcPort(httpPort);
+            setSelfPort(httpPort);
+            console.log(`  RPC Port:     http://127.0.0.1:${httpPort} (random)`);
+            return true;
+        } catch (e) {
+            console.error("  RPC Port:     FAILED", e);
+            return false;
+        }
     }
-  }
 }
 
 // ── 生命周期 ──
 
 app.whenReady().then(async () => {
-  // 先创建窗口（产生 IPC transport），再启动 HTTP/2 端口
-  // CLI 连接时会桥接到 IPC transport，故 IPC 必须就绪
-  const { binding, ipcTransport } = createWindow();
-  ipcBinding = binding;
-  // 窗口能力注入（##366）：`instances.reveal`（跨实例唤起）与 `instances.self`（自报窗口状态）
-  // 走这里 —— RPC 层不 import Electron（serve 模式也要能加载 api-impl）。
-  setWindowOps({ reveal: () => revealWindow(), state: () => currentWindowState() });
+    // 先创建窗口（产生 IPC transport），再启动 HTTP/2 端口
+    // CLI 连接时会桥接到 IPC transport，故 IPC 必须就绪
+    const { binding, ipcTransport } = createWindow();
+    ipcBinding = binding;
+    // 窗口能力注入（##366）：`instances.reveal`（跨实例唤起）与 `instances.self`（自报窗口状态）
+    // 走这里 —— RPC 层不 import Electron（serve 模式也要能加载 api-impl）。
+    setWindowOps({ reveal: () => revealWindow(), state: () => currentWindowState() });
 
-  // 模型目录刷新（##385 §3.2 的一半）：**启动后一次**，后台不阻塞（延迟 15s 让窗口先出来）。
-  // 定时（24h）与 job 可见性归 ##408 —— 这里只调用 `core/models-sync.ts::refreshModelsOnce` 那一次 tick。
-  // test 变体一律不起 —— 自动化测试不该发外部请求（真抓取的行为由单测 + 意图测试的本地源覆盖）。
-  // ⚠️ 两个条件必须**叠加**（不是二选一）：`enabled` 一传进来，`refreshModelsOnStartup` 就不再读
-  //   `DIY_MODELS_STARTUP_REFRESH` —— 只写 `env !== "test"` 会让该环境变量的「关」在 prod/lab 失效。
-  cancelModelsStartupRefresh = refreshModelsOnStartup({
-    enabled: readRuntimeConfig().env !== "test" && startupRefreshEnabled(),
-  });
-
-  // 远程可见性（##479 第一刀）：/ping + mDNS 广播。内部全吞错（失败只意味着「别的机器发现不到我」），
-  // 故这里 await 不会挡启动，只保证「RPC 可用时 /ping 一定也已就绪」（`diy remote self` 不会撞空窗）。
-  // ⚠️ 无鉴权：缺省只绑 127.0.0.1；跨机发现要 DIY_PING_HOST=<内网/tailscale 地址>，绝不要绑公网。
-  // test 变体一律不起：意图测试要的是「起→测→收」的确定现场，不该凭空多一个监听端口与多播广播
-  //（远程能力由 `tests/services/remote.test.ts` 直接起服务覆盖，不依赖 Electron）。
-  if (cfg.env !== "test") {
-    await remoteService.start({
-      home: appConfig.diyHome,
-      app: APP_PACKAGE_NAME,
-      variant: process.env["DIY_VARIANT"] ?? "prod",
-      version: APP_VERSION,
+    // 模型目录刷新（##385 §3.2 的一半）：**启动后一次**，后台不阻塞（延迟 15s 让窗口先出来）。
+    // 定时（24h）与 job 可见性归 ##408 —— 这里只调用 `core/models-sync.ts::refreshModelsOnce` 那一次 tick。
+    // test 变体一律不起 —— 自动化测试不该发外部请求（真抓取的行为由单测 + 意图测试的本地源覆盖）。
+    // ⚠️ 两个条件必须**叠加**（不是二选一）：`enabled` 一传进来，`refreshModelsOnStartup` 就不再读
+    //   `DIY_MODELS_STARTUP_REFRESH` —— 只写 `env !== "test"` 会让该环境变量的「关」在 prod/lab 失效。
+    cancelModelsStartupRefresh = refreshModelsOnStartup({
+        enabled: readRuntimeConfig().env !== "test" && startupRefreshEnabled(),
     });
-  }
 
-  // Hub 连接恢复（##511）：
-  //   ① 卫星侧 —— 有 link.json 就把 WSS 长连建起来（以前 `hub join` 拿完 Token 就没了，
-  //      主控侧 connectionCount 恒 0 ⇒ 假「离线」）；没有 Token 则报 no-token（UI 显示「未连接」）
-  //   ② 主控侧 —— 有身份就预热监听，否则没人邀请时服务端根本没起，「谁在线」永远是 0
-  // 两者都不阻塞启动、都不抛（失败只意味着这台机器暂时连不上/当不了主控）。
-  void hubService
-    .startClient()
-    .catch((e: unknown) => console.error("[hub] 卫星长连未建立:", e instanceof Error ? e.message : e));
-  void hubService.warmupServer();
+    // 远程可见性（##479 第一刀）：/ping + mDNS 广播。内部全吞错（失败只意味着「别的机器发现不到我」），
+    // 故这里 await 不会挡启动，只保证「RPC 可用时 /ping 一定也已就绪」（`diy remote self` 不会撞空窗）。
+    // ⚠️ 无鉴权：缺省只绑 127.0.0.1；跨机发现要 DIY_PING_HOST=<内网/tailscale 地址>，绝不要绑公网。
+    // test 变体一律不起：意图测试要的是「起→测→收」的确定现场，不该凭空多一个监听端口与多播广播
+    //（远程能力由 `tests/services/remote.test.ts` 直接起服务覆盖，不依赖 Electron）。
+    if (cfg.env !== "test") {
+        await remoteService.start({
+            home: appConfig.diyHome,
+            app: APP_PACKAGE_NAME,
+            variant: process.env["DIY_VARIANT"] ?? "prod",
+            version: APP_VERSION,
+        });
+    }
 
-  const ok = await startRpcPort(ipcTransport);
-  // 端口已定（含 EADDRINUSE 后的随机端口兜底）→ 重设标题补上 `:<port>`
-  applyWindowTitle();
+    // Hub 连接恢复（##511）：
+    //   ① 卫星侧 —— 有 link.json 就把 WSS 长连建起来（以前 `hub join` 拿完 Token 就没了，
+    //      主控侧 connectionCount 恒 0 ⇒ 假「离线」）；没有 Token 则报 no-token（UI 显示「未连接」）
+    //   ② 主控侧 —— 有身份就预热监听，否则没人邀请时服务端根本没起，「谁在线」永远是 0
+    // 两者都不阻塞启动、都不抛（失败只意味着这台机器暂时连不上/当不了主控）。
+    void hubService
+        .startClient()
+        .catch((e: unknown) => console.error("[hub] 卫星长连未建立:", e instanceof Error ? e.message : e));
+    void hubService.warmupServer();
 
-  // 通知信箱启动扫尾（##436）：僵尸投递 / 终态任务里永不投递的插话 → 落一条可读条目。
-  // **不阻塞启动、不抛**（函数内部全吞）：扫尾是记账，坏了不能让 app 起不来。
-  void import("./services/inbox-sweep")
-    .then((m) => m.sweepInboxOnStartup())
-    .catch((e: unknown) => console.error("[inbox-sweep] 启动扫尾未执行（不影响运行）:", e));
+    const ok = await startRpcPort(ipcTransport);
+    // 端口已定（含 EADDRINUSE 后的随机端口兜底）→ 重设标题补上 `:<port>`
+    applyWindowTitle();
 
-  if (ok) {
-    loadMainApp();
-    console.log("═══════════════════════════════════════");
-  } else {
-    loadMainApp();
-    console.warn("[diy] RPC 服务器启动失败，GUI 功能受限");
-  }
+    // 通知信箱启动扫尾（##436）：僵尸投递 / 终态任务里永不投递的插话 → 落一条可读条目。
+    // **不阻塞启动、不抛**（函数内部全吞）：扫尾是记账，坏了不能让 app 起不来。
+    void import("./services/inbox-sweep")
+        .then((m) => m.sweepInboxOnStartup())
+        .catch((e: unknown) => console.error("[inbox-sweep] 启动扫尾未执行（不影响运行）:", e));
 
-  // macOS 惯例：窗口关掉后 app 仍在 Dock，点图标（activate）= 把窗口请出来
-  app.on("activate", () => ensureWindow());
+    if (ok) {
+        loadMainApp();
+        console.log("═══════════════════════════════════════");
+    } else {
+        loadMainApp();
+        console.warn("[diy] RPC 服务器启动失败，GUI 功能受限");
+    }
+
+    // macOS 惯例：窗口关掉后 app 仍在 Dock，点图标（activate）= 把窗口请出来
+    app.on("activate", () => ensureWindow());
 });
 
 // ⚠️ 窗口关闭 ≠ 服务停止（这里曾经埋着一个僵尸实例的坑，改前务必读完）：
@@ -549,16 +550,16 @@ app.whenReady().then(async () => {
 // → CLI 死等 30s 报「启动超时」；用户视角是「app 明明还在跑，CLI 却说启动不了」。
 // 现在：窗口的 IPC 通道随 webContents 一起清掉（重建窗口时会新建），RPC 服务留到真正退出。
 app.on("window-all-closed", () => {
-  // 落一行日志：这条路径上「进程还在、界面没了」是个容易误判的状态
-  // （排查 ./diy.sh 超时时，先看这里有没有记录就知道窗口是不是被关过）
-  console.log("[diy] 所有窗口已关闭：RPC 服务继续运行（进程常驻，点 Dock 图标可重建窗口）");
-  ipcBinding?.destroy();
-  ipcBinding = null;
-  mainWindow = null;
-  // diy.ui.* 的转发目标随之失效：让「窗口没了还在调界面 RPC」立刻得到明确错误，
-  // 而不是等在死通道上超时（重建窗口时由 activate 换回新通道）
-  rpcPort?.clearRendererTransport();
-  if (!os.caps.keepRunningOnWindowClose) app.quit();
+    // 落一行日志：这条路径上「进程还在、界面没了」是个容易误判的状态
+    // （排查 ./diy.sh 超时时，先看这里有没有记录就知道窗口是不是被关过）
+    console.log("[diy] 所有窗口已关闭：RPC 服务继续运行（进程常驻，点 Dock 图标可重建窗口）");
+    ipcBinding?.destroy();
+    ipcBinding = null;
+    mainWindow = null;
+    // diy.ui.* 的转发目标随之失效：让「窗口没了还在调界面 RPC」立刻得到明确错误，
+    // 而不是等在死通道上超时（重建窗口时由 activate 换回新通道）
+    rpcPort?.clearRendererTransport();
+    if (!os.caps.keepRunningOnWindowClose) app.quit();
 });
 
 // RPC 服务与窗口通道的停止点：真正退出前（非 darwin 由 window-all-closed 的 app.quit() 触发；
@@ -573,27 +574,27 @@ const SHUTDOWN_BUDGET_MS = 2_500;
 let quitting = false;
 
 app.on("before-quit", (event) => {
-  // 噪音计数的最后一行：窗口内还没打出来的条数在这里补齐（不丢信息）
-  rendererNoise.flush();
-  cancelModelsStartupRefresh?.();
-  cancelModelsStartupRefresh = null;
-  rpcPort?.stop();
-  // 远程可见性收尾：停 /ping + 撤 mDNS 广播（不保证执行 —— 读侧本来就不信过期记录）
-  void remoteService.stop();
-  // Hub 配对服务收尾（懒启动的监听器；没起过就是空操作）
-  void hubService.stop();
-  // 注册表清理：正常退出即删自己的条目。**但不能只靠它** —— SIGKILL / 崩溃时这里不会跑，
-  // 故读侧（core/instance-registry.ts::readRecords）一律按 pid 存活过滤并顺手删死者。
-  dropSelfRecord();
-  if (quitting) return;
-  // 第二趟 `app.quit()` 才是真退出（`quitting` 已置位，直接放行）
-  if (!runRegistry.list().some((r) => r.state === "running")) return;
-  event.preventDefault();
-  quitting = true;
-  void Promise.race([
-    runRegistry.shutdown({ graceMs: 1_500 }),
-    new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_BUDGET_MS)),
-  ]).finally(() => app.quit());
+    // 噪音计数的最后一行：窗口内还没打出来的条数在这里补齐（不丢信息）
+    rendererNoise.flush();
+    cancelModelsStartupRefresh?.();
+    cancelModelsStartupRefresh = null;
+    rpcPort?.stop();
+    // 远程可见性收尾：停 /ping + 撤 mDNS 广播（不保证执行 —— 读侧本来就不信过期记录）
+    void remoteService.stop();
+    // Hub 配对服务收尾（懒启动的监听器；没起过就是空操作）
+    void hubService.stop();
+    // 注册表清理：正常退出即删自己的条目。**但不能只靠它** —— SIGKILL / 崩溃时这里不会跑，
+    // 故读侧（core/instance-registry.ts::readRecords）一律按 pid 存活过滤并顺手删死者。
+    dropSelfRecord();
+    if (quitting) return;
+    // 第二趟 `app.quit()` 才是真退出（`quitting` 已置位，直接放行）
+    if (!runRegistry.list().some((r) => r.state === "running")) return;
+    event.preventDefault();
+    quitting = true;
+    void Promise.race([
+        runRegistry.shutdown({ graceMs: 1_500 }),
+        new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_BUDGET_MS)),
+    ]).finally(() => app.quit());
 });
 
 /**
@@ -602,18 +603,18 @@ app.on("before-quit", (event) => {
  * 无需真的双击：`max=true` 就意味第一次双击会走 un-zoom。
  */
 function traceWindowState(win: BrowserWindow): void {
-  const dump = (tag: string): void => {
-    const b = win.getBounds();
-    console.log(
-      `[win] ${tag} ${b.width}×${b.height}@${b.x},${b.y} min=${win.isMinimized()} max=${win.isMaximized()}`,
-    );
-  };
-  dump("created");
-  win.on("show", () => dump("show"));
-  win.on("maximize", () => dump("maximize"));
-  win.on("unmaximize", () => dump("unmaximize"));
-  win.on("minimize", () => dump("minimize"));
-  win.on("restore", () => dump("restore"));
+    const dump = (tag: string): void => {
+        const b = win.getBounds();
+        console.log(
+            `[win] ${tag} ${b.width}×${b.height}@${b.x},${b.y} min=${win.isMinimized()} max=${win.isMaximized()}`,
+        );
+    };
+    dump("created");
+    win.on("show", () => dump("show"));
+    win.on("maximize", () => dump("maximize"));
+    win.on("unmaximize", () => dump("unmaximize"));
+    win.on("minimize", () => dump("minimize"));
+    win.on("restore", () => dump("restore"));
 }
 
 /**
@@ -623,25 +624,25 @@ function traceWindowState(win: BrowserWindow): void {
  * 窗口已存在时只聚焦；不存在时走完整重建（IPC 转发 + 加载界面）。
  */
 function ensureWindow(): void {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (win) {
-    if (win.isMinimized()) win.restore();
-    win.focus();
-    return;
-  }
-  const { binding, ipcTransport } = createWindow();
-  ipcBinding = binding;
-  // 旧 webContents 已销毁，把 diy.ui.* 的转发目标换到新窗口，否则界面 RPC 归死人
-  rpcPort?.setRendererTransport(ipcTransport);
-  loadMainApp();
-  console.log("[diy] 窗口已重建（diy.ui.* 转发已切到新窗口）");
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+        if (win.isMinimized()) win.restore();
+        win.focus();
+        return;
+    }
+    const { binding, ipcTransport } = createWindow();
+    ipcBinding = binding;
+    // 旧 webContents 已销毁，把 diy.ui.* 的转发目标换到新窗口，否则界面 RPC 归死人
+    rpcPort?.setRendererTransport(ipcTransport);
+    loadMainApp();
+    console.log("[diy] 窗口已重建（diy.ui.* 转发已切到新窗口）");
 }
 
 /** 当前窗口状态（`instances.self` 自报用）；无窗口 → null（serve 模式 / 窗口已关） */
 function currentWindowState(): InstanceSelf["window"] {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (!win) return null;
-  return { visible: win.isVisible(), fullScreen: win.isFullScreen(), minimized: win.isMinimized() };
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return null;
+    return { visible: win.isVisible(), fullScreen: win.isFullScreen(), minimized: win.isMinimized() };
 }
 
 /**
@@ -652,16 +653,16 @@ function currentWindowState(): InstanceSelf["window"] {
  * 半屏的窗口切过去还得再点一次）。失败如实返回原因，不静默。
  */
 function revealWindow(): RevealResult {
-  let win = BrowserWindow.getAllWindows()[0];
-  if (!win) {
-    ensureWindow();
-    win = BrowserWindow.getAllWindows()[0];
-  }
-  if (!win) return { ok: false, reason: "窗口不存在且重建失败", fullScreen: false };
-  if (win.isMinimized()) win.restore();
-  app.focus({ steal: true });
-  win.show();
-  win.focus();
-  if (!win.isFullScreen()) win.setFullScreen(true);
-  return { ok: true, reason: "已前置并全屏", fullScreen: true };
+    let win = BrowserWindow.getAllWindows()[0];
+    if (!win) {
+        ensureWindow();
+        win = BrowserWindow.getAllWindows()[0];
+    }
+    if (!win) return { ok: false, reason: "窗口不存在且重建失败", fullScreen: false };
+    if (win.isMinimized()) win.restore();
+    app.focus({ steal: true });
+    win.show();
+    win.focus();
+    if (!win.isFullScreen()) win.setFullScreen(true);
+    return { ok: true, reason: "已前置并全屏", fullScreen: true };
 }

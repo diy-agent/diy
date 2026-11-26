@@ -26,70 +26,70 @@ import { localISOString } from "@diy-agent/time";
 
 /** 启动时快照的一跳父进程（`parents[0]` = 直接父亲） */
 export interface ParentHop {
-  pid: number;
-  command: string;
+    pid: number;
+    command: string;
 }
 
 /** 一条实例注册记录（`<pid>.json`） */
 export interface InstanceRecord {
-  pid: number;
-  /**
-   * app 短名（`diy-app` / `diy-web` / `diy-chat`…）。**老记录没有这个字段 ⇒ null**（读侧宽松）。
-   * dev 启动器靠它判断「谁活着」，不用从 argv 猜。
-   */
-  app: string | null;
-  /**
-   * launch id（app.yaml 里的一条启动命令，如 `lab` / `web-8123`）。**老记录 ⇒ null**（读侧宽松）。
-   * dev 启动器按 `(worktree, app, launch)` 三元组把运行时对回静态清单。
-   */
-  launch: string | null;
-  /** 启动它的 git worktree 根（绝对路径）；老记录 ⇒ null */
-  worktree: string | null;
-  /**
-   * 实例**自报的名字**（`DIY_INSTANCE_NAME` / app.yaml 的 `name:`）。用户命名优先，
-   * 没写 ⇒ null（展示侧退化为 `<app>#<pid>`，见 shared/instance-row.ts::displayNameOf）。
-   *
-   * 为什么要有它（##518）：`launch` / `slot` 只是**启动配置模版**，同一模版起两份时
-   * 靠编号区分是反人类的；实例自己起个名字才是人认得出的身份。
-   */
-  name: string | null;
-  /**
-   * 有没有 source —— **实例分类的第一刀**（##518 用户裁）：
-   *   `source`   = 从工作区代码起的（`sha.sh` 手工 / app.yaml / 测试代码），dev 能读写、能操作；
-   *   `packaged` = 安装包起的（asar 内无源码），dev 只能观测。
-   * 老记录 ⇒ null（读侧按 diyHome 与 argv 猜，不硬编）。
-   */
-  mode: "source" | "packaged" | null;
-  /** RPC 端口；未就绪为 null（启动早期写的那一份） */
-  port: number | null;
-  /**
-   * `/ping` 端口（##479 远程发现）。`null` / 缺字段 = 本轮之前启动的老实例（不提供 /ping）。
-   * 与 `port` 分开：RPC 是 h2c + 身份校验，ping 是**无鉴权**的极简 HTTP/1.1，两者别共用端口。
-   */
-  pingPort: number | null;
-  /** 实例自己认定的数据根（`AppConfig.diyHome`，**经 dev-home 纠正**后的那个） */
-  diyHome: string;
-  /** 产物变体（prod|test|lab） */
-  variant: string;
-  /** 运行环境（production|development|test） */
-  env: string;
-  /** 本进程 argv 原文（「谁开的」再补一层：能看到 --no-sandbox 之类的启动参数） */
-  argv: string[];
-  cwd: string;
-  startedAt: string;
-  updatedAt: string;
-  /** 启动瞬间快照的父进程链（pid + command），最多 `PARENT_DEPTH` 跳 */
-  parents: ParentHop[];
+    pid: number;
+    /**
+     * app 短名（`diy-app` / `diy-web` / `diy-chat`…）。**老记录没有这个字段 ⇒ null**（读侧宽松）。
+     * dev 启动器靠它判断「谁活着」，不用从 argv 猜。
+     */
+    app: string | null;
+    /**
+     * launch id（app.yaml 里的一条启动命令，如 `lab` / `web-8123`）。**老记录 ⇒ null**（读侧宽松）。
+     * dev 启动器按 `(worktree, app, launch)` 三元组把运行时对回静态清单。
+     */
+    launch: string | null;
+    /** 启动它的 git worktree 根（绝对路径）；老记录 ⇒ null */
+    worktree: string | null;
+    /**
+     * 实例**自报的名字**（`DIY_INSTANCE_NAME` / app.yaml 的 `name:`）。用户命名优先，
+     * 没写 ⇒ null（展示侧退化为 `<app>#<pid>`，见 shared/instance-row.ts::displayNameOf）。
+     *
+     * 为什么要有它（##518）：`launch` / `slot` 只是**启动配置模版**，同一模版起两份时
+     * 靠编号区分是反人类的；实例自己起个名字才是人认得出的身份。
+     */
+    name: string | null;
+    /**
+     * 有没有 source —— **实例分类的第一刀**（##518 用户裁）：
+     *   `source`   = 从工作区代码起的（`sha.sh` 手工 / app.yaml / 测试代码），dev 能读写、能操作；
+     *   `packaged` = 安装包起的（asar 内无源码），dev 只能观测。
+     * 老记录 ⇒ null（读侧按 diyHome 与 argv 猜，不硬编）。
+     */
+    mode: "source" | "packaged" | null;
+    /** RPC 端口；未就绪为 null（启动早期写的那一份） */
+    port: number | null;
+    /**
+     * `/ping` 端口（##479 远程发现）。`null` / 缺字段 = 本轮之前启动的老实例（不提供 /ping）。
+     * 与 `port` 分开：RPC 是 h2c + 身份校验，ping 是**无鉴权**的极简 HTTP/1.1，两者别共用端口。
+     */
+    pingPort: number | null;
+    /** 实例自己认定的数据根（`AppConfig.diyHome`，**经 dev-home 纠正**后的那个） */
+    diyHome: string;
+    /** 产物变体（prod|test|lab） */
+    variant: string;
+    /** 运行环境（production|development|test） */
+    env: string;
+    /** 本进程 argv 原文（「谁开的」再补一层：能看到 --no-sandbox 之类的启动参数） */
+    argv: string[];
+    cwd: string;
+    startedAt: string;
+    updatedAt: string;
+    /** 启动瞬间快照的父进程链（pid + command），最多 `PARENT_DEPTH` 跳 */
+    parents: ParentHop[];
 }
 
 /** 注册表目录：`DIY_INSTANCE_REGISTRY` 覆盖（测试隔离），缺省 `<真实家目录>/.diy-instances` */
 export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
-  // 位置唯一真源：`@diy-agent/dev-paths`（`~/.diy/dev/apps`）
-  return registryDirOf(env);
+    // 位置唯一真源：`@diy-agent/dev-paths`（`~/.diy/dev/apps`）
+    return registryDirOf(env);
 }
 
 export function recordPath(dir: string, pid: number): string {
-  return join(dir, `${pid}.json`);
+    return join(dir, `${pid}.json`);
 }
 
 /**
@@ -97,91 +97,96 @@ export function recordPath(dir: string, pid: number): string {
  * 注册表是「别人进程写的文件」，读侧对它没有信任基础，宁可少一行也不拿半个对象去渲染。
  */
 export function parseRecord(raw: unknown): InstanceRecord | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const o = raw as Record<string, unknown>;
-  const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
-  const str = (v: unknown): v is string => typeof v === "string" && v.length > 0;
-  if (!num(o["pid"]) || o["pid"] <= 0) return null;
-  if (!("port" in o) || !(o["port"] === null || num(o["port"]))) return null;
-  if (!str(o["diyHome"])) return null;
-  const parents: ParentHop[] = Array.isArray(o["parents"])
-    ? (o["parents"] as unknown[])
-        .map((h) => {
-          const hop = h as Record<string, unknown>;
-          return num(hop?.["pid"]) && typeof hop?.["command"] === "string"
-            ? { pid: hop["pid"], command: hop["command"] }
-            : null;
-        })
-        .filter((h): h is ParentHop => h !== null)
-    : [];
-  return {
-    pid: o["pid"],
-    port: (o["port"] as number | null) ?? null,
-    // 可选的增量字段：老记录没有它 → null（读侧宽松，见文件头）
-    app: str(o["app"]) ? (o["app"] as string) : null,
-    // 同理：老记录没有这两个字段 → null（##502 第二轮新增）
-    launch: str(o["launch"]) ? (o["launch"] as string) : null,
-    worktree: str(o["worktree"]) ? (o["worktree"] as string) : null,
-    name: str(o["name"]) ? (o["name"] as string) : null,
-    mode: o["mode"] === "source" || o["mode"] === "packaged" ? o["mode"] : null,
-    pingPort: num(o["pingPort"]) ? (o["pingPort"] as number) : null,
-    diyHome: o["diyHome"],
-    variant: typeof o["variant"] === "string" ? o["variant"] : "",
-    env: typeof o["env"] === "string" ? o["env"] : "",
-    argv: Array.isArray(o["argv"]) ? (o["argv"] as unknown[]).filter((x): x is string => typeof x === "string") : [],
-    cwd: typeof o["cwd"] === "string" ? o["cwd"] : "",
-    startedAt: typeof o["startedAt"] === "string" ? o["startedAt"] : "",
-    updatedAt: typeof o["updatedAt"] === "string" ? o["updatedAt"] : "",
-    parents,
-  };
+    if (typeof raw !== "object" || raw === null) return null;
+    const o = raw as Record<string, unknown>;
+    const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+    const str = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+    if (!num(o["pid"]) || o["pid"] <= 0) return null;
+    if (!("port" in o) || !(o["port"] === null || num(o["port"]))) return null;
+    if (!str(o["diyHome"])) return null;
+    const parents: ParentHop[] = Array.isArray(o["parents"])
+        ? (o["parents"] as unknown[])
+              .map((h) => {
+                  const hop = h as Record<string, unknown>;
+                  return num(hop?.["pid"]) && typeof hop?.["command"] === "string"
+                      ? { pid: hop["pid"], command: hop["command"] }
+                      : null;
+              })
+              .filter((h): h is ParentHop => h !== null)
+        : [];
+    return {
+        pid: o["pid"],
+        port: (o["port"] as number | null) ?? null,
+        // 可选的增量字段：老记录没有它 → null（读侧宽松，见文件头）
+        app: str(o["app"]) ? (o["app"] as string) : null,
+        // 同理：老记录没有这两个字段 → null（##502 第二轮新增）
+        launch: str(o["launch"]) ? (o["launch"] as string) : null,
+        worktree: str(o["worktree"]) ? (o["worktree"] as string) : null,
+        name: str(o["name"]) ? (o["name"] as string) : null,
+        mode: o["mode"] === "source" || o["mode"] === "packaged" ? o["mode"] : null,
+        pingPort: num(o["pingPort"]) ? (o["pingPort"] as number) : null,
+        diyHome: o["diyHome"],
+        variant: typeof o["variant"] === "string" ? o["variant"] : "",
+        env: typeof o["env"] === "string" ? o["env"] : "",
+        argv: Array.isArray(o["argv"])
+            ? (o["argv"] as unknown[]).filter((x): x is string => typeof x === "string")
+            : [],
+        cwd: typeof o["cwd"] === "string" ? o["cwd"] : "",
+        startedAt: typeof o["startedAt"] === "string" ? o["startedAt"] : "",
+        updatedAt: typeof o["updatedAt"] === "string" ? o["updatedAt"] : "",
+        parents,
+    };
 }
 
 /** pid 是否活着。EPERM = 有那个进程但没权限发信号 ⇒ **活着**（不能当死处理） */
 export function isPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    // 0 信号是 Node 的跨平台存在性检查（不是系统命令）
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
-  }
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+        // 0 信号是 Node 的跨平台存在性检查（不是系统命令）
+        process.kill(pid, 0);
+        return true;
+    } catch (e) {
+        return (e as NodeJS.ErrnoException).code === "EPERM";
+    }
 }
 
 /** 按存活过滤（纯函数，便于单测：喂一个「只有某几个 pid 活着」的判定器） */
-export function pruneRecords(records: InstanceRecord[], alive: (pid: number) => boolean = isPidAlive): InstanceRecord[] {
-  return records.filter((r) => alive(r.pid));
+export function pruneRecords(
+    records: InstanceRecord[],
+    alive: (pid: number) => boolean = isPidAlive,
+): InstanceRecord[] {
+    return records.filter((r) => alive(r.pid));
 }
 
 /** 写一条记录（**原子**：同目录临时文件 + rename —— 读侧可能与本进程并发，绝不能让读者看到半截 JSON） */
 export function writeRecord(dir: string, rec: InstanceRecord): void {
-  // 收敛到共享原子写（##383）：去掉自造 fd 旁路（第 5 种私有写法）
-  writeFileAtomic(recordPath(dir, rec.pid), `${JSON.stringify(rec, null, 2)}\n`);
+    // 收敛到共享原子写（##383）：去掉自造 fd 旁路（第 5 种私有写法）
+    writeFileAtomic(recordPath(dir, rec.pid), `${JSON.stringify(rec, null, 2)}\n`);
 }
 
 /** 读一条记录；不存在/坏 JSON/字段不合格 → null */
 export function readRecord(dir: string, pid: number): InstanceRecord | null {
-  try {
-    return parseRecord(JSON.parse(readFileSync(recordPath(dir, pid), "utf-8")));
-  } catch {
-    return null;
-  }
+    try {
+        return parseRecord(JSON.parse(readFileSync(recordPath(dir, pid), "utf-8")));
+    } catch {
+        return null;
+    }
 }
 
 /** 局部更新（读-改-写）；记录不在则什么都不做（**不凭空造一条**：写与更新不是同一件事） */
 export function updateRecord(dir: string, pid: number, patch: Partial<InstanceRecord>): void {
-  const cur = readRecord(dir, pid);
-  if (!cur) return;
-  writeRecord(dir, { ...cur, ...patch, updatedAt: localISOString() });
+    const cur = readRecord(dir, pid);
+    if (!cur) return;
+    writeRecord(dir, { ...cur, ...patch, updatedAt: localISOString() });
 }
 
 /** 删除记录（退出清理）；不存在不算错 */
 export function removeRecord(dir: string, pid: number): void {
-  try {
-    unlinkSync(recordPath(dir, pid));
-  } catch {
-    /* 已不在 */
-  }
+    try {
+        unlinkSync(recordPath(dir, pid));
+    } catch {
+        /* 已不在 */
+    }
 }
 
 /**
@@ -189,29 +194,37 @@ export function removeRecord(dir: string, pid: number): void {
  * 目录不存在 → 空表（第一次跑，正常态，不是错误）。
  */
 export function readRecords(dir: string, alive: (pid: number) => boolean = isPidAlive): InstanceRecord[] {
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return [];
-  }
-  const out: InstanceRecord[] = [];
-  for (const name of names) {
-    if (!name.endsWith(".json")) continue;
-    const pid = Number(name.slice(0, -".json".length));
-    if (!Number.isFinite(pid)) continue;
-    const rec = readRecord(dir, pid);
-    if (!rec) {
-      try { unlinkSync(join(dir, name)); } catch { /* 忽略 */ }
-      continue;
+    let names: string[];
+    try {
+        names = readdirSync(dir);
+    } catch {
+        return [];
     }
-    if (!alive(rec.pid)) {
-      try { unlinkSync(join(dir, name)); } catch { /* 忽略 */ }
-      continue;
+    const out: InstanceRecord[] = [];
+    for (const name of names) {
+        if (!name.endsWith(".json")) continue;
+        const pid = Number(name.slice(0, -".json".length));
+        if (!Number.isFinite(pid)) continue;
+        const rec = readRecord(dir, pid);
+        if (!rec) {
+            try {
+                unlinkSync(join(dir, name));
+            } catch {
+                /* 忽略 */
+            }
+            continue;
+        }
+        if (!alive(rec.pid)) {
+            try {
+                unlinkSync(join(dir, name));
+            } catch {
+                /* 忽略 */
+            }
+            continue;
+        }
+        out.push(rec);
     }
-    out.push(rec);
-  }
-  return out.sort((a, b) => a.pid - b.pid);
+    return out.sort((a, b) => a.pid - b.pid);
 }
 
 /** 父进程链最多快照几跳（祖先再多也没有信息量，且每跳多一次 ps） */
@@ -219,9 +232,9 @@ export const PARENT_DEPTH = 4;
 
 /** 取一个进程的一跳（策略层实现：POSIX 跑 ps、Windows 查 CIM） */
 export function processHop(pid: number): { hop: ParentHop; ppid: number } | null {
-  if (!Number.isFinite(pid) || pid <= 1) return null;
-  const got = os.hopSync(pid);
-  return got ? { hop: { pid: got.pid, command: got.command }, ppid: got.ppid } : null;
+    if (!Number.isFinite(pid) || pid <= 1) return null;
+    const got = os.hopSync(pid);
+    return got ? { hop: { pid: got.pid, command: got.command }, ppid: got.ppid } : null;
 }
 
 /**
@@ -231,18 +244,18 @@ export function processHop(pid: number): { hop: ParentHop; ppid: number } | null
  * `lookup` 可注入（单测喂一张假表，不真跑 ps）。
  */
 export function snapshotParents(
-  ppid: number = process.ppid,
-  lookup: (pid: number) => { hop: ParentHop; ppid: number } | null = processHop,
-  depth: number = PARENT_DEPTH,
+    ppid: number = process.ppid,
+    lookup: (pid: number) => { hop: ParentHop; ppid: number } | null = processHop,
+    depth: number = PARENT_DEPTH,
 ): ParentHop[] {
-  const out: ParentHop[] = [];
-  let cur = ppid;
-  for (let i = 0; i < depth && cur > 1; i++) {
-    const got = lookup(cur);
-    if (!got) break;
-    out.push(got.hop);
-    if (got.ppid === cur) break; // 自环（不该发生，但别死循环）
-    cur = got.ppid;
-  }
-  return out;
+    const out: ParentHop[] = [];
+    let cur = ppid;
+    for (let i = 0; i < depth && cur > 1; i++) {
+        const got = lookup(cur);
+        if (!got) break;
+        out.push(got.hop);
+        if (got.ppid === cur) break; // 自环（不该发生，但别死循环）
+        cur = got.ppid;
+    }
+    return out;
 }

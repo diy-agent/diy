@@ -24,7 +24,11 @@ import { executorOf } from "../../src/main/workflows";
 function freshTask(name: string): string {
     const uri = `projects/8/tasks/${name}`;
     mkdirSync(join(process.env["DIY_HOME"]!, uri), { recursive: true });
-    writeFileSync(join(process.env["DIY_HOME"]!, uri, "AGENTS.md"), `---\ntitle: ${name}\nstate: pending\n---\n`, "utf-8");
+    writeFileSync(
+        join(process.env["DIY_HOME"]!, uri, "AGENTS.md"),
+        `---\ntitle: ${name}\nstate: pending\n---\n`,
+        "utf-8",
+    );
     return uri;
 }
 
@@ -53,7 +57,11 @@ describe("turn 消息装配（##341）：agent 的输入契约", () => {
         advanceFlow(uri, "clarify");
         putArtifact(uri, "clarify", "澄清结论：需求是「把导入修好」");
         advanceFlow(uri, "design");
-        const msg = composeTurnMessage(uri, showFlow(uri), { kind: "agent", agent: "设计 agent", role: "你是设计 agent。" });
+        const msg = composeTurnMessage(uri, showFlow(uri), {
+            kind: "agent",
+            agent: "设计 agent",
+            role: "你是设计 agent。",
+        });
 
         expect(msg).toContain("【角色】你是设计 agent。");
         expect(msg).toContain("【当前节点】开发工作流 · 设计（design）");
@@ -139,12 +147,18 @@ describe("事实预热（##341）：异步取、同步读", () => {
                 return { code: 0, output: "merged" };
             },
         };
-        const look = await collectFacts(ctxOf("merge", { merge: { command: "gh pr view --json mergeable -q .mergeable", apply: false } }), deps);
+        const look = await collectFacts(
+            ctxOf("merge", { merge: { command: "gh pr view --json mergeable -q .mergeable", apply: false } }),
+            deps,
+        );
         expect(look[0]!.fact).toMatchObject({ code: 0, output: "MERGEABLE" });
         expect(look[0]!.fact.applied).toBeUndefined();
         expect(merged).toBe(0); // 默认不合：一个默认值不该替人合掉真实 PR
 
-        const doIt = await collectFacts(ctxOf("merge", { merge: { command: "gh pr view --json mergeable -q .mergeable", apply: true } }), deps);
+        const doIt = await collectFacts(
+            ctxOf("merge", { merge: { command: "gh pr view --json mergeable -q .mergeable", apply: true } }),
+            deps,
+        );
         expect(doIt[0]!.fact.applied).toBe(true);
         expect(merged).toBe(1);
     });
@@ -158,7 +172,10 @@ describe("render 插件：`records` 收「一行一条」文本（##341 补）",
             renderer: "table",
             payload: { rows: [{ cells: ["P0 未落点"] }, { cells: ["P1 缺测试"] }] },
         });
-        expect(records("", { type: "node", data: { nodeId: "review" } })).toEqual({ renderer: "table", payload: { rows: [] } });
+        expect(records("", { type: "node", data: { nodeId: "review" } })).toEqual({
+            renderer: "table",
+            payload: { rows: [] },
+        });
     });
 
     it("结构化两种 raw 照旧（裸数组 / { columns, rows }），别的形状照旧当场拒", () => {

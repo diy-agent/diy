@@ -449,7 +449,10 @@ function parseEventLines(lines: readonly string[]): { events: RoomEvent[]; bad: 
  *   · **`limit` 模式下 `bad` 只数读到的这个窗口**（窗口外的坏行压根没进内存）—— 要全量计数
  *     就不传 `limit`。
  */
-export async function readEvents(roomId: string, opts: { limit?: number } = {}): Promise<{ events: RoomEvent[]; bad: number }> {
+export async function readEvents(
+    roomId: string,
+    opts: { limit?: number } = {},
+): Promise<{ events: RoomEvent[]; bad: number }> {
     const f = roomEventsPath(roomId);
     const limit = opts.limit && opts.limit > 0 ? Math.floor(opts.limit) : 0;
     if (limit > 0) {
@@ -463,7 +466,10 @@ export async function readEvents(roomId: string, opts: { limit?: number } = {}):
             readStats.eventsFiles++;
             readStats.eventsTailBytes += bytesRead;
             const parsed = parseEventLines(lines);
-            const tail = parsed.events.length > limit ? { events: parsed.events.slice(parsed.events.length - limit), bad: parsed.bad } : parsed;
+            const tail =
+                parsed.events.length > limit
+                    ? { events: parsed.events.slice(parsed.events.length - limit), bad: parsed.bad }
+                    : parsed;
             const enough = tail.events.length >= limit || atStart || attempt >= 2;
             if (parsed.bad === 0 || enough) return tail;
             window *= 2;

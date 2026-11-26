@@ -15,43 +15,43 @@ import { describe, it, expect } from "vitest";
 import { resolveMember, type RoomMember } from "../../src/shared/room";
 
 const m = (id: string, name: string, kind: "human" | "agent" = "agent"): RoomMember =>
-  ({ id, name, kind, backend: null, ...(kind === "agent" ? { persona: "persona/1" } : {}) }) as RoomMember;
+    ({ id, name, kind, backend: null, ...(kind === "agent" ? { persona: "persona/1" } : {}) }) as RoomMember;
 
 const ROOM = {
-  members: [
-    m("human:chen56", "chen56", "human"),
-    m("agent:main", "deepseek-4.1-flash"),
-    m("agent:for-test", "for-test"),
-  ],
+    members: [
+        m("human:chen56", "chen56", "human"),
+        m("agent:main", "deepseek-4.1-flash"),
+        m("agent:for-test", "for-test"),
+    ],
 };
 
 describe("resolveMember —— id 末段短名（##377 第 20 刀）", () => {
-  it("① 精确 id / 精确 name 照旧", () => {
-    expect(resolveMember(ROOM, "agent:main")).toBe("agent:main");
-    expect(resolveMember(ROOM, "deepseek-4.1-flash")).toBe("agent:main");
-    expect(resolveMember(ROOM, "@for-test")).toBe("agent:for-test");
-  });
+    it("① 精确 id / 精确 name 照旧", () => {
+        expect(resolveMember(ROOM, "agent:main")).toBe("agent:main");
+        expect(resolveMember(ROOM, "deepseek-4.1-flash")).toBe("agent:main");
+        expect(resolveMember(ROOM, "@for-test")).toBe("agent:for-test");
+    });
 
-  it("② id 末段唯一 ⇒ 命中（用户直觉形状 `@main`）", () => {
-    expect(resolveMember(ROOM, "main")).toBe("agent:main");
-    expect(resolveMember(ROOM, "@main")).toBe("agent:main");
-  });
+    it("② id 末段唯一 ⇒ 命中（用户直觉形状 `@main`）", () => {
+        expect(resolveMember(ROOM, "main")).toBe("agent:main");
+        expect(resolveMember(ROOM, "@main")).toBe("agent:main");
+    });
 
-  it("③ 末段不唯一 ⇒ 保持原样（不猜错人）", () => {
-    const dup = {
-      members: [m("agent:main", "甲"), m("agent:x:main", "乙")],
-    };
-    expect(resolveMember(dup, "main")).toBe("main");
-  });
+    it("③ 末段不唯一 ⇒ 保持原样（不猜错人）", () => {
+        const dup = {
+            members: [m("agent:main", "甲"), m("agent:x:main", "乙")],
+        };
+        expect(resolveMember(dup, "main")).toBe("main");
+    });
 
-  it("③' 人成员的末段不参与短名匹配（`@chen56` 走 name 精确，不走末段猜）", () => {
-    const onlyHuman = { members: [m("human:other", "某人", "human")] };
-    expect(resolveMember(onlyHuman, "other")).toBe("other");
-  });
+    it("③' 人成员的末段不参与短名匹配（`@chen56` 走 name 精确，不走末段猜）", () => {
+        const onlyHuman = { members: [m("human:other", "某人", "human")] };
+        expect(resolveMember(onlyHuman, "other")).toBe("other");
+    });
 
-  it("④ 找不到 ⇒ 原样返回", () => {
-    expect(resolveMember(ROOM, "nosuchmember")).toBe("nosuchmember");
-    expect(resolveMember(null, "main")).toBe("main");
-    expect(resolveMember(ROOM, "@")).toBe("@");
-  });
+    it("④ 找不到 ⇒ 原样返回", () => {
+        expect(resolveMember(ROOM, "nosuchmember")).toBe("nosuchmember");
+        expect(resolveMember(null, "main")).toBe("main");
+        expect(resolveMember(ROOM, "@")).toBe("@");
+    });
 });

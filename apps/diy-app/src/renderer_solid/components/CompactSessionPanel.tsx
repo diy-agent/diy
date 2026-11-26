@@ -51,7 +51,13 @@ import {
     visibleDiffRows,
     type YamlDiffRow,
 } from "../../shared/yaml-lines";
-import { clipForPreview, requestViewYaml, type LayerRow, type PreviewClipStats, type RequestView } from "../../shared/context/request-view";
+import {
+    clipForPreview,
+    requestViewYaml,
+    type LayerRow,
+    type PreviewClipStats,
+    type RequestView,
+} from "../../shared/context/request-view";
 import { DrawerMaxButton } from "@diy-agent/ui-kit";
 import { notificationStore } from "../store/notificationStore";
 import {
@@ -62,7 +68,12 @@ import {
     windowRatio,
     type CompactWhenInput,
 } from "@diy-agent/compaction/compact-when";
-import { EXAMPLE_MESSAGES, buildCompactExample, bytesToTokens, type ExampleRow } from "@diy-agent/compaction/compact-example";
+import {
+    EXAMPLE_MESSAGES,
+    buildCompactExample,
+    bytesToTokens,
+    type ExampleRow,
+} from "@diy-agent/compaction/compact-example";
 import { normalizeHistoryLimit } from "@diy-agent/compaction/history-limit";
 import { CompactCutBar } from "./CompactCutBar";
 
@@ -128,7 +139,11 @@ function CostCompare(props: { facts: LayerRow[] }) {
                             </span>
                         </div>
                         <div class="mt-0.5 h-3 rounded bg-base-200 overflow-hidden">
-                            <div data-cost-bar class="h-full bg-base-content/35" style={{ width: width(t().oldTokens) }} />
+                            <div
+                                data-cost-bar
+                                class="h-full bg-base-content/35"
+                                style={{ width: width(t().oldTokens) }}
+                            />
                         </div>
                     </div>
                     <div>
@@ -145,7 +160,11 @@ function CostCompare(props: { facts: LayerRow[] }) {
                     <div class="pt-1.5 border-t border-base-300">
                         <Show
                             when={saved() > 1e-9}
-                            fallback={<span data-cost-saved class="opacity-60">无节省（上限未顶到 / 历史本来就不多）</span>}
+                            fallback={
+                                <span data-cost-saved class="opacity-60">
+                                    无节省（上限未顶到 / 历史本来就不多）
+                                </span>
+                            }
                         >
                             <span data-cost-saved class="text-success font-semibold">
                                 省 {money(saved())}（−{savedPct()}%）
@@ -178,30 +197,32 @@ export interface CompactPreviewModel {
 export interface CompactPanelCtl {
     /** 本面板服务哪个任务（统计 / 事件账要自己去取） */
     uri: () => string;
-    auto: () => {
-        config: {
-            policy: unknown;
-            history?: {
-                /** ##442：只剩摘要模式（保留量固定 W×0.16，触发线零旋钮） */
-                limit?: { summary?: { mode: "model" | "self" } };
-            };
-        };
-        /**
-         * 判定用的事实（实测）：`windowTokens` = 该会话最后一步实测 total；
-         * `retainedTokens` = 上次投递出去的历史 ≈ token；`boundary` = 已落盘的压缩边界（null = 没压过）。
-         */
-        facts?: {
-            windowTokens: number | null;
-            windowLimitTokens?: number | null;
-            retainedTokens?: number | null;
-            boundary?: { at: string; dropped: number; limitTokens: number } | null;
-            /** 本会话写过的压缩事件条数（turns.jsonl 的 compaction entry） */
-            compactionCount?: number;
-        };
-        raw?: { path: string; text: string };
-        /** 读配置的出声条目（##370）：非空 = 有键缺失/非法，已逐键回落缺省 */
-        warnings?: AutoCompactIssue[];
-    } | undefined;
+    auto: () =>
+        | {
+              config: {
+                  policy: unknown;
+                  history?: {
+                      /** ##442：只剩摘要模式（保留量固定 W×0.16，触发线零旋钮） */
+                      limit?: { summary?: { mode: "model" | "self" } };
+                  };
+              };
+              /**
+               * 判定用的事实（实测）：`windowTokens` = 该会话最后一步实测 total；
+               * `retainedTokens` = 上次投递出去的历史 ≈ token；`boundary` = 已落盘的压缩边界（null = 没压过）。
+               */
+              facts?: {
+                  windowTokens: number | null;
+                  windowLimitTokens?: number | null;
+                  retainedTokens?: number | null;
+                  boundary?: { at: string; dropped: number; limitTokens: number } | null;
+                  /** 本会话写过的压缩事件条数（turns.jsonl 的 compaction entry） */
+                  compactionCount?: number;
+              };
+              raw?: { path: string; text: string };
+              /** 读配置的出声条目（##370）：非空 = 有键缺失/非法，已逐键回落缺省 */
+              warnings?: AutoCompactIssue[];
+          }
+        | undefined;
     autoBusy: () => boolean;
     patchAuto: (patch: Record<string, unknown>) => Promise<void>;
     autoPolicy: () => CompactPolicy;
@@ -307,8 +328,9 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
     const render = (): ToolResultMode => currentToolResult().render;
     const setRender = (r: ToolResultMode) =>
         patchToolResult(r === "headtail" ? { render: "headtail", renderData: headtailData() } : { render: r });
-    const setRenderData = (patch: Partial<{ head: number; tail: number; maxLineChars: number; maxKeepBytes: number }>) =>
-        patchToolResult({ render: "headtail", renderData: { ...headtailData(), ...patch } });
+    const setRenderData = (
+        patch: Partial<{ head: number; tail: number; maxLineChars: number; maxKeepBytes: number }>,
+    ) => patchToolResult({ render: "headtail", renderData: { ...headtailData(), ...patch } });
     const summaryEnabled = (): boolean => autoPolicy().summary;
     const setSummary = (v: boolean) => patchAutoPolicy({ ...autoPolicy(), summary: v });
     const rawText = (): string => auto()?.raw?.text ?? "";
@@ -365,9 +387,29 @@ export function useCompactPanel(uri: () => string, visible: () => boolean = () =
 
     return {
         uri,
-        auto, autoBusy, patchAuto, autoPolicy, limitTokens, commitLimitTokens, limitSummary, setLimitSummary, summaryMode, setSummaryMode,
-        pv, pvLoading, busy, err, apply,
-        render, setRender, renderData: headtailData, setRenderData, summaryEnabled, setSummary, rawText, rawPath,
+        auto,
+        autoBusy,
+        patchAuto,
+        autoPolicy,
+        limitTokens,
+        commitLimitTokens,
+        limitSummary,
+        setLimitSummary,
+        summaryMode,
+        setSummaryMode,
+        pv,
+        pvLoading,
+        busy,
+        err,
+        apply,
+        render,
+        setRender,
+        renderData: headtailData,
+        setRenderData,
+        summaryEnabled,
+        setSummary,
+        rawText,
+        rawPath,
         warnings,
         refresh: async () => await refetchAuto(),
     };
@@ -465,7 +507,11 @@ function WhenCompactBlock(props: { ctl: CompactPanelCtl; windowLimit: number | n
                         </div>
                     )}
                 </For>
-                <div class="border-t border-base-300 pt-1 opacity-70" data-when-result title={compactResultSentence(input().limitTokens)}>
+                <div
+                    class="border-t border-base-300 pt-1 opacity-70"
+                    data-when-result
+                    title={compactResultSentence(input().limitTokens)}
+                >
                     <span class="font-semibold">压成什么样：</span> {compactResultSentence(input().limitTokens)}
                 </div>
                 {/* 自动压缩与投递的关系：划清界线 */}
@@ -515,7 +561,9 @@ function ExamplePreviewBlock(props: { limitTokens: number }) {
             title={r.why}
         >
             <span class="w-6 shrink-0 font-mono text-caption opacity-60">{r.turn}</span>
-            <span class={`w-10 shrink-0 text-caption ${KIND_TONE[r.kind]} ${kept ? "" : "line-through"}`}>{r.kind}</span>
+            <span class={`w-10 shrink-0 text-caption ${KIND_TONE[r.kind]} ${kept ? "" : "line-through"}`}>
+                {r.kind}
+            </span>
             <span class={`min-w-0 flex-1 truncate text-caption ${kept ? "" : "line-through"}`}>{r.label}</span>
             <span class="w-14 shrink-0 text-right text-caption tabular-nums opacity-70">{r.tokens} tok</span>
         </div>
@@ -524,8 +572,8 @@ function ExamplePreviewBlock(props: { limitTokens: number }) {
         <Block title="范例预览（合成样例）" extra={`${EXAMPLE_MESSAGES.length} 条 · ${beforeTok()} tok`}>
             <div class="space-y-1" data-example>
                 <div class="text-caption opacity-60">
-                    固定样例（每条标的是**模拟** token 尺寸，3 字节 ≈ 1 token —— 样例正文是中文，与真压的
-                    CJK 粗估同口径）；按当前上限 {props.limitTokens} token 推演：
+                    固定样例（每条标的是**模拟** token 尺寸，3 字节 ≈ 1 token —— 样例正文是中文，与真压的 CJK
+                    粗估同口径）；按当前上限 {props.limitTokens} token 推演：
                     右侧出现的才会进本次请求，被划掉的仍在历史里（可查可撤销）。
                 </div>
                 <div class="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -540,7 +588,9 @@ function ExamplePreviewBlock(props: { limitTokens: number }) {
                         <For each={ex().rows.filter((r) => r.kept)}>{(r) => row(r, false)}</For>
                         <div class="mt-1 border-t border-base-300 pt-1 text-caption opacity-60">
                             保头 = 硬编码 600 tok（首个 user / 任务目标，永不丢）
-                            {ex().biggestDrop ? ` · 最大一块被丢的是 ${ex().biggestDrop!.kind}（${ex().biggestDrop!.tokens} tok）` : ""}
+                            {ex().biggestDrop
+                                ? ` · 最大一块被丢的是 ${ex().biggestDrop!.kind}（${ex().biggestDrop!.tokens} tok）`
+                                : ""}
                         </div>
                     </div>
                 </div>
@@ -642,7 +692,10 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
     };
 
     /** 手动折叠覆盖 */
-    const [manual, setManual] = createSignal<{ level: number; collapsed: Set<number> }>({ level: -1, collapsed: new Set() });
+    const [manual, setManual] = createSignal<{ level: number; collapsed: Set<number> }>({
+        level: -1,
+        collapsed: new Set(),
+    });
     const toggleFold = (i: number) => {
         const cur = new Set(collapsed());
         if (cur.has(i)) cur.delete(i);
@@ -750,7 +803,10 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                 {/* ##370 出声：配置里有键缺失/非法 ⇒ 已逐键回落缺省。
                     没有这一块，用户只看到「我的配置没生效」，而原因只在应用日志里。 */}
                 <Show when={ctl.warnings().length > 0}>
-                    <div data-compact-warnings class="rounded-lg border border-warning/60 bg-warning/10 p-2 text-caption space-y-1">
+                    <div
+                        data-compact-warnings
+                        class="rounded-lg border border-warning/60 bg-warning/10 p-2 text-caption space-y-1"
+                    >
                         <div class="font-semibold">⚠ 配置有 {ctl.warnings().length} 处出声（已逐键回落缺省）</div>
                         <ul class="m-0 list-disc pl-4 space-y-0.5">
                             <For each={ctl.warnings()}>{(w) => <li>{w.message}</li>}</For>
@@ -762,13 +818,18 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                     when={panelView() === "form"}
                     fallback={
                         <div class="rounded-lg border border-base-300">
-                            <div class="border-b border-base-300 px-2 py-1 text-caption opacity-60 break-all" title={ctl.rawPath()}>
+                            <div
+                                class="border-b border-base-300 px-2 py-1 text-caption opacity-60 break-all"
+                                title={ctl.rawPath()}
+                            >
                                 真源 {ctl.rawPath() || "auto-compact.yaml"}（只读）
                             </div>
                             <pre
                                 data-compact-raw
                                 class="m-0 max-h-[70vh] overflow-auto p-2 text-caption font-mono leading-[1.5] whitespace-pre-wrap break-all"
-                            >{ctl.rawText() || "（尚未生成；改动参数后即落盘）"}</pre>
+                            >
+                                {ctl.rawText() || "（尚未生成；改动参数后即落盘）"}
+                            </pre>
                         </div>
                     }
                 >
@@ -787,7 +848,9 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                 当前 {estTok(ctl.pv()?.before.bytes ?? 0).toLocaleString()} tok → 压缩后{" "}
                                 {estTok(ctl.pv()?.after.bytes ?? 0).toLocaleString()} tok{" "}
                                 <span class="text-success">(-{ratio()}%)</span>
-                                <span class="opacity-60">　删 {diffCounts().del} / 增 {diffCounts().add} 行</span>
+                                <span class="opacity-60">
+                                    　删 {diffCounts().del} / 增 {diffCounts().add} 行
+                                </span>
                             </Show>
                         </div>
                         <div class="text-caption opacity-70">
@@ -795,32 +858,34 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </div>
                         {/* ##423 块 2：本会话计数 + 最近一次压缩的前后对比（此前哪里都看不到这两个数） */}
                         <div class="text-caption opacity-70" data-compact-stats>
-                            本会话：<b class="tabular-nums">{deliveries()}</b> 次投递（= 步数）· <b class="tabular-nums">{turnCount()}</b> 轮 ·
-                            压缩<b class="tabular-nums">{compactionCount()}</b> 次（事件，写边界）
+                            本会话：<b class="tabular-nums">{deliveries()}</b> 次投递（= 步数）·{" "}
+                            <b class="tabular-nums">{turnCount()}</b> 轮 · 压缩
+                            <b class="tabular-nums">{compactionCount()}</b> 次（事件，写边界）
                             <span class="opacity-60">
                                 　另有审计 {compactRows().length} 条（手动/自动各次的 compact.jsonl 记录）
                             </span>
                             <Show when={boundary()}>
                                 {(b) => (
                                     <span class="block opacity-80" data-compact-last>
-                                        最近一次事件：{new Date(b().at).toLocaleString()} · 丢 {b().dropped} 条 · 当时上限{" "}
-                                        {fmtTokens(b().limitTokens)}（现在 {fmtTokens(ctl.limitTokens())}）
+                                        最近一次事件：{new Date(b().at).toLocaleString()} · 丢 {b().dropped} 条 ·
+                                        当时上限 {fmtTokens(b().limitTokens)}（现在 {fmtTokens(ctl.limitTokens())}）
                                     </span>
                                 )}
                             </Show>
                             <Show when={compactRows().at(-1)}>
                                 {(e) => (
                                     <span class="block opacity-60" data-compact-last-audit>
-                                        最近一条审计：轮 {e().size?.before?.turns ?? "—"} → {e().size?.after?.turns ?? "—"} · 条{" "}
-                                        {e().size?.before?.messages ?? "—"} → {e().size?.after?.messages ?? "—"} · 字节{" "}
-                                        {fmtBytes(e().size?.before?.bytes)} → {fmtBytes(e().size?.after?.bytes)}
+                                        最近一条审计：轮 {e().size?.before?.turns ?? "—"} →{" "}
+                                        {e().size?.after?.turns ?? "—"} · 条 {e().size?.before?.messages ?? "—"} →{" "}
+                                        {e().size?.after?.messages ?? "—"} · 字节 {fmtBytes(e().size?.before?.bytes)} →{" "}
+                                        {fmtBytes(e().size?.after?.bytes)}
                                     </span>
                                 )}
                             </Show>
                         </div>
                         <div class="text-caption opacity-45">
-                            历史只按一条上限切：从最后一步往前累加装到上限的一半为止，保头 600 token 硬编码、切点 tool 配对平衡；
-                            边界只在压缩事件时算一次（之后每步只追加不重算）。
+                            历史只按一条上限切：从最后一步往前累加装到上限的一半为止，保头 600 token 硬编码、切点 tool
+                            配对平衡； 边界只在压缩事件时算一次（之后每步只追加不重算）。
                         </div>
                         <Show when={ctl.err()}>
                             <div class="text-caption text-error">{ctl.err()}</div>
@@ -883,9 +948,21 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                                 name="tool-render"
                                                 value={ctl.render()}
                                                 options={[
-                                                    { value: "asis", label: "原样", hint: "工具结果一字不改（最完整，也最占历史上限）" },
-                                                    { value: "headtail", label: "头尾裁剪", hint: "保留头几行 + 尾几行，中间省略；单行超长另按字符阈裁" },
-                                                    { value: "callpath", label: "只留调用", hint: "只留「调了什么」+ 原文落盘路径，不正文 —— 大输出最省" },
+                                                    {
+                                                        value: "asis",
+                                                        label: "原样",
+                                                        hint: "工具结果一字不改（最完整，也最占历史上限）",
+                                                    },
+                                                    {
+                                                        value: "headtail",
+                                                        label: "头尾裁剪",
+                                                        hint: "保留头几行 + 尾几行，中间省略；单行超长另按字符阈裁",
+                                                    },
+                                                    {
+                                                        value: "callpath",
+                                                        label: "只留调用",
+                                                        hint: "只留「调了什么」+ 原文落盘路径，不正文 —— 大输出最省",
+                                                    },
                                                 ]}
                                                 disabled={ctl.autoBusy()}
                                                 onChange={(v) => ctl.setRender(v)}
@@ -898,7 +975,10 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                             <For each={RENDER_DATA_FIELDS}>
                                                 {(f) => (
                                                     <div class="flex items-center gap-2">
-                                                        <span class="w-28 shrink-0 truncate font-mono opacity-70" title={f.hint}>
+                                                        <span
+                                                            class="w-28 shrink-0 truncate font-mono opacity-70"
+                                                            title={f.hint}
+                                                        >
                                                             {f.key}
                                                         </span>
                                                         <input
@@ -908,9 +988,15 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                                             min="0"
                                                             value={ctl.renderData()[f.key]}
                                                             disabled={ctl.autoBusy()}
-                                                            onChange={(e) => ctl.setRenderData({ [f.key]: Number(e.currentTarget.value) })}
+                                                            onChange={(e) =>
+                                                                ctl.setRenderData({
+                                                                    [f.key]: Number(e.currentTarget.value),
+                                                                })
+                                                            }
                                                         />
-                                                        <span class="truncate opacity-40" title={f.hint}>{f.hint}</span>
+                                                        <span class="truncate opacity-40" title={f.hint}>
+                                                            {f.hint}
+                                                        </span>
                                                     </div>
                                                 )}
                                             </For>
@@ -927,7 +1013,11 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                                         value={ctl.summaryEnabled() ? "on" : "off"}
                                         options={[
                                             { value: "off", label: "关", hint: "不额外计算历史摘要（缺省）" },
-                                            { value: "on", label: "开", hint: "额外算一份历史摘要（预留字段，当前未启用）" },
+                                            {
+                                                value: "on",
+                                                label: "开",
+                                                hint: "额外算一份历史摘要（预留字段，当前未启用）",
+                                            },
                                         ]}
                                         disabled={ctl.autoBusy()}
                                         onChange={(v) => ctl.setSummary(v === "on")}
@@ -953,7 +1043,8 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                     fallback={
                         <div class="p-6 flex flex-col gap-3 text-caption">
                             <div class="opacity-70">
-                                差异视图缺省关闭（##406）：大请求的 diff 计算与渲染曾把页面卡死。先保证页面能进，再按需开。
+                                差异视图缺省关闭（##406）：大请求的 diff
+                                计算与渲染曾把页面卡死。先保证页面能进，再按需开。
                             </div>
                             <button class="btn btn-xs btn-outline self-start" onClick={() => setDiffEnabled(true)}>
                                 计算并显示 diff（大会话可能要等数秒）
@@ -961,135 +1052,182 @@ export function CompactPanelContent(props: { ctl: CompactPanelCtl }) {
                         </div>
                     }
                 >
-                <div class="px-3 py-1.5 border-b flex items-center gap-3 shrink-0 text-caption">
-                    <div class="join">
-                        <button
-                            class={"btn btn-xs join-item " + (!sideBySide() ? "btn-active" : "btn-ghost")}
-                            onClick={() => setSideBySide(false)}
-                        >
-                            统一 diff
+                    <div class="px-3 py-1.5 border-b flex items-center gap-3 shrink-0 text-caption">
+                        <div class="join">
+                            <button
+                                class={"btn btn-xs join-item " + (!sideBySide() ? "btn-active" : "btn-ghost")}
+                                onClick={() => setSideBySide(false)}
+                            >
+                                统一 diff
+                            </button>
+                            <button
+                                class={"btn btn-xs join-item " + (sideBySide() ? "btn-active" : "btn-ghost")}
+                                onClick={() => setSideBySide(true)}
+                            >
+                                并排
+                            </button>
+                        </div>
+                        <label class="flex items-center gap-1 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                class="toggle toggle-xs"
+                                aria-label="只看差异"
+                                checked={onlyDiff()}
+                                onChange={(e) => setOnlyDiff(e.currentTarget.checked)}
+                            />
+                            只看差异
+                        </label>
+                        <button class="btn btn-ghost btn-xs" aria-label="逐级展开" onClick={nextLevel}>
+                            展开 {curLevel()}/{foldLevels()}
                         </button>
-                        <button
-                            class={"btn btn-xs join-item " + (sideBySide() ? "btn-active" : "btn-ghost")}
-                            onClick={() => setSideBySide(true)}
-                        >
-                            并排
-                        </button>
+                        {/* ##406：预览是有界的副本 —— 裁掉了多少必须说出来，否则「看不到」会被误当成「没有」 */}
+                        <Show when={clipStats().droppedChars > 0 || clipStats().droppedItems > 0}>
+                            <span
+                                class="badge badge-ghost badge-xs"
+                                title="长文本 / 大数组在预览里只留头尾（真发内容不受影响）。要看原文请到流量日志。"
+                            >
+                                预览已裁剪 {clipStats().droppedChars.toLocaleString()} 字符 /{" "}
+                                {clipStats().droppedItems.toLocaleString()} 项
+                            </span>
+                        </Show>
+                        <span class="opacity-50 ml-auto">请求结构 YAML（base vs mod）</span>
                     </div>
-                    <label class="flex items-center gap-1 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            class="toggle toggle-xs"
-                            aria-label="只看差异"
-                            checked={onlyDiff()}
-                            onChange={(e) => setOnlyDiff(e.currentTarget.checked)}
-                        />
-                        只看差异
-                    </label>
-                    <button class="btn btn-ghost btn-xs" aria-label="逐级展开" onClick={nextLevel}>
-                        展开 {curLevel()}/{foldLevels()}
-                    </button>
-                    {/* ##406：预览是有界的副本 —— 裁掉了多少必须说出来，否则「看不到」会被误当成「没有」 */}
-                    <Show when={clipStats().droppedChars > 0 || clipStats().droppedItems > 0}>
-                        <span
-                            class="badge badge-ghost badge-xs"
-                            title="长文本 / 大数组在预览里只留头尾（真发内容不受影响）。要看原文请到流量日志。"
-                        >
-                            预览已裁剪 {clipStats().droppedChars.toLocaleString()} 字符 / {clipStats().droppedItems.toLocaleString()} 项
-                        </span>
-                    </Show>
-                    <span class="opacity-50 ml-auto">请求结构 YAML（base vs mod）</span>
-                </div>
 
-                <div class="overflow-auto grow p-2 text-caption font-mono leading-[1.5]" data-compact-preview>
-                    <Show
-                        when={!sideBySide()}
-                        fallback={
-                            <table class="w-full border-collapse">
-                                <tbody>
-                                    <For each={renderRows()}>
-                                        {({ i, row }) => (
-                                            <tr
-                                                class={
-                                                    row.t === "add"
-                                                        ? "bg-success/10"
-                                                        : row.t === "del" || row.t === "change"
-                                                          ? "bg-error/10"
-                                                          : ""
-                                                }
-                                            >
-                                                <td class="align-top whitespace-pre-wrap break-all w-1/2 pr-2 border-r border-base-300">
-                                                    <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
-                                                    <span class={row.t === "del" || row.t === "change" ? "text-error" : ""}>
-                                                        {row.left ? INDENT.repeat(row.left.indent) + row.left.text : ""}
+                    <div class="overflow-auto grow p-2 text-caption font-mono leading-[1.5]" data-compact-preview>
+                        <Show
+                            when={!sideBySide()}
+                            fallback={
+                                <table class="w-full border-collapse">
+                                    <tbody>
+                                        <For each={renderRows()}>
+                                            {({ i, row }) => (
+                                                <tr
+                                                    class={
+                                                        row.t === "add"
+                                                            ? "bg-success/10"
+                                                            : row.t === "del" || row.t === "change"
+                                                              ? "bg-error/10"
+                                                              : ""
+                                                    }
+                                                >
+                                                    <td class="align-top whitespace-pre-wrap break-all w-1/2 pr-2 border-r border-base-300">
+                                                        <FoldToggle
+                                                            i={i}
+                                                            row={row}
+                                                            collapsed={collapsed().has(i)}
+                                                            changes={changes().get(i)}
+                                                            onToggle={toggleFold}
+                                                        />
+                                                        <span
+                                                            class={
+                                                                row.t === "del" || row.t === "change"
+                                                                    ? "text-error"
+                                                                    : ""
+                                                            }
+                                                        >
+                                                            {row.left
+                                                                ? INDENT.repeat(row.left.indent) + row.left.text
+                                                                : ""}
+                                                        </span>
+                                                        <ChangeMark
+                                                            collapsed={collapsed().has(i)}
+                                                            changes={changes().get(i)}
+                                                        />
+                                                    </td>
+                                                    <td class="align-top whitespace-pre-wrap break-all pl-2">
+                                                        <span
+                                                            class={
+                                                                row.t === "add" || row.t === "change"
+                                                                    ? "text-success"
+                                                                    : ""
+                                                            }
+                                                        >
+                                                            {row.right
+                                                                ? INDENT.repeat(row.right.indent) + row.right.text
+                                                                : ""}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </For>
+                                    </tbody>
+                                </table>
+                            }
+                        >
+                            <For each={renderRows()}>
+                                {({ i, row }) => (
+                                    <Show
+                                        when={row.t !== "change"}
+                                        fallback={
+                                            <>
+                                                <div data-diff="del" class="bg-error/10 text-error">
+                                                    <FoldToggle
+                                                        i={i}
+                                                        row={row}
+                                                        collapsed={collapsed().has(i)}
+                                                        changes={changes().get(i)}
+                                                        onToggle={toggleFold}
+                                                    />
+                                                    <span class="opacity-40 select-none">- </span>
+                                                    <span class="whitespace-pre-wrap break-all">
+                                                        {INDENT.repeat(row.left?.indent ?? row.indent) +
+                                                            (row.left?.text ?? "")}
                                                     </span>
-                                                    <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
-                                                </td>
-                                                <td class="align-top whitespace-pre-wrap break-all pl-2">
-                                                    <span class={row.t === "add" || row.t === "change" ? "text-success" : ""}>
-                                                        {row.right ? INDENT.repeat(row.right.indent) + row.right.text : ""}
+                                                    <ChangeMark
+                                                        collapsed={collapsed().has(i)}
+                                                        changes={changes().get(i)}
+                                                    />
+                                                </div>
+                                                <div data-diff="add" class="bg-success/10 text-success">
+                                                    <span class="inline-block w-3" />
+                                                    <span class="opacity-40 select-none">+ </span>
+                                                    <span class="whitespace-pre-wrap break-all">
+                                                        {INDENT.repeat(row.right?.indent ?? row.indent) +
+                                                            (row.right?.text ?? "")}
                                                     </span>
-                                                </td>
-                                            </tr>
-                                        )}
-                                    </For>
-                                </tbody>
-                            </table>
-                        }
-                    >
-                        <For each={renderRows()}>
-                            {({ i, row }) => (
-                                <Show
-                                    when={row.t !== "change"}
-                                    fallback={
-                                        <>
-                                            <div data-diff="del" class="bg-error/10 text-error">
-                                                <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
-                                                <span class="opacity-40 select-none">- </span>
-                                                <span class="whitespace-pre-wrap break-all">
-                                                    {INDENT.repeat(row.left?.indent ?? row.indent) + (row.left?.text ?? "")}
-                                                </span>
-                                                <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
-                                            </div>
-                                            <div data-diff="add" class="bg-success/10 text-success">
-                                                <span class="inline-block w-3" />
-                                                <span class="opacity-40 select-none">+ </span>
-                                                <span class="whitespace-pre-wrap break-all">
-                                                    {INDENT.repeat(row.right?.indent ?? row.indent) + (row.right?.text ?? "")}
-                                                </span>
-                                            </div>
-                                        </>
-                                    }
-                                >
-                                    <div
-                                        data-diff={row.t}
-                                        class={
-                                            row.t === "add"
-                                                ? "bg-success/10 text-success"
-                                                : row.t === "del"
-                                                  ? "bg-error/10 text-error"
-                                                  : ""
+                                                </div>
+                                            </>
                                         }
                                     >
-                                        <FoldToggle i={i} row={row} collapsed={collapsed().has(i)} changes={changes().get(i)} onToggle={toggleFold} />
-                                        <span class="opacity-40 select-none">{row.t === "add" ? "+" : row.t === "del" ? "-" : " "} </span>
-                                        <span class="whitespace-pre-wrap break-all">
-                                            {INDENT.repeat(row.indent) + (row.right?.text ?? row.left?.text ?? "")}
-                                        </span>
-                                        <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
-                                    </div>
-                                </Show>
-                            )}
-                        </For>
-                    </Show>
-                    <Show when={renderRows().length === 0}>
-                        {/* 预览现算（##321 懒算后 = 打开抽屉那一刻）⇒ 大会话要等数秒：把"在算"
+                                        <div
+                                            data-diff={row.t}
+                                            class={
+                                                row.t === "add"
+                                                    ? "bg-success/10 text-success"
+                                                    : row.t === "del"
+                                                      ? "bg-error/10 text-error"
+                                                      : ""
+                                            }
+                                        >
+                                            <FoldToggle
+                                                i={i}
+                                                row={row}
+                                                collapsed={collapsed().has(i)}
+                                                changes={changes().get(i)}
+                                                onToggle={toggleFold}
+                                            />
+                                            <span class="opacity-40 select-none">
+                                                {row.t === "add" ? "+" : row.t === "del" ? "-" : " "}{" "}
+                                            </span>
+                                            <span class="whitespace-pre-wrap break-all">
+                                                {INDENT.repeat(row.indent) + (row.right?.text ?? row.left?.text ?? "")}
+                                            </span>
+                                            <ChangeMark collapsed={collapsed().has(i)} changes={changes().get(i)} />
+                                        </div>
+                                    </Show>
+                                )}
+                            </For>
+                        </Show>
+                        <Show when={renderRows().length === 0}>
+                            {/* 预览现算（##321 懒算后 = 打开抽屉那一刻）⇒ 大会话要等数秒：把"在算"
                             与"确实没差异"分开说，否则用户看到的是"无差异"这个**假结论**。 */}
-                        <div class="p-4 opacity-60">
-                            {ctl.pvLoading() ? "正在计算预览…（大会话首次需要数秒）" : "无差异（当前参数与生效请求一致）"}
-                        </div>
-                    </Show>
-                </div>
+                            <div class="p-4 opacity-60">
+                                {ctl.pvLoading()
+                                    ? "正在计算预览…（大会话首次需要数秒）"
+                                    : "无差异（当前参数与生效请求一致）"}
+                            </div>
+                        </Show>
+                    </div>
                 </Show>
             </div>
         </div>
@@ -1129,19 +1267,14 @@ function ChangeMark(props: { collapsed: boolean; changes?: { add: number; del: n
     const show = () => props.collapsed && hasOwnChange(c);
     return (
         <Show when={show()}>
-            <span
-                class="ml-2 text-warning select-none"
-                title={`内含变更：删 ${c!.del} / 增 ${c!.add} 行（展开查看）`}
-            >
-                ●{" "}
-                {c!.del > 0 ? `-${c!.del}` : ""}
+            <span class="ml-2 text-warning select-none" title={`内含变更：删 ${c!.del} / 增 ${c!.add} 行（展开查看）`}>
+                ● {c!.del > 0 ? `-${c!.del}` : ""}
                 {c!.del > 0 && c!.add > 0 ? " " : ""}
                 {c!.add > 0 ? `+${c!.add}` : ""}
             </span>
         </Show>
     );
 }
-
 
 // ─── 压缩历史（事件快照列表 + 撤销）────────────────
 //
@@ -1214,7 +1347,9 @@ export function CompactHistoryPanel(props: { uri: string; onClose: () => void })
                 if (e.target === e.currentTarget) props.onClose();
             }}
         >
-            <div class={`bg-base-100 rounded-xl w-full flex flex-col ${maximized() ? "max-w-[96vw] h-[92vh]" : "max-w-3xl max-h-[90vh]"}`}>
+            <div
+                class={`bg-base-100 rounded-xl w-full flex flex-col ${maximized() ? "max-w-[96vw] h-[92vh]" : "max-w-3xl max-h-[90vh]"}`}
+            >
                 <div class="px-4 py-3 border-b flex items-center justify-between">
                     <div class="font-bold text-title">压缩历史（{rows().length} 次快照）</div>
                     <div class="flex items-center gap-1">
@@ -1229,17 +1364,16 @@ export function CompactHistoryPanel(props: { uri: string; onClose: () => void })
                     **不回改**这些快照；回溯看的就是当时这一次。
                 </div>
                 <div class="overflow-auto grow">
-                    <Show
-                        when={rows().length > 0}
-                        fallback={<div class="p-6 opacity-60">还没有压缩记录。</div>}
-                    >
+                    <Show when={rows().length > 0} fallback={<div class="p-6 opacity-60">还没有压缩记录。</div>}>
                         {/* ##443 刀 3：压缩历史不再是「第五张表」—— 逐条列成行内清单
                             （主入口已是用量表的 step 行「压缩」标记；这里保留审计视图）。 */}
                         <div class="px-4 py-1" data-compact-history>
                             <For each={rows()}>
                                 {(e) => (
                                     <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-b border-base-200 py-1.5 text-caption">
-                                        <span class="w-36 shrink-0 opacity-70">{e.ts ? new Date(e.ts).toLocaleString() : "—"}</span>
+                                        <span class="w-36 shrink-0 opacity-70">
+                                            {e.ts ? new Date(e.ts).toLocaleString() : "—"}
+                                        </span>
                                         <span class="badge badge-ghost badge-xs">{algoName(e.policy?.mode)}</span>
                                         <span class="tabular-nums" title="轮次：压缩前 → 压缩后">
                                             轮 {e.size?.before?.turns ?? "?"} → {e.size?.after?.turns ?? "?"}

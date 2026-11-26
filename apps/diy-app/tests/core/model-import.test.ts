@@ -112,9 +112,7 @@ describe("scanEnv（候选 + 扫描面）", () => {
 
     it("命中：candidates 与 scanEnvCandidates 一致（同一份逻辑的两个出口）", () => {
         const r = scanEnv(home, ENV);
-        expect(r.candidates.map((c) => c.provider)).toEqual(
-            scanEnvCandidates(home, ENV).map((c) => c.provider),
-        );
+        expect(r.candidates.map((c) => c.provider)).toEqual(scanEnvCandidates(home, ENV).map((c) => c.provider));
         expect(r.candidates.some((c) => c.status === "importable")).toBe(true);
     });
 

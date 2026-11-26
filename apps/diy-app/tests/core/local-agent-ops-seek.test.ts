@@ -63,7 +63,9 @@ function snapshot(store: BlockStore) {
             children: [...b.children],
             stopped: b.stopped,
             fields: Object.fromEntries(
-                Object.entries(b).filter(([k]) => !STRUCT.has(k)).sort(([a], [c]) => (a < c ? -1 : a > c ? 1 : 0)),
+                Object.entries(b)
+                    .filter(([k]) => !STRUCT.has(k))
+                    .sort(([a], [c]) => (a < c ? -1 : a > c ? 1 : 0)),
             ),
         }))
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -108,7 +110,10 @@ beforeAll(() => {
 });
 
 /** 每个用例一个全新任务（块树缓存 / 会话缓存不互相污染） */
-function newTask(opsText: string, ledger?: (ctx: { from: number; llmLine: number; size: number }) => unknown[]): string {
+function newTask(
+    opsText: string,
+    ledger?: (ctx: { from: number; llmLine: number; size: number }) => unknown[],
+): string {
     const uri = createTask({ title: `ops seek ${uris.length + 1}`, project });
     uris.push(uri);
     const fp = opsFile(uri);
@@ -116,8 +121,16 @@ function newTask(opsText: string, ledger?: (ctx: { from: number; llmLine: number
     writeFileSync(fp, opsText, "utf-8");
     // llm.jsonl：按「每轮 2 条」落一份全量（对账 / 行号口径的真身）
     const llm = Array.from({ length: TURNS }, (_, k) => [
-        JSON.stringify({ role: "user", content: `第 ${k + 1} 问（中文会跨字节）`, turn: `t${String(k + 1).padStart(4, "0")}` }),
-        JSON.stringify({ role: "assistant", content: `第 ${k + 1} 答：好的`, turn: `t${String(k + 1).padStart(4, "0")}` }),
+        JSON.stringify({
+            role: "user",
+            content: `第 ${k + 1} 问（中文会跨字节）`,
+            turn: `t${String(k + 1).padStart(4, "0")}`,
+        }),
+        JSON.stringify({
+            role: "assistant",
+            content: `第 ${k + 1} 答：好的`,
+            turn: `t${String(k + 1).padStart(4, "0")}`,
+        }),
     ])
         .flat()
         .join("\n");
@@ -152,7 +165,12 @@ function compactEvent(ctx: { from: number; llmLine: number; size: number }, over
             keptFromLlmLine: ctx.llmLine,
             opsBytes: ctx.size,
         },
-        size: { before: { turns: 6, messages: 12, bytes: 1, estTokens: 1 }, after: { turns: 3, messages: 6, bytes: 1, estTokens: 1 }, keptTurns: 3, droppedTurns: 3 },
+        size: {
+            before: { turns: 6, messages: 12, bytes: 1, estTokens: 1 },
+            after: { turns: 3, messages: 6, bytes: 1, estTokens: 1 },
+            keptTurns: 3,
+            droppedTurns: 3,
+        },
         ...over,
     };
 }
@@ -174,7 +192,9 @@ describe("resolveOpsReplay：起点判定", () => {
     });
 
     it("旧账缺 keptFromLlmLine ⇒ 退全量（行号没法换算就不跳）", () => {
-        const uri = newTask(CANON, (ctx) => [compactEvent(ctx, { boundary: { ...compactEvent(ctx).boundary, keptFromLlmLine: undefined } })]);
+        const uri = newTask(CANON, (ctx) => [
+            compactEvent(ctx, { boundary: { ...compactEvent(ctx).boundary, keptFromLlmLine: undefined } }),
+        ]);
         expect(resolveOpsReplay(uri)).toMatchObject({ from: 0, lineBase: 0, kind: "full" });
     });
 
@@ -196,7 +216,9 @@ describe("resolveOpsReplay：起点判定", () => {
     });
 
     it("文件比压缩时还短 ⇒ 也只断代，**不回退从 0 读**", () => {
-        const uri = newTask(CANON, (ctx) => [compactEvent(ctx, { boundary: { ...compactEvent(ctx).boundary, opsBytes: ctx.size + 4096 } })]);
+        const uri = newTask(CANON, (ctx) => [
+            compactEvent(ctx, { boundary: { ...compactEvent(ctx).boundary, opsBytes: ctx.size + 4096 } }),
+        ]);
         const r = resolveOpsReplay(uri);
         expect(r.kind).toBe("truncated");
         expect(r.from).toBe(statSync(opsFile(uri)).size);

@@ -12,7 +12,7 @@
 /** 四角向外 —— 语义：最大化 / 展开 */
 export function IconExpand(props: { class?: string }) {
     return (
-        <svg class={`fill-current ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
+        <svg class={`fill-current ${props.class ?? ''}`} viewBox="0 0 24 24" aria-hidden="true">
             <path
                 fill-rule="evenodd"
                 clip-rule="evenodd"
@@ -25,7 +25,7 @@ export function IconExpand(props: { class?: string }) {
 /** 四角向内 —— 语义：还原（从最大化回到网格） */
 export function IconCompress(props: { class?: string }) {
     return (
-        <svg class={`fill-current ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
+        <svg class={`fill-current ${props.class ?? ''}`} viewBox="0 0 24 24" aria-hidden="true">
             <path
                 fill-rule="evenodd"
                 clip-rule="evenodd"
@@ -43,7 +43,7 @@ export function IconCompress(props: { class?: string }) {
 export function IconCollapse(props: { class?: string }) {
     return (
         <svg
-            class={`fill-none stroke-current ${props.class ?? ""}`}
+            class={`fill-none stroke-current ${props.class ?? ''}`}
             viewBox="0 0 24 24"
             stroke-width="1.6"
             aria-hidden="true"
@@ -60,7 +60,7 @@ export function IconCollapse(props: { class?: string }) {
  */
 export function IconTrash(props: { class?: string }) {
     return (
-        <svg class={`fill-current ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
+        <svg class={`fill-current ${props.class ?? ''}`} viewBox="0 0 24 24" aria-hidden="true">
             <path
                 fill-rule="evenodd"
                 clip-rule="evenodd"
@@ -78,7 +78,7 @@ export function IconTrash(props: { class?: string }) {
  */
 export function IconGrip(props: { class?: string }) {
     return (
-        <svg class={`fill-current ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
+        <svg class={`fill-current ${props.class ?? ''}`} viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="9" cy="6" r="1.5" />
             <circle cx="15" cy="6" r="1.5" />
             <circle cx="9" cy="12" r="1.5" />
@@ -98,7 +98,7 @@ export function IconGrip(props: { class?: string }) {
 export function IconClock(props: { class?: string }) {
     return (
         <svg
-            class={`fill-none stroke-current ${props.class ?? ""}`}
+            class={`fill-none stroke-current ${props.class ?? ''}`}
             viewBox="0 0 24 24"
             stroke-width="2"
             stroke-linecap="round"
@@ -114,7 +114,7 @@ export function IconClock(props: { class?: string }) {
 /** 闪电 —— 语义：立刻插话（加急到下一步）。实心画法，比描边箭头在小尺寸下更醒目。 */
 export function IconBolt(props: { class?: string }) {
     return (
-        <svg class={`fill-current ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
+        <svg class={`fill-current ${props.class ?? ''}`} viewBox="0 0 24 24" aria-hidden="true">
             <path d="M13.5 2 4.8 13.2h5.4L9.9 22l9-11.4h-5.6L13.5 2Z" />
         </svg>
     );
@@ -140,7 +140,7 @@ export function IconBolt(props: { class?: string }) {
  */
 export function IconDot(props: { class?: string }) {
     return (
-        <svg class={`shrink-0 fill-current ${props.class ?? ""}`} viewBox="0 0 24 24" aria-hidden="true">
+        <svg class={`shrink-0 fill-current ${props.class ?? ''}`} viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r="2.5" />
         </svg>
     );
@@ -154,7 +154,7 @@ export function IconDot(props: { class?: string }) {
 export function IconCode(props: { class?: string }) {
     return (
         <svg
-            class={`fill-none stroke-current ${props.class ?? ""}`}
+            class={`fill-none stroke-current ${props.class ?? ''}`}
             viewBox="0 0 24 24"
             stroke-width="1.9"
             stroke-linecap="round"
@@ -180,7 +180,7 @@ export function IconCode(props: { class?: string }) {
 export function IconChevron(props: { open: boolean; class?: string }) {
     return (
         <svg
-            class={`shrink-0 transition-transform duration-150 ${props.open ? "" : "-rotate-90"} ${props.class ?? ""}`}
+            class={`shrink-0 transition-transform duration-150 ${props.open ? '' : '-rotate-90'} ${props.class ?? ''}`}
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"

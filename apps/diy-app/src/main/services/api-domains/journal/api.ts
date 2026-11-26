@@ -19,17 +19,13 @@ export const journalRoutes = RpcSchema.group({
         add: RpcSchema.unary({
             desc: `追加一条日志（只追加、不改不删；title 一行必填 —— 标题写不出多半是该拆）`,
             input: {
-                task: z
-                    .string()
-                    .cliArg({
-                        placeholder: "<projects/N/tasks/M>",
-                        desc: "任务 URI（**必填，不做「当前任务」推导**）",
-                    }),
-                kind: z
-                    .enum(["decision", "pitfall", "review", "progress", "learn"])
-                    .cliOption({
-                        desc: "kind：decision 决策 / pitfall 踩坑 / review 结论 / progress 里程碑 / learn 发现（**传英文值**，中文只是说明）",
-                    }),
+                task: z.string().cliArg({
+                    placeholder: "<projects/N/tasks/M>",
+                    desc: "任务 URI（**必填，不做「当前任务」推导**）",
+                }),
+                kind: z.enum(["decision", "pitfall", "review", "progress", "learn"]).cliOption({
+                    desc: "kind：decision 决策 / pitfall 踩坑 / review 结论 / progress 里程碑 / learn 发现（**传英文值**，中文只是说明）",
+                }),
                 title: z.string().cliOption({ placeholder: "<text>", desc: "一行标题（标题写不出 = 这条该拆）" }),
                 body: z
                     .string()
@@ -47,13 +43,10 @@ export const journalRoutes = RpcSchema.group({
                     .string()
                     .optional()
                     .cliOption({ readFile: true, placeholder: "<file|->", desc: "可选正文来自文件（- = stdin）" }),
-                refs: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        placeholder: "<a,b>",
-                        desc: "引用：commit / 任务 uri / 事实 gid / 路径:行（逗号分隔）",
-                    }),
+                refs: z.string().optional().cliOption({
+                    placeholder: "<a,b>",
+                    desc: "引用：commit / 任务 uri / 事实 gid / 路径:行（逗号分隔）",
+                }),
                 round: z.string().optional().cliOption({ desc: "会话轮次 id（可选）" }),
                 author: z.string().optional().cliOption({
                     placeholder: "<role[:name]>",
@@ -104,7 +97,6 @@ export const journalRoutes = RpcSchema.group({
         }),
     },
 });
-
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

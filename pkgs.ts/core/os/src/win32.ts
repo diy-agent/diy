@@ -12,18 +12,13 @@
 //   · Git Bash（MSYS）会丢掉 Node 传入的文件句柄 → 后台 run 必须让 shell 自己重定向日志
 //     （`shellRedirectsLog: true`）。
 
-import { execFile, execFileSync, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { formatEtime } from "./duration.js";
-import { aggregateTree } from "./tree.js";
-import { selectOwnedProcs } from "./proc-scan.js";
-import { registeredLive } from "./live.js";
-import type {
-    GpuInfo,
-    OsStrategy,
-    ProcessRow,
-    ShellSpec,
-} from "./types.js";
+import { execFile, execFileSync, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { formatEtime } from './duration.js';
+import { aggregateTree } from './tree.js';
+import { selectOwnedProcs } from './proc-scan.js';
+import { registeredLive } from './live.js';
+import type { GpuInfo, OsStrategy, ProcessRow, ShellSpec } from './types.js';
 
 /** 注入点：单测喂固定 JSON 夹具 / 假 shell 探测，不真跑 PowerShell。 */
 export interface Win32Deps {
@@ -38,17 +33,17 @@ export interface Win32Deps {
     now(): number;
 }
 
-const PS = "powershell.exe";
-const PS_FLAGS = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"];
+const PS = 'powershell.exe';
+const PS_FLAGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command'];
 
 /** PowerShell 脚本前置：强制 UTF-8 输出（否则中文路径在重定向时会按 OEM 码页乱码）。 */
-const PS_UTF8 = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$OutputEncoding=[System.Text.Encoding]::UTF8;";
+const PS_UTF8 = '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$OutputEncoding=[System.Text.Encoding]::UTF8;';
 
 const SNAPSHOT_SCRIPT =
     PS_UTF8 +
-    "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Select-Object " +
-    "ProcessId,ParentProcessId,CommandLine,CreationDate,WorkingSetSize,KernelModeTime,UserModeTime | " +
-    "ConvertTo-Json -Compress -Depth 2";
+    'Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Select-Object ' +
+    'ProcessId,ParentProcessId,CommandLine,CreationDate,WorkingSetSize,KernelModeTime,UserModeTime | ' +
+    'ConvertTo-Json -Compress -Depth 2';
 
 /**
  * WMIC 的列（`/format:list`）。为什么优先用它：PowerShell 冷启动约 2.6s，
@@ -56,10 +51,10 @@ const SNAPSHOT_SCRIPT =
  * WMIC 在新版 Windows 上已被移除，所以**跑空就回退 PowerShell**（见 snapshotSync）。
  */
 const WMIC_ARGS = [
-    "process",
-    "get",
-    "ProcessId,ParentProcessId,CommandLine,CreationDate,WorkingSetSize,KernelModeTime,UserModeTime",
-    "/format:list",
+    'process',
+    'get',
+    'ProcessId,ParentProcessId,CommandLine,CreationDate,WorkingSetSize,KernelModeTime,UserModeTime',
+    '/format:list',
 ] as const;
 
 /** 同步快照缓存窗口：父链要连查 4 跳，4 次各跑一遍系统命令会把启动拖慢一个数量级。 */
@@ -72,14 +67,14 @@ function defaultWin32Deps(env: NodeJS.ProcessEnv = process.env, now: () => numbe
         runSync(cmd, args, timeoutMs = 5000) {
             try {
                 return execFileSync(cmd, args as string[], {
-                    encoding: "utf-8",
+                    encoding: 'utf-8',
                     timeout: timeoutMs,
-                    stdio: ["ignore", "pipe", "ignore"],
+                    stdio: ['ignore', 'pipe', 'ignore'],
                     maxBuffer: 32 * 1024 * 1024,
                     windowsHide: true,
                 });
             } catch {
-                return "";
+                return '';
             }
         },
         run(cmd, args, timeoutMs = 5000) {
@@ -87,8 +82,8 @@ function defaultWin32Deps(env: NodeJS.ProcessEnv = process.env, now: () => numbe
                 execFile(
                     cmd,
                     args as string[],
-                    { encoding: "utf8", timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, windowsHide: true },
-                    (err, stdout) => resolve(err ? "" : (stdout ?? "")),
+                    { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, windowsHide: true },
+                    (err, stdout) => resolve(err ? '' : (stdout ?? '')),
                 );
             });
         },
@@ -96,7 +91,7 @@ function defaultWin32Deps(env: NodeJS.ProcessEnv = process.env, now: () => numbe
             try {
                 execFileSync(cmd, args as string[], {
                     timeout: timeoutMs,
-                    stdio: ["ignore", "pipe", "ignore"],
+                    stdio: ['ignore', 'pipe', 'ignore'],
                     windowsHide: true,
                 });
                 return true;
@@ -106,8 +101,8 @@ function defaultWin32Deps(env: NodeJS.ProcessEnv = process.env, now: () => numbe
         },
         spawnDetached(cmd, args) {
             try {
-                const child = spawn(cmd, args as string[], { stdio: "ignore", windowsHide: true });
-                child.on("error", () => {});
+                const child = spawn(cmd, args as string[], { stdio: 'ignore', windowsHide: true });
+                child.on('error', () => {});
                 child.unref();
                 return true;
             } catch {
@@ -138,11 +133,11 @@ function parseDmtf(raw: string): number | null {
 /** wmic 的 `/format:list` 会把命令行里的 XML 元字符转义；还原后再交给上层匹配。 */
 function decodeWmic(text: string): string {
     return text
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"')
         .replace(/&apos;/g, "'")
-        .replace(/&amp;/g, "&");
+        .replace(/&amp;/g, '&');
 }
 
 /**
@@ -155,22 +150,22 @@ export function parseWmicRows(stdout: string, now: number = Date.now()): Process
     const out: ProcessRow[] = [];
     let cur: Record<string, string> = {};
     const flush = (): void => {
-        const pid = Number(cur["ProcessId"]);
+        const pid = Number(cur['ProcessId']);
         if (Number.isInteger(pid) && pid > 0) {
-            const created = cur["CreationDate"] ? parseDmtf(cur["CreationDate"]) : null;
+            const created = cur['CreationDate'] ? parseDmtf(cur['CreationDate']) : null;
             const elapsed = created === null ? null : Math.max(0, now - created);
-            const cpu100ns = Number(cur["KernelModeTime"] ?? 0) + Number(cur["UserModeTime"] ?? 0);
+            const cpu100ns = Number(cur['KernelModeTime'] ?? 0) + Number(cur['UserModeTime'] ?? 0);
             const cpu =
                 elapsed !== null && elapsed > 0 && Number.isFinite(cpu100ns)
                     ? Math.round((cpu100ns / 1e7 / (elapsed / 1000)) * 1000) / 10
                     : null;
-            const rss = Number(cur["WorkingSetSize"]);
+            const rss = Number(cur['WorkingSetSize']);
             out.push({
                 pid,
-                ppid: Number(cur["ParentProcessId"]) || 0,
+                ppid: Number(cur['ParentProcessId']) || 0,
                 pgid: null, // Windows 没有进程组（R4：cap 与数据形状一致）
-                command: decodeWmic(cur["CommandLine"] ?? "").trim(),
-                etimeText: elapsed === null ? "" : formatEtime(elapsed),
+                command: decodeWmic(cur['CommandLine'] ?? '').trim(),
+                etimeText: elapsed === null ? '' : formatEtime(elapsed),
                 pcpu: cpu,
                 rssKb: Number.isFinite(rss) && rss > 0 ? Math.floor(rss / 1024) : null,
                 createdAt: created,
@@ -179,11 +174,11 @@ export function parseWmicRows(stdout: string, now: number = Date.now()): Process
         cur = {};
     };
     for (const line of stdout.split(/\r?\n/)) {
-        if (line.trim() === "") {
+        if (line.trim() === '') {
             flush();
             continue;
         }
-        const eq = line.indexOf("=");
+        const eq = line.indexOf('=');
         if (eq <= 0) continue;
         cur[line.slice(0, eq).trim()] = line.slice(eq + 1);
     }
@@ -207,8 +202,8 @@ interface CimRow {
 
 /** `/Date(1234567890+0800)/` / ISO 字符串 / 数字 → ms。认不出 = null。 */
 function createdAtOf(raw: unknown): number | null {
-    if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
-    if (typeof raw !== "string" || !raw) return null;
+    if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+    if (typeof raw !== 'string' || !raw) return null;
     const ms = /\/Date\((-?\d+)([+-]\d+)?\)\//.exec(raw);
     if (ms) return Number(ms[1]);
     const t = Date.parse(raw);
@@ -227,7 +222,7 @@ export function parseCimRows(stdout: string, now: number = Date.now()): ProcessR
     const list = Array.isArray(parsed) ? parsed : [parsed];
     const out: ProcessRow[] = [];
     for (const item of list) {
-        if (!item || typeof item !== "object") continue;
+        if (!item || typeof item !== 'object') continue;
         const r = item as CimRow;
         const pid = Number(r.ProcessId);
         if (!Number.isInteger(pid) || pid <= 0) continue;
@@ -244,8 +239,8 @@ export function parseCimRows(stdout: string, now: number = Date.now()): ProcessR
             ppid: Number(r.ParentProcessId) || 0,
             // Windows 没有进程组：null 而不是拿 pid 冒充（R4）
             pgid: null,
-            command: (r.CommandLine ?? "").trim(),
-            etimeText: elapsed === null ? "" : formatEtime(elapsed),
+            command: (r.CommandLine ?? '').trim(),
+            etimeText: elapsed === null ? '' : formatEtime(elapsed),
             pcpu: cpu,
             rssKb: Number.isFinite(rss) && rss > 0 ? Math.floor(rss / 1024) : null,
             createdAt: created,
@@ -261,7 +256,7 @@ export function parseCimRows(stdout: string, now: number = Date.now()): ProcessR
  * 候选顺序（R6/R7）：`DIY_SHELL` → Git Bash 已知位置 → `pwsh.exe` → `powershell.exe`；
  * **bash 缺席不是错误** —— 有 pwsh 就够用；两者都有时都返回（工具面并存）。
  */
-import { discoverShellSpecs, pwshCandidates, winShellCandidates } from "@diy-agent/tools";
+import { discoverShellSpecs, pwshCandidates, winShellCandidates } from '@diy-agent/tools';
 export { discoverShellSpecs, pwshCandidates, winShellCandidates as shellCandidates };
 
 /** 「这是观测工具自己」：两种取数方式（wmic 优先 / CIM 回退）各自会出现在自己的快照里。 */
@@ -276,7 +271,7 @@ export function createWin32Os(deps: Win32Deps = defaultWin32Deps()): OsStrategy 
         const now = deps.now();
         // 同步路径的预算是硬约束：主进程等「看不见」远好过等 4s。wmic 正常 0.3s，
         // 24H2 起 wmic 被移除时 CIM 冷启动可到 4s —— 常量 2s 到点就放弃（返回 null，见 R9）。
-        const wmic = parseWmicRows(deps.runSync("wmic", WMIC_ARGS, SYNC_TIMEOUT_MS), now);
+        const wmic = parseWmicRows(deps.runSync('wmic', WMIC_ARGS, SYNC_TIMEOUT_MS), now);
         if (wmic.length > 0) return wmic;
         const cim = parseCimRows(deps.runSync(PS, [...PS_FLAGS, SNAPSHOT_SCRIPT], SYNC_TIMEOUT_MS), now);
         return cim.length > 0 ? cim : null;
@@ -296,14 +291,14 @@ export function createWin32Os(deps: Win32Deps = defaultWin32Deps()): OsStrategy 
     let inflight: Promise<ProcessRow[] | null> | undefined;
     const readSnapshotAsync = async (): Promise<ProcessRow[] | null> => {
         const at = deps.now();
-        const wmic = parseWmicRows(await deps.run("wmic", WMIC_ARGS, 4_000), at);
+        const wmic = parseWmicRows(await deps.run('wmic', WMIC_ARGS, 4_000), at);
         if (wmic.length > 0) return wmic;
         const cim = parseCimRows(await deps.run(PS, [...PS_FLAGS, SNAPSHOT_SCRIPT], 8_000), at);
         return cim.length > 0 ? cim : null;
     };
 
     return {
-        kind: "windows",
+        kind: 'windows',
         caps: {
             processGroups: false,
             processEnvironments: false,
@@ -312,9 +307,9 @@ export function createWin32Os(deps: Win32Deps = defaultWin32Deps()): OsStrategy 
             focusProcess: false,
             keepRunningOnWindowClose: false,
             shellRedirectsLog: true,
-            runLifetime: "root",
+            runLifetime: 'root',
             gracefulSignals: false,
-            orphanRecovery: "lineage",
+            orphanRecovery: 'lineage',
         },
 
         resolveShells(): ShellSpec[] {
@@ -332,7 +327,7 @@ export function createWin32Os(deps: Win32Deps = defaultWin32Deps()): OsStrategy 
             // Windows 没有可捕获的终止信号：一次 taskkill /T /F；已回收的 pid 不发（R3/R5）。
             for (const t of targets) {
                 if (!pidAlive(t.pid)) continue;
-                deps.spawnDetached("taskkill", ["/pid", String(t.pid), "/T", "/F"]);
+                deps.spawnDetached('taskkill', ['/pid', String(t.pid), '/T', '/F']);
             }
         },
 
@@ -343,10 +338,10 @@ export function createWin32Os(deps: Win32Deps = defaultWin32Deps()): OsStrategy 
 
         facts() {
             return [
-                "Windows：后台作业寿命跟根进程；根退出后，子孙可能先报完成（另开任务做 Job Object 等价）",
-                "Windows：结束进程走异步 taskkill，回执只代表「结束请求已发出」",
-                "Windows：没有 Git Bash 时使用 pwsh 工具（PowerShell 语法，不是 bash）",
-                "Windows：不采集 TCP 连接（进程健康判据少一项连接证据）",
+                'Windows：后台作业寿命跟根进程；根退出后，子孙可能先报完成（另开任务做 Job Object 等价）',
+                'Windows：结束进程走异步 taskkill，回执只代表「结束请求已发出」',
+                'Windows：没有 Git Bash 时使用 pwsh 工具（PowerShell 语法，不是 bash）',
+                'Windows：不采集 TCP 连接（进程健康判据少一项连接证据）',
             ];
         },
 
@@ -395,7 +390,7 @@ export function createWin32Os(deps: Win32Deps = defaultWin32Deps()): OsStrategy 
         },
 
         gpu(): GpuInfo {
-            return { metalFamily: 99, gpuName: "unknown", shouldUseAngle: false };
+            return { metalFamily: 99, gpuName: 'unknown', shouldUseAngle: false };
         },
 
         focusProcess() {
@@ -410,6 +405,6 @@ function pidAlive(pid: number): boolean {
         process.kill(pid, 0);
         return true;
     } catch (e) {
-        return (e as NodeJS.ErrnoException).code === "EPERM";
+        return (e as NodeJS.ErrnoException).code === 'EPERM';
     }
 }

@@ -23,7 +23,11 @@ import { threadIdOfVisit } from "../../src/renderer_solid/lib/flow-model";
 function freshTask(name: string): string {
     const uri = `projects/9/tasks/${name}`;
     mkdirSync(join(process.env["DIY_HOME"]!, uri), { recursive: true });
-    writeFileSync(join(process.env["DIY_HOME"]!, uri, "AGENTS.md"), `---\ntitle: ${name}\nstate: pending\n---\n`, "utf-8");
+    writeFileSync(
+        join(process.env["DIY_HOME"]!, uri, "AGENTS.md"),
+        `---\ntitle: ${name}\nstate: pending\n---\n`,
+        "utf-8",
+    );
     return uri;
 }
 
@@ -144,7 +148,9 @@ describe("写闸门（##342 不造数据）", () => {
         const v = showFlow(uri);
         expect(v.position).toBe("implement");
         expect(v.trajectory).toHaveLength(5);
-        expect(readFileSync(join(process.env["DIY_HOME"]!, uri, "flow", "path.jsonl"), "utf-8")).not.toContain("已解决");
+        expect(readFileSync(join(process.env["DIY_HOME"]!, uri, "flow", "path.jsonl"), "utf-8")).not.toContain(
+            "已解决",
+        );
     });
 });
 

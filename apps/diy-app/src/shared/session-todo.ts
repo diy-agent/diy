@@ -101,10 +101,7 @@ export function todoOf(rows: NavRow[]): TodoItem[] {
         out.push({ row: r, kind, count, why: whyOf(kind, count, r.queueHuman) });
     }
     return out.sort(
-        (a, b) =>
-            rankOf(a.kind) - rankOf(b.kind) ||
-            b.count - a.count ||
-            a.row.uri.localeCompare(b.row.uri),
+        (a, b) => rankOf(a.kind) - rankOf(b.kind) || b.count - a.count || a.row.uri.localeCompare(b.row.uri),
     );
 }
 

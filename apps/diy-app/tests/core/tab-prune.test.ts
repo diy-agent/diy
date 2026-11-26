@@ -11,12 +11,12 @@ import { installRpc } from "../helpers/renderer-deps";
 
 const store = new Map<string, string>();
 (globalThis as unknown as { localStorage: Storage }).localStorage = {
-  getItem: (k: string) => store.get(k) ?? null,
-  setItem: (k: string, v: string) => void store.set(k, v),
-  removeItem: (k: string) => void store.delete(k),
-  clear: () => store.clear(),
-  key: () => null,
-  length: 0,
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+    clear: () => store.clear(),
+    key: () => null,
+    length: 0,
 } as Storage;
 
 const h = vi.hoisted(() => ({ loadTaskTree: vi.fn() }));
@@ -27,75 +27,75 @@ const A = "projects/1/tasks/a";
 const B = "projects/1/tasks/b";
 
 beforeEach(() => {
-  store.clear();
-  h.loadTaskTree.mockReset();
+    store.clear();
+    h.loadTaskTree.mockReset();
 });
 
 describe("staleTaskTabCtxs —— 判据本身", () => {
-  it("树还没加载过 → 一律不剪（空树是「树还没到」，不是「任务不存在」）", () => {
-    expect(
-      staleTaskTabCtxs({ opened: [{ pageId: "task-run", ctx: A }], aliveUris: [], treeLoaded: false }),
-    ).toEqual([]);
-  });
+    it("树还没加载过 → 一律不剪（空树是「树还没到」，不是「任务不存在」）", () => {
+        expect(
+            staleTaskTabCtxs({ opened: [{ pageId: "task-run", ctx: A }], aliveUris: [], treeLoaded: false }),
+        ).toEqual([]);
+    });
 
-  it("任务 tab 不在树上 → 剪；在树上 → 留", () => {
-    const opened = [
-      { pageId: "task-run", ctx: A },
-      { pageId: "task-run", ctx: B },
-    ];
-    expect(staleTaskTabCtxs({ opened, aliveUris: [A], treeLoaded: true })).toEqual([B]);
-    expect(staleTaskTabCtxs({ opened, aliveUris: [A, B], treeLoaded: true })).toEqual([]);
-  });
+    it("任务 tab 不在树上 → 剪；在树上 → 留", () => {
+        const opened = [
+            { pageId: "task-run", ctx: A },
+            { pageId: "task-run", ctx: B },
+        ];
+        expect(staleTaskTabCtxs({ opened, aliveUris: [A], treeLoaded: true })).toEqual([B]);
+        expect(staleTaskTabCtxs({ opened, aliveUris: [A, B], treeLoaded: true })).toEqual([]);
+    });
 
-  it("非任务 ctx（lab 的别的 ctx / settings 无 ctx）不动", () => {
-    const opened = [
-      { pageId: "lab", ctx: "some-non-task-ctx" },
-      { pageId: "settings", ctx: null },
-    ];
-    expect(staleTaskTabCtxs({ opened, aliveUris: [], treeLoaded: true })).toEqual([]);
-  });
+    it("非任务 ctx（lab 的别的 ctx / settings 无 ctx）不动", () => {
+        const opened = [
+            { pageId: "lab", ctx: "some-non-task-ctx" },
+            { pageId: "settings", ctx: null },
+        ];
+        expect(staleTaskTabCtxs({ opened, aliveUris: [], treeLoaded: true })).toEqual([]);
+    });
 
-  it("同一任务的多个 tab（task-run + lab 子页面）只报一次 ctx", () => {
-    const opened = [
-      { pageId: "task-run", ctx: A },
-      { pageId: "lab", ctx: A },
-      { pageId: "ctxlab", ctx: A },
-    ];
-    expect(staleTaskTabCtxs({ opened, aliveUris: [], treeLoaded: true })).toEqual([A]);
-  });
+    it("同一任务的多个 tab（task-run + lab 子页面）只报一次 ctx", () => {
+        const opened = [
+            { pageId: "task-run", ctx: A },
+            { pageId: "lab", ctx: A },
+            { pageId: "ctxlab", ctx: A },
+        ];
+        expect(staleTaskTabCtxs({ opened, aliveUris: [], treeLoaded: true })).toEqual([A]);
+    });
 });
 
 describe("剪枝挂在**最新**那份树上（过期快照不剪）", () => {
-  it("旧响应后到被丢弃：alive 仍含 A → 不剪 A", async () => {
-    vi.resetModules();
-    await installRpc({ diy: { task: { tree: h.loadTaskTree } } });
-    const { taskStore } = await import("../../src/renderer_solid/store/taskStore");
-    let resolveOld!: (v: unknown) => void;
-    let resolveNew!: (v: unknown) => void;
-    h.loadTaskTree
-      .mockReturnValueOnce(new Promise((r) => (resolveOld = r))) // 旧请求
-      .mockReturnValueOnce(new Promise((r) => (resolveNew = r))); // 新请求
+    it("旧响应后到被丢弃：alive 仍含 A → 不剪 A", async () => {
+        vi.resetModules();
+        await installRpc({ diy: { task: { tree: h.loadTaskTree } } });
+        const { taskStore } = await import("../../src/renderer_solid/store/taskStore");
+        let resolveOld!: (v: unknown) => void;
+        let resolveNew!: (v: unknown) => void;
+        h.loadTaskTree
+            .mockReturnValueOnce(new Promise((r) => (resolveOld = r))) // 旧请求
+            .mockReturnValueOnce(new Promise((r) => (resolveNew = r))); // 新请求
 
-    const p1 = taskStore.loadTree();
-    const p2 = taskStore.loadTree();
-    resolveNew({ data: [{ uri: A }] });
-    await p2;
-    resolveOld({ data: [] }); // 过期快照：若被采纳，A 会被误判成「已删」
-    await p1;
+        const p1 = taskStore.loadTree();
+        const p2 = taskStore.loadTree();
+        resolveNew({ data: [{ uri: A }] });
+        await p2;
+        resolveOld({ data: [] }); // 过期快照：若被采纳，A 会被误判成「已删」
+        await p1;
 
-    const alive = new Set<string>();
-    const walk = (ns: { uri?: string; children?: unknown[] }[]): void => {
-      for (const n of ns) {
-        if (n.uri) alive.add(n.uri);
-        walk((n.children ?? []) as { uri?: string; children?: unknown[] }[]);
-      }
-    };
-    walk(taskStore.nodes);
-    const stale = staleTaskTabCtxs({
-      opened: [{ pageId: "task-run", ctx: A }],
-      aliveUris: alive,
-      treeLoaded: taskStore.treeLoaded,
+        const alive = new Set<string>();
+        const walk = (ns: { uri?: string; children?: unknown[] }[]): void => {
+            for (const n of ns) {
+                if (n.uri) alive.add(n.uri);
+                walk((n.children ?? []) as { uri?: string; children?: unknown[] }[]);
+            }
+        };
+        walk(taskStore.nodes);
+        const stale = staleTaskTabCtxs({
+            opened: [{ pageId: "task-run", ctx: A }],
+            aliveUris: alive,
+            treeLoaded: taskStore.treeLoaded,
+        });
+        expect(stale).toEqual([]); // 修复前（若用旧快照）这里会是 [A] → 误剪活着的 tab
     });
-    expect(stale).toEqual([]); // 修复前（若用旧快照）这里会是 [A] → 误剪活着的 tab
-  });
 });

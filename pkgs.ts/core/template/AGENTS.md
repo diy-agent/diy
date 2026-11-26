@@ -11,10 +11,10 @@
 `evidence.at: 818d342a:pkgs.ts/core/template/AGENTS.md:<行>` —— rev 钉住版本，本文件瘦身后行号仍可核）。
 本文件 1.9 KB → 1.6 KB。
 
-| 主题 | 是什么 | 条数 |
-|---|---|---|
-| `template.find` | 包内定位：SPEC / parser+ast / render+trace / scope / analyze / barrel / 宿主装配入口 | 7 |
-| `template.rule` | 硬约束：**不做表达式语言** / 逐字节保真不转义 / 意图测试优先 / IO 归宿主 | 4 |
+| 主题            | 是什么                                                                               | 条数 |
+| --------------- | ------------------------------------------------------------------------------------ | ---- |
+| `template.find` | 包内定位：SPEC / parser+ast / render+trace / scope / analyze / barrel / 宿主装配入口 | 7    |
+| `template.rule` | 硬约束：**不做表达式语言** / 逐字节保真不转义 / 意图测试优先 / IO 归宿主             | 4    |
 
 **取法**：
 

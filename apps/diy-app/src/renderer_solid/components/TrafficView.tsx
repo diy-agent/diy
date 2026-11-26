@@ -127,7 +127,10 @@ function StoredAt(props: { loc: Rec["log"] }) {
                             style={{ left: `${pos().x}px`, top: `${pos().y}px` }}
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <button class="block w-full text-left px-3 py-1 hover:bg-base-200 text-body" onClick={() => void reveal()}>
+                            <button
+                                class="block w-full text-left px-3 py-1 hover:bg-base-200 text-body"
+                                onClick={() => void reveal()}
+                            >
                                 在文件管理器中显示
                             </button>
                         </div>
@@ -169,7 +172,14 @@ interface ColDef {
     on: boolean;
 }
 const COLUMNS: ColDef[] = [
-    { key: "seqno", label: "序号", width: "w-14", align: "right", on: true, tip: "落盘追加顺序（当天日志文件内的行号，按写入先后）" },
+    {
+        key: "seqno",
+        label: "序号",
+        width: "w-14",
+        align: "right",
+        on: true,
+        tip: "落盘追加顺序（当天日志文件内的行号，按写入先后）",
+    },
     { key: "status", label: "状态", width: "w-16", on: true },
     { key: "method", label: "方法", width: "w-16", on: true },
     { key: "name", label: "名称", on: true, tip: "主机 + 路径（对齐 devtools 的 Name 列）" },
@@ -229,12 +239,14 @@ const PAGE_SIZE = 100;
  * 为什么抽成函数而不是 store 单例：抽屉与页面可以**各持一份**（互不抢筛选与选中），
  * 只要调用两次 `createTrafficState()` 即可；而「同一份状态喂两个 view」在本函数外组合。
  */
-export function createTrafficState(opts: {
-    /** 打开时要定位的记录（优先 id，其次 trace_id；都没有则定位最近一次失败） */
-    focus?: Accessor<TrafficFocus | null>;
-    /** focus 消费后回调（清掉，避免下次重开误定位） */
-    onFocusConsumed?: () => void;
-} = {}) {
+export function createTrafficState(
+    opts: {
+        /** 打开时要定位的记录（优先 id，其次 trace_id；都没有则定位最近一次失败） */
+        focus?: Accessor<TrafficFocus | null>;
+        /** focus 消费后回调（清掉，避免下次重开误定位） */
+        onFocusConsumed?: () => void;
+    } = {},
+) {
     const [snap, setSnap] = createSignal<Snapshot | null>(null);
     const [rows, setRows] = createSignal<Rec[]>([]);
     const [loading, setLoading] = createSignal(false);
@@ -415,12 +427,42 @@ export function createTrafficState(opts: {
     };
 
     return {
-        snap, rows, loading, stats, sel, setSel, tab, setTab,
-        qText, setQText, fStatus, setFStatus, fMethod, setFMethod, fDate, setFDate,
-        dates, logBytes, alertOff, setAlertOff, cols, setCols, sortKey, sortDir, shown,
-        methods, dateOptions, cur, sortedRows, visibleRows, toggleSort, onTableScroll,
+        snap,
+        rows,
+        loading,
+        stats,
+        sel,
+        setSel,
+        tab,
+        setTab,
+        qText,
+        setQText,
+        fStatus,
+        setFStatus,
+        fMethod,
+        setFMethod,
+        fDate,
+        setFDate,
+        dates,
+        logBytes,
+        alertOff,
+        setAlertOff,
+        cols,
+        setCols,
+        sortKey,
+        sortDir,
+        shown,
+        methods,
+        dateOptions,
+        cur,
+        sortedRows,
+        visibleRows,
+        toggleSort,
+        onTableScroll,
         setTableEl: (el: HTMLDivElement | undefined) => (tableScroll = el),
-        open, scheduleQuery, toggleFullCapture,
+        open,
+        scheduleQuery,
+        toggleFullCapture,
         /** 清理面板删完文件后刷新体积 / 日期下拉（##324） */
         loadFiles,
     };
@@ -539,7 +581,13 @@ function TrafficTable(props: { st: TrafficState }) {
                                             title={c.tip ? `${c.tip}（点击排序）` : "点击排序"}
                                             onClick={() => st.toggleSort(c.key)}
                                         >
-                                            <span class={c.align === "right" ? "flex justify-end items-center gap-1" : "flex items-center gap-1"}>
+                                            <span
+                                                class={
+                                                    c.align === "right"
+                                                        ? "flex justify-end items-center gap-1"
+                                                        : "flex items-center gap-1"
+                                                }
+                                            >
                                                 {c.label}
                                                 <Show when={st.sortKey() === c.key}>
                                                     <span class="opacity-60">{st.sortDir() === "asc" ? "▲" : "▼"}</span>
@@ -554,7 +602,10 @@ function TrafficTable(props: { st: TrafficState }) {
                     <tbody>
                         <Show when={st.rows().length === 0}>
                             <tr>
-                                <td colspan={COLUMNS.filter((c) => st.cols()[c.key]).length} class="text-center opacity-50 py-6">
+                                <td
+                                    colspan={COLUMNS.filter((c) => st.cols()[c.key]).length}
+                                    class="text-center opacity-50 py-6"
+                                >
                                     {st.loading() ? "查询中…" : "没有符合筛选条件的记录"}
                                 </td>
                             </tr>
@@ -567,7 +618,10 @@ function TrafficTable(props: { st: TrafficState }) {
                                     title={r.url}
                                 >
                                     <Show when={st.cols().seqno}>
-                                        <td class="text-right opacity-50" title={r.log ? `${r.log.file}:${r.log.line}` : "未落盘"}>
+                                        <td
+                                            class="text-right opacity-50"
+                                            title={r.log ? `${r.log.file}:${r.log.line}` : "未落盘"}
+                                        >
                                             {cellValue(r, "seqno").text}
                                         </td>
                                     </Show>
@@ -668,7 +722,8 @@ export function TrafficList(props: { st: TrafficState; intro?: boolean }) {
             </div>
             <Show when={props.intro !== false}>
                 <p class="text-caption opacity-50 shrink-0">
-                    这里显示应用实际发出去的 HTTP 请求与收到的响应。记录一直开着，逐条写进磁盘日志（按天切文件），可用日期 + 关键词翻查历史。
+                    这里显示应用实际发出去的 HTTP
+                    请求与收到的响应。记录一直开着，逐条写进磁盘日志（按天切文件），可用日期 + 关键词翻查历史。
                     超长正文默认只留首尾一段，需要完整时打开「记录完整请求内容」。
                 </p>
             </Show>
@@ -686,7 +741,10 @@ export function TrafficDetail(props: { st: TrafficState; inline?: boolean }) {
     return (
         <Show when={st.cur()} fallback={<div class="p-4 text-body opacity-50">← 从左侧选一条请求查看详情</div>}>
             {(r) => (
-                <div class={`flex flex-col gap-2 border border-base-300 rounded p-2 flex-1 min-h-0 ${props.inline ? "" : "m-2"}`} data-traffic-detail>
+                <div
+                    class={`flex flex-col gap-2 border border-base-300 rounded p-2 flex-1 min-h-0 ${props.inline ? "" : "m-2"}`}
+                    data-traffic-detail
+                >
                     <div class="flex items-center gap-2 flex-wrap shrink-0">
                         <Show when={props.inline}>
                             <button class="btn btn-xs btn-ghost" onClick={() => st.setSel(null)}>
@@ -713,7 +771,9 @@ export function TrafficDetail(props: { st: TrafficState; inline?: boolean }) {
                             </span>
                         </Show>
                         <span class="text-body opacity-60">{(r().ms / 1000).toFixed(2)}s</span>
-                        <span class="text-body opacity-60" title="请求发出时刻（本地时区）">{time(r().ts)}</span>
+                        <span class="text-body opacity-60" title="请求发出时刻（本地时区）">
+                            {time(r().ts)}
+                        </span>
                         <span class="text-body opacity-60" title="请求体 + 响应体字节数">
                             {fmtBytes(r().reqBytes + r().resBytes)}
                         </span>
@@ -733,10 +793,18 @@ export function TrafficDetail(props: { st: TrafficState; inline?: boolean }) {
                     </Show>
                     <StoredAt loc={r().log} />
                     <div role="tablist" class="tabs tabs-boxed tabs-xs w-fit shrink-0">
-                        <button role="tab" class={`tab ${st.tab() === "req" ? "tab-active" : ""}`} onClick={() => st.setTab("req")}>
+                        <button
+                            role="tab"
+                            class={`tab ${st.tab() === "req" ? "tab-active" : ""}`}
+                            onClick={() => st.setTab("req")}
+                        >
                             请求
                         </button>
-                        <button role="tab" class={`tab ${st.tab() === "res" ? "tab-active" : ""}`} onClick={() => st.setTab("res")}>
+                        <button
+                            role="tab"
+                            class={`tab ${st.tab() === "res" ? "tab-active" : ""}`}
+                            onClick={() => st.setTab("res")}
+                        >
                             响应
                         </button>
                     </div>
@@ -773,11 +841,7 @@ export function TrafficDetail(props: { st: TrafficState; inline?: boolean }) {
  * **抽屉形态**：列表 ⇄ 详情**原地切换**（贴当前对话查一条时，不该被拆成两个 area）。
  * 页面形态见 `TrafficPage`（同样这份 state，交给 ViewGrid 摆成左右两个 viewset）。
  */
-export function TrafficView(props: {
-    focus?: TrafficFocus | null;
-    onFocusConsumed?: () => void;
-    showIntro?: boolean;
-}) {
+export function TrafficView(props: { focus?: TrafficFocus | null; onFocusConsumed?: () => void; showIntro?: boolean }) {
     const st = createTrafficState({
         focus: () => props.focus ?? null,
         onFocusConsumed: props.onFocusConsumed,
@@ -820,7 +884,8 @@ export function TrafficView(props: {
             </div>
             <Show when={props.showIntro !== false}>
                 <p class="text-caption opacity-50 shrink-0">
-                    这里显示应用实际发出去的 HTTP 请求与收到的响应。记录一直开着，逐条写进磁盘日志（按天切文件），可用日期 + 关键词翻查历史。
+                    这里显示应用实际发出去的 HTTP
+                    请求与收到的响应。记录一直开着，逐条写进磁盘日志（按天切文件），可用日期 + 关键词翻查历史。
                     超长正文默认只留首尾一段，需要完整时打开「记录完整请求内容」。
                 </p>
             </Show>

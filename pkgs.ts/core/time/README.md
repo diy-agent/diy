@@ -4,11 +4,11 @@
 
 ## 约定
 
-| 场景 | 写法 | 例 |
-|---|---|---|
+| 场景                                          | 写法               | 例                             |
+| --------------------------------------------- | ------------------ | ------------------------------ |
 | 记录类时间戳（日志 / 事件 / 任务字段 / 消息） | `localISOString()` | `2026-10-31T11:29:25.403+0800` |
-| 按天分桶 / 查节假日表 | `localDateKey()` | `2026-10-31` |
-| 要比先后 | `compareInstant()` | 别用 `<` 比串 |
+| 按天分桶 / 查节假日表                         | `localDateKey()`   | `2026-10-31`                   |
+| 要比先后                                      | `compareInstant()` | 别用 `<` 比串                  |
 
 **例外**：必须 UTC 的字段（跨机器排序等）—— 字段名带 `utc` 后缀 + 注释写明原因：
 
@@ -27,7 +27,7 @@ utcAt: '2026-10-31T03:29:25.403Z',
 ```ts
 import { compareInstant, localDateKey, localISOString } from '@diy-agent/time';
 
-record.at = localISOString();            // 缺省 = 现在
+record.at = localISOString(); // 缺省 = 现在
 record.day = localDateKey(new Date(ms)); // 本地日期
 rows.sort((a, b) => compareInstant(b.ts, a.ts)); // 时刻序（不是字典序）
 ```

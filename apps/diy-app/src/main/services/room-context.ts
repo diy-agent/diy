@@ -69,7 +69,11 @@ export interface RoomRuntimeFact {
  *
  * `sayId`：投递轮传「正文里那一条」，避免同一句话既在正文又在 recent 里出现一次。
  */
-export async function roomRuntimeFact(opts: { roomId: string; taskUri: string; sayId?: string }): Promise<RoomRuntimeFact | null> {
+export async function roomRuntimeFact(opts: {
+    roomId: string;
+    taskUri: string;
+    sayId?: string;
+}): Promise<RoomRuntimeFact | null> {
     const { roomId, taskUri, sayId } = opts;
     const room = readRoom(roomId);
     if (!room) return null;
@@ -77,7 +81,10 @@ export async function roomRuntimeFact(opts: { roomId: string; taskUri: string; s
     // （投递轮里收件人可能**不是**主人格 —— 它是被邀请进来、绑在自己任务上的那个成员。）
     const bound = (m: (typeof room.members)[number]): boolean =>
         m.backend?.type === "task" && m.backend.data.taskUri === taskUri;
-    const self = room.members.find((m) => bound(m) && m.main === true) ?? room.members.find(bound) ?? room.members.find((m) => m.main === true);
+    const self =
+        room.members.find((m) => bound(m) && m.main === true) ??
+        room.members.find(bound) ??
+        room.members.find((m) => m.main === true);
     if (!self) return null;
     // 只要"最近谁说了什么"（`roomContextFor` 最多吐 `CONTEXT_MAX_EVENTS` 条 / 4000 字符）⇒
     // 倒读尾部一窗就够了（##427：旧实现为这句话把整条事件流读了一遍，5 MB 时是轮首一次 ~60 ms 的同步阻塞）。

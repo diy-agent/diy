@@ -72,14 +72,20 @@ function history(opts: { first: Rc; last: Rc }) {
             role: "assistant",
             content: null,
             tool_calls: [
-                { id: callId, type: "function", function: { name: "bash", arguments: JSON.stringify({ command: cmd }) } },
+                {
+                    id: callId,
+                    type: "function",
+                    function: { name: "bash", arguments: JSON.stringify({ command: cmd }) },
+                },
             ],
         };
         if (rc === true) m["reasoning_content"] = `用户要跑 ${cmd}，我调用 bash 工具。`;
         else if (rc === "empty") m["reasoning_content"] = "";
         else if (rc === "clipped") {
             // 形状 = clipReasoningText 的产物（`${head}\n[… 推理省略 N 字符 …]\n`）
-            m["reasoning_content"] = `用户要在项目里核对 ${cmd} 的输出，我先把调用发出去，再看结果决定下一步怎么做。`.repeat(12) + "\n[… 推理省略 5321 字符 …]\n";
+            m["reasoning_content"] =
+                `用户要在项目里核对 ${cmd} 的输出，我先把调用发出去，再看结果决定下一步怎么做。`.repeat(12) +
+                "\n[… 推理省略 5321 字符 …]\n";
         }
         return m;
     };

@@ -39,12 +39,20 @@
 //    槽位与 `parseView` 校验是内核给的，**什么时候译、拿哪份 raw 去译是宿主的决定** ——
 //    调用点唯一：`core/flow.ts` 的 `translateArtifact`（见那里的立场：无产物 ⇒ null，坏 ⇒ 抛）。
 
-import { exec } from 'node:child_process';
-import { createRegistry, type ActionResult, type GuardResult, type PluginContext, type PluginRegistry, type RenderPlugin, type View } from '@diy-agent/flow';
+import { exec } from "node:child_process";
+import {
+    createRegistry,
+    type ActionResult,
+    type GuardResult,
+    type PluginContext,
+    type PluginRegistry,
+    type RenderPlugin,
+    type View,
+} from "@diy-agent/flow";
 // ⚠️ `ViewData<'…'>` 就是「这个 renderer 要吃的 data 形状」（真源 = `@diy-agent/flow` 的 `view.ts`，##318）。
 //    下面每个插件都用它给 payload 站岗：**插件产出**与**渲染器消费**因此由 `tsc` 对齐 ——
 //    ##337 review1 P2-A 正是这条缝（声明 `doc`、却把裸文本当 `DocData`），当时没有任何一道机器判据管它。
-import type { DiffData, DocData, TableData } from '@diy-agent/flow';
+import type { DiffData, DocData, TableData } from "@diy-agent/flow";
 
 // ═══════════════════════════════════════════════════════════════
 // render 槽：raw → 引擎通用渲染器（纯函数，不碰外部世界）
@@ -52,12 +60,19 @@ import type { DiffData, DocData, TableData } from '@diy-agent/flow';
 
 /** 把 raw 里「本该是字符串」的部分取出来（翻不了就抛，交给宿主 `callPlugin` 包成 `plugin-threw`） */
 function asText(data: unknown, plugin: string): string {
-    if (typeof data === 'string') return data;
+    if (typeof data === "string") return data;
     // `--file` 放进来的是 JSON 时，一段正文常写成 `"…"` 或 `{ "text": "…" }` —— 两种都认
-    if (typeof data === 'object' && data !== null && !Array.isArray(data) && typeof (data as Record<string, unknown>)["text"] === 'string') {
+    if (
+        typeof data === "object" &&
+        data !== null &&
+        !Array.isArray(data) &&
+        typeof (data as Record<string, unknown>)["text"] === "string"
+    ) {
         return (data as Record<string, string>)["text"]!;
     }
-    throw new Error(`render 插件 ${plugin} 的 raw 应为字符串（或 { text: string }），实得 ${JSON.stringify(data)?.slice(0, 120)}`);
+    throw new Error(
+        `render 插件 ${plugin} 的 raw 应为字符串（或 { text: string }），实得 ${JSON.stringify(data)?.slice(0, 120)}`,
+    );
 }
 
 /**
@@ -67,34 +82,35 @@ function asText(data: unknown, plugin: string): string {
  * 插件只补「加 / 删 / 上下文」这个语义，剥不剥标记是渲染器的事。
  */
 const patch: RenderPlugin = (data): View => {
-    const text = asText(data, 'patch');
-    const lines = text.split('\n').map((line) => ({
+    const text = asText(data, "patch");
+    const lines = text.split("\n").map((line) => ({
         // 文件头 `--- a/x` / `+++ b/x`（以及 `diff --git` / `@@` / `\ No newline`）都算上下文：
         // 只有「单个 +/- 开头」才是增删行 —— 否则每份 diff 的头两行都会被上成红绿，一眼就错
-        kind: line.startsWith('+++') || line.startsWith('---')
-            ? ('context' as const)
-            : line.startsWith('+')
-              ? ('add' as const)
-              : line.startsWith('-')
-                ? ('del' as const)
-                : ('context' as const),
+        kind:
+            line.startsWith("+++") || line.startsWith("---")
+                ? ("context" as const)
+                : line.startsWith("+")
+                  ? ("add" as const)
+                  : line.startsWith("-")
+                    ? ("del" as const)
+                    : ("context" as const),
         text: line,
     }));
     // 末尾换行会多切出一个空行；diff 里它没有语义，去掉（只在**最后一个**是空串时）
-    if (lines.length > 1 && lines[lines.length - 1]!.text === '') lines.pop();
+    if (lines.length > 1 && lines[lines.length - 1]!.text === "") lines.pop();
     const payload: DiffData = { lines };
-    return { renderer: 'diff', payload };
+    return { renderer: "diff", payload };
 };
 
 /** 一行记录的取值：数组行原样当 cells；对象行按列序取值（缺列 ⇒ 空串，值一律 String —— table 只吃字符串） */
 function cellsOf(row: unknown, columns: readonly string[] | undefined, plugin: string): string[] {
-    if (Array.isArray(row)) return row.map((cell) => (cell === null || cell === undefined ? '' : String(cell)));
-    if (typeof row === 'object' && row !== null) {
+    if (Array.isArray(row)) return row.map((cell) => (cell === null || cell === undefined ? "" : String(cell)));
+    if (typeof row === "object" && row !== null) {
         const obj = row as Record<string, unknown>;
         const keys = columns ?? Object.keys(obj);
-        return keys.map((key) => (obj[key] === null || obj[key] === undefined ? '' : String(obj[key])));
+        return keys.map((key) => (obj[key] === null || obj[key] === undefined ? "" : String(obj[key])));
     }
-    if (typeof row === 'string' || typeof row === 'number' || typeof row === 'boolean') return [String(row)];
+    if (typeof row === "string" || typeof row === "number" || typeof row === "boolean") return [String(row)];
     throw new Error(`render 插件 ${plugin} 的行应为数组 / 对象 / 标量，实得 ${JSON.stringify(row)}`);
 }
 
@@ -112,26 +128,31 @@ function cellsOf(row: unknown, columns: readonly string[] | undefined, plugin: s
  */
 const records: RenderPlugin = (data): View => {
     // 纯文本：一行一条（去尾随空行；空串 ⇒ 0 行 = 空表，不编造）
-    if (typeof data === 'string') {
-        const lines = data.split('\n').map((line) => line.trimEnd()).filter((line) => line.trim() !== '');
+    if (typeof data === "string") {
+        const lines = data
+            .split("\n")
+            .map((line) => line.trimEnd())
+            .filter((line) => line.trim() !== "");
         const payload: TableData = { rows: lines.map((line) => ({ cells: [line] })) };
-        return { renderer: 'table', payload };
+        return { renderer: "table", payload };
     }
     // 认两种结构化 raw：裸数组（= 只有 rows）/ 对象 `{ columns?, rows }`；别的当场拒（不猜、不降级）
     let rawRows: unknown[];
     let rawColumns: unknown;
     if (Array.isArray(data)) {
         rawRows = data;
-    } else if (typeof data === 'object' && data !== null && Array.isArray((data as Record<string, unknown>)["rows"])) {
+    } else if (typeof data === "object" && data !== null && Array.isArray((data as Record<string, unknown>)["rows"])) {
         rawRows = (data as Record<string, unknown>)["rows"] as unknown[];
         rawColumns = (data as Record<string, unknown>)["columns"];
     } else {
-        throw new Error(`render 插件 records 的 raw 应为数组 / { columns?, rows } / 一行一条的文本，实得 ${JSON.stringify(data)?.slice(0, 120)}`);
+        throw new Error(
+            `render 插件 records 的 raw 应为数组 / { columns?, rows } / 一行一条的文本，实得 ${JSON.stringify(data)?.slice(0, 120)}`,
+        );
     }
     const columns = Array.isArray(rawColumns) ? rawColumns.map((c: unknown) => String(c)) : undefined;
-    const rows = rawRows.map((row) => ({ cells: cellsOf(row, columns, 'records') }));
+    const rows = rawRows.map((row) => ({ cells: cellsOf(row, columns, "records") }));
     const payload: TableData = columns === undefined ? { rows } : { columns, rows };
-    return { renderer: 'table', payload };
+    return { renderer: "table", payload };
 };
 
 /**
@@ -144,8 +165,8 @@ const records: RenderPlugin = (data): View => {
  * 认两种 raw：裸字符串（管道进来的正文）与已经是 `{ text }` 的对象（幂等，便于二次加工）。
  */
 const text: RenderPlugin = (data): View => {
-    const payload: DocData = { text: asText(data, 'text') };
-    return { renderer: 'doc', payload };
+    const payload: DocData = { text: asText(data, "text") };
+    return { renderer: "doc", payload };
 };
 
 /**
@@ -156,9 +177,9 @@ const text: RenderPlugin = (data): View => {
  */
 export function createRenderRegistry(): PluginRegistry {
     return createRegistry()
-        .register('render', 'patch', patch)
-        .register('render', 'records', records)
-        .register('render', 'text', text);
+        .register("render", "patch", patch)
+        .register("render", "records", records)
+        .register("render", "text", text);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -201,13 +222,13 @@ function execCommand(command: string, cwd: string): Promise<CommandResult> {
     return new Promise((resolve) => {
         exec(
             command,
-            { cwd, timeout: 10 * 60 * 1000, maxBuffer: 8 * 1024 * 1024, encoding: 'utf-8' },
+            { cwd, timeout: 10 * 60 * 1000, maxBuffer: 8 * 1024 * 1024, encoding: "utf-8" },
             (err, stdout, stderr) => {
-                const output = `${stdout ?? ''}${stderr ?? ''}`;
+                const output = `${stdout ?? ""}${stderr ?? ""}`;
                 if (!err) return resolve({ code: 0, output });
                 // `exec` 的 err.code 是退出码（number）或系统错误串（如 'ETIMEDOUT'）
-                const code = typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : -1;
-                resolve({ code, output: `${output}${output === '' ? '' : '\n'}[宿主] ${err.message}` });
+                const code = typeof (err as { code?: unknown }).code === "number" ? (err as { code: number }).code : -1;
+                resolve({ code, output: `${output}${output === "" ? "" : "\n"}[宿主] ${err.message}` });
             },
         );
     });
@@ -216,7 +237,7 @@ function execCommand(command: string, cwd: string): Promise<CommandResult> {
 /** 取本节点分组的 L2 参数袋（`ctx.params[节点 id]`；内核已校验 + 已合并缺省 + 冻结） */
 function bagOf(ctx: PluginContext): Record<string, unknown> {
     const bag = ctx.params[ctx.node.id];
-    return typeof bag === 'object' && bag !== null ? (bag as Record<string, unknown>) : {};
+    return typeof bag === "object" && bag !== null ? (bag as Record<string, unknown>) : {};
 }
 
 /** 从事实表里取一条事实：**没有就抛**（没预热就求值是编排 bug，不许静默当成「不通过」） */
@@ -234,7 +255,7 @@ function factOf<T>(deps: HostPluginDeps, name: string): T {
 /** 本节点上的命令字符串（缺省值由定义给；这里再兜一道，免得空串进 shell） */
 function commandOf(ctx: PluginContext, key: string, fallback: string): string {
     const raw = bagOf(ctx)[key];
-    const command = typeof raw === 'string' && raw.trim() !== '' ? raw : fallback;
+    const command = typeof raw === "string" && raw.trim() !== "" ? raw : fallback;
     return command;
 }
 
@@ -245,9 +266,9 @@ function commandOf(ctx: PluginContext, key: string, fallback: string): string {
  * 不绿时把输出尾部带进 `reason`（审计 / UI 上要看得见「为什么没绿」）。
  */
 const ciGreen: (deps: HostPluginDeps) => (ctx: PluginContext) => GuardResult = (deps) => (_ctx) => {
-    const fact = factOf<CommandFact>(deps, 'ci_green');
+    const fact = factOf<CommandFact>(deps, "ci_green");
     if (fact.code === 0) return { pass: true };
-    const tail = fact.output.trim().split('\n').slice(-8).join('\n');
+    const tail = fact.output.trim().split("\n").slice(-8).join("\n");
     return { pass: false, reason: `CI 未绿（${fact.command}，退出码 ${fact.code}）：\n${tail}` };
 };
 
@@ -260,9 +281,10 @@ const ciGreen: (deps: HostPluginDeps) => (ctx: PluginContext) => GuardResult = (
  * ——「真合并」必须是一次显式选择（L2 旋钮，用户可改值）。
  */
 const prMergeable: (deps: HostPluginDeps) => (ctx: PluginContext) => ActionResult = (deps) => (_ctx) => {
-    const fact = factOf<CommandFact>(deps, 'pr_mergeable');
+    const fact = factOf<CommandFact>(deps, "pr_mergeable");
     const mergeable = fact.code === 0 && /\bMERGEABLE\b/.test(fact.output);
-    if (!mergeable) return { ok: false, ref: fact.output.trim().split('\n').slice(-3).join(' ') || `退出码 ${fact.code}` };
+    if (!mergeable)
+        return { ok: false, ref: fact.output.trim().split("\n").slice(-3).join(" ") || `退出码 ${fact.code}` };
     return fact.applied === true
         ? { ok: true, ref: `已合并（${fact.command}）` }
         : { ok: true, ref: `可合并（${fact.command}）` };
@@ -274,8 +296,8 @@ const prMergeable: (deps: HostPluginDeps) => (ctx: PluginContext) => ActionResul
  */
 export function createHostRegistry(deps: HostPluginDeps = {}): PluginRegistry {
     return createRenderRegistry()
-        .register('guard', 'ci_green', ciGreen(deps))
-        .register('action', 'pr_mergeable', prMergeable(deps));
+        .register("guard", "ci_green", ciGreen(deps))
+        .register("action", "pr_mergeable", prMergeable(deps));
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -300,24 +322,33 @@ export async function collectFacts(ctx: PluginContext, deps: HostPluginDeps = {}
     const run = deps.runCommand ?? execCommand;
     const out: PreparedFact[] = [];
     for (const raw of ctx.node.guard) {
-        const at = raw.indexOf(':');
-        const prefix = at > 0 ? raw.slice(0, at) : '';
-        const name = at > 0 ? raw.slice(at + 1) : '';
-        if (prefix === 'pred' && name === 'ci_green') {
-            const command = commandOf(ctx, 'command', '(未声明 command)');
+        const at = raw.indexOf(":");
+        const prefix = at > 0 ? raw.slice(0, at) : "";
+        const name = at > 0 ? raw.slice(at + 1) : "";
+        if (prefix === "pred" && name === "ci_green") {
+            const command = commandOf(ctx, "command", "(未声明 command)");
             const r = await run(command, cwd);
             out.push({ name, ctx, fact: { command, code: r.code, output: r.output } });
             continue;
         }
-        if (prefix === 'action' && name === 'pr_mergeable') {
-            const command = commandOf(ctx, 'command', 'gh pr view --json mergeable,state -q .mergeable');
+        if (prefix === "action" && name === "pr_mergeable") {
+            const command = commandOf(ctx, "command", "gh pr view --json mergeable,state -q .mergeable");
             const r = await run(command, cwd);
             const mergeable = r.code === 0 && /\bMERGEABLE\b/.test(r.output);
             const apply = bagOf(ctx)["apply"] === true;
             if (mergeable && apply) {
-                const merge = deps.mergePr ?? ((c: string) => execCommand('gh pr merge --squash --delete-branch', c));
+                const merge = deps.mergePr ?? ((c: string) => execCommand("gh pr merge --squash --delete-branch", c));
                 const applied = await merge(cwd);
-                out.push({ name, ctx, fact: { command: `${command} → 合并`, code: applied.code, output: `${r.output}${applied.output}`, applied: applied.code === 0 } });
+                out.push({
+                    name,
+                    ctx,
+                    fact: {
+                        command: `${command} → 合并`,
+                        code: applied.code,
+                        output: `${r.output}${applied.output}`,
+                        applied: applied.code === 0,
+                    },
+                });
                 continue;
             }
             out.push({ name, ctx, fact: { command, code: r.code, output: r.output } });

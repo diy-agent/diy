@@ -95,8 +95,10 @@ describe("template list/get", () => {
         // summary.md 是 fragment（独立模版，不在 system 里）；其余非入口皆是 section
         expect(list.find((e) => e.relpath === "summary.md")!.role).toBe("fragment");
         expect(
-            list.every((e) =>
-                e.role === (e.relpath === "_system.md" ? "entry" : e.relpath === "summary.md" ? "fragment" : "section"),
+            list.every(
+                (e) =>
+                    e.role ===
+                    (e.relpath === "_system.md" ? "entry" : e.relpath === "summary.md" ? "fragment" : "section"),
             ),
         ).toBe(true);
         // 命名约定 `_` = 锁定：入口与保命契约都不可覆盖
@@ -190,9 +192,7 @@ describe("template preview", () => {
         const pidA = await freshProj("uriA");
         const pidB = await freshProj("uriB");
         await fx.sh.run(`./diy.sh task create A任务 ${pidA}`);
-        const r = await fx.sh.getJson(
-            `./diy.sh template preview ${pidB} --taskUri projects/${pidA}/tasks/1`,
-        );
+        const r = await fx.sh.getJson(`./diy.sh template preview ${pidB} --taskUri projects/${pidA}/tasks/1`);
         const p = r.data as Record<string, unknown>;
         // system 里的任务与 cwd 必须来自 taskUri 的那个项目
         expect(String(p["system"])).toContain("A任务");

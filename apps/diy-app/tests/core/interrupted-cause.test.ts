@@ -83,7 +83,11 @@ describe("classifyInterruptedCause：窗口内证据 → 可命名原因", () =>
     });
 
     it("窗口内有新 minidump ⇒ crash:minidump + agent/app-crash", () => {
-        const c = classifyInterruptedCause(T0, T1, ev([], [{ path: "/h/log/crashes/pending/a.dmp", mtimeMs: T0 + 500 }]));
+        const c = classifyInterruptedCause(
+            T0,
+            T1,
+            ev([], [{ path: "/h/log/crashes/pending/a.dmp", mtimeMs: T0 + 500 }]),
+        );
         expect(c?.why).toBe("crash:minidump");
         expect(c?.code).toBe("agent/app-crash");
         expect(c?.evidence).toBe("/h/log/crashes/pending/a.dmp");
@@ -94,7 +98,10 @@ describe("classifyInterruptedCause：窗口内证据 → 可命名原因", () =>
             T0,
             T1,
             ev(
-                [{ ts: new Date(T0 - 10).toISOString(), kind: "SIGTERM" }, { ts: new Date(T1 + 10).toISOString(), kind: "SIGTERM" }],
+                [
+                    { ts: new Date(T0 - 10).toISOString(), kind: "SIGTERM" },
+                    { ts: new Date(T1 + 10).toISOString(), kind: "SIGTERM" },
+                ],
                 [{ path: "/h/x.dmp", mtimeMs: T0 - 1000 }],
             ),
         );

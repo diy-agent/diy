@@ -12,22 +12,22 @@ applyTheme(getTheme());
 applySkin(getSkin());
 
 declare global {
-  interface Window {
-    transport: import("@diy-agent/rpc").EnvelopeTransport;
-  }
+    interface Window {
+        transport: import("@diy-agent/rpc").EnvelopeTransport;
+    }
 }
 
 // Renderer 侧 RPC 服务端 — 处理来自 Main 进程或 CLI 的 RPC 调用（diy.ui.*）
 // window.transport 由 preload/index.ts 暴露
 if (window.transport) {
-  const rendererBinding = bindRendererApi(window.transport);
-  // UI 状态变化流的事件源（diy.ui.watch.uiState 的推送端）
-  startUiWatch();
-  // 页面卸载时清理
-  window.addEventListener("beforeunload", () => rendererBinding.destroy());
-  console.log("[renderer] RPC binding started");
+    const rendererBinding = bindRendererApi(window.transport);
+    // UI 状态变化流的事件源（diy.ui.watch.uiState 的推送端）
+    startUiWatch();
+    // 页面卸载时清理
+    window.addEventListener("beforeunload", () => rendererBinding.destroy());
+    console.log("[renderer] RPC binding started");
 } else {
-  console.warn("[renderer] window.transport not available — RPC disabled");
+    console.warn("[renderer] window.transport not available — RPC disabled");
 }
 
 render(() => <App />, document.getElementById("root")!);

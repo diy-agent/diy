@@ -19,107 +19,115 @@ import electronPath from "electron";
 
 /** 等待 app.port 文件出现并返回端口 */
 function waitForPort(home: string, timeoutMs = 30000): Promise<number> {
-  const portFile = join(home, "app.port");
-  const start = Date.now();
-  return new Promise<number>((resolve, reject) => {
-    const poll = () => {
-      if (existsSync(portFile)) {
-        try {
-          const port = parseInt(readFileSync(portFile, "utf-8").trim(), 10);
-          if (Number.isFinite(port)) return resolve(port);
-        } catch {
-          /* 重试 */
-        }
-      }
-      if (Date.now() - start > timeoutMs) {
-        return reject(new Error(`等待 ${portFile} 超时（${timeoutMs}ms）`));
-      }
-      setTimeout(poll, 200);
-    };
-    poll();
-  });
+    const portFile = join(home, "app.port");
+    const start = Date.now();
+    return new Promise<number>((resolve, reject) => {
+        const poll = () => {
+            if (existsSync(portFile)) {
+                try {
+                    const port = parseInt(readFileSync(portFile, "utf-8").trim(), 10);
+                    if (Number.isFinite(port)) return resolve(port);
+                } catch {
+                    /* 重试 */
+                }
+            }
+            if (Date.now() - start > timeoutMs) {
+                return reject(new Error(`等待 ${portFile} 超时（${timeoutMs}ms）`));
+            }
+            setTimeout(poll, 200);
+        };
+        poll();
+    });
 }
 
 /** 就绪探测：HTTP/2 连 port 发一次 diy.doctor，直到可服务或超时。
  *  消化 app.port 文件出现但 RPC handler 尚未完全就绪、以及 HTTP/2 首连偶发失败的时序。
  */
 function waitForRpcReady(port: number, timeoutMs = 15000): Promise<void> {
-  const start = Date.now();
-  const tryOnce = (): Promise<boolean> =>
-    new Promise((resolve) => {
-      const client: ClientHttp2Session = connect(`http://127.0.0.1:${port}`);
-      let settled = false;
-      const finish = (ok: boolean) => {
-        if (settled) return;
-        settled = true;
-        client.destroy();
-        resolve(ok);
-      };
-      client.on("error", () => finish(false));
-      const req = client.request({ ":path": "/diy.doctor", ":method": "GET" });
-      req.on("response", () => finish(true));
-      req.on("error", () => finish(false));
-      req.end();
-      setTimeout(() => finish(false), 1000);
-    });
+    const start = Date.now();
+    const tryOnce = (): Promise<boolean> =>
+        new Promise((resolve) => {
+            const client: ClientHttp2Session = connect(`http://127.0.0.1:${port}`);
+            let settled = false;
+            const finish = (ok: boolean) => {
+                if (settled) return;
+                settled = true;
+                client.destroy();
+                resolve(ok);
+            };
+            client.on("error", () => finish(false));
+            const req = client.request({ ":path": "/diy.doctor", ":method": "GET" });
+            req.on("response", () => finish(true));
+            req.on("error", () => finish(false));
+            req.end();
+            setTimeout(() => finish(false), 1000);
+        });
 
-  const loop = async () => {
-    for (;;) {
-      if (await tryOnce()) return;
-      if (Date.now() - start > timeoutMs) throw new Error(`RPC 就绪探测超时（port ${port}，${timeoutMs}ms）`);
-      await new Promise((r) => setTimeout(r, 300));
-    }
-  };
-  return loop();
+    const loop = async () => {
+        for (;;) {
+            if (await tryOnce()) return;
+            if (Date.now() - start > timeoutMs) throw new Error(`RPC 就绪探测超时（port ${port}，${timeoutMs}ms）`);
+            await new Promise((r) => setTimeout(r, 300));
+        }
+    };
+    return loop();
 }
 
 /** 隔离 HOME：临时目录 + symlink 必要配置（不写坏用户数据） */
 function makeIsolatedHome(): string {
-  const home = mkdtempSync(join(tmpdir(), TEST_HOME_PREFIX));
-  // 符号链接源头必须是真实家目录：setup.ts 已把 process.env.HOME 指向隔离目录，
-  // 此处的 homedir() 会跟着变，会把 home 链到自身。故用 setup.ts 留档的 DIY_REAL_HOME。
-  const real = process.env["DIY_REAL_HOME"] ?? homedir();
-  for (const d of [".config", ".local", ".ssh", ".cache"]) {
-    const src = join(real, d);
-    if (existsSync(src)) {
-      try { symlinkSync(src, join(home, d)); } catch { /* 忽略重复 */ }
+    const home = mkdtempSync(join(tmpdir(), TEST_HOME_PREFIX));
+    // 符号链接源头必须是真实家目录：setup.ts 已把 process.env.HOME 指向隔离目录，
+    // 此处的 homedir() 会跟着变，会把 home 链到自身。故用 setup.ts 留档的 DIY_REAL_HOME。
+    const real = process.env["DIY_REAL_HOME"] ?? homedir();
+    for (const d of [".config", ".local", ".ssh", ".cache"]) {
+        const src = join(real, d);
+        if (existsSync(src)) {
+            try {
+                symlinkSync(src, join(home, d));
+            } catch {
+                /* 忽略重复 */
+            }
+        }
     }
-  }
-  for (const f of [".gitconfig"]) {
-    const src = join(real, f);
-    if (existsSync(src)) {
-      try { symlinkSync(src, join(home, f)); } catch { /* 忽略 */ }
+    for (const f of [".gitconfig"]) {
+        const src = join(real, f);
+        if (existsSync(src)) {
+            try {
+                symlinkSync(src, join(home, f));
+            } catch {
+                /* 忽略 */
+            }
+        }
     }
-  }
-  // 预置「用户已配置 opencode-go」的模型 provider + 缺省人物：
-  //   生产**没有内置 provider**（无配置 = 无模型），intent 测试要模拟"已配置用户"。
-  //   缺省人物指向 opencode-go 的一个模型（缺省人物模型为空则无 provider 时不可聊天）。
-  writeFileSync(
-    join(home, "model.yaml"),
-    [
-      "stdProviders:",
-      "  opencode-go:",
-      "    accounts:",
-      '      - type: apiKey',
-      '        data: { value: "$OPENCODE_API_KEY" }',
-      "    filter: { include: [], exclude: [] }",
-      "",
-    ].join("\n"),
-  );
-  writeFileSync(
-    join(home, "personas.yaml"),
-    [
-      "default: persona/1",
-      "personas:",
-      "  persona/1:",
-      "    name: 大副",
-      "    model: 0@opencode-go/mimo-v2.6-flash",
-      "    reasoningEffort: medium",
-      '    instructions: ""',
-      "",
-    ].join("\n"),
-  );
-  return home;
+    // 预置「用户已配置 opencode-go」的模型 provider + 缺省人物：
+    //   生产**没有内置 provider**（无配置 = 无模型），intent 测试要模拟"已配置用户"。
+    //   缺省人物指向 opencode-go 的一个模型（缺省人物模型为空则无 provider 时不可聊天）。
+    writeFileSync(
+        join(home, "model.yaml"),
+        [
+            "stdProviders:",
+            "  opencode-go:",
+            "    accounts:",
+            "      - type: apiKey",
+            '        data: { value: "$OPENCODE_API_KEY" }',
+            "    filter: { include: [], exclude: [] }",
+            "",
+        ].join("\n"),
+    );
+    writeFileSync(
+        join(home, "personas.yaml"),
+        [
+            "default: persona/1",
+            "personas:",
+            "  persona/1:",
+            "    name: 大副",
+            "    model: 0@opencode-go/mimo-v2.6-flash",
+            "    reasoningEffort: medium",
+            '    instructions: ""',
+            "",
+        ].join("\n"),
+    );
+    return home;
 }
 
 /**
@@ -132,33 +140,43 @@ function makeIsolatedHome(): string {
 const liveInstances = new Set<ChildProcess>();
 let cleanupHooked = false;
 function registerForCleanup(proc: ChildProcess | null): void {
-  if (!proc) return;
-  liveInstances.add(proc);
-  if (!cleanupHooked) {
-    cleanupHooked = true;
-    const killAll = () => {
-      for (const p of liveInstances) {
-        if (p.exitCode === null && p.signalCode === null) {
-          try { p.kill("SIGKILL"); } catch { /* 已退出 */ }
-        }
-      }
-      liveInstances.clear();
-    };
-    process.once("exit", killAll);
-    process.once("SIGINT", () => { killAll(); process.exit(130); });
-    process.once("SIGTERM", () => { killAll(); process.exit(143); });
-  }
+    if (!proc) return;
+    liveInstances.add(proc);
+    if (!cleanupHooked) {
+        cleanupHooked = true;
+        const killAll = () => {
+            for (const p of liveInstances) {
+                if (p.exitCode === null && p.signalCode === null) {
+                    try {
+                        p.kill("SIGKILL");
+                    } catch {
+                        /* 已退出 */
+                    }
+                }
+            }
+            liveInstances.clear();
+        };
+        process.once("exit", killAll);
+        process.once("SIGINT", () => {
+            killAll();
+            process.exit(130);
+        });
+        process.once("SIGTERM", () => {
+            killAll();
+            process.exit(143);
+        });
+    }
 }
 
 export interface ElectronTest {
-  /** 隔离 HOME（含 DIY_HOME），供 ./diy.sh 使用 */
-  home: string;
-  /** RPC 端口 */
-  port: number;
-  /** CDP WebSocket 地址（可被 playwright-cli attach 连接） */
-  cdpUrl: string | null;
-  /** 停止并清理 */
-  stop(): Promise<void>;
+    /** 隔离 HOME（含 DIY_HOME），供 ./diy.sh 使用 */
+    home: string;
+    /** RPC 端口 */
+    port: number;
+    /** CDP WebSocket 地址（可被 playwright-cli attach 连接） */
+    cdpUrl: string | null;
+    /** 停止并清理 */
+    stop(): Promise<void>;
 }
 
 /**
@@ -171,24 +189,24 @@ export interface ElectronTest {
  * 拿不到不视为失败 —— 返回 null，测试照常跑（CDP 只是可观测性入口）。
  */
 async function waitForCdpBase(home: string, timeoutMs = 8000): Promise<string | null> {
-  const file = join(home, "electron_user_data", "DevToolsActivePort");
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const lines = readFileSync(file, "utf-8").split("\n");
-      const port = parseInt(lines[0]?.trim() ?? "", 10);
-      const path = lines[1]?.trim();
-      if (Number.isFinite(port) && port > 0 && path) {
-        // 文件第二行就是 /devtools/browser/<id>，直接拼成 playwright-cli attach 需要的完整 URL
-        // （attach 只给 base 会 404，这是踩过的坑）
-        return `ws://127.0.0.1:${port}${path}`;
-      }
-    } catch {
-      /* 文件还没写出来，继续等 */
+    const file = join(home, "electron_user_data", "DevToolsActivePort");
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        try {
+            const lines = readFileSync(file, "utf-8").split("\n");
+            const port = parseInt(lines[0]?.trim() ?? "", 10);
+            const path = lines[1]?.trim();
+            if (Number.isFinite(port) && port > 0 && path) {
+                // 文件第二行就是 /devtools/browser/<id>，直接拼成 playwright-cli attach 需要的完整 URL
+                // （attach 只给 base 会 404，这是踩过的坑）
+                return `ws://127.0.0.1:${port}${path}`;
+            }
+        } catch {
+            /* 文件还没写出来，继续等 */
+        }
+        await new Promise((r) => setTimeout(r, 100));
     }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  return null;
+    return null;
 }
 
 /**
@@ -196,75 +214,78 @@ async function waitForCdpBase(home: string, timeoutMs = 8000): Promise<string | 
  * 必须在测试后调用 stop() 释放进程。
  */
 export async function startElectronTest(extraEnv: Record<string, string> = {}): Promise<ElectronTest> {
-  const home = makeIsolatedHome();
-  // DIY_ENV=test：runtime.ts 派生副屏定位等测试专属能力，不遮挡主屏工作
-  // extraEnv：单条用例专属注入（如 `DIY_MODELS_DEV_ORIGIN` 指向本地 fixture，避免真抓上游）
-  const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_ENV: "test", ...extraEnv };
-  const appDir = join(__dirname, "..");
+    const home = makeIsolatedHome();
+    // DIY_ENV=test：runtime.ts 派生副屏定位等测试专属能力，不遮挡主屏工作
+    // extraEnv：单条用例专属注入（如 `DIY_MODELS_DEV_ORIGIN` 指向本地 fixture，避免真抓上游）
+    const env = { ...process.env, HOME: home, DIY_HOME: home, DIY_ENV: "test", ...extraEnv };
+    const appDir = join(__dirname, "..");
 
-  // 测试实例走 build/test/main（DIY_VARIANT=test 由 test-intent 注入），与 lab 产物隔离
-  const args = [join("build", process.env["DIY_VARIANT"] ?? "test", "main", "index.mjs"), "--remote-debugging-port=0"];
-  // 受限环境（Chromium sandbox 初始化被拒，如沙箱/容器）置 DIY_NO_SANDBOX=1 跑通测试；
-  // 默认不传，与生产行为一致。
-  if (process.env["DIY_NO_SANDBOX"] === "1") args.push("--no-sandbox");
-  const proc: ChildProcess = spawn(String(electronPath), args, {
-    cwd: appDir,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  registerForCleanup(proc);
+    // 测试实例走 build/test/main（DIY_VARIANT=test 由 test-intent 注入），与 lab 产物隔离
+    const args = [
+        join("build", process.env["DIY_VARIANT"] ?? "test", "main", "index.mjs"),
+        "--remote-debugging-port=0",
+    ];
+    // 受限环境（Chromium sandbox 初始化被拒，如沙箱/容器）置 DIY_NO_SANDBOX=1 跑通测试；
+    // 默认不传，与生产行为一致。
+    if (process.env["DIY_NO_SANDBOX"] === "1") args.push("--no-sandbox");
+    const proc: ChildProcess = spawn(String(electronPath), args, {
+        cwd: appDir,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+    });
+    registerForCleanup(proc);
 
-  // stdout/stderr 保持 pipe，但**必须持续 drain** —— 只 pipe 不读会填满管道缓冲把子进程
-  // 卡在 write 上。这里不再为了抓 "DevTools listening" 而依赖它，只留一小段尾部用于
-  // 启动失败时定位（CDP 地址改由 DevToolsActivePort 文件获取）。
-  let stderrTail = "";
-  proc.stdout?.on("data", () => {
-    /* 纯排空 */
-  });
-  proc.stderr?.on("data", (chunk: Buffer) => {
-    stderrTail = (stderrTail + chunk.toString()).slice(-4000);
-  });
+    // stdout/stderr 保持 pipe，但**必须持续 drain** —— 只 pipe 不读会填满管道缓冲把子进程
+    // 卡在 write 上。这里不再为了抓 "DevTools listening" 而依赖它，只留一小段尾部用于
+    // 启动失败时定位（CDP 地址改由 DevToolsActivePort 文件获取）。
+    let stderrTail = "";
+    proc.stdout?.on("data", () => {
+        /* 纯排空 */
+    });
+    proc.stderr?.on("data", (chunk: Buffer) => {
+        stderrTail = (stderrTail + chunk.toString()).slice(-4000);
+    });
 
-  try {
-    const port = await waitForPort(home);
-    // 端口文件出现后再等 RPC 真正可服务，避免首条 CLI 命令偶发空响应
-    await waitForRpcReady(port);
-    const cdpUrl = await waitForCdpBase(home);
-    return {
-      home,
-      port,
-      cdpUrl,
-      stop: () => {
-        liveInstances.delete(proc);
-        return new Promise<void>((resolve) => {
-          const done = () => {
-            removeIsolatedHome(home); // 实例已停 → 它的临时 HOME 没用了，当场删（见函数注释）
-            resolve();
-          };
-          if (proc.exitCode !== null || proc.signalCode !== null) return done();
-          proc.once("exit", done);
-          proc.kill("SIGTERM");
-          // SIGTERM 3s 后还没退出 → SIGKILL。残留 Electron 堆内存会把机器拖慢，
-          // 后续用例的 CLI 探活连带超时，造成全量跑级联失败。
-          setTimeout(() => {
-            if (proc.exitCode === null && proc.signalCode === null) {
-              try {
-                proc.kill("SIGKILL");
-              } catch {
-                /* 竞态：正好退出了 */
-              }
-            }
-            done();
-          }, 3000);
-        });
-      },
-    };
-  } catch (err) {
-    proc.kill("SIGTERM");
-    removeIsolatedHome(home); // 起不来也别把垃圾留下
-    if (stderrTail.trim()) {
-      console.error(`[electron-test] 启动失败，子进程 stderr 尾部：\n${stderrTail}`);
+    try {
+        const port = await waitForPort(home);
+        // 端口文件出现后再等 RPC 真正可服务，避免首条 CLI 命令偶发空响应
+        await waitForRpcReady(port);
+        const cdpUrl = await waitForCdpBase(home);
+        return {
+            home,
+            port,
+            cdpUrl,
+            stop: () => {
+                liveInstances.delete(proc);
+                return new Promise<void>((resolve) => {
+                    const done = () => {
+                        removeIsolatedHome(home); // 实例已停 → 它的临时 HOME 没用了，当场删（见函数注释）
+                        resolve();
+                    };
+                    if (proc.exitCode !== null || proc.signalCode !== null) return done();
+                    proc.once("exit", done);
+                    proc.kill("SIGTERM");
+                    // SIGTERM 3s 后还没退出 → SIGKILL。残留 Electron 堆内存会把机器拖慢，
+                    // 后续用例的 CLI 探活连带超时，造成全量跑级联失败。
+                    setTimeout(() => {
+                        if (proc.exitCode === null && proc.signalCode === null) {
+                            try {
+                                proc.kill("SIGKILL");
+                            } catch {
+                                /* 竞态：正好退出了 */
+                            }
+                        }
+                        done();
+                    }, 3000);
+                });
+            },
+        };
+    } catch (err) {
+        proc.kill("SIGTERM");
+        removeIsolatedHome(home); // 起不来也别把垃圾留下
+        if (stderrTail.trim()) {
+            console.error(`[electron-test] 启动失败，子进程 stderr 尾部：\n${stderrTail}`);
+        }
+        throw err;
     }
-    throw err;
-  }
 }

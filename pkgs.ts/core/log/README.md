@@ -6,11 +6,11 @@ diy 的应用日志：**OTel 日志 API + 文件导出器**（jsonl / 按天切 
 
 不自研日志 API。分层：
 
-| 包 | 是什么 | 谁依赖 |
-|---|---|---|
-| `@opentelemetry/api-logs` | **接口**（类型 + noop 实现，几 KB）。`Logger` / `LoggerProvider` / `SeverityNumber` | 所有业务包 |
-| `@opentelemetry/sdk-logs` | **实现**（几十 KB）。`LoggerProvider` / `BatchLogRecordProcessor` / exporter | **只有装配层**（`apps/*/main.ts`） |
-| `@diy-agent/log` | **文件导出器** + `child(source)` 语法糖 | 装配层（导出器）；业务包可只用 api-logs |
+| 包                        | 是什么                                                                              | 谁依赖                                  |
+| ------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------- |
+| `@opentelemetry/api-logs` | **接口**（类型 + noop 实现，几 KB）。`Logger` / `LoggerProvider` / `SeverityNumber` | 所有业务包                              |
+| `@opentelemetry/sdk-logs` | **实现**（几十 KB）。`LoggerProvider` / `BatchLogRecordProcessor` / exporter        | **只有装配层**（`apps/*/main.ts`）      |
+| `@diy-agent/log`          | **文件导出器** + `child(source)` 语法糖                                             | 装配层（导出器）；业务包可只用 api-logs |
 
 判据（可 grep）：`pkgs.ts/*/src` 里不出现 OTel SDK 包名（业务包只用接口）；
 本包 `src/` 里没有自研 Logger 接口，导出器按 `LogRecordExporter` 的形状结构化实现。
@@ -72,7 +72,15 @@ const log = child('main:test', provider); // 第二个参数 = 注入 provider
 一行：
 
 ```json
-{"at":"2026-10-31T02:41:33.024Z","level":"info","source":"main:chat","msg":"应用启动","data":{"variant":"lab"},"trace_id":"…","span_id":"…"}
+{
+    "at": "2026-10-31T02:41:33.024Z",
+    "level": "info",
+    "source": "main:chat",
+    "msg": "应用启动",
+    "data": { "variant": "lab" },
+    "trace_id": "…",
+    "span_id": "…"
+}
 ```
 
 - **按天**：文件名 = 记录时间的本地日期（`at` 字段仍是 ISO，给机器读）；跨天自动新建；

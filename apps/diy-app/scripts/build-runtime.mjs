@@ -45,7 +45,9 @@ function slimPackageJson(pkg) {
     if (pkg.main) out.main = pkg.main;
     if (pkg.exports) out.exports = pkg.exports;
     const internalDeps = Object.fromEntries(
-        Object.entries(pkg.dependencies ?? {}).filter(([name]) => INTERNAL_SCOPES.some((scope) => name.startsWith(scope))),
+        Object.entries(pkg.dependencies ?? {}).filter(([name]) =>
+            INTERNAL_SCOPES.some((scope) => name.startsWith(scope)),
+        ),
     );
     if (Object.keys(internalDeps).length > 0) out.dependencies = internalDeps;
     return out;
@@ -80,7 +82,9 @@ function collectPackages() {
         const outName = m[1];
         const outDirOfPkg = join(pkgsDir, dir, outName);
         if (!existsSync(join(outDirOfPkg, "index.js"))) {
-            throw new Error(`${pkg.name}: main 指 ${pkg.main}，但 ${outDirOfPkg}/index.js 不存在 —— 先跑根 ./sha.sh build（build-pkgs）`);
+            throw new Error(
+                `${pkg.name}: main 指 ${pkg.main}，但 ${outDirOfPkg}/index.js 不存在 —— 先跑根 ./sha.sh build（build-pkgs）`,
+            );
         }
         picked.push({ pkg, libDir: outDirOfPkg });
     }

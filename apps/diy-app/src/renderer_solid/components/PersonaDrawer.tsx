@@ -52,7 +52,13 @@
 
 import { createSignal, createEffect, createMemo, on, For, Show } from "solid-js";
 import { useDrawerMax, DrawerMaxButton } from "@diy-agent/ui-kit";
-import { Caches, PERSONA_DRAWER_H_MIN, PERSONA_DRAWER_H_MAX, PERSONA_LEFT_W_MIN, PERSONA_LEFT_W_MAX } from "../lib/ui-state";
+import {
+    Caches,
+    PERSONA_DRAWER_H_MIN,
+    PERSONA_DRAWER_H_MAX,
+    PERSONA_LEFT_W_MIN,
+    PERSONA_LEFT_W_MAX,
+} from "../lib/ui-state";
 import { personaStore } from "../store/personaStore";
 import { taskStore } from "../store/taskStore";
 import { notificationStore } from "../store/notificationStore";
@@ -109,11 +115,7 @@ function HighlightText(props: { text: string; query: () => string }) {
         <Show when={props.query().trim()} fallback={<>{props.text}</>}>
             <For each={chunks()}>
                 {(chunk, i) =>
-                    i() % 2 ? (
-                        <mark class="rounded bg-warning/40 px-0.5 text-inherit">{chunk}</mark>
-                    ) : (
-                        chunk
-                    )
+                    i() % 2 ? <mark class="rounded bg-warning/40 px-0.5 text-inherit">{chunk}</mark> : chunk
                 }
             </For>
         </Show>
@@ -128,11 +130,7 @@ function HighlightText(props: { text: string; query: () => string }) {
  * 点某成员的头像要编辑**它的人物**，靠这个 prop 指定；同时置 `manualPick`，
  * 否则下面那条"校准回本任务人物"的 effect 会立刻把它覆盖掉。
  */
-export function PersonaDrawer(props: {
-    open: boolean;
-    onClose: () => void;
-    initialPersona?: string | null;
-}) {
+export function PersonaDrawer(props: { open: boolean; onClose: () => void; initialPersona?: string | null }) {
     /** 右侧正在编辑的人物 id（空白态 = 新建，见 creating） */
     const [editing, setEditing] = createSignal<string | null>(null);
     const [creating, setCreating] = createSignal(false);
@@ -149,13 +147,7 @@ export function PersonaDrawer(props: {
         const q = search().trim().toLocaleLowerCase();
         if (!q) return personaStore.personas;
         return personaStore.personas.filter((p) =>
-            [
-                p.name,
-                p.model,
-                p.reasoningEffort,
-                reasoningEffortLabel(p.reasoningEffort),
-                p.instructions,
-            ]
+            [p.name, p.model, p.reasoningEffort, reasoningEffortLabel(p.reasoningEffort), p.instructions]
                 .join("\n")
                 .toLocaleLowerCase()
                 .includes(q),
@@ -223,8 +215,7 @@ export function PersonaDrawer(props: {
                 // 本任务跟随缺省时，右侧停在「跟随缺省」那一行（而不是解析出来的缺省人物 ——
                 // 那会让人以为"我固定绑了它"，而实际是"跟着缺省走"）
                 setEditing(
-                    props.initialPersona ??
-                        (personaStore.isFollowing() ? FOLLOW_DEFAULT : personaStore.idForTask()),
+                    props.initialPersona ?? (personaStore.isFollowing() ? FOLLOW_DEFAULT : personaStore.idForTask()),
                 );
                 void personaStore.load(true);
             },
@@ -257,16 +248,14 @@ export function PersonaDrawer(props: {
 
     /** 右侧选中的是「跟随缺省」那一行（不是一个真实人物） */
     const editingFollow = () => !creating() && editing() === FOLLOW_DEFAULT;
-    const current = () =>
-        creating() || editingFollow() ? null : personaStore.defOf(editing() ?? "");
+    const current = () => (creating() || editingFollow() ? null : personaStore.defOf(editing() ?? ""));
     /** 本任务固定绑定的人物 id（跟随缺省时为 null —— 与 idForTask 的"解析结果"不同） */
     const boundId = () => (personaStore.isFollowing() ? null : personaStore.idForTask());
 
     /** 右侧三块属性的**当前显示值**：新建态看草稿、编辑态看人物定义（统一一处，三块不必各写一套三元） */
     const shownModel = () => (creating() ? newModel() : (current()?.model ?? ""));
     const shownEffort = () => (creating() ? newEffort() : (current()?.reasoningEffort ?? ""));
-    const shownInstructions = () =>
-        creating() ? newInstructions() : (current()?.instructions ?? "");
+    const shownInstructions = () => (creating() ? newInstructions() : (current()?.instructions ?? ""));
 
     /**
      * 进入新建态：默认模型跟着"当前正在看的那个人物"（多半是照着它建一个），
@@ -295,8 +284,7 @@ export function PersonaDrawer(props: {
         }
         setNewModel(model);
         const supported: string[] = personaStore.reasoningChoices(model);
-        if (!supported.includes(newEffort()))
-            setNewEffort(personaStore.defaultReasoning(model) ?? "");
+        if (!supported.includes(newEffort())) setNewEffort(personaStore.defaultReasoning(model) ?? "");
     };
 
     /** 点档位：编辑态立即存；新建态只改草稿 */
@@ -379,12 +367,7 @@ export function PersonaDrawer(props: {
     };
 
     /** 保存（改完即存）。新建时用输入框里的名字；更新时按 patch 改。 */
-    const save = async (patch: {
-        name?: string;
-        model?: string;
-        reasoningEffort?: string;
-        instructions?: string;
-    }) => {
+    const save = async (patch: { name?: string; model?: string; reasoningEffort?: string; instructions?: string }) => {
         setBusy(true);
         try {
             if (creating()) {
@@ -519,11 +502,7 @@ export function PersonaDrawer(props: {
                         </span>
                         <div class="ml-auto flex items-center gap-1">
                             <DrawerMaxButton max={DM.max()} onToggle={DM.toggle} />
-                            <button
-                                class="btn btn-ghost btn-xs"
-                                aria-label="关闭人物面板"
-                                onClick={props.onClose}
-                            >
+                            <button class="btn btn-ghost btn-xs" aria-label="关闭人物面板" onClick={props.onClose}>
                                 ✕
                             </button>
                         </div>
@@ -541,9 +520,7 @@ export function PersonaDrawer(props: {
                             <span class="opacity-70" aria-hidden="true">
                                 ⓘ
                             </span>
-                            <span>
-                                改右侧属性 = 影响 {current()?.taskCount ?? 0} 个任务（下一轮生效）
-                            </span>
+                            <span>改右侧属性 = 影响 {current()?.taskCount ?? 0} 个任务（下一轮生效）</span>
                         </div>
                     </Show>
 
@@ -600,9 +577,7 @@ export function PersonaDrawer(props: {
                                         <div class="mb-1 flex w-full items-stretch gap-1">
                                             <button
                                                 class={`min-w-0 flex-1 flex-col items-start gap-0.5 rounded-box px-2 py-1.5 text-left transition-colors ${
-                                                    editingFollow()
-                                                        ? "bg-primary/15"
-                                                        : "hover:bg-base-200"
+                                                    editingFollow() ? "bg-primary/15" : "hover:bg-base-200"
                                                 }`}
                                                 aria-label="跟随缺省人物"
                                                 onClick={() => {
@@ -613,9 +588,7 @@ export function PersonaDrawer(props: {
                                                 onDblClick={() => void pickForTask(FOLLOW_DEFAULT)}
                                             >
                                                 <span class="flex w-full items-center gap-1">
-                                                    <span class="truncate text-body font-medium">
-                                                        跟随缺省
-                                                    </span>
+                                                    <span class="truncate text-body font-medium">跟随缺省</span>
                                                 </span>
                                                 <span class="w-full truncate text-caption opacity-60">
                                                     缺省改变时，本任务下一轮跟着变
@@ -631,18 +604,14 @@ export function PersonaDrawer(props: {
                                                     <span
                                                         class="truncate opacity-80"
                                                         title={(() => {
-                                                            const d = personaStore.defOf(
-                                                                personaStore.defaultPersona,
-                                                            );
+                                                            const d = personaStore.defOf(personaStore.defaultPersona);
                                                             return d
                                                                 ? `${personaStore.displayModel(d.model)} · ${reasoningEffortLabel(d.reasoningEffort)}`
                                                                 : "";
                                                         })()}
                                                     >
                                                         {(() => {
-                                                            const d = personaStore.defOf(
-                                                                personaStore.defaultPersona,
-                                                            );
+                                                            const d = personaStore.defOf(personaStore.defaultPersona);
                                                             return d
                                                                 ? ` · ${personaStore.displayModel(d.model)} · ${reasoningEffortLabel(d.reasoningEffort)}`
                                                                 : "";
@@ -667,7 +636,14 @@ export function PersonaDrawer(props: {
                                 <Show when={personaStore.loading}>
                                     <div class="px-2 py-1 text-body opacity-50">加载中…</div>
                                 </Show>
-                                <Show when={!personaStore.loading && search().trim() && !followMatchesSearch() && filteredPersonas().length === 0}>
+                                <Show
+                                    when={
+                                        !personaStore.loading &&
+                                        search().trim() &&
+                                        !followMatchesSearch() &&
+                                        filteredPersonas().length === 0
+                                    }
+                                >
                                     <div class="px-2 py-3 text-center text-body opacity-60">
                                         没有匹配「{search().trim()}」的人物
                                     </div>
@@ -703,11 +679,7 @@ export function PersonaDrawer(props: {
                                                         <span class="truncate text-body font-medium">
                                                             <HighlightText text={p.name} query={search} />
                                                         </span>
-                                                        <Show
-                                                            when={
-                                                                p.id === personaStore.defaultPersona
-                                                            }
-                                                        >
+                                                        <Show when={p.id === personaStore.defaultPersona}>
                                                             <span class="badge badge-xs badge-secondary badge-soft shrink-0">
                                                                 缺省
                                                             </span>
@@ -720,9 +692,7 @@ export function PersonaDrawer(props: {
                                                         />
                                                         {" · "}
                                                         <HighlightText
-                                                            text={reasoningEffortLabel(
-                                                                p.reasoningEffort,
-                                                            )}
+                                                            text={reasoningEffortLabel(p.reasoningEffort)}
                                                             query={search}
                                                         />
                                                     </span>
@@ -732,9 +702,7 @@ export function PersonaDrawer(props: {
                                                         title={p.instructions || "未设置行为指令"}
                                                     >
                                                         <HighlightText
-                                                            text={
-                                                                p.instructions || "未设置行为指令"
-                                                            }
+                                                            text={p.instructions || "未设置行为指令"}
                                                             query={search}
                                                         />
                                                     </span>
@@ -744,10 +712,7 @@ export function PersonaDrawer(props: {
                                                     class="btn btn-secondary btn-xs my-1 shrink-0 self-start opacity-0 transition-opacity group-hover:opacity-100"
                                                     aria-label={`设人物 ${p.name} 为缺省`}
                                                     title="设为缺省人物"
-                                                    disabled={
-                                                        busy() ||
-                                                        p.id === personaStore.defaultPersona
-                                                    }
+                                                    disabled={busy() || p.id === personaStore.defaultPersona}
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         void personaStore.setDefault(p.id);
@@ -788,18 +753,14 @@ export function PersonaDrawer(props: {
                                     // 连带影响所有跟随者 —— 这种动作必须回到"选中那个人物再改"。
                                     <Show
                                         when={editingFollow()}
-                                        fallback={
-                                            <div class="text-body opacity-60">没有可用人物。</div>
-                                        }
+                                        fallback={<div class="text-body opacity-60">没有可用人物。</div>}
                                     >
                                         <div
                                             class="max-w-[46rem] space-y-2 text-body"
                                             data-testid="persona-follow-pane"
                                         >
                                             <div class="flex items-center gap-2">
-                                                <span class="badge badge-xs badge-primary">
-                                                    本任务
-                                                </span>
+                                                <span class="badge badge-xs badge-primary">本任务</span>
                                                 <span class="font-medium">跟随缺省人物</span>
                                             </div>
                                             <p class="leading-relaxed opacity-70">
@@ -808,37 +769,28 @@ export function PersonaDrawer(props: {
                                             <div class="rounded-box border border-base-300 px-3 py-2">
                                                 <div class="flex items-center gap-1">
                                                     <span class="opacity-60">当前缺省：</span>
-                                                    <span class="font-medium">
-                                                        {personaStore.defaultPersonaName()}
-                                                    </span>
-                                                    <span class="badge badge-xs badge-ghost">
-                                                        缺省
-                                                    </span>
+                                                    <span class="font-medium">{personaStore.defaultPersonaName()}</span>
+                                                    <span class="badge badge-xs badge-ghost">缺省</span>
                                                 </div>
                                                 <div class="mt-1 opacity-70">
                                                     {personaStore.displayModel(
-                                                        personaStore.defOf(
-                                                            personaStore.defaultPersona,
-                                                        )?.model ?? "",
+                                                        personaStore.defOf(personaStore.defaultPersona)?.model ?? "",
                                                     )}
                                                     {" · "}
                                                     {reasoningEffortLabel(
-                                                        personaStore.defOf(
-                                                            personaStore.defaultPersona,
-                                                        )?.reasoningEffort ?? "",
+                                                        personaStore.defOf(personaStore.defaultPersona)
+                                                            ?.reasoningEffort ?? "",
                                                     )}
                                                 </div>
                                                 <div class="mt-1 opacity-50">
-                                                    {personaStore.defOf(personaStore.defaultPersona)
-                                                        ?.taskCount ?? 0}{" "}
-                                                    个任务固定绑定了它；{personaStore.followCount}{" "}
-                                                    个任务跟随缺省
+                                                    {personaStore.defOf(personaStore.defaultPersona)?.taskCount ?? 0}{" "}
+                                                    个任务固定绑定了它；{personaStore.followCount} 个任务跟随缺省
                                                 </div>
                                             </div>
                                             <p class="leading-relaxed opacity-60">
                                                 ⓘ 想改模型 / 参数 / 行为指令，请在左列选中「
-                                                {personaStore.defaultPersonaName()}」再改 ——
-                                                那一处改的是人物定义本身， 会影响所有用它的任务。
+                                                {personaStore.defaultPersonaName()}」再改 —— 那一处改的是人物定义本身，
+                                                会影响所有用它的任务。
                                             </p>
                                         </div>
                                     </Show>
@@ -856,9 +808,7 @@ export function PersonaDrawer(props: {
                                                     value={nameDraft()}
                                                     disabled={busy()}
                                                     aria-label="人物名字"
-                                                    onInput={(e) =>
-                                                        setNameDraft(e.currentTarget.value)
-                                                    }
+                                                    onInput={(e) => setNameDraft(e.currentTarget.value)}
                                                     onBlur={commitName}
                                                     onKeyDown={(e) => {
                                                         if (e.key === "Enter") {
@@ -923,15 +873,11 @@ export function PersonaDrawer(props: {
                                         aria-label="人物行为指令"
                                         // 新建态只更新草稿（创建时一并提交）；编辑态改完即存 —— 两种语义别混
                                         onInput={(e) => {
-                                            if (creating())
-                                                setNewInstructions(e.currentTarget.value);
+                                            if (creating()) setNewInstructions(e.currentTarget.value);
                                         }}
                                         onBlur={(e) => {
                                             if (creating()) return;
-                                            if (
-                                                e.currentTarget.value !==
-                                                (current()?.instructions ?? "")
-                                            ) {
+                                            if (e.currentTarget.value !== (current()?.instructions ?? "")) {
                                                 void save({ instructions: e.currentTarget.value });
                                             }
                                         }}
@@ -959,9 +905,7 @@ export function PersonaDrawer(props: {
                                       ? "本任务正在用它"
                                       : "双击 = 本任务改用它"}
                             </span>
-                            <span class="ml-auto text-body opacity-50">
-                                悬停人物条目 = 「缺省」按钮
-                            </span>
+                            <span class="ml-auto text-body opacity-50">悬停人物条目 = 「缺省」按钮</span>
                         </Show>
                         <Show when={creating()}>
                             <button
@@ -1028,9 +972,7 @@ function ModelField(props: {
             },
         ),
     );
-    const current = createMemo(
-        () => props.models.find((m) => m.ref === props.value || m.id === props.value) ?? null,
-    );
+    const current = createMemo(() => props.models.find((m) => m.ref === props.value || m.id === props.value) ?? null);
     const price = () => {
         const c = current()?.cost;
         if (!c || c.input == null) return "";
@@ -1055,9 +997,7 @@ function ModelField(props: {
                 >
                     <span class="flex items-center gap-2">
                         <span class="font-mono text-body">
-                            {props.value
-                                ? personaStore.displayModel(props.value)
-                                : "（未选模型）"}
+                            {props.value ? personaStore.displayModel(props.value) : "（未选模型）"}
                         </span>
                         <ChevronDown open={open()} />
                     </span>
@@ -1065,7 +1005,10 @@ function ModelField(props: {
                         <span class="text-caption opacity-60">
                             {current()?.name ?? ""}
                             <Show when={price()}>
-                                <span class="opacity-70">{current()?.name ? " · " : ""}{price()}</span>
+                                <span class="opacity-70">
+                                    {current()?.name ? " · " : ""}
+                                    {price()}
+                                </span>
                             </Show>
                         </span>
                     </Show>
@@ -1187,10 +1130,10 @@ function ModelPicker(props: {
             const variant =
                 provider() === "all"
                     ? m
-                    : props.models.find((x) => {
+                    : (props.models.find((x) => {
                           const y = splitQualified(x.ref);
                           return !!y && y.provider === pq.provider && y.model === m.id && y.account === acct;
-                      }) ?? m;
+                      }) ?? m);
             out.push({
                 provider: pq.provider,
                 id: m.id,
@@ -1244,10 +1187,7 @@ function ModelPicker(props: {
     };
     const arrow = (k: SortKey) => (sortKey() === k ? (sortDir() === 1 ? " ▲" : " ▼") : "");
     const Th = (p: { k: SortKey; label: string; cls?: string }) => (
-        <th
-            class={`cursor-pointer select-none whitespace-nowrap ${p.cls ?? ""}`}
-            onClick={() => toggleSort(p.k)}
-        >
+        <th class={`cursor-pointer select-none whitespace-nowrap ${p.cls ?? ""}`} onClick={() => toggleSort(p.k)}>
             {p.label}
             {arrow(p.k)}
         </th>

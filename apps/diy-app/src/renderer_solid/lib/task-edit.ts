@@ -23,23 +23,23 @@ export type TaskEditPatch = { [K in keyof Omit<TaskEditInput, "uri" | "appendBod
  * 展开写法在类型上无法保证所有键都在（TS 会报缺键）。新增字段时这里补一行。
  */
 export async function editTask(uri: string, patch: TaskEditPatch): Promise<void> {
-  await diyService.diy.task.edit({
-    uri,
-    title: patch.title,
-    state: patch.state,
-    body: patch.body,
-    parent: patch.parent,
-    change_type: patch.change_type,
-    module: patch.module,
-    priority: patch.priority,
-    // agent 人物（换绑 = 只改本任务的引用；模型/参数由人物定义决定，见 shared/persona.ts）
-    persona: patch.persona,
-    // 以下不入 UI 口径（见 TaskEditPatch 说明）—— 契约为「键必须出现」，故显式给 undefined：
-    // 正文的"传文件"形态与追加三态都是 CLI 侧能力（##338 / ##322）
-    bodyText: undefined,
-    bodyFile: undefined,
-    appendBody: undefined,
-    appendBodyFile: undefined,
-    appendBodyText: undefined,
-  });
+    await diyService.diy.task.edit({
+        uri,
+        title: patch.title,
+        state: patch.state,
+        body: patch.body,
+        parent: patch.parent,
+        change_type: patch.change_type,
+        module: patch.module,
+        priority: patch.priority,
+        // agent 人物（换绑 = 只改本任务的引用；模型/参数由人物定义决定，见 shared/persona.ts）
+        persona: patch.persona,
+        // 以下不入 UI 口径（见 TaskEditPatch 说明）—— 契约为「键必须出现」，故显式给 undefined：
+        // 正文的"传文件"形态与追加三态都是 CLI 侧能力（##338 / ##322）
+        bodyText: undefined,
+        bodyFile: undefined,
+        appendBody: undefined,
+        appendBodyFile: undefined,
+        appendBodyText: undefined,
+    });
 }

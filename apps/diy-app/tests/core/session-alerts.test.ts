@@ -152,7 +152,12 @@ describe("##358 D3 · alertsOf —— 只报跃迁", () => {
             row({ uri: "c", label: "#c", running: true, stalled: true }),
             row({ uri: "d", label: "#d", running: true, queue: 1 }),
         ];
-        const prevAll = { "a": prevBase, b: row({ uri: "b", label: "#b" }), c: row({ uri: "c", label: "#c", running: true }), d: row({ uri: "d", label: "#d", running: true }) };
+        const prevAll = {
+            a: prevBase,
+            b: row({ uri: "b", label: "#b" }),
+            c: row({ uri: "c", label: "#c", running: true }),
+            d: row({ uri: "d", label: "#d", running: true }),
+        };
         const out = alertsOf(prevAll, kinds, { autoPull: true });
         expect(out.length).toBe(4);
         for (const a of out) expect(a.text).not.toContain("步");

@@ -1033,7 +1033,12 @@ export function projectAll(store: BlockStore): LocalModelMessage[] {
                 // 结构化机器事件：整条走 notify（内容 = meta.notify，不用正文；正文仍留给 UI 列表）
                 const notify = b.notify as NotifyItem | undefined;
                 if (notify && typeof notify.kind === "string") {
-                    out.push({ role: "user", content: userEnvelope({ notify: [notify] }), turn, ...(step ? { step } : {}) });
+                    out.push({
+                        role: "user",
+                        content: userEnvelope({ notify: [notify] }),
+                        turn,
+                        ...(step ? { step } : {}),
+                    });
                     return;
                 }
                 const body = stripRuntimeSections(text);

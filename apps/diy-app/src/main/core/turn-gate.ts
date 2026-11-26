@@ -13,11 +13,11 @@
 
 import { getTask } from "./state";
 import {
-  isTerminalSessionState,
-  terminalSessionDetail,
-  TERMINAL_STATE_REASON,
-  type TurnGateDecision,
-  type TurnGateInput,
+    isTerminalSessionState,
+    terminalSessionDetail,
+    TERMINAL_STATE_REASON,
+    type TurnGateDecision,
+    type TurnGateInput,
 } from "../../shared/turn-gate";
 
 /**
@@ -30,12 +30,12 @@ import {
  * 终态词表与文案在 `shared/turn-gate`（UI 的静态提示读同一份，不可能漂）。
  */
 export function taskTurnGate(input: TurnGateInput): TurnGateDecision {
-  const state = getTask(input.sessionUri)?.state;
-  if (!isTerminalSessionState(state)) return { allow: true };
-  return {
-    allow: false,
-    code: "session/closed",
-    reason: TERMINAL_STATE_REASON[state],
-    detail: terminalSessionDetail(input.sessionUri, state),
-  };
+    const state = getTask(input.sessionUri)?.state;
+    if (!isTerminalSessionState(state)) return { allow: true };
+    return {
+        allow: false,
+        code: "session/closed",
+        reason: TERMINAL_STATE_REASON[state],
+        detail: terminalSessionDetail(input.sessionUri, state),
+    };
 }

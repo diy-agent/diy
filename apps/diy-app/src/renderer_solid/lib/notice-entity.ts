@@ -61,7 +61,9 @@ const DETAIL_DRAFT = [
 export function taskDeletedNotice(title?: string): NoticeMeta {
     return {
         source: "任务树 · deleteTask（renderer_solid/lib/delete-entry.ts::deleteTaskViaUi）",
-        reason: title ? `已删除任务「${title}」并重载任务树；其子任务未被删除，已失父升为一级任务` : "已删除任务并重载任务树；其子任务未被删除，已失父升为一级任务",
+        reason: title
+            ? `已删除任务「${title}」并重载任务树；其子任务未被删除，已失父升为一级任务`
+            : "已删除任务并重载任务树；其子任务未被删除，已失父升为一级任务",
         detail: DETAIL_TASK_DELETE,
     };
 }

@@ -16,14 +16,7 @@
 // 要更大的窗口或全量（`limit: 0`）才重读。
 
 import { stat } from "node:fs/promises";
-import {
-    readDeliveries,
-    readRoomView,
-    roomDeliveriesPath,
-    roomEventsPath,
-    roomYamlPath,
-    type RoomView,
-} from "./room";
+import { readDeliveries, readRoomView, roomDeliveriesPath, roomEventsPath, roomYamlPath, type RoomView } from "./room";
 import type { DeliveryState } from "../../shared/room";
 
 interface ViewEntry {
@@ -49,7 +42,11 @@ async function sigOf(file: string): Promise<string> {
 }
 
 async function roomSig(roomId: string): Promise<string> {
-    const parts = await Promise.all([sigOf(roomYamlPath(roomId)), sigOf(roomEventsPath(roomId)), sigOf(roomDeliveriesPath(roomId))]);
+    const parts = await Promise.all([
+        sigOf(roomYamlPath(roomId)),
+        sigOf(roomEventsPath(roomId)),
+        sigOf(roomDeliveriesPath(roomId)),
+    ]);
     return parts.join("|");
 }
 

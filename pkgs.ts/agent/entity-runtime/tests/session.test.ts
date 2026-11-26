@@ -362,7 +362,11 @@ describe('BotSession', () => {
                     origin: 'self' as const,
                     turn: 1,
                 },
-                { message: { role: 'user', content: '人: '.concat('最新一句'.repeat(900)) }, origin: 'public' as const, turn: 2 },
+                {
+                    message: { role: 'user', content: '人: '.concat('最新一句'.repeat(900)) },
+                    origin: 'public' as const,
+                    turn: 2,
+                },
             ],
         });
         const a = makeSession({ seed, windowTokens: 20_000 });

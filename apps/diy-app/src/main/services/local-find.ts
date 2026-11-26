@@ -167,7 +167,10 @@ function fieldsOf(b: Block): Array<[keyof FindScopes, string, string]> {
             break;
         case "plan": {
             const items = Array.isArray(b.items) ? (b.items as Array<{ text?: unknown }>) : [];
-            const text = items.map((it) => str(it?.text)).filter(Boolean).join("\n");
+            const text = items
+                .map((it) => str(it?.text))
+                .filter(Boolean)
+                .join("\n");
             out.push(["text", text, "计划"]);
             break;
         }
@@ -210,8 +213,7 @@ export async function findInOpsFile(fp: string, opts: FindOptions): Promise<Find
     /** 压缩边界（按轮序兜底）：一旦撞到 boundary 轮，此后都算"已压缩" */
     let seenBoundary = compactedFromTurnId === null;
 
-    const isCompacted = (at: number): boolean =>
-        compactedBefore !== null ? at < compactedBefore : !seenBoundary;
+    const isCompacted = (at: number): boolean => (compactedBefore !== null ? at < compactedBefore : !seenBoundary);
 
     /** 折一轮 → 收集命中 */
     const flush = (): boolean => {

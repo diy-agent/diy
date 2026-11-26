@@ -14,37 +14,37 @@
 // 若将来要把 diff 用到大文本/实时场景，按这个顺序升级：限流 → 换线性空间 Myers（jsdiff）→ Worker。
 
 export interface DiffLine {
-  /** ' ' 原文 | '-' 删除 | '+' 新增 */
-  t: string;
-  s: string;
+    /** ' ' 原文 | '-' 删除 | '+' 新增 */
+    t: string;
+    s: string;
 }
 
 export function lineDiff(a: string, b: string): DiffLine[] {
-  const A = a.split("\n");
-  const B = b.split("\n");
-  const n = A.length;
-  const m = B.length;
-  const dp: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
-  for (let i = n - 1; i >= 0; i--)
-    for (let j = m - 1; j >= 0; j--)
-      dp[i]![j] = A[i] === B[j] ? (dp[i + 1]![j + 1] ?? 0) + 1 : Math.max(dp[i + 1]![j] ?? 0, dp[i]![j + 1] ?? 0);
-  const out: DiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < n && j < m) {
-    if (A[i] === B[j]) {
-      out.push({ t: " ", s: A[i]! });
-      i++;
-      j++;
-    } else if ((dp[i + 1]![j] ?? 0) >= (dp[i]![j + 1] ?? 0)) {
-      out.push({ t: "-", s: A[i]! });
-      i++;
-    } else {
-      out.push({ t: "+", s: B[j]! });
-      j++;
+    const A = a.split("\n");
+    const B = b.split("\n");
+    const n = A.length;
+    const m = B.length;
+    const dp: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
+    for (let i = n - 1; i >= 0; i--)
+        for (let j = m - 1; j >= 0; j--)
+            dp[i]![j] = A[i] === B[j] ? (dp[i + 1]![j + 1] ?? 0) + 1 : Math.max(dp[i + 1]![j] ?? 0, dp[i]![j + 1] ?? 0);
+    const out: DiffLine[] = [];
+    let i = 0;
+    let j = 0;
+    while (i < n && j < m) {
+        if (A[i] === B[j]) {
+            out.push({ t: " ", s: A[i]! });
+            i++;
+            j++;
+        } else if ((dp[i + 1]![j] ?? 0) >= (dp[i]![j + 1] ?? 0)) {
+            out.push({ t: "-", s: A[i]! });
+            i++;
+        } else {
+            out.push({ t: "+", s: B[j]! });
+            j++;
+        }
     }
-  }
-  while (i < n) out.push({ t: "-", s: A[i++]! });
-  while (j < m) out.push({ t: "+", s: B[j++]! });
-  return out;
+    while (i < n) out.push({ t: "-", s: A[i++]! });
+    while (j < m) out.push({ t: "+", s: B[j++]! });
+    return out;
 }

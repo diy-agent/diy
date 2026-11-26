@@ -14,46 +14,46 @@ const C = "task-run:projects/1/tasks/c";
 const keyOf = (k: string) => k;
 
 describe("partitionByPin", () => {
-  it("置顶项全部前移，区内保持全局顺序", () => {
-    const { pinned, rest } = partitionByPin([A, B, C], keyOf, new Set([A, C]));
-    expect(pinned).toEqual([A, C]); // 不是 [C, A]：顺序由输入决定
-    expect(rest).toEqual([B]);
-  });
+    it("置顶项全部前移，区内保持全局顺序", () => {
+        const { pinned, rest } = partitionByPin([A, B, C], keyOf, new Set([A, C]));
+        expect(pinned).toEqual([A, C]); // 不是 [C, A]：顺序由输入决定
+        expect(rest).toEqual([B]);
+    });
 
-  it("新开的 tab 挤不掉置顶项（置顶恒在最前）", () => {
-    const before = partitionByPin([A], keyOf, new Set([A]));
-    const after = partitionByPin([A, B, C], keyOf, new Set([A]));
-    expect(after.pinned).toEqual(before.pinned);
-    expect(after.rest).toEqual([B, C]);
-  });
+    it("新开的 tab 挤不掉置顶项（置顶恒在最前）", () => {
+        const before = partitionByPin([A], keyOf, new Set([A]));
+        const after = partitionByPin([A, B, C], keyOf, new Set([A]));
+        expect(after.pinned).toEqual(before.pinned);
+        expect(after.rest).toEqual([B, C]);
+    });
 
-  it("子孙被置顶不隐式置顶祖先（集合不被渲染逻辑扩大）", () => {
-    const { pinned, rest } = partitionByPin([A, B], keyOf, new Set([B]));
-    expect(pinned).toEqual([B]);
-    expect(rest).toEqual([A]);
-  });
+    it("子孙被置顶不隐式置顶祖先（集合不被渲染逻辑扩大）", () => {
+        const { pinned, rest } = partitionByPin([A, B], keyOf, new Set([B]));
+        expect(pinned).toEqual([B]);
+        expect(rest).toEqual([A]);
+    });
 
-  it("空集合 / 全置顶都是恒等分区", () => {
-    expect(partitionByPin([A, B], keyOf, new Set())).toEqual({ pinned: [], rest: [A, B] });
-    expect(partitionByPin([A, B], keyOf, new Set([A, B]))).toEqual({ pinned: [A, B], rest: [] });
-  });
+    it("空集合 / 全置顶都是恒等分区", () => {
+        expect(partitionByPin([A, B], keyOf, new Set())).toEqual({ pinned: [], rest: [A, B] });
+        expect(partitionByPin([A, B], keyOf, new Set([A, B]))).toEqual({ pinned: [A, B], rest: [] });
+    });
 });
 
 describe("togglePin", () => {
-  it("置顶 / 取消置顶各一次回到原状，且不改原数组", () => {
-    const src = [A];
-    expect(togglePin(src, B)).toEqual([A, B]);
-    expect(togglePin([A, B], B)).toEqual([A]);
-    expect(src).toEqual([A]);
-  });
+    it("置顶 / 取消置顶各一次回到原状，且不改原数组", () => {
+        const src = [A];
+        expect(togglePin(src, B)).toEqual([A, B]);
+        expect(togglePin([A, B], B)).toEqual([A]);
+        expect(src).toEqual([A]);
+    });
 });
 
 describe("prunePins", () => {
-  it("剪掉已不存在的键（关掉的 tab / 删掉的任务）", () => {
-    expect(prunePins([A, B, C], [A, C])).toEqual([A, C]);
-  });
+    it("剪掉已不存在的键（关掉的 tab / 删掉的任务）", () => {
+        expect(prunePins([A, B, C], [A, C])).toEqual([A, C]);
+    });
 
-  it("键还在就保留 —— 任务重开仍是置顶（集合是偏好，不是「当前列表快照」）", () => {
-    expect(prunePins([A], [A])).toEqual([A]);
-  });
+    it("键还在就保留 —— 任务重开仍是置顶（集合是偏好，不是「当前列表快照」）", () => {
+        expect(prunePins([A], [A])).toEqual([A]);
+    });
 });

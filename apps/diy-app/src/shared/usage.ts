@@ -108,11 +108,16 @@ export function describeTiers(cost: ModelCost | null | undefined): string[] {
     for (const t of cost?.tiers ?? []) {
         const w = t.when;
         if (w.kind === "utc-range") {
-            const scope = `${formatMinuteOfDay(w.startMin)}–${formatMinuteOfDay(w.endMin)} ${formatOffset(w.offsetMs)}` +
+            const scope =
+                `${formatMinuteOfDay(w.startMin)}–${formatMinuteOfDay(w.endMin)} ${formatOffset(w.offsetMs)}` +
                 (w.calendar ? ` · ${w.calendar}` : "");
-            out.push(`${w.label ?? "时段档"}（${scope}）：in ${t.input} / out ${t.output}${t.cacheRead === undefined ? "" : ` / cache ${t.cacheRead}`}`);
+            out.push(
+                `${w.label ?? "时段档"}（${scope}）：in ${t.input} / out ${t.output}${t.cacheRead === undefined ? "" : ` / cache ${t.cacheRead}`}`,
+            );
         } else {
-            out.push(`总输入 > ${w.size} tokens：in ${t.input} / out ${t.output}${t.cacheRead === undefined ? "" : ` / cache ${t.cacheRead}`}`);
+            out.push(
+                `总输入 > ${w.size} tokens：in ${t.input} / out ${t.output}${t.cacheRead === undefined ? "" : ` / cache ${t.cacheRead}`}`,
+            );
         }
     }
     return out;
@@ -186,8 +191,7 @@ export interface UsageLike {
 
 const num = (v: number | null | undefined): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 /** 可缺省的计数：undefined/null → null（**不可测**语义，与 0 区分） */
-const opt = (v: number | null | undefined): number | null =>
-    typeof v === "number" && Number.isFinite(v) ? v : null;
+const opt = (v: number | null | undefined): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 /**
  * `LanguageModelUsage` → 四桶。
@@ -203,7 +207,8 @@ export function bucketsOf(u: UsageLike | undefined | null): UsageBuckets {
     const cacheWrite = opt(d.cacheWriteTokens);
     const cacheRead = num(d.cacheReadTokens);
     const inputTotal = num(u?.inputTokens);
-    const noCache = d.noCacheTokens != null ? num(d.noCacheTokens) : Math.max(0, inputTotal - cacheRead - (cacheWrite ?? 0));
+    const noCache =
+        d.noCacheTokens != null ? num(d.noCacheTokens) : Math.max(0, inputTotal - cacheRead - (cacheWrite ?? 0));
     const outputTotal = num(u?.outputTokens);
     const reasoning = num(od.reasoningTokens);
     const text = od.textTokens != null ? num(od.textTokens) : Math.max(0, outputTotal - reasoning);
@@ -307,18 +312,37 @@ const PER_M = 1_000_000;
  * 不可测桶（`cacheWrite: null`）→ 金额也是 null（**不按 0 算**，否则静默低估）；
  * 若该模型无 cacheWrite 价但有实测 token，按普通输入价兜底（保守且可解释）。
  */
-export function costBreakdown(rates: EffectiveRates, b: Pick<UsageBuckets, "noCache" | "cacheRead" | "cacheWrite" | "text" | "reasoning">): CostBreakdown {
+export function costBreakdown(
+    rates: EffectiveRates,
+    b: Pick<UsageBuckets, "noCache" | "cacheRead" | "cacheWrite" | "text" | "reasoning">,
+): CostBreakdown {
     const noCache = (rates.input * b.noCache) / PER_M;
     const cacheRead = ((rates.cacheRead ?? rates.input) * b.cacheRead) / PER_M;
     const cacheWrite = b.cacheWrite == null ? null : ((rates.cacheWrite ?? rates.input) * b.cacheWrite) / PER_M;
     const text = (rates.output * b.text) / PER_M;
     const reasoning = (rates.output * b.reasoning) / PER_M;
-    return { noCache, cacheRead, cacheWrite, text, reasoning, total: noCache + cacheRead + (cacheWrite ?? 0) + text + reasoning };
+    return {
+        noCache,
+        cacheRead,
+        cacheWrite,
+        text,
+        reasoning,
+        total: noCache + cacheRead + (cacheWrite ?? 0) + text + reasoning,
+    };
 }
 
 /** 会话/分组累计（同口径相加；null 桶保持 null 直到有实测值） */
 export function sumBuckets(list: UsageBuckets[]): UsageBuckets {
-    const acc: UsageBuckets = { noCache: 0, cacheRead: 0, cacheWrite: null, text: 0, reasoning: 0, outputTotal: 0, inputTotal: 0, total: 0 };
+    const acc: UsageBuckets = {
+        noCache: 0,
+        cacheRead: 0,
+        cacheWrite: null,
+        text: 0,
+        reasoning: 0,
+        outputTotal: 0,
+        inputTotal: 0,
+        total: 0,
+    };
     for (const b of list) {
         acc.noCache += b.noCache;
         acc.cacheRead += b.cacheRead;
@@ -689,7 +713,9 @@ export function stepRate(p: StepPerformance | undefined | null, outputTokens: nu
  * 只计**有计时且确有输出**的步（`responseTimeMs > 0` 且输出 > 0）：老记录 / 空工具步不进分母，
  * 免得把"没数的步"当成"零耗时"把平均值抬高。
  */
-export function avgRate(steps: readonly { performance?: StepPerformance | null; outputTokens: number }[]): number | null {
+export function avgRate(
+    steps: readonly { performance?: StepPerformance | null; outputTokens: number }[],
+): number | null {
     let out = 0;
     let ms = 0;
     let counted = 0;

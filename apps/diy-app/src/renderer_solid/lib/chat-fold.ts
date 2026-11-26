@@ -19,7 +19,6 @@ import { clampLines as clampLinesOf, lastLine as lastLineOf } from "./chat-text"
 import { endMarkOf, turnEndText, type EndMark } from "../../shared/turn-end";
 export { endMarkOf, type EndMark };
 
-
 /** 用户发言块（插话与轮次开场那次发言同形，只差 attrs.steer） */
 export function isUserText(n: BlockNode): boolean {
     return n.tag === "text" && n.attrs.role === "user";
@@ -229,7 +228,11 @@ export interface TurnDegraded {
 export function degradedOf(turn: BlockNode): TurnDegraded | null {
     const d = turn.attrs.degraded as Partial<TurnDegraded> | undefined;
     if (!d || typeof d !== "object") return null;
-    return { refDangling: d.refDangling === true, ...(d.state ? { state: d.state } : {}), ...(d.at ? { at: d.at } : {}) };
+    return {
+        refDangling: d.refDangling === true,
+        ...(d.state ? { state: d.state } : {}),
+        ...(d.at ? { at: d.at } : {}),
+    };
 }
 
 /** 结束原因（读该轮事实；脏值当没有） */
@@ -306,7 +309,6 @@ export function receiptStateOf(steerId: string, pendingSteerIds: readonly string
     if (!steerId) return "queued";
     return pendingSteerIds.includes(steerId) ? "queued" : "delivered";
 }
-
 
 /**
  * 这一行**点开会不会多出东西** —— 决定行首给「展开箭头」还是「末级点」。
@@ -578,13 +580,7 @@ export function planOfLevel(level: TurnLevel): LevelPlan {
  * 「已经画出来的这块有多高」，对任何内容都单调、无魔法常数。
  * 结果夹在 [min,max]（上界防"拖成整篇"，下界至少一句）。
  */
-export function linesFromDrag(
-    startLines: number,
-    startHeight: number,
-    dy: number,
-    min: number,
-    max: number,
-): number {
+export function linesFromDrag(startLines: number, startHeight: number, dy: number, min: number, max: number): number {
     if (!(startHeight > 0)) return startLines;
     const n = Math.round((startLines * (startHeight + dy)) / startHeight);
     return Math.min(max, Math.max(min, n));

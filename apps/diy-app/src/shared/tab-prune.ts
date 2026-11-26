@@ -13,17 +13,17 @@
 import { isTaskUri } from "./task-uri";
 
 export interface TabCtxLike {
-  pageId: string;
-  ctx: string | null;
+    pageId: string;
+    ctx: string | null;
 }
 
 export interface PruneInput {
-  /** 已打开的 tab（真信息：pageId + ctx；顺序 = 显示顺序） */
-  opened: readonly TabCtxLike[];
-  /** 当前树里还活着的任务 URI（**最新**那一份） */
-  aliveUris: Iterable<string>;
-  /** 树是否已成功加载过至少一次 */
-  treeLoaded: boolean;
+    /** 已打开的 tab（真信息：pageId + ctx；顺序 = 显示顺序） */
+    opened: readonly TabCtxLike[];
+    /** 当前树里还活着的任务 URI（**最新**那一份） */
+    aliveUris: Iterable<string>;
+    /** 树是否已成功加载过至少一次 */
+    treeLoaded: boolean;
 }
 
 /**
@@ -31,16 +31,16 @@ export interface PruneInput {
  * 调用方拿到后逐个 `tabStore.dropCtx(ctx)`（它自己负责 active 落位与子页面连带关闭）。
  */
 export function staleTaskTabCtxs(input: PruneInput): string[] {
-  if (!input.treeLoaded) return []; // ①「树还没到」不是「任务不存在」
-  const alive = new Set(input.aliveUris);
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const t of input.opened) {
-    if (!isTaskUri(t.ctx)) continue; // ② 非任务 tab 不动
-    const ctx = t.ctx as string;
-    if (alive.has(ctx) || seen.has(ctx)) continue;
-    seen.add(ctx);
-    out.push(ctx);
-  }
-  return out;
+    if (!input.treeLoaded) return []; // ①「树还没到」不是「任务不存在」
+    const alive = new Set(input.aliveUris);
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const t of input.opened) {
+        if (!isTaskUri(t.ctx)) continue; // ② 非任务 tab 不动
+        const ctx = t.ctx as string;
+        if (alive.has(ctx) || seen.has(ctx)) continue;
+        seen.add(ctx);
+        out.push(ctx);
+    }
+    return out;
 }

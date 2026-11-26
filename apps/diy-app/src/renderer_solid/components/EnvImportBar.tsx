@@ -76,8 +76,7 @@ export function EnvImportBar(props: {
                 {/* 命中但都被跳过：说清为什么不用导（已配置 / 密钥重复 / 同源） */}
                 <Match when={props.candidates.length > 0}>
                     <span>
-                        ✅ 环境变量命中的 {props.candidates.length} 家 provider 均已配置
-                        （同一个密钥不重复配）：
+                        ✅ 环境变量命中的 {props.candidates.length} 家 provider 均已配置 （同一个密钥不重复配）：
                     </span>
                     <For each={already()}>
                         {(c) => (

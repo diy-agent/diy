@@ -121,7 +121,9 @@ export interface FlowArtifactView {
 }
 
 /** 探测结果：`ok: false` = 命令尚未在 main 上（##337 未合并）/ 调用失败 —— **不是**「这个节点没产物」 */
-export type ArtifactProbe = { readonly ok: true; readonly value: FlowArtifactView | null } | { readonly ok: false; readonly reason: string };
+export type ArtifactProbe =
+    | { readonly ok: true; readonly value: FlowArtifactView | null }
+    | { readonly ok: false; readonly reason: string };
 
 /** 驻留的 key（同一节点多次驻留**各取各的**产物 —— `seq` 是领域事实，不是显示细节） */
 export const visitKey = (node: string, seq: number): string => `${node}#${seq}`;
@@ -329,7 +331,10 @@ export function paramValueOf(view: FlowInstanceView, entry: FlowParamEntry): Par
     if (bag && typeof bag === "object") {
         const v = (bag as Record<string, unknown>)[entry.name];
         if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
-        if (Array.isArray(v) && v.every((x) => typeof x === "string" || typeof x === "number" || typeof x === "boolean")) {
+        if (
+            Array.isArray(v) &&
+            v.every((x) => typeof x === "string" || typeof x === "number" || typeof x === "boolean")
+        ) {
             return v as ParamScalar[];
         }
     }

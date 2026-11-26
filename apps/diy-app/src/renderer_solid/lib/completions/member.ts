@@ -39,8 +39,9 @@ export function memberCompletion(members: () => readonly RoomMember[]): Completi
         const room = { members: all };
         const agents = all.filter((m) => m.kind === "agent");
         // 匹配面 = 名字 + id + **所有可用键**（打 `@t3` 也要能选中那个成员）
-        const hit = agents.filter((m) =>
-            !q || [m.name, m.id, ...memberKeys(room, m)].some((k) => k.toLowerCase().includes(q)));
+        const hit = agents.filter(
+            (m) => !q || [m.name, m.id, ...memberKeys(room, m)].some((k) => k.toLowerCase().includes(q)),
+        );
 
         const options: Completion[] = [];
         // `@all` 只在不与具体名字冲突时列（输入了具体前缀就别混进来）

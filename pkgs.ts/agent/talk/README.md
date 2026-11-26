@@ -17,16 +17,25 @@ import { assemblyRole, assertThreadRefs, createReaction, docRangeAnchor } from '
 const target = docRangeAnchor('rev-7', 31 * 40, '此处有问题');
 
 const r1 = createReaction({
-    id: 'r1', author: 'b', turnId: 't1', target,
-    content: '这一行漏了并发写保护', at: '2026-10-13T00:00:00.000Z',
+    id: 'r1',
+    author: 'b',
+    turnId: 't1',
+    target,
+    content: '这一行漏了并发写保护',
+    at: '2026-10-13T00:00:00.000Z',
 });
 // 回复是**结构化寻址**：引 id，不写「R1」这种文字
 const r2 = createReaction({
-    id: 'r2', author: 'c', turnId: 't1', target, replyTo: 'r1',
-    content: '同意，且需要补一条锁顺序说明', at: '2026-10-13T00:00:05.000Z',
+    id: 'r2',
+    author: 'c',
+    turnId: 't1',
+    target,
+    replyTo: 'r1',
+    content: '同意，且需要补一条锁顺序说明',
+    at: '2026-10-13T00:00:05.000Z',
 });
 
-assertThreadRefs([r1, r2]);                             // 悬空 replyTo / 重号 / 异锚点在这里报错
+assertThreadRefs([r1, r2]); // 悬空 replyTo / 重号 / 异锚点在这里报错
 
 assemblyRole({ kind: 'speech', author: 'b', self: 'a' }); // => 'user'（绝不能是 'assistant'）
 ```
@@ -39,13 +48,13 @@ import { assemble } from '@diy-agent/talk';
 // 多源：发言线 / 私有过程 / 资料演进；策略选投影；window 由宿主注入（内核不自作主张）
 assemble({
     sources: [
-        { type: 'reactions', data: { reactions: [r1, r2] } },        // 发言线
-        { type: 'trace', data: { events: [ownToolRun] } },           // 自己的过程（他人过程永不进入）
-        { type: 'material', data: { events: [revision] } },          // 文档修订
+        { type: 'reactions', data: { reactions: [r1, r2] } }, // 发言线
+        { type: 'trace', data: { events: [ownToolRun] } }, // 自己的过程（他人过程永不进入）
+        { type: 'material', data: { events: [revision] } }, // 文档修订
     ],
-    strategy: 'text-only',   // 'full' | 'text-only' | 'changes-only'
+    strategy: 'text-only', // 'full' | 'text-only' | 'changes-only'
     selfId: 'a',
-    window: (messages) => messages.slice(-20),   // 可选：宿主给裁剪 / 摘要函数
+    window: (messages) => messages.slice(-20), // 可选：宿主给裁剪 / 摘要函数
 });
 // => Message[]（{ role: 'user' | 'assistant', content }；他人发言绝不为 assistant）
 ```
@@ -60,12 +69,12 @@ assemble({
 
 ## 四个原语
 
-| 导出 | 是什么 |
-|---|---|
-| `Anchor` | 指向哪：`message` / `doc-range`（钉 revision）/ `task-field` / `node`（工作流泳道） |
-| `Event` | 容器无关的记录：`{ id, author, anchor, content, causes, at }` |
-| `Reaction` | 对话侧的发言：`{ id, author, turnId, target, replyTo, content, at }`，`replyTo` 是 id 引用 |
-| `assemblyRole` / `assertRoleAssignments` | role 翻译与铁律核对（他人发言绝不能装配成 `assistant`） |
+| 导出                                     | 是什么                                                                                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `Anchor`                                 | 指向哪：`message` / `doc-range`（钉 revision）/ `task-field` / `node`（工作流泳道）        |
+| `Event`                                  | 容器无关的记录：`{ id, author, anchor, content, causes, at }`                              |
+| `Reaction`                               | 对话侧的发言：`{ id, author, turnId, target, replyTo, content, at }`，`replyTo` 是 id 引用 |
+| `assemblyRole` / `assertRoleAssignments` | role 翻译与铁律核对（他人发言绝不能装配成 `assistant`）                                    |
 
 序列化：`eventToJson/FromJson` · `reactionToJson/FromJson` · `threadToJson/FromJson`（读侧同样做完整校验，不静默丢弃）。
 `*ToJson` 缺省缩进多行；传 `{ compact: true }` 得紧凑单行（供 jsonl）。读侧可选 `{ allowUnknown: true }` 做前向兼容。

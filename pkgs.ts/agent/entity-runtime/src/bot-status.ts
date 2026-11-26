@@ -87,7 +87,11 @@ export function botLastTurnOf(roomId: string, item: Item): BotLastTurn | undefin
     // 带 author 的 error 本身就是结局（`run.failed` 那条）；其余条目要先看轮级事实
     const verdict = outcomeOfFact(item);
     if (verdict !== undefined) {
-        return { ...base, outcome: verdict.outcome, ...(verdict.message === undefined ? {} : { message: verdict.message }) };
+        return {
+            ...base,
+            outcome: verdict.outcome,
+            ...(verdict.message === undefined ? {} : { message: verdict.message }),
+        };
     }
     return { ...base, outcome: 'done' };
 }
@@ -125,16 +129,12 @@ export interface TurnFactSource {
  * 成本：两条全表 json 分组查询（靠 `items_author_seq` / `items_fact_owner_seq` 表达式索引，
  * 实测 25ms + 54ms）；`rooms.list` 30s 一次、`bots.rows` 开浮层一次，可以接受。
  */
-export function createTurnLookup(
-    source: TurnFactSource,
-): (roomId: string, botId: string) => BotLastTurn | undefined {
+export function createTurnLookup(source: TurnFactSource): (roomId: string, botId: string) => BotLastTurn | undefined {
     return buildTurnLookup(source);
 }
 
 /** `createTurnLookup` 的本体（缓存版要能直接拿它造一份新的） */
-function buildTurnLookup(
-    source: TurnFactSource,
-): (roomId: string, botId: string) => BotLastTurn | undefined {
+function buildTurnLookup(source: TurnFactSource): (roomId: string, botId: string) => BotLastTurn | undefined {
     const last = new Map<string, BotLastTurn>();
     for (const { roomId, item } of source.lastItemPerBot()) {
         const turn = botLastTurnOf(roomId, item);

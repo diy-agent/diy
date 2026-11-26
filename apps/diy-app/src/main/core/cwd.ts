@@ -19,21 +19,21 @@ import { getProjectPath } from "./project";
 import { projectFromUri } from "../../shared/task-uri";
 
 export interface ResolvedCwd {
-  /** 工具实际执行目录（bash/read 的基准） */
-  cwd: string;
-  /** 回退原因（纯文案，不含前缀/换行）；未回退时为空串。模版里写「注意：{{cwd.note}}」 */
-  note: string;
-  /** 是否发生了回退（项目目录不可用）——模版用它决定要不要提示 */
-  isFallback: boolean;
-  /** 是否退化到任务目录 */
-  isTaskDir: boolean;
-  /** 是否退化到应用目录（进程 cwd） */
-  isAppDir: boolean;
+    /** 工具实际执行目录（bash/read 的基准） */
+    cwd: string;
+    /** 回退原因（纯文案，不含前缀/换行）；未回退时为空串。模版里写「注意：{{cwd.note}}」 */
+    note: string;
+    /** 是否发生了回退（项目目录不可用）——模版用它决定要不要提示 */
+    isFallback: boolean;
+    /** 是否退化到任务目录 */
+    isTaskDir: boolean;
+    /** 是否退化到应用目录（进程 cwd） */
+    isAppDir: boolean;
 }
 
 /** `~` 展开（只用 $HOME，不猜别的家目录来源） */
 function expand(p: string): string {
-  return p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
+    return p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
 }
 
 /**
@@ -42,37 +42,37 @@ function expand(p: string): string {
  * @param taskUri 任务 URI（projects/<pid>/tasks/<tid>）
  */
 export function resolveCwd(home: string, taskUri: string): ResolvedCwd {
-  const declared = getProjectPath(projectFromUri(taskUri));
-  if (declared) {
-    const abs = expand(declared);
-    try {
-      if (existsSync(abs)) return { cwd: abs, note: "", isFallback: false, isTaskDir: false, isAppDir: false };
-    } catch (e) {
-      // 无效路径回退可接受，但要留痕（如权限/非法字符导致 stat 抛错）
-      console.warn(`[cwd] 项目目录探测失败 ${abs}:`, e);
+    const declared = getProjectPath(projectFromUri(taskUri));
+    if (declared) {
+        const abs = expand(declared);
+        try {
+            if (existsSync(abs)) return { cwd: abs, note: "", isFallback: false, isTaskDir: false, isAppDir: false };
+        } catch (e) {
+            // 无效路径回退可接受，但要留痕（如权限/非法字符导致 stat 抛错）
+            console.warn(`[cwd] 项目目录探测失败 ${abs}:`, e);
+        }
     }
-  }
-  const td = taskUri ? join(home, taskUri) : "";
-  if (td) {
-    try {
-      if (existsSync(td)) {
-        return {
-          cwd: td,
-          note: "项目目录不存在，工具实际在任务目录下执行",
-          isFallback: true,
-          isTaskDir: true,
-          isAppDir: false,
-        };
-      }
-    } catch (e) {
-      console.warn(`[cwd] 任务目录探测失败 ${td}:`, e);
+    const td = taskUri ? join(home, taskUri) : "";
+    if (td) {
+        try {
+            if (existsSync(td)) {
+                return {
+                    cwd: td,
+                    note: "项目目录不存在，工具实际在任务目录下执行",
+                    isFallback: true,
+                    isTaskDir: true,
+                    isAppDir: false,
+                };
+            }
+        } catch (e) {
+            console.warn(`[cwd] 任务目录探测失败 ${td}:`, e);
+        }
     }
-  }
-  return {
-    cwd: process.cwd(),
-    note: "项目目录与任务目录都不存在，工具实际在应用目录下执行",
-    isFallback: true,
-    isTaskDir: false,
-    isAppDir: true,
-  };
+    return {
+        cwd: process.cwd(),
+        note: "项目目录与任务目录都不存在，工具实际在应用目录下执行",
+        isFallback: true,
+        isTaskDir: false,
+        isAppDir: true,
+    };
 }

@@ -54,7 +54,7 @@ export interface KeptBoundary {
     /** 保留段实际的 token 数（可能 > 保留量：一条消息/一轮本身超大时） */
     retainedTokens: number;
     /** `none` = 什么都没丢 · `drop` = 真的丢了 `dropped` 条 */
-    kind: "none" | "drop";
+    kind: 'none' | 'drop';
 }
 
 /** 压完保留多少：窗口 × 0.16（dsh 同值；128k→20k、256k→41k、1M→160k） */
@@ -76,7 +76,7 @@ export function retainTokensOf(windowTokens: number): number {
     return Math.max(1, Math.floor(windowTokens * RETAIN_RATIO));
 }
 
-const none = (): KeptBoundary => ({ cut: 0, dropped: 0, retainedTokens: 0, kind: "none" });
+const none = (): KeptBoundary => ({ cut: 0, dropped: 0, retainedTokens: 0, kind: 'none' });
 
 /**
  * 算保留边界（**唯一判据**）。
@@ -130,8 +130,8 @@ export function selectKeptBoundary(
     // ③ 压完仍超触发线 ⇒ 不压（手动 force 跳过）
     if (!opts.force && retained >= triggerTokens) return none();
 
-    return { cut, dropped: cut, retainedTokens: retained, kind: "drop" };
+    return { cut, dropped: cut, retainedTokens: retained, kind: 'drop' };
 }
 
 /** 这次是否真的丢了东西（= 是不是一次压缩事件） */
-export const hasDropped = (b: KeptBoundary): boolean => b.kind === "drop";
+export const hasDropped = (b: KeptBoundary): boolean => b.kind === 'drop';

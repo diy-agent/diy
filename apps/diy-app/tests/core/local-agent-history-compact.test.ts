@@ -27,7 +27,9 @@ function turnLines(i: number, filler = 40): string[] {
         JSON.stringify({ op: "stop", id: `${id}_u` }),
         JSON.stringify({ op: "start", id: `${id}_s1`, kind: "step", parent: id }),
         JSON.stringify({ op: "start", id: `${id}_a1`, kind: "text", parent: `${id}_s1`, meta: { role: "assistant" } }),
-        ...Array.from({ length: 3 }, (_, k) => JSON.stringify({ op: "delta", id: `${id}_a1`, fields: { content: `${k}${chunk}` } })),
+        ...Array.from({ length: 3 }, (_, k) =>
+            JSON.stringify({ op: "delta", id: `${id}_a1`, fields: { content: `${k}${chunk}` } }),
+        ),
         JSON.stringify({ op: "stop", id: `${id}_a1` }),
         JSON.stringify({ op: "stop", id: `${id}_s1` }),
         JSON.stringify({ op: "stop", id }),
@@ -45,7 +47,9 @@ function snapshot(store: BlockStore) {
             children: [...b.children],
             stopped: b.stopped,
             fields: Object.fromEntries(
-                Object.entries(b).filter(([k]) => !STRUCT.has(k)).sort(([a], [c]) => (a < c ? -1 : a > c ? 1 : 0)),
+                Object.entries(b)
+                    .filter(([k]) => !STRUCT.has(k))
+                    .sort(([a], [c]) => (a < c ? -1 : a > c ? 1 : 0)),
             ),
         }))
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

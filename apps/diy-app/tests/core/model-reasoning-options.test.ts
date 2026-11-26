@@ -24,7 +24,9 @@ describe("reasoningFromSpec — models.dev reasoning_options 映射", () => {
     });
 
     it("effort 词表 → 精确档位（平台默认开头），default 优先 medium", () => {
-        const r = reasoningFromSpec(true, [{ type: "effort", values: ["none", "low", "medium", "high", "xhigh", "max"] }]);
+        const r = reasoningFromSpec(true, [
+            { type: "effort", values: ["none", "low", "medium", "high", "xhigh", "max"] },
+        ]);
         expect(r.supported).toEqual([DEFAULT_EFFORT, "none", "low", "medium", "high", "xhigh", "max"]);
         expect(r.default).toBe("medium");
         expect(r.declared).toBe(true);
@@ -66,7 +68,9 @@ describe("reasoningFromSpec — models.dev reasoning_options 映射", () => {
     });
 
     it("多面 provider（opencode-go 的 gpt-6-luna 等）模型级词表各不同", () => {
-        const luna = reasoningFromSpec(true, [{ type: "effort", values: ["none", "low", "medium", "high", "xhigh", "max"] }]);
+        const luna = reasoningFromSpec(true, [
+            { type: "effort", values: ["none", "low", "medium", "high", "xhigh", "max"] },
+        ]);
         const mimo = reasoningFromSpec(true, []); // models.dev 里 mimo reasoning_options:[]
         expect(luna.supported).toContain("xhigh");
         // mimo 未登记枚举 → 通用兜底（含 none/low/medium/high，与 diy 实测一致）

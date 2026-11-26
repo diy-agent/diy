@@ -250,10 +250,7 @@ let _poller: EnvDiskPoller | null = null;
 export function ensureDiskPoller(): EnvDiskPoller {
     if (!_poller) {
         const intervalMs = Number(process.env["DIY_ENV_DISK_POLL_MS"]) || undefined;
-        _poller = new EnvDiskPoller(
-            { statfs: realStatfs, intervalMs },
-            process.env["DIY_ENV_WATCH_TARGET"] || "/",
-        );
+        _poller = new EnvDiskPoller({ statfs: realStatfs, intervalMs }, process.env["DIY_ENV_WATCH_TARGET"] || "/");
         _poller.start();
     }
     return _poller;
@@ -347,9 +344,7 @@ export async function noteWriteError(e: unknown, path?: string): Promise<void> {
         // 取 dirname：失败时目标文件可能根本不存在（新文件没写出来），
         // 而 `statfs` 对不存在的路径直接 ENOENT；父目录一定在（写之前已 mkdir -p）。
         // `resolve` 顺带解掉相对路径（R4：`dirname("a.txt")` 得 `"."`，展示成「卷 .」很怪）
-        sample = await realStatfs(
-            path ? dirname(resolvePath(path)) : process.env["DIY_ENV_WATCH_TARGET"] || "/",
-        );
+        sample = await realStatfs(path ? dirname(resolvePath(path)) : process.env["DIY_ENV_WATCH_TARGET"] || "/");
     } catch {
         /* 读不到水位也照发（见 envNoticeFromWriteError 的理由） */
     }

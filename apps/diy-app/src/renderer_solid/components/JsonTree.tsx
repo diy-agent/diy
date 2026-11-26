@@ -101,7 +101,10 @@ function StringPreview(props: { fmt: "raw" | "md" | "json" | "yaml"; raw: string
         <Show
             when={props.fmt === "md"}
             fallback={
-                <Show when={props.fmt !== "raw"} fallback={<pre class="whitespace-pre-wrap font-mono text-body leading-relaxed">{props.raw}</pre>}>
+                <Show
+                    when={props.fmt !== "raw"}
+                    fallback={<pre class="whitespace-pre-wrap font-mono text-body leading-relaxed">{props.raw}</pre>}
+                >
                     <ParsedPreview raw={props.raw} kind={props.fmt as "json" | "yaml"} syntax={props.syntax} />
                 </Show>
             }
@@ -136,7 +139,11 @@ function ParsedPreview(props: { raw: string; kind: "json" | "yaml"; syntax: Tree
     return (
         <Show
             when={res().ok}
-            fallback={<div class="text-warning text-caption">不是合法 {props.kind.toUpperCase()}：{(res() as { message: string }).message}</div>}
+            fallback={
+                <div class="text-warning text-caption">
+                    不是合法 {props.kind.toUpperCase()}：{(res() as { message: string }).message}
+                </div>
+            }
         >
             <JsonTree data={(res() as { data: unknown }).data} syntax={props.syntax} />
         </Show>
@@ -150,7 +157,12 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
     const guess = (): Fmt => (typeof props.v === "string" ? guessFmt(props.v) : "raw");
     const [fmt, setFmt] = createSignal<Fmt>(guess());
     // 全局展开层级变化时同步；手动折叠在两次点击之间保留
-    createEffect(on(() => props.floor(), (f) => setOpen(props.depth <= f)));
+    createEffect(
+        on(
+            () => props.floor(),
+            (f) => setOpen(props.depth <= f),
+        ),
+    );
     const v = () => props.v;
     const isObj = () => v() !== null && typeof v() === "object";
     const isArr = () => Array.isArray(v());
@@ -162,7 +174,8 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
     /** yaml 折叠态的对象徽章：`N 键`（空对象给 `{}`，否则什么都没有，看着像坏了） */
     const emptyBadge = (): string => (keys().length === 0 ? "{}" : `${keys().length} 键`);
     // YAML 的键裸写（不加引号）：同一份数据少两字符，长键密集处（facts 投影）观感差别明显
-    const keyLabel = () => (props.k !== undefined ? <span class="text-info">{yn() ? props.k : `"${props.k}"`}</span> : null);
+    const keyLabel = () =>
+        props.k !== undefined ? <span class="text-info">{yn() ? props.k : `"${props.k}"`}</span> : null;
 
     // 标量
     if (!isObj()) {
@@ -237,8 +250,7 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
                 </div>
             );
         }
-        const color =
-            typeof v() === "number" ? "text-warning" : v() === null ? "opacity-50" : "text-secondary";
+        const color = typeof v() === "number" ? "text-warning" : v() === null ? "opacity-50" : "text-secondary";
         return (
             <div class="py-px">
                 {keyLabel()}
@@ -284,7 +296,22 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
             </div>
             <Show when={open()}>
                 <div class="ml-3 rounded-r border-l-2 border-base-300 pl-2" style={depthTint(props.depth)}>
-                    <Show when={isArr()} fallback={<For each={keys()}>{(k) => <JsonNode k={k} v={(v() as Record<string, unknown>)[k]} depth={props.depth + 1} floor={props.floor} syntax={props.syntax} />}</For>}>
+                    <Show
+                        when={isArr()}
+                        fallback={
+                            <For each={keys()}>
+                                {(k) => (
+                                    <JsonNode
+                                        k={k}
+                                        v={(v() as Record<string, unknown>)[k]}
+                                        depth={props.depth + 1}
+                                        floor={props.floor}
+                                        syntax={props.syntax}
+                                    />
+                                )}
+                            </For>
+                        }
+                    >
                         <For each={items()}>
                             {(item, i) => (
                                 <div class="flex gap-1">
@@ -292,7 +319,12 @@ function JsonNode(props: { k?: string; v: unknown; depth: number; floor: () => n
                                         故 yaml 态把序号降为极淡的旁注（不占一列宽度心智） */}
                                     <span class="opacity-30 font-mono text-caption pt-0.5">{yn() ? "-" : i()}</span>
                                     <div class="flex-1 min-w-0">
-                                        <JsonNode v={item} depth={props.depth + 1} floor={props.floor} syntax={props.syntax} />
+                                        <JsonNode
+                                            v={item}
+                                            depth={props.depth + 1}
+                                            floor={props.floor}
+                                            syntax={props.syntax}
+                                        />
                                     </div>
                                 </div>
                             )}

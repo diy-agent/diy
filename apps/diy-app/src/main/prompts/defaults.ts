@@ -28,7 +28,7 @@
 
 export const PROMPT_DEFAULTS: Record<string, string> = {
     // ── 装配入口（锁定）：顺序即节顺序，空行即节间分隔 ──────────────
-    '_system.md': `---
+    "_system.md": `---
 title: 系统上下文装配
 desc: 节顺序与节间分隔（装配入口，锁定不可覆盖）。
 version: 1
@@ -54,7 +54,7 @@ lockTip: "装配入口是结构契约：改了会改变模型看到的节顺序�
     // 为什么独立于 system：摘要从会话内容派生、每轮可能不同，投递位置是「新会话首条上下文消息」，
     // 放进 system 会砸掉前缀缓存（见 shared/context/summary.ts 头注）。故此节只在勾选摘要时
     // 由 main 单独渲染，不参与 _system.md 装配。
-    'summary.md': `---
+    "summary.md": `---
 title: 历史摘要
 desc: 压缩会话后带进新会话的承接摘要。变量来自对「被丢弃的轮」的结构化抽取（结论/改动/未完成/未决）。
 version: 1
@@ -89,7 +89,7 @@ version: 1
 
 `,
 
-    'identity.md': `---
+    "identity.md": `---
 title: 身份
 desc: agent 的开场白 + 当前 agent 人物（名字与行为指令来自 personas.yaml）。整段替换式更新，改语气改定位都在这。
 version: 3
@@ -101,7 +101,7 @@ version: 3
 
 `,
 
-    'diy.md': `---
+    "diy.md": `---
 title: diy 自述
 desc: agent 所在系统的自述：命令行入口、数据目录、写禁区。入口与数据根由环境渲染，随环境变化。
 version: 1
@@ -129,7 +129,7 @@ diy 是一个 Electron 桌面管控台。命令行入口 {{diy.cli}}，数据根
 
 `,
 
-    'project.md': `---
+    "project.md": `---
 title: 项目规范
 desc: 按目录 scope 生效的 AGENTS.md 链（home 到工作目录逐层）。层数由 chain 决定，链为空则本节只有说明文字。
 version: 1
@@ -152,7 +152,7 @@ version: 1
 
 `,
 
-    'task.md': `---
+    "task.md": `---
 title: 任务场景
 desc: 当前任务的身份、三个关键路径与正文。正文可能被中途编辑，改动随本节更新。
 version: 1
@@ -171,7 +171,7 @@ version: 1
 
 `,
 
-    'rules.md': `---
+    "rules.md": `---
 title: 规则
 desc: 行为规则，平铺列表。保持简练——每条都会出现在每一次请求里。
 version: 1
@@ -191,7 +191,7 @@ version: 1
 
 `,
 
-    'skills.md': `---
+    "skills.md": `---
 title: 技能清单
 desc: 尚未接入：本槽位当前渲染为空（skills 为空时整节不进请求），保留位置待 skills 接入。
 version: 1
@@ -205,7 +205,7 @@ version: 1
 `,
 
     // ── 内部规则（保命，锁定）────────────────────────────────────────
-    '_guard.md': `---
+    "_guard.md": `---
 title: 内部规则（保命）
 desc: 行为边界：禁止自杀式命令。措辞是安全契约，锁定不可改。
 version: 1

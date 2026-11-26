@@ -27,7 +27,5 @@ export function resolveAppRoot(from: string, exists: (p: string) => boolean = ex
         if (parent === dir) break; // 到文件系统根
         dir = parent;
     }
-    throw new Error(
-        `找不到包根：从 ${from} 上溯 ${MAX_DEPTH} 层未见 ${MARKER}（源码树与 npm 包都应带上它）`,
-    );
+    throw new Error(`找不到包根：从 ${from} 上溯 ${MAX_DEPTH} 层未见 ${MARKER}（源码树与 npm 包都应带上它）`);
 }

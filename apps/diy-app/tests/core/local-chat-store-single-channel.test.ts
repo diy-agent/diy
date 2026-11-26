@@ -71,7 +71,6 @@ const h = vi.hoisted(() => ({
     addToast: vi.fn(),
 }));
 
-
 // node 环境没有 rAF，而 op 落地后的合帧刷新走它。替身必须**延后执行**、由 flushFrames() 手动跑：
 // 若替身同步执行回调，`rafId = requestAnimationFrame(cb)` 里 cb 先置 null、赋值随后又写回非 null
 // → 此后永远不再合帧（刷新静默消失）。
@@ -279,7 +278,7 @@ describe("订阅静默（R1）：显示通道坏了不许静默", () => {
     it("重订的连续补发把这一轮补齐可见（用户最终看得到，一个字不丢）", async () => {
         const store = await freshStore();
         h.silentUntil = 1; // 第 1 次订阅静默（坏掉）；重订那次是好的 —— 现实里绝大多数情形
-        await store.open(URI)
+        await store.open(URI);
         h.chatOps = TURN;
         await store.send(URI, "看现场");
         await settle(10); // 重订（第 2 次订阅）会立刻推来 (0, N] 的连续补发

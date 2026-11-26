@@ -102,7 +102,10 @@ describe("装配层：对比测试（判据 2 —— 正常路径零延迟）", 
         expect(warmWaitEnabled({ DIY_NO_WARM_WAIT: "1" } as NodeJS.ProcessEnv)).toBe(false);
         expect(warmWaitEnabled({} as NodeJS.ProcessEnv)).toBe(true);
         const sleep = vi.fn(async () => {});
-        const out = await warmWaitIfCold(COLD_BIG, { enabled: warmWaitEnabled({ DIY_NO_WARM_WAIT: "1" } as NodeJS.ProcessEnv), sleep });
+        const out = await warmWaitIfCold(COLD_BIG, {
+            enabled: warmWaitEnabled({ DIY_NO_WARM_WAIT: "1" } as NodeJS.ProcessEnv),
+            sleep,
+        });
         expect(sleep).not.toHaveBeenCalled();
         expect(out.waitedMs).toBe(0);
     });
@@ -121,7 +124,14 @@ describe("装配层：对比测试（判据 2 —— 正常路径零延迟）", 
 
 describe("记账字段（判据 4 的数据源）", () => {
     it("waitedMs 只在等待时出现：没等的步 JSON 里没有这个键", () => {
-        const base = { ts: "t", turnId: "turn", step: 1, model: "m", apiFace: "chat", usage: {} } as unknown as StepUsageRecord;
+        const base = {
+            ts: "t",
+            turnId: "turn",
+            step: 1,
+            model: "m",
+            apiFace: "chat",
+            usage: {},
+        } as unknown as StepUsageRecord;
         expect("waitedMs" in JSON.parse(JSON.stringify(base))).toBe(false);
         const waited = { ...base, waitedMs: WARM_WAIT_MS } as StepUsageRecord;
         expect(JSON.parse(JSON.stringify(waited)).waitedMs).toBe(WARM_WAIT_MS);

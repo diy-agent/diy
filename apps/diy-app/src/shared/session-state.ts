@@ -232,7 +232,9 @@ export function endCauseOf(end: TurnEndReason | null | undefined): EndCause | nu
 
 /** 归因是否"值得看一眼"（`none` / `user` 都是预期内，不提醒） */
 export function isAbnormalBlame(blame: Blame): boolean {
-    return blame === "limit" || blame === "service" || blame === "environment" || blame === "unknown" || blame === "defect";
+    return (
+        blame === "limit" || blame === "service" || blame === "environment" || blame === "unknown" || blame === "defect"
+    );
 }
 
 /** 这个任务此刻的会话状态（**唯一入口**；四处消费者都走它） */
@@ -250,16 +252,49 @@ export function sessionStateOf(i: SessionStateInput): SessionState {
     const talked = i.hasSession === true || (e?.turnCount ?? 0) > 0 || (i.totalTurns ?? 0) > 0;
 
     if (e?.turn) {
-        return { run: "running", end: null, blame: "none", tier: "expected", stalled, unread, draft, queued, queuedHuman, seen: unread === 0 };
+        return {
+            run: "running",
+            end: null,
+            blame: "none",
+            tier: "expected",
+            stalled,
+            unread,
+            draft,
+            queued,
+            queuedHuman,
+            seen: unread === 0,
+        };
     }
     if (!talked) {
         // ⚠️ 队列/草稿是属性，`never` 也要如实带出来（##393 收编时曾在此把它写成 0，
         // 于是「有留言待投递的空闲会话」在任务表上显示成「已对话」—— 属性被状态分支吞掉）
-        return { run: "never", end: null, blame: "none", tier: "expected", stalled: false, unread, draft, queued, queuedHuman, seen: unread === 0 };
+        return {
+            run: "never",
+            end: null,
+            blame: "none",
+            tier: "expected",
+            stalled: false,
+            unread,
+            draft,
+            queued,
+            queuedHuman,
+            seen: unread === 0,
+        };
     }
     const end = endCauseOf(e?.lastEndReason ?? null);
     const blame = blameOf(e?.lastEndReason ?? null);
-    return { run: "ended", end, blame, tier: tierOf(blame), stalled: false, unread, draft, queued, queuedHuman, seen: unread === 0 };
+    return {
+        run: "ended",
+        end,
+        blame,
+        tier: tierOf(blame),
+        stalled: false,
+        unread,
+        draft,
+        queued,
+        queuedHuman,
+        seen: unread === 0,
+    };
 }
 
 // ─── 派生属性（判据的底层量，收编自 session-overview） ────────
@@ -320,7 +355,12 @@ export function queueViewOf(e: SessionEntry): QueueView {
     const n = e.queue;
     if (n <= 0) return { kind: "none", count: 0, label: "", tip: "" };
     if (e.turn) {
-        return { kind: "chatting", count: n, label: `排队 ${n}`, tip: `${n} 条留言待投递：本轮收尾后整批投给模型（##306 插话队列）` };
+        return {
+            kind: "chatting",
+            count: n,
+            label: `排队 ${n}`,
+            tip: `${n} 条留言待投递：本轮收尾后整批投给模型（##306 插话队列）`,
+        };
     }
     if (e.viewers > 0) {
         return {

@@ -66,7 +66,6 @@ const h = vi.hoisted(() => ({
     sub: null as null | { push: (f: unknown) => void },
 }));
 
-
 // node 环境没有 rAF；替身必须**延后执行**、由 settle() 手动跑（同 single-channel 用例的注释）
 const rafQueue: Array<() => void> = [];
 beforeAll(() => {
@@ -245,7 +244,10 @@ describe("B. 短轮收敛（stop 边界）：不许滞留成永久 live", () => 
         const store = await freshStore();
         h.running.mockReturnValue(new Promise(() => {}));
         await store.open(URI);
-        pushBatch([{ op: "start", id: "t1", kind: "turn" }, { op: "stop", id: "t1" }]);
+        pushBatch([
+            { op: "start", id: "t1", kind: "turn" },
+            { op: "stop", id: "t1" },
+        ]);
         await settle();
         expect(store.live).toBe(false);
 

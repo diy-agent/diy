@@ -34,73 +34,73 @@ const remarkPlugins = [remarkGfm];
 // ─── hast 工具 ───────────────────────────────────────
 
 interface HastNode {
-  type?: string;
-  tagName?: string;
-  value?: string;
-  properties?: Record<string, unknown>;
-  children?: HastNode[];
+    type?: string;
+    tagName?: string;
+    value?: string;
+    properties?: Record<string, unknown>;
+    children?: HastNode[];
 }
 
 /** 取 hast 子树纯文本（代码块的源码正文）。读的都是 store 代理上的字段 ⇒ 在跟踪作用域里现读即可跟随更新 */
 function hastText(node: HastNode): string {
-  if (node.type === "text") return node.value ?? "";
-  return (node.children ?? []).map(hastText).join("");
+    if (node.type === "text") return node.value ?? "";
+    return (node.children ?? []).map(hastText).join("");
 }
 
 /** 从 code 节点的 className 提取语言（hast 中 className 是数组） */
 function hastLang(node: HastNode | undefined): string | undefined {
-  const cls = node?.properties?.className;
-  const first = Array.isArray(cls) ? cls[0] : typeof cls === "string" ? cls : undefined;
-  return /language-([\w-]+)/.exec(String(first ?? ""))?.[1];
+    const cls = node?.properties?.className;
+    const first = Array.isArray(cls) ? cls[0] : typeof cls === "string" ? cls : undefined;
+    return /language-([\w-]+)/.exec(String(first ?? ""))?.[1];
 }
 
 // ─── 组件映射 ────────────────────────────────────────
 
 /** 构建映射。streaming 用 getter 延迟读取，保证 props 变化能追踪、映射对象身份稳定 */
 function makeComponents(streaming: () => boolean) {
-  return {
-    /** 围栏代码块：<pre><code class="language-x">…</code></pre> → Shiki（整体替换 pre） */
-    pre(props: { node?: HastNode; children?: unknown }) {
-      // 不能 `const codeNode = props.node.children.find(...)`：reconcile 下这个组件只挂载一次，
-      // 而 code 节点的**内容**是就地更新的 —— 读一次等于把第一帧的内容钉死（流式里表现为
-      // 代码块只显示开头一段）。故取节点、取正文都放进访问器，交给 Solid 的跟踪作用域。
-      const codeNode = () => props.node?.children?.find((c) => c.tagName === "code");
-      return (
-        <Show when={codeNode()} fallback={<pre>{props.children as never}</pre>}>
-          {(cn) => <CodeBlock code={hastText(cn())} lang={hastLang(cn())} streaming={streaming()} />}
-        </Show>
-      );
-    },
-    /** 行内 code：无语言、不换行、不高亮 */
-    code(props: { node?: HastNode; inline?: boolean; children?: unknown }) {
-      if (props.inline) {
-        return (
-          <code class="rounded bg-base-200 px-1 py-0.5 font-mono text-[0.9em]">
-            {props.node ? hastText(props.node) : (props.children as never)}
-          </code>
-        );
-      }
-      // 兜底：极少数不带 <pre> 的代码块（如裸 code 节点）直接交给 CodeBlock
-      return <CodeBlock code={props.node ? hastText(props.node) : ""} />;
-    },
-  };
+    return {
+        /** 围栏代码块：<pre><code class="language-x">…</code></pre> → Shiki（整体替换 pre） */
+        pre(props: { node?: HastNode; children?: unknown }) {
+            // 不能 `const codeNode = props.node.children.find(...)`：reconcile 下这个组件只挂载一次，
+            // 而 code 节点的**内容**是就地更新的 —— 读一次等于把第一帧的内容钉死（流式里表现为
+            // 代码块只显示开头一段）。故取节点、取正文都放进访问器，交给 Solid 的跟踪作用域。
+            const codeNode = () => props.node?.children?.find((c) => c.tagName === "code");
+            return (
+                <Show when={codeNode()} fallback={<pre>{props.children as never}</pre>}>
+                    {(cn) => <CodeBlock code={hastText(cn())} lang={hastLang(cn())} streaming={streaming()} />}
+                </Show>
+            );
+        },
+        /** 行内 code：无语言、不换行、不高亮 */
+        code(props: { node?: HastNode; inline?: boolean; children?: unknown }) {
+            if (props.inline) {
+                return (
+                    <code class="rounded bg-base-200 px-1 py-0.5 font-mono text-[0.9em]">
+                        {props.node ? hastText(props.node) : (props.children as never)}
+                    </code>
+                );
+            }
+            // 兜底：极少数不带 <pre> 的代码块（如裸 code 节点）直接交给 CodeBlock
+            return <CodeBlock code={props.node ? hastText(props.node) : ""} />;
+        },
+    };
 }
 
 export function MarkdownView(props: {
-  content: string;
-  class?: string;
-  /** 内容是否仍在流式生成（透传给 CodeBlock 决定是否高亮） */
-  streaming?: boolean;
+    content: string;
+    class?: string;
+    /** 内容是否仍在流式生成（透传给 CodeBlock 决定是否高亮） */
+    streaming?: boolean;
 }) {
-  const components = makeComponents(() => !!props.streaming);
-  return (
-    <div class={`markdown-body text-prose leading-relaxed break-words ${props.class ?? ""}`}>
-      <SolidMarkdown
-        children={props.content}
-        remarkPlugins={remarkPlugins}
-        components={components as never}
-        renderingStrategy="reconcile"
-      />
-    </div>
-  );
+    const components = makeComponents(() => !!props.streaming);
+    return (
+        <div class={`markdown-body text-prose leading-relaxed break-words ${props.class ?? ""}`}>
+            <SolidMarkdown
+                children={props.content}
+                remarkPlugins={remarkPlugins}
+                components={components as never}
+                renderingStrategy="reconcile"
+            />
+        </div>
+    );
 }

@@ -122,8 +122,7 @@ function persist(next: { entries?: TabEntry[]; active?: string }) {
 }
 
 /** 某 tab 的父键（子页面用；顶级 tab 无父）—— 判据在 shared/tab-order（与排序同源） */
-const parentKeyOf = (item: TabLike): string | undefined =>
-    pageParentKeyOf(item, (pid) => findPage(pid)?.parentPage);
+const parentKeyOf = (item: TabLike): string | undefined => pageParentKeyOf(item, (pid) => findPage(pid)?.parentPage);
 
 /**
  * TabEntry → 富视图：把 key / parent / taskAncestors 全部现算出来。

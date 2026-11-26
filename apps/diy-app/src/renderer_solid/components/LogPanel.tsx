@@ -3,12 +3,12 @@ import { diyService } from "../lib/rpc";
 import { VIEW_BAR_H } from "../lib/layout-metrics";
 
 export interface LogEntry {
-  timestamp?: string;
-  time?: string;
-  level?: string;
-  message?: string;
-  msg?: string;
-  raw?: string;
+    timestamp?: string;
+    time?: string;
+    level?: string;
+    message?: string;
+    msg?: string;
+    raw?: string;
 }
 
 export function LogPanel() {
@@ -23,17 +23,11 @@ export function LogPanel() {
     const filtered = createMemo(() =>
         logs().filter((e) => {
             if (levelFilter() && e.level !== levelFilter()) return false;
-            if (filter() && !JSON.stringify(e).toLowerCase().includes(filter().toLowerCase()))
-                return false;
+            if (filter() && !JSON.stringify(e).toLowerCase().includes(filter().toLowerCase())) return false;
             return true;
         }),
     );
-    const levels = createMemo(
-        () =>
-            [...new Set(logs().map((e) => e.level ?? ""))]
-                .filter(Boolean)
-                .sort() as string[],
-    );
+    const levels = createMemo(() => [...new Set(logs().map((e) => e.level ?? ""))].filter(Boolean).sort() as string[]);
     return (
         <div class="flex flex-col h-full">
             <div class={`flex items-center gap-2 px-3 ${VIEW_BAR_H} border-b shrink-0`}>
@@ -58,24 +52,17 @@ export function LogPanel() {
             </div>
             <div class="flex-1 overflow-auto">
                 {filtered().length === 0 ? (
-                    <div class="flex items-center justify-center h-full opacity-60 text-body">
-                        无日志
-                    </div>
+                    <div class="flex items-center justify-center h-full opacity-60 text-body">无日志</div>
                 ) : (
                     <div class="font-mono text-body leading-relaxed">
                         <For each={filtered()}>
                             {(entry) => {
                                 const level = String(entry["level"] ?? "");
-                                const time = String(
-                                    entry["timestamp"] ?? entry["time"] ?? "",
-                                ).slice(0, 19);
-                                const msg = String(
-                                    entry["message"] ?? entry["msg"] ?? JSON.stringify(entry),
-                                );
+                                const time = String(entry["timestamp"] ?? entry["time"] ?? "").slice(0, 19);
+                                const msg = String(entry["message"] ?? entry["msg"] ?? JSON.stringify(entry));
                                 return (
                                     <div class="border-b border-base-300 px-3 py-1.5 hover:bg-base-200">
-                                        {time} <span class="font-bold uppercase">{level}</span>{" "}
-                                        {msg}
+                                        {time} <span class="font-bold uppercase">{level}</span> {msg}
                                     </div>
                                 );
                             }}

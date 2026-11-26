@@ -15,8 +15,8 @@
  * 不是「每轮都读」 —— 这正是它能把 body 摘小的原因。它**不替代 git log**：git 记的是
  * 代码怎么变，journal 记的是当时为什么这么定、踩过什么、什么被否掉了。
  */
-import { isAnchor, type Anchor } from '@diy-agent/talk';
-import { z } from 'zod';
+import { isAnchor, type Anchor } from "@diy-agent/talk";
+import { z } from "zod";
 
 /**
  * 五种 kind，每种只回答一个问题（写错 kind = 以后查不到）：
@@ -35,7 +35,7 @@ import { z } from 'zod';
  *
  * 不写 author 的历史条目一律视为「未标」：**不猜、不默认成 agent** —— 伪造来源比缺字段更糟。
  */
-export const JOURNAL_AUTHOR_ROLES = ['system', 'agent', 'human'] as const;
+export const JOURNAL_AUTHOR_ROLES = ["system", "agent", "human"] as const;
 export const JournalAuthorSchema = z.object({
     role: z.enum(JOURNAL_AUTHOR_ROLES),
     /** 具体是谁（`main` / `chen56` 等）；`system` 通常可省 */
@@ -51,10 +51,10 @@ export type JournalAuthor = z.infer<typeof JournalAuthorSchema>;
  * 五套之间的漂移就是下一个"知识散落"。
  */
 export const JournalAnchorSchema = z.custom<Anchor>((value) => isAnchor(value), {
-    message: '不是合法锚点（合法：message / doc-range / task-field / node，见 @diy-agent/talk）',
+    message: "不是合法锚点（合法：message / doc-range / task-field / node，见 @diy-agent/talk）",
 });
 
-export const JOURNAL_KINDS = ['decision', 'pitfall', 'review', 'progress', 'learn'] as const;
+export const JOURNAL_KINDS = ["decision", "pitfall", "review", "progress", "learn"] as const;
 export const JournalKindSchema = z.enum(JOURNAL_KINDS);
 export type JournalKind = z.infer<typeof JournalKindSchema>;
 
@@ -108,7 +108,6 @@ export const JournalFindSchema = z.object({
     /** 坏行（半截写入 / 手改坏）—— 跳过而不是整份失败，否则一条坏行毁掉全部历史 */
     problems: z.array(JournalProblemSchema),
 });
-
 
 /** 日志原文（UI「原 JSONL」视图）：只读字节、只数行 —— 坏行也要看得见 */
 export const JournalRawSchema = z.object({

@@ -14,7 +14,7 @@
 chat 以 bot 为中心之后，「一个 bot 一条长期对话」：
 
 ```ts
-const ref = await bot.primary();   // 第一次建 + 把 id 写回 bot.json；之后幂等
+const ref = await bot.primary(); // 第一次建 + 把 id 写回 bot.json；之后幂等
 ```
 
 - 写回 `primarySessionId`（`bot.json` 的一个字段），重启后 `primary()` 还是同一条

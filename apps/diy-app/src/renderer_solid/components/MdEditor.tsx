@@ -25,12 +25,7 @@ import { json } from "@codemirror/lang-json";
 import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import {
-    acceptCompletion,
-    autocompletion,
-    completionStatus,
-    type CompletionSource,
-} from "@codemirror/autocomplete";
+import { acceptCompletion, autocompletion, completionStatus, type CompletionSource } from "@codemirror/autocomplete";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { themeSignal } from "../lib/theme";
 import { editorThemeKey, currentEditorTheme } from "../lib/editor-theme";
@@ -59,40 +54,40 @@ const xmlAttr = Decoration.mark({ class: "cm-xml-attr" });
 /** 装饰插件：`knownTags` 由外部传入（从各模版正文自动收集，见 shared/xml-tags） */
 const makeDslPlugin = (knownTags: ReadonlySet<string>) =>
     ViewPlugin.fromClass(
-    class {
-        decorations: DecorationSet;
-        constructor(view: EditorView) {
-            this.decorations = this.build(view);
-        }
-        update(u: ViewUpdate) {
-            if (u.docChanged || u.viewportChanged) this.decorations = this.build(u.view);
-        }
-        build(view: EditorView): DecorationSet {
-            const out: Range<Decoration>[] = [];
-            for (const { from, to } of view.visibleRanges) {
-                const text = view.state.sliceDoc(from, to);
-                // {{…}} 插值
-                for (const m of text.matchAll(/\{\{[^}]*\}\}/g)) {
-                    out.push(dslMark.range(from + m.index, from + m.index + m[0].length));
-                }
-                // <template …> / </template> 控制标记（含属性）
-                for (const m of text.matchAll(/<\/?template\b[^>]*>/g)) {
-                    out.push(dslCtl.range(from + m.index, from + m.index + m[0].length));
-                }
-                // 输出侧伪 XML 节标签：判据与着色由 shared/xml-tags 决定（已知集合 ∪ 独占一行）
-                // → 模版里新写的 `<diy-new>` 立刻着色，正文中夹在句子里的 `<pid>` 不着色
-                for (const t of findTags(text, knownTags)) {
-                    out.push(xmlPunct.range(from + t.from, from + t.nameFrom));
-                    out.push(xmlName.range(from + t.nameFrom, from + t.nameTo));
-                    out.push(xmlPunct.range(from + t.nameTo, from + t.to));
-                    if (t.attrFrom !== undefined) out.push(xmlAttr.range(from + t.attrFrom, from + t.attrTo!));
-                }
+        class {
+            decorations: DecorationSet;
+            constructor(view: EditorView) {
+                this.decorations = this.build(view);
             }
-            return Decoration.set(out, true);
-        }
-    },
-    { decorations: (v) => v.decorations },
-);
+            update(u: ViewUpdate) {
+                if (u.docChanged || u.viewportChanged) this.decorations = this.build(u.view);
+            }
+            build(view: EditorView): DecorationSet {
+                const out: Range<Decoration>[] = [];
+                for (const { from, to } of view.visibleRanges) {
+                    const text = view.state.sliceDoc(from, to);
+                    // {{…}} 插值
+                    for (const m of text.matchAll(/\{\{[^}]*\}\}/g)) {
+                        out.push(dslMark.range(from + m.index, from + m.index + m[0].length));
+                    }
+                    // <template …> / </template> 控制标记（含属性）
+                    for (const m of text.matchAll(/<\/?template\b[^>]*>/g)) {
+                        out.push(dslCtl.range(from + m.index, from + m.index + m[0].length));
+                    }
+                    // 输出侧伪 XML 节标签：判据与着色由 shared/xml-tags 决定（已知集合 ∪ 独占一行）
+                    // → 模版里新写的 `<diy-new>` 立刻着色，正文中夹在句子里的 `<pid>` 不着色
+                    for (const t of findTags(text, knownTags)) {
+                        out.push(xmlPunct.range(from + t.from, from + t.nameFrom));
+                        out.push(xmlName.range(from + t.nameFrom, from + t.nameTo));
+                        out.push(xmlPunct.range(from + t.nameTo, from + t.to));
+                        if (t.attrFrom !== undefined) out.push(xmlAttr.range(from + t.attrFrom, from + t.attrTo!));
+                    }
+                }
+                return Decoration.set(out, true);
+            }
+        },
+        { decorations: (v) => v.decorations },
+    );
 
 /* ── mention chip（##377 第 12 刀 / ##166 §38.1）─────────────────────────
  * 【用户】「`@xxx` 后这个特殊的内容是否是个特殊格式？其他 agent 都是一个**单一的 UI 元素**，
@@ -338,10 +333,7 @@ function languageOf(lang?: "markdown" | "yaml" | "json"): Extension {
 function styleExtensions(ext?: Extension | null): Extension[] {
     const key = editorThemeKey();
     const appDark = themeSignal() === "dark";
-    const fallback = [
-        labTheme,
-        syntaxHighlighting(appDark ? darkHighlight : defaultHighlightStyle),
-    ];
+    const fallback = [labTheme, syntaxHighlighting(appDark ? darkHighlight : defaultHighlightStyle)];
     if (key === "diy" || !ext) return fallback;
     return [labLayoutTheme, ext];
 }
@@ -432,10 +424,7 @@ export function MdEditor(props: {
         }
         const p = makeMentionPlugin();
         mentionPlugin = p;
-        return [
-            p,
-            EditorView.atomicRanges.of((v) => v.plugin(p)?.decorations ?? Decoration.none),
-        ];
+        return [p, EditorView.atomicRanges.of((v) => v.plugin(p)?.decorations ?? Decoration.none)];
     };
     /** 第三方主题扩展（动态 import，选到才加载）；null = 还没加载好 → 先用内置方案 */
     const [themeExt, setThemeExt] = createSignal<Extension | null>(null);

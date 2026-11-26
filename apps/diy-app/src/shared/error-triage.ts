@@ -129,11 +129,13 @@ const NETWORK_CODE_LABELS: Record<NetworkErrorCode, { code: string; reason: stri
  * 那是服务端故障 ##369；混进来会让告警疲劳）。
  */
 export const KNOWN_EXTERNAL: readonly TriageRule[] = [
-    ...NETWORK_ERROR_CODES.map((c): TriageRule => ({
-        code: NETWORK_CODE_LABELS[c].code,
-        reason: `${NETWORK_CODE_LABELS[c].reason}（${c}）`,
-        test: (p) => p.code === c,
-    })),
+    ...NETWORK_ERROR_CODES.map(
+        (c): TriageRule => ({
+            code: NETWORK_CODE_LABELS[c].code,
+            reason: `${NETWORK_CODE_LABELS[c].reason}（${c}）`,
+            test: (p) => p.code === c,
+        }),
+    ),
     {
         code: "fs/disk-full",
         reason: "磁盘满（ENOSPC）：写入方没有空间了，腾空间即可（##384 已单独顶栏告警）",
@@ -237,7 +239,11 @@ export function triageOfTurnEnd(r: TurnEndReason): TurnEndTriage {
         case "completed":
             return { triage: null, code: null, reason: "模型自然说完：预期收尾" };
         case "max-steps":
-            return { triage: "external-recognized", code: "llm/step-limit", reason: `步数到上限（${r.data.limit}）被强制收尾` };
+            return {
+                triage: "external-recognized",
+                code: "llm/step-limit",
+                reason: `步数到上限（${r.data.limit}）被强制收尾`,
+            };
         case "max-tokens":
             return {
                 triage: "external-recognized",
@@ -288,7 +294,11 @@ export function triageOfTurnEnd(r: TurnEndReason): TurnEndTriage {
         }
         case "error": {
             if (r.data.source === "budget") {
-                return { triage: "external-recognized", code: "llm/budget-exceeded", reason: "本轮金额/用量预算到上限" };
+                return {
+                    triage: "external-recognized",
+                    code: "llm/budget-exceeded",
+                    reason: "本轮金额/用量预算到上限",
+                };
             }
             // 上下文窗口越线（##406 刀 2）：**已识别** —— 说得出「啥到上限了」（窗口 token / 阈值 / 本轮估算）。
             // 这不是我方缺陷，也不是未知外部：处置话术由调用点给（`local-agent` 的预检分支），

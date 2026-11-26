@@ -213,7 +213,9 @@ describe("游标编解码：绑定「同一份日志」而不是「这一刻的�
     it("形态不对 / 版本不对 / 文件不存在 ⇒ null", () => {
         const { fp } = newSession(1);
         expect(decodeCursor("not-a-token", fp)).toBeNull();
-        expect(decodeCursor(Buffer.from(JSON.stringify({ v: 99, at: 0 }), "utf-8").toString("base64url"), fp)).toBeNull();
+        expect(
+            decodeCursor(Buffer.from(JSON.stringify({ v: 99, at: 0 }), "utf-8").toString("base64url"), fp),
+        ).toBeNull();
         expect(decodeCursor(encodeCursor(fp, 0), path.join(path.dirname(fp), "nope.jsonl"))).toBeNull();
     });
 

@@ -55,6 +55,12 @@ export interface RendererActions {
     openTab?: (pageId: string, ctx: string) => void;
 }
 let _actions: RendererActions = {};
-export function setRendererActions(a: RendererActions) { _actions = a; }
-export function resetRendererActions() { _actions = {}; }
-export function getRendererActions() { return _actions; }
+export function setRendererActions(a: RendererActions) {
+    _actions = a;
+}
+export function resetRendererActions() {
+    _actions = {};
+}
+export function getRendererActions() {
+    return _actions;
+}

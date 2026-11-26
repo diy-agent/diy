@@ -113,7 +113,8 @@ export function EnvStatusBar(props: {
                     const d = describe(n);
                     // 红系（error）是硬要求（用户原话「弹红色 error 提示」）；disk-low 是提醒 → 黄系。
                     // 两者共用同一形态：只换配色，不换结构（bar 层不长两套逻辑）。
-                    const tone = n.level === "error" ? "border-error/40 bg-error/15" : "border-warning/40 bg-warning/15";
+                    const tone =
+                        n.level === "error" ? "border-error/40 bg-error/15" : "border-warning/40 bg-warning/15";
                     return (
                         <div
                             data-env-status-bar-item={n.type}

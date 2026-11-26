@@ -303,7 +303,10 @@ describe("sessionStore —— 总轮次 = 只数**已收尾**的轮（##358 D5 �
         expect(sessionStore.turnsOf(U)).toBe(1);
 
         // 本轮收尾（turn=null、turnCount 前进到 2）⇒ 总轮次 2；此时"没看"就该有 +1
-        pushFrame({ kind: "upsert", entry: makeEntry({ turn: null, turnCount: 2, lastEndReason: { type: "completed", data: {} } }, U) });
+        pushFrame({
+            kind: "upsert",
+            entry: makeEntry({ turn: null, turnCount: 2, lastEndReason: { type: "completed", data: {} } }, U),
+        });
         await settle();
         expect(sessionStore.turnsOf(U)).toBe(2);
         // 水位是首帧（在跑时）钉下的 1 ⇒ 收尾那轮没被吃掉 ⇒ 未读 1

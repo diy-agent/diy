@@ -22,28 +22,32 @@ export type { InstanceSelf, RevealResult };
 
 /** `diy.app.info` 里本模块要用的字段（只取所需，避免依赖整份 schema） */
 export interface AppInfoLite {
-  diyHome: string;
-  pid: number;
-  env: string;
-  port?: number;
-  branch?: string;
-  repoDisplay?: string;
+    diyHome: string;
+    pid: number;
+    env: string;
+    port?: number;
+    branch?: string;
+    repoDisplay?: string;
 }
 
 /** 一次调用的总预算包装：连上 + 调用共用同一个 deadline（`probe-instance` 的写法保留） */
-async function withBudget<T>(timeoutMs: number, fn: (client: HttpClientBinding) => Promise<T>, port: number): Promise<T> {
-  const client = new HttpClientBinding(`http://127.0.0.1:${port}`);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, rej) => {
-    timer = setTimeout(() => rej(new Error(`probe timeout ${timeoutMs}ms`)), timeoutMs);
-  });
-  try {
-    await Promise.race([client.ready(), deadline]);
-    return await Promise.race([fn(client), deadline]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-    client.dispose();
-  }
+async function withBudget<T>(
+    timeoutMs: number,
+    fn: (client: HttpClientBinding) => Promise<T>,
+    port: number,
+): Promise<T> {
+    const client = new HttpClientBinding(`http://127.0.0.1:${port}`);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error(`probe timeout ${timeoutMs}ms`)), timeoutMs);
+    });
+    try {
+        await Promise.race([client.ready(), deadline]);
+        return await Promise.race([fn(client), deadline]);
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        client.dispose();
+    }
 }
 
 /**
@@ -55,15 +59,15 @@ async function withBudget<T>(timeoutMs: number, fn: (client: HttpClientBinding) 
  * （症状是「启动超时 + 锁被占用」，与真正的锁问题无法区分）。
  */
 export async function fetchAppInfo(port: number, timeoutMs = 1500): Promise<AppInfoLite> {
-  return withBudget(
-    timeoutMs,
-    (client) =>
-      client.invoke<{ input: Record<string, never>; meta: Record<string, never> }, AppInfoLite>("diy.app.info", {
-        input: {},
-        meta: {},
-      }),
-    port,
-  );
+    return withBudget(
+        timeoutMs,
+        (client) =>
+            client.invoke<{ input: Record<string, never>; meta: Record<string, never> }, AppInfoLite>("diy.app.info", {
+                input: {},
+                meta: {},
+            }),
+        port,
+    );
 }
 
 /**
@@ -72,30 +76,36 @@ export async function fetchAppInfo(port: number, timeoutMs = 1500): Promise<AppI
  * 那时降级到 `fetchAppInfo` 拿身份 —— 见 `probeInstanceRow`）。
  */
 export async function fetchInstanceSelf(port: number, timeoutMs = 1500): Promise<InstanceSelf | null> {
-  try {
-    return await withBudget(
-      timeoutMs,
-      (client) =>
-        client.invoke<{ input: Record<string, never>; meta: Record<string, never> }, InstanceSelf>("diy.instances.self", {
-          input: {},
-          meta: {},
-        }),
-      port,
-    );
-  } catch {
-    return null;
-  }
+    try {
+        return await withBudget(
+            timeoutMs,
+            (client) =>
+                client.invoke<{ input: Record<string, never>; meta: Record<string, never> }, InstanceSelf>(
+                    "diy.instances.self",
+                    {
+                        input: {},
+                        meta: {},
+                    },
+                ),
+            port,
+        );
+    } catch {
+        return null;
+    }
 }
 
 /** 让目标实例把窗口请出来（`diy.instances.reveal`，由目标实例自己 show+focus+全屏） */
 export async function revealInstance(port: number, timeoutMs = 2500): Promise<RevealResult> {
-  return withBudget(
-    timeoutMs,
-    (client) =>
-      client.invoke<{ input: Record<string, never>; meta: Record<string, never> }, RevealResult>("diy.instances.reveal", {
-        input: {},
-        meta: {},
-      }),
-    port,
-  );
+    return withBudget(
+        timeoutMs,
+        (client) =>
+            client.invoke<{ input: Record<string, never>; meta: Record<string, never> }, RevealResult>(
+                "diy.instances.reveal",
+                {
+                    input: {},
+                    meta: {},
+                },
+            ),
+        port,
+    );
 }

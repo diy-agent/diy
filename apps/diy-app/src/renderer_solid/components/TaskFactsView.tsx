@@ -144,7 +144,9 @@ export function TaskFactsView(props: { uri: string }) {
                             when={data().exists}
                             fallback={
                                 <div class="opacity-60">
-                                    库是空的（<code class="font-mono">{data().dir}</code>）—— 第一次 <code class="font-mono">diy facts submit --in {spec()}</code> 会写在这里（目录自动建）。
+                                    库是空的（<code class="font-mono">{data().dir}</code>）—— 第一次{" "}
+                                    <code class="font-mono">diy facts submit --in {spec()}</code>{" "}
+                                    会写在这里（目录自动建）。
                                 </div>
                             }
                         >
@@ -175,7 +177,10 @@ export function TaskFactsView(props: { uri: string }) {
                 <Show when={exposeSummary()}>
                     {(x) => (
                         <div class="flex flex-wrap items-center gap-2 text-xs">
-                            <span class={`badge badge-sm ${x().used > x().limit ? "badge-error" : "badge-ghost"} font-mono`} title="full 档的字节和 / 预算（超了 submit 与 check 都会报错）">
+                            <span
+                                class={`badge badge-sm ${x().used > x().limit ? "badge-error" : "badge-ghost"} font-mono`}
+                                title="full 档的字节和 / 预算（超了 submit 与 check 都会报错）"
+                            >
                                 full {x().used} / {x().limit} B
                             </span>
                             <span class="opacity-70 font-mono">
@@ -215,7 +220,14 @@ export function TaskFactsView(props: { uri: string }) {
                             <CodeBlock code={p().text} lang={p().algorithm === "md-list" ? "md" : "yaml"} />
                             <Show when={p().problems.length > 0}>
                                 <ul class="text-error font-mono">
-                                    <For each={p().problems}>{(x) => <li>{x.gid} — {x.code}{x.detail ? `: ${x.detail}` : ""}</li>}</For>
+                                    <For each={p().problems}>
+                                        {(x) => (
+                                            <li>
+                                                {x.gid} — {x.code}
+                                                {x.detail ? `: ${x.detail}` : ""}
+                                            </li>
+                                        )}
+                                    </For>
                                 </ul>
                             </Show>
                             <div class="opacity-50">这就是要发给 LLM 的形态：变体已解析成当前值，按命名空间分组。</div>

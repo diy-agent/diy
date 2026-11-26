@@ -94,14 +94,16 @@ function locIn(text: string, start: Loc, index: number): Loc {
     const lines = before.split('\n');
     return lines.length === 1
         ? { line: start.line, col: start.col + index, offset: start.offset + index }
-        : { line: start.line + lines.length - 1, col: lines[lines.length - 1]!.length + 1, offset: start.offset + index };
+        : {
+              line: start.line + lines.length - 1,
+              col: lines[lines.length - 1]!.length + 1,
+              offset: start.offset + index,
+          };
 }
 
 export function analyze(source: string, opts: AnalyzeOptions = {}): Analysis {
     const hints: LintIssue[] = [];
-    const out = analyzeNodes(
-        parse(source, { ...opts, onStyleHint: (message, loc) => hints.push({ message, loc }) }),
-    );
+    const out = analyzeNodes(parse(source, { ...opts, onStyleHint: (message, loc) => hints.push({ message, loc }) }));
     out.lint.push(...hints);
     if (opts.vars) out.lint.push(...checkVars(out, opts.vars));
     return out;
@@ -122,12 +124,12 @@ function checkVars(a: Analysis, vars: VarSpec[]): LintIssue[] {
     const asExpr = new Set<string>([
         ...a.loops.map((l) => l.source),
         ...a.conditions.map((c) => c.path),
-        ...a.includes.flatMap((inc) => inc.args.flatMap((g) => (g.value.kind === "expr" ? [g.value.path] : []))),
+        ...a.includes.flatMap((inc) => inc.args.flatMap((g) => (g.value.kind === 'expr' ? [g.value.path] : []))),
     ]);
     const out: LintIssue[] = [];
     const seen = new Set<string>();
     for (const p of a.paths) {
-        if (p.scope !== "global") continue;
+        if (p.scope !== 'global') continue;
         const spec = byPath.get(p.path);
         if (!spec) {
             if (dynamicPrefixes.some((pre) => p.path.startsWith(pre))) continue;
@@ -139,10 +141,10 @@ function checkVars(a: Analysis, vars: VarSpec[]): LintIssue[] {
             });
             continue;
         }
-        if ((spec.type === "array" || spec.type === "object") && !asExpr.has(p.path)) {
+        if ((spec.type === 'array' || spec.type === 'object') && !asExpr.has(p.path)) {
             out.push({
                 message:
-                    spec.type === "array"
+                    spec.type === 'array'
                         ? `{{${p.path}}} 是数组，不能直接插值：用 <template :for={{${p.path}}} :as="x"> 迭代（项 {{.x.value}}）`
                         : `{{${p.path}}} 是对象，不能直接插值：取具体字段（{{${p.path}.field}}）`,
                 loc: p.loc,
@@ -151,7 +153,7 @@ function checkVars(a: Analysis, vars: VarSpec[]): LintIssue[] {
     }
     for (const l of a.loops) {
         const spec = byPath.get(l.source);
-        if (spec && spec.type !== "array") {
+        if (spec && spec.type !== 'array') {
             out.push({
                 message: `:for 的源必须是数组，契约里 ${l.source} 是 ${spec.type}`,
                 loc: l.loc,
@@ -224,11 +226,15 @@ export function analyzeNodes(nodes: Node[]): Analysis {
                     break;
                 case 'include':
                     for (const a of n.args) {
-                        if (a.value.kind === 'expr') addPath(a.value.path, a.loc, a.loc.offset + a.name.length + 2 + a.value.path.length);
+                        if (a.value.kind === 'expr')
+                            addPath(a.value.path, a.loc, a.loc.offset + a.name.length + 2 + a.value.path.length);
                         else {
                             walk(a.value.nodes);
                             // 迁移提示：值看起来是路径，但现在是字面量字符串（老写法 path=".f.path"）
-                            const only = a.value.nodes.length === 1 && a.value.nodes[0]!.type === 'text' ? a.value.nodes[0]!.value : undefined;
+                            const only =
+                                a.value.nodes.length === 1 && a.value.nodes[0]!.type === 'text'
+                                    ? a.value.nodes[0]!.value
+                                    : undefined;
                             if (only !== undefined && /^(\.$|\.\w|[A-Za-z_$][\w$]*\.)/.test(only)) {
                                 out.lint.push({
                                     message:

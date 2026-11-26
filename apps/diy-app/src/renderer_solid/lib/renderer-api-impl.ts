@@ -38,279 +38,275 @@ export function bindRendererApi(transport: EnvelopeTransport): ServerBinding {
     // TODO(##87): HandlersOf 对 ui 域的推导会丢上下文类型（22 处隐式 any），暂时用 any 兜住，待查根因
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handlers: any = {
-            ui: {
-                    component: {
-                        list: async () => {
-                            // TODO: 动态扫描注册的组件
-                            return {
-                                status: "ok",
-                                data: {
-                                    components: [
-                                        { name: "taskTree", label: "任务树", description: "任务层级树形展示" },
-                                        { name: "logPanel", label: "日志面板", description: "实时日志输出面板" },
-                                        { name: "agentChat", label: "Agent 对话", description: "AI 代理对话面板" },
-                                    ],
-                                },
-                            };
+        ui: {
+            component: {
+                list: async () => {
+                    // TODO: 动态扫描注册的组件
+                    return {
+                        status: "ok",
+                        data: {
+                            components: [
+                                { name: "taskTree", label: "任务树", description: "任务层级树形展示" },
+                                { name: "logPanel", label: "日志面板", description: "实时日志输出面板" },
+                                { name: "agentChat", label: "Agent 对话", description: "AI 代理对话面板" },
+                            ],
                         },
-                        status: async () => {
-                            // TODO: 从组件 Store 读取真实状态
-                            return {
-                                status: "ok",
-                                data: { visible: true, state: "ready" },
-                            };
-                        },
-                    },
-                    page: {
-                        info: async () => ({
-                            status: "ok",
-                            data: {
-                                title: document.title,
-                                url: window.location.href,
-                                ready: document.readyState === "complete",
-                            },
-                        }),
-                        navigate: async ({ input }: any) => {
-                            const nav = getRendererActions().navigate;
-                            if (!nav) return { status: "error", data: { reason: "renderer actions 未就绪" } };
-                            nav(input.page);
-                            const snap = currentSnapshot();
-                            return { status: "ok", data: { rev: snap.rev, uiRev: snap.uiRev, active: snap.active } };
-                        },
-                        focus: async ({ input }: any) => {
-                            getRendererActions().focus?.(input.uri);
-                            return { status: "ok" };
-                        },
-                        toast: async ({ input }: any) => {
-                            getRendererActions().toast?.(input.message, (input.level as ToastType) ?? "info");
-                            return { status: "ok" };
-                        },
-                    },
-                    view: {
-                        expand: async ({ input }: any) => {
-                            getRendererActions().setView?.(input.key, input.open !== "closed");
-                            return { status: "ok" };
-                        },
-                        set: async ({ input }: any) => {
-                            const pageId = input.page ?? "task-run";
-                            const ctx = input.ctx ?? null;
-                            // 依赖倒置的代价：写错 view/page/ctx 没有类型错误，只能运行时拦（判据与渲染层共用）
-                            const bad = checkViewTarget(input.view, pageId, ctx);
-                            if (bad) throw new Error(bad);
-                            getRendererActions().setViewVisible?.(pageId, input.view, ctx, input.open !== "closed");
-                            return { status: "ok" };
-                        },
-                    },
-                    persona: {
-                        open: async ({ input }: any) => {
-                            personaDrawerStore.open(input.id);
-                            return { status: "ok" };
-                        },
-                        close: async () => {
-                            personaDrawerStore.close();
-                            return { status: "ok" };
-                        },
-                        state: async () => {
-                            return {
-                                status: "ok",
-                                data: { open: personaDrawerStore.isOpen(), id: personaDrawerStore.target() },
-                            };
-                        },
-                    },
-                    layout: {
-                        get: async ({ input }: any) => {
-                            const snap = getRendererActions().getLayout?.(input.page, input.ctx ?? null);
-                            if (!snap) throw new Error(`未知 page: ${input.page}`);
-                            return { status: "ok", data: { ...snap, layout: snap.layout as never } };
-                        },
-                        set: async ({ input }: any) => {
-                            const changes: LayoutChanges = {};
-                            // cols/rows 在 renderer 侧解析成 TrackSize[]（CLI 只传简写串）
-                            if (input.cols !== undefined) {
-                                const t = parseTracks(input.cols);
-                                if (!t) throw new Error(`--cols 格式非法: ${input.cols}（数字=px，*=fr，逗号分隔）`);
-                                changes.cols = t;
-                            }
-                            if (input.rows !== undefined) {
-                                const t = parseTracks(input.rows);
-                                if (!t) throw new Error(`--rows 格式非法: ${input.rows}`);
-                                changes.rows = t;
-                            }
-                            if (input.hide)
-                                changes.hide = input.hide
-                                    .split(",")
-                                    .map((x: any) => x.trim())
-                                    .filter(Boolean);
-                            if (input.show)
-                                changes.show = input.show
-                                    .split(",")
-                                    .map((x: any) => x.trim())
-                                    .filter(Boolean);
-                            if (input.maximize !== undefined) changes.maximize = input.maximize || null;
-                            getRendererActions().setLayout?.(input.page, changes);
-                            return { status: "ok" };
-                        },
-                        reset: async ({ input }: any) => {
-                            getRendererActions().resetLayout?.(input.page);
-                            return { status: "ok" };
-                        },
-                    },
-                    viewarea: {
-                        set: async ({ input }: any) => {
-                            // pageId 由调用方给出（同一 area 名在不同 page 上是不同的东西）
-                            getRendererActions().setViewArea?.(
-                                input.page ?? "task-run",
-                                input.area,
-                                input.open !== "closed",
-                            );
-                            return { status: "ok" };
-                        },
-                    },
-                    tab: {
-                        open: async ({ input }: any) => {
-                            // 两种写法：`<任务 URI>`（= 任务执行页）或 `<pageId>:<任务 URI>`（如 `lab:projects/1/tasks/1`）
-                            const m = input.uri.match(/^([a-z][a-z0-9-]*):(.+)$/);
-                            const pageId = m ? m[1]! : "task-run";
-                            const ctx = m ? m[2]! : input.uri;
-                            const tabKey = `${pageId}:${ctx}`;
-                            const openTab = getRendererActions().openTab;
-                            if (!openTab)
-                                return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
-                            // 顺序/缩进依赖任务层次：先确保树里有这个 ctx（缺则按需重载一次，覆盖 fileChange 防抖窗口）
-                            await taskStore.ensureTasks([ctx]);
-                            openTab(pageId, ctx);
-                            // 写后回读：本地 UI 写是同步 flush，这里立刻能读到后置状态。把「是否真的达到该状态」
-                            // 回给调用方（原实现无条件 return ok，写没生效也报 ok，调用方无法自检）。
-                            const snap = currentSnapshot();
-                            const ok = snap.tabs.some((t) => t.key === tabKey);
-                            return {
-                                status: ok ? "ok" : "error",
-                                data: {
-                                    uri: input.uri,
-                                    rev: snap.rev,
-                                    uiRev: snap.uiRev,
-                                    active: snap.active,
-                                    reason: ok ? undefined : "打开后未在快照中看到该 tab",
-                                },
-                            };
-                        },
-                        close: async ({ input }: any) => {
-                            const closeTab = getRendererActions().closeTab;
-                            if (!closeTab)
-                                return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
-                            closeTab(input.uri);
-                            const snap = currentSnapshot();
-                            const ok = !snap.tabs.some((t) => t.key === input.uri);
-                            return {
-                                status: ok ? "ok" : "error",
-                                data: {
-                                    uri: input.uri,
-                                    rev: snap.rev,
-                                    uiRev: snap.uiRev,
-                                    reason: ok ? undefined : "关闭后该 tab 仍在快照中",
-                                },
-                            };
-                        },
-                        active: async ({ input }: any) => {
-                            const activate = getRendererActions().activateTab;
-                            if (!activate)
-                                return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
-                            activate(input.uri);
-                            const snap = currentSnapshot();
-                            const ok = snap.active === input.uri;
-                            return {
-                                status: ok ? "ok" : "error",
-                                data: {
-                                    uri: input.uri,
-                                    rev: snap.rev,
-                                    uiRev: snap.uiRev,
-                                    reason: ok ? undefined : `激活后 active=${snap.active}`,
-                                },
-                            };
-                        },
-                        list: async () => {
-                            // opened 的顺序由任务层次现算：读之前确保树含所有已开 tab 的 ctx（缺则按需重载一次）
-                            await taskStore.ensureTasks(tabStore.opened.map((t) => t.ctx));
-                            // 契约保持字符串数组（CLI/测试都按字符串用）：opened = tab key 列表
-                            return {
-                                status: "ok",
-                                data: { opened: tabStore.opened.map((t) => t.key), active: tabStore.active },
-                            };
-                        },
-                    },
-                    tree: async ({ input }: any) => {
-                        return diyService.diy.task.tree({ allTasks: input.all ?? false });
-                    },
-                    status: async () => {
-                        const s = await diyService.diy.app.info({});
-                        return { status: "ok", data: { pid: s.pid, uptime: s.uptime, memory: s.heapUsed } };
-                    },
-                    project: {
-                        create: async ({ input }: any) => {
-                            const id = await createProjectViaUi(input.path, input.label, input.desc);
-                            return { status: "ok", data: { id } };
-                        },
-                        remove: async ({ input }: any) => {
-                            await removeProjectViaUi(input.id);
-                            return { status: "ok", data: { id: input.id } };
-                        },
-                    },
-                    task: {
-                        create: async ({ input }: any) => {
-                            const uri = await createTaskViaUi({
-                                title: input.title,
-                                project: input.project,
-                                parent: input.parent,
-                            });
-                            return { status: "ok", data: { uri } };
-                        },
-                        update: async ({ input }: any) => {
-                            const { uri, ...changes } = input;
-                            await editTask(uri, changes);
-                            await taskStore.loadTree();
-                            if (taskStore.selectedUri === uri) {
-                                await taskStore.selectTask(uri);
-                            }
-                            getRendererActions().toast?.("任务已更新", "success");
-                            return { status: "ok", data: { uri } };
-                        },
-                        delete: async ({ input }: any) => {
-                            await deleteTaskViaUi(input.uri);
-                            return { status: "ok", data: { uri: input.uri } };
-                        },
-                        setState: async ({ input }: any) => {
-                            await editTask(input.uri, { state: input.state });
-                            await taskStore.loadTree();
-                            notificationStore.addToast(
-                                "success",
-                                `状态已改为 ${input.state}`,
-                                taskStateNotice({ uri: input.uri, state: input.state }),
-                            );
-                            return { status: "ok", data: { uri: input.uri } };
-                        },
-                    },
-                    inspect: async () => {
-                        const tree = buildA11yTree(document.body);
-                        // 剥离内部字段（_count/_visible），保持输出干净
-                        const clean = stripInternal(tree);
-                        return {
-                            status: "ok",
-                            data: {
-                                tree: clean,
-                                stats: { totalNodes: tree?._count || 0, visibleNodes: tree?._visible || 0 },
-                            },
-                        };
-                    },
-                    state: async () => ({ status: "ok", data: currentSnapshot() }),
-                    watch: {
-                        uiState: async function* () {
-                            for await (const snap of uiWatchStream()) {
-                                yield { status: "ok", data: snap };
-                            }
-                        },
-                    },
+                    };
                 },
-        };
+                status: async () => {
+                    // TODO: 从组件 Store 读取真实状态
+                    return {
+                        status: "ok",
+                        data: { visible: true, state: "ready" },
+                    };
+                },
+            },
+            page: {
+                info: async () => ({
+                    status: "ok",
+                    data: {
+                        title: document.title,
+                        url: window.location.href,
+                        ready: document.readyState === "complete",
+                    },
+                }),
+                navigate: async ({ input }: any) => {
+                    const nav = getRendererActions().navigate;
+                    if (!nav) return { status: "error", data: { reason: "renderer actions 未就绪" } };
+                    nav(input.page);
+                    const snap = currentSnapshot();
+                    return { status: "ok", data: { rev: snap.rev, uiRev: snap.uiRev, active: snap.active } };
+                },
+                focus: async ({ input }: any) => {
+                    getRendererActions().focus?.(input.uri);
+                    return { status: "ok" };
+                },
+                toast: async ({ input }: any) => {
+                    getRendererActions().toast?.(input.message, (input.level as ToastType) ?? "info");
+                    return { status: "ok" };
+                },
+            },
+            view: {
+                expand: async ({ input }: any) => {
+                    getRendererActions().setView?.(input.key, input.open !== "closed");
+                    return { status: "ok" };
+                },
+                set: async ({ input }: any) => {
+                    const pageId = input.page ?? "task-run";
+                    const ctx = input.ctx ?? null;
+                    // 依赖倒置的代价：写错 view/page/ctx 没有类型错误，只能运行时拦（判据与渲染层共用）
+                    const bad = checkViewTarget(input.view, pageId, ctx);
+                    if (bad) throw new Error(bad);
+                    getRendererActions().setViewVisible?.(pageId, input.view, ctx, input.open !== "closed");
+                    return { status: "ok" };
+                },
+            },
+            persona: {
+                open: async ({ input }: any) => {
+                    personaDrawerStore.open(input.id);
+                    return { status: "ok" };
+                },
+                close: async () => {
+                    personaDrawerStore.close();
+                    return { status: "ok" };
+                },
+                state: async () => {
+                    return {
+                        status: "ok",
+                        data: { open: personaDrawerStore.isOpen(), id: personaDrawerStore.target() },
+                    };
+                },
+            },
+            layout: {
+                get: async ({ input }: any) => {
+                    const snap = getRendererActions().getLayout?.(input.page, input.ctx ?? null);
+                    if (!snap) throw new Error(`未知 page: ${input.page}`);
+                    return { status: "ok", data: { ...snap, layout: snap.layout as never } };
+                },
+                set: async ({ input }: any) => {
+                    const changes: LayoutChanges = {};
+                    // cols/rows 在 renderer 侧解析成 TrackSize[]（CLI 只传简写串）
+                    if (input.cols !== undefined) {
+                        const t = parseTracks(input.cols);
+                        if (!t) throw new Error(`--cols 格式非法: ${input.cols}（数字=px，*=fr，逗号分隔）`);
+                        changes.cols = t;
+                    }
+                    if (input.rows !== undefined) {
+                        const t = parseTracks(input.rows);
+                        if (!t) throw new Error(`--rows 格式非法: ${input.rows}`);
+                        changes.rows = t;
+                    }
+                    if (input.hide)
+                        changes.hide = input.hide
+                            .split(",")
+                            .map((x: any) => x.trim())
+                            .filter(Boolean);
+                    if (input.show)
+                        changes.show = input.show
+                            .split(",")
+                            .map((x: any) => x.trim())
+                            .filter(Boolean);
+                    if (input.maximize !== undefined) changes.maximize = input.maximize || null;
+                    getRendererActions().setLayout?.(input.page, changes);
+                    return { status: "ok" };
+                },
+                reset: async ({ input }: any) => {
+                    getRendererActions().resetLayout?.(input.page);
+                    return { status: "ok" };
+                },
+            },
+            viewarea: {
+                set: async ({ input }: any) => {
+                    // pageId 由调用方给出（同一 area 名在不同 page 上是不同的东西）
+                    getRendererActions().setViewArea?.(input.page ?? "task-run", input.area, input.open !== "closed");
+                    return { status: "ok" };
+                },
+            },
+            tab: {
+                open: async ({ input }: any) => {
+                    // 两种写法：`<任务 URI>`（= 任务执行页）或 `<pageId>:<任务 URI>`（如 `lab:projects/1/tasks/1`）
+                    const m = input.uri.match(/^([a-z][a-z0-9-]*):(.+)$/);
+                    const pageId = m ? m[1]! : "task-run";
+                    const ctx = m ? m[2]! : input.uri;
+                    const tabKey = `${pageId}:${ctx}`;
+                    const openTab = getRendererActions().openTab;
+                    if (!openTab)
+                        return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
+                    // 顺序/缩进依赖任务层次：先确保树里有这个 ctx（缺则按需重载一次，覆盖 fileChange 防抖窗口）
+                    await taskStore.ensureTasks([ctx]);
+                    openTab(pageId, ctx);
+                    // 写后回读：本地 UI 写是同步 flush，这里立刻能读到后置状态。把「是否真的达到该状态」
+                    // 回给调用方（原实现无条件 return ok，写没生效也报 ok，调用方无法自检）。
+                    const snap = currentSnapshot();
+                    const ok = snap.tabs.some((t) => t.key === tabKey);
+                    return {
+                        status: ok ? "ok" : "error",
+                        data: {
+                            uri: input.uri,
+                            rev: snap.rev,
+                            uiRev: snap.uiRev,
+                            active: snap.active,
+                            reason: ok ? undefined : "打开后未在快照中看到该 tab",
+                        },
+                    };
+                },
+                close: async ({ input }: any) => {
+                    const closeTab = getRendererActions().closeTab;
+                    if (!closeTab)
+                        return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
+                    closeTab(input.uri);
+                    const snap = currentSnapshot();
+                    const ok = !snap.tabs.some((t) => t.key === input.uri);
+                    return {
+                        status: ok ? "ok" : "error",
+                        data: {
+                            uri: input.uri,
+                            rev: snap.rev,
+                            uiRev: snap.uiRev,
+                            reason: ok ? undefined : "关闭后该 tab 仍在快照中",
+                        },
+                    };
+                },
+                active: async ({ input }: any) => {
+                    const activate = getRendererActions().activateTab;
+                    if (!activate)
+                        return { status: "error", data: { uri: input.uri, reason: "renderer actions 未就绪" } };
+                    activate(input.uri);
+                    const snap = currentSnapshot();
+                    const ok = snap.active === input.uri;
+                    return {
+                        status: ok ? "ok" : "error",
+                        data: {
+                            uri: input.uri,
+                            rev: snap.rev,
+                            uiRev: snap.uiRev,
+                            reason: ok ? undefined : `激活后 active=${snap.active}`,
+                        },
+                    };
+                },
+                list: async () => {
+                    // opened 的顺序由任务层次现算：读之前确保树含所有已开 tab 的 ctx（缺则按需重载一次）
+                    await taskStore.ensureTasks(tabStore.opened.map((t) => t.ctx));
+                    // 契约保持字符串数组（CLI/测试都按字符串用）：opened = tab key 列表
+                    return {
+                        status: "ok",
+                        data: { opened: tabStore.opened.map((t) => t.key), active: tabStore.active },
+                    };
+                },
+            },
+            tree: async ({ input }: any) => {
+                return diyService.diy.task.tree({ allTasks: input.all ?? false });
+            },
+            status: async () => {
+                const s = await diyService.diy.app.info({});
+                return { status: "ok", data: { pid: s.pid, uptime: s.uptime, memory: s.heapUsed } };
+            },
+            project: {
+                create: async ({ input }: any) => {
+                    const id = await createProjectViaUi(input.path, input.label, input.desc);
+                    return { status: "ok", data: { id } };
+                },
+                remove: async ({ input }: any) => {
+                    await removeProjectViaUi(input.id);
+                    return { status: "ok", data: { id: input.id } };
+                },
+            },
+            task: {
+                create: async ({ input }: any) => {
+                    const uri = await createTaskViaUi({
+                        title: input.title,
+                        project: input.project,
+                        parent: input.parent,
+                    });
+                    return { status: "ok", data: { uri } };
+                },
+                update: async ({ input }: any) => {
+                    const { uri, ...changes } = input;
+                    await editTask(uri, changes);
+                    await taskStore.loadTree();
+                    if (taskStore.selectedUri === uri) {
+                        await taskStore.selectTask(uri);
+                    }
+                    getRendererActions().toast?.("任务已更新", "success");
+                    return { status: "ok", data: { uri } };
+                },
+                delete: async ({ input }: any) => {
+                    await deleteTaskViaUi(input.uri);
+                    return { status: "ok", data: { uri: input.uri } };
+                },
+                setState: async ({ input }: any) => {
+                    await editTask(input.uri, { state: input.state });
+                    await taskStore.loadTree();
+                    notificationStore.addToast(
+                        "success",
+                        `状态已改为 ${input.state}`,
+                        taskStateNotice({ uri: input.uri, state: input.state }),
+                    );
+                    return { status: "ok", data: { uri: input.uri } };
+                },
+            },
+            inspect: async () => {
+                const tree = buildA11yTree(document.body);
+                // 剥离内部字段（_count/_visible），保持输出干净
+                const clean = stripInternal(tree);
+                return {
+                    status: "ok",
+                    data: {
+                        tree: clean,
+                        stats: { totalNodes: tree?._count || 0, visibleNodes: tree?._visible || 0 },
+                    },
+                };
+            },
+            state: async () => ({ status: "ok", data: currentSnapshot() }),
+            watch: {
+                uiState: async function* () {
+                    for await (const snap of uiWatchStream()) {
+                        yield { status: "ok", data: snap };
+                    }
+                },
+            },
+        },
+    };
     binding.use({ prefix: "diy", api: uiApi, handlers });
 
     return binding;

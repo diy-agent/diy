@@ -90,7 +90,9 @@ export function reportError(e: unknown, ctx: ErrorReportContext, opts: ReportErr
         return { written: true, suppressed: false, file };
     } catch (writeErr) {
         // 落盘失败（ENOSPC / 目录被删）不能反噬调用方 —— 退到 console，至少留一行
-        console.warn(`[error-report] 落盘失败（${ctx.where}）：${String(writeErr)}；原错误：${report.code ?? "-"} ${report.message}`);
+        console.warn(
+            `[error-report] 落盘失败（${ctx.where}）：${String(writeErr)}；原错误：${report.code ?? "-"} ${report.message}`,
+        );
         return { written: false, suppressed: false, file };
     }
 }

@@ -5,21 +5,21 @@ import { BUILD_DIR, isExternal } from "./vite.pkg-deps";
 // 新增 workspace 依赖必须同步加那里 —— 漏加 = 产物留 `import "@diy-agent/x"`，node 加载 `.ts` 直接炸）。
 
 export default defineConfig({
-  build: {
-    outDir: `build/${BUILD_DIR}/main`,
-    lib: {
-      entry: "src/main/index.ts",
-      formats: ["es"],
-      fileName: () => "index.mjs",
+    build: {
+        outDir: `build/${BUILD_DIR}/main`,
+        lib: {
+            entry: "src/main/index.ts",
+            formats: ["es"],
+            fileName: () => "index.mjs",
+        },
+        rollupOptions: {
+            external: (id: string) => isExternal(id),
+        },
+        minify: false,
+        emptyOutDir: true,
     },
-    rollupOptions: {
-      external: (id: string) => isExternal(id),
+    resolve: {
+        conditions: ["node"],
+        mainFields: ["module", "jsnext:main", "jsnext"],
     },
-    minify: false,
-    emptyOutDir: true,
-  },
-  resolve: {
-    conditions: ["node"],
-    mainFields: ["module", "jsnext:main", "jsnext"],
-  },
 });

@@ -22,9 +22,8 @@ const store = new Map<string, string>();
     length: 0,
 } as Storage;
 
-const { Caches, CONCLUSION_LINES_DEFAULT, CONCLUSION_LINES_MAX, clearUiCache } = await import(
-    "../../src/renderer_solid/lib/ui-state"
-);
+const { Caches, CONCLUSION_LINES_DEFAULT, CONCLUSION_LINES_MAX, clearUiCache } =
+    await import("../../src/renderer_solid/lib/ui-state");
 const { DEFAULT_TURN_LEVEL, TURN_LEVEL_MAX } = await import("../../src/renderer_solid/lib/chat-fold");
 
 describe("聊天全局展开级别", () => {

@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @plugin "daisyui" {
-  themes: light, dark --default;
+    themes:
+        light,
+        dark --default;
 }
 
 /* ── Tailwind 扫描范围补丁（状态色圆点必需） ──────────────────────
@@ -21,37 +23,37 @@
  * 档位按「角色」命名、按值独立调整：改字号只动这一处。
  * 层级感用 weight/opacity/indent 表达，不用字号表达树层级（任务 208 的教训）。 */
 @theme {
-  /* 队列待投递的**紫**（##358 D1 的角标语汇：绿=未读/运行 · 红=未读异常 · 黄=停滞 · 紫=队列）。
+    /* 队列待投递的**紫**（##358 D1 的角标语汇：绿=未读/运行 · 红=未读异常 · 黄=停滞 · 紫=队列）。
    * daisyUI 的 primary 在本主题是蓝紫、secondary 是品红，都不是口径里的那个紫 ——
    * 自定义色按规范用 diy- 前缀（Tailwind v4 会据此生成 bg-/text-/border- 三件套）。 */
-  --color-diy-queue: oklch(70% 0.17 290);
-  /* 会话**结束归因**色（##393）：形状表阶段、颜色表归因 —— 两轴分开，
+    --color-diy-queue: oklch(70% 0.17 290);
+    /* 会话**结束归因**色（##393）：形状表阶段、颜色表归因 —— 两轴分开，
    * 色弱用户靠形状 + 线型 + tooltip 三重兜底。语义唯一落点 = shared/session-state::TONE_OF_BLAME，
    * 渲染唯一落点 = components/SessionGlyph.tsx::TONE_TEXT（别在页面里再写一张配色表）。 */
-  --color-diy-end-normal: oklch(70% 0.06 165); /* 正常结束：灰绿 */
-  --color-diy-end-user: oklch(70% 0.07 250); /* 你停止：蓝灰（不是故障） */
-  --color-diy-end-limit: oklch(78% 0.14 85); /* 我方限制：琥珀 */
-  --color-diy-end-service: oklch(70% 0.16 45); /* 上游服务：橙 */
-  --color-diy-end-env: oklch(72% 0.1 195); /* 已识别环境：青 */
-  --color-diy-end-unknown: oklch(70% 0.17 300); /* 未识别外部：紫 */
-  --text-caption: 0.625rem;
-  --text-body: 0.6875rem;
-  --text-prose: 0.875rem;
-  --text-title: 0.875rem;
-  --text-display: 1.125rem;
+    --color-diy-end-normal: oklch(70% 0.06 165); /* 正常结束：灰绿 */
+    --color-diy-end-user: oklch(70% 0.07 250); /* 你停止：蓝灰（不是故障） */
+    --color-diy-end-limit: oklch(78% 0.14 85); /* 我方限制：琥珀 */
+    --color-diy-end-service: oklch(70% 0.16 45); /* 上游服务：橙 */
+    --color-diy-end-env: oklch(72% 0.1 195); /* 已识别环境：青 */
+    --color-diy-end-unknown: oklch(70% 0.17 300); /* 未识别外部：紫 */
+    --text-caption: 0.625rem;
+    --text-body: 0.6875rem;
+    --text-prose: 0.875rem;
+    --text-title: 0.875rem;
+    --text-display: 1.125rem;
 }
 
 /* 任务标题链接色：daisyUI dark 默认 primary（oklch 58% 蓝紫）在黑底上对比不足，单独加亮。
  * 自定义色按规范用 diy- 前缀；随主题切换（main.tsx 经 data-theme 显式锁定）。 */
 :root,
 [data-theme="dark"] {
-  --color-diy-link: oklch(87% 0.11 260);
+    --color-diy-link: oklch(87% 0.11 260);
 }
 [data-theme="light"] {
-  --color-diy-link: oklch(48% 0.22 277);
+    --color-diy-link: oklch(48% 0.22 277);
 }
 .diy-link {
-  color: var(--color-diy-link);
+    color: var(--color-diy-link);
 }
 
 /* ── 浮层语义分层（##166 §36 · ##377 第 10 刀）─────────────────────────
@@ -71,15 +73,15 @@
  * `inset` = 浮层内次级块（viewbar / 成员栏 / 输入区容器）。
  * 与主页面切开的三件套（缺一不可）：① 底色差 ② `--diy-overlay-edge` 分界线 ③ shadow-2xl。 */
 :root {
-  /* 浮层面板主体（侧边栏 / 球）—— 比页面底「再抬一档」。
+    /* 浮层面板主体（侧边栏 / 球）—— 比页面底「再抬一档」。
      比例 85/15（§36.3 原写 88/12）：实测 dark 下 88/12 的 ΔRGB 只有 **9**（判据要 ≥10，
      dark 区 sRGB 值小 ⇒ 同样的 L 差换来的绝对 RGB 差更小），85/15 才过线；light 侧更宽裕。 */
-  --diy-surface-overlay: color-mix(in oklab, var(--color-base-100) 85%, var(--color-base-content) 15%);
-  /* 浮层内的次级块（viewbar / 成员栏 / 输入区容器）—— 再偏一档。
+    --diy-surface-overlay: color-mix(in oklab, var(--color-base-100) 85%, var(--color-base-content) 15%);
+    /* 浮层内的次级块（viewbar / 成员栏 / 输入区容器）—— 再偏一档。
      76/24（§36.3 原写 80/20）：overlay 提到 85/15 后，80/20 只剩 3.6 个百分点（判据下限 3%），
      76/24 给到 ~6.5 个百分点，两主题都稳。 */
-  --diy-surface-inset: color-mix(in oklab, var(--color-base-100) 76%, var(--color-base-content) 24%);
-  /* **第四档：浮层之上的弹层**（补全面板 / 成员 hover 浮窗 / 成员抽屉）。
+    --diy-surface-inset: color-mix(in oklab, var(--color-base-100) 76%, var(--color-base-content) 24%);
+    /* **第四档：浮层之上的弹层**（补全面板 / 成员 hover 浮窗 / 成员抽屉）。
      为什么必须再派生一档（##377 第 11 刀实测暴露）：daisyUI 两主题里 base-100 已是"最抬"的一档，
      overlay 又只比它抬一点 ⇒ 弹层浮在 overlay 面板上时**两者同色**（实测 dark 下补全面板与侧边栏
      面板都是 `oklab(0.362016)`，ΔRGB = 0），只剩 border + shadow 分界 —— 弹层"浮"不起来。
@@ -89,9 +91,9 @@
      dark 55,62,71 → 87,96,107；light 216,216,216 → 173,173,174）—— 15 个百分点即 Δ≈34，
      早已远超判据 ≥10。取 68/32 的真实理由：让 overlay→inset（9 个点）与 inset→raised（8 个点）
      两段档距相当，且 inset→raised 的 Δ 也有 dark 17 / light 20 —— 三档都看得见，不是"刚好过线"。 */
-  --diy-surface-raised: color-mix(in oklab, var(--color-base-100) 68%, var(--color-base-content) 32%);
-  /* 浮层分界线 —— 比 `--diy-edge`(16%) 更清楚：它要跟**另一块面**切开，不是块内描边 */
-  --diy-overlay-edge: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+    --diy-surface-raised: color-mix(in oklab, var(--color-base-100) 68%, var(--color-base-content) 32%);
+    /* 浮层分界线 —— 比 `--diy-edge`(16%) 更清楚：它要跟**另一块面**切开，不是块内描边 */
+    --diy-overlay-edge: color-mix(in oklab, var(--color-base-content) 22%, transparent);
 }
 
 /* ── mention chip（##377 第 12 刀 / ##166 §38.1）──────────────────────
@@ -99,11 +101,11 @@
  * 只是渲染成一个视觉单元。同 Obsidian `[[link]]` / GitHub `@mention`。
  * 色走语义变量（`--color-primary` + `color-mix`）—— 零硬编码色值，light/dark 自动取对方向。 */
 .cm-mention-chip {
-  background: color-mix(in oklab, var(--color-primary) 22%, transparent);
-  color: var(--color-primary);
-  border-radius: 0.25rem;
-  padding: 0 0.15em;
-  font-weight: 600;
+    background: color-mix(in oklab, var(--color-primary) 22%, transparent);
+    color: var(--color-primary);
+    border-radius: 0.25rem;
+    padding: 0 0.15em;
+    font-weight: 600;
 }
 
 /* ── 窄窗（<1024）导航：rail 常驻 + 点开浮层（##297） ─────────────────
@@ -118,87 +120,140 @@
  * 点 rail 顶部的 ◉ 才把 side 转回 fixed 浮层（覆盖主区 + 恢复可见遮罩），
  * 点遮罩收回。侧栏宽度**从不消失**：最窄 40px，永不 0。 */
 @media (width < 1024px) {
-  .diy-nav-rail {
-    grid-template-columns: 2.5rem 1fr;
-  }
-  .diy-nav-rail > .drawer-side {
-    position: sticky;
-    visibility: visible;
-    opacity: 1;
-    pointer-events: auto;
-    width: auto;
-    display: block;
-    overflow-y: auto;
-    translate: 0%;
-  }
-  /* rail 里的 nav 必须自己归零 translate：daisyUI 把「滑入」的那条归零规则挂在
+    .diy-nav-rail {
+        grid-template-columns: 2.5rem 1fr;
+    }
+    .diy-nav-rail > .drawer-side {
+        position: sticky;
+        visibility: visible;
+        opacity: 1;
+        pointer-events: auto;
+        width: auto;
+        display: block;
+        overflow-y: auto;
+        translate: 0%;
+    }
+    /* rail 里的 nav 必须自己归零 translate：daisyUI 把「滑入」的那条归零规则挂在
    * `@media(width>=1024)` 的 .lg:drawer-open 分支里（`.drawer-open>.drawer-toggle
    * ~.drawer-side>:not(.drawer-overlay){translate:0%}`），窄窗没人管 —— side 占了列，
    * 里面的 nav 却还停在 -100%（实测 menu x=-40，整条 rail 滑在画面外、点不到）。
    * 浮层态同样要 0%（否则展开后 nav 也在左外）。 */
-  .diy-nav-rail > .drawer-side > :not(.drawer-overlay) {
-    translate: 0%;
-  }
-  /* rail 态的遮罩：不显示也不吃点击（点 rail 自己不该把它收掉） */
-  .diy-nav-rail > .drawer-side > .drawer-overlay {
-    cursor: default;
-    background-color: transparent;
-    pointer-events: none;
-  }
-  /* 展开态（浮层）：side 退回 fixed 满屏 → 盖住主区，遮罩恢复可见可点 */
-  .diy-nav-rail-open > .drawer-side {
-    position: fixed;
-    width: 100%;
-    display: grid;
-  }
-  .diy-nav-rail-open > .drawer-side > .drawer-overlay {
-    cursor: pointer;
-    background-color: oklch(0% 0 0 / 0.4);
-    pointer-events: auto;
-  }
-  /* 浮层宽度上限：nav 宽度（.menu 的内联 style）是**用户可拖、且从桌面继承**的（≤640px），
+    .diy-nav-rail > .drawer-side > :not(.drawer-overlay) {
+        translate: 0%;
+    }
+    /* rail 态的遮罩：不显示也不吃点击（点 rail 自己不该把它收掉） */
+    .diy-nav-rail > .drawer-side > .drawer-overlay {
+        cursor: default;
+        background-color: transparent;
+        pointer-events: none;
+    }
+    /* 展开态（浮层）：side 退回 fixed 满屏 → 盖住主区，遮罩恢复可见可点 */
+    .diy-nav-rail-open > .drawer-side {
+        position: fixed;
+        width: 100%;
+        display: grid;
+    }
+    .diy-nav-rail-open > .drawer-side > .drawer-overlay {
+        cursor: pointer;
+        background-color: oklch(0% 0 0 / 0.4);
+        pointer-events: auto;
+    }
+    /* 浮层宽度上限：nav 宽度（.menu 的内联 style）是**用户可拖、且从桌面继承**的（≤640px），
    * 在窄窗里完全可能超过视口 —— 那样遮罩与右上 ✕ 全被挤出屏外，点哪儿都收不回来（死局）。
    * max-width 压过内联 width（这不需要 !important，比宽度的优先级高），留 3rem 遮罩可点。 */
-  .diy-nav-rail-open > .drawer-side > .menu {
-    max-width: calc(100vw - 3rem);
-  }
+    .diy-nav-rail-open > .drawer-side > .menu {
+        max-width: calc(100vw - 3rem);
+    }
 }
 
 /* ── Markdown 正文排版（components/MarkdownView.tsx） ──────────────
  * 不引入 @tailwindcss/typography：只需覆盖几个标签，插件体积与定制成本不划算。
  * 颜色全部走 daisyUI 主题变量，深浅主题自动跟随。 */
-.markdown-body > :first-child { margin-top: 0; }
-.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body > :first-child {
+    margin-top: 0;
+}
+.markdown-body > :last-child {
+    margin-bottom: 0;
+}
 .markdown-body :is(h1, h2, h3, h4, h5, h6) {
-  font-weight: 700;
-  line-height: 1.3;
-  margin: 0.9em 0 0.45em;
+    font-weight: 700;
+    line-height: 1.3;
+    margin: 0.9em 0 0.45em;
 }
-.markdown-body h1 { font-size: 1.35em; }
-.markdown-body h2 { font-size: 1.18em; }
-.markdown-body h3 { font-size: 1.05em; }
-.markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 1em; opacity: 0.9; }
-.markdown-body p { margin: 0.55em 0; }
-.markdown-body :is(ul, ol) { margin: 0.55em 0; padding-left: 1.5em; }
-.markdown-body ul { list-style: disc; }
-.markdown-body ol { list-style: decimal; }
-.markdown-body li { margin: 0.2em 0; }
-.markdown-body li > :is(ul, ol) { margin: 0.2em 0; }
+.markdown-body h1 {
+    font-size: 1.35em;
+}
+.markdown-body h2 {
+    font-size: 1.18em;
+}
+.markdown-body h3 {
+    font-size: 1.05em;
+}
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    font-size: 1em;
+    opacity: 0.9;
+}
+.markdown-body p {
+    margin: 0.55em 0;
+}
+.markdown-body :is(ul, ol) {
+    margin: 0.55em 0;
+    padding-left: 1.5em;
+}
+.markdown-body ul {
+    list-style: disc;
+}
+.markdown-body ol {
+    list-style: decimal;
+}
+.markdown-body li {
+    margin: 0.2em 0;
+}
+.markdown-body li > :is(ul, ol) {
+    margin: 0.2em 0;
+}
 .markdown-body blockquote {
-  margin: 0.6em 0;
-  padding-left: 0.8em;
-  border-left: 3px solid var(--color-base-300);
-  opacity: 0.85;
+    margin: 0.6em 0;
+    padding-left: 0.8em;
+    border-left: 3px solid var(--color-base-300);
+    opacity: 0.85;
 }
-.markdown-body a { color: var(--color-diy-link); text-decoration: underline; }
-.markdown-body strong { font-weight: 700; }
-.markdown-body hr { margin: 1.1em 0; border-color: var(--color-base-300); }
-.markdown-body table { margin: 0.7em 0; border-collapse: collapse; font-size: 0.92em; display: block; overflow-x: auto; }
-.markdown-body :is(th, td) { border: 1px solid var(--color-base-300); padding: 0.3em 0.65em; }
-.markdown-body th { font-weight: 700; background: var(--color-base-200); }
-.markdown-body img { max-width: 100%; }
+.markdown-body a {
+    color: var(--color-diy-link);
+    text-decoration: underline;
+}
+.markdown-body strong {
+    font-weight: 700;
+}
+.markdown-body hr {
+    margin: 1.1em 0;
+    border-color: var(--color-base-300);
+}
+.markdown-body table {
+    margin: 0.7em 0;
+    border-collapse: collapse;
+    font-size: 0.92em;
+    display: block;
+    overflow-x: auto;
+}
+.markdown-body :is(th, td) {
+    border: 1px solid var(--color-base-300);
+    padding: 0.3em 0.65em;
+}
+.markdown-body th {
+    font-weight: 700;
+    background: var(--color-base-200);
+}
+.markdown-body img {
+    max-width: 100%;
+}
 /* GFM 任务清单：[x] / [ ] */
-.markdown-body li > input[type="checkbox"] { margin-right: 0.4em; vertical-align: middle; }
+.markdown-body li > input[type="checkbox"] {
+    margin-right: 0.4em;
+    vertical-align: middle;
+}
 
 /* ── 任务内容三块的容器自适应布局（components/TaskDetailContent.tsx） ─────
  * 容器窄（任务执行页左栏 ~276px / nav 悬停覆盖层 320px）→ 顺序一列；
@@ -289,12 +344,12 @@
  * 不动 DOM、由浏览器绘制（Solid 流式重渲染不会把它们冲掉）。
  * 全部命中用半亮色，当前命中用高对比（与 DynamicBar 的 warning 系同色系）。 */
 ::highlight(diy-find) {
-  background-color: color-mix(in oklab, var(--color-warning) 40%, transparent);
-  color: inherit;
+    background-color: color-mix(in oklab, var(--color-warning) 40%, transparent);
+    color: inherit;
 }
 ::highlight(diy-find-active) {
-  background-color: var(--color-warning);
-  color: var(--color-warning-content);
+    background-color: var(--color-warning);
+    color: var(--color-warning-content);
 }
 
 /* ── 界面样式（皮肤：rail 竖栏 / card 卡片）────────────────────────────
@@ -346,7 +401,6 @@
  * 「离屏布局」这笔开销，不需要这条规则。
  * ⚠️ 高度估算的**唯一**出口是 `chat-virtual.ROW_FALLBACK`：账与 CSS 两处各估一次必然漂移
  * （CSS 的 `24rem` 与账面估算不一致 ⇒ 总高度与滚动位置对不上），故这里不再留任何估算。 */
-
 
 [data-skin="card"] .diy-chat {
     --diy-edge-w: 4px;

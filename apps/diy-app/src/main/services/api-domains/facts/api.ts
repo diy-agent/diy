@@ -26,12 +26,9 @@ export const factsRoutes = RpcSchema.group({
             desc: `事实库体检：条目 / claim / 词表计数 + 全部问题（与 ./sha.sh check 同一套判据，不会出现"CLI 绿、CI 红"）。顶层计数 = **本根**，额外只读库（设备级）单列在 \`extra\` —— 混一桶会造出"我啥也没干库就暴涨"的假象`,
             input: {
                 dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
-                in: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
-                    }),
+                in: z.string().optional().cliOption({
+                    desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
+                }),
             },
             output: FactsStatusSchema,
         }),
@@ -46,12 +43,9 @@ export const factsRoutes = RpcSchema.group({
                     desc: "总字节上限（UTF-8，按**最终输出的 JSON** 量，含 budget/truncated/notes 回执）：按主题序 → aspect 序**逐条贪心装**，装不下就停（余下记 `truncated`）。利用率接近 100%，不再有「整主题砍」的断崖；一条都装不下时给 `notes` 说明最小单元与建议值",
                 }),
                 dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
-                in: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
-                    }),
+                in: z.string().optional().cliOption({
+                    desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
+                }),
             },
             output: FactsBriefSchema,
         }),
@@ -62,12 +56,9 @@ export const factsRoutes = RpcSchema.group({
                 limit: z.number().optional().cliOption({ desc: "最多返回几条（缺省 20；total 不受影响）" }),
                 maxChars: z.number().optional().cliOption({ desc: "每条摘要字数上限（缺省 80）" }),
                 dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
-                in: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
-                    }),
+                in: z.string().optional().cliOption({
+                    desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
+                }),
             },
             output: FactsFindSchema,
         }),
@@ -79,12 +70,9 @@ export const factsRoutes = RpcSchema.group({
                 path: z.string().optional().cliOption({ desc: "作用域：代码路径（多个用逗号分隔，仓库相对）" }),
                 task: z.string().optional().cliOption({ desc: "作用域：任务 URI" }),
                 dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
-                in: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
-                    }),
+                in: z.string().optional().cliOption({
+                    desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
+                }),
             },
             output: FactsGetSchema,
         }),
@@ -105,12 +93,9 @@ export const factsRoutes = RpcSchema.group({
                  * 会让 worktree 里的 `facts submit` 写进主仓（##408）。
                  */
                 cwd: z.string().optional().cliOption({ callerCwd: true }),
-                in: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
-                    }),
+                in: z.string().optional().cliOption({
+                    desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
+                }),
             },
             output: FactsSubmitSchema,
         }),
@@ -118,12 +103,9 @@ export const factsRoutes = RpcSchema.group({
             desc: `真源**原文**（UI「原 YAML」视图用）：不解析不校验，读什么给什么 —— 包括注释与字段顺序`,
             input: {
                 dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
-                in: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（词表继承仓库）",
-                    }),
+                in: z.string().optional().cliOption({
+                    desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（词表继承仓库）",
+                }),
             },
             output: FactsRawSchema,
         }),
@@ -140,12 +122,9 @@ export const factsRoutes = RpcSchema.group({
                 task: z.string().optional().cliOption({ desc: "解析上下文：任务 URI" }),
                 includeProposed: z.boolean().optional().cliOption({ desc: "把 proposed（未 accepted）也算进来" }),
                 dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
-                in: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（词表继承仓库）",
-                    }),
+                in: z.string().optional().cliOption({
+                    desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（词表继承仓库）",
+                }),
             },
             output: FactsProjectSchema,
         }),
@@ -154,18 +133,14 @@ export const factsRoutes = RpcSchema.group({
             input: {
                 files: z.string().cliOption({ placeholder: "<path,...>", desc: "文件路径（逗号分隔，仓库相对）" }),
                 dir: z.string().optional().cliOption({ desc: "knowledge 目录（缺省自动向上找）" }),
-                in: z
-                    .string()
-                    .optional()
-                    .cliOption({
-                        desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
-                    }),
+                in: z.string().optional().cliOption({
+                    desc: "库的位置：缺省 = 仓库 knowledge/；global = 设备级 <数据根>/knowledge；task:<taskUri> = 任务级库（<任务目录>/knowledge，词表继承仓库）",
+                }),
             },
             output: FactsAffectedSchema,
         }),
     },
 });
-
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

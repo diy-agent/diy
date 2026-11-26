@@ -100,7 +100,9 @@ describe("status / get", () => {
 describe("submit", () => {
     it("载荷解析：裸数组与 {facts,subjects} 都收", () => {
         expect(store.parseSubmitPayload("[]").facts).toEqual([]);
-        expect(store.parseSubmitPayload('{"facts":[{"id":"a"}],"subjects":[{"key":"s"}]}').subjects).toEqual([{ key: "s" }]);
+        expect(store.parseSubmitPayload('{"facts":[{"id":"a"}],"subjects":[{"key":"s"}]}').subjects).toEqual([
+            { key: "s" },
+        ]);
         expect(() => store.parseSubmitPayload("{oops")).toThrow(/JSON/);
     });
 
@@ -112,11 +114,14 @@ describe("submit", () => {
         expect(() => store.parseSubmitPayload('{"facts":[],"subjects":[{"subject":"x"}]}')).toThrow(/形如 \{ key/);
         expect(() => store.parseSubmitPayload('{"facts":[],"subjects":["x"]}')).toThrow(/期望对象/);
         expect(() => store.parseSubmitPayload('{"facts":[],"subjects":[{"key":"  "}]}')).toThrow(/非空字符串/);
-        expect(() => store.parseSubmitPayload('{"facts":[],"subjects":[{"key":"a","aliases":"b"}]}')).toThrow(/字符串数组/);
+        expect(() => store.parseSubmitPayload('{"facts":[],"subjects":[{"key":"a","aliases":"b"}]}')).toThrow(
+            /字符串数组/,
+        );
         // 合法：description / aliases 选填
-        expect(store.parseSubmitPayload('{"facts":[],"subjects":[{"key":"a","description":"d","aliases":["b"]}]}').subjects).toEqual([
-            { key: "a", description: "d", aliases: ["b"] },
-        ]);
+        expect(
+            store.parseSubmitPayload('{"facts":[],"subjects":[{"key":"a","description":"d","aliases":["b"]}]}')
+                .subjects,
+        ).toEqual([{ key: "a", description: "d", aliases: ["b"] }]);
     });
 
     it("dry-run 回差异但不落盘", () => {
@@ -200,16 +205,22 @@ describe("submit", () => {
     });
 
     it("dropSubjects：删本地词表条目；删不掉的三条各自带码", () => {
-        const del = store.submitPayload(store.parseSubmitPayload(JSON.stringify({ facts: [], subjects: [], dropSubjects: ["dev.test"] })));
+        const del = store.submitPayload(
+            store.parseSubmitPayload(JSON.stringify({ facts: [], subjects: [], dropSubjects: ["dev.test"] })),
+        );
         expect(del.problems.filter((p) => p.level === "error")).toEqual([]);
         expect(del.report.droppedSubjects).toEqual(["dev.test"]);
         expect(readFileSync(path.join(kb, "subjects.yaml"), "utf8")).not.toContain("dev.test");
 
-        const inUse = store.submitPayload(store.parseSubmitPayload(JSON.stringify({ facts: [], subjects: [], dropSubjects: ["app.port"] })));
+        const inUse = store.submitPayload(
+            store.parseSubmitPayload(JSON.stringify({ facts: [], subjects: [], dropSubjects: ["app.port"] })),
+        );
         expect(inUse.problems.map((p) => p.code)).toContain("facts/subject-drop-in-use");
 
         const both = store.submitPayload(
-            store.parseSubmitPayload(JSON.stringify({ facts: [], subjects: [{ key: "x.y", description: "y" }], dropSubjects: ["x.y"] })),
+            store.parseSubmitPayload(
+                JSON.stringify({ facts: [], subjects: [{ key: "x.y", description: "y" }], dropSubjects: ["x.y"] }),
+            ),
         );
         expect(both.problems.map((p) => p.code)).toContain("facts/subject-drop-declared");
     });
@@ -327,7 +338,9 @@ describe("--in task:<uri>（任务级库）", () => {
         // ① 只用继承来的 subject、不新增 → 本地根本不建 subjects.yaml
         store.submitPayload({ facts: [oneFact], subjects: [] }, { in: "task:projects/4/tasks/404" });
         expect(existsSync(path.join(taskDir, "knowledge/subjects.yaml"))).toBe(false);
-        expect(store.status({ in: "task:projects/4/tasks/404" }).problems.filter((p) => p.level === "warning")).toEqual([]);
+        expect(store.status({ in: "task:projects/4/tasks/404" }).problems.filter((p) => p.level === "warning")).toEqual(
+            [],
+        );
 
         // ② 新增一个本地 subject → 写回的文件只含这一个，不含继承来的 app.port / dev.test
         store.submitPayload(
@@ -397,7 +410,10 @@ describe("brief", () => {
 
     it("preview 是线索不是结论：超长截断带 …，且比完整值短", () => {
         const long = "甲".repeat(200);
-        write("facts/long.yaml", `domain: long\nfacts:\n  - id: long.thing\n    subject: dev.test\n    aspect: big\n    value: '${long}'\n    review: accepted\n    lifecycle: active\n    evidence: { source: code, at: K.ts:1 }\n`);
+        write(
+            "facts/long.yaml",
+            `domain: long\nfacts:\n  - id: long.thing\n    subject: dev.test\n    aspect: big\n    value: '${long}'\n    review: accepted\n    lifecycle: active\n    evidence: { source: code, at: K.ts:1 }\n`,
+        );
         const r = store.brief("dev.test", { dir: kb, maxChars: 20 }).subjects[0]!;
         const big = r.entries.find((e) => e.aspect === "big")!;
         expect(big.preview.length).toBeLessThanOrEqual(21);
@@ -444,7 +460,13 @@ describe("跨库读的三个口径缺口（##5 第 6 轮 A/B/C）", () => {
         // 主库 app.port#default 两条变体全标 superseded（= 让位给设备库）
         write(
             "facts/app.yaml",
-            ["domain: app", "facts:", ...factLine("port.production", "18888", "superseded"), ...factLine("port.dev", "0", "superseded"), ""].join("\n"),
+            [
+                "domain: app",
+                "facts:",
+                ...factLine("port.production", "18888", "superseded"),
+                ...factLine("port.dev", "0", "superseded"),
+                "",
+            ].join("\n"),
         );
         writeGlobal("facts/app.yaml", ["domain: app", "facts:", ...factLine("global.port", "3000"), ""].join("\n"));
         const b = store.brief("app.port");
@@ -500,7 +522,13 @@ describe("跨库读的三个口径缺口（##5 第 6 轮 A/B/C）", () => {
         // 主库同 claim 全标 superseded（正确表达覆盖的方式：让位，投影只解析一次）
         write(
             "facts/app.yaml",
-            ["domain: app", "facts:", ...factLine("port.production", "18888", "superseded"), ...factLine("port.dev", "0", "superseded"), ""].join("\n"),
+            [
+                "domain: app",
+                "facts:",
+                ...factLine("port.production", "18888", "superseded"),
+                ...factLine("port.dev", "0", "superseded"),
+                "",
+            ].join("\n"),
         );
         writeGlobal("facts/app.yaml", ["domain: app", "facts:", ...factLine("global.port", "3000"), ""].join("\n"));
         expect(store.status().problems.filter((p) => p.code === "facts/cross-lib-dup")).toEqual([]);
@@ -801,7 +829,10 @@ describe("空库语义：读就出空、写就直接写", () => {
         expect(existsSync(file)).toBe(true);
         expect(readFileSync(file, "utf8")).toContain("红灯即停");
         // 库已存在时不再回显（"新建"只发生一次）
-        const again = store.submitPayload({ facts: [{ ...oneFact, value: "红灯即停。" }], subjects: [] }, { in: inTask });
+        const again = store.submitPayload(
+            { facts: [{ ...oneFact, value: "红灯即停。" }], subjects: [] },
+            { in: inTask },
+        );
         expect(again.report.created).toBeUndefined();
     });
 

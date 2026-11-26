@@ -65,18 +65,19 @@ export interface DiskVerdict {
  * 判据表：**顺序即优先级**（第一条命中即返回）。表驱动而非 if 链：加一档只加一行，
  * 单测也能逐行对照"这条为什么算/不算"。
  */
-const DISK_RULES: ReadonlyArray<{ level: Exclude<DiskLevel, "ok">; reason: string; test: (s: DiskSample) => boolean }> = [
-    {
-        level: "full",
-        reason: `可用空间不足 ${DISK_FULL_MAX_AVAIL_BYTES / 1024 / 1024} MiB：写入随时会失败（ENOSPC）`,
-        test: (s) => s.availBytes < DISK_FULL_MAX_AVAIL_BYTES,
-    },
-    {
-        level: "low",
-        reason: `可用空间不足 ${DISK_LOW_MAX_AVAIL_BYTES / 1024 / 1024 / 1024} GiB：接近满盘，该腾空间了`,
-        test: (s) => s.availBytes < DISK_LOW_MAX_AVAIL_BYTES,
-    },
-];
+const DISK_RULES: ReadonlyArray<{ level: Exclude<DiskLevel, "ok">; reason: string; test: (s: DiskSample) => boolean }> =
+    [
+        {
+            level: "full",
+            reason: `可用空间不足 ${DISK_FULL_MAX_AVAIL_BYTES / 1024 / 1024} MiB：写入随时会失败（ENOSPC）`,
+            test: (s) => s.availBytes < DISK_FULL_MAX_AVAIL_BYTES,
+        },
+        {
+            level: "low",
+            reason: `可用空间不足 ${DISK_LOW_MAX_AVAIL_BYTES / 1024 / 1024 / 1024} GiB：接近满盘，该腾空间了`,
+            test: (s) => s.availBytes < DISK_LOW_MAX_AVAIL_BYTES,
+        },
+    ];
 
 /** 判「这个卷现在什么水位」。 */
 export function classifyDisk(s: DiskSample): DiskVerdict {
@@ -276,7 +277,10 @@ export function diskSlotKey(v: { dev?: number | null; mount: string }): string {
  * 双方都有 dev 时比 dev（`/` 与 `/Users/x/y` 同卷也算）；任一方 dev 未知时退回比路径
  * —— 那时没有更强的信息可用，比路径至少不会误撤别的卷。
  */
-export function sameVolume(a: { dev?: number | null; mount: string }, b: { dev?: number | null; mount: string }): boolean {
+export function sameVolume(
+    a: { dev?: number | null; mount: string },
+    b: { dev?: number | null; mount: string },
+): boolean {
     if (a.dev != null && b.dev != null) return a.dev === b.dev;
     return a.mount === b.mount;
 }
@@ -322,8 +326,6 @@ export function envNoticeFromNetwork(probe: NetworkProbe, streak: number, now = 
         data: { code: probe.code, streak, message: probe.message, reason: v.reason },
     };
 }
-
-
 
 /**
  * 订阅事件（`env.watch` 的 chunk 形状）：**显式两态**，而不是"用负 id 表示撤销"。

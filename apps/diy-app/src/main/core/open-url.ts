@@ -5,13 +5,13 @@
 //      见 scripts/check-no-vi-mock.sh）—— 注入一个手写假 `openExternal` 才测得准；
 //   2. 校验（只许 http/https）与调用分开，边界一眼可读。
 export interface OpenExternalPort {
-  openExternal(url: string): Promise<void>;
+    openExternal(url: string): Promise<void>;
 }
 
 export interface OpenUrlResult {
-  ok: boolean;
-  /** 失败原因（人话）；成功为 null */
-  message: string | null;
+    ok: boolean;
+    /** 失败原因（人话）；成功为 null */
+    message: string | null;
 }
 
 /**
@@ -19,14 +19,14 @@ export interface OpenUrlResult {
  * 失败不抛 —— 回 `ok:false` + 原文，调用方摆到红条 / toast。
  */
 export async function openUrlWith(port: OpenExternalPort, raw: string): Promise<OpenUrlResult> {
-  const url = raw.trim();
-  if (!/^https?:\/\//i.test(url)) {
-    return { ok: false, message: `只接受 http(s) URL：${url}` };
-  }
-  try {
-    await port.openExternal(url);
-    return { ok: true, message: null };
-  } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : String(e) };
-  }
+    const url = raw.trim();
+    if (!/^https?:\/\//i.test(url)) {
+        return { ok: false, message: `只接受 http(s) URL：${url}` };
+    }
+    try {
+        await port.openExternal(url);
+        return { ok: true, message: null };
+    } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    }
 }

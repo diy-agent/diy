@@ -277,7 +277,10 @@ export function RoomsPage() {
             }));
         } catch (e) {
             if (opts.soft) return; // 轮询里的失败不打断（下一轮还会再试）
-            setTurns((prev) => ({ ...prev, [eventId]: { turn: null, taskUri: "", turnId: "", live: false, error: msgOf(e) } }));
+            setTurns((prev) => ({
+                ...prev,
+                [eventId]: { turn: null, taskUri: "", turnId: "", live: false, error: msgOf(e) },
+            }));
         }
     };
 
@@ -509,191 +512,215 @@ export function RoomsPage() {
                 </div>
 
                 <div class="relative flex-1 min-h-0 flex flex-col">
-                <div
-                    class="flex-1 overflow-auto px-3 py-2 space-y-2"
-                    ref={(el) => {
-                        streamRef = el;
-                        setFollow({ ...streamFollowInit }); // 打开房间：从最新看起
-                        if (el) queueMicrotask(() => pinBottom(el, true));
-                    }}
-                    onScroll={(e) => {
-                        // ⚠️ 跟随态只由**人滚的**决定：钉底带出来的 scroll 事件不算
-                        const el = e.currentTarget;
-                        setFollow(
-                            onStreamScroll(followNow(), {
-                                scrollTop: el.scrollTop,
-                                scrollHeight: el.scrollHeight,
-                                clientHeight: el.clientHeight,
-                            }),
-                        );
-                    }}
-                    data-room-events
-                >
-                    <Show when={events().length === 0}>
-                        <div class="text-caption opacity-50">还没有发言。右栏点 @ 寻址，或直接打字（投给当前接受者）。</div>
-                    </Show>
-                    <For each={events()}>
-                        {(e) => {
-                            const mine = () => e.author === human()?.id;
-                            const author = () => room()?.members.find((m) => m.id === e.author);
-                            // 进度：这条 reply 一出现就把它那一轮取回来（取不到就一直空着，下面如实说）
-                            const st = () => turns()[e.id];
-                            const isFolded = () => folded()[e.id] === true;
-                            createEffect(() => {
-                                if (e.kind !== "reply" || !e.ref || st()) return;
-                                void loadTurn(e.id);
-                            });
-                            return (
-                                <div
-                                    class={`flex ${mine() ? "justify-end" : "justify-start"}`}
-                                    data-room-event
-                                    data-room-kind={e.kind}
-                                    data-room-author={e.author}
-                                    data-room-delivered={e.delivered ? "true" : "false"}
-                                >
-                                    <div class="max-w-[78%] flex flex-col">
-                                        <Show when={!mine()}>
-                                            <div class="flex items-center gap-1.5 mb-0.5">
-                                                <div
-                                                    class="w-5 h-5 rounded-full flex items-center justify-center text-xs shrink-0"
-                                                    style={{
-                                                        background: `${colorOf(e.author)}33`,
-                                                        border: `1px solid ${colorOf(e.author)}`,
-                                                    }}
-                                                    data-room-avatar={e.author}
-                                                >
-                                                    {avatarOf(e.author)}
-                                                </div>
-                                                <span class="text-sm font-medium" style={{ color: colorOf(e.author) }}>
-                                                    {author()?.name ?? shortName(e.author)}
-                                                </span>
-                                                <span class="text-caption opacity-50">{hms(e.ts)}</span>
-                                                <Show when={e.to.length > 0}>
-                                                    <span class="text-caption opacity-50">→ {e.to.map((t) => memberName(room(), t)).join(" / ")}</span>
-                                                </Show>
-                                            </div>
-                                        </Show>
-                                        {/* 这条是**别的房间投进来的**（##377 第 24 刀 · 双向可见）：
-                                            源房间那条原话在别处，这里给一句「从哪来」，别让它看起来是本房间自己说的 */}
-                                        <Show when={originLabel(e.origin)}>
-                                            <div class="text-caption opacity-60 mb-0.5" data-room-origin={e.origin?.roomId}>
-                                                🫧 {originLabel(e.origin)}
-                                            </div>
-                                        </Show>
-                                        <div
-                                            class={`rounded-lg px-2.5 py-1.5 text-sm whitespace-pre-wrap ${
-                                                e.kind === "say" ? "bg-primary/15" : "bg-base-200"
-                                            }`}
-                                            data-room-text
-                                        >
-                                            {e.text || <span class="opacity-50">（无正文）</span>}
-                                        </div>
-                                        {/* 投递状态（每个收件人一条）：排队中 / 投递中 / 已投递 / 未投递 */}
-                                        <Show when={(e.deliveries?.length ?? 0) > 0}>
-                                            <div class="flex flex-wrap gap-1 mt-0.5">
-                                                <For each={e.deliveries}>
-                                                    {(d) => (
-                                                        <span
-                                                            class={`badge badge-xs ${statusClass(d.status)}`}
-                                                            title={d.error ?? d.note ?? ""}
-                                                            data-room-delivery={`${e.id}:${d.memberId}`}
-                                                            data-room-status={d.status}
-                                                        >
-                                                            {memberName(room(), d.memberId)} · {deliveryStateText(d)}
+                    <div
+                        class="flex-1 overflow-auto px-3 py-2 space-y-2"
+                        ref={(el) => {
+                            streamRef = el;
+                            setFollow({ ...streamFollowInit }); // 打开房间：从最新看起
+                            if (el) queueMicrotask(() => pinBottom(el, true));
+                        }}
+                        onScroll={(e) => {
+                            // ⚠️ 跟随态只由**人滚的**决定：钉底带出来的 scroll 事件不算
+                            const el = e.currentTarget;
+                            setFollow(
+                                onStreamScroll(followNow(), {
+                                    scrollTop: el.scrollTop,
+                                    scrollHeight: el.scrollHeight,
+                                    clientHeight: el.clientHeight,
+                                }),
+                            );
+                        }}
+                        data-room-events
+                    >
+                        <Show when={events().length === 0}>
+                            <div class="text-caption opacity-50">
+                                还没有发言。右栏点 @ 寻址，或直接打字（投给当前接受者）。
+                            </div>
+                        </Show>
+                        <For each={events()}>
+                            {(e) => {
+                                const mine = () => e.author === human()?.id;
+                                const author = () => room()?.members.find((m) => m.id === e.author);
+                                // 进度：这条 reply 一出现就把它那一轮取回来（取不到就一直空着，下面如实说）
+                                const st = () => turns()[e.id];
+                                const isFolded = () => folded()[e.id] === true;
+                                createEffect(() => {
+                                    if (e.kind !== "reply" || !e.ref || st()) return;
+                                    void loadTurn(e.id);
+                                });
+                                return (
+                                    <div
+                                        class={`flex ${mine() ? "justify-end" : "justify-start"}`}
+                                        data-room-event
+                                        data-room-kind={e.kind}
+                                        data-room-author={e.author}
+                                        data-room-delivered={e.delivered ? "true" : "false"}
+                                    >
+                                        <div class="max-w-[78%] flex flex-col">
+                                            <Show when={!mine()}>
+                                                <div class="flex items-center gap-1.5 mb-0.5">
+                                                    <div
+                                                        class="w-5 h-5 rounded-full flex items-center justify-center text-xs shrink-0"
+                                                        style={{
+                                                            background: `${colorOf(e.author)}33`,
+                                                            border: `1px solid ${colorOf(e.author)}`,
+                                                        }}
+                                                        data-room-avatar={e.author}
+                                                    >
+                                                        {avatarOf(e.author)}
+                                                    </div>
+                                                    <span
+                                                        class="text-sm font-medium"
+                                                        style={{ color: colorOf(e.author) }}
+                                                    >
+                                                        {author()?.name ?? shortName(e.author)}
+                                                    </span>
+                                                    <span class="text-caption opacity-50">{hms(e.ts)}</span>
+                                                    <Show when={e.to.length > 0}>
+                                                        <span class="text-caption opacity-50">
+                                                            → {e.to.map((t) => memberName(room(), t)).join(" / ")}
                                                         </span>
-                                                    )}
-                                                </For>
+                                                    </Show>
+                                                </div>
+                                            </Show>
+                                            {/* 这条是**别的房间投进来的**（##377 第 24 刀 · 双向可见）：
+                                            源房间那条原话在别处，这里给一句「从哪来」，别让它看起来是本房间自己说的 */}
+                                            <Show when={originLabel(e.origin)}>
+                                                <div
+                                                    class="text-caption opacity-60 mb-0.5"
+                                                    data-room-origin={e.origin?.roomId}
+                                                >
+                                                    🫧 {originLabel(e.origin)}
+                                                </div>
+                                            </Show>
+                                            <div
+                                                class={`rounded-lg px-2.5 py-1.5 text-sm whitespace-pre-wrap ${
+                                                    e.kind === "say" ? "bg-primary/15" : "bg-base-200"
+                                                }`}
+                                                data-room-text
+                                            >
+                                                {e.text || <span class="opacity-50">（无正文）</span>}
                                             </div>
-                                        </Show>
-                                        <Show when={e.error}>
-                                            <div class="text-caption text-error mt-0.5" data-room-undelivered>
-                                                {e.kind === "say" ? "未投递：" : ""}
-                                                {e.error}
-                                            </div>
-                                        </Show>
-                                        <Show when={e.sourceTask}>
-                                            <div class="text-caption opacity-50 mt-0.5" data-room-source>
-                                                来自会话 {e.sourceTask}
-                                                {e.deliveries?.find((d) => d.memberId === e.author)?.turnId
-                                                    ? ` · 轮次 ${e.deliveries!.find((d) => d.memberId === e.author)!.turnId}`
-                                                    : ""}
-                                            </div>
-                                        </Show>
-                                        {/* ── 过程进度（##166 §28.7 A）──────────────────────────────
+                                            {/* 投递状态（每个收件人一条）：排队中 / 投递中 / 已投递 / 未投递 */}
+                                            <Show when={(e.deliveries?.length ?? 0) > 0}>
+                                                <div class="flex flex-wrap gap-1 mt-0.5">
+                                                    <For each={e.deliveries}>
+                                                        {(d) => (
+                                                            <span
+                                                                class={`badge badge-xs ${statusClass(d.status)}`}
+                                                                title={d.error ?? d.note ?? ""}
+                                                                data-room-delivery={`${e.id}:${d.memberId}`}
+                                                                data-room-status={d.status}
+                                                            >
+                                                                {memberName(room(), d.memberId)} ·{" "}
+                                                                {deliveryStateText(d)}
+                                                            </span>
+                                                        )}
+                                                    </For>
+                                                </div>
+                                            </Show>
+                                            <Show when={e.error}>
+                                                <div class="text-caption text-error mt-0.5" data-room-undelivered>
+                                                    {e.kind === "say" ? "未投递：" : ""}
+                                                    {e.error}
+                                                </div>
+                                            </Show>
+                                            <Show when={e.sourceTask}>
+                                                <div class="text-caption opacity-50 mt-0.5" data-room-source>
+                                                    来自会话 {e.sourceTask}
+                                                    {e.deliveries?.find((d) => d.memberId === e.author)?.turnId
+                                                        ? ` · 轮次 ${e.deliveries!.find((d) => d.memberId === e.author)!.turnId}`
+                                                        : ""}
+                                                </div>
+                                            </Show>
+                                            {/* ── 过程进度（##166 §28.7 A）──────────────────────────────
                                             展开的不是"room 自己攒的日志"，而是**那一轮本身**：
                                             `ref = { memberUri, turnId }` → 成员会话的 ops 流切一刀 →
                                             `TurnView`（任务对话页在用的同一个组件）画出来。
                                             于是"room 里的进度"和"任务对话里的进度"是同一份数据、同一套渲染；
                                             room 相对任务对话只多一件事：多条并列（见下方 @dev @review）。 */}
-                                        <Show when={e.kind === "reply" && e.ref}>
-                                            <div class="mt-1 rounded-lg border border-base-300 bg-base-100/60" data-room-progress={e.id}>
-                                                <button
-                                                    class="flex w-full items-center gap-1.5 px-2 py-1 text-left text-caption"
-                                                    onClick={() => setFolded((p) => ({ ...p, [e.id]: !isFolded() }))}
-                                                    data-room-progress-toggle={e.id}
+                                            <Show when={e.kind === "reply" && e.ref}>
+                                                <div
+                                                    class="mt-1 rounded-lg border border-base-300 bg-base-100/60"
+                                                    data-room-progress={e.id}
                                                 >
-                                                    <span class="opacity-60">{isFolded() ? "▸" : "▾"}</span>
-                                                    <span>过程进度</span>
-                                                    <span class="opacity-50">{shortName(e.author)} · {st()?.turnId ?? e.ref!.turnId}</span>
-                                                    <Show when={st()?.live}>
-                                                        <span class="badge badge-xs badge-info" data-room-progress-live>
-                                                            直播中
+                                                    <button
+                                                        class="flex w-full items-center gap-1.5 px-2 py-1 text-left text-caption"
+                                                        onClick={() =>
+                                                            setFolded((p) => ({ ...p, [e.id]: !isFolded() }))
+                                                        }
+                                                        data-room-progress-toggle={e.id}
+                                                    >
+                                                        <span class="opacity-60">{isFolded() ? "▸" : "▾"}</span>
+                                                        <span>过程进度</span>
+                                                        <span class="opacity-50">
+                                                            {shortName(e.author)} · {st()?.turnId ?? e.ref!.turnId}
                                                         </span>
-                                                    </Show>
-                                                    <Show when={st() && !st()!.turn && !st()!.error}>
-                                                        <span class="opacity-50">（这一轮已不在会话里）</span>
-                                                    </Show>
-                                                </button>
-                                                <Show when={!isFolded()}>
-                                                    <div class="px-2 pb-2" data-room-progress-body={e.id}>
-                                                        <Show when={st()?.error}>
-                                                            <div class="text-caption text-error">{st()!.error}</div>
-                                                        </Show>
-                                                        <Show when={!st()}>
-                                                            <div class="text-caption opacity-60">正在取这一轮…</div>
-                                                        </Show>
-                                                        <Show when={st()?.turn}>
-                                                            <ChatView
-                                                                source={{
-                                                                    trees: () => {
-                                                                        const t = st()?.turn;
-                                                                        return t ? [t] : [];
-                                                                    },
-                                                                    live: () => st()?.live === true,
-                                                                }}
+                                                        <Show when={st()?.live}>
+                                                            <span
+                                                                class="badge badge-xs badge-info"
+                                                                data-room-progress-live
                                                             >
-                                                                <TurnView
-                                                                    turnId={e.ref!.turnId}
-                                                                    pin={pin()}
-                                                                    level={2}
-                                                                    histOpen={true}
-                                                                    onCycle={() => undefined}
-                                                                    conclusionLines={3}
-                                                                    onResizeLines={() => undefined}
-                                                                    onToggle={(bid, force) =>
-                                                                        setPin((p) => ({ ...p, [bid]: force ?? !p[bid] }))
-                                                                    }
-                                                                    onFull={() => undefined}
-                                                                    liveTurnId={st()?.live ? e.ref!.turnId : null}
-                                                                    md={true}
-                                                                    usageHover={null}
-                                                                    onHoverUsage={() => undefined}
-                                                                    onHoverEndUsage={() => undefined}
-                                                                    usageDetail={null}
-                                                                    onDetailUsage={() => undefined}
-                                                                />
-                                                            </ChatView>
+                                                                直播中
+                                                            </span>
                                                         </Show>
-                                                    </div>
-                                                </Show>
-                                            </div>
-                                        </Show>
+                                                        <Show when={st() && !st()!.turn && !st()!.error}>
+                                                            <span class="opacity-50">（这一轮已不在会话里）</span>
+                                                        </Show>
+                                                    </button>
+                                                    <Show when={!isFolded()}>
+                                                        <div class="px-2 pb-2" data-room-progress-body={e.id}>
+                                                            <Show when={st()?.error}>
+                                                                <div class="text-caption text-error">{st()!.error}</div>
+                                                            </Show>
+                                                            <Show when={!st()}>
+                                                                <div class="text-caption opacity-60">正在取这一轮…</div>
+                                                            </Show>
+                                                            <Show when={st()?.turn}>
+                                                                <ChatView
+                                                                    source={{
+                                                                        trees: () => {
+                                                                            const t = st()?.turn;
+                                                                            return t ? [t] : [];
+                                                                        },
+                                                                        live: () => st()?.live === true,
+                                                                    }}
+                                                                >
+                                                                    <TurnView
+                                                                        turnId={e.ref!.turnId}
+                                                                        pin={pin()}
+                                                                        level={2}
+                                                                        histOpen={true}
+                                                                        onCycle={() => undefined}
+                                                                        conclusionLines={3}
+                                                                        onResizeLines={() => undefined}
+                                                                        onToggle={(bid, force) =>
+                                                                            setPin((p) => ({
+                                                                                ...p,
+                                                                                [bid]: force ?? !p[bid],
+                                                                            }))
+                                                                        }
+                                                                        onFull={() => undefined}
+                                                                        liveTurnId={st()?.live ? e.ref!.turnId : null}
+                                                                        md={true}
+                                                                        usageHover={null}
+                                                                        onHoverUsage={() => undefined}
+                                                                        onHoverEndUsage={() => undefined}
+                                                                        usageDetail={null}
+                                                                        onDetailUsage={() => undefined}
+                                                                    />
+                                                                </ChatView>
+                                                            </Show>
+                                                        </div>
+                                                    </Show>
+                                                </div>
+                                            </Show>
+                                        </div>
                                     </div>
-                                </div>
-                            );
-                        }}
-                    </For>
-                </div>
+                                );
+                            }}
+                        </For>
+                    </div>
                     {/* 上翻阅读时不打扰，但给一条「回去」的路 */}
                     <Show when={!stick()}>
                         <button
@@ -804,12 +831,18 @@ export function RoomsPage() {
                                             <Show
                                                 when={m.kind !== "human"}
                                                 fallback={
-                                                    <div class="text-caption opacity-40 truncate mt-0.5" data-room-l1={m.id}>
+                                                    <div
+                                                        class="text-caption opacity-40 truncate mt-0.5"
+                                                        data-room-l1={m.id}
+                                                    >
                                                         在线
                                                     </div>
                                                 }
                                             >
-                                                <div class="text-caption truncate mt-0.5 flex items-center gap-1" data-room-l1={m.id}>
+                                                <div
+                                                    class="text-caption truncate mt-0.5 flex items-center gap-1"
+                                                    data-room-l1={m.id}
+                                                >
                                                     <Show
                                                         when={rosterOf(m.id)?.entry?.turn}
                                                         fallback={

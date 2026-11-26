@@ -107,13 +107,9 @@ async function personaIdByName(name: string): Promise<string> {
 async function setupTask(title: string): Promise<string> {
     const repo = `${fx.HOME}/persona-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
     const r = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 人物实验`);
-    const pid = String(
-        ((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id ?? "",
-    );
+    const pid = String(((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id ?? "");
     const created = await fx.sh.getJson(`./diy.sh task create ${title} ${pid}`);
-    return String(
-        ((created.data as Record<string, unknown>)?.data as Record<string, unknown>)?.uri ?? "",
-    );
+    return String(((created.data as Record<string, unknown>)?.data as Record<string, unknown>)?.uri ?? "");
 }
 
 /**
@@ -247,10 +243,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
             return true;
         })()`);
         await waitUntil(
-            async () =>
-                ui!.eval<number>(
-                    `document.querySelectorAll('[data-testid="persona-drawer"]').length`,
-                ),
+            async () => ui!.eval<number>(`document.querySelectorAll('[data-testid="persona-drawer"]').length`),
             (n) => n === 0,
             { label: "旧面板已关" },
         );
@@ -284,9 +277,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
      */
     async function openModelPicker(root: string): Promise<void> {
         const picker = `${sel(root)} [data-testid="persona-model-picker"]`;
-        const already = await ui!.eval<boolean>(
-            `!!document.querySelector(${JSON.stringify(picker)})`,
-        );
+        const already = await ui!.eval<boolean>(`!!document.querySelector(${JSON.stringify(picker)})`);
         if (!already) await clickIn(`${sel(root)} [data-testid="persona-model-trigger"]`);
         await waitUntil(
             async () => ui!.eval<boolean>(`!!document.querySelector(${JSON.stringify(picker)})`),
@@ -466,9 +457,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         ).toBe(pl!.id);
         // 5) 新建**不自动换绑**本任务（换绑是双击左列的事，两件事不混）
         expect(
-            await ui!.eval<string | null>(
-                `document.querySelector('${sel(uri)}')?.getAttribute('data-bound') ?? null`,
-            ),
+            await ui!.eval<string | null>(`document.querySelector('${sel(uri)}')?.getAttribute('data-bound') ?? null`),
         ).not.toBe(pl!.id);
     });
 
@@ -604,11 +593,9 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await fx.sh.run(`./diy.sh task edit ${uri} --persona ${别}`);
         await fx.sh.getJson(`./diy.sh ui tab close active`);
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
-        const after = await waitUntil(
-            bylines,
-            (v) => v.length === 3 && v[1]!.includes("deepseek-v4.1-flash"),
-            { label: "换绑后署名仍是各轮事实" },
-        );
+        const after = await waitUntil(bylines, (v) => v.length === 3 && v[1]!.includes("deepseek-v4.1-flash"), {
+            label: "换绑后署名仍是各轮事实",
+        });
         expect(after[0]).toContain("mimo-v2.6-flash"); // t1 事实不变
         expect(after[1]).toContain("deepseek-v4.1-flash"); // t2 事实不变
         expect(after[1]).not.toContain("mimo-v2.6-flash"); // 新绑定（mimo）不得污染历史
@@ -616,11 +603,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
 
     it("人物搜索：按字段过滤并高亮；Esc/清除恢复列表；无结果有提示", async () => {
         const 名 = uniq("搜索人物");
-        await addPersona(
-            名,
-            "mimo-v2.6-flash",
-            "--reasoningEffort none --instructions '只回要点。'",
-        );
+        await addPersona(名, "mimo-v2.6-flash", "--reasoningEffort none --instructions '只回要点。'");
         const uri = await setupTask("搜索人物任务");
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
         await openPanel(uri);
@@ -632,19 +615,14 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
             { label: "人物搜索框上屏" },
         );
         const personCount = () =>
-            ui!.eval<number>(
-                `document.querySelectorAll('${root} button[aria-label^="人物 "]').length`,
-            );
+            ui!.eval<number>(`document.querySelectorAll('${root} button[aria-label^="人物 "]').length`);
         await waitUntil(
-            async () =>
-                ui!.eval<boolean>(`!!document.querySelector('${root} [aria-label="人物 ${名}"]')`),
+            async () => ui!.eval<boolean>(`!!document.querySelector('${root} [aria-label="人物 ${名}"]')`),
             (visible) => visible,
             { label: "新建人物已出现在列表" },
         );
         const typeQuery = async (query: string) => {
-            const value = await ui!.eval<string>(
-                `document.querySelector('${search}')?.value ?? ''`,
-            );
+            const value = await ui!.eval<string>(`document.querySelector('${search}')?.value ?? ''`);
             if (value) await ui!.clickSelector(`${root} [aria-label="清除人物搜索"]`);
             await ui!.clickSelector(search);
             await ui!.type(query);
@@ -709,7 +687,13 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
 
         const geo = await waitUntil(
             async () =>
-                ui!.eval<{ hRatio: number; leftRatio: number; leftW: number; rows: number; models: string[] } | null>(`(() => {
+                ui!.eval<{
+                    hRatio: number;
+                    leftRatio: number;
+                    leftW: number;
+                    rows: number;
+                    models: string[];
+                } | null>(`(() => {
                     const d = document.querySelector('${sel(uri)}');
                     if (!d) return null;
                     const dr = d.getBoundingClientRect();
@@ -999,10 +983,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await openPanel(uri);
 
         await waitUntil(
-            async () =>
-                ui!.eval<boolean>(
-                    `!!document.querySelector('${sel(uri)} [aria-label="人物 ${候选名}"]')`,
-                ),
+            async () => ui!.eval<boolean>(`!!document.querySelector('${sel(uri)} [aria-label="人物 ${候选名}"]')`),
             (v) => v === true,
             { label: "左列出现候选人" },
         );
@@ -1035,9 +1016,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
             { label: "任务已换绑" },
         );
         expect(personaOf(uri)).toBe(候选人);
-        expect((await personaList()).personas.find((p) => p.id === 候选人)?.model).toBe(
-            "mimo-v2.6-flash",
-        );
+        expect((await personaList()).personas.find((p) => p.id === 候选人)?.model).toBe("mimo-v2.6-flash");
         // 面板已关闭
         await waitUntil(
             async () => ui!.eval<number>(`document.querySelectorAll('${sel(uri)}').length`),
@@ -1069,7 +1048,13 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
 
         const r = await waitUntil(
             async () =>
-                ui!.eval<{ visible: number; full: number; text: string; inView: boolean; scrolled: number } | null>(`(() => {
+                ui!.eval<{
+                    visible: number;
+                    full: number;
+                    text: string;
+                    inView: boolean;
+                    scrolled: number;
+                } | null>(`(() => {
                     const d = document.querySelector('${sel(uri)}');
                     if (!d) return null;
                     const list = d.querySelector('[data-testid="persona-left-list"]');  // 左列滚动容器（必须是它自己）
@@ -1111,9 +1096,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await openPanel(uri);
 
         expect(
-            await ui!.eval<string | null>(
-                `document.querySelector('${sel(uri)}')?.getAttribute('data-bound') ?? null`,
-            ),
+            await ui!.eval<string | null>(`document.querySelector('${sel(uri)}')?.getAttribute('data-bound') ?? null`),
         ).toBe(id);
         await ui!.dblclickSelector(`${sel(uri)} [aria-label="人物 ${名}"]`);
         await waitUntil(
@@ -1161,10 +1144,7 @@ describe("UI：人物面板（主从视图）—— 选、改、换绑都在这�
         await clickIn(`${sel(uri)} [aria-label="新建人物"]`);
         await openModelPicker(uri);
         await waitUntil(
-            async () =>
-                ui!.eval<boolean>(
-                    `!document.querySelector('${sel(uri)} [data-testid="persona-impact-bar"]')`,
-                ),
+            async () => ui!.eval<boolean>(`!document.querySelector('${sel(uri)} [data-testid="persona-impact-bar"]')`),
             (v) => v === true,
             { label: "新建态不显示影响面条" },
         );

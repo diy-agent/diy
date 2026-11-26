@@ -17,7 +17,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { envWatchHub, EnvDiskPoller, noteWriteError, type EnvWatchProbe } from "../../src/main/services/env-watch";
 import { setWriteErrorHook, writeFileAtomic } from "../../src/main/core/atomic-write";
-import { envNoticeFromDisk, envNoticeFromNetwork, type DiskSample, type EnvNoticeEvent } from "../../src/shared/env-watch";
+import {
+    envNoticeFromDisk,
+    envNoticeFromNetwork,
+    type DiskSample,
+    type EnvNoticeEvent,
+} from "../../src/shared/env-watch";
 
 const GiB = 1024 ** 3;
 const MiB = 1024 ** 2;

@@ -259,12 +259,21 @@ export function loadInstance(uri: string): LoadedInstance {
 const REGISTRY = createHostRegistry();
 
 /** 宿主侧的运行态（内核 `createRuntime` 的包装：注册表由宿主给，内核只按名解析） */
-function runtimeOf(def: WorkflowDef<string>, params: Readonly<Record<string, unknown>> | undefined, registry: PluginRegistry = REGISTRY) {
+function runtimeOf(
+    def: WorkflowDef<string>,
+    params: Readonly<Record<string, unknown>> | undefined,
+    registry: PluginRegistry = REGISTRY,
+) {
     return createRuntime(def, { registry, params });
 }
 
 /** 交插件求值用的上下文（与内核 `createRuntime::contextOf` 同形 —— 它没导出，这里手搓同形字面量） */
-function pluginContext(def: WorkflowDef<string>, node: NodeDef<string>, params: Readonly<Record<string, unknown>> | undefined, actor: string): PluginContext {
+function pluginContext(
+    def: WorkflowDef<string>,
+    node: NodeDef<string>,
+    params: Readonly<Record<string, unknown>> | undefined,
+    actor: string,
+): PluginContext {
     return { workflow: def, node, params: params ?? {}, actor };
 }
 
@@ -305,7 +314,12 @@ function viewOf(uri: string, def: WorkflowDef<string>, state: FlowState<string>)
         node: node ? { id: node.id, name: node.name, actor: node.actor, hint: renderHint(node, params) } : null,
         done: status.done,
         bounces: status.bounces,
-        next: { mode: status.mode, pending: status.pending.map((ref) => ref.raw), edges, terminal: state.position !== null && !hasNext },
+        next: {
+            mode: status.mode,
+            pending: status.pending.map((ref) => ref.raw),
+            edges,
+            terminal: state.position !== null && !hasNext,
+        },
         art: artifact.art,
         view: artifact.view,
         viewError: artifact.error,
@@ -365,8 +379,10 @@ function threadErrorOf(uri: string): string | null {
     try {
         const { skipped } = readPosts(uri);
         if (skipped === 0) return null;
-        return `讨论流有 ${skipped} 行读不出（旁注坏了不影响推进 —— 删掉 ${flowFile(uri, "threads")} 即可）：` +
-            "打回意见是旁注，驱动判据不读它";
+        return (
+            `讨论流有 ${skipped} 行读不出（旁注坏了不影响推进 —— 删掉 ${flowFile(uri, "threads")} 即可）：` +
+            "打回意见是旁注，驱动判据不读它"
+        );
     } catch (e) {
         return `讨论流读不出：${(e as Error).message}（旁注坏了不影响推进 —— 删掉 ${flowFile(uri, "threads")} 即可）`;
     }
@@ -458,7 +474,9 @@ function residenciesOf(state: FlowState<string>, nodeId: string): number {
 function resolveNode(uri: string, def: WorkflowDef<string>, state: FlowState<string>, nodeId?: string): string {
     if (nodeId !== undefined && nodeId !== "") {
         if (!def.nodes.some((n) => n.id === nodeId)) {
-            throw new Error(`未知节点 ${JSON.stringify(nodeId)}（本工作流「${def.id}」的节点：${def.nodes.map((n) => n.id).join(" / ")}）`);
+            throw new Error(
+                `未知节点 ${JSON.stringify(nodeId)}（本工作流「${def.id}」的节点：${def.nodes.map((n) => n.id).join(" / ")}）`,
+            );
         }
         return nodeId;
     }
@@ -514,7 +532,16 @@ export function viewArtifact(uri: string, nodeId?: string, seq?: number): FlowAr
     const target = resolveNode(uri, def, state, nodeId);
     const at = resolveSeq(uri, state, target, seq);
     const { art, plugin, view } = artifactAt(uri, def, target, at);
-    return { uri, node: target, nodeName: nodeNameOf(def, target), seq: at, art, plugin, view, bag: artifactFile(uri, target) };
+    return {
+        uri,
+        node: target,
+        nodeName: nodeNameOf(def, target),
+        seq: at,
+        art,
+        plugin,
+        view,
+        bag: artifactFile(uri, target),
+    };
 }
 
 /**
@@ -567,7 +594,10 @@ export function putArtifact(uri: string, nodeId: string, content: string, seq?: 
  * 必须写**全限定名**（本版 CLI 没有「当前节点」上下文，裸名无从归属）。
  * `list` 用 `,` 分隔、元素一律按字符串给（内核只要求「list 装标量」，元素类型不在声明里）。
  */
-export function parseParamArgs(schema: readonly ParamEntry[], args: readonly string[]): Record<string, Record<string, unknown>> {
+export function parseParamArgs(
+    schema: readonly ParamEntry[],
+    args: readonly string[],
+): Record<string, Record<string, unknown>> {
     const out: Record<string, Record<string, unknown>> = {};
     for (const arg of args) {
         const eq = arg.indexOf("=");
@@ -611,12 +641,20 @@ function coerceParam(entry: ParamEntry, raw: string): unknown {
 // ═══════════════════════════════════════════════════════════════
 
 /** 宿主渲染的审计正文（**内核不编人类文本**：`Transition.move` 给结构化语义，文案归宿主） */
-function moveText(def: WorkflowDef<string>, kind: "entry" | "next" | "bounce", from: string | null, to: string, note?: string): string {
+function moveText(
+    def: WorkflowDef<string>,
+    kind: "entry" | "next" | "bounce",
+    from: string | null,
+    to: string,
+    note?: string,
+): string {
     const toName = nodeNameOf(def, to);
     const tail = note && note.trim() !== "" ? `（${note.trim()}）` : "";
     if (kind === "entry") return `进入入口节点「${toName}」${tail}`;
     const fromName = nodeNameOf(def, from);
-    return kind === "bounce" ? `打回：「${fromName}」→「${toName}」${tail}` : `前进：「${fromName}」→「${toName}」${tail}`;
+    return kind === "bounce"
+        ? `打回：「${fromName}」→「${toName}」${tail}`
+        : `前进：「${fromName}」→「${toName}」${tail}`;
 }
 
 /**
@@ -638,9 +676,7 @@ function commit(
 ): FlowView {
     const at = localISOString();
     // 正路必须带 params（##333 review2 P1）：交回状态自己那份 —— 内核据此保证「读回同配置」
-    const request = state.params === undefined
-        ? { to, at, ref }
-        : { to, at, ref, params: state.params };
+    const request = state.params === undefined ? { to, at, ref } : { to, at, ref, params: state.params };
     const next = advance(def, state, request).state;
     // 先落权威快照，再落重建材料与审计：中途崩掉最坏是「快照多一条、增量少一条」⇒ 对账亮错
     // （绝不静默择一）；反过来先落增量则会留下「增量多一条」，同样是亮错，但那时权威快照反倒是旧的。
@@ -738,7 +774,13 @@ export function startFlow(uri: string, workflowId: string, paramArgs: readonly s
 }
 
 /** 推进：走 `next` 边（首次 = 进入入口节点）。`author` 缺省 `cli`（节点执行器会传 agent 标识） */
-export function advanceFlow(uri: string, to: string, refArgs: readonly string[] = [], note?: string, author = "cli"): FlowView {
+export function advanceFlow(
+    uri: string,
+    to: string,
+    refArgs: readonly string[] = [],
+    note?: string,
+    author = "cli",
+): FlowView {
     const { def, state } = loadInstance(uri);
     requireEdge(def, state.position, to, "next");
     const ref = { taskUri: uri, ...parseRefArgs(refArgs) };
@@ -747,7 +789,13 @@ export function advanceFlow(uri: string, to: string, refArgs: readonly string[] 
 }
 
 /** 打回：走 `bounce` 边（目标节点再驻留一次，`Visit.seq` 递增 —— 不新建节点） */
-export function bounceFlow(uri: string, to: string, refArgs: readonly string[] = [], note?: string, author = "cli"): FlowView {
+export function bounceFlow(
+    uri: string,
+    to: string,
+    refArgs: readonly string[] = [],
+    note?: string,
+    author = "cli",
+): FlowView {
     const { def, state } = loadInstance(uri);
     requireEdge(def, state.position, to, "bounce");
     const ref = { taskUri: uri, ...parseRefArgs(refArgs) };
@@ -817,7 +865,9 @@ export function appendBounceOpinion(
 export function finishFlow(uri: string, note?: string): FlowView {
     const { def, state } = loadInstance(uri);
     if (state.position === null) {
-        throw new Error(`实例尚未进入工作流（${uri}）：没跑过就无所谓「走完」—— 先 \`diy flow advance ${uri} --to <入口节点>\``);
+        throw new Error(
+            `实例尚未进入工作流（${uri}）：没跑过就无所谓「走完」—— 先 \`diy flow advance ${uri} --to <入口节点>\``,
+        );
     }
     if (state.done === true) {
         throw new Error(`实例已收尾（done = true，位置 = ${state.position}）：重复收尾没有意义`);
@@ -931,7 +981,14 @@ export async function stepFlow(uri: string, deps: HostPluginDeps = {}): Promise<
         const { move } = result.transition;
         const next = result.transition.state;
         persistMove(uri, def, next, move.kind, move.from, move.to, result.transition.reason, at);
-        return { status: "moved", to: move.to, kind: move.kind, reason: result.transition.reason, facts, view: viewOf(uri, def, next) };
+        return {
+            status: "moved",
+            to: move.to,
+            kind: move.kind,
+            reason: result.transition.reason,
+            facts,
+            view: viewOf(uri, def, next),
+        };
     }
     if (result.status === "done") {
         writeState(uri, result.state);
@@ -1041,7 +1098,11 @@ export function paramsSet(uri: string, paramArgs: readonly string[]): FlowView {
         to: null,
         author: "cli",
         content: `改参数值（尚未进入）：${Object.entries(params)
-            .map(([node, bag]) => Object.entries(bag as Record<string, unknown>).map(([k, v]) => `${node}.${k}=${JSON.stringify(v)}`).join(", "))
+            .map(([node, bag]) =>
+                Object.entries(bag as Record<string, unknown>)
+                    .map(([k, v]) => `${node}.${k}=${JSON.stringify(v)}`)
+                    .join(", "),
+            )
             .join("; ")}`,
         ref: { taskUri: uri },
     });
@@ -1060,7 +1121,12 @@ export function listFlowDefinitions(): WorkflowSummary[] {
 }
 
 /** 扫盘找实例（`diy flow list --instances`）——只认 `projects/<pid>/tasks/<tid>/flow/instance.json` */
-export function listFlowInstances(): Array<{ uri: string; workflowId: string; position: string | null; error?: string }> {
+export function listFlowInstances(): Array<{
+    uri: string;
+    workflowId: string;
+    position: string | null;
+    error?: string;
+}> {
     const out: Array<{ uri: string; workflowId: string; position: string | null; error?: string }> = [];
     const root = projectsRoot();
     if (!existsSync(root)) return out;
@@ -1078,7 +1144,12 @@ export function listFlowInstances(): Array<{ uri: string; workflowId: string; po
                 const def = binding ? workflowById(binding.workflowId) : null;
                 if (binding && state && def) assertSnapshotMatches(def, uri, state);
                 if (!binding || !state || !def) {
-                    out.push({ uri, workflowId: binding?.workflowId ?? "?", position: state?.position ?? null, error: "实例不完整（绑定 / 快照 / 定义三者缺一）" });
+                    out.push({
+                        uri,
+                        workflowId: binding?.workflowId ?? "?",
+                        position: state?.position ?? null,
+                        error: "实例不完整（绑定 / 快照 / 定义三者缺一）",
+                    });
                 } else {
                     out.push({ uri, workflowId: binding.workflowId, position: state.position });
                 }

@@ -101,7 +101,8 @@ describe("##436 未读数（比水位新的条数）", () => {
 
 describe("##436 角标只数 N2（##266 复核阻塞 1）", () => {
     const n2e = (id: string): InboxEntry => entry(id, { level: "N2", kind: "message" });
-    const n1e = (id: string, kind: "cost-step" | "message" = "cost-step"): InboxEntry => entry(id, { level: "N1", kind });
+    const n1e = (id: string, kind: "cost-step" | "message" = "cost-step"): InboxEntry =>
+        entry(id, { level: "N1", kind });
 
     it("全是 N1 ⇒ 角标为空（agent↔agent 派活不该把人叫来）", () => {
         const rows = [n1e(ib(1, 1)), n1e(ib(1, 2), "message"), n1e(ib(2, 1))];
@@ -179,7 +180,12 @@ describe("##436 徽标文字（0 不显示数字 / 99+）", () => {
 describe("##436 跳转锚点", () => {
     it("taskUri 只算'打开'，不算'定位'", () => {
         const j = jumpOf(entry("a"));
-        expect(j).toEqual({ taskUri: "projects/4/tasks/436", turnId: undefined, blockId: undefined, steerId: undefined });
+        expect(j).toEqual({
+            taskUri: "projects/4/tasks/436",
+            turnId: undefined,
+            blockId: undefined,
+            steerId: undefined,
+        });
         expect(hasAnchorOf(j)).toBe(false);
     });
 

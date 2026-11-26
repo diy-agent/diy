@@ -15,25 +15,25 @@
 // taskStore 与 tabStore 都不依赖对方，祖先链由调用方算好传进来。
 
 export interface TabLike {
-  /** 唯一键：`<pageId>:<ctx>` */
-  key: string;
-  pageId: string;
-  /** 上下文键（任务 URI） */
-  ctx: string | null;
-  /** 父 tab 的 key（**页面**层次：子页面挂靠，关父连带关子） */
-  parent?: string;
-  /** 任务祖先链（**任务**层次：不含自己，从根到直接父）。无 = 顶级任务或非任务 tab */
-  taskAncestors?: string[];
+    /** 唯一键：`<pageId>:<ctx>` */
+    key: string;
+    pageId: string;
+    /** 上下文键（任务 URI） */
+    ctx: string | null;
+    /** 父 tab 的 key（**页面**层次：子页面挂靠，关父连带关子） */
+    parent?: string;
+    /** 任务祖先链（**任务**层次：不含自己，从根到直接父）。无 = 顶级任务或非任务 tab */
+    taskAncestors?: string[];
 }
 
 /** 某 tab 在本 page 里的父键（页面层次）。显式 parent 优先，否则由注册表 parentPage 推 */
 export function pageParentKeyOf(
-  item: TabLike,
-  parentPageOf: (pageId: string) => string | undefined,
+    item: TabLike,
+    parentPageOf: (pageId: string) => string | undefined,
 ): string | undefined {
-  if (item.parent) return item.parent;
-  const pp = parentPageOf(item.pageId);
-  return pp ? `${pp}:${item.ctx ?? ""}` : undefined;
+    if (item.parent) return item.parent;
+    const pp = parentPageOf(item.pageId);
+    return pp ? `${pp}:${item.ctx ?? ""}` : undefined;
 }
 
 /**
@@ -49,28 +49,28 @@ export function pageParentKeyOf(
  * 只按它所属任务行的层级取值（子页面与父共享 ctx）。
  */
 export function taskDepths<T extends TabLike>(
-  rows: readonly T[],
-  isSubPage: (t: T) => boolean = (t) => !!t.parent,
+    rows: readonly T[],
+    isSubPage: (t: T) => boolean = (t) => !!t.parent,
 ): Map<string, number> {
-  const out = new Map<string, number>();
-  const stack: string[] = [];
-  for (const t of rows) {
-    if (!t.ctx) {
-      out.set(t.key, 0);
-      continue;
+    const out = new Map<string, number>();
+    const stack: string[] = [];
+    for (const t of rows) {
+        if (!t.ctx) {
+            out.set(t.key, 0);
+            continue;
+        }
+        if (isSubPage(t)) {
+            // 子页面不推栈：层级 = 它所属任务行的层级（栈顶正是那个任务时取它的层数）
+            out.set(t.key, stack[stack.length - 1] === t.ctx ? stack.length - 1 : stack.length);
+            continue;
+        }
+        const ancestors = t.taskAncestors ?? [];
+        // 弹到「最近的仍在我祖先链上的行」——上面那些无关行不再是可视父
+        while (stack.length > 0 && !ancestors.includes(stack[stack.length - 1]!)) stack.pop();
+        out.set(t.key, stack.length);
+        if (stack[stack.length - 1] !== t.ctx) stack.push(t.ctx);
     }
-    if (isSubPage(t)) {
-      // 子页面不推栈：层级 = 它所属任务行的层级（栈顶正是那个任务时取它的层数）
-      out.set(t.key, stack[stack.length - 1] === t.ctx ? stack.length - 1 : stack.length);
-      continue;
-    }
-    const ancestors = t.taskAncestors ?? [];
-    // 弹到「最近的仍在我祖先链上的行」——上面那些无关行不再是可视父
-    while (stack.length > 0 && !ancestors.includes(stack[stack.length - 1]!)) stack.pop();
-    out.set(t.key, stack.length);
-    if (stack[stack.length - 1] !== t.ctx) stack.push(t.ctx);
-  }
-  return out;
+    return out;
 }
 
 /**
@@ -81,7 +81,7 @@ export function taskDepths<T extends TabLike>(
  * 喂全量列表会得到「按全量算的层级」——那正是 ##466 的错法。
  */
 export function taskIndentOf(item: TabLike, opened: readonly TabLike[]): number {
-  return taskDepths(opened).get(item.key) ?? 0;
+    return taskDepths(opened).get(item.key) ?? 0;
 }
 
 /**
@@ -100,41 +100,41 @@ export function taskIndentOf(item: TabLike, opened: readonly TabLike[]): number 
  * （这正是用户报的场景，第一版实现漏了）。
  */
 export function insertionIndex(
-  item: TabLike,
-  opened: TabLike[],
-  parentPageOf: (pageId: string) => string | undefined,
+    item: TabLike,
+    opened: TabLike[],
+    parentPageOf: (pageId: string) => string | undefined,
 ): number {
-  // ① 页面层次：子页面插父之后
-  const pageParent = pageParentKeyOf(item, parentPageOf);
-  if (pageParent) {
-    const i = opened.findIndex((t) => t.key === pageParent);
-    if (i >= 0) return endOfFamily(opened, i, (t) => t.parent === pageParent);
-  }
+    // ① 页面层次：子页面插父之后
+    const pageParent = pageParentKeyOf(item, parentPageOf);
+    if (pageParent) {
+        const i = opened.findIndex((t) => t.key === pageParent);
+        if (i >= 0) return endOfFamily(opened, i, (t) => t.parent === pageParent);
+    }
 
-  // ② 任务层次（我是子）：找**最近的**已打开祖先，插到它这一族之后
-  const ancestors = item.taskAncestors ?? [];
-  for (let k = ancestors.length - 1; k >= 0; k--) {
-    const ancUri = ancestors[k]!;
-    const i = opened.findIndex((t) => t.ctx === ancUri);
-    if (i < 0) continue;
-    return endOfFamily(opened, i, (t) => (t.taskAncestors ?? []).includes(ancUri));
-  }
+    // ② 任务层次（我是子）：找**最近的**已打开祖先，插到它这一族之后
+    const ancestors = item.taskAncestors ?? [];
+    for (let k = ancestors.length - 1; k >= 0; k--) {
+        const ancUri = ancestors[k]!;
+        const i = opened.findIndex((t) => t.ctx === ancUri);
+        if (i < 0) continue;
+        return endOfFamily(opened, i, (t) => (t.taskAncestors ?? []).includes(ancUri));
+    }
 
-  // ③ 任务层次（我是父）：已开项里有我的后代 → 插到最靠前那个后代之前
-  if (item.ctx) {
-    const myUri = item.ctx;
-    const first = opened.findIndex((t) => (t.taskAncestors ?? []).includes(myUri));
-    if (first >= 0) return first;
-  }
+    // ③ 任务层次（我是父）：已开项里有我的后代 → 插到最靠前那个后代之前
+    if (item.ctx) {
+        const myUri = item.ctx;
+        const first = opened.findIndex((t) => (t.taskAncestors ?? []).includes(myUri));
+        if (first >= 0) return first;
+    }
 
-  return opened.length;
+    return opened.length;
 }
 
 /** 从下标 i 起，跨过所有满足 sameFamily 的连续项，返回该族之后的下标 */
 function endOfFamily(opened: TabLike[], i: number, sameFamily: (t: TabLike) => boolean): number {
-  let j = i + 1;
-  while (j < opened.length && sameFamily(opened[j]!)) j++;
-  return j;
+    let j = i + 1;
+    while (j < opened.length && sameFamily(opened[j]!)) j++;
+    return j;
 }
 
 /**
@@ -146,39 +146,36 @@ function endOfFamily(opened: TabLike[], i: number, sameFamily: (t: TabLike) => b
  *
  * 稳定：同族内保持原相对顺序（用户手动调过的顺序不被搅乱）。
  */
-export function normalizeOrder(
-  opened: TabLike[],
-  parentPageOf: (pageId: string) => string | undefined,
-): TabLike[] {
-  const out: TabLike[] = [];
-  const placed = new Set<string>();
-  const byKey = new Map(opened.map((t) => [t.key, t]));
-  // 「哪些祖先已打开」的判据必须与根判定、isChildOf 共用同一份 —— 曾各算各的：
-  // 根判定认「任一开着祖先」而子判定只认直接父，直接父已关的孤儿两头不靠 → 掉兜底垫底（226）
-  const openCtx = new Set(opened.map((t) => t.ctx));
+export function normalizeOrder(opened: TabLike[], parentPageOf: (pageId: string) => string | undefined): TabLike[] {
+    const out: TabLike[] = [];
+    const placed = new Set<string>();
+    const byKey = new Map(opened.map((t) => [t.key, t]));
+    // 「哪些祖先已打开」的判据必须与根判定、isChildOf 共用同一份 —— 曾各算各的：
+    // 根判定认「任一开着祖先」而子判定只认直接父，直接父已关的孤儿两头不靠 → 掉兜底垫底（226）
+    const openCtx = new Set(opened.map((t) => t.ctx));
 
-  /** 深度优先：先放自己，再放自己的后代（页面子页面 + 任务子任务） */
-  const emit = (t: TabLike) => {
-    if (placed.has(t.key)) return;
-    placed.add(t.key);
-    out.push(t);
-    // 后代顺序 = 原列表顺序（稳定）
-    for (const c of opened) {
-      if (placed.has(c.key)) continue;
-      if (isChildOf(c, t, parentPageOf, byKey, openCtx)) emit(c);
+    /** 深度优先：先放自己，再放自己的后代（页面子页面 + 任务子任务） */
+    const emit = (t: TabLike) => {
+        if (placed.has(t.key)) return;
+        placed.add(t.key);
+        out.push(t);
+        // 后代顺序 = 原列表顺序（稳定）
+        for (const c of opened) {
+            if (placed.has(c.key)) continue;
+            if (isChildOf(c, t, parentPageOf, byKey, openCtx)) emit(c);
+        }
+    };
+
+    // 根 = 没有父在列表里的项（按原顺序）
+    for (const t of opened) {
+        const pageParent = pageParentKeyOf(t, parentPageOf);
+        const hasPageParent = !!pageParent && byKey.has(pageParent);
+        const hasTaskAncestor = (t.taskAncestors ?? []).some((a) => openCtx.has(a));
+        if (!hasPageParent && !hasTaskAncestor) emit(t);
     }
-  };
-
-  // 根 = 没有父在列表里的项（按原顺序）
-  for (const t of opened) {
-    const pageParent = pageParentKeyOf(t, parentPageOf);
-    const hasPageParent = !!pageParent && byKey.has(pageParent);
-    const hasTaskAncestor = (t.taskAncestors ?? []).some((a) => openCtx.has(a));
-    if (!hasPageParent && !hasTaskAncestor) emit(t);
-  }
-  // 兜底：环或异常数据导致的未放置项，按原顺序补上（绝不丢 tab）
-  for (const t of opened) emit(t);
-  return out;
+    // 兜底：环或异常数据导致的未放置项，按原顺序补上（绝不丢 tab）
+    for (const t of opened) emit(t);
+    return out;
 }
 
 /**
@@ -191,20 +188,20 @@ export function normalizeOrder(
  * 所有根之后，配上仍在的缩进，视觉上挂到无关任务下面（226）。
  */
 function isChildOf(
-  c: TabLike,
-  t: TabLike,
-  parentPageOf: (pageId: string) => string | undefined,
-  byKey: Map<string, TabLike>,
-  openCtx: Set<string | null>,
+    c: TabLike,
+    t: TabLike,
+    parentPageOf: (pageId: string) => string | undefined,
+    byKey: Map<string, TabLike>,
+    openCtx: Set<string | null>,
 ): boolean {
-  const pageParent = pageParentKeyOf(c, parentPageOf);
-  if (pageParent && byKey.has(pageParent)) return pageParent === t.key;
-  // 任务层次：t.ctx 必须在祖先链里，且 t 之后（更靠近 c）没有更近的已打开祖先
-  const ancestors = c.taskAncestors ?? [];
-  const ti = t.ctx ? ancestors.indexOf(t.ctx) : -1;
-  if (ti < 0) return false;
-  for (let k = ti + 1; k < ancestors.length; k++) {
-    if (openCtx.has(ancestors[k]!)) return false;
-  }
-  return true;
+    const pageParent = pageParentKeyOf(c, parentPageOf);
+    if (pageParent && byKey.has(pageParent)) return pageParent === t.key;
+    // 任务层次：t.ctx 必须在祖先链里，且 t 之后（更靠近 c）没有更近的已打开祖先
+    const ancestors = c.taskAncestors ?? [];
+    const ti = t.ctx ? ancestors.indexOf(t.ctx) : -1;
+    if (ti < 0) return false;
+    for (let k = ti + 1; k < ancestors.length; k++) {
+        if (openCtx.has(ancestors[k]!)) return false;
+    }
+    return true;
 }

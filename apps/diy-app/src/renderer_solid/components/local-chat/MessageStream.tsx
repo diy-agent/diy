@@ -11,11 +11,30 @@ import { nearBottom as libNearBottom, type ChatAnchor } from "../../lib/chat-scr
 import { countLines, firstLine, previewLines } from "../../lib/chat-text";
 import type { BlockNode } from "../../../main/services/local-blocks";
 import { INTERRUPTED_TOOL_NOTICE } from "../../../main/services/local-blocks";
-import { composeTail, endLeafTip, expandableOf, fmtBytes, fmtMs, intentOf, isInterruptedToolBlock, historyOpenOf, isUserText, leadUsers, leavesOf, procOpenOf, receiptStateOf, procStatusOf, spentOf, tailOf, turnRows, waitTextOf, type ProcTone, type TurnRow } from "../../lib/chat-fold";
+import {
+    composeTail,
+    endLeafTip,
+    expandableOf,
+    fmtBytes,
+    fmtMs,
+    intentOf,
+    isInterruptedToolBlock,
+    historyOpenOf,
+    isUserText,
+    leadUsers,
+    leavesOf,
+    procOpenOf,
+    receiptStateOf,
+    procStatusOf,
+    spentOf,
+    tailOf,
+    turnRows,
+    waitTextOf,
+    type ProcTone,
+    type TurnRow,
+} from "../../lib/chat-fold";
 
 // ─── 层级 ───────────────────────────────────────────
-
-
 
 // ─── 小工具 ─────────────────────────────────────────
 
@@ -176,7 +195,11 @@ function viewLive(): boolean {
  */
 const EMPTY_TURN: BlockNode = { tag: "turn", id: "", stopped: true, touched: 0, attrs: {}, children: [] };
 export function turnById(id: string): BlockNode {
-    return useContext(ChatViewCtx).trees().find((t) => t.id === id) ?? EMPTY_TURN;
+    return (
+        useContext(ChatViewCtx)
+            .trees()
+            .find((t) => t.id === id) ?? EMPTY_TURN
+    );
 }
 
 // ─── 树工具（文档序） ───────────────────────────────
@@ -212,11 +235,7 @@ export function hasAssistantContent(turn: BlockNode): boolean {
 function sameRow(a: TurnRow, b: TurnRow): boolean {
     if (a.kind !== b.kind || a.key !== b.key) return false;
     if (a.kind === "proc") {
-        return (
-            b.kind === "proc" &&
-            a.parts.length === b.parts.length &&
-            a.parts.every((n, i) => n === b.parts[i])
-        );
+        return b.kind === "proc" && a.parts.length === b.parts.length && a.parts.every((n, i) => n === b.parts[i]);
     }
     return (b as { node: BlockNode }).node === a.node;
 }
@@ -497,7 +516,8 @@ function fmtCount(n: number): string {
  * 明确点一下才付代价（4 MB 段重折 ≈ 180 ms，瞬时 ~3 MB）。见任务 body「按需读走 ②」。
  */
 function CapNotice(props: { node: BlockNode; field: "content" | "output" }) {
-    const cap = () => (props.node.attrs.__cap as Record<string, { total: number; omitted: number }> | undefined)?.[props.field];
+    const cap = () =>
+        (props.node.attrs.__cap as Record<string, { total: number; omitted: number }> | undefined)?.[props.field];
     const [busy, setBusy] = createSignal(false);
     const load = async () => {
         if (busy()) return;
@@ -729,9 +749,7 @@ export function ProcessRow(props: {
     const title = () => (
         <>
             {statusMark(n())}
-            <span class="font-medium text-base-content/80 truncate flex-1">
-                {summaryOf(n(), open(), props.turn)}
-            </span>
+            <span class="font-medium text-base-content/80 truncate flex-1">{summaryOf(n(), open(), props.turn)}</span>
             <ParamsToggle
                 node={n()}
                 onOpen={() => {
@@ -744,11 +762,7 @@ export function ProcessRow(props: {
     return (
         <div class="text-body" data-block-id={n().id} data-block-tag={n().tag} data-expandable={can() ? "1" : "0"}>
             {/* 竖列折叠条：整块高 + 一个点击区（见 RowGutter 头注）；形状全在皮肤里 */}
-            <RowGutter
-                can={can()}
-                open={open()}
-                onToggle={() => props.onToggle(n().id)}
-            />
+            <RowGutter can={can()} open={open()} onToggle={() => props.onToggle(n().id)} />
             <Show
                 when={can()}
                 fallback={
@@ -835,10 +849,7 @@ export function TailBox(props: {
             data-failing={failing() ? "1" : undefined}
             data-live-area={props.live ? (n().stopped ? "waiting" : "active") : undefined}
         >
-            <RowGutter
-                open={open()}
-                onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)}
-            />
+            <RowGutter open={open()} onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)} />
             <DisclosureHead
                 open={open()}
                 onToggle={() => props.onToggle(n().id, props.live ? !open() : undefined)}
@@ -1021,8 +1032,13 @@ export function ErrorBox(props: {
         // 用户 2026-10-17：「留言已经发出去了，这个还在输入框上面悬着？」⇒ 降级成历史回执。
         // `steerId` 优先取外部传来的（轮块上的那个），退到块自己的 attrs（若有）
         const steerId = () =>
-            props.receiptSteerId ?? (typeof props.node.attrs.steerId === "string" ? (props.node.attrs.steerId as string) : "");
-        const delivered = () => receiptStateOf(steerId(), localChatStore.steers.map((s) => s.id)) === "delivered";
+            props.receiptSteerId ??
+            (typeof props.node.attrs.steerId === "string" ? (props.node.attrs.steerId as string) : "");
+        const delivered = () =>
+            receiptStateOf(
+                steerId(),
+                localChatStore.steers.map((s) => s.id),
+            ) === "delivered";
         return (
             <Show
                 when={!delivered()}
@@ -1067,9 +1083,7 @@ export function ErrorBox(props: {
                     data-testid="error-traffic-link"
                     onClick={() => trafficStore.openWith({ traceId: tid(), reqId: reqId() })}
                 >
-                    {tid()
-                        ? `查看实际请求 / 响应（trace_id ${tid()!.slice(0, 8)}…）→`
-                        : "查看实际请求 / 响应 →"}
+                    {tid() ? `查看实际请求 / 响应（trace_id ${tid()!.slice(0, 8)}…）→` : "查看实际请求 / 响应 →"}
                 </button>
             </Show>
         </div>

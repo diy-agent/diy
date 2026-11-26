@@ -22,32 +22,32 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  * 用作缩写基准就会把临时数据根伪装成 `~`。取不到（无 passwd 条目）才退回 $HOME。
  */
 export function realHomeDir(): string {
-  try {
-    return userInfo().homedir || homedir();
-  } catch {
-    return homedir();
-  }
+    try {
+        return userInfo().homedir || homedir();
+    } catch {
+        return homedir();
+    }
 }
 
 /** DIY_HOME 的展示形式：相对真实家目录缩 `~`；隔离/临时数据根照实显示绝对路径 */
 export function homeDisplayOf(diyHome: string): string {
-  // 临时数据根**不缩写**。POSIX 上 tmpdir 在家目录之外，本来就缩不了；
-  // **Windows 上 tmpdir 就在 `C:\\Users\\<u>\\AppData\\Local\\Temp` 之下** —— 不显式挡一道就会被缩成
-  // `~/AppData/Local/Temp/…`，那正是「把隔离实例伪装成真数据根」的错方向（模板 / 文档都写着“隔离实例照实显示”）。
-  if (isUnder(diyHome, tmpdir())) return diyHome;
-  return abbrevHome(diyHome, realHomeDir());
+    // 临时数据根**不缩写**。POSIX 上 tmpdir 在家目录之外，本来就缩不了；
+    // **Windows 上 tmpdir 就在 `C:\\Users\\<u>\\AppData\\Local\\Temp` 之下** —— 不显式挡一道就会被缩成
+    // `~/AppData/Local/Temp/…`，那正是「把隔离实例伪装成真数据根」的错方向（模板 / 文档都写着“隔离实例照实显示”）。
+    if (isUnder(diyHome, tmpdir())) return diyHome;
+    return abbrevHome(diyHome, realHomeDir());
 }
 
 /** `p` 是否在 `root` 之下（跨平台；上跳 / 跨盘都算不在） */
 function isUnder(p: string, root: string): boolean {
-  const rel = relative(resolve(root), resolve(p));
-  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+    const rel = relative(resolve(root), resolve(p));
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 /** 当前代码所在仓库的展示路径：worktree 也显示为它自己的具体目录。 */
 export function repoDisplayOf(startDir: string = HERE): string {
-  const root = findGitRoot(startDir);
-  return root ? abbrevHome(root, realHomeDir()) : "?";
+    const root = findGitRoot(startDir);
+    return root ? abbrevHome(root, realHomeDir()) : "?";
 }
 
 // ── 开发态「入口自证」的共享判据 ──────────────────────────────
@@ -63,17 +63,17 @@ export function repoDisplayOf(startDir: string = HERE): string {
  * 别在别处再写一份 `join(homedir(), ".diy")` —— 两份判据迟早分叉。
  */
 export function prodDataHome(): string {
-  return join(realHomeDir(), ".diy");
+    return join(realHomeDir(), ".diy");
 }
 
 /** 该路径是否指向生产数据根（写法差异 —— 相对路径 / 尾斜杠 —— 归一后再比，不该绕过） */
 export function isProdDataHome(home: string): boolean {
-  return resolve(home) === prodDataHome();
+    return resolve(home) === prodDataHome();
 }
 
 /** 是否显式放行生产数据根（`DIY_ALLOW_PROD_HOME=1`，与 diy.sh 同一个开关） */
 export function prodHomeAllowed(): boolean {
-  return process.env["DIY_ALLOW_PROD_HOME"] === "1";
+    return process.env["DIY_ALLOW_PROD_HOME"] === "1";
 }
 
 /**
@@ -86,7 +86,7 @@ export function prodHomeAllowed(): boolean {
  * `<repo>/diy.sh`（数据根 build/home），模型于是去敲一个连不上当前实例的入口。
  */
 export function cliEntryForRepo(repoRoot: string, home: string): string {
-  return isProdDataHome(home) ? "diy" : join(repoRoot, "diy.sh");
+    return isProdDataHome(home) ? "diy" : join(repoRoot, "diy.sh");
 }
 
 /**
@@ -96,7 +96,7 @@ export function cliEntryForRepo(repoRoot: string, home: string): string {
  * 用途之一：非打包运行时**自证** CLI 入口（<repo>/diy.sh），不靠环境变量继承（见 main/index.ts）。
  */
 export function findRepoRoot(startDir: string): string | null {
-  return findGitRoot(startDir);
+    return findGitRoot(startDir);
 }
 
 /**
@@ -106,36 +106,36 @@ export function findRepoRoot(startDir: string): string | null {
  * 与 dev 启动器读 `<home>/instance-id` 同一口径（那边只读不代建，这里也是）。
  */
 export function readInstanceId(home: string): string | null {
-  try {
-    const text = readFileSync(join(home, "instance-id"), "utf-8").trim();
-    return text === "" ? null : text;
-  } catch {
-    return null;
-  }
+    try {
+        const text = readFileSync(join(home, "instance-id"), "utf-8").trim();
+        return text === "" ? null : text;
+    } catch {
+        return null;
+    }
 }
 
 function findGitRoot(startDir: string): string | null {
-  let dir = resolve(startDir);
-  for (;;) {
-    if (existsSync(join(dir, ".git"))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return null; // 到文件系统根
-    dir = parent;
-  }
+    let dir = resolve(startDir);
+    for (;;) {
+        if (existsSync(join(dir, ".git"))) return dir;
+        const parent = dirname(dir);
+        if (parent === dir) return null; // 到文件系统根
+        dir = parent;
+    }
 }
 
 /** 跑一次 git 取字符串；git 不存在 / 不是仓库 / 超时 / 非零退出 → null（都当「拿不到」） */
 function git(dir: string, args: string[]): string | null {
-  try {
-    const out = execFileSync("git", ["-C", dir, ...args], {
-      encoding: "utf-8",
-      timeout: 3000,
-      stdio: ["ignore", "pipe", "ignore"], // stderr 丢弃：非仓库时 git 会刷屏
-    }).trim();
-    return out || null;
-  } catch {
-    return null;
-  }
+    try {
+        const out = execFileSync("git", ["-C", dir, ...args], {
+            encoding: "utf-8",
+            timeout: 3000,
+            stdio: ["ignore", "pipe", "ignore"], // stderr 丢弃：非仓库时 git 会刷屏
+        }).trim();
+        return out || null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -147,23 +147,23 @@ function git(dir: string, args: string[]): string | null {
 let branchCache: string | null | undefined;
 
 export function currentGitBranch(startDir: string = HERE): string | null {
-  if (branchCache === undefined) branchCache = detectBranch(startDir);
-  return branchCache;
+    if (branchCache === undefined) branchCache = detectBranch(startDir);
+    return branchCache;
 }
 
 /** 仅供测试：清空缓存（生产不需要 —— 分支在一次进程生命周期内不变） */
 export function resetGitBranchCache(): void {
-  branchCache = undefined;
+    branchCache = undefined;
 }
 
 function detectBranch(startDir: string): string | null {
-  const root = findGitRoot(startDir);
-  if (!root) return null;
-  const head = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  if (!head) return null;
-  if (head !== "HEAD") return head; // 正常分支（worktree 也是分支名）
-  const sha = git(root, ["rev-parse", "--short", "HEAD"]);
-  return sha ? `${sha}(detached)` : null;
+    const root = findGitRoot(startDir);
+    if (!root) return null;
+    const head = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    if (!head) return null;
+    if (head !== "HEAD") return head; // 正常分支（worktree 也是分支名）
+    const sha = git(root, ["rev-parse", "--short", "HEAD"]);
+    return sha ? `${sha}(detached)` : null;
 }
 
 /**
@@ -178,20 +178,20 @@ function detectBranch(startDir: string): string | null {
  * 这个回答「是不是同一个根」（纯同一性，与生产/开发无关）。
  */
 export function sameDataHome(a: string, b: string): boolean {
-  // 先比写法归一的字面值（尾斜杠 / `.` / `..` / 相对路径），再解开符号链接比。
-  // 方向性：只有两条路都证明「是同一处」才返回 true —— 绝**不**在没有依据时判相等。
-  // 判据错向的代价不对称：误判相等 = CLI 连到别人的实例（串台，##328(实例身份只靠端口)）；误判不等 = 多起一个实例（吵，但安全）。
-  if (resolve(a) === resolve(b)) return true;
-  const ra = tryRealpath(a);
-  const rb = tryRealpath(b);
-  return ra !== null && rb !== null && ra === rb;
+    // 先比写法归一的字面值（尾斜杠 / `.` / `..` / 相对路径），再解开符号链接比。
+    // 方向性：只有两条路都证明「是同一处」才返回 true —— 绝**不**在没有依据时判相等。
+    // 判据错向的代价不对称：误判相等 = CLI 连到别人的实例（串台，##328(实例身份只靠端口)）；误判不等 = 多起一个实例（吵，但安全）。
+    if (resolve(a) === resolve(b)) return true;
+    const ra = tryRealpath(a);
+    const rb = tryRealpath(b);
+    return ra !== null && rb !== null && ra === rb;
 }
 
 /** 解符号链接；路径不存在（或不可达）时返回 null —— 不猜。 */
 function tryRealpath(p: string): string | null {
-  try {
-    return realpathSync(p); // sync-io-ok: 启动早期判一次「是不是同一个实例」，无并发可挡；改异步会把实例判定调用链全变 async（##328 原设计）
-  } catch {
-    return null;
-  }
+    try {
+        return realpathSync(p); // sync-io-ok: 启动早期判一次「是不是同一个实例」，无并发可挡；改异步会把实例判定调用链全变 async（##328 原设计）
+    } catch {
+        return null;
+    }
 }

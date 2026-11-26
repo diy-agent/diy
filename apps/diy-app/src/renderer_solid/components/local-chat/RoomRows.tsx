@@ -4,7 +4,16 @@ import { localChatStore } from "../../store/localChatStore";
 import { IconBolt, IconClock, IconCompress, IconExpand, IconGrip } from "@diy-agent/ui-kit";
 import { copyFailMeta, copyOkMeta } from "../../lib/notice-copy";
 import { notificationStore } from "../../store/notificationStore";
-import { deliveryStateText, memberAvatar, memberColor, memberName, orderedMembers, steerTurnRefs, type Room, type RoomEvent } from "../../../shared/room";
+import {
+    deliveryStateText,
+    memberAvatar,
+    memberColor,
+    memberName,
+    orderedMembers,
+    steerTurnRefs,
+    type Room,
+    type RoomEvent,
+} from "../../../shared/room";
 import { fmtClock } from "../../../shared/date-format";
 import { diyService } from "../../lib/rpc";
 import type { SteerItem } from "../../../main/core/drafts";
@@ -108,10 +117,7 @@ function RoomSteerTurn(props: {
         }
     });
     return (
-        <div
-            class="w-[92%] rounded-lg border border-base-300 bg-base-100/60"
-            data-room-say-turn={props.turnId}
-        >
+        <div class="w-[92%] rounded-lg border border-base-300 bg-base-100/60" data-room-say-turn={props.turnId}>
             <button
                 class="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-caption"
                 onClick={() => props.onToggle()}
@@ -250,9 +256,7 @@ export function RoomReplyRow(props: {
     open: boolean;
     onToggle: () => void;
 }) {
-    const [st, setSt] = createSignal<{ turn: BlockNode | null; turnId: string; live: boolean } | null>(
-        null,
-    );
+    const [st, setSt] = createSignal<{ turn: BlockNode | null; turnId: string; live: boolean } | null>(null);
     const [err, setErr] = createSignal<string | null>(null);
     /** 取过一次就不再重复取（展开/收起是纯前端两态；要刷新进度就再收开一次） */
     let fetched = false;
@@ -317,10 +321,7 @@ export function RoomReplyRow(props: {
                 </div>
             </Show>
             <Show when={props.event.ref}>
-                <div
-                    class="rounded-lg border border-base-300 bg-base-100/60"
-                    data-room-reply-progress={props.event.id}
-                >
+                <div class="rounded-lg border border-base-300 bg-base-100/60" data-room-reply-progress={props.event.id}>
                     <button
                         class="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-caption"
                         onClick={() => props.onToggle()}
@@ -344,9 +345,7 @@ export function RoomReplyRow(props: {
                                 <div class="text-caption opacity-60">正在取这一轮…</div>
                             </Show>
                             <Show when={st()?.turn}>
-                                {(t) => (
-                                    <RoomTurnBody turn={t()} turnId={st()!.turnId} live={st()?.live === true} />
-                                )}
+                                {(t) => <RoomTurnBody turn={t()} turnId={st()!.turnId} live={st()?.live === true} />}
                             </Show>
                         </div>
                     </Show>
@@ -512,15 +511,16 @@ function SteerRow(props: {
                 <IconGrip class="h-3.5 w-3.5" />
             </span>
             {/* 中：留言本身 —— 占满剩余宽度，截断在尾部（要发出去的是这句话） */}
-            <span class="min-w-0 flex-1 truncate" title={it().text}>{it().text}</span>
+            <span class="min-w-0 flex-1 truncate" title={it().text}>
+                {it().text}
+            </span>
             {/* 右：排到哪一轮的两态开关（daisyUI swap，可逆）。
                 两态**同时改形状与颜色**，不能只换色 —— 小图标上"同一个形状换个颜色"扫一眼分不出：
                   · 下一轮：时钟 + 弱色 = "还得等"
                   · 下一步（默认，加急）：闪电 + warning 高对比底色/描边 + 呼吸 = "马上插进去"
                 形状不同，不读 tooltip 也能分辨；动画只作用于图标，不动整行布局。 */}
             <label
-                class={`btn btn-xs shrink-0 swap ${ it().mode === "next-step" ? "border-warning/60 bg-warning/15 text-warning hover:bg-warning/25" : "btn-ghost text-base-content/45 hover:text-base-content/80" }`}
-
+                class={`btn btn-xs shrink-0 swap ${it().mode === "next-step" ? "border-warning/60 bg-warning/15 text-warning hover:bg-warning/25" : "btn-ghost text-base-content/45 hover:text-base-content/80"}`}
                 data-tip={
                     it().mode === "next-turn"
                         ? "排到下一轮（点击改为马上插到下一步）"

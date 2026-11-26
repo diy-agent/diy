@@ -75,12 +75,9 @@ export const llmConfigRoutes = RpcSchema.group({
                     .enum(["auto", "spec", "override"])
                     .default("auto")
                     .cliOption({ desc: "落点：auto=custom→spec、std→override" }),
-                tiers: z
-                    .array(TierWriteSchema)
-                    .optional()
-                    .cliOption({
-                        desc: `时段档 JSON 数组，如 '[{"input":0.5,"output":3,"tier":{"type":"utc-range","data":{"start":"01:00:00+08:00","end":"04:00:00+08:00","calendar":"CN-business-day","label":"peak"}}}]'`,
-                    }),
+                tiers: z.array(TierWriteSchema).optional().cliOption({
+                    desc: `时段档 JSON 数组，如 '[{"input":0.5,"output":3,"tier":{"type":"utc-range","data":{"start":"01:00:00+08:00","end":"04:00:00+08:00","calendar":"CN-business-day","label":"peak"}}}]'`,
+                }),
                 append: z.boolean().optional().cliOption({ desc: "与 --tiers 合用：追加，不改既有档" }),
                 drop: z
                     .number()
@@ -127,7 +124,6 @@ export const llmConfigRoutes = RpcSchema.group({
         }),
     },
 });
-
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

@@ -87,7 +87,8 @@ describe('createToolOutputCapper：超限 ⇒ 头尾 + marker + 原文落盘', (
 });
 
 describe('createToolOutputCapper：bash 结果头的 truncated 位', () => {
-    const head = (flags: string) => [`---\nok: true\nexit_code: 0\ntruncated: ${flags}\ncwd: /x\n---`, lines(5000)].join('\n');
+    const head = (flags: string) =>
+        [`---\nok: true\nexit_code: 0\ntruncated: ${flags}\ncwd: /x\n---`, lines(5000)].join('\n');
 
     it('真截断时把头里的 truncated: false 改写成 true（模型据此知道源级输出也不全）', async () => {
         const home = await homeOf();

@@ -52,7 +52,10 @@ export function DisputePanel(props: {
         <div class="flex h-full min-h-0 flex-col gap-1 overflow-auto p-2 text-body" data-flow-dispute="">
             <div class="flex items-center gap-1">
                 <span class="font-bold opacity-70">📣 讨论</span>
-                <span class="badge badge-xs badge-ghost" data-flow-thread-count={String(props.threads?.threads.length ?? 0)}>
+                <span
+                    class="badge badge-xs badge-ghost"
+                    data-flow-thread-count={String(props.threads?.threads.length ?? 0)}
+                >
                     {props.threads?.threads.length ?? 0} 个线程
                 </span>
                 <span class="opacity-50">锚点 = 折线上的真打回边（打回不新建节点）</span>
@@ -81,7 +84,11 @@ export function DisputePanel(props: {
 
             <Show
                 when={props.threads && props.threads.threads.length > 0}
-                fallback={<div class="opacity-60" data-flow-thread-none="">还没有打回 ⇒ 没有讨论线程（线程挂在真打回边上，不虚构）</div>}
+                fallback={
+                    <div class="opacity-60" data-flow-thread-none="">
+                        还没有打回 ⇒ 没有讨论线程（线程挂在真打回边上，不虚构）
+                    </div>
+                }
             >
                 <ul class="flex flex-col gap-0.5">
                     <For each={props.threads!.threads}>

@@ -62,7 +62,7 @@ describe("effectiveBashArgs", () => {
     });
 
     it("入参不是对象（流式早期 null / 半截字符串）⇒ 全缺省，不抛", () => {
-        for (const bad of [null, undefined, "{\"command\"", 42]) {
+        for (const bad of [null, undefined, '{"command"', 42]) {
             const r = effectiveBashArgs(bad);
             expect(r.args).toEqual({ command: "", timeout: 0, background: false });
             expect(r.defaulted).toEqual(["background", "timeout"]);

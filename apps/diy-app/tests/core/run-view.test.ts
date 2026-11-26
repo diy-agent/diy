@@ -66,7 +66,10 @@ describe("时长", () => {
 
 describe("退出情况", () => {
     it("有信号 ⇒ 说信号（退出码 null 时不许显示成「退出码 0」）", () => {
-        const v = runViewOf({ ...base, state: "killed", endedAt: base.startedAt + 10, exitCode: null, signal: "SIGTERM" }, 0);
+        const v = runViewOf(
+            { ...base, state: "killed", endedAt: base.startedAt + 10, exitCode: null, signal: "SIGTERM" },
+            0,
+        );
         expect(v.exitText).toBe("信号 SIGTERM");
         expect(v.signal).toBe("SIGTERM");
     });

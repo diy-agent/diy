@@ -55,7 +55,13 @@ const BODY_MIN_W = 160;
  * 模块级而非组件内：同一个块会在多个实例里出现，折叠是「这类内容要不要看」的
  * 全局偏好，不该每开一个面板就变回默认。
  */
-const [blocks, setBlocks] = createSignal<Record<string, boolean>>({ attrs: true, lineage: true, body: true, facts: false, journal: false });
+const [blocks, setBlocks] = createSignal<Record<string, boolean>>({
+    attrs: true,
+    lineage: true,
+    body: true,
+    facts: false,
+    journal: false,
+});
 const blockOpen = (k: string) => blocks()[k] !== false;
 
 /** 折叠框（VSCode 式：标题条整条可点，▾/▸ 指示） */
@@ -203,7 +209,8 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
     onMount(() => void personaStore.load());
 
     /** 会话状态（##393）：唯一判据 `shared/session-state`；这里**只负责分列展示**，不另判 */
-    const sess = () => sessionStateFor(props.uri, { hasSession: props.task.has_session, hasDraft: props.task.has_draft });
+    const sess = () =>
+        sessionStateFor(props.uri, { hasSession: props.task.has_session, hasDraft: props.task.has_draft });
     const stateText = () => {
         const st = sess();
         if (st.run === "running") return st.stalled ? "运行中（停滞）" : "运行中";
@@ -285,7 +292,13 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                         when={editing()}
                         fallback={
                             <h3 class="min-w-0 flex-1 text-title font-bold">
-                                <TaskNameLink uri={props.uri} label={props.task.title || props.uri} class="block" wrap size="title" />
+                                <TaskNameLink
+                                    uri={props.uri}
+                                    label={props.task.title || props.uri}
+                                    class="block"
+                                    wrap
+                                    size="title"
+                                />
                             </h3>
                         }
                     >
@@ -298,7 +311,11 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                         />
                     </Show>
                     <Show when={!editing()}>
-                        <button class="btn btn-ghost btn-xs shrink-0 opacity-60 hover:opacity-100" title="编辑标题" onClick={startEdit}>
+                        <button
+                            class="btn btn-ghost btn-xs shrink-0 opacity-60 hover:opacity-100"
+                            title="编辑标题"
+                            onClick={startEdit}
+                        >
                             ✏️
                         </button>
                     </Show>
@@ -311,10 +328,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                 「突出」靠位置 + mono + 浅底衬，不再靠字号抢戏（标题已经在抢了）。 */}
             <div class="task-field-row" data-testid="task-detail-uri">
                 <span class="task-field-label text-body opacity-50">URI</span>
-                <span
-                    class="min-w-0 truncate rounded bg-base-200 px-1 font-mono text-body"
-                    title={props.uri}
-                >
+                <span class="min-w-0 truncate rounded bg-base-200 px-1 font-mono text-body" title={props.uri}>
                     {props.uri}
                 </span>
             </div>
@@ -327,7 +341,11 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                 <div class="task-field-row">
                     <span class="task-field-label text-body opacity-50">状态</span>
                     <div class="flex min-w-0 items-center gap-1">
-                        <StateSelect current={props.task.state} saving={saving()} onSave={(v) => void savePatch({ state: v })} />
+                        <StateSelect
+                            current={props.task.state}
+                            saving={saving()}
+                            onSave={(v) => void savePatch({ state: v })}
+                        />
                         <Show when={editing()}>
                             <button class="btn btn-primary btn-xs" onClick={save} disabled={saving()}>
                                 {saving() ? <span class="loading loading-spinner loading-xs"></span> : "💾 保存"}
@@ -345,7 +363,11 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                     saving={saving()}
                     onSave={(v) => void savePatch({ change_type: v })}
                 />
-                <TaskModuleInput value={props.task.module} saving={saving()} onSave={(v) => void savePatch({ module: v })} />
+                <TaskModuleInput
+                    value={props.task.module}
+                    saving={saving()}
+                    onSave={(v) => void savePatch({ module: v })}
+                />
                 <TaskFieldSelect
                     field="priority"
                     value={props.task.priority}
@@ -362,10 +384,7 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                         disabled={saving() || personaStore.personas.length === 0}
                         value={props.task.persona ?? ""}
                         onChange={async (e) => {
-                            const ok = await personaStore.setForTask(
-                                props.task.uri,
-                                e.currentTarget.value,
-                            );
+                            const ok = await personaStore.setForTask(props.task.uri, e.currentTarget.value);
                             if (ok) await props.refresh();
                         }}
                     >
@@ -393,7 +412,10 @@ function AttrsBlock(props: { uri: string; task: TaskDetail; refresh: () => Promi
                             hasDraft={props.task.has_draft}
                             size="md"
                         />
-                        <span class="text-body" title="运行状态只有三个值：未运行 / 运行中 / 已结束；结束原因是一个属性">
+                        <span
+                            class="text-body"
+                            title="运行状态只有三个值：未运行 / 运行中 / 已结束；结束原因是一个属性"
+                        >
                             {stateText()}
                         </span>
                         <Show when={reasonText()}>
@@ -501,7 +523,8 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "mana
      */
     let scrollEl: HTMLDivElement | undefined;
     /** 定位到当前任务行：只在它不在可视区时滚（`block:"nearest"`），不无谓打扰 */
-    const scrollToCurrent = () => scrollEl?.querySelector("[data-lineage-current]")?.scrollIntoView({ block: "nearest" });
+    const scrollToCurrent = () =>
+        scrollEl?.querySelector("[data-lineage-current]")?.scrollIntoView({ block: "nearest" });
 
     createEffect(
         on(
@@ -557,7 +580,9 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "mana
                             放标题后、💬 前：紧跟标题读成"这行的会话状态"，💬 仍靠 ml-auto 贴右。 */}
                         <SessionGlyph uri={r.uri} size="xs" />
                         <Show when={chatOpen(r.uri)}>
-                            <span class="ml-auto shrink-0 text-body" title="已在对话中打开">💬</span>
+                            <span class="ml-auto shrink-0 text-body" title="已在对话中打开">
+                                💬
+                            </span>
                         </Show>
                     </div>
                 )}
@@ -583,8 +608,12 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "mana
                                     {(_f) => (
                                         <div class="flex flex-col gap-1.5 text-body min-w-0">
                                             <div class="flex items-baseline gap-1.5 min-w-0">
-                                                <span class="font-mono opacity-60 shrink-0">#{shownInfo()!.node.num ?? "?"}</span>
-                                                <span class="font-semibold min-w-0 break-all">{shownInfo()!.node.title ?? shownInfo()!.node.uri}</span>
+                                                <span class="font-mono opacity-60 shrink-0">
+                                                    #{shownInfo()!.node.num ?? "?"}
+                                                </span>
+                                                <span class="font-semibold min-w-0 break-all">
+                                                    {shownInfo()!.node.title ?? shownInfo()!.node.uri}
+                                                </span>
                                             </div>
                                             <div class="flex items-center gap-1.5 opacity-70">
                                                 <span
@@ -594,14 +623,24 @@ function LineageBlock(props: { uri: string; hoverPreview?: boolean; host?: "mana
                                             </div>
                                             <Show when={shownInfo()!.parentTitle}>
                                                 <div class="min-w-0 opacity-70">
-                                                    父级：<span class="min-w-0 break-all">{shownInfo()!.parentTitle}</span>
+                                                    父级：
+                                                    <span class="min-w-0 break-all">{shownInfo()!.parentTitle}</span>
                                                 </div>
                                             </Show>
                                             <Show when={shownInfo()!.node.created}>
-                                                <div class="opacity-60">🕐 {new Date(shownInfo()!.node.created!).toLocaleString()}</div>
+                                                <div class="opacity-60">
+                                                    🕐 {new Date(shownInfo()!.node.created!).toLocaleString()}
+                                                </div>
                                             </Show>
-                                            <Show when={shownInfo()!.node.updated && shownInfo()!.node.updated !== shownInfo()!.node.created}>
-                                                <div class="opacity-60">✏️ {new Date(shownInfo()!.node.updated!).toLocaleString()}</div>
+                                            <Show
+                                                when={
+                                                    shownInfo()!.node.updated &&
+                                                    shownInfo()!.node.updated !== shownInfo()!.node.created
+                                                }
+                                            >
+                                                <div class="opacity-60">
+                                                    ✏️ {new Date(shownInfo()!.node.updated!).toLocaleString()}
+                                                </div>
                                             </Show>
                                             <Show when={shownInfo()!.node.body}>
                                                 <div class="opacity-50 border-t border-base-300 pt-1.5 line-clamp-4 whitespace-pre-wrap break-all">
@@ -692,7 +731,11 @@ function BodyBlock(props: { uri: string; task: TaskDetail; refresh: () => Promis
                                 </button>
                             </div>
                         </Show>
-                        <button class="btn btn-ghost btn-xs ml-auto opacity-60 hover:opacity-100" title="编辑内容" onClick={startEdit}>
+                        <button
+                            class="btn btn-ghost btn-xs ml-auto opacity-60 hover:opacity-100"
+                            title="编辑内容"
+                            onClick={startEdit}
+                        >
                             ✏️
                         </button>
                     </div>
@@ -890,7 +933,11 @@ export function TaskDetailContent(props: {
                                 <AttrsBlock uri={props.uri} task={shownTask()!} refresh={refresh} />
                             </Block>
                             <Block k="lineage" title="任务树">
-                                <LineageBlock uri={props.uri} hoverPreview={props.hoverPreview} host={props.host ?? "chat"} />
+                                <LineageBlock
+                                    uri={props.uri}
+                                    hoverPreview={props.hoverPreview}
+                                    host={props.host ?? "chat"}
+                                />
                             </Block>
                         </div>
                         {/* 拖宽手柄：只在两列布局下显示（窄容器里单列，拖它没有语义）。

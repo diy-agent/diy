@@ -7,7 +7,7 @@
     "noEmit": true,
     "declaration": false,
     "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "moduleResolution": "Bundler"
   },
   "include": [
     "src",

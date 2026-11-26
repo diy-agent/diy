@@ -12,13 +12,13 @@
 // `agent` → 无名 agent）。于是驱动环（`services/flow-runner.ts`）对**任意**定义都通用，
 // 不写死这一个工作流；将来「工作流开发包」自带执行者表时，这里只是换供给方。
 
-import type { Actor } from '@diy-agent/flow';
-import { DEV_WORKFLOW, DEV_EXECUTORS } from './dev';
+import type { Actor } from "@diy-agent/flow";
+import { DEV_WORKFLOW, DEV_EXECUTORS } from "./dev";
 
 /** 一个节点的执行者（宿主侧知识：内核只给 `actor`，这一层说清「到底谁去干」） */
 export type NodeExecutor =
     | {
-          readonly kind: 'agent';
+          readonly kind: "agent";
           /** 执行者标识（进审计 `author` 与 turn 消息署名） */
           readonly agent: string;
           /** 角色定位文本（进 turn 消息首部 —— 「哪个 agent」的实质差别在这里） */
@@ -26,8 +26,8 @@ export type NodeExecutor =
           /** 可选人物（id / 显示名）：取它的模型作**本轮**覆盖；缺省用任务绑定的人物 */
           readonly persona?: string;
       }
-    | { readonly kind: 'human' }
-    | { readonly kind: 'system' };
+    | { readonly kind: "human" }
+    | { readonly kind: "system" };
 
 /** 各工作流的执行者表（键 = 定义自己的 `id`）。**只增不改**：实例文件里的 workflowId 要长期可解析。 */
 const EXECUTOR_TABLES: Readonly<Record<string, Readonly<Record<string, NodeExecutor>>>> = Object.freeze({
@@ -45,7 +45,7 @@ export function executorOf(workflowId: string, nodeId: string, actor: Actor | st
     const table = Object.hasOwn(EXECUTOR_TABLES, workflowId) ? EXECUTOR_TABLES[workflowId]! : {};
     const declared = table[nodeId];
     if (declared) return declared;
-    if (actor === 'human') return { kind: 'human' };
-    if (actor === 'system') return { kind: 'system' };
-    return { kind: 'agent', agent: nodeId, role: '' };
+    if (actor === "human") return { kind: "human" };
+    if (actor === "system") return { kind: "system" };
+    return { kind: "agent", agent: nodeId, role: "" };
 }

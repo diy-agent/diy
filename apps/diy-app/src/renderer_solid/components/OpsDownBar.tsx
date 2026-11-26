@@ -40,8 +40,8 @@ export function OpsDownBar() {
             <span class="shrink-0 font-medium">会话实时更新中断</span>
             <span class="opacity-80">正在自动重连…（重连成功后补齐，历史不丢）</span>
             <span class="ml-auto text-xs opacity-70">
-                {/* 一级也带上「从几点开始」：一眼能对表，不必先说"出事"再点详情才发现 */}
-                自 {formatClock(localChatStore.opsDownSince ?? now())} 起
+                {/* 一级也带上「从几点开始」：一眼能对表，不必先说"出事"再点详情才发现 */}自{" "}
+                {formatClock(localChatStore.opsDownSince ?? now())} 起
             </span>
             <NoticeDetail meta={meta()} label="详情" />
         </div>

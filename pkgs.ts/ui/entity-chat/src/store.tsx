@@ -499,10 +499,7 @@ export function useRunningSessionRooms(): Room[] {
         () => state.running,
         () => state.running,
     );
-    return React.useMemo(
-        () => rooms.filter((room) => isRunningSession(room, running[room.id] ?? 0)),
-        [rooms, running],
-    );
+    return React.useMemo(() => rooms.filter((room) => isRunningSession(room, running[room.id] ?? 0)), [rooms, running]);
 }
 
 /**
@@ -513,8 +510,16 @@ export function useRunningSessionRooms(): Room[] {
 export function useRunningSessions(): number {
     return React.useSyncExternalStore(
         subscribeShell,
-        () => state.rooms.reduce((total, room) => total + (isRunningSession(room, state.running[room.id] ?? 0) ? 1 : 0), 0),
-        () => state.rooms.reduce((total, room) => total + (isRunningSession(room, state.running[room.id] ?? 0) ? 1 : 0), 0),
+        () =>
+            state.rooms.reduce(
+                (total, room) => total + (isRunningSession(room, state.running[room.id] ?? 0) ? 1 : 0),
+                0,
+            ),
+        () =>
+            state.rooms.reduce(
+                (total, room) => total + (isRunningSession(room, state.running[room.id] ?? 0) ? 1 : 0),
+                0,
+            ),
     );
 }
 

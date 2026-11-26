@@ -12,24 +12,24 @@ import { fmtDiskBytes, type EnvNotice } from "../../shared/env-watch";
  * 对排查没有价值。
  */
 export function renderEnvList(rows: EnvNotice[]): string {
-  if (rows.length === 0) return "环境正常：磁盘水位充足、网络无连续失败。";
-  const lines = rows.map((n) => {
-    switch (n.type) {
-      case "disk-full":
-      case "disk-low": {
-        const d = n.data;
-        const size =
-          d.availBytes < 0 || d.totalBytes < 0
-            ? "可用空间读不到"
-            : `可用 ${fmtDiskBytes(d.availBytes)} / 共 ${fmtDiskBytes(d.totalBytes)}`;
-        const from = d.source === "write-error" ? "（写失败被动升级）" : "（轮询）";
-        return `[${n.level}] ${n.type}  ${d.mount || "?"}  ${size}${from}  ${d.reason}  (id=${n.id})`;
-      }
-      case "network-down": {
-        const d = n.data;
-        return `[${n.level}] ${n.type}  连续 ${d.streak} 次${d.code ? ` ${d.code}` : ""}  ${d.message}  ${d.reason}  (id=${n.id})`;
-      }
-    }
-  });
-  return lines.join("\n");
+    if (rows.length === 0) return "环境正常：磁盘水位充足、网络无连续失败。";
+    const lines = rows.map((n) => {
+        switch (n.type) {
+            case "disk-full":
+            case "disk-low": {
+                const d = n.data;
+                const size =
+                    d.availBytes < 0 || d.totalBytes < 0
+                        ? "可用空间读不到"
+                        : `可用 ${fmtDiskBytes(d.availBytes)} / 共 ${fmtDiskBytes(d.totalBytes)}`;
+                const from = d.source === "write-error" ? "（写失败被动升级）" : "（轮询）";
+                return `[${n.level}] ${n.type}  ${d.mount || "?"}  ${size}${from}  ${d.reason}  (id=${n.id})`;
+            }
+            case "network-down": {
+                const d = n.data;
+                return `[${n.level}] ${n.type}  连续 ${d.streak} 次${d.code ? ` ${d.code}` : ""}  ${d.message}  ${d.reason}  (id=${n.id})`;
+            }
+        }
+    });
+    return lines.join("\n");
 }

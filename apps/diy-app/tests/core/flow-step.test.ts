@@ -30,13 +30,19 @@ import type { CommandResult } from "../../src/main/workflows/plugins";
 function freshTask(name: string): string {
     const uri = `projects/9/tasks/${name}`;
     mkdirSync(join(process.env["DIY_HOME"]!, uri), { recursive: true });
-    writeFileSync(join(process.env["DIY_HOME"]!, uri, "AGENTS.md"), `---\ntitle: ${name}\nstate: pending\n---\n`, "utf-8");
+    writeFileSync(
+        join(process.env["DIY_HOME"]!, uri, "AGENTS.md"),
+        `---\ntitle: ${name}\nstate: pending\n---\n`,
+        "utf-8",
+    );
     return uri;
 }
 
 /** 桩命令：按命令串给结果（不真跑任何东西 —— 「不真出网」是可证的） */
-const stubRun = (results: Record<string, CommandResult>) => async (command: string): Promise<CommandResult> =>
-    results[command] ?? { code: 127, output: `桩里没有这条命令：${command}` };
+const stubRun =
+    (results: Record<string, CommandResult>) =>
+    async (command: string): Promise<CommandResult> =>
+        results[command] ?? { code: 127, output: `桩里没有这条命令：${command}` };
 
 /** 走到 `ci`（六个节点里 system 的那一个） */
 function enterToCi(uri: string): void {
@@ -142,7 +148,9 @@ describe("系统推（##341）：pred: 红则不推、绿才推", () => {
         await stepFlow(uri, { runCommand: stubRun({ [CI_CMD]: { code: 0, output: "绿" } }) });
         advanceFlow(uri, "merge", [], "人工批准");
         const r = await stepFlow(uri, {
-            runCommand: stubRun({ "gh pr view --json mergeable,state -q .mergeable": { code: 0, output: "CONFLICTING" } }),
+            runCommand: stubRun({
+                "gh pr view --json mergeable,state -q .mergeable": { code: 0, output: "CONFLICTING" },
+            }),
         });
         expect(r.status).toBe("stuck");
         expect(showFlow(uri).position).toBe("merge");

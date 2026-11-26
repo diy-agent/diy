@@ -273,18 +273,22 @@ describe("寿命按进程组算（不是根 bash）", () => {
 
     // Windows 上 `jobAlive` 只能判根进程（没有进程组语义，见 main/os/）⇒ 根 bash 一退
     // 就收口，等不到 `nohup` 留下的子孙。这是已知边界，不是回归。
-    it.skipIf(process.platform === "win32")("真进程：`nohup sleep &` 的父命令秒退，run 活到后台进程真的没了才结束", async () => {
-        const p = await reg.spawn({ command: "nohup sleep 0.6 > /dev/null 2>&1 & echo ok", cwd: root, origin });
-        // 根命令本身 20ms 级就退；此时不许收口
-        await until(() => p.rootExitedAt !== undefined);
-        expect(p.state).toBe("running");
-        expect(p.awaitingGroup).toBe(true);
-        const done = await reg.wait(p.id, 10_000);
-        expect(done?.state).toBe("exited");
-        expect(done?.exitCode).toBe(0);
-        // 时长按"真正没人跑"算（≥ 后台进程那 ~600ms），不是父命令的 20ms
-        expect(done!.endedAt! - done!.startedAt).toBeGreaterThanOrEqual(400);
-    }, 15_000);
+    it.skipIf(process.platform === "win32")(
+        "真进程：`nohup sleep &` 的父命令秒退，run 活到后台进程真的没了才结束",
+        async () => {
+            const p = await reg.spawn({ command: "nohup sleep 0.6 > /dev/null 2>&1 & echo ok", cwd: root, origin });
+            // 根命令本身 20ms 级就退；此时不许收口
+            await until(() => p.rootExitedAt !== undefined);
+            expect(p.state).toBe("running");
+            expect(p.awaitingGroup).toBe(true);
+            const done = await reg.wait(p.id, 10_000);
+            expect(done?.state).toBe("exited");
+            expect(done?.exitCode).toBe(0);
+            // 时长按"真正没人跑"算（≥ 后台进程那 ~600ms），不是父命令的 20ms
+            expect(done!.endedAt! - done!.startedAt).toBeGreaterThanOrEqual(400);
+        },
+        15_000,
+    );
 
     it("通知只在组空那一刻发，且只发一次（探活多轮不重复唤醒）", async () => {
         let alive = true;
@@ -403,7 +407,11 @@ describe("退出即收（shutdown）", () => {
             expect(notes).toEqual([]);
             return;
         }
-        const orphan = await reg.spawn({ command: "nohup sleep 30 > /dev/null 2>&1 & echo started", cwd: root, origin });
+        const orphan = await reg.spawn({
+            command: "nohup sleep 30 > /dev/null 2>&1 & echo started",
+            cwd: root,
+            origin,
+        });
         // 等它进入"组还有活口"的态：这才是最难收的那一类（根已退出、活的是被 reparent 的子孙）
         for (let i = 0; i < 100 && !reg.get(orphan.id)?.awaitingGroup; i++) await new Promise((r) => setTimeout(r, 20));
         expect(reg.get(orphan.id)?.awaitingGroup).toBe(true);

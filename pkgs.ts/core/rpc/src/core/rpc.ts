@@ -32,7 +32,10 @@ export interface _RpcSchemaUnaryConfig<TSchema extends Record<string, z.ZodTypeA
 }
 
 /** @internal */
-export interface _RpcSchemaServerStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TOutput> {
+export interface _RpcSchemaServerStreamConfig<
+  TSchema extends Record<string, z.ZodTypeAny>,
+  TOutput,
+> {
   desc?: string;
   input: TSchema;
   output: z.ZodType<TOutput>;
@@ -40,7 +43,11 @@ export interface _RpcSchemaServerStreamConfig<TSchema extends Record<string, z.Z
 }
 
 /** @internal */
-export interface _RpcSchemaClientStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput> {
+export interface _RpcSchemaClientStreamConfig<
+  TSchema extends Record<string, z.ZodTypeAny>,
+  TChunk,
+  TOutput,
+> {
   desc?: string;
   input: TSchema;
   chunkIn: z.ZodType<TChunk>;
@@ -49,7 +56,11 @@ export interface _RpcSchemaClientStreamConfig<TSchema extends Record<string, z.Z
 }
 
 /** @internal */
-export interface _RpcSchemaBidiStreamConfig<TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut> {
+export interface _RpcSchemaBidiStreamConfig<
+  TSchema extends Record<string, z.ZodTypeAny>,
+  TChunkIn,
+  TChunkOut,
+> {
   desc?: string;
   input: TSchema;
   chunkIn: z.ZodType<TChunkIn>;
@@ -68,8 +79,6 @@ export interface _RpcSchemaGroupConfig {
   children: _Router;
 }
 
-
-
 // ═══════════════════════════════════════════════════
 //  RpcSchema — 纯定义工厂（返回 ProcedureMeta，无 call）
 // ═══════════════════════════════════════════════════
@@ -83,20 +92,45 @@ export class RpcSchema {
 
   static serverStream<const TSchema extends Record<string, z.ZodTypeAny>, TOutput>(
     config: _RpcSchemaServerStreamConfig<TSchema, TOutput>,
-  ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, never, TOutput, 'server'> {
+  ): ProcedureMeta<
+    { [K in keyof TSchema]: z.output<TSchema[K]> },
+    TOutput,
+    never,
+    TOutput,
+    'server'
+  > {
     return _makeMeta(config, 'server', z.object(config.input), config.output);
   }
 
   static clientStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunk, TOutput>(
     config: _RpcSchemaClientStreamConfig<TSchema, TChunk, TOutput>,
-  ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TOutput, TChunk, never, 'client'> {
+  ): ProcedureMeta<
+    { [K in keyof TSchema]: z.output<TSchema[K]> },
+    TOutput,
+    TChunk,
+    never,
+    'client'
+  > {
     return _makeMeta(config, 'client', z.object(config.input), config.output, config.chunkIn);
   }
 
   static bidiStream<const TSchema extends Record<string, z.ZodTypeAny>, TChunkIn, TChunkOut>(
     config: _RpcSchemaBidiStreamConfig<TSchema, TChunkIn, TChunkOut>,
-  ): ProcedureMeta<{ [K in keyof TSchema]: z.output<TSchema[K]> }, TChunkOut, TChunkIn, TChunkOut, 'bidi'> {
-    return _makeMeta(config, 'bidi', z.object(config.input), undefined, config.chunkIn, config.chunkOut);
+  ): ProcedureMeta<
+    { [K in keyof TSchema]: z.output<TSchema[K]> },
+    TChunkOut,
+    TChunkIn,
+    TChunkOut,
+    'bidi'
+  > {
+    return _makeMeta(
+      config,
+      'bidi',
+      z.object(config.input),
+      undefined,
+      config.chunkIn,
+      config.chunkOut,
+    );
   }
 
   /**
@@ -122,15 +156,17 @@ export class RpcSchema {
   }
 }
 
-
-
-
 // ═══════════════════════════════════════════════════
 //  内部工厂底层
 // ═══════════════════════════════════════════════════
 
 function _makeMeta(
-  config: { desc?: string; children?: _Router; alias?: string | readonly string[]; deprecated?: string },
+  config: {
+    desc?: string;
+    children?: _Router;
+    alias?: string | readonly string[];
+    deprecated?: string;
+  },
   streamMode: string,
   inputSchema?: z.ZodTypeAny,
   outputSchema?: z.ZodTypeAny,
@@ -167,7 +203,10 @@ function dedent(s: string): string {
   const lines = s.replace(/^\n/, '').split('\n');
   const indents = lines.filter((l) => l.trim()).map((l) => l.match(/^ */)?.[0].length ?? 0);
   const min = indents.length ? Math.min(...indents) : 0;
-  return lines.map((l) => l.slice(min)).join('\n').trimEnd();
+  return lines
+    .map((l) => l.slice(min))
+    .join('\n')
+    .trimEnd();
 }
 
 // ═══════════════════════════════════════════════════

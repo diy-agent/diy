@@ -55,7 +55,9 @@ describe("edit 工具 — 装配层契约", () => {
         const p = join(workDir, "miss.ts");
         writeFileSync(p, "x\n", "utf-8");
         const tools = buildTools(workDir, limits, "test/task") as any;
-        await expect(tools.edit.execute({ path: "miss.ts", edits: [{ oldText: "nope", newText: "y" }] })).rejects.toMatchObject({
+        await expect(
+            tools.edit.execute({ path: "miss.ts", edits: [{ oldText: "nope", newText: "y" }] }),
+        ).rejects.toMatchObject({
             code: "fs/no-match",
         });
         expect(readFileSync(p, "utf-8")).toBe("x\n");

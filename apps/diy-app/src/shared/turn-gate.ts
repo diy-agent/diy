@@ -27,9 +27,7 @@ export interface TurnGateInput {
 }
 
 /** 拒绝的载荷：`code` 供日志/统计（`<域>/<kebab-case>`），`reason` 是给用户的一句话 */
-export type TurnGateDecision =
-    | { allow: true }
-    | { allow: false; code: string; reason: string; detail?: string };
+export type TurnGateDecision = { allow: true } | { allow: false; code: string; reason: string; detail?: string };
 
 /**
  * 准入策略：**同步纯函数**（内核在 `chat()` 最开头调它，早于读盘与模型解析）。

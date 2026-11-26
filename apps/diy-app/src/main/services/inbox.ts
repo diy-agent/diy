@@ -29,10 +29,7 @@ export function inboxFile(): string {
 let seq = 0;
 
 /** 组装一条信箱条目（id / ts 由这里补，调用方只给事实） */
-export function inboxEntryOf(
-    partial: Omit<InboxEntry, "id" | "ts">,
-    now = new Date(),
-): InboxEntry {
+export function inboxEntryOf(partial: Omit<InboxEntry, "id" | "ts">, now = new Date()): InboxEntry {
     return { id: `ib-${now.getTime()}-${String(++seq).padStart(4, "0")}`, ts: localISOString(now), ...partial };
 }
 
@@ -188,7 +185,6 @@ export function messageEntryOf(input: {
         },
     };
 }
-
 
 /** fire-and-forget 落一条（记账失败只出声，绝不让投递因此失败） */
 export function noteInbox(partial: Omit<InboxEntry, "id" | "ts">): void {

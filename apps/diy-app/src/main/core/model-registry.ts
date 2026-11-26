@@ -98,20 +98,16 @@ export function expandEnvValue(
     return error ? { value: null, error } : { value: out, error: null };
 }
 
-
 function accountViews(accounts: ProviderConfig["accounts"]): AccountView[] {
     return accounts.map((a, i) => {
         // 空值 = 还没填（不是错误，运行时该账号不可用）：expanded=null、error=null。
-        const { value, error } = a.data.value.trim() === "" ? { value: null, error: null } : expandEnvValue(a.data.value);
+        const { value, error } =
+            a.data.value.trim() === "" ? { value: null, error: null } : expandEnvValue(a.data.value);
         return { index: i, label: a.name ?? String(i), account: a, expanded: value, error };
     });
 }
 
-function modelViews(
-    spec: SpecProvider | null,
-    overrides: Record<string, ModelOverride>,
-    filter: Filter,
-): ModelView[] {
+function modelViews(spec: SpecProvider | null, overrides: Record<string, ModelOverride>, filter: Filter): ModelView[] {
     const specModels = spec?.models ?? {}; // custom spec 未写 models 时是 undefined
     const specIds = Object.keys(specModels);
     const ids = [...specIds, ...Object.keys(overrides ?? {}).filter((id) => !specIds.includes(id))];
@@ -128,7 +124,14 @@ function modelViews(
         const cost =
             o?.cost ??
             (sc && (sc.input !== undefined || sc.output !== undefined)
-                ? { input: sc.input, output: sc.output, cache_read: sc.cache_read, cache_write: sc.cache_write, baseLabel: sc.baseLabel, tiers: sc.tiers }
+                ? {
+                      input: sc.input,
+                      output: sc.output,
+                      cache_read: sc.cache_read,
+                      cache_write: sc.cache_write,
+                      baseLabel: sc.baseLabel,
+                      tiers: sc.tiers,
+                  }
                 : null);
         // 档位：配置覆盖 > models.dev 的 reasoning_options（effort 词表）> 兜底/关闭。
         const declaredSupport = reasoningFromSpec(m?.reasoning, m?.reasoning_options);
@@ -149,7 +152,11 @@ function modelViews(
         });
     }
     // 展示顺序 = 价格从低到高（便宜的先看见；无价排后）。UI 模型平铺按钮照此渲染。
-    out.sort((a, b) => (a.cost?.input ?? Number.POSITIVE_INFINITY) - (b.cost?.input ?? Number.POSITIVE_INFINITY) || a.id.localeCompare(b.id));
+    out.sort(
+        (a, b) =>
+            (a.cost?.input ?? Number.POSITIVE_INFINITY) - (b.cost?.input ?? Number.POSITIVE_INFINITY) ||
+            a.id.localeCompare(b.id),
+    );
     return out;
 }
 
@@ -169,9 +176,7 @@ function providerView(
         key,
         kind,
         limited,
-        spec: spec
-            ? { id: spec.id, name: spec.name ?? null, npm: spec.npm, api: spec.api, env: spec.env ?? [] }
-            : null,
+        spec: spec ? { id: spec.id, name: spec.name ?? null, npm: spec.npm, api: spec.api, env: spec.env ?? [] } : null,
         config: { accounts: config.accounts, filter, models: overrides },
         accounts,
         models,
@@ -192,9 +197,7 @@ export function registryView(home: string): LlmConfigView {
         env: p.env ?? [],
     }));
     const providers: ProviderView[] = [
-        ...Object.entries(cfg.stdProviders).map(([key, config]) =>
-            providerView("std", key, config, snap[key] ?? null),
-        ),
+        ...Object.entries(cfg.stdProviders).map(([key, config]) => providerView("std", key, config, snap[key] ?? null)),
         ...Object.entries(cfg.customProviders).map(([key, config]) =>
             providerView("custom", key, config, customSpecs[key] ?? null),
         ),

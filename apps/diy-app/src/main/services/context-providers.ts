@@ -197,7 +197,11 @@ const SKILLS_HELP: SchemaDoc = {
  *
  * 渲染变量用 `core`（不含本节）—— identity.md 只引用 persona，不引用自己。
  */
-export function sectionProvider(key: "identity" | "rules" | "guard", core: () => Record<string, unknown>, shared: Shared): ContextProvider {
+export function sectionProvider(
+    key: "identity" | "rules" | "guard",
+    core: () => Record<string, unknown>,
+    shared: Shared,
+): ContextProvider {
     return {
         key,
         provide: () => {
@@ -213,7 +217,6 @@ export function sectionProvider(key: "identity" | "rules" | "guard", core: () =>
         },
     };
 }
-
 
 /** `kb` 节：知识库索引（AGENTS.md 里「按需」的条目迁进 facts 后，agent 靠它知道库里有什么） */
 /**
@@ -266,7 +269,6 @@ export function kbProvider(home: string, shared: Shared): ContextProvider {
         },
     };
 }
-
 
 /** `docs` 节：仓库文档索引摘要（真源是仓库文件树；任务不在仓库里 ⇒ 整节缺席） */
 export function docsProvider(projectId: string): ContextProvider {

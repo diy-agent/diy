@@ -9,13 +9,13 @@ electronVersion: "43.1.1"
 # buildResources 挪 res/：build/ 现在是产物根（build/prod/**），不能再当资源目录
 # （否则 electron-builder 会把整个 build/ 当资源并从打包里排除）。
 directories:
-  output: release
-  buildResources: res
+    output: release
+    buildResources: res
 
 files:
-  - build/prod/**/*
-  - package.json
-  - "!node_modules/**"
+    - build/prod/**/*
+    - package.json
+    - "!node_modules/**"
 
 asar: true
 
@@ -24,38 +24,38 @@ asar: true
 # 主进程用 createRequire(Resources/runtime/package.json) 解析 @diy-agent/*。
 # 与 files 段的 `!node_modules/**` 无关：extraResources 走 Resources/ 根，不进 asar。
 extraResources:
-  - from: runtime
-    to: runtime
-  # electron-builder 的拷贝过滤器无条件跳过「相对层的根 node_modules」
-  # （app-builder-lib/out/util/filter.js: relative === "node_modules" → false），
-  # 故 runtime/node_modules 必须单独挂一次：此时相对路径是 @diy-agent/...，不再命中那条规则。
-  - from: runtime/node_modules
-    to: runtime/node_modules
+    - from: runtime
+      to: runtime
+    # electron-builder 的拷贝过滤器无条件跳过「相对层的根 node_modules」
+    # （app-builder-lib/out/util/filter.js: relative === "node_modules" → false），
+    # 故 runtime/node_modules 必须单独挂一次：此时相对路径是 @diy-agent/...，不再命中那条规则。
+    - from: runtime/node_modules
+      to: runtime/node_modules
 
 # ── macOS ──
 mac:
-  icon: res/icon.icns
-  target:
-    - target: dmg
-      arch:
-        - arm64
-        - x64
-  category: public.app-category.developer-tools
-  artifactName: "${productName}-${version}-${arch}.${ext}"
+    icon: res/icon.icns
+    target:
+        - target: dmg
+          arch:
+              - arm64
+              - x64
+    category: public.app-category.developer-tools
+    artifactName: "${productName}-${version}-${arch}.${ext}"
 
 dmg:
-  title: "diy 管控台"
+    title: "diy 管控台"
 
 # ── Linux ──
 linux:
-  target:
-    - AppImage
-    - deb
-  category: Development
-  artifactName: "${productName}-${version}-${arch}.${ext}"
+    target:
+        - AppImage
+        - deb
+    category: Development
+    artifactName: "${productName}-${version}-${arch}.${ext}"
 
 # ── Windows ──
 win:
-  target:
-    - portable
-  artifactName: "${productName}-${version}-${arch}.${ext}"
+    target:
+        - portable
+    artifactName: "${productName}-${version}-${arch}.${ext}"

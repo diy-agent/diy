@@ -27,9 +27,7 @@ afterEach(() => {
 });
 
 const add = (o: Partial<store.JournalAddInput> = {}) => {
-    return store.addEntries(TASK, [
-        { kind: "progress", title: "落地一步", ...o }],
-    );
+    return store.addEntries(TASK, [{ kind: "progress", title: "落地一步", ...o }]);
 };
 
 describe("add / read", () => {
@@ -69,7 +67,7 @@ describe("正文三选一", () => {
         expect(store.resolveBody(undefined, undefined, undefined)).toBeUndefined();
     });
 
-    it("多给即错（静默取一个会让\"我明明写了两个\"变成悬案）", () => {
+    it('多给即错（静默取一个会让"我明明写了两个"变成悬案）', () => {
         expect(() => store.resolveBody("a", "b", undefined)).toThrow();
     });
 });
@@ -89,8 +87,19 @@ describe("坏行容忍", () => {
 describe("find", () => {
     beforeEach(() => {
         store.addEntries(TASK, [
-            { kind: "pitfall", title: "单引号包裹长文本", body: "js-yaml 会整段加引号", ts: "2026-10-20T01:00:00.000Z" },
-            { kind: "decision", title: "日志走 append-only", body: "改日志没意义", ts: "2026-10-21T02:00:00.000Z", refs: ["b2f739da"] },
+            {
+                kind: "pitfall",
+                title: "单引号包裹长文本",
+                body: "js-yaml 会整段加引号",
+                ts: "2026-10-20T01:00:00.000Z",
+            },
+            {
+                kind: "decision",
+                title: "日志走 append-only",
+                body: "改日志没意义",
+                ts: "2026-10-21T02:00:00.000Z",
+                refs: ["b2f739da"],
+            },
             { kind: "review", title: "验收：60 测试全绿", ts: "2026-10-21T03:00:00.000Z" },
         ]);
     });
@@ -253,9 +262,7 @@ describe("author / anchor", () => {
     });
 
     it("anchor 形状非法在写入前就拦住（磁盘不动）", () => {
-        expect(() =>
-            add({ anchor: { type: "node" } as never }),
-        ).toThrow();
+        expect(() => add({ anchor: { type: "node" } as never })).toThrow();
         expect(store.readJournal(TASK).rows).toHaveLength(0);
     });
 });
@@ -301,6 +308,8 @@ describe("addSystemEvent", () => {
     });
 
     it("任务不存在 → 拒（同 addEntries，不在别处造孤儿）", () => {
-        expect(() => store.addSystemEvent("projects/1/tasks/999", { code: "agent/x", title: "t" })).toThrow(/任务不存在/);
+        expect(() => store.addSystemEvent("projects/1/tasks/999", { code: "agent/x", title: "t" })).toThrow(
+            /任务不存在/,
+        );
     });
 });

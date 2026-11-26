@@ -70,14 +70,28 @@ export function SessionGlyph(props: SessionGlyphProps) {
                                 fallback={
                                     /* 未运行：空心圆（细）—— 「没开始」与「结束了」形状上就不同 */
                                     <svg width={px()} height={px()} viewBox="0 0 16 16" aria-hidden="true">
-                                        <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                                        <circle
+                                            cx="8"
+                                            cy="8"
+                                            r="5.5"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="1.6"
+                                        />
                                     </svg>
                                 }
                             >
                                 {/* 已结束：UML 终态圆（外圈 + 实心内点）；线型在 svg 里表达 */}
                                 <svg width={px()} height={px()} viewBox="0 0 16 16" aria-hidden="true">
                                     <Show when={v().line === "double"}>
-                                        <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1" />
+                                        <circle
+                                            cx="8"
+                                            cy="8"
+                                            r="7"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            stroke-width="1"
+                                        />
                                     </Show>
                                     <circle
                                         cx="8"

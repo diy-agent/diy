@@ -11,12 +11,7 @@
 //   ③ `note` 与 `error` 是两件事：`ok + note` 不算失败，徽章文案要读得懂
 
 import { describe, it, expect } from "vitest";
-import {
-    DeliveryStateSchema,
-    STEERED_NOTE,
-    deliveryPlanFor,
-    deliveryStateText,
-} from "../../src/shared/room";
+import { DeliveryStateSchema, STEERED_NOTE, deliveryPlanFor, deliveryStateText } from "../../src/shared/room";
 
 describe("deliveryPlanFor：忙不忙只决定投递方式", () => {
     it("① 空闲 ⇒ 开一轮", () => {

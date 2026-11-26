@@ -70,7 +70,8 @@ export function FlowStage(props: {
 }) {
     const lanes = createMemo(() => deriveLanes(props.view));
     const stage = createMemo(() => buildStage(lanes(), props.view.trajectory));
-    const isCurrent = (v: StageVisit) => props.view.position === v.visit.node && v.index === props.view.trajectory.length - 1;
+    const isCurrent = (v: StageVisit) =>
+        props.view.position === v.visit.node && v.index === props.view.trajectory.length - 1;
 
     return (
         <div class="h-full overflow-auto bg-base-200 p-2">
@@ -92,7 +93,8 @@ export function FlowStage(props: {
                                     left: `${lane.x}px`,
                                     width: `${lane.w}px`,
                                     height: `${stage().height}px`,
-                                    "background-color": i() % 2 === 0 ? "rgba(148,163,184,0.10)" : "rgba(148,163,184,0.18)",
+                                    "background-color":
+                                        i() % 2 === 0 ? "rgba(148,163,184,0.10)" : "rgba(148,163,184,0.18)",
                                 }}
                             >
                                 <div class="px-2 pt-1 text-body font-bold" style={{ color: ACTOR_COLOR["agent"] }}>
@@ -120,10 +122,26 @@ export function FlowStage(props: {
                     xmlns="http://www.w3.org/2000/svg"
                 >
                     <defs>
-                        <marker id="flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                        <marker
+                            id="flow-arrow"
+                            viewBox="0 0 10 10"
+                            refX="9"
+                            refY="5"
+                            markerWidth="6"
+                            markerHeight="6"
+                            orient="auto"
+                        >
                             <path d="M0,0 L10,5 L0,10 z" fill={WIRE_COLOR.next} />
                         </marker>
-                        <marker id="flow-arrow-bounce" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                        <marker
+                            id="flow-arrow-bounce"
+                            viewBox="0 0 10 10"
+                            refX="9"
+                            refY="5"
+                            markerWidth="6"
+                            markerHeight="6"
+                            orient="auto"
+                        >
                             <path d="M0,0 L10,5 L0,10 z" fill={WIRE_COLOR.bounce} />
                         </marker>
                     </defs>
@@ -146,7 +164,13 @@ export function FlowStage(props: {
                         {(w) => (
                             <Show when={w.label}>
                                 {(l) => (
-                                    <text x={l().x} y={l().y} text-anchor="middle" font-size="10.5" fill={WIRE_COLOR[w.kind]}>
+                                    <text
+                                        x={l().x}
+                                        y={l().y}
+                                        text-anchor="middle"
+                                        font-size="10.5"
+                                        fill={WIRE_COLOR[w.kind]}
+                                    >
                                         {l().text}
                                     </text>
                                 )}
@@ -195,13 +219,19 @@ export function FlowStage(props: {
                                         class="inline-block h-2 w-2 rounded-full"
                                         style={{
                                             background:
-                                                ACTOR_COLOR[lanes()[v.lane]?.node === props.view.node?.id ? props.view.node.actor : "agent"] ??
-                                                ACTOR_COLOR["agent"],
+                                                ACTOR_COLOR[
+                                                    lanes()[v.lane]?.node === props.view.node?.id
+                                                        ? props.view.node.actor
+                                                        : "agent"
+                                                ] ?? ACTOR_COLOR["agent"],
                                         }}
                                     />
                                     <span>{v.visit.kind === "bounce" ? "打回进入" : "推进进入"}</span>
                                 </div>
-                                <ArtifactBox state={props.artifacts[visitKey(v.visit.node, v.visit.seq)]} visit={v.visit} />
+                                <ArtifactBox
+                                    state={props.artifacts[visitKey(v.visit.node, v.visit.seq)]}
+                                    visit={v.visit}
+                                />
                             </div>
                         )}
                     </For>

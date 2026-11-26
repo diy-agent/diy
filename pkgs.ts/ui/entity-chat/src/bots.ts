@@ -171,9 +171,7 @@ export function outcomeTextOf(row: BotRow): string {
         case 'interrupted':
             return '中断（上一轮没跑完）';
         case 'failed':
-            return row.outcomeMessage === undefined || row.outcomeMessage === ''
-                ? '运行失败'
-                : row.outcomeMessage;
+            return row.outcomeMessage === undefined || row.outcomeMessage === '' ? '运行失败' : row.outcomeMessage;
     }
 }
 
@@ -252,7 +250,7 @@ export interface BotRowsState {
  * 实际用到的那几项 —— 缺了就当「这台实例没有这份表」，不抛错、不白屏。
  */
 function rowsApi(): { rows: () => Promise<{ rows: BotRow[] }> } | undefined {
-    return (diy2.bots as { rows?: () => Promise<{ rows: BotRow[] }> } | undefined) as
+    return diy2.bots as { rows?: () => Promise<{ rows: BotRow[] }> } | undefined as
         | { rows: () => Promise<{ rows: BotRow[] }> }
         | undefined;
 }
@@ -269,7 +267,6 @@ export function useBotRows(active: boolean): BotRowsState {
     const [error, setError] = React.useState<string | null>(null);
     const [loaded, setLoaded] = React.useState(false);
     const [tick, setTick] = React.useState(0);
-
 
     React.useEffect(() => {
         let alive = true;

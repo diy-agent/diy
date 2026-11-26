@@ -61,7 +61,12 @@ describe("refreshModelsOnStartup", () => {
     it("延迟 DEFAULT_STARTUP_DELAY_MS 后跑**一次**（不注册任何间隔）", async () => {
         const { timer, timeouts } = fakeTimer();
         let calls = 0;
-        refreshModelsOnStartup({ timer, delayMs: DEFAULT_STARTUP_DELAY_MS, refresh: async () => (calls++, okResult(false)), log: () => {} });
+        refreshModelsOnStartup({
+            timer,
+            delayMs: DEFAULT_STARTUP_DELAY_MS,
+            refresh: async () => (calls++, okResult(false)),
+            log: () => {},
+        });
         expect(timeouts).toHaveLength(1); // 只有一个 setTimeout：没有任何循环调度
         expect(timeouts[0]!.ms).toBe(15_000);
         expect(calls).toBe(0); // 不阻塞启动：注册时没跑
@@ -73,7 +78,12 @@ describe("refreshModelsOnStartup", () => {
     it("关闭时什么都不注册（手工按钮仍可用）", () => {
         const { timer, timeouts } = fakeTimer();
         const logs: string[] = [];
-        refreshModelsOnStartup({ timer, enabled: false, refresh: async () => okResult(false), log: (m) => logs.push(m) });
+        refreshModelsOnStartup({
+            timer,
+            enabled: false,
+            refresh: async () => okResult(false),
+            log: (m) => logs.push(m),
+        });
         expect(timeouts).toHaveLength(0);
         expect(logs.join("\n")).toMatch(/已关闭/);
     });
@@ -81,7 +91,11 @@ describe("refreshModelsOnStartup", () => {
     it("取消函数清掉挂着的定时器，之后不再调 refresh（应用退出不留悬挂 tick）", async () => {
         const { timer, timeouts } = fakeTimer();
         let calls = 0;
-        const cancel = refreshModelsOnStartup({ timer, refresh: async () => (calls++, okResult(false)), log: () => {} });
+        const cancel = refreshModelsOnStartup({
+            timer,
+            refresh: async () => (calls++, okResult(false)),
+            log: () => {},
+        });
         cancel();
         expect(timeouts[0]!.cleared).toBe(true);
         timeouts[0]!.fn(); // 即使（竞争下）回调仍被调到，也不跑

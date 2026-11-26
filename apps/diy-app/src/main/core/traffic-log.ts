@@ -16,7 +16,19 @@
 //
 // 界面按日期/全文查历史时，走 queryRecords：一天一个文件地流式扫，不把全部内容堆进内存。
 
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, writeSync } from "node:fs";
+import {
+    closeSync,
+    existsSync,
+    fstatSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    readSync,
+    statSync,
+    unlinkSync,
+    writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { TrafficStore, type RecentQuery, type TrafficEntry, type TrafficStats } from "@diy-agent/traffic";
 import { diyHome } from "./state";
@@ -133,7 +145,13 @@ class Writer {
         }
         this.pos += wrote;
         this.line += 1;
-        return { file: `${LOG_DIR_REL}/${this.day}`, offset, len: wrote, line: this.line, abs: join(dirAbs(), this.day) };
+        return {
+            file: `${LOG_DIR_REL}/${this.day}`,
+            offset,
+            len: wrote,
+            line: this.line,
+            abs: join(dirAbs(), this.day),
+        };
     }
 }
 
@@ -180,8 +198,8 @@ export function appendRecord(payload: unknown): LogLoc {
         const p = payload as Record<string, unknown>;
         store.push({
             ...p,
-            kind: typeof p['kind'] === 'string' ? p['kind'] : 'http',
-            at: typeof p['ts'] === 'number' ? p['ts'] : Date.now(),
+            kind: typeof p["kind"] === "string" ? p["kind"] : "http",
+            at: typeof p["ts"] === "number" ? p["ts"] : Date.now(),
         });
     } catch {
         /* 内存层的失败不该让一条已经落盘的记录报错 */
@@ -318,9 +336,25 @@ function haystack(rec: Record<string, unknown>): string {
     const body = rec.reqBody as { head?: string; tail?: string } | null | undefined;
     const res = rec.resBody as { head?: string; tail?: string } | null | undefined;
     const parts: unknown[] = [
-        rec.url, rec.method, rec.status, rec.host, rec.path, rec.kind,
-        rec.model, rec.provider, rec.taskUri, rec.turnId, rec.traceId, rec.err, rec.resNote,
-        rec.reqHeaders, rec.resHeaders, body?.head, body?.tail, res?.head, res?.tail,
+        rec.url,
+        rec.method,
+        rec.status,
+        rec.host,
+        rec.path,
+        rec.kind,
+        rec.model,
+        rec.provider,
+        rec.taskUri,
+        rec.turnId,
+        rec.traceId,
+        rec.err,
+        rec.resNote,
+        rec.reqHeaders,
+        rec.resHeaders,
+        body?.head,
+        body?.tail,
+        res?.head,
+        res?.tail,
     ];
     return parts
         .map((p) => (p == null ? "" : typeof p === "string" ? p : JSON.stringify(p)))

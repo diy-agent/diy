@@ -7,7 +7,8 @@ import { DomApp } from "../../../src/providers/dom.js";
  * **清空整列 + 重建全部行**。消息越多越贵，但实现最直白、语义最简单。
  */
 
-const hhmmss = (): string => new Date().toLocaleTimeString("zh-CN", { hour12: false });
+const hhmmss = (): string =>
+  new Date().toLocaleTimeString("zh-CN", { hour12: false });
 
 export function streamDslDemo(el: HTMLElement): void {
   const app = new DomApp({ mount: el });

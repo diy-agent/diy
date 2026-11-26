@@ -11,10 +11,7 @@ import { makeShellTool, type ShellToolHost } from '../src/shell/tool.js';
 import { FALLBACK_SHELL } from '../src/shell/spec.js';
 
 /** 取出工具定义里的 execute（ai-sdk 的 tool() 返回对象带 execute） */
-const exec = async (
-    host: Pick<ShellToolHost, 'beforeRun'>,
-    command: string,
-): Promise<string> => {
+const exec = async (host: Pick<ShellToolHost, 'beforeRun'>, command: string): Promise<string> => {
     const t = makeShellTool(FALLBACK_SHELL, { cwd: process.cwd(), limits: { bashTimeoutMs: 2000 }, ...host });
     const out = await (t as unknown as { execute: (a: unknown) => Promise<string> }).execute({ command });
     return out;
@@ -40,7 +37,15 @@ describe('beforeRun 钩子', () => {
 
     it('钩子收到的就是**原始命令**（宿主拿它自己判，不做预处理）', async () => {
         let seen = '';
-        await exec({ beforeRun: (cmd) => { seen = cmd; return undefined; } }, 'echo "带 引号 的命令"');
+        await exec(
+            {
+                beforeRun: (cmd) => {
+                    seen = cmd;
+                    return undefined;
+                },
+            },
+            'echo "带 引号 的命令"',
+        );
         expect(seen).toBe('echo "带 引号 的命令"');
     });
 });

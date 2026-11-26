@@ -15,29 +15,37 @@ import { channelHarness, httpHarness, wsHarness, type TransportHarness } from '.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** 四流模式共享 api 定义（纯 meta，router() 回写全名） */
-const api = RpcSchema.group({ children: {
-  greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
-  fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
-  count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),
-  upload: RpcSchema.clientStream({
-    input: { tag: z.string() }, chunkIn: z.string(),
-    output: z.object({ tag: z.string(), received: z.array(z.string()) }),
-  }),
-  echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.string(), chunkOut: z.string() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
+    fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
+    count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),
+    upload: RpcSchema.clientStream({
+      input: { tag: z.string() },
+      chunkIn: z.string(),
+      output: z.object({ tag: z.string(), received: z.array(z.string()) }),
+    }),
+    echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.string(), chunkOut: z.string() }),
+  },
+});
 
 function wireBinding(binding: ServerBinding) {
-  binding._on("greet", api.greet, async ({ input }) => `Hello, ${input.name}!`);
-  binding._on("fail", api.fail, async () => { throw new RpcError('INTERNAL', 'boom'); });
-  binding._on("count", api.count, async function* ({ input }) {
-    for (let i = 1; i <= input.to; i++) { await sleep(1); yield i; }
+  binding._on('greet', api.greet, async ({ input }) => `Hello, ${input.name}!`);
+  binding._on('fail', api.fail, async () => {
+    throw new RpcError('INTERNAL', 'boom');
   });
-  binding._on("upload", api.upload, async ({ input, stream }) => {
+  binding._on('count', api.count, async function* ({ input }) {
+    for (let i = 1; i <= input.to; i++) {
+      await sleep(1);
+      yield i;
+    }
+  });
+  binding._on('upload', api.upload, async ({ input, stream }) => {
     const received: string[] = [];
     for await (const c of stream) received.push(c as string);
     return { tag: input.tag, received };
   });
-  binding._on("echo", api.echo, async function* ({ stream }) {
+  binding._on('echo', api.echo, async function* ({ stream }) {
     for await (const m of stream) yield `echo: ${m}`;
   });
 }
@@ -49,44 +57,47 @@ const harnesses: TransportHarness[] = [
   // ipc 后续接入
 ];
 
-describe.each(harnesses.map((h) => [h.name, h] as const))(
-  'binding: %s',
-  (_name, h) => {
-    it('四流模式往返 + 错误传播', async () => {
-      const { binding, client, dispose } = await h.start();
-      try {
-        wireBinding(binding);
-        const cli = createTypedClient(client, api);
+describe.each(harnesses.map((h) => [h.name, h] as const))('binding: %s', (_name, h) => {
+  it('四流模式往返 + 错误传播', async () => {
+    const { binding, client, dispose } = await h.start();
+    try {
+      wireBinding(binding);
+      const cli = createTypedClient(client, api);
 
-        // 1. unary
-        const g = await cli.greet({ name: 'World' });
-        expect(g).toBe('Hello, World!');
+      // 1. unary
+      const g = await cli.greet({ name: 'World' });
+      expect(g).toBe('Hello, World!');
 
-        // 2. unary 错误传播
-        await expect(cli.fail({})).rejects.toMatchObject({ code: 'INTERNAL', message: 'boom' });
+      // 2. unary 错误传播
+      await expect(cli.fail({})).rejects.toMatchObject({ code: 'INTERNAL', message: 'boom' });
 
-        // 3. server-stream
-        const hnd = await cli.count({ to: 3 });
-        const nums: number[] = [];
-        for await (const v of hnd) nums.push(v);
-        expect(nums).toEqual([1, 2, 3]);
+      // 3. server-stream
+      const hnd = await cli.count({ to: 3 });
+      const nums: number[] = [];
+      for await (const v of hnd) nums.push(v);
+      expect(nums).toEqual([1, 2, 3]);
 
-        // 4. client-stream
-        async function* uploadGen() { yield 'a'; yield 'b'; }
-        const up = await cli.upload({ tag: 'demo' }, uploadGen());
-        expect(up).toEqual({ tag: 'demo', received: ['a', 'b'] });
-
-        // 5. bidi-stream
-        async function* msgs() { yield 'hello'; yield 'world'; }
-        const replies = await cli.echo({}, msgs());
-        const out: string[] = [];
-        for await (const r of replies) out.push(r);
-        expect(out).toEqual(['echo: hello', 'echo: world']);
-
-        binding.destroy();
-      } finally {
-        await dispose();
+      // 4. client-stream
+      async function* uploadGen() {
+        yield 'a';
+        yield 'b';
       }
-    });
-  },
-);
+      const up = await cli.upload({ tag: 'demo' }, uploadGen());
+      expect(up).toEqual({ tag: 'demo', received: ['a', 'b'] });
+
+      // 5. bidi-stream
+      async function* msgs() {
+        yield 'hello';
+        yield 'world';
+      }
+      const replies = await cli.echo({}, msgs());
+      const out: string[] = [];
+      for await (const r of replies) out.push(r);
+      expect(out).toEqual(['echo: hello', 'echo: world']);
+
+      binding.destroy();
+    } finally {
+      await dispose();
+    }
+  });
+});

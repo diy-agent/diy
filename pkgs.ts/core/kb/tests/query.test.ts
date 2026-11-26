@@ -3,7 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { briefOf, deviceKbRoot, findIn, firstSentence, getSection, parseSections, pathsOf, sameKbRoot } from '../src/query';
+import {
+    briefOf,
+    deviceKbRoot,
+    findIn,
+    firstSentence,
+    getSection,
+    parseSections,
+    pathsOf,
+    sameKbRoot,
+} from '../src/query';
 
 const dirs: string[] = [];
 function tmp(): string {

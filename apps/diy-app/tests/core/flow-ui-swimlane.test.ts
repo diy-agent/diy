@@ -12,7 +12,14 @@
 
 import { describe, it, expect } from "vitest";
 import { deflateSync } from "node:zlib";
-import { deriveLanes, paramKv, paramValueOf, paramsOfSchema, type FlowInstanceView, type FlowVisitBrief } from "../../src/renderer_solid/lib/flow-model";
+import {
+    deriveLanes,
+    paramKv,
+    paramValueOf,
+    paramsOfSchema,
+    type FlowInstanceView,
+    type FlowVisitBrief,
+} from "../../src/renderer_solid/lib/flow-model";
 import { LANE_Z, NODE_Z, WIRE_Z, buildStage, DEFAULT_GEOM } from "../../src/renderer_solid/components/flow/swimlane";
 import { countPixels, decodePng, isBlue, isRed } from "../png-pixels";
 
@@ -35,7 +42,12 @@ function viewOf(partial: Partial<FlowInstanceView>): FlowInstanceView {
         done: false,
         bounces: 1,
         next: { mode: "actor", pending: ["prompt:ci_done"], edges: [], terminal: true },
-        trajectory: [visit("implement", "next"), visit("review", "next"), visit("implement", "bounce", 2), visit("ci", "next")],
+        trajectory: [
+            visit("implement", "next"),
+            visit("review", "next"),
+            visit("implement", "bounce", 2),
+            visit("ci", "next"),
+        ],
         params: {},
         paramsSchema: [],
         auditSkipped: 0,
@@ -76,7 +88,13 @@ describe("deriveLanes —— 泳道推导（折线首现序 ∪ 出边目标）"
     });
 
     it("未进入（折线为空、无出边）⇒ 零泳道，不编造", () => {
-        const v = viewOf({ entered: false, position: null, node: null, trajectory: [], next: { mode: "entry", pending: [], edges: [], terminal: false } });
+        const v = viewOf({
+            entered: false,
+            position: null,
+            node: null,
+            trajectory: [],
+            next: { mode: "entry", pending: [], edges: [], terminal: false },
+        });
         expect(deriveLanes(v)).toEqual([]);
     });
 });
@@ -94,7 +112,14 @@ describe("buildStage —— 折线几何", () => {
     it("同泳道相邻驻留 = 直线（`L`）；跨泳道 = S 形（`C`）", () => {
         // implement(泳道 0) 两次驻留相邻：打回后从 review 回 implement 是跨道，故只能构造同列相邻场景
         const sameLane: FlowVisitBrief[] = [visit("a", "next"), visit("a", "next", 2)];
-        const lanes = deriveLanes(viewOf({ trajectory: sameLane, position: "a", node: null, next: { mode: "actor", pending: [], edges: [], terminal: true } }));
+        const lanes = deriveLanes(
+            viewOf({
+                trajectory: sameLane,
+                position: "a",
+                node: null,
+                next: { mode: "actor", pending: [], edges: [], terminal: true },
+            }),
+        );
         const st = buildStage(lanes, sameLane);
         expect(st.wires[0]!.d).toContain("L");
 
@@ -129,8 +154,25 @@ describe("buildStage —— 折线几何", () => {
 
 describe("参数小工具", () => {
     const schema = [
-        { node: "review", name: "reviewers", path: "review.reviewers", type: "number" as const, label: "评审人数", default: 1, min: 1, max: 5, unit: "人" },
-        { node: "ci", name: "command", path: "ci.command", type: "string" as const, label: "CI 命令", default: "./sha.sh check" },
+        {
+            node: "review",
+            name: "reviewers",
+            path: "review.reviewers",
+            type: "number" as const,
+            label: "评审人数",
+            default: 1,
+            min: 1,
+            max: 5,
+            unit: "人",
+        },
+        {
+            node: "ci",
+            name: "command",
+            path: "ci.command",
+            type: "string" as const,
+            label: "CI 命令",
+            default: "./sha.sh check",
+        },
         { node: "ci", name: "tags", path: "ci.tags", type: "list" as const, label: "标签", default: ["a", "b"] },
     ];
 

@@ -14,22 +14,31 @@
 //   · custom 模型不支持「覆盖」models.dev 参数（全球共用），故无覆盖列
 import { For, Index, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type {
-  Account,
-  CalendarChoice,
-  CatalogEntry,
-  Cost,
-  CostTier,
-  CustomSpecsFile,
-  EnvImportCandidate,
-  LlmConfigView,
-  ModelConfigFile,
-  ProviderConfig,
-  SpecProvider,
-  WindowChoice,
+    Account,
+    CalendarChoice,
+    CatalogEntry,
+    Cost,
+    CostTier,
+    CustomSpecsFile,
+    EnvImportCandidate,
+    LlmConfigView,
+    ModelConfigFile,
+    ProviderConfig,
+    SpecProvider,
+    WindowChoice,
 } from "../../shared/model-config";
 import { filterAllows, npmOfEndpoints } from "../../shared/model-config";
 import type { CostField } from "../../shared/cost-edit";
-import { addUtcRangeTier, editCost, patchUtcRange, removeTier, setBaseLabel, setBasePrice, tierIssues, utcRangeSlots } from "../../shared/cost-edit";
+import {
+    addUtcRangeTier,
+    editCost,
+    patchUtcRange,
+    removeTier,
+    setBaseLabel,
+    setBasePrice,
+    tierIssues,
+    utcRangeSlots,
+} from "../../shared/cost-edit";
 import { diyService } from "../lib/rpc";
 import { EnvImportBar, type EnvScanScope } from "./EnvImportBar";
 import { createModelsSync } from "../lib/models-sync";
@@ -42,29 +51,29 @@ import { MODEL_UNAVAILABLE_KIND_LABEL } from "../../shared/model-unavailable";
 type FilterMode = "all" | "include" | "exclude";
 
 function modeOf(f: ProviderConfig["filter"]): FilterMode {
-  if (!f || (f.include.length === 0 && f.exclude.length === 0)) return "all";
-  return f.include.length > 0 ? "include" : "exclude";
+    if (!f || (f.include.length === 0 && f.exclude.length === 0)) return "all";
+    return f.include.length > 0 ? "include" : "exclude";
 }
 
 function fmtK(n: number | null | undefined): string {
-  if (n == null) return "—";
-  if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
-  if (n >= 1000) return `${Math.round(n / 1000)}K`;
-  return String(n);
+    if (n == null) return "—";
+    if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
+    if (n >= 1000) return `${Math.round(n / 1000)}K`;
+    return String(n);
 }
 
 /** npm（面）可选项：只认这两家（见 shared/models.ts NPM_FACE）。值是 npm 包名。 */
 const FACE_OPTIONS = [
-  { npm: "@ai-sdk/openai-compatible", label: "chat（/chat/completions）" },
-  { npm: "@ai-sdk/openai", label: "responses（/responses）" },
+    { npm: "@ai-sdk/openai-compatible", label: "chat（/chat/completions）" },
+    { npm: "@ai-sdk/openai", label: "responses（/responses）" },
 ] as const;
 
 /** 单价输入框（key 是 spec 的 snake_case；$/1M tokens）。逐档价格复用同一组控件。 */
 const COST_FIELDS: { key: CostField; ph: string; label: string }[] = [
-  { key: "input", ph: "in", label: "非缓存 $/1M（必填）" },
-  { key: "output", ph: "out", label: "输出 $/1M（必填）" },
-  { key: "cache_read", ph: "读", label: "缓存读 $/1M（可选）" },
-  { key: "cache_write", ph: "写", label: "缓存写 $/1M（可选）" },
+    { key: "input", ph: "in", label: "非缓存 $/1M（必填）" },
+    { key: "output", ph: "out", label: "输出 $/1M（必填）" },
+    { key: "cache_read", ph: "读", label: "缓存读 $/1M（可选）" },
+    { key: "cache_write", ph: "写", label: "缓存写 $/1M（可选）" },
 ];
 
 /**
@@ -78,478 +87,500 @@ const FOCUS_ATTR = "data-focus-phase";
 
 /** 按锚点找目标：**只按属性值比较**，不拼选择器（provider 名里可能有 `.` / `:` 之类） */
 function findByAnchor(anchor: string): HTMLElement | null {
-  for (const el of document.querySelectorAll<HTMLElement>("[data-focus-target]")) {
-    if (el.dataset.focusTarget === anchor) return el;
-  }
-  return null;
+    for (const el of document.querySelectorAll<HTMLElement>("[data-focus-target]")) {
+        if (el.dataset.focusTarget === anchor) return el;
+    }
+    return null;
 }
 
-export function ModelConfigPage(props: {
-  /**
-   * 从提示跳过来的修复引导（##407）：`remedy` = 判据给出的目标 + 自足文案，`nonce` = 每次点击不同。
-   * 缺省 = 用户自己点进来的（不引导、不高亮）。
-   */
-  focus?: { remedy: Remedy; nonce: number } | null;
-} = {}) {
-  const [loading, setLoading] = createSignal(true);
-  const [saving, setSaving] = createSignal(false);
-  const [dirty, setDirty] = createSignal(false);
-  const [view, setView] = createSignal<LlmConfigView | null>(null);
-  const [file, setFile] = createSignal<ModelConfigFile>({ stdProviders: {}, customProviders: {} });
-  const [specs, setSpecs] = createSignal<CustomSpecsFile>({});
-  const [query, setQuery] = createSignal("");
-  const [showNewCustom, setShowNewCustom] = createSignal(false);
-  /** 环境变量导入候选（snapshot 声明的 env ∩ process.env，再与现有配置比对；见 core/model-import） */
-  const [envCandidates, setEnvCandidates] = createSignal<EnvImportCandidate[]>([]);
-  /** 扫描面（providers 数 / 变量名）：零命中时提示条靠它交代「查过什么」 */
-  const [envScanned, setEnvScanned] = createSignal<EnvScanScope | null>(null);
-  /** 扫描失败原因：区别于「零命中」——前者是功能坏了，后者是环境里真没有 */
-  const [envScanError, setEnvScanError] = createSignal<string | null>(null);
-  const [envDismissed, setEnvDismissed] = createSignal(false);
-  /** 待确认移除的 provider（null = 无弹窗）。用应用内 ConfirmDialog，不用原生 confirm（见其头注释） */
-  const [pendingRemove, setPendingRemove] = createSignal<{ kind: "std" | "custom"; key: string } | null>(null);
-  /** 引导卡是否被用户关掉（换一条新引导时重新打开） */
-  const [guideOff, setGuideOff] = createSignal(false);
-  /** 当前要显示的引导（`remedy` 存在且没被收起才算） */
-  const guide = (): Remedy | null => (props.focus?.remedy && !guideOff() ? props.focus.remedy : null);
+export function ModelConfigPage(
+    props: {
+        /**
+         * 从提示跳过来的修复引导（##407）：`remedy` = 判据给出的目标 + 自足文案，`nonce` = 每次点击不同。
+         * 缺省 = 用户自己点进来的（不引导、不高亮）。
+         */
+        focus?: { remedy: Remedy; nonce: number } | null;
+    } = {},
+) {
+    const [loading, setLoading] = createSignal(true);
+    const [saving, setSaving] = createSignal(false);
+    const [dirty, setDirty] = createSignal(false);
+    const [view, setView] = createSignal<LlmConfigView | null>(null);
+    const [file, setFile] = createSignal<ModelConfigFile>({ stdProviders: {}, customProviders: {} });
+    const [specs, setSpecs] = createSignal<CustomSpecsFile>({});
+    const [query, setQuery] = createSignal("");
+    const [showNewCustom, setShowNewCustom] = createSignal(false);
+    /** 环境变量导入候选（snapshot 声明的 env ∩ process.env，再与现有配置比对；见 core/model-import） */
+    const [envCandidates, setEnvCandidates] = createSignal<EnvImportCandidate[]>([]);
+    /** 扫描面（providers 数 / 变量名）：零命中时提示条靠它交代「查过什么」 */
+    const [envScanned, setEnvScanned] = createSignal<EnvScanScope | null>(null);
+    /** 扫描失败原因：区别于「零命中」——前者是功能坏了，后者是环境里真没有 */
+    const [envScanError, setEnvScanError] = createSignal<string | null>(null);
+    const [envDismissed, setEnvDismissed] = createSignal(false);
+    /** 待确认移除的 provider（null = 无弹窗）。用应用内 ConfirmDialog，不用原生 confirm（见其头注释） */
+    const [pendingRemove, setPendingRemove] = createSignal<{ kind: "std" | "custom"; key: string } | null>(null);
+    /** 引导卡是否被用户关掉（换一条新引导时重新打开） */
+    const [guideOff, setGuideOff] = createSignal(false);
+    /** 当前要显示的引导（`remedy` 存在且没被收起才算） */
+    const guide = (): Remedy | null => (props.focus?.remedy && !guideOff() ? props.focus.remedy : null);
 
-  // ── 定位高亮（##407）：滚动到锚点 + flash 4s → rest ─────────────────
-  // 页面刚挂载时数据还没到（loading），目标元素可能还不存在 ⇒ 有限次重试（最多 ~2s）。
-  let focusTimer: ReturnType<typeof setTimeout> | undefined;
-  let focusTries = 0;
-  let focusedEl: HTMLElement | null = null;
-  const clearFocus = () => {
-    if (focusTimer !== undefined) clearTimeout(focusTimer);
-    focusTimer = undefined;
-    focusedEl?.removeAttribute(FOCUS_ATTR);
-    focusedEl = null;
-  };
-  /**
-   * 滚到目标（**幂等重试**）：刚切到本页时卡片还在加载，第一次 scrollIntoView 常常落空
-   * （容器内容还没长出来）；数据到了内容变高，位置又变了。故反复校正到真的在视口内为止。
-   * 首次用 smooth（看得见"跳过去"的过程），后续用 auto（不来回晃）。
-   */
-  const ensureVisible = (el: HTMLElement, tries = 0) => {
-    if (!el.isConnected) return;
-    const r = el.getBoundingClientRect();
-    if (r.top >= 0 && r.bottom <= window.innerHeight) return;
-    el.scrollIntoView({ block: "center", behavior: tries === 0 ? "smooth" : "auto" });
-    if (tries < 10) setTimeout(() => ensureVisible(el, tries + 1), 120);
-  };
-  const applyFocus = (anchor: string) => {
-    clearFocus();
-    focusTries = 0;
-    const tick = () => {
-      const el = findByAnchor(anchor);
-      if (!el) {
-        if (focusTries++ < 40) setTimeout(tick, 50);
-        return;
-      }
-      focusedEl = el;
-      el.setAttribute(FOCUS_ATTR, "flash");
-      ensureVisible(el);
-      focusTimer = setTimeout(() => {
-        // 不锁死：4s 后降为静态细描边，卡片照常可点
-        if (el.isConnected) el.setAttribute(FOCUS_ATTR, "rest");
-      }, FOCUS_FLASH_MS);
+    // ── 定位高亮（##407）：滚动到锚点 + flash 4s → rest ─────────────────
+    // 页面刚挂载时数据还没到（loading），目标元素可能还不存在 ⇒ 有限次重试（最多 ~2s）。
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    let focusTries = 0;
+    let focusedEl: HTMLElement | null = null;
+    const clearFocus = () => {
+        if (focusTimer !== undefined) clearTimeout(focusTimer);
+        focusTimer = undefined;
+        focusedEl?.removeAttribute(FOCUS_ATTR);
+        focusedEl = null;
     };
-    tick();
-  };
-  createEffect(() => {
-    const f = props.focus;
-    const nonce = f?.nonce ?? 0;
-    void nonce; // 显式读：同一条引导再点一次也要重新闪
-    if (!f) return;
-    setGuideOff(false);
-    applyFocus(f.remedy.target.anchor);
-  });
-  onCleanup(clearFocus);
-
-  const reload = async () => {
-    try {
-      const v = await diyService.diy.llmConfig.read({});
-      setView(v);
-      setFile(structuredClone(v.modelFile));
-      setSpecs(structuredClone(v.customSpecs));
-      setDirty(false);
-      // read 降级（配置结构非法）时仍打开页面，只提示原因（避免 RPC 抛错锁死，##275 R1-6）
-      if (v.error) notificationStore.addToastLegacy("error", `配置读取失败：${v.error}`);
-    } catch (e) {
-      notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "配置读取失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-  /**
-   * 模型目录刷新（##385 §3.3）：**常规入口**（顶栏 bar 不一定在屏幕上，所以这里必须有）。
-   * **有 diff 才重读视图**：`changed=false` 意为磁盘与界面同源同内容（`diffSnapshot` 已是逐字比较），
-   * 再 `reload` 一次没有收益，只会白花一次 RPC。
-   */
-  const modelsSync = createModelsSync({
-    onDone: (r) => {
-      if (r.ok && r.changed) void reload();
-    },
-  });
-
-  /** 扫环境变量（只列不写）：提示条据此渲染（候选 + 扫描面；失败也如实入条，不静默吞） */
-  const scanEnv = async () => {
-    try {
-      const r = await diyService.diy.llmConfig.scanEnv({});
-      setEnvCandidates(r.candidates);
-      setEnvScanned(r.scanned);
-      setEnvScanError(null);
-    } catch (e) {
-      setEnvCandidates([]);
-      setEnvScanned(null);
-      setEnvScanError(e instanceof Error ? e.message : "扫描失败");
-    }
-  };
-  onMount(() => {
-    void reload();
-    void scanEnv();
-  });
-
-  /** 导入候选（providers 为空 = 全部可导入项）；落盘后重读，候选随之变灰/消失 */
-  const importEnv = async (providers: string[]) => {
-    try {
-      const r = await diyService.diy.llmConfig.importEnv({ providers: providers.length ? providers : undefined });
-      await reload();
-      await scanEnv();
-      if (r.imported.length > 0) {
-        notificationStore.addToastLegacy("success", `已导入 ${r.imported.join("、")}（账号写为 $VAR 引用）`);
-      }
-      if (r.skipped.length > 0) {
-        notificationStore.addToastLegacy(
-          "info",
-          `跳过：${r.skipped.map((s) => `${s.provider}（${s.note}）`).join("；")}`,
-        );
-      }
-    } catch (e) {
-      notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "导入失败");
-    }
-  };
-
-  const mutateFile = (fn: (f: ModelConfigFile) => void) => {
-    const next = structuredClone(file());
-    fn(next);
-    setFile(next);
-    setDirty(true);
-  };
-  const mutateSpec = (key: string, fn: (s: SpecProvider) => void) => {
-    const next = structuredClone(specs());
-    const cur = next[key] ?? { id: key, npm: FACE_OPTIONS[0].npm, api: "", models: {} };
-    fn(cur);
-    next[key] = cur;
-    setSpecs(next);
-    setDirty(true);
-  };
-
-  /** 保存（write modelFile + 脏 spec 逐条 writeSpec + 重新 read） */
-  const save = async () => {
-    setSaving(true);
-    try {
-      await diyService.diy.llmConfig.write({ modelFile: file() });
-      const base = view()?.customSpecs ?? {};
-      const now = specs();
-      const ids = new Set([...Object.keys(base), ...Object.keys(now)]);
-      for (const id of ids) {
-        const a = base[id] ? JSON.stringify(base[id]) : null;
-        const b = now[id] ? JSON.stringify(now[id]) : null;
-        if (a !== b) await diyService.diy.llmConfig.writeSpec({ id, spec: now[id] ?? null });
-      }
-      await reload();
-      await scanEnv();
-      notificationStore.addToastLegacy("success", "model.yaml 已保存");
-    } catch (e) {
-      notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "保存失败");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  /** 添加 std provider：账号留空（人填 key），env[0] 只作占位提示 */
-  const addStd = async (id: string) => {
-    const next = structuredClone(file());
-    next.stdProviders[id] = {
-      accounts: [{ type: "apiKey", data: { value: "" } }],
-      filter: { include: [], exclude: [] },
+    /**
+     * 滚到目标（**幂等重试**）：刚切到本页时卡片还在加载，第一次 scrollIntoView 常常落空
+     * （容器内容还没长出来）；数据到了内容变高，位置又变了。故反复校正到真的在视口内为止。
+     * 首次用 smooth（看得见"跳过去"的过程），后续用 auto（不来回晃）。
+     */
+    const ensureVisible = (el: HTMLElement, tries = 0) => {
+        if (!el.isConnected) return;
+        const r = el.getBoundingClientRect();
+        if (r.top >= 0 && r.bottom <= window.innerHeight) return;
+        el.scrollIntoView({ block: "center", behavior: tries === 0 ? "smooth" : "auto" });
+        if (tries < 10) setTimeout(() => ensureVisible(el, tries + 1), 120);
     };
-    setFile(next);
-    try {
-      await diyService.diy.llmConfig.write({ modelFile: next });
-      await reload();
-      notificationStore.addToastLegacy("success", `已添加 ${id}（请填密钥）`);
-    } catch (e) {
-      notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "添加失败");
-    }
-  };
+    const applyFocus = (anchor: string) => {
+        clearFocus();
+        focusTries = 0;
+        const tick = () => {
+            const el = findByAnchor(anchor);
+            if (!el) {
+                if (focusTries++ < 40) setTimeout(tick, 50);
+                return;
+            }
+            focusedEl = el;
+            el.setAttribute(FOCUS_ATTR, "flash");
+            ensureVisible(el);
+            focusTimer = setTimeout(() => {
+                // 不锁死：4s 后降为静态细描边，卡片照常可点
+                if (el.isConnected) el.setAttribute(FOCUS_ATTR, "rest");
+            }, FOCUS_FLASH_MS);
+        };
+        tick();
+    };
+    createEffect(() => {
+        const f = props.focus;
+        const nonce = f?.nonce ?? 0;
+        void nonce; // 显式读：同一条引导再点一次也要重新闪
+        if (!f) return;
+        setGuideOff(false);
+        applyFocus(f.remedy.target.anchor);
+    });
+    onCleanup(clearFocus);
 
-  const unconfigured = createMemo<CatalogEntry[]>(() => {
-    const v = view();
-    if (!v) return [];
-    const used = new Set(Object.keys(file().stdProviders));
-    const q = query().trim().toLowerCase();
-    return v.catalog
-      .filter((c) => !used.has(c.id))
-      .filter((c) => !q || c.id.toLowerCase().includes(q) || (c.name ?? "").toLowerCase().includes(q));
-  });
+    const reload = async () => {
+        try {
+            const v = await diyService.diy.llmConfig.read({});
+            setView(v);
+            setFile(structuredClone(v.modelFile));
+            setSpecs(structuredClone(v.customSpecs));
+            setDirty(false);
+            // read 降级（配置结构非法）时仍打开页面，只提示原因（避免 RPC 抛错锁死，##275 R1-6）
+            if (v.error) notificationStore.addToastLegacy("error", `配置读取失败：${v.error}`);
+        } catch (e) {
+            notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "配置读取失败");
+        } finally {
+            setLoading(false);
+        }
+    };
+    /**
+     * 模型目录刷新（##385 §3.3）：**常规入口**（顶栏 bar 不一定在屏幕上，所以这里必须有）。
+     * **有 diff 才重读视图**：`changed=false` 意为磁盘与界面同源同内容（`diffSnapshot` 已是逐字比较），
+     * 再 `reload` 一次没有收益，只会白花一次 RPC。
+     */
+    const modelsSync = createModelsSync({
+        onDone: (r) => {
+            if (r.ok && r.changed) void reload();
+        },
+    });
 
-  const stdCards = createMemo(() =>
-    Object.entries(file().stdProviders).map(([key, cfg]) => ({
-      key,
-      cfg,
-      base: view()?.providers.find((p) => p.kind === "std" && p.key === key),
-    })),
-  );
-  const customCards = createMemo(() =>
-    Object.entries(file().customProviders).map(([key, cfg]) => ({
-      key,
-      cfg,
-      spec: specs()[key] ?? null,
-      base: view()?.providers.find((p) => p.kind === "custom" && p.key === key),
-    })),
-  );
+    /** 扫环境变量（只列不写）：提示条据此渲染（候选 + 扫描面；失败也如实入条，不静默吞） */
+    const scanEnv = async () => {
+        try {
+            const r = await diyService.diy.llmConfig.scanEnv({});
+            setEnvCandidates(r.candidates);
+            setEnvScanned(r.scanned);
+            setEnvScanError(null);
+        } catch (e) {
+            setEnvCandidates([]);
+            setEnvScanned(null);
+            setEnvScanError(e instanceof Error ? e.message : "扫描失败");
+        }
+    };
+    onMount(() => {
+        void reload();
+        void scanEnv();
+    });
 
-  /**
-   * 移除 provider = **立即落盘**（与「添加 provider」同一约定）。
-   * 为什么不攒 dirty 等「保存全部」：移除是破坏性操作，攒着会让人以为删掉了 ——
-   * 一切换页面就又 read 回来（实测被报成「删不掉」）。删完顺手重扫环境变量：
-   * 「删掉 → 提示条立刻出现导入」是这条路径的**目的**，不重扫就得重进页面才看得到。
-   */
-  const removeProvider = async (kind: "std" | "custom", key: string) => {
-    setPendingRemove(null);
-    const next = structuredClone(file());
-    if (kind === "std") delete next.stdProviders[key];
-    else delete next.customProviders[key];
-    setFile(next);
-    try {
-      await diyService.diy.llmConfig.write({ modelFile: next });
-      await reload();
-      await scanEnv();
-      notificationStore.addToastLegacy("success", `已移除 ${kind === "custom" ? `custom:${key}` : key}`);
-    } catch (e) {
-      notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "移除失败");
-    }
-  };
+    /** 导入候选（providers 为空 = 全部可导入项）；落盘后重读，候选随之变灰/消失 */
+    const importEnv = async (providers: string[]) => {
+        try {
+            const r = await diyService.diy.llmConfig.importEnv({ providers: providers.length ? providers : undefined });
+            await reload();
+            await scanEnv();
+            if (r.imported.length > 0) {
+                notificationStore.addToastLegacy("success", `已导入 ${r.imported.join("、")}（账号写为 $VAR 引用）`);
+            }
+            if (r.skipped.length > 0) {
+                notificationStore.addToastLegacy(
+                    "info",
+                    `跳过：${r.skipped.map((s) => `${s.provider}（${s.note}）`).join("；")}`,
+                );
+            }
+        } catch (e) {
+            notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "导入失败");
+        }
+    };
 
-  return (
-    <div class="p-4 space-y-3 overflow-y-auto h-full">
-      <div class="flex items-center justify-between">
-        <div class="text-title font-bold">🤖 模型 provider 配置</div>
-        <div class="flex gap-2 items-center">
-          {/* 三态文案（更新中 / 成功报数 / 失败给原因）紧贴按钮：用户点完不必再翻别处 */}
-          <Show when={modelsSync.text()}>
-            <span
-              class="text-xs"
-              data-models-sync-status={modelsSync.phase()}
-              classList={{ "text-error": modelsSync.phase() === "error", "opacity-70": modelsSync.phase() !== "error" }}
-            >
-              {modelsSync.text()}
-            </span>
-          </Show>
-          <code class="text-body opacity-50 text-xs">~/.diy/model.yaml</code>
-          <button
-            class="btn btn-sm"
-            data-models-sync
-            title="抓 models.dev 最新目录并写入 $DIY_HOME/data/models.dev.json（有变化才写；失败保留旧数据）"
-            disabled={modelsSync.phase() === "running"}
-            onClick={() => void modelsSync.run()}
-          >
-            {modelsSync.phase() === "running" ? "更新中…" : "🔄 更新模型数据"}
-          </button>
-          <button class="btn btn-sm btn-primary" disabled={loading() || !dirty() || saving()} onClick={() => void save()}>
-            {saving() ? "保存中…" : "保存全部"}
-          </button>
-        </div>
-      </div>
-      {/* ##407 修复引导卡：**自足**（改哪个字段 / 填什么 / 为什么不能自动改），
+    const mutateFile = (fn: (f: ModelConfigFile) => void) => {
+        const next = structuredClone(file());
+        fn(next);
+        setFile(next);
+        setDirty(true);
+    };
+    const mutateSpec = (key: string, fn: (s: SpecProvider) => void) => {
+        const next = structuredClone(specs());
+        const cur = next[key] ?? { id: key, npm: FACE_OPTIONS[0].npm, api: "", models: {} };
+        fn(cur);
+        next[key] = cur;
+        setSpecs(next);
+        setDirty(true);
+    };
+
+    /** 保存（write modelFile + 脏 spec 逐条 writeSpec + 重新 read） */
+    const save = async () => {
+        setSaving(true);
+        try {
+            await diyService.diy.llmConfig.write({ modelFile: file() });
+            const base = view()?.customSpecs ?? {};
+            const now = specs();
+            const ids = new Set([...Object.keys(base), ...Object.keys(now)]);
+            for (const id of ids) {
+                const a = base[id] ? JSON.stringify(base[id]) : null;
+                const b = now[id] ? JSON.stringify(now[id]) : null;
+                if (a !== b) await diyService.diy.llmConfig.writeSpec({ id, spec: now[id] ?? null });
+            }
+            await reload();
+            await scanEnv();
+            notificationStore.addToastLegacy("success", "model.yaml 已保存");
+        } catch (e) {
+            notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "保存失败");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    /** 添加 std provider：账号留空（人填 key），env[0] 只作占位提示 */
+    const addStd = async (id: string) => {
+        const next = structuredClone(file());
+        next.stdProviders[id] = {
+            accounts: [{ type: "apiKey", data: { value: "" } }],
+            filter: { include: [], exclude: [] },
+        };
+        setFile(next);
+        try {
+            await diyService.diy.llmConfig.write({ modelFile: next });
+            await reload();
+            notificationStore.addToastLegacy("success", `已添加 ${id}（请填密钥）`);
+        } catch (e) {
+            notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "添加失败");
+        }
+    };
+
+    const unconfigured = createMemo<CatalogEntry[]>(() => {
+        const v = view();
+        if (!v) return [];
+        const used = new Set(Object.keys(file().stdProviders));
+        const q = query().trim().toLowerCase();
+        return v.catalog
+            .filter((c) => !used.has(c.id))
+            .filter((c) => !q || c.id.toLowerCase().includes(q) || (c.name ?? "").toLowerCase().includes(q));
+    });
+
+    const stdCards = createMemo(() =>
+        Object.entries(file().stdProviders).map(([key, cfg]) => ({
+            key,
+            cfg,
+            base: view()?.providers.find((p) => p.kind === "std" && p.key === key),
+        })),
+    );
+    const customCards = createMemo(() =>
+        Object.entries(file().customProviders).map(([key, cfg]) => ({
+            key,
+            cfg,
+            spec: specs()[key] ?? null,
+            base: view()?.providers.find((p) => p.kind === "custom" && p.key === key),
+        })),
+    );
+
+    /**
+     * 移除 provider = **立即落盘**（与「添加 provider」同一约定）。
+     * 为什么不攒 dirty 等「保存全部」：移除是破坏性操作，攒着会让人以为删掉了 ——
+     * 一切换页面就又 read 回来（实测被报成「删不掉」）。删完顺手重扫环境变量：
+     * 「删掉 → 提示条立刻出现导入」是这条路径的**目的**，不重扫就得重进页面才看得到。
+     */
+    const removeProvider = async (kind: "std" | "custom", key: string) => {
+        setPendingRemove(null);
+        const next = structuredClone(file());
+        if (kind === "std") delete next.stdProviders[key];
+        else delete next.customProviders[key];
+        setFile(next);
+        try {
+            await diyService.diy.llmConfig.write({ modelFile: next });
+            await reload();
+            await scanEnv();
+            notificationStore.addToastLegacy("success", `已移除 ${kind === "custom" ? `custom:${key}` : key}`);
+        } catch (e) {
+            notificationStore.addToastLegacy("error", e instanceof Error ? e.message : "移除失败");
+        }
+    };
+
+    return (
+        <div class="p-4 space-y-3 overflow-y-auto h-full">
+            <div class="flex items-center justify-between">
+                <div class="text-title font-bold">🤖 模型 provider 配置</div>
+                <div class="flex gap-2 items-center">
+                    {/* 三态文案（更新中 / 成功报数 / 失败给原因）紧贴按钮：用户点完不必再翻别处 */}
+                    <Show when={modelsSync.text()}>
+                        <span
+                            class="text-xs"
+                            data-models-sync-status={modelsSync.phase()}
+                            classList={{
+                                "text-error": modelsSync.phase() === "error",
+                                "opacity-70": modelsSync.phase() !== "error",
+                            }}
+                        >
+                            {modelsSync.text()}
+                        </span>
+                    </Show>
+                    <code class="text-body opacity-50 text-xs">~/.diy/model.yaml</code>
+                    <button
+                        class="btn btn-sm"
+                        data-models-sync
+                        title="抓 models.dev 最新目录并写入 $DIY_HOME/data/models.dev.json（有变化才写；失败保留旧数据）"
+                        disabled={modelsSync.phase() === "running"}
+                        onClick={() => void modelsSync.run()}
+                    >
+                        {modelsSync.phase() === "running" ? "更新中…" : "🔄 更新模型数据"}
+                    </button>
+                    <button
+                        class="btn btn-sm btn-primary"
+                        disabled={loading() || !dirty() || saving()}
+                        onClick={() => void save()}
+                    >
+                        {saving() ? "保存中…" : "保存全部"}
+                    </button>
+                </div>
+            </div>
+            {/* ##407 修复引导卡：**自足**（改哪个字段 / 填什么 / 为什么不能自动改），
           纯静态文本 —— 不调用任何模型、不依赖网络（此刻 LLM 已经不可用）。
           同时它是 `models-pick` 锚点：没有具体 provider 时，引导就把人带到这里。 */}
-      <Show when={guide()}>
-        {(r) => (
-          <div
-            class="rounded-box border-2 border-primary bg-primary/5 p-3 space-y-1"
-            data-remedy-guide
-            data-focus-target={ANCHOR_MODEL_PICK}
-            data-remedy-anchor={r().target.anchor}
-          >
-            <div class="flex items-center gap-2">
-              <span class="text-title font-bold">🛠 修复引导：{r().label}</span>
-              <button class="btn btn-ghost btn-xs ml-auto" title="收起引导（不改变任何配置）" onClick={() => setGuideOff(true)}>
-                ✕
-              </button>
-            </div>
-            <div class="whitespace-pre-wrap text-body leading-relaxed" data-remedy-guide-hint>
-              {r().hint}
-            </div>
-            <div class="text-xs opacity-60">
-              这条引导是**静态**的：不调用模型、断网可用；关掉顶栏提示后仍可从本页「最近的模型不可用提示」找回。
-            </div>
-          </div>
-        )}
-      </Show>
+            <Show when={guide()}>
+                {(r) => (
+                    <div
+                        class="rounded-box border-2 border-primary bg-primary/5 p-3 space-y-1"
+                        data-remedy-guide
+                        data-focus-target={ANCHOR_MODEL_PICK}
+                        data-remedy-anchor={r().target.anchor}
+                    >
+                        <div class="flex items-center gap-2">
+                            <span class="text-title font-bold">🛠 修复引导：{r().label}</span>
+                            <button
+                                class="btn btn-ghost btn-xs ml-auto"
+                                title="收起引导（不改变任何配置）"
+                                onClick={() => setGuideOff(true)}
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div class="whitespace-pre-wrap text-body leading-relaxed" data-remedy-guide-hint>
+                            {r().hint}
+                        </div>
+                        <div class="text-xs opacity-60">
+                            这条引导是**静态**的：不调用模型、断网可用；关掉顶栏提示后仍可从本页「最近的模型不可用提示」找回。
+                        </div>
+                    </div>
+                )}
+            </Show>
 
-      {/* ##407 可回看：顶栏提示关掉后，这里是同一批事实的去处（全局通知信箱尚未实现，见 tool.wake-gap）。 */}
-      <Show when={modelNoticeStore.history.length > 0}>
-        <div class="card border bg-base-100 p-3 space-y-1" data-notice-history>
-          <div class="flex items-center gap-2">
-            <span class="text-title font-semibold">🕘 最近的模型不可用提示</span>
-            <span class="text-xs opacity-50">（关掉顶栏提示后仍可回看；点「🛠」跳回该改的地方）</span>
-          </div>
-          <For each={modelNoticeStore.history.slice().reverse()}>
-            {(n) => {
-              const r = remedyOf({
-                reason: n.reason,
-                ctx: { kind: n.kind, provider: n.provider, model: n.model, httpStatus: n.statusCode },
-              });
-              return (
-                <div class="flex items-center gap-2 text-xs" data-notice-history-item data-notice-id={n.id}>
-                  <span class="opacity-60 font-mono">{new Date(n.ts).toLocaleTimeString()}</span>
-                  <span class="badge badge-sm badge-error">{MODEL_UNAVAILABLE_KIND_LABEL[n.kind]}</span>
-                  <code class="font-mono">{n.model}</code>
-                  <span class="opacity-60">人物 {n.personaName}</span>
-                  <Show when={r}>
-                    {(rr) => (
-                      <button
-                        class="btn btn-xs btn-primary ml-auto"
-                        data-notice-history-goto
-                        data-remedy-anchor={rr().target.anchor}
-                        onClick={() => {
-                          setGuideOff(false);
-                          applyFocus(rr().target.anchor);
+            {/* ##407 可回看：顶栏提示关掉后，这里是同一批事实的去处（全局通知信箱尚未实现，见 tool.wake-gap）。 */}
+            <Show when={modelNoticeStore.history.length > 0}>
+                <div class="card border bg-base-100 p-3 space-y-1" data-notice-history>
+                    <div class="flex items-center gap-2">
+                        <span class="text-title font-semibold">🕘 最近的模型不可用提示</span>
+                        <span class="text-xs opacity-50">（关掉顶栏提示后仍可回看；点「🛠」跳回该改的地方）</span>
+                    </div>
+                    <For each={modelNoticeStore.history.slice().reverse()}>
+                        {(n) => {
+                            const r = remedyOf({
+                                reason: n.reason,
+                                ctx: { kind: n.kind, provider: n.provider, model: n.model, httpStatus: n.statusCode },
+                            });
+                            return (
+                                <div
+                                    class="flex items-center gap-2 text-xs"
+                                    data-notice-history-item
+                                    data-notice-id={n.id}
+                                >
+                                    <span class="opacity-60 font-mono">{new Date(n.ts).toLocaleTimeString()}</span>
+                                    <span class="badge badge-sm badge-error">
+                                        {MODEL_UNAVAILABLE_KIND_LABEL[n.kind]}
+                                    </span>
+                                    <code class="font-mono">{n.model}</code>
+                                    <span class="opacity-60">人物 {n.personaName}</span>
+                                    <Show when={r}>
+                                        {(rr) => (
+                                            <button
+                                                class="btn btn-xs btn-primary ml-auto"
+                                                data-notice-history-goto
+                                                data-remedy-anchor={rr().target.anchor}
+                                                onClick={() => {
+                                                    setGuideOff(false);
+                                                    applyFocus(rr().target.anchor);
+                                                }}
+                                            >
+                                                🛠 {rr().label}
+                                            </button>
+                                        )}
+                                    </Show>
+                                </div>
+                            );
                         }}
-                      >
-                        🛠 {rr().label}
-                      </button>
-                    )}
-                  </Show>
+                    </For>
                 </div>
-              );
-            }}
-          </For>
-        </div>
-      </Show>
+            </Show>
 
-      <div class="text-body opacity-60 text-xs">
-        密钥支持 <code>$ENV</code> 插值（未定义会报错）；模型清单来自 models.dev snapshot（models.dev
-        provider）或 providers.custom.yaml（自定义）。勾选即启用/隐藏，逐卡片「保存」落盘。
-        自定义 provider 可在模型行**填单价**（$/1M，落 providers.custom.yaml）；不填 = 无价（金额显示
-        <code>—</code>，绝不按 0 计）。峰谷价用行内**时段档**（时刻 + 可选日历，如中国法定工作日）。
-      </div>
+            <div class="text-body opacity-60 text-xs">
+                密钥支持 <code>$ENV</code> 插值（未定义会报错）；模型清单来自 models.dev snapshot（models.dev
+                provider）或 providers.custom.yaml（自定义）。勾选即启用/隐藏，逐卡片「保存」落盘。 自定义 provider
+                可在模型行**填单价**（$/1M，落 providers.custom.yaml）；不填 = 无价（金额显示
+                <code>—</code>，绝不按 0 计）。峰谷价用行内**时段档**（时刻 + 可选日历，如中国法定工作日）。
+            </div>
 
-      {/* 环境变量导入提示条（形态对齐 FindBar：页内一条、可关闭、不挡内容）。
+            {/* 环境变量导入提示条（形态对齐 FindBar：页内一条、可关闭、不挡内容）。
           四态都给话（##286）：可导入 / 命中但均已在配置中 / 零命中 / 扫描失败 —— 用户不必猜。
           只提示不自动写，点「导入」才落盘。 */}
-      <Show when={!envDismissed()}>
-        <EnvImportBar
-          candidates={envCandidates()}
-          scanned={envScanned()}
-          error={envScanError()}
-          onImport={(providers) => void importEnv(providers)}
-          onRetry={() => void scanEnv()}
-          onDismiss={() => setEnvDismissed(true)}
-        />
-      </Show>
+            <Show when={!envDismissed()}>
+                <EnvImportBar
+                    candidates={envCandidates()}
+                    scanned={envScanned()}
+                    error={envScanError()}
+                    onImport={(providers) => void importEnv(providers)}
+                    onRetry={() => void scanEnv()}
+                    onDismiss={() => setEnvDismissed(true)}
+                />
+            </Show>
 
-      <Show when={!loading()} fallback={<div class="text-body opacity-50">加载中…</div>}>
-        {/* ── stdProviders ── */}
-        <div class="text-title font-semibold mt-2">models.dev provider（snapshot）</div>
-        <Show when={unconfigured().length > 0}>
-          <div class="flex gap-2 items-start max-w-2xl">
-            <input
-              class="input input-bordered input-sm w-56"
-              placeholder="🔍 搜索 provider…"
-              value={query()}
-              onInput={(e) => setQuery(e.currentTarget.value)}
-            />
-            <div class="flex-1 max-h-40 overflow-y-auto border rounded-box bg-base-100">
-              <Index each={unconfigured().slice(0, 200)}>
-                {(c) => (
-                  <button
-                    class="block w-full text-left px-2 py-1 text-sm hover:bg-base-200"
-                    onClick={() => void addStd(c().id)}
-                  >
-                    <span class="font-mono">{c().id}</span>
-                    <Show when={c().name}>
-                      <span class="opacity-50"> — {c().name}</span>
-                    </Show>
-                    <span class="opacity-40 text-xs"> · {c().npm}</span>
-                  </button>
+            <Show when={!loading()} fallback={<div class="text-body opacity-50">加载中…</div>}>
+                {/* ── stdProviders ── */}
+                <div class="text-title font-semibold mt-2">models.dev provider（snapshot）</div>
+                <Show when={unconfigured().length > 0}>
+                    <div class="flex gap-2 items-start max-w-2xl">
+                        <input
+                            class="input input-bordered input-sm w-56"
+                            placeholder="🔍 搜索 provider…"
+                            value={query()}
+                            onInput={(e) => setQuery(e.currentTarget.value)}
+                        />
+                        <div class="flex-1 max-h-40 overflow-y-auto border rounded-box bg-base-100">
+                            <Index each={unconfigured().slice(0, 200)}>
+                                {(c) => (
+                                    <button
+                                        class="block w-full text-left px-2 py-1 text-sm hover:bg-base-200"
+                                        onClick={() => void addStd(c().id)}
+                                    >
+                                        <span class="font-mono">{c().id}</span>
+                                        <Show when={c().name}>
+                                            <span class="opacity-50"> — {c().name}</span>
+                                        </Show>
+                                        <span class="opacity-40 text-xs"> · {c().npm}</span>
+                                    </button>
+                                )}
+                            </Index>
+                            <Show when={unconfigured().length === 0}>
+                                <div class="px-2 py-1 text-xs opacity-50">无匹配（清空搜索查看全部）</div>
+                            </Show>
+                        </div>
+                    </div>
+                </Show>
+                <Index each={stdCards()}>
+                    {(c) => (
+                        <StdCard
+                            card={c()}
+                            file={file}
+                            mutateFile={mutateFile}
+                            save={save}
+                            saving={saving}
+                            onRemove={() => setPendingRemove({ kind: "std", key: c().key })}
+                        />
+                    )}
+                </Index>
+
+                {/* ── customProviders ── */}
+                <div class="text-title font-semibold mt-4">自定义 provider（providers.custom.yaml）</div>
+                <Index each={customCards()}>
+                    {(c) => (
+                        <CustomCard
+                            card={c()}
+                            file={file}
+                            mutateFile={mutateFile}
+                            specs={specs}
+                            mutateSpec={mutateSpec}
+                            calendars={() => view()?.calendars ?? []}
+                            windows={() => view()?.windows ?? []}
+                            save={save}
+                            saving={saving}
+                            onRemove={() => setPendingRemove({ kind: "custom", key: c().key })}
+                        />
+                    )}
+                </Index>
+                <Show when={!showNewCustom()}>
+                    <button class="btn btn-sm btn-outline" onClick={() => setShowNewCustom(true)}>
+                        ＋ 新增 custom provider
+                    </button>
+                </Show>
+                <Show when={showNewCustom()}>
+                    <NewCustomForm
+                        existing={specs()}
+                        onCancel={() => setShowNewCustom(false)}
+                        onCreate={(id, spec, keyValue) => {
+                            const nextSpecs = { ...specs(), [id]: spec };
+                            setSpecs(nextSpecs);
+                            mutateFile((f) => {
+                                f.customProviders[id] = {
+                                    accounts: [{ type: "apiKey", data: { value: keyValue } }],
+                                    filter: { include: [], exclude: [] },
+                                };
+                            });
+                            setShowNewCustom(false);
+                            notificationStore.addToastLegacy("success", `已添加 custom:${id}（点「保存全部」落盘）`);
+                        }}
+                    />
+                </Show>
+            </Show>
+
+            {/* 移除确认：破坏性（模型选择随之消失），且不可撤销 */}
+            <Show when={pendingRemove()}>
+                {(t) => (
+                    <ConfirmDialog
+                        title={`移除 provider「${t().kind === "custom" ? `custom:${t().key}` : t().key}」？`}
+                        message="该 provider 及其模型选择将立即从 model.yaml 移除。"
+                        confirmLabel="移除"
+                        onCancel={() => setPendingRemove(null)}
+                        onConfirm={() => void removeProvider(t().kind, t().key)}
+                    />
                 )}
-              </Index>
-              <Show when={unconfigured().length === 0}>
-                <div class="px-2 py-1 text-xs opacity-50">无匹配（清空搜索查看全部）</div>
-              </Show>
-            </div>
-          </div>
-        </Show>
-        <Index each={stdCards()}>
-          {(c) => (
-            <StdCard
-              card={c()}
-              file={file}
-              mutateFile={mutateFile}
-              save={save}
-              saving={saving}
-              onRemove={() => setPendingRemove({ kind: "std", key: c().key })}
-            />
-          )}
-        </Index>
-
-        {/* ── customProviders ── */}
-        <div class="text-title font-semibold mt-4">自定义 provider（providers.custom.yaml）</div>
-        <Index each={customCards()}>
-          {(c) => (
-            <CustomCard
-              card={c()}
-              file={file}
-              mutateFile={mutateFile}
-              specs={specs}
-              mutateSpec={mutateSpec}
-              calendars={() => view()?.calendars ?? []}
-              windows={() => view()?.windows ?? []}
-              save={save}
-              saving={saving}
-              onRemove={() => setPendingRemove({ kind: "custom", key: c().key })}
-            />
-          )}
-        </Index>
-        <Show when={!showNewCustom()}>
-          <button class="btn btn-sm btn-outline" onClick={() => setShowNewCustom(true)}>
-            ＋ 新增 custom provider
-          </button>
-        </Show>
-        <Show when={showNewCustom()}>
-          <NewCustomForm
-            existing={specs()}
-            onCancel={() => setShowNewCustom(false)}
-            onCreate={(id, spec, keyValue) => {
-              const nextSpecs = { ...specs(), [id]: spec };
-              setSpecs(nextSpecs);
-              mutateFile((f) => {
-                f.customProviders[id] = { accounts: [{ type: "apiKey", data: { value: keyValue } }], filter: { include: [], exclude: [] } };
-              });
-              setShowNewCustom(false);
-              notificationStore.addToastLegacy("success", `已添加 custom:${id}（点「保存全部」落盘）`);
-            }}
-          />
-        </Show>
-      </Show>
-
-      {/* 移除确认：破坏性（模型选择随之消失），且不可撤销 */}
-      <Show when={pendingRemove()}>
-        {(t) => (
-          <ConfirmDialog
-            title={`移除 provider「${t().kind === "custom" ? `custom:${t().key}` : t().key}」？`}
-            message="该 provider 及其模型选择将立即从 model.yaml 移除。"
-            confirmLabel="移除"
-            onCancel={() => setPendingRemove(null)}
-            onConfirm={() => void removeProvider(t().kind, t().key)}
-          />
-        )}
-      </Show>
-    </div>
-  );
+            </Show>
+        </div>
+    );
 }
 
 // ── 账号编辑（std / custom 共用） ──────────────────────────────
@@ -557,245 +588,331 @@ export function ModelConfigPage(props: {
 // 产生新身份 → 行被重建 → 输入框丢焦点（"输入一个字符焦点就跳开" 的根因）。
 
 function AccountsEditor(props: {
-  cfg: () => ProviderConfig;
-  mutateCfg: (fn: (c: ProviderConfig) => void) => void;
-  base: () => { accounts: { error: string | null; account: Account }[] } | undefined;
-  limited: () => string;
-  placeholder: () => string;
-  onTest: () => void;
-  testing: () => boolean;
-  testLabel?: () => string;
+    cfg: () => ProviderConfig;
+    mutateCfg: (fn: (c: ProviderConfig) => void) => void;
+    base: () => { accounts: { error: string | null; account: Account }[] } | undefined;
+    limited: () => string;
+    placeholder: () => string;
+    onTest: () => void;
+    testing: () => boolean;
+    testLabel?: () => string;
 }) {
-  return (
-    <div class="space-y-1">
-      <div class="flex items-center gap-3">
-        <span class="text-sm font-medium">账号</span>
-        <span class="text-xs opacity-50">name@provider 里的 name（可选，缺省 = 序号）</span>
-      </div>
-      <Index each={props.cfg().accounts}>
-        {(acc, i) => {
-          const baseAt = () => props.base()?.accounts[i];
-          return (
-            <div class="flex gap-2 items-center flex-wrap">
-              <input
-                class="input input-bordered input-sm w-32"
-                placeholder="账号显示名"
-                value={acc().name ?? ""}
-                onInput={(e) =>
-                  props.mutateCfg((c) => {
-                    const a = c.accounts[i];
-                    const v = e.currentTarget.value.trim();
-                    if (v) a.name = v;
-                    else delete a.name;
-                  })
-                }
-              />
-              <input
-                class="input input-bordered input-sm flex-1 min-w-56"
-                placeholder={props.placeholder()}
-                value={acc().data.value}
-                onInput={(e) => props.mutateCfg((c) => { c.accounts[i].data.value = e.currentTarget.value; })}
-              />
-              <code class="text-xs opacity-60">{acc().name ?? i}@{props.limited()}</code>
-              <Show when={baseAt()?.error && baseAt()!.account.data.value === acc().data.value}>
-                <span class="text-error text-xs">{baseAt()!.error}</span>
-              </Show>
-              <Show when={props.cfg().accounts.length > 1}>
-                <button class="btn btn-xs btn-ghost" title="删除此账号" onClick={() => props.mutateCfg((c) => { c.accounts.splice(i, 1); })}>
-                  ×
-                </button>
-              </Show>
-              <Show when={i === 0}>
-                <button class="btn btn-xs btn-outline" disabled={props.testing()} onClick={props.onTest}>
-                  {props.testing() ? "测试中…" : (props.testLabel?.() ?? "测试")}
-                </button>
-              </Show>
+    return (
+        <div class="space-y-1">
+            <div class="flex items-center gap-3">
+                <span class="text-sm font-medium">账号</span>
+                <span class="text-xs opacity-50">name@provider 里的 name（可选，缺省 = 序号）</span>
             </div>
-          );
-        }}
-      </Index>
-      <div class="flex gap-2">
-        <button
-          class="btn btn-xs btn-outline"
-          onClick={() => props.mutateCfg((c) => { c.accounts.push({ type: "apiKey", data: { value: "" } } as Account); })}
-        >
-          ＋ 添加账号
-        </button>
-      </div>
-    </div>
-  );
+            <Index each={props.cfg().accounts}>
+                {(acc, i) => {
+                    const baseAt = () => props.base()?.accounts[i];
+                    return (
+                        <div class="flex gap-2 items-center flex-wrap">
+                            <input
+                                class="input input-bordered input-sm w-32"
+                                placeholder="账号显示名"
+                                value={acc().name ?? ""}
+                                onInput={(e) =>
+                                    props.mutateCfg((c) => {
+                                        const a = c.accounts[i];
+                                        const v = e.currentTarget.value.trim();
+                                        if (v) a.name = v;
+                                        else delete a.name;
+                                    })
+                                }
+                            />
+                            <input
+                                class="input input-bordered input-sm flex-1 min-w-56"
+                                placeholder={props.placeholder()}
+                                value={acc().data.value}
+                                onInput={(e) =>
+                                    props.mutateCfg((c) => {
+                                        c.accounts[i].data.value = e.currentTarget.value;
+                                    })
+                                }
+                            />
+                            <code class="text-xs opacity-60">
+                                {acc().name ?? i}@{props.limited()}
+                            </code>
+                            <Show when={baseAt()?.error && baseAt()!.account.data.value === acc().data.value}>
+                                <span class="text-error text-xs">{baseAt()!.error}</span>
+                            </Show>
+                            <Show when={props.cfg().accounts.length > 1}>
+                                <button
+                                    class="btn btn-xs btn-ghost"
+                                    title="删除此账号"
+                                    onClick={() =>
+                                        props.mutateCfg((c) => {
+                                            c.accounts.splice(i, 1);
+                                        })
+                                    }
+                                >
+                                    ×
+                                </button>
+                            </Show>
+                            <Show when={i === 0}>
+                                <button
+                                    class="btn btn-xs btn-outline"
+                                    disabled={props.testing()}
+                                    onClick={props.onTest}
+                                >
+                                    {props.testing() ? "测试中…" : (props.testLabel?.() ?? "测试")}
+                                </button>
+                            </Show>
+                        </div>
+                    );
+                }}
+            </Index>
+            <div class="flex gap-2">
+                <button
+                    class="btn btn-xs btn-outline"
+                    onClick={() =>
+                        props.mutateCfg((c) => {
+                            c.accounts.push({ type: "apiKey", data: { value: "" } } as Account);
+                        })
+                    }
+                >
+                    ＋ 添加账号
+                </button>
+            </div>
+        </div>
+    );
 }
 
 // ── std provider 卡片（spec 只读） ─────────────────────────────
 
 function StdCard(props: {
-  card: { key: string; cfg: ProviderConfig; base: LlmConfigView["providers"][number] | undefined };
-  file: () => ModelConfigFile;
-  mutateFile: (fn: (f: ModelConfigFile) => void) => void;
-  save: () => Promise<void>;
-  saving: () => boolean;
-  /** 点「移除」= 请求确认（由页面弹 ConfirmDialog，见 removeProvider） */
-  onRemove: () => void;
+    card: { key: string; cfg: ProviderConfig; base: LlmConfigView["providers"][number] | undefined };
+    file: () => ModelConfigFile;
+    mutateFile: (fn: (f: ModelConfigFile) => void) => void;
+    save: () => Promise<void>;
+    saving: () => boolean;
+    /** 点「移除」= 请求确认（由页面弹 ConfirmDialog，见 removeProvider） */
+    onRemove: () => void;
 }) {
-  const [testing, setTesting] = createSignal(false);
-  const [modelQuery, setModelQuery] = createSignal("");
-  const mutateCfg = (fn: (c: ProviderConfig) => void) =>
-    props.mutateFile((f) => { const c = f.stdProviders[props.card.key]; if (c) fn(c); });
+    const [testing, setTesting] = createSignal(false);
+    const [modelQuery, setModelQuery] = createSignal("");
+    const mutateCfg = (fn: (c: ProviderConfig) => void) =>
+        props.mutateFile((f) => {
+            const c = f.stdProviders[props.card.key];
+            if (c) fn(c);
+        });
 
-  const spec = () => props.card.base?.spec ?? null;
-  const mode = () => modeOf(props.card.cfg.filter);
-  const models = createMemo(() => {
-    const q = modelQuery().trim().toLowerCase();
-    const all = props.card.base?.models ?? [];
-    return all.filter((m) => !q || m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q));
-  });
-
-  const test = async () => {
-    const s = spec();
-    if (!s) return;
-    const acc = props.card.cfg.accounts[0];
-    setTesting(true);
-    try {
-      const r = await diyService.diy.llmConfig.probe({ baseUrl: s.api, apiKey: acc?.data.value ?? "" });
-      if (r.ok) notificationStore.addToastLegacy("success", `连通（HTTP ${r.status}，${r.models.length} 个模型）`);
-      else notificationStore.addToastLegacy("error", `不通：${r.error ?? "未知错误"}`);
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const setFilter = (m: FilterMode) => {
-    const ms = props.card.base?.models ?? [];
-    mutateCfg((cfg) => {
-      if (m === "all") cfg.filter = { include: [], exclude: [] };
-      else if (m === "include") cfg.filter = { include: ms.filter((x) => filterAllows(cfg.filter ?? { include: [], exclude: [] }, x.id)).map((x) => x.id), exclude: [] };
-      else cfg.filter = { include: [], exclude: ms.filter((x) => !filterAllows(cfg.filter ?? { include: [], exclude: [] }, x.id)).map((x) => x.id) };
+    const spec = () => props.card.base?.spec ?? null;
+    const mode = () => modeOf(props.card.cfg.filter);
+    const models = createMemo(() => {
+        const q = modelQuery().trim().toLowerCase();
+        const all = props.card.base?.models ?? [];
+        return all.filter((m) => !q || m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q));
     });
-  };
-  const toggle = (id: string) => {
-    const m = mode();
-    if (m === "all") return;
-    mutateCfg((cfg) => {
-      const flt = cfg.filter ?? { include: [], exclude: [] };
-      const list = m === "include" ? flt.include : flt.exclude;
-      const i = list.indexOf(id);
-      if (i >= 0) list.splice(i, 1); else list.push(id);
-      cfg.filter = flt;
-    });
-  };
 
-  return (
-    <div class="card border bg-base-100 p-3 space-y-2 mt-2" data-focus-target={`provider-std-${props.card.key}`}>
-      <div class="flex items-center gap-2 flex-wrap">
-        <span class="font-semibold">{props.card.key}</span>
-        <code class="text-xs opacity-60">{props.card.key}</code>
-        <span class={`badge badge-sm ${props.card.base?.usable ? "badge-success" : "badge-warning"}`}>
-          {props.card.base?.usable ? "密钥可用" : "无可用密钥"}
-        </span>
-        <Show when={props.card.base && !props.card.base.spec}>
-          <span class="badge badge-error badge-sm">spec 缺失</span>
-        </Show>
-      </div>
-      <Show when={spec()}>
-        {(s) => (
-          <div class="text-xs opacity-60 flex gap-3 flex-wrap">
-            <span>npm: <code>{s().npm}</code></span>
-            <span>api: <code>{s().api}</code></span>
-          </div>
-        )}
-      </Show>
-      <AccountsEditor
-        cfg={() => props.card.cfg}
-        mutateCfg={mutateCfg}
-        base={() => props.card.base}
-        limited={() => props.card.key}
-        placeholder={() => (spec()?.env?.[0] ? `输入密钥，或 $${spec()!.env[0]}` : "输入密钥，或 $ENV")}
-        onTest={() => void test()}
-        testing={testing}
-      />
+    const test = async () => {
+        const s = spec();
+        if (!s) return;
+        const acc = props.card.cfg.accounts[0];
+        setTesting(true);
+        try {
+            const r = await diyService.diy.llmConfig.probe({ baseUrl: s.api, apiKey: acc?.data.value ?? "" });
+            if (r.ok)
+                notificationStore.addToastLegacy("success", `连通（HTTP ${r.status}，${r.models.length} 个模型）`);
+            else notificationStore.addToastLegacy("error", `不通：${r.error ?? "未知错误"}`);
+        } finally {
+            setTesting(false);
+        }
+    };
 
-      <ModelFilter mode={mode} setFilter={setFilter} />
-      <div class="flex items-center gap-2">
-        <input class="input input-bordered input-xs w-56" placeholder="🔍 搜索模型…" value={modelQuery()} onInput={(e) => setModelQuery(e.currentTarget.value)} />
-        <span class="text-xs opacity-50">{models().length} / {props.card.base?.models.length ?? 0}</span>
-      </div>
-      <Show when={models().length > 0} fallback={<div class="text-xs opacity-50">（无模型清单）</div>}>
-        <div class="max-h-72 overflow-y-auto">
-          <table class="table table-xs">
-            <thead>
-              <tr>
-                <th class="w-8">{mode() === "exclude" ? "排除" : "启用"}</th>
-                <th>模型</th>
-                <th class="w-36">context / output</th>
-                <th class="w-24">推理档位</th>
-                <th class="w-24">$/1M</th>
-              </tr>
-            </thead>
-            <tbody>
-              <Index each={models()}>
-                {(m) => {
-                  const enabled = () => {
-                    if (mode() === "all") return true;
-                    const flt = props.card.cfg.filter;
-                    if (!flt) return true;
-                    return mode() === "include" ? flt.include.includes(m().id) : !flt.exclude.includes(m().id);
-                  };
-                  return (
-                    <tr class={enabled() ? "" : "opacity-40"}>
-                      <td>
-                        <input type="checkbox" class="checkbox checkbox-xs" disabled={mode() === "all"} checked={enabled()} onChange={() => toggle(m().id)} />
-                      </td>
-                      <td>
-                        <div class="flex gap-2 items-center flex-wrap">
-                          <span class="font-mono text-xs">{m().id}</span>
-                          <span class="text-xs opacity-70">{m().name}</span>
-                          <Show when={m().specMissing}>
-                            <span class="badge badge-error badge-xs">spec无</span>
-                          </Show>
-                        </div>
-                      </td>
-                      <td class="font-mono text-xs">{fmtK(m().context)} / {fmtK(m().output)}</td>
-                      <td class="text-xs">
-                        <Show when={m().reasoning.declared} fallback={<span class="opacity-50">未声明</span>}>
-                          {m().reasoning.supported.join("/")}
-                        </Show>
-                      </td>
-                      <td class="text-xs">{m().cost?.input != null ? `${m().cost!.input}/${m().cost!.output}` : "—"}</td>
-                    </tr>
-                  );
-                }}
-              </Index>
-            </tbody>
-          </table>
+    const setFilter = (m: FilterMode) => {
+        const ms = props.card.base?.models ?? [];
+        mutateCfg((cfg) => {
+            if (m === "all") cfg.filter = { include: [], exclude: [] };
+            else if (m === "include")
+                cfg.filter = {
+                    include: ms
+                        .filter((x) => filterAllows(cfg.filter ?? { include: [], exclude: [] }, x.id))
+                        .map((x) => x.id),
+                    exclude: [],
+                };
+            else
+                cfg.filter = {
+                    include: [],
+                    exclude: ms
+                        .filter((x) => !filterAllows(cfg.filter ?? { include: [], exclude: [] }, x.id))
+                        .map((x) => x.id),
+                };
+        });
+    };
+    const toggle = (id: string) => {
+        const m = mode();
+        if (m === "all") return;
+        mutateCfg((cfg) => {
+            const flt = cfg.filter ?? { include: [], exclude: [] };
+            const list = m === "include" ? flt.include : flt.exclude;
+            const i = list.indexOf(id);
+            if (i >= 0) list.splice(i, 1);
+            else list.push(id);
+            cfg.filter = flt;
+        });
+    };
+
+    return (
+        <div class="card border bg-base-100 p-3 space-y-2 mt-2" data-focus-target={`provider-std-${props.card.key}`}>
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-semibold">{props.card.key}</span>
+                <code class="text-xs opacity-60">{props.card.key}</code>
+                <span class={`badge badge-sm ${props.card.base?.usable ? "badge-success" : "badge-warning"}`}>
+                    {props.card.base?.usable ? "密钥可用" : "无可用密钥"}
+                </span>
+                <Show when={props.card.base && !props.card.base.spec}>
+                    <span class="badge badge-error badge-sm">spec 缺失</span>
+                </Show>
+            </div>
+            <Show when={spec()}>
+                {(s) => (
+                    <div class="text-xs opacity-60 flex gap-3 flex-wrap">
+                        <span>
+                            npm: <code>{s().npm}</code>
+                        </span>
+                        <span>
+                            api: <code>{s().api}</code>
+                        </span>
+                    </div>
+                )}
+            </Show>
+            <AccountsEditor
+                cfg={() => props.card.cfg}
+                mutateCfg={mutateCfg}
+                base={() => props.card.base}
+                limited={() => props.card.key}
+                placeholder={() => (spec()?.env?.[0] ? `输入密钥，或 $${spec()!.env[0]}` : "输入密钥，或 $ENV")}
+                onTest={() => void test()}
+                testing={testing}
+            />
+
+            <ModelFilter mode={mode} setFilter={setFilter} />
+            <div class="flex items-center gap-2">
+                <input
+                    class="input input-bordered input-xs w-56"
+                    placeholder="🔍 搜索模型…"
+                    value={modelQuery()}
+                    onInput={(e) => setModelQuery(e.currentTarget.value)}
+                />
+                <span class="text-xs opacity-50">
+                    {models().length} / {props.card.base?.models.length ?? 0}
+                </span>
+            </div>
+            <Show when={models().length > 0} fallback={<div class="text-xs opacity-50">（无模型清单）</div>}>
+                <div class="max-h-72 overflow-y-auto">
+                    <table class="table table-xs">
+                        <thead>
+                            <tr>
+                                <th class="w-8">{mode() === "exclude" ? "排除" : "启用"}</th>
+                                <th>模型</th>
+                                <th class="w-36">context / output</th>
+                                <th class="w-24">推理档位</th>
+                                <th class="w-24">$/1M</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <Index each={models()}>
+                                {(m) => {
+                                    const enabled = () => {
+                                        if (mode() === "all") return true;
+                                        const flt = props.card.cfg.filter;
+                                        if (!flt) return true;
+                                        return mode() === "include"
+                                            ? flt.include.includes(m().id)
+                                            : !flt.exclude.includes(m().id);
+                                    };
+                                    return (
+                                        <tr class={enabled() ? "" : "opacity-40"}>
+                                            <td>
+                                                <input
+                                                    type="checkbox"
+                                                    class="checkbox checkbox-xs"
+                                                    disabled={mode() === "all"}
+                                                    checked={enabled()}
+                                                    onChange={() => toggle(m().id)}
+                                                />
+                                            </td>
+                                            <td>
+                                                <div class="flex gap-2 items-center flex-wrap">
+                                                    <span class="font-mono text-xs">{m().id}</span>
+                                                    <span class="text-xs opacity-70">{m().name}</span>
+                                                    <Show when={m().specMissing}>
+                                                        <span class="badge badge-error badge-xs">spec无</span>
+                                                    </Show>
+                                                </div>
+                                            </td>
+                                            <td class="font-mono text-xs">
+                                                {fmtK(m().context)} / {fmtK(m().output)}
+                                            </td>
+                                            <td class="text-xs">
+                                                <Show
+                                                    when={m().reasoning.declared}
+                                                    fallback={<span class="opacity-50">未声明</span>}
+                                                >
+                                                    {m().reasoning.supported.join("/")}
+                                                </Show>
+                                            </td>
+                                            <td class="text-xs">
+                                                {m().cost?.input != null
+                                                    ? `${m().cost!.input}/${m().cost!.output}`
+                                                    : "—"}
+                                            </td>
+                                        </tr>
+                                    );
+                                }}
+                            </Index>
+                        </tbody>
+                    </table>
+                </div>
+            </Show>
+
+            <div class="flex gap-2 pt-1">
+                <button class="btn btn-sm btn-primary" disabled={props.saving()} onClick={() => void props.save()}>
+                    保存
+                </button>
+                <button class="btn btn-sm btn-outline btn-error" onClick={props.onRemove}>
+                    移除
+                </button>
+            </div>
         </div>
-      </Show>
-
-      <div class="flex gap-2 pt-1">
-        <button class="btn btn-sm btn-primary" disabled={props.saving()} onClick={() => void props.save()}>保存</button>
-        <button class="btn btn-sm btn-outline btn-error" onClick={props.onRemove}>移除</button>
-      </div>
-    </div>
-  );
+    );
 }
 
 function ModelFilter(props: { mode: () => FilterMode; setFilter: (m: FilterMode) => void }) {
-  return (
-    <div class="flex gap-3 items-center text-sm">
-      <span class="font-medium">模型启用</span>
-      <label class="label cursor-pointer gap-1 py-0">
-        <input type="radio" class="radio radio-xs" checked={props.mode() === "all"} onChange={() => props.setFilter("all")} />
-        <span class="label-text text-xs">全部</span>
-      </label>
-      <label class="label cursor-pointer gap-1 py-0">
-        <input type="radio" class="radio radio-xs" checked={props.mode() === "include"} onChange={() => props.setFilter("include")} />
-        <span class="label-text text-xs">仅包含（白名单）</span>
-      </label>
-      <label class="label cursor-pointer gap-1 py-0">
-        <input type="radio" class="radio radio-xs" checked={props.mode() === "exclude"} onChange={() => props.setFilter("exclude")} />
-        <span class="label-text text-xs">排除（黑名单）</span>
-      </label>
-    </div>
-  );
+    return (
+        <div class="flex gap-3 items-center text-sm">
+            <span class="font-medium">模型启用</span>
+            <label class="label cursor-pointer gap-1 py-0">
+                <input
+                    type="radio"
+                    class="radio radio-xs"
+                    checked={props.mode() === "all"}
+                    onChange={() => props.setFilter("all")}
+                />
+                <span class="label-text text-xs">全部</span>
+            </label>
+            <label class="label cursor-pointer gap-1 py-0">
+                <input
+                    type="radio"
+                    class="radio radio-xs"
+                    checked={props.mode() === "include"}
+                    onChange={() => props.setFilter("include")}
+                />
+                <span class="label-text text-xs">仅包含（白名单）</span>
+            </label>
+            <label class="label cursor-pointer gap-1 py-0">
+                <input
+                    type="radio"
+                    class="radio radio-xs"
+                    checked={props.mode() === "exclude"}
+                    onChange={() => props.setFilter("exclude")}
+                />
+                <span class="label-text text-xs">排除（黑名单）</span>
+            </label>
+        </div>
+    );
 }
 
 // ── custom provider 卡片（spec 可编辑） ────────────────────────
@@ -807,446 +924,722 @@ function ModelFilter(props: { mode: () => FilterMode; setFilter: (m: FilterMode)
 // 之后各字段仍可就地改（context/output/面/档位），与新增时同一套控件。
 
 function CustomCard(props: {
-  card: { key: string; cfg: ProviderConfig; spec: SpecProvider | null; base: LlmConfigView["providers"][number] | undefined };
-  file: () => ModelConfigFile;
-  mutateFile: (fn: (f: ModelConfigFile) => void) => void;
-  specs: () => CustomSpecsFile;
-  mutateSpec: (key: string, fn: (s: SpecProvider) => void) => void;
-  /** 内置日历清单（时段档的「工作日扩展」下拉项，来自 llmConfig.read） */
-  calendars: () => CalendarChoice[];
-  /** 具名时段表清单（时段档的「时段表」下拉项，来自 llmConfig.read；空 = 只能自定义时刻） */
-  windows: () => WindowChoice[];
-  save: () => Promise<void>;
-  saving: () => boolean;
-  /** 点「移除」= 请求确认（由页面弹 ConfirmDialog，见 removeProvider） */
-  onRemove: () => void;
+    card: {
+        key: string;
+        cfg: ProviderConfig;
+        spec: SpecProvider | null;
+        base: LlmConfigView["providers"][number] | undefined;
+    };
+    file: () => ModelConfigFile;
+    mutateFile: (fn: (f: ModelConfigFile) => void) => void;
+    specs: () => CustomSpecsFile;
+    mutateSpec: (key: string, fn: (s: SpecProvider) => void) => void;
+    /** 内置日历清单（时段档的「工作日扩展」下拉项，来自 llmConfig.read） */
+    calendars: () => CalendarChoice[];
+    /** 具名时段表清单（时段档的「时段表」下拉项，来自 llmConfig.read；空 = 只能自定义时刻） */
+    windows: () => WindowChoice[];
+    save: () => Promise<void>;
+    saving: () => boolean;
+    /** 点「移除」= 请求确认（由页面弹 ConfirmDialog，见 removeProvider） */
+    onRemove: () => void;
 }) {
-  const [testing, setTesting] = createSignal(false);
-  const [modelQuery, setModelQuery] = createSignal("");
-  /** 展开编辑时段档的模型 id（同一时刻只展开一个，表窄） */
-  const [expanded, setExpanded] = createSignal<string | null>(null);
-  const mutateCfg = (fn: (c: ProviderConfig) => void) =>
-    props.mutateFile((f) => { const c = f.customProviders[props.card.key]; if (c) fn(c); });
-
-  const spec = () => props.card.spec;
-  const providerNpm = () => spec()?.npm ?? FACE_OPTIONS[0].npm;
-  const modelIds = createMemo(() => {
-    const q = modelQuery().trim().toLowerCase();
-    return Object.keys(spec()?.models ?? {}).filter((id) => {
-      if (!q) return true;
-      const nm = (spec()?.models[id] as { name?: string } | undefined)?.name ?? "";
-      return id.toLowerCase().includes(q) || nm.toLowerCase().includes(q);
-    });
-  });
-  const mode = () => modeOf(props.card.cfg.filter);
-
-  /** 测试连通 + 从 /models 同步模型清单（替换 spec.models；context/面 取自元数据） */
-  const testAndFetch = async () => {
-    const s = spec();
-    if (!s) return;
-    if (!s.api.trim()) { notificationStore.addToastLegacy("error", "先填 API 地址"); return; }
-    setTesting(true);
-    try {
-      const r = await diyService.diy.llmConfig.probe({ baseUrl: s.api, apiKey: props.card.cfg.accounts[0]?.data.value ?? "" });
-      if (!r.ok) { notificationStore.addToastLegacy("error", `不通：${r.error ?? "未知错误"}`); return; }
-      const fallbackNpm = providerNpm();
-      const prevModels = spec()?.models ?? {};
-      const next: Record<string, SpecProvider["models"][string]> = {};
-      let skipped = 0;
-      for (const m of r.models) {
-        // endpoints 非空 → 按端点定面（只支持两家；anthropic 等跳过）；为空 → 用 provider 级默认面。
-        const faceNpm = m.endpoints.length > 0 ? npmOfEndpoints(m.endpoints) : fallbackNpm;
-        if (!faceNpm) { skipped++; continue; }
-        const prev = prevModels[m.id];
-        // 合并而非重建：/models 只提供 name/context/面；**手工登记的价格/档位/自定义 limit 必须保留**
-        // （否则点一次「测试并获取模型列表」就把填好的价冲掉 → 静默变无价）。
-        next[m.id] = {
-          ...(prev ?? {}),
-          id: m.id,
-          ...(m.name ? { name: m.name } : {}),
-          ...(m.context ? { limit: { ...(prev?.limit ?? {}), context: m.context } } : {}),
-          ...(faceNpm !== fallbackNpm ? { provider: { npm: faceNpm } } : {}),
-        };
-      }
-      props.mutateSpec(props.card.key, (sp) => { sp.models = next; });
-      notificationStore.addToastLegacy(
-        "success",
-        `连通（HTTP ${r.status}），同步 ${Object.keys(next).length} 个模型` + (skipped ? `（跳过 ${skipped} 个未支持面的模型）` : ""),
-      );
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const patchModel = (id: string, fn: (m: NonNullable<SpecProvider["models"][string]>) => void) =>
-    props.mutateSpec(props.card.key, (s) => { const m = s.models[id]; if (m) fn(m); });
-
-  /** 读某模型某单价字段的展示值（未填 → 空串，不显示 0） */
-  const costVal = (id: string, f: CostField): string => {
-    const v = spec()?.models[id]?.cost?.[f];
-    return v != null ? String(v) : "";
-  };
-  /** in/out 只填了一个（runtime 只认两者齐全的价 → 该模型仍无价）：UI 标红提醒 */
-  const costPartial = (id: string): boolean => {
-    const c = spec()?.models[id]?.cost;
-    return c != null && (c.input != null) !== (c.output != null);
-  };
-  /** 写 base 档单价（$/1M，spec 的 snake_case）：清空则删字段；全空则删整个 cost（无价）。 */
-  const patchCost = (id: string, f: CostField, raw: string) =>
-    patchModel(id, (mm) => editCost(mm, (c) => setBasePrice(c, f, raw)));
-
-  // ── 时段档（utc-range）：变换在 shared/cost-edit.ts（纯函数，可单测） ──
-  const costOf = (id: string): Cost | undefined => spec()?.models[id]?.cost;
-  const slotsOf = (id: string) => utcRangeSlots(costOf(id));
-  const patchTier = (id: string, index: number, p: Parameters<typeof patchUtcRange>[2]) =>
-    patchModel(id, (mm) => editCost(mm, (c) => patchUtcRange(c, index, p)));
-  const addTier = (id: string) =>
-    patchModel(id, (mm) => { editCost(mm, addUtcRangeTier); setExpanded(id); });
-  const dropTier = (id: string, index: number) =>
-    patchModel(id, (mm) => editCost(mm, (c) => removeTier(c, index)));
-  /** 时段档的日历编辑块（`utc-range` 归一形状；非该类型不该出现在展开区） */
-  const winOf = (t: CostTier) => (t.tier?.type === "utc-range" ? t.tier.data : null);
-
-  const toggle = (id: string) => {
-    const m = mode();
-    if (m === "all") return;
-    mutateCfg((cfg) => {
-      const flt = cfg.filter ?? { include: [], exclude: [] };
-      const list = m === "include" ? flt.include : flt.exclude;
-      const i = list.indexOf(id);
-      if (i >= 0) list.splice(i, 1); else list.push(id);
-      cfg.filter = flt;
-    });
-  };
-
-  return (
-    <div class="card border bg-base-100 p-3 space-y-2 mt-2" data-focus-target={`provider-custom-${props.card.key}`}>
-      <div class="flex items-center gap-2 flex-wrap">
-        <span class="font-semibold">{props.card.key}</span>
-        <code class="text-xs opacity-60">custom:{props.card.key}</code>
-        <span class="badge badge-outline badge-sm">custom</span>
-        <span class={`badge badge-sm ${props.card.base?.usable ? "badge-success" : "badge-warning"}`}>
-          {props.card.base?.usable ? "密钥可用" : "无可用密钥"}
-        </span>
-        <Show when={!spec()}>
-          <span class="badge badge-error badge-sm">spec 缺失</span>
-        </Show>
-      </div>
-      <div class="grid grid-cols-2 gap-2">
-        <label class="form-control">
-          <span class="label-text text-xs">API 地址（baseUrl，必填）</span>
-          <input
-            class="input input-bordered input-sm"
-            placeholder="https://…/v1"
-            value={spec()?.api ?? ""}
-            onInput={(e) => props.mutateSpec(props.card.key, (s) => { s.api = e.currentTarget.value; })}
-          />
-        </label>
-        <label class="form-control">
-          <span class="label-text text-xs">默认 API 协议（面；模型可从 /models 覆写）</span>
-          <select
-            class="select select-bordered select-sm"
-            value={providerNpm()}
-            onChange={(e) => props.mutateSpec(props.card.key, (s) => { s.npm = e.currentTarget.value; })}
-          >
-            <For each={FACE_OPTIONS}>{(o) => <option value={o.npm}>{o.label}</option>}</For>
-          </select>
-        </label>
-      </div>
-
-      <AccountsEditor
-        cfg={() => props.card.cfg}
-        mutateCfg={mutateCfg}
-        base={() => props.card.base}
-        limited={() => `custom:${props.card.key}`}
-        placeholder={() => "输入密钥（明文或 $ENV）"}
-        onTest={() => void testAndFetch()}
-        testing={testing}
-        testLabel={() => "测试并获取模型列表"}
-      />
-
-      <ModelFilter mode={mode} setFilter={(m) => {
-        const ids = Object.keys(spec()?.models ?? {});
-        mutateCfg((cfg) => {
-          if (m === "all") cfg.filter = { include: [], exclude: [] };
-          else if (m === "include") cfg.filter = { include: ids.filter((x) => filterAllows(cfg.filter ?? { include: [], exclude: [] }, x)), exclude: [] };
-          else cfg.filter = { include: [], exclude: ids.filter((x) => !filterAllows(cfg.filter ?? { include: [], exclude: [] }, x)) };
+    const [testing, setTesting] = createSignal(false);
+    const [modelQuery, setModelQuery] = createSignal("");
+    /** 展开编辑时段档的模型 id（同一时刻只展开一个，表窄） */
+    const [expanded, setExpanded] = createSignal<string | null>(null);
+    const mutateCfg = (fn: (c: ProviderConfig) => void) =>
+        props.mutateFile((f) => {
+            const c = f.customProviders[props.card.key];
+            if (c) fn(c);
         });
-      }} />
 
-      <div class="flex items-center gap-2">
-        <span class="text-xs opacity-50">模型清单由「测试并获取模型列表」从 /models 同步</span>
-        <span class="flex-1" />
-        <input class="input input-bordered input-xs w-40" placeholder="🔍 搜索模型…" value={modelQuery()} onInput={(e) => setModelQuery(e.currentTarget.value)} />
-      </div>
+    const spec = () => props.card.spec;
+    const providerNpm = () => spec()?.npm ?? FACE_OPTIONS[0].npm;
+    const modelIds = createMemo(() => {
+        const q = modelQuery().trim().toLowerCase();
+        return Object.keys(spec()?.models ?? {}).filter((id) => {
+            if (!q) return true;
+            const nm = (spec()?.models[id] as { name?: string } | undefined)?.name ?? "";
+            return id.toLowerCase().includes(q) || nm.toLowerCase().includes(q);
+        });
+    });
+    const mode = () => modeOf(props.card.cfg.filter);
 
-      <Show when={modelIds().length > 0} fallback={<div class="text-xs opacity-50">（还没有模型：先填 API 地址与密钥，点「测试并获取模型列表」）</div>}>
-        <div class="max-h-72 overflow-y-auto">
-          <table class="table table-xs">
-            <thead>
-              <tr>
-                <th class="w-8">{mode() === "exclude" ? "排除" : "启用"}</th>
-                <th>模型 id / 名称</th>
-                <th class="w-28">context</th>
-                <th class="w-28">output</th>
-                <th class="w-52">档位（逗号，空=平台默认）</th>
-                <th class="w-72">价格 $/1M（in / out / 缓存读 / 缓存写）</th>
-              </tr>
-            </thead>
-            <tbody>
-              <Index each={modelIds()}>
-                {(id) => {
-                  const m = () => spec()!.models[id()];
-                  const enabled = () => {
-                    if (mode() === "all") return true;
-                    const flt = props.card.cfg.filter;
-                    if (!flt) return true;
-                    return mode() === "include" ? flt.include.includes(id()) : !flt.exclude.includes(id());
-                  };
-                  const efforts = () => {
-                    const opts = (m() as { reasoning_options?: Array<{ type?: string; values?: unknown }> }).reasoning_options ?? [];
-                    const v = opts.find((o) => o.type === "effort")?.values;
-                    return Array.isArray(v) ? (v as string[]).join(",") : "";
-                  };
-                  return (
-                    <>
-                    <tr class={enabled() ? "" : "opacity-40"}>
-                      <td>
-                        <input type="checkbox" class="checkbox checkbox-xs" disabled={mode() === "all"} checked={enabled()} onChange={() => toggle(id())} />
-                      </td>
-                      <td>
-                        <div class="flex gap-2 items-center flex-wrap">
-                          <span class="font-mono text-xs">{id()}</span>
-                          <Show when={(m() as { name?: string })?.name}>
-                            <span class="text-xs opacity-70">{(m() as { name?: string }).name}</span>
-                          </Show>
-                        </div>
-                      </td>
-                      <td>
-                        <input
-                          class="input input-bordered input-xs w-24"
-                          placeholder="200000"
-                          value={m()?.limit?.context != null ? String(m()!.limit!.context) : ""}
-                          onInput={(e) => patchModel(id(), (mm) => { const t = e.currentTarget.value.trim(); mm.limit = { ...mm.limit, ...(t ? { context: Number(t) } : {}) }; if (!t) delete mm.limit!.context; })}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          class="input input-bordered input-xs w-24"
-                          placeholder="32768"
-                          value={m()?.limit?.output != null ? String(m()!.limit!.output) : ""}
-                          onInput={(e) => patchModel(id(), (mm) => { const t = e.currentTarget.value.trim(); mm.limit = { ...mm.limit, ...(t ? { output: Number(t) } : {}) }; if (!t) delete mm.limit!.output; })}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          class="input input-bordered input-xs w-48"
-                          placeholder="如 low,medium,high"
-                          value={efforts()}
-                          onInput={(e) => patchModel(id(), (mm) => {
-                            const vals = e.currentTarget.value.split(",").map((s) => s.trim()).filter(Boolean);
-                            const other = ((mm as { reasoning_options?: unknown[] }).reasoning_options ?? []).filter((o) => (o as { type?: string }).type !== "effort");
-                            (mm as { reasoning_options?: unknown[] }).reasoning_options = [...other, ...(vals.length ? [{ type: "effort", values: vals }] : [])];
-                          })}
-                        />
-                      </td>
-                      <td>
-                        <div class="flex items-center gap-1">
-                          <Index each={COST_FIELDS}>
-                            {(f) => (
-                              <input
-                                class="input input-bordered input-xs w-14"
-                                placeholder={f().ph}
-                                title={f().label}
-                                value={costVal(id(), f().key)}
-                                onInput={(e) => patchCost(id(), f().key, e.currentTarget.value)}
-                              />
-                            )}
-                          </Index>
-                        </div>
-                        <div class="flex items-center gap-1 mt-1">
-                          <input
-                            class="input input-bordered input-xs w-16"
-                            placeholder="基准标签"
-                            title="未命中任何时段档时的档名（如 off-peak）；留空显示 base"
-                            value={costOf(id())?.baseLabel ?? ""}
-                            onInput={(e) => patchModel(id(), (mm) => editCost(mm, (c) => setBaseLabel(c, e.currentTarget.value)))}
-                          />
-                          <button
-                            class="btn btn-xs btn-ghost"
-                            title="峰/谷时段价（按 UTC 时刻 + 可选日历）"
-                            onClick={() => setExpanded(expanded() === id() ? null : id())}
-                          >
-                            时段档{slotsOf(id()).length ? ` ${slotsOf(id()).length}` : ""}
-                          </button>
-                        </div>
-                        <Show when={costPartial(id())}>
-                          <span class="text-error text-xs">in/out 需同填才有价</span>
-                        </Show>
-                      </td>
-                    </tr>
-                    <Show when={expanded() === id()}>
-                      <tr class="bg-base-200">
-                        <td colspan={6}>
-                          <div class="space-y-1 py-1">
-                            <div class="text-xs opacity-60">
-                              命中时段用档价，未命中用上面的默认价（基准标签 <code>{costOf(id())?.baseLabel ?? "base"}</code>）。
-                              档可**引用具名时段表**（段/日历/标签在 <code>models.dev.diy.json</code> 定义，
-                              同 vendor 的多个模型共用一张），也可「自定义时刻」。
-                              时刻 = 带 UTC 偏移的 ISO 8601（如 <code>01:00:00+08:00</code>）；end &lt; start = 跨零点。
-                              日历 = 该时段只在这些日子生效；档内价格留空 = 沿用默认价。
-                            </div>
-                            <For each={slotsOf(id())}>
-                              {(slot) => {
-                                const d = () => winOf(slot.tier)!;
-                                const issues = () => tierIssues(costOf(id()), slot.tier);
-                                return (
-                                  <div class="flex items-center gap-1 flex-wrap">
-                                    <select
-                                      class="select select-bordered select-xs w-44"
-                                      title="具名时段表（段/日历/标签在 models.dev.diy.json 里定义，此处只引用）或自定义时刻"
-                                      value={d().window ?? ""}
-                                      onChange={(e) => patchTier(id(), slot.index, { window: e.currentTarget.value })}
-                                    >
-                                      <option value="">自定义时刻</option>
-                                      <For each={props.windows()}>{(w) => <option value={w.id}>{w.id}</option>}</For>
-                                    </select>
-                                    <Show
-                                      when={d().window}
-                                      fallback={
-                                        <>
-                                          <input
-                                            class="input input-bordered input-xs w-36 font-mono"
-                                            title="开始时刻（含 UTC 偏移）"
-                                            value={d().start ?? ""}
-                                            onInput={(e) => patchTier(id(), slot.index, { start: e.currentTarget.value })}
-                                          />
-                                          <span class="opacity-50">→</span>
-                                          <input
-                                            class="input input-bordered input-xs w-36 font-mono"
-                                            title="结束时刻（偏移须与开始一致）"
-                                            value={d().end ?? ""}
-                                            onInput={(e) => patchTier(id(), slot.index, { end: e.currentTarget.value })}
-                                          />
-                                          <select
-                                            class="select select-bordered select-xs w-44"
-                                            title="仅在这些日子生效"
-                                            value={d().calendar ?? ""}
-                                            onChange={(e) => patchTier(id(), slot.index, { calendar: e.currentTarget.value })}
-                                          >
-                                            <option value="">不限日历（每天）</option>
-                                            <For each={props.calendars()}>{(c) => <option value={c.id}>{c.label}</option>}</For>
-                                          </select>
-                                          <input
-                                            class="input input-bordered input-xs w-20"
-                                            placeholder="标签 peak"
-                                            title="该时段的档名（落 usage.jsonl 的 window 字段）"
-                                            value={d().label ?? ""}
-                                            onInput={(e) => patchTier(id(), slot.index, { label: e.currentTarget.value })}
-                                          />
-                                        </>
-                                      }
-                                    >
-                                      <span class="text-xs opacity-60 font-mono max-w-96 truncate" title="段/日历/标签由时段表定义（models.dev.diy.json）">
-                                        {props.windows().find((w) => w.id === d().window)?.detail ?? "（时段表不存在）"}
-                                      </span>
-                                    </Show>
-                                    <Index each={COST_FIELDS}>
-                                      {(f) => (
-                                        <input
-                                          class="input input-bordered input-xs w-14"
-                                          placeholder={f().ph}
-                                          title={`本档 ${f().label}`}
-                                          value={slot.tier[f().key] != null ? String(slot.tier[f().key]) : ""}
-                                          onInput={(e) => patchTier(id(), slot.index, { price: { f: f().key, raw: e.currentTarget.value } })}
-                                        />
-                                      )}
-                                    </Index>
-                                    <button class="btn btn-xs btn-ghost text-error" title="删除此档" onClick={() => dropTier(id(), slot.index)}>×</button>
-                                    <Show when={issues().length > 0}>
-                                      <span class="text-error text-xs">{issues().join("；")}</span>
-                                    </Show>
-                                  </div>
-                                );
-                              }}
-                            </For>
-                            <div class="flex items-center gap-2">
-                              <button class="btn btn-xs btn-outline" onClick={() => addTier(id())}>＋ 时段档</button>
-                              <span class="text-xs opacity-50">
-                                档位顺序即优先级（首个命中者生效）；判档用请求发起时刻。
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    </Show>
-                    </>
-                  );
+    /** 测试连通 + 从 /models 同步模型清单（替换 spec.models；context/面 取自元数据） */
+    const testAndFetch = async () => {
+        const s = spec();
+        if (!s) return;
+        if (!s.api.trim()) {
+            notificationStore.addToastLegacy("error", "先填 API 地址");
+            return;
+        }
+        setTesting(true);
+        try {
+            const r = await diyService.diy.llmConfig.probe({
+                baseUrl: s.api,
+                apiKey: props.card.cfg.accounts[0]?.data.value ?? "",
+            });
+            if (!r.ok) {
+                notificationStore.addToastLegacy("error", `不通：${r.error ?? "未知错误"}`);
+                return;
+            }
+            const fallbackNpm = providerNpm();
+            const prevModels = spec()?.models ?? {};
+            const next: Record<string, SpecProvider["models"][string]> = {};
+            let skipped = 0;
+            for (const m of r.models) {
+                // endpoints 非空 → 按端点定面（只支持两家；anthropic 等跳过）；为空 → 用 provider 级默认面。
+                const faceNpm = m.endpoints.length > 0 ? npmOfEndpoints(m.endpoints) : fallbackNpm;
+                if (!faceNpm) {
+                    skipped++;
+                    continue;
+                }
+                const prev = prevModels[m.id];
+                // 合并而非重建：/models 只提供 name/context/面；**手工登记的价格/档位/自定义 limit 必须保留**
+                // （否则点一次「测试并获取模型列表」就把填好的价冲掉 → 静默变无价）。
+                next[m.id] = {
+                    ...(prev ?? {}),
+                    id: m.id,
+                    ...(m.name ? { name: m.name } : {}),
+                    ...(m.context ? { limit: { ...(prev?.limit ?? {}), context: m.context } } : {}),
+                    ...(faceNpm !== fallbackNpm ? { provider: { npm: faceNpm } } : {}),
+                };
+            }
+            props.mutateSpec(props.card.key, (sp) => {
+                sp.models = next;
+            });
+            notificationStore.addToastLegacy(
+                "success",
+                `连通（HTTP ${r.status}），同步 ${Object.keys(next).length} 个模型` +
+                    (skipped ? `（跳过 ${skipped} 个未支持面的模型）` : ""),
+            );
+        } finally {
+            setTesting(false);
+        }
+    };
+
+    const patchModel = (id: string, fn: (m: NonNullable<SpecProvider["models"][string]>) => void) =>
+        props.mutateSpec(props.card.key, (s) => {
+            const m = s.models[id];
+            if (m) fn(m);
+        });
+
+    /** 读某模型某单价字段的展示值（未填 → 空串，不显示 0） */
+    const costVal = (id: string, f: CostField): string => {
+        const v = spec()?.models[id]?.cost?.[f];
+        return v != null ? String(v) : "";
+    };
+    /** in/out 只填了一个（runtime 只认两者齐全的价 → 该模型仍无价）：UI 标红提醒 */
+    const costPartial = (id: string): boolean => {
+        const c = spec()?.models[id]?.cost;
+        return c != null && (c.input != null) !== (c.output != null);
+    };
+    /** 写 base 档单价（$/1M，spec 的 snake_case）：清空则删字段；全空则删整个 cost（无价）。 */
+    const patchCost = (id: string, f: CostField, raw: string) =>
+        patchModel(id, (mm) => editCost(mm, (c) => setBasePrice(c, f, raw)));
+
+    // ── 时段档（utc-range）：变换在 shared/cost-edit.ts（纯函数，可单测） ──
+    const costOf = (id: string): Cost | undefined => spec()?.models[id]?.cost;
+    const slotsOf = (id: string) => utcRangeSlots(costOf(id));
+    const patchTier = (id: string, index: number, p: Parameters<typeof patchUtcRange>[2]) =>
+        patchModel(id, (mm) => editCost(mm, (c) => patchUtcRange(c, index, p)));
+    const addTier = (id: string) =>
+        patchModel(id, (mm) => {
+            editCost(mm, addUtcRangeTier);
+            setExpanded(id);
+        });
+    const dropTier = (id: string, index: number) => patchModel(id, (mm) => editCost(mm, (c) => removeTier(c, index)));
+    /** 时段档的日历编辑块（`utc-range` 归一形状；非该类型不该出现在展开区） */
+    const winOf = (t: CostTier) => (t.tier?.type === "utc-range" ? t.tier.data : null);
+
+    const toggle = (id: string) => {
+        const m = mode();
+        if (m === "all") return;
+        mutateCfg((cfg) => {
+            const flt = cfg.filter ?? { include: [], exclude: [] };
+            const list = m === "include" ? flt.include : flt.exclude;
+            const i = list.indexOf(id);
+            if (i >= 0) list.splice(i, 1);
+            else list.push(id);
+            cfg.filter = flt;
+        });
+    };
+
+    return (
+        <div class="card border bg-base-100 p-3 space-y-2 mt-2" data-focus-target={`provider-custom-${props.card.key}`}>
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-semibold">{props.card.key}</span>
+                <code class="text-xs opacity-60">custom:{props.card.key}</code>
+                <span class="badge badge-outline badge-sm">custom</span>
+                <span class={`badge badge-sm ${props.card.base?.usable ? "badge-success" : "badge-warning"}`}>
+                    {props.card.base?.usable ? "密钥可用" : "无可用密钥"}
+                </span>
+                <Show when={!spec()}>
+                    <span class="badge badge-error badge-sm">spec 缺失</span>
+                </Show>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+                <label class="form-control">
+                    <span class="label-text text-xs">API 地址（baseUrl，必填）</span>
+                    <input
+                        class="input input-bordered input-sm"
+                        placeholder="https://…/v1"
+                        value={spec()?.api ?? ""}
+                        onInput={(e) =>
+                            props.mutateSpec(props.card.key, (s) => {
+                                s.api = e.currentTarget.value;
+                            })
+                        }
+                    />
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs">默认 API 协议（面；模型可从 /models 覆写）</span>
+                    <select
+                        class="select select-bordered select-sm"
+                        value={providerNpm()}
+                        onChange={(e) =>
+                            props.mutateSpec(props.card.key, (s) => {
+                                s.npm = e.currentTarget.value;
+                            })
+                        }
+                    >
+                        <For each={FACE_OPTIONS}>{(o) => <option value={o.npm}>{o.label}</option>}</For>
+                    </select>
+                </label>
+            </div>
+
+            <AccountsEditor
+                cfg={() => props.card.cfg}
+                mutateCfg={mutateCfg}
+                base={() => props.card.base}
+                limited={() => `custom:${props.card.key}`}
+                placeholder={() => "输入密钥（明文或 $ENV）"}
+                onTest={() => void testAndFetch()}
+                testing={testing}
+                testLabel={() => "测试并获取模型列表"}
+            />
+
+            <ModelFilter
+                mode={mode}
+                setFilter={(m) => {
+                    const ids = Object.keys(spec()?.models ?? {});
+                    mutateCfg((cfg) => {
+                        if (m === "all") cfg.filter = { include: [], exclude: [] };
+                        else if (m === "include")
+                            cfg.filter = {
+                                include: ids.filter((x) => filterAllows(cfg.filter ?? { include: [], exclude: [] }, x)),
+                                exclude: [],
+                            };
+                        else
+                            cfg.filter = {
+                                include: [],
+                                exclude: ids.filter(
+                                    (x) => !filterAllows(cfg.filter ?? { include: [], exclude: [] }, x),
+                                ),
+                            };
+                    });
                 }}
-              </Index>
-            </tbody>
-          </table>
-        </div>
-      </Show>
+            />
 
-      <div class="flex gap-2 pt-1">
-        <button class="btn btn-sm btn-primary" disabled={props.saving()} onClick={() => void props.save()}>保存</button>
-        <button class="btn btn-sm btn-outline btn-error" onClick={props.onRemove}>移除</button>
-      </div>
-    </div>
-  );
+            <div class="flex items-center gap-2">
+                <span class="text-xs opacity-50">模型清单由「测试并获取模型列表」从 /models 同步</span>
+                <span class="flex-1" />
+                <input
+                    class="input input-bordered input-xs w-40"
+                    placeholder="🔍 搜索模型…"
+                    value={modelQuery()}
+                    onInput={(e) => setModelQuery(e.currentTarget.value)}
+                />
+            </div>
+
+            <Show
+                when={modelIds().length > 0}
+                fallback={
+                    <div class="text-xs opacity-50">（还没有模型：先填 API 地址与密钥，点「测试并获取模型列表」）</div>
+                }
+            >
+                <div class="max-h-72 overflow-y-auto">
+                    <table class="table table-xs">
+                        <thead>
+                            <tr>
+                                <th class="w-8">{mode() === "exclude" ? "排除" : "启用"}</th>
+                                <th>模型 id / 名称</th>
+                                <th class="w-28">context</th>
+                                <th class="w-28">output</th>
+                                <th class="w-52">档位（逗号，空=平台默认）</th>
+                                <th class="w-72">价格 $/1M（in / out / 缓存读 / 缓存写）</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <Index each={modelIds()}>
+                                {(id) => {
+                                    const m = () => spec()!.models[id()];
+                                    const enabled = () => {
+                                        if (mode() === "all") return true;
+                                        const flt = props.card.cfg.filter;
+                                        if (!flt) return true;
+                                        return mode() === "include"
+                                            ? flt.include.includes(id())
+                                            : !flt.exclude.includes(id());
+                                    };
+                                    const efforts = () => {
+                                        const opts =
+                                            (m() as { reasoning_options?: Array<{ type?: string; values?: unknown }> })
+                                                .reasoning_options ?? [];
+                                        const v = opts.find((o) => o.type === "effort")?.values;
+                                        return Array.isArray(v) ? (v as string[]).join(",") : "";
+                                    };
+                                    return (
+                                        <>
+                                            <tr class={enabled() ? "" : "opacity-40"}>
+                                                <td>
+                                                    <input
+                                                        type="checkbox"
+                                                        class="checkbox checkbox-xs"
+                                                        disabled={mode() === "all"}
+                                                        checked={enabled()}
+                                                        onChange={() => toggle(id())}
+                                                    />
+                                                </td>
+                                                <td>
+                                                    <div class="flex gap-2 items-center flex-wrap">
+                                                        <span class="font-mono text-xs">{id()}</span>
+                                                        <Show when={(m() as { name?: string })?.name}>
+                                                            <span class="text-xs opacity-70">
+                                                                {(m() as { name?: string }).name}
+                                                            </span>
+                                                        </Show>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <input
+                                                        class="input input-bordered input-xs w-24"
+                                                        placeholder="200000"
+                                                        value={
+                                                            m()?.limit?.context != null
+                                                                ? String(m()!.limit!.context)
+                                                                : ""
+                                                        }
+                                                        onInput={(e) =>
+                                                            patchModel(id(), (mm) => {
+                                                                const t = e.currentTarget.value.trim();
+                                                                mm.limit = {
+                                                                    ...mm.limit,
+                                                                    ...(t ? { context: Number(t) } : {}),
+                                                                };
+                                                                if (!t) delete mm.limit!.context;
+                                                            })
+                                                        }
+                                                    />
+                                                </td>
+                                                <td>
+                                                    <input
+                                                        class="input input-bordered input-xs w-24"
+                                                        placeholder="32768"
+                                                        value={
+                                                            m()?.limit?.output != null ? String(m()!.limit!.output) : ""
+                                                        }
+                                                        onInput={(e) =>
+                                                            patchModel(id(), (mm) => {
+                                                                const t = e.currentTarget.value.trim();
+                                                                mm.limit = {
+                                                                    ...mm.limit,
+                                                                    ...(t ? { output: Number(t) } : {}),
+                                                                };
+                                                                if (!t) delete mm.limit!.output;
+                                                            })
+                                                        }
+                                                    />
+                                                </td>
+                                                <td>
+                                                    <input
+                                                        class="input input-bordered input-xs w-48"
+                                                        placeholder="如 low,medium,high"
+                                                        value={efforts()}
+                                                        onInput={(e) =>
+                                                            patchModel(id(), (mm) => {
+                                                                const vals = e.currentTarget.value
+                                                                    .split(",")
+                                                                    .map((s) => s.trim())
+                                                                    .filter(Boolean);
+                                                                const other = (
+                                                                    (mm as { reasoning_options?: unknown[] })
+                                                                        .reasoning_options ?? []
+                                                                ).filter(
+                                                                    (o) => (o as { type?: string }).type !== "effort",
+                                                                );
+                                                                (
+                                                                    mm as { reasoning_options?: unknown[] }
+                                                                ).reasoning_options = [
+                                                                    ...other,
+                                                                    ...(vals.length
+                                                                        ? [{ type: "effort", values: vals }]
+                                                                        : []),
+                                                                ];
+                                                            })
+                                                        }
+                                                    />
+                                                </td>
+                                                <td>
+                                                    <div class="flex items-center gap-1">
+                                                        <Index each={COST_FIELDS}>
+                                                            {(f) => (
+                                                                <input
+                                                                    class="input input-bordered input-xs w-14"
+                                                                    placeholder={f().ph}
+                                                                    title={f().label}
+                                                                    value={costVal(id(), f().key)}
+                                                                    onInput={(e) =>
+                                                                        patchCost(id(), f().key, e.currentTarget.value)
+                                                                    }
+                                                                />
+                                                            )}
+                                                        </Index>
+                                                    </div>
+                                                    <div class="flex items-center gap-1 mt-1">
+                                                        <input
+                                                            class="input input-bordered input-xs w-16"
+                                                            placeholder="基准标签"
+                                                            title="未命中任何时段档时的档名（如 off-peak）；留空显示 base"
+                                                            value={costOf(id())?.baseLabel ?? ""}
+                                                            onInput={(e) =>
+                                                                patchModel(id(), (mm) =>
+                                                                    editCost(mm, (c) =>
+                                                                        setBaseLabel(c, e.currentTarget.value),
+                                                                    ),
+                                                                )
+                                                            }
+                                                        />
+                                                        <button
+                                                            class="btn btn-xs btn-ghost"
+                                                            title="峰/谷时段价（按 UTC 时刻 + 可选日历）"
+                                                            onClick={() =>
+                                                                setExpanded(expanded() === id() ? null : id())
+                                                            }
+                                                        >
+                                                            时段档
+                                                            {slotsOf(id()).length ? ` ${slotsOf(id()).length}` : ""}
+                                                        </button>
+                                                    </div>
+                                                    <Show when={costPartial(id())}>
+                                                        <span class="text-error text-xs">in/out 需同填才有价</span>
+                                                    </Show>
+                                                </td>
+                                            </tr>
+                                            <Show when={expanded() === id()}>
+                                                <tr class="bg-base-200">
+                                                    <td colspan={6}>
+                                                        <div class="space-y-1 py-1">
+                                                            <div class="text-xs opacity-60">
+                                                                命中时段用档价，未命中用上面的默认价（基准标签{" "}
+                                                                <code>{costOf(id())?.baseLabel ?? "base"}</code>）。
+                                                                档可**引用具名时段表**（段/日历/标签在{" "}
+                                                                <code>models.dev.diy.json</code> 定义， 同 vendor
+                                                                的多个模型共用一张），也可「自定义时刻」。 时刻 = 带 UTC
+                                                                偏移的 ISO 8601（如 <code>01:00:00+08:00</code>）；end
+                                                                &lt; start = 跨零点。 日历 =
+                                                                该时段只在这些日子生效；档内价格留空 = 沿用默认价。
+                                                            </div>
+                                                            <For each={slotsOf(id())}>
+                                                                {(slot) => {
+                                                                    const d = () => winOf(slot.tier)!;
+                                                                    const issues = () =>
+                                                                        tierIssues(costOf(id()), slot.tier);
+                                                                    return (
+                                                                        <div class="flex items-center gap-1 flex-wrap">
+                                                                            <select
+                                                                                class="select select-bordered select-xs w-44"
+                                                                                title="具名时段表（段/日历/标签在 models.dev.diy.json 里定义，此处只引用）或自定义时刻"
+                                                                                value={d().window ?? ""}
+                                                                                onChange={(e) =>
+                                                                                    patchTier(id(), slot.index, {
+                                                                                        window: e.currentTarget.value,
+                                                                                    })
+                                                                                }
+                                                                            >
+                                                                                <option value="">自定义时刻</option>
+                                                                                <For each={props.windows()}>
+                                                                                    {(w) => (
+                                                                                        <option value={w.id}>
+                                                                                            {w.id}
+                                                                                        </option>
+                                                                                    )}
+                                                                                </For>
+                                                                            </select>
+                                                                            <Show
+                                                                                when={d().window}
+                                                                                fallback={
+                                                                                    <>
+                                                                                        <input
+                                                                                            class="input input-bordered input-xs w-36 font-mono"
+                                                                                            title="开始时刻（含 UTC 偏移）"
+                                                                                            value={d().start ?? ""}
+                                                                                            onInput={(e) =>
+                                                                                                patchTier(
+                                                                                                    id(),
+                                                                                                    slot.index,
+                                                                                                    {
+                                                                                                        start: e
+                                                                                                            .currentTarget
+                                                                                                            .value,
+                                                                                                    },
+                                                                                                )
+                                                                                            }
+                                                                                        />
+                                                                                        <span class="opacity-50">
+                                                                                            →
+                                                                                        </span>
+                                                                                        <input
+                                                                                            class="input input-bordered input-xs w-36 font-mono"
+                                                                                            title="结束时刻（偏移须与开始一致）"
+                                                                                            value={d().end ?? ""}
+                                                                                            onInput={(e) =>
+                                                                                                patchTier(
+                                                                                                    id(),
+                                                                                                    slot.index,
+                                                                                                    {
+                                                                                                        end: e
+                                                                                                            .currentTarget
+                                                                                                            .value,
+                                                                                                    },
+                                                                                                )
+                                                                                            }
+                                                                                        />
+                                                                                        <select
+                                                                                            class="select select-bordered select-xs w-44"
+                                                                                            title="仅在这些日子生效"
+                                                                                            value={d().calendar ?? ""}
+                                                                                            onChange={(e) =>
+                                                                                                patchTier(
+                                                                                                    id(),
+                                                                                                    slot.index,
+                                                                                                    {
+                                                                                                        calendar:
+                                                                                                            e
+                                                                                                                .currentTarget
+                                                                                                                .value,
+                                                                                                    },
+                                                                                                )
+                                                                                            }
+                                                                                        >
+                                                                                            <option value="">
+                                                                                                不限日历（每天）
+                                                                                            </option>
+                                                                                            <For
+                                                                                                each={props.calendars()}
+                                                                                            >
+                                                                                                {(c) => (
+                                                                                                    <option
+                                                                                                        value={c.id}
+                                                                                                    >
+                                                                                                        {c.label}
+                                                                                                    </option>
+                                                                                                )}
+                                                                                            </For>
+                                                                                        </select>
+                                                                                        <input
+                                                                                            class="input input-bordered input-xs w-20"
+                                                                                            placeholder="标签 peak"
+                                                                                            title="该时段的档名（落 usage.jsonl 的 window 字段）"
+                                                                                            value={d().label ?? ""}
+                                                                                            onInput={(e) =>
+                                                                                                patchTier(
+                                                                                                    id(),
+                                                                                                    slot.index,
+                                                                                                    {
+                                                                                                        label: e
+                                                                                                            .currentTarget
+                                                                                                            .value,
+                                                                                                    },
+                                                                                                )
+                                                                                            }
+                                                                                        />
+                                                                                    </>
+                                                                                }
+                                                                            >
+                                                                                <span
+                                                                                    class="text-xs opacity-60 font-mono max-w-96 truncate"
+                                                                                    title="段/日历/标签由时段表定义（models.dev.diy.json）"
+                                                                                >
+                                                                                    {props
+                                                                                        .windows()
+                                                                                        .find(
+                                                                                            (w) => w.id === d().window,
+                                                                                        )?.detail ?? "（时段表不存在）"}
+                                                                                </span>
+                                                                            </Show>
+                                                                            <Index each={COST_FIELDS}>
+                                                                                {(f) => (
+                                                                                    <input
+                                                                                        class="input input-bordered input-xs w-14"
+                                                                                        placeholder={f().ph}
+                                                                                        title={`本档 ${f().label}`}
+                                                                                        value={
+                                                                                            slot.tier[f().key] != null
+                                                                                                ? String(
+                                                                                                      slot.tier[
+                                                                                                          f().key
+                                                                                                      ],
+                                                                                                  )
+                                                                                                : ""
+                                                                                        }
+                                                                                        onInput={(e) =>
+                                                                                            patchTier(
+                                                                                                id(),
+                                                                                                slot.index,
+                                                                                                {
+                                                                                                    price: {
+                                                                                                        f: f().key,
+                                                                                                        raw: e
+                                                                                                            .currentTarget
+                                                                                                            .value,
+                                                                                                    },
+                                                                                                },
+                                                                                            )
+                                                                                        }
+                                                                                    />
+                                                                                )}
+                                                                            </Index>
+                                                                            <button
+                                                                                class="btn btn-xs btn-ghost text-error"
+                                                                                title="删除此档"
+                                                                                onClick={() =>
+                                                                                    dropTier(id(), slot.index)
+                                                                                }
+                                                                            >
+                                                                                ×
+                                                                            </button>
+                                                                            <Show when={issues().length > 0}>
+                                                                                <span class="text-error text-xs">
+                                                                                    {issues().join("；")}
+                                                                                </span>
+                                                                            </Show>
+                                                                        </div>
+                                                                    );
+                                                                }}
+                                                            </For>
+                                                            <div class="flex items-center gap-2">
+                                                                <button
+                                                                    class="btn btn-xs btn-outline"
+                                                                    onClick={() => addTier(id())}
+                                                                >
+                                                                    ＋ 时段档
+                                                                </button>
+                                                                <span class="text-xs opacity-50">
+                                                                    档位顺序即优先级（首个命中者生效）；判档用请求发起时刻。
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            </Show>
+                                        </>
+                                    );
+                                }}
+                            </Index>
+                        </tbody>
+                    </table>
+                </div>
+            </Show>
+
+            <div class="flex gap-2 pt-1">
+                <button class="btn btn-sm btn-primary" disabled={props.saving()} onClick={() => void props.save()}>
+                    保存
+                </button>
+                <button class="btn btn-sm btn-outline btn-error" onClick={props.onRemove}>
+                    移除
+                </button>
+            </div>
+        </div>
+    );
 }
 
 // ── 新增 custom provider ──────────────────────────────────────
 
 function NewCustomForm(props: {
-  existing: CustomSpecsFile;
-  onCancel: () => void;
-  onCreate: (id: string, spec: SpecProvider, keyValue: string) => void;
+    existing: CustomSpecsFile;
+    onCancel: () => void;
+    onCreate: (id: string, spec: SpecProvider, keyValue: string) => void;
 }) {
-  const [id, setId] = createSignal("");
-  const [api, setApi] = createSignal("");
-  const [npm, setNpm] = createSignal<string>(FACE_OPTIONS[0].npm);
-  const [keyValue, setKeyValue] = createSignal("");
-  const [err, setErr] = createSignal<string | null>(null);
+    const [id, setId] = createSignal("");
+    const [api, setApi] = createSignal("");
+    const [npm, setNpm] = createSignal<string>(FACE_OPTIONS[0].npm);
+    const [keyValue, setKeyValue] = createSignal("");
+    const [err, setErr] = createSignal<string | null>(null);
 
-  const create = () => {
-    const k = id().trim();
-    if (!k) { setErr("填 provider id"); return; }
-    if (props.existing[k]) { setErr(`custom:${k} 已存在`); return; }
-    if (!api().trim()) { setErr("填 API 地址"); return; }
-    props.onCreate(k, { id: k, npm: npm(), api: api().trim(), models: {} }, keyValue());
-  };
+    const create = () => {
+        const k = id().trim();
+        if (!k) {
+            setErr("填 provider id");
+            return;
+        }
+        if (props.existing[k]) {
+            setErr(`custom:${k} 已存在`);
+            return;
+        }
+        if (!api().trim()) {
+            setErr("填 API 地址");
+            return;
+        }
+        props.onCreate(k, { id: k, npm: npm(), api: api().trim(), models: {} }, keyValue());
+    };
 
-  return (
-    <div class="card border p-3 bg-base-200 space-y-2 mt-2">
-      <div class="text-sm font-semibold">新增 custom provider</div>
-      <div class="grid grid-cols-2 gap-2">
-        <label class="form-control">
-          <span class="label-text text-xs">provider id（裸，不带 custom:）</span>
-          <input class="input input-bordered input-sm font-mono" placeholder="goat" value={id()} onInput={(e) => setId(e.currentTarget.value)} />
-        </label>
-        <label class="form-control">
-          <span class="label-text text-xs">API 地址（baseUrl，必填）</span>
-          <input class="input input-bordered input-sm" placeholder="https://…/v1" value={api()} onInput={(e) => setApi(e.currentTarget.value)} />
-        </label>
-        <label class="form-control">
-          <span class="label-text text-xs">API 协议（面）</span>
-          <select class="select select-bordered select-sm" value={npm()} onChange={(e) => setNpm(e.currentTarget.value)}>
-            <For each={FACE_OPTIONS}>{(o) => <option value={o.npm}>{o.label}</option>}</For>
-          </select>
-        </label>
-        <label class="form-control">
-          <span class="label-text text-xs">密钥（明文或 $ENV）</span>
-          <input class="input input-bordered input-sm" placeholder="sk-… 或 $MY_KEY" value={keyValue()} onInput={(e) => setKeyValue(e.currentTarget.value)} />
-        </label>
-      </div>
-      <Show when={err()}><div class="text-error text-xs">{err()}</div></Show>
-      <div class="text-xs opacity-60">创建后进卡片填密钥，点「测试并获取模型列表」从 /models 同步模型（只支持能提供模型元数据的端点）。</div>
-      <div class="flex gap-2">
-        <button class="btn btn-sm btn-primary" onClick={create}>创建</button>
-        <button class="btn btn-sm" onClick={props.onCancel}>取消</button>
-      </div>
-    </div>
-  );
+    return (
+        <div class="card border p-3 bg-base-200 space-y-2 mt-2">
+            <div class="text-sm font-semibold">新增 custom provider</div>
+            <div class="grid grid-cols-2 gap-2">
+                <label class="form-control">
+                    <span class="label-text text-xs">provider id（裸，不带 custom:）</span>
+                    <input
+                        class="input input-bordered input-sm font-mono"
+                        placeholder="goat"
+                        value={id()}
+                        onInput={(e) => setId(e.currentTarget.value)}
+                    />
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs">API 地址（baseUrl，必填）</span>
+                    <input
+                        class="input input-bordered input-sm"
+                        placeholder="https://…/v1"
+                        value={api()}
+                        onInput={(e) => setApi(e.currentTarget.value)}
+                    />
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs">API 协议（面）</span>
+                    <select
+                        class="select select-bordered select-sm"
+                        value={npm()}
+                        onChange={(e) => setNpm(e.currentTarget.value)}
+                    >
+                        <For each={FACE_OPTIONS}>{(o) => <option value={o.npm}>{o.label}</option>}</For>
+                    </select>
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs">密钥（明文或 $ENV）</span>
+                    <input
+                        class="input input-bordered input-sm"
+                        placeholder="sk-… 或 $MY_KEY"
+                        value={keyValue()}
+                        onInput={(e) => setKeyValue(e.currentTarget.value)}
+                    />
+                </label>
+            </div>
+            <Show when={err()}>
+                <div class="text-error text-xs">{err()}</div>
+            </Show>
+            <div class="text-xs opacity-60">
+                创建后进卡片填密钥，点「测试并获取模型列表」从 /models 同步模型（只支持能提供模型元数据的端点）。
+            </div>
+            <div class="flex gap-2">
+                <button class="btn btn-sm btn-primary" onClick={create}>
+                    创建
+                </button>
+                <button class="btn btn-sm" onClick={props.onCancel}>
+                    取消
+                </button>
+            </div>
+        </div>
+    );
 }

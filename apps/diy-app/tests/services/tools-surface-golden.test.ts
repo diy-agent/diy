@@ -29,10 +29,7 @@ interface ToolSurfaceEntry {
 }
 
 function surfaceOf(cwd: string, taskUri: string): ToolSurfaceEntry[] {
-    const tools = buildTools(cwd, DEFAULT_LIMITS, taskUri) as Record<
-        string,
-        { description?: unknown }
-    >;
+    const tools = buildTools(cwd, DEFAULT_LIMITS, taskUri) as Record<string, { description?: unknown }>;
     return Object.entries(tools).map(([name, t]) => ({
         name,
         description: String(t.description ?? ""),

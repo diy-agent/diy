@@ -109,7 +109,9 @@ export function NodeDetail(props: {
                     when={isCurrent() && props.view.next.pending.length > 0}
                     fallback={
                         <div class="text-body opacity-50">
-                            {isCurrent() ? "当前节点没有待宣布的 guard（已进入终态？）" : "guard 未下发（只报当前节点的 pending）"}
+                            {isCurrent()
+                                ? "当前节点没有待宣布的 guard（已进入终态？）"
+                                : "guard 未下发（只报当前节点的 pending）"}
                         </div>
                     }
                 >

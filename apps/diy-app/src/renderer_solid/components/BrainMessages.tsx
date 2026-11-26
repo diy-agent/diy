@@ -76,7 +76,11 @@ const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
 
 /** 首行预览（卡片折叠时的唯一信息，故要短） */
 function firstLine(s: string, n = 90): string {
-    const line = s.replace(ANSI_RE, "").split("\n").find((x) => x.trim() !== "") ?? "";
+    const line =
+        s
+            .replace(ANSI_RE, "")
+            .split("\n")
+            .find((x) => x.trim() !== "") ?? "";
     return line.length > n ? `${line.slice(0, n)}…` : line;
 }
 
@@ -106,7 +110,8 @@ function previewOf(text: string, env: YamlTry): string {
 function MessageCard(props: { m: StepMessage; open: () => boolean; onToggle: () => void; floor: number }): JSX.Element {
     const [mode, setMode] = createSignal<"read" | "raw">("read");
     const env = createMemo(() => parseEnvelope(props.m.text));
-    const meta = (): { cls: string; label: string } => ROLE_META[props.m.role] ?? { cls: "badge-ghost", label: props.m.role };
+    const meta = (): { cls: string; label: string } =>
+        ROLE_META[props.m.role] ?? { cls: "badge-ghost", label: props.m.role };
     return (
         <div class="rounded border border-base-300">
             <div class="flex w-full items-center gap-1 px-2 py-1 text-body">
@@ -158,7 +163,9 @@ function MessageCard(props: { m: StepMessage; open: () => boolean; onToggle: () 
             <Show when={props.open()}>
                 <div class="border-t border-base-300 bg-base-100 px-2 py-1">
                     <Show when={mode() === "raw"}>
-                        <pre class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all font-mono text-caption leading-relaxed">{props.m.text}</pre>
+                        <pre class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all font-mono text-caption leading-relaxed">
+                            {props.m.text}
+                        </pre>
                     </Show>
                     <Show when={mode() === "read"}>
                         <Show
@@ -203,7 +210,11 @@ function MessageCard(props: { m: StepMessage; open: () => boolean; onToggle: () 
 /** 展开层级上限：1 层 = 卡片全展开，其上每层深入树一层。8 层之后该切 `<>` 原文了 */
 const MAX_LEVEL = 8;
 
-export function BrainMessages(props: { messages: readonly StepMessage[]; raw: string | null; note: string }): JSX.Element {
+export function BrainMessages(props: {
+    messages: readonly StepMessage[];
+    raw: string | null;
+    note: string;
+}): JSX.Element {
     /**
      * 展开层级（**一个总闸**）：0 = 全收起；L≥1 = 卡片全展开 + 树展开到 L 层。
      *
@@ -215,7 +226,7 @@ export function BrainMessages(props: { messages: readonly StepMessage[]; raw: st
     /** 单卡反选：点卡头可单独翻某张卡（在总闸基础上取反，不动总闸） */
     const [flipped, setFlipped] = createSignal<Set<number>>(new Set());
     const [rawOpen, setRawOpen] = createSignal(false);
-    const isOpen = (i: number): boolean => (level() >= 1) !== flipped().has(i);
+    const isOpen = (i: number): boolean => level() >= 1 !== flipped().has(i);
     const toggle = (i: number): void => {
         const next = new Set(flipped());
         if (next.has(i)) next.delete(i);

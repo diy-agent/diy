@@ -36,7 +36,6 @@ function tabLabel(uri: string): string {
     return n?.num ? `#${n.num} ${n.title ?? uri}` : (n?.title ?? uri);
 }
 
-
 const SECTIONS: Record<string, { label: string; icon: string }> = {
     task: { label: "任务管理", icon: "📋" },
     llm: { label: "LLM", icon: "🧠" },
@@ -66,13 +65,15 @@ function computeCrumbs(activeKey: string, section: string): Crumb[] {
     // ── section 路由（无 tab 上下文） ──
     if (!activeKey) {
         const info = SECTIONS[section] ?? { label: section, icon: "📄" };
-        return [{
-            label: info.label,
-            icon: info.icon,
-            action: { kind: "none" }, // 已在当前 section
-            siblings: null,
-            isCurrent: true,
-        }];
+        return [
+            {
+                label: info.label,
+                icon: info.icon,
+                action: { kind: "none" }, // 已在当前 section
+                siblings: null,
+                isCurrent: true,
+            },
+        ];
     }
 
     // ── tab 路由 ──
@@ -181,7 +182,11 @@ function CrumbDropdown(props: {
                 ref={btnRef}
                 tabindex={0}
                 class="btn btn-ghost btn-xs px-0.5 min-h-0 h-4 text-caption leading-none opacity-40 hover:opacity-100"
-                onClick={(e) => { e.stopPropagation(); setOpen(!open()); watchOpen(); }}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    setOpen(!open());
+                    watchOpen();
+                }}
             >
                 ▾
             </button>
@@ -205,14 +210,19 @@ function CrumbDropdown(props: {
                                             when={t.pageId === "task-run"}
                                             fallback={<span class="w-1.5 shrink-0 opacity-40">↳</span>}
                                         >
-                                            <span class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`} />
+                                            <span
+                                                class={`w-1.5 h-1.5 rounded-full shrink-0 ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`}
+                                            />
                                         </Show>
                                         <span class="flex-1 truncate">{labelOf(t)}</span>
                                         {isCur && <span class="text-primary text-caption">◀</span>}
                                         <button
                                             class="btn btn-ghost btn-xs px-0.5 min-h-0 h-4 opacity-0 hover:!opacity-100 text-caption"
                                             title="关闭"
-                                            onClick={(e) => { e.stopPropagation(); props.onClose(t.key); }}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                props.onClose(t.key);
+                                            }}
                                         >
                                             ✕
                                         </button>

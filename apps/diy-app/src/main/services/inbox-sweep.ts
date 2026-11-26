@@ -42,7 +42,6 @@ import { inboxEntryOf, inboxHub, stuckSteerEntryOf } from "./inbox";
  */
 const NO_NEW_TURN_STATES: ReadonlySet<string> = new Set<string>([...TERMINAL_SESSION_STATES, "shelved"]);
 
-
 /**
  * 扫一遍所有任务：结案了但 `steers` 还非空的 ⇒ 每条留言落一条 `lost` 条目。
  *
@@ -70,11 +69,7 @@ export async function sweepStuckSteers(): Promise<number> {
             const key = `${uri}#${steer.id}`;
             if (seen.has(key)) continue;
             try {
-                await inboxHub.push(
-                    inboxEntryOf(
-                        stuckSteerEntryOf({ taskUri: uri, state, steer, dedupeKey: key }),
-                    ),
-                );
+                await inboxHub.push(inboxEntryOf(stuckSteerEntryOf({ taskUri: uri, state, steer, dedupeKey: key })));
                 seen.add(key);
                 noted++;
             } catch (e) {

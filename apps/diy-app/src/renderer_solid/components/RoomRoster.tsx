@@ -31,14 +31,7 @@
  */
 import { createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import {
-    memberAvatar,
-    memberColor,
-    memberKey,
-    orderedMembers,
-    type Room,
-    type RoomMember,
-} from "../../shared/room";
+import { memberAvatar, memberColor, memberKey, orderedMembers, type Room, type RoomMember } from "../../shared/room";
 import { personaStore } from "../store/personaStore";
 import { getRendererActions } from "../lib/renderer-actions";
 
@@ -115,9 +108,7 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
      * 浮层**看不见**、`mouseenter` 永不触发 ⇒ `cancelHide` 从不被调 ⇒ 180ms 后消失。
      * 同坑的既有解法见 `TaskDetailContent.tsx` TaskNameLink 头注（Portal + fixed）。
      */
-    const [hover, setHover] = createSignal<{ id: string; left: number; top: number } | null>(
-        null,
-    );
+    const [hover, setHover] = createSignal<{ id: string; left: number; top: number } | null>(null);
     /** 延迟隐藏：鼠标从行移到浮层的途中不能消失（否则浮层里的按钮点不到） */
     let hideTimer: number | undefined;
     const cancelHide = (): void => {
@@ -137,8 +128,7 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
 
     /** 成员展示顺序（人先、agent 后）—— 顺序与头像位次同一份（同房间内头像不撞） */
     const ordered = createMemo(() => orderedMembers(props.room));
-    const rosterOf = (id: string): RosterMemberL1 | undefined =>
-        props.roster.find((m) => m.memberId === id);
+    const rosterOf = (id: string): RosterMemberL1 | undefined => props.roster.find((m) => m.memberId === id);
 
     /**
      * 已在房间的人物（护栏，##166 §28.7 F）：**同一 backend 不得挂两个人物**（A 帽子，§27 已否）。
@@ -146,15 +136,10 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
      * 因为成员名是 `@` 寻址的键，重名会让寻址有歧义（`resolveMember` 取第一个）。
      */
     const invitedPersonas = createMemo(
-        () =>
-            new Set(
-                (props.room?.members ?? []).map((m) => m.persona).filter((x): x is string => !!x),
-            ),
+        () => new Set((props.room?.members ?? []).map((m) => m.persona).filter((x): x is string => !!x)),
     );
     /** 人物清单 —— 直接用 `personaStore`（人物管理页同一份缓存），不自己再拉一遍 */
-    const personaOptions = createMemo(() =>
-        personaStore.personas.map((p) => ({ id: p.id, name: p.name })),
-    );
+    const personaOptions = createMemo(() => personaStore.personas.map((p) => ({ id: p.id, name: p.name })));
     const personaName = (id: string | undefined): string =>
         id ? (personaStore.personas.find((p) => p.id === id)?.name ?? id) : "";
 
@@ -182,10 +167,7 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
     };
 
     return (
-        <div
-            class={`flex flex-col min-h-0 ${props.class ?? "w-60 shrink-0 border-l"}`}
-            data-room-roster
-        >
+        <div class={`flex flex-col min-h-0 ${props.class ?? "w-60 shrink-0 border-l"}`} data-room-roster>
             {/* 头部：只剩「成员 + 计数」—— view 级操作（清空接受者等）归调用方的 viewbar（§38.3） */}
             <div class="px-3 py-1.5 shrink-0 flex items-center gap-2" data-room-roster-head>
                 <span class="text-caption opacity-70">成员</span>
@@ -213,11 +195,7 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
                                         + 二级浮窗；三级：**点头像** → 人物编辑半截页（复用 PersonaDrawer）。
                                         ⚠️ `.aura` 带 2px padding ⇒ 用 `-m-[2px]` 抵消，**行高不因此变**（§39.2 紧凑护栏） */}
                                     <div
-                                        class={
-                                            hover()?.id === m.id
-                                                ? "aura -m-[2px] shrink-0"
-                                                : "shrink-0"
-                                        }
+                                        class={hover()?.id === m.id ? "aura -m-[2px] shrink-0" : "shrink-0"}
                                         style={{ color: memberColor(m) }}
                                     >
                                         <div
@@ -263,23 +241,15 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
                                                 @{memberKey(props.room, m)}
                                             </button>
                                             <Show when={isFocus()}>
-                                                <span class="badge badge-xs badge-primary shrink-0">
-                                                    接受者
-                                                </span>
+                                                <span class="badge badge-xs badge-primary shrink-0">接受者</span>
                                             </Show>
                                             <div class="flex-1" />
-                                            <span
-                                                class="text-caption opacity-50 shrink-0 truncate"
-                                                data-room-l1={m.id}
-                                            >
+                                            <span class="text-caption opacity-50 shrink-0 truncate" data-room-l1={m.id}>
                                                 {l1Text(m.id)}
                                             </span>
                                         </div>
                                         {/* 行 2：二级信息一行摘要（kind · 角色 · 影子 task 短名） */}
-                                        <div
-                                            class="text-caption opacity-45 truncate"
-                                            data-room-member-sub={m.id}
-                                        >
+                                        <div class="text-caption opacity-45 truncate" data-room-member-sub={m.id}>
                                             {m.kind === "human" ? "人 · 你" : m.role || "agent"}
                                             <Show when={task()}>
                                                 {" · "}
@@ -309,101 +279,91 @@ export function RoomRoster(props: RoomRosterProps): JSX.Element {
                                             onMouseLeave={scheduleHide}
                                             data-room-member-hover={m.id}
                                         >
-                                        <div class="flex items-center gap-2 mb-1.5">
-                                            <div
-                                                class="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0"
-                                                style={{
-                                                    background: `${memberColor(m)}33`,
-                                                    border: `1px solid ${memberColor(m)}`,
-                                                }}
-                                            >
-                                                {memberAvatar(m, i())}
-                                            </div>
-                                            <div class="min-w-0">
-                                                <div class="text-body font-medium truncate">
-                                                    {m.name}
+                                            <div class="flex items-center gap-2 mb-1.5">
+                                                <div
+                                                    class="w-8 h-8 rounded-full flex items-center justify-center text-base shrink-0"
+                                                    style={{
+                                                        background: `${memberColor(m)}33`,
+                                                        border: `1px solid ${memberColor(m)}`,
+                                                    }}
+                                                >
+                                                    {memberAvatar(m, i())}
                                                 </div>
-                                                <div class="text-caption opacity-50 truncate">
-                                                    {m.id}
+                                                <div class="min-w-0">
+                                                    <div class="text-body font-medium truncate">{m.name}</div>
+                                                    <div class="text-caption opacity-50 truncate">{m.id}</div>
                                                 </div>
                                             </div>
-                                        </div>
-                                        <div class="text-caption space-y-0.5">
-                                            <div>
-                                                <span class="opacity-50">角色 </span>
-                                                {m.kind === "human" ? "人（你）" : m.role || "agent"}
-                                                <Show when={m.main}>
-                                                    <span class="badge badge-xs badge-ghost ml-1">
-                                                        主人格
-                                                    </span>
-                                                </Show>
-                                            </div>
-                                            <Show when={m.persona}>
+                                            <div class="text-caption space-y-0.5">
                                                 <div>
-                                                    <span class="opacity-50">人物 </span>
-                                                    {personaName(m.persona)}
+                                                    <span class="opacity-50">角色 </span>
+                                                    {m.kind === "human" ? "人（你）" : m.role || "agent"}
+                                                    <Show when={m.main}>
+                                                        <span class="badge badge-xs badge-ghost ml-1">主人格</span>
+                                                    </Show>
                                                 </div>
-                                            </Show>
-                                            <Show when={task()}>
-                                                <div class="truncate">
-                                                    <span class="opacity-50">会话 </span>
-                                                    <button
-                                                        class="link link-hover"
-                                                        title="打开这个会话"
-                                                        onClick={() =>
-                                                            getRendererActions().openTaskRun?.(task())
-                                                        }
-                                                        data-room-hover-task={m.id}
-                                                    >
-                                                        {taskShort(task())}
-                                                    </button>
-                                                    <span class="opacity-40">
-                                                        {" "}
-                                                        {task().replace(/^projects\/\d+\//, "")}
-                                                    </span>
+                                                <Show when={m.persona}>
+                                                    <div>
+                                                        <span class="opacity-50">人物 </span>
+                                                        {personaName(m.persona)}
+                                                    </div>
+                                                </Show>
+                                                <Show when={task()}>
+                                                    <div class="truncate">
+                                                        <span class="opacity-50">会话 </span>
+                                                        <button
+                                                            class="link link-hover"
+                                                            title="打开这个会话"
+                                                            onClick={() => getRendererActions().openTaskRun?.(task())}
+                                                            data-room-hover-task={m.id}
+                                                        >
+                                                            {taskShort(task())}
+                                                        </button>
+                                                        <span class="opacity-40">
+                                                            {" "}
+                                                            {task().replace(/^projects\/\d+\//, "")}
+                                                        </span>
+                                                    </div>
+                                                </Show>
+                                                <div>
+                                                    <span class="opacity-50">活动 </span>
+                                                    {rosterOf(m.id)?.entry
+                                                        ? `${rosterOf(m.id)!.entry!.turnCount} 轮 / ${rosterOf(m.id)!.entry!.totalSteps} 步`
+                                                        : "无记录"}
+                                                    <Show when={rosterOf(m.id)?.action?.label}>
+                                                        {" · "}
+                                                        {rosterOf(m.id)!.action!.label}
+                                                    </Show>
                                                 </div>
-                                            </Show>
-                                            <div>
-                                                <span class="opacity-50">活动 </span>
-                                                {rosterOf(m.id)?.entry
-                                                    ? `${rosterOf(m.id)!.entry!.turnCount} 轮 / ${rosterOf(m.id)!.entry!.totalSteps} 步`
-                                                    : "无记录"}
-                                                <Show when={rosterOf(m.id)?.action?.label}>
-                                                    {" · "}
-                                                    {rosterOf(m.id)!.action!.label}
+                                                <Show when={(rosterOf(m.id)?.queued ?? 0) > 0}>
+                                                    <div class="text-warning">排队 {rosterOf(m.id)!.queued} 条</div>
                                                 </Show>
                                             </div>
-                                            <Show when={(rosterOf(m.id)?.queued ?? 0) > 0}>
-                                                <div class="text-warning">
-                                                    排队 {rosterOf(m.id)!.queued} 条
-                                                </div>
-                                            </Show>
-                                        </div>
-                                        <div class="flex items-center gap-1 mt-2 pt-1.5 border-t border-base-content/10">
-                                            <Show when={props.onAddress}>
-                                                <button
-                                                    class="btn btn-xs btn-ghost"
-                                                    title={`把 @${memberKey(props.room, m)} 塞进输入框`}
-                                                    onClick={() => props.onAddress?.(memberKey(props.room, m))}
-                                                    data-room-address={m.id}
-                                                >
-                                                    @ 寻址
-                                                </button>
-                                            </Show>
-                                            <div class="flex-1" />
-                                            {/* 移出：主人格不可移出（它就是宿主本身，服务端也拦）；
+                                            <div class="flex items-center gap-1 mt-2 pt-1.5 border-t border-base-content/10">
+                                                <Show when={props.onAddress}>
+                                                    <button
+                                                        class="btn btn-xs btn-ghost"
+                                                        title={`把 @${memberKey(props.room, m)} 塞进输入框`}
+                                                        onClick={() => props.onAddress?.(memberKey(props.room, m))}
+                                                        data-room-address={m.id}
+                                                    >
+                                                        @ 寻址
+                                                    </button>
+                                                </Show>
+                                                <div class="flex-1" />
+                                                {/* 移出：主人格不可移出（它就是宿主本身，服务端也拦）；
                                                 人成员不走这条路（人 = 页面操作者本人，无 backend） */}
-                                            <Show when={props.onRemove && !m.main && m.kind !== "human"}>
-                                                <button
-                                                    class="btn btn-xs btn-ghost text-error"
-                                                    title={`把 ${m.name} 移出房间（影子任务保留，只是不再是成员）`}
-                                                    onClick={() => void props.onRemove?.(m)}
-                                                    data-room-remove={m.id}
-                                                >
-                                                    移出
-                                                </button>
-                                            </Show>
-                                        </div>
+                                                <Show when={props.onRemove && !m.main && m.kind !== "human"}>
+                                                    <button
+                                                        class="btn btn-xs btn-ghost text-error"
+                                                        title={`把 ${m.name} 移出房间（影子任务保留，只是不再是成员）`}
+                                                        onClick={() => void props.onRemove?.(m)}
+                                                        data-room-remove={m.id}
+                                                    >
+                                                        移出
+                                                    </button>
+                                                </Show>
+                                            </div>
                                         </div>
                                     </Portal>
                                 </Show>

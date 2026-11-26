@@ -183,7 +183,11 @@ import {
     type CtxSnapshot,
 } from "../../shared/context/changelog";
 import type { DeliveryStepRecord } from "../../shared/context/steps";
-import { segmentSystemSnapshotOf, segmentSystemTextOf, type SnapshotReason } from "../../shared/context/segment-snapshot";
+import {
+    segmentSystemSnapshotOf,
+    segmentSystemTextOf,
+    type SnapshotReason,
+} from "../../shared/context/segment-snapshot";
 import { stepDeltaOf } from "../../shared/context/step-delta";
 import {
     clipSpecOf,
@@ -728,10 +732,10 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
         }
     }
     const keptFrom = ((): number => {
-        if (boundary === null) return 0;                    // 从没压过 ⇒ 全保留
+        if (boundary === null) return 0; // 从没压过 ⇒ 全保留
         if (boundaryOffset !== undefined && turnOffset.size > 0) {
             const first = order.findIndex((t) => (turnOffset.get(t) ?? 0) >= boundaryOffset);
-            return first < 0 ? order.length : first;         // 一个都没有 ⇒ 全清
+            return first < 0 ? order.length : first; // 一个都没有 ⇒ 全清
         }
         return boundaryTurnId === null ? order.length : cutIdx < 0 ? 0 : cutIdx;
     })();
@@ -777,7 +781,7 @@ export function keptRoundsView(taskUri: string): KeptRoundsView {
         truncated: usages.length >= 800,
         windowTokens,
         usedTokens,
-        retainedTokens: boundary ? (boundary as unknown as { retainTokens?: number }).retainTokens ?? null : null,
+        retainedTokens: boundary ? ((boundary as unknown as { retainTokens?: number }).retainTokens ?? null) : null,
         price,
     };
 }
@@ -1511,7 +1515,11 @@ function latestBoundary(taskUri: string): EffectiveBoundary | null {
             ...(b.ref ? { keptFromOpsOffset: b.ref.ops.offset } : {}),
             keptFromLlmLine: b.cut.llmLine,
             schema: OPS_SCHEMA_CURRENT,
-            policy: { mode: "budget", modeData: { budgetBytes: b.retainTokens ?? 0, toolResult: { render: "asis" } }, summary: false } as never,
+            policy: {
+                mode: "budget",
+                modeData: { budgetBytes: b.retainTokens ?? 0, toolResult: { render: "asis" } },
+                summary: false,
+            } as never,
             ts: b.at,
         } as EffectiveBoundary;
     } catch {
@@ -2134,7 +2142,7 @@ export function buildTools(cwd: string, limits: LocalAgentLimits, taskUri: strin
     return {
         ...shellTools,
         read: fileTools.read,
-                /**
+        /**
          * `job` —— 后台进程的**唯一问询口**（##408 刀 8；##515 第 3 步实现搬进 `@diy-agent/jobs`）。
          *
          * 本层只做两件接线：
@@ -4086,7 +4094,10 @@ export class LocalAgentManager {
         const cutTurn = idx < 0 ? undefined : turnIds[idx];
         let retain = 0;
         if (cutTurn !== undefined) {
-            const from = Math.max(0, all.findIndex((m) => (m as { turn?: string }).turn === cutTurn));
+            const from = Math.max(
+                0,
+                all.findIndex((m) => (m as { turn?: string }).turn === cutTurn),
+            );
             for (let i = from; i < all.length; i++) retain += estimateTokensOf(JSON.stringify(all[i]?.content ?? ""));
         }
         const r = this.appliedHistoryRange(taskUri, all, replay.lineBase, {
@@ -5409,11 +5420,7 @@ export class LocalAgentManager {
         // 段首 system 快照（##442 用户 2026-10-27）：变量树全在 system，压缩点前不重建。
         // 跨轮变化走 user 控制增量（`sentOf` 里按上一次真发的树算），不砸这条 system 的前缀缓存。
         const frozenState = this.compactStateOf(taskUri);
-        const frozenSnap = frozenSystemSnapshotOf(
-            liveDelivery,
-            frozenState.lastStep,
-            frozenState.boundary?.at ?? null,
-        );
+        const frozenSnap = frozenSystemSnapshotOf(liveDelivery, frozenState.lastStep, frozenState.boundary?.at ?? null);
         const frozenSystemText = frozenSnap.text;
         // 重建 = 本轮它的全部历史按全价重算。这四种原因里只有前两种是正常的，另两种必须留痕
         // （否则“某天账单贵了”又只能靠 flow 猜——##487 就是这么查了半个钟头）。

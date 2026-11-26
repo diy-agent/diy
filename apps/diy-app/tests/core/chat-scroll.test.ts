@@ -5,7 +5,13 @@
 //   · anchorScrollTop：切走切回后回到哪一行（③ 的 bug 就是基准取错）
 // 故与 chat-fold 同规格钉在这里；组件只管把结果写进 scrollTop。
 import { describe, expect, it } from "vitest";
-import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId } from "../../src/renderer_solid/lib/chat-scroll";
+import {
+    anchorScrollTop,
+    anchorTick,
+    clampScrollTop,
+    followPlan,
+    lastLeafId,
+} from "../../src/renderer_solid/lib/chat-scroll";
 import type { BlockNode } from "../../src/main/services/local-blocks";
 
 function n(tag: string, id: string, attrs: Record<string, unknown> = {}, children: BlockNode[] = []): BlockNode {
@@ -47,7 +53,14 @@ describe("clampScrollTop：滚动区间的唯一收口", () => {
 });
 
 describe("followPlan：新内容刷出时视口落哪（##331 ①）", () => {
-    const base = { stick: true, prevTailId: "t1_a", tailId: "t1_b", blockTop: 900, blockHeight: 1440, clientHeight: 800 };
+    const base = {
+        stick: true,
+        prevTailId: "t1_a",
+        tailId: "t1_b",
+        blockTop: 900,
+        blockHeight: 1440,
+        clientHeight: 800,
+    };
 
     it("新块比视口**高** → 首行贴视口顶（不钉末行 —— 这就是 ① 的修法）", () => {
         expect(followPlan(base)).toEqual({ kind: "block-top", blockTop: 900 });
@@ -99,7 +112,11 @@ describe("anchorScrollTop：切走切回的锚点恢复（##331 ③）", () => {
 // 只更新基准、**没有 latch** ⇒ 下一帧基准已等于用户位置、`userScrolled` 为假 ⇒ 漂移校正
 // 立刻把用户**推回锚点**，与注释「绝不抢」相反。下面第一条用例就是钉死这个回归。
 describe("anchorTick：锚点连校（用户一旦动手就永不抢）", () => {
-    const M = (scrollTop: number, blockOffset: number | null, extra: Partial<Parameters<typeof anchorTick>[0]> = {}) => ({
+    const M = (
+        scrollTop: number,
+        blockOffset: number | null,
+        extra: Partial<Parameters<typeof anchorTick>[0]> = {},
+    ) => ({
         scrollTop,
         blockOffset,
         offset: 0,

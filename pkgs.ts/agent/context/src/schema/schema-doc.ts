@@ -12,8 +12,8 @@
 //   · 落盘校验：走 z.toJSONSchema（另有 strict 模式）
 //   · 投递说明：走本文件的 fieldDocs（精简表）
 
-import { z } from "zod";
-import type { ZodObject, ZodType } from "zod";
+import { z } from 'zod';
+import type { ZodObject, ZodType } from 'zod';
 
 /** 一个字段的**说明性**文档（不含任何校验细节） */
 export interface FieldDoc {
@@ -34,7 +34,7 @@ export function fieldDocs(schema: ZodObject): FieldDoc[] {
     const shape = schema.shape as Record<string, ZodType>;
     return Object.entries(shape).map(([name, field]) => ({
         name,
-        desc: field.description ?? "",
+        desc: field.description ?? '',
         required: !field.safeParse(undefined).success,
     }));
 }
@@ -43,12 +43,12 @@ export function fieldDocs(schema: ZodObject): FieldDoc[] {
  * 把字段说明渲染成**注释行**（YAML 的 `#` 行）—— 直接贴在被说明的结构上方即可。
  * 必填字段不加标记，可选字段尾部标 `（可选）`：默认情形不该被标记噪音淹没。
  */
-export function renderFieldDocs(schema: ZodObject, indent = "#   "): string[] {
+export function renderFieldDocs(schema: ZodObject, indent = '#   '): string[] {
     const docs = fieldDocs(schema);
     const width = Math.max(...docs.map((d) => d.name.length), 1);
     return docs.map((d) => {
         const name = d.name.padEnd(width);
-        const tail = d.required ? "" : "（可选）";
+        const tail = d.required ? '' : '（可选）';
         return `${indent}${name} ${d.desc}${tail}`;
     });
 }
@@ -110,20 +110,20 @@ interface JsonSchemaBit {
  * `$defs` / `$schema` 这类机器字段一并丢掉（它们对模型没有意义）。
  */
 function deref(node: unknown, root: JsonSchemaBit, depth = 0): unknown {
-    if (depth > 16 || node === null || typeof node !== "object") return node;
+    if (depth > 16 || node === null || typeof node !== 'object') return node;
     if (Array.isArray(node)) return node.map((n) => deref(n, root, depth + 1));
     const obj = node as Record<string, unknown>;
-    const ref = obj["$ref"];
-    if (typeof ref === "string" && ref.startsWith("#/")) {
+    const ref = obj['$ref'];
+    if (typeof ref === 'string' && ref.startsWith('#/')) {
         const target = ref
             .slice(2)
-            .split("/")
+            .split('/')
             .reduce<unknown>((acc, k) => (acc as Record<string, unknown> | undefined)?.[k], root);
         if (target !== undefined) return deref(target, root, depth + 1);
     }
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
-        if (k === "$defs" || k === "$schema" || k === "$id") continue;
+        if (k === '$defs' || k === '$schema' || k === '$id') continue;
         out[k] = deref(v, root, depth + 1);
     }
     return out;
@@ -137,7 +137,7 @@ function deref(node: unknown, root: JsonSchemaBit, depth = 0): unknown {
  */
 function hasStructure(bit: JsonSchemaBit): boolean {
     if (bit.properties && Object.keys(bit.properties).length > 0) return true;
-    if (typeof bit.type === "string") return true;
+    if (typeof bit.type === 'string') return true;
     if (bit.items !== undefined || bit.prefixItems !== undefined) return true;
     return false;
 }
@@ -148,51 +148,51 @@ function simplifyBit(bit: JsonSchemaBit, depth: number, maxDepth: number, descMa
     // `descMaxDepth`：**只在前几层说「这组是什么」**，深层/叶子的字段说明不进每轮 system
     // （实测 help 11.2 KB 里 85% 是 desc 文本，结构骨架只 1.6 KB —— 见 ##5 量化）。
     // 叶子字段名（path / value / variants）本就自解释，解释它们的代价是每轮重复付。
-    if (depth <= descMaxDepth && typeof bit.description === "string" && bit.description) {
-        out["desc"] = bit.description;
+    if (depth <= descMaxDepth && typeof bit.description === 'string' && bit.description) {
+        out['desc'] = bit.description;
     }
     // `z.number().nullable()` / union → JSON Schema `anyOf`/`oneOf`。取**第一个非 null** 分支
     // 作为主类型（值里允许 null 由字段 desc 说明）；否则 union 会被压成 `{type:"object"}`，
     // help 里 `exitCode` 看起来像对象 —— 误导模型。
     const variants = bit.anyOf ?? bit.oneOf;
     if (Array.isArray(variants) && variants.length > 0) {
-        const chosen = variants.find((v) => v.type !== "null") ?? variants[0]!;
+        const chosen = variants.find((v) => v.type !== 'null') ?? variants[0]!;
         return simplifyBit(chosen, depth, maxDepth, descMaxDepth);
     }
     // `z.number().nullable()` 也可能产出 `type: ["number","null"]`（不是 anyOf）——
     // 取第一个非 null 的主类型；否则会落到 `type:"object"`，help 里会误导。
     const type =
-        typeof bit.type === "string"
+        typeof bit.type === 'string'
             ? bit.type
             : Array.isArray(bit.type)
-              ? (bit.type.find((t): t is string => typeof t === "string" && t !== "null") ?? undefined)
+              ? (bit.type.find((t): t is string => typeof t === 'string' && t !== 'null') ?? undefined)
               : undefined;
     const props = bit.properties;
-    if (type === "object" && props && Object.keys(props).length > 0 && depth < maxDepth) {
+    if (type === 'object' && props && Object.keys(props).length > 0 && depth < maxDepth) {
         for (const [k, v] of Object.entries(props)) out[k] = simplifyBit(v, depth + 1, maxDepth, descMaxDepth);
         return out;
     }
-    if (type === "array") {
-        out["type"] = "array";
+    if (type === 'array') {
+        out['type'] = 'array';
         const item = Array.isArray(bit.items) ? bit.items[0] : (bit.items ?? bit.prefixItems?.[0]);
-        if (item && depth < maxDepth) out["items"] = simplifyBit(item, depth + 1, maxDepth, descMaxDepth);
+        if (item && depth < maxDepth) out['items'] = simplifyBit(item, depth + 1, maxDepth, descMaxDepth);
         return out;
     }
     // record（`z.record(k, v)` → `additionalProperties`）：**值的结构**要带上。
     // 键是动态的（claim / gid），但"每个值里有什么字段"正是读 help 的人最缺的那块信息。
     // 只下钻有形状的值；`z.unknown()` 这类照旧只标类型。
     const ap = bit.additionalProperties;
-    if (type === "object" && ap && typeof ap === "object" && !Array.isArray(ap) && depth < maxDepth) {
+    if (type === 'object' && ap && typeof ap === 'object' && !Array.isArray(ap) && depth < maxDepth) {
         // `$ref` 在 describeSchema 入口已由 deref 全量展开，这里拿到的就是实物。
         const valueBit = ap as JsonSchemaBit;
         if (hasStructure(valueBit)) {
-            out["type"] = "object";
-            out["values"] = simplifyBit(valueBit, depth + 1, maxDepth, descMaxDepth);
+            out['type'] = 'object';
+            out['values'] = simplifyBit(valueBit, depth + 1, maxDepth, descMaxDepth);
             return out;
         }
     }
     // 空对象 / 无形状 record / any → 只标类型，不再下钻。
-    out["type"] = type ?? "object";
+    out['type'] = type ?? 'object';
     return out;
 }
 
@@ -209,9 +209,9 @@ export function describeSchema(schema: ZodType, opts: { maxDepth?: number; descM
     // 校验细节（prefixItems / items:false / minItems…）全部丢掉：投给模型的只有
     // 「字段名 + 一句话 + 结构」，那是人/模型读得懂的部分。
     const json = z.toJSONSchema(schema, {
-        io: "input",
-        unrepresentable: "any",
-        reused: "inline",
+        io: 'input',
+        unrepresentable: 'any',
+        reused: 'inline',
     }) as unknown as JsonSchemaBit;
     return simplifyBit(deref(json, json) as JsonSchemaBit, 0, maxDepth, descMaxDepth);
 }
@@ -224,15 +224,15 @@ export function describeSchema(schema: ZodType, opts: { maxDepth?: number; descM
  */
 export function pruneSchemaDoc(doc: SchemaDoc, paths: readonly string[]): SchemaDoc {
     const out: SchemaDoc = {};
-    if (typeof doc["desc"] === "string") out["desc"] = doc["desc"];
+    if (typeof doc['desc'] === 'string') out['desc'] = doc['desc'];
     for (const path of [...paths].sort()) {
-        const segs = path.split(".");
+        const segs = path.split('.');
         let src: SchemaDoc | undefined = doc;
         let dst = out;
         for (let i = 0; i < segs.length; i++) {
             const k = segs[i]!;
             const next = src?.[k];
-            if (next === undefined || typeof next !== "object" || Array.isArray(next)) break;
+            if (next === undefined || typeof next !== 'object' || Array.isArray(next)) break;
             const child = next as SchemaDoc;
             if (i === segs.length - 1) {
                 // 叶子：整棵子树照抄（数组元素结构就是在这里带上的）
@@ -240,7 +240,7 @@ export function pruneSchemaDoc(doc: SchemaDoc, paths: readonly string[]): Schema
             } else {
                 if (!(k in dst)) {
                     const fresh: SchemaDoc = {};
-                    if (typeof child["desc"] === "string") fresh["desc"] = child["desc"];
+                    if (typeof child['desc'] === 'string') fresh['desc'] = child['desc'];
                     dst[k] = fresh;
                 }
                 dst = dst[k] as SchemaDoc;

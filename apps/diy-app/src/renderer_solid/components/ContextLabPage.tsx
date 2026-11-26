@@ -35,7 +35,13 @@ import { notificationStore } from "../store/notificationStore";
 import type { ContextLab } from "../../shared/context/preview";
 import { diffSize } from "../../shared/context/steps";
 import { foldCounts, foldDiff, numberDiff, type DiffRow } from "../../shared/context/diff-view";
-import { attributionOf, allUnits, foldStatRows, unitsFromRules, type Attribution } from "../../shared/context/attribution";
+import {
+    attributionOf,
+    allUnits,
+    foldStatRows,
+    unitsFromRules,
+    type Attribution,
+} from "../../shared/context/attribution";
 import { fmtAgo, fmtShortTime } from "../../shared/date-format";
 import type { ContextDiff, CtxLog, HistoryEntryView, Stats } from "../../shared/context/schema";
 import type { DiffLine } from "../../shared/line-diff";
@@ -95,7 +101,10 @@ function Fold(props: { k: string; label: string; extra?: string; right?: JSX.Ele
             classList={{ "flex-1 min-h-[140px]": !!fold()[props.k] }}
         >
             <div class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-body font-bold tracking-wide">
-                <button class="flex items-center gap-1 opacity-80 hover:opacity-100" onClick={() => setFold(props.k, !fold()[props.k])}>
+                <button
+                    class="flex items-center gap-1 opacity-80 hover:opacity-100"
+                    onClick={() => setFold(props.k, !fold()[props.k])}
+                >
                     <span>{fold()[props.k] ? "▾" : "▸"}</span>
                     <span>{props.label}</span>
                 </button>
@@ -125,21 +134,26 @@ function UnitBadge(props: { a: Attribution }) {
     }
     if (props.a.kind === "container") {
         return (
-            <span class="badge badge-xs badge-neutral" title={`容器行：子字段分属 ${props.a.units.length} 个投递单元 —— ${props.a.units.join(", ")}`}>
+            <span
+                class="badge badge-xs badge-neutral"
+                title={`容器行：子字段分属 ${props.a.units.length} 个投递单元 —— ${props.a.units.join(", ")}`}
+            >
                 {`跨 ${props.a.units.length} 单元`}
             </span>
         );
     }
     return (
-        <span class="badge badge-xs badge-ghost opacity-60" title="未投递（不在 PLACE_CANDIDATES，也不是某个单元的祖先）">
+        <span
+            class="badge badge-xs badge-ghost opacity-60"
+            title="未投递（不在 PLACE_CANDIDATES，也不是某个单元的祖先）"
+        >
             未投递
         </span>
     );
 }
 
 /** 结构树一行的高亮态（选中 + 容器色条） */
-const rowCls = (selected: boolean): string =>
-    selected ? "bg-primary/20 ring-1 ring-primary/60" : "";
+const rowCls = (selected: boolean): string => (selected ? "bg-primary/20 ring-1 ring-primary/60" : "");
 
 /** 结构树节点：契约（类型/描述）+ 单元标记 */
 function StructureRows(props: {
@@ -404,10 +418,7 @@ export function ContextLabPage(props: { uri: string }) {
                 </span>
             }
         >
-            <Show
-                when={rawOf() === p.k}
-                fallback={p.children}
-            >
+            <Show when={rawOf() === p.k} fallback={p.children}>
                 <div class="flex flex-col gap-1">
                     <Show when={p.rawInfo}>
                         {(info) => (
@@ -530,7 +541,8 @@ export function ContextLabPage(props: { uri: string }) {
                                                     : "system 重建（段首快照换了一份）",
                                             );
                                         }
-                                        if (t.cacheHitRate !== null) bits.push(`缓存命中 ${Math.round(t.cacheHitRate * 100)}%`);
+                                        if (t.cacheHitRate !== null)
+                                            bits.push(`缓存命中 ${Math.round(t.cacheHitRate * 100)}%`);
                                         if (t.cost !== null) bits.push(`$${t.cost.toFixed(4)}`);
                                         return bits.join(" · ");
                                     };
@@ -593,13 +605,7 @@ export function ContextLabPage(props: { uri: string }) {
 
     /** 变更种类 → 行配色（vscode diff 的观感：增绿 / 删红 / 改黄） */
     const diffRowCls = (kind: "add" | "update" | "remove" | null): string =>
-        kind === "add"
-            ? "bg-success/10"
-            : kind === "remove"
-              ? "bg-error/10"
-              : kind === "update"
-                ? "bg-warning/10"
-                : "";
+        kind === "add" ? "bg-success/10" : kind === "remove" ? "bg-error/10" : kind === "update" ? "bg-warning/10" : "";
 
     /**
      * 变量树变更（##310）—— 整棵 context 变量树 + 把**这一步**的变更标在命中节点上。
@@ -654,7 +660,9 @@ export function ContextLabPage(props: { uri: string }) {
                                         onClick={() => setSelected(n.path)}
                                     >
                                         <td class="whitespace-nowrap font-mono">
-                                            <span style={{ "padding-left": `${(n.path.split(".").length - 1) * 12}px` }} />
+                                            <span
+                                                style={{ "padding-left": `${(n.path.split(".").length - 1) * 12}px` }}
+                                            />
                                             <span class={c ? "font-bold" : ""}>{n.path}</span>
                                             <Show when={c}>
                                                 <span class={`ml-1 badge badge-xs font-mono ${kindCls(c!.kind)}`}>
@@ -676,7 +684,10 @@ export function ContextLabPage(props: { uri: string }) {
                                             >
                                                 {(o) => (
                                                     <span class="flex items-center gap-1">
-                                                        <span class="truncate text-error line-through" title={o().before ?? ""}>
+                                                        <span
+                                                            class="truncate text-error line-through"
+                                                            title={o().before ?? ""}
+                                                        >
                                                             {o().before ?? "∅"}
                                                         </span>
                                                         <span class="opacity-40">→</span>
@@ -756,7 +767,10 @@ export function ContextLabPage(props: { uri: string }) {
                             <Show when={dd().base}>
                                 {(b) => (
                                     <>
-                                        <span class="badge badge-xs" title={b().ts}>{`第 ${b().index} 轮 · ${b().turnId}`}</span>
+                                        <span
+                                            class="badge badge-xs"
+                                            title={b().ts}
+                                        >{`第 ${b().index} 轮 · ${b().turnId}`}</span>
                                         <span class="opacity-40">→</span>
                                     </>
                                 )}
@@ -825,7 +839,11 @@ export function ContextLabPage(props: { uri: string }) {
                                                 return (
                                                     <div
                                                         class={`flex items-start font-mono text-caption ${
-                                                            l.t === "+" ? "bg-success/15" : l.t === "-" ? "bg-error/15" : ""
+                                                            l.t === "+"
+                                                                ? "bg-success/15"
+                                                                : l.t === "-"
+                                                                  ? "bg-error/15"
+                                                                  : ""
                                                         }`}
                                                     >
                                                         <span class="w-10 shrink-0 select-none border-r border-base-300 px-1 text-right opacity-40">
@@ -834,8 +852,12 @@ export function ContextLabPage(props: { uri: string }) {
                                                         <span class="w-10 shrink-0 select-none border-r border-base-300 px-1 text-right opacity-40">
                                                             {l.newNo ?? ""}
                                                         </span>
-                                                        <span class="w-4 shrink-0 select-none text-center opacity-70">{l.t === " " ? "" : l.t}</span>
-                                                        <span class="whitespace-pre-wrap break-all pr-1">{l.s === "" ? " " : l.s}</span>
+                                                        <span class="w-4 shrink-0 select-none text-center opacity-70">
+                                                            {l.t === " " ? "" : l.t}
+                                                        </span>
+                                                        <span class="whitespace-pre-wrap break-all pr-1">
+                                                            {l.s === "" ? " " : l.s}
+                                                        </span>
                                                     </div>
                                                 );
                                             })()}
@@ -877,8 +899,8 @@ export function ContextLabPage(props: { uri: string }) {
                 <div class="p-2 text-body">
                     <div class="mb-1">{`未找到该步的实际请求（轮 ${e.ref.turnId} · 第 ${e.ref.step} 步）。`}</div>
                     <div class="opacity-60">
-                        可能的原因：① 这条记录是手写/演示数据，没真发过；② 流量日志被清（流量日志等同 cache，可随时清理）；
-                        ③ 该轮不是本机发出的。真发一轮后再回来看即可对上。
+                        可能的原因：① 这条记录是手写/演示数据，没真发过；② 流量日志被清（流量日志等同
+                        cache，可随时清理）； ③ 该轮不是本机发出的。真发一轮后再回来看即可对上。
                     </div>
                 </div>
             );
@@ -939,7 +961,10 @@ export function ContextLabPage(props: { uri: string }) {
                                 <span class="badge badge-xs badge-ghost font-mono">{`${list().length} 条消息`}</span>
                                 <span class="opacity-70">{`≈${parsed.totalTokens} tokens`}</span>
                                 <span class="opacity-70">{`正文 ${fmtBytes(parsed.totalBytes)}`}</span>
-                                <span class="opacity-50" title="按 CJK 1 token / 其余 4 字符 1 token 估算，非上游真实计数">
+                                <span
+                                    class="opacity-50"
+                                    title="按 CJK 1 token / 其余 4 字符 1 token 估算，非上游真实计数"
+                                >
                                     （估算值）
                                 </span>
                                 <button
@@ -962,7 +987,10 @@ export function ContextLabPage(props: { uri: string }) {
                                 <div class="flex flex-col gap-1">
                                     <For each={list()}>
                                         {(m, i) => (
-                                            <details class="rounded border border-base-300 bg-base-100" open={i() === list().length - 1}>
+                                            <details
+                                                class="rounded border border-base-300 bg-base-100"
+                                                open={i() === list().length - 1}
+                                            >
                                                 <summary class="cursor-pointer px-2 py-1 text-body">
                                                     <span class="font-bold">{`${m.index}. ${m.role}`}</span>
                                                     <span class="ml-2 font-mono text-caption opacity-70">
@@ -979,9 +1007,13 @@ export function ContextLabPage(props: { uri: string }) {
                                                         <For each={m.toolCalls}>
                                                             {(c) => (
                                                                 <div class="rounded bg-base-200 px-1 py-0.5 font-mono text-caption">
-                                                                    <span class="badge badge-xs badge-info mr-1">{c.name}</span>
+                                                                    <span class="badge badge-xs badge-info mr-1">
+                                                                        {c.name}
+                                                                    </span>
                                                                     <span class="opacity-70">{`参数 ${c.argsChars} 字：`}</span>
-                                                                    <span class="whitespace-pre-wrap break-all">{c.argsPreview}</span>
+                                                                    <span class="whitespace-pre-wrap break-all">
+                                                                        {c.argsPreview}
+                                                                    </span>
                                                                 </div>
                                                             )}
                                                         </For>
@@ -1027,7 +1059,10 @@ export function ContextLabPage(props: { uri: string }) {
         // 行粒度（RV-03）：中间容器（有后代同时上榜）且自身**不是投递单元** → 折叠。
         // 容器的变化恒由后代解释（父 hash = 子树 hash），单列只会稀释"这个单元变得多不多"的判据。
         // 纯函数在 shared/context/attribution.ts（可与 UI 分开单测）。
-        const { rows: keptPaths, collapsed } = foldStatRows(s.paths.map((x) => x.path), unitMap());
+        const { rows: keptPaths, collapsed } = foldStatRows(
+            s.paths.map((x) => x.path),
+            unitMap(),
+        );
         const kept = new Set(keptPaths);
         const rows = s.paths.filter((x) => kept.has(x.path));
         return (
@@ -1043,7 +1078,8 @@ export function ContextLabPage(props: { uri: string }) {
                 {/* RV-09：归属列按**页面当前划分**（统计是"今天这把刀切哪"的操作视角），
                     与上面 sys 徽章"按当轮快照"的口径**有意不同** → 必须写出来，否则用户当成一套。 */}
                 <div class="mb-1 px-1 text-caption opacity-50">
-                    归属列与折叠均按当前划分（改划分即重算；历史轮次的原因看「变更历史（真发轮次）」的 sys 徽章，按当轮快照）
+                    归属列与折叠均按当前划分（改划分即重算；历史轮次的原因看「变更历史（真发轮次）」的 sys
+                    徽章，按当轮快照）
                 </div>
                 <Show when={collapsed > 0}>
                     <div class="mb-1 px-1 text-caption opacity-50">
@@ -1053,9 +1089,7 @@ export function ContextLabPage(props: { uri: string }) {
                 <Show
                     when={s.paths.length > 0}
                     fallback={
-                        <div class="p-2 opacity-60">
-                            还没有变化记录。真发几轮后这里会累计每个节点变了多少次。
-                        </div>
+                        <div class="p-2 opacity-60">还没有变化记录。真发几轮后这里会累计每个节点变了多少次。</div>
                     }
                 >
                     <table class="table table-xs">
@@ -1160,9 +1194,7 @@ export function ContextLabPage(props: { uri: string }) {
                         const e = effectiveEntry();
                         return e ? `第 ${e.ref.step} 步 · ${e.changes.length} 处变更` : "没有带变化的记录";
                     })()}
-                    raw={() =>
-                        JSON.stringify({ 记录: effectiveEntry(), 当前变量树: lab()?.tree ?? null }, null, 2)
-                    }
+                    raw={() => JSON.stringify({ 记录: effectiveEntry(), 当前变量树: lab()?.tree ?? null }, null, 2)}
                 >
                     {varDiffPane()}
                 </View>

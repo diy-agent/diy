@@ -41,8 +41,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // preview 是**编译后运行**的稳定实例（`sha.sh preview` 起 Electron），不是 serve 的模式：
 // 显式拦一下，免得有人以为它还有独立的产物根（产物已统一 build/prod，##381 起无 preview 目录）。
 if (process.env["DIY_VARIANT"] === "preview") {
-  console.error("✗ preview 变体已删除，改用 lab：DIY_VARIANT=lab ./sha.sh lab");
-  process.exit(1);
+    console.error("✗ preview 变体已删除，改用 lab：DIY_VARIANT=lab ./sha.sh lab");
+    process.exit(1);
 }
 
 // ── 开发态入口自证（与 main/index.ts / diy.sh / electron-dev.mts 同一套判据）──
@@ -52,28 +52,28 @@ if (process.env["DIY_VARIANT"] === "preview") {
 // 找不到仓库根（打包部署目录）就不动：宁可缺、由 prompt-registry 走「未注入」告警。
 const repoRoot = findRepoRoot(__dirname);
 if (repoRoot) {
-  // 数据根：**只认显式值**（`sha.sh serve` 会算好 run/diy-app/serve 传进来）。
-  // 生产根拒绝 + 缺失报错都交给 core/dev-home（与 lab / diy.sh 同一判据，别在这里再写一套）。
-  let decision: { home: string };
-  try {
-    decision = resolveDataHome({
-      explicit: process.env["DIY_HOME"],
-      allowProdHome: prodHomeAllowed(),
-      hint: "cd apps/diy-app && ./sha.sh serve",
-    });
-  } catch (e) {
-    console.error(`[serve] ${(e as Error).message}`);
-    process.exit(1);
-  }
-  process.env["DIY_HOME"] = decision.home;
-  // 环境：开发入口不该是 production（那会关掉 dev 专属能力）
-  if (process.env["DIY_ENV"] === "production") {
-    console.warn("[serve] 警告: 忽略继承的 DIY_ENV=production, 改用 development");
-    process.env["DIY_ENV"] = "development";
-  }
-  // 入口：与数据根匹配。**无条件覆盖**（外部注入值会被换掉）—— serve 没有上游入口为它声明，
-  // 它只能自证；与 main/index.ts 的 `||=`（已在生产 GUI 里被 bin/diy 注入）语义不同，见 AGENTS.md env.self-declare。
-  process.env["DIY_CLI"] = cliEntryForRepo(repoRoot, decision.home);
+    // 数据根：**只认显式值**（`sha.sh serve` 会算好 run/diy-app/serve 传进来）。
+    // 生产根拒绝 + 缺失报错都交给 core/dev-home（与 lab / diy.sh 同一判据，别在这里再写一套）。
+    let decision: { home: string };
+    try {
+        decision = resolveDataHome({
+            explicit: process.env["DIY_HOME"],
+            allowProdHome: prodHomeAllowed(),
+            hint: "cd apps/diy-app && ./sha.sh serve",
+        });
+    } catch (e) {
+        console.error(`[serve] ${(e as Error).message}`);
+        process.exit(1);
+    }
+    process.env["DIY_HOME"] = decision.home;
+    // 环境：开发入口不该是 production（那会关掉 dev 专属能力）
+    if (process.env["DIY_ENV"] === "production") {
+        console.warn("[serve] 警告: 忽略继承的 DIY_ENV=production, 改用 development");
+        process.env["DIY_ENV"] = "development";
+    }
+    // 入口：与数据根匹配。**无条件覆盖**（外部注入值会被换掉）—— serve 没有上游入口为它声明，
+    // 它只能自证；与 main/index.ts 的 `||=`（已在生产 GUI 里被 bin/diy 注入）语义不同，见 AGENTS.md env.self-declare。
+    process.env["DIY_CLI"] = cliEntryForRepo(repoRoot, decision.home);
 }
 
 // 运行配置由入口注入的环境变量装配（DIY_HOME / DIY_PORT）
@@ -86,14 +86,14 @@ const ROOT = path.resolve(__dirname, "..", "..");
 const STATIC_DIR = path.resolve(ROOT, "build", "prod", "renderer");
 
 const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "application/javascript",
-  ".css": "text/css",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".ico": "image/x-icon",
-  ".woff2": "font/woff2",
-  ".json": "application/json",
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".json": "application/json",
 };
 
 // 端口优先级: --port flag > DIY_PORT（入口注入） > 兜底 18888。
@@ -103,96 +103,96 @@ let port = cfg.port ?? 18888;
 const args = process.argv.slice(2);
 const portIdx = args.indexOf("--port");
 if (portIdx >= 0) {
-  const p = parseInt(args[portIdx + 1] ?? String(port), 10);
-  if (Number.isFinite(p)) port = p;
+    const p = parseInt(args[portIdx + 1] ?? String(port), 10);
+    if (Number.isFinite(p)) port = p;
 }
 
 async function main() {
-  if (!fs.existsSync(STATIC_DIR)) {
-    console.error(`[diy/serve] 静态文件目录不存在: ${STATIC_DIR}`);
-    console.error(`  请先构建 renderer: ./sha.sh build-renderer`);
-    process.exit(1);
-  }
+    if (!fs.existsSync(STATIC_DIR)) {
+        console.error(`[diy/serve] 静态文件目录不存在: ${STATIC_DIR}`);
+        console.error(`  请先构建 renderer: ./sha.sh build-renderer`);
+        process.exit(1);
+    }
 
-  const appConfig = AppConfig.fromRuntime(cfg);
-  // 注册表：与 Electron 实例同一套（同一目录、同一形状）—— 让 `diy instances ls` 也能看见 serve。
-  // 它没有窗口，故 `instances.focus` 对它只会如实失败（不是「不列出来」的理由）。
-  try {
-    writeSelfRecord({
-      diyHome: appConfig.diyHome,
-      variant: process.env["DIY_VARIANT"] ?? "prod",
-      env: cfg.env,
+    const appConfig = AppConfig.fromRuntime(cfg);
+    // 注册表：与 Electron 实例同一套（同一目录、同一形状）—— 让 `diy instances ls` 也能看见 serve。
+    // 它没有窗口，故 `instances.focus` 对它只会如实失败（不是「不列出来」的理由）。
+    try {
+        writeSelfRecord({
+            diyHome: appConfig.diyHome,
+            variant: process.env["DIY_VARIANT"] ?? "prod",
+            env: cfg.env,
+        });
+        process.once("exit", () => dropSelfRecord());
+    } catch (e) {
+        console.warn("[serve] 实例注册表写入失败（不影响启动）:", e);
+    }
+
+    // 读取构建好的 index.html，注入 WebSocket bootstrap
+    const indexHtml = fs.readFileSync(path.join(STATIC_DIR, "index.html"), "utf-8");
+    const servedHtml = indexHtml.replace("</body>", createBootstrap() + "\n</body>");
+
+    // ── HTTP 服务器（静态文件 + SPA fallback） ──
+    const httpServer = http.createServer((req, res) => {
+        let url = req.url ?? "/";
+        // Strip query string
+        const qIdx = url.indexOf("?");
+        if (qIdx >= 0) url = url.slice(0, qIdx);
+
+        if (url === "/") {
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(servedHtml);
+            return;
+        }
+
+        const filePath = path.normalize(path.join(STATIC_DIR, url));
+        if (!filePath.startsWith(STATIC_DIR)) {
+            res.writeHead(403);
+            res.end("Forbidden");
+            return;
+        }
+
+        if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+            // SPA fallback: all unknown routes serve index.html
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(servedHtml);
+            return;
+        }
+
+        const ext = path.extname(filePath);
+        res.writeHead(200, { "Content-Type": MIME[ext] ?? "application/octet-stream" });
+        res.end(fs.readFileSync(filePath));
     });
-    process.once("exit", () => dropSelfRecord());
-  } catch (e) {
-    console.warn("[serve] 实例注册表写入失败（不影响启动）:", e);
-  }
 
-  // 读取构建好的 index.html，注入 WebSocket bootstrap
-  const indexHtml = fs.readFileSync(path.join(STATIC_DIR, "index.html"), "utf-8");
-  const servedHtml = indexHtml.replace("</body>", createBootstrap() + "\n</body>");
+    // ── WebSocket 服务器（RPC 传输） ──
+    const wss = new WebSocketServer({ server: httpServer });
 
-  // ── HTTP 服务器（静态文件 + SPA fallback） ──
-  const httpServer = http.createServer((req, res) => {
-    let url = req.url ?? "/";
-    // Strip query string
-    const qIdx = url.indexOf("?");
-    if (qIdx >= 0) url = url.slice(0, qIdx);
+    wss.on("connection", (ws) => {
+        bindApi(new WsTransport(ws));
+    });
 
-    if (url === "/") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(servedHtml);
-      return;
-    }
-
-    const filePath = path.normalize(path.join(STATIC_DIR, url));
-    if (!filePath.startsWith(STATIC_DIR)) {
-      res.writeHead(403);
-      res.end("Forbidden");
-      return;
-    }
-
-    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-      // SPA fallback: all unknown routes serve index.html
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(servedHtml);
-      return;
-    }
-
-    const ext = path.extname(filePath);
-    res.writeHead(200, { "Content-Type": MIME[ext] ?? "application/octet-stream" });
-    res.end(fs.readFileSync(filePath));
-  });
-
-  // ── WebSocket 服务器（RPC 传输） ──
-  const wss = new WebSocketServer({ server: httpServer });
-
-  wss.on("connection", (ws) => {
-    bindApi(new WsTransport(ws));
-  });
-
-  // ── 启动 ──
-  httpServer.listen(port, "127.0.0.1", () => {
-    const home = appConfig.diyHome;
-    // 取实际绑定端口（--port 0 时由系统分配），getAppInfo 回报的必须是真值
-    const bound = httpServer.address();
-    const realPort = typeof bound === "object" && bound ? bound.port : port;
-    setRpcPort(realPort);
-    setSelfPort(realPort);
-    console.log("═══════════════════════════════════════");
-    console.log("  diy 管控台 — Web 模式");
-    console.log("═══════════════════════════════════════");
-    console.log(`  地址:     http://127.0.0.1:${realPort}`);
-    console.log(`  Tailscale: http://<tailscale-host>:${realPort}`);
-    console.log(`  PID:      ${process.pid}`);
-    console.log(`  DIY_HOME: ${home}`);
-    console.log(`  DIY_CLI:  ${process.env["DIY_CLI"] ?? "(未注入 → 提示词会告警)"}`);
-    console.log("───────────────────────────────────────");
-  });
+    // ── 启动 ──
+    httpServer.listen(port, "127.0.0.1", () => {
+        const home = appConfig.diyHome;
+        // 取实际绑定端口（--port 0 时由系统分配），getAppInfo 回报的必须是真值
+        const bound = httpServer.address();
+        const realPort = typeof bound === "object" && bound ? bound.port : port;
+        setRpcPort(realPort);
+        setSelfPort(realPort);
+        console.log("═══════════════════════════════════════");
+        console.log("  diy 管控台 — Web 模式");
+        console.log("═══════════════════════════════════════");
+        console.log(`  地址:     http://127.0.0.1:${realPort}`);
+        console.log(`  Tailscale: http://<tailscale-host>:${realPort}`);
+        console.log(`  PID:      ${process.pid}`);
+        console.log(`  DIY_HOME: ${home}`);
+        console.log(`  DIY_CLI:  ${process.env["DIY_CLI"] ?? "(未注入 → 提示词会告警)"}`);
+        console.log("───────────────────────────────────────");
+    });
 }
 
 function createBootstrap(): string {
-  return `<script>
+    return `<script>
 (function(){var ws=new WebSocket('ws://127.0.0.1:${port}');
 var q=[];var r=0;
 ws.addEventListener('open',function(){r=1;for(var i=0;i<q.length;i++)ws.send(JSON.stringify(q[i]))});
@@ -207,7 +207,7 @@ window.diy={onUiCommand:function(cb){_u.add(cb);return function(){_u.delete(cb)}
 }
 
 main().catch((e) => {
-  const msg = e instanceof Error ? e.message : String(e);
-  console.error(`[diy/serve] 启动失败: ${msg}`);
-  process.exit(1);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[diy/serve] 启动失败: ${msg}`);
+    process.exit(1);
 });

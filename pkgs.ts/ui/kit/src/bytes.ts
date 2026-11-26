@@ -5,8 +5,8 @@
  * 放在组件里会形成「面板 import 页面组件」的反向依赖。
  */
 export function fmtBytes(n: number): string {
-    if (!Number.isFinite(n) || n <= 0) return "0 B";
-    const u = ["B", "KB", "MB", "GB"];
+    if (!Number.isFinite(n) || n <= 0) return '0 B';
+    const u = ['B', 'KB', 'MB', 'GB'];
     let i = 0;
     let v = n;
     while (v >= 1024 && i < u.length - 1) {

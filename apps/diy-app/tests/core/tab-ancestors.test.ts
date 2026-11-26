@@ -52,7 +52,13 @@ describe("落盘内容 —— 只有真信息", () => {
         store.set(
             "diy_tabs_opened",
             JSON.stringify([
-                { key: "task-run:OLD", pageId: "task-run", ctx: C, parent: "task-run:ZZZ", taskAncestors: ["projects/1/tasks/gone"] },
+                {
+                    key: "task-run:OLD",
+                    pageId: "task-run",
+                    ctx: C,
+                    parent: "task-run:ZZZ",
+                    taskAncestors: ["projects/1/tasks/gone"],
+                },
             ]),
         );
         const tabStore = await freshStore();
@@ -102,7 +108,11 @@ describe("任务被移动 → 导航结构跟随（165 的回归点）", () => {
             expect(new Set(tabStore.opened.map((t) => t.key)).size).toBe(2);
             expect(tabStore.opened).toHaveLength(2);
         }
-        expect(persisted().map((e) => e.ctx).sort()).toEqual([A, C].sort()); // 盘上仍是两条真信息
+        expect(
+            persisted()
+                .map((e) => e.ctx)
+                .sort(),
+        ).toEqual([A, C].sort()); // 盘上仍是两条真信息
     });
 });
 

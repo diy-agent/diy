@@ -35,14 +35,29 @@ describe("cutMarker：构造", () => {
         }
     });
 
-    it("lowerBound ⇒ bound=\"lower\"（total 是下界时不许冒充精确值）", () => {
-        const s = cutMarker({ by: "chat-preview", scope: "view", why: "window", total: 120, kept: 50, lowerBound: true });
+    it('lowerBound ⇒ bound="lower"（total 是下界时不许冒充精确值）', () => {
+        const s = cutMarker({
+            by: "chat-preview",
+            scope: "view",
+            why: "window",
+            total: 120,
+            kept: 50,
+            lowerBound: true,
+        });
         expect(s).toContain('bound="lower"');
         expect(parseCutMarkers(s)[0]!.lowerBound).toBe(true);
     });
 
     it("fence ⇒ 包一层行内代码（markdown 视图里不被 HTML 分支吞掉），仍可解析", () => {
-        const s = cutMarker({ by: "renderer-text-cap", scope: "view", why: "render", unit: "chars", total: 292890, kept: 131072, fence: true });
+        const s = cutMarker({
+            by: "renderer-text-cap",
+            scope: "view",
+            why: "render",
+            unit: "chars",
+            total: 292890,
+            kept: 131072,
+            fence: true,
+        });
         expect(s.startsWith("`<cut ")).toBe(true);
         expect(s.endsWith("/>`")).toBe(true);
         expect(parseCutMarkers(s)[0]!.total).toBe(292890);
@@ -65,7 +80,9 @@ describe("cutMarker：构造", () => {
 
 describe("cutMarker：不变量（必抛）", () => {
     it("scope 非法值必抛", () => {
-        expect(() => cutMarker({ by: "x", scope: "wireish" as never, why: "budget", total: 1, kept: 1 })).toThrow(/scope/);
+        expect(() => cutMarker({ by: "x", scope: "wireish" as never, why: "budget", total: 1, kept: 1 })).toThrow(
+            /scope/,
+        );
         expect(() => cutMarker({ by: "x", scope: "" as never, why: "budget", total: 1, kept: 1 })).toThrow(/scope/);
     });
 
@@ -118,7 +135,13 @@ describe("parseCutMarkers：旧格式只读兼容（不改写历史日志）", (
             unit: "lines",
             total: 8400,
         },
-        { text: "[... 中间省略 700 行 / 12.0 KB，完整输出已省略 ...]", by: "tool-output", scope: "wire", unit: "lines", total: 700 },
+        {
+            text: "[... 中间省略 700 行 / 12.0 KB，完整输出已省略 ...]",
+            by: "tool-output",
+            scope: "wire",
+            unit: "lines",
+            total: 700,
+        },
         {
             text: "[输出已省略（只留调用）：8400 行 / 210.0 KB，完整输出见 /abs/a.txt]",
             by: "tool-result-callpath",
@@ -127,7 +150,13 @@ describe("parseCutMarkers：旧格式只读兼容（不改写历史日志）", (
             total: 8400,
         },
         { text: "[… 推理省略 12000 字符 …]", by: "reasoning-clip", scope: "wire", unit: "chars", total: 12000 },
-        { text: "<中间省略 401174 字节（正文共 425750 字节）>", by: "traffic-log", scope: "archive", unit: "bytes", total: 425750 },
+        {
+            text: "<中间省略 401174 字节（正文共 425750 字节）>",
+            by: "traffic-log",
+            scope: "archive",
+            unit: "bytes",
+            total: 425750,
+        },
         {
             text: "……已省略 292890 字符（全文 425750 字符；界面只保留头尾两段）……",
             by: "renderer-text-cap",

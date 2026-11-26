@@ -76,7 +76,13 @@ describe("diffValues（两级 diff：先节点、再文本）", () => {
     });
 
     it("数组丢元素 → **整棵子树全 del**（不再半白半红）", () => {
-        const b = { messages: [{ role: "user", content: "第1轮" }, { role: "assistant", content: "答复" }, { role: "user", content: "第2轮" }] };
+        const b = {
+            messages: [
+                { role: "user", content: "第1轮" },
+                { role: "assistant", content: "答复" },
+                { role: "user", content: "第2轮" },
+            ],
+        };
         const m = { messages: [{ role: "user", content: "第2轮" }] };
         const rows = diffValues(b, m);
         // 第1轮与答复：其所有行都是 del（含 `- role:` 头行）
@@ -89,8 +95,13 @@ describe("diffValues（两级 diff：先节点、再文本）", () => {
     });
 
     it("对象同 key 标量变 → change（左右都有）", () => {
-        const rows = diffValues({ messages: [{ role: "user", content: "旧" }] }, { messages: [{ role: "user", content: "新" }] });
-        expect(rows.some((r) => r.t === "change" && r.left?.text.includes("旧") && r.right?.text.includes("新"))).toBe(true);
+        const rows = diffValues(
+            { messages: [{ role: "user", content: "旧" }] },
+            { messages: [{ role: "user", content: "新" }] },
+        );
+        expect(rows.some((r) => r.t === "change" && r.left?.text.includes("旧") && r.right?.text.includes("新"))).toBe(
+            true,
+        );
         // `- role: "user"` 未变 → same
         expect(rows.some((r) => r.t === "same" && r.left?.text.includes('role: "user"'))).toBe(true);
     });
@@ -98,8 +109,12 @@ describe("diffValues（两级 diff：先节点、再文本）", () => {
     it("工具输出（多行块标量）变 → 只在块内逐行 diff，外层结构仍 same", () => {
         const out = (n: number) => Array.from({ length: n }, (_, i) => `row ${i}`).join("\n");
         const clipped = ["row 0", "row 1", "row 2", "[... 中间省略 ...]", "row 27", "row 28", "row 29"].join("\n");
-        const b = { messages: [{ role: "tool", content: [{ type: "tool-result", output: { type: "text", value: out(30) } }] }] };
-        const m = { messages: [{ role: "tool", content: [{ type: "tool-result", output: { type: "text", value: clipped } }] }] };
+        const b = {
+            messages: [{ role: "tool", content: [{ type: "tool-result", output: { type: "text", value: out(30) } }] }],
+        };
+        const m = {
+            messages: [{ role: "tool", content: [{ type: "tool-result", output: { type: "text", value: clipped } }] }],
+        };
         const rows = diffValues(b, m);
         // 头 3 行保留 → same
         expect(rows.some((r) => r.t === "same" && r.left?.text.trim() === "row 0")).toBe(true);
@@ -112,7 +127,12 @@ describe("diffValues（两级 diff：先节点、再文本）", () => {
 
     it("数组前插一个元素（摘要）→ 该元素 add，其余 same", () => {
         const b = { messages: [{ role: "user", content: "A" }] };
-        const m = { messages: [{ role: "user", content: "<summary>…</summary>" }, { role: "user", content: "A" }] };
+        const m = {
+            messages: [
+                { role: "user", content: "<summary>…</summary>" },
+                { role: "user", content: "A" },
+            ],
+        };
         const rows = diffValues(b, m);
         expect(rows.some((r) => r.t === "add" && r.right?.text.includes("summary"))).toBe(true);
         expect(rows.some((r) => r.t === "same" && r.left?.text.includes("A"))).toBe(true);

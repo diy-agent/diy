@@ -147,8 +147,7 @@ export function analyzeMind(messages: readonly StepMessage[]): {
             // 由上面的 roleGroup 判过 —— 标签再写死「历史」就会与计数互相矛盾。
             // 实测：`历史 · user 18759 B` 出现在 input 组下，读的人第一反应是分组算错了。
             const prefix = roleGroup === "input" ? "输入" : roleGroup === "system" ? "system" : "历史";
-            const label =
-                m.role === "assistant" ? "历史 · assistant（含工具调用参数）" : `${prefix} · ${m.role}`;
+            const label = m.role === "assistant" ? "历史 · assistant（含工具调用参数）" : `${prefix} · ${m.role}`;
             push(label, roleGroup, m.text);
             continue;
         }
@@ -217,7 +216,11 @@ export interface SegmentWhy {
 export function explainSegment(key: string, reasons: Record<string, string> = {}): SegmentWhy {
     const pick = (p: string): string => reasons[p] ?? reasons[p.split(".")[0] ?? ""] ?? "";
     if (key === "help") {
-        return { place: "help", kind: "结构说明", reason: "由 zod 递归派生（envelope.buildHelpDoc）；system 参数每次请求全量重建" };
+        return {
+            place: "help",
+            kind: "结构说明",
+            reason: "由 zod 递归派生（envelope.buildHelpDoc）；system 参数每次请求全量重建",
+        };
     }
     if (key.startsWith("chain · ")) return { place: "system", kind: "全量重建", reason: pick("chain") };
     if (key.startsWith("system.")) return { place: "system", kind: "全量重建", reason: pick(key.slice(7)) };
@@ -272,7 +275,9 @@ export interface RepeatSignal {
  * 为什么只报「同一参数」：参数不同就是不同的活儿（`rg a` 与 `rg b`），报它等于把正常工作算成异常；
  * 而 `sed -n 1,200p x.ts` 连调两次没有任何理由——那才是协调故障（重试没接上、上下文丢了）。
  */
-export function repeatReads(steps: readonly { step: number; toolCalls: readonly { name: string; argsPreview: string }[] }[]): RepeatSignal[] {
+export function repeatReads(
+    steps: readonly { step: number; toolCalls: readonly { name: string; argsPreview: string }[] }[],
+): RepeatSignal[] {
     const seen = new Map<string, number[]>();
     for (const s of steps) {
         for (const c of s.toolCalls) {
@@ -312,7 +317,8 @@ export function mindTrend(
         systemBytes: s.byGroup.system,
         runtimeBytes: s.byGroup.runtime,
     }));
-    const share = (s: { historyBytes: number; reqBytes: number }): number => (s.reqBytes > 0 ? s.historyBytes / s.reqBytes : 0);
+    const share = (s: { historyBytes: number; reqBytes: number }): number =>
+        s.reqBytes > 0 ? s.historyBytes / s.reqBytes : 0;
     const heavy = list.find((s) => share(s) > 0.7);
     return {
         steps: list,

@@ -13,15 +13,15 @@ export type { DiyTheme };
 export const [themeSignal, setThemeSignal] = createSignal<DiyTheme>(Caches.diy_app_theme.get());
 
 export function getTheme(): DiyTheme {
-  return Caches.diy_app_theme.get();
+    return Caches.diy_app_theme.get();
 }
 
 export function applyTheme(t: DiyTheme): void {
-  document.documentElement.dataset.theme = t;
+    document.documentElement.dataset.theme = t;
 }
 
 export function setTheme(t: DiyTheme): void {
-  Caches.diy_app_theme.set(t);
-  applyTheme(t);
-  setThemeSignal(t);
+    Caches.diy_app_theme.set(t);
+    applyTheme(t);
+    setThemeSignal(t);
 }

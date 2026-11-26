@@ -60,9 +60,7 @@ export function JsonViewer(props: { data: unknown }) {
             </div>
             <div class="min-h-0 flex-1 overflow-auto bg-base-200 rounded p-2">
                 <Show when={raw()} fallback={<JsonTree data={props.data} />}>
-                    <pre class="whitespace-pre-wrap break-all font-mono text-body leading-relaxed">
-                        {text()}
-                    </pre>
+                    <pre class="whitespace-pre-wrap break-all font-mono text-body leading-relaxed">{text()}</pre>
                 </Show>
             </div>
         </div>

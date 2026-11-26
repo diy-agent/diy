@@ -38,10 +38,7 @@ export interface JsonlTail {
  *
  * @param file 目标文件（不存在 → 空结果、`truncated: false`；"没有"与"被截断"是两回事）
  */
-export function readJsonlTail(
-    file: string,
-    opts: { maxBytes?: number; maxLines?: number } = {},
-): JsonlTail {
+export function readJsonlTail(file: string, opts: { maxBytes?: number; maxLines?: number } = {}): JsonlTail {
     const maxBytes = Math.max(1, opts.maxBytes ?? JSONL_TAIL_DEFAULT_BYTES);
     const maxLines = Math.max(1, opts.maxLines ?? JSONL_TAIL_DEFAULT_LINES);
     // sync-io-ok: 尾部限读是同步读口（调用方全在同步 fold 窗口）；这里只是一次存在性判定

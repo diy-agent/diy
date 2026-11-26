@@ -108,7 +108,8 @@ function targetOf(ctx: RemedyContext): RemedyTarget {
 }
 
 /** 引导卡公用尾句：为什么不能自动改（三条都一样的理由：这是用户的决定 + 此刻没有 LLM） */
-const WHY_MANUAL = "为什么不能自动改：key / 模型都是你的配置与决定，应用不替你改；且此刻 LLM 已不可用，这条引导也不调用任何模型。";
+const WHY_MANUAL =
+    "为什么不能自动改：key / 模型都是你的配置与决定，应用不替你改；且此刻 LLM 已不可用，这条引导也不调用任何模型。";
 
 /** 判定时的**事实视图**（ctx + 顶层两项，拍平后可逐条读） */
 interface RemedyProbe extends RemedyContext {

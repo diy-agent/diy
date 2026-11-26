@@ -30,7 +30,18 @@ import {
 } from "@diy-agent/persistence";
 
 export { TURN_SCHEMA_CURRENT, TURN_TEXT_MAX_BYTES };
-export type { OpsRef, OpsRefCheck, OpsRefReason, TurnEntry, TurnRecord, TurnRecordState, TurnTextV1, TurnDraft, TurnOp, CompactionEntry };
+export type {
+    OpsRef,
+    OpsRefCheck,
+    OpsRefReason,
+    TurnEntry,
+    TurnRecord,
+    TurnRecordState,
+    TurnTextV1,
+    TurnDraft,
+    TurnOp,
+    CompactionEntry,
+};
 
 /** 旧名（v1）—— 现在就是 `TurnRecord` */
 export type TurnRecordV1 = TurnRecord;

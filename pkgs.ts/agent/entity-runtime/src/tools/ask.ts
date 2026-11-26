@@ -62,9 +62,7 @@ export function askTool(gate: AskGate | undefined, owner?: string): ToolSet[stri
                 // 真的那么多就分两批问（那也是两次「提问」，各占一格）。
                 .max(8)
                 .optional()
-                .describe(
-                    '要一起问的多个问题（一张卡、一次提交，最多 8 题）。只问一件事就用下面的简写字段',
-                ),
+                .describe('要一起问的多个问题（一张卡、一次提交，最多 8 题）。只问一件事就用下面的简写字段'),
             question: z.string().optional().describe('单题简写：只问一件事时用它，配合 kind/options/fields'),
             kind: z
                 .enum(['choice', 'form', 'text'])
@@ -74,10 +72,7 @@ export function askTool(gate: AskGate | undefined, owner?: string): ToolSet[stri
             options: z.array(OPTION_SCHEMA).optional().describe('选项（choice 用）'),
             fields: z.array(FIELD_SCHEMA).optional().describe('表单字段（form 用）'),
             multiple: z.boolean().optional().describe('选项是否多选'),
-            required: z
-                .boolean()
-                .optional()
-                .describe('单题简写：这题是否必须作答（缺省 true）'),
+            required: z.boolean().optional().describe('单题简写：这题是否必须作答（缺省 true）'),
             note: z.string().optional().describe('补充说明：背景 / 影响 / 默认建议（批量时作为整批的背景）'),
         }),
         execute: async (input, options) => {

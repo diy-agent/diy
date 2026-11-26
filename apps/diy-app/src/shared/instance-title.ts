@@ -34,35 +34,35 @@
  * 其余（如测试的 /tmp/diy-app-test-xxx）原样返回 —— 它们本来就不在用户家目录下。
  */
 export function abbrevHome(home: string, homeDir: string): string {
-  if (!home) return "";
-  // 两边都归一成 `/` 再比：Windows 的 homeDir 是 `C:\\Users\\x`，写死 `startsWith(base + "/")`
-  // 永远为假 ⇒ 家目录内的数据根**从不缩写**（实测本机：`C:\\Users\\chen\\.diy` 本该显 `~/.diy`）。
-  // 输出也统一用 `/`：这是**展示串**（不参与路径运算），`~/a/b` 在两边都好读。
-  const posix = (s: string) => s.replace(/\\/g, "/");
-  const h = posix(home);
-  const base = posix(homeDir).replace(/\/+$/, "");
-  if (!base) return home;
-  if (h === base) return "~";
-  if (h.startsWith(`${base}/`)) return `~${h.slice(base.length)}`;
-  return home;
+    if (!home) return "";
+    // 两边都归一成 `/` 再比：Windows 的 homeDir 是 `C:\\Users\\x`，写死 `startsWith(base + "/")`
+    // 永远为假 ⇒ 家目录内的数据根**从不缩写**（实测本机：`C:\\Users\\chen\\.diy` 本该显 `~/.diy`）。
+    // 输出也统一用 `/`：这是**展示串**（不参与路径运算），`~/a/b` 在两边都好读。
+    const posix = (s: string) => s.replace(/\\/g, "/");
+    const h = posix(home);
+    const base = posix(homeDir).replace(/\/+$/, "");
+    if (!base) return home;
+    if (h === base) return "~";
+    if (h.startsWith(`${base}/`)) return `~${h.slice(base.length)}`;
+    return home;
 }
 
 /** 组装标题所需的事实。缺的字段直接不出现（`pid 0` / `:0` 这类占位比留白更难看） */
 export interface InstanceIdentity {
-  /** 当前代码仓库（或 worktree）的展示路径 */
-  repoDisplay: string;
-  /** 数据根（DIY_HOME）的展示形式：绝对路径，或相对**真实家目录**的 `~/…` */
-  homeDisplay: string;
-  /** 运行环境（兼容保留，不再显示） */
-  env: string;
-  /** 当前运行代码所在 git 分支（拿不到时省略） */
-  branch?: string | null;
-  /** RPC 端口（尚未绑定 / 未知时省略） */
-  port?: number | null;
-  /** 进程 PID */
-  pid?: number | null;
-  /** 实例 URI（`diy://<instance-id>/<app>.<launch>`）；拿不到时省略 */
-  uri?: string | null;
+    /** 当前代码仓库（或 worktree）的展示路径 */
+    repoDisplay: string;
+    /** 数据根（DIY_HOME）的展示形式：绝对路径，或相对**真实家目录**的 `~/…` */
+    homeDisplay: string;
+    /** 运行环境（兼容保留，不再显示） */
+    env: string;
+    /** 当前运行代码所在 git 分支（拿不到时省略） */
+    branch?: string | null;
+    /** RPC 端口（尚未绑定 / 未知时省略） */
+    port?: number | null;
+    /** 进程 PID */
+    pid?: number | null;
+    /** 实例 URI（`diy://<instance-id>/<app>.<launch>`）；拿不到时省略 */
+    uri?: string | null;
 }
 
 /**
@@ -73,8 +73,8 @@ export interface InstanceIdentity {
  * （生产 / 各 worktree 的 lab），两者合起来才是「谁是谁」。
  */
 export function instanceUriOf(nodeId: string | null, app: string, launch: string | null): string {
-  const tail = launch === null || launch === "" ? app : `${app}.${launch}`;
-  return nodeId === null || nodeId === "" ? tail : `diy://${nodeId}/${tail}`;
+    const tail = launch === null || launch === "" ? app : `${app}.${launch}`;
+    return nodeId === null || nodeId === "" ? tail : `diy://${nodeId}/${tail}`;
 }
 
 /**
@@ -84,13 +84,8 @@ export function instanceUriOf(nodeId: string | null, app: string, launch: string
  * 字段缺失时显示 `?`，保持标题结构稳定。
  */
 export function instanceTitle(id: InstanceIdentity): string {
-  const parts = [
-    id.repoDisplay || "?",
-    id.homeDisplay || "?",
-    `port:${id.port ?? "?"}`,
-    `pid:${id.pid ?? "?"}`,
-  ];
-  // 实例 URI 放最后：前四段已足够宽，URI 是「命令打给谁」的精确抓手，可读性差异不明显时省掉更清爽
-  if (id.uri !== undefined && id.uri !== null && id.uri !== "") parts.push(id.uri);
-  return parts.join("🔹");
+    const parts = [id.repoDisplay || "?", id.homeDisplay || "?", `port:${id.port ?? "?"}`, `pid:${id.pid ?? "?"}`];
+    // 实例 URI 放最后：前四段已足够宽，URI 是「命令打给谁」的精确抓手，可读性差异不明显时省掉更清爽
+    if (id.uri !== undefined && id.uri !== null && id.uri !== "") parts.push(id.uri);
+    return parts.join("🔹");
 }

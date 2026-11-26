@@ -108,13 +108,9 @@ export const flowRoutes = RpcSchema.group({
                             readFile: true,
                             desc: "发言正文：文件路径（相对路径按当前目录解析）或 `-` 读 stdin",
                         }),
-                        type: z
-                            .enum(["note", "resolved", "escalate"])
-                            .default("note")
-                            .optional()
-                            .cliOption({
-                                desc: "note=普通发言（缺省）/ resolved=宣布线程已解决（位置不动）/ escalate=升级人裁决",
-                            }),
+                        type: z.enum(["note", "resolved", "escalate"]).default("note").optional().cliOption({
+                            desc: "note=普通发言（缺省）/ resolved=宣布线程已解决（位置不动）/ escalate=升级人裁决",
+                        }),
                         author: z.string().optional().cliOption({ desc: "发言作者（缺省 cli；升级人裁决常写 human）" }),
                     },
                     output: FlowThreadsSchema,
@@ -244,7 +240,6 @@ export const flowRoutes = RpcSchema.group({
         }),
     },
 });
-
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

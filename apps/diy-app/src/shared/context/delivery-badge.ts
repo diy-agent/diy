@@ -101,8 +101,7 @@ export function deliveryBadgeTitle(input: DeliveryBadgeInput): string {
 
     // ① 本步事实（token 域）
     const kept = typeof s.keptTokens === "number" ? fmtTokensShort(s.keptTokens) + " tok" : "无记录";
-    const dropped =
-        typeof s.droppedTokens === "number" ? `（${fmtTokensShort(s.droppedTokens)} tok）` : "";
+    const dropped = typeof s.droppedTokens === "number" ? `（${fmtTokensShort(s.droppedTokens)} tok）` : "";
     out.push(
         `历史裁剪（本步投递的唯一维度，与 runtime 无关）：上限 ${fmtLimitTokens(s.limitTokens)}` +
             ` · 保留 ${kept} · 丢 ${s.droppedMessages}/${s.totalMessages} 条${dropped} · ${s.keptRuns} 段`,

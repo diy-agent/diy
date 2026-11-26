@@ -51,7 +51,11 @@ let fx: ElectronFixture;
 beforeAll(async () => {
     const electron = await startElectronTest();
     const HOME = electron.home;
-    fx = { electron, HOME, sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }) };
+    fx = {
+        electron,
+        HOME,
+        sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
+    };
 });
 
 afterAll(async () => {
@@ -98,8 +102,12 @@ describe("flow list", () => {
         const uri = await freshTask("list");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev`);
         const withInstances = await fx.sh.getJson(`./diy.sh flow list --instances`);
-        const instances = (withInstances.data as Record<string, unknown>)["instances"] as Array<Record<string, unknown>>;
-        expect(instances.some((i) => i["uri"] === uri && i["workflowId"] === "dev" && i["position"] === null)).toBe(true);
+        const instances = (withInstances.data as Record<string, unknown>)["instances"] as Array<
+            Record<string, unknown>
+        >;
+        expect(instances.some((i) => i["uri"] === uri && i["workflowId"] === "dev" && i["position"] === null)).toBe(
+            true,
+        );
     });
 });
 
@@ -167,11 +175,15 @@ describe("flow start", () => {
     it("重复 start：**尚未进入**的实例会被重写（换配置窗口）；已进入则拒", async () => {
         const uri = await freshTask("start-again");
         await fx.sh.run(`./diy.sh flow start ${uri} --workflow dev --param 'review.reviewers=2'`);
-        const again = (await fx.sh.getJson(`./diy.sh flow start ${uri} --workflow dev --param 'review.reviewers=4'`)).data as Record<string, unknown>;
+        const again = (await fx.sh.getJson(`./diy.sh flow start ${uri} --workflow dev --param 'review.reviewers=4'`))
+            .data as Record<string, unknown>;
         expect(again["entered"]).toBe(false);
         expect((again["params"] as Record<string, Record<string, unknown>>)["review"]?.["reviewers"]).toBe(4);
         // 重建材料留两条 config（重建取最后一份）⇒ 对账仍同形
-        const ops = readFileSync(flowFile(uri, "path.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l)["op"]);
+        const ops = readFileSync(flowFile(uri, "path.jsonl"), "utf-8")
+            .trim()
+            .split("\n")
+            .map((l) => JSON.parse(l)["op"]);
         expect(ops).toEqual(["config", "config"]);
         const shown = (await fx.sh.getJson(`./diy.sh flow show ${uri}`)).data as Record<string, unknown>;
         expect((shown["params"] as Record<string, Record<string, unknown>>)["review"]?.["reviewers"]).toBe(4);
@@ -273,7 +285,10 @@ describe("flow advance / bounce", () => {
             "implement#2/bounce",
         ]);
         // 备注只进审计（领域态不含人类文本）
-        const audit = readFileSync(flowFile(uri, "events.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+        const audit = readFileSync(flowFile(uri, "events.jsonl"), "utf-8")
+            .trim()
+            .split("\n")
+            .map((l) => JSON.parse(l));
         expect(audit.some((a) => typeof a.content === "string" && a.content.includes("P0 未落点"))).toBe(true);
         expect(readFileSync(flowFile(uri, "state.json"), "utf-8")).not.toContain("P0 未落点");
     });
@@ -303,7 +318,8 @@ describe("flow params", () => {
         expect((g["defaults"] as Record<string, unknown>)["review"]).toEqual({ reviewers: 1, maxBounces: 2 });
 
         // 尚未进入：可以改配置（换配置 = 另起一次运行，那个窗口在这里）
-        const set = (await fx.sh.getJson(`./diy.sh flow params set ${uri} --param 'review.reviewers=5'`)).data as Record<string, unknown>;
+        const set = (await fx.sh.getJson(`./diy.sh flow params set ${uri} --param 'review.reviewers=5'`))
+            .data as Record<string, unknown>;
         expect((set["params"] as Record<string, Record<string, unknown>>)["review"]).toMatchObject({ reviewers: 5 });
         expect(JSON.parse(readFileSync(flowFile(uri, "state.json"), "utf-8")).params.review.reviewers).toBe(5);
 
@@ -355,7 +371,9 @@ describe("flow prompt", () => {
         expect(r["nodeId"]).toBe("review");
         expect(r["hint"]).toContain("按 2 人评审");
         // 装配结果 = prompt-registry 用 flow_node_hint 模版渲染的节（不是宿主自己拼的字符串）
-        expect(r["prompt"]).toContain('<flow_node workflow="dev" node="review" node_name="Review" actor="agent" position="review">');
+        expect(r["prompt"]).toContain(
+            '<flow_node workflow="dev" node="review" node_name="Review" actor="agent" position="review">',
+        );
         expect(r["prompt"]).toContain("按 2 人评审");
         expect(r["prompt"]).toContain("</flow_node>");
         expect(r["bytes"]).toBe(Buffer.byteLength(String(r["prompt"]), "utf-8"));
@@ -382,7 +400,10 @@ describe("flow 终态与收尾", () => {
         expect(ci["done"]).toBe(false);
 
         // 走到头之后：位置变更怎么都不行（no-edge / 不许跳步）
-        for (const cmd of [`./diy.sh flow advance ${uri} --to implement`, `./diy.sh flow bounce ${uri} --to implement`]) {
+        for (const cmd of [
+            `./diy.sh flow advance ${uri} --to implement`,
+            `./diy.sh flow bounce ${uri} --to implement`,
+        ]) {
             const r = await fx.sh.run(cmd);
             expect(r.code, `$ ${cmd} 应失败`).not.toBe(0);
             expect(`${r.stdout}\n${r.stderr}`).toMatch(/不许跳步|不存在从/);
@@ -393,7 +414,10 @@ describe("flow 终态与收尾", () => {
         expect(fin["done"]).toBe(true);
         expect((fin["next"] as Record<string, unknown>)["terminal"]).toBe(true);
         expect(JSON.parse(readFileSync(flowFile(uri, "state.json"), "utf-8")).done).toBe(true);
-        const recs = readFileSync(flowFile(uri, "path.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+        const recs = readFileSync(flowFile(uri, "path.jsonl"), "utf-8")
+            .trim()
+            .split("\n")
+            .map((l) => JSON.parse(l));
         expect(recs[recs.length - 1]["op"]).toBe("finish");
 
         // 审计是 cache：删掉之后 done 照样在（权威 = state.json）；对账也过（重建侧同样重建得出 done）
@@ -476,7 +500,8 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
         // 一段 unified diff（**非 JSON ⇒ 原样当字符串**交给插件）：头两行 `---`/`+++` 不算增删
         const diffFile = join(fx.HOME, "t337-step.diff");
         writeFileSync(diffFile, "--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n context\n-旧\n+新\n", "utf-8");
-        const put = (await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file "${diffFile}"`)).data as Record<string, unknown>;
+        const put = (await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node implement --file "${diffFile}"`))
+            .data as Record<string, unknown>;
         expect(put).toMatchObject({ node: "implement", seq: 1, plugin: "patch" });
         expect(put["view"]).toEqual({
             renderer: "diff", // **与 art.renderer 一致**（宿主另有一道校验：不一致当场报错）
@@ -508,7 +533,8 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
         const ciFile = join(fx.HOME, "t337-ci.txt");
         writeFileSync(ciFile, "./sha.sh check\nEXIT=0\n", "utf-8");
         // `-` = 读 stdin（管道；内容在**调用方进程**读，见 _cli-meta.readFile）
-        const ciPut = (await fx.sh.getJson(`cat "${ciFile}" | ./diy.sh flow artifact put ${uri} --node ci --file -`)).data as Record<string, unknown>;
+        const ciPut = (await fx.sh.getJson(`cat "${ciFile}" | ./diy.sh flow artifact put ${uri} --node ci --file -`))
+            .data as Record<string, unknown>;
         expect(ciPut["art"]).toMatchObject({ renderer: "doc", plugin: "text" });
         expect(ciPut).toMatchObject({ node: "ci", seq: 1, plugin: "text" });
         const ciView = ciPut["view"] as Record<string, unknown>;
@@ -531,26 +557,37 @@ describe("flow 产物与视图下发（art + render 插件）", () => {
         await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement`);
         await fx.sh.run(`./diy.sh flow advance ${uri} --to review`);
         // 第 2 次驻留还没放产物：**缺项 ⇒ view null**（只认「那一次」的产物，不会拿第 1 次的顶上）
-        const hole = (await fx.sh.getJson(`./diy.sh flow view ${uri} --node review --seq 2`)).data as Record<string, unknown>;
+        const hole = (await fx.sh.getJson(`./diy.sh flow view ${uri} --node review --seq 2`)).data as Record<
+            string,
+            unknown
+        >;
         expect(hole["seq"]).toBe(2);
         expect(hole["view"]).toBeNull();
         // `--seq` 缺省 = 该节点**最后一次**驻留（人在的就是那一次）
-        expect(((await fx.sh.getJson(`./diy.sh flow view ${uri} --node review`)).data as Record<string, unknown>)["seq"]).toBe(2);
+        expect(
+            ((await fx.sh.getJson(`./diy.sh flow view ${uri} --node review`)).data as Record<string, unknown>)["seq"],
+        ).toBe(2);
 
         const f2 = join(fx.HOME, "t337-review2.json");
         // 裸数组（= 只有 rows，列序取该行的键序 —— 上面那份给了 columns，这份没给）
         writeFileSync(f2, JSON.stringify([{ 项: "落点", 结论: "已补" }]), "utf-8");
-        const put2 = (await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node review --file "${f2}"`)).data as Record<string, unknown>;
+        const put2 = (await fx.sh.getJson(`./diy.sh flow artifact put ${uri} --node review --file "${f2}"`))
+            .data as Record<string, unknown>;
         expect(put2["seq"]).toBe(2);
         expect(put2["view"]).toEqual({ renderer: "table", payload: { rows: [{ cells: ["落点", "已补"] }] } });
 
         // 第 1 次驻留那份**不动**（各取各的；回填更早的驻留也走 --seq）
-        const first = (await fx.sh.getJson(`./diy.sh flow view ${uri} --node review --seq 1`)).data as Record<string, unknown>;
+        const first = (await fx.sh.getJson(`./diy.sh flow view ${uri} --node review --seq 1`)).data as Record<
+            string,
+            unknown
+        >;
         expect(first["view"]).toEqual({
             renderer: "table",
             payload: { columns: ["项", "结论"], rows: [{ cells: ["落点", "P0 未落"] }] },
         });
-        expect(JSON.parse(readFileSync(join(fx.HOME, uri, "flow", "artifacts", "review.json"), "utf-8")).length).toBe(2);
+        expect(JSON.parse(readFileSync(join(fx.HOME, uri, "flow", "artifacts", "review.json"), "utf-8")).length).toBe(
+            2,
+        );
     });
 
     it("拒：袋坏（亮错，不静默当「没产物」）· 内容空 · 未知节点 · 没驻留过 / seq 越界 · 非形状 URI", async () => {
@@ -726,7 +763,10 @@ function postsText(thread: Record<string, unknown>): string {
 }
 
 /** `flow thread list` 的线程表 */
-async function listThreads(uri: string, extra = ""): Promise<{ threads: Array<Record<string, unknown>>; skipped: number; error: string | null; file: string }> {
+async function listThreads(
+    uri: string,
+    extra = "",
+): Promise<{ threads: Array<Record<string, unknown>>; skipped: number; error: string | null; file: string }> {
     const r = await fx.sh.getJson(`./diy.sh flow thread list ${uri} ${extra}`.trim());
     const d = r.data as Record<string, unknown>;
     return {
@@ -744,13 +784,22 @@ describe("flow 讨论线程（##342）", () => {
         await advanceTo(uri, "clarify", "design", "implement", "review");
         const opinion = join(fx.HOME, "opinion.txt");
         writeFileSync(opinion, "P0：边界条件没覆盖\nP1：错误信息没说清", "utf-8");
-        const bounced = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --note '审计后缀' --opinion "${opinion}" --author '评审 agent'`);
+        const bounced = await fx.sh.run(
+            `./diy.sh flow bounce ${uri} --to implement --note '审计后缀' --opinion "${opinion}" --author '评审 agent'`,
+        );
         expect(bounced.code, bounced.stderr).toBe(0);
 
         // 讨论流：一行一条 JSON（append-only）；锚点 = 这次打回的**落点驻留**（implement#2）
-        const lines = readFileSync(flowFile(uri, "threads.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+        const lines = readFileSync(flowFile(uri, "threads.jsonl"), "utf-8")
+            .trim()
+            .split("\n")
+            .map((l) => JSON.parse(l));
         expect(lines).toHaveLength(1);
-        expect(lines[0]).toMatchObject({ author: "评审 agent", type: "note", anchor: { from: "review", to: "implement", seq: 2 } });
+        expect(lines[0]).toMatchObject({
+            author: "评审 agent",
+            type: "note",
+            anchor: { from: "review", to: "implement", seq: 2 },
+        });
         expect(lines[0]["text"]).toContain("边界条件没覆盖");
         // `--note` 照旧只进审计（不回退）
         expect(readFileSync(flowFile(uri, "events.jsonl"), "utf-8")).toContain("审计后缀");
@@ -881,7 +930,9 @@ describe("flow 讨论线程（##342）", () => {
         // 空正文另拒（不写空发言）
         const empty = join(fx.HOME, "empty.txt");
         writeFileSync(empty, "   \n", "utf-8");
-        const blank = await fx.sh.run(`./diy.sh flow thread post ${uri} --thread 'review->implement#2' --text ${empty}`);
+        const blank = await fx.sh.run(
+            `./diy.sh flow thread post ${uri} --thread 'review->implement#2' --text ${empty}`,
+        );
         expect(blank.code).not.toBe(0);
         expect(`${blank.stdout}${blank.stderr}`).toMatch(/正文为空/);
     });
@@ -898,7 +949,9 @@ describe("flow 讨论线程（##342）", () => {
         // (b) 开发被说服 ⇒ 线程 resolved（位置不动）
         const pre = (await fx.sh.getJson(`./diy.sh flow show ${uri}`)).data as Record<string, unknown>;
         expect((await listThreads(uri)).threads[0]!["status"]).toBe("open");
-        const resolved = await fx.sh.run(threadPostCmd(uri, key, "已解决：开发补齐了边界条件", "resolved", "开发 agent"));
+        const resolved = await fx.sh.run(
+            threadPostCmd(uri, key, "已解决：开发补齐了边界条件", "resolved", "开发 agent"),
+        );
         expect(resolved.code, resolved.stderr).toBe(0);
         expect((await listThreads(uri)).threads[0]!["status"]).toBe("resolved");
         const afterResolved = (await fx.sh.getJson(`./diy.sh flow show ${uri}`)).data as Record<string, unknown>;
@@ -939,8 +992,19 @@ describe("flow 讨论线程（##342）", () => {
         expect(adv.code, adv.stderr).toBe(0);
 
         // ② 坏行（半截 JSON + 形状不符）：只报数、只亮错误位，**不炸领域读**
-        const good = JSON.stringify({ id: "x", at: "2026-01-01T00:00:00.000Z", author: "cli", type: "note", anchor: { from: "review", to: "implement", seq: 2 }, text: "好行" });
-        writeFileSync(flowFile(uri, "threads.jsonl"), `${good}\n{"id": "半截\n{"id":"y","at":"z","author":"cli","type":"nope","anchor":{"from":"review","to":"implement","seq":2},"text":"类型不认识"}\n`, "utf-8");
+        const good = JSON.stringify({
+            id: "x",
+            at: "2026-01-01T00:00:00.000Z",
+            author: "cli",
+            type: "note",
+            anchor: { from: "review", to: "implement", seq: 2 },
+            text: "好行",
+        });
+        writeFileSync(
+            flowFile(uri, "threads.jsonl"),
+            `${good}\n{"id": "半截\n{"id":"y","at":"z","author":"cli","type":"nope","anchor":{"from":"review","to":"implement","seq":2},"text":"类型不认识"}\n`,
+            "utf-8",
+        );
         const bad = (await fx.sh.getJson(`./diy.sh flow show ${uri}`)).data as Record<string, unknown>;
         expect(bad["threadError"]).toBeTruthy();
         expect(String(bad["threadError"])).toContain("2 行读不出");

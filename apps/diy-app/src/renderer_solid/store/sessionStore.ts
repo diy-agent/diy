@@ -165,7 +165,6 @@ function ledgerMoved(a: SessionEntry, b: SessionEntry): boolean {
     return a.turnCount !== b.turnCount || stepsNow(a) !== stepsNow(b);
 }
 
-
 /**
  * 「水位待写」：这些 uri **该记水位，但账本真值还没到货**（`turnsOf` = undefined）。
  *
@@ -375,7 +374,7 @@ export const sessionStore = {
     /**
      * 记下"我看过这个会话到此刻"。
      *
-     * 只有**正在看**的会话该被追平（App 侧对当前激活的 task-run tab 调用）—— 
+     * 只有**正在看**的会话该被追平（App 侧对当前激活的 task-run tab 调用）——
      * 若对所有条目无条件追，等于"看一次全库都算已读"。
      *
      * ⚠️ **读水位必须 untrack**（##308 review3 P1-1，回归见 tests/core/session-store.test.ts）：

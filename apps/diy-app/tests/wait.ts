@@ -20,11 +20,7 @@ export interface WaitOptions {
  * 轮询 fn 直到 ok(v) 为真；到上限仍未成立则**返回最后一次取值**（不抛错）。
  * 用法：`expect(await waitUntil(treeText, (t) => t.includes('X'))).toContain('X')`
  */
-export async function waitUntil<T>(
-    fn: () => Promise<T>,
-    ok: (v: T) => boolean,
-    opts: WaitOptions = {},
-): Promise<T> {
+export async function waitUntil<T>(fn: () => Promise<T>, ok: (v: T) => boolean, opts: WaitOptions = {}): Promise<T> {
     const timeoutMs = opts.timeoutMs ?? 5000;
     const intervalMs = opts.intervalMs ?? 100;
     const deadline = Date.now() + timeoutMs;

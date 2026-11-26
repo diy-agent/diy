@@ -13,13 +13,7 @@
 
 import { describe, it, expect } from "vitest";
 import * as yaml from "js-yaml";
-import {
-    applyFacts,
-    createTree,
-    envelopeText,
-    setPlaces,
-    type ContextTreeState,
-} from "../../src/shared/context/index";
+import { applyFacts, createTree, envelopeText, setPlaces, type ContextTreeState } from "../../src/shared/context/index";
 import { requestYaml } from "../../src/shared/context/request";
 
 /** 基准树：system = diy + chain；runtime = task（title + body） */

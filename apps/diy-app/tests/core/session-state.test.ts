@@ -92,8 +92,16 @@ describe("blameOf：TurnEndReason 六个值逐一映射（不许漏、不许编�
         ["aborted:detached（断流）", { type: "aborted", data: { source: "detached" } }, "unknown"],
         // ##266 review1 R1：`error:llm` 拿不到具体码（message 多为 `[router_error] model request failed`）
         // ⇒ **不归 service**（service = 已识别外部，须说得出 429/401/403），与 ##394 triageOfTurnEnd 一致
-        ["error:llm（上游故障，拿不到码）", { type: "error", data: { source: "llm", message: "[router_error] model request failed" } }, "unknown"],
-        ["error:llm（429 也一样，值域里没带码）", { type: "error", data: { source: "llm", message: "429" } }, "unknown"],
+        [
+            "error:llm（上游故障，拿不到码）",
+            { type: "error", data: { source: "llm", message: "[router_error] model request failed" } },
+            "unknown",
+        ],
+        [
+            "error:llm（429 也一样，值域里没带码）",
+            { type: "error", data: { source: "llm", message: "429" } },
+            "unknown",
+        ],
         ["error:budget（预算）", { type: "error", data: { source: "budget", message: "quota" } }, "limit"],
         ["error:stream（断流）", { type: "error", data: { source: "stream", message: "reset" } }, "unknown"],
         ["interrupted（崩溃恢复）", { type: "interrupted", data: {} }, "unknown"],
@@ -201,15 +209,21 @@ describe("属性不参与状态判定", () => {
 describe("glyphOf：形状 ≠ 只靠颜色", () => {
     it("三阶段三种形状：空心圆 / 实心点 / UML 终态圆", () => {
         expect(glyphOf(sessionStateOf(input({ entry: null, hasSession: false }))).shape).toBe("hollow");
-        expect(glyphOf(sessionStateOf(input({ entry: entry({ turn: { startedAt: T0 } as never }) }))).shape).toBe("live");
+        expect(glyphOf(sessionStateOf(input({ entry: entry({ turn: { startedAt: T0 } as never }) }))).shape).toBe(
+            "live",
+        );
         expect(
-            glyphOf(sessionStateOf(input({ entry: entry({ turnCount: 1, lastEndReason: { type: "completed", data: {} } }) })))
-                .shape,
+            glyphOf(
+                sessionStateOf(
+                    input({ entry: entry({ turnCount: 1, lastEndReason: { type: "completed", data: {} } }) }),
+                ),
+            ).shape,
         ).toBe("ended");
     });
 
     it("线型：unknown 虚线（等你裁定）/ defect 双环（我方缺陷）/ 其余实线", () => {
-        const g = (end: TurnEndReason) => glyphOf(sessionStateOf(input({ entry: entry({ turnCount: 1, lastEndReason: end }) })));
+        const g = (end: TurnEndReason) =>
+            glyphOf(sessionStateOf(input({ entry: entry({ turnCount: 1, lastEndReason: end }) })));
         expect(g({ type: "interrupted", data: {} }).line).toBe("dashed");
         expect(g({ type: "completed", data: {} }).line).toBe("solid");
         // defect 今天没有信号源（值域里没有）；这里钉的是"接口留位"而不是"能造出来"
@@ -218,7 +232,9 @@ describe("glyphOf：形状 ≠ 只靠颜色", () => {
 
     it("属性轴（SessionFlags）与状态轴正交：未读怎么变，`run` 都不变（用户 3.4 / ##395 接入口）", () => {
         const ended = (unread: number) =>
-            sessionStateOf(input({ entry: entry({ turnCount: 3, lastEndReason: { type: "completed", data: {} } }), unread }));
+            sessionStateOf(
+                input({ entry: entry({ turnCount: 3, lastEndReason: { type: "completed", data: {} } }), unread }),
+            );
         // 同一个已结束会话：未读 0 / 2 / 9 —— **状态不动**，只有属性动
         for (const n of [0, 2, 9]) {
             const s = ended(n);
@@ -229,7 +245,9 @@ describe("glyphOf：形状 ≠ 只靠颜色", () => {
             expect(f.seen).toBe(n === 0);
         }
         // 运行中的会话同样可以"有未读"（属性），但状态仍是 running —— 未读绝不是第四种状态
-        const running = sessionStateOf(input({ entry: entry({ turn: { startedAt: T0 } as never, turnCount: 2 }), unread: 1 }));
+        const running = sessionStateOf(
+            input({ entry: entry({ turn: { startedAt: T0 } as never, turnCount: 2 }), unread: 1 }),
+        );
         expect(running.run).toBe("running");
         expect(flagsOf(running).unread).toBe(true);
         // 属性轴里没有任何"状态"值：类型上就不可能出现 in-turn / unread 这类伪状态
@@ -246,7 +264,9 @@ describe("glyphOf：形状 ≠ 只靠颜色", () => {
 
     it("未读以属性形式进图标视图（`+N`），但形状仍由状态决定", () => {
         const v = glyphOf(
-            sessionStateOf(input({ entry: entry({ turnCount: 3, lastEndReason: { type: "completed", data: {} } }), unread: 2 })),
+            sessionStateOf(
+                input({ entry: entry({ turnCount: 3, lastEndReason: { type: "completed", data: {} } }), unread: 2 }),
+            ),
         );
         expect(v.shape).toBe("ended");
         expect(v.count).toBe("+2");

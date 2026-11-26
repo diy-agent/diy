@@ -42,7 +42,14 @@ function textReply(text: string): LanguageModelV3StreamResult {
         { type: "text-end", id: "t" },
         { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage },
     ];
-    return { stream: new ReadableStream({ start(c) { for (const p of parts) c.enqueue(p); c.close(); } }) };
+    return {
+        stream: new ReadableStream({
+            start(c) {
+                for (const p of parts) c.enqueue(p);
+                c.close();
+            },
+        }),
+    };
 }
 
 function stubModel(): MockLanguageModelV3 {
@@ -70,7 +77,11 @@ function filesOf(uri: string) {
 }
 
 const readLines = (fp: string): string[] =>
-    existsSync(fp) ? readFileSync(fp, "utf-8").split("\n").filter((l) => l.trim() !== "") : [];
+    existsSync(fp)
+        ? readFileSync(fp, "utf-8")
+              .split("\n")
+              .filter((l) => l.trim() !== "")
+        : [];
 
 describe("llm 全量日志：只增 + 与压缩解耦", () => {
     it("① 一轮对话 → 写出全量消息（行 = 原生 ModelMessage）", async () => {
@@ -152,7 +163,11 @@ describe("崩溃残留自愈（加载时收敛 + 补齐日志）", () => {
         await run(new LocalAgentManager(() => stubModel() as unknown as LanguageModel), uri, "正常一句");
         const clean = readLines(f.llm);
         // 追加一行不属于投影的脏行
-        writeFileSync(f.llm, clean.join("\n") + "\n" + JSON.stringify({ role: "user", content: "脏行" }) + "\n", "utf-8");
+        writeFileSync(
+            f.llm,
+            clean.join("\n") + "\n" + JSON.stringify({ role: "user", content: "脏行" }) + "\n",
+            "utf-8",
+        );
         await run(new LocalAgentManager(() => stubModel() as unknown as LanguageModel), uri, "再来一句");
         const after = readLines(f.llm);
         expect(after.join("\n")).not.toContain("脏行");

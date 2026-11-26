@@ -3,9 +3,9 @@ import { createTypedClient, ChannelClientBinding } from "@diy-agent/rpc";
 import { apiDef } from "../../main/services/api-def";
 
 declare global {
-  interface Window {
-    transport: EnvelopeTransport;
-  }
+    interface Window {
+        transport: EnvelopeTransport;
+    }
 }
 
 /**
@@ -22,7 +22,7 @@ declare global {
  * 只是推迟到**第一次用**时才建（renderer 里此时 window.transport 一定已就绪）。
  */
 function createRealService() {
-  return createTypedClient(new ChannelClientBinding(window.transport), apiDef);
+    return createTypedClient(new ChannelClientBinding(window.transport), apiDef);
 }
 
 type DiyService = ReturnType<typeof createRealService>;
@@ -34,11 +34,11 @@ let impl: DiyService | null = null;
  * 用 Proxy 而不是每次调用 `getDiyService()`：15+ 个调用点不必改，且属性访问语义不变。
  */
 export const diyService: DiyService = new Proxy({} as DiyService, {
-  get(_target, prop) {
-    const svc = (impl ??= createRealService()) as Record<string | symbol, unknown>;
-    const v = svc[prop];
-    return typeof v === "function" ? v.bind(svc) : v;
-  },
+    get(_target, prop) {
+        const svc = (impl ??= createRealService()) as Record<string | symbol, unknown>;
+        const v = svc[prop];
+        return typeof v === "function" ? v.bind(svc) : v;
+    },
 });
 
 /**
@@ -46,5 +46,5 @@ export const diyService: DiyService = new Proxy({} as DiyService, {
  * 名字不带 `ForTest`：`rpc` 模块本身就是"该被换掉的边界"，与 `setWriteErrorHook` 同风格。
  */
 export function setDiyService(svc: DiyService | null): void {
-  impl = svc;
+    impl = svc;
 }

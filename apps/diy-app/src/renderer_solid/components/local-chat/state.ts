@@ -26,13 +26,36 @@
  * 「显示什么、按什么序、开到第几层」的语义全在 `lib/chat-fold.ts`（纯函数 + 单测），本文件只管画。
  * MD 渲染/原文是**正交**的显示偏好：摘要态同样按它渲染（见 TextRow）。
  */
-import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, untrack } from "solid-js";
+import {
+    createEffect,
+    createMemo,
+    createSignal,
+    For,
+    Match,
+    on,
+    onCleanup,
+    onMount,
+    Show,
+    Switch,
+    untrack,
+} from "solid-js";
 import { localChatStore } from "../../store/localChatStore";
 import { useLocate } from "./useLocate";
 import { useRoomFeed } from "./useRoomFeed";
 import { personaStore } from "../../store/personaStore";
 import { PersonaDrawer } from "../PersonaDrawer";
-import { TurnUsageDetailDrawer, SessionUsageChip, WindowRing, OverallRateChip, sessionAvgRate, UsageDrawer, UsageHoverCard, armHoverClose, cancelHoverClose, type UsageHoverState } from "../UsagePanel";
+import {
+    TurnUsageDetailDrawer,
+    SessionUsageChip,
+    WindowRing,
+    OverallRateChip,
+    sessionAvgRate,
+    UsageDrawer,
+    UsageHoverCard,
+    armHoverClose,
+    cancelHoverClose,
+    type UsageHoverState,
+} from "../UsagePanel";
 import { CompactHistoryPanel } from "../CompactSessionPanel";
 import { TrafficDrawer } from "../TrafficDrawer";
 import { ConfirmDialog, IconChevron, IconCode, IconCompress, IconExpand, IconTrash } from "@diy-agent/ui-kit";
@@ -59,13 +82,31 @@ import { memberCompletion, taskCompletion } from "../../lib/completions";
 import { MAIN_MEMBER_ID, opsOwnsEvent, type Room, type RoomEvent } from "../../../shared/room";
 import { diyService } from "../../lib/rpc";
 import { layoutStore } from "../../store/layoutStore";
-import { anchorScrollTop, anchorTick, clampScrollTop, followPlan, lastLeafId, type AnchorTickState, type ChatAnchor } from "../../lib/chat-scroll";
+import {
+    anchorScrollTop,
+    anchorTick,
+    clampScrollTop,
+    followPlan,
+    lastLeafId,
+    type AnchorTickState,
+    type ChatAnchor,
+} from "../../lib/chat-scroll";
 import { userStamp } from "../../lib/user-stamp";
 import type { ReasoningEffort } from "../../../main/services/local-agent";
 import { reasoningEffortLabel } from "../../../shared/reasoning-effort";
 import { VIEW_BAR_H, chatInputMaxHeight } from "../../lib/layout-metrics";
 import type { BlockNode } from "../../../main/services/local-blocks";
-import { DEFAULT_TURN_LEVEL, TURN_LEVEL_MAX, cycleTurnLevel, isTurnLevel, historyOpenOf, liveTurnOf, turnLevelTip, turnRows, type TurnLevel } from "../../lib/chat-fold";
+import {
+    DEFAULT_TURN_LEVEL,
+    TURN_LEVEL_MAX,
+    cycleTurnLevel,
+    isTurnLevel,
+    historyOpenOf,
+    liveTurnOf,
+    turnLevelTip,
+    turnRows,
+    type TurnLevel,
+} from "../../lib/chat-fold";
 import { degradedBannerText } from "../../../shared/degraded-history";
 import {
     ErrorBox,
@@ -88,7 +129,6 @@ export { ChatView } from "./MessageStream";
 export { TurnView } from "./TurnView";
 
 // ─── 页面 ───────────────────────────────────────────
-
 
 export interface LocalChatPageProps {
     uri?: string;
@@ -154,7 +194,9 @@ export function useLocalChatPage(props: LocalChatPageProps) {
     const taskState = createMemo<string | null>(() => {
         const u = uri();
         if (!u) return null;
-        const walk = (ns: readonly { uri?: string; state?: string; children?: readonly unknown[] }[]): string | null => {
+        const walk = (
+            ns: readonly { uri?: string; state?: string; children?: readonly unknown[] }[],
+        ): string | null => {
             for (const n of ns) {
                 if (n.uri === u && n.state) return n.state;
                 const hit = walk((n.children ?? []) as typeof ns) as string | null;
@@ -483,9 +525,7 @@ export function useLocalChatPage(props: LocalChatPageProps) {
                             // 用户看到的正是"切走再切回就看不见 agent 刚说的话"。
                             // 退化为**看最新**（与"无锚点"同一条路）：宁可丢一次阅读位置，
                             // 也不能把用户扔回一段与刚才无关的历史。
-                            console.warn(
-                                `[localChat] 阅读位置锚点已失效（块 ${a.id} 不在账面布局里），改为看最新`,
-                            );
+                            console.warn(`[localChat] 阅读位置锚点已失效（块 ${a.id} 不在账面布局里），改为看最新`);
                             gotoBottom();
                         }
                     } else {
@@ -624,8 +664,7 @@ export function useLocalChatPage(props: LocalChatPageProps) {
     const histOpenOf = (turnId: string): boolean => historyOpenOf(foldMarks()[turnId], globalLevel());
     /** 人物标题 bar：**收拢 / 展开这一轮的历史**（不换层）——按"现在是什么态"决定翻到哪一边。
      *  注意：**1 级下也能直接开历史**（不是"先切到 3 级"）—— 用户 2026-10-12 R22 口径。 */
-    const toggleTurn = (turnId: string) =>
-        setFoldMarks((p) => ({ ...p, [turnId]: histOpenOf(turnId) }));
+    const toggleTurn = (turnId: string) => setFoldMarks((p) => ({ ...p, [turnId]: histOpenOf(turnId) }));
     /** 全部轮次换层（顶部按钮）：**状态复位**，不是"叠加一层"。
      *
      * 用户 2026-10-11 口径：「总的 4 级展开按钮点击后，所有级别都应该复原，而不是因为被点开
@@ -655,8 +694,7 @@ export function useLocalChatPage(props: LocalChatPageProps) {
     const [gateBusy, setGateBusy] = createSignal(false);
     const [pinned, setPinned] = createSignal<Record<string, boolean>>({});
     /** `force` 显式定值（活动块这类**默认展开**的行：缺省翻转出来是 true = 维持展开） */
-    const togglePin = (id: string, force?: boolean) =>
-        setPinned((p) => ({ ...p, [id]: force ?? !p[id] }));
+    const togglePin = (id: string, force?: boolean) => setPinned((p) => ({ ...p, [id]: force ?? !p[id] }));
     // 用量两级交互状态（hover 卡 + 明细抽屉）：与 pinned 同构，**存页面级组件外** ——
     // 块树每帧重建，组件局部 signal 会随之复位（D3 的"点开又被自动合上"就是这么来的）。
     const [usageHover, setUsageHover] = createSignal<UsageHoverState | null>(null);
@@ -865,7 +903,8 @@ export function useLocalChatPage(props: LocalChatPageProps) {
             tailId,
             blockTop: node ? blockTopIn(el, node) : 0,
             blockHeight: node ? node.getBoundingClientRect().height : 0,
-            clientHeight: el.clientHeight,        });
+            clientHeight: el.clientHeight,
+        });
         if (plan.kind === "idle") return;
         const apply = () => {
             const e2 = scrollRef;
@@ -1061,136 +1100,136 @@ export function useLocalChatPage(props: LocalChatPageProps) {
     };
 
     return {
-    uri,
-    taskState,
-    closedInfo,
-    closedMeta,
-    inputValue,
-    setInputValue,
-    moreOpen,
-    setMoreOpen,
-    gensOpen,
-    setGensOpen,
-    personaPanelOpen,
-    setPersonaPanelOpen,
-    fullscreen,
-    setFullscreen,
-    setRootEl: (el: HTMLDivElement | undefined) => (rootRef = el),
-    scrollEl: () => scrollRef,
-    setScrollEl: (el: HTMLDivElement | undefined) => (scrollRef = el),
-    rootEl: () => rootRef,
-    viewH,
-    setViewH,
-    inputMaxH,
-    stick,
-    setStick,
-    restoring,
-    unwatch,
-    scrollTop,
-    setScrollTop,
-    chatVpH,
-    setChatVpH,
-    ledgerTick,
-    setLedgerTick,
-    OVERSCAN_PX,
-    ledgers,
-    curLedger,
-    touchLedger,
-    rowKeyOf,
-    registerRow,
-    applyHeights,
-    rowRO,
-    vpAnchor,
-    captureAnchor,
-    progWriteTop: () => progWriteTop,
-    setProgWriteTop: (v: number | null) => (progWriteTop = v),
-    writeScrollTop,
-    anchorRowIndex,
-    gotoBottom,
-    loadOlderInto,
-    maybeLoadOlder,
-    applyAnchor,
-    restore,
-    applyDraft,
-    liveTurnId,
-    overallRate,
-    md,
-    setMdRaw,
-    setMd,
-    levelFromCache,
-    globalLevel,
-    setGlobalLevelRaw,
-    setGlobalLevel,
-    foldMarks,
-    setFoldMarks,
-    histOpenOf,
-    toggleTurn,
-    cycleAllLevels,
-    conclusionLines,
-    setConclusionLines,
-    changeConclusionLines,
-    confirmClear,
-    setConfirmClear,
-    inputGateAsk,
-    setInputGateAsk,
-    gateBusy,
-    setGateBusy,
-    pinned,
-    setPinned,
-    togglePin,
-    usageHover,
-    setUsageHover,
-    usageDetail,
-    setUsageDetail,
-    hoverUsageIn,
-    hoverUsageOut,
-    full,
-    setFull,
-    roomMeta,
-    setRoomMeta,
-    roomFeed,
-    setRoomFeed,
-    roomNote,
-    setRoomNote,
-    mainMemberId,
-    applyRosterAuto,
-    loadRoomFeed,
-    chatCompletions,
-    roomRows,
-    roomEventOf,
-    replyOpen,
-    setReplyOpen,
-    steerOpen,
-    setSteerOpen,
-    rootRows,
-    allRows,
-    prevKeysRef,
-    rowKeys,
-    layout,
-    win,
-    windowRows,
-    renderedTurnIds,
-    flashTurn,
-    scrollToTurn,
-    locateHit,
-    flashBlock,
-    scrollToBlock,
-    locateJobTarget,
-    revealBlock,
-    usageBoard,
-    setUsageBoard,
-    prevTailId,
-    personaDef,
-    deliver,
-    submit,
-    sendViaFile,
-    sendAnyway,
-    submitByEnter,
-    cancelSteer,
-    toggleSteerMode,
-    reorderSteers,
-    flushSteerQueue,
-    editSteer,
-    focusInput,
+        uri,
+        taskState,
+        closedInfo,
+        closedMeta,
+        inputValue,
+        setInputValue,
+        moreOpen,
+        setMoreOpen,
+        gensOpen,
+        setGensOpen,
+        personaPanelOpen,
+        setPersonaPanelOpen,
+        fullscreen,
+        setFullscreen,
+        setRootEl: (el: HTMLDivElement | undefined) => (rootRef = el),
+        scrollEl: () => scrollRef,
+        setScrollEl: (el: HTMLDivElement | undefined) => (scrollRef = el),
+        rootEl: () => rootRef,
+        viewH,
+        setViewH,
+        inputMaxH,
+        stick,
+        setStick,
+        restoring,
+        unwatch,
+        scrollTop,
+        setScrollTop,
+        chatVpH,
+        setChatVpH,
+        ledgerTick,
+        setLedgerTick,
+        OVERSCAN_PX,
+        ledgers,
+        curLedger,
+        touchLedger,
+        rowKeyOf,
+        registerRow,
+        applyHeights,
+        rowRO,
+        vpAnchor,
+        captureAnchor,
+        progWriteTop: () => progWriteTop,
+        setProgWriteTop: (v: number | null) => (progWriteTop = v),
+        writeScrollTop,
+        anchorRowIndex,
+        gotoBottom,
+        loadOlderInto,
+        maybeLoadOlder,
+        applyAnchor,
+        restore,
+        applyDraft,
+        liveTurnId,
+        overallRate,
+        md,
+        setMdRaw,
+        setMd,
+        levelFromCache,
+        globalLevel,
+        setGlobalLevelRaw,
+        setGlobalLevel,
+        foldMarks,
+        setFoldMarks,
+        histOpenOf,
+        toggleTurn,
+        cycleAllLevels,
+        conclusionLines,
+        setConclusionLines,
+        changeConclusionLines,
+        confirmClear,
+        setConfirmClear,
+        inputGateAsk,
+        setInputGateAsk,
+        gateBusy,
+        setGateBusy,
+        pinned,
+        setPinned,
+        togglePin,
+        usageHover,
+        setUsageHover,
+        usageDetail,
+        setUsageDetail,
+        hoverUsageIn,
+        hoverUsageOut,
+        full,
+        setFull,
+        roomMeta,
+        setRoomMeta,
+        roomFeed,
+        setRoomFeed,
+        roomNote,
+        setRoomNote,
+        mainMemberId,
+        applyRosterAuto,
+        loadRoomFeed,
+        chatCompletions,
+        roomRows,
+        roomEventOf,
+        replyOpen,
+        setReplyOpen,
+        steerOpen,
+        setSteerOpen,
+        rootRows,
+        allRows,
+        prevKeysRef,
+        rowKeys,
+        layout,
+        win,
+        windowRows,
+        renderedTurnIds,
+        flashTurn,
+        scrollToTurn,
+        locateHit,
+        flashBlock,
+        scrollToBlock,
+        locateJobTarget,
+        revealBlock,
+        usageBoard,
+        setUsageBoard,
+        prevTailId,
+        personaDef,
+        deliver,
+        submit,
+        sendViaFile,
+        sendAnyway,
+        submitByEnter,
+        cancelSteer,
+        toggleSteerMode,
+        reorderSteers,
+        flushSteerQueue,
+        editSteer,
+        focusInput,
     };
 }

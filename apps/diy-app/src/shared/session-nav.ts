@@ -188,7 +188,8 @@ export function heroBadgeOf(rows: NavRow[]): NavBadge | null {
         const n = err.reduce((s, r) => s + r.unread, 0);
         // 颜色跟着**归因**走（unknown 紫 / service 橙 / limit 琥珀），不再一律红 ——
         // 用户 2026-10-20：异常种类很多，红色只留给"我方缺陷"
-        const worst = err.find((r) => r.state.blame === "defect") ?? err.find((r) => r.state.blame === "unknown") ?? err[0];
+        const worst =
+            err.find((r) => r.state.blame === "defect") ?? err.find((r) => r.state.blame === "unknown") ?? err[0];
         return {
             key: "error",
             tone: glyphOf(worst.state).tone,
@@ -251,9 +252,23 @@ export function secondaryBadgeOf(rows: NavRow[], hero: NavBadge | null): NavBadg
 export function rowBadgeOf(r: NavRow): NavBadge | null {
     const g = glyphOf(r.state, r.label);
     if (r.stalled)
-        return { key: "stalled", tone: "amber", pulse: false, text: "停滞", short: "⚠", tip: `${r.label}：在跑但长时间没动静` };
+        return {
+            key: "stalled",
+            tone: "amber",
+            pulse: false,
+            text: "停滞",
+            short: "⚠",
+            tip: `${r.label}：在跑但长时间没动静`,
+        };
     if (r.running)
-        return { key: "running", tone: "green", pulse: true, text: "运行中", short: "●", tip: `${r.label}：正在跑（##305 无窗口也在跑）` };
+        return {
+            key: "running",
+            tone: "green",
+            pulse: true,
+            text: "运行中",
+            short: "●",
+            tip: `${r.label}：正在跑（##305 无窗口也在跑）`,
+        };
     if (r.abnormal && r.unread > 0)
         return {
             key: "error",
@@ -273,7 +288,14 @@ export function rowBadgeOf(r: NavRow): NavBadge | null {
             tip: `${r.label}：未读 ${r.unread} 条消息`,
         };
     if (r.queue > 0)
-        return { key: "queue", tone: "violet", pulse: false, text: `队列 ${r.queue}`, short: String(r.queue), tip: `${r.label}：${r.queue} 条留言待投递` };
+        return {
+            key: "queue",
+            tone: "violet",
+            pulse: false,
+            text: `队列 ${r.queue}`,
+            short: String(r.queue),
+            tip: `${r.label}：${r.queue} 条留言待投递`,
+        };
     return null;
 }
 

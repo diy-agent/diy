@@ -17,36 +17,36 @@ import { taskSystemDir } from "../../src/main/core/state";
 // ═══════════════════════════════════════
 
 function makeTask(
-  uri: string,
-  overrides: Partial<{
-    title: string;
-    state: string;
-    parent: string;
-    body: string;
-    change_type: string;
-    module: string;
-    priority: string;
-    created: string;
-    /** 直写进 frontmatter 的额外行（测"词表外的手写值"这类脏数据） */
-    extraFront: string;
-  }> = {},
+    uri: string,
+    overrides: Partial<{
+        title: string;
+        state: string;
+        parent: string;
+        body: string;
+        change_type: string;
+        module: string;
+        priority: string;
+        created: string;
+        /** 直写进 frontmatter 的额外行（测"词表外的手写值"这类脏数据） */
+        extraFront: string;
+    }> = {},
 ): void {
-  const dir = join(diyHome(), uri);
-  mkdirSync(dir, { recursive: true });
+    const dir = join(diyHome(), uri);
+    mkdirSync(dir, { recursive: true });
 
-  const lines = ["---"];
-  if (overrides.title) lines.push(`title: ${overrides.title}`);
-  if (overrides.state) lines.push(`state: ${overrides.state}`);
-  if (overrides.parent) lines.push(`parent: ${overrides.parent}`);
-  if (overrides.change_type) lines.push(`change_type: ${overrides.change_type}`);
-  if (overrides.module) lines.push(`module: ${overrides.module}`);
-  if (overrides.priority) lines.push(`priority: ${overrides.priority}`);
-  if (overrides.created) lines.push(`created: '${overrides.created}'`);
-  if (overrides.extraFront) lines.push(overrides.extraFront);
-  lines.push("---");
-  if (overrides.body) lines.push(overrides.body);
+    const lines = ["---"];
+    if (overrides.title) lines.push(`title: ${overrides.title}`);
+    if (overrides.state) lines.push(`state: ${overrides.state}`);
+    if (overrides.parent) lines.push(`parent: ${overrides.parent}`);
+    if (overrides.change_type) lines.push(`change_type: ${overrides.change_type}`);
+    if (overrides.module) lines.push(`module: ${overrides.module}`);
+    if (overrides.priority) lines.push(`priority: ${overrides.priority}`);
+    if (overrides.created) lines.push(`created: '${overrides.created}'`);
+    if (overrides.extraFront) lines.push(overrides.extraFront);
+    lines.push("---");
+    if (overrides.body) lines.push(overrides.body);
 
-  writeFileSync(join(dir, "AGENTS.md"), lines.join("\n"), "utf-8");
+    writeFileSync(join(dir, "AGENTS.md"), lines.join("\n"), "utf-8");
 }
 
 // ═══════════════════════════════════════
@@ -56,21 +56,21 @@ function makeTask(
 let WORK = "";
 let HOME = "";
 beforeAll(() => {
-  WORK = createProject(join(diyHome(), "repos", "work-project"), { label: "工作" });
-  HOME = createProject(join(diyHome(), "repos", "home-project"), { label: "个人" });
+    WORK = createProject(join(diyHome(), "repos", "work-project"), { label: "工作" });
+    HOME = createProject(join(diyHome(), "repos", "home-project"), { label: "个人" });
 
-  makeTask(`projects/${WORK}/tasks/1`, { title: "写周报", state: "pending" });
-  makeTask(`projects/${WORK}/tasks/2`, {
-    title: "修 Bug",
-    state: "active",
-    parent: `projects/${WORK}/tasks/1`,
-  });
-  makeTask(`projects/${WORK}/tasks/3`, {
-    title: "发 PR",
-    state: "done",
-    parent: `projects/${WORK}/tasks/1`,
-  });
-  makeTask(`projects/${HOME}/tasks/1`, { title: "缴费", state: "pending" });
+    makeTask(`projects/${WORK}/tasks/1`, { title: "写周报", state: "pending" });
+    makeTask(`projects/${WORK}/tasks/2`, {
+        title: "修 Bug",
+        state: "active",
+        parent: `projects/${WORK}/tasks/1`,
+    });
+    makeTask(`projects/${WORK}/tasks/3`, {
+        title: "发 PR",
+        state: "done",
+        parent: `projects/${WORK}/tasks/1`,
+    });
+    makeTask(`projects/${HOME}/tasks/1`, { title: "缴费", state: "pending" });
 });
 
 // ═══════════════════════════════════════
@@ -78,18 +78,18 @@ beforeAll(() => {
 // ═══════════════════════════════════════
 
 describe("loadTaskTree 全部模式", () => {
-  it("返回 project 下所有顶层任务（含子任务）", () => {
-    const tree = loadTaskTree();
-    const work = tree.find((n) => n.project === WORK)!;
-    // 顶层：只有 task-1（task-2 和 task-3 是 task-1 的子任务）
-    expect(work!.children.length).toBe(1);
-    // task-1 下有 2 个子任务
-    const t1 = work!.children[0]!;
-    expect(t1.children.length).toBe(2);
-    const childUris = t1.children.map((c) => c.uri);
-    expect(childUris).toContain(`projects/${WORK}/tasks/2`);
-    expect(childUris).toContain(`projects/${WORK}/tasks/3`);
-  });
+    it("返回 project 下所有顶层任务（含子任务）", () => {
+        const tree = loadTaskTree();
+        const work = tree.find((n) => n.project === WORK)!;
+        // 顶层：只有 task-1（task-2 和 task-3 是 task-1 的子任务）
+        expect(work!.children.length).toBe(1);
+        // task-1 下有 2 个子任务
+        const t1 = work!.children[0]!;
+        expect(t1.children.length).toBe(2);
+        const childUris = t1.children.map((c) => c.uri);
+        expect(childUris).toContain(`projects/${WORK}/tasks/2`);
+        expect(childUris).toContain(`projects/${WORK}/tasks/3`);
+    });
 });
 
 // ═══════════════════════════════════════
@@ -97,24 +97,24 @@ describe("loadTaskTree 全部模式", () => {
 // ═══════════════════════════════════════
 
 describe("父子链接", () => {
-  it("子任务挂在父任务下，不在 project 顶层", () => {
-    const tree = loadTaskTree();
-    const work = tree.find((n) => n.project === WORK)!;
+    it("子任务挂在父任务下，不在 project 顶层", () => {
+        const tree = loadTaskTree();
+        const work = tree.find((n) => n.project === WORK)!;
 
-    const t1 = work!.children.find((c) => c.uri === `projects/${WORK}/tasks/1`)!;
-    expect(t1.children.length).toBe(2);
+        const t1 = work!.children.find((c) => c.uri === `projects/${WORK}/tasks/1`)!;
+        expect(t1.children.length).toBe(2);
 
-    const childUris = t1.children.map((c) => c.uri);
-    expect(childUris).toContain(`projects/${WORK}/tasks/2`);
-    expect(childUris).toContain(`projects/${WORK}/tasks/3`);
-  });
+        const childUris = t1.children.map((c) => c.uri);
+        expect(childUris).toContain(`projects/${WORK}/tasks/2`);
+        expect(childUris).toContain(`projects/${WORK}/tasks/3`);
+    });
 
-  it("无父任务的任务仍在 project 顶层", () => {
-    const tree = loadTaskTree();
-    const work = tree.find((n) => n.project === WORK)!;
-    const topLevel = work!.children.filter((c) => c.parentUri === undefined || c.parentUri === "");
-    expect(topLevel.length).toBe(1); // 只有 task-1
-  });
+    it("无父任务的任务仍在 project 顶层", () => {
+        const tree = loadTaskTree();
+        const work = tree.find((n) => n.project === WORK)!;
+        const topLevel = work!.children.filter((c) => c.parentUri === undefined || c.parentUri === "");
+        expect(topLevel.length).toBe(1); // 只有 task-1
+    });
 });
 
 // ═══════════════════════════════════════
@@ -124,47 +124,47 @@ describe("父子链接", () => {
 // ═══════════════════════════════════════
 
 describe("结构化字段随树带回", () => {
-  let FIELD_PROJ = "";
-  beforeAll(() => {
-    FIELD_PROJ = createProject(join(diyHome(), "repos", "field-project"), { label: "字段" });
-    makeTask(`projects/${FIELD_PROJ}/tasks/1`, {
-      title: "带字段",
-      change_type: "fix",
-      module: "agent/ui",
-      priority: "P1",
-      created: "2026-09-01T00:00:00.000Z",
+    let FIELD_PROJ = "";
+    beforeAll(() => {
+        FIELD_PROJ = createProject(join(diyHome(), "repos", "field-project"), { label: "字段" });
+        makeTask(`projects/${FIELD_PROJ}/tasks/1`, {
+            title: "带字段",
+            change_type: "fix",
+            module: "agent/ui",
+            priority: "P1",
+            created: "2026-09-01T00:00:00.000Z",
+        });
+        makeTask(`projects/${FIELD_PROJ}/tasks/2`, { title: "没字段" });
+        // 词表外的手写值：读侧宽容，必须读得出来（否则表格里这几列显示为空，像数据丢了）
+        makeTask(`projects/${FIELD_PROJ}/tasks/3`, { title: "手写值", extraFront: "priority: high\nchange_type: bug" });
     });
-    makeTask(`projects/${FIELD_PROJ}/tasks/2`, { title: "没字段" });
-    // 词表外的手写值：读侧宽容，必须读得出来（否则表格里这几列显示为空，像数据丢了）
-    makeTask(`projects/${FIELD_PROJ}/tasks/3`, { title: "手写值", extraFront: "priority: high\nchange_type: bug" });
-  });
 
-  it("三个字段原样进节点", () => {
-    const tree = loadTaskTree();
-    const proj = tree.find((n) => n.project === FIELD_PROJ)!;
-    const t1 = proj.children.find((c) => c.num === "1")!;
-    expect(t1.change_type).toBe("fix");
-    expect(t1.module).toBe("agent/ui");
-    expect(t1.priority).toBe("P1");
-    expect(t1.created).toBe("2026-09-01T00:00:00.000Z");
-  });
+    it("三个字段原样进节点", () => {
+        const tree = loadTaskTree();
+        const proj = tree.find((n) => n.project === FIELD_PROJ)!;
+        const t1 = proj.children.find((c) => c.num === "1")!;
+        expect(t1.change_type).toBe("fix");
+        expect(t1.module).toBe("agent/ui");
+        expect(t1.priority).toBe("P1");
+        expect(t1.created).toBe("2026-09-01T00:00:00.000Z");
+    });
 
-  it("没写字段的任务：值为 undefined（不是空串 —— 展示层据此显示占位符）", () => {
-    const tree = loadTaskTree();
-    const proj = tree.find((n) => n.project === FIELD_PROJ)!;
-    const t2 = proj.children.find((c) => c.num === "2")!;
-    expect(t2.change_type).toBeUndefined();
-    expect(t2.module).toBeUndefined();
-    expect(t2.priority).toBeUndefined();
-  });
+    it("没写字段的任务：值为 undefined（不是空串 —— 展示层据此显示占位符）", () => {
+        const tree = loadTaskTree();
+        const proj = tree.find((n) => n.project === FIELD_PROJ)!;
+        const t2 = proj.children.find((c) => c.num === "2")!;
+        expect(t2.change_type).toBeUndefined();
+        expect(t2.module).toBeUndefined();
+        expect(t2.priority).toBeUndefined();
+    });
 
-  it("词表外的手写值不被过滤（读侧宽容）", () => {
-    const tree = loadTaskTree();
-    const proj = tree.find((n) => n.project === FIELD_PROJ)!;
-    const t3 = proj.children.find((c) => c.num === "3")!;
-    expect(t3.priority).toBe("high");
-    expect(t3.change_type).toBe("bug");
-  });
+    it("词表外的手写值不被过滤（读侧宽容）", () => {
+        const tree = loadTaskTree();
+        const proj = tree.find((n) => n.project === FIELD_PROJ)!;
+        const t3 = proj.children.find((c) => c.num === "3")!;
+        expect(t3.priority).toBe("high");
+        expect(t3.change_type).toBe("bug");
+    });
 });
 
 // ═══════════════════════════════════════
@@ -175,52 +175,59 @@ describe("结构化字段随树带回", () => {
 // ═══════════════════════════════════════
 
 describe("agent 面状态真源随树带回（##355）", () => {
-  let AG = "";
-  beforeAll(() => {
-    AG = createProject(join(diyHome(), "repos", "agent-state-project"), { label: "状态" });
-    makeTask(`projects/${AG}/tasks/1`, { title: "干净任务" });
-    makeTask(`projects/${AG}/tasks/2`, { title: "对话过" });
-    makeTask(`projects/${AG}/tasks/3`, { title: "有草稿" });
-    // ② 造出「对话过」的落盘事实：Op 日志非空（走产品同一路径函数，不复制 key 算法）
-    writeFileSync(opsFile(`projects/${AG}/tasks/2`), '{"op":"start","kind":"turn","id":"t1"}\n', "utf-8");
-    // ③ 造出「有草稿」的落盘事实：任务目录 .diy/drafts.yaml 的 agent_input
-    const sysDir = taskSystemDir(`projects/${AG}/tasks/3`);
-    mkdirSync(sysDir, { recursive: true });
-    writeFileSync(
-      join(sysDir, "drafts.yaml"),
-      ["kind: diy.ui-drafts", "version: 3", `task: projects/${AG}/tasks/3`, "fields:", "  agent_input: 半句话", ""].join("\n"),
-      "utf-8",
-    );
-  });
+    let AG = "";
+    beforeAll(() => {
+        AG = createProject(join(diyHome(), "repos", "agent-state-project"), { label: "状态" });
+        makeTask(`projects/${AG}/tasks/1`, { title: "干净任务" });
+        makeTask(`projects/${AG}/tasks/2`, { title: "对话过" });
+        makeTask(`projects/${AG}/tasks/3`, { title: "有草稿" });
+        // ② 造出「对话过」的落盘事实：Op 日志非空（走产品同一路径函数，不复制 key 算法）
+        writeFileSync(opsFile(`projects/${AG}/tasks/2`), '{"op":"start","kind":"turn","id":"t1"}\n', "utf-8");
+        // ③ 造出「有草稿」的落盘事实：任务目录 .diy/drafts.yaml 的 agent_input
+        const sysDir = taskSystemDir(`projects/${AG}/tasks/3`);
+        mkdirSync(sysDir, { recursive: true });
+        writeFileSync(
+            join(sysDir, "drafts.yaml"),
+            [
+                "kind: diy.ui-drafts",
+                "version: 3",
+                `task: projects/${AG}/tasks/3`,
+                "fields:",
+                "  agent_input: 半句话",
+                "",
+            ].join("\n"),
+            "utf-8",
+        );
+    });
 
-  it("干净任务：has_session=false、has_draft=false（是真值不是 undefined —— 判据要能当真）", () => {
-    const proj = loadTaskTree().find((n) => n.project === AG)!;
-    const t1 = proj.children.find((c) => c.num === "1")!;
-    expect(t1.has_session).toBe(false);
-    expect(t1.has_draft).toBe(false);
-  });
+    it("干净任务：has_session=false、has_draft=false（是真值不是 undefined —— 判据要能当真）", () => {
+        const proj = loadTaskTree().find((n) => n.project === AG)!;
+        const t1 = proj.children.find((c) => c.num === "1")!;
+        expect(t1.has_session).toBe(false);
+        expect(t1.has_draft).toBe(false);
+    });
 
-  it("有 Op 日志 → has_session=true", () => {
-    const proj = loadTaskTree().find((n) => n.project === AG)!;
-    const t2 = proj.children.find((c) => c.num === "2")!;
-    expect(t2.has_session).toBe(true);
-    expect(t2.has_draft).toBe(false);
-  });
+    it("有 Op 日志 → has_session=true", () => {
+        const proj = loadTaskTree().find((n) => n.project === AG)!;
+        const t2 = proj.children.find((c) => c.num === "2")!;
+        expect(t2.has_session).toBe(true);
+        expect(t2.has_draft).toBe(false);
+    });
 
-  it("drafts.yaml 有 agent_input → has_draft=true（title/body 草稿不算 —— agent 面状态只看输入框）", () => {
-    const proj = loadTaskTree().find((n) => n.project === AG)!;
-    const t3 = proj.children.find((c) => c.num === "3")!;
-    expect(t3.has_draft).toBe(true);
-    expect(t3.has_session).toBe(false);
-  });
+    it("drafts.yaml 有 agent_input → has_draft=true（title/body 草稿不算 —— agent 面状态只看输入框）", () => {
+        const proj = loadTaskTree().find((n) => n.project === AG)!;
+        const t3 = proj.children.find((c) => c.num === "3")!;
+        expect(t3.has_draft).toBe(true);
+        expect(t3.has_session).toBe(false);
+    });
 
-  it("空文件不算对话过（clear 之后留下的空日志不是「对话过」）", () => {
-    const uri = `projects/${AG}/tasks/4`;
-    makeTask(uri, { title: "空日志" });
-    writeFileSync(opsFile(uri), "", "utf-8");
-    const proj = loadTaskTree().find((n) => n.project === AG)!;
-    expect(proj.children.find((c) => c.num === "4")!.has_session).toBe(false);
-  });
+    it("空文件不算对话过（clear 之后留下的空日志不是「对话过」）", () => {
+        const uri = `projects/${AG}/tasks/4`;
+        makeTask(uri, { title: "空日志" });
+        writeFileSync(opsFile(uri), "", "utf-8");
+        const proj = loadTaskTree().find((n) => n.project === AG)!;
+        expect(proj.children.find((c) => c.num === "4")!.has_session).toBe(false);
+    });
 });
 
 // ═══════════════════════════════════════
@@ -228,19 +235,19 @@ describe("agent 面状态真源随树带回（##355）", () => {
 // ═══════════════════════════════════════
 
 describe("renderTreeText", () => {
-  it("渲染结果可读", () => {
-    const tree = loadTaskTree();
-    const text = renderTreeText(tree);
+    it("渲染结果可读", () => {
+        const tree = loadTaskTree();
+        const text = renderTreeText(tree);
 
-    // 包含 project 名称
-    expect(text).toContain("工作");
-    expect(text).toContain("个人");
+        // 包含 project 名称
+        expect(text).toContain("工作");
+        expect(text).toContain("个人");
 
-    // 包含全部任务
-    expect(text).toContain(`projects/${WORK}/tasks/1`);
-    expect(text).toContain(`projects/${WORK}/tasks/2`);
-    expect(text).toContain(`projects/${WORK}/tasks/3`);
-  });
+        // 包含全部任务
+        expect(text).toContain(`projects/${WORK}/tasks/1`);
+        expect(text).toContain(`projects/${WORK}/tasks/2`);
+        expect(text).toContain(`projects/${WORK}/tasks/3`);
+    });
 });
 
 // ═══════════════════════════════════════
@@ -248,10 +255,10 @@ describe("renderTreeText", () => {
 // ═══════════════════════════════════════
 
 describe("home project", () => {
-  it("home 有 task-1", () => {
-    const tree = loadTaskTree();
-    const home = tree.find((n) => n.project === HOME)!;
-    expect(home.children.length).toBe(1);
-    expect(home.children[0]?.uri).toBe(`projects/${HOME}/tasks/1`);
-  });
+    it("home 有 task-1", () => {
+        const tree = loadTaskTree();
+        const home = tree.find((n) => n.project === HOME)!;
+        expect(home.children.length).toBe(1);
+        expect(home.children[0]?.uri).toBe(`projects/${HOME}/tasks/1`);
+    });
 });

@@ -157,7 +157,12 @@ describe("运行中转后台", () => {
         reg.setNotifier((e) => notes.push(e.text));
         const { ctl } = startForeground("echo first; sleep 0.2; echo last-line", { timeoutMs: 20_000 });
         await sleep(100);
-        const info = await reg.adopt({ process: ctl, command: "echo first; sleep 0.2; echo last-line", cwd: root, origin });
+        const info = await reg.adopt({
+            process: ctl,
+            command: "echo first; sleep 0.2; echo last-line",
+            cwd: root,
+            origin,
+        });
         await reg.wait(info.id, 10_000);
         await sleep(50); // notify 是异步的
         expect(notes).toHaveLength(1);
@@ -184,7 +189,8 @@ describe("运行中转后台", () => {
         const badReg = new RunRegistry({ rootDir: join(blocker, "sub") });
         try {
             // 200KB 远超管道缓冲（64KB）：只有真被消费，命令才可能跑完
-            const cmd = 'for i in $(seq 1 400); do echo "pad-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; done; echo tail-marker';
+            const cmd =
+                'for i in $(seq 1 400); do echo "pad-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; done; echo tail-marker';
             const { ctl } = startForeground(cmd, { timeoutMs: 20_000 });
             const info = await badReg.adopt({ process: ctl, command: cmd, cwd: root });
             expect(badReg.logUnavailable(info.id)).toBe(true);

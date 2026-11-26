@@ -38,7 +38,12 @@ const MAX_TASKS = 512;
 export function noteSelfStep(taskUri: string, buckets: SelfBuckets, cost: CostBreakdown | null): void {
     if (lastOf.has(taskUri)) lastOf.delete(taskUri);
     lastOf.set(taskUri, {
-        buckets: { total: buckets.total, outputTotal: buckets.outputTotal, cacheRead: buckets.cacheRead, inputTotal: buckets.inputTotal },
+        buckets: {
+            total: buckets.total,
+            outputTotal: buckets.outputTotal,
+            cacheRead: buckets.cacheRead,
+            inputTotal: buckets.inputTotal,
+        },
         cost,
     });
     if (lastOf.size > MAX_TASKS) {

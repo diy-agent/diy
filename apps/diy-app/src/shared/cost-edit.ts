@@ -12,7 +12,14 @@
 // 只动 utc-range 条目）。⚠️ 时段档的**顺序即优先级**（按序首个命中，见 usage.ratesOf）：
 // 任何批量操作都不得打乱既有时段档的相对次序。
 import { parseTimeOfDay } from "./calendars";
-import { COST_PRICE_FIELDS, TIME_OF_DAY_RE, type Cost, type CostClearField, type CostPriceField, type CostTier } from "./model-config";
+import {
+    COST_PRICE_FIELDS,
+    TIME_OF_DAY_RE,
+    type Cost,
+    type CostClearField,
+    type CostPriceField,
+    type CostTier,
+} from "./model-config";
 
 /** 可编辑的单价字段（spec 的 snake_case；单位 $/1M tokens）—— 字段集真源在 model-config */
 export type CostField = CostPriceField;
@@ -155,7 +162,10 @@ export function patchUtcRange(cost: Cost, index: number, patch: TierPatch): void
         }
     }
     // ② 改「自定义模式专属字段」= 隐式切回自定义（否则 window 与 start 并存 → zod 拒整份 YAML）
-    if ((["start", "end", "calendar", "label"] as const).some((k) => patch[k] !== undefined) && d.window !== undefined) {
+    if (
+        (["start", "end", "calendar", "label"] as const).some((k) => patch[k] !== undefined) &&
+        d.window !== undefined
+    ) {
         delete d.window;
         d.start ??= UTC_RANGE_TEMPLATE.start;
         d.end ??= UTC_RANGE_TEMPLATE.end;
@@ -276,7 +286,8 @@ export function setUtcRangeTiers(cost: Cost, tiers: readonly CostTier[], mode: "
     const kept = all.filter((t) => t.tier?.type !== "utc-range");
     const firstIdx = all.findIndex((t) => t.tier?.type === "utc-range");
     // 插入点 = 原首条时段档之前**被保留下来**的条目数（= 它在 kept 里的下标）
-    const insertAt = firstIdx < 0 ? kept.length : all.slice(0, firstIdx).filter((t) => t.tier?.type !== "utc-range").length;
+    const insertAt =
+        firstIdx < 0 ? kept.length : all.slice(0, firstIdx).filter((t) => t.tier?.type !== "utc-range").length;
     const next = [...kept.slice(0, insertAt), ...incoming, ...kept.slice(insertAt)];
     if (next.length === 0) delete cost.tiers;
     else cost.tiers = next;

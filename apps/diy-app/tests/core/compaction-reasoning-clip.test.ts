@@ -14,7 +14,12 @@
 //   ④ 只落投递层：块树 / ops 原文一字不动。
 
 import { describe, it, expect } from "vitest";
-import { DEFAULT_REASONING_CLIP, clipReasoningText, utf8Bytes, type ReasoningClipSpec } from "@diy-agent/compaction/compaction";
+import {
+    DEFAULT_REASONING_CLIP,
+    clipReasoningText,
+    utf8Bytes,
+    type ReasoningClipSpec,
+} from "@diy-agent/compaction/compaction";
 import { blocksToMessages, replay, type Op } from "../../src/main/services/local-blocks";
 import { parseCutMarkers } from "@diy-agent/context/format/cut-marker";
 
@@ -90,7 +95,10 @@ describe("clipReasoningText（纯函数：裁短不裁空）", () => {
         for (const c of cases) {
             for (const text of [LONG, "短", "字".repeat(601)]) {
                 const r = clipReasoningText(text, c);
-                expect(r.text.length, `${text.length} 字 / headChars=${("data" in c ? c.data.headChars : 0)}`).toBeGreaterThan(0);
+                expect(
+                    r.text.length,
+                    `${text.length} 字 / headChars=${"data" in c ? c.data.headChars : 0}`,
+                ).toBeGreaterThan(0);
                 expect(r.text.startsWith(text.slice(0, 1))).toBe(true); // 头至少 1 字符
             }
         }
@@ -124,7 +132,15 @@ describe("分层核算把推理算进去（##374：账要算得平）", () => {
             system: "",
             tools: [],
             toolsBytes: 0,
-            messages: [{ role: "assistant", content: [{ type: "reasoning", text: reasoning }, { type: "text", text: "结论" }] }],
+            messages: [
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "reasoning", text: reasoning },
+                        { type: "text", text: "结论" },
+                    ],
+                },
+            ],
         };
         const b = messageLayerBytes(view.messages);
         expect(b.assistantReasoning).toBe(utf8Bytes(reasoning));
@@ -183,7 +199,15 @@ describe("分层核算把推理算进去（##374：账要算得平）", () => {
             system: "",
             tools: [],
             toolsBytes: 0,
-            messages: [{ role: "assistant", content: [{ type: "reasoning", text: reasoning }, { type: "text", text: "结论" }] }],
+            messages: [
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "reasoning", text: reasoning },
+                        { type: "text", text: "结论" },
+                    ],
+                },
+            ],
         };
         const b = messageLayerBytes(view.messages);
         expect(b.assistantReasoning).toBe(utf8Bytes(reasoning));
@@ -220,7 +244,15 @@ describe("分层核算把推理算进去（##374：账要算得平）", () => {
             system: "",
             tools: [],
             toolsBytes: 0,
-            messages: [{ role: "assistant", content: [{ type: "reasoning", text: reasoning }, { type: "text", text: "结论" }] }],
+            messages: [
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "reasoning", text: reasoning },
+                        { type: "text", text: "结论" },
+                    ],
+                },
+            ],
         };
         const b = messageLayerBytes(view.messages);
         expect(b.assistantReasoning).toBe(utf8Bytes(reasoning));
@@ -279,7 +311,15 @@ describe("分层核算把推理算进去（##374：账要算得平）", () => {
             system: "",
             tools: [],
             toolsBytes: 0,
-            messages: [{ role: "assistant", content: [{ type: "reasoning", text: reasoning }, { type: "text", text: "结论" }] }],
+            messages: [
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "reasoning", text: reasoning },
+                        { type: "text", text: "结论" },
+                    ],
+                },
+            ],
         };
         const b = messageLayerBytes(view.messages);
         expect(b.assistantReasoning).toBe(utf8Bytes(reasoning));
@@ -306,4 +346,3 @@ describe("分层核算把推理算进去（##374：账要算得平）", () => {
         expect(row.newTokens).toBeLessThan(row.oldTokens);
     });
 });
-

@@ -30,14 +30,22 @@ describe("splitYamlBlocks", () => {
 
     it("块标量正文里的「像键的行」不算新块", () => {
         // 正文里有 0 缩进的 `resolvedBy: ""`（真实信封里会出现：facts 的值被缩进渲染后仍可能顶格？）
-        const text = ["task:", "  body: |", "    ## 目标", "    resolvedBy: \"\"", "  title: x"].join("\n");
+        const text = ["task:", "  body: |", "    ## 目标", '    resolvedBy: ""', "  title: x"].join("\n");
         const blocks = splitYamlBlocks(text, 2);
         expect(blocks.map((b) => b.key)).toEqual(["body", "title"]);
         expect(blocks[0]!.text).toContain("resolvedBy");
     });
 
     it("列表项用值作名字（chain 的每个文件一段）", () => {
-        const text = ["chain:", "  - path: /Users/ccc/AGENTS.md", "    content: |", "      x", "  - path: /tmp/b.md", "    content: |", "      y"].join("\n");
+        const text = [
+            "chain:",
+            "  - path: /Users/ccc/AGENTS.md",
+            "    content: |",
+            "      x",
+            "  - path: /tmp/b.md",
+            "    content: |",
+            "      y",
+        ].join("\n");
         expect(splitYamlBlocks(text, 2).map((b) => b.key)).toEqual(["/Users/ccc/AGENTS.md", "/tmp/b.md"]);
     });
 });
@@ -165,7 +173,10 @@ describe("explainSegment / unchangedSegments（「为什么发」的归因）", 
 
     it("按段 key 判容器 + 来法，并把 reason 取到单元（含二级路径回落顶层）", () => {
         expect(explainSegment("help")).toMatchObject({ place: "help", kind: "结构说明" });
-        expect(explainSegment("chain · /Users/ccc/AGENTS.md", reasons)).toMatchObject({ place: "system", kind: "全量重建" });
+        expect(explainSegment("chain · /Users/ccc/AGENTS.md", reasons)).toMatchObject({
+            place: "system",
+            kind: "全量重建",
+        });
         expect(explainSegment("vars.facts", reasons)).toMatchObject({
             place: "runtime",
             kind: "首步全量",

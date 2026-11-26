@@ -22,30 +22,28 @@ const store = new Map<string, string>();
 const { Caches } = await import("../../src/renderer_solid/lib/ui-state");
 
 describe("Caches.diy_tabs_opened —— 只校验整体形状", () => {
-  beforeEach(() => store.clear());
+    beforeEach(() => store.clear());
 
-  it("对象数组原样读回（**回归点**：曾被 filter(string) 滤空）", () => {
-    const items = [
-      { key: "task-run:projects/1/tasks/2", pageId: "task-run", ctx: "projects/1/tasks/2" },
-    ];
-    Caches.diy_tabs_opened.set(items);
-    expect(Caches.diy_tabs_opened.get()).toEqual(items);
-  });
+    it("对象数组原样读回（**回归点**：曾被 filter(string) 滤空）", () => {
+        const items = [{ key: "task-run:projects/1/tasks/2", pageId: "task-run", ctx: "projects/1/tasks/2" }];
+        Caches.diy_tabs_opened.set(items);
+        expect(Caches.diy_tabs_opened.get()).toEqual(items);
+    });
 
-  it("旧格式（纯 URI 字符串）也原样读回，交给 tabStore 升级", () => {
-    Caches.diy_tabs_opened.set(["projects/1/tasks/2"]);
-    expect(Caches.diy_tabs_opened.get()).toEqual(["projects/1/tasks/2"]);
-  });
+    it("旧格式（纯 URI 字符串）也原样读回，交给 tabStore 升级", () => {
+        Caches.diy_tabs_opened.set(["projects/1/tasks/2"]);
+        expect(Caches.diy_tabs_opened.get()).toEqual(["projects/1/tasks/2"]);
+    });
 
-  it("不是数组 → 回默认空数组（脏数据不把界面搞崩）", () => {
-    store.set("diy_tabs_opened", '{"not":"array"}');
-    expect(Caches.diy_tabs_opened.get()).toEqual([]);
-    store.set("diy_tabs_opened", "不是 JSON");
-    expect(Caches.diy_tabs_opened.get()).toEqual([]);
-  });
+    it("不是数组 → 回默认空数组（脏数据不把界面搞崩）", () => {
+        store.set("diy_tabs_opened", '{"not":"array"}');
+        expect(Caches.diy_tabs_opened.get()).toEqual([]);
+        store.set("diy_tabs_opened", "不是 JSON");
+        expect(Caches.diy_tabs_opened.get()).toEqual([]);
+    });
 
-  it("数组元素不合法也照样读回（清洗是 tabStore 的事，不是这里）", () => {
-    store.set("diy_tabs_opened", '[1,null,{"noPageId":true}]');
-    expect(Caches.diy_tabs_opened.get()).toEqual([1, null, { noPageId: true }]);
-  });
+    it("数组元素不合法也照样读回（清洗是 tabStore 的事，不是这里）", () => {
+        store.set("diy_tabs_opened", '[1,null,{"noPageId":true}]');
+        expect(Caches.diy_tabs_opened.get()).toEqual([1, null, { noPageId: true }]);
+    });
 });

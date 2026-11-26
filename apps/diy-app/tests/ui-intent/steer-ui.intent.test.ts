@@ -138,8 +138,7 @@ async function a11yText(): Promise<string> {
  * 旧消息）。真实用户点的是按钮，测试也必须点到按钮。
  * （历史上这里踩过一次：横条标题含「发送」二字，点「发送」落到了标题上，表现为"点了没反应"。）
  */
-const clickButton = (text: string) =>
-    ui.click((t, node) => node.role === "button" && t.includes(text));
+const clickButton = (text: string) => ui.click((t, node) => node.role === "button" && t.includes(text));
 
 /**
  * 横条里的插话条目数（DOM 直读）。
@@ -147,8 +146,7 @@ const clickButton = (text: string) =>
  * 为什么不查文本：横条刻意**没有可见标题**（"N 条待发送"那种说明是界面自己解释自己）。
  * 靠 `data-steer-id` 计数既精确又不受文案变动影响；"用户看得见内容"另由 a11y 文本断言覆盖。
  */
-const steerBarRows = () =>
-    ui.query<number>("document.querySelectorAll('[data-steer-bar] [data-steer-id]').length");
+const steerBarRows = () => ui.query<number>("document.querySelectorAll('[data-steer-bar] [data-steer-id]').length");
 
 /**
  * 「停止」按钮在不在 —— **"这一轮还在跑"的唯一判据**。
@@ -258,7 +256,9 @@ describe.skip("插话界面 —— 生成中插嘴、横条、取消", () => {
         expect(text).toContain("插一句：记得跑测试");
         // 默认态是「排到下一步」（##360：缺省即时生效）：开关提示词说清点它会变成什么
         expect(text).toContain("已加急");
-        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[])[0].mode)).toBe("next-step");
+        expect(
+            await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[])[0].mode),
+        ).toBe("next-step");
         // 输入框已清空 → 留言按钮随之收起（没内容就没得留）
         expect(text).not.toContain("留言");
         // 持久化：真落在任务目录里，而非只活在内存
@@ -275,14 +275,30 @@ describe.skip("插话界面 —— 生成中插嘴、横条、取消", () => {
         await waitUntil(a11yText, (s) => s.includes("留言"), { label: "按钮再现" });
         await clickButton("留言");
         await waitUntil(steerBarRows, (n) => n === 2, { label: "两条并存" });
-        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[]).map((i) => i.mode))).toEqual(["next-step", "next-step"]);
+        expect(
+            await fx.sh
+                .getJson(`./diy.sh agent local steer list ${uri}`)
+                .then((r) => (r.data as any[]).map((i) => i.mode)),
+        ).toEqual(["next-step", "next-step"]);
         // 点一下 → 切回「下一轮」（checkbox 灭）
         await ui.clickSelector('[data-steer-id="steer/2"] [data-steer-toggle="steer/2"]');
-        expect(await ui.query<boolean>("document.querySelector('[data-steer-toggle=\"steer/2\"] input')?.checked === false")).toBe(true);
+        expect(
+            await ui.query<boolean>(
+                "document.querySelector('[data-steer-toggle=\"steer/2\"] input')?.checked === false",
+            ),
+        ).toBe(true);
         // 再点一下 → 回到缺省「下一步」（checkbox 亮）
         await ui.clickSelector('[data-steer-id="steer/2"] [data-steer-toggle="steer/2"]');
-        expect(await ui.query<boolean>("document.querySelector('[data-steer-toggle=\"steer/2\"] input')?.checked === true")).toBe(true);
-        expect(await fx.sh.getJson(`./diy.sh agent local steer list ${uri}`).then((r) => (r.data as any[]).map((i) => i.mode))).toEqual(["next-step", "next-step"]);
+        expect(
+            await ui.query<boolean>(
+                "document.querySelector('[data-steer-toggle=\"steer/2\"] input')?.checked === true",
+            ),
+        ).toBe(true);
+        expect(
+            await fx.sh
+                .getJson(`./diy.sh agent local steer list ${uri}`)
+                .then((r) => (r.data as any[]).map((i) => i.mode)),
+        ).toEqual(["next-step", "next-step"]);
         const text = await a11yText();
         expect(text).toContain("插一句：记得跑测试");
         expect(text).toContain("再做一件事");
@@ -490,7 +506,11 @@ describe.skip("##303 —— 留言的投递入口（同上：测的是已删除�
 
         // 立即投递：有轮次在跑 → 加急到下一步（不是开新一轮，那一轮正被桩挂着）
         await ui.clickSelector("[data-steer-flush]");
-        await waitUntil(() => steerModes(u), (m) => m[0] === "next-step", { label: "已加急为下一步" });
+        await waitUntil(
+            () => steerModes(u),
+            (m) => m[0] === "next-step",
+            { label: "已加急为下一步" },
+        );
         expect(await steerBarRows()).toBe(1); // 条数不变
         expect(await a11yText()).toContain("排队的话");
         await stopTurn();
@@ -528,11 +548,9 @@ describe.skip("##303 —— 留言的投递入口（同上：测的是已删除�
         await ui.type("半句在打");
         await ui.clickSelector("[data-steer-edit]");
         await waitUntil(steerBarRows, (n) => n === 0, { label: "撤回后横条空" });
-        const t = await waitUntil(
-            editorText,
-            (s) => s.includes("半句在打") && s.includes("先撤回的话"),
-            { label: "撤回内容与草稿并存" },
-        );
+        const t = await waitUntil(editorText, (s) => s.includes("半句在打") && s.includes("先撤回的话"), {
+            label: "撤回内容与草稿并存",
+        });
         // 顺序：原有的半句在前，`---` 分隔，撤回的内容在后
         const iDraft = t.indexOf("半句在打");
         const iRule = t.indexOf("---");

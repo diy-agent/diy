@@ -83,7 +83,9 @@ describe("parseStepRequest：请求 → 消息", () => {
 
     it("每条的字节数含 tool_calls（回答「哪条撑爆了上下文」）", () => {
         const r = parseStepRequest(
-            body([{ role: "assistant", content: [{ type: "tool-call", toolName: "t", input: { a: "y".repeat(500) } }] }]),
+            body([
+                { role: "assistant", content: [{ type: "tool-call", toolName: "t", input: { a: "y".repeat(500) } }] },
+            ]),
         );
         expect(r.messages![0]!.bytes).toBeGreaterThan(500);
     });

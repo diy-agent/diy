@@ -49,21 +49,26 @@ export function InputLimitDialog(props: {
             }}
         >
             <div class="bg-base-100 rounded-xl w-full max-w-lg flex flex-col" data-input-gate>
-                <div class="px-4 py-3 border-b font-bold text-title">这条消息太长了（超过 {fmtInt(props.gate.limitChars)} 字符）</div>
+                <div class="px-4 py-3 border-b font-bold text-title">
+                    这条消息太长了（超过 {fmtInt(props.gate.limitChars)} 字符）
+                </div>
                 <div class="px-4 py-3 text-body flex flex-col gap-2">
-                    <div class="text-sm opacity-80">
-                        它会整段进上下文并留在历史里 —— 此后每一轮都按它计费。三个数：
-                    </div>
+                    <div class="text-sm opacity-80">它会整段进上下文并留在历史里 —— 此后每一轮都按它计费。三个数：</div>
                     <ul class="text-sm flex flex-col gap-1" data-input-gate-numbers>
                         <li>
-                            本条：<b>{fmtInt(props.gate.chars)}</b> 字符 · 估算 <b>{fmtInt(props.gate.estTokens)}</b> token
+                            本条：<b>{fmtInt(props.gate.chars)}</b> 字符 · 估算 <b>{fmtInt(props.gate.estTokens)}</b>{" "}
+                            token
                         </li>
                         <li>
                             本轮预计成本增量：<b data-input-gate-cost>{fmtCost(props.gate.costIncrement)}</b>
                         </li>
                         <li>
                             当前窗口占用（加本条后）：<b data-input-gate-window>{pct()}</b>
-                            <span class="opacity-60">（上限 {props.gate.contextLimitTokens == null ? "未知" : fmtInt(props.gate.contextLimitTokens)} token）</span>
+                            <span class="opacity-60">
+                                （上限{" "}
+                                {props.gate.contextLimitTokens == null ? "未知" : fmtInt(props.gate.contextLimitTokens)}{" "}
+                                token）
+                            </span>
                         </li>
                     </ul>
                     <div class="text-sm opacity-70">

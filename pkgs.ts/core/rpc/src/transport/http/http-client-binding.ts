@@ -13,7 +13,12 @@ import * as http2 from 'node:http2';
 import type { ClientHttp2Session, ClientHttp2Stream } from 'node:http2';
 import type { StreamHandle } from '../../core/types.js';
 import { _AsyncQueue } from '../../core/_async-queue.js';
-import { RpcError, _fromErrorPayload, _reasonToRpcError, type _ErrorPayload } from '../../core/error.js';
+import {
+  RpcError,
+  _fromErrorPayload,
+  _reasonToRpcError,
+  type _ErrorPayload,
+} from '../../core/error.js';
 import type { CallOptions, ClientBinding } from '../../core/server-binding.js';
 import { codeForHttpStatus } from './_codes.js';
 
@@ -41,16 +46,22 @@ export class HttpClientBinding implements ClientBinding {
   /** 把 in-flight promise 纳入 dispose 落定：dispose → reject(DISPOSED)；正常 settle 自动移除 */
   private _track<T>(p: Promise<T>): Promise<T> {
     let rejectGuard!: (e: unknown) => void;
-    const guard = new Promise<never>((_, rej) => { rejectGuard = rej; });
+    const guard = new Promise<never>((_, rej) => {
+      rejectGuard = rej;
+    });
     const settle = (e: unknown) => rejectGuard(e);
     this._settles.add(settle);
-    return Promise.race([p, guard]).finally(() => { this._settles.delete(settle); });
+    return Promise.race([p, guard]).finally(() => {
+      this._settles.delete(settle);
+    });
   }
 
   /** 登记已建立的流式队列：settle 自动移除，dispose 未 settle 的以 DISPOSED 收尾 */
   private _trackQueue(q: _AsyncQueue<unknown>): _AsyncQueue<unknown> {
     this._queues.add(q);
-    q.onSettle(() => { this._queues.delete(q); });
+    q.onSettle(() => {
+      this._queues.delete(q);
+    });
     return q;
   }
 
@@ -104,15 +115,23 @@ export class HttpClientBinding implements ClientBinding {
       }
       const t = setTimeout(() => {
         cleanup();
-        reject(new RpcError('UNAVAILABLE', `Connect to ${this.baseUrl} timed out after ${timeout}ms`));
+        reject(
+          new RpcError('UNAVAILABLE', `Connect to ${this.baseUrl} timed out after ${timeout}ms`),
+        );
       }, timeout);
       const cleanup = () => {
         clearTimeout(t);
         session.removeListener('connect', onConnect);
         session.removeListener('error', onErr);
       };
-      const onConnect = () => { cleanup(); resolve(); };
-      const onErr = (e: Error) => { cleanup(); reject(e); };
+      const onConnect = () => {
+        cleanup();
+        resolve();
+      };
+      const onErr = (e: Error) => {
+        cleanup();
+        reject(e);
+      };
       session.once('connect', onConnect);
       session.once('error', onErr);
     });
@@ -171,12 +190,24 @@ export class HttpClientBinding implements ClientBinding {
     const notifyUpstream = () => {
       if (notified) return;
       notified = true;
-      try { void upstream.return?.(undefined)?.catch(() => {}); } catch { /* ignore */ }
+      try {
+        void upstream.return?.(undefined)?.catch(() => {});
+      } catch {
+        /* ignore */
+      }
     };
     this._upstreamCleanups.add(notifyUpstream);
     const onAbort = () => {
-      try { stream.write(JSON.stringify({ __cancel: true }) + '\n'); } catch { /* ignore */ }
-      try { stream.end(); } catch { /* ignore */ }
+      try {
+        stream.write(JSON.stringify({ __cancel: true }) + '\n');
+      } catch {
+        /* ignore */
+      }
+      try {
+        stream.end();
+      } catch {
+        /* ignore */
+      }
       notifyUpstream();
     };
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
@@ -200,7 +231,11 @@ export class HttpClientBinding implements ClientBinding {
         // 上游迭代出错则中止上传（不吞错——R19 P1-2）
       }
       if (!signal?.aborted && !remoteSettled) {
-        try { stream.end(); } catch { /* 已断开 */ }
+        try {
+          stream.end();
+        } catch {
+          /* 已断开 */
+        }
       }
     })();
 
@@ -246,11 +281,19 @@ export class HttpClientBinding implements ClientBinding {
       // 观察不到取消（意图测试 C2：bidi handler signal.aborted）
       if (!sentCancel && signal?.aborted) {
         sentCancel = true;
-        try { stream.write('{"__cancel":true}\n'); } catch { /* 流已断 */ }
+        try {
+          stream.write('{"__cancel":true}\n');
+        } catch {
+          /* 流已断 */
+        }
       }
       if (notified) return;
       notified = true;
-      try { void upstream.return?.(undefined)?.catch(() => {}); } catch { /* ignore */ }
+      try {
+        void upstream.return?.(undefined)?.catch(() => {});
+      } catch {
+        /* ignore */
+      }
     };
     this._upstreamCleanups.add(onUpstreamAbort);
     if (signal) signal.addEventListener('abort', onUpstreamAbort, { once: true });
@@ -276,7 +319,11 @@ export class HttpClientBinding implements ClientBinding {
         outQueue?.error(toStreamError(e), { drain: true });
       }
       if (!signal?.aborted && !remoteEnded) {
-        try { stream.end(); } catch { /* 已断开 */ }
+        try {
+          stream.end();
+        } catch {
+          /* 已断开 */
+        }
       }
     })();
 
@@ -372,13 +419,23 @@ function firstResponseStatus(stream: ClientHttp2Stream, options?: CallOptions): 
       if (signal) signal.removeEventListener('abort', onAbort);
       if (timer) clearTimeout(timer);
     };
-    const onResp = (headers: Record<string, unknown>) => { cleanup(); resolve(Number(headers[':status'] ?? 0)); };
-    const onErr = (e: Error) => { cleanup(); reject(e); };
+    const onResp = (headers: Record<string, unknown>) => {
+      cleanup();
+      resolve(Number(headers[':status'] ?? 0));
+    };
+    const onErr = (e: Error) => {
+      cleanup();
+      reject(e);
+    };
     // 流关闭但既无 response 也无 error（本地 dispose RST / 对端静默关流）→ 必须落定，
     // 否则 init promise 永挂（任务 185 实测：dispose-before-ack TIMEOUT 未落定）
-    const onClose = () => { cleanup(); reject(new RpcError('CANCELLED', 'Stream closed before response')); };
+    const onClose = () => {
+      cleanup();
+      reject(new RpcError('CANCELLED', 'Stream closed before response'));
+    };
     const onAbort = () => {
-      cleanup(); stream.close(http2.constants.NGHTTP2_CANCEL);
+      cleanup();
+      stream.close(http2.constants.NGHTTP2_CANCEL);
       reject(_reasonToRpcError(signal!.reason));
     };
     stream.on('response', onResp);
@@ -386,11 +443,15 @@ function firstResponseStatus(stream: ClientHttp2Stream, options?: CallOptions): 
     stream.on('close', onClose);
     if (timeout != null && timeout > 0) {
       timer = setTimeout(() => {
-        cleanup(); stream.close(http2.constants.NGHTTP2_CANCEL);
+        cleanup();
+        stream.close(http2.constants.NGHTTP2_CANCEL);
         reject(new RpcError('TIMEOUT', `Response timed out after ${timeout}ms`));
       }, timeout);
     }
-    if (signal?.aborted) { onAbort(); return; }
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
     signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
@@ -401,7 +462,9 @@ function readAll(stream: ClientHttp2Stream, options?: CallOptions): Promise<Buff
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let settled = false;
-    const cleanup = () => { if (signal) signal.removeEventListener('abort', onAbort); };
+    const cleanup = () => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+    };
     const onAbort = () => {
       settled = true;
       cleanup();
@@ -409,8 +472,16 @@ function readAll(stream: ClientHttp2Stream, options?: CallOptions): Promise<Buff
       reject(_reasonToRpcError(signal!.reason));
     };
     stream.on('data', (c: Buffer) => chunks.push(c));
-    stream.on('end', () => { settled = true; cleanup(); resolve(Buffer.concat(chunks)); });
-    stream.on('error', (e) => { settled = true; cleanup(); reject(e); });
+    stream.on('end', () => {
+      settled = true;
+      cleanup();
+      resolve(Buffer.concat(chunks));
+    });
+    stream.on('error', (e) => {
+      settled = true;
+      cleanup();
+      reject(e);
+    });
     // close 兑底（review P2）：流被销毁而未收到 end/error/abort 时，不留残留 listener、不悬死
     stream.on('close', () => {
       if (settled) return;
@@ -419,7 +490,10 @@ function readAll(stream: ClientHttp2Stream, options?: CallOptions): Promise<Buff
       reject(new RpcError('CANCELLED', 'Connection closed'));
     });
     if (signal) {
-      if (signal.aborted) { onAbort(); return; }
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
       signal.addEventListener('abort', onAbort, { once: true });
     }
   });
@@ -434,7 +508,9 @@ function collectResponse(stream: ClientHttp2Stream, options?: CallOptions): Prom
 
 /** 上传源错误 → RpcError：非 RpcError 包装为 STREAM_ERROR（与 channel end{error} 帧码对齐） */
 function toStreamError(e: unknown): RpcError {
-  return e instanceof RpcError ? e : new RpcError('STREAM_ERROR', String((e as Error)?.message ?? e));
+  return e instanceof RpcError
+    ? e
+    : new RpcError('STREAM_ERROR', String((e as Error)?.message ?? e));
 }
 
 /** 解析单值响应：200 → result；否则抛 RpcError（保留 ext.http） */
@@ -448,17 +524,23 @@ function parseResult<T>(resp: HttpResp): T {
 
 function parseError(status: number, data: Buffer): RpcError {
   let body: Partial<_ErrorPayload> = {};
-  try { body = JSON.parse(data.toString() || '{}'); } catch { /* 非 JSON 错误体 */ }
+  try {
+    body = JSON.parse(data.toString() || '{}');
+  } catch {
+    /* 非 JSON 错误体 */
+  }
   const code = body.code ?? codeForHttpStatus(status);
-  return new RpcError(
-    code,
-    body.message ?? `HTTP ${status}`,
-    { details: body.details, ext: { ...body.ext, http: { status } } },
-  );
+  return new RpcError(code, body.message ?? `HTTP ${status}`, {
+    details: body.details,
+    ext: { ...body.ext, http: { status } },
+  });
 }
 
 /** 把流式响应（NDJSON {"v"}/{"e"}）桥接成 _AsyncQueue；AbortSignal → RST_STREAM */
-function createNdjsonStream(stream: ClientHttp2Stream, options?: CallOptions): _AsyncQueue<unknown> {
+function createNdjsonStream(
+  stream: ClientHttp2Stream,
+  options?: CallOptions,
+): _AsyncQueue<unknown> {
   const q = new _AsyncQueue<unknown>();
   let buf = '';
 
@@ -470,14 +552,23 @@ function createNdjsonStream(stream: ClientHttp2Stream, options?: CallOptions): _
       buf = buf.slice(idx + 1);
       if (!line) continue;
       let f: { v?: unknown; e?: _ErrorPayload } | null = null;
-      try { f = JSON.parse(line); } catch { continue; }
+      try {
+        f = JSON.parse(line);
+      } catch {
+        continue;
+      }
       if (!f) continue;
-      if (f.e) { q.error(_fromErrorPayload(f.e), { drain: true }); return; }
+      if (f.e) {
+        q.error(_fromErrorPayload(f.e), { drain: true });
+        return;
+      }
       if ('v' in f) q.push(f.v);
     }
   });
   stream.on('end', () => q.end());
-  stream.on('error', (e) => q.error(e instanceof Error ? e : new Error(String(e)), { drain: true }));
+  stream.on('error', (e) =>
+    q.error(e instanceof Error ? e : new Error(String(e)), { drain: true }),
+  );
 
   const signal = options?.signal;
   let onAbort: (() => void) | undefined;

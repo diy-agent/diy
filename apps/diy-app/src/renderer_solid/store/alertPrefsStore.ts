@@ -22,9 +22,15 @@ const [autoPull, setAutoPullSig] = createSignal(load());
 
 export const alertPrefsStore = {
     /** 自动拉回是否开启（缺省开） */
-    get autoPull() { return autoPull(); },
+    get autoPull() {
+        return autoPull();
+    },
     setAutoPull(on: boolean) {
         setAutoPullSig(on);
-        try { globalThis.localStorage?.setItem(KEY, on ? "1" : "0"); } catch { /* 无 localStorage（node 测试）忽略 */ }
+        try {
+            globalThis.localStorage?.setItem(KEY, on ? "1" : "0");
+        } catch {
+            /* 无 localStorage（node 测试）忽略 */
+        }
     },
 };

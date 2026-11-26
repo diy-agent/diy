@@ -69,14 +69,7 @@ import { allTaskUris, isAncestorOf } from "./lib/task-lineage";
 import { scanPlanOf, SCAN_SLICE } from "../shared/session-scan";
 // 会话活动语汇（##358 D1/D2）：nav 的主角标 / 次角标 / 「后台活动」区**共用一份**判据
 //（纯函数在 shared/session-nav —— 位次仍出自 shared/session-overview，与任务表 / 总览同源）。
-import {
-    backgroundOf,
-    navUrisOf,
-    heroBadgeOf,
-    navRowOf,
-    rankOf,
-    secondaryBadgeOf,
-} from "../shared/session-nav";
+import { backgroundOf, navUrisOf, heroBadgeOf, navRowOf, rankOf, secondaryBadgeOf } from "../shared/session-nav";
 import type { NavRow } from "../shared/session-nav";
 import type { GlyphTone } from "../shared/session-state";
 import { ALERT_ACTION_LABEL, ALERT_QUEUE_ACTION_LABEL, alertsOf, type SessionAlert } from "../shared/session-alerts";
@@ -224,7 +217,18 @@ const NAV_TONE_CLASS: Record<GlyphTone, string> = {
 /** 「会话」列表最多列几行：nav 是"扫一眼"的地方，不是账页（更多的折成表尾一句纯文本） */
 const NAV_SESSION_LIMIT = 8;
 
-const VALID_PAGES = new Set(["task", "task-run", "lab", "llm", "traffic", "sessions", "rooms", "instances", "hub", "settings"]);
+const VALID_PAGES = new Set([
+    "task",
+    "task-run",
+    "lab",
+    "llm",
+    "traffic",
+    "sessions",
+    "rooms",
+    "instances",
+    "hub",
+    "settings",
+]);
 
 /**
  * 窄窗断点。**必须与 index.css 的 `@media (width < 1024px)`、daisyUI 的 `lg:` 分支
@@ -350,7 +354,12 @@ export default function App() {
     // RV-03（##245 review）：切页后旧页面的查找 Range 随 Solid 卸载退化成 zeroWidth，
     // badge 还挂着过期计数（refresh 全仓零调用）。查找条是**页内**语义 → 换页即关
     // （close 会清 Range/计数/高亮，一步到位）。
-    createEffect(on(() => route(), () => findStore.close()));
+    createEffect(
+        on(
+            () => route(),
+            () => findStore.close(),
+        ),
+    );
 
     /**
      * 树刷新后剪掉「指向已不存在任务」的 tab，并告知用户（##226 接线 + ##361 存在性校验）。
@@ -497,9 +506,7 @@ export default function App() {
     // 卡片贴的是主区左缘（与 rail 无关），一旦把它算进去，hover 一次侧栏就从 40px 弹到
     // 224px，收缩逻辑全乱。resizingNav / navDragging 是两态共有的「拖拽期间保持展开」项。
     const expanded = () =>
-        resizingNav() ||
-        navDragging() ||
-        (isNarrow() ? railOpen() : pinned() || hovered() || !!hoverTaskUri());
+        resizingNav() || navDragging() || (isNarrow() ? railOpen() : pinned() || hovered() || !!hoverTaskUri());
 
     /**
      * 清空悬停覆盖层。**任何「切页面」的动作都要调它**：
@@ -618,8 +625,9 @@ export default function App() {
         let stopped = false;
         let scheduled = false; // 防叠加：任务树连变时只保留一条待跑的定时链
         const idle = (fn: () => void) => {
-            const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number })
-                .requestIdleCallback;
+            const ric = (
+                window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }
+            ).requestIdleCallback;
             if (ric) ric(fn, { timeout: 1200 });
             else window.setTimeout(fn, 60);
         };
@@ -946,8 +954,7 @@ export default function App() {
             focus: (uri) => taskStore.selectTask(uri),
             openPersona: (personaId) => personaDrawerStore.open(personaId),
             // 折叠块展开态按前缀分派：`ctx.*` 归上下文树试验场，其余归提示词页
-            setView: (key, open) =>
-                key.startsWith("ctx.") ? setCtxLabFold(key, open) : setLabView(key, open),
+            setView: (key, open) => (key.startsWith("ctx.") ? setCtxLabFold(key, open) : setLabView(key, open)),
             setViewArea: (pageId, area, open) => layoutStore.setAreaHidden(pageId, area, !open),
             // view 级隐藏/显示：key = viewId@ctx（context 型）。global 型 view 没有 ctx 维度
             getLayout: (pageId, ctx) => {
@@ -1140,286 +1147,324 @@ export default function App() {
         // diy-nav-rail / diy-nav-rail-open：窄窗 rail 常驻占列 + 点开浮层（##297），
         // 覆盖规则见 index.css。宽窗不需要额外类：lg:drawer-open 已让侧栏占列。
         <>
-        <div
-            class={`drawer lg:drawer-open ${
-                isNarrow() ? `diy-nav-rail${railOpen() ? " diy-nav-rail-open" : ""}` : ""
-            }`}
-        >
-            {/* DaisyUI drawer 必须的 checkbox（控制开合，:checked 决定侧栏是否展开） */}
-            <input type="checkbox" id="sidebar-toggle" class="drawer-toggle" />
-            {/* 主内容区。窄窗浮层展开时置 inert：浮层把主区整个盖住，但 DOM 里主区的
+            <div
+                class={`drawer lg:drawer-open ${
+                    isNarrow() ? `diy-nav-rail${railOpen() ? " diy-nav-rail-open" : ""}` : ""
+                }`}
+            >
+                {/* DaisyUI drawer 必须的 checkbox（控制开合，:checked 决定侧栏是否展开） */}
+                <input type="checkbox" id="sidebar-toggle" class="drawer-toggle" />
+                {/* 主内容区。窄窗浮层展开时置 inert：浮层把主区整个盖住，但 DOM 里主区的
                 按钮仍可 Tab 到、回车也照样触发（看不见的焦点 = 一点就中的坑）；
                 inert 同时挡掉命中测试。宽窗与 rail 态不受影响（rail 只占 40px，主区可用）。 */}
-            <div
-                class="drawer-content flex flex-col h-screen"
-                inert={isNarrow() && railOpen()}
-            >
-                <main
-                    class="flex-1 flex flex-col relative overflow-hidden bg-base-100"
-                    onClick={() => {
-                        hideHoverLayers(); // 空区域点击也顺手收掉悬停层
-                        // 点击空白处关闭任务详情面板（任务行/面板自身已 stopPropagation 接管）
-                        // 只在任务树页面生效：其他页面点击不应取消选中任务
-                        if (route().kind === "section" && (route() as { section: Section }).section === "task" && taskStore.selectedUri) taskStore.selectTask(null);
-                    }}
-                >
-                    {/* 「模型不可用」顶栏 bar（##369 ①）：**页面最上方**（面包屑之上）——
+                <div class="drawer-content flex flex-col h-screen" inert={isNarrow() && railOpen()}>
+                    <main
+                        class="flex-1 flex flex-col relative overflow-hidden bg-base-100"
+                        onClick={() => {
+                            hideHoverLayers(); // 空区域点击也顺手收掉悬停层
+                            // 点击空白处关闭任务详情面板（任务行/面板自身已 stopPropagation 接管）
+                            // 只在任务树页面生效：其他页面点击不应取消选中任务
+                            if (
+                                route().kind === "section" &&
+                                (route() as { section: Section }).section === "task" &&
+                                taskStore.selectedUri
+                            )
+                                taskStore.selectTask(null);
+                        }}
+                    >
+                        {/* 「模型不可用」顶栏 bar（##369 ①）：**页面最上方**（面包屑之上）——
                         真 LLM 实验跑不成时，用户不必翻会话就该看到；可关闭、不挡内容、不中断流程。 */}
-                    <Show when={modelNoticeStore.notice}>
-                        {(n) => (
-                            <ModelUnavailableBar
-                                notice={n()}
-                                onDismiss={() => modelNoticeStore.dismissCurrent()}
-                                onConfigure={() => {
-                                    // 无修复映射时的兜底："去配置模型" = 设置 → 模型（只切页，不定位）
-                                    goSection("settings");
-                                    setSubPage("models");
-                                }}
-                                onRemedy={(r) => {
-                                    // 有映射（##407）：带到**具体锚点**去，页面里滚动 + 高亮该字段。
-                                    // 纯静态导航 —— 引导本身不调用任何模型（此刻 LLM 已经不可用）。
-                                    goSection("settings");
-                                    setSubPage("models");
-                                    setModelFocus({ remedy: r, nonce: Date.now() });
-                                }}
-                            />
-                        )}
-                    </Show>
-                    {/* 「环境感知」顶栏 bar（##384）：磁盘满 / 网断 —— 与上面那条同为**页面最上方**。
+                        <Show when={modelNoticeStore.notice}>
+                            {(n) => (
+                                <ModelUnavailableBar
+                                    notice={n()}
+                                    onDismiss={() => modelNoticeStore.dismissCurrent()}
+                                    onConfigure={() => {
+                                        // 无修复映射时的兜底："去配置模型" = 设置 → 模型（只切页，不定位）
+                                        goSection("settings");
+                                        setSubPage("models");
+                                    }}
+                                    onRemedy={(r) => {
+                                        // 有映射（##407）：带到**具体锚点**去，页面里滚动 + 高亮该字段。
+                                        // 纯静态导航 —— 引导本身不调用任何模型（此刻 LLM 已经不可用）。
+                                        goSection("settings");
+                                        setSubPage("models");
+                                        setModelFocus({ remedy: r, nonce: Date.now() });
+                                    }}
+                                />
+                            )}
+                        </Show>
+                        {/* 「环境感知」顶栏 bar（##384）：磁盘满 / 网断 —— 与上面那条同为**页面最上方**。
                         多条并存时堆叠（磁盘满与网断可以同时发生），最多 MAX_BARS 条 + 超出折叠计数（同一常量，不写字面量）。
                         **自动消**：空间腾出来 / 网恢复时 main 推 resolve 事件，红条自己消失。 */}
-                    <Show when={envWatchStore.notices.length > 0}>
-                        <EnvStatusBar
-                            notices={envWatchStore.notices.slice(0, MAX_BARS)}
-                            overflow={envWatchStore.overflow}
-                            onDismiss={(id) => envWatchStore.dismiss(id)}
-                        />
-                    </Show>
-                    {/* 「缓存可能已冷」顶栏**单行**条（##477）：距上次请求太久 → 这一轮整段按全价重付。
-                        只有一行（用户硬要求：不叠加、不弹窗），新提示替换旧的；✕ 关掉当前这条。 */}
-                    <Show when={cacheHintStore.hint}>
-                        {(h) => <CacheHintBar hint={h()} onDismiss={() => cacheHintStore.dismiss()} />}
-                    </Show>
-                    {/* 面包屑导航：从当前页面回溯到根，每个非叶子节点带 ▾ 下拉（列出同级 tab） */}
-                    <Breadcrumb
-                        section={route().kind === "section" ? (route() as { kind: "section"; section: Section }).section : "task"}
-                        activeKey={route().kind === "tab" ? (route() as { kind: "tab"; key: string }).key : ""}
-                        gotoTab={(key) => {
-                            hideHoverLayers();
-                            tabStore.activate(key);
-                            setRoute({ kind: "tab", key });
-                        }}
-                        gotoSection={(id) => {
-                            hideHoverLayers();
-                            if (id === "task") {
-                                requestTreeReveal();
-                                tabStore.showTree();
-                            }
-                            setRoute({ kind: "section", section: id as Section });
-                        }}
-                        closeTab={closeTab}
-                        right={
-                            <InboxBell
-                                onOpenEntry={(e) => {
-                                    // 先切页再投定位请求：会话页可能是**整页新挂**（它自己等三个条件
-                                    // 齐了才消费请求，见 LocalChatPage 的 chatNavStore effect）
-                                    openSessionByUri(e.taskUri);
-                                    const j = jumpOf(e);
-                                    if (hasAnchorOf(j)) {
-                                        chatNavStore.request({ ...j, origin: "inbox" });
-                                    } else {
-                                        // 不许"只开 tab 还不说"（body 硬要求）：说清为什么没定位
-                                        notificationStore.addToast(
-                                            "info",
-                                            `已打开 ${e.taskUri}；这条通知没有轮次锚点，原文在信箱面板里`,
-                                            {
-                                                source: "通知信箱 · 去来源会话（##436）",
-                                                reason: `条目 ${e.id}（${e.kind}）只带 taskUri，没有 turnId/blockId/steerId ⇒ 会话页不知道该滚到哪里`,
-                                                detail:
-                                                    "为什么没有锚点：留言投递那一刻块还没生成（它插进的那一轮可能正在跑）；\n" +
-                                                    "滞留类条目（lost）指向的是「这条留言取不出来」，本来就还没进过任何一轮。\n" +
-                                                    "怎么补：在信箱面板展开该条看原文（未截断），再用页内查找（⌘F）搜其中的关键词。",
-                                            },
-                                            { duration: 10000 },
-                                        );
-                                    }
-                                }}
+                        <Show when={envWatchStore.notices.length > 0}>
+                            <EnvStatusBar
+                                notices={envWatchStore.notices.slice(0, MAX_BARS)}
+                                overflow={envWatchStore.overflow}
+                                onDismiss={(id) => envWatchStore.dismiss(id)}
                             />
-                        }
-                    />
-                    {/* 页内查找条：动态出现（关掉即消失），不是模态弹窗。它自己 Portal 到 body
+                        </Show>
+                        {/* 「缓存可能已冷」顶栏**单行**条（##477）：距上次请求太久 → 这一轮整段按全价重付。
+                        只有一行（用户硬要求：不叠加、不弹窗），新提示替换旧的；✕ 关掉当前这条。 */}
+                        <Show when={cacheHintStore.hint}>
+                            {(h) => <CacheHintBar hint={h()} onDismiss={() => cacheHintStore.dismiss()} />}
+                        </Show>
+                        {/* 面包屑导航：从当前页面回溯到根，每个非叶子节点带 ▾ 下拉（列出同级 tab） */}
+                        <Breadcrumb
+                            section={
+                                route().kind === "section"
+                                    ? (route() as { kind: "section"; section: Section }).section
+                                    : "task"
+                            }
+                            activeKey={route().kind === "tab" ? (route() as { kind: "tab"; key: string }).key : ""}
+                            gotoTab={(key) => {
+                                hideHoverLayers();
+                                tabStore.activate(key);
+                                setRoute({ kind: "tab", key });
+                            }}
+                            gotoSection={(id) => {
+                                hideHoverLayers();
+                                if (id === "task") {
+                                    requestTreeReveal();
+                                    tabStore.showTree();
+                                }
+                                setRoute({ kind: "section", section: id as Section });
+                            }}
+                            closeTab={closeTab}
+                            right={
+                                <InboxBell
+                                    onOpenEntry={(e) => {
+                                        // 先切页再投定位请求：会话页可能是**整页新挂**（它自己等三个条件
+                                        // 齐了才消费请求，见 LocalChatPage 的 chatNavStore effect）
+                                        openSessionByUri(e.taskUri);
+                                        const j = jumpOf(e);
+                                        if (hasAnchorOf(j)) {
+                                            chatNavStore.request({ ...j, origin: "inbox" });
+                                        } else {
+                                            // 不许"只开 tab 还不说"（body 硬要求）：说清为什么没定位
+                                            notificationStore.addToast(
+                                                "info",
+                                                `已打开 ${e.taskUri}；这条通知没有轮次锚点，原文在信箱面板里`,
+                                                {
+                                                    source: "通知信箱 · 去来源会话（##436）",
+                                                    reason: `条目 ${e.id}（${e.kind}）只带 taskUri，没有 turnId/blockId/steerId ⇒ 会话页不知道该滚到哪里`,
+                                                    detail:
+                                                        "为什么没有锚点：留言投递那一刻块还没生成（它插进的那一轮可能正在跑）；\n" +
+                                                        "滞留类条目（lost）指向的是「这条留言取不出来」，本来就还没进过任何一轮。\n" +
+                                                        "怎么补：在信箱面板展开该条看原文（未截断），再用页内查找（⌘F）搜其中的关键词。",
+                                                },
+                                                { duration: 10000 },
+                                            );
+                                        }
+                                    }}
+                                />
+                            }
+                        />
+                        {/* 页内查找条：动态出现（关掉即消失），不是模态弹窗。它自己 Portal 到 body
                         顶层（Z_FIND），**不在流内占位**；这里只是挂载点。查找不搜自己（data-find-skip）。 */}
-                    <FindBar />
-                    <div ref={(el) => (mainAreaEl = el)} class="flex-1 min-h-0 overflow-hidden relative">
-                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "task"}>
-                        <TaskTree reveal={treeReveal()} />
-                        <TaskDetailPanel />
-                    </Show>
-                    <Show when={route().kind === "tab" && activeTabItem()?.pageId === "task-run"}>
-                        <Show when={activeTabItem()} keyed>
-                            {(t) => <TaskRunPage uri={t.ctx ?? ""} />}
-                        </Show>
-                    </Show>
-                    <Show when={route().kind === "tab" && activeTabItem()?.pageId === "lab"}>
-                        <Show when={activeTabItem()} keyed>
-                            {(t) => <LabPage uri={t.ctx ?? ""} />}
-                        </Show>
-                    </Show>
-                    <Show when={route().kind === "tab" && activeTabItem()?.pageId === "ctxlab"}>
-                        <Show when={activeTabItem()} keyed>
-                            {(t) => <ContextLabPage uri={t.ctx ?? ""} />}
-                        </Show>
-                    </Show>
-                    <Show when={route().kind === "tab" && activeTabItem()?.pageId === "brain"}>
-                        <Show when={activeTabItem()} keyed>
-                            {(t) => <BrainPage uri={t.ctx ?? ""} />}
-                        </Show>
-                    </Show>
-                    <Show when={route().kind === "tab" && activeTabItem()?.pageId === "flow"}>
-                        <Show when={activeTabItem()} keyed>
-                            {(t) => <FlowPage uri={t.ctx ?? ""} />}
-                        </Show>
-                    </Show>
-                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "llm"}>
-                        <LlmPage />
-                    </Show>
-                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "traffic"}>
-                        <TrafficPage />
-                    </Show>
-                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "sessions"}>
-                        <SessionOverviewPage />
-                    </Show>
-                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "rooms"}>
-                        <RoomsPage />
-                    </Show>
-                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "instances"}>
-                        <InstancesPage />
-                    </Show>
-                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "hub"}>
-                        <RemotePage />
-                    </Show>
-                    <Show when={route().kind === "section" && (route() as { section: Section }).section === "settings"}>
-                        <div class="flex flex-col h-full">
-                            <div class="border-b px-3 py-2 shrink-0">
-                                <Tabs.Root value={subPage()} onChange={setSubPage}>
-                                    <Tabs.List class="tabs tabs-box">
-                                        <Tabs.Trigger value="info" class="tab">
-                                            📊 状态
-                                        </Tabs.Trigger>
-                                        <Tabs.Trigger value="logs" class="tab">
-                                            📋 日志
-                                        </Tabs.Trigger>
-                                        <Tabs.Trigger value="theme" class="tab">
-                                            🎨 外观
-                                        </Tabs.Trigger>
-                                        <Tabs.Trigger value="models" class="tab">
-                                            🤖 模型
-                                        </Tabs.Trigger>
-                                    </Tabs.List>
-                                </Tabs.Root>
-                            </div>
-                            <Show when={subPage() === "info"}>
-                                <AppInfo />
+                        <FindBar />
+                        <div ref={(el) => (mainAreaEl = el)} class="flex-1 min-h-0 overflow-hidden relative">
+                            <Show
+                                when={
+                                    route().kind === "section" && (route() as { section: Section }).section === "task"
+                                }
+                            >
+                                <TaskTree reveal={treeReveal()} />
+                                <TaskDetailPanel />
                             </Show>
-                            <Show when={subPage() === "logs"}>
-                                <LogPanel />
+                            <Show when={route().kind === "tab" && activeTabItem()?.pageId === "task-run"}>
+                                <Show when={activeTabItem()} keyed>
+                                    {(t) => <TaskRunPage uri={t.ctx ?? ""} />}
+                                </Show>
                             </Show>
-                            <Show when={subPage() === "theme"}>
-                                <ThemeSettings />
+                            <Show when={route().kind === "tab" && activeTabItem()?.pageId === "lab"}>
+                                <Show when={activeTabItem()} keyed>
+                                    {(t) => <LabPage uri={t.ctx ?? ""} />}
+                                </Show>
                             </Show>
-                            <Show when={subPage() === "models"}>
-                                <ModelConfigPage focus={modelFocus()} />
+                            <Show when={route().kind === "tab" && activeTabItem()?.pageId === "ctxlab"}>
+                                <Show when={activeTabItem()} keyed>
+                                    {(t) => <ContextLabPage uri={t.ctx ?? ""} />}
+                                </Show>
                             </Show>
-                        </div>
-                    </Show>
-                        {/* 悬停导航任务项 → 任务详情覆盖层（overlay，**不挤压主区**）。
+                            <Show when={route().kind === "tab" && activeTabItem()?.pageId === "brain"}>
+                                <Show when={activeTabItem()} keyed>
+                                    {(t) => <BrainPage uri={t.ctx ?? ""} />}
+                                </Show>
+                            </Show>
+                            <Show when={route().kind === "tab" && activeTabItem()?.pageId === "flow"}>
+                                <Show when={activeTabItem()} keyed>
+                                    {(t) => <FlowPage uri={t.ctx ?? ""} />}
+                                </Show>
+                            </Show>
+                            <Show
+                                when={route().kind === "section" && (route() as { section: Section }).section === "llm"}
+                            >
+                                <LlmPage />
+                            </Show>
+                            <Show
+                                when={
+                                    route().kind === "section" &&
+                                    (route() as { section: Section }).section === "traffic"
+                                }
+                            >
+                                <TrafficPage />
+                            </Show>
+                            <Show
+                                when={
+                                    route().kind === "section" &&
+                                    (route() as { section: Section }).section === "sessions"
+                                }
+                            >
+                                <SessionOverviewPage />
+                            </Show>
+                            <Show
+                                when={
+                                    route().kind === "section" && (route() as { section: Section }).section === "rooms"
+                                }
+                            >
+                                <RoomsPage />
+                            </Show>
+                            <Show
+                                when={
+                                    route().kind === "section" &&
+                                    (route() as { section: Section }).section === "instances"
+                                }
+                            >
+                                <InstancesPage />
+                            </Show>
+                            <Show
+                                when={route().kind === "section" && (route() as { section: Section }).section === "hub"}
+                            >
+                                <RemotePage />
+                            </Show>
+                            <Show
+                                when={
+                                    route().kind === "section" &&
+                                    (route() as { section: Section }).section === "settings"
+                                }
+                            >
+                                <div class="flex flex-col h-full">
+                                    <div class="border-b px-3 py-2 shrink-0">
+                                        <Tabs.Root value={subPage()} onChange={setSubPage}>
+                                            <Tabs.List class="tabs tabs-box">
+                                                <Tabs.Trigger value="info" class="tab">
+                                                    📊 状态
+                                                </Tabs.Trigger>
+                                                <Tabs.Trigger value="logs" class="tab">
+                                                    📋 日志
+                                                </Tabs.Trigger>
+                                                <Tabs.Trigger value="theme" class="tab">
+                                                    🎨 外观
+                                                </Tabs.Trigger>
+                                                <Tabs.Trigger value="models" class="tab">
+                                                    🤖 模型
+                                                </Tabs.Trigger>
+                                            </Tabs.List>
+                                        </Tabs.Root>
+                                    </div>
+                                    <Show when={subPage() === "info"}>
+                                        <AppInfo />
+                                    </Show>
+                                    <Show when={subPage() === "logs"}>
+                                        <LogPanel />
+                                    </Show>
+                                    <Show when={subPage() === "theme"}>
+                                        <ThemeSettings />
+                                    </Show>
+                                    <Show when={subPage() === "models"}>
+                                        <ModelConfigPage focus={modelFocus()} />
+                                    </Show>
+                                </div>
+                            </Show>
+                            {/* 悬停导航任务项 → 任务详情覆盖层（overlay，**不挤压主区**）。
                             定位取 left-0 是「nav 右缘」：本容器正是 DaisyUI drawer 的
                             drawer-content，天然紧贴侧栏右缘，不需要手算 nav 宽度。
                             宽度固定 320px（w-80）：它随鼠标出现、跟着鼠标消失，拖宽无意义。 */}
-                        <Show when={hoverTaskUri()}>
-                            {(uri) => (
-                                <aside
-                                    data-find-skip
-                                    class="absolute inset-y-0 left-0 z-30 w-80 bg-base-100 border-r shadow-2xl flex flex-col"
-                                    aria-label={`任务详情：${uri()}`}
-                                    onMouseEnter={cancelHideHoverTask}
-                                    onMouseLeave={hideHoverLayers}
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <TaskSideView uri={uri()} hoverPreview={false} />
-                                </aside>
-                            )}
-                        </Show>
-                        <Show when={hoverTreeTask()}>
-                            {(preview) => (
-                                <aside
-                                    data-find-skip
-                                    class="absolute inset-y-0 z-30 bg-base-100 border-r shadow-2xl flex flex-col"
-                                    style={{ left: `${preview().left}px`, width: `${preview().width}px` }}
-                                    aria-label={`任务详情：${preview().uri}`}
-                                    onMouseEnter={cancelHideHoverTask}
-                                    onMouseLeave={scheduleHideHoverTask}
-                                    onClick={(e) => e.stopPropagation()}
-                                >
-                                    <TaskSideView uri={preview().uri} hoverPreview={false} />
-                                </aside>
-                            )}
-                        </Show>
-                        {/* 全局 tooltip 浮层：fixed，按触发元素定位（下方放不下则翻到上方）。
-                            pointer-events-none：绝不挡住鼠标，免得 tooltip 自己触发 mouseout 抖动。 */}
-                        <Show when={tip()}>
-                            {(t) => {
-                                const r = t().el.getBoundingClientRect();
-                                const up = r.bottom + 48 > window.innerHeight;
-                                const left = Math.max(6, Math.min(r.left, window.innerWidth - 270));
-                                return (
-                                    <div
-                                        class="pointer-events-none fixed z-[200] max-w-64 rounded bg-neutral px-2 py-1 text-body leading-relaxed text-neutral-content shadow-lg"
-                                        style={{
-                                            left: `${left}px`,
-                                            top: `${up ? r.top - 6 : r.bottom + 6}px`,
-                                            transform: up ? "translateY(-100%)" : undefined,
-                                        }}
+                            <Show when={hoverTaskUri()}>
+                                {(uri) => (
+                                    <aside
+                                        data-find-skip
+                                        class="absolute inset-y-0 left-0 z-30 w-80 bg-base-100 border-r shadow-2xl flex flex-col"
+                                        aria-label={`任务详情：${uri()}`}
+                                        onMouseEnter={cancelHideHoverTask}
+                                        onMouseLeave={hideHoverLayers}
+                                        onClick={(e) => e.stopPropagation()}
                                     >
-                                        {t().text}
-                                    </div>
-                                );
-                            }}
-                        </Show>
-                    </div>
-</main>
-            </div>
+                                        <TaskSideView uri={uri()} hoverPreview={false} />
+                                    </aside>
+                                )}
+                            </Show>
+                            <Show when={hoverTreeTask()}>
+                                {(preview) => (
+                                    <aside
+                                        data-find-skip
+                                        class="absolute inset-y-0 z-30 bg-base-100 border-r shadow-2xl flex flex-col"
+                                        style={{ left: `${preview().left}px`, width: `${preview().width}px` }}
+                                        aria-label={`任务详情：${preview().uri}`}
+                                        onMouseEnter={cancelHideHoverTask}
+                                        onMouseLeave={scheduleHideHoverTask}
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <TaskSideView uri={preview().uri} hoverPreview={false} />
+                                    </aside>
+                                )}
+                            </Show>
+                            {/* 全局 tooltip 浮层：fixed，按触发元素定位（下方放不下则翻到上方）。
+                            pointer-events-none：绝不挡住鼠标，免得 tooltip 自己触发 mouseout 抖动。 */}
+                            <Show when={tip()}>
+                                {(t) => {
+                                    const r = t().el.getBoundingClientRect();
+                                    const up = r.bottom + 48 > window.innerHeight;
+                                    const left = Math.max(6, Math.min(r.left, window.innerWidth - 270));
+                                    return (
+                                        <div
+                                            class="pointer-events-none fixed z-[200] max-w-64 rounded bg-neutral px-2 py-1 text-body leading-relaxed text-neutral-content shadow-lg"
+                                            style={{
+                                                left: `${left}px`,
+                                                top: `${up ? r.top - 6 : r.bottom + 6}px`,
+                                                transform: up ? "translateY(-100%)" : undefined,
+                                            }}
+                                        >
+                                            {t().text}
+                                        </div>
+                                    );
+                                }}
+                            </Show>
+                        </div>
+                    </main>
+                </div>
 
-            {/* 侧栏 - DaisyUI drawer。
+                {/* 侧栏 - DaisyUI drawer。
                 DragDropProvider 是纯 context（不产生 DOM），包住侧栏让任务项的
                 useDraggable/useDroppable 拿到管理器 —— nav 拖拽改父子（任务 242）。 */}
-            <DragDropProvider
-                sensors={[PointerSensor]}
-                onDragStart={() => {
-                    setNavDragging(true);
-                    hideHoverLayers(); // 拖拽中不再弹 hover 详情层（幽灵经过别的项会乱）
-                }}
-                onDragEnd={(e) => {
-                    setNavDragging(false);
-                    return handleNavDragEnd(e);
-                }}
-            >
-            <div class="drawer-side z-40">
-                {/* 遮罩：宽窗恒透明（daisyUI drawer-open 覆盖）；窄窗由 index.css 置
+                <DragDropProvider
+                    sensors={[PointerSensor]}
+                    onDragStart={() => {
+                        setNavDragging(true);
+                        hideHoverLayers(); // 拖拽中不再弹 hover 详情层（幽灵经过别的项会乱）
+                    }}
+                    onDragEnd={(e) => {
+                        setNavDragging(false);
+                        return handleNavDragEnd(e);
+                    }}
+                >
+                    <div class="drawer-side z-40">
+                        {/* 遮罩：宽窗恒透明（daisyUI drawer-open 覆盖）；窄窗由 index.css 置
                     pointer-events:none，**只在浮层展开态**可见可点 → 点空白收回侧栏（##297）。
                     preventDefault 是必需的：`<label for>` 默认会顺手切 `#sidebar-toggle`，
                     而那是 daisyUI 的另一套状态（`:checked` → `--page-scroll-lock` 锁根滚动），
                     与 railOpen 双头跑必然脱同步。窄窗的开合只认 railOpen。 */}
-                <label
-                    for="sidebar-toggle"
-                    class="drawer-overlay"
-                    onClick={(e) => {
-                        if (!isNarrow()) return;
-                        e.preventDefault();
-                        setRailOpen(false);
-                    }}
-                />
-                {/* 宽用内联 style：daisyUI .menu{width:fit-content} 是非分层样式，会压住 w-12/w-56 utility
+                        <label
+                            for="sidebar-toggle"
+                            class="drawer-overlay"
+                            onClick={(e) => {
+                                if (!isNarrow()) return;
+                                e.preventDefault();
+                                setRailOpen(false);
+                            }}
+                        />
+                        {/* 宽用内联 style：daisyUI .menu{width:fit-content} 是非分层样式，会压住 w-12/w-56 utility
                     收起态同步去掉 menu 的 8px 水平 padding（p-0），否则按钮内容超出 rail 被顶到右侧。
 
                     `flex-nowrap` 是必需的，不是风格选择：daisyUI .menu 带 `flex-flow:column wrap`，
@@ -1428,414 +1473,523 @@ export default function App() {
                     行右侧的关闭按钮跑到侧栏外被 overflow-hidden 裁掉，`elementFromPoint` 命中的是
                     主区内容（即「页面遮挡住关闭按钮、点不到」）。nowrap 让交叉轴回到容器宽度，
                     再配合 `min-w-0` 保证内部的 truncate 能真正收缩。 */}
-                {/* 展开宽度可调（拖右缘 / 双击手柄复位）：宽度记在视图 cache，重启恢复。
+                        {/* 展开宽度可调（拖右缘 / 双击手柄复位）：宽度记在视图 cache，重启恢复。
                     拖拽期间摘掉 transition —— 否则宽度在鼠标后面追，手感是"拖不动"。 */}
-                <div
-                    ref={(el) => (navEl = el)}
-                    class={`menu flex-nowrap bg-base-200 min-h-full whitespace-nowrap overflow-hidden relative ${expanded() ? "p-2" : "p-0"} ${resizingNav() ? "" : "transition-[width,padding] duration-200"}`}
-                    style={{ width: expanded() ? `${navW()}px` : "2.5rem" }}
-                    onMouseEnter={() => setHovered(true)}
-                    onMouseLeave={() => setHovered(false)}
-                >
-                    {/* 顶栏 = 与面包屑 / 各 view 顶栏同高的 viewbar（VIEW_BAR_H）。
+                        <div
+                            ref={(el) => (navEl = el)}
+                            class={`menu flex-nowrap bg-base-200 min-h-full whitespace-nowrap overflow-hidden relative ${expanded() ? "p-2" : "p-0"} ${resizingNav() ? "" : "transition-[width,padding] duration-200"}`}
+                            style={{ width: expanded() ? `${navW()}px` : "2.5rem" }}
+                            onMouseEnter={() => setHovered(true)}
+                            onMouseLeave={() => setHovered(false)}
+                        >
+                            {/* 顶栏 = 与面包屑 / 各 view 顶栏同高的 viewbar（VIEW_BAR_H）。
                         原先这里是 h-12 且只有 ◉，而 pin 按钮独占底部一行 —— 两处都与
                         「一律 32px 高、按钮区在右」的统一规格不符。现改为：左 ◉、右按钮区。
                         收起态（rail 40px）装不下按钮区，只留 ◉ 居中。 */}
-                    <div
-                        data-testid="nav-viewbar"
-                        class={`relative flex items-center ${VIEW_BAR_H} border-b shrink-0 ${expanded() ? "justify-between px-2" : "justify-center"}`}
-                    >
-                        {/* 窄窗（<1024）：◉ 就地变成**唯一的导航入口**（点击把 40px rail 展开成浮层）。
+                            <div
+                                data-testid="nav-viewbar"
+                                class={`relative flex items-center ${VIEW_BAR_H} border-b shrink-0 ${expanded() ? "justify-between px-2" : "justify-center"}`}
+                            >
+                                {/* 窄窗（<1024）：◉ 就地变成**唯一的导航入口**（点击把 40px rail 展开成浮层）。
                             **绝对定位钉在左侧 40px 区中心**是必需的：位置在展开前后完全不变 ——
                             否则按下的瞬间侧栏展开、按钮移位，down/up 落在不同元素上，真实点击不成立
                             （这正是下方 fallback 注释里那条「收起态别放按钮」的坑）。
                             展开态右侧再加一个 ✕：遮罩之外也给一条明确的退路（触屏上尤其）。 */}
-                        <Show when={isNarrow()}>
-                            <button
-                                type="button"
-                                data-testid="nav-rail-toggle"
-                                class="absolute left-0 top-0 z-10 flex h-full w-10 cursor-pointer items-center justify-center font-bold hover:bg-base-300"
-                                title={railOpen() ? "收起导航" : "展开导航"}
-                                aria-label={railOpen() ? "收起导航" : "展开导航"}
-                                aria-expanded={railOpen()}
-                                onClick={() => setRailOpen(!railOpen())}
-                            >
-                                ◉
-                            </button>
-                            <Show when={railOpen()}>
-                                <button
-                                    type="button"
-                                    data-testid="nav-rail-close"
-                                    class="ml-auto cursor-pointer px-1 text-caption opacity-60 hover:opacity-100"
-                                    title="收起导航"
-                                    aria-label="收起导航"
-                                    onClick={() => setRailOpen(false)}
-                                >
-                                    ✕
-                                </button>
-                            </Show>
-                        </Show>
-                        {/* 宽窗：◉ 只是品牌标识 + 右侧按钮区的 pin（常驻展开）。窄窗不需要 pin ——
+                                <Show when={isNarrow()}>
+                                    <button
+                                        type="button"
+                                        data-testid="nav-rail-toggle"
+                                        class="absolute left-0 top-0 z-10 flex h-full w-10 cursor-pointer items-center justify-center font-bold hover:bg-base-300"
+                                        title={railOpen() ? "收起导航" : "展开导航"}
+                                        aria-label={railOpen() ? "收起导航" : "展开导航"}
+                                        aria-expanded={railOpen()}
+                                        onClick={() => setRailOpen(!railOpen())}
+                                    >
+                                        ◉
+                                    </button>
+                                    <Show when={railOpen()}>
+                                        <button
+                                            type="button"
+                                            data-testid="nav-rail-close"
+                                            class="ml-auto cursor-pointer px-1 text-caption opacity-60 hover:opacity-100"
+                                            title="收起导航"
+                                            aria-label="收起导航"
+                                            onClick={() => setRailOpen(false)}
+                                        >
+                                            ✕
+                                        </button>
+                                    </Show>
+                                </Show>
+                                {/* 宽窗：◉ 只是品牌标识 + 右侧按钮区的 pin（常驻展开）。窄窗不需要 pin ——
                             rail 常驻本身就已经是「占一列」的语义（那正是 pin 当年在窄窗想做的事）。 */}
-                        <Show when={!isNarrow()}>
-                            <Show
-                                when={expanded()}
-                                fallback={
-                                    /* 收起态（rail 40px）只留品牌图标：按钮区放不下（◉ + 📍 挤在 40px 里），
+                                <Show when={!isNarrow()}>
+                                    <Show
+                                        when={expanded()}
+                                        fallback={
+                                            /* 收起态（rail 40px）只留品牌图标：按钮区放不下（◉ + 📍 挤在 40px 里），
                                        也没有必要 —— 鼠标移到侧栏即展开，按钮区随之出现，「锁定」是一步之遥。
                                        顺带避开一个陷阱：在收起态放 pin 按钮，点击的按下瞬间侧栏才展开、
                                        按钮已经移位，down/up 落在不同元素上 → 点击不成立（真实点击测试抓到过）。 */
-                                    <span class="font-bold" title="diy">
-                                        ◉
-                                    </span>
-                                }
-                            >
-                                <span class="font-bold" title="diy">
-                                    ◉
-                                </span>
-                                <button
-                                    class="btn btn-ghost btn-xs px-1 min-h-0 opacity-60 hover:opacity-100"
-                                    title={pinned() ? "取消锁定（恢复悬停展开）" : "锁定展开"}
-                                    onClick={() => setPinned(!pinned())}
-                                >
-                                    <span>{pinned() ? "📌" : "📍"}</span>
-                                </button>
-                            </Show>
-                        </Show>
-                    </div>
-                    <div class={`space-y-1 w-full min-w-0 ${expanded() ? "p-1" : "py-2"}`}>
-                        {/* ⌘K 快速打开会话（##254）的**可见入口**：展开态是一行「搜索…」伪输入框
+                                            <span class="font-bold" title="diy">
+                                                ◉
+                                            </span>
+                                        }
+                                    >
+                                        <span class="font-bold" title="diy">
+                                            ◉
+                                        </span>
+                                        <button
+                                            class="btn btn-ghost btn-xs px-1 min-h-0 opacity-60 hover:opacity-100"
+                                            title={pinned() ? "取消锁定（恢复悬停展开）" : "锁定展开"}
+                                            onClick={() => setPinned(!pinned())}
+                                        >
+                                            <span>{pinned() ? "📌" : "📍"}</span>
+                                        </button>
+                                    </Show>
+                                </Show>
+                            </div>
+                            <div class={`space-y-1 w-full min-w-0 ${expanded() ? "p-1" : "py-2"}`}>
+                                {/* ⌘K 快速打开会话（##254）的**可见入口**：展开态是一行「搜索…」伪输入框
                             （与导航项同构的 li，快捷键写在右侧）；收起态是 40px rail 里的 🔍 按钮
                             （装不下文字，与顶栏按钮区同理）。两态都要有 —— 不知道快捷键的人也得点得到。 */}
-                        {/* R4-5：收起态（rail）装不下文字，可访问名会退化成只有 🔍 ——
+                                {/* R4-5：收起态（rail）装不下文字，可访问名会退化成只有 🔍 ——
                             `title` 不保证被当作可访问名，故显式给 aria-label。 */}
-                        <li class="flex justify-center">
-                            <button
-                                class={`flex items-center gap-2 w-full transition-colors cursor-pointer ${
-                                    expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"
-                                } hover:bg-base-300`}
-                                data-testid="nav-search-open"
-                                // R6-1：快捷键文案（title / aria-label / <kbd>）与弹层 footer 同源，
-                                // 不再各写各的 —— 非 mac 用户也得看得见 Ctrl+K。
-                                title={`搜索任务 / 会话（${NAV_SEARCH_SHORTCUT}）`}
-                                aria-label={`搜索任务 / 会话（${NAV_SEARCH_SHORTCUT}）`}
-                                onClick={() => {
-                                    hideHoverLayers();
-                                    collapseRail(); // 窄窗：⌘K 弹层要占满屏，先把浮层收了
-                                    setNavSearchOpen(true);
-                                }}
-                            >
-                                <span>🔍</span>
-                                <Show when={expanded()}>
-                                    <span class="flex-1 text-left opacity-70">搜索…</span>
-                                    <kbd class="text-caption opacity-50">{NAV_SEARCH_SHORTCUT}</kbd>
-                                </Show>
-                            </button>
-                        </li>
-                        <For each={NAV_ITEMS}>
-                            {(item) => (
-                                <>
-                                    <li class="flex justify-center">
-                                        {/* tab 式选中指示：当前页加高亮胶囊 + 左侧指示条，收起态也可见 */}
-                                        <button
-                                            class={`relative flex items-center gap-2 w-full transition-colors cursor-pointer ${expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"} ${navActive() === item.id ? "bg-primary/30 text-base-content font-semibold ring-1 ring-primary/40" : "hover:bg-base-300"}`}
-                                            title={
-                                                item.id === "sessions"
-                                                    ? `会话（在跑 ${sessionStore.workingCount} / 本次启动活跃过 ${sessionStore.entries.length}）` +
-                                                      (navHero() ? `\n${navHero()!.tip}` : "")
-                                                    : item.label
-                                            }
-                                            onClick={() => goSection(item.id)}
-                                        >
-                                            <span>{item.icon}</span>
-                                            {expanded() && <span>{item.label}</span>}
-                                            {/* 「会话」项的**主角标**（##358 D1，取代 ##308 的"在跑数"）。
+                                <li class="flex justify-center">
+                                    <button
+                                        class={`flex items-center gap-2 w-full transition-colors cursor-pointer ${
+                                            expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"
+                                        } hover:bg-base-300`}
+                                        data-testid="nav-search-open"
+                                        // R6-1：快捷键文案（title / aria-label / <kbd>）与弹层 footer 同源，
+                                        // 不再各写各的 —— 非 mac 用户也得看得见 Ctrl+K。
+                                        title={`搜索任务 / 会话（${NAV_SEARCH_SHORTCUT}）`}
+                                        aria-label={`搜索任务 / 会话（${NAV_SEARCH_SHORTCUT}）`}
+                                        onClick={() => {
+                                            hideHoverLayers();
+                                            collapseRail(); // 窄窗：⌘K 弹层要占满屏，先把浮层收了
+                                            setNavSearchOpen(true);
+                                        }}
+                                    >
+                                        <span>🔍</span>
+                                        <Show when={expanded()}>
+                                            <span class="flex-1 text-left opacity-70">搜索…</span>
+                                            <kbd class="text-caption opacity-50">{NAV_SEARCH_SHORTCUT}</kbd>
+                                        </Show>
+                                    </button>
+                                </li>
+                                <For each={NAV_ITEMS}>
+                                    {(item) => (
+                                        <>
+                                            <li class="flex justify-center">
+                                                {/* tab 式选中指示：当前页加高亮胶囊 + 左侧指示条，收起态也可见 */}
+                                                <button
+                                                    class={`relative flex items-center gap-2 w-full transition-colors cursor-pointer ${expanded() ? "px-3 py-2 rounded-lg" : "h-8 w-8 rounded-lg justify-center"} ${navActive() === item.id ? "bg-primary/30 text-base-content font-semibold ring-1 ring-primary/40" : "hover:bg-base-300"}`}
+                                                    title={
+                                                        item.id === "sessions"
+                                                            ? `会话（在跑 ${sessionStore.workingCount} / 本次启动活跃过 ${sessionStore.entries.length}）` +
+                                                              (navHero() ? `\n${navHero()!.tip}` : "")
+                                                            : item.label
+                                                    }
+                                                    onClick={() => goSection(item.id)}
+                                                >
+                                                    <span>{item.icon}</span>
+                                                    {expanded() && <span>{item.label}</span>}
+                                                    {/* 「会话」项的**主角标**（##358 D1，取代 ##308 的"在跑数"）。
                                                 用户原话：`+23` 未读 · 绿色=未读 · 红色=未读异常终止 · **闪烁绿=运行中**。
                                                 同一时刻**只出一个**（收起态 40px rail 装不下第二个）——
                                                 优先级 停滞 > 运行中 > 异常未读 > 未读 > 队列，判据在 shared/session-nav。
                                                 其余信息进 tooltip（点标题可看），队列降成下面的次角标。 */}
-                                            <Show when={item.id === "sessions" && navHero()}>
-                                                {(hero) => (
-                                                    <span
-                                                        class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[hero().tone]} ${
-                                                            hero().pulse ? "animate-pulse" : ""
-                                                        } ${expanded() ? "ml-auto" : "absolute -top-0.5 -right-0.5 px-1"}`}
-                                                        title={hero().tip}
-                                                        data-nav-hero={hero().key}
-                                                    >
-                                                        {expanded() ? hero().text : hero().short}
-                                                    </span>
-                                                )}
-                                            </Show>
-                                            {/* 次角标：主角标之外还想让你知道的那件事（现在只有队列，紫）。
+                                                    <Show when={item.id === "sessions" && navHero()}>
+                                                        {(hero) => (
+                                                            <span
+                                                                class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[hero().tone]} ${
+                                                                    hero().pulse ? "animate-pulse" : ""
+                                                                } ${expanded() ? "ml-auto" : "absolute -top-0.5 -right-0.5 px-1"}`}
+                                                                title={hero().tip}
+                                                                data-nav-hero={hero().key}
+                                                            >
+                                                                {expanded() ? hero().text : hero().short}
+                                                            </span>
+                                                        )}
+                                                    </Show>
+                                                    {/* 次角标：主角标之外还想让你知道的那件事（现在只有队列，紫）。
                                                 刻意只给数 —— 展开态也塞不下第二段文字。 */}
-                                            <Show when={item.id === "sessions" && navSecondary()}>
-                                                {(sec) => (
-                                                    <span
-                                                        class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[sec().tone]} ${
-                                                            expanded() ? "" : "absolute -bottom-0.5 -right-0.5 px-1"
-                                                        }`}
-                                                        title={sec().tip}
-                                                        data-nav-secondary={sec().key}
-                                                    >
-                                                        {sec().text}
-                                                    </span>
-                                                )}
-                                            </Show>
-                                        </button>
-                                    </li>
-                                    {/* 「任务管理」下的动态页面：每个打开的任务一项（等同编辑器开 tab）。
+                                                    <Show when={item.id === "sessions" && navSecondary()}>
+                                                        {(sec) => (
+                                                            <span
+                                                                class={`badge border badge-xs font-mono whitespace-nowrap ${NAV_TONE_CLASS[sec().tone]} ${
+                                                                    expanded()
+                                                                        ? ""
+                                                                        : "absolute -bottom-0.5 -right-0.5 px-1"
+                                                                }`}
+                                                                title={sec().tip}
+                                                                data-nav-secondary={sec().key}
+                                                            >
+                                                                {sec().text}
+                                                            </span>
+                                                        )}
+                                                    </Show>
+                                                </button>
+                                            </li>
+                                            {/* 「任务管理」下的动态页面：每个打开的任务一项（等同编辑器开 tab）。
                                         **展开与收缩两态结构一致** —— 收缩态用「序号」图标承载同样的
                                         层级与选中语义（收缩态不显示标题与关闭按钮，装不下）。 */}
-                                    <Show when={item.id === "task"}>
-                                        <For each={navProjectGroups()}>
-                                            {(g) => {
-                                                /** 页面层次的子页面（lab 挂 task-run 下）—— 与缩进共用同一判据 */
-                                                const isSubPageOf = (x: { parent?: string; pageId: string }) =>
-                                                    !!x.parent || !!findPage(x.pageId)?.parentPage;
-                                                /** 缩进层级按**本段实际渲染顺序**算（栈判据，见 shared/tab-order 的 taskDepths）：
+                                            <Show when={item.id === "task"}>
+                                                <For each={navProjectGroups()}>
+                                                    {(g) => {
+                                                        /** 页面层次的子页面（lab 挂 task-run 下）—— 与缩进共用同一判据 */
+                                                        const isSubPageOf = (x: { parent?: string; pageId: string }) =>
+                                                            !!x.parent || !!findPage(x.pageId)?.parentPage;
+                                                        /** 缩进层级按**本段实际渲染顺序**算（栈判据，见 shared/tab-order 的 taskDepths）：
                                                     置顶把行提到顶部后，祖先不在上方就不缩进 —— 否则假缩进会把它挂到无关任务下面（##466 ②）。*/
-                                                const depths = createMemo(() => taskDepths(g.tabs, isSubPageOf));
-                                                return (
-                                                <>
-                                                    {/* 分段标题：**仅展开态** —— rail（40px）装不下文字，
+                                                        const depths = createMemo(() =>
+                                                            taskDepths(g.tabs, isSubPageOf),
+                                                        );
+                                                        return (
+                                                            <>
+                                                                {/* 分段标题：**仅展开态** —— rail（40px）装不下文字，
                                                         那一态靠每行左缘的项目色条区分（同一个颜色 = 同一个项目）。
                                                         置顶段（##466）跨项目恒在最上；其余段序 = 该项目组首次出现位置。 */}
-                                                    <Show when={expanded()}>
-                                                        <li class="flex justify-center">
-                                                            <div
-                                                                class="flex items-center gap-1.5 w-full min-w-0 px-3 pt-2 pb-0.5 text-caption opacity-60 select-none"
-                                                                data-nav-project-head={g.pinned ? "__pinned__" : (g.project?.id ?? "")}
-                                                                title={
-                                                                    g.pinned
-                                                                        ? "置顶（跨项目，固定在最上）"
-                                                                        : g.project
-                                                                          ? (g.project.path ?? g.project.label)
-                                                                          : "没有项目归属的页面"
-                                                                }
-                                                            >
-                                                                <Show when={g.project}>
-                                                                    {(p) => (
-                                                                        <span
-                                                                            class="w-1.5 h-1.5 rounded-full shrink-0"
-                                                                            style={{ "background-color": projectColor(p().id) }}
-                                                                        />
-                                                                    )}
+                                                                <Show when={expanded()}>
+                                                                    <li class="flex justify-center">
+                                                                        <div
+                                                                            class="flex items-center gap-1.5 w-full min-w-0 px-3 pt-2 pb-0.5 text-caption opacity-60 select-none"
+                                                                            data-nav-project-head={
+                                                                                g.pinned
+                                                                                    ? "__pinned__"
+                                                                                    : (g.project?.id ?? "")
+                                                                            }
+                                                                            title={
+                                                                                g.pinned
+                                                                                    ? "置顶（跨项目，固定在最上）"
+                                                                                    : g.project
+                                                                                      ? (g.project.path ??
+                                                                                        g.project.label)
+                                                                                      : "没有项目归属的页面"
+                                                                            }
+                                                                        >
+                                                                            <Show when={g.project}>
+                                                                                {(p) => (
+                                                                                    <span
+                                                                                        class="w-1.5 h-1.5 rounded-full shrink-0"
+                                                                                        style={{
+                                                                                            "background-color":
+                                                                                                projectColor(p().id),
+                                                                                        }}
+                                                                                    />
+                                                                                )}
+                                                                            </Show>
+                                                                            <span class="truncate">
+                                                                                {g.pinned
+                                                                                    ? "📌 置顶"
+                                                                                    : `📁 ${g.project?.label ?? "未归属项目"}`}
+                                                                            </span>
+                                                                        </div>
+                                                                    </li>
                                                                 </Show>
-                                                                <span class="truncate">
-                                                                    {g.pinned ? "📌 置顶" : `📁 ${g.project?.label ?? "未归属项目"}`}
-                                                                </span>
-                                                            </div>
-                                                        </li>
-                                                    </Show>
-                                                    <For each={g.tabs}>
-                                                        {(t) => {
-                                                    const isActive = () => activeKey() === t.key;
-                                                    /** 页面层次的子页面（lab 挂 task-run 下） */
-                                                    const isSubPage = () => isSubPageOf(t);
-                                                    /** 任务层次的缩进层级（本段显示顺序里的可见祖先层数；0 = 顶级） */
-                                                    const taskIndent = () => depths().get(t.key) ?? 0;
-                                                    const num = () => (t.ctx ? findNode(taskStore.nodes, t.ctx)?.num : undefined);
-                                                    // 非 task-run 的页面 tab 一律用 registry 的 title（避免"新页面忘了加特判"
-                                                    // 就显示成所属任务名 —— R3 那个 bug 的成因；见 review RV-05）。
-                                                    // task-run 例外：它代表任务本体，显示任务名而非页面名。
-                                                    const label = () => {
-                                                        const def = findPage(t.pageId);
-                                                        if (def && t.pageId !== "task-run")
-                                                            return `${def.title}${num() ? ` #${num()}` : ""}`;
-                                                        return tabLabel(t.ctx ?? "");
-                                                    };
-                                                    // 图标同样走 registry（RV-10）：别在组件里特判 pageId ——
-                                                    // 新页面忘记加特判就会重复 R3 那个 bug；无 icon 时退回页面序号。
-                                                    const icon = () => findPage(t.pageId)?.icon ?? (num() ?? "•");
-                                                    const tabGoto = () => {
-                                                        hideHoverLayers();
-                                                        collapseRail(); // 窄窗：浮层也一起收
-                                                        tabStore.activate(t.key);
-                                                        setRoute({ kind: "tab", key: t.key });
-                                                    };
-                                                    /** 缩进：页面子页面一级 + 每个已打开的祖先任务一级 */
-                                                    const indentPx = () => 28 + (isSubPage() ? 12 : 0) + taskIndent() * 14;
-                                                    const isNested = () => isSubPage() || taskIndent() > 0;
-                                                    // nav 拖拽改父子（任务 242）：带任务上下文的 tab 都可拖/可放
-                                                    // （lab 提示词页也有 ctx=挂的任务；dnd id 用 tab key —— 同一任务
-                                                    // 可开多个 tab，uri 会撞 id）。只挂展开态（收起态看不出标题，不支持拖）。
-                                                    const drag = useDraggable({
-                                                        get id() {
-                                                            return t.key;
-                                                        },
-                                                        get data() {
-                                                            return { title: label(), kind: "nav-task" };
-                                                        },
-                                                    });
-                                                    const drop = useDroppable({
-                                                        get id() {
-                                                            return t.key;
-                                                        },
-                                                    });
-                                                    const dndRef = (el: Element | undefined) => {
-                                                        drag.ref(el);
-                                                        drop.ref(el);
-                                                    };
-                                                    /** 置顶态（##356 ②）：投影自 navPinStore，切换即写视图 cache（跨重启保持） */
-                                                    const pinned = () => navPinStore.has(t.key);
-                                                    return (
-                                                        <>
-                                                        <li class="flex justify-center">
-                                                            <Show
-                                                                when={expanded()}
-                                                                fallback={
-                                                                    <button
-                                                                        class={`relative flex items-center justify-center h-8 w-8 rounded-lg text-caption font-mono transition-colors cursor-pointer ${
-                                                                            isActive()
-                                                                                ? "bg-primary/30 ring-1 ring-primary/40 font-semibold"
-                                                                                : "hover:bg-base-300 opacity-70"
-                                                                        }`}
-                                                                        title={label()}
-                                                                        data-nav-project={projectOfCtx(t.ctx)}
-                                                                        data-nav-tab={t.ctx ?? t.key}
-                                                                        onClick={tabGoto}
-                                                                        onMouseEnter={() => {
-                                                                            if (!navDragging()) showHoverTask(t.ctx);
-                                                                        }}
-                                                                        onMouseLeave={scheduleHideHoverTask}
-                                                                    >
-                                                                        {/* 项目归属（##302）：收起态没有组头文字，**色条是唯一的归属线索**
+                                                                <For each={g.tabs}>
+                                                                    {(t) => {
+                                                                        const isActive = () => activeKey() === t.key;
+                                                                        /** 页面层次的子页面（lab 挂 task-run 下） */
+                                                                        const isSubPage = () => isSubPageOf(t);
+                                                                        /** 任务层次的缩进层级（本段显示顺序里的可见祖先层数；0 = 顶级） */
+                                                                        const taskIndent = () =>
+                                                                            depths().get(t.key) ?? 0;
+                                                                        const num = () =>
+                                                                            t.ctx
+                                                                                ? findNode(taskStore.nodes, t.ctx)?.num
+                                                                                : undefined;
+                                                                        // 非 task-run 的页面 tab 一律用 registry 的 title（避免"新页面忘了加特判"
+                                                                        // 就显示成所属任务名 —— R3 那个 bug 的成因；见 review RV-05）。
+                                                                        // task-run 例外：它代表任务本体，显示任务名而非页面名。
+                                                                        const label = () => {
+                                                                            const def = findPage(t.pageId);
+                                                                            if (def && t.pageId !== "task-run")
+                                                                                return `${def.title}${num() ? ` #${num()}` : ""}`;
+                                                                            return tabLabel(t.ctx ?? "");
+                                                                        };
+                                                                        // 图标同样走 registry（RV-10）：别在组件里特判 pageId ——
+                                                                        // 新页面忘记加特判就会重复 R3 那个 bug；无 icon 时退回页面序号。
+                                                                        const icon = () =>
+                                                                            findPage(t.pageId)?.icon ?? num() ?? "•";
+                                                                        const tabGoto = () => {
+                                                                            hideHoverLayers();
+                                                                            collapseRail(); // 窄窗：浮层也一起收
+                                                                            tabStore.activate(t.key);
+                                                                            setRoute({ kind: "tab", key: t.key });
+                                                                        };
+                                                                        /** 缩进：页面子页面一级 + 每个已打开的祖先任务一级 */
+                                                                        const indentPx = () =>
+                                                                            28 +
+                                                                            (isSubPage() ? 12 : 0) +
+                                                                            taskIndent() * 14;
+                                                                        const isNested = () =>
+                                                                            isSubPage() || taskIndent() > 0;
+                                                                        // nav 拖拽改父子（任务 242）：带任务上下文的 tab 都可拖/可放
+                                                                        // （lab 提示词页也有 ctx=挂的任务；dnd id 用 tab key —— 同一任务
+                                                                        // 可开多个 tab，uri 会撞 id）。只挂展开态（收起态看不出标题，不支持拖）。
+                                                                        const drag = useDraggable({
+                                                                            get id() {
+                                                                                return t.key;
+                                                                            },
+                                                                            get data() {
+                                                                                return {
+                                                                                    title: label(),
+                                                                                    kind: "nav-task",
+                                                                                };
+                                                                            },
+                                                                        });
+                                                                        const drop = useDroppable({
+                                                                            get id() {
+                                                                                return t.key;
+                                                                            },
+                                                                        });
+                                                                        const dndRef = (el: Element | undefined) => {
+                                                                            drag.ref(el);
+                                                                            drop.ref(el);
+                                                                        };
+                                                                        /** 置顶态（##356 ②）：投影自 navPinStore，切换即写视图 cache（跨重启保持） */
+                                                                        const pinned = () => navPinStore.has(t.key);
+                                                                        return (
+                                                                            <>
+                                                                                <li class="flex justify-center">
+                                                                                    <Show
+                                                                                        when={expanded()}
+                                                                                        fallback={
+                                                                                            <button
+                                                                                                class={`relative flex items-center justify-center h-8 w-8 rounded-lg text-caption font-mono transition-colors cursor-pointer ${
+                                                                                                    isActive()
+                                                                                                        ? "bg-primary/30 ring-1 ring-primary/40 font-semibold"
+                                                                                                        : "hover:bg-base-300 opacity-70"
+                                                                                                }`}
+                                                                                                title={label()}
+                                                                                                data-nav-project={projectOfCtx(
+                                                                                                    t.ctx,
+                                                                                                )}
+                                                                                                data-nav-tab={
+                                                                                                    t.ctx ?? t.key
+                                                                                                }
+                                                                                                onClick={tabGoto}
+                                                                                                onMouseEnter={() => {
+                                                                                                    if (!navDragging())
+                                                                                                        showHoverTask(
+                                                                                                            t.ctx,
+                                                                                                        );
+                                                                                                }}
+                                                                                                onMouseLeave={
+                                                                                                    scheduleHideHoverTask
+                                                                                                }
+                                                                                            >
+                                                                                                {/* 项目归属（##302）：收起态没有组头文字，**色条是唯一的归属线索**
                                                                             （同一个颜色 = 同一个项目；展开态的组头色点同色）。贴在左缘 ——
                                                                             ##355 的 agent 状态点在 left-0.5，色条占 left-0 的 2px，两者相邻不叠。 */}
-                                                                        <Show when={projectOfCtx(t.ctx)}>
-                                                                            <span
-                                                                                class="absolute left-0 top-1 bottom-1 w-0.5 rounded-full"
-                                                                                style={{ "background-color": projectColor(projectOfCtx(t.ctx)) }}
-                                                                            />
-                                                                        </Show>
-                                                                        {icon()}
-                                                                        {/* 收起态装不下缩进，用一个小角标表达「有父」 */}
-                                                                        <Show when={isNested()}>
-                                                                            <span class="absolute left-0.5 bottom-0.5 text-caption opacity-50">↳</span>
-                                                                        </Show>
-                                                                        {/* 会话状态点（##393）：rail 装不下文案，退成**一个点**（颜色+形状即语义，
+                                                                                                <Show
+                                                                                                    when={projectOfCtx(
+                                                                                                        t.ctx,
+                                                                                                    )}
+                                                                                                >
+                                                                                                    <span
+                                                                                                        class="absolute left-0 top-1 bottom-1 w-0.5 rounded-full"
+                                                                                                        style={{
+                                                                                                            "background-color":
+                                                                                                                projectColor(
+                                                                                                                    projectOfCtx(
+                                                                                                                        t.ctx,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                        }}
+                                                                                                    />
+                                                                                                </Show>
+                                                                                                {icon()}
+                                                                                                {/* 收起态装不下缩进，用一个小角标表达「有父」 */}
+                                                                                                <Show when={isNested()}>
+                                                                                                    <span class="absolute left-0.5 bottom-0.5 text-caption opacity-50">
+                                                                                                        ↳
+                                                                                                    </span>
+                                                                                                </Show>
+                                                                                                {/* 会话状态点（##393）：rail 装不下文案，退成**一个点**（颜色+形状即语义，
                                                                             全文在 title）。原来这里有**两个**点（##355 左上 / ##308 右上）—— 两条轴
                                                                             各说一半，正是用户 3.3 说的"不一致"；现在判据只有 `shared/session-state`。 */}
-                                                                        <Show when={t.ctx}>
-                                                                            <SessionGlyphDot
-                                                                                uri={t.ctx!}
-                                                                                hasSession={findNode(taskStore.nodes, t.ctx!)?.has_session}
-                                                                                hasDraft={findNode(taskStore.nodes, t.ctx!)?.has_draft}
-                                                                                class="absolute top-0.5 right-0.5"
-                                                                            />
-                                                                        </Show>
-                                                                    </button>
-                                                                }
-                                                            >
-                                                                <div
-                                                                    ref={dndRef}
-                                                                    class={`relative group flex items-center gap-1 w-full pr-1 py-1 rounded-lg text-body cursor-pointer transition-colors ${
-                                                                        isActive() ? "bg-primary/25 ring-1 ring-primary/30" : "hover:bg-base-300"
-                                                                    } ${drop.isDropTarget() ? "ring-2 ring-primary/60 ring-inset" : ""}`}
-                                                                    style={{ "padding-left": `${indentPx()}px` }}
-                                                                    title={t.ctx ?? t.key}
-                                                                    data-nav-project={projectOfCtx(t.ctx)}
-                                                                    data-nav-tab={t.ctx ?? t.key}
-                                                                    onClick={tabGoto}
-                                                                    onMouseEnter={() => {
-                                                                        if (!navDragging()) showHoverTask(t.ctx);
-                                                                    }}
-                                                                    onMouseLeave={scheduleHideHoverTask}
-                                                                >
-                                                                    {/* 项目归属（##302）：左缘色条 —— 与分组标题的色点同色，
+                                                                                                <Show when={t.ctx}>
+                                                                                                    <SessionGlyphDot
+                                                                                                        uri={t.ctx!}
+                                                                                                        hasSession={
+                                                                                                            findNode(
+                                                                                                                taskStore.nodes,
+                                                                                                                t.ctx!,
+                                                                                                            )
+                                                                                                                ?.has_session
+                                                                                                        }
+                                                                                                        hasDraft={
+                                                                                                            findNode(
+                                                                                                                taskStore.nodes,
+                                                                                                                t.ctx!,
+                                                                                                            )?.has_draft
+                                                                                                        }
+                                                                                                        class="absolute top-0.5 right-0.5"
+                                                                                                    />
+                                                                                                </Show>
+                                                                                            </button>
+                                                                                        }
+                                                                                    >
+                                                                                        <div
+                                                                                            ref={dndRef}
+                                                                                            class={`relative group flex items-center gap-1 w-full pr-1 py-1 rounded-lg text-body cursor-pointer transition-colors ${
+                                                                                                isActive()
+                                                                                                    ? "bg-primary/25 ring-1 ring-primary/30"
+                                                                                                    : "hover:bg-base-300"
+                                                                                            } ${drop.isDropTarget() ? "ring-2 ring-primary/60 ring-inset" : ""}`}
+                                                                                            style={{
+                                                                                                "padding-left": `${indentPx()}px`,
+                                                                                            }}
+                                                                                            title={t.ctx ?? t.key}
+                                                                                            data-nav-project={projectOfCtx(
+                                                                                                t.ctx,
+                                                                                            )}
+                                                                                            data-nav-tab={
+                                                                                                t.ctx ?? t.key
+                                                                                            }
+                                                                                            onClick={tabGoto}
+                                                                                            onMouseEnter={() => {
+                                                                                                if (!navDragging())
+                                                                                                    showHoverTask(
+                                                                                                        t.ctx,
+                                                                                                    );
+                                                                                            }}
+                                                                                            onMouseLeave={
+                                                                                                scheduleHideHoverTask
+                                                                                            }
+                                                                                        >
+                                                                                            {/* 项目归属（##302）：左缘色条 —— 与分组标题的色点同色，
                                                                         行离组头很远（滚过一屏）时仍读得出「我属哪一组」。 */}
-                                                                    <Show when={projectOfCtx(t.ctx)}>
-                                                                        <span
-                                                                            class="absolute left-0 top-1 bottom-1 w-0.5 rounded-full"
-                                                                            style={{ "background-color": projectColor(projectOfCtx(t.ctx)) }}
-                                                                        />
-                                                                    </Show>
-                                                                    {/* 缩进用竖线引导（比箭头更清楚地表示「挂在上面那项之下」）；
+                                                                                            <Show
+                                                                                                when={projectOfCtx(
+                                                                                                    t.ctx,
+                                                                                                )}
+                                                                                            >
+                                                                                                <span
+                                                                                                    class="absolute left-0 top-1 bottom-1 w-0.5 rounded-full"
+                                                                                                    style={{
+                                                                                                        "background-color":
+                                                                                                            projectColor(
+                                                                                                                projectOfCtx(
+                                                                                                                    t.ctx,
+                                                                                                                ),
+                                                                                                            ),
+                                                                                                    }}
+                                                                                                />
+                                                                                            </Show>
+                                                                                            {/* 缩进用竖线引导（比箭头更清楚地表示「挂在上面那项之下」）；
                                                                         行首标记的取舍见下：任务 tab 是状态圆点，子页面 tab 是页面图标 */}
-                                                                    <Show when={isNested()}>
-                                                                        <span class="w-1.5 shrink-0 self-stretch border-l border-base-content/25" />
-                                                                    </Show>
-                                                                    {/* 行首标记：**是任务还是页面**的唯一视觉判据（##350 ①）。
+                                                                                            <Show when={isNested()}>
+                                                                                                <span class="w-1.5 shrink-0 self-stretch border-l border-base-content/25" />
+                                                                                            </Show>
+                                                                                            {/* 行首标记：**是任务还是页面**的唯一视觉判据（##350 ①）。
                                                                         任务 tab = 任务状态圆点（颜色即状态）；
                                                                         子页面 tab（lab / ctxlab / flow）= 注册表的页面图标，**不标任务状态** ——
                                                                         子页面挂的 ctx 只是"哪个任务的"，它自己不是任务；标了状态圆点就会被读成"又一个任务"。
                                                                         外层定宽 w-4：两种标记同宽，混排时标题左缘才对得齐。
                                                                         会话 chip/dot（##308）不在此列 —— 那是"这条会话在烧"的会话态，与"这是不是任务"是两件事。 */}
-                                                                    <span class="flex w-4 shrink-0 items-center justify-center">
-                                                                        <Show
-                                                                            when={isSubPage()}
-                                                                            fallback={
-                                                                                <span
-                                                                                    class={`w-1.5 h-1.5 rounded-full ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`}
-                                                                                    data-task-state-dot
-                                                                                />
-                                                                            }
-                                                                        >
-                                                                            <span class="font-mono text-caption opacity-80" data-subpage-icon>
-                                                                                {icon()}
-                                                                            </span>
-                                                                        </Show>
-                                                                    </span>
-                                                                    {/* 内容（那行文字）。**语义钩子 `data-nav-label` 是给测试定点的**（##373）：
+                                                                                            <span class="flex w-4 shrink-0 items-center justify-center">
+                                                                                                <Show
+                                                                                                    when={isSubPage()}
+                                                                                                    fallback={
+                                                                                                        <span
+                                                                                                            class={`w-1.5 h-1.5 rounded-full ${taskStateColor(findNode(taskStore.nodes, t.ctx ?? "")?.state)}`}
+                                                                                                            data-task-state-dot
+                                                                                                        />
+                                                                                                    }
+                                                                                                >
+                                                                                                    <span
+                                                                                                        class="font-mono text-caption opacity-80"
+                                                                                                        data-subpage-icon
+                                                                                                    >
+                                                                                                        {icon()}
+                                                                                                    </span>
+                                                                                                </Show>
+                                                                                            </span>
+                                                                                            {/* 内容（那行文字）。**语义钩子 `data-nav-label` 是给测试定点的**（##373）：
                                                                         行内**绝对定位的装饰节点**（##302 项目色条 left-0、##355 状态点）都排在它前面，
                                                                         而 `querySelector('span')` 取的是「第一个 span」= 实现序而非契约 ——
                                                                         ##302 插色条后，缩进用例量到色条（恒等于行左缘）→ `12 > 12` 恒红。
                                                                         要量内容的左边界就取它，别再按标签取第一个元素。 */}
-                                                                    <span class="truncate flex-1" data-nav-label>
-                                                                        {label()}
-                                                                    </span>
-                                                                    {/* 会话状态（##393）：nav 会话行、任务表行、详情、总览表格**同一个组件**
+                                                                                            <span
+                                                                                                class="truncate flex-1"
+                                                                                                data-nav-label
+                                                                                            >
+                                                                                                {label()}
+                                                                                            </span>
+                                                                                            {/* 会话状态（##393）：nav 会话行、任务表行、详情、总览表格**同一个组件**
                                                                         （components/SessionGlyph + lib/session-state）—— 用户 3.2 要的
                                                                         「对话中与 nav 会话列表一样的动画图标」在这里，不再是一句文字。 */}
-                                                                    <Show when={t.ctx}>
-                                                                        <SessionGlyph
-                                                                            uri={t.ctx!}
-                                                                            hasSession={findNode(taskStore.nodes, t.ctx!)?.has_session}
-                                                                            hasDraft={findNode(taskStore.nodes, t.ctx!)?.has_draft}
-                                                                        />
-                                                                    </Show>
-                                                                    {/* 置顶开关（##356 ②）：置顶项常显 📌（一眼看出为什么它在最上面），
+                                                                                            <Show when={t.ctx}>
+                                                                                                <SessionGlyph
+                                                                                                    uri={t.ctx!}
+                                                                                                    hasSession={
+                                                                                                        findNode(
+                                                                                                            taskStore.nodes,
+                                                                                                            t.ctx!,
+                                                                                                        )?.has_session
+                                                                                                    }
+                                                                                                    hasDraft={
+                                                                                                        findNode(
+                                                                                                            taskStore.nodes,
+                                                                                                            t.ctx!,
+                                                                                                        )?.has_draft
+                                                                                                    }
+                                                                                                />
+                                                                                            </Show>
+                                                                                            {/* 置顶开关（##356 ②）：置顶项常显 📌（一眼看出为什么它在最上面），
                                                                         普通项 hover 才显 📍。收起态（rail）不渲染 —— 40px 装不下，
                                                                         但排序与缩进在 rail 态同样生效。 */}
-                                                                    <button
-                                                                        class={`btn btn-ghost btn-xs px-1 shrink-0 ${
-                                                                            pinned()
-                                                                                ? "opacity-80 hover:!opacity-100"
-                                                                                : "opacity-0 group-hover:opacity-70 hover:!opacity-100"
-                                                                        }`}
-                                                                        title={pinned() ? "取消置顶" : "置顶（固定在上部）"}
-                                                                        data-testid="nav-tab-pin"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            navPinStore.toggle(t.key);
-                                                                        }}
-                                                                    >
-                                                                        {pinned() ? "📌" : "📍"}
-                                                                    </button>
-                                                                    <button
-                                                                        class="btn btn-ghost btn-xs px-1 opacity-0 group-hover:opacity-70 hover:!opacity-100 shrink-0"
-                                                                        title={isSubPage() ? "关闭该子页面" : "关闭（暂时不理会，不影响任务状态）"}
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            closeTab(t.key);
-                                                                        }}
-                                                                    >
-                                                                        ✕
-                                                                    </button>
-                                                                </div>
-                                                            </Show>
-                                                        </li>
-                                                        </>
+                                                                                            <button
+                                                                                                class={`btn btn-ghost btn-xs px-1 shrink-0 ${
+                                                                                                    pinned()
+                                                                                                        ? "opacity-80 hover:!opacity-100"
+                                                                                                        : "opacity-0 group-hover:opacity-70 hover:!opacity-100"
+                                                                                                }`}
+                                                                                                title={
+                                                                                                    pinned()
+                                                                                                        ? "取消置顶"
+                                                                                                        : "置顶（固定在上部）"
+                                                                                                }
+                                                                                                data-testid="nav-tab-pin"
+                                                                                                onClick={(e) => {
+                                                                                                    e.stopPropagation();
+                                                                                                    navPinStore.toggle(
+                                                                                                        t.key,
+                                                                                                    );
+                                                                                                }}
+                                                                                            >
+                                                                                                {pinned() ? "📌" : "📍"}
+                                                                                            </button>
+                                                                                            <button
+                                                                                                class="btn btn-ghost btn-xs px-1 opacity-0 group-hover:opacity-70 hover:!opacity-100 shrink-0"
+                                                                                                title={
+                                                                                                    isSubPage()
+                                                                                                        ? "关闭该子页面"
+                                                                                                        : "关闭（暂时不理会，不影响任务状态）"
+                                                                                                }
+                                                                                                onClick={(e) => {
+                                                                                                    e.stopPropagation();
+                                                                                                    closeTab(t.key);
+                                                                                                }}
+                                                                                            >
+                                                                                                ✕
+                                                                                            </button>
+                                                                                        </div>
+                                                                                    </Show>
+                                                                                </li>
+                                                                            </>
+                                                                        );
+                                                                    }}
+                                                                </For>
+                                                            </>
                                                         );
-                                                        }}
-                                                    </For>
-                                                </>
-                                                );
-                                            }}
-                                        </For>
-                                    </Show>
-                                    {/* ── 「会话」项下的会话列表（##358 D1/D2/D4/D5 合成一份）──────
+                                                    }}
+                                                </For>
+                                            </Show>
+                                            {/* ── 「会话」项下的会话列表（##358 D1/D2/D4/D5 合成一份）──────
                                         用户 2026-10-19 口径：「把待处理任务放到『会话』按钮下，去掉多余的修饰词
                                         『待你处理』『3』」「后台活动是啥？……去掉吧，进行中任务直接列在会话下，
                                         和待处理任务一起，**通过活动的状态来表达**」。
@@ -1846,114 +2000,123 @@ export default function App() {
                                         行集仍是三份数据的**并集**（有一笔账在等你 ∪ 在跑 ∪ 最近活动过 ——
                                         判据各自没变，变的是"怎么摆"），按"值不值得看"排序（`rankOf`）。
                                         收起态（rail 40px）不列行：那时主角标就是全部语义。 */}
-                                    <Show when={item.id === "sessions" && expanded()}>
-                                        <For each={navSessionList().items}>
-                                            {(i) => {
-                                                const r = () => i.row;
-                                                const go = () => {
-                                                    hideHoverLayers();
-                                                    collapseRail(); // 窄窗：浮层收回，把主区让给刚打开的会话
-                                                    getRendererActions().openTaskRun?.(r().uri);
-                                                };
-                                                const tip = () =>
-                                                    `${r().label}\n${i.why}${i.when ? `\n最后活动：${i.when}` : ""}\n（点一下 → 回到这个会话）`;
-                                                return (
-                                                    <li class="flex justify-center">
-                                                        <button
-                                                            class="group flex items-center gap-2 w-full pl-6 pr-2 py-1 rounded-lg text-body cursor-pointer hover:bg-base-300"
-                                                            title={tip()}
-                                                            data-nav-session={r().uri}
-                                                            data-nav-session-kind={i.kind}
-                                                            onClick={go}
-                                                        >
-                                                            {/* 会话状态图标（##393）：**与任务表 / 详情 / 总览同一个组件、同一套判据**
+                                            <Show when={item.id === "sessions" && expanded()}>
+                                                <For each={navSessionList().items}>
+                                                    {(i) => {
+                                                        const r = () => i.row;
+                                                        const go = () => {
+                                                            hideHoverLayers();
+                                                            collapseRail(); // 窄窗：浮层收回，把主区让给刚打开的会话
+                                                            getRendererActions().openTaskRun?.(r().uri);
+                                                        };
+                                                        const tip = () =>
+                                                            `${r().label}\n${i.why}${i.when ? `\n最后活动：${i.when}` : ""}\n（点一下 → 回到这个会话）`;
+                                                        return (
+                                                            <li class="flex justify-center">
+                                                                <button
+                                                                    class="group flex items-center gap-2 w-full pl-6 pr-2 py-1 rounded-lg text-body cursor-pointer hover:bg-base-300"
+                                                                    title={tip()}
+                                                                    data-nav-session={r().uri}
+                                                                    data-nav-session-kind={i.kind}
+                                                                    onClick={go}
+                                                                >
+                                                                    {/* 会话状态图标（##393）：**与任务表 / 详情 / 总览同一个组件、同一套判据**
                                                                （components/SessionGlyph + lib/session-state）。用户 3.3 要的「所有出现会话状态的
                                                                地方都一致」在这里是结构性的：nav 不再自己画圆点/光环。 */}
-                                                            <SessionGlyph uri={r().uri} size="sm" />
-                                                            <span class="truncate flex-1 text-left">{r().label}</span>
-                                                            {/* 时间用**相对格式**（`20h`），读 `nowMs()` ⇒ 每分钟自己往前走；
+                                                                    <SessionGlyph uri={r().uri} size="sm" />
+                                                                    <span class="truncate flex-1 text-left">
+                                                                        {r().label}
+                                                                    </span>
+                                                                    {/* 时间用**相对格式**（`20h`），读 `nowMs()` ⇒ 每分钟自己往前走；
                                                                 tooltip 里仍给绝对时刻（要精确时看那里）。 */}
-                                                            <span
-                                                                class="font-mono text-caption opacity-50 shrink-0"
-                                                                title={i.when ? `最后活动：${i.when}` : undefined}
-                                                                data-nav-session-ago={fmtAgo(r().lastTs, nowMs())}
-                                                            >
-                                                                {fmtAgo(r().lastTs, nowMs())}
-                                                            </span>
-                                                        </button>
+                                                                    <span
+                                                                        class="font-mono text-caption opacity-50 shrink-0"
+                                                                        title={
+                                                                            i.when ? `最后活动：${i.when}` : undefined
+                                                                        }
+                                                                        data-nav-session-ago={fmtAgo(
+                                                                            r().lastTs,
+                                                                            nowMs(),
+                                                                        )}
+                                                                    >
+                                                                        {fmtAgo(r().lastTs, nowMs())}
+                                                                    </span>
+                                                                </button>
+                                                            </li>
+                                                        );
+                                                    }}
+                                                </For>
+                                                {/* 表尾这句是**纯文本**（不是按钮）：点了没反应的控件才是问题 */}
+                                                <Show when={navSessionList().more > 0}>
+                                                    <li class="px-3 pb-1 text-caption opacity-50" data-nav-session-more>
+                                                        还有 {navSessionList().more} 条
                                                     </li>
-                                                );
-                                            }}
-                                        </For>
-                                        {/* 表尾这句是**纯文本**（不是按钮）：点了没反应的控件才是问题 */}
-                                        <Show when={navSessionList().more > 0}>
-                                            <li class="px-3 pb-1 text-caption opacity-50" data-nav-session-more>
-                                                还有 {navSessionList().more} 条
-                                            </li>
-                                        </Show>
-                                        {/* 「自动拉回」开关（D3 的 L2）——原先挂在「后台活动」区标题行上，区没了就搬到这里。
+                                                </Show>
+                                                {/* 「自动拉回」开关（D3 的 L2）——原先挂在「后台活动」区标题行上，区没了就搬到这里。
                                             它是**真按钮**（点了会变），不是装饰。 */}
-                                        <li class="flex items-center px-3 pt-1 pb-0.5">
-                                            <button
-                                                class="text-caption opacity-50 hover:opacity-100 cursor-pointer"
-                                                data-nav-autopull={alertPrefsStore.autoPull ? "on" : "off"}
-                                                title={
-                                                    alertPrefsStore.autoPull
-                                                        ? "自动拉回：开。只有「异常终止」和「有人在等你回复」会抢焦点开 tab；其余一律只提示。"
-                                                        : "自动拉回：关。现在一律只弹提示（带「回到」按钮），不抢焦点。"
-                                                }
-                                                onClick={() => alertPrefsStore.setAutoPull(!alertPrefsStore.autoPull)}
-                                            >
-                                                自动拉回 {alertPrefsStore.autoPull ? "开" : "关"}
-                                            </button>
-                                        </li>
-                                    </Show>
-                                </>
-                            )}
-                        </For>
-                    </div>
-                    {/* 右缘拖拽条：调宽 + 双击复位。收起态（rail）没有可调的宽度，不渲染 */}
-                    <Show when={expanded()}>
-                        <div
-                            class="absolute inset-y-0 right-0 w-1.5 cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-10"
-                            title="拖动调整侧栏宽度（双击复位）"
-                            onMouseDown={onNavGripDown}
-                            onDblClick={() => {
-                                setNavW(NAV_W_DEFAULT);
-                                Caches.diy_nav_width.set(NAV_W_DEFAULT);
-                            }}
-                        />
-                    </Show>
-                </div>
-            </div>
-            {/* 拖拽幽灵：跟随光标显示「正在拖的任务标题」（TaskTree 同款视觉） */}
-            <DragOverlay>
-                {(source) =>
-                    source?.data?.title ? (
-                        <div class="flex items-center px-3 py-1 text-prose bg-base-100 border rounded shadow-lg opacity-80 max-w-[200px] pointer-events-none select-none">
-                            <span class="truncate">{String(source.data.title)}</span>
-                            <span class="ml-2 text-body opacity-60">拖放改层级</span>
+                                                <li class="flex items-center px-3 pt-1 pb-0.5">
+                                                    <button
+                                                        class="text-caption opacity-50 hover:opacity-100 cursor-pointer"
+                                                        data-nav-autopull={alertPrefsStore.autoPull ? "on" : "off"}
+                                                        title={
+                                                            alertPrefsStore.autoPull
+                                                                ? "自动拉回：开。只有「异常终止」和「有人在等你回复」会抢焦点开 tab；其余一律只提示。"
+                                                                : "自动拉回：关。现在一律只弹提示（带「回到」按钮），不抢焦点。"
+                                                        }
+                                                        onClick={() =>
+                                                            alertPrefsStore.setAutoPull(!alertPrefsStore.autoPull)
+                                                        }
+                                                    >
+                                                        自动拉回 {alertPrefsStore.autoPull ? "开" : "关"}
+                                                    </button>
+                                                </li>
+                                            </Show>
+                                        </>
+                                    )}
+                                </For>
+                            </div>
+                            {/* 右缘拖拽条：调宽 + 双击复位。收起态（rail）没有可调的宽度，不渲染 */}
+                            <Show when={expanded()}>
+                                <div
+                                    class="absolute inset-y-0 right-0 w-1.5 cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-10"
+                                    title="拖动调整侧栏宽度（双击复位）"
+                                    onMouseDown={onNavGripDown}
+                                    onDblClick={() => {
+                                        setNavW(NAV_W_DEFAULT);
+                                        Caches.diy_nav_width.set(NAV_W_DEFAULT);
+                                    }}
+                                />
+                            </Show>
                         </div>
-                    ) : null
-                }
-            </DragOverlay>
-            </DragDropProvider>
+                    </div>
+                    {/* 拖拽幽灵：跟随光标显示「正在拖的任务标题」（TaskTree 同款视觉） */}
+                    <DragOverlay>
+                        {(source) =>
+                            source?.data?.title ? (
+                                <div class="flex items-center px-3 py-1 text-prose bg-base-100 border rounded shadow-lg opacity-80 max-w-[200px] pointer-events-none select-none">
+                                    <span class="truncate">{String(source.data.title)}</span>
+                                    <span class="ml-2 text-body opacity-60">拖放改层级</span>
+                                </div>
+                            ) : null
+                        }
+                    </DragOverlay>
+                </DragDropProvider>
 
-            {/* ⌘K 快速打开会话（##254）：结果单位是**任务**（diy 里任务与会话 1:1），
+                {/* ⌘K 快速打开会话（##254）：结果单位是**任务**（diy 里任务与会话 1:1），
                 选中即开/聚焦该任务的会话 tab —— 不经过任务管理详情。 */}
-            <NavSearch
-                open={navSearchOpen()}
-                onClose={() => setNavSearchOpen(false)}
-                onPick={(uri) => getRendererActions().openTaskRun?.(uri)}
-            />
+                <NavSearch
+                    open={navSearchOpen()}
+                    onClose={() => setNavSearchOpen(false)}
+                    onPick={(uri) => getRendererActions().openTaskRun?.(uri)}
+                />
 
-            {/* 全局审批弹窗（##500 续）：任何页面收到配对请求都弹，不依赖当前路由 */}
-            <HubApprovalCenter />
-            <ToastContainer />
-        </div>
-        {/* 全局侧边栏助手 room（##166 §30 / §31）：**独立于路由** ——
+                {/* 全局审批弹窗（##500 续）：任何页面收到配对请求都弹，不依赖当前路由 */}
+                <HubApprovalCenter />
+                <ToastContainer />
+            </div>
+            {/* 全局侧边栏助手 room（##166 §30 / §31）：**独立于路由** ——
             挂在 drawer 之外，免得 drawer 的布局/变换影响它的 fixed 定位。 */}
-        <SidebarRoom />
+            <SidebarRoom />
         </>
     );
 }

@@ -38,8 +38,12 @@ describe("toTierWhens（档触发条件的最后一道哨：models.dev 快照路
     /** 无时段表（快照路径的常态：上游不表达时段） */
     const NO_WINDOWS = {};
     it("context：顶层 size 与 data.size 都认（models.dev 原生 / diy 自相似两处）", () => {
-        expect(toTierWhens({ type: "context", size: 272_000 }, "m", NO_WINDOWS)).toEqual([{ kind: "context", size: 272_000 }]);
-        expect(toTierWhens({ type: "context", data: { size: 128_000 } }, "m", NO_WINDOWS)).toEqual([{ kind: "context", size: 128_000 }]);
+        expect(toTierWhens({ type: "context", size: 272_000 }, "m", NO_WINDOWS)).toEqual([
+            { kind: "context", size: 272_000 },
+        ]);
+        expect(toTierWhens({ type: "context", data: { size: 128_000 } }, "m", NO_WINDOWS)).toEqual([
+            { kind: "context", size: 128_000 },
+        ]);
     });
     it("context：size 非数字 / 缺失 / ≤0 → 丢档（放过就是「永远比不过」的死档，静默少收钱）", () => {
         for (const t of [
@@ -49,13 +53,42 @@ describe("toTierWhens（档触发条件的最后一道哨：models.dev 快照路
             { type: "context", size: 0 },
             { type: "context", size: -1 },
             { type: "context" },
-        ]) expect(toTierWhens(t, "m", NO_WINDOWS)).toEqual([]);
+        ])
+            expect(toTierWhens(t, "m", NO_WINDOWS)).toEqual([]);
     });
     it("utc-range：合法 → 归一成分钟 + 偏移（日历/标签可选）；缺偏移/偏移不一致 → 丢档", () => {
-        expect(toTierWhens({ type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: "CN-business-day", label: "peak" } }, "m", NO_WINDOWS))
-            .toEqual([{ kind: "utc-range", startMin: 60, endMin: 240, offsetMs: 8 * 3600_000, calendar: "CN-business-day", label: "peak" }]);
+        expect(
+            toTierWhens(
+                {
+                    type: "utc-range",
+                    data: {
+                        start: "01:00:00+08:00",
+                        end: "04:00:00+08:00",
+                        calendar: "CN-business-day",
+                        label: "peak",
+                    },
+                },
+                "m",
+                NO_WINDOWS,
+            ),
+        ).toEqual([
+            {
+                kind: "utc-range",
+                startMin: 60,
+                endMin: 240,
+                offsetMs: 8 * 3600_000,
+                calendar: "CN-business-day",
+                label: "peak",
+            },
+        ]);
         expect(toTierWhens({ type: "utc-range", data: { start: "01:00", end: "04:00" } }, "m", NO_WINDOWS)).toEqual([]); // 无偏移 = 歧义
-        expect(toTierWhens({ type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+09:00" } }, "m", NO_WINDOWS)).toEqual([]); // 两端不一致
+        expect(
+            toTierWhens(
+                { type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+09:00" } },
+                "m",
+                NO_WINDOWS,
+            ),
+        ).toEqual([]); // 两端不一致
     });
     it("utc-range + 具名时段表：一张表**多段 → 多条**窗（DeepSeek 峰就是两段）", () => {
         const windows = {
@@ -69,8 +102,22 @@ describe("toTierWhens（档触发条件的最后一道哨：models.dev 快照路
             },
         };
         expect(toTierWhens({ type: "utc-range", data: { window: "ds-peak" } }, "m", windows)).toEqual([
-            { kind: "utc-range", startMin: 60, endMin: 240, offsetMs: 0, calendar: "CN-mon-fri-ex-holiday", label: "peak" },
-            { kind: "utc-range", startMin: 360, endMin: 600, offsetMs: 0, calendar: "CN-mon-fri-ex-holiday", label: "peak" },
+            {
+                kind: "utc-range",
+                startMin: 60,
+                endMin: 240,
+                offsetMs: 0,
+                calendar: "CN-mon-fri-ex-holiday",
+                label: "peak",
+            },
+            {
+                kind: "utc-range",
+                startMin: 360,
+                endMin: 600,
+                offsetMs: 0,
+                calendar: "CN-mon-fri-ex-holiday",
+                label: "peak",
+            },
         ]);
     });
     it("utc-range + 具名时段表：表里没这个 id → 丢档（退 base 价，绝不静默按错档收）", () => {
@@ -214,8 +261,32 @@ describe("refreshModelRuntime（装配 snapshot ⊕ custom ⊕ model.yaml）", (
             cacheRead: 0.003,
             baseLabel: "off-peak",
             tiers: [
-                { when: { kind: "utc-range", startMin: 60, endMin: 240, offsetMs: 0, calendar: "CN-mon-fri-ex-holiday", label: "peak" }, input: 0.3, output: 1.2, cacheRead: 0.006 },
-                { when: { kind: "utc-range", startMin: 360, endMin: 600, offsetMs: 0, calendar: "CN-mon-fri-ex-holiday", label: "peak" }, input: 0.3, output: 1.2, cacheRead: 0.006 },
+                {
+                    when: {
+                        kind: "utc-range",
+                        startMin: 60,
+                        endMin: 240,
+                        offsetMs: 0,
+                        calendar: "CN-mon-fri-ex-holiday",
+                        label: "peak",
+                    },
+                    input: 0.3,
+                    output: 1.2,
+                    cacheRead: 0.006,
+                },
+                {
+                    when: {
+                        kind: "utc-range",
+                        startMin: 360,
+                        endMin: 600,
+                        offsetMs: 0,
+                        calendar: "CN-mon-fri-ex-holiday",
+                        label: "peak",
+                    },
+                    input: 0.3,
+                    output: 1.2,
+                    cacheRead: 0.006,
+                },
             ],
         });
         // 实际计费：2026-10-14（周三）02:00Z 落**峰段①**（01:00–04:00Z）→ 峰价；
@@ -335,7 +406,14 @@ describe("refreshModelRuntime（装配 snapshot ⊕ custom ⊕ model.yaml）", (
         expect(c.baseLabel).toBe("off-peak");
         expect(c.tiers).toEqual([
             {
-                when: { kind: "utc-range", startMin: 60, endMin: 240, offsetMs: 8 * 3600_000, calendar: "CN-business-day", label: "peak" },
+                when: {
+                    kind: "utc-range",
+                    startMin: 60,
+                    endMin: 240,
+                    offsetMs: 8 * 3600_000,
+                    calendar: "CN-business-day",
+                    label: "peak",
+                },
                 input: 0.5,
                 output: 3,
                 cacheRead: 0.1,

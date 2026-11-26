@@ -95,7 +95,8 @@ function promptText(model: MockLanguageModelV3, callIndex: number): string {
         const content = msg.content;
         if (typeof content === "string") out.push(content);
         else if (Array.isArray(content)) {
-            for (const part of content as Array<{ text?: string }>) if (typeof part.text === "string") out.push(part.text);
+            for (const part of content as Array<{ text?: string }>)
+                if (typeof part.text === "string") out.push(part.text);
         }
     }
     return out.join("\n");
@@ -141,7 +142,9 @@ describe("轮次中改配置：在途轮次用轮首快照，下一轮才用新�
         expect(JSON.stringify(((await mgr.requestView(uri)) as { messages: unknown[] }).messages)).toContain("第 1 句");
         // 改预算（= 新配置）→ 下一次请求（下一轮的轮首）即反映
         setBudget(0);
-        expect(JSON.stringify(((await mgr.requestView(uri)) as { messages: unknown[] }).messages)).not.toContain("第 1 句");
+        expect(JSON.stringify(((await mgr.requestView(uri)) as { messages: unknown[] }).messages)).not.toContain(
+            "第 1 句",
+        );
     });
 });
 

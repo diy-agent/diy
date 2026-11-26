@@ -36,7 +36,6 @@ export function stepsNow(e: SessionEntry): number {
     return e.totalSteps + (e.turn?.steps ?? 0);
 }
 
-
 /** 步数进度（`k/maxSteps`；`maxSteps` 未知时只给已跑步数，不编上限） */
 export interface StepsProgress {
     done: number;
@@ -56,8 +55,6 @@ export function stepsProgressOf(e: SessionEntry, maxSteps: number | null): Steps
         text: limit ? `${done}/${limit}` : `${done} 步`,
     };
 }
-
-
 
 /**
  * 「该不该先看」的位次（**越小越该看**）——排序与分组用同一把尺子。
@@ -144,7 +141,9 @@ export function tipOf(e: SessionEntry, maxSteps: number | null, now: number): st
         if (e.turn.model) lines.push(`模型：${e.turn.model}`);
         if (e.turn.state === "detached") lines.push("此刻无人观察（轮次仍在跑，##305）");
     } else {
-        lines.push(`已开始（此刻没在跑）：本进程内跑过 ${e.turnCount} 轮 / 累计 ${e.totalSteps} 步 · ${fmtTokens(e.totalTokens)} tokens`);
+        lines.push(
+            `已开始（此刻没在跑）：本进程内跑过 ${e.turnCount} 轮 / 累计 ${e.totalSteps} 步 · ${fmtTokens(e.totalTokens)} tokens`,
+        );
         const mark = endMarkOf(e.lastEndReason, false);
         if (mark.tip) lines.push(`上一轮：${mark.tip}`);
     }
@@ -314,8 +313,14 @@ export function overviewRowOf(i: OverviewRowInput): SessionOverviewRow | null {
     const totalTurns = Math.max(entry?.turnCount ?? 0, ledger?.turns ?? 0);
     const unread = i.seenTurns === null ? 0 : Math.max(0, totalTurns - i.seenTurns);
     // 0 不算事实（"读到且为 0" ≠ "累计为 0"）——与 TaskTree 的双源取大同一条规则
-    const steps = maxDefined(entry && stepsNow(entry) > 0 ? stepsNow(entry) : undefined, talked ? ledger!.steps : undefined);
-    const tokens = maxDefined(entry && entry.totalTokens > 0 ? entry.totalTokens : undefined, talked ? ledger!.tokens : undefined);
+    const steps = maxDefined(
+        entry && stepsNow(entry) > 0 ? stepsNow(entry) : undefined,
+        talked ? ledger!.steps : undefined,
+    );
+    const tokens = maxDefined(
+        entry && entry.totalTokens > 0 ? entry.totalTokens : undefined,
+        talked ? ledger!.tokens : undefined,
+    );
     const lastActivity = mergeTs(entry?.lastActivity, talked ? (ledger!.lastTs ?? undefined) : undefined);
     const cost = ledger ? ledger.cost : undefined;
     const base = {

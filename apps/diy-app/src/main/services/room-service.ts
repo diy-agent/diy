@@ -38,10 +38,7 @@ import {
 import { diyHome, getTask } from "../core/state";
 import { defaultPersonaId, listPersonas } from "../core/persona";
 import { DEFAULT_STEER_MODE } from "../../shared/steer-mode";
-import {
-    messageEntryOf,
-    noteInbox,
-} from "./inbox";
+import { messageEntryOf, noteInbox } from "./inbox";
 import {
     DEFAULT_CHANNEL_ID,
     deliveryPlanFor,
@@ -277,8 +274,9 @@ async function mirrorIntoTarget(input: {
         const target = await ensureRoomForTask(input.targetTaskUri);
         // 目标房间里「拥有那个会话」的成员 = 主人格（会话按 task 唯一 ⇒ 一轮跑在哪个 task，就归哪个房间的主人格）
         const owner =
-            target.members.find((m) => m.main === true && m.backend?.type === "task" && m.backend.data.taskUri === input.targetTaskUri) ??
-            target.members.find((m) => m.main === true);
+            target.members.find(
+                (m) => m.main === true && m.backend?.type === "task" && m.backend.data.taskUri === input.targetTaskUri,
+            ) ?? target.members.find((m) => m.main === true);
         const targetMemberId = owner?.id ?? MAIN_MEMBER_ID;
         // 幂等（review2 R1）：判据是「两条**各自**在不在」，不是「say 在」——
         // 补写比漏写安全（与「水位是优化」同族）：重复写没有意义，少一条就是永久缺一块。
@@ -306,7 +304,11 @@ async function mirrorIntoTarget(input: {
     } catch (e) {
         // 出口落盘（##411）：这里原来只是 console.warn —— 跨房间镜像写不进去的事实随时间丢失。
         // 只用 catch 作用域内可拿到的入参（`targetMemberId` 在 try 里算的，这里不能引）。
-        reportError(e, { where: "room/mirror-write-back", sourceRoomId: input.sourceRoomId, taskUri: input.targetTaskUri });
+        reportError(e, {
+            where: "room/mirror-write-back",
+            sourceRoomId: input.sourceRoomId,
+            taskUri: input.targetTaskUri,
+        });
         console.warn(`[room] 写回接收方房间失败（不影响投递）：${errText(e)}`);
     }
 }
@@ -385,9 +387,7 @@ function whyNotDeliverable(m: RoomMember | undefined, room: Pick<Room, "members"
         // 打错名字是最常见的一类（成员在界面上显示**人物名**，凭直觉打的短名未必命中）⇒ 直接给可选名
         // 候选清单走 `memberOptions`（一处真源，与 UI 提示同一份 —— ##377 review3 R1）
         const names = memberOptions(room);
-        return names.length > 0
-            ? `房间里没有这个成员（可选：${names.join(" / ")}）`
-            : "房间里没有这个成员";
+        return names.length > 0 ? `房间里没有这个成员（可选：${names.join(" / ")}）` : "房间里没有这个成员";
     }
     if (m.kind !== "agent") return "收件人是人（在场即送达），无需投给 agent";
     if (m.backend?.type !== "task") return "该成员没有 backend（没有会话可投）";
@@ -467,7 +467,16 @@ async function runAndCollect(
     return collectTurn(
         // 位次（##266 review1 R3.2）：① taskUri ② text ③ model ④ reasoningEffort ⑤ signal
         // ⑥ seed ⑦ origin —— 中间四个 `undefined` 依次是"按任务绑定的人物解析 / 不开信号 / 不用 seed"。
-        () => getLocalAgent().chat(taskUri, text, undefined, undefined, undefined, undefined, origin) as AsyncGenerator<Op>,
+        () =>
+            getLocalAgent().chat(
+                taskUri,
+                text,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                origin,
+            ) as AsyncGenerator<Op>,
     );
 }
 
@@ -511,8 +520,7 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
     const room = await ensureRoomForTask(roomId);
     const text = rawText.trim();
     // 空掏言 = 调用链前提被破（UI/CLI 本就该拦）—— 判 defect，别再当成未知异常
-    if (!text)
-        throw new InvariantError("agent/room-empty-message", "空发言：没内容可发（UI/CLI 应提前拦）");
+    if (!text) throw new InvariantError("agent/room-empty-message", "空发言：没内容可发（UI/CLI 应提前拦）");
 
     const human = humanOf(room);
     const author = human?.id ?? "human:unknown";
@@ -584,7 +592,9 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
                 text: "",
                 delivered: false,
                 error: why,
-                ...(m?.backend?.type === "task" && m.backend.data.taskUri ? { sourceTask: m.backend.data.taskUri } : {}),
+                ...(m?.backend?.type === "task" && m.backend.data.taskUri
+                    ? { sourceTask: m.backend.data.taskUri }
+                    : {}),
             });
             const st: DeliveryState = {
                 memberId: id,
@@ -598,13 +608,26 @@ export async function* postToRoom(roomId: string, rawText: string): AsyncGenerat
             immediate.push({ ...sayEvent, deliveries: [...states.values()] }, skip);
             continue;
         }
-        tasks.push(deliverOne({ roomId, room, sayId, member: m!, author, fromName, body, toAll, markState, done: (ev) => {
-            // 完成信号与回复事件分开计数（##377 第 27 刀）：忙时插进正在跑的那一轮 ⇒
-            // 这条投递**没有**属于自己的回复，但"办完了"必须算数，否则流永远不关闭。
-            if (ev) completed.push(ev);
-            finished++;
-            poke();
-        } }));
+        tasks.push(
+            deliverOne({
+                roomId,
+                room,
+                sayId,
+                member: m!,
+                author,
+                fromName,
+                body,
+                toAll,
+                markState,
+                done: (ev) => {
+                    // 完成信号与回复事件分开计数（##377 第 27 刀）：忙时插进正在跑的那一轮 ⇒
+                    // 这条投递**没有**属于自己的回复，但"办完了"必须算数，否则流永远不关闭。
+                    if (ev) completed.push(ev);
+                    finished++;
+                    poke();
+                },
+            }),
+        );
     }
     for (const ev of immediate) yield ev;
 

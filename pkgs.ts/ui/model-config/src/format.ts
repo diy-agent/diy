@@ -2,14 +2,14 @@
 //
 // 为什么不放 actions.ts：那边 import @diy-agent/model-catalog（node:fs / js-yaml），
 // renderer 的 esbuild 是 `--platform=browser`，带上它整包就编不过（##467 实测）。
-import type { AccountStateView, ModelView, SavedAccountView } from "./shared.js";
+import type { AccountStateView, ModelView, SavedAccountView } from './shared.js';
 
 /** 账号状态的一行文字 —— 只有长度 / 环境引用，永不回显原值 */
 export function accountLabel(account: AccountStateView): string {
-    if (!account.configured) return "未设置";
-    if (account.env) return "已设置（环境变量）";
+    if (!account.configured) return '未设置';
+    if (account.env) return '已设置（环境变量）';
     if (account.chars !== undefined) return `已设置（${account.chars} 字符）`;
-    return "已设置";
+    return '已设置';
 }
 
 /** 写后的账号提示（与 accountLabel 同一口径） */

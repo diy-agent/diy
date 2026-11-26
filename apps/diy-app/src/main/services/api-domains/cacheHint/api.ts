@@ -76,7 +76,6 @@ export const cacheHintRoutes = RpcSchema.group({
     },
 });
 
-
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
  * `server.use({ prefix: "diy", api: cacheHintApi, handlers: { cacheHint: … } })`

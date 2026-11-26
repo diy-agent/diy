@@ -13,44 +13,44 @@ import { fr, px, type Layout } from "./grid-layout";
 
 /** view 的类型定义（一份代码，不含任何实例状态） */
 export interface ViewDef {
-  id: string;
-  title: string;
-  /**
-   * 状态归属：
-   *  - global  — 单实例（如任务树）
-   *  - context — 每个 page 实例一个（如 per-task 的 chat：各持滚动位置/草稿/流式状态）
-   */
-  instanceScope: "global" | "context";
-  /**
-   * 能放到哪些 page、默认放哪个 area、同 area 内排序。
-   * **加 view 只改这一处**，不必去改任何 page —— 这是依赖倒置的全部收益。
-   */
-  placement: Record<string, ViewPlacement>;
+    id: string;
+    title: string;
+    /**
+     * 状态归属：
+     *  - global  — 单实例（如任务树）
+     *  - context — 每个 page 实例一个（如 per-task 的 chat：各持滚动位置/草稿/流式状态）
+     */
+    instanceScope: "global" | "context";
+    /**
+     * 能放到哪些 page、默认放哪个 area、同 area 内排序。
+     * **加 view 只改这一处**，不必去改任何 page —— 这是依赖倒置的全部收益。
+     */
+    placement: Record<string, ViewPlacement>;
 }
 
 export interface ViewPlacement {
-  area: string;
-  /** 同 area 内的展示顺序（小在前），缺省 0 */
-  order?: number;
+    area: string;
+    /** 同 area 内的展示顺序（小在前），缺省 0 */
+    order?: number;
 }
 
 /** page 定义：一类事情一个全布局。布局是**声明式固定**的，不允许动态 add view */
 export interface PageDef {
-  id: string;
-  title: string;
-  /**
-   * nav tab 图标（短字符）。缺省时由 tab 显示页面序号 —— 别在组件里特判 pageId（review RV-10）。
-   * **子页面 tab 就用它当行首标记**（代替任务的状态圆点，##350 ①）：子页面不是任务，
-   * 标任务状态会被读成"又一个任务"。故新子页面**应给 icon** —— 不给就退回序号，
-   * 看上去与任务 tab 的序号无异，正是本字段要消解的那种错觉。
-   */
-  icon?: string;
-  /** 是否可多开（任务执行页：每个任务一个实例，等同浏览器 tab） */
-  multi?: boolean;
-  /** 父 page id：有值 = 子页面（不进顶级导航，生命周期挂父 tab） */
-  parentPage?: string;
-  /** 开发者给的默认布局（用户覆盖是另一层数据） */
-  layout: Layout;
+    id: string;
+    title: string;
+    /**
+     * nav tab 图标（短字符）。缺省时由 tab 显示页面序号 —— 别在组件里特判 pageId（review RV-10）。
+     * **子页面 tab 就用它当行首标记**（代替任务的状态圆点，##350 ①）：子页面不是任务，
+     * 标任务状态会被读成"又一个任务"。故新子页面**应给 icon** —— 不给就退回序号，
+     * 看上去与任务 tab 的序号无异，正是本字段要消解的那种错觉。
+     */
+    icon?: string;
+    /** 是否可多开（任务执行页：每个任务一个实例，等同浏览器 tab） */
+    multi?: boolean;
+    /** 父 page id：有值 = 子页面（不进顶级导航，生命周期挂父 tab） */
+    parentPage?: string;
+    /** 开发者给的默认布局（用户覆盖是另一层数据） */
+    layout: Layout;
 }
 
 // ═══════════════════════════════════════════
@@ -58,176 +58,176 @@ export interface PageDef {
 // ═══════════════════════════════════════════
 
 export const VIEWS: ViewDef[] = [
-  {
-    id: "task.tree",
-    title: "任务树",
-    instanceScope: "global",
-    placement: { task: { area: "main", order: 10 } },
-  },
-  {
-    id: "task.detail",
-    title: "任务详情",
-    instanceScope: "context",
-    placement: { "task-run": { area: "left", order: 10 } },
-  },
-  {
-    // 提示词页的中心：编辑器。左树 / 右预览都是卫星
-    id: "lab.editor",
-    title: "编辑器",
-    instanceScope: "context",
-    placement: { lab: { area: "center", order: 10 } },
-  },
-  {
-    // 左侧一组折叠 view：模板树 / 结构树 / 变量定义 / 变量值
-    // （一个 area 装多个 view，用折叠框呈现 —— 与右栏的 tab 是同一机制的两个取值）
-    id: "lab.inspector",
-    title: "模板与变量",
-    instanceScope: "context",
-    placement: { lab: { area: "left", order: 10 } },
-  },
-  {
-    // 右栏：_system.md 渲染 / 请求预览 / 系统上下文 —— **一个 view**，内部三个可折叠块
-    // （与左栏 lab.inspector 同构）。不做成 area 内多个 view 或互斥 tab：
-    // 前者会平分高度、后者多一层页签，两种都是"每块只剩一小条"。
-    id: "lab.preview",
-    title: "预览",
-    instanceScope: "context",
-    placement: { lab: { area: "right", order: 10 } },
-  },
-  {
-    // 上下文树页（**独立子页面**，见下 PAGES 的 ctxlab）：两列 —— 结构树 | 请求预览
-    // 左：结构树（变量契约）。划分操作就在这里做（点选换容器），不另开一个"规则表"view
-    id: "ctxlab.structure",
-    title: "结构树",
-    instanceScope: "context",
-    placement: { ctxlab: { area: "left", order: 10 } },
-  },
-  {
-    // 中：请求预览 —— 整份请求的大 YAML（内嵌 system/runtime 文本就地解析展开；可切原文 JSON）
-    id: "ctxlab.delivery",
-    title: "预览",
-    instanceScope: "context",
-    placement: { ctxlab: { area: "center", order: 10 } },
-  },
-  {
-    // 泳道视图页（##320）：中心 = 轨迹折线（泳道 ≡ 节点 1:1，打回不新建节点）
-    id: "flow.stage",
-    title: "轨迹",
-    instanceScope: "context",
-    placement: { flow: { area: "center", order: 10 } },
-  },
-  {
-    // 同页右栏：节点详情（hint / guard / actor / art 三段链）+ 参数表单（按 schema 自动渲染）
-    id: "flow.inspector",
-    title: "节点与参数",
-    instanceScope: "context",
-    placement: { flow: { area: "right", order: 10 } },
-  },
-  {
-    // 同页右栏下部：打回讨论线程（##342）—— 锚点 = 折线上的**真打回边**，
-    // 与泳道图是**同一份事件流的两种投影**（打回不新建节点、讨论不占位置）。
-    // 数据只走 RPC（`flow thread list`）；旁注坏了只在面板里亮错误位（rule.core-log）。
-    id: "flow.dispute",
-    title: "讨论",
-    instanceScope: "context",
-    placement: { flow: { area: "right", order: 20 } },
-  },
-  {
-    // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）
-    // 这正是「靠 placement、不靠嵌套」的体现
-    id: "chat.local",
-    title: "对话",
-    instanceScope: "context",
-    placement: {
-      "task-run": { area: "center", order: 10 },
-      lab: { area: "bottom", order: 10 },
+    {
+        id: "task.tree",
+        title: "任务树",
+        instanceScope: "global",
+        placement: { task: { area: "main", order: 10 } },
     },
-  },
-  {
-    // 任务执行页右栏：**房间成员**（##166 §43.3 A / ##377 第 16 刀）。
-    // 任务恒是一个 room（§28.7 G）⇒ 房间 id 就是 taskUri；本 view 只负责取数
-    // （room.create 幂等 / room.get / room.roster）+ 三级的抽屉，成员列表本体复用
-    // `RoomRoster`（与侧边栏、房间页**同一份**，不复制）。
-    id: "room.roster",
-    title: "成员",
-    instanceScope: "context",
-    placement: { "task-run": { area: "right", order: 10 } },
-  },
-  {
-    // 任务执行页**底栏**：作业（##408 刀 6）—— 会话里跑出来的长时命令的列表 + 来源导航。
-    // 为什么是底栏而不是右栏（成员栏）：作业行要横着放「标题 · 来源 · 状态 · 耗时 · 摘要」四段，
-    // 320px 的右栏每行都会被挤成三行换行；底栏跨三列（colSpan 3）才有 `git --stat` 那样的行感。
-    // 也不新开一级导航页：作业是**某任务的**后台活（origin 指回该任务的某一轮），离开任务页就没有主语。
-    id: "job.runs",
-    title: "作业",
-    instanceScope: "context",
-    placement: { "task-run": { area: "bottom", order: 10 } },
-  },
-  {
-    id: "llm.proxy",
-    title: "LLM 代理",
-    instanceScope: "global",
-    placement: { llm: { area: "main", order: 10 } },
-  },
-  {
-    id: "settings.appinfo",
-    title: "状态",
-    instanceScope: "global",
-    placement: { settings: { area: "main", order: 10 } },
-  },
-  {
-    id: "settings.logs",
-    title: "日志",
-    instanceScope: "global",
-    placement: { settings: { area: "main", order: 20 } },
-  },
-  {
-    id: "settings.theme",
-    title: "外观",
-    instanceScope: "global",
-    placement: { settings: { area: "main", order: 30 } },
-  },
-  {
-    // 流量页左栏：基本信息（告警 + 完整记录开关 + 日志体积 + 查询条 + 请求表）
-    id: "traffic.list",
-    title: "请求列表",
-    instanceScope: "global",
-    placement: { traffic: { area: "left", order: 10 } },
-  },
-  {
-    // 流量页右栏：请求 / 响应编辑器（选中那条记录的概览 + 两个 JsonViewer）。
-    // 与左栏是**同一份状态的两种投影**（选中项在 state 里，两边各画一块），
-    // 故不用 context 型：整页只有一份"当前选中"，多实例反而各选各的。
-    id: "traffic.detail",
-    title: "请求 / 响应",
-    instanceScope: "global",
-    placement: { traffic: { area: "right", order: 10 } },
-  },
-  {
-    // 大脑页左栏：**这一次思考**的脑容量账（段 → 字节）+ 记分。
-    // 与上下文树的分工：那边回答"变量变了什么"，这边回答"这次思考的钱花在哪、值不值"。
-    id: "brain.budget",
-    title: "这次思考",
-    instanceScope: "context",
-    placement: { brain: { area: "left", order: 10 } },
-  },
-  {
-    // 大脑页中栏：**多步**的时间维度（脑容量曲线 + 形态 + 异常信号）。
-    // 与左栏同一份数据的两把尺：一次是快照，多次是趋势。
-    id: "brain.timeline",
-    title: "多步趋势",
-    instanceScope: "context",
-    placement: { brain: { area: "center", order: 10 } },
-  },
-  {
-    // 大脑页右栏：**发出去的消息（逐条审阅）**。
-    // 与左栏段账是同一份 messages 的两把尺：段账回答「字节是谁付的」，这里回答
-    // 「模型实际看到的那几条，逐字长什么样」（结构化 + `<>` 原文，同一次解析的两种投影）。
-    id: "brain.messages",
-    title: "发出去的消息",
-    instanceScope: "context",
-    placement: { brain: { area: "right", order: 10 } },
-  },
+    {
+        id: "task.detail",
+        title: "任务详情",
+        instanceScope: "context",
+        placement: { "task-run": { area: "left", order: 10 } },
+    },
+    {
+        // 提示词页的中心：编辑器。左树 / 右预览都是卫星
+        id: "lab.editor",
+        title: "编辑器",
+        instanceScope: "context",
+        placement: { lab: { area: "center", order: 10 } },
+    },
+    {
+        // 左侧一组折叠 view：模板树 / 结构树 / 变量定义 / 变量值
+        // （一个 area 装多个 view，用折叠框呈现 —— 与右栏的 tab 是同一机制的两个取值）
+        id: "lab.inspector",
+        title: "模板与变量",
+        instanceScope: "context",
+        placement: { lab: { area: "left", order: 10 } },
+    },
+    {
+        // 右栏：_system.md 渲染 / 请求预览 / 系统上下文 —— **一个 view**，内部三个可折叠块
+        // （与左栏 lab.inspector 同构）。不做成 area 内多个 view 或互斥 tab：
+        // 前者会平分高度、后者多一层页签，两种都是"每块只剩一小条"。
+        id: "lab.preview",
+        title: "预览",
+        instanceScope: "context",
+        placement: { lab: { area: "right", order: 10 } },
+    },
+    {
+        // 上下文树页（**独立子页面**，见下 PAGES 的 ctxlab）：两列 —— 结构树 | 请求预览
+        // 左：结构树（变量契约）。划分操作就在这里做（点选换容器），不另开一个"规则表"view
+        id: "ctxlab.structure",
+        title: "结构树",
+        instanceScope: "context",
+        placement: { ctxlab: { area: "left", order: 10 } },
+    },
+    {
+        // 中：请求预览 —— 整份请求的大 YAML（内嵌 system/runtime 文本就地解析展开；可切原文 JSON）
+        id: "ctxlab.delivery",
+        title: "预览",
+        instanceScope: "context",
+        placement: { ctxlab: { area: "center", order: 10 } },
+    },
+    {
+        // 泳道视图页（##320）：中心 = 轨迹折线（泳道 ≡ 节点 1:1，打回不新建节点）
+        id: "flow.stage",
+        title: "轨迹",
+        instanceScope: "context",
+        placement: { flow: { area: "center", order: 10 } },
+    },
+    {
+        // 同页右栏：节点详情（hint / guard / actor / art 三段链）+ 参数表单（按 schema 自动渲染）
+        id: "flow.inspector",
+        title: "节点与参数",
+        instanceScope: "context",
+        placement: { flow: { area: "right", order: 10 } },
+    },
+    {
+        // 同页右栏下部：打回讨论线程（##342）—— 锚点 = 折线上的**真打回边**，
+        // 与泳道图是**同一份事件流的两种投影**（打回不新建节点、讨论不占位置）。
+        // 数据只走 RPC（`flow thread list`）；旁注坏了只在面板里亮错误位（rule.core-log）。
+        id: "flow.dispute",
+        title: "讨论",
+        instanceScope: "context",
+        placement: { flow: { area: "right", order: 20 } },
+    },
+    {
+        // 边聊边调：与任务执行页是**同一个 view**，只是换个 area（卫星）
+        // 这正是「靠 placement、不靠嵌套」的体现
+        id: "chat.local",
+        title: "对话",
+        instanceScope: "context",
+        placement: {
+            "task-run": { area: "center", order: 10 },
+            lab: { area: "bottom", order: 10 },
+        },
+    },
+    {
+        // 任务执行页右栏：**房间成员**（##166 §43.3 A / ##377 第 16 刀）。
+        // 任务恒是一个 room（§28.7 G）⇒ 房间 id 就是 taskUri；本 view 只负责取数
+        // （room.create 幂等 / room.get / room.roster）+ 三级的抽屉，成员列表本体复用
+        // `RoomRoster`（与侧边栏、房间页**同一份**，不复制）。
+        id: "room.roster",
+        title: "成员",
+        instanceScope: "context",
+        placement: { "task-run": { area: "right", order: 10 } },
+    },
+    {
+        // 任务执行页**底栏**：作业（##408 刀 6）—— 会话里跑出来的长时命令的列表 + 来源导航。
+        // 为什么是底栏而不是右栏（成员栏）：作业行要横着放「标题 · 来源 · 状态 · 耗时 · 摘要」四段，
+        // 320px 的右栏每行都会被挤成三行换行；底栏跨三列（colSpan 3）才有 `git --stat` 那样的行感。
+        // 也不新开一级导航页：作业是**某任务的**后台活（origin 指回该任务的某一轮），离开任务页就没有主语。
+        id: "job.runs",
+        title: "作业",
+        instanceScope: "context",
+        placement: { "task-run": { area: "bottom", order: 10 } },
+    },
+    {
+        id: "llm.proxy",
+        title: "LLM 代理",
+        instanceScope: "global",
+        placement: { llm: { area: "main", order: 10 } },
+    },
+    {
+        id: "settings.appinfo",
+        title: "状态",
+        instanceScope: "global",
+        placement: { settings: { area: "main", order: 10 } },
+    },
+    {
+        id: "settings.logs",
+        title: "日志",
+        instanceScope: "global",
+        placement: { settings: { area: "main", order: 20 } },
+    },
+    {
+        id: "settings.theme",
+        title: "外观",
+        instanceScope: "global",
+        placement: { settings: { area: "main", order: 30 } },
+    },
+    {
+        // 流量页左栏：基本信息（告警 + 完整记录开关 + 日志体积 + 查询条 + 请求表）
+        id: "traffic.list",
+        title: "请求列表",
+        instanceScope: "global",
+        placement: { traffic: { area: "left", order: 10 } },
+    },
+    {
+        // 流量页右栏：请求 / 响应编辑器（选中那条记录的概览 + 两个 JsonViewer）。
+        // 与左栏是**同一份状态的两种投影**（选中项在 state 里，两边各画一块），
+        // 故不用 context 型：整页只有一份"当前选中"，多实例反而各选各的。
+        id: "traffic.detail",
+        title: "请求 / 响应",
+        instanceScope: "global",
+        placement: { traffic: { area: "right", order: 10 } },
+    },
+    {
+        // 大脑页左栏：**这一次思考**的脑容量账（段 → 字节）+ 记分。
+        // 与上下文树的分工：那边回答"变量变了什么"，这边回答"这次思考的钱花在哪、值不值"。
+        id: "brain.budget",
+        title: "这次思考",
+        instanceScope: "context",
+        placement: { brain: { area: "left", order: 10 } },
+    },
+    {
+        // 大脑页中栏：**多步**的时间维度（脑容量曲线 + 形态 + 异常信号）。
+        // 与左栏同一份数据的两把尺：一次是快照，多次是趋势。
+        id: "brain.timeline",
+        title: "多步趋势",
+        instanceScope: "context",
+        placement: { brain: { area: "center", order: 10 } },
+    },
+    {
+        // 大脑页右栏：**发出去的消息（逐条审阅）**。
+        // 与左栏段账是同一份 messages 的两把尺：段账回答「字节是谁付的」，这里回答
+        // 「模型实际看到的那几条，逐字长什么样」（结构化 + `<>` 原文，同一次解析的两种投影）。
+        id: "brain.messages",
+        title: "发出去的消息",
+        instanceScope: "context",
+        placement: { brain: { area: "right", order: 10 } },
+    },
 ];
 
 // ═══════════════════════════════════════════
@@ -236,15 +236,15 @@ export const VIEWS: ViewDef[] = [
 
 /** 任务执行页：左详情 | 中 chat | 右预留 | 底 devtools */
 export const TASK_RUN_LAYOUT: Layout = {
-  version: 1,
-  cols: [px(300), fr(1), px(320)], // 右栏 = 房间成员栏（##377 第 16 刀；原为 0 = 预留）
-  rows: [fr(1), px(320)], // 底栏高度；默认收起由 layoutStore 的 hidden 表达（不是把尺寸写 0）
-  areas: [
-    { id: "left", col: 0, row: 0 },
-    { id: "center", col: 1, row: 0 },
-    { id: "right", col: 2, row: 0 },
-    { id: "bottom", col: 0, row: 1, colSpan: 3 },
-  ],
+    version: 1,
+    cols: [px(300), fr(1), px(320)], // 右栏 = 房间成员栏（##377 第 16 刀；原为 0 = 预留）
+    rows: [fr(1), px(320)], // 底栏高度；默认收起由 layoutStore 的 hidden 表达（不是把尺寸写 0）
+    areas: [
+        { id: "left", col: 0, row: 0 },
+        { id: "center", col: 1, row: 0 },
+        { id: "right", col: 2, row: 0 },
+        { id: "bottom", col: 0, row: 1, colSpan: 3 },
+    ],
 };
 
 /**
@@ -256,156 +256,156 @@ export const TASK_RUN_LAYOUT: Layout = {
  * 且只在"用户从未动过本页布局"时生效（`layoutStore.hasUserLayout`）。
  */
 export const DEFAULT_HIDDEN: Record<string, string[]> = {
-  "task-run": ["right", "bottom"], // right（成员栏，多人任务由 TaskRunPage 自动展开）；bottom = devtools
-  lab: ["bottom"], // 提示词页的 chat 是卫星，默认不占地方
+    "task-run": ["right", "bottom"], // right（成员栏，多人任务由 TaskRunPage 自动展开）；bottom = devtools
+    lab: ["bottom"], // 提示词页的 chat 是卫星，默认不占地方
 };
 
 export const PAGES: PageDef[] = [
-  {
-    id: "task",
-    title: "任务",
-    layout: {
-      version: 1,
-      cols: [fr(1)],
-      rows: [fr(1)],
-      areas: [{ id: "main", col: 0, row: 0 }],
+    {
+        id: "task",
+        title: "任务",
+        layout: {
+            version: 1,
+            cols: [fr(1)],
+            rows: [fr(1)],
+            areas: [{ id: "main", col: 0, row: 0 }],
+        },
     },
-  },
-  {
-    id: "task-run",
-    title: "任务执行",
-    multi: true, // 每个任务一个实例
-    layout: TASK_RUN_LAYOUT,
-  },
-  {
-    // 提示词页：**子页面**（只能由任务执行页打开，不进顶级导航）。
-    // 中心 = 系统提示词编辑器；左右下都是卫星。
-    id: "lab",
-    title: "提示词",
-    icon: "L",
-    multi: true, // 每个任务一个实例（上下文键 = 任务 URI）
-    parentPage: "task-run", // 子页面：关掉任务对话 → 提示词页一并关闭
-    layout: {
-      version: 1,
-      cols: [px(300), fr(1), px(384)],
-      rows: [fr(1), px(0)], // 底部 chat 默认收起（卫星，按需展开）
-      areas: [
-        { id: "left", col: 0, row: 0 },
-        { id: "center", col: 1, row: 0 },
-        { id: "right", col: 2, row: 0 },
-        { id: "bottom", col: 0, row: 1, colSpan: 3 },
-      ],
+    {
+        id: "task-run",
+        title: "任务执行",
+        multi: true, // 每个任务一个实例
+        layout: TASK_RUN_LAYOUT,
     },
-  },
-  {
-    // 上下文树页：**独立子页面**，与提示词页（lab）平级挂在任务执行页之下。
-    // 单独开一个 tab 的理由：提示词页右栏已被既有 view 占满，塞进来会互抢空间、
-    // 也避免上下文树（整页是真实数据的另一种组织）与提示词预览互相抢空间。
-    id: "ctxlab",
-    title: "上下文树",
-    icon: "C", // 子页面 tab 的行首标记（##350 ①）：有它才不落到"页面序号"上、看着像个任务
-    multi: true, // 每个任务一个实例
-    parentPage: "task-run",
-    layout: {
-      version: 1,
-      // 两列：结构树（输入）| 请求预览（产出）
-      cols: [px(340), fr(1)],
-      rows: [fr(1)],
-      areas: [
-        { id: "left", col: 0, row: 0 },
-        { id: "center", col: 1, row: 0 },
-      ],
+    {
+        // 提示词页：**子页面**（只能由任务执行页打开，不进顶级导航）。
+        // 中心 = 系统提示词编辑器；左右下都是卫星。
+        id: "lab",
+        title: "提示词",
+        icon: "L",
+        multi: true, // 每个任务一个实例（上下文键 = 任务 URI）
+        parentPage: "task-run", // 子页面：关掉任务对话 → 提示词页一并关闭
+        layout: {
+            version: 1,
+            cols: [px(300), fr(1), px(384)],
+            rows: [fr(1), px(0)], // 底部 chat 默认收起（卫星，按需展开）
+            areas: [
+                { id: "left", col: 0, row: 0 },
+                { id: "center", col: 1, row: 0 },
+                { id: "right", col: 2, row: 0 },
+                { id: "bottom", col: 0, row: 1, colSpan: 3 },
+            ],
+        },
     },
-  },
-  {
-    // 大脑页：**独立子页面**，与上下文树页（ctxlab）平级挂在任务执行页之下。
-    // 为什么独立：上下文树是"变量树的一种组织"，大脑页是"脑容量 × 材料 × 时间"的跨维度视图；
-    // 塞进 ctxlab 会被它的树形交互带偏（用户 2026-10-23 拍板：独立 page、平行位置）。
-    // 记分**合并**在本页（不另开页）：结果（分）与原因（段账 / 历史占比）必须同一屏才说得清。
-    id: "brain",
-    title: "大脑",
-    icon: "B",
-    multi: true, // 每个任务一个实例
-    parentPage: "task-run",
-    layout: {
-      version: 1,
-      // 左：这次思考（段账 + 记分）| 中：多步趋势（曲线 + 信号）| 右：发出去的消息（逐条）
-      // 右栏而不是叠在中栏：消息列表天然是竖长条（40 条 × 卡片），叠起来会把趋势图挤没。
-      // 三栏都用「固定左 + 两个弹性」：右栏给死 px 会在 1024 宽窗口里把中栏压到几十像素
-      // （实测把发送框挤出屏幕）。左栏是段账表，宽度需求稳定；中/右都是长列表，弹性更合理。
-      cols: [px(340), fr(1), fr(1)],
-      rows: [fr(1)],
-      areas: [
-        { id: "left", col: 0, row: 0 },
-        { id: "center", col: 1, row: 0 },
-        { id: "right", col: 2, row: 0 },
-      ],
+    {
+        // 上下文树页：**独立子页面**，与提示词页（lab）平级挂在任务执行页之下。
+        // 单独开一个 tab 的理由：提示词页右栏已被既有 view 占满，塞进来会互抢空间、
+        // 也避免上下文树（整页是真实数据的另一种组织）与提示词预览互相抢空间。
+        id: "ctxlab",
+        title: "上下文树",
+        icon: "C", // 子页面 tab 的行首标记（##350 ①）：有它才不落到"页面序号"上、看着像个任务
+        multi: true, // 每个任务一个实例
+        parentPage: "task-run",
+        layout: {
+            version: 1,
+            // 两列：结构树（输入）| 请求预览（产出）
+            cols: [px(340), fr(1)],
+            rows: [fr(1)],
+            areas: [
+                { id: "left", col: 0, row: 0 },
+                { id: "center", col: 1, row: 0 },
+            ],
+        },
     },
-  },
-  {
-    // 泳道视图页（##320）：**独立子页面**（与提示词页 lab / 上下文树页 ctxlab 平级，
-    // 挂在任务执行页之下）。单独开 tab 的理由：泳道数 = 步骤数，折线要横向铺开 ——
-    // 塞进任务执行页会与 chat 抢空间，也会被既有 view 的折叠框挤成一条。
-    id: "flow",
-    title: "泳道",
-    icon: "W",
-    multi: true, // 每个任务一个实例（上下文键 = 任务 URI）
-    parentPage: "task-run",
-    layout: {
-      version: 1,
-      // 两列：泳道图（主）| 节点详情 + 参数表单
-      cols: [fr(1), px(380)],
-      rows: [fr(1)],
-      areas: [
-        { id: "center", col: 0, row: 0 },
-        { id: "right", col: 1, row: 0 },
-      ],
+    {
+        // 大脑页：**独立子页面**，与上下文树页（ctxlab）平级挂在任务执行页之下。
+        // 为什么独立：上下文树是"变量树的一种组织"，大脑页是"脑容量 × 材料 × 时间"的跨维度视图；
+        // 塞进 ctxlab 会被它的树形交互带偏（用户 2026-10-23 拍板：独立 page、平行位置）。
+        // 记分**合并**在本页（不另开页）：结果（分）与原因（段账 / 历史占比）必须同一屏才说得清。
+        id: "brain",
+        title: "大脑",
+        icon: "B",
+        multi: true, // 每个任务一个实例
+        parentPage: "task-run",
+        layout: {
+            version: 1,
+            // 左：这次思考（段账 + 记分）| 中：多步趋势（曲线 + 信号）| 右：发出去的消息（逐条）
+            // 右栏而不是叠在中栏：消息列表天然是竖长条（40 条 × 卡片），叠起来会把趋势图挤没。
+            // 三栏都用「固定左 + 两个弹性」：右栏给死 px 会在 1024 宽窗口里把中栏压到几十像素
+            // （实测把发送框挤出屏幕）。左栏是段账表，宽度需求稳定；中/右都是长列表，弹性更合理。
+            cols: [px(340), fr(1), fr(1)],
+            rows: [fr(1)],
+            areas: [
+                { id: "left", col: 0, row: 0 },
+                { id: "center", col: 1, row: 0 },
+                { id: "right", col: 2, row: 0 },
+            ],
+        },
     },
-  },
-  {
-    // 流量页（导航栏「流量」）：左 = 基本信息（列表），右 = 请求 / 响应编辑器。
-    // 走 ViewGrid 而非手拼 —— 与普通 page 一致：可控显隐 + 每个 view 可最大化 / 恢复（##133）。
-    id: "traffic",
-    title: "流量",
-    layout: {
-      version: 1,
-      // 列表列多（名称 / 类型 / 大小…），给它多一档宽度；右侧编辑器可拖（线是全局的）
-      cols: [fr(3), fr(2)],
-      rows: [fr(1)],
-      areas: [
-        { id: "left", col: 0, row: 0 },
-        { id: "right", col: 1, row: 0 },
-      ],
+    {
+        // 泳道视图页（##320）：**独立子页面**（与提示词页 lab / 上下文树页 ctxlab 平级，
+        // 挂在任务执行页之下）。单独开 tab 的理由：泳道数 = 步骤数，折线要横向铺开 ——
+        // 塞进任务执行页会与 chat 抢空间，也会被既有 view 的折叠框挤成一条。
+        id: "flow",
+        title: "泳道",
+        icon: "W",
+        multi: true, // 每个任务一个实例（上下文键 = 任务 URI）
+        parentPage: "task-run",
+        layout: {
+            version: 1,
+            // 两列：泳道图（主）| 节点详情 + 参数表单
+            cols: [fr(1), px(380)],
+            rows: [fr(1)],
+            areas: [
+                { id: "center", col: 0, row: 0 },
+                { id: "right", col: 1, row: 0 },
+            ],
+        },
     },
-  },
-  {
-    id: "llm",
-    title: "LLM",
-    layout: {
-      version: 1,
-      cols: [fr(1)],
-      rows: [fr(1)],
-      areas: [{ id: "main", col: 0, row: 0 }],
+    {
+        // 流量页（导航栏「流量」）：左 = 基本信息（列表），右 = 请求 / 响应编辑器。
+        // 走 ViewGrid 而非手拼 —— 与普通 page 一致：可控显隐 + 每个 view 可最大化 / 恢复（##133）。
+        id: "traffic",
+        title: "流量",
+        layout: {
+            version: 1,
+            // 列表列多（名称 / 类型 / 大小…），给它多一档宽度；右侧编辑器可拖（线是全局的）
+            cols: [fr(3), fr(2)],
+            rows: [fr(1)],
+            areas: [
+                { id: "left", col: 0, row: 0 },
+                { id: "right", col: 1, row: 0 },
+            ],
+        },
     },
-  },
-  {
-    id: "settings",
-    title: "设置",
-    layout: {
-      version: 1,
-      cols: [fr(1)],
-      rows: [fr(1)],
-      areas: [{ id: "main", col: 0, row: 0 }],
+    {
+        id: "llm",
+        title: "LLM",
+        layout: {
+            version: 1,
+            cols: [fr(1)],
+            rows: [fr(1)],
+            areas: [{ id: "main", col: 0, row: 0 }],
+        },
     },
-  },
+    {
+        id: "settings",
+        title: "设置",
+        layout: {
+            version: 1,
+            cols: [fr(1)],
+            rows: [fr(1)],
+            areas: [{ id: "main", col: 0, row: 0 }],
+        },
+    },
 ];
 
 export function findPage(id: string): PageDef | undefined {
-  return PAGES.find((p) => p.id === id);
+    return PAGES.find((p) => p.id === id);
 }
 
 export function findView(id: string): ViewDef | undefined {
-  return VIEWS.find((v) => v.id === id);
+    return VIEWS.find((v) => v.id === id);
 }
 
 // ═══════════════════════════════════════════
@@ -418,7 +418,7 @@ export function findView(id: string): ViewDef | undefined {
  * context → `viewId@上下文键`（上下文键由 **page 实例**提供，如任务 URI）
  */
 export function viewInstanceKey(def: ViewDef, ctx: string | null): string {
-  return def.instanceScope === "context" ? `${def.id}@${ctx ?? ""}` : def.id;
+    return def.instanceScope === "context" ? `${def.id}@${ctx ?? ""}` : def.id;
 }
 
 /** view 实例键 → 所在 area（null = 隐藏）。binding 独立成层，即使现在固定不动 */
@@ -429,18 +429,18 @@ export type Binding = Record<string, string | null>;
  * 这是「静态层」到「动态层」的唯一桥：之后用户改动只动 Binding，不碰注册表。
  */
 export function defaultBinding(page: PageDef, ctx: string | null, views: ViewDef[] = VIEWS): Binding {
-  const b: Binding = {};
-  for (const def of views) {
-    const place = def.placement[page.id];
-    if (!place) continue; // 该 view 不允许进本 page（page 白名单效果由 placement 承担）
-    b[viewInstanceKey(def, ctx)] = place.area;
-  }
-  return b;
+    const b: Binding = {};
+    for (const def of views) {
+        const place = def.placement[page.id];
+        if (!place) continue; // 该 view 不允许进本 page（page 白名单效果由 placement 承担）
+        b[viewInstanceKey(def, ctx)] = place.area;
+    }
+    return b;
 }
 
 /** 某 view（实例）在本 page 的排序值 */
 export function placementOrder(def: ViewDef, pageId: string): number {
-  return def.placement[pageId]?.order ?? 0;
+    return def.placement[pageId]?.order ?? 0;
 }
 
 // ═══════════════════════════════════════════
@@ -448,9 +448,9 @@ export function placementOrder(def: ViewDef, pageId: string): number {
 // ═══════════════════════════════════════════
 
 export interface AreaGroup {
-  areaId: string;
-  /** 该 area 内的 view，已按 order 排序 */
-  views: ViewDef[];
+    areaId: string;
+    /** 该 area 内的 view，已按 order 排序 */
+    views: ViewDef[];
 }
 
 /**
@@ -462,31 +462,29 @@ export interface AreaGroup {
  *  3. 输出顺序 = layout.areas 的声明顺序（几何顺序），area 内按 order —— 与视觉一致
  */
 export function groupViewsByArea(
-  page: PageDef,
-  ctx: string | null,
-  binding: Binding,
-  views: ViewDef[] = VIEWS,
+    page: PageDef,
+    ctx: string | null,
+    binding: Binding,
+    views: ViewDef[] = VIEWS,
 ): AreaGroup[] {
-  const groups = new Map<string, ViewDef[]>();
-  for (const def of views) {
-    const place = def.placement[page.id];
-    if (!place) continue; // 不允许进本 page
-    const key = viewInstanceKey(def, ctx);
-    const areaId = binding[key] === undefined ? place.area : binding[key];
-    if (areaId === null) continue; // 显式隐藏
-    if (!page.layout.areas.some((a) => a.id === areaId)) continue; // 防御：area 已不存在
-    const list = groups.get(areaId) ?? [];
-    list.push(def);
-    groups.set(areaId, list);
-  }
-  return page.layout.areas
-    .filter((a) => groups.has(a.id))
-    .map((a) => ({
-      areaId: a.id,
-      views: [...groups.get(a.id)!].sort(
-        (x, y) => placementOrder(x, page.id) - placementOrder(y, page.id),
-      ),
-    }));
+    const groups = new Map<string, ViewDef[]>();
+    for (const def of views) {
+        const place = def.placement[page.id];
+        if (!place) continue; // 不允许进本 page
+        const key = viewInstanceKey(def, ctx);
+        const areaId = binding[key] === undefined ? place.area : binding[key];
+        if (areaId === null) continue; // 显式隐藏
+        if (!page.layout.areas.some((a) => a.id === areaId)) continue; // 防御：area 已不存在
+        const list = groups.get(areaId) ?? [];
+        list.push(def);
+        groups.set(areaId, list);
+    }
+    return page.layout.areas
+        .filter((a) => groups.has(a.id))
+        .map((a) => ({
+            areaId: a.id,
+            views: [...groups.get(a.id)!].sort((x, y) => placementOrder(x, page.id) - placementOrder(y, page.id)),
+        }));
 }
 
 /**
@@ -497,24 +495,24 @@ export function groupViewsByArea(
  * 放在 shared 是为了 CLI/渲染层用同一份判据（而不是各写一套 if）。
  */
 export function checkViewTarget(
-  viewId: string,
-  pageId: string,
-  ctx: string | null,
-  views: ViewDef[] = VIEWS,
-  pages: PageDef[] = PAGES,
+    viewId: string,
+    pageId: string,
+    ctx: string | null,
+    views: ViewDef[] = VIEWS,
+    pages: PageDef[] = PAGES,
 ): string | null {
-  const def = findView(viewId); // 注意：findView 只认真注册表，故此处不用 views 参数
-  if (!def) return `未知 view: ${viewId}`;
-  const page = pages.find((p) => p.id === pageId);
-  if (!page) return `未知 page: ${pageId}`;
-  if (!def.placement[pageId]) return `view ${viewId} 不允许放在 page ${pageId}`;
-  if (def.instanceScope === "context" && !ctx) {
-    return `view ${viewId} 是 context 型，必须给上下文键（--ctx，如任务 URI）`;
-  }
-  if (def.instanceScope === "global" && ctx) {
-    return `view ${viewId} 是 global 型，不该给 --ctx`;
-  }
-  return null;
+    const def = findView(viewId); // 注意：findView 只认真注册表，故此处不用 views 参数
+    if (!def) return `未知 view: ${viewId}`;
+    const page = pages.find((p) => p.id === pageId);
+    if (!page) return `未知 page: ${pageId}`;
+    if (!def.placement[pageId]) return `view ${viewId} 不允许放在 page ${pageId}`;
+    if (def.instanceScope === "context" && !ctx) {
+        return `view ${viewId} 是 context 型，必须给上下文键（--ctx，如任务 URI）`;
+    }
+    if (def.instanceScope === "global" && ctx) {
+        return `view ${viewId} 是 global 型，不该给 --ctx`;
+    }
+    return null;
 }
 
 /**
@@ -525,14 +523,14 @@ export function checkViewTarget(
  * 纯函数，可单测、可被 CLI 复用。
  */
 export function applyHiddenViews(binding: Binding, hiddenViews: Record<string, boolean>): Binding {
-  const hidden = Object.keys(hiddenViews).filter((k) => hiddenViews[k]);
-  if (hidden.length === 0) return binding;
-  const out: Binding = { ...binding };
-  for (const k of hidden) {
-    // 只对**本 binding 里存在**的键生效：脏数据里的陌生键不该凭空造出条目
-    if (k in out) out[k] = null;
-  }
-  return out;
+    const hidden = Object.keys(hiddenViews).filter((k) => hiddenViews[k]);
+    if (hidden.length === 0) return binding;
+    const out: Binding = { ...binding };
+    for (const k of hidden) {
+        // 只对**本 binding 里存在**的键生效：脏数据里的陌生键不该凭空造出条目
+        if (k in out) out[k] = null;
+    }
+    return out;
 }
 
 /**
@@ -545,12 +543,12 @@ export function applyHiddenViews(binding: Binding, hiddenViews: Record<string, b
  * 故本函数基于 groupViewsByArea（只看 binding 的隐藏/null 语义），不掺 area 开合态。
  */
 export function areasWithViews(
-  page: PageDef,
-  ctx: string | null,
-  binding: Binding,
-  views: ViewDef[] = VIEWS,
+    page: PageDef,
+    ctx: string | null,
+    binding: Binding,
+    views: ViewDef[] = VIEWS,
 ): Set<string> {
-  return new Set(groupViewsByArea(page, ctx, binding, views).map((g) => g.areaId));
+    return new Set(groupViewsByArea(page, ctx, binding, views).map((g) => g.areaId));
 }
 
 // ═══════════════════════════════════════════
@@ -563,15 +561,10 @@ export function areasWithViews(
  * 用途：判定"左右两块是哪两块"这类**归属问题**（如流量页左=列表、右=编辑器），
  * 以及测试里断言注册表本身没写错。返回 null = 该 view 不来本 page。
  */
-export function viewAreaId(
-  page: PageDef,
-  viewId: string,
-  ctx: string | null,
-  views: ViewDef[] = VIEWS,
-): string | null {
-  void ctx; // 归属只由 placement 决定（实例键才用 ctx），保留参数与 groupViewsByArea 同形
-  const def = views.find((v) => v.id === viewId);
-  return def?.placement[page.id]?.area ?? null;
+export function viewAreaId(page: PageDef, viewId: string, ctx: string | null, views: ViewDef[] = VIEWS): string | null {
+    void ctx; // 归属只由 placement 决定（实例键才用 ctx），保留参数与 groupViewsByArea 同形
+    const def = views.find((v) => v.id === viewId);
+    return def?.placement[page.id]?.area ?? null;
 }
 
 /**
@@ -581,24 +574,24 @@ export function viewAreaId(
  * 这是 shared 层，不能反向依赖 renderer 的 store 类型 —— 由结构兼容自动满足。
  */
 export interface AreaOpenState {
-  /** areaId → 隐藏（最小化）；缺省 = 显示 */
-  hidden: Record<string, boolean>;
-  /** 被最大化的 area id；null = 正常网格 */
-  maximized: string | null;
+    /** areaId → 隐藏（最小化）；缺省 = 显示 */
+    hidden: Record<string, boolean>;
+    /** 被最大化的 area id；null = 正常网格 */
+    maximized: string | null;
 }
 
 /** 一次渲染要画什么：可见 area、生效的最大化 area、被最大化挤掉的 area */
 export interface PageViewPlan {
-  /** 有 view 且**未被最小化**的 area，按 layout.areas 声明顺序（= 几何顺序） */
-  visibleAreaIds: string[];
-  /**
-   * **生效的**最大化 area。
-   * 用户态里记的那个若不可见（被最小化 / area 已不存在 / 本就无 view）→ null（退回网格）。
-   * 即"最大化"不是一个可以指向空气的状态。
-   */
-  maximizedAreaId: string | null;
-  /** 最大化期间不渲染的其它可见 area（最大化→还原时原样回来） */
-  suppressedAreaIds: string[];
+    /** 有 view 且**未被最小化**的 area，按 layout.areas 声明顺序（= 几何顺序） */
+    visibleAreaIds: string[];
+    /**
+     * **生效的**最大化 area。
+     * 用户态里记的那个若不可见（被最小化 / area 已不存在 / 本就无 view）→ null（退回网格）。
+     * 即"最大化"不是一个可以指向空气的状态。
+     */
+    maximizedAreaId: string | null;
+    /** 最大化期间不渲染的其它可见 area（最大化→还原时原样回来） */
+    suppressedAreaIds: string[];
 }
 
 /**
@@ -609,23 +602,22 @@ export interface PageViewPlan {
  * 留在组件里就只能靠 CDP 肉眼验（##351 review2 R2）。
  */
 export function planPageViews(
-  page: PageDef,
-  ctx: string | null,
-  binding: Binding,
-  state: AreaOpenState,
-  views: ViewDef[] = VIEWS,
+    page: PageDef,
+    ctx: string | null,
+    binding: Binding,
+    state: AreaOpenState,
+    views: ViewDef[] = VIEWS,
 ): PageViewPlan {
-  const withViews = areasWithViews(page, ctx, binding, views);
-  const visibleAreaIds = page.layout.areas
-    .map((a) => a.id)
-    .filter((id) => withViews.has(id) && state.hidden[id] !== true);
-  const maximizedAreaId =
-    state.maximized && visibleAreaIds.includes(state.maximized) ? state.maximized : null;
-  return {
-    visibleAreaIds,
-    maximizedAreaId,
-    suppressedAreaIds: maximizedAreaId ? visibleAreaIds.filter((id) => id !== maximizedAreaId) : [],
-  };
+    const withViews = areasWithViews(page, ctx, binding, views);
+    const visibleAreaIds = page.layout.areas
+        .map((a) => a.id)
+        .filter((id) => withViews.has(id) && state.hidden[id] !== true);
+    const maximizedAreaId = state.maximized && visibleAreaIds.includes(state.maximized) ? state.maximized : null;
+    return {
+        visibleAreaIds,
+        maximizedAreaId,
+        suppressedAreaIds: maximizedAreaId ? visibleAreaIds.filter((id) => id !== maximizedAreaId) : [],
+    };
 }
 
 // ═══════════════════════════════════════════
@@ -633,66 +625,63 @@ export function planPageViews(
 // ═══════════════════════════════════════════
 
 export interface RegistryError {
-  path: string;
-  msg: string;
+    path: string;
+    msg: string;
 }
 
 /**
  * 校验注册表自洽：id 唯一、placement 指向存在的 page、area 存在于该 page 的 layout。
  * 依赖倒置的代价是「写错 view 名/area 名不会有类型错误」——故用本函数在单测里兜住。
  */
-export function validateRegistry(
-  views: ViewDef[] = VIEWS,
-  pages: PageDef[] = PAGES,
-): RegistryError[] {
-  const errs: RegistryError[] = [];
-  const viewIds = new Set<string>();
+export function validateRegistry(views: ViewDef[] = VIEWS, pages: PageDef[] = PAGES): RegistryError[] {
+    const errs: RegistryError[] = [];
+    const viewIds = new Set<string>();
 
-  views.forEach((v, i) => {
-    const at = (f: string) => `views[${i}].${f}`;
-    if (!v.id || v.id.trim() === "") errs.push({ path: at("id"), msg: "id 必须非空" });
-    else if (viewIds.has(v.id)) errs.push({ path: at("id"), msg: `id 重复: ${v.id}` });
-    else viewIds.add(v.id);
-    if (v.instanceScope !== "global" && v.instanceScope !== "context") {
-      errs.push({ path: at("instanceScope"), msg: "必须是 global 或 context" });
-    }
-    for (const [pageId, place] of Object.entries(v.placement ?? {})) {
-      const page = pages.find((p) => p.id === pageId);
-      if (!page) {
-        errs.push({ path: at(`placement.${pageId}`), msg: `page 不存在: ${pageId}` });
-        continue;
-      }
-      const area = page.layout.areas.find((a) => a.id === place.area);
-      if (!area) {
-        errs.push({
-          path: at(`placement.${pageId}.area`),
-          msg: `area「${place.area}」不存在于 page「${pageId}」的 layout`,
-        });
-      }
-    }
-  });
+    views.forEach((v, i) => {
+        const at = (f: string) => `views[${i}].${f}`;
+        if (!v.id || v.id.trim() === "") errs.push({ path: at("id"), msg: "id 必须非空" });
+        else if (viewIds.has(v.id)) errs.push({ path: at("id"), msg: `id 重复: ${v.id}` });
+        else viewIds.add(v.id);
+        if (v.instanceScope !== "global" && v.instanceScope !== "context") {
+            errs.push({ path: at("instanceScope"), msg: "必须是 global 或 context" });
+        }
+        for (const [pageId, place] of Object.entries(v.placement ?? {})) {
+            const page = pages.find((p) => p.id === pageId);
+            if (!page) {
+                errs.push({ path: at(`placement.${pageId}`), msg: `page 不存在: ${pageId}` });
+                continue;
+            }
+            const area = page.layout.areas.find((a) => a.id === place.area);
+            if (!area) {
+                errs.push({
+                    path: at(`placement.${pageId}.area`),
+                    msg: `area「${place.area}」不存在于 page「${pageId}」的 layout`,
+                });
+            }
+        }
+    });
 
-  // page 级：view 的 placement 里出现未知 page 已在上面覆盖；
-  // 这里检查同一 page 内没有重名 area（renderer 按 id 分组渲染，重名会互相覆盖）
-  pages.forEach((p, i) => {
-    const seen = new Set<string>();
-    for (const a of p.layout.areas) {
-      if (seen.has(a.id)) errs.push({ path: `pages[${i}].layout.areas`, msg: `area id 重复: ${a.id}` });
-      seen.add(a.id);
-    }
-    // 子页面（有 parentPage）**必须**有 icon：没有它 tab 行首就退回"页面序号"，
-    // 与任务 tab 的序号一模一样 —— 正是 ##350 ① 要消解的"子页面看着像任务"错觉。
-    // 靠人记不住（R1 实测：clab 补完就以为治好了，存量靠肉眼核），故升成注册表不变量。
-    if (p.parentPage && !p.icon?.trim()) {
-      errs.push({
-        path: `pages[${i}].icon`,
-        msg: `子页面「${p.id}」缺 icon（##350 ①）：无 icon 会退回页面序号，tab 上看不出它是页面还是任务`,
-      });
-    }
-    if (p.parentPage && !pages.some((q) => q.id === p.parentPage)) {
-      errs.push({ path: `pages[${i}].parentPage`, msg: `父页面不存在: ${p.parentPage}` });
-    }
-  });
+    // page 级：view 的 placement 里出现未知 page 已在上面覆盖；
+    // 这里检查同一 page 内没有重名 area（renderer 按 id 分组渲染，重名会互相覆盖）
+    pages.forEach((p, i) => {
+        const seen = new Set<string>();
+        for (const a of p.layout.areas) {
+            if (seen.has(a.id)) errs.push({ path: `pages[${i}].layout.areas`, msg: `area id 重复: ${a.id}` });
+            seen.add(a.id);
+        }
+        // 子页面（有 parentPage）**必须**有 icon：没有它 tab 行首就退回"页面序号"，
+        // 与任务 tab 的序号一模一样 —— 正是 ##350 ① 要消解的"子页面看着像任务"错觉。
+        // 靠人记不住（R1 实测：clab 补完就以为治好了，存量靠肉眼核），故升成注册表不变量。
+        if (p.parentPage && !p.icon?.trim()) {
+            errs.push({
+                path: `pages[${i}].icon`,
+                msg: `子页面「${p.id}」缺 icon（##350 ①）：无 icon 会退回页面序号，tab 上看不出它是页面还是任务`,
+            });
+        }
+        if (p.parentPage && !pages.some((q) => q.id === p.parentPage)) {
+            errs.push({ path: `pages[${i}].parentPage`, msg: `父页面不存在: ${p.parentPage}` });
+        }
+    });
 
-  return errs;
+    return errs;
 }

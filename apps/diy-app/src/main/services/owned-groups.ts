@@ -86,7 +86,10 @@ export function applyLoaded(map: Map<number, GroupOwner>, raw: unknown, bootAt?:
         if (bootAt !== undefined && at < bootAt - BOOT_SKEW_MS) continue;
         map.set(pgid, {
             at,
-            createdAt: typeof (o as { createdAt?: unknown }).createdAt === "number" ? (o as { createdAt: number }).createdAt : at,
+            createdAt:
+                typeof (o as { createdAt?: unknown }).createdAt === "number"
+                    ? (o as { createdAt: number }).createdAt
+                    : at,
             command: o.command,
             cwd: typeof o.cwd === "string" ? o.cwd : "",
             ...(typeof o.runId === "string" ? { runId: o.runId } : {}),

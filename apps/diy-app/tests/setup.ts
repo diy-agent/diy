@@ -87,17 +87,21 @@ writeFileSync(
 // 竞态无害：多 worker 同时判旧 → 各自扫一遍（清扫本身 try/catch 容错、重复扫幂等）。
 // stamp 名不带本套件前缀 ⇒ 任何一次 sweep 都不会把它当目标。
 {
-  const stamp = join(tmpdir(), ".diy-test-home-sweep-stamp");
-  const SWEEP_EVERY_MS = 60_000;
-  let due = true;
-  try {
-    due = Date.now() - statSync(stamp).mtimeMs > SWEEP_EVERY_MS;
-  } catch {
-    /* 没有 stamp / 读不了 → 该扫 */
-  }
-  if (due) {
-    try { writeFileSync(stamp, ""); } catch { /* 写不了不影响清扫；最多多扫几次 */ }
-    const n = sweepStaleTestHomes();
-    if (n > 0) console.log(`[setup] 清扫 ${n} 个过期测试临时目录（>24h）`);
-  }
+    const stamp = join(tmpdir(), ".diy-test-home-sweep-stamp");
+    const SWEEP_EVERY_MS = 60_000;
+    let due = true;
+    try {
+        due = Date.now() - statSync(stamp).mtimeMs > SWEEP_EVERY_MS;
+    } catch {
+        /* 没有 stamp / 读不了 → 该扫 */
+    }
+    if (due) {
+        try {
+            writeFileSync(stamp, "");
+        } catch {
+            /* 写不了不影响清扫；最多多扫几次 */
+        }
+        const n = sweepStaleTestHomes();
+        if (n > 0) console.log(`[setup] 清扫 ${n} 个过期测试临时目录（>24h）`);
+    }
 }

@@ -30,7 +30,12 @@ const ds = OPENCODE_GO_SNAPSHOT.find((m) => m.id === AMBIGUOUS_ID)!;
 const CATALOG: ResolvedModel[] = [
     ...OPENCODE_GO_SNAPSHOT,
     // 第二家 provider 收录同一个裸 id（这就是「裸 id 歧义」的成因）
-    { ...ds, provider: "opencode", ref: `0@opencode/${AMBIGUOUS_ID}`, cost: { input: 9.99, output: 9.99, cacheRead: 0.999 } },
+    {
+        ...ds,
+        provider: "opencode",
+        ref: `0@opencode/${AMBIGUOUS_ID}`,
+        cost: { input: 9.99, output: 9.99, cacheRead: 0.999 },
+    },
     // opencode-go 下的第二个账号：**元数据一致**（同 provider 多账号 → 优先本账号，价相同）
     { ...ds, account: "work", ref: `work@opencode-go/${AMBIGUOUS_ID}` },
 ];
@@ -57,7 +62,10 @@ describe("respondedIdCandidates：回执的三种形状都要能剥到 catalog �
         expect(respondedIdCandidates(`deepseek/${AMBIGUOUS_ID}`)).toEqual([`deepseek/${AMBIGUOUS_ID}`, AMBIGUOUS_ID]);
     });
     it("完全限定名 → 追加 model 段", () => {
-        expect(respondedIdCandidates(`0@opencode-go/${AMBIGUOUS_ID}`)).toEqual([`0@opencode-go/${AMBIGUOUS_ID}`, AMBIGUOUS_ID]);
+        expect(respondedIdCandidates(`0@opencode-go/${AMBIGUOUS_ID}`)).toEqual([
+            `0@opencode-go/${AMBIGUOUS_ID}`,
+            AMBIGUOUS_ID,
+        ]);
     });
     it("自带 / 的 id 原样排第一（不能被 vendor 规则抢先剥掉）", () => {
         expect(respondedIdCandidates("xiaomi/mimo-v2.6-flash")[0]).toBe("xiaomi/mimo-v2.6-flash");

@@ -111,11 +111,7 @@ export interface ChatClient {
     sessions?(entityId: string): Promise<SessionInfo[]>;
 
     /** 可选：手动压缩某个 bot 的上下文（只影响它自己，不触发运行） */
-    compact?(
-        entityId: string,
-        botId: string,
-        options?: { keepTurns?: number },
-    ): Promise<CompactOutcome>;
+    compact?(entityId: string, botId: string, options?: { keepTurns?: number }): Promise<CompactOutcome>;
 
     /**
      * 可选：撤掉一次正在跑的压缩。

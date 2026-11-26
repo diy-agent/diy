@@ -66,9 +66,7 @@ describe("role:user：控制增量", () => {
     it("变了才列；数组整单元替换", () => {
         const d = deliveryOf({ skills: ["a"] });
         const delta = controlDeltaDelivery(d.tree, ["task.state", "skills"]);
-        expect(delta.text).toBe(
-            ["vars:", "  skills:", "    - a", "  task:", "    state: pending"].join("\n"),
-        );
+        expect(delta.text).toBe(["vars:", "  skills:", "    - a", "  task:", "    state: pending"].join("\n"));
     });
 
     it("单元消失 ⇒ path: null（不是静默不出现）", () => {
@@ -142,7 +140,7 @@ describe("role:user：chat / notify 与键序", () => {
         const plain = withNotify('chat:\n  - from: human:chen56\n    text: "说"', item);
         expect(plain.startsWith("notify:\n")).toBe(true);
         expect(plain.indexOf("notify:")).toBeLessThan(plain.indexOf("chat:"));
-        const mixed = withNotify("vars:\n  self: { steps: 1 }\nchat:\n  - from: human:chen56\n    text: \"说\"", item);
+        const mixed = withNotify('vars:\n  self: { steps: 1 }\nchat:\n  - from: human:chen56\n    text: "说"', item);
         expect(mixed.indexOf("vars:")).toBeLessThan(mixed.indexOf("notify:"));
         expect(mixed.indexOf("notify:")).toBeLessThan(mixed.indexOf("chat:"));
         expect(mixed).toContain("kind: compact");

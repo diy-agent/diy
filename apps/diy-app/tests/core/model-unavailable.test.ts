@@ -37,26 +37,46 @@ const CASES: Array<{
         kind: "coming-soon",
     },
     // ── 命中：模型 id 不认识 ──
-    { name: "404（模型不在可用清单）", probe: { statusCode: 404, responseBody: null, message: "Not Found" }, kind: "unknown-model" },
+    {
+        name: "404（模型不在可用清单）",
+        probe: { statusCode: 404, responseBody: null, message: "Not Found" },
+        kind: "unknown-model",
+    },
     {
         name: "unknown model（无状态码，文案兜底）",
         probe: { statusCode: null, responseBody: "unknown model: chen56@opencode-go/longcat-9", message: null },
         kind: "unknown-model",
     },
     // ── 命中：认证 ──
-    { name: "401（key 未配/失效）", probe: { statusCode: 401, responseBody: '{"error":"invalid api key"}', message: null }, kind: "auth" },
+    {
+        name: "401（key 未配/失效）",
+        probe: { statusCode: 401, responseBody: '{"error":"invalid api key"}', message: null },
+        kind: "auth",
+    },
     { name: "403（key 无权限）", probe: { statusCode: 403, responseBody: null, message: "Forbidden" }, kind: "auth" },
     // ── 命中：配额 ──
-    { name: "429（配额/限流）", probe: { statusCode: 429, responseBody: '{"error":"rate limit exceeded"}', message: null }, kind: "quota" },
+    {
+        name: "429（配额/限流）",
+        probe: { statusCode: 429, responseBody: '{"error":"rate limit exceeded"}', message: null },
+        kind: "quota",
+    },
 
     // ── 不命中：上游服务端故障（另一类问题：该等，不是该配模型）──
     { name: "500", probe: { statusCode: 500, responseBody: "internal error", message: null }, kind: null },
     { name: "503", probe: { statusCode: 503, responseBody: null, message: "Service Unavailable" }, kind: null },
     // ── 不命中：网络/超时（根本没有响应，也就没有状态码）──
-    { name: "超时（fetch failed / timeout）", probe: { statusCode: null, responseBody: null, message: "fetch failed: timeout" }, kind: null },
+    {
+        name: "超时（fetch failed / timeout）",
+        probe: { statusCode: null, responseBody: null, message: "fetch failed: timeout" },
+        kind: null,
+    },
     { name: "空错误（什么线索都没有）", probe: { statusCode: null, responseBody: null, message: null }, kind: null },
     // ── 不命中：其它 4xx（既不是模型、也不是认证/配额）──
-    { name: "400 参数错误", probe: { statusCode: 400, responseBody: '{"error":"invalid request body"}', message: null }, kind: null },
+    {
+        name: "400 参数错误",
+        probe: { statusCode: 400, responseBody: '{"error":"invalid request body"}', message: null },
+        kind: null,
+    },
 ];
 
 describe("classifyModelUnavailable（表驱动）", () => {
@@ -114,7 +134,7 @@ describe("upstreamText / probeModelError", () => {
     });
 
     it("upstream 压掉换行（bar 是单行条，原始 body 常是多行 JSON）", () => {
-        const t = upstreamText({ statusCode: 404, responseBody: "{\n  \"a\": 1\n}", message: null });
+        const t = upstreamText({ statusCode: 404, responseBody: '{\n  "a": 1\n}', message: null });
         expect(t).not.toContain("\n");
     });
 
@@ -124,7 +144,10 @@ describe("upstreamText / probeModelError", () => {
     });
 
     it("probe：顺着 cause / lastError 链下一层（重试耗尽后 SDK 包一层）", () => {
-        const wrapped = { message: "retries exhausted", lastError: { statusCode: 404, responseBody: "unknown model", message: "Not Found" } };
+        const wrapped = {
+            message: "retries exhausted",
+            lastError: { statusCode: 404, responseBody: "unknown model", message: "Not Found" },
+        };
         const p = probeModelError(wrapped);
         expect(p.statusCode).toBe(404);
         expect(p.responseBody).toBe("unknown model");
@@ -149,7 +172,10 @@ describe("noticeFromError（main 侧组装）", () => {
     };
 
     it("命中 → 通知带齐 bar 要显示的全部字段", () => {
-        const n = noticeFromError({ statusCode: 400, responseBody: "[model_coming_soon] coming soon", message: null }, ctx);
+        const n = noticeFromError(
+            { statusCode: 400, responseBody: "[model_coming_soon] coming soon", message: null },
+            ctx,
+        );
         expect(n).not.toBeNull();
         expect(n!.kind).toBe("coming-soon");
         expect(n!.model).toBe("chen56@x/longcat-9");

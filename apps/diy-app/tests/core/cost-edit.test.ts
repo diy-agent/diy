@@ -31,7 +31,16 @@ const dsCost = (): Cost => ({
     output: 0.6,
     cache_read: 0.003,
     baseLabel: "off-peak",
-    tiers: [{ input: 0.5, output: 3, tier: { type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: CN_BUSINESS_DAY, label: "peak" } } }],
+    tiers: [
+        {
+            input: 0.5,
+            output: 3,
+            tier: {
+                type: "utc-range",
+                data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: CN_BUSINESS_DAY, label: "peak" },
+            },
+        },
+    ],
 });
 
 describe("setBasePrice（base 档单价）", () => {
@@ -111,7 +120,11 @@ describe("utcRangeSlots（保下标）", () => {
             output: 2,
             tiers: [
                 { input: 9, output: 9, tier: { type: "context", size: 272000 } },
-                { input: 5, output: 6, tier: { type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00" } } },
+                {
+                    input: 5,
+                    output: 6,
+                    tier: { type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00" } },
+                },
                 { input: 3, output: 4 }, // 无 tier：models.dev 允许，原样保留
             ],
         };
@@ -132,7 +145,10 @@ describe("addUtcRangeTier（新增档）", () => {
         expect(i).toBe(0);
         expect(c.tiers).toHaveLength(1);
         const t = c.tiers![0]!;
-        expect(t.tier).toEqual({ type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: CN_BUSINESS_DAY, label: "peak" } });
+        expect(t.tier).toEqual({
+            type: "utc-range",
+            data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: CN_BUSINESS_DAY, label: "peak" },
+        });
         expect(t.input).toBeUndefined(); // 空价 = 沿用 base 价
     });
     it("已有档 → 追加在末尾（顺序 = 优先级）", () => {
@@ -145,11 +161,19 @@ describe("addUtcRangeTier（新增档）", () => {
 describe("patchUtcRange（改档）", () => {
     it("改时刻 / 改价 / 改标签", () => {
         const c = dsCost();
-        patchUtcRange(c, 0, { start: "09:00:00+08:00", end: "12:30:00+08:00", label: "day", price: { f: "output", raw: "7.5" } });
+        patchUtcRange(c, 0, {
+            start: "09:00:00+08:00",
+            end: "12:30:00+08:00",
+            label: "day",
+            price: { f: "output", raw: "7.5" },
+        });
         const w = c.tiers![0]!;
         expect(w.input).toBe(0.5); // 未动
         expect(w.output).toBe(7.5);
-        expect(w.tier).toMatchObject({ type: "utc-range", data: { start: "09:00:00+08:00", end: "12:30:00+08:00", label: "day" } });
+        expect(w.tier).toMatchObject({
+            type: "utc-range",
+            data: { start: "09:00:00+08:00", end: "12:30:00+08:00", label: "day" },
+        });
     });
     it("日历/标签清空 → 删字段（不限日历 = 每天都算）", () => {
         const c = dsCost();
@@ -164,7 +188,11 @@ describe("patchUtcRange（改档）", () => {
         expect("input" in c.tiers![0]!).toBe(false);
     });
     it("下标指向 context 档 → 原样不动（UI 不该误改 models.dev 原生条目）", () => {
-        const c: Cost = { input: 1, output: 2, tiers: [{ input: 9, output: 9, tier: { type: "context", size: 1000 } }] };
+        const c: Cost = {
+            input: 1,
+            output: 2,
+            tiers: [{ input: 9, output: 9, tier: { type: "context", size: 1000 } }],
+        };
         patchUtcRange(c, 0, { start: "00:00:00Z" });
         expect(c.tiers![0]!.tier).toEqual({ type: "context", size: 1000 });
     });
@@ -278,12 +306,27 @@ describe("编辑产物必须过写侧 schema", () => {
         patchUtcRange(c, i, { price: { f: "output", raw: "3" } });
         const parsed = CostSchema.safeParse(c);
         expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
-        if (parsed.success) expect(parsed.data.tiers![0]!.tier).toMatchObject({ type: "utc-range", data: { calendar: CN_BUSINESS_DAY } });
+        if (parsed.success)
+            expect(parsed.data.tiers![0]!.tier).toMatchObject({
+                type: "utc-range",
+                data: { calendar: CN_BUSINESS_DAY },
+            });
     });
     it("具名时段表档（window）也过 CostSchema；window 与 start 并存 → 拒（歧义不猜）", () => {
         const c = dsWindowCost();
         expect(CostSchema.safeParse(c).success).toBe(true);
-        const bad = { input: 1, output: 2, tiers: [{ tier: { type: "utc-range", data: { window: "deepseek-peak", start: "01:00:00Z", end: "04:00:00Z" } } }] };
+        const bad = {
+            input: 1,
+            output: 2,
+            tiers: [
+                {
+                    tier: {
+                        type: "utc-range",
+                        data: { window: "deepseek-peak", start: "01:00:00Z", end: "04:00:00Z" },
+                    },
+                },
+            ],
+        };
         expect(CostSchema.safeParse(bad).success).toBe(false);
     });
 });
@@ -318,7 +361,11 @@ describe("isEmptyCost（空块不留噪声）", () => {
 describe("setUtcRangeTiers（档位顺序 = 优先级，替换只能整段换）", () => {
     it("replace：context 档原位保留，新时段档落在原首条时段档的位置", () => {
         const c: Cost = { input: 1, output: 2, tiers: [dsCost().tiers![0]!, ctxTier()] };
-        setUtcRangeTiers(c, [{ output: 99, tier: { type: "utc-range", data: { start: "05:00:00+08:00", end: "06:00:00+08:00" } } }], "replace");
+        setUtcRangeTiers(
+            c,
+            [{ output: 99, tier: { type: "utc-range", data: { start: "05:00:00+08:00", end: "06:00:00+08:00" } } }],
+            "replace",
+        );
         expect(c.tiers!.map((t) => t.tier?.type)).toEqual(["utc-range", "context"]);
         expect(c.tiers![0]!.output).toBe(99);
         expect(utcRangeCount(c)).toBe(1);
@@ -338,7 +385,9 @@ describe("setUtcRangeTiers（档位顺序 = 优先级，替换只能整段换）
     });
     it("入参深拷贝：改外部数组不影响已写入的档", () => {
         const c: Cost = {};
-        const incoming: CostTier = { tier: { type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00" } } };
+        const incoming: CostTier = {
+            tier: { type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00" } },
+        };
         setUtcRangeTiers(c, [incoming], "replace");
         incoming.output = 7;
         expect(c.tiers![0]!.output).toBeUndefined();
@@ -371,7 +420,11 @@ describe("costWarnings（CLI 回执的预警；与运行时判据一致）", () 
     it("缺 base in/out、坏时刻、不存在的日历、缺 tier 的条目 → 逐条点出（带序号）", () => {
         const c: Cost = {
             tiers: [
-                { input: 1, output: 2, tier: { type: "utc-range", data: { start: "01:00:00", end: "04:00:00+08:00", calendar: "Mars" } } },
+                {
+                    input: 1,
+                    output: 2,
+                    tier: { type: "utc-range", data: { start: "01:00:00", end: "04:00:00+08:00", calendar: "Mars" } },
+                },
                 { input: 1, output: 2 }, // 缺触发条件（运行时忽略）
             ],
         };

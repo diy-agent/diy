@@ -10,7 +10,12 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
-import { dateOfLogFile, groupByStep, pickStepTraffic, type TrafficStepRecord } from "../../src/shared/context/traffic-step";
+import {
+    dateOfLogFile,
+    groupByStep,
+    pickStepTraffic,
+    type TrafficStepRecord,
+} from "../../src/shared/context/traffic-step";
 import { changeForNode, nodeHitByChange } from "../../src/shared/context/changelog";
 
 const rec = (over: Partial<TrafficStepRecord> & { ts: number }): TrafficStepRecord => ({
@@ -28,9 +33,15 @@ describe("pickStepTraffic：一步 → 那条请求", () => {
         // 第 1 步请求 ts=1000、第 2 步请求 ts=2000；第 2 步的记录写在 1900
         const records = [rec({ ts: 1000, attempt: 1 }), rec({ ts: 2000, attempt: 2 })];
         const iso = (ms: number) => new Date(ms).toISOString();
-        expect(pickStepTraffic(records, { turnId: "t1", step: 2 }, "projects/1/tasks/1", iso(1900))?.record.ts).toBe(2000);
-        expect(pickStepTraffic(records, { turnId: "t1", step: 1 }, "projects/1/tasks/1", iso(900))?.record.ts).toBe(1000);
-        expect(pickStepTraffic(records, { turnId: "t1", step: 1 }, "projects/1/tasks/1", iso(900))?.turnRecords).toBe(2);
+        expect(pickStepTraffic(records, { turnId: "t1", step: 2 }, "projects/1/tasks/1", iso(1900))?.record.ts).toBe(
+            2000,
+        );
+        expect(pickStepTraffic(records, { turnId: "t1", step: 1 }, "projects/1/tasks/1", iso(900))?.record.ts).toBe(
+            1000,
+        );
+        expect(pickStepTraffic(records, { turnId: "t1", step: 1 }, "projects/1/tasks/1", iso(900))?.turnRecords).toBe(
+            2,
+        );
     });
 
     it("★ 重试自动吸收：第 1 步重发过（attempt 顶到 2），第 2 步的记录仍取到第 2 步那条", () => {
@@ -87,9 +98,9 @@ describe("步号判据（##409）：有 stepSeq 时优先按步取，比时刻�
     it("老记录（无步号）自动退回时刻判据 / 按序判据", () => {
         const records = [rec({ ts: 100 }), rec({ ts: 200 })];
         expect(pickStepTraffic(records, { turnId: "t1", step: 2 }, null)?.record.ts).toBe(200);
-        expect(
-            pickStepTraffic(records, { turnId: "t1", step: 1 }, null, new Date(150).toISOString())?.record.ts,
-        ).toBe(200);
+        expect(pickStepTraffic(records, { turnId: "t1", step: 1 }, null, new Date(150).toISOString())?.record.ts).toBe(
+            200,
+        );
     });
 });
 

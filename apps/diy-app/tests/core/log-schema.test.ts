@@ -8,11 +8,7 @@
 
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import {
-    LlmLogLineSchema,
-    describeAnomalies,
-    readLlmLog,
-} from "../../src/shared/context/log-schema";
+import { LlmLogLineSchema, describeAnomalies, readLlmLog } from "../../src/shared/context/log-schema";
 import { fieldDocs, fieldNames, renderFieldDocs } from "@diy-agent/context/schema/schema-doc";
 
 // ─── ① 日志行：必需严格 ────────────────────────────────

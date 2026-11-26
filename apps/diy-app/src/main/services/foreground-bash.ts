@@ -100,14 +100,21 @@ export class ForegroundBash {
      */
     async detach(toolCallId: string, taskUri: string): Promise<RunInfo> {
         const e = this.map.get(toolCallId);
-        if (!e) throw new ForegroundBashError({ code: "agent/job-not-found", message: "这条工具调用已经不在前台表里（可能已结束或已转后台）" });
+        if (!e)
+            throw new ForegroundBashError({
+                code: "agent/job-not-found",
+                message: "这条工具调用已经不在前台表里（可能已结束或已转后台）",
+            });
         // 归属闸（`shared/job-fence.ts`）：与 kill 同一份判据 —— 声明必须与记录一致。
         // 转后台之后这条 run 就归那个任务了（退出即收 / 通知都按它算），认错归属等于替别人起活。
         const fence = fenceTaskOwner(taskUri, e.origin?.taskUri ?? null, "这条前台调用");
         if (!fence.ok) throw new ForegroundBashError({ code: fence.code, message: fence.msg });
         if (e.process.ended()) {
             this.map.delete(toolCallId);
-            throw new ForegroundBashError({ code: "agent/job-already-ended", message: "命令已经结束，结果就在那条工具调用里" });
+            throw new ForegroundBashError({
+                code: "agent/job-already-ended",
+                message: "命令已经结束，结果就在那条工具调用里",
+            });
         }
         let info: RunInfo;
         try {

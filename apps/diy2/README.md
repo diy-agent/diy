@@ -48,7 +48,7 @@ curl -s "http://127.0.0.1:$PORT/api/rooms"  # 数据面
 | -------------------------------- | ------- | --------------------- | ----------- | ----------------------------------- |
 | `./sha.sh dev` / `lab`           | lab     | `run/diy2/lab`        | development | 0（内核分配，落 `<home>/app.port`） |
 | `./sha.sh staging [--build]`     | staging | `run/diy2/staging`    | development | 0                                   |
-| `./sha.sh start`（= `diy2 web`） | prod    | `~/.diy2`              | production  | 5192                                |
+| `./sha.sh start`（= `diy2 web`） | prod    | `~/.diy2`             | production  | 5192                                |
 
 产物目录**固定** `apps/diy2/build/prod/{web,server,cli}`（一个包目录一份产物）：多份并存靠
 worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目录。
@@ -123,12 +123,12 @@ diy2 facts status                  # 条目 / 小节 / 字节数 + 问题清单�
 `run/diy2/lab/log/`）—— 不要再 `nohup … >> /tmp/xxx.log 2>&1`：/tmp 会被清、多实例互相
 覆盖（实测现场：prod 的输出曾散落在 /tmp/diy2-prod-stdout.log）。
 
-| 落点 | 谁写 | 是什么 |
-|---|---|---|
-| `log/app/YYYY-MM-DD.log` | 服务端 OTel 装配（`server/log.ts`） | **结构化主账**（jsonl；按天切 + 10MB×5 份 + 留 14 天） |
-| `log/stdout.log` | `web --detach` 把子进程 fd1/fd2 接到这（`src/cli/detach-log.ts`） | 人读终端行 ⊕ 裸 stderr（未捕获异常 / 第三方 console）；超 10MB 滚 `.1` |
-| `log/job/runs/<日期>/<id>/out.log` | 后台作业 | 每条 run 自己的输出（`jobs.tail` RPC 能读尾巴） |
-| `log/network/` · `log/error/` · `log/main.log` · `log/cli.log` · `log/crashes/` | **diy-app**（Electron 侧，共用数据根时） | 不是 diy2 server 写的；排查 Electron 侧才看 |
+| 落点                                                                            | 谁写                                                              | 是什么                                                                 |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `log/app/YYYY-MM-DD.log`                                                        | 服务端 OTel 装配（`server/log.ts`）                               | **结构化主账**（jsonl；按天切 + 10MB×5 份 + 留 14 天）                 |
+| `log/stdout.log`                                                                | `web --detach` 把子进程 fd1/fd2 接到这（`src/cli/detach-log.ts`） | 人读终端行 ⊕ 裸 stderr（未捕获异常 / 第三方 console）；超 10MB 滚 `.1` |
+| `log/job/runs/<日期>/<id>/out.log`                                              | 后台作业                                                          | 每条 run 自己的输出（`jobs.tail` RPC 能读尾巴）                        |
+| `log/network/` · `log/error/` · `log/main.log` · `log/cli.log` · `log/crashes/` | **diy-app**（Electron 侧，共用数据根时）                          | 不是 diy2 server 写的；排查 Electron 侧才看                            |
 
 前台 `diy2 web` 的输出直接进终端（Ctrl-C 一起退），**不落** `stdout.log` —— 要留档用
 `--detach`，或前台自己 `| tee`。日志写盘失败不带崩进程（旁路，只往 stderr 报一行）。

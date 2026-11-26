@@ -22,15 +22,19 @@ function seed(): { store: BlockStore; apply: (ops: Op[]) => void } {
         { op: "start", id: "t1", kind: "turn" },
         { op: "start", id: "t1_s1", kind: "step", parent: "t1" },
         { op: "start", id: "call_A", kind: "tool", parent: "t1_s1", meta: { tool: "read", status: "streaming" } },
-        { op: "patch", id: "call_A", fields: { input: '{"path":"/a.ts"}', args: { path: "/a.ts" }, status: "running" } },
+        {
+            op: "patch",
+            id: "call_A",
+            fields: { input: '{"path":"/a.ts"}', args: { path: "/a.ts" }, status: "running" },
+        },
     ]);
     return { store, apply };
 }
 
 const toolParts = (msgs: ReturnType<typeof blocksToMessages>) =>
-    msgs.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter(
-        (p) => p.type === "tool-call" || p.type === "tool-result",
-    );
+    msgs
+        .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+        .filter((p) => p.type === "tool-call" || p.type === "tool-result");
 
 describe("##522 输出上限截断轮的 tool 调用不进历史", () => {
     it("haltedBy=max-tokens ⇒ 整条 tool 调用不投影（既不提交 tool-call，也不伪造 result）", () => {

@@ -104,7 +104,11 @@ const textReply = (text: string): LanguageModelV3StreamResult =>
     ]);
 
 /** 一次 bash 工具调用 */
-const bashCallReply = (callId: string, command: string, extra: Record<string, unknown> = {}): LanguageModelV3StreamResult =>
+const bashCallReply = (
+    callId: string,
+    command: string,
+    extra: Record<string, unknown> = {},
+): LanguageModelV3StreamResult =>
     stream([
         { type: "stream-start", warnings: [] },
         { type: "tool-input-start", id: callId, toolName: "bash" },
@@ -164,22 +168,25 @@ const donePatches = (ops: Op[], id: string): Op[] =>
 
 describe("bash spawn / IO 失败 → tool 块 status:error（##332 ③）", () => {
     // Windows 的 chmod 不产生真实权限位（目录仍可进入），EACCES 这条路径只在 POSIX 可复现
-    it.skipIf(process.platform === "win32")("cwd 无权限（EACCES，callback 路径）→ status:error，正文给失败文案 + 工作目录", async () => {
-        const uri = newUri(PROJECT_NOPERM);
-        const model = stubModel([bashCallReply("c1", "echo hi"), textReply("换个目录")]);
+    it.skipIf(process.platform === "win32")(
+        "cwd 无权限（EACCES，callback 路径）→ status:error，正文给失败文案 + 工作目录",
+        async () => {
+            const uri = newUri(PROJECT_NOPERM);
+            const model = stubModel([bashCallReply("c1", "echo hi"), textReply("换个目录")]);
 
-        const ops = await run(uri, model);
+            const ops = await run(uri, model);
 
-        const id = toolIds(ops)[0];
-        expect(id).toBeTruthy();
-        expect(statusOf(ops, id!)).toBe("error");
-        const out = outputOf(ops, id!);
-        expect(out).toContain("[命令未能启动 EACCES]");
-        // 带 cwd 是刻意的：Node 的原文（`spawn /bin/bash EACCES`）会把"目录进不去"说成"bash 有问题"
-        expect(out).toContain(NOPERM_DIR);
-        // 不能同时又落一条 done —— UI 取最后一次 patch，两条并存说明分支串了
-        expect(donePatches(ops, id!)).toHaveLength(0);
-    });
+            const id = toolIds(ops)[0];
+            expect(id).toBeTruthy();
+            expect(statusOf(ops, id!)).toBe("error");
+            const out = outputOf(ops, id!);
+            expect(out).toContain("[命令未能启动 EACCES]");
+            // 带 cwd 是刻意的：Node 的原文（`spawn /bin/bash EACCES`）会把"目录进不去"说成"bash 有问题"
+            expect(out).toContain(NOPERM_DIR);
+            // 不能同时又落一条 done —— UI 取最后一次 patch，两条并存说明分支串了
+            expect(donePatches(ops, id!)).toHaveLength(0);
+        },
+    );
 
     it("cwd 是普通文件（ENOTDIR，execFile 同步抛）→ status:error", async () => {
         const uri = newUri(PROJECT_FILE);
@@ -194,24 +201,27 @@ describe("bash spawn / IO 失败 → tool 块 status:error（##332 ③）", () =
         expect(outputOf(ops, id!)).toMatch(/\[命令未能启动 (ENOTDIR|ENOENT)\]/);
     });
 
-    it.skipIf(process.platform === "win32")("模型侧不受影响：失败文案随 tool 结果回灌给下一步，且历史重建是 error-text", async () => {
-        const uri = newUri(PROJECT_NOPERM);
-        const model = stubModel([bashCallReply("c1", "echo hi"), textReply("换个目录")]);
+    it.skipIf(process.platform === "win32")(
+        "模型侧不受影响：失败文案随 tool 结果回灌给下一步，且历史重建是 error-text",
+        async () => {
+            const uri = newUri(PROJECT_NOPERM);
+            const model = stubModel([bashCallReply("c1", "echo hi"), textReply("换个目录")]);
 
-        const ops = await run(uri, model);
+            const ops = await run(uri, model);
 
-        // 旧行为（吞成文本）能给模型的，现在同样给得到
-        expect(promptDump(model, 1)).toContain("[命令未能启动 EACCES]");
-        // 判据取**投影**（ops → 块树 → ModelMessage），不取 prompt：同上，见 ##329 的说明
-        const store = new BlockStore();
-        for (const op of ops) store.apply(op);
-        const results = blocksToMessages(store)
-            .filter((m) => m.role === "tool")
-            .map((m) => (m.content as Array<{ output: { type: string; value: string } }>)[0]!.output);
-        expect(results).toHaveLength(1);
-        expect(results[0]!.type).toBe("error-text");
-        expect(results[0]!.value).toContain("[命令未能启动 EACCES]");
-    });
+            // 旧行为（吞成文本）能给模型的，现在同样给得到
+            expect(promptDump(model, 1)).toContain("[命令未能启动 EACCES]");
+            // 判据取**投影**（ops → 块树 → ModelMessage），不取 prompt：同上，见 ##329 的说明
+            const store = new BlockStore();
+            for (const op of ops) store.apply(op);
+            const results = blocksToMessages(store)
+                .filter((m) => m.role === "tool")
+                .map((m) => (m.content as Array<{ output: { type: string; value: string } }>)[0]!.output);
+            expect(results).toHaveLength(1);
+            expect(results[0]!.type).toBe("error-text");
+            expect(results[0]!.value).toContain("[命令未能启动 EACCES]");
+        },
+    );
 
     it("报错不打断这一轮：后续步照常执行、轮次正常收尾", async () => {
         const uri = newUri(PROJECT_FILE);

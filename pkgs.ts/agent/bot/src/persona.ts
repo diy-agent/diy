@@ -19,36 +19,36 @@
 // 约定：本文件只放 schema/类型/内置默认值，禁止 import node:*（renderer 会打进包）。
 // 独立子路径导出（`@diy-agent/bot/persona`）：包主入口带文件存储（node:fs），renderer 不能引。
 
-import { z } from "zod";
+import { z } from 'zod';
 
 /**
  * 人物定义：agent 的**默认工作方式**。
  * 没有 desc 字段 —— 名字本身就是说明，而模型与档位在界面上始终可见（不必再抄一遍）。
  */
 export const PersonaDefSchema = z.object({
-  /** 显示名（可变；引用用 id，见文件头） */
-  name: z.string().describe("显示名（可改，引用不受影响）"),
-  model: z.string().describe("模型 id（须在模型清单内）"),
-  reasoningEffort: z.string().describe("推理强度档位（须在该模型支持集内）"),
-  /**
-   * 输出软上限（tokens，##429）：这个人物的单次回复最多吐多少。
-   *
-   * 为什么挂在人物上而不只留全局 env：模型与「愿意付多少输出」是同一类决策
-   * （换模型为了什么，往往同时决定给多少预算），而 DIY_LOCAL_MAX_OUTPUT_TOKENS
-   * 是全局一把、改它等于改所有人物。省略 = 跟随场景缺省（对话 16384）。
-   * 真发值仍会被模型硬上限与全局天花板压低，见 shared/output-budget.ts。
-   */
-  maxOutputTokens: z.number().optional().describe("输出软上限（tokens）；省略 = 场景缺省"),
-  /**
-   * 行为指令：给这个人物的固定行为要求（说话方式、回答结构、专业程度、输出约束……），
-   * 注入系统提示词的**身份节**；空串 = 不注入。
-   *
-   * 字段名用 `instructions` 而不是 `style`/`tone`/`prompt`：
-   *   · `style`/`tone` 太窄（只像"措辞语气"），而这里能写"先给结论再给依据"这类**行为**要求
-   *   · `prompt` 太宽（会被理解成整个系统提示词），`context` 是另一回事（任务资料/历史消息）
-   *   · `instructions` 是业界对"给 agent 的固定指令"的通用叫法（OpenAI Assistants/Responses 同词）
-   */
-  instructions: z.string().describe("行为指令（注入身份节；空=不注入）"),
+    /** 显示名（可变；引用用 id，见文件头） */
+    name: z.string().describe('显示名（可改，引用不受影响）'),
+    model: z.string().describe('模型 id（须在模型清单内）'),
+    reasoningEffort: z.string().describe('推理强度档位（须在该模型支持集内）'),
+    /**
+     * 输出软上限（tokens，##429）：这个人物的单次回复最多吐多少。
+     *
+     * 为什么挂在人物上而不只留全局 env：模型与「愿意付多少输出」是同一类决策
+     * （换模型为了什么，往往同时决定给多少预算），而 DIY_LOCAL_MAX_OUTPUT_TOKENS
+     * 是全局一把、改它等于改所有人物。省略 = 跟随场景缺省（对话 16384）。
+     * 真发值仍会被模型硬上限与全局天花板压低，见 shared/output-budget.ts。
+     */
+    maxOutputTokens: z.number().optional().describe('输出软上限（tokens）；省略 = 场景缺省'),
+    /**
+     * 行为指令：给这个人物的固定行为要求（说话方式、回答结构、专业程度、输出约束……），
+     * 注入系统提示词的**身份节**；空串 = 不注入。
+     *
+     * 字段名用 `instructions` 而不是 `style`/`tone`/`prompt`：
+     *   · `style`/`tone` 太窄（只像"措辞语气"），而这里能写"先给结论再给依据"这类**行为**要求
+     *   · `prompt` 太宽（会被理解成整个系统提示词），`context` 是另一回事（任务资料/历史消息）
+     *   · `instructions` 是业界对"给 agent 的固定指令"的通用叫法（OpenAI Assistants/Responses 同词）
+     */
+    instructions: z.string().describe('行为指令（注入身份节；空=不注入）'),
 });
 export type PersonaDef = z.infer<typeof PersonaDefSchema>;
 
@@ -68,8 +68,8 @@ export type PersonaView = Persona & { taskCount: number };
  * key = 人物 id（稳定）；`default` 也是 id（新建任务物化它）。
  */
 export const PersonasFileSchema = z.object({
-  default: z.string(),
-  personas: z.record(z.string(), PersonaDefSchema),
+    default: z.string(),
+    personas: z.record(z.string(), PersonaDefSchema),
 });
 export type PersonasFile = z.infer<typeof PersonasFileSchema>;
 
@@ -82,11 +82,11 @@ export type PersonasFile = z.infer<typeof PersonasFileSchema>;
  *   · 与任务 URI `projects/4/tasks/182` 是同一种"路径式标识"读法，人一眼能对上
  * 名字仍然是**纯标签**（可改）：引用一律用 id，见文件头。
  */
-export const PERSONA_ID_PREFIX = "persona/";
+export const PERSONA_ID_PREFIX = 'persona/';
 
 /** 内置缺省人物的 id 与名字（personas.yaml 不存在时系统可用的唯一人物） */
-export const BUILTIN_PERSONA_ID = "persona/1";
-export const BUILTIN_PERSONA_NAME = "大副";
+export const BUILTIN_PERSONA_ID = 'persona/1';
+export const BUILTIN_PERSONA_NAME = '大副';
 
 /**
  * 内置缺省人物定义（personas.yaml 不存在时系统可用的唯一人物）。
@@ -95,25 +95,25 @@ export const BUILTIN_PERSONA_NAME = "大副";
  * 默认模型的病灶：重启回落到一个与用户配置无关的值）。
  */
 export const BUILTIN_PERSONA_DEF: PersonaDef = {
-  name: BUILTIN_PERSONA_NAME,
-  model: "",
-  reasoningEffort: "",
-  instructions: "每次回答前先称一声「sir」。",
+    name: BUILTIN_PERSONA_NAME,
+    model: '',
+    reasoningEffort: '',
+    instructions: '每次回答前先称一声「sir」。',
 };
 
 export const BUILTIN_PERSONAS: PersonasFile = {
-  default: BUILTIN_PERSONA_ID,
-  personas: { [BUILTIN_PERSONA_ID]: BUILTIN_PERSONA_DEF },
+    default: BUILTIN_PERSONA_ID,
+    personas: { [BUILTIN_PERSONA_ID]: BUILTIN_PERSONA_DEF },
 };
 
 /** 自动生成新人物 id：`persona/<n>`，n = 现有 `persona/<数字>` id 的最大值 + 1（与任务号同思路，人可读） */
 export function nextPersonaId(existing: Iterable<string>): string {
-  let max = 0;
-  for (const id of existing) {
-    const m = /^persona\/(\d+)$/.exec(id);
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  return `${PERSONA_ID_PREFIX}${max + 1}`;
+    let max = 0;
+    for (const id of existing) {
+        const m = /^persona\/(\d+)$/.exec(id);
+        if (m) max = Math.max(max, Number(m[1]));
+    }
+    return `${PERSONA_ID_PREFIX}${max + 1}`;
 }
 
 /**
@@ -123,9 +123,9 @@ export function nextPersonaId(existing: Iterable<string>): string {
  * 与 `priority`/`change_type` 同一套「缺省 = 不写键」的约定，文件里不堆噪音。
  * CLI 侧 `--persona default`（或空串）与 RPC 侧的空串都翻成"删键"这同一个动作。
  */
-export const PERSONA_FOLLOW_KEYWORD = "default";
+export const PERSONA_FOLLOW_KEYWORD = 'default';
 
 /** 该入参是否表示「跟随缺省」（= 删掉 persona 键）。空串与关键字等价，省得调用方记两套写法。 */
 export function isPersonaFollow(v: string): boolean {
-  return v.trim() === "" || v.trim() === PERSONA_FOLLOW_KEYWORD;
+    return v.trim() === '' || v.trim() === PERSONA_FOLLOW_KEYWORD;
 }

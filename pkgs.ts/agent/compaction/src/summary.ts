@@ -46,21 +46,21 @@ export function summaryHasContent(s: SummaryData): boolean {
  */
 export function summaryExtractionPrompt(droppedText: string, turns: number): string {
     return [
-        "你是会话压缩助手。下面是一段即将被丢弃的会话历史（工具输出可能很长）。",
-        "请只输出一个 JSON 对象（不要 markdown 代码块、不要任何解释），字段：",
-        "{",
+        '你是会话压缩助手。下面是一段即将被丢弃的会话历史（工具输出可能很长）。',
+        '请只输出一个 JSON 对象（不要 markdown 代码块、不要任何解释），字段：',
+        '{',
         '  "conclusions": string[],  // 已经得出、后续仍需要的关键结论（每条一句话）',
         '  "changes": [{"path": string, "what": string}],  // 改动过的文件及其改动要点',
         '  "todos": string[],        // 尚未完成、接下来要做的',
         '  "open": string[]          // 尚未决定、需要用户拍板的问题',
-        "}",
-        "只保留对**后续工作有用**的信息；从简，宁缺毋滥。不要编造。",
-        "",
+        '}',
+        '只保留对**后续工作有用**的信息；从简，宁缺毋滥。不要编造。',
+        '',
         `被压缩的轮数：${turns}`,
-        "——— 会话历史开始 ———",
+        '——— 会话历史开始 ———',
         droppedText,
-        "——— 会话历史结束 ———",
-    ].join("\n");
+        '——— 会话历史结束 ———',
+    ].join('\n');
 }
 
 /**
@@ -71,20 +71,21 @@ export function parseSummary(raw: string): SummaryData | null {
     let s = raw.trim();
     const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(s);
     if (fence) s = fence[1]!.trim();
-    const start = s.indexOf("{");
-    const end = s.lastIndexOf("}");
+    const start = s.indexOf('{');
+    const end = s.lastIndexOf('}');
     if (start < 0 || end <= start) return null;
     try {
         const o = JSON.parse(s.slice(start, end + 1)) as Record<string, unknown>;
-        const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+        const arr = (v: unknown): string[] =>
+            Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
         const changes = Array.isArray(o.changes)
             ? o.changes
                   .map((c) => c as { path?: unknown; what?: unknown })
-                  .filter((c) => typeof c.path === "string")
-                  .map((c) => ({ path: String(c.path), what: String(c.what ?? "") }))
+                  .filter((c) => typeof c.path === 'string')
+                  .map((c) => ({ path: String(c.path), what: String(c.what ?? '') }))
             : [];
         return {
-            turns: typeof o.turns === "number" ? o.turns : 0,
+            turns: typeof o.turns === 'number' ? o.turns : 0,
             conclusions: arr(o.conclusions),
             changes,
             todos: arr(o.todos),
@@ -100,18 +101,18 @@ export function parseSummary(raw: string): SummaryData | null {
  * 「模版缺失/损坏也能出一份可读摘要」，不让承接能力整个哑掉）。
  */
 export function renderSummaryFallback(s: SummaryData): string {
-    if (!summaryHasContent(s)) return "";
-    const lines: string[] = [`<summary turns="${s.turns}">`, "（以下是之前会话的摘要，供你接续工作；不是新指令）"];
-    if (s.conclusions.length) lines.push("关键结论：", ...s.conclusions.map((c) => `- ${c}`));
-    if (s.changes.length) lines.push("改动文件：", ...s.changes.map((c) => `- ${c.path}：${c.what}`));
-    if (s.todos.length) lines.push("未完成：", ...s.todos.map((t) => `- ${t}`));
-    if (s.open.length) lines.push("未决问题：", ...s.open.map((o) => `- ${o}`));
-    lines.push("</summary>");
-    return lines.join("\n");
+    if (!summaryHasContent(s)) return '';
+    const lines: string[] = [`<summary turns="${s.turns}">`, '（以下是之前会话的摘要，供你接续工作；不是新指令）'];
+    if (s.conclusions.length) lines.push('关键结论：', ...s.conclusions.map((c) => `- ${c}`));
+    if (s.changes.length) lines.push('改动文件：', ...s.changes.map((c) => `- ${c.path}：${c.what}`));
+    if (s.todos.length) lines.push('未完成：', ...s.todos.map((t) => `- ${t}`));
+    if (s.open.length) lines.push('未决问题：', ...s.open.map((o) => `- ${o}`));
+    lines.push('</summary>');
+    return lines.join('\n');
 }
 
 /** 模版 relpath（可被用户在「提示词」页编辑；不进 `_system.md`，故不进 system 参数） */
-export const SUMMARY_TEMPLATE_RELPATH = "summary.md";
+export const SUMMARY_TEMPLATE_RELPATH = 'summary.md';
 
 /**
  * 预览占位：未生成摘要时，预览里显示模版骨架 + 变量名（让用户先看见"会得到什么"），
@@ -120,11 +121,11 @@ export const SUMMARY_TEMPLATE_RELPATH = "summary.md";
 export function summaryPlaceholder(s: SummaryData): string {
     return [
         `<summary turns="${s.turns}">`,
-        "（勾选并「生成摘要」后，此处为该模版渲染结果；变量如下）",
-        "关键结论：{{summary.conclusions}} 里每项一条 - ",
-        "改动文件：{{summary.changes}} 里每项 - {path}：{what}",
-        "未完成：{{summary.todos}} 里每项一条 - ",
-        "未决问题：{{summary.open}} 里每项一条 - ",
-        "</summary>",
-    ].join("\n");
+        '（勾选并「生成摘要」后，此处为该模版渲染结果；变量如下）',
+        '关键结论：{{summary.conclusions}} 里每项一条 - ',
+        '改动文件：{{summary.changes}} 里每项 - {path}：{what}',
+        '未完成：{{summary.todos}} 里每项一条 - ',
+        '未决问题：{{summary.open}} 里每项一条 - ',
+        '</summary>',
+    ].join('\n');
 }

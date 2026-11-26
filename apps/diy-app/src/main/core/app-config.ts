@@ -17,35 +17,35 @@ import type { RuntimeConfig } from "../../runtime";
 import { writeFileAtomic } from "./atomic-write";
 
 export class AppConfig {
-  readonly diyHome: string;
-  readonly cache: string;
-  readonly electronUserData: string;
+    readonly diyHome: string;
+    readonly cache: string;
+    readonly electronUserData: string;
 
-  /** 单根模型：cache/userData 从 diyHome 同一根派生 */
-  constructor(home: string) {
-    this.diyHome = home;
-    this.cache = join(home, "cache");
-    this.electronUserData = join(home, "electron_user_data");
-  }
-
-  /** 由运行时配置构造（home 来自入口注入的 DIY_HOME） */
-  static fromRuntime(cfg: RuntimeConfig): AppConfig {
-    return new AppConfig(cfg.home);
-  }
-
-  /** 读取上次实际监听端口；无记录返回 null（由调用方给定默认/兜底） */
-  readPort(): number | null {
-    const p = join(this.diyHome, "app.port");
-    if (!existsSync(p)) return null;
-    try {
-      const port = parseInt(readFileSync(p, "utf-8").trim(), 10);
-      return Number.isFinite(port) ? port : null;
-    } catch {
-      return null;
+    /** 单根模型：cache/userData 从 diyHome 同一根派生 */
+    constructor(home: string) {
+        this.diyHome = home;
+        this.cache = join(home, "cache");
+        this.electronUserData = join(home, "electron_user_data");
     }
-  }
 
-  writePort(port: number): void {
-    writeFileAtomic(join(this.diyHome, "app.port"), String(port));
-  }
+    /** 由运行时配置构造（home 来自入口注入的 DIY_HOME） */
+    static fromRuntime(cfg: RuntimeConfig): AppConfig {
+        return new AppConfig(cfg.home);
+    }
+
+    /** 读取上次实际监听端口；无记录返回 null（由调用方给定默认/兜底） */
+    readPort(): number | null {
+        const p = join(this.diyHome, "app.port");
+        if (!existsSync(p)) return null;
+        try {
+            const port = parseInt(readFileSync(p, "utf-8").trim(), 10);
+            return Number.isFinite(port) ? port : null;
+        } catch {
+            return null;
+        }
+    }
+
+    writePort(port: number): void {
+        writeFileAtomic(join(this.diyHome, "app.port"), String(port));
+    }
 }

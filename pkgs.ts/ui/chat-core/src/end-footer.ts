@@ -121,7 +121,13 @@ export function turnSettleOf(turn: { endedAt?: number; reason?: TurnEndReason } 
  */
 export function settleFactsOf(
     turn:
-        | { startedAt?: number; endedAt?: number; usage?: { inputTokens: number; outputTokens: number }; toolCalls?: number; reason?: TurnEndReason }
+        | {
+              startedAt?: number;
+              endedAt?: number;
+              usage?: { inputTokens: number; outputTokens: number };
+              toolCalls?: number;
+              reason?: TurnEndReason;
+          }
         | undefined,
 ): string[] {
     if (turn?.endedAt === undefined) return [];

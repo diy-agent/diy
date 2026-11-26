@@ -56,7 +56,11 @@ function watermark(): string {
 }
 
 /** 把一条信箱条目变成 toast（导出以便单测直接钉文案/二级信息） */
-export function toastOfEntry(e: InboxEntry): { type: "info" | "error"; message: string; meta: { source: string; reason: string; detail: string } } {
+export function toastOfEntry(e: InboxEntry): {
+    type: "info" | "error";
+    message: string;
+    meta: { source: string; reason: string; detail: string };
+} {
     return {
         // 撞上限：模型话没说完就断了（有实际损失）⇒ error 色；其余（成本告警 / 留言 / 滞留）⇒ info
         type: e.kind === "max-tokens" ? "error" : "info",
@@ -104,32 +108,34 @@ async function load(): Promise<void> {
 function start(): void {
     if (started) return;
     started = true;
-    void diyService.diy
-        .app.info({})
+    void diyService.diy.app
+        .info({})
         .then((info) => setDataRoot(info.diyHome ?? ""))
         .catch(() => {
             /* 拿不到数据根 ⇒ 水位判不出归属 ⇒ 全部算未读（多报一次，总比谎报已读过好） */
         })
         .then(() => load())
         .then(() => {
-        if (abort) return;
-        const ctrl = new AbortController();
-        abort = ctrl;
-        void diyService.diy.notice.inbox
-            .watch({}, { signal: ctrl.signal })
-            .then(async (stream) => {
-                for await (const e of stream) {
-                    if (!remember(e.id)) continue;
-                    append(e);
-                    const t = toastOfEntry(e);
-                    // N2（人署名留言）= 值得抬头看一眼 → 停久一点；N1 照旧 8s 自己走
-                    notificationStore.addToast(t.type, t.message, t.meta, { duration: e.level === "N2" ? 15000 : 8000 });
-                }
-            })
-            .catch(() => {
-                /* 断流即停（窗口关闭 / 实例退出）；重连由下一次 start 负责 */
-            });
-    });
+            if (abort) return;
+            const ctrl = new AbortController();
+            abort = ctrl;
+            void diyService.diy.notice.inbox
+                .watch({}, { signal: ctrl.signal })
+                .then(async (stream) => {
+                    for await (const e of stream) {
+                        if (!remember(e.id)) continue;
+                        append(e);
+                        const t = toastOfEntry(e);
+                        // N2（人署名留言）= 值得抬头看一眼 → 停久一点；N1 照旧 8s 自己走
+                        notificationStore.addToast(t.type, t.message, t.meta, {
+                            duration: e.level === "N2" ? 15000 : 8000,
+                        });
+                    }
+                })
+                .catch(() => {
+                    /* 断流即停（窗口关闭 / 实例退出）；重连由下一次 start 负责 */
+                });
+        });
 }
 
 function stop(): void {

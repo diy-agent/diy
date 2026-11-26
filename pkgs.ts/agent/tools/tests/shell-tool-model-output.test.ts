@@ -13,14 +13,25 @@ import { describe, expect, it } from 'vitest';
 import { makeShellTool } from '../src/shell/tool.js';
 import type { ShellSpec } from '../src/shell/spec.js';
 
-const spec = { kind: 'bash', label: 'bash', bin: 'bash', args: (command: string) => ['-c', command] } as unknown as ShellSpec;
+const spec = {
+    kind: 'bash',
+    label: 'bash',
+    bin: 'bash',
+    args: (command: string) => ['-c', command],
+} as unknown as ShellSpec;
 
 function tool(host: { toModelOutput?: (text: string, toolCallId: string) => string | Promise<string> }) {
     return makeShellTool(spec, {
         cwd: process.cwd(),
         limits: { bashTimeoutMs: 10_000 },
         ...(host.toModelOutput === undefined ? {} : { toModelOutput: host.toModelOutput }),
-    }) as unknown as { toModelOutput: (opts: { toolCallId: string; input: unknown; output: unknown }) => Promise<{ type: string; value: unknown }> };
+    }) as unknown as {
+        toModelOutput: (opts: {
+            toolCallId: string;
+            input: unknown;
+            output: unknown;
+        }) => Promise<{ type: string; value: unknown }>;
+    };
 }
 
 describe('makeShellTool 的 toModelOutput', () => {

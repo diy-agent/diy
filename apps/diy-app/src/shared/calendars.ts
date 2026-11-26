@@ -105,7 +105,10 @@ export function isoWeekday(d: Date): number {
 }
 
 /** 把 UTC 毫秒折算到指定偏移下的「本地日」视图（用 getUTC* 读 = 本地字段，不用宿主时区） */
-export function localParts(atMs: number, offsetMs: number): { ymd: string; minutes: number; weekday: number; date: Date } {
+export function localParts(
+    atMs: number,
+    offsetMs: number,
+): { ymd: string; minutes: number; weekday: number; date: Date } {
     const d = new Date(atMs + offsetMs);
     return {
         // 这里的 `toISOString()` **不是**记录时间戳，而是「偏移已折算进 ms 之后取日历日」：

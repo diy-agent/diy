@@ -24,7 +24,8 @@ export const DEFAULT_ASSEMBLY_HARD_CAP_BYTES = 1024 * 1024;
  * **发请求前的 token 预检**（本文件其余部分）的职责，两处各管一段，别混成一个数。
  */
 export function assemblyHardCapBytes(contextLimitTokens?: number): number {
-    if (!contextLimitTokens || !Number.isFinite(contextLimitTokens) || contextLimitTokens <= 0) return DEFAULT_ASSEMBLY_HARD_CAP_BYTES;
+    if (!contextLimitTokens || !Number.isFinite(contextLimitTokens) || contextLimitTokens <= 0)
+        return DEFAULT_ASSEMBLY_HARD_CAP_BYTES;
     return Math.floor(contextLimitTokens) * 4;
 }
 
@@ -71,9 +72,17 @@ export function estimateRequest(i: RequestEstimateInput): RequestEstimate {
         Math.max(0, i.toolsTokens ?? estimateTokens(i.toolsBytes)) +
         Math.max(0, i.messagesTokens ?? estimateTokens(i.messagesBytes));
     const win = i.contextLimitTokens && i.contextLimitTokens > 0 ? Math.floor(i.contextLimitTokens) : null;
-    if (win === null) return { bytes, estTokens, contextLimitTokens: null, thresholdTokens: null, ratio: null, over: false };
+    if (win === null)
+        return { bytes, estTokens, contextLimitTokens: null, thresholdTokens: null, ratio: null, over: false };
     const thresholdTokens = Math.floor(win * PREFLIGHT_RATIO);
-    return { bytes, estTokens, contextLimitTokens: win, thresholdTokens, ratio: estTokens / win, over: estTokens > thresholdTokens };
+    return {
+        bytes,
+        estTokens,
+        contextLimitTokens: win,
+        thresholdTokens,
+        ratio: estTokens / win,
+        over: estTokens > thresholdTokens,
+    };
 }
 
 /**

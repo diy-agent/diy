@@ -36,7 +36,9 @@ export function CreateProjectSheet() {
         try {
             await createProjectViaUi(path().trim(), label().trim() || undefined, desc().trim() || undefined);
             setOpen(false);
-            setPath(""); setLabel(""); setDesc("");
+            setPath("");
+            setLabel("");
+            setDesc("");
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             notificationStore.addToastLegacy("error", `创建失败: ${msg}`);
@@ -55,9 +57,7 @@ export function CreateProjectSheet() {
             <dialog class="modal" open={open()}>
                 <div class="modal-box w-96">
                     <h3 class="font-bold text-display">创建项目</h3>
-                    <p class="text-body opacity-60 py-2">
-                        选择要映射的目录（会在其中写 diy.yaml 名片）
-                    </p>
+                    <p class="text-body opacity-60 py-2">选择要映射的目录（会在其中写 diy.yaml 名片）</p>
 
                     <div class="form-control py-1">
                         <label class="label">
@@ -101,18 +101,18 @@ export function CreateProjectSheet() {
                     </div>
 
                     <div class="modal-action">
-                        <button class="btn btn-sm" onClick={() => setOpen(false)}>取消</button>
-                        <button
-                            class="btn btn-primary btn-sm"
-                            onClick={submit}
-                            disabled={busy() || !path().trim()}
-                        >
+                        <button class="btn btn-sm" onClick={() => setOpen(false)}>
+                            取消
+                        </button>
+                        <button class="btn btn-primary btn-sm" onClick={submit} disabled={busy() || !path().trim()}>
                             {busy() ? "创建中…" : "创建"}
                         </button>
                     </div>
                 </div>
                 <form method="dialog" class="modal-backdrop">
-                    <button class="text-body" onClick={() => setOpen(false)}>close</button>
+                    <button class="text-body" onClick={() => setOpen(false)}>
+                        close
+                    </button>
                 </form>
             </dialog>
         </>

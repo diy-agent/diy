@@ -58,9 +58,7 @@ const [spent, setSpent] = createSignal(0);
  * 桥接探针：页内查找 0/0 时对数据层探一次，回答「本会话另有几处（几处在未渲染的轮上）」。
  * `null` = 还没探 / 当前查询没探出结论（**没结论就不显示那一行**，口径 1 的"不许静默敷衍"）。
  */
-const [probe, setProbe] = createSignal<{ query: string; hits: number; turns: number; unrendered: number } | null>(
-    null,
-);
+const [probe, setProbe] = createSignal<{ query: string; hits: number; turns: number; unrendered: number } | null>(null);
 
 /** 面板的定位回调（由会话页注册：只有它拿得到滚动容器与块树） */
 let locator: ((hit: ChatFindHit) => void) | null = null;
@@ -137,12 +135,7 @@ function schedule(taskUri: string | null, q: string, s: ChatFindScopes, maxTurns
  * 不从 DOM 反推（DOM 查询在这里既慢又会把"正在卸载"的行算进去）。
  * 与面板共用 `scan`：去抖/取消/seq 只有一份实现，两个入口不会各自飘。
  */
-function runProbe(
-    taskUri: string | null,
-    q: string,
-    rendered: ReadonlySet<string>,
-    s: ChatFindScopes,
-): void {
+function runProbe(taskUri: string | null, q: string, rendered: ReadonlySet<string>, s: ChatFindScopes): void {
     if (!taskUri || !q.trim()) {
         lastProbeKey = "";
         setProbe(null);
@@ -272,7 +265,6 @@ export const chatFindStore = {
         setLimit(next);
         schedule(taskUri, query(), scopes(), next);
     },
-
 };
 
 /** 当前会话 URI（面板/探针都要它；由会话页写入，避免把 taskStore 依赖塞进本 store） */

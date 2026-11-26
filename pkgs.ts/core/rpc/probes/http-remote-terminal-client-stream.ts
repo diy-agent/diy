@@ -5,9 +5,11 @@ import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const api = RpcSchema.group({ children: {
-  collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.boolean() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.boolean() }),
+  },
+});
 
 type Snapshot = {
   activeStreams: number;
@@ -30,7 +32,7 @@ function readSnapshot(client: HttpClientBinding, stream?: http2.ClientHttp2Strea
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding._on("collect", api.collect, async () => true); // 远端不消费输入，立即返回 result
+  binding._on('collect', api.collect, async () => true); // 远端不消费输入，立即返回 result
 
   const server = http2.createServer();
   server._on('stream', (stream, headers) => {
@@ -56,7 +58,9 @@ async function main() {
   try {
     // 流引用在调用同步段后、await 前捕获（终态收束会同步移出集合，否则取到 undefined）
     const pending = client.clientStream('collect', { input: {}, meta: {} }, delayedChunks);
-    const stream = [...(client as unknown as { activeStreams: Set<http2.ClientHttp2Stream> }).activeStreams][0];
+    const stream = [
+      ...(client as unknown as { activeStreams: Set<http2.ClientHttp2Stream> }).activeStreams,
+    ][0];
     await pending;
     console.log('[client-stream] immediately:', readSnapshot(client, stream));
     await sleep(500);

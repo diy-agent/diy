@@ -277,7 +277,7 @@ describe("落盘 store（判据 1：能查到 <provider>/<model> → {safePoint,
                 "    failPoint: 600000",
                 "    updatedAt: 2026-10-30T00:00:00.000Z",
                 "    lastRequestAt: 1700000000000",
-                "    hints: { date: \"2026-10-30\", count: 2 }",
+                '    hints: { date: "2026-10-30", count: 2 }',
                 "",
             ].join("\n"),
             "utf-8",
@@ -373,7 +373,12 @@ describe("装配层：首步事实 → 边界 → 那一行提示", () => {
             taskUri: "t",
             now: T0 + 10 * MIN,
         });
-        cacheHint.noteFirstStepResult({ channel: firstMiss.channel, gapMs: firstMiss.gapMs, now: T0 + 10 * MIN, ...MISS });
+        cacheHint.noteFirstStepResult({
+            channel: firstMiss.channel,
+            gapMs: firstMiss.gapMs,
+            now: T0 + 10 * MIN,
+            ...MISS,
+        });
         expect(cacheHint.stats(CH).failPoint).toBe(10 * MIN);
 
         // 再用 100 次 11min 的成功把 safePoint 撑到 11min
@@ -384,7 +389,12 @@ describe("装配层：首步事实 → 边界 → 那一行提示", () => {
                 taskUri: "t",
                 now: T0 + 10 * MIN + 11 * MIN * i,
             });
-            cacheHint.noteFirstStepResult({ channel: r.channel, gapMs: r.gapMs, now: T0 + 10 * MIN + 11 * MIN * i, ...HIT });
+            cacheHint.noteFirstStepResult({
+                channel: r.channel,
+                gapMs: r.gapMs,
+                now: T0 + 10 * MIN + 11 * MIN * i,
+                ...HIT,
+            });
         }
         expect(cacheHint.stats(CH).safePoint).toBe(11 * MIN);
         cacheHint.dismiss();
@@ -475,9 +485,7 @@ describe("装配层：首步事实 → 边界 → 那一行提示", () => {
         expect(v.samples).toBe(0);
         // 不给会话 / 别的会话 → 没有「距上次请求」（UI 显示「—」，不是一个巨大的数）
         expect(cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash")!.lastRequestAt).toBeNull();
-        expect(
-            cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash", "projects/14/tasks/1")!.lastRequestAt,
-        ).toBeNull();
+        expect(cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash", "projects/14/tasks/1")!.lastRequestAt).toBeNull();
         // 未知模型 → null（不编一个渠道）
         expect(cacheHint.viewOf("不存在@no/where")).toBeNull();
         expect(cacheHint.viewOf(null)).toBeNull();
@@ -581,7 +589,11 @@ describe("##492 会话维度：距上次请求属于本会话，边界属于渠�
         });
         expect(fresh.gapMs).toBeNull();
         expect(fresh.hint).toBeNull();
-        const v = cacheHint.viewOf("0@opencode-go/deepseek-v4.1-flash", "projects/4/tasks/999", new Date(T0 + 5 * HOUR))!;
+        const v = cacheHint.viewOf(
+            "0@opencode-go/deepseek-v4.1-flash",
+            "projects/4/tasks/999",
+            new Date(T0 + 5 * HOUR),
+        )!;
         expect(v.lastRequestAt).toBe(T0 + 5 * HOUR); // 这次请求之后就有了
     });
 });

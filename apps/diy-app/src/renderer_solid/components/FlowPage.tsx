@@ -118,7 +118,14 @@ export function FlowPage(props: { uri: string }) {
             if (kind === "advance") {
                 await diyService.diy.flow.advance({ uri: props.uri, to, ref: undefined, note: undefined });
             } else {
-                await diyService.diy.flow.bounce({ uri: props.uri, to, ref: undefined, note: undefined, opinion: undefined, author: undefined });
+                await diyService.diy.flow.bounce({
+                    uri: props.uri,
+                    to,
+                    ref: undefined,
+                    note: undefined,
+                    opinion: undefined,
+                    author: undefined,
+                });
             }
             await load();
         } catch (e) {
@@ -175,7 +182,10 @@ export function FlowPage(props: { uri: string }) {
                                 stepKey={
                                     selected() === null
                                         ? v.trajectory.length > 0
-                                            ? visitKey(v.trajectory[v.trajectory.length - 1]!.node, v.trajectory[v.trajectory.length - 1]!.seq)
+                                            ? visitKey(
+                                                  v.trajectory[v.trajectory.length - 1]!.node,
+                                                  v.trajectory[v.trajectory.length - 1]!.seq,
+                                              )
                                             : null
                                         : visitKey(v.trajectory[selected()!]!.node, v.trajectory[selected()!]!.seq)
                                 }
@@ -235,8 +245,13 @@ export function FlowPage(props: { uri: string }) {
                                     </button>
                                 </Show>
                                 <Show when={v().next.mode === "actor"}>
-                                    <Show when={v().next.edges.length > 0} fallback={<span class="opacity-60">无出边</span>}>
-                                        <span class="opacity-60">{v().next.pending.length > 0 ? "等人宣布：" : "走："}</span>
+                                    <Show
+                                        when={v().next.edges.length > 0}
+                                        fallback={<span class="opacity-60">无出边</span>}
+                                    >
+                                        <span class="opacity-60">
+                                            {v().next.pending.length > 0 ? "等人宣布：" : "走："}
+                                        </span>
                                         <Show when={v().next.edges.filter((e) => e.kind === "next").length > 0}>
                                             <span class="dropdown dropdown-end">
                                                 <div
@@ -247,12 +262,17 @@ export function FlowPage(props: { uri: string }) {
                                                 >
                                                     推进 ▾
                                                 </div>
-                                                <ul tabindex="0" class="dropdown-content menu z-10 w-40 rounded-box bg-base-100 p-1 shadow">
+                                                <ul
+                                                    tabindex="0"
+                                                    class="dropdown-content menu z-10 w-40 rounded-box bg-base-100 p-1 shadow"
+                                                >
                                                     {v()
                                                         .next.edges.filter((e) => e.kind === "next")
                                                         .map((e) => (
                                                             <li>
-                                                                <button onClick={() => void move("advance", e.to)}>→ {e.toName}</button>
+                                                                <button onClick={() => void move("advance", e.to)}>
+                                                                    → {e.toName}
+                                                                </button>
                                                             </li>
                                                         ))}
                                                 </ul>

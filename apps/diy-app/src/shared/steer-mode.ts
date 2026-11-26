@@ -24,13 +24,13 @@ export const DEFAULT_STEER_MODE = "next-step" as const;
 
 /** 历史 mode 值 → 现值（只做展示归一；写入侧永远只写现值，见 core/drafts.ts）。 */
 export function normalizeSteerMode(mode: string): string {
-  return mode === "step" ? "next-step" : mode === "turn" ? "next-turn" : mode;
+    return mode === "step" ? "next-step" : mode === "turn" ? "next-turn" : mode;
 }
 
 /** 投递时机的短标签：说人话（next-step/next-turn 是给代码看的枚举名）。 */
 export function steerModeLabel(mode: string): string {
-  const m = normalizeSteerMode(mode);
-  return m === "next-step" ? "下一步" : m === "next-turn" ? "下一轮" : m;
+    const m = normalizeSteerMode(mode);
+    return m === "next-step" ? "下一步" : m === "next-turn" ? "下一轮" : m;
 }
 
 /**
@@ -41,12 +41,12 @@ export function steerModeLabel(mode: string): string {
  * 留言的语义就是"发一句话"，没有轮次可插就没得排 —— 不能让它躺在队列里等一个永不到来的时机。
  */
 export function steerModeTip(mode: string): string {
-  const m = normalizeSteerMode(mode);
-  if (m === "next-step") {
-    return "插入到下一步：模型下一次模型步之前生效；本轮已收尾（或当前没有轮次在跑）则作为下一轮的开场立刻发出";
-  }
-  if (m === "next-turn") {
-    return "插入到下一次对话后：本轮跑完，自动接着开新一轮；当前没有轮次在跑则立刻开一轮发出";
-  }
-  return "";
+    const m = normalizeSteerMode(mode);
+    if (m === "next-step") {
+        return "插入到下一步：模型下一次模型步之前生效；本轮已收尾（或当前没有轮次在跑）则作为下一轮的开场立刻发出";
+    }
+    if (m === "next-turn") {
+        return "插入到下一次对话后：本轮跑完，自动接着开新一轮；当前没有轮次在跑则立刻开一轮发出";
+    }
+    return "";
 }

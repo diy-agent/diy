@@ -71,7 +71,10 @@ describe("dev 定义的产物链自洽（P2-A 的护身符）", () => {
             if (!art.plugin) continue; // 直吃 raw 的节点：raw 必须已是该 renderer 的 data（无插件可查）
             const plugin = registry.resolve("render", art.plugin);
             const view = plugin(SAMPLES[art.plugin], ANCHOR);
-            expect(view.renderer, `节点 ${node.id} 声明 ${art.renderer}，插件 ${art.plugin} 却给出 ${view.renderer}`).toBe(art.renderer);
+            expect(
+                view.renderer,
+                `节点 ${node.id} 声明 ${art.renderer}，插件 ${art.plugin} 却给出 ${view.renderer}`,
+            ).toBe(art.renderer);
         }
     });
 

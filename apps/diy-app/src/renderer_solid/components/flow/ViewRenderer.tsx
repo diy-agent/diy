@@ -118,7 +118,10 @@ function TableView(props: { payload: unknown }) {
             if (!isObj(r)) return null;
             const cells = arr(r["cells"]);
             if (!cells) return null;
-            rows.push({ cells: cells.map((c) => (typeof c === "string" ? c : c === null || c === undefined ? "" : String(c))), tone: toneOf(r["tone"]) });
+            rows.push({
+                cells: cells.map((c) => (typeof c === "string" ? c : c === null || c === undefined ? "" : String(c))),
+                tone: toneOf(r["tone"]),
+            });
         }
         const columns = props.payload["columns"] === undefined ? null : strs(props.payload["columns"]);
         return { columns, rows };
@@ -143,7 +146,10 @@ function TableView(props: { payload: unknown }) {
                                     <tr>
                                         <For each={r.cells}>
                                             {(c, i) => (
-                                                <td class="text-body" style={i() === 0 ? { color: TONE_COLOR[r.tone] } : undefined}>
+                                                <td
+                                                    class="text-body"
+                                                    style={i() === 0 ? { color: TONE_COLOR[r.tone] } : undefined}
+                                                >
                                                     {c}
                                                 </td>
                                             )}
@@ -268,7 +274,11 @@ function BadgeView(props: { payload: unknown }) {
                         {(b) => (
                             <span
                                 class="rounded px-1.5 py-0.5 text-body"
-                                style={{ background: `${TONE_COLOR[b.tone]}22`, color: TONE_COLOR[b.tone], border: `1px solid ${TONE_COLOR[b.tone]}55` }}
+                                style={{
+                                    background: `${TONE_COLOR[b.tone]}22`,
+                                    color: TONE_COLOR[b.tone],
+                                    border: `1px solid ${TONE_COLOR[b.tone]}55`,
+                                }}
                             >
                                 {b.label}
                             </span>
@@ -309,7 +319,13 @@ function KlineView(props: { payload: unknown }) {
                 const y = (v: number) => (hi() === lo() ? H / 2 : H - ((v - lo()) / (hi() - lo())) * (H - 8) - 4);
                 const step = () => W / Math.max(1, cs().length);
                 return (
-                    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" data-flow-kline="">
+                    <svg
+                        width="100%"
+                        height={H}
+                        viewBox={`0 0 ${W} ${H}`}
+                        preserveAspectRatio="none"
+                        data-flow-kline=""
+                    >
                         <For each={cs()}>
                             {(c, i) => {
                                 const cx = () => i() * step() + step() / 2;
@@ -399,7 +415,10 @@ function EquityView(props: { payload: unknown }) {
                 const lo = () => Math.min(...d().nav);
                 const x = (i: number) => (i / Math.max(1, d().nav.length - 1)) * W;
                 const y = (v: number) => (hi() === lo() ? H / 2 : H - ((v - lo()) / (hi() - lo())) * (H - 10) - 5);
-                const path = () => d().nav.map((v, i) => `${i === 0 ? "M" : "L"}${x(i)},${y(v)}`).join(" ");
+                const path = () =>
+                    d()
+                        .nav.map((v, i) => `${i === 0 ? "M" : "L"}${x(i)},${y(v)}`)
+                        .join(" ");
                 /** 最大回撤点（`markDrawdown` 时标出）：回撤序列的最小值处 */
                 const ddLow = () => {
                     const dd = d().dd;
@@ -409,13 +428,27 @@ function EquityView(props: { payload: unknown }) {
                     return idx;
                 };
                 return (
-                    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" data-flow-equity="">
+                    <svg
+                        width="100%"
+                        height={H}
+                        viewBox={`0 0 ${W} ${H}`}
+                        preserveAspectRatio="none"
+                        data-flow-equity=""
+                    >
                         <path d={path()} fill="none" stroke="#3b82f6" stroke-width="1.6" />
                         <Show when={ddLow()}>
                             {(i) => (
                                 <g>
                                     <circle cx={x(i())} cy={y(d().nav[i()] ?? lo())} r="3" fill="#ef4444" />
-                                    <line x1={x(i())} x2={x(i())} y1="0" y2={H} stroke="#ef4444" stroke-dasharray="3 3" stroke-width="1" />
+                                    <line
+                                        x1={x(i())}
+                                        x2={x(i())}
+                                        y1="0"
+                                        y2={H}
+                                        stroke="#ef4444"
+                                        stroke-dasharray="3 3"
+                                        stroke-width="1"
+                                    />
                                 </g>
                             )}
                         </Show>

@@ -59,9 +59,7 @@ afterAll(async () => {
 async function setup(taskTitle: string): Promise<string> {
     const repo = `${fx.HOME}/local-${Date.now()}`;
     const r = await fx.sh.getJson(`./diy.sh project create "${repo}" --label 本地实验`);
-    const pid = String(
-        ((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id ?? "",
-    );
+    const pid = String(((r.data as Record<string, unknown>)?.data as Record<string, unknown>)?.id ?? "");
     await fx.sh.run(`./diy.sh task create ${taskTitle} ${pid}`);
     return `projects/${pid}/tasks/1`;
 }
@@ -137,8 +135,8 @@ function seedOps(taskUri: string, ops: Array<Record<string, unknown>>): string {
 
 /** 取 CLI JSON 的 data 字段（getJson 返回 Record<string, unknown>，这里按用例收窄） */
 async function cliData<T>(cmd: string): Promise<T> {
-  const r = await fx.sh.getJson(cmd);
-  return r.data as T;
+    const r = await fx.sh.getJson(cmd);
+    return r.data as T;
 }
 
 /**
@@ -149,119 +147,119 @@ async function cliData<T>(cmd: string): Promise<T> {
  * 详见文件头的说明。
  */
 function seedSteers(uri: string, items: Array<{ mode: string; text: string }>): string {
-  const dir = join(fx.HOME, uri, ".diy");
-  mkdirSync(dir, { recursive: true });
-  const rows = items
-    .map(
-      (it, i) =>
-        `  - id: steer/${i + 1}\n    mode: ${it.mode}\n    text: ${JSON.stringify(it.text)}\n    created: '2026-10-13T00:00:0${i}.000Z'`,
-    )
-    .join("\n");
-  const fp = join(dir, "drafts.yaml");
-  // ⚠️ 不带 frontmatter 的 `---` 分隔符：产品写侧是 yaml.dump 的**单文档**文本，
-  // 多一个 `---` 会被 js-yaml 当成第二个文档 → 整份草稿读不出来（readDrafts 返回 null）。
-  writeFileSync(
-    fp,
-    ["kind: diy.ui-drafts", "version: 3", `task: ${uri}`, "fields: {}", "steers:", rows, ""].join("\n"),
-    "utf-8",
-  );
-  return fp;
+    const dir = join(fx.HOME, uri, ".diy");
+    mkdirSync(dir, { recursive: true });
+    const rows = items
+        .map(
+            (it, i) =>
+                `  - id: steer/${i + 1}\n    mode: ${it.mode}\n    text: ${JSON.stringify(it.text)}\n    created: '2026-10-13T00:00:0${i}.000Z'`,
+        )
+        .join("\n");
+    const fp = join(dir, "drafts.yaml");
+    // ⚠️ 不带 frontmatter 的 `---` 分隔符：产品写侧是 yaml.dump 的**单文档**文本，
+    // 多一个 `---` 会被 js-yaml 当成第二个文档 → 整份草稿读不出来（readDrafts 返回 null）。
+    writeFileSync(
+        fp,
+        ["kind: diy.ui-drafts", "version: 3", `task: ${uri}`, "fields: {}", "steers:", rows, ""].join("\n"),
+        "utf-8",
+    );
+    return fp;
 }
 
 interface SteerRow {
-  id: string;
-  mode: string;
-  text: string;
+    id: string;
+    mode: string;
+    text: string;
 }
 
 describe("agent.local — 插话 steer（无网络）", () => {
-  it("队列项 → list 可见（时机如实读出来）→ cancel 取消", async () => {
-    const uri = await setup("插话任务");
-    seedSteers(uri, [{ mode: "next-step", text: "插到下一步" }]);
-    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
-    expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ mode: "next-step", text: "插到下一步" });
+    it("队列项 → list 可见（时机如实读出来）→ cancel 取消", async () => {
+        const uri = await setup("插话任务");
+        seedSteers(uri, [{ mode: "next-step", text: "插到下一步" }]);
+        const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+        expect(list).toHaveLength(1);
+        expect(list[0]).toMatchObject({ mode: "next-step", text: "插到下一步" });
 
-    const after = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} ${list[0]!.id}`);
-    expect(after).toEqual([]);
-    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
-  });
+        const after = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} ${list[0]!.id}`);
+        expect(after).toEqual([]);
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
 
-  it("id 形如 steer/N（实体/序号）：CLI 里能直接手敲，不必复制粘贴随机串", async () => {
-    const uri = await setup("id 格式");
-    seedSteers(uri, [
-      { mode: "next-turn", text: "第一条" },
-      { mode: "next-turn", text: "第二条" },
-    ]);
-    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
-    expect(list.map((i) => i.id)).toEqual(["steer/1", "steer/2"]);
-    // 用这个 id 取消（id 会进 shell，含 "/" 也没问题：它只做字符串匹配，不当路径解析）
-    const after = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} steer/1`);
-    expect(after.map((i) => i.id)).toEqual(["steer/2"]);
-    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
-  });
+    it("id 形如 steer/N（实体/序号）：CLI 里能直接手敲，不必复制粘贴随机串", async () => {
+        const uri = await setup("id 格式");
+        seedSteers(uri, [
+            { mode: "next-turn", text: "第一条" },
+            { mode: "next-turn", text: "第二条" },
+        ]);
+        const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+        expect(list.map((i) => i.id)).toEqual(["steer/1", "steer/2"]);
+        // 用这个 id 取消（id 会进 shell，含 "/" 也没问题：它只做字符串匹配，不当路径解析）
+        const after = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} steer/1`);
+        expect(after.map((i) => i.id)).toEqual(["steer/2"]);
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
 
-  it("两种模式各自记住（next-step / next-turn 并存，FIFO 顺序即提交顺序）", async () => {
-    const uri = await setup("两种插话");
-    seedSteers(uri, [
-      { mode: "next-step", text: "第一步插话" },
-      { mode: "next-turn", text: "下一轮插话" },
-    ]);
-    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
-    expect(list.map((i) => [i.mode, i.text])).toEqual([
-      ["next-step", "第一步插话"],
-      ["next-turn", "下一轮插话"],
-    ]);
-    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
-  });
+    it("两种模式各自记住（next-step / next-turn 并存，FIFO 顺序即提交顺序）", async () => {
+        const uri = await setup("两种插话");
+        seedSteers(uri, [
+            { mode: "next-step", text: "第一步插话" },
+            { mode: "next-turn", text: "下一轮插话" },
+        ]);
+        const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+        expect(list.map((i) => [i.mode, i.text])).toEqual([
+            ["next-step", "第一步插话"],
+            ["next-turn", "下一轮插话"],
+        ]);
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
 
-  it("取消不存在的 id 幂等（重复点 ✕ 不该报错）", async () => {
-    const uri = await setup("幂等取消");
-    const r = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} nope`);
-    expect(r).toEqual([]);
-    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
-  });
+    it("取消不存在的 id 幂等（重复点 ✕ 不该报错）", async () => {
+        const uri = await setup("幂等取消");
+        const r = await cliData<SteerRow[]>(`./diy.sh agent local steer cancel ${uri} nope`);
+        expect(r).toEqual([]);
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
 
-  it("空内容被拒（不落空插话：投进去只会污染提示词）", async () => {
-    const uri = await setup("空插话");
-    const r = await fx.sh.run(`./diy.sh agent local chat ${uri} "   " --mode next-step`);
-    expect(r.code).not.toBe(0);
-    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
-    expect(list).toEqual([]);
-    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
-  });
+    it("空内容被拒（不落空插话：投进去只会污染提示词）", async () => {
+        const uri = await setup("空插话");
+        const r = await fx.sh.run(`./diy.sh agent local chat ${uri} "   " --mode next-step`);
+        expect(r.code).not.toBe(0);
+        const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+        expect(list).toEqual([]);
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
 
-  it("非法 mode 被契约拒绝（不许静默放行）", async () => {
-    const uri = await setup("非法模式");
-    const r = await fx.sh.run(`./diy.sh agent local chat ${uri} "内容" --mode next`);
-    expect(r.code).not.toBe(0);
-    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
-  });
+    it("非法 mode 被契约拒绝（不许静默放行）", async () => {
+        const uri = await setup("非法模式");
+        const r = await fx.sh.run(`./diy.sh agent local chat ${uri} "内容" --mode next`);
+        expect(r.code).not.toBe(0);
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
 
-  it("队列落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件，可被 CLI 直接观察）", async () => {
-    const uri = await setup("落盘检查");
-    const fp = seedSteers(uri, [{ mode: "next-turn", text: "持久化的话" }]);
-    expect(existsSync(fp)).toBe(true);
-    const raw = readFileSync(fp, "utf-8");
-    expect(raw).toContain("steers");
-    expect(raw).toContain("持久化的话");
-    // 取消后队列空、字段也空 → 文件删除（不留空壳）
-    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
-    await fx.sh.getJson(`./diy.sh agent local steer cancel ${uri} ${list[0]!.id}`);
-    expect(existsSync(fp)).toBe(false);
-    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
-  });
+    it("队列落盘在任务目录 .diy/drafts.yaml（与聊天草稿同文件，可被 CLI 直接观察）", async () => {
+        const uri = await setup("落盘检查");
+        const fp = seedSteers(uri, [{ mode: "next-turn", text: "持久化的话" }]);
+        expect(existsSync(fp)).toBe(true);
+        const raw = readFileSync(fp, "utf-8");
+        expect(raw).toContain("steers");
+        expect(raw).toContain("持久化的话");
+        // 取消后队列空、字段也空 → 文件删除（不留空壳）
+        const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+        await fx.sh.getJson(`./diy.sh agent local steer cancel ${uri} ${list[0]!.id}`);
+        expect(existsSync(fp)).toBe(false);
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
 
-  it("与聊天草稿同文件互不干扰（清草稿不动插话）", async () => {
-    const uri = await setup("共存检查");
-    seedSteers(uri, [{ mode: "next-step", text: "排队的插话" }]);
-    await fx.sh.getJson(`./diy.sh task drafts set ${uri} --agent_input "打到一半的草稿"`);
-    // 清空草稿字段：插话队列必须还在（"清空输入框" ≠ "放弃排队中的插话"）
-    await fx.sh.getJson(`./diy.sh task drafts clear ${uri}`);
-    const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
-    expect(list.map((i) => i.text)).toEqual(["排队的插话"]);
-    await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
-  });
+    it("与聊天草稿同文件互不干扰（清草稿不动插话）", async () => {
+        const uri = await setup("共存检查");
+        seedSteers(uri, [{ mode: "next-step", text: "排队的插话" }]);
+        await fx.sh.getJson(`./diy.sh task drafts set ${uri} --agent_input "打到一半的草稿"`);
+        // 清空草稿字段：插话队列必须还在（"清空输入框" ≠ "放弃排队中的插话"）
+        await fx.sh.getJson(`./diy.sh task drafts clear ${uri}`);
+        const list = await cliData<SteerRow[]>(`./diy.sh agent local steer list ${uri}`);
+        expect(list.map((i) => i.text)).toEqual(["排队的插话"]);
+        await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
+    });
 });
 
 describe("agent.local — 控制面（无网络）", () => {
@@ -302,9 +300,7 @@ describe("agent.local — 控制面（无网络）", () => {
         expect(r.code, r.stderr).toBe(0);
         const frame = JSON.parse(r.stdout.trim()) as { kind?: string; entries?: Array<Record<string, unknown>> };
         expect(frame.kind, "无 --watch 时只给一份快照").toBe("snapshot");
-        const e = frame.entries!.find(
-            (x) => ((x.refs as Array<{ uri: string }>) ?? []).some((f) => f.uri === uri),
-        );
+        const e = frame.entries!.find((x) => ((x.refs as Array<{ uri: string }>) ?? []).some((f) => f.uri === uri));
         expect(e, `快照里应有 ${uri}`).toBeTruthy();
         expect(e!.turn, "没开轮 → turn=null（idle 是这个模型的合法态，不是缺字段）").toBe(null);
         expect(e!.queue, "待投递留言数必须如实报出（三种排队的判据之一）").toBe(1);
@@ -352,17 +348,10 @@ describe("agent.local — 真实对话（zen/go）", () => {
             const ops = lines.map((l) => JSON.parse(l));
             // 结构断言：turn 起、user 块在、text 块有内容、turn 收、usage 回填
             expect(ops[0]).toMatchObject({ op: "start", kind: "turn" });
-            expect(
-                ops.some((o) => o.op === "start" && o.kind === "text" && o.meta?.role === "user"),
-            ).toBe(true);
-            expect(
-                ops.some(
-                    (o) =>
-                        o.op === "delta" &&
-                        typeof o.fields?.content === "string" &&
-                        o.fields.content,
-                ),
-            ).toBe(true);
+            expect(ops.some((o) => o.op === "start" && o.kind === "text" && o.meta?.role === "user")).toBe(true);
+            expect(ops.some((o) => o.op === "delta" && typeof o.fields?.content === "string" && o.fields.content)).toBe(
+                true,
+            );
             expect(ops.at(-1)).toMatchObject({ op: "stop" });
             expect(ops.some((o) => o.op === "patch" && o.fields?.usage)).toBe(true);
             // 存储 = 传输：jsonl 与流一致
@@ -401,11 +390,9 @@ describe("agent.local — 真实对话（zen/go）", () => {
                 .map((l) => JSON.parse(l));
             // 失败形态是 turn 里挂一个 error 块（source=llm）—— 它就是本 bug 的指纹
             expect(ops.some((o) => o.op === "start" && o.kind === "error")).toBe(false);
-            expect(
-                ops.some(
-                    (o) => o.op === "delta" && typeof o.fields?.content === "string" && o.fields.content,
-                ),
-            ).toBe(true);
+            expect(ops.some((o) => o.op === "delta" && typeof o.fields?.content === "string" && o.fields.content)).toBe(
+                true,
+            );
             expect(ops.some((o) => o.op === "patch" && o.fields?.usage)).toBe(true);
             await fx.sh.run(`./diy.sh project remove ${uri.split("/")[1]}`);
         },
@@ -438,16 +425,9 @@ describe("agent.local — 真实对话（zen/go）", () => {
                 ),
             ).toBe(true);
             expect(
-                ops.some(
-                    (o) =>
-                        o.op === "delta" &&
-                        o.id === id &&
-                        String(o.fields?.output).includes("hello-local"),
-                ),
+                ops.some((o) => o.op === "delta" && o.id === id && String(o.fields?.output).includes("hello-local")),
             ).toBe(true);
-            expect(
-                ops.some((o) => o.op === "patch" && o.id === id && o.fields?.status === "done"),
-            ).toBe(true);
+            expect(ops.some((o) => o.op === "patch" && o.id === id && o.fields?.status === "done")).toBe(true);
             // llm 日志含工具链路（assistant tool-call + tool result）
             const llm = readFileSync(homeFile(uri, "llm"), "utf-8")
                 .split("\n")
@@ -481,9 +461,7 @@ describe("agent.local — 真实对话（zen/go）", () => {
             try {
                 const activeRows = async () => {
                     const r = await fx.sh.getJson(`./diy.sh agent local running`);
-                    return (
-                        (r.data as { active?: Array<{ taskUri: string; subscribers: number }> })?.active ?? []
-                    );
+                    return (r.data as { active?: Array<{ taskUri: string; subscribers: number }> })?.active ?? [];
                 };
                 // 轮询（不给固定 sleep：上游首 token 往返时长不定）
                 let hit: { taskUri: string; subscribers: number } | undefined;
@@ -494,7 +472,9 @@ describe("agent.local — 真实对话（zen/go）", () => {
                 expect(hit, `running 应报 ${uri} 活跃`).toBeTruthy();
                 // R8：这条 chat 流本身就是订阅者（run.subs）+ 该会话的 op 订阅 → 必须 >= 1。
                 // 若这里恒 0，[5] 的"谁在跑"会把正在被观察的轮次误报成 detached。
-                expect(hit!.subscribers, `活跃轮次的 subscribers（实际 ${hit!.subscribers}）`).toBeGreaterThanOrEqual(1);
+                expect(hit!.subscribers, `活跃轮次的 subscribers（实际 ${hit!.subscribers}）`).toBeGreaterThanOrEqual(
+                    1,
+                );
 
                 // 停止入口走的就是这个 RPC：对别人发起的轮次同样有效
                 const c = await fx.sh.getJson(`./diy.sh agent local cancel ${uri}`);
@@ -543,7 +523,10 @@ describe("agent.local — 真实对话（zen/go）", () => {
             };
             /** 该 uri 在帧里的条目（snapshot 在 entries 里，upsert 在 entry 里） */
             const entryIn = (f: Record<string, unknown>): Record<string, unknown> | null => {
-                const list = f.kind === "snapshot" ? (f.entries as Array<Record<string, unknown>>) : [f.entry as Record<string, unknown>];
+                const list =
+                    f.kind === "snapshot"
+                        ? (f.entries as Array<Record<string, unknown>>)
+                        : [f.entry as Record<string, unknown>];
                 for (const e of list ?? []) {
                     const refs = (e?.refs as Array<{ kind: string; uri: string }>) ?? [];
                     if (refs.some((r) => r.kind === "task" && r.uri === uri)) return e;
@@ -553,7 +536,11 @@ describe("agent.local — 真实对话（zen/go）", () => {
             const waitFor = async (pred: (e: Record<string, unknown>) => boolean, label: string) => {
                 let hit: Record<string, unknown> | null = null;
                 for (let i = 0; i < 60 && !hit; i++) {
-                    hit = frames().map(entryIn).filter((e): e is Record<string, unknown> => !!e).find(pred) ?? null;
+                    hit =
+                        frames()
+                            .map(entryIn)
+                            .filter((e): e is Record<string, unknown> => !!e)
+                            .find(pred) ?? null;
                     if (!hit) await new Promise((r) => setTimeout(r, 500));
                 }
                 expect(hit, `${label}（watch 已写 ${frames().length} 帧）`).toBeTruthy();

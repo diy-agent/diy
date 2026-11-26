@@ -9,11 +9,7 @@ describe("collectTags（从模版正文收集已知标签）", () => {
             '<project_instructions path="安">\n# t\n</project_instructions>\n',
             "<guard>\n锁\n</guard>\n",
         ];
-        expect([...collectTags(bodies)].sort()).toEqual([
-            "guard",
-            "project_instructions",
-            "task",
-        ]);
+        expect([...collectTags(bodies)].sort()).toEqual(["guard", "project_instructions", "task"]);
     });
 
     it("新增标签无需改代码：正文里出现即被收集", () => {
@@ -68,7 +64,7 @@ describe("findTags（决定哪些区间着色）", () => {
     });
 
     it("独占一行但行内有别的内容 → 不着色", () => {
-        expect(findTags('<diy-new>内容</diy-new>', known)).toEqual([]);
+        expect(findTags("<diy-new>内容</diy-new>", known)).toEqual([]);
     });
 
     it("控制标记 <template> 永不作为输出标签着色", () => {

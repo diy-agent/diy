@@ -19,12 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import {
-    ChannelClientBinding,
-    ChannelServerBinding,
-    createMemTransportPair,
-    createTypedClient,
-} from "@diy-agent/rpc";
+import { ChannelClientBinding, ChannelServerBinding, createMemTransportPair, createTypedClient } from "@diy-agent/rpc";
 import { apiDef } from "../../src/main/services/api-def";
 import { bindAppHandlers } from "../../src/main/services/api-impl";
 import { createProject } from "../../src/main/core/project";
@@ -33,7 +28,14 @@ import { refreshModelRuntime } from "../../src/main/core/model-runtime";
 import { getModelCatalog } from "../../src/shared/models";
 import { sessionFileRel } from "../../src/main/core/local-paths";
 
-type Persona = { id: string; name: string; model: string; reasoningEffort: string; instructions: string; taskCount: number };
+type Persona = {
+    id: string;
+    name: string;
+    model: string;
+    reasoningEffort: string;
+    instructions: string;
+    taskCount: number;
+};
 type PersonaList = { default: string; personas: Persona[]; followCount: number };
 
 let home: string;
@@ -125,7 +127,13 @@ describe("人物是一种配置：可以新建、改名、换模型，但不能�
         expect(p.model).toBe(MODEL);
         expect(p.instructions).toBe("只回要点。");
 
-        await rpc.diy.agent.persona.set({ id, model: MODEL2, name: undefined, reasoningEffort: undefined, instructions: undefined } as never);
+        await rpc.diy.agent.persona.set({
+            id,
+            model: MODEL2,
+            name: undefined,
+            reasoningEffort: undefined,
+            instructions: undefined,
+        } as never);
         const p2 = (await personaList()).personas.find((x) => x.id === id)!;
         expect(p2.model).toBe(MODEL2);
         expect(p2.instructions).toBe("只回要点。");
@@ -136,7 +144,13 @@ describe("人物是一种配置：可以新建、改名、换模型，但不能�
         const 原 = uniq("待改名");
         const 新 = uniq("改名后");
         const id = await addPersona(原);
-        await rpc.diy.agent.persona.set({ id, name: 新, model: undefined, reasoningEffort: undefined, instructions: undefined } as never);
+        await rpc.diy.agent.persona.set({
+            id,
+            name: 新,
+            model: undefined,
+            reasoningEffort: undefined,
+            instructions: undefined,
+        } as never);
         const p = (await personaList()).personas.find((x) => x.id === id)!;
         expect(p.name).toBe(新);
         expect(p.id).toBe(id);
@@ -144,10 +158,22 @@ describe("人物是一种配置：可以新建、改名、换模型，但不能�
 
     it("写不进去的组合当场拒绝：不存在的模型、模型不支持的推理强度", async () => {
         await expect(
-            rpc.diy.agent.persona.set({ name: "报错人物", model: "不存在的模型", id: undefined, reasoningEffort: undefined, instructions: undefined } as never),
+            rpc.diy.agent.persona.set({
+                name: "报错人物",
+                model: "不存在的模型",
+                id: undefined,
+                reasoningEffort: undefined,
+                instructions: undefined,
+            } as never),
         ).rejects.toThrow(/未知模型/);
         await expect(
-            rpc.diy.agent.persona.set({ name: "报错人物", model: MODEL, reasoningEffort: "ultra", id: undefined, instructions: undefined } as never),
+            rpc.diy.agent.persona.set({
+                name: "报错人物",
+                model: MODEL,
+                reasoningEffort: "ultra",
+                id: undefined,
+                instructions: undefined,
+            } as never),
         ).rejects.toThrow(/不支持推理强度/);
         expect((await personaList()).personas.map((p) => p.name)).not.toContain("报错人物");
     });
@@ -200,7 +226,13 @@ describe("任务用哪个人物：跟随缺省，或者固定绑一个", () => {
         const uri = await setupTask("改名不影响绑定");
         await rpc.diy.task.edit({ uri, persona: id } as never);
 
-        await rpc.diy.agent.persona.set({ id, name: 新名, model: undefined, reasoningEffort: undefined, instructions: undefined } as never);
+        await rpc.diy.agent.persona.set({
+            id,
+            name: 新名,
+            model: undefined,
+            reasoningEffort: undefined,
+            instructions: undefined,
+        } as never);
         expect(personaOf(uri)).toBe(id);
         expect((await personaList()).personas.find((x) => x.id === id)?.name).toBe(新名);
     });
@@ -236,7 +268,11 @@ describe("任务用哪个人物：跟随缺省，或者固定绑一个", () => {
 
     it("建任务时就能直接指定用哪个人物", async () => {
         const id = await addPersona(uniq("被指定的"));
-        const r = (await rpc.diy.task.create({ project: projectId, title: `指定人物#${String(++seq)}`, persona: id } as never)) as {
+        const r = (await rpc.diy.task.create({
+            project: projectId,
+            title: `指定人物#${String(++seq)}`,
+            persona: id,
+        } as never)) as {
             uri?: string;
             data?: { uri?: string };
         };

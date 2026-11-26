@@ -135,7 +135,11 @@ function clippedIdsOf(uri: string): string[] {
 }
 
 /** 单文件搬迁：copy → 校验 → 删源；返回动作 */
-function takeOver(from: string, to: string, dryRun: boolean): { action: LayoutMigrationEntry["action"]; note?: string } {
+function takeOver(
+    from: string,
+    to: string,
+    dryRun: boolean,
+): { action: LayoutMigrationEntry["action"]; note?: string } {
     let note: string | undefined;
     const srcSize = statSync(from).size;
     if (existsSync(to)) {
@@ -255,9 +259,7 @@ export function migrateLocalLayout(opts: { dryRun: boolean; toolout?: boolean })
             }
         }
         const legacyDir = legacyToolOutDir();
-        const files = existsSync(legacyDir)
-            ? readdirSync(legacyDir).filter((f) => f.endsWith(".txt"))
-            : [];
+        const files = existsSync(legacyDir) ? readdirSync(legacyDir).filter((f) => f.endsWith(".txt")) : [];
         for (const f of files) {
             const id = f.slice(0, -4);
             const uri = idToUri.get(id);

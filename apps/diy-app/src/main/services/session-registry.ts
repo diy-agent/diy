@@ -42,17 +42,17 @@ export type { RegistryFrame, SessionEntry, SessionRef, SessionTurn };
  * 每次构造条目视图时现算。
  */
 export interface SessionRegistryDeps {
-  /** 内容观察者数（chat 流 `run.subs` + op 流订阅者；见 LocalAgentManager.watchers） */
-  viewersOf(taskUri: string): number;
-  /**
-   * 待投递留言的来源分布（steer 队列，##306 / ##435）。
-   *
-   * **一次读盘给两个数**（review#435 P1）：`view()` 是每个会话每次变更都调用的热路径
-   * （`noteTurnStep` 每步一次、`touch` 每有动静一次），拆成两个取值器就是同一份
-   * `drafts.yaml` 每帧读两遍。`total` = 全部待投递条数，`human` = 其中**署名是人**的
-   * （`author: human:*`）。
-   */
-  queueCountsOf(taskUri: string): { total: number; human: number };
+    /** 内容观察者数（chat 流 `run.subs` + op 流订阅者；见 LocalAgentManager.watchers） */
+    viewersOf(taskUri: string): number;
+    /**
+     * 待投递留言的来源分布（steer 队列，##306 / ##435）。
+     *
+     * **一次读盘给两个数**（review#435 P1）：`view()` 是每个会话每次变更都调用的热路径
+     * （`noteTurnStep` 每步一次、`touch` 每有动静一次），拆成两个取值器就是同一份
+     * `drafts.yaml` 每帧读两遍。`total` = 全部待投递条数，`human` = 其中**署名是人**的
+     * （`author: human:*`）。
+     */
+    queueCountsOf(taskUri: string): { total: number; human: number };
 }
 
 /**
@@ -64,284 +64,296 @@ export interface SessionRegistryDeps {
  * 另一半（chat 流订阅者 `run.subs`）只存在于 manager 里，故 manager 注入的是它的超集。
  */
 const defaultDeps: SessionRegistryDeps = {
-  viewersOf: (uri) => opsFeed.subscriberCount(uri),
-  queueCountsOf: () => ({ total: 0, human: 0 }), // 待投递留言队列归 manager；manager 未构造 = 没有队列，0 是事实而非占位
+    viewersOf: (uri) => opsFeed.subscriberCount(uri),
+    queueCountsOf: () => ({ total: 0, human: 0 }), // 待投递留言队列归 manager；manager 未构造 = 没有队列，0 是事实而非占位
 };
 
 /** 注册表内核条目（不含活态属性 viewers / queue —— 那两个是取值器给的） */
 interface CoreEntry {
-  /** 内部键（= taskUri）；对外 id 由 sessionIdOf 派生，见 `SessionEntry.id` */
-  uri: string;
-  refs: SessionRef[];
-  turn: {
-    turnId: string;
-    steps: number;
-    tokens: number;
-    /** 心跳（每步刷新）—— 卡死/无进展判据的输入 */
-    lastOpAt: string;
-    /** 起始时刻（不随步进变）；`agent.local.running.since` 与崩溃现场都读它 */
-    startedAt: string;
-    model?: string;
-    cwd?: string;
-  } | null;
-  firstSeenAt: string;
-  lastActivity: string;
-  turnCount: number;
-  lastEndReason: TurnEndReason | null;
-  totalSteps: number;
-  totalTokens: number;
+    /** 内部键（= taskUri）；对外 id 由 sessionIdOf 派生，见 `SessionEntry.id` */
+    uri: string;
+    refs: SessionRef[];
+    turn: {
+        turnId: string;
+        steps: number;
+        tokens: number;
+        /** 心跳（每步刷新）—— 卡死/无进展判据的输入 */
+        lastOpAt: string;
+        /** 起始时刻（不随步进变）；`agent.local.running.since` 与崩溃现场都读它 */
+        startedAt: string;
+        model?: string;
+        cwd?: string;
+    } | null;
+    firstSeenAt: string;
+    lastActivity: string;
+    turnCount: number;
+    lastEndReason: TurnEndReason | null;
+    totalSteps: number;
+    totalTokens: number;
 }
 
 class SessionRegistry {
-  /** uri → 条目（只增不减：轮次结束清 turn 但**不删条目**，R5） */
-  private entries = new Map<string, CoreEntry>();
-  /** 注册表订阅者（**不等于** viewers，R3） */
-  private subs = new Set<AsyncQueue<RegistryFrame>>();
-  private deps: SessionRegistryDeps = defaultDeps;
+    /** uri → 条目（只增不减：轮次结束清 turn 但**不删条目**，R5） */
+    private entries = new Map<string, CoreEntry>();
+    /** 注册表订阅者（**不等于** viewers，R3） */
+    private subs = new Set<AsyncQueue<RegistryFrame>>();
+    private deps: SessionRegistryDeps = defaultDeps;
 
-  constructor() {
-    // 「谁在看」是活态属性 → 内容订阅者增 / 退必须**变化即推帧**（review1 P2-1 缺口 A/B）：
-    //   ① 订阅发生 = 一次真实的"活跃"（会话被打开）⇒ `noteActivity` 会建档，
-    //      "打开·未通讯"这一格才有东西可显示；
-    //   ② viewers 归零 / 翻 detached 也能在一行内被 `--watch` 看到。
-    // 挂在**内容总线**上而不是 RPC 绑定处：所有内容订阅（UI 窗口 / CLI / 别的 agent）都经它，
-    // 而注册表自身的订阅者不经它 ⇒ R3「观测不污染」天然成立。
-    opsFeed.setSubsChangedListener((uri) => this.noteActivity(uri));
-  }
-
-  /** local-agent 启动时注入活态取值器（测试可直接摆桩） */
-  setDeps(deps: SessionRegistryDeps): void {
-    this.deps = deps;
-  }
-
-  private now(): string {
-    return localISOString();
-  }
-
-  private entry(uri: string): CoreEntry {
-    let e = this.entries.get(uri);
-    if (!e) {
-      const t = this.now();
-      e = {
-        uri,
-        refs: [{ kind: "task", uri }],
-        turn: null,
-        firstSeenAt: t,
-        lastActivity: t,
-        turnCount: 0,
-        lastEndReason: null,
-        totalSteps: 0,
-        totalTokens: 0,
-      };
-      this.entries.set(uri, e);
+    constructor() {
+        // 「谁在看」是活态属性 → 内容订阅者增 / 退必须**变化即推帧**（review1 P2-1 缺口 A/B）：
+        //   ① 订阅发生 = 一次真实的"活跃"（会话被打开）⇒ `noteActivity` 会建档，
+        //      "打开·未通讯"这一格才有东西可显示；
+        //   ② viewers 归零 / 翻 detached 也能在一行内被 `--watch` 看到。
+        // 挂在**内容总线**上而不是 RPC 绑定处：所有内容订阅（UI 窗口 / CLI / 别的 agent）都经它，
+        // 而注册表自身的订阅者不经它 ⇒ R3「观测不污染」天然成立。
+        opsFeed.setSubsChangedListener((uri) => this.noteActivity(uri));
     }
-    return e;
-  }
 
-  /** 内核条目 + 活态属性 → 对外视图（订阅 / 快照唯一出口） */
-  private view(e: CoreEntry): SessionEntry {
-    const viewers = this.deps.viewersOf(e.uri);
-    const counts = this.deps.queueCountsOf(e.uri);
-    const queue = Math.max(0, counts.total);
-    // 夹到 [0, total] 是**防御**（取值器不来就不该越界 —— 于是 `queueAuto` 永远不为负），
-    // 不是给"两次读盘不一致"打的补丁：两个数来自同一次 `list()`。
-    const queueHuman = Math.min(Math.max(0, counts.human), queue);
-    return {
-      id: sessionIdOf(e.uri),
-      refs: e.refs.map((r) => ({ ...r })),
-      turn: e.turn ? { ...e.turn, state: viewers > 0 ? "active" : "detached" } : null,
-      queue,
-      queueHuman,
-      queueAuto: queue - queueHuman,
-      viewers,
-      firstSeenAt: e.firstSeenAt,
-      lastActivity: e.lastActivity,
-      turnCount: e.turnCount,
-      lastEndReason: e.lastEndReason ? { ...e.lastEndReason } : null,
-      totalSteps: e.totalSteps,
-      totalTokens: e.totalTokens,
-    };
-  }
-
-  /** 推一条变更（订阅者为空时只更新状态，不构造帧 —— 与 ops-feed 同策略） */
-  private emit(uri: string): void {
-    const e = this.entries.get(uri);
-    if (!e || this.subs.size === 0) return;
-    const frame: RegistryFrame = { kind: "upsert", entry: this.view(e) };
-    for (const q of this.subs) q.push(frame);
-  }
-
-  /** 一条会话开始活动就被"见过"（轮次开始 / 留言 / 任何 noteX 都会建条目） */
-  private touch(e: CoreEntry): void {
-    e.lastActivity = this.now();
-    this.emit(e.uri);
-  }
-
-  // ─── 变更入口（local-agent 驱动显式调用；数据来源是内存态，不靠日志反推）───
-
-  /**
-   * 轮次开始：建 turn（steps=0 / tokens=0），条目"见过即留痕"。
-   *
-   * `turnId` 可省（生成一个）—— 调用方（local-agent）总有真 turnId；省缺只服务"只想表达
-   * 有一轮在跑"的调用方（如崩溃现场的单测）。`model` / `cwd` 是**该轮的事实**，必须收下并
-   * 出现在 `SessionEntry.turn` 里，否则 `agent.local.running` 的消费方要再拉一次做字段合并
-   * （review1 P2-2）。
-   */
-  noteTurnStart(uri: string, opts: { turnId?: string; model?: string; cwd?: string }): void {
-    const e = this.entry(uri);
-    const t = this.now();
-    e.turn = {
-      turnId: opts.turnId ?? `t${Date.now()}`,
-      steps: 0,
-      tokens: 0,
-      lastOpAt: t,
-      startedAt: t,
-      model: opts.model,
-      cwd: opts.cwd,
-    };
-    this.touch(e);
-  }
-
-  /** 步进（每步 start-step）：更新已跑步数与心跳 */
-  noteTurnStep(uri: string, steps: number): void {
-    const e = this.entries.get(uri);
-    if (!e || !e.turn) return;
-    e.turn.steps = steps;
-    e.turn.lastOpAt = this.now();
-    this.touch(e);
-  }
-
-  /** 本轮 tokens（每步 finish-step 后同步账本值） */
-  noteTurnUsage(uri: string, tokens: number): void {
-    const e = this.entries.get(uri);
-    if (!e || !e.turn) return;
-    e.turn.tokens = tokens;
-    e.turn.lastOpAt = this.now();
-    this.touch(e);
-  }
-
-  /**
-   * 轮次结束（R5）：**只清 turn、条目保留**，turnCount +1、记末轮 endReason。
-   * 累计 steps / tokens 累进（跨轮）。
-   *
-   * 幂等：turn 已清（closeTurn 已收口）时再调只更新 lastActivity —— driveTurn 的兜底注销
-   * 与 runTurn 的 closeTurn 收口路径会各调一次，不许因此把 turnCount 加两遍。
-   */
-  noteTurnEnd(uri: string, endReason: TurnEndReason, info?: { steps?: number; tokens?: number }): void {
-    const e = this.entries.get(uri);
-    if (!e) return;
-    if (!e.turn) {
-      this.touch(e);
-      return;
+    /** local-agent 启动时注入活态取值器（测试可直接摆桩） */
+    setDeps(deps: SessionRegistryDeps): void {
+        this.deps = deps;
     }
-    const steps = info?.steps ?? e.turn.steps;
-    const tokens = info?.tokens ?? e.turn.tokens;
-    e.totalSteps += steps;
-    e.totalTokens += tokens;
-    e.turn = null;
-    e.turnCount += 1;
-    e.lastEndReason = endReason;
-    this.touch(e);
-  }
 
-  /** 活态属性变化（留言入队 / 出队；viewers 变化留缝）—— 让订阅方拿到新快照值 */
-  noteActivity(uri: string): void {
-    const e = this.entries.get(uri);
-    if (!e) {
-      // 从未见过的会话被留言 = 一次真实的"活跃"，值得建条目
-      this.touch(this.entry(uri));
-      return;
+    private now(): string {
+        return localISOString();
     }
-    this.touch(e);
-  }
 
-  /**
-   * 此刻**在跑**的轮次（`turn != null` 的条目），按起始时间升序。
-   *
-   * ⚠️ 与 `snapshot()` 的关键差别：**不碰 deps**（不查 viewers、不读 queue 落盘）。
-   * 它的读路是 `agent.local.running` 与崩溃现场（`crashScene`）—— 后者跑在崩溃钩子里，
-   * 同步、不许任何 I/O，更不能去碰 manager。故这里只做纯内存读。
-   */
-  activeTurnList(): Array<{
-    uri: string;
-    turnId: string;
-    model?: string;
-    cwd?: string;
-    since: string;
-    steps: number;
-    tokens: number;
-  }> {
-    const out: Array<{
-      uri: string;
-      turnId: string;
-      model?: string;
-      cwd?: string;
-      since: string;
-      steps: number;
-      tokens: number;
-    }> = [];
-    for (const e of this.entries.values()) {
-      const t = e.turn;
-      if (!t) continue;
-      out.push({ uri: e.uri, turnId: t.turnId, model: t.model, cwd: t.cwd, since: t.startedAt, steps: t.steps, tokens: t.tokens });
+    private entry(uri: string): CoreEntry {
+        let e = this.entries.get(uri);
+        if (!e) {
+            const t = this.now();
+            e = {
+                uri,
+                refs: [{ kind: "task", uri }],
+                turn: null,
+                firstSeenAt: t,
+                lastActivity: t,
+                turnCount: 0,
+                lastEndReason: null,
+                totalSteps: 0,
+                totalTokens: 0,
+            };
+            this.entries.set(uri, e);
+        }
+        return e;
     }
-    return out.sort((a, b) => a.since.localeCompare(b.since));
-  }
 
-  // ─── 读侧 ───
-
-  /** 全量快照（按 firstSeenAt 升序 = 人读顺序） */
-  snapshot(): SessionEntry[] {
-    return [...this.entries.values()]
-      .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt))
-      .map((e) => this.view(e));
-  }
-
-  /**
-   * 单条会话的注册表视图（按 taskUri）。
-   *
-   * 存在理由：`snapshot()` 是"全库"（每个条目都要查 viewers / 读 queue 落盘），
-   * 而 room 的 roster / 单轮进度只关心**某几个会话** —— 不该为一条会话把全库都算一遍。
-   * 与 `activeTurnList()` 的分工：那个**不碰 deps**（崩溃钩子用），这个正常算活态属性。
-   */
-  entryOf(taskUri: string): SessionEntry | null {
-    const e = this.entries.get(taskUri);
-    return e ? this.view(e) : null;
-  }
-
-  /** 注册表自身的订阅者数（测试用；**不许**混进 viewers，R3） */
-  subscriberCount(): number {
-    return this.subs.size;
-  }
-
-  /**
-   * 订阅注册表（`agent.local.sessions` 的实现）：
-   *   ① 首帧 `snapshot`（全量）；
-   *   ② `watch=true` 时持续推 upsert；否则**只给一份快照就结束**（CLI 无参即此路径）。
-   *
-   * ⚠️ 本订阅**不进 `viewers`**（R3）：注册表是"看状态"，不是"看内容"。
-   */
-  subscribe(opts: { watch?: boolean; signal?: AbortSignal } = {}): AsyncIterable<RegistryFrame> {
-    const q = new AsyncQueue<RegistryFrame>();
-    q.push({ kind: "snapshot", entries: this.snapshot() });
-    if (!opts.watch) {
-      q.close();
-      return q;
+    /** 内核条目 + 活态属性 → 对外视图（订阅 / 快照唯一出口） */
+    private view(e: CoreEntry): SessionEntry {
+        const viewers = this.deps.viewersOf(e.uri);
+        const counts = this.deps.queueCountsOf(e.uri);
+        const queue = Math.max(0, counts.total);
+        // 夹到 [0, total] 是**防御**（取值器不来就不该越界 —— 于是 `queueAuto` 永远不为负），
+        // 不是给"两次读盘不一致"打的补丁：两个数来自同一次 `list()`。
+        const queueHuman = Math.min(Math.max(0, counts.human), queue);
+        return {
+            id: sessionIdOf(e.uri),
+            refs: e.refs.map((r) => ({ ...r })),
+            turn: e.turn ? { ...e.turn, state: viewers > 0 ? "active" : "detached" } : null,
+            queue,
+            queueHuman,
+            queueAuto: queue - queueHuman,
+            viewers,
+            firstSeenAt: e.firstSeenAt,
+            lastActivity: e.lastActivity,
+            turnCount: e.turnCount,
+            lastEndReason: e.lastEndReason ? { ...e.lastEndReason } : null,
+            totalSteps: e.totalSteps,
+            totalTokens: e.totalTokens,
+        };
     }
-    this.subs.add(q);
-    // signal：传输断开时即时退订（否则悬挂的 next() 会让订阅滞留到下一次 emit）
-    return withCleanup(q, () => {
-      this.subs.delete(q);
-    }, opts.signal);
-  }
 
-  /** 测试用：清空全部内存态（生产不调用 —— 生产靠进程退出，这正是"本次启动"语义） */
-  reset(): void {
-    this.entries.clear();
-    for (const q of this.subs) q.close();
-    this.subs.clear();
-    this.deps = defaultDeps;
-  }
+    /** 推一条变更（订阅者为空时只更新状态，不构造帧 —— 与 ops-feed 同策略） */
+    private emit(uri: string): void {
+        const e = this.entries.get(uri);
+        if (!e || this.subs.size === 0) return;
+        const frame: RegistryFrame = { kind: "upsert", entry: this.view(e) };
+        for (const q of this.subs) q.push(frame);
+    }
+
+    /** 一条会话开始活动就被"见过"（轮次开始 / 留言 / 任何 noteX 都会建条目） */
+    private touch(e: CoreEntry): void {
+        e.lastActivity = this.now();
+        this.emit(e.uri);
+    }
+
+    // ─── 变更入口（local-agent 驱动显式调用；数据来源是内存态，不靠日志反推）───
+
+    /**
+     * 轮次开始：建 turn（steps=0 / tokens=0），条目"见过即留痕"。
+     *
+     * `turnId` 可省（生成一个）—— 调用方（local-agent）总有真 turnId；省缺只服务"只想表达
+     * 有一轮在跑"的调用方（如崩溃现场的单测）。`model` / `cwd` 是**该轮的事实**，必须收下并
+     * 出现在 `SessionEntry.turn` 里，否则 `agent.local.running` 的消费方要再拉一次做字段合并
+     * （review1 P2-2）。
+     */
+    noteTurnStart(uri: string, opts: { turnId?: string; model?: string; cwd?: string }): void {
+        const e = this.entry(uri);
+        const t = this.now();
+        e.turn = {
+            turnId: opts.turnId ?? `t${Date.now()}`,
+            steps: 0,
+            tokens: 0,
+            lastOpAt: t,
+            startedAt: t,
+            model: opts.model,
+            cwd: opts.cwd,
+        };
+        this.touch(e);
+    }
+
+    /** 步进（每步 start-step）：更新已跑步数与心跳 */
+    noteTurnStep(uri: string, steps: number): void {
+        const e = this.entries.get(uri);
+        if (!e || !e.turn) return;
+        e.turn.steps = steps;
+        e.turn.lastOpAt = this.now();
+        this.touch(e);
+    }
+
+    /** 本轮 tokens（每步 finish-step 后同步账本值） */
+    noteTurnUsage(uri: string, tokens: number): void {
+        const e = this.entries.get(uri);
+        if (!e || !e.turn) return;
+        e.turn.tokens = tokens;
+        e.turn.lastOpAt = this.now();
+        this.touch(e);
+    }
+
+    /**
+     * 轮次结束（R5）：**只清 turn、条目保留**，turnCount +1、记末轮 endReason。
+     * 累计 steps / tokens 累进（跨轮）。
+     *
+     * 幂等：turn 已清（closeTurn 已收口）时再调只更新 lastActivity —— driveTurn 的兜底注销
+     * 与 runTurn 的 closeTurn 收口路径会各调一次，不许因此把 turnCount 加两遍。
+     */
+    noteTurnEnd(uri: string, endReason: TurnEndReason, info?: { steps?: number; tokens?: number }): void {
+        const e = this.entries.get(uri);
+        if (!e) return;
+        if (!e.turn) {
+            this.touch(e);
+            return;
+        }
+        const steps = info?.steps ?? e.turn.steps;
+        const tokens = info?.tokens ?? e.turn.tokens;
+        e.totalSteps += steps;
+        e.totalTokens += tokens;
+        e.turn = null;
+        e.turnCount += 1;
+        e.lastEndReason = endReason;
+        this.touch(e);
+    }
+
+    /** 活态属性变化（留言入队 / 出队；viewers 变化留缝）—— 让订阅方拿到新快照值 */
+    noteActivity(uri: string): void {
+        const e = this.entries.get(uri);
+        if (!e) {
+            // 从未见过的会话被留言 = 一次真实的"活跃"，值得建条目
+            this.touch(this.entry(uri));
+            return;
+        }
+        this.touch(e);
+    }
+
+    /**
+     * 此刻**在跑**的轮次（`turn != null` 的条目），按起始时间升序。
+     *
+     * ⚠️ 与 `snapshot()` 的关键差别：**不碰 deps**（不查 viewers、不读 queue 落盘）。
+     * 它的读路是 `agent.local.running` 与崩溃现场（`crashScene`）—— 后者跑在崩溃钩子里，
+     * 同步、不许任何 I/O，更不能去碰 manager。故这里只做纯内存读。
+     */
+    activeTurnList(): Array<{
+        uri: string;
+        turnId: string;
+        model?: string;
+        cwd?: string;
+        since: string;
+        steps: number;
+        tokens: number;
+    }> {
+        const out: Array<{
+            uri: string;
+            turnId: string;
+            model?: string;
+            cwd?: string;
+            since: string;
+            steps: number;
+            tokens: number;
+        }> = [];
+        for (const e of this.entries.values()) {
+            const t = e.turn;
+            if (!t) continue;
+            out.push({
+                uri: e.uri,
+                turnId: t.turnId,
+                model: t.model,
+                cwd: t.cwd,
+                since: t.startedAt,
+                steps: t.steps,
+                tokens: t.tokens,
+            });
+        }
+        return out.sort((a, b) => a.since.localeCompare(b.since));
+    }
+
+    // ─── 读侧 ───
+
+    /** 全量快照（按 firstSeenAt 升序 = 人读顺序） */
+    snapshot(): SessionEntry[] {
+        return [...this.entries.values()]
+            .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt))
+            .map((e) => this.view(e));
+    }
+
+    /**
+     * 单条会话的注册表视图（按 taskUri）。
+     *
+     * 存在理由：`snapshot()` 是"全库"（每个条目都要查 viewers / 读 queue 落盘），
+     * 而 room 的 roster / 单轮进度只关心**某几个会话** —— 不该为一条会话把全库都算一遍。
+     * 与 `activeTurnList()` 的分工：那个**不碰 deps**（崩溃钩子用），这个正常算活态属性。
+     */
+    entryOf(taskUri: string): SessionEntry | null {
+        const e = this.entries.get(taskUri);
+        return e ? this.view(e) : null;
+    }
+
+    /** 注册表自身的订阅者数（测试用；**不许**混进 viewers，R3） */
+    subscriberCount(): number {
+        return this.subs.size;
+    }
+
+    /**
+     * 订阅注册表（`agent.local.sessions` 的实现）：
+     *   ① 首帧 `snapshot`（全量）；
+     *   ② `watch=true` 时持续推 upsert；否则**只给一份快照就结束**（CLI 无参即此路径）。
+     *
+     * ⚠️ 本订阅**不进 `viewers`**（R3）：注册表是"看状态"，不是"看内容"。
+     */
+    subscribe(opts: { watch?: boolean; signal?: AbortSignal } = {}): AsyncIterable<RegistryFrame> {
+        const q = new AsyncQueue<RegistryFrame>();
+        q.push({ kind: "snapshot", entries: this.snapshot() });
+        if (!opts.watch) {
+            q.close();
+            return q;
+        }
+        this.subs.add(q);
+        // signal：传输断开时即时退订（否则悬挂的 next() 会让订阅滞留到下一次 emit）
+        return withCleanup(
+            q,
+            () => {
+                this.subs.delete(q);
+            },
+            opts.signal,
+        );
+    }
+
+    /** 测试用：清空全部内存态（生产不调用 —— 生产靠进程退出，这正是"本次启动"语义） */
+    reset(): void {
+        this.entries.clear();
+        for (const q of this.subs) q.close();
+        this.subs.clear();
+        this.deps = defaultDeps;
+    }
 }
 
 export const sessionRegistry = new SessionRegistry();

@@ -51,7 +51,9 @@ async function run(label: string, model: string, messages: ModelMessage[], effor
             // 档位必须经 providerOptions 命名空间下发，否则上游收不到（##184 坑 4）；
             // 不传 = 交上游默认（deepseek-v4.1-flash 的 models.dev 默认是 medium，即"思考档"）。
             ...(effort ? { providerOptions: { openaiCompatible: { reasoningEffort: effort } } } : {}),
-            onError: ({ error }) => { inner = error; },
+            onError: ({ error }) => {
+                inner = error;
+            },
         });
         const text = await result.text; // ⚠️ 必须 await 结果，否则校验错误只会变成 unhandled rejection
         console.log(`${label}\n   ✅ OK → ${JSON.stringify(text.slice(0, 60))}\n`);
@@ -92,9 +94,7 @@ const orphan: ModelMessage[] = [
     { role: "user", content: "用 bash 跑一下 echo hi" },
     {
         role: "assistant",
-        content: [
-            { type: "tool-call", toolCallId: "call_1", toolName: "bash", input: { command: "echo hi" } },
-        ],
+        content: [{ type: "tool-call", toolCallId: "call_1", toolName: "bash", input: { command: "echo hi" } }],
     },
     { role: "user", content: "继续" },
 ];
@@ -120,45 +120,67 @@ const withoutReasoning: ModelMessage[] = [
 // ─── E：多步工具链（一个 turn 内两次工具调用）─────────
 const multiStep: ModelMessage[] = [
     { role: "user", content: "先 echo a，再 echo b" },
-    { role: "assistant", content: [
-        { type: "reasoning", text: "先跑第一条命令。" },
-        { type: "tool-call", toolCallId: "call_a", toolName: "bash", input: { command: "echo a" } },
-    ] },
-    { role: "tool", content: [
-        { type: "tool-result", toolCallId: "call_a", toolName: "bash", output: { type: "text", value: "a" } },
-    ] },
-    { role: "assistant", content: [
-        { type: "tool-call", toolCallId: "call_b", toolName: "bash", input: { command: "echo b" } },
-    ] },
-    { role: "tool", content: [
-        { type: "tool-result", toolCallId: "call_b", toolName: "bash", output: { type: "text", value: "b" } },
-    ] },
+    {
+        role: "assistant",
+        content: [
+            { type: "reasoning", text: "先跑第一条命令。" },
+            { type: "tool-call", toolCallId: "call_a", toolName: "bash", input: { command: "echo a" } },
+        ],
+    },
+    {
+        role: "tool",
+        content: [
+            { type: "tool-result", toolCallId: "call_a", toolName: "bash", output: { type: "text", value: "a" } },
+        ],
+    },
+    {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call_b", toolName: "bash", input: { command: "echo b" } }],
+    },
+    {
+        role: "tool",
+        content: [
+            { type: "tool-result", toolCallId: "call_b", toolName: "bash", output: { type: "text", value: "b" } },
+        ],
+    },
     { role: "user", content: "两条命令的输出分别是什么？一句话" },
 ];
 
 // ─── F：工具失败的 output 类型 ─────────────────────────
 const failedTool: ModelMessage[] = [
     { role: "user", content: "跑一下不存在的命令" },
-    { role: "assistant", content: [
-        { type: "tool-call", toolCallId: "call_x", toolName: "bash", input: { command: "nope" } },
-    ] },
-    { role: "tool", content: [
-        { type: "tool-result", toolCallId: "call_x", toolName: "bash",
-          output: { type: "error-text", value: "command not found: nope" } },
-    ] },
+    {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call_x", toolName: "bash", input: { command: "nope" } }],
+    },
+    {
+        role: "tool",
+        content: [
+            {
+                type: "tool-result",
+                toolCallId: "call_x",
+                toolName: "bash",
+                output: { type: "error-text", value: "command not found: nope" },
+            },
+        ],
+    },
     { role: "user", content: "刚才失败了吗？一个字" },
 ];
 
 // ─── G：顺序错乱（tool 结果被放到 user 消息之后）─────────
 const wrongOrder: ModelMessage[] = [
     { role: "user", content: "用 bash 跑一下 echo hi" },
-    { role: "assistant", content: [
-        { type: "tool-call", toolCallId: "call_1", toolName: "bash", input: { command: "echo hi" } },
-    ] },
+    {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call_1", toolName: "bash", input: { command: "echo hi" } }],
+    },
     { role: "user", content: "顺便问一下，今天是周几？" },
-    { role: "tool", content: [
-        { type: "tool-result", toolCallId: "call_1", toolName: "bash", output: { type: "text", value: "hi" } },
-    ] },
+    {
+        role: "tool",
+        content: [
+            { type: "tool-result", toolCallId: "call_1", toolName: "bash", output: { type: "text", value: "hi" } },
+        ],
+    },
 ];
 
 // ─── H / I / J：thinking 档 × tool-call × reasoning 有无（##371 探针）───────
@@ -167,23 +189,33 @@ const wrongOrder: ModelMessage[] = [
 // 而历史里 assistant 几乎都带 tool-call ⇒ 只要这个组合触发，它就是生产 400 的根因。
 const thinkToolNoReasoning: ModelMessage[] = [
     { role: "user", content: "用 bash 跑一下 echo hi" },
-    { role: "assistant", content: [
-        { type: "tool-call", toolCallId: "call_1", toolName: "bash", input: { command: "echo hi" } },
-    ] },
-    { role: "tool", content: [
-        { type: "tool-result", toolCallId: "call_1", toolName: "bash", output: { type: "text", value: "hi" } },
-    ] },
+    {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call_1", toolName: "bash", input: { command: "echo hi" } }],
+    },
+    {
+        role: "tool",
+        content: [
+            { type: "tool-result", toolCallId: "call_1", toolName: "bash", output: { type: "text", value: "hi" } },
+        ],
+    },
     { role: "user", content: "输出是什么？一个字回答" },
 ];
 const thinkToolWithReasoning: ModelMessage[] = [
     { role: "user", content: "用 bash 跑一下 echo hi" },
-    { role: "assistant", content: [
-        { type: "reasoning", text: "用户让我跑 echo hi，先调用 bash 工具。" },
-        { type: "tool-call", toolCallId: "call_1", toolName: "bash", input: { command: "echo hi" } },
-    ] },
-    { role: "tool", content: [
-        { type: "tool-result", toolCallId: "call_1", toolName: "bash", output: { type: "text", value: "hi" } },
-    ] },
+    {
+        role: "assistant",
+        content: [
+            { type: "reasoning", text: "用户让我跑 echo hi，先调用 bash 工具。" },
+            { type: "tool-call", toolCallId: "call_1", toolName: "bash", input: { command: "echo hi" } },
+        ],
+    },
+    {
+        role: "tool",
+        content: [
+            { type: "tool-result", toolCallId: "call_1", toolName: "bash", output: { type: "text", value: "hi" } },
+        ],
+    },
     { role: "user", content: "输出是什么？一个字回答" },
 ];
 // 对照：纯文本 assistant（无 tool-call）缺 reasoning
@@ -200,7 +232,26 @@ await run("E 多步工具链：2× (tool-call + tool-result)（glm-5.3-flash）"
 await run("F 工具失败用 error-text 输出（glm-5.3-flash）", "glm-5.3-flash", failedTool);
 await run("G 顺序错乱：tool-result 放到下一条 user 之后（glm-5.3-flash）", "glm-5.3-flash", wrongOrder);
 console.log("── ##371：thinking 档 × tool-call × reasoning ──\n");
-await run("H thinking(high) + tool-call 缺 reasoning（deepseek-v4.1-flash）", "deepseek-v4.1-flash", thinkToolNoReasoning, "high");
-await run("I thinking(high) + tool-call 带 reasoning（deepseek-v4.1-flash）", "deepseek-v4.1-flash", thinkToolWithReasoning, "high");
-await run("J thinking(high) + 纯文本 assistant 缺 reasoning（deepseek-v4.1-flash）", "deepseek-v4.1-flash", thinkTextNoReasoning, "high");
-await run("K 不传档（上游默认 medium）+ tool-call 缺 reasoning（deepseek-v4.1-flash）", "deepseek-v4.1-flash", thinkToolNoReasoning);
+await run(
+    "H thinking(high) + tool-call 缺 reasoning（deepseek-v4.1-flash）",
+    "deepseek-v4.1-flash",
+    thinkToolNoReasoning,
+    "high",
+);
+await run(
+    "I thinking(high) + tool-call 带 reasoning（deepseek-v4.1-flash）",
+    "deepseek-v4.1-flash",
+    thinkToolWithReasoning,
+    "high",
+);
+await run(
+    "J thinking(high) + 纯文本 assistant 缺 reasoning（deepseek-v4.1-flash）",
+    "deepseek-v4.1-flash",
+    thinkTextNoReasoning,
+    "high",
+);
+await run(
+    "K 不传档（上游默认 medium）+ tool-call 缺 reasoning（deepseek-v4.1-flash）",
+    "deepseek-v4.1-flash",
+    thinkToolNoReasoning,
+);

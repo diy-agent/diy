@@ -64,11 +64,12 @@ export function flowDir(uri: string): string {
 }
 
 export function flowFile(uri: string, name: "instance" | "state" | "path" | "events" | "threads"): string {
-    const file = name === "path"
-        ? "path.jsonl"
-        : name === "events"
-            ? "events.jsonl"
-            : name === "threads"
+    const file =
+        name === "path"
+            ? "path.jsonl"
+            : name === "events"
+              ? "events.jsonl"
+              : name === "threads"
                 ? "threads.jsonl"
                 : `${name}.json`;
     return join(flowDir(uri), file);
@@ -122,7 +123,8 @@ export function readBinding(uri: string): FlowBinding | null {
     };
     const ref = obj["ref"];
     if (ref !== undefined) {
-        if (typeof ref !== "object" || ref === null || Array.isArray(ref)) throw new Error(`实例绑定的 ref 应为对象：${path}`);
+        if (typeof ref !== "object" || ref === null || Array.isArray(ref))
+            throw new Error(`实例绑定的 ref 应为对象：${path}`);
         for (const [k, v] of Object.entries(ref)) {
             if (typeof v !== "string") throw new Error(`实例绑定的 ref.${k} 应为字符串：${path}`);
         }
@@ -168,16 +170,22 @@ export function writeState(uri: string, state: FlowState<string>): void {
  */
 export type FlowPathRecord =
     | { readonly op: "config"; readonly params: Readonly<Record<string, unknown>> }
-    | { readonly op: "advance"; readonly to: string; readonly at: string; readonly ref?: Readonly<Record<string, string>> }
+    | {
+          readonly op: "advance";
+          readonly to: string;
+          readonly at: string;
+          readonly ref?: Readonly<Record<string, string>>;
+      }
     /** 收尾（`done` 置位）。`at` 只为审计可读，重建不依赖它（重建只认「有过一次收尾」这个事实） */
     | { readonly op: "finish"; readonly at: string };
 
 export function appendPathRecord(uri: string, record: FlowPathRecord): void {
-    const out: Record<string, unknown> = record.op === "config"
-        ? { op: "config", params: record.params }
-        : record.op === "finish"
-            ? { op: "finish", at: record.at }
-            : record.ref === undefined
+    const out: Record<string, unknown> =
+        record.op === "config"
+            ? { op: "config", params: record.params }
+            : record.op === "finish"
+              ? { op: "finish", at: record.at }
+              : record.ref === undefined
                 ? { op: "advance", to: record.to, at: record.at }
                 : { op: "advance", to: record.to, at: record.at, ref: record.ref };
     const file = flowFile(uri, "path");
@@ -189,7 +197,9 @@ export function appendPathRecord(uri: string, record: FlowPathRecord): void {
 export function readPathRecords(uri: string): FlowPathRecord[] {
     const file = flowFile(uri, "path");
     if (!existsSync(file)) return [];
-    const lines = readFileSync(file, "utf-8").split("\n").filter((l) => l.trim() !== "");
+    const lines = readFileSync(file, "utf-8")
+        .split("\n")
+        .filter((l) => l.trim() !== "");
     return lines.map((line, i) => {
         let raw: unknown;
         try {
@@ -224,7 +234,9 @@ export function readPathRecords(uri: string): FlowPathRecord[] {
             if (typeof rec["at"] !== "string") throw new Error(`path.jsonl 第 ${i + 1} 行（finish）缺少 at`);
             return { op: "finish", at: rec["at"] };
         }
-        throw new Error(`path.jsonl 第 ${i + 1} 行的 op 未知（只认 config / advance / finish）：${JSON.stringify(rec["op"])}`);
+        throw new Error(
+            `path.jsonl 第 ${i + 1} 行的 op 未知（只认 config / advance / finish）：${JSON.stringify(rec["op"])}`,
+        );
     });
 }
 
@@ -312,12 +324,14 @@ function parsePost(raw: unknown): FlowPost | null {
     if (typeof raw !== "object" || raw === null) return null;
     const o = raw as Record<string, unknown>;
     const { id, at, author, type, text } = o;
-    if (typeof id !== "string" || typeof at !== "string" || typeof author !== "string" || typeof text !== "string") return null;
+    if (typeof id !== "string" || typeof at !== "string" || typeof author !== "string" || typeof text !== "string")
+        return null;
     if (typeof type !== "string" || !POST_TYPES.includes(type as FlowPostType)) return null;
     const a = o["anchor"];
     if (typeof a !== "object" || a === null) return null;
     const { from, to, seq } = a as Record<string, unknown>;
-    if (typeof from !== "string" || typeof to !== "string" || typeof seq !== "number" || !Number.isInteger(seq)) return null;
+    if (typeof from !== "string" || typeof to !== "string" || typeof seq !== "number" || !Number.isInteger(seq))
+        return null;
     return { id, at, author, type: type as FlowPostType, anchor: { from, to, seq }, text };
 }
 
@@ -378,7 +392,11 @@ export function readPosts(uri: string): { posts: FlowPost[]; skipped: number } {
  */
 export function applyFinish(state: FlowState<string>): FlowState<string> {
     if (state.position === null) {
-        throw new FlowError("invalid-state", "尚未进入工作流（position 为 null）：没跑过就无所谓「走完」", "flow/state.json");
+        throw new FlowError(
+            "invalid-state",
+            "尚未进入工作流（position 为 null）：没跑过就无所谓「走完」",
+            "flow/state.json",
+        );
     }
     return parseFlowState<string>({
         position: state.position,
@@ -410,7 +428,11 @@ export function rebuildState(def: WorkflowDef<string>, records: readonly FlowPat
         }
         if (record.op === "finish") {
             if (state.done === true) {
-                throw new FlowError("invalid-state", "path.jsonl 里有两条 finish 记录（收尾只能一次）：日志自相矛盾", "flow/path.jsonl");
+                throw new FlowError(
+                    "invalid-state",
+                    "path.jsonl 里有两条 finish 记录（收尾只能一次）：日志自相矛盾",
+                    "flow/path.jsonl",
+                );
             }
             state = applyFinish(state);
             continue;
@@ -422,9 +444,10 @@ export function rebuildState(def: WorkflowDef<string>, records: readonly FlowPat
                 "flow/path.jsonl",
             );
         }
-        const request: AdvanceRequest<string> = record.ref === undefined
-            ? { to: record.to, at: record.at }
-            : { to: record.to, at: record.at, ref: record.ref };
+        const request: AdvanceRequest<string> =
+            record.ref === undefined
+                ? { to: record.to, at: record.at }
+                : { to: record.to, at: record.at, ref: record.ref };
         state = advance(def, state, request).state;
     }
     return state;

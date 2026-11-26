@@ -198,11 +198,7 @@ export function tightenFailPoint(current: number | null, gapMs: number): number 
  *
  * 返回原值 = 这次失败被忽略（调用方据此决定要不要出声）。
  */
-export function recordFailureGap(
-    safePointMs: number,
-    failPointMs: number | null,
-    gapMs: number,
-): number | null {
+export function recordFailureGap(safePointMs: number, failPointMs: number | null, gapMs: number): number | null {
     if (!(gapMs > 0)) return failPointMs;
     if (gapMs <= safePointMs) return failPointMs;
     return tightenFailPoint(failPointMs, gapMs);
@@ -279,10 +275,7 @@ export function cacheHintText(h: CacheHint): string {
 }
 
 /** 今日计数：日期一变归零（日期用本地日期，与用户"今日"一致） */
-export function bumpTodayCount(
-    prev: { date: string; count: number },
-    today: string,
-): { date: string; count: number } {
+export function bumpTodayCount(prev: { date: string; count: number }, today: string): { date: string; count: number } {
     return prev.date === today ? { date: today, count: prev.count + 1 } : { date: today, count: 1 };
 }
 

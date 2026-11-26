@@ -7,38 +7,38 @@
  * 依赖面只有 `DevtoolsHost.invoke`：宿主可以是 diy-app（进程内 IPC）、dev（h2c 连目标实例）、
  * diy2（自身 rpc）。插件不知道自己在哪跑。
  */
-import * as React from "react";
-import { createRoot } from "react-dom/client";
-import type { PageContext, PageView } from "@diy-agent/workbench-ui";
-import { createTrafficClient, type TrafficQuery, type TrafficClient } from "./client.js";
-import type { TrafficEntry } from "./types.js";
+import * as React from 'react';
+import { createRoot } from 'react-dom/client';
+import type { PageContext, PageView } from '@diy-agent/workbench-ui';
+import { createTrafficClient, type TrafficQuery, type TrafficClient } from './client.js';
+import type { TrafficEntry } from './types.js';
 
 /** 状态色：只按语义给 class，具体颜色由宿主的令牌决定（插件不定义视觉） */
 function statusClass(entry: TrafficEntry): string {
     const status = entry.status;
-    if (typeof status !== "number") return "dt-dim";
-    if (status >= 500) return "dt-err";
-    if (status >= 400) return "dt-warn";
-    return "dt-ok";
+    if (typeof status !== 'number') return 'dt-dim';
+    if (status >= 500) return 'dt-err';
+    if (status >= 400) return 'dt-warn';
+    return 'dt-ok';
 }
 
 function shortTime(at: string | undefined): string {
-    if (at === undefined) return "—";
+    if (at === undefined) return '—';
     const d = new Date(at);
     if (Number.isNaN(d.getTime())) return at;
-    const p = (n: number): string => String(n).padStart(2, "0");
+    const p = (n: number): string => String(n).padStart(2, '0');
     return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 function label(entry: TrafficEntry): string {
-    return entry.model !== undefined && entry.model !== "" ? String(entry.model) : String(entry.url ?? "—");
+    return entry.model !== undefined && entry.model !== '' ? String(entry.model) : String(entry.url ?? '—');
 }
 
 function TrafficView(props: { client: TrafficClient }) {
     const [query, setQuery] = React.useState<TrafficQuery>({ limit: 200 });
-    const [text, setText] = React.useState("");
+    const [text, setText] = React.useState('');
     const [rows, setRows] = React.useState<readonly TrafficEntry[]>([]);
-    const [meta, setMeta] = React.useState<string>("");
+    const [meta, setMeta] = React.useState<string>('');
     const [error, setError] = React.useState<string | null>(null);
     const [picked, setPicked] = React.useState<TrafficEntry | null>(null);
     const [busy, setBusy] = React.useState(false);
@@ -49,7 +49,9 @@ function TrafficView(props: { client: TrafficClient }) {
             try {
                 const res = await props.client.query(q);
                 setRows(res.records);
-                setMeta(`命中 ${String(res.hits)} 条 · 扫了 ${String(res.scanned)} 行 · ${String(res.ms)} ms${res.truncated ? " · 已截断" : ""}`);
+                setMeta(
+                    `命中 ${String(res.hits)} 条 · 扫了 ${String(res.scanned)} 行 · ${String(res.ms)} ms${res.truncated ? ' · 已截断' : ''}`,
+                );
                 setError(null);
             } catch (e) {
                 setRows([]);
@@ -67,7 +69,7 @@ function TrafficView(props: { client: TrafficClient }) {
 
     const submit = (event: React.FormEvent): void => {
         event.preventDefault();
-        setQuery({ ...query, text: text.trim() === "" ? undefined : text.trim() });
+        setQuery({ ...query, text: text.trim() === '' ? undefined : text.trim() });
     };
 
     return (
@@ -81,7 +83,7 @@ function TrafficView(props: { client: TrafficClient }) {
                     onChange={(e) => setText(e.target.value)}
                 />
                 <button type="submit" className="dt-btn" disabled={busy}>
-                    {busy ? "查询中…" : "查询"}
+                    {busy ? '查询中…' : '查询'}
                 </button>
                 <span className="dt-meta">{error ?? meta}</span>
             </form>
@@ -99,20 +101,22 @@ function TrafficView(props: { client: TrafficClient }) {
                     <tbody>
                         {rows.map((entry, index) => (
                             <tr
-                                key={`${String(entry.at ?? "")}-${String(index)}`}
-                                className={picked === entry ? "dt-row dt-picked" : "dt-row"}
+                                key={`${String(entry.at ?? '')}-${String(index)}`}
+                                className={picked === entry ? 'dt-row dt-picked' : 'dt-row'}
                                 role="row"
                                 tabIndex={0}
                                 onClick={() => setPicked(entry)}
                                 onKeyDown={(e) => {
-                                    if (e.key === "Enter" || e.key === " ") setPicked(entry);
+                                    if (e.key === 'Enter' || e.key === ' ') setPicked(entry);
                                 }}
                             >
                                 <td>{shortTime(entry.at)}</td>
-                                <td>{String(entry.method ?? entry.kind ?? "—")}</td>
-                                <td className={statusClass(entry)}>{entry.status === undefined ? "—" : String(entry.status)}</td>
+                                <td>{String(entry.method ?? entry.kind ?? '—')}</td>
+                                <td className={statusClass(entry)}>
+                                    {entry.status === undefined ? '—' : String(entry.status)}
+                                </td>
                                 <td className="dt-truncate">{label(entry)}</td>
-                                <td>{entry.ms === undefined ? "—" : `${String(Math.round(entry.ms))} ms`}</td>
+                                <td>{entry.ms === undefined ? '—' : `${String(Math.round(entry.ms))} ms`}</td>
                             </tr>
                         ))}
                         {rows.length === 0 && !busy ? (
@@ -141,8 +145,8 @@ function TrafficView(props: { client: TrafficClient }) {
  * `render` 是同步挂载 + 返回销毁函数（与 workbench 的页面生命周期对齐）。
  */
 export const trafficPageView: PageView = {
-    id: "devtools-traffic",
-    title: "请求",
+    id: 'devtools-traffic',
+    title: '请求',
     render(container: HTMLElement, ctx: PageContext): () => void {
         const client = createTrafficClient({ invoke: (m, a) => ctx.invoke(m, a) as Promise<never> });
         const root = createRoot(container);

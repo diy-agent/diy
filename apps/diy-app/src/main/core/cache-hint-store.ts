@@ -85,7 +85,9 @@ export function loadCacheHintStore(home: string, now = new Date()): CacheHintSto
     if (!raw || typeof raw !== "object") return empty;
     const o = raw as Record<string, unknown>;
     if (o["version"] !== CACHE_HINT_STORE_VERSION) {
-        console.warn(`[cache-hint] ${p} 版本 ${String(o["version"])} 与当前 ${CACHE_HINT_STORE_VERSION} 不符，整份忽略`);
+        console.warn(
+            `[cache-hint] ${p} 版本 ${String(o["version"])} 与当前 ${CACHE_HINT_STORE_VERSION} 不符，整份忽略`,
+        );
         return empty;
     }
     const channelsRaw = o["channels"];

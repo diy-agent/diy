@@ -17,8 +17,20 @@ const NOW = () => new Date("2026-10-22T08:00:00.000Z");
 
 /** 一份合法上游（两家白名单 provider） */
 const upstream = (extra: Record<string, unknown> = {}) => ({
-    alpha: { id: "alpha", name: "Alpha", npm: "@ai-sdk/openai-compatible", api: "https://a.example/v1", models: { m1: { id: "m1", name: "M1" } } },
-    beta: { id: "beta", name: "Beta", npm: "@ai-sdk/openai", api: "https://b.example/v1", models: { m2: { id: "m2" }, m3: { id: "m3" } } },
+    alpha: {
+        id: "alpha",
+        name: "Alpha",
+        npm: "@ai-sdk/openai-compatible",
+        api: "https://a.example/v1",
+        models: { m1: { id: "m1", name: "M1" } },
+    },
+    beta: {
+        id: "beta",
+        name: "Beta",
+        npm: "@ai-sdk/openai",
+        api: "https://b.example/v1",
+        models: { m2: { id: "m2" }, m3: { id: "m3" } },
+    },
     ...extra,
 });
 
@@ -69,7 +81,11 @@ describe("refreshModelsOnce", () => {
     it("上游非 JSON → 保留旧文件（内容与 mtime 逐字不变）+ 给原因", async () => {
         await refreshModelsOnce({ home: HOME, fetchText: async () => JSON.stringify(upstream()), now: NOW });
         const before = { body: readFileSync(dataFile(), "utf-8"), mtime: statSync(dataFile()).mtimeMs };
-        const r = await refreshModelsOnce({ home: HOME, fetchText: async () => "<html>502 Bad Gateway</html>", now: NOW });
+        const r = await refreshModelsOnce({
+            home: HOME,
+            fetchText: async () => "<html>502 Bad Gateway</html>",
+            now: NOW,
+        });
         expect(r.ok).toBe(false);
         expect(r.changed).toBe(false);
         expect(r.error).toMatch(/JSON|Unexpected/i);

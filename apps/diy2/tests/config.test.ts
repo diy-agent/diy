@@ -235,9 +235,9 @@ describe('resolveConfig', () => {
         ).toBeUndefined();
 
         mkdirSync(join(appRoot, 'build', 'prod', 'web'), { recursive: true });
-        expect(
-            (await resolveConfig({ moduleDir: appRoot, mode: 'development', overrides: { home } })).webDir,
-        ).toBe(join(appRoot, 'build', 'prod', 'web'));
+        expect((await resolveConfig({ moduleDir: appRoot, mode: 'development', overrides: { home } })).webDir).toBe(
+            join(appRoot, 'build', 'prod', 'web'),
+        );
         expect(
             (
                 await resolveConfig({

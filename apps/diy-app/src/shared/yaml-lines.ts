@@ -113,9 +113,13 @@ export function toYamlLines(value: unknown, pathPrefix = ""): YamlLine[] {
             else {
                 push(indent, `- ${k0}:`, `${ip}/${k0}`, true);
                 if (typeof v0 === "string") {
-                    v0.split("\n").forEach((l, j) => push(indent + 1, l === "" ? "" : `  ${l}`, `${ip}/${k0}/${j}`, false));
+                    v0.split("\n").forEach((l, j) =>
+                        push(indent + 1, l === "" ? "" : `  ${l}`, `${ip}/${k0}/${j}`, false),
+                    );
                 } else if (Array.isArray(v0)) emitArrayItems(indent + 1, v0, `${ip}/${k0}`);
-                else for (const [k, vv] of Object.entries(v0 as Record<string, unknown>)) emitKey(indent + 1, k, vv, `${ip}/${k0}/${k}`);
+                else
+                    for (const [k, vv] of Object.entries(v0 as Record<string, unknown>))
+                        emitKey(indent + 1, k, vv, `${ip}/${k0}/${k}`);
             }
             for (const [k, vv] of entries.slice(1)) emitKey(indent + 1, k, vv, `${ip}/${k}`);
         });
@@ -125,7 +129,8 @@ export function toYamlLines(value: unknown, pathPrefix = ""): YamlLine[] {
     if (sk !== null) push(0, sk, pathPrefix || "/", false);
     else if (isEmpty(value)) push(0, Array.isArray(value) ? "[]" : "{}", pathPrefix || "/", false);
     else if (Array.isArray(value)) emitArrayItems(0, value, pathPrefix);
-    else for (const [k, vv] of Object.entries(value as Record<string, unknown>)) emitKey(0, k, vv, `${pathPrefix}/${k}`);
+    else
+        for (const [k, vv] of Object.entries(value as Record<string, unknown>)) emitKey(0, k, vv, `${pathPrefix}/${k}`);
     return out;
 }
 
@@ -216,7 +221,14 @@ function addRow(l: YamlLine): YamlDiffRow {
 }
 
 /** 整棵子树按单一标签渲染（same/del/add） */
-function emitSubtree(out: YamlDiffRow[], value: unknown, indent: number, path: string, side: "same" | "del" | "add", prefix = ""): void {
+function emitSubtree(
+    out: YamlDiffRow[],
+    value: unknown,
+    indent: number,
+    path: string,
+    side: "same" | "del" | "add",
+    prefix = "",
+): void {
     const ls = toYamlLines(value, path);
     ls.forEach((l, i) => {
         const text = i === 0 && prefix ? prefix + l.text : l.text;
@@ -226,12 +238,27 @@ function emitSubtree(out: YamlDiffRow[], value: unknown, indent: number, path: s
 }
 
 /** `key: <subtree>` 整体按单一标签渲染 */
-function emitEntry(out: YamlDiffRow[], indent: number, prefix: string, key: string, value: unknown, path: string, side: "same" | "del" | "add"): void {
+function emitEntry(
+    out: YamlDiffRow[],
+    indent: number,
+    prefix: string,
+    key: string,
+    value: unknown,
+    path: string,
+    side: "same" | "del" | "add",
+): void {
     emitSubtree(out, { [key]: value }, indent, path, side, prefix);
 }
 
 /** 对象节点：key 并集，逐 key 下钻（itemPrefix = "- " 表示这是数组元素，首 key 与 `-` 同行） */
-function diffObject(out: YamlDiffRow[], indent: number, a: Record<string, unknown>, b: Record<string, unknown>, path: string, itemPrefix?: string): void {
+function diffObject(
+    out: YamlDiffRow[],
+    indent: number,
+    a: Record<string, unknown>,
+    b: Record<string, unknown>,
+    path: string,
+    itemPrefix?: string,
+): void {
     const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])];
     keys.forEach((k, idx) => {
         const inA = Object.hasOwn(a, k);
@@ -254,7 +281,8 @@ function diffArray(out: YamlDiffRow[], indent: number, a: unknown[], b: unknown[
     const dp: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
     for (let i = n - 1; i >= 0; i--)
         for (let j = m - 1; j >= 0; j--)
-            dp[i]![j] = ha[i] === hb[j] ? (dp[i + 1]![j + 1] ?? 0) + 1 : Math.max(dp[i + 1]![j] ?? 0, dp[i]![j + 1] ?? 0);
+            dp[i]![j] =
+                ha[i] === hb[j] ? (dp[i + 1]![j + 1] ?? 0) + 1 : Math.max(dp[i + 1]![j] ?? 0, dp[i]![j + 1] ?? 0);
     // 产出操作序列
     type Op = { t: "same"; i: number; j: number } | { t: "del"; i: number } | { t: "add"; j: number };
     const ops: Op[] = [];

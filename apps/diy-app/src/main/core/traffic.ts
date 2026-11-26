@@ -50,7 +50,16 @@ import {
     type CleanResult,
 } from "./traffic-log";
 
-export { TrafficLogError, type LogLoc, type QueryOpts, type QueryResult, type LogStats, type LogFileDetail, type CleanOpts, type CleanResult };
+export {
+    TrafficLogError,
+    type LogLoc,
+    type QueryOpts,
+    type QueryResult,
+    type LogStats,
+    type LogFileDetail,
+    type CleanOpts,
+    type CleanResult,
+};
 
 const CH_CREATE = "undici:request:create";
 const CH_REQ_CHUNK = "undici:request:bodyChunkSent";
@@ -416,7 +425,10 @@ class Traffic {
     /** session → 本轮归属（发请求前登记；事件里按 session / 地址反查） */
     private runs = new Map<string, RunMeta>();
     /** 地址 origin → 归属来源（缺 `x-opencode-session` 头时的兜底：按地址匹配） */
-    private originKind = new Map<string, { kind: TrafficKind; session: string; provider: string; model: string; baseUrl: string }>();
+    private originKind = new Map<
+        string,
+        { kind: TrafficKind; session: string; provider: string; model: string; baseUrl: string }
+    >();
     /** 地址 origin → 最近的归属（用于展示 provider/model） */
     private originMeta = new Map<string, RunMeta>();
     /** session → 本轮的请求计数与**当前步**（见 noteRun / noteStep） */
@@ -433,9 +445,13 @@ class Traffic {
         if (this.inited) return;
         this.inited = true;
         subscribe(CH_CREATE, (msg) => this.guard(() => this.onCreate(msg as { request: UReq })));
-        subscribe(CH_REQ_CHUNK, (msg) => this.guard(() => this.onReqChunk(msg as { request: UReq; chunk: Uint8Array })));
+        subscribe(CH_REQ_CHUNK, (msg) =>
+            this.guard(() => this.onReqChunk(msg as { request: UReq; chunk: Uint8Array })),
+        );
         subscribe(CH_HEADERS, (msg) => this.guard(() => this.onHeaders(msg as { request: UReq; response: URes })));
-        subscribe(CH_RES_CHUNK, (msg) => this.guard(() => this.onResChunk(msg as { request: UReq; chunk: Uint8Array })));
+        subscribe(CH_RES_CHUNK, (msg) =>
+            this.guard(() => this.onResChunk(msg as { request: UReq; chunk: Uint8Array })),
+        );
         subscribe(CH_TRAILERS, (msg) => this.guard(() => this.commit((msg as { request: UReq }).request)));
         subscribe(CH_ERROR, (msg) => this.guard(() => this.onError(msg as { request: UReq; error: Error })));
     }
@@ -654,7 +670,8 @@ class Traffic {
             h["x-request-id"] ??
             h["x-opencode-log-id"] ??
             // 再退一步：任何形如 `*-trace-id` / `*-log-id` 的头（如 deepseek 的 x-ds-trace-id）
-            (Object.entries(h).find(([k]) => /(^|-)trace[-_]?id$|(^|-)log[-_]?id$/.test(k))?.[1] ?? null);
+            Object.entries(h).find(([k]) => /(^|-)trace[-_]?id$|(^|-)log[-_]?id$/.test(k))?.[1] ??
+            null;
         // 响应正文一律留（有界）。压缩体要整段收到才能解压，故按 full 收、带上限。
         const encoding = acc.rec.resHeaders["content-encoding"] ?? "";
         acc.resBody = new BodyBuf(

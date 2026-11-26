@@ -42,7 +42,14 @@ import {
 import { faceOfNpm } from "../../shared/models";
 import { calendars } from "./calendars";
 import { windowChoices, windowTable } from "./cost-windows";
-import { customSpecsFile, loadCustomSpecs, loadModelConfig, modelConfigFile, saveCustomSpecs, saveModelConfig } from "./model-config";
+import {
+    customSpecsFile,
+    loadCustomSpecs,
+    loadModelConfig,
+    modelConfigFile,
+    saveCustomSpecs,
+    saveModelConfig,
+} from "./model-config";
 import { registryView, snapshotProvider } from "./model-registry";
 
 /** `--target auto` 的解析：custom 的价天生属于 spec，std 只能加覆盖 */
@@ -179,7 +186,9 @@ interface WriteSlot {
 function writeSlot(loc: Located, home: string, modelId: string, target: CostTarget): WriteSlot {
     if (target === "spec") {
         if (loc.kind !== "custom") {
-            throw new Error(`${loc.limited} 是 models.dev 收录的 provider（价目在 snapshot 里）→ 请用 --target override 登记覆盖价`);
+            throw new Error(
+                `${loc.limited} 是 models.dev 收录的 provider（价目在 snapshot 里）→ 请用 --target override 登记覆盖价`,
+            );
         }
         const sp = loc.specs[loc.id];
         if (!sp) throw new Error(`providers.custom.yaml 里没有 provider ${loc.id}（先在模型设置页加 custom provider）`);
@@ -262,7 +271,9 @@ export function setModelCost(home: string, args: SetCostArgs): CostUpdateResult 
         [args.input, args.output, args.cacheRead, args.cacheWrite, args.baseLabel].some((v) => v !== undefined) ||
         (args.clearFields?.length ?? 0) > 0;
     if (!touched) {
-        throw new Error("没有要改的字段：给 --input/--output/--cache-read/--cache-write/--base-label，或用 --clear 删整块");
+        throw new Error(
+            "没有要改的字段：给 --input/--output/--cache-read/--cache-write/--base-label，或用 --clear 删整块",
+        );
     }
 
     const seeded = seed(slot);
@@ -287,7 +298,9 @@ export interface SetTiersArgs {
 export function setModelTiers(home: string, args: SetTiersArgs): CostUpdateResult {
     const modes = [args.tiers !== undefined, args.drop !== undefined, args.clear === true].filter(Boolean).length;
     if (modes !== 1) {
-        throw new Error("三种模式只能给一个：--tiers '[…]'（时段档数组）· --drop <n>（删第 n 条）· --clear（删光时段档）");
+        throw new Error(
+            "三种模式只能给一个：--tiers '[…]'（时段档数组）· --drop <n>（删第 n 条）· --clear（删光时段档）",
+        );
     }
     const loc = locate(home, args.provider);
     const target: CostTarget = args.target === "auto" ? defaultTarget(loc.kind) : args.target;

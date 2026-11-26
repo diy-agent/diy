@@ -3,6 +3,9 @@
     "version": "0.1.0",
     "private": true,
     "description": "知识库目录：多级 markdown + yaml 头，文件名即索引（写 + 整理 + 只读投影）",
+    "files": [
+        "src/"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "types": "./src/index.ts",
@@ -16,9 +19,9 @@
             "default": "./dist/node/index.js"
         }
     },
-    "files": [
-        "src/"
-    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
     "dependencies": {
         "js-yaml": "^5.5.0"
     },
@@ -27,8 +30,5 @@
         "oxlint": "^1.72.0",
         "typescript": "^6.0.3",
         "vitest": "^4.1.10"
-    },
-    "scripts": {
-        "build": "tsc -p tsconfig.build.json"
     }
 }

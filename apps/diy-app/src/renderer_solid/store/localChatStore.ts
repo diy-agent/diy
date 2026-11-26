@@ -237,16 +237,47 @@ function stateFor(taskUri: string): TaskState {
         const [hasMore, setHasMore] = createSignal(false);
         const [olderBusy, setOlderBusy] = createSignal(false);
         s = {
-            segments: [], tailCursor: null, hasMore, setHasMore, olderBusy, setOlderBusy,
-            loaded: false, trees, setTrees, running, setRunning,
-            active, setActive, activeAsk: 0, truthActive: false,
-            stopRequestedAt, setStopRequestedAt, abort: null,
-            error, setError, steers, setSteers, usage, setUsage, steerSeq: 0, steerSettled: 0,
-            scroll: null, tab: "local", detailScroll: 0,
-            appliedSeq: 0, epoch: -1, opsAbort: null, opsState, setOpsState, opsDownNotified: false,
-            opsDownAt: null, opsReconnects: 0,
-            detached, setDetached,
-            degraded, setDegraded,
+            segments: [],
+            tailCursor: null,
+            hasMore,
+            setHasMore,
+            olderBusy,
+            setOlderBusy,
+            loaded: false,
+            trees,
+            setTrees,
+            running,
+            setRunning,
+            active,
+            setActive,
+            activeAsk: 0,
+            truthActive: false,
+            stopRequestedAt,
+            setStopRequestedAt,
+            abort: null,
+            error,
+            setError,
+            steers,
+            setSteers,
+            usage,
+            setUsage,
+            steerSeq: 0,
+            steerSettled: 0,
+            scroll: null,
+            tab: "local",
+            detailScroll: 0,
+            appliedSeq: 0,
+            epoch: -1,
+            opsAbort: null,
+            opsState,
+            setOpsState,
+            opsDownNotified: false,
+            opsDownAt: null,
+            opsReconnects: 0,
+            detached,
+            setDetached,
+            degraded,
+            setDegraded,
         };
         states.set(taskUri, s);
     }
@@ -864,11 +895,7 @@ function markOpsLive(st: TaskState): void {
         const reconnects = st.opsReconnects;
         st.opsDownAt = null;
         st.opsReconnects = 0;
-        notificationStore.addToast(
-            "success",
-            "会话实时更新已恢复",
-            opsLiveMeta({ from, to: Date.now(), reconnects }),
-        );
+        notificationStore.addToast("success", "会话实时更新已恢复", opsLiveMeta({ from, to: Date.now(), reconnects }));
     }
 }
 
@@ -1753,7 +1780,6 @@ function getDetailScroll(taskUri: string): number {
     return states.get(taskUri)?.detailScroll ?? 0;
 }
 
-
 // ─── 压缩（compact）：少发 ≠ 销毁 ──────────────────────
 //
 // 语义提醒（与 clear 正交）：
@@ -1815,7 +1841,6 @@ async function compact(
 async function compactEvents(taskUri: string) {
     return diyService.diy.agent.local.compact.events({ taskUri });
 }
-
 
 /** 策略对象 → RPC 扁平参数（headtail 展开成顶层字段，与 api-def 的 cliOption 对齐） */
 function policyFlat(p: FlatCompactPolicy): {
@@ -1932,8 +1957,8 @@ export const localChatStore = {
     clear,
     /** 压缩：预览（只算）/ 执行 / 撤销 / 压缩历史（事件快照列表，只读查看）*/
     compactPreview,
-  compactLedger,
-  compactSetKept,
+    compactLedger,
+    compactSetKept,
     compact,
     autoCompactStatus,
     autoCompactSetConfig,

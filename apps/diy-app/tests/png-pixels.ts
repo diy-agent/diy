@@ -77,7 +77,18 @@ export function decodePng(buf: Buffer): RgbaImage {
             const b = prev[i]!;
             const c = i >= channels ? prev[i - channels]! : 0;
             const x = line[i]!;
-            const val = filter === 0 ? x : filter === 1 ? x + a : filter === 2 ? x + b : filter === 3 ? x + ((a + b) >> 1) : filter === 4 ? x + paeth(a, b, c) : NaN;
+            const val =
+                filter === 0
+                    ? x
+                    : filter === 1
+                      ? x + a
+                      : filter === 2
+                        ? x + b
+                        : filter === 3
+                          ? x + ((a + b) >> 1)
+                          : filter === 4
+                            ? x + paeth(a, b, c)
+                            : NaN;
             if (Number.isNaN(val)) throw new Error(`未知 PNG 行滤波类型 ${filter}`);
             line[i] = val & 0xff;
         }
@@ -115,7 +126,11 @@ export interface PixelRegion {
 }
 
 /** 区域内的像素计数（区域按**图像坐标**：调用方负责把视口 rect × devicePixelRatio） */
-export function countPixels(img: RgbaImage, region: PixelRegion, pred: (r: number, g: number, b: number) => boolean): number {
+export function countPixels(
+    img: RgbaImage,
+    region: PixelRegion,
+    pred: (r: number, g: number, b: number) => boolean,
+): number {
     const x0 = Math.max(0, Math.floor(region.x));
     const y0 = Math.max(0, Math.floor(region.y));
     const x1 = Math.min(img.width, Math.ceil(region.x + region.w));

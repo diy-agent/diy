@@ -10,16 +10,16 @@
 //   之后任何变化都只追加一条 user 增量（`controlDeltaDelivery`），不重写已发出的 system。
 //   system 是**段首快照**（压缩才重建），前缀缓存命中靠它。
 
-import { project as projectTree } from "./projection.js";
-import { applyFacts, createTree, setPlaces } from "./reducer.js";
-import { controlDeltaEnvelope, dataText, varsEnvelope } from "./envelope.js";
-import type { SchemaDoc } from "./schema/schema-doc.js";
-import { hashValue } from "./hash.js";
-import { WIRE_VERSION } from "./wire.js";
-import { isPlainObject } from "./tree.js";
-import type { ContextFact, ContextPath, ContextTreeState } from "./types.js";
-import { TASK_HEAD_FIELDS } from "./schema/task-head.js";
-import { emptyCursor } from "./projection.js";
+import { project as projectTree } from './projection.js';
+import { applyFacts, createTree, setPlaces } from './reducer.js';
+import { controlDeltaEnvelope, dataText, varsEnvelope } from './envelope.js';
+import type { SchemaDoc } from './schema/schema-doc.js';
+import { hashValue } from './hash.js';
+import { WIRE_VERSION } from './wire.js';
+import { isPlainObject } from './tree.js';
+import type { ContextFact, ContextPath, ContextTreeState } from './types.js';
+import { TASK_HEAD_FIELDS } from './schema/task-head.js';
+import { emptyCursor } from './projection.js';
 
 /**
  * 候选投递单元（原子单元；两两不重叠）。
@@ -52,10 +52,10 @@ const TASK_HEAD_REASONS: Record<string, string> = Object.fromEntries(
 );
 
 export const PLACE_CANDIDATES: PlaceCandidate[] = [
-    { path: "diy", reason: "进程身份（CLI / 数据根）：整个会话不变" },
-    { path: "project", reason: "项目路径：只在切项目时变" },
-    { path: "cwd", reason: "工作目录整段含 note/isFallback/isTaskDir/isAppDir —— 目录判定会变；体量小" },
-    { path: "chain", reason: "AGENTS.md 链：只在目录/文件改动时变" },
+    { path: 'diy', reason: '进程身份（CLI / 数据根）：整个会话不变' },
+    { path: 'project', reason: '项目路径：只在切项目时变' },
+    { path: 'cwd', reason: '工作目录整段含 note/isFallback/isTaskDir/isAppDir —— 目录判定会变；体量小' },
+    { path: 'chain', reason: 'AGENTS.md 链：只在目录/文件改动时变' },
     // 任务头（frontmatter）字段（##322：**读侧显式给头**，确认任务/取父级不必去 cat 文件）。
     // 它们就是文件头的同一份（不是副本），随文件走；**逐键一个单元**（改正文不该重发整头）。
     // **名单不在此手抄**：path 从 TASK_HEAD_FIELDS 派生（##322 review R3），reason 必须逐键齐全
@@ -64,50 +64,50 @@ export const PLACE_CANDIDATES: PlaceCandidate[] = [
         path: `task.${f.key}`,
         reason: TASK_HEAD_REASONS[f.key]!,
     })),
-    { path: "task.uri", reason: "任务 URI：不变" },
-    { path: "task.dir", reason: "任务目录：不变" },
+    { path: 'task.uri', reason: '任务 URI：不变' },
+    { path: 'task.dir', reason: '任务目录：不变' },
     // ── 模版节（identity / rules / guard，值是模版渲染结果；见 prompt-registry 的 DELIVERED_SECTIONS）──
     // 为什么必须有：它们此前**完全不在投递里**（名单没有 = 不投）—— 真发于是丢掉
     // 人物行为指令、行为规范与保命契约（209 review P0-1 实测：persona/身份/<rules>/<guard> 全 false）。
     // 为什么不列 persona：身份节（identity.md）里已经有「人物是「X」」+ 行为指令，
     // 再列 persona 会把同一段指令投两遍（浪费前缀缓存、也让人分不清哪份为准）。
-    { path: "identity", reason: "身份：人物名 + 行为指令（模版节渲染结果）；任务存续期内不变" },
-    { path: "rules", reason: "行为规范：静态文本，只在改模版时变" },
-    { path: "guard", reason: "保命契约：静态文本，丢了模型可能换写法杀宿主进程" },
+    { path: 'identity', reason: '身份：人物名 + 行为指令（模版节渲染结果）；任务存续期内不变' },
+    { path: 'rules', reason: '行为规范：静态文本，只在改模版时变' },
+    { path: 'guard', reason: '保命契约：静态文本，丢了模型可能换写法杀宿主进程' },
     // 「我自己的东西在哪、怎么找」：关键位置（我这个任务真发的请求落到哪个文件、怎么找）
     // 给不出来，模型就无法自查"我上一步到底发出去了什么"。
     // 值只有 `file`（纯数据）；路径规则/定位命令在 `.describe()` → 信封的 `help.reqlog`。
-    { path: "reqlog", reason: "真发请求的流量日志在哪：文件名按天变；只是定位信息、本就不常查" },
-    { path: "task.body", reason: "任务正文：每次编辑正文就变；散文，与结构化单元分开" },
-    { path: "skills", reason: "技能清单：安装/升级技能就变" },
+    { path: 'reqlog', reason: '真发请求的流量日志在哪：文件名按天变；只是定位信息、本就不常查' },
+    { path: 'task.body', reason: '任务正文：每次编辑正文就变；散文，与结构化单元分开' },
+    { path: 'skills', reason: '技能清单：安装/升级技能就变' },
     // 房间上下文（##377 第 26 刀）：**两个原子单元，别合成一个** —— 增量按 place 逐条比
     // （`projection.ts` 的 renderedHash），合起来则"成员改个名"会把整段 recent 重发一遍。
-    { path: "room.members", reason: "房间成员：低频（改成员才变）" },
-    { path: "room.recent", reason: "房间近期发言：高频（有人说话就变）" },
+    { path: 'room.members', reason: '房间成员：低频（改成员才变）' },
+    { path: 'room.recent', reason: '房间近期发言：高频（有人说话就变）' },
     // 事实库投影（##404 待办 4）：它是"任务当前的真身"，随 submit 变（稀疏）；
     // 与 `task.body` 分开：body 是 prose、facts 是结构化键值，混在一起既不能按 claim diff，
     // 也没法在页面上分开看。
-    { path: "facts", reason: "事实库投影：随 submit 变（稀疏）；结构化，与 body 的散文分开" },
+    { path: 'facts', reason: '事实库投影：随 submit 变（稀疏）；结构化，与 body 的散文分开' },
     // 知识库索引（##404 待办 1）：agent 靠它知道**库里有什么**。
     // 为什么单列而不并进 facts：二者字节量与变化频率差一个量级，合并后"改一个主题名"会把
     // 4 KB 投影整段重发。
-    { path: "kb", reason: "知识库索引：随库文件增删/改标题变（低频）；真源是 md 文件树" },
+    { path: 'kb', reason: '知识库索引：随库文件增删/改标题变（低频）；真源是 md 文件树' },
     // 仓库文档索引（##5 第 11 轮 B）：`docs/` 不在 AGENTS.md 链上，不列出来 agent 就不知道
     // 有哪些设计稿。与 kb 同样：真源不同（文件树 vs 事实库），变更频率也不同。
-    { path: "docs", reason: "仓库文档索引：随文档增删/改标题变（低频）；真源是文件树" },
+    { path: 'docs', reason: '仓库文档索引：随文档增删/改标题变（低频）；真源是文件树' },
     // 任务日志：append-only 的事件句（决策 / 踩坑 / 评审），与 body 的散文分开
-    { path: "journal", reason: "任务日志：追加才变（低频）；事件句，与 body 的散文分开" },
+    { path: 'journal', reason: '任务日志：追加才变（低频）；事件句，与 body 的散文分开' },
     // 任务的需求账本树：**状态**（要做成哪些东西、现在能挑哪几条），与 journal 的**事件**分开——
     // 同一份变化若两边都投，等于模型每轮读两遍（设计见 2026-11-24-task-units-dag.md §6，
     // 2026-11-25 已收窄成纯树：执行规划不进账本）。
-    { path: "units", reason: "需求账本树：agent 改树才变（低频）；给的是当前树，不是变更事件" },
+    { path: 'units', reason: '需求账本树：agent 改树才变（低频）；给的是当前树，不是变更事件' },
     // 自量（##404 / ##9 提案）：窗口占用 / 上一步消耗 / 本轮累计。
     // 为什么单列：它的变化频率是**最高档**（每步一次），与其他单元混在一起会让"别的字段改一下"
     // 也把这份高频段重发一遍；且不进变更历史（见 changelog 字段）。
     {
-        path: "self",
+        path: 'self',
         changelog: false,
-        reason: "自量（窗口占用/上一步消耗/本轮累计）：每步都变，且不进变更历史（见 changelog 字段）",
+        reason: '自量（窗口占用/上一步消耗/本轮累计）：每步都变，且不进变更历史（见 changelog 字段）',
     },
 ];
 
@@ -152,9 +152,9 @@ export function treeOfGlobals(globals: Record<string, unknown>): ContextTreeStat
     void emptyCursor;
     let tree = createTree();
     const facts: ContextFact[] = Object.entries(globals).map(([k, v]) => ({
-        type: "patch" as const,
+        type: 'patch' as const,
         path: k,
-        op: "set" as const,
+        op: 'set' as const,
         value: v,
     }));
     tree = applyFacts(tree, facts).state;
@@ -172,7 +172,7 @@ function valueHashesOf(state: ContextTreeState): Record<ContextPath, string> {
             node.forEach((v, i) => walk(v, base ? `${base}.${i}` : String(i)));
         }
     };
-    walk(state.values, "");
+    walk(state.values, '');
     return out;
 }
 
@@ -191,8 +191,8 @@ export function buildDelivery(
 ): Delivery {
     const inTree = (p: ContextPath): boolean => {
         let cur: unknown = globals;
-        for (const seg of p.split(".")) {
-            if (cur === null || typeof cur !== "object" || !(seg in (cur as Record<string, unknown>))) return false;
+        for (const seg of p.split('.')) {
+            if (cur === null || typeof cur !== 'object' || !(seg in (cur as Record<string, unknown>))) return false;
             cur = (cur as Record<string, unknown>)[seg];
         }
         return true;
@@ -209,7 +209,7 @@ export function buildDelivery(
     // 把前缀缓存扭一次（见 `buildHelpDoc` 注释）。
     const env = varsEnvelope(tree, places, unitPaths(), helps);
 
-    const part = (p: ContextPath[], t: { text: string; lines: DeliveryPart["lines"] }): DeliveryPart => ({
+    const part = (p: ContextPath[], t: { text: string; lines: DeliveryPart['lines'] }): DeliveryPart => ({
         places: p,
         text: t.text,
         bytes: byteLen(t.text),

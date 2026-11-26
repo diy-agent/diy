@@ -23,9 +23,7 @@ describe('scope 三轴匹配', () => {
 
     it('path-scoped 事实在纯 env 上下文里查不到', () => {
         expect(scopeMatches({ paths: ['apps/diy-app/tests'] }, { env: 'test' })).toBe(false);
-        expect(scopeMatches({ paths: ['apps/diy-app/tests'] }, { paths: ['apps/diy-app/tests/a.test.ts'] })).toBe(
-            true,
-        );
+        expect(scopeMatches({ paths: ['apps/diy-app/tests'] }, { paths: ['apps/diy-app/tests/a.test.ts'] })).toBe(true);
     });
 
     it('scopeKey 归一：数组顺序无关，轴序固定', () => {

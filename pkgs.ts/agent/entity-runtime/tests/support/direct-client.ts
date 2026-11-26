@@ -3,7 +3,15 @@
 // `wire=true` 时所有命令与事件都过一次 JSON：模拟任何真实传输都会做的序列化边界，
 // 用来抓"载荷里有不可序列化东西"这类只有换传输才暴露的问题。
 
-import type { AskAnswer, ChatClient, Command, CompactOutcome, SessionInfo, Snapshot, StreamEvent } from '@diy-agent/chat-core';
+import type {
+    AskAnswer,
+    ChatClient,
+    Command,
+    CompactOutcome,
+    SessionInfo,
+    Snapshot,
+    StreamEvent,
+} from '@diy-agent/chat-core';
 
 import { HUMAN, type Harness } from './harness';
 

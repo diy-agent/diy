@@ -39,7 +39,9 @@ export function NoticeDetail(props: {
 
     const copy = async () => {
         try {
-            await navigator.clipboard.writeText(noticeCopyText(props.meta, { message: props.message, when: props.when }));
+            await navigator.clipboard.writeText(
+                noticeCopyText(props.meta, { message: props.message, when: props.when }),
+            );
             setCopied(true);
             setTimeout(() => setCopied(false), 1200);
         } catch {
@@ -81,7 +83,11 @@ export function NoticeDetail(props: {
                 >
                     <div class="mb-2 flex items-center gap-2">
                         <span class="font-semibold">这条提示的来龙去脉</span>
-                        <button class="btn btn-ghost btn-xs ml-auto" data-notice-detail-copy="1" onClick={() => void copy()}>
+                        <button
+                            class="btn btn-ghost btn-xs ml-auto"
+                            data-notice-detail-copy="1"
+                            onClick={() => void copy()}
+                        >
                             {copied() ? "已复制" : "复制"}
                         </button>
                         <button class="btn btn-ghost btn-xs" onClick={() => setOpen(false)}>
@@ -97,7 +103,10 @@ export function NoticeDetail(props: {
                         纯静态文本，断网也可用 —— 它不请求任何模型，也不依赖详情面板之外的状态。 */}
                     <Show when={props.remedy}>
                         {(r) => (
-                            <div class="mb-3 rounded-field border border-primary/40 bg-primary/5 p-2" data-notice-remedy-card="1">
+                            <div
+                                class="mb-3 rounded-field border border-primary/40 bg-primary/5 p-2"
+                                data-notice-remedy-card="1"
+                            >
                                 <div class="mb-1 flex items-center gap-2 font-semibold">
                                     <span>🛠 怎么修</span>
                                     <Show when={props.onRemedy}>

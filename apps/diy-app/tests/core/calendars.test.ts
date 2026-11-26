@@ -7,7 +7,15 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { formatMinuteOfDay, formatOffset, isWorkdayById, matchUtcRange, parseTimeOfDay, type CalendarTable, type UtcRangeWindow } from "../../src/shared/calendars";
+import {
+    formatMinuteOfDay,
+    formatOffset,
+    isWorkdayById,
+    matchUtcRange,
+    parseTimeOfDay,
+    type CalendarTable,
+    type UtcRangeWindow,
+} from "../../src/shared/calendars";
 import { describeTiers, ModelCostSchema, ratesOf, type ModelCost } from "../../src/shared/usage";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -19,7 +27,13 @@ const TABLES: CalendarTable = (
 const win = (start: string, end: string, calendar?: string, label?: string): UtcRangeWindow => {
     const s = parseTimeOfDay(start)!;
     const e = parseTimeOfDay(end)!;
-    return { startMin: s.minutes, endMin: e.minutes, offsetMs: s.offsetMs, ...(calendar ? { calendar } : {}), ...(label ? { label } : {}) };
+    return {
+        startMin: s.minutes,
+        endMin: e.minutes,
+        offsetMs: s.offsetMs,
+        ...(calendar ? { calendar } : {}),
+        ...(label ? { label } : {}),
+    };
 };
 
 /** DeepSeek 形状：谷价 base + 峰价时段档（01:00–04:00 中国工作日） */
@@ -28,7 +42,14 @@ const DS_COST: ModelCost = {
     output: 0.6,
     cacheRead: 0.003,
     baseLabel: "off-peak",
-    tiers: [{ when: { kind: "utc-range", ...win("01:00:00+08:00", "04:00:00+08:00", "CN-business-day", "peak") }, input: 0.5, output: 3, cacheRead: 0.1 }],
+    tiers: [
+        {
+            when: { kind: "utc-range", ...win("01:00:00+08:00", "04:00:00+08:00", "CN-business-day", "peak") },
+            input: 0.5,
+            output: 3,
+            cacheRead: 0.1,
+        },
+    ],
 };
 
 describe("parseTimeOfDay（ISO 8601 时刻 + 必填偏移）", () => {
@@ -75,8 +96,20 @@ describe("matchUtcRange（时段 + 日历）", () => {
     const at = (iso: string) => Date.parse(iso);
 
     it("时段内 + 工作日 → 命中；时段外 → 不命中", () => {
-        expect(matchUtcRange(win("01:00:00+08:00", "04:00:00+08:00", "CN-business-day"), at("2026-10-08T02:00:00+08:00"), TABLES)).toBe(true);
-        expect(matchUtcRange(win("01:00:00+08:00", "04:00:00+08:00", "CN-business-day"), at("2026-10-08T05:00:00+08:00"), TABLES)).toBe(false);
+        expect(
+            matchUtcRange(
+                win("01:00:00+08:00", "04:00:00+08:00", "CN-business-day"),
+                at("2026-10-08T02:00:00+08:00"),
+                TABLES,
+            ),
+        ).toBe(true);
+        expect(
+            matchUtcRange(
+                win("01:00:00+08:00", "04:00:00+08:00", "CN-business-day"),
+                at("2026-10-08T05:00:00+08:00"),
+                TABLES,
+            ),
+        ).toBe(false);
     });
 
     it("边界：start 闭、end 开", () => {
@@ -93,11 +126,19 @@ describe("matchUtcRange（时段 + 日历）", () => {
     });
 
     it("时段命中但日历判非工作日 → 不命中（国庆凌晨不算峰）", () => {
-        expect(matchUtcRange(win("01:00:00+08:00", "04:00:00+08:00", "CN-business-day"), at("2026-10-05T02:00:00+08:00"), TABLES)).toBe(false);
+        expect(
+            matchUtcRange(
+                win("01:00:00+08:00", "04:00:00+08:00", "CN-business-day"),
+                at("2026-10-05T02:00:00+08:00"),
+                TABLES,
+            ),
+        ).toBe(false);
     });
 
     it("无 calendar → 只看时段（每天都算）", () => {
-        expect(matchUtcRange(win("01:00:00+08:00", "04:00:00+08:00"), at("2026-10-05T02:00:00+08:00"), TABLES)).toBe(true);
+        expect(matchUtcRange(win("01:00:00+08:00", "04:00:00+08:00"), at("2026-10-05T02:00:00+08:00"), TABLES)).toBe(
+            true,
+        );
     });
 });
 
@@ -128,8 +169,16 @@ describe("ratesOf 的时段价（与上下文阶梯两轴分离）", () => {
             input: 1,
             output: 1,
             tiers: [
-                { when: { kind: "utc-range", ...win("00:30:00+08:00", "08:30:00+08:00", undefined, "cheap") }, input: 2, output: 2 },
-                { when: { kind: "utc-range", ...win("01:00:00+08:00", "04:00:00+08:00", undefined, "peak") }, input: 9, output: 9 },
+                {
+                    when: { kind: "utc-range", ...win("00:30:00+08:00", "08:30:00+08:00", undefined, "cheap") },
+                    input: 2,
+                    output: 2,
+                },
+                {
+                    when: { kind: "utc-range", ...win("01:00:00+08:00", "04:00:00+08:00", undefined, "peak") },
+                    input: 9,
+                    output: 9,
+                },
             ],
         };
         expect(ratesOf(overlap, 1, at("2026-10-08T02:00:00+08:00"), TABLES)!.input).toBe(2);
@@ -140,7 +189,11 @@ describe("ratesOf 的时段价（与上下文阶梯两轴分离）", () => {
             input: 1,
             output: 1,
             tiers: [
-                { when: { kind: "utc-range", ...win("01:00:00+08:00", "04:00:00+08:00", undefined, "peak") }, input: 5, output: 5 },
+                {
+                    when: { kind: "utc-range", ...win("01:00:00+08:00", "04:00:00+08:00", undefined, "peak") },
+                    input: 5,
+                    output: 5,
+                },
                 { when: { kind: "context", size: 100_000 }, input: 9, output: 9 },
             ],
         };
@@ -170,11 +223,18 @@ describe("展示格式化（formatMinuteOfDay / formatOffset，与解析互逆�
 
 describe("describeTiers（分档价必须**看得见**，否则表里 0.15、实收 0.5）", () => {
     it("时段档 → 时段名 + 区间 + 日历 + 三个价", () => {
-        expect(describeTiers(DS_COST)).toEqual(["peak（01:00–04:00 +08:00 · CN-business-day）：in 0.5 / out 3 / cache 0.1"]);
+        expect(describeTiers(DS_COST)).toEqual([
+            "peak（01:00–04:00 +08:00 · CN-business-day）：in 0.5 / out 3 / cache 0.1",
+        ]);
     });
 
     it("无日历 → 不写日历段；缺档名 → 占位（不冒用 baseLabel）", () => {
-        const c: ModelCost = { input: 1, output: 2, baseLabel: "off-peak", tiers: [{ when: { kind: "utc-range", ...win("22:00:00+08:00", "02:00:00+08:00") }, input: 5, output: 6 }] };
+        const c: ModelCost = {
+            input: 1,
+            output: 2,
+            baseLabel: "off-peak",
+            tiers: [{ when: { kind: "utc-range", ...win("22:00:00+08:00", "02:00:00+08:00") }, input: 5, output: 6 }],
+        };
         const [line] = describeTiers(c);
         expect(line).toContain("22:00–02:00 +08:00）：in 5 / out 6");
         expect(line).not.toContain("CN-business-day");
@@ -182,8 +242,13 @@ describe("describeTiers（分档价必须**看得见**，否则表里 0.15、实
     });
 
     it("上下文阶梯 → 阈值写法；无分档 → 空数组（UI 据此不画标记）", () => {
-        expect(describeTiers({ input: 1, output: 2, tiers: [{ when: { kind: "context", size: 272_000 }, input: 2, output: 4 }] }))
-            .toEqual(["总输入 > 272000 tokens：in 2 / out 4"]);
+        expect(
+            describeTiers({
+                input: 1,
+                output: 2,
+                tiers: [{ when: { kind: "context", size: 272_000 }, input: 2, output: 4 }],
+            }),
+        ).toEqual(["总输入 > 272000 tokens：in 2 / out 4"]);
         expect(describeTiers({ input: 1, output: 2 })).toEqual([]);
         expect(describeTiers(null)).toEqual([]);
     });

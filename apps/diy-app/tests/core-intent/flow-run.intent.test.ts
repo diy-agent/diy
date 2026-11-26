@@ -179,7 +179,11 @@ beforeAll(async () => {
     process.env["DIY_ZEN_BASE_URL"] = stub.url;
     const electron = await startElectronTest();
     const HOME = electron.home;
-    fx = { electron, HOME, sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }) };
+    fx = {
+        electron,
+        HOME,
+        sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
+    };
 }, 120_000);
 
 afterAll(async () => {
@@ -219,7 +223,11 @@ interface Frame {
 }
 
 /** 跑一轮驱动环，逐帧解析（帧是**给人看的输出**，不是真源） */
-async function runFlow(uri: string, extra = "", timeoutMs = 120_000): Promise<{ code: number; frames: Frame[]; stop: Frame; stdout: string; stderr: string }> {
+async function runFlow(
+    uri: string,
+    extra = "",
+    timeoutMs = 120_000,
+): Promise<{ code: number; frames: Frame[]; stop: Frame; stdout: string; stderr: string }> {
     const r = await fx.sh.run(`./diy.sh flow run ${uri} ${extra}`.trim(), timeoutMs);
     const frames = r.stdout
         .split("\n")
@@ -249,7 +257,11 @@ async function show(uri: string): Promise<View> {
 const line = (v: { node: string; seq: number }): string => `${v.node}#${v.seq}`;
 
 /** 某节点某次驻留的**产物视图**（`flow view` 的 `{ renderer, payload }`；没放产物 ⇒ null） */
-async function payloadOf(uri: string, node: string, seq: number): Promise<{ renderer: string; payload: unknown } | null> {
+async function payloadOf(
+    uri: string,
+    node: string,
+    seq: number,
+): Promise<{ renderer: string; payload: unknown } | null> {
     const r = await fx.sh.getJson(`./diy.sh flow view ${uri} --node ${node} --seq ${seq}`);
     return ((r.data as Record<string, unknown>)["view"] as { renderer: string; payload: unknown } | null) ?? null;
 }
@@ -260,7 +272,12 @@ function audit(uri: string): Array<{ kind?: string; author?: string; to?: string
     return raw
         .split("\n")
         .filter((l) => l.trim())
-        .map((l) => JSON.parse(l) as Record<string, unknown>) as Array<{ kind?: string; author?: string; to?: string; content?: string }>;
+        .map((l) => JSON.parse(l) as Record<string, unknown>) as Array<{
+        kind?: string;
+        author?: string;
+        to?: string;
+        content?: string;
+    }>;
 }
 
 interface OpLine {
@@ -333,7 +350,16 @@ describe("flow run：自动轮转", () => {
             "ci#1",
             "approve#1",
         ]);
-        expect(view.trajectory.map((v) => v.kind)).toEqual(["next", "next", "next", "next", "bounce", "next", "next", "next"]);
+        expect(view.trajectory.map((v) => v.kind)).toEqual([
+            "next",
+            "next",
+            "next",
+            "next",
+            "bounce",
+            "next",
+            "next",
+            "next",
+        ]);
 
         // 系统那一步（ci）真的跑了命令，产物袋里有它的输出
         const ciPayload = await payloadOf(uri, "ci", 1);
@@ -428,13 +454,7 @@ describe("flow run：停得住", () => {
         const view = await show(uri);
         expect(view.position).toBe("ci");
         expect(view.done).toBe(false);
-        expect(view.trajectory.map(line)).toEqual([
-            "clarify#1",
-            "design#1",
-            "implement#1",
-            "review#1",
-            "ci#1",
-        ]);
+        expect(view.trajectory.map(line)).toEqual(["clarify#1", "design#1", "implement#1", "review#1", "ci#1"]);
         expect(view.next.edges.map((e) => e.to)).toEqual(["approve"]); // 边上还有路，只是这一刻不通
     }, 150_000);
 
@@ -459,13 +479,25 @@ describe("flow run：停得住", () => {
         try {
             // 等到轮次真起来（桩收到请求 = 驱动环已经把它发出去了）
             const first = stub.requests.length;
-            await waitUntil(async () => stub.requests.length > first, (ok) => ok, { label: "驱动环起轮次", timeoutMs: 30_000 });
+            await waitUntil(
+                async () => stub.requests.length > first,
+                (ok) => ok,
+                { label: "驱动环起轮次", timeoutMs: 30_000 },
+            );
             // 再等它落进盘上（轮次开场 op）—— 断得太早就没有「被中断」可言
-            await waitUntil(async () => turnIds(uri).length, (n) => n > 0, { label: "轮次开场", timeoutMs: 20_000, intervalMs: 200 });
+            await waitUntil(
+                async () => turnIds(uri).length,
+                (n) => n > 0,
+                { label: "轮次开场", timeoutMs: 20_000, intervalMs: 200 },
+            );
             expect(turnEndReasons(uri)).toEqual([]); // 还没有结束原因 = 正挂着
 
             killTree(child.pid!); // 收掉整个进程组（CLI + 它的 node）
-            const reasons = await waitUntil(async () => turnEndReasons(uri), (r) => r.length > 0, { label: "轮次收尾（中断）", timeoutMs: 20_000 });
+            const reasons = await waitUntil(
+                async () => turnEndReasons(uri),
+                (r) => r.length > 0,
+                { label: "轮次收尾（中断）", timeoutMs: 20_000 },
+            );
             expect(reasons).toContain("aborted");
         } finally {
             try {
@@ -488,15 +520,29 @@ describe("flow run：停得住", () => {
         const uri = await freshFlow("busy", []);
         stub.mode = "hang"; // 用户那一轮永远不结束 ⇒ 该任务会话一直「在跑」
         // 用户自己的轮次（同一条任务会话）—— 驱动环**不许**把自己那一步塞进他后面排队
-        const child = spawn(DIY_SH_SPAWN.cmd, [...DIY_SH_SPAWN.prefix, "agent", "local", "chat", uri, "用户插话：先别动"], {
-            cwd: join(__dirname, "..", "..", "..", ".."),
-            env: { ...process.env, DIY_HOME: fx.HOME, HOME: fx.HOME, DIY_VARIANT: "test", DIY_CLI_MODE: "compiled" },
-            detached: true,
-            stdio: "ignore",
-        });
+        const child = spawn(
+            DIY_SH_SPAWN.cmd,
+            [...DIY_SH_SPAWN.prefix, "agent", "local", "chat", uri, "用户插话：先别动"],
+            {
+                cwd: join(__dirname, "..", "..", "..", ".."),
+                env: {
+                    ...process.env,
+                    DIY_HOME: fx.HOME,
+                    HOME: fx.HOME,
+                    DIY_VARIANT: "test",
+                    DIY_CLI_MODE: "compiled",
+                },
+                detached: true,
+                stdio: "ignore",
+            },
+        );
         try {
             const first = stub.requests.length;
-            await waitUntil(async () => stub.requests.length > first, (ok) => ok, { label: "用户轮次起飞", timeoutMs: 30_000 });
+            await waitUntil(
+                async () => stub.requests.length > first,
+                (ok) => ok,
+                { label: "用户轮次起飞", timeoutMs: 30_000 },
+            );
             const busyAt = stub.requests.length;
 
             const { stop, frames } = await runFlow(uri, "", 60_000);
@@ -543,11 +589,23 @@ describe("flow run：产物落袋失败不挡这一轮（##341 review1 P3-4 / re
             expect(String(impl[0]!.artifactError)).toContain("patch");
 
             // ② 照常推进：后一个节点（review）也跑了，折线位置在审批点
-            expect(frames.filter((f) => f.kind === "turn").map((f) => f.node)).toEqual(["clarify", "design", "implement", "review"]);
+            expect(frames.filter((f) => f.kind === "turn").map((f) => f.node)).toEqual([
+                "clarify",
+                "design",
+                "implement",
+                "review",
+            ]);
             const view = await show(uri);
             expect(view.position).toBe("approve");
             expect(view.done).toBe(false);
-            expect(view.trajectory.map(line)).toEqual(["clarify#1", "design#1", "implement#1", "review#1", "ci#1", "approve#1"]);
+            expect(view.trajectory.map(line)).toEqual([
+                "clarify#1",
+                "design#1",
+                "implement#1",
+                "review#1",
+                "ci#1",
+                "approve#1",
+            ]);
 
             // ③ 袋里**一个字节都没写**（试译失败就不留「谁也译不出的半成品」）……
             expect(existsSync(join(fx.HOME, uri, "flow", "artifacts", "implement.json"))).toBe(false);

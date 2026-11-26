@@ -222,11 +222,7 @@ describe("seekWindowStart — 识别与回溯", () => {
     it("坏行（半截 JSON）不参与候选：跳过继续往前找", () => {
         const fp = tmpFile();
         const good = turnOps("t1", 100);
-        writeFileSync(
-            fp,
-            `${JSON.stringify(good[0])}\n{"op":"start","id":"t2","kind":TRUNC\n`,
-            "utf-8",
-        );
+        writeFileSync(fp, `${JSON.stringify(good[0])}\n{"op":"start","id":"t2","kind":TRUNC\n`, "utf-8");
         const buf = readFileSync(fp);
         const off = seekWindowStart(fp, 10);
         expect(off).toBe(0); // 唯一真轮首在文件头 → 全量

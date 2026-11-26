@@ -38,41 +38,42 @@ let fx: { sh: ShellTest; HOME: string; electron: ElectronTest };
 let ui: UiDriver;
 
 beforeAll(async () => {
-  const electron = await startElectronTest();
-  const HOME = electron.home;
-  fx = {
-    electron,
-    HOME,
-    sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
-  };
-  ui = await makeUiDriver(electron.cdpUrl, async () => undefined);
+    const electron = await startElectronTest();
+    const HOME = electron.home;
+    fx = {
+        electron,
+        HOME,
+        sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
+    };
+    ui = await makeUiDriver(electron.cdpUrl, async () => undefined);
 }, 60000);
 
 afterAll(async () => {
-  ui?.close();
-  await fx?.electron?.stop();
+    ui?.close();
+    await fx?.electron?.stop();
 });
 
 interface AppInfo {
-  port: number;
-  pid: number;
+    port: number;
+    pid: number;
 }
 
 /** 窗口是否已经没了：CDP 的 page target 消失，或它的 url 变空（webContents 已销毁） */
 async function windowGone(): Promise<boolean> {
-  const port = new URL(fx.electron.cdpUrl!).port;
-  const list = (await fetch(`http://127.0.0.1:${port}/json/list`).then((r) =>
-    r.json(),
-  )) as { type: string; url: string }[];
-  const page = list.find((t) => t.type === "page");
-  return !page || page.url === "";
+    const port = new URL(fx.electron.cdpUrl!).port;
+    const list = (await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json())) as {
+        type: string;
+        url: string;
+    }[];
+    const page = list.find((t) => t.type === "page");
+    return !page || page.url === "";
 }
 
 async function appInfo(timeoutMs = 10000): Promise<AppInfo> {
-  // 显式给短超时：这条命令若挂在「启动超时 30s」路径上，用默认 20s 只会让用例更难读
-  const r = await fx.sh.run("./diy.sh app info --json", timeoutMs);
-  if (r.code !== 0) throw new Error(`getAppInfo 失败 exit=${r.code}\nstderr: ${r.stderr}`);
-  return (JSON.parse(r.stdout) as { data: AppInfo }).data;
+    // 显式给短超时：这条命令若挂在「启动超时 30s」路径上，用默认 20s 只会让用例更难读
+    const r = await fx.sh.run("./diy.sh app info --json", timeoutMs);
+    if (r.code !== 0) throw new Error(`getAppInfo 失败 exit=${r.code}\nstderr: ${r.stderr}`);
+    return (JSON.parse(r.stdout) as { data: AppInfo }).data;
 }
 
 // ⚠️ 本文件整组只在「关窗后进程常驻」的平台上有意义。
@@ -84,28 +85,28 @@ async function appInfo(timeoutMs = 10000): Promise<AppInfo> {
 // 要补就写 Windows 专属断言（关窗后 CLI 探测失败 → 拉起新实例 → 单实例锁让位），
 // 或者产品侧给 Windows 加托盘、把能力位翻成 true（那是功能变更，不是测试修复）。
 describe.skipIf(process.platform === "win32")("关掉窗口后 RPC 服务继续可用", () => {
-  it("窗口关掉 → CLI 仍连同一实例（端口/PID 不变，app.port 不被改写）", async () => {
-    const before = await appInfo();
-    const portFile = join(fx.HOME, "app.port");
+    it("窗口关掉 → CLI 仍连同一实例（端口/PID 不变，app.port 不被改写）", async () => {
+        const before = await appInfo();
+        const portFile = join(fx.HOME, "app.port");
 
-    // 关窗：真实路径（renderer 的 window.close → BrowserWindow.close → window-all-closed）。
-    // 用 setTimeout 把 close 推后一拍：evaluate 的响应必须先发出去，否则页面一销毁
-    // 这次 CDP 调用就永远等不到回包（实测会挂死用例）。
-    await ui.eval("(() => { setTimeout(() => window.close(), 50); return true; })()");
-    // 「窗口真的没了」的判据：page target 消失，或其 url 变空（webContents 已 destroyed）
-    await waitUntil(windowGone, (gone) => gone, { label: "窗口已关闭" });
+        // 关窗：真实路径（renderer 的 window.close → BrowserWindow.close → window-all-closed）。
+        // 用 setTimeout 把 close 推后一拍：evaluate 的响应必须先发出去，否则页面一销毁
+        // 这次 CDP 调用就永远等不到回包（实测会挂死用例）。
+        await ui.eval("(() => { setTimeout(() => window.close(), 50); return true; })()");
+        // 「窗口真的没了」的判据：page target 消失，或其 url 变空（webContents 已 destroyed）
+        await waitUntil(windowGone, (gone) => gone, { label: "窗口已关闭" });
 
-    const after = await appInfo();
-    expect(after.pid).toBe(before.pid); // 没有另起实例（锁还在，别被锁拒后死等）
-    expect(after.port).toBe(before.port); // RPC 端口没停
-    expect(readFileSync(portFile, "utf-8").trim()).toBe(String(before.port));
-  });
+        const after = await appInfo();
+        expect(after.pid).toBe(before.pid); // 没有另起实例（锁还在，别被锁拒后死等）
+        expect(after.port).toBe(before.port); // RPC 端口没停
+        expect(readFileSync(portFile, "utf-8").trim()).toBe(String(before.port));
+    });
 
-  it("窗口关掉后调界面 RPC → 明确报「窗口不存在」，不挂到超时", async () => {
-    const r = await fx.sh.run("./diy.sh ui inspect", 10000);
-    expect(r.code).not.toBe(0);
-    expect(r.stderr).toContain("窗口不存在");
-  });
+    it("窗口关掉后调界面 RPC → 明确报「窗口不存在」，不挂到超时", async () => {
+        const r = await fx.sh.run("./diy.sh ui inspect", 10000);
+        expect(r.code).not.toBe(0);
+        expect(r.stderr).toContain("窗口不存在");
+    });
 });
 
 // ── 关窗后「窗口回得来」：常驻唯一的正当性来源 ──
@@ -119,21 +120,21 @@ describe.skipIf(process.platform === "win32")("关掉窗口后 RPC 服务继续�
 // 故本组用例同时锁定两条路（正是 review 指出「补了一处漏一处」的地方）。
 /** 重建后的窗口需要重新 attach（旧 ui 句柄指向已销毁的 webContents） */
 async function freshUi(): Promise<void> {
-  await waitUntil(windowGone, (gone) => !gone, { label: "窗口重新出现" });
-  await waitUntil(
-    async () => {
-      const port = new URL(fx.electron.cdpUrl!).port;
-      const list = (await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json())) as {
-        type: string;
-        url: string;
-      }[];
-      return list.some((t) => t.type === "page" && t.url !== "");
-    },
-    (ok) => ok,
-    { label: "page target 已加载（url 非空）" },
-  );
-  ui?.close();
-  ui = await makeUiDriver(fx.electron.cdpUrl, async () => undefined);
+    await waitUntil(windowGone, (gone) => !gone, { label: "窗口重新出现" });
+    await waitUntil(
+        async () => {
+            const port = new URL(fx.electron.cdpUrl!).port;
+            const list = (await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json())) as {
+                type: string;
+                url: string;
+            }[];
+            return list.some((t) => t.type === "page" && t.url !== "");
+        },
+        (ok) => ok,
+        { label: "page target 已加载（url 非空）" },
+    );
+    ui?.close();
+    ui = await makeUiDriver(fx.electron.cdpUrl, async () => undefined);
 }
 
 /**
@@ -145,21 +146,25 @@ async function freshUi(): Promise<void> {
  * `build/<variant>/main/index.mjs` 是 `startElectronTest` 的 cwd（appDir），与常驻实例同一份代码/同一 HOME。
  */
 function spawnClash(): Promise<void> {
-  return new Promise((resolve) => {
-    const second = spawn(String(electronPath), [join("build", process.env["DIY_VARIANT"] ?? "test", "main", "index.mjs")], {
-      cwd: join(__dirname, ".."),
-      env: { ...process.env, HOME: fx.HOME, DIY_HOME: fx.HOME, DIY_ENV: "test" },
-      stdio: "ignore",
+    return new Promise((resolve) => {
+        const second = spawn(
+            String(electronPath),
+            [join("build", process.env["DIY_VARIANT"] ?? "test", "main", "index.mjs")],
+            {
+                cwd: join(__dirname, ".."),
+                env: { ...process.env, HOME: fx.HOME, DIY_HOME: fx.HOME, DIY_ENV: "test" },
+                stdio: "ignore",
+            },
+        );
+        second.once("close", () => resolve());
     });
-    second.once("close", () => resolve());
-  });
 }
 
 /** 界面 RPC 恢复（② 真判据）：diy ui inspect 拿得到无障碍树，而不是报「窗口不存在」 */
 async function expectUiWorks(where: string): Promise<void> {
-  const r = await fx.sh.run("./diy.sh ui inspect", 10000);
-  expect(r.code, `${where}: diy ui inspect 应成功`).toBe(0);
-  expect(r.stdout).not.toContain("窗口不存在");
+    const r = await fx.sh.run("./diy.sh ui inspect", 10000);
+    expect(r.code, `${where}: diy ui inspect 应成功`).toBe(0);
+    expect(r.stdout).not.toContain("窗口不存在");
 }
 
 /**
@@ -170,28 +175,28 @@ async function expectUiWorks(where: string): Promise<void> {
  * 用例挂满 30s，且 spawnClash() 根本没执行（误表现为"second-instance 没送达"）。
  */
 async function closeWindow(): Promise<void> {
-  if (await windowGone()) return; // 已经关过 → 什么都不做
-  const fresh = await makeUiDriver(fx.electron.cdpUrl, async () => undefined);
-  try {
-    await fresh.eval("(() => { setTimeout(() => window.close(), 50); return true; })()");
-  } finally {
-    fresh.close(); // 不留死驱动
-  }
-  await waitUntil(windowGone, (gone) => gone, { label: "窗口已关闭" });
+    if (await windowGone()) return; // 已经关过 → 什么都不做
+    const fresh = await makeUiDriver(fx.electron.cdpUrl, async () => undefined);
+    try {
+        await fresh.eval("(() => { setTimeout(() => window.close(), 50); return true; })()");
+    } finally {
+        fresh.close(); // 不留死驱动
+    }
+    await waitUntil(windowGone, (gone) => gone, { label: "窗口已关闭" });
 }
 
 describe.skipIf(process.platform === "win32")("关窗后再启动一次（second-instance）→ 窗口请回来", () => {
-  it("spawn 第二进程撞锁 → 常驻实例重建窗口，界面 RPC 恢复", async () => {
-    await closeWindow();
-    await spawnClash(); // 真实 second-instance 路径（同 activate 共用 ensureWindow）
-    await freshUi();
-    await expectUiWorks("second-instance 重建后");
-  }, 30000);
+    it("spawn 第二进程撞锁 → 常驻实例重建窗口，界面 RPC 恢复", async () => {
+        await closeWindow();
+        await spawnClash(); // 真实 second-instance 路径（同 activate 共用 ensureWindow）
+        await freshUi();
+        await expectUiWorks("second-instance 重建后");
+    }, 30000);
 
-  it("窗口缺席时再次撞锁 → 仍能重建（ensureWindow 幂等，覆盖 activate 同一条逻辑）", async () => {
-    await closeWindow();
-    await spawnClash();
-    await freshUi();
-    await expectUiWorks("再次重建后");
-  }, 30000);
+    it("窗口缺席时再次撞锁 → 仍能重建（ensureWindow 幂等，覆盖 activate 同一条逻辑）", async () => {
+        await closeWindow();
+        await spawnClash();
+        await freshUi();
+        await expectUiWorks("再次重建后");
+    }, 30000);
 });

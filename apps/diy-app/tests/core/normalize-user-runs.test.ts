@@ -96,7 +96,12 @@ describe("normalizeUserRuns", () => {
     it("不碰 tool 消息与配对（tool-call / tool-result 原样）", () => {
         const msgs = [
             { role: "assistant", content: [{ type: "tool-call", toolCallId: "t", toolName: "bash", input: {} }] },
-            { role: "tool", content: [{ type: "tool-result", toolCallId: "t", toolName: "bash", output: { type: "text", value: "r" } }] },
+            {
+                role: "tool",
+                content: [
+                    { type: "tool-result", toolCallId: "t", toolName: "bash", output: { type: "text", value: "r" } },
+                ],
+            },
             { role: "user", content: "x" },
         ] as unknown as ModelMessage[];
         expect(normalizeUserRuns(msgs)).toEqual(msgs);

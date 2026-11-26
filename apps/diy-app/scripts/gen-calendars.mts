@@ -54,7 +54,9 @@ async function main(): Promise<void> {
     // 版本：本地装过 chinese-days 就取 package.json，否则记源 URL
     let version = PINNED;
     try {
-        const pkg = JSON.parse(readFileSync(join(APP, "node_modules/chinese-days/package.json"), "utf-8")) as { version?: string };
+        const pkg = JSON.parse(readFileSync(join(APP, "node_modules/chinese-days/package.json"), "utf-8")) as {
+            version?: string;
+        };
         if (pkg.version) version = `${PINNED}@${pkg.version}`;
     } catch {
         /* 没装依赖（正常：本脚本走 CDN）→ 只记包名 */

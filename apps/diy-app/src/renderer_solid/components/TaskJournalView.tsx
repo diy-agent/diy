@@ -126,12 +126,19 @@ export function TaskJournalView(props: { uri: string }) {
                     {(r) => (
                         <Show
                             when={r().exists}
-                            fallback={<div class="opacity-60">还没有日志（<code class="font-mono">{r().path}</code>）—— 第一次 <code class="font-mono">diy journal add</code> 自动创建。</div>}
+                            fallback={
+                                <div class="opacity-60">
+                                    还没有日志（<code class="font-mono">{r().path}</code>）—— 第一次{" "}
+                                    <code class="font-mono">diy journal add</code> 自动创建。
+                                </div>
+                            }
                         >
                             <div class="space-y-1">
                                 <div class="font-mono opacity-60 text-xs break-all">{r().path}</div>
                                 <CodeBlock code={r().text} lang="json" />
-                                <div class="opacity-50">一行一条 JSON，只追加。坏行会照原样出现在这里（渲染视图会跳过它）。</div>
+                                <div class="opacity-50">
+                                    一行一条 JSON，只追加。坏行会照原样出现在这里（渲染视图会跳过它）。
+                                </div>
                             </div>
                         </Show>
                     )}
@@ -150,9 +157,7 @@ export function TaskJournalView(props: { uri: string }) {
                     {(v) => (
                         <div class="space-y-1">
                             <Show when={v().problems.length > 0}>
-                                <div class="text-error">
-                                    有 {v().problems.length} 条坏行被跳过（原 JSONL 里能看见）
-                                </div>
+                                <div class="text-error">有 {v().problems.length} 条坏行被跳过（原 JSONL 里能看见）</div>
                             </Show>
                             <Show when={v().rows.length > 0} fallback={<div class="opacity-50">无条目</div>}>
                                 <MarkdownView content={v().text} />

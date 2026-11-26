@@ -28,121 +28,124 @@ import { textHit, textHitAny } from "./ui-text";
 const OCCLUSION_WAIT_MS = 6000;
 
 interface CdpTarget {
-  id: string;
-  type: string;
-  url: string;
-  webSocketDebuggerUrl: string;
+    id: string;
+    type: string;
+    url: string;
+    webSocketDebuggerUrl: string;
 }
 
 /** 极简 CDP 客户端：够用即止（只要 Input / Runtime 两个域） */
 class Cdp {
-  private ws!: WebSocket;
-  private seq = 1;
-  /** id → settle（含 resolve/reject）；连接断掉时全部 reject，避免 promise 永不 settle */
-  private pending = new Map<number, { res: (v: unknown) => void; rej: (e: Error) => void }>();
+    private ws!: WebSocket;
+    private seq = 1;
+    /** id → settle（含 resolve/reject）；连接断掉时全部 reject，避免 promise 永不 settle */
+    private pending = new Map<number, { res: (v: unknown) => void; rej: (e: Error) => void }>();
 
-  static async attach(baseWsUrl: string): Promise<Cdp> {
-    // 浏览器级 ws 不能直接 dispatch 输入事件 —— 要附到具体的 page target 上
-    const port = new URL(baseWsUrl).port;
-    const list: CdpTarget[] = await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json());
-    const page = list.find((t) => t.type === "page");
-    if (!page) throw new Error("[ui-drive] 没有可用的 page target");
+    static async attach(baseWsUrl: string): Promise<Cdp> {
+        // 浏览器级 ws 不能直接 dispatch 输入事件 —— 要附到具体的 page target 上
+        const port = new URL(baseWsUrl).port;
+        const list: CdpTarget[] = await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json());
+        const page = list.find((t) => t.type === "page");
+        if (!page) throw new Error("[ui-drive] 没有可用的 page target");
 
-    const cdp = new Cdp();
-    cdp.ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise<void>((res, rej) => {
-      cdp.ws.once("open", () => res());
-      cdp.ws.once("error", (e) => rej(e));
-    });
-    cdp.ws.on("message", (raw) => {
-      const msg = JSON.parse(raw.toString()) as { id?: number; result?: unknown };
-      if (msg.id && cdp.pending.has(msg.id)) {
-        const p = cdp.pending.get(msg.id)!;
-        cdp.pending.delete(msg.id);
-        p.res(msg.result);
-      }
-    });
-    // 连接断开（窗口销毁 / target 没了）→ 立刻 reject 所有等待中的调用。
-    // 缺这条，socket 已断时 send 的 promise 永不 settle → 用例静默挂到 30s 超时，
-    // 现象是「30s 后才失败、错误指向超时」而不是「target 已销毁」——误导排查。
-    const rejectAll = (why: string) => {
-      for (const p of cdp.pending.values()) p.rej(new Error(`[ui-drive] CDP 连接断开：${why}`));
-      cdp.pending.clear();
-    };
-    cdp.ws.on("close", () => rejectAll("ws closed（window 已销毁？）"));
-    cdp.ws.on("error", (e) => rejectAll(`ws error: ${e.message}`));
-    return cdp;
-  }
-
-  /**
-   * 发送 CDP 命令。**带超时**：命令不响应（渲染进程卡住 / 连接半死）时抛出明确错误，
-   * 而不是让 Promise 永远挂着 —— 后者表现为"某测试 30s 超时"，看不出真正原因。
-   * 与上面的 rejectAll（连接断开）互补：那条管"socket 断了"，这条管"socket 活着但不回包"。
-   */
-  send<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = 10_000): Promise<T> {
-    const id = this.seq++;
-    return new Promise<T>((res, rej) => {
-      // 连接不在 OPEN（窗口/页面已销毁）→ 立即失败，不进 pending（否则永远等不到回包）
-      if (this.ws.readyState !== WebSocket.OPEN) {
-        rej(new Error(`[ui-drive] CDP 连接未就绪（readyState=${this.ws.readyState}），method=${method}`));
-        return;
-      }
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        rej(new Error(`[ui-drive] CDP 命令超时（${timeoutMs}ms）: ${method}`));
-      }, timeoutMs);
-      this.pending.set(id, {
-        res: (v) => {
-          clearTimeout(timer);
-          res(v as T);
-        },
-        rej: (e) => {
-          clearTimeout(timer);
-          rej(e);
-        },
-      });
-      try {
-        this.ws.send(JSON.stringify({ id, method, params }));
-      } catch (e) {
-        clearTimeout(timer);
-        this.pending.delete(id);
-        rej(e as Error);
-      }
-    });
-  }
-
-  /** 在 renderer 里求值（拿 DOM 尺寸、读状态用）。默认 5s 超时：死 target 不该吃掉整个用例预算 */
-  async eval<T>(expression: string, timeoutMs = 5000): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const r = await Promise.race([
-        this.send<{ result?: { value?: T } }>("Runtime.evaluate", {
-          expression,
-          returnByValue: true,
-          awaitPromise: true,
-        }),
-        new Promise<never>((_, rej) => {
-          timer = setTimeout(() => rej(new Error(`[ui-drive] eval 超时 ${timeoutMs}ms（target 可能已销毁）`)), timeoutMs);
-        }),
-      ]);
-      return r.result?.value as T;
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
+        const cdp = new Cdp();
+        cdp.ws = new WebSocket(page.webSocketDebuggerUrl);
+        await new Promise<void>((res, rej) => {
+            cdp.ws.once("open", () => res());
+            cdp.ws.once("error", (e) => rej(e));
+        });
+        cdp.ws.on("message", (raw) => {
+            const msg = JSON.parse(raw.toString()) as { id?: number; result?: unknown };
+            if (msg.id && cdp.pending.has(msg.id)) {
+                const p = cdp.pending.get(msg.id)!;
+                cdp.pending.delete(msg.id);
+                p.res(msg.result);
+            }
+        });
+        // 连接断开（窗口销毁 / target 没了）→ 立刻 reject 所有等待中的调用。
+        // 缺这条，socket 已断时 send 的 promise 永不 settle → 用例静默挂到 30s 超时，
+        // 现象是「30s 后才失败、错误指向超时」而不是「target 已销毁」——误导排查。
+        const rejectAll = (why: string) => {
+            for (const p of cdp.pending.values()) p.rej(new Error(`[ui-drive] CDP 连接断开：${why}`));
+            cdp.pending.clear();
+        };
+        cdp.ws.on("close", () => rejectAll("ws closed（window 已销毁？）"));
+        cdp.ws.on("error", (e) => rejectAll(`ws error: ${e.message}`));
+        return cdp;
     }
-  }
 
-  close(): void {
-    this.ws.close();
-  }
+    /**
+     * 发送 CDP 命令。**带超时**：命令不响应（渲染进程卡住 / 连接半死）时抛出明确错误，
+     * 而不是让 Promise 永远挂着 —— 后者表现为"某测试 30s 超时"，看不出真正原因。
+     * 与上面的 rejectAll（连接断开）互补：那条管"socket 断了"，这条管"socket 活着但不回包"。
+     */
+    send<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = 10_000): Promise<T> {
+        const id = this.seq++;
+        return new Promise<T>((res, rej) => {
+            // 连接不在 OPEN（窗口/页面已销毁）→ 立即失败，不进 pending（否则永远等不到回包）
+            if (this.ws.readyState !== WebSocket.OPEN) {
+                rej(new Error(`[ui-drive] CDP 连接未就绪（readyState=${this.ws.readyState}），method=${method}`));
+                return;
+            }
+            const timer = setTimeout(() => {
+                this.pending.delete(id);
+                rej(new Error(`[ui-drive] CDP 命令超时（${timeoutMs}ms）: ${method}`));
+            }, timeoutMs);
+            this.pending.set(id, {
+                res: (v) => {
+                    clearTimeout(timer);
+                    res(v as T);
+                },
+                rej: (e) => {
+                    clearTimeout(timer);
+                    rej(e);
+                },
+            });
+            try {
+                this.ws.send(JSON.stringify({ id, method, params }));
+            } catch (e) {
+                clearTimeout(timer);
+                this.pending.delete(id);
+                rej(e as Error);
+            }
+        });
+    }
+
+    /** 在 renderer 里求值（拿 DOM 尺寸、读状态用）。默认 5s 超时：死 target 不该吃掉整个用例预算 */
+    async eval<T>(expression: string, timeoutMs = 5000): Promise<T> {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const r = await Promise.race([
+                this.send<{ result?: { value?: T } }>("Runtime.evaluate", {
+                    expression,
+                    returnByValue: true,
+                    awaitPromise: true,
+                }),
+                new Promise<never>((_, rej) => {
+                    timer = setTimeout(
+                        () => rej(new Error(`[ui-drive] eval 超时 ${timeoutMs}ms（target 可能已销毁）`)),
+                        timeoutMs,
+                    );
+                }),
+            ]);
+            return r.result?.value as T;
+        } finally {
+            if (timer !== undefined) clearTimeout(timer);
+        }
+    }
+
+    close(): void {
+        this.ws.close();
+    }
 }
 
 /** a11y 树节点（`ui inspect` 的输出结构） */
 export interface A11yNode {
-  role: string;
-  text: string;
-  value?: string;
-  rect?: { x: number; y: number; w: number; h: number };
-  children?: A11yNode[];
+    role: string;
+    text: string;
+    value?: string;
+    rect?: { x: number; y: number; w: number; h: number };
+    children?: A11yNode[];
 }
 
 /**
@@ -150,19 +153,19 @@ export interface A11yNode {
  * `match` 收到的 text 已 trim；返回 rect 中心点（点击用）。
  */
 export function findClickable(
-  tree: A11yNode | undefined,
-  match: (text: string, node: A11yNode) => boolean,
+    tree: A11yNode | undefined,
+    match: (text: string, node: A11yNode) => boolean,
 ): { text: string; x: number; y: number } | undefined {
-  if (!tree) return undefined;
-  // 有 rect 且不退化（0×0 的不可点）
-  if (tree.rect && tree.rect.w > 0 && tree.rect.h > 0 && match(tree.text.trim(), tree)) {
-    return { text: tree.text.trim(), x: tree.rect.x + tree.rect.w / 2, y: tree.rect.y + tree.rect.h / 2 };
-  }
-  for (const c of tree.children ?? []) {
-    const hit = findClickable(c, match);
-    if (hit) return hit;
-  }
-  return undefined;
+    if (!tree) return undefined;
+    // 有 rect 且不退化（0×0 的不可点）
+    if (tree.rect && tree.rect.w > 0 && tree.rect.h > 0 && match(tree.text.trim(), tree)) {
+        return { text: tree.text.trim(), x: tree.rect.x + tree.rect.w / 2, y: tree.rect.y + tree.rect.h / 2 };
+    }
+    for (const c of tree.children ?? []) {
+        const hit = findClickable(c, match);
+        if (hit) return hit;
+    }
+    return undefined;
 }
 
 /**
@@ -172,169 +175,169 @@ export function findClickable(
  *   await ui.drag(from, to);             // 拖线（拖动不了时的退路是只点全屏/开合）
  */
 export interface UiDriver {
-  /** 按文本找元素并真实点击（找不到 / 不可见 → 抛错，不静默跳过） */
-  click(text: TextMatch): Promise<void>;
-  /**
-   * 悬停到元素上（发 mouseMoved）。
-   *
-   * ⚠️ 实测局限：CDP 的 `Input.dispatchMouseEvent` **不会**让 Chromium 更新
-   * CSS `:hover` 状态（`:hover` 由真实输入设备的鼠标位置驱动，DevTools 注入的事件
-   * 只做命中测试与派发）。所以对「hover 才显形」的控件（tab 的 ✕、
-   * `group-hover:opacity-70` 之类），本方法**不足以**让它们进 a11y 树。
-   * 这类元素用 `clickSelector` 按 DOM 坐标点（见下）。
-   */
-  hover(text: TextMatch): Promise<void>;
-  /**
-   * 让鼠标「进入」某元素：派发 DOM `mouseenter`（leaveSelector 则派发 `mouseleave`）。
-   *
-   * 为什么必须这样做（不是偷懒）：Chromium 由**真实输入设备位置**驱动 hover，
-   * `Input.dispatchMouseEvent` 只做命中测试与派发，**不更新 hover 事件链**（见上面
-   * `hover` 的注释）。于是「悬停才出现的 UI」（侧栏 hover 展开、悬停任务项的详情
-   * 面板）用 CDP 驱动不出来，只能派发原生事件。
-   * 作为补偿，调用方应同时断言目标 rect 非零且 `elementFromPoint` 命中它 ——
-   * 证明「这一项真的在鼠标可达处」，而不是只靠合成事件自说自话。
-   *
-   * 返回 false = 选择器没找到元素（调用方自行决定是否断言失败，不静默跳过）。
-   */
-  hoverSelector(selector: string, opts?: { nth?: number }): Promise<boolean>;
-  /** 派发 DOM `mouseleave`（与 hoverSelector 对称） */
-  leaveSelector(selector: string, opts?: { nth?: number }): Promise<boolean>;
-  /**
-   * 按 CSS 选择器定位 → 在**元素中心真实派发**鼠标按下/抬起。
-   *
-   * 为什么需要（不是绕路）：`ui inspect` 的 a11y 树会剔除 `opacity: 0` 的元素，
-   * 而这类元素（tab 的 ✕、area 角标）**仍然命中测试正常**（opacity 不关闭 pointer
-   * events），真人也是 hover 后直接点的。a11y 树看不到 ≠ 点不到。
-   * 定位用 DOM、发送用 CDP 原生事件 —— 命中测试那一层仍然是真的。
-   */
-  clickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
-  /**
-   * 在**任意坐标**真实点击（press + release，走完整命中测试）。
-   *
-   * 为什么需要（不是绕路）：有些可点目标没有"自己的中心点"可用 —— 典型是**模态遮罩**：
-   * 遮罩是全屏的，它的几何中心恰好落在居中的面板里（点下去命中的是面板，不是遮罩）。
-   * 这类场合只能给出一个"确实落在遮罩上"的坐标再点，才能测得动。
-   */
-  clickPoint(point: { x: number; y: number }): Promise<void>;
-  /**
-   * 按 CSS 选择器定位 → **真实双击**（同上定位与命中路径）。
-   *
-   * 为什么不是"连点两次 clickSelector"：Chromium 的 `dblclick` 由**点击计数**驱动
-   * （同一坐标、`clickCount: 2` 的第二次 press/release），两次独立的单击只会产生
-   * 两个 `click`，`onDblClick` 一次都不会触发 —— 界面看着"点了没反应"。
-   */
-  dblclickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
-  /** 读 DOM（拿 rect / 计算样式等；a11y 树看不到的东西用这个） */
-  query<T>(expression: string): Promise<T>;
-  /**
-   * 向**当前焦点元素**真实输入文本（`Input.insertText`）。
-   *
-   * 为什么不用 `el.value = x` 或派发合成 input 事件：那些绕过浏览器输入路径，
-   * 输入框不会经历真实的插入会话（而 Solid 的 onInput 绑在事件上，恰好会"看起来能过"）。
-   * 用 CDP 的 insertText 走的就是输入法/键盘最终落到的同一条路径。
-   * 注意：文本会插到**插入点**，不替换已有内容；要先 click 聚焦、必要时 `press("Meta+A")` 全选
-   * （`Meta+A` 已带 `SelectAll`，是真的全选；早先不带的版本会把「覆盖」悄悄变成「追加」）。
-   */
-  type(text: string): Promise<void>;
-  /**
-   * 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A`
-   * （`Meta/Ctrl+A` 会附上 CDP 的 `SelectAll` 编辑命令 —— 只发按键码 Chromium 不会全选，见下）。
-   *
-   * `autoRepeat: true` = 把这次 keydown 标成**按住不放的连发**（CDP `autoRepeat` →
-   * `KeyboardEvent.repeat === true`）。用于验证"连发只响应首次"这类契约：没有它就只能
-   * 连按两次独立按键，那测的是 toggle 而不是 repeat 守卫（review6 R6-3）。
-   */
-  press(key: string, opts?: { autoRepeat?: boolean }): Promise<void>;
-  /**
-   * 让**当前焦点元素**进入真实输入法（IME）组合态（CDP `Input.imeSetComposition`）。
-   *
-   * 为什么必须走这条路（不是绕路）：`isComposing` 是**浏览器在 IME 管线里自己打的标** ——
-   * 用 `new KeyboardEvent(..., { isComposing: true })` 派发只能测"handler 认不认这个字段"，
-   * 证明不了"真实输入法送来的回车确实带这个标"。本方法建立组合态后，随后的 `press()`
-   * 走的才是与中文拼音输入同一条路径（Chromium 会在其 keydown 上标 `isComposing:true`）。
-   */
-  imeCompose(text: string): Promise<void>;
-  /** 按坐标拖拽（拖线用）；steps 让中间点也发出去，命中拖拽逻辑 */
-  drag(from: { x: number; y: number }, to: { x: number; y: number }, steps?: number): Promise<void>;
-  /**
-   * 覆写渲染视口尺寸（CDP `Emulation.setDeviceMetricsOverride`）。
-   *
-   * 用途：验证**"随视口/布局变化重算"**的响应式分支（如输入区封顶 = view 1/3 的
-   * ResizeObserver 回调）。只改渲染进程的布局视口、不动真实窗口 —— 对被测代码而言
-   * 走的是同一条路径（视口变化 → 重排 → ResizeObserver 回调），而真实窗口尺寸
-   * 在无头/CI 下不可控。
-   * 用完必须 `clearViewport()` 复位，否则影响同文件后续用例。
-   */
-  setViewport(width: number, height: number): Promise<void>;
-  /** 撤销 setViewport 的覆写（回到真实窗口尺寸） */
-  clearViewport(): Promise<void>;
-  /**
-   * 把被测窗口推到前台（CDP `Page.bringToFront`）。
-   *
-   * 为什么用例要管这个：macOS 的**窗口遮挡跟踪**会把被完全挡住的窗口的
-   * `document.visibilityState` 打成 `hidden`，而 `hidden` 时 Chromium 节流
-   * `requestAnimationFrame`（实测完全不调度）。凡是断言「上滚补段后的位置补偿」
-   * 的用例 —— 补偿那一步就在 rAF 回调里 —— 不先让页面可见就会**假红**：
-   * 代码没错，是它的执行时机被系统掐了。CI 上窗口很可能正被别的窗口盖着。
-   */
-  bringToFront(): Promise<void>;
-  /**
-   * 截当前页（PNG 字节；CDP `Page.captureScreenshot`）。
-   *
-   * 为什么要有它：**像素判据**（##166 §14.5 / §14.8）——「截图无报错」≠「画出来了」：
-   * 首帧抛错时截图照样出图，只是图上什么都没有。解码见 `tests/png-pixels.ts`。
-   * 坐标：不带 `clip` = 整视口；本驱动不传 `clip`（CDP 的 clip 是**页面坐标**，
-   * 而调用方手里的 rect 多是**视口坐标**，两套坐标混用最容易错 —— 裁切交给像素工具按
-   * `devicePixelRatio` 自己做，那里有原始 rect 可比对）。
-   */
-  screenshot(): Promise<Buffer>;
-  /** 在 renderer 里求值 */
-  eval<T>(expr: string): Promise<T>;
-  close(): void;
+    /** 按文本找元素并真实点击（找不到 / 不可见 → 抛错，不静默跳过） */
+    click(text: TextMatch): Promise<void>;
+    /**
+     * 悬停到元素上（发 mouseMoved）。
+     *
+     * ⚠️ 实测局限：CDP 的 `Input.dispatchMouseEvent` **不会**让 Chromium 更新
+     * CSS `:hover` 状态（`:hover` 由真实输入设备的鼠标位置驱动，DevTools 注入的事件
+     * 只做命中测试与派发）。所以对「hover 才显形」的控件（tab 的 ✕、
+     * `group-hover:opacity-70` 之类），本方法**不足以**让它们进 a11y 树。
+     * 这类元素用 `clickSelector` 按 DOM 坐标点（见下）。
+     */
+    hover(text: TextMatch): Promise<void>;
+    /**
+     * 让鼠标「进入」某元素：派发 DOM `mouseenter`（leaveSelector 则派发 `mouseleave`）。
+     *
+     * 为什么必须这样做（不是偷懒）：Chromium 由**真实输入设备位置**驱动 hover，
+     * `Input.dispatchMouseEvent` 只做命中测试与派发，**不更新 hover 事件链**（见上面
+     * `hover` 的注释）。于是「悬停才出现的 UI」（侧栏 hover 展开、悬停任务项的详情
+     * 面板）用 CDP 驱动不出来，只能派发原生事件。
+     * 作为补偿，调用方应同时断言目标 rect 非零且 `elementFromPoint` 命中它 ——
+     * 证明「这一项真的在鼠标可达处」，而不是只靠合成事件自说自话。
+     *
+     * 返回 false = 选择器没找到元素（调用方自行决定是否断言失败，不静默跳过）。
+     */
+    hoverSelector(selector: string, opts?: { nth?: number }): Promise<boolean>;
+    /** 派发 DOM `mouseleave`（与 hoverSelector 对称） */
+    leaveSelector(selector: string, opts?: { nth?: number }): Promise<boolean>;
+    /**
+     * 按 CSS 选择器定位 → 在**元素中心真实派发**鼠标按下/抬起。
+     *
+     * 为什么需要（不是绕路）：`ui inspect` 的 a11y 树会剔除 `opacity: 0` 的元素，
+     * 而这类元素（tab 的 ✕、area 角标）**仍然命中测试正常**（opacity 不关闭 pointer
+     * events），真人也是 hover 后直接点的。a11y 树看不到 ≠ 点不到。
+     * 定位用 DOM、发送用 CDP 原生事件 —— 命中测试那一层仍然是真的。
+     */
+    clickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
+    /**
+     * 在**任意坐标**真实点击（press + release，走完整命中测试）。
+     *
+     * 为什么需要（不是绕路）：有些可点目标没有"自己的中心点"可用 —— 典型是**模态遮罩**：
+     * 遮罩是全屏的，它的几何中心恰好落在居中的面板里（点下去命中的是面板，不是遮罩）。
+     * 这类场合只能给出一个"确实落在遮罩上"的坐标再点，才能测得动。
+     */
+    clickPoint(point: { x: number; y: number }): Promise<void>;
+    /**
+     * 按 CSS 选择器定位 → **真实双击**（同上定位与命中路径）。
+     *
+     * 为什么不是"连点两次 clickSelector"：Chromium 的 `dblclick` 由**点击计数**驱动
+     * （同一坐标、`clickCount: 2` 的第二次 press/release），两次独立的单击只会产生
+     * 两个 `click`，`onDblClick` 一次都不会触发 —— 界面看着"点了没反应"。
+     */
+    dblclickSelector(selector: string, opts?: { nth?: number }): Promise<void>;
+    /** 读 DOM（拿 rect / 计算样式等；a11y 树看不到的东西用这个） */
+    query<T>(expression: string): Promise<T>;
+    /**
+     * 向**当前焦点元素**真实输入文本（`Input.insertText`）。
+     *
+     * 为什么不用 `el.value = x` 或派发合成 input 事件：那些绕过浏览器输入路径，
+     * 输入框不会经历真实的插入会话（而 Solid 的 onInput 绑在事件上，恰好会"看起来能过"）。
+     * 用 CDP 的 insertText 走的就是输入法/键盘最终落到的同一条路径。
+     * 注意：文本会插到**插入点**，不替换已有内容；要先 click 聚焦、必要时 `press("Meta+A")` 全选
+     * （`Meta+A` 已带 `SelectAll`，是真的全选；早先不带的版本会把「覆盖」悄悄变成「追加」）。
+     */
+    type(text: string): Promise<void>;
+    /**
+     * 真实按键（如 Enter / ArrowDown / Escape）。可带 Meta/Ctrl/Shift 修饰，如 `Meta+A`
+     * （`Meta/Ctrl+A` 会附上 CDP 的 `SelectAll` 编辑命令 —— 只发按键码 Chromium 不会全选，见下）。
+     *
+     * `autoRepeat: true` = 把这次 keydown 标成**按住不放的连发**（CDP `autoRepeat` →
+     * `KeyboardEvent.repeat === true`）。用于验证"连发只响应首次"这类契约：没有它就只能
+     * 连按两次独立按键，那测的是 toggle 而不是 repeat 守卫（review6 R6-3）。
+     */
+    press(key: string, opts?: { autoRepeat?: boolean }): Promise<void>;
+    /**
+     * 让**当前焦点元素**进入真实输入法（IME）组合态（CDP `Input.imeSetComposition`）。
+     *
+     * 为什么必须走这条路（不是绕路）：`isComposing` 是**浏览器在 IME 管线里自己打的标** ——
+     * 用 `new KeyboardEvent(..., { isComposing: true })` 派发只能测"handler 认不认这个字段"，
+     * 证明不了"真实输入法送来的回车确实带这个标"。本方法建立组合态后，随后的 `press()`
+     * 走的才是与中文拼音输入同一条路径（Chromium 会在其 keydown 上标 `isComposing:true`）。
+     */
+    imeCompose(text: string): Promise<void>;
+    /** 按坐标拖拽（拖线用）；steps 让中间点也发出去，命中拖拽逻辑 */
+    drag(from: { x: number; y: number }, to: { x: number; y: number }, steps?: number): Promise<void>;
+    /**
+     * 覆写渲染视口尺寸（CDP `Emulation.setDeviceMetricsOverride`）。
+     *
+     * 用途：验证**"随视口/布局变化重算"**的响应式分支（如输入区封顶 = view 1/3 的
+     * ResizeObserver 回调）。只改渲染进程的布局视口、不动真实窗口 —— 对被测代码而言
+     * 走的是同一条路径（视口变化 → 重排 → ResizeObserver 回调），而真实窗口尺寸
+     * 在无头/CI 下不可控。
+     * 用完必须 `clearViewport()` 复位，否则影响同文件后续用例。
+     */
+    setViewport(width: number, height: number): Promise<void>;
+    /** 撤销 setViewport 的覆写（回到真实窗口尺寸） */
+    clearViewport(): Promise<void>;
+    /**
+     * 把被测窗口推到前台（CDP `Page.bringToFront`）。
+     *
+     * 为什么用例要管这个：macOS 的**窗口遮挡跟踪**会把被完全挡住的窗口的
+     * `document.visibilityState` 打成 `hidden`，而 `hidden` 时 Chromium 节流
+     * `requestAnimationFrame`（实测完全不调度）。凡是断言「上滚补段后的位置补偿」
+     * 的用例 —— 补偿那一步就在 rAF 回调里 —— 不先让页面可见就会**假红**：
+     * 代码没错，是它的执行时机被系统掐了。CI 上窗口很可能正被别的窗口盖着。
+     */
+    bringToFront(): Promise<void>;
+    /**
+     * 截当前页（PNG 字节；CDP `Page.captureScreenshot`）。
+     *
+     * 为什么要有它：**像素判据**（##166 §14.5 / §14.8）——「截图无报错」≠「画出来了」：
+     * 首帧抛错时截图照样出图，只是图上什么都没有。解码见 `tests/png-pixels.ts`。
+     * 坐标：不带 `clip` = 整视口；本驱动不传 `clip`（CDP 的 clip 是**页面坐标**，
+     * 而调用方手里的 rect 多是**视口坐标**，两套坐标混用最容易错 —— 裁切交给像素工具按
+     * `devicePixelRatio` 自己做，那里有原始 rect 可比对）。
+     */
+    screenshot(): Promise<Buffer>;
+    /** 在 renderer 里求值 */
+    eval<T>(expr: string): Promise<T>;
+    close(): void;
 }
 
 /** 匹配谓词：字符串 = 文本包含；函数 = 自定义（拿得到整个节点，可按 role/rect 过滤） */
 export type TextMatch = string | ((text: string, node: A11yNode) => boolean);
 
 export async function makeUiDriver(
-  cdpUrl: string | null,
-  inspect: () => Promise<A11yNode | undefined>,
+    cdpUrl: string | null,
+    inspect: () => Promise<A11yNode | undefined>,
 ): Promise<UiDriver> {
-  if (!cdpUrl) throw new Error("[ui-drive] 该实例没有 CDP 端点（启动时拿不到 DevToolsActivePort）");
-  const cdp = await Cdp.attach(cdpUrl);
+    if (!cdpUrl) throw new Error("[ui-drive] 该实例没有 CDP 端点（启动时拿不到 DevToolsActivePort）");
+    const cdp = await Cdp.attach(cdpUrl);
 
-  const mouse = (type: string, p: { x: number; y: number }, extra: Record<string, unknown> = {}) =>
-    cdp.send("Input.dispatchMouseEvent", {
-      type,
-      x: Math.round(p.x),
-      y: Math.round(p.y),
-      button: "left",
-      buttons: type === "mouseReleased" ? 0 : 1,
-      clickCount: type === "mouseMoved" ? 0 : 1,
-      ...extra,
-    });
+    const mouse = (type: string, p: { x: number; y: number }, extra: Record<string, unknown> = {}) =>
+        cdp.send("Input.dispatchMouseEvent", {
+            type,
+            x: Math.round(p.x),
+            y: Math.round(p.y),
+            button: "left",
+            buttons: type === "mouseReleased" ? 0 : 1,
+            clickCount: type === "mouseMoved" ? 0 : 1,
+            ...extra,
+        });
 
-  /** 对某选择器命中的第 nth 个元素派发原生 hover 事件（见 hoverSelector 的说明） */
-  const fireMouse = (type: "mouseenter" | "mouseleave", selector: string, nth: number) =>
-    cdp.eval<boolean>(`(() => {
+    /** 对某选择器命中的第 nth 个元素派发原生 hover 事件（见 hoverSelector 的说明） */
+    const fireMouse = (type: "mouseenter" | "mouseleave", selector: string, nth: number) =>
+        cdp.eval<boolean>(`(() => {
       const el = document.querySelectorAll(${JSON.stringify(selector)})[${nth}];
       if (!el) return false;
       el.dispatchEvent(new MouseEvent(${JSON.stringify(type)}, { bubbles: false }));
       return true;
     })()`);
 
-  /**
-   * 取某选择器命中的第 nth 个元素的**稳定中心点**：等坐标连续两次一致再返回。
-   *
-   * 实测教训：侧栏展开是 `transition-[width] duration-200`，pin 之后立刻取坐标
-   * 拿到的是动画中间值，等事件派发到浏览器时按钮已经移走 —— 点击落到别处，
-   * 表现为「点了没反应」（tab 没关掉，但也没有报错）。真人不会点中途的元素。
-   * 找不到 / 零尺寸直接抛错（不静默跳过）。
-   */
-  const sampleStablePoint = async (selector: string, nth: number) => {
-    const sample = () =>
-      cdp.eval<{ x: number; y: number } | string>(
-        `(() => {
+    /**
+     * 取某选择器命中的第 nth 个元素的**稳定中心点**：等坐标连续两次一致再返回。
+     *
+     * 实测教训：侧栏展开是 `transition-[width] duration-200`，pin 之后立刻取坐标
+     * 拿到的是动画中间值，等事件派发到浏览器时按钮已经移走 —— 点击落到别处，
+     * 表现为「点了没反应」（tab 没关掉，但也没有报错）。真人不会点中途的元素。
+     * 找不到 / 零尺寸直接抛错（不静默跳过）。
+     */
+    const sampleStablePoint = async (selector: string, nth: number) => {
+        const sample = () =>
+            cdp.eval<{ x: number; y: number } | string>(
+                `(() => {
            const els = document.querySelectorAll(${JSON.stringify(selector)});
            const el = els[${nth}];
            if (!el) return "NOT_FOUND";
@@ -345,57 +348,57 @@ export async function makeUiDriver(
            if (r.width === 0 || r.height === 0) return "ZERO_SIZE";
            return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
          })()`,
-      );
+            );
 
-    let point = await sample();
-    if (typeof point === "string") {
-      throw new Error(`[ui-drive] 选择器定位失败（${point}）: ${selector}[${nth}]`);
-    }
-    for (let i = 0; i < 40; i++) {
-      await new Promise((r) => setTimeout(r, 40));
-      const next = await sample();
-      if (typeof next === "string") {
-        throw new Error(`[ui-drive] 选择器定位失败（${next}）: ${selector}[${nth}]`);
-      }
-      if (Math.abs(next.x - point.x) < 1 && Math.abs(next.y - point.y) < 1) {
-        point = next;
-        break;
-      }
-      point = next;
-    }
-    return point;
-  };
+        let point = await sample();
+        if (typeof point === "string") {
+            throw new Error(`[ui-drive] 选择器定位失败（${point}）: ${selector}[${nth}]`);
+        }
+        for (let i = 0; i < 40; i++) {
+            await new Promise((r) => setTimeout(r, 40));
+            const next = await sample();
+            if (typeof next === "string") {
+                throw new Error(`[ui-drive] 选择器定位失败（${next}）: ${selector}[${nth}]`);
+            }
+            if (Math.abs(next.x - point.x) < 1 && Math.abs(next.y - point.y) < 1) {
+                point = next;
+                break;
+            }
+            point = next;
+        }
+        return point;
+    };
 
-  /**
-   * 坐标处的最上层元素是不是目标（或其内部后代）？
-   *
-   * 为什么点击前要验：`sampleStablePoint` 只保证「坐标连续两次一致」——而路由切换 /
-   * 重渲染会让节点**在同一坐标处被替换**，或浮层短暂盖住它。此时原生事件的命中测试打到的
-   * 不是目标元素，click 会静默丢失（页面毫无反应、也没有报错）。
-   * 实测：ui-find「点顶栏 🔍 打开查找条」在负载高时就这样挂到 waitUntil 上限、靠 retry 才过
-   * （##255 §1）。
-   */
-  const pointHits = (selector: string, nth: number, p: { x: number; y: number }) =>
-    cdp.eval<boolean>(`(() => {
+    /**
+     * 坐标处的最上层元素是不是目标（或其内部后代）？
+     *
+     * 为什么点击前要验：`sampleStablePoint` 只保证「坐标连续两次一致」——而路由切换 /
+     * 重渲染会让节点**在同一坐标处被替换**，或浮层短暂盖住它。此时原生事件的命中测试打到的
+     * 不是目标元素，click 会静默丢失（页面毫无反应、也没有报错）。
+     * 实测：ui-find「点顶栏 🔍 打开查找条」在负载高时就这样挂到 waitUntil 上限、靠 retry 才过
+     * （##255 §1）。
+     */
+    const pointHits = (selector: string, nth: number, p: { x: number; y: number }) =>
+        cdp.eval<boolean>(`(() => {
       const el = document.querySelectorAll(${JSON.stringify(selector)})[${nth}];
       if (!el) return false;
       const hit = document.elementFromPoint(${Math.round(p.x)}, ${Math.round(p.y)});
       return !!hit && (hit === el || el.contains(hit));
     })()`);
 
-  /**
-   * 坐标处是否命中「文本匹配」的元素 —— `ui.click`（a11y 树定位）的遮挡校验用。
-   *
-   * 为什么 a11y 路径也要校验：成功 toast（「任务已创建 ✕」/「已压缩…」）浮在**右上角**，
-   * 实测正好盖住右上区域的表头（`ui.task-list` 的「编号」列）与抽屉右上角的视图切换按钮
-   * （`ui-compact` 的 `[data-drawer-tab=…]`）—— `mousePressed/Released` 落到 toast 上，
-   * 点击**静默无效**（不抛错），表现为「点了没反应」。
-   *
-   * 文本匹配从宽：命中元素文本与期望文本**互含**即算命中（a11y 名与 DOM 文本常有细微差异，
-   * 如箭头字符）；加长度上限，避免命中的是 body / 整页容器（它的文本必然包含 w）造成误判。
-   */
-  const pointHitsText = (p: { x: number; y: number }, want: string) =>
-    cdp.eval<boolean | string>(`(() => {
+    /**
+     * 坐标处是否命中「文本匹配」的元素 —— `ui.click`（a11y 树定位）的遮挡校验用。
+     *
+     * 为什么 a11y 路径也要校验：成功 toast（「任务已创建 ✕」/「已压缩…」）浮在**右上角**，
+     * 实测正好盖住右上区域的表头（`ui.task-list` 的「编号」列）与抽屉右上角的视图切换按钮
+     * （`ui-compact` 的 `[data-drawer-tab=…]`）—— `mousePressed/Released` 落到 toast 上，
+     * 点击**静默无效**（不抛错），表现为「点了没反应」。
+     *
+     * 文本匹配从宽：命中元素文本与期望文本**互含**即算命中（a11y 名与 DOM 文本常有细微差异，
+     * 如箭头字符）；加长度上限，避免命中的是 body / 整页容器（它的文本必然包含 w）造成误判。
+     */
+    const pointHitsText = (p: { x: number; y: number }, want: string) =>
+        cdp.eval<boolean | string>(`(() => {
       const hit = document.elementFromPoint(${Math.round(p.x)}, ${Math.round(p.y)});
       if (!hit) return "该坐标处没有任何元素";
       // 比较逻辑由纯函数注入（tests/ui-text.ts）：放**真代码**里，避开模板字面量把
@@ -420,204 +423,205 @@ export async function makeUiDriver(
         (named ? ' 祖先名 "' + named + '"' : "");
     })()`);
 
-  /** 取树并按谓词定位（每次现取：上一步操作会让 rect 变） */
-  const locate = async (target: TextMatch) => {
-    const match =
-      typeof target === "function" ? target : (t: string) => t.includes(target);
-    const found = await waitUntil(
-      async () => findClickable(await inspect(), match),
-      (v) => !!v,
-      { label: `找可点元素 ${typeof target === "string" ? target : "（谓词）"}` },
-    );
-    if (!found) {
-      throw new Error(
-        `[ui-drive] 找不到可点元素：${typeof target === "string" ? target : "（谓词）"}` +
-          `（不存在、不可见（opacity:0 会被 a11y 树剔除），或尺寸为 0）`,
-      );
-    }
-    return found;
-  };
-
-  return {
-    async click(text) {
-      let target = await locate(text);
-      // 与 clickSelector 同一套命中校验（见 pointHitsText 的说明）：坐标被浮层占着就重定位，
-      // 按墙钟等待 OCCLUSION_WAIT_MS（覆盖成功 toast 的停留期）；仍不命中则按原坐标点击 —— 沿用旧行为，
-      // 只打一行日志，不把测试变成硬失败。
-      const deadline = Date.now() + OCCLUSION_WAIT_MS;
-      for (;;) {
-        const hit = await pointHitsText(target, target.text);
-        if (hit === true) break;
-        if (Date.now() >= deadline) {
-          console.error(
-            `[ui-drive] 点击目标持续被遮挡（~${OCCLUSION_WAIT_MS / 1000}s），按原坐标点击：` +
-              `${typeof text === "string" ? `"${text}"` : "（谓词）"}` +
-              `；期望文本 "${target.text}"，实际命中 ${hit}`,
-          );
-          break;
+    /** 取树并按谓词定位（每次现取：上一步操作会让 rect 变） */
+    const locate = async (target: TextMatch) => {
+        const match = typeof target === "function" ? target : (t: string) => t.includes(target);
+        const found = await waitUntil(
+            async () => findClickable(await inspect(), match),
+            (v) => !!v,
+            { label: `找可点元素 ${typeof target === "string" ? target : "（谓词）"}` },
+        );
+        if (!found) {
+            throw new Error(
+                `[ui-drive] 找不到可点元素：${typeof target === "string" ? target : "（谓词）"}` +
+                    `（不存在、不可见（opacity:0 会被 a11y 树剔除），或尺寸为 0）`,
+            );
         }
-        await new Promise((r) => setTimeout(r, 50));
-        target = await locate(text);
-      }
-      await mouse("mousePressed", target);
-      await mouse("mouseReleased", target);
-      // 让 Solid 的响应式更新走完（点击 → state 变 → DOM 重渲染）
-      await new Promise((r) => setTimeout(r, 120));
-    },
+        return found;
+    };
 
-    async hover(text) {
-      const target = await locate(text);
-      await mouse("mouseMoved", target);
-      await new Promise((r) => setTimeout(r, 150));
-    },
+    return {
+        async click(text) {
+            let target = await locate(text);
+            // 与 clickSelector 同一套命中校验（见 pointHitsText 的说明）：坐标被浮层占着就重定位，
+            // 按墙钟等待 OCCLUSION_WAIT_MS（覆盖成功 toast 的停留期）；仍不命中则按原坐标点击 —— 沿用旧行为，
+            // 只打一行日志，不把测试变成硬失败。
+            const deadline = Date.now() + OCCLUSION_WAIT_MS;
+            for (;;) {
+                const hit = await pointHitsText(target, target.text);
+                if (hit === true) break;
+                if (Date.now() >= deadline) {
+                    console.error(
+                        `[ui-drive] 点击目标持续被遮挡（~${OCCLUSION_WAIT_MS / 1000}s），按原坐标点击：` +
+                            `${typeof text === "string" ? `"${text}"` : "（谓词）"}` +
+                            `；期望文本 "${target.text}"，实际命中 ${hit}`,
+                    );
+                    break;
+                }
+                await new Promise((r) => setTimeout(r, 50));
+                target = await locate(text);
+            }
+            await mouse("mousePressed", target);
+            await mouse("mouseReleased", target);
+            // 让 Solid 的响应式更新走完（点击 → state 变 → DOM 重渲染）
+            await new Promise((r) => setTimeout(r, 120));
+        },
 
-    async hoverSelector(selector, opts = {}) {
-      return fireMouse("mouseenter", selector, opts.nth ?? 0);
-    },
+        async hover(text) {
+            const target = await locate(text);
+            await mouse("mouseMoved", target);
+            await new Promise((r) => setTimeout(r, 150));
+        },
 
-    async leaveSelector(selector, opts = {}) {
-      return fireMouse("mouseleave", selector, opts.nth ?? 0);
-    },
+        async hoverSelector(selector, opts = {}) {
+            return fireMouse("mouseenter", selector, opts.nth ?? 0);
+        },
 
-    async clickSelector(selector, opts = {}) {
-      const nth = opts.nth ?? 0;
-      let point = await sampleStablePoint(selector, nth);
-      // 命中校验：坐标被别的元素占着（节点刚被替换 / 浮层短暂遮挡）就重采样等它归位。
-      // 按墙钟等待 OCCLUSION_WAIT_MS：必须覆盖**成功 toast 的停留期** —— 实测「已压缩…」toast 浮在右上角，与抽屉
-      // 右上角的视图切换按钮（`[data-drawer-tab=…]`）**坐标完全重合**，早先 1.5s 的窗口等不到它淡出，
-      // 点击就落到 toast 上（ui-compact「打开抽屉 → 分表」首跑必红、靠 retry 蒙过的根因）。
-      // 仍是有界等待：确实被有意覆盖的元素沿用旧行为按原坐标点击，只打一行日志，不把测试
-      // 变成硬失败。
-      const deadline = Date.now() + OCCLUSION_WAIT_MS;
-      for (;;) {
-        if (await pointHits(selector, nth, point)) break;
-        if (Date.now() >= deadline) {
-          console.error(`[ui-drive] 点击目标持续被遮挡（~${OCCLUSION_WAIT_MS / 1000}s），按原坐标点击：${selector}[${nth}]`);
-          break;
-        }
-        await new Promise((r) => setTimeout(r, 50));
-        point = await sampleStablePoint(selector, nth);
-      }
-      await mouse("mousePressed", point);
-      await mouse("mouseReleased", point);
-      await new Promise((r) => setTimeout(r, 120));
-    },
+        async leaveSelector(selector, opts = {}) {
+            return fireMouse("mouseleave", selector, opts.nth ?? 0);
+        },
 
-    async clickPoint(point) {
-      await mouse("mousePressed", point);
-      await mouse("mouseReleased", point);
-      // 让 Solid 的响应式更新走完（点击 → state 变 → DOM 重渲染）
-      await new Promise((r) => setTimeout(r, 120));
-    },
+        async clickSelector(selector, opts = {}) {
+            const nth = opts.nth ?? 0;
+            let point = await sampleStablePoint(selector, nth);
+            // 命中校验：坐标被别的元素占着（节点刚被替换 / 浮层短暂遮挡）就重采样等它归位。
+            // 按墙钟等待 OCCLUSION_WAIT_MS：必须覆盖**成功 toast 的停留期** —— 实测「已压缩…」toast 浮在右上角，与抽屉
+            // 右上角的视图切换按钮（`[data-drawer-tab=…]`）**坐标完全重合**，早先 1.5s 的窗口等不到它淡出，
+            // 点击就落到 toast 上（ui-compact「打开抽屉 → 分表」首跑必红、靠 retry 蒙过的根因）。
+            // 仍是有界等待：确实被有意覆盖的元素沿用旧行为按原坐标点击，只打一行日志，不把测试
+            // 变成硬失败。
+            const deadline = Date.now() + OCCLUSION_WAIT_MS;
+            for (;;) {
+                if (await pointHits(selector, nth, point)) break;
+                if (Date.now() >= deadline) {
+                    console.error(
+                        `[ui-drive] 点击目标持续被遮挡（~${OCCLUSION_WAIT_MS / 1000}s），按原坐标点击：${selector}[${nth}]`,
+                    );
+                    break;
+                }
+                await new Promise((r) => setTimeout(r, 50));
+                point = await sampleStablePoint(selector, nth);
+            }
+            await mouse("mousePressed", point);
+            await mouse("mouseReleased", point);
+            await new Promise((r) => setTimeout(r, 120));
+        },
 
-    async dblclickSelector(selector, opts = {}) {
-      const point = await sampleStablePoint(selector, opts.nth ?? 0);
-      // 第二次带 clickCount: 2 —— 这才是 Chromium 判定 dblclick 的依据（见接口注释）
-      const at = (type: string, clickCount: number) => mouse(type, point, { clickCount });
-      await at("mousePressed", 1);
-      await at("mouseReleased", 1);
-      await at("mousePressed", 2);
-      await at("mouseReleased", 2);
-      await new Promise((r) => setTimeout(r, 120));
-    },
+        async clickPoint(point) {
+            await mouse("mousePressed", point);
+            await mouse("mouseReleased", point);
+            // 让 Solid 的响应式更新走完（点击 → state 变 → DOM 重渲染）
+            await new Promise((r) => setTimeout(r, 120));
+        },
 
-    query: (expression) => cdp.eval(expression),
+        async dblclickSelector(selector, opts = {}) {
+            const point = await sampleStablePoint(selector, opts.nth ?? 0);
+            // 第二次带 clickCount: 2 —— 这才是 Chromium 判定 dblclick 的依据（见接口注释）
+            const at = (type: string, clickCount: number) => mouse(type, point, { clickCount });
+            await at("mousePressed", 1);
+            await at("mouseReleased", 1);
+            await at("mousePressed", 2);
+            await at("mouseReleased", 2);
+            await new Promise((r) => setTimeout(r, 120));
+        },
 
-    async type(text) {
-      await cdp.send("Input.insertText", { text });
-      await new Promise((r) => setTimeout(r, 120));
-    },
+        query: (expression) => cdp.eval(expression),
 
-    async press(key, opts) {
-      // 常见键 → 键码。`Mod+K`（Meta/Ctrl）形式解析：修饰键只改 modifiers，主键照发。
-      const CODES: Record<string, { code: string; vk: number }> = {
-        ArrowDown: { code: "ArrowDown", vk: 40 },
-        ArrowUp: { code: "ArrowUp", vk: 38 },
-        Escape: { code: "Escape", vk: 27 },
-        Backspace: { code: "Backspace", vk: 8 },
-        Delete: { code: "Delete", vk: 46 },
-        Enter: { code: "Enter", vk: 13 },
-        Tab: { code: "Tab", vk: 9 },
-      };
-      const parts = key.split("+");
-      const main = parts.pop()!;
-      const modifiers = parts.reduce((acc, m) => {
-        if (m === "Meta") return acc | 4;
-        if (m === "Ctrl") return acc | 2;
-        if (m === "Shift") return acc | 8;
-        return acc;
-      }, 0);
-      const info = CODES[main] ?? { code: `Key${main.toUpperCase()}`, vk: main.toUpperCase().charCodeAt(0) };
-      // 单字母的 `key` 必须是小写（"a" 而不是 "A"）：带 Meta/Ctrl 的组合键，
-      // Chromium 按 `key` 值匹配快捷键，大写字母匹配不上（表现为「按了没反应」）。
-      const keyValue = main.length === 1 ? main.toLowerCase() : main;
-      const base = {
-        key: keyValue,
-        code: info.code,
-        windowsVirtualKeyCode: info.vk,
-        nativeVirtualKeyCode: info.vk,
-        modifiers,
-      };
-      // autoRepeat 只打在 keyDown 上（keyUp 没有"连发"这回事）
-      // **全选必须走 CDP 的 `commands`**：只发 `Meta+A` 的 keyDown/keyUp，Chromium 一个字都不选。
-      // 实测（##320）：输入框里 value 已是 "1"，`Meta+A` 后 `insertText("3")` 得到 **"13"**（追加），
-      // 加了 `commands: ["SelectAll"]` 才得到 "3"（替换）。而 `press("Meta+A")` **不报错**，
-      // 于是「全选覆盖」的用例会静默变成「追加」——症状是断言里的值莫名其妙多了一位。
-      // 编辑命令不走 keyCode 派发链（它是浏览器对快捷键的**语义**处理），CDP 必须显式告知。
-      const commands = main.toLowerCase() === "a" && (modifiers & 4 || modifiers & 2) ? ["SelectAll"] : undefined;
-      await cdp.send("Input.dispatchKeyEvent", {
-        type: "keyDown",
-        autoRepeat: opts?.autoRepeat ?? false,
-        ...(commands ? { commands } : {}),
-        ...base,
-      });
-      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
-      await new Promise((r) => setTimeout(r, 120));
-    },
+        async type(text) {
+            await cdp.send("Input.insertText", { text });
+            await new Promise((r) => setTimeout(r, 120));
+        },
 
-    async imeCompose(text) {
-      // 组合中的文本与选区都落在末尾（模拟"拼音已敲完、尚未选词"）
-      await cdp.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
-      await new Promise((r) => setTimeout(r, 120));
-    },
+        async press(key, opts) {
+            // 常见键 → 键码。`Mod+K`（Meta/Ctrl）形式解析：修饰键只改 modifiers，主键照发。
+            const CODES: Record<string, { code: string; vk: number }> = {
+                ArrowDown: { code: "ArrowDown", vk: 40 },
+                ArrowUp: { code: "ArrowUp", vk: 38 },
+                Escape: { code: "Escape", vk: 27 },
+                Backspace: { code: "Backspace", vk: 8 },
+                Delete: { code: "Delete", vk: 46 },
+                Enter: { code: "Enter", vk: 13 },
+                Tab: { code: "Tab", vk: 9 },
+            };
+            const parts = key.split("+");
+            const main = parts.pop()!;
+            const modifiers = parts.reduce((acc, m) => {
+                if (m === "Meta") return acc | 4;
+                if (m === "Ctrl") return acc | 2;
+                if (m === "Shift") return acc | 8;
+                return acc;
+            }, 0);
+            const info = CODES[main] ?? { code: `Key${main.toUpperCase()}`, vk: main.toUpperCase().charCodeAt(0) };
+            // 单字母的 `key` 必须是小写（"a" 而不是 "A"）：带 Meta/Ctrl 的组合键，
+            // Chromium 按 `key` 值匹配快捷键，大写字母匹配不上（表现为「按了没反应」）。
+            const keyValue = main.length === 1 ? main.toLowerCase() : main;
+            const base = {
+                key: keyValue,
+                code: info.code,
+                windowsVirtualKeyCode: info.vk,
+                nativeVirtualKeyCode: info.vk,
+                modifiers,
+            };
+            // autoRepeat 只打在 keyDown 上（keyUp 没有"连发"这回事）
+            // **全选必须走 CDP 的 `commands`**：只发 `Meta+A` 的 keyDown/keyUp，Chromium 一个字都不选。
+            // 实测（##320）：输入框里 value 已是 "1"，`Meta+A` 后 `insertText("3")` 得到 **"13"**（追加），
+            // 加了 `commands: ["SelectAll"]` 才得到 "3"（替换）。而 `press("Meta+A")` **不报错**，
+            // 于是「全选覆盖」的用例会静默变成「追加」——症状是断言里的值莫名其妙多了一位。
+            // 编辑命令不走 keyCode 派发链（它是浏览器对快捷键的**语义**处理），CDP 必须显式告知。
+            const commands = main.toLowerCase() === "a" && (modifiers & 4 || modifiers & 2) ? ["SelectAll"] : undefined;
+            await cdp.send("Input.dispatchKeyEvent", {
+                type: "keyDown",
+                autoRepeat: opts?.autoRepeat ?? false,
+                ...(commands ? { commands } : {}),
+                ...base,
+            });
+            await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+            await new Promise((r) => setTimeout(r, 120));
+        },
 
-    async drag(from, to, steps = 8) {
-      await mouse("mousePressed", from);
-      for (let i = 1; i <= steps; i++) {
-        const x = from.x + ((to.x - from.x) * i) / steps;
-        const y = from.y + ((to.y - from.y) * i) / steps;
-        await mouse("mouseMoved", { x, y });
-      }
-      await mouse("mouseReleased", to);
-      await new Promise((r) => setTimeout(r, 120));
-    },
+        async imeCompose(text) {
+            // 组合中的文本与选区都落在末尾（模拟"拼音已敲完、尚未选词"）
+            await cdp.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
+            await new Promise((r) => setTimeout(r, 120));
+        },
 
-    async setViewport(width, height) {
-      await cdp.send("Emulation.setDeviceMetricsOverride", {
-        width,
-        height,
-        deviceScaleFactor: 0, // 0 = 沿用当前设备像素比（不额外改变渲染缩放）
-        mobile: false,
-      });
-      await new Promise((r) => setTimeout(r, 200));
-    },
+        async drag(from, to, steps = 8) {
+            await mouse("mousePressed", from);
+            for (let i = 1; i <= steps; i++) {
+                const x = from.x + ((to.x - from.x) * i) / steps;
+                const y = from.y + ((to.y - from.y) * i) / steps;
+                await mouse("mouseMoved", { x, y });
+            }
+            await mouse("mouseReleased", to);
+            await new Promise((r) => setTimeout(r, 120));
+        },
 
-    async clearViewport() {
-      await cdp.send("Emulation.clearDeviceMetricsOverride");
-      await new Promise((r) => setTimeout(r, 200));
-    },
+        async setViewport(width, height) {
+            await cdp.send("Emulation.setDeviceMetricsOverride", {
+                width,
+                height,
+                deviceScaleFactor: 0, // 0 = 沿用当前设备像素比（不额外改变渲染缩放）
+                mobile: false,
+            });
+            await new Promise((r) => setTimeout(r, 200));
+        },
 
-    async bringToFront() {
-      await cdp.send("Page.bringToFront");
-      // 给遮挡状态一次提交的余量：visibilityState 的变化与下一帧 rAF 都不在同一次微任务里
-      await new Promise((r) => setTimeout(r, 150));
-    },
+        async clearViewport() {
+            await cdp.send("Emulation.clearDeviceMetricsOverride");
+            await new Promise((r) => setTimeout(r, 200));
+        },
 
-    screenshot: async () => {
-      const r = await cdp.send<{ data: string }>("Page.captureScreenshot", { format: "png" });
-      return Buffer.from(r.data, "base64");
-    },
-    eval: (expr) => cdp.eval(expr),
-    close: () => cdp.close(),
-  };
+        async bringToFront() {
+            await cdp.send("Page.bringToFront");
+            // 给遮挡状态一次提交的余量：visibilityState 的变化与下一帧 rAF 都不在同一次微任务里
+            await new Promise((r) => setTimeout(r, 150));
+        },
+
+        screenshot: async () => {
+            const r = await cdp.send<{ data: string }>("Page.captureScreenshot", { format: "png" });
+            return Buffer.from(r.data, "base64");
+        },
+        eval: (expr) => cdp.eval(expr),
+        close: () => cdp.close(),
+    };
 }

@@ -19,34 +19,34 @@ const MP = "__ST_TEST__";
 const SENT = "__ST_TEST__DONE1";
 
 describe("ShellTest 输出清洗", () => {
-  it("stderr：marker 与真实输出**同行**时，只剥 marker、保住输出（核心回归）", () => {
-    const raw = `${MP}(0)__ Error: 未知模型 不存在的模型（可选：见 diy agent local models）\n${MP}(1)__ \n${SENT}E\n`;
-    const clean = stripStderrNoise(raw, MP, SENT);
-    expect(clean).toBe("Error: 未知模型 不存在的模型（可选：见 diy agent local models）");
-  });
+    it("stderr：marker 与真实输出**同行**时，只剥 marker、保住输出（核心回归）", () => {
+        const raw = `${MP}(0)__ Error: 未知模型 不存在的模型（可选：见 diy agent local models）\n${MP}(1)__ \n${SENT}E\n`;
+        const clean = stripStderrNoise(raw, MP, SENT);
+        expect(clean).toBe("Error: 未知模型 不存在的模型（可选：见 diy agent local models）");
+    });
 
-  it("stderr：多行输出每行都带 marker 时，逐行剥离且顺序不变", () => {
-    const raw = `${MP}(0)__ a\n${MP}(0)__ b\n${MP}(1)__ \n${SENT}E\n`;
-    expect(stripStderrNoise(raw, MP, SENT)).toBe("a\nb");
-  });
+    it("stderr：多行输出每行都带 marker 时，逐行剥离且顺序不变", () => {
+        const raw = `${MP}(0)__ a\n${MP}(0)__ b\n${MP}(1)__ \n${SENT}E\n`;
+        expect(stripStderrNoise(raw, MP, SENT)).toBe("a\nb");
+    });
 
-  it("stderr：纯 marker 行被清掉（不产生空行噪声）", () => {
-    const raw = `${MP}(0)__ \n${MP}(1)__ \n${SENT}E\n`;
-    expect(stripStderrNoise(raw, MP, SENT)).toBe("");
-  });
+    it("stderr：纯 marker 行被清掉（不产生空行噪声）", () => {
+        const raw = `${MP}(0)__ \n${MP}(1)__ \n${SENT}E\n`;
+        expect(stripStderrNoise(raw, MP, SENT)).toBe("");
+    });
 
-  it("stderr：真实输出在 marker **之前**的同一行也保住", () => {
-    const raw = `partial text ${MP}(0)__ \n${SENT}E\n`;
-    expect(stripStderrNoise(raw, MP, SENT)).toBe("partial text");
-  });
+    it("stderr：真实输出在 marker **之前**的同一行也保住", () => {
+        const raw = `partial text ${MP}(0)__ \n${SENT}E\n`;
+        expect(stripStderrNoise(raw, MP, SENT)).toBe("partial text");
+    });
 
-  it("stdout：剥掉带退出码的哨兵与 \\r，保留正文", () => {
-    const raw = `{"ok":true}\r\n${SENT}:0\r\n`;
-    expect(stripStdoutNoise(raw, SENT)).toBe('{"ok":true}');
-  });
+    it("stdout：剥掉带退出码的哨兵与 \\r，保留正文", () => {
+        const raw = `{"ok":true}\r\n${SENT}:0\r\n`;
+        expect(stripStdoutNoise(raw, SENT)).toBe('{"ok":true}');
+    });
 
-  it("stdout：多行 JSON 正文不被破坏", () => {
-    const raw = `{\n  "a": 1\n}\n\n${SENT}:1\n`;
-    expect(stripStdoutNoise(raw, SENT)).toBe('{\n  "a": 1\n}');
-  });
+    it("stdout：多行 JSON 正文不被破坏", () => {
+        const raw = `{\n  "a": 1\n}\n\n${SENT}:1\n`;
+        expect(stripStdoutNoise(raw, SENT)).toBe('{\n  "a": 1\n}');
+    });
 });

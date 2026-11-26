@@ -129,7 +129,8 @@ function contentText(c: unknown): string {
             .map((p) => {
                 const o = p as { type?: unknown; toolName?: unknown; name?: unknown; input?: unknown; args?: unknown };
                 if (o?.type === "tool-call") {
-                    const name = typeof o.toolName === "string" ? o.toolName : typeof o.name === "string" ? o.name : "(未命名)";
+                    const name =
+                        typeof o.toolName === "string" ? o.toolName : typeof o.name === "string" ? o.name : "(未命名)";
                     return `[tool-call ${name}] ${preview(JSON.stringify(o.input ?? o.args ?? {}))}`;
                 }
                 return partText(p);

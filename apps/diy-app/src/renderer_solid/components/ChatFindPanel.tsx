@@ -135,7 +135,12 @@ export function ChatFindPanel(props: {
                             <div class="px-3 py-6 text-center text-xs opacity-50">
                                 <Show
                                     when={chatFindStore.query.trim()}
-                                    fallback={<>敲几个字，在<span class="font-medium">整个会话的数据</span>里找（不只是屏幕上这几轮）</>}
+                                    fallback={
+                                        <>
+                                            敲几个字，在<span class="font-medium">整个会话的数据</span>
+                                            里找（不只是屏幕上这几轮）
+                                        </>
+                                    }
                                 >
                                     <Show when={!chatFindStore.busy} fallback={<>…</>}>
                                         会话数据里没有「{chatFindStore.query.trim()}」

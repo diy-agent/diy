@@ -21,9 +21,9 @@ export const DraftFieldsSchema = z.partialRecord(DraftFieldSchema, z.string());
 
 /** 草稿数据（含 meta，供 renderer 判定过期 / CLI 观察） */
 export const DraftsData = z.object({
-  base_updated: z.string().optional(),
-  saved: z.string().optional(),
-  fields: DraftFieldsSchema,
+    base_updated: z.string().optional(),
+    saved: z.string().optional(),
+    fields: DraftFieldsSchema,
 });
 /**
  * 任务详情载荷（getTask 的 data）。
@@ -33,37 +33,37 @@ export const DraftsData = z.object({
  * 全部 optional：任务文件是用户可编辑的，字段可以被删掉，读侧不该因此报错。
  */
 export const TaskDetailSchema = z.object({
-  uri: z.string(),
-  title: z.string().optional(),
-  state: TaskStateSchema.optional(),
-  project: z.string().optional(),
-  /** 项目路径/显示名（main 回填：project 字段只存 id） */
-  project_path: z.string().optional(),
-  project_label: z.string().optional(),
-  parent: z.string().optional(),
-  body: z.string().optional(),
-  created: z.string().optional(),
-  updated: z.string().optional(),
-  change_type: z.string().optional(),
-  module: z.string().optional(),
-  priority: z.string().optional(),
-  /** agent 人物名：本任务由哪个「人物」干活（决定模型/参数/行为指令，见 shared/persona.ts） */
-  persona: z.string().optional(),
-  /**
-   * 文件头原件（frontmatter 的**未过滤**解析结果，含本系统不认识的键）—— 与磁盘上
-   * `AGENTS.md` 的 `---…---` 是同一份（见 core/state.ts 的 TaskData.frontmatter）。
-   * 上面那些具名字段是它的**投影**，不是权限白名单：读侧显式给出头，写侧才有「传整份文件 → 剥头」的对称。
-   */
-  frontmatter: z.record(z.string(), z.unknown()).optional(),
-  /** 未提交草稿：renderer 用它恢复编辑态与输入框（见 core/drafts.ts） */
-  ui_drafts: DraftsData.nullable().optional(),
-  /**
-   * 该任务**是否与 agent 对话过**（##355 的「干净任务」态）。
-   * 真源 = 会话 Op 日志存在且非空（main/core/local-paths.ts 的 hasConversation）——
-   * 与任务树节点上的同名字段是**同一个判据**，两处都从 main 侧算，渲染端不猜。
-   */
-  has_session: z.boolean().optional(),
-  /** 该任务是否有未发送的草稿（##355 的「有草稿」态；真源同 `ui_drafts`，这里只给"有没有"） */
-  has_draft: z.boolean().optional(),
+    uri: z.string(),
+    title: z.string().optional(),
+    state: TaskStateSchema.optional(),
+    project: z.string().optional(),
+    /** 项目路径/显示名（main 回填：project 字段只存 id） */
+    project_path: z.string().optional(),
+    project_label: z.string().optional(),
+    parent: z.string().optional(),
+    body: z.string().optional(),
+    created: z.string().optional(),
+    updated: z.string().optional(),
+    change_type: z.string().optional(),
+    module: z.string().optional(),
+    priority: z.string().optional(),
+    /** agent 人物名：本任务由哪个「人物」干活（决定模型/参数/行为指令，见 shared/persona.ts） */
+    persona: z.string().optional(),
+    /**
+     * 文件头原件（frontmatter 的**未过滤**解析结果，含本系统不认识的键）—— 与磁盘上
+     * `AGENTS.md` 的 `---…---` 是同一份（见 core/state.ts 的 TaskData.frontmatter）。
+     * 上面那些具名字段是它的**投影**，不是权限白名单：读侧显式给出头，写侧才有「传整份文件 → 剥头」的对称。
+     */
+    frontmatter: z.record(z.string(), z.unknown()).optional(),
+    /** 未提交草稿：renderer 用它恢复编辑态与输入框（见 core/drafts.ts） */
+    ui_drafts: DraftsData.nullable().optional(),
+    /**
+     * 该任务**是否与 agent 对话过**（##355 的「干净任务」态）。
+     * 真源 = 会话 Op 日志存在且非空（main/core/local-paths.ts 的 hasConversation）——
+     * 与任务树节点上的同名字段是**同一个判据**，两处都从 main 侧算，渲染端不猜。
+     */
+    has_session: z.boolean().optional(),
+    /** 该任务是否有未发送的草稿（##355 的「有草稿」态；真源同 `ui_drafts`，这里只给"有没有"） */
+    has_draft: z.boolean().optional(),
 });
 export type TaskDetail = z.infer<typeof TaskDetailSchema>;

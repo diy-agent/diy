@@ -51,7 +51,13 @@ export interface MessageLayerBytes {
 
 /** 单条 message 的字节按层归集（与 blocksToMessages 产出的形状对齐） */
 export function messageLayerBytes(messages: readonly unknown[]): MessageLayerBytes {
-    const acc: MessageLayerBytes = { user: 0, assistantText: 0, assistantReasoning: 0, assistantTool: 0, toolResult: 0 };
+    const acc: MessageLayerBytes = {
+        user: 0,
+        assistantText: 0,
+        assistantReasoning: 0,
+        assistantTool: 0,
+        toolResult: 0,
+    };
     for (const m of messages) {
         const msg = m as { role?: string; content?: unknown };
         const content = msg.content;
@@ -87,10 +93,34 @@ export function layerFacts(base: RequestView, mod: RequestView, inputRate: numbe
     const m = messageLayerBytes(mod.messages);
     const rows: { key: string; name: string; label: string; oldBytes: number; newBytes: number }[] = [
         { key: "total", name: "合计", label: "合计（各层之和）", oldBytes: 0, newBytes: 0 },
-        { key: "system", name: "系统提示词", label: "system — 人物行为指令 / 规则 / 保命契约 / AGENTS.md 链", oldBytes: utf8Bytes(base.system), newBytes: utf8Bytes(mod.system) },
-        { key: "tools", name: "工具定义", label: "tools — bash / read 等函数 schema（压缩动不了它）", oldBytes: base.toolsBytes, newBytes: mod.toolsBytes },
-        { key: "user", name: "用户消息", label: "user — 用户消息（含 runtime 任务正文 / 技能清单）", oldBytes: b.user, newBytes: m.user },
-        { key: "assistant.text", name: "模型回复", label: "assistant.text — 模型回复正文", oldBytes: b.assistantText, newBytes: m.assistantText },
+        {
+            key: "system",
+            name: "系统提示词",
+            label: "system — 人物行为指令 / 规则 / 保命契约 / AGENTS.md 链",
+            oldBytes: utf8Bytes(base.system),
+            newBytes: utf8Bytes(mod.system),
+        },
+        {
+            key: "tools",
+            name: "工具定义",
+            label: "tools — bash / read 等函数 schema（压缩动不了它）",
+            oldBytes: base.toolsBytes,
+            newBytes: mod.toolsBytes,
+        },
+        {
+            key: "user",
+            name: "用户消息",
+            label: "user — 用户消息（含 runtime 任务正文 / 技能清单）",
+            oldBytes: b.user,
+            newBytes: m.user,
+        },
+        {
+            key: "assistant.text",
+            name: "模型回复",
+            label: "assistant.text — 模型回复正文",
+            oldBytes: b.assistantText,
+            newBytes: m.assistantText,
+        },
         {
             key: "assistant.reasoning",
             name: "模型推理",
@@ -98,8 +128,20 @@ export function layerFacts(base: RequestView, mod: RequestView, inputRate: numbe
             oldBytes: b.assistantReasoning,
             newBytes: m.assistantReasoning,
         },
-        { key: "assistant.tool", name: "工具调用", label: "assistant.tool — 模型发起的工具调用（命令 / 参数）", oldBytes: b.assistantTool, newBytes: m.assistantTool },
-        { key: "tool.result", name: "工具结果", label: "tool.result — 工具执行结果（头尾裁剪作用于此）", oldBytes: b.toolResult, newBytes: m.toolResult },
+        {
+            key: "assistant.tool",
+            name: "工具调用",
+            label: "assistant.tool — 模型发起的工具调用（命令 / 参数）",
+            oldBytes: b.assistantTool,
+            newBytes: m.assistantTool,
+        },
+        {
+            key: "tool.result",
+            name: "工具结果",
+            label: "tool.result — 工具执行结果（头尾裁剪作用于此）",
+            oldBytes: b.toolResult,
+            newBytes: m.toolResult,
+        },
     ];
     const rest = rows.slice(1).sort((a, x) => x.oldBytes - a.oldBytes);
     const toks = rest.map((r) => ({ oldTokens: tok(r.oldBytes), newTokens: tok(r.newBytes) }));
@@ -182,7 +224,11 @@ export function clipForPreview(value: unknown, opts?: PreviewClipOpts): { value:
             const tail = Math.max(0, maxChars - head);
             const dropped = v.length - head - tail;
             stats.droppedChars += dropped;
-            return v.slice(0, head) + `\n…[预览已裁掉 ${dropped} 字符，原文 ${v.length} 字符]…\n` + (tail > 0 ? v.slice(-tail) : "");
+            return (
+                v.slice(0, head) +
+                `\n…[预览已裁掉 ${dropped} 字符，原文 ${v.length} 字符]…\n` +
+                (tail > 0 ? v.slice(-tail) : "")
+            );
         }
         if (Array.isArray(v)) {
             if (v.length <= maxItems) return v.map(walk);

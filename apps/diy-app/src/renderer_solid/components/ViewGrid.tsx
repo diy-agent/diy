@@ -237,7 +237,12 @@ export function ViewGrid(props: {
                 {/* 竖线拖拽手柄：每条内部竖线上，只渲染「两侧 owner 不同」的段。
                     相邻 track 已被折叠（尺寸 0）的线不渲染 —— 那条线贴着隐藏的 area，
                     拖它没有可见效果，还会把折叠值写进用户尺寸。 */}
-                <For each={layout().cols.slice(0, -1).map((_, i) => i + 1).filter((l) => !isCollapsed("col", l))}>
+                <For
+                    each={layout()
+                        .cols.slice(0, -1)
+                        .map((_, i) => i + 1)
+                        .filter((l) => !isCollapsed("col", l))}
+                >
                     {(line) => (
                         <For each={colLineSegments(layout(), line)}>
                             {(seg) => (
@@ -258,7 +263,12 @@ export function ViewGrid(props: {
                 </For>
 
                 {/* 横线拖拽手柄 */}
-                <For each={layout().rows.slice(0, -1).map((_, i) => i + 1).filter((l) => !isCollapsed("row", l))}>
+                <For
+                    each={layout()
+                        .rows.slice(0, -1)
+                        .map((_, i) => i + 1)
+                        .filter((l) => !isCollapsed("row", l))}
+                >
                     {(line) => (
                         <For each={rowLineSegments(layout(), line)}>
                             {(seg) => (

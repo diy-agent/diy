@@ -1,4 +1,10 @@
-import { GenApp, html, mountStream, Signal, type GenNode } from "../../../src/browser.js";
+import {
+  GenApp,
+  html,
+  mountStream,
+  Signal,
+  type GenNode,
+} from "../../../src/browser.js";
 
 /**
  * stream —— **只属于 B 风格**的能力：异步流 → 每条 insert（真·增量投递）。
@@ -41,7 +47,8 @@ function createInbox<T>(): { push(v: T): void; consume(): AsyncGenerator<T> } {
   };
 }
 
-const hhmmss = (): string => new Date().toLocaleTimeString("zh-CN", { hour12: false });
+const hhmmss = (): string =>
+  new Date().toLocaleTimeString("zh-CN", { hour12: false });
 
 export function streamDemo(el: HTMLElement): void {
   const app = new GenApp({ mount: el });
@@ -64,18 +71,30 @@ export function streamDemo(el: HTMLElement): void {
   const startStream = (): void => {
     if (!listNode) return;
     stop?.();
-    stop = mountStream(listNode, inbox.consume(), (c) => html.div({ class: "chat-msg", text: `💬 ${c.text}` }), {
-      key: (c) => c.id,
-      onError: (e) => console.error("[streamDemo]", e),
-    });
+    stop = mountStream(
+      listNode,
+      inbox.consume(),
+      (c) => html.div({ class: "chat-msg", text: `💬 ${c.text}` }),
+      {
+        key: (c) => c.id,
+        onError: (e) => console.error("[streamDemo]", e),
+      },
+    );
   };
 
   app.render(
     html.div({ class: "panel-body" }, function* () {
-      yield html.div({ class: "panel-tag", text: "B · mountStream（异步流 → 每条 insert，0 重跑）" });
+      yield html.div({
+        class: "panel-tag",
+        text: "B · mountStream（异步流 → 每条 insert，0 重跑）",
+      });
 
       yield html.div({ class: "panel-row" }, function* () {
-        yield html.button({ class: "panel-btn", text: "① 发送一条", onClick: send });
+        yield html.button({
+          class: "panel-btn",
+          text: "① 发送一条",
+          onClick: send,
+        });
         yield html.button({
           class: "panel-btn",
           text: "② 模拟 SSE ×10",
@@ -103,15 +122,14 @@ export function streamDemo(el: HTMLElement): void {
 
       yield html.div({
         class: "panel-out",
-        text: () => `已发送 ${sent.value} 条 · 已上屏 ${shown.value} 条 · 列表重跑 ${rerunCount.value} 次`,
+        text: () =>
+          `已发送 ${sent.value} 条 · 已上屏 ${shown.value} 条 · 列表重跑 ${rerunCount.value} 次`,
       });
 
-      yield html
-        .div({ class: "chat-list" })
-        .unsafe((n: GenNode) => {
-          listNode = n;
-          startStream();
-        });
+      yield html.div({ class: "chat-list" }).unsafe((n: GenNode) => {
+        listNode = n;
+        startStream();
+      });
     }),
   );
 

@@ -43,26 +43,26 @@ const DIR_SAFE_CHAR = /^[A-Za-z0-9._/-]$/;
  * `/` 保留 ⇒ 任务 room（id = taskUri）仍是 `rooms/projects/1/tasks/1/`，老数据零迁移。
  */
 export function roomDirName(id: string): string {
-  let out = "";
-  for (const ch of id) out += DIR_SAFE_CHAR.test(ch) ? ch : encodeURIComponent(ch);
-  return out;
+    let out = "";
+    for (const ch of id) out += DIR_SAFE_CHAR.test(ch) ? ch : encodeURIComponent(ch);
+    return out;
 }
 
 /** 目录名 → room id（`%` 后不是合法转义序列 ⇒ 当老的原样目录名，原样返回）。 */
 export function roomIdFromDirName(name: string): string {
-  try {
-    return decodeURIComponent(name);
-  } catch {
-    return name;
-  }
+    try {
+        return decodeURIComponent(name);
+    } catch {
+        return name;
+    }
 }
 
 /** 房间 id 是否安全（同时是**目录名**判据：不许 `..` / 不许结尾 `/`） */
 export function isValidRoomId(id: string): boolean {
-  if (!ROOM_ID_RE.test(id)) return false;
-  if (id.includes("..")) return false;
-  if (id.endsWith("/")) return false;
-  return true;
+    if (!ROOM_ID_RE.test(id)) return false;
+    if (id.includes("..")) return false;
+    if (id.endsWith("/")) return false;
+    return true;
 }
 
 /**
@@ -122,34 +122,34 @@ export const RoomMemberKindSchema = z.enum(["human", "agent"]);
  * （room 内独立 session）留口：加分支即可，形状不变。
  */
 export const RoomBackendSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("task"),
-    data: z.object({
-      taskUri: z.string().describe("该成员的会话所在任务 URI（复用现有一切：CLI/RPC/装配/UI）"),
+    z.object({
+        type: z.literal("task"),
+        data: z.object({
+            taskUri: z.string().describe("该成员的会话所在任务 URI（复用现有一切：CLI/RPC/装配/UI）"),
+        }),
     }),
-  }),
 ]);
 export type RoomBackend = z.infer<typeof RoomBackendSchema>;
 
 export const RoomMemberSchema = z.object({
-  /** 全局 id 短式（接 §25 `<ns>:<type>:<path>`）：`human:chen56` / `agent:dev` */
-  id: z.string(),
-  /** 显示名（气泡署名 / `@` 寻址用） */
-  name: z.string(),
-  kind: RoomMemberKindSchema,
-  /** 人的会话不在 task 里（§28.6 待决 76 未定案）—— 最小切片给 null */
-  backend: RoomBackendSchema.nullable(),
-  /** **主人格**（= 宿主任务自己的 agent；成员表第一行，##166 §28.7 G 推论 3） */
-  main: z.boolean().optional(),
-  /**
-   * 人物 id（`core:persona:<id>`，§25 全式）—— 决定它以**什么身份 + 什么行为指令**说话。
-   * 与 backend（在哪说、有什么上下文）解耦：同一人物可进多个 room（§28.7 B）。
-   */
-  persona: z.string().optional(),
-  role: z.string().optional(),
-  color: z.string().optional(),
-  /** 头像（emoji）。留空 = 按成员在房间里的位置自动分配（`memberAvatar`） */
-  avatar: z.string().optional(),
+    /** 全局 id 短式（接 §25 `<ns>:<type>:<path>`）：`human:chen56` / `agent:dev` */
+    id: z.string(),
+    /** 显示名（气泡署名 / `@` 寻址用） */
+    name: z.string(),
+    kind: RoomMemberKindSchema,
+    /** 人的会话不在 task 里（§28.6 待决 76 未定案）—— 最小切片给 null */
+    backend: RoomBackendSchema.nullable(),
+    /** **主人格**（= 宿主任务自己的 agent；成员表第一行，##166 §28.7 G 推论 3） */
+    main: z.boolean().optional(),
+    /**
+     * 人物 id（`core:persona:<id>`，§25 全式）—— 决定它以**什么身份 + 什么行为指令**说话。
+     * 与 backend（在哪说、有什么上下文）解耦：同一人物可进多个 room（§28.7 B）。
+     */
+    persona: z.string().optional(),
+    role: z.string().optional(),
+    color: z.string().optional(),
+    /** 头像（emoji）。留空 = 按成员在房间里的位置自动分配（`memberAvatar`） */
+    avatar: z.string().optional(),
 });
 export type RoomMember = z.infer<typeof RoomMemberSchema>;
 
@@ -170,45 +170,45 @@ export const DEFAULT_CHANNEL_ID = "default";
 export const DEFAULT_CHANNEL_NAME = "默认";
 
 export const RoomChannelSchema = z.object({
-  id: z.string(),
-  name: z.string(),
+    id: z.string(),
+    name: z.string(),
 });
 export type RoomChannel = z.infer<typeof RoomChannelSchema>;
 
 /** 恒有的那一条 channel（新房间、以及老房间读出来补齐，都用它） */
 export function defaultChannels(): RoomChannel[] {
-  return [{ id: DEFAULT_CHANNEL_ID, name: DEFAULT_CHANNEL_NAME }];
+    return [{ id: DEFAULT_CHANNEL_ID, name: DEFAULT_CHANNEL_NAME }];
 }
 
 export const RoomSchema = z.object({
-  id: z.string(),
-  title: z.string().optional(),
-  /**
-   * 当前接受者（成员 id）。**一等字段、必须落盘、全成员可见**（§28.5 B 推论 2）——
-   * 否则人 / agent 都不知道自己在跟谁说话。null = 未设（此时无 `@` 的发言一律未投递）。
-   */
-  focus: z.string().nullable(),
-  members: z.array(RoomMemberSchema),
-  /**
-   * channel 表 —— **恒有 `default`**（本切片只占位，见 `DEFAULT_CHANNEL_ID`）。
-   *
-   * `.default(...)` 是**读侧兼容**：占位符引入之前建的房间（room.yaml 里没有这个键）
-   * 照样读得出来并补上 `default` —— 不迁移存量、不产生"老房间读不出"的假故障。
-   */
-  channels: z.array(RoomChannelSchema).default(() => defaultChannels()),
-  /**
-   * **成员水位**（##166 §44.6 四.1）：`成员 id → 该成员已经看到过的最后一条事件 id`。
-   *
-   * 用途只有一个 —— 投递时算「自上次以来房间里**别人**说了什么」，把那段上下文附进正文。
-   * 为什么记 **id** 而不记时间戳：同一毫秒可能落两条事件（`nextEventId` 的 ts 是毫秒）
-   * ⇒ 时间戳比较会在"同毫秒"上丢边界。而**也不能拿 id 比大小**（序号跨进程重来，踩坑 3）——
-   * 读侧一律按 `events.jsonl` 的**物理顺序**定位（append-only ⇒ 顺序就是因果顺序）。
-   *
-   * `.default({})` 兜存量：老房间没有这个键 ⇒ 第一次投递时按"从头看"处理（最多吐上限条）。
-   */
-  lastSeen: z.record(z.string(), z.string()).default({}),
-  created: z.string(),
-  updated: z.string(),
+    id: z.string(),
+    title: z.string().optional(),
+    /**
+     * 当前接受者（成员 id）。**一等字段、必须落盘、全成员可见**（§28.5 B 推论 2）——
+     * 否则人 / agent 都不知道自己在跟谁说话。null = 未设（此时无 `@` 的发言一律未投递）。
+     */
+    focus: z.string().nullable(),
+    members: z.array(RoomMemberSchema),
+    /**
+     * channel 表 —— **恒有 `default`**（本切片只占位，见 `DEFAULT_CHANNEL_ID`）。
+     *
+     * `.default(...)` 是**读侧兼容**：占位符引入之前建的房间（room.yaml 里没有这个键）
+     * 照样读得出来并补上 `default` —— 不迁移存量、不产生"老房间读不出"的假故障。
+     */
+    channels: z.array(RoomChannelSchema).default(() => defaultChannels()),
+    /**
+     * **成员水位**（##166 §44.6 四.1）：`成员 id → 该成员已经看到过的最后一条事件 id`。
+     *
+     * 用途只有一个 —— 投递时算「自上次以来房间里**别人**说了什么」，把那段上下文附进正文。
+     * 为什么记 **id** 而不记时间戳：同一毫秒可能落两条事件（`nextEventId` 的 ts 是毫秒）
+     * ⇒ 时间戳比较会在"同毫秒"上丢边界。而**也不能拿 id 比大小**（序号跨进程重来，踩坑 3）——
+     * 读侧一律按 `events.jsonl` 的**物理顺序**定位（append-only ⇒ 顺序就是因果顺序）。
+     *
+     * `.default({})` 兜存量：老房间没有这个键 ⇒ 第一次投递时按"从头看"处理（最多吐上限条）。
+     */
+    lastSeen: z.record(z.string(), z.string()).default({}),
+    created: z.string(),
+    updated: z.string(),
 });
 export type Room = z.infer<typeof RoomSchema>;
 
@@ -239,37 +239,37 @@ export const DeliveryStatusSchema = z.enum(["queued", "running", "ok", "failed",
 export type DeliveryStatus = z.infer<typeof DeliveryStatusSchema>;
 
 export const DeliveryStateSchema = z.object({
-  memberId: z.string(),
-  status: DeliveryStatusSchema,
-  /** 该成员这一轮跑在哪个会话（审计 / 判据 3 的证据链：去那个 task 的 ops 流里找 turnId） */
-  taskUri: z.string().optional(),
-  turnId: z.string().optional(),
-  /** 这一轮的回复是哪条事件（`ok` 时才有；失败/排队时缺省） */
-  replyId: z.string().optional(),
-  /** 失败/跳过原因（人话） */
-  error: z.string().optional(),
-  /**
-   * **补充说明**（人话，不是错误）—— 只有 `status:"ok"` 时偶尔有值。
-   *
-   * 第一种用途（##377 第 27 刀）：会话正有轮次在跑 ⇒ 这条不"开一轮"，而是
-   * **插进正在跑的那一轮**（下一步生效）。消息确实送达了（`ok`），但拿不到一条属于
-   * 自己的回复 —— 不写这句，人看到"已投递"却没有回复会以为丢了。
-   *
-   * ⚠️ 与 `error` 分开是因为语义相反：`error` = 没送到 / 送失败；`note` = 送到了，但方式不同。
-   */
-  note: z.string().optional(),
-  /**
-   * 忙时插话**入的是哪条队列项**（`steer/N`，##377 第 29 刀）。
-   *
-   * 它只有一个用途：给读侧留一个**键**。队列项落进某一轮之后，那个 user 块本来就带
-   * `meta.steerId`（`local-agent.steerBlockOps` / 轮首开场块），块的 `parent` 就是 turn id
-   * ⇒ 拿它对上"这句话被哪一轮消化了"。
-   *
-   * ⚠️ **别据此另存一份「回复映射」**：`turnId` 在 room 里已经有地方住（本 schema 上一行），
-   * 它填上之后 `ref: { memberUri, turnId }` 就够定位那一轮（owner 口径，第 29 刀）。
-   */
-  steerId: z.string().optional(),
-  ts: z.string(),
+    memberId: z.string(),
+    status: DeliveryStatusSchema,
+    /** 该成员这一轮跑在哪个会话（审计 / 判据 3 的证据链：去那个 task 的 ops 流里找 turnId） */
+    taskUri: z.string().optional(),
+    turnId: z.string().optional(),
+    /** 这一轮的回复是哪条事件（`ok` 时才有；失败/排队时缺省） */
+    replyId: z.string().optional(),
+    /** 失败/跳过原因（人话） */
+    error: z.string().optional(),
+    /**
+     * **补充说明**（人话，不是错误）—— 只有 `status:"ok"` 时偶尔有值。
+     *
+     * 第一种用途（##377 第 27 刀）：会话正有轮次在跑 ⇒ 这条不"开一轮"，而是
+     * **插进正在跑的那一轮**（下一步生效）。消息确实送达了（`ok`），但拿不到一条属于
+     * 自己的回复 —— 不写这句，人看到"已投递"却没有回复会以为丢了。
+     *
+     * ⚠️ 与 `error` 分开是因为语义相反：`error` = 没送到 / 送失败；`note` = 送到了，但方式不同。
+     */
+    note: z.string().optional(),
+    /**
+     * 忙时插话**入的是哪条队列项**（`steer/N`，##377 第 29 刀）。
+     *
+     * 它只有一个用途：给读侧留一个**键**。队列项落进某一轮之后，那个 user 块本来就带
+     * `meta.steerId`（`local-agent.steerBlockOps` / 轮首开场块），块的 `parent` 就是 turn id
+     * ⇒ 拿它对上"这句话被哪一轮消化了"。
+     *
+     * ⚠️ **别据此另存一份「回复映射」**：`turnId` 在 room 里已经有地方住（本 schema 上一行），
+     * 它填上之后 `ref: { memberUri, turnId }` 就够定位那一轮（owner 口径，第 29 刀）。
+     */
+    steerId: z.string().optional(),
+    ts: z.string(),
 });
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 
@@ -283,58 +283,58 @@ export type DeliveryOrigin = z.infer<typeof DeliveryOriginSchema>;
 
 /** 事件：`say` = 人（或未来某个成员）发的一句话；`reply` = 被投递 agent 跑完一轮的回复 */
 export const RoomEventSchema = z.object({
-  id: z.string(),
-  ts: z.string().describe("ISO 时刻"),
-  /**
-   * 这条事件属于哪条 channel（**落盘**，##166 §28.K 待拍 17）。
-   *
-   * 本切片恒为 `default`（只有一条流 ⇒ 零分支）；`.default(...)` 只兜**存量事件**
-   * （占位符之前写的事件行没有这个键）—— 新事件一律显式写盘。
-   */
-  channel: z.string().default(DEFAULT_CHANNEL_ID),
-  kind: z.enum(["say", "reply"]),
-  /** 发言者成员 id；解析不出成员时是原始名字（外部主体） */
-  author: z.string(),
-  /** 收件人成员 id（解析后）。空 = 未投递 */
-  to: z.array(z.string()),
-  /** 投递依据（**只有 `say` 事件有意义**；`reply` 是投递结果本身，不带依据） */
-  routing: RoomRoutingSchema.optional(),
-  /** **原话**（含 `@X` 前缀）—— 投递时另剥（正文要干净） */
-  text: z.string(),
-  /**
-   * 是否投递成功（任一个收件人 `ok`）。
-   *
-   * ⚠️ 它是**读侧投影**：落盘时恒为 false（那会儿还没投），`core/room.readRoomView`
-   *    按投递状态 fold 后填**真值**。别把盘上那份当结论。
-   */
-  delivered: z.boolean(),
-  /** 投递失败原因（人话）；delivered=false 且有它 = 有话说不出 */
-  error: z.string().optional(),
-  /** 该回复来自哪个 task 会话（`reply` 事件带；审计用 —— 判据 3 的证据链） */
-  sourceTask: z.string().optional(),
-  /**
-   * **这一轮的引用**（##166 §28.7 A1）：`reply` 事件带，指向成员会话里的那一轮。
-   *
-   * room **不新造进度数据源** —— 进度就是「成员会话的 `ops.jsonl` 按 `turnId` 切一刀」，
-   * 与任务对话看到的是同一条流、同一套渲染（§28.7 A：room 只需「对成员会话的引用 + 并列渲染」）。
-   * `memberUri` = 房间成员 id（`agent:dev`）；会话本体仍是 `sourceTask`（两者都带，读侧不必再查成员表）。
-   */
-  ref: z
-    .object({
-      memberUri: z.string().describe("成员 id（房间内，如 agent:dev）"),
-      turnId: z.string().describe("该成员会话里这一轮的 turnId（ops 流按它切片）"),
-    })
-    .optional(),
-  /** 各收件人的投递状态（读侧投影 —— 落盘在 `deliveries.jsonl`，读时附上来） */
-  deliveries: z.array(DeliveryStateSchema).optional(),
-  /**
-   * **这条事件从别的房间投过来的**（##377 第 24 刀 · 双向可见）。
-   *
-   * 只有「投递写回接收方自己房间」的那两条事件（`say` + `reply`）带它 ——
-   * 目的是让接收方房间的读侧能答两个问题：这条是谁投的、源房间那条原话在哪。
-   * 不带 = 本房间自己产生的（绝大多数事件）。
-   */
-  origin: DeliveryOriginSchema.optional(),
+    id: z.string(),
+    ts: z.string().describe("ISO 时刻"),
+    /**
+     * 这条事件属于哪条 channel（**落盘**，##166 §28.K 待拍 17）。
+     *
+     * 本切片恒为 `default`（只有一条流 ⇒ 零分支）；`.default(...)` 只兜**存量事件**
+     * （占位符之前写的事件行没有这个键）—— 新事件一律显式写盘。
+     */
+    channel: z.string().default(DEFAULT_CHANNEL_ID),
+    kind: z.enum(["say", "reply"]),
+    /** 发言者成员 id；解析不出成员时是原始名字（外部主体） */
+    author: z.string(),
+    /** 收件人成员 id（解析后）。空 = 未投递 */
+    to: z.array(z.string()),
+    /** 投递依据（**只有 `say` 事件有意义**；`reply` 是投递结果本身，不带依据） */
+    routing: RoomRoutingSchema.optional(),
+    /** **原话**（含 `@X` 前缀）—— 投递时另剥（正文要干净） */
+    text: z.string(),
+    /**
+     * 是否投递成功（任一个收件人 `ok`）。
+     *
+     * ⚠️ 它是**读侧投影**：落盘时恒为 false（那会儿还没投），`core/room.readRoomView`
+     *    按投递状态 fold 后填**真值**。别把盘上那份当结论。
+     */
+    delivered: z.boolean(),
+    /** 投递失败原因（人话）；delivered=false 且有它 = 有话说不出 */
+    error: z.string().optional(),
+    /** 该回复来自哪个 task 会话（`reply` 事件带；审计用 —— 判据 3 的证据链） */
+    sourceTask: z.string().optional(),
+    /**
+     * **这一轮的引用**（##166 §28.7 A1）：`reply` 事件带，指向成员会话里的那一轮。
+     *
+     * room **不新造进度数据源** —— 进度就是「成员会话的 `ops.jsonl` 按 `turnId` 切一刀」，
+     * 与任务对话看到的是同一条流、同一套渲染（§28.7 A：room 只需「对成员会话的引用 + 并列渲染」）。
+     * `memberUri` = 房间成员 id（`agent:dev`）；会话本体仍是 `sourceTask`（两者都带，读侧不必再查成员表）。
+     */
+    ref: z
+        .object({
+            memberUri: z.string().describe("成员 id（房间内，如 agent:dev）"),
+            turnId: z.string().describe("该成员会话里这一轮的 turnId（ops 流按它切片）"),
+        })
+        .optional(),
+    /** 各收件人的投递状态（读侧投影 —— 落盘在 `deliveries.jsonl`，读时附上来） */
+    deliveries: z.array(DeliveryStateSchema).optional(),
+    /**
+     * **这条事件从别的房间投过来的**（##377 第 24 刀 · 双向可见）。
+     *
+     * 只有「投递写回接收方自己房间」的那两条事件（`say` + `reply`）带它 ——
+     * 目的是让接收方房间的读侧能答两个问题：这条是谁投的、源房间那条原话在哪。
+     * 不带 = 本房间自己产生的（绝大多数事件）。
+     */
+    origin: DeliveryOriginSchema.optional(),
 });
 export type RoomEvent = z.infer<typeof RoomEventSchema>;
 
@@ -409,7 +409,7 @@ export function addressQueryAt(text: string): { query: string; from: number } | 
 
 /** `@all` / `@*` 记号（群发）——单收件人寻址与它互斥，但可**并列**（`@all @dev` 仍是全体） */
 export function isAllAddress(nameOrId: string): boolean {
-  return nameOrId === "all" || nameOrId === "*";
+    return nameOrId === "all" || nameOrId === "*";
 }
 
 /**
@@ -427,28 +427,28 @@ export function isAllAddress(nameOrId: string): boolean {
  * ⚠️ 除 `@all` 外**协议里没有隐式广播**：要多收件人必须显式列 ⇒ 成本从「默认 N 倍」变成「显式 N 倍」。
  */
 export function resolveRecipients(
-  to: readonly string[] | undefined,
-  focus: string | null | undefined,
-  members: readonly RoomMember[] = [],
-  /**
-   * 发言者本人（##166 §38.2）：`@` 自己 = **笔记**（不是投递）。
-   * 不传 = 与旧行为逐字一致（不知道"谁在说"时无法识别"@ 自己"）。
-   */
-  self?: string | null,
+    to: readonly string[] | undefined,
+    focus: string | null | undefined,
+    members: readonly RoomMember[] = [],
+    /**
+     * 发言者本人（##166 §38.2）：`@` 自己 = **笔记**（不是投递）。
+     * 不传 = 与旧行为逐字一致（不知道"谁在说"时无法识别"@ 自己"）。
+     */
+    self?: string | null,
 ): { recipients: string[]; routing: RoomRouting } {
-  const explicit = (to ?? []).filter((t) => !!t);
-  if (explicit.length > 0) {
-    const hasAll = explicit.some(isAllAddress);
-    // ⚠️ `@` 自己**不算收件人**：自己给自己投递没有意义（会在自己的会话里起一轮）
-    const named = explicit.filter((t) => !isAllAddress(t) && t !== self);
-    const agents = members.filter((m) => m.kind === "agent").map((m) => m.id);
-    const recipients = [...new Set([...named, ...(hasAll ? agents : [])])];
-    // 只剩自己 ⇒ 笔记（**不是** fallback 到 focus：用户显式 @ 了自己，就该照他说的做）
-    if (recipients.length === 0) return { recipients: [], routing: "note" };
-    return { recipients, routing: hasAll ? "all" : "explicit" };
-  }
-  if (focus) return { recipients: [focus], routing: "focus" };
-  return { recipients: [], routing: "note" };
+    const explicit = (to ?? []).filter((t) => !!t);
+    if (explicit.length > 0) {
+        const hasAll = explicit.some(isAllAddress);
+        // ⚠️ `@` 自己**不算收件人**：自己给自己投递没有意义（会在自己的会话里起一轮）
+        const named = explicit.filter((t) => !isAllAddress(t) && t !== self);
+        const agents = members.filter((m) => m.kind === "agent").map((m) => m.id);
+        const recipients = [...new Set([...named, ...(hasAll ? agents : [])])];
+        // 只剩自己 ⇒ 笔记（**不是** fallback 到 focus：用户显式 @ 了自己，就该照他说的做）
+        if (recipients.length === 0) return { recipients: [], routing: "note" };
+        return { recipients, routing: hasAll ? "all" : "explicit" };
+    }
+    if (focus) return { recipients: [focus], routing: "focus" };
+    return { recipients: [], routing: "note" };
 }
 
 /**
@@ -516,7 +516,6 @@ export function opsAuthorFor(main: boolean, author: string): string | undefined 
  * 接收方**分不清**「本任务的人在跟我说话」与「别的房间投过来的一句」。
  * 有了来源，UI 才能标出来，未来「把这条写回接收方自己的 room」也有了键（双向可见的地基）。
  */
-
 
 /** 一条发言的**随附事实**（`chat` 的第 7 参 —— 替代原来单个 `author`，再扩不必加第 8 个位次）。 */
 export type TurnOrigin = {
@@ -736,10 +735,7 @@ export function mirrorEvents(input: MirrorInput): { say: RoomEvent; reply?: Room
  * 口径与「水位是优化」同族：**补写比漏写安全** —— 重复写已存在的事件没有意义，
  * 而少一条就是永久缺一块。故判据按**每条**算，调用方只补缺的那条。
  */
-export function mirrorMissingParts(
-    events: readonly RoomEvent[],
-    sayId: string,
-): { say: boolean; reply: boolean } {
+export function mirrorMissingParts(events: readonly RoomEvent[], sayId: string): { say: boolean; reply: boolean } {
     const mine = sayId ? events.filter((e) => e.origin?.sayId === sayId) : [];
     return {
         say: !mine.some((e) => e.kind === "say"),
@@ -787,9 +783,7 @@ export function withSteerTurns(
 }
 
 /** 一条 say 里「能指到某一轮」的投递（UI 展开入口的判据；纯函数 + 单测） */
-export function steerTurnRefs(
-    ev: Pick<RoomEvent, "deliveries">,
-): { memberId: string; turnId: string }[] {
+export function steerTurnRefs(ev: Pick<RoomEvent, "deliveries">): { memberId: string; turnId: string }[] {
     const out: { memberId: string; turnId: string }[] = [];
     for (const d of ev.deliveries ?? []) {
         if (d.turnId) out.push({ memberId: d.memberId, turnId: d.turnId });
@@ -813,28 +807,28 @@ export function originLabel(origin: DeliveryOrigin | null | undefined): string |
 export type MemberBag = { members: readonly RoomMember[] } | null | undefined;
 
 export function resolveMember(room: MemberBag, nameOrId: string): string {
-  const key = nameOrId.trim().replace(/^@+/, "");
-  if (!key) return nameOrId;
-  const members = room?.members ?? [];
-  // ① id 全式（`agent:main` / `human:chen56`）—— 精确，无歧义
-  const byId = members.find((m) => m.id === key);
-  if (byId) return byId.id;
-  // ② name（人物名）：**唯一命中才认**（##377 第 21 刀）
-  //    原来 `find(m => m.id === key || m.name === key)` 取第一个 —— 两个任务 agent 同室时
-  //    它们的 name **完全相同**（都来自人物名），第一个往往正好是主人格 ⇒ 后进来的成员**永远打不到**。
-  //    取不到时原样返回（上层报「没有这个成员」并在提示里给别名），**不猜**。
-  const byName = members.filter((m) => m.name === key);
-  if (byName.length === 1) return byName[0]!.id;
-  // name **有歧义 ⇒ 到此为止，不再往下猜**：否则会滑到「id 末段」那层，
-  // 恰好命中某个 id 与 name 同形的新成员（实测：`@deepseek-4.1-flash` 会打到 backend=tasks/2 的那个，
-  // 而用户想说的是主人格）—— 那比"报没有"更坏：静默投给了错的人。
-  if (byName.length > 1) return nameOrId;
-  // ③ 别名（`t3` ← backend 的 taskUri）—— 同类唯一才认
-  const byAlias = members.filter((m) => m.kind === "agent" && memberAlias(m) === key);
-  if (byAlias.length === 1) return byAlias[0]!.id;
-  // ④ **id 末段**也认（##377 第 20 刀）：id 是 `agent:main`，用户凭直觉会打 `@main`。
-  const byShort = members.filter((m) => m.kind === "agent" && lastSegment(m.id) === key);
-  return byShort.length === 1 ? byShort[0]!.id : nameOrId;
+    const key = nameOrId.trim().replace(/^@+/, "");
+    if (!key) return nameOrId;
+    const members = room?.members ?? [];
+    // ① id 全式（`agent:main` / `human:chen56`）—— 精确，无歧义
+    const byId = members.find((m) => m.id === key);
+    if (byId) return byId.id;
+    // ② name（人物名）：**唯一命中才认**（##377 第 21 刀）
+    //    原来 `find(m => m.id === key || m.name === key)` 取第一个 —— 两个任务 agent 同室时
+    //    它们的 name **完全相同**（都来自人物名），第一个往往正好是主人格 ⇒ 后进来的成员**永远打不到**。
+    //    取不到时原样返回（上层报「没有这个成员」并在提示里给别名），**不猜**。
+    const byName = members.filter((m) => m.name === key);
+    if (byName.length === 1) return byName[0]!.id;
+    // name **有歧义 ⇒ 到此为止，不再往下猜**：否则会滑到「id 末段」那层，
+    // 恰好命中某个 id 与 name 同形的新成员（实测：`@deepseek-4.1-flash` 会打到 backend=tasks/2 的那个，
+    // 而用户想说的是主人格）—— 那比"报没有"更坏：静默投给了错的人。
+    if (byName.length > 1) return nameOrId;
+    // ③ 别名（`t3` ← backend 的 taskUri）—— 同类唯一才认
+    const byAlias = members.filter((m) => m.kind === "agent" && memberAlias(m) === key);
+    if (byAlias.length === 1) return byAlias[0]!.id;
+    // ④ **id 末段**也认（##377 第 20 刀）：id 是 `agent:main`，用户凭直觉会打 `@main`。
+    const byShort = members.filter((m) => m.kind === "agent" && lastSegment(m.id) === key);
+    return byShort.length === 1 ? byShort[0]!.id : nameOrId;
 }
 
 /**
@@ -859,19 +853,19 @@ export function memberAlias(m: RoomMember): string | undefined {
  * - 单人房间 / 名字唯一 ⇒ `name` 第一，别名的显示交给 `memberLabel`（那里按 agent 数判是否露）。
  */
 export function memberKeys(room: MemberBag, m: RoomMember): string[] {
-  if (m.kind !== "agent") return [m.name];
-  const cand = [m.name, memberAlias(m), lastSegment(m.id)].filter((k): k is string => Boolean(k));
-  // **按「真能打中」筛，不自己再写一遍唯一性判断**（##266 review1 R1）：
-  // 原来这里对别名 / id 末段无条件放行，而 `resolveMember` 的 ③④ 要求**同类唯一**才认 ⇒
-  // 候选里会躺着打不中的键（跨项目同号 `projects/1/tasks/3` + `projects/2/tasks/3` 实测：
-  // 两个成员都给出 `@t3`，照着敲被判歧义）。判据只能有一份 —— 就是 `resolveMember` 本身。
-  // ⇒ 以后新增寻址写法（如完整 id 形态）只改 `resolveMember` 一处，提示自动跟上。
-  return [...new Set(cand.filter((k) => resolveMember(room, k) === m.id))];
+    if (m.kind !== "agent") return [m.name];
+    const cand = [m.name, memberAlias(m), lastSegment(m.id)].filter((k): k is string => Boolean(k));
+    // **按「真能打中」筛，不自己再写一遍唯一性判断**（##266 review1 R1）：
+    // 原来这里对别名 / id 末段无条件放行，而 `resolveMember` 的 ③④ 要求**同类唯一**才认 ⇒
+    // 候选里会躺着打不中的键（跨项目同号 `projects/1/tasks/3` + `projects/2/tasks/3` 实测：
+    // 两个成员都给出 `@t3`，照着敲被判歧义）。判据只能有一份 —— 就是 `resolveMember` 本身。
+    // ⇒ 以后新增寻址写法（如完整 id 形态）只改 `resolveMember` 一处，提示自动跟上。
+    return [...new Set(cand.filter((k) => resolveMember(room, k) === m.id))];
 }
 
 /** 首选寻址键（= `memberKeys[0]`；理论上恒有值，兜底回 name） */
 export function memberKey(room: MemberBag, m: RoomMember): string {
-  return memberKeys(room, m)[0] ?? m.name;
+    return memberKeys(room, m)[0] ?? m.name;
 }
 
 /** 成员的**可读标签**（`deepseek-4.1-flash·t3`）—— 气泡署名 / 提示用；无别名则回落 name */
@@ -892,17 +886,19 @@ export function memberLabel(room: MemberBag, id: string): string {
  * 格式 `@t3(deepseek-4.1-flash)`：**前面是可打的键、括号里是人名**。
  */
 export function memberOptions(room: MemberBag, limit = 4): string[] {
-    return (room?.members ?? [])
-        .filter((m) => m.kind === "agent")
-        // 一个键都打不中的成员（跨项目同号 + 同人物名，两条同时成立）**不进候选**：
-        // 给了也是白给，而且会让「可选：@t3」自己打不中（review1 R1 的原病灶）。
-        .filter((m) => memberKeys(room, m).length > 0)
-        .slice(0, limit)
-        .map((m) => {
-            const k = memberKey(room, m);
-            // 键与人物名不同 ⇒ 名字放进括号（「该打什么」在前，「他是谁」在后）
-            return k && k !== m.name ? `@${k}(${m.name})` : `@${m.name}`;
-        });
+    return (
+        (room?.members ?? [])
+            .filter((m) => m.kind === "agent")
+            // 一个键都打不中的成员（跨项目同号 + 同人物名，两条同时成立）**不进候选**：
+            // 给了也是白给，而且会让「可选：@t3」自己打不中（review1 R1 的原病灶）。
+            .filter((m) => memberKeys(room, m).length > 0)
+            .slice(0, limit)
+            .map((m) => {
+                const k = memberKey(room, m);
+                // 键与人物名不同 ⇒ 名字放进括号（「该打什么」在前，「他是谁」在后）
+                return k && k !== m.name ? `@${k}(${m.name})` : `@${m.name}`;
+            })
+    );
 }
 
 /**
@@ -910,13 +906,13 @@ export function memberOptions(room: MemberBag, limit = 4): string[] {
  * `@` 后面空名字（`room post --to "@"`）不能渲染成 `@@`（##377 review3 R5）。
  */
 export function addrDisplay(nameOrId: string): string {
-  const k = nameOrId.trim().replace(/^@+/, "");
-  return k ? `@${shortName(k)}` : "@（名字为空）";
+    const k = nameOrId.trim().replace(/^@+/, "");
+    return k ? `@${shortName(k)}` : "@（名字为空）";
 }
 
 /** 成员显示名（找不到就回落到 id —— 绝不显示空） */
 export function memberName(room: MemberBag, id: string): string {
-  return room?.members.find((m) => m.id === id)?.name ?? shortName(id);
+    return room?.members.find((m) => m.id === id)?.name ?? shortName(id);
 }
 
 /**
@@ -928,8 +924,8 @@ export function memberName(room: MemberBag, id: string): string {
  * 两段 id 上无差别，但一旦出现三段就会「提示的名字打不中」。收敛到这里。
  */
 export function lastSegment(id: string): string {
-  const i = id.lastIndexOf(":");
-  return i >= 0 ? id.slice(i + 1) : id;
+    const i = id.lastIndexOf(":");
+    return i >= 0 ? id.slice(i + 1) : id;
 }
 
 /** `agent:dev` → `dev`（正文前缀 / 气泡署名要短，模型与人都读得住） */
@@ -937,9 +933,9 @@ export const shortName = lastSegment;
 
 /** id → 稳定散列（配色 / 头像兜底都靠它：同一身份到哪都一样） */
 function idHash(id: string): number {
-  let h = 0;
-  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return h;
+    let h = 0;
+    for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return h;
 }
 
 const COLORS = ["#7c9cbf", "#c0a06a", "#8fbf7c", "#bf7c9c", "#9c7cbf", "#6abfc0", "#bfa07c", "#7cbfa0"];
@@ -952,8 +948,22 @@ export function memberColor(m: Pick<RoomMember, "id" | "color">): string {
 
 /** 头像池（emoji；数量够一屋子人不撞） */
 export const MEMBER_AVATARS = [
-    "🧑‍🚀", "🦊", "🐼", "🦉", "🐙", "🐧", "🐝", "🦁",
-    "🐨", "🐳", "🦄", "🐯", "🐸", "🦋", "🐺", "🐢",
+    "🧑‍🚀",
+    "🦊",
+    "🐼",
+    "🦉",
+    "🐙",
+    "🐧",
+    "🐝",
+    "🦁",
+    "🐨",
+    "🐳",
+    "🦄",
+    "🐯",
+    "🐸",
+    "🦋",
+    "🐺",
+    "🐢",
 ];
 
 /**
@@ -1154,11 +1164,7 @@ export function roomMembersValue(room: Room): RoomMembersValue {
 }
 
 /** 近期发言单元的值（`from` 用**能 @ 的键**：模型读到谁说的，就能 @ 回去） */
-export function roomRecentValue(
-    room: Room,
-    items: readonly RoomContextItem[],
-    omitted: number,
-): RoomRecentValue {
+export function roomRecentValue(room: Room, items: readonly RoomContextItem[], omitted: number): RoomRecentValue {
     return {
         items: items.map((it) => {
             const m = room.members.find((x) => x.id === it.author);
@@ -1169,13 +1175,10 @@ export function roomRecentValue(
 }
 
 /** 护栏文案（输入框上方那条）：本条将投递给谁 —— **@ 优先、focus 兜底、都没有 = 未投递** */
-export function deliveryHint(
-    recipients: readonly string[],
-    room: MemberBag,
-    routing: RoomRouting,
-): string {
+export function deliveryHint(recipients: readonly string[], room: MemberBag, routing: RoomRouting): string {
     // 笔记（§38.2）：**中性**文案 —— 不是"未投递"，是"本来就没打算投"
-    if (recipients.length === 0) return routing === "note" ? "笔记（不投递，只进房间历史）" : "未投递（没有 @ 收件人、也没有当前接受者）";
+    if (recipients.length === 0)
+        return routing === "note" ? "笔记（不投递，只进房间历史）" : "未投递（没有 @ 收件人、也没有当前接受者）";
     // 打错名字（##377 第 20 刀）：`@a` 这种解析不出来的会被原样放进 recipients ⇒ 别显示
     // "将投递给 a"（实测会这样，与后端「房间里没有这个成员」自相矛盾）—— 当场给可选名。
     const known = new Set((room?.members ?? []).map((m) => m.id));

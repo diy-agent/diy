@@ -62,13 +62,18 @@ export function useRoomFeed(props: { uri: () => string | null; rosterAutoFor?: s
      * 用户位置弹到 +1885px 再弹回；把 room 事件清空后 13 秒纹丝不动 ⇒ 因果坐实。
      */
     const feedSig = (es: RoomEvent[]): string =>
-        es.map((e) =>
-            // `turnId` 也进签名（##377 第 29 刀）：它是**读侧投影**，投递当下没有、队列项落位后才算得出来 ——
-            // 不进签名的话轮询永远认作"没变"，那条 say 的「回复在那一轮」入口就不会出现。
-            `${e.id}:${(e.deliveries ?? []).map((d) => `${d.memberId}=${d.status}=${d.turnId ?? ""}`).join(",")}:${e.error ?? ""}`,
-        ).join("|");
+        es
+            .map(
+                (e) =>
+                    // `turnId` 也进签名（##377 第 29 刀）：它是**读侧投影**，投递当下没有、队列项落位后才算得出来 ——
+                    // 不进签名的话轮询永远认作"没变"，那条 say 的「回复在那一轮」入口就不会出现。
+                    `${e.id}:${(e.deliveries ?? []).map((d) => `${d.memberId}=${d.status}=${d.turnId ?? ""}`).join(",")}:${e.error ?? ""}`,
+            )
+            .join("|");
     const roomSig = (r: Room | null): string =>
-        r === null ? "none" : `${r.focus ?? ""}#${r.members.map((m) => `${m.id}:${m.name}:${m.main === true ? "main" : ""}`).join(",")}`;
+        r === null
+            ? "none"
+            : `${r.focus ?? ""}#${r.members.map((m) => `${m.id}:${m.name}:${m.main === true ? "main" : ""}`).join(",")}`;
     let prevFeedSig: string | null = null;
     let prevRoomSig: string | null = null;
 
@@ -95,10 +100,7 @@ export function useRoomFeed(props: { uri: () => string | null; rosterAutoFor?: s
     };
 
     /** 输入框补全源（**memo 稳引用**：`memberCompletion` 每次调用返回新函数，见 MdEditor 的 prop 注释） */
-    const chatCompletions = createMemo(() => [
-        memberCompletion(() => roomMeta()?.members ?? []),
-        taskCompletion,
-    ]);
+    const chatCompletions = createMemo(() => [memberCompletion(() => roomMeta()?.members ?? []), taskCompletion]);
 
     /**
      * 外部行（key = `room:<事件 id>`）—— **按 id 复用行对象**：`<For>` 按引用 diff，
@@ -111,16 +113,18 @@ export function useRoomFeed(props: { uri: () => string | null; rosterAutoFor?: s
         prevRoomRows = roomFeed()
             .map(
                 (e) =>
-                    byKey.get(`room:${e.id}`) ??
-                    { key: `room:${e.id}`, tag: e.kind === "say" ? "room-say" : "room-reply", tsMs: Date.parse(e.ts) },
+                    byKey.get(`room:${e.id}`) ?? {
+                        key: `room:${e.id}`,
+                        tag: e.kind === "say" ? "room-say" : "room-reply",
+                        tsMs: Date.parse(e.ts),
+                    },
             )
             .filter((r) => Number.isFinite(r.tsMs))
             .sort((a, b) => a.tsMs - b.tsMs);
         return prevRoomRows;
     });
 
-    const roomEventOf = (key: string): RoomEvent | null =>
-        roomFeed().find((e) => `room:${e.id}` === key) ?? null;
+    const roomEventOf = (key: string): RoomEvent | null => roomFeed().find((e) => `room:${e.id}` === key) ?? null;
 
     /** 外部行的展开态（**页面级**：虚拟化摘行会卸载组件，放组件里会丢 —— 见 RoomReplyRow 头注） */
     const [replyOpen, setReplyOpen] = createSignal<Record<string, boolean>>({});

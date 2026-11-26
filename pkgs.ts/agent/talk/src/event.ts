@@ -10,7 +10,14 @@
 
 import { parseAnchor, type Anchor } from './anchor.js';
 import { TalkError } from './errors.js';
-import { rejectUnknown, takeIsoString, takeObject, takeString, takeStringArray, type ParseOptions } from './validate.js';
+import {
+    rejectUnknown,
+    takeIsoString,
+    takeObject,
+    takeString,
+    takeStringArray,
+    type ParseOptions,
+} from './validate.js';
 
 export interface Event {
     readonly id: string;

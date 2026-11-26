@@ -120,7 +120,13 @@ describe("按需取全文（##93 D）", () => {
         h.historyWindow.mockResolvedValueOnce(win(bigTurn(), "c1", false));
         await m.localChatStore.open(URI);
         // 重取回的段里没有这个 id（模拟日志被改写 / 块已被新帧替换）
-        h.historyWindow.mockResolvedValueOnce(win(bigTurn().filter((o) => o.id !== "t1_b"), "c1", false));
+        h.historyWindow.mockResolvedValueOnce(
+            win(
+                bigTurn().filter((o) => o.id !== "t1_b"),
+                "c1",
+                false,
+            ),
+        );
         expect(await m.loadFullBlockFields("t1_b")).toBeNull();
     });
 });

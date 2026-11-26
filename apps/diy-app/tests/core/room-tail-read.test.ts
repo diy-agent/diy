@@ -65,7 +65,8 @@ function seed(n: number, padChars = 0): void {
     mkdirSync(roomDir(ROOM), { recursive: true });
     const pad = "填充".repeat(padChars);
     const lines: string[] = [];
-    for (let i = 1; i <= n; i++) lines.push(JSON.stringify({ ...ev(i), ...(pad ? { text: `第 ${i} 条 ${pad}` } : {}) }));
+    for (let i = 1; i <= n; i++)
+        lines.push(JSON.stringify({ ...ev(i), ...(pad ? { text: `第 ${i} 条 ${pad}` } : {}) }));
     writeFileSync(roomEventsPath(ROOM), lines.join("\n") + "\n", "utf8");
 }
 
@@ -167,7 +168,10 @@ describe("③ 文件签名缓存 / 读盘合并", () => {
 
     it("并发两个订阅者 ⇒ 共享同一次读盘", async () => {
         seed(50);
-        const [a, b] = await Promise.all([readRoomViewCached(ROOM, { limit: 10 }), readRoomViewCached(ROOM, { limit: 10 })]);
+        const [a, b] = await Promise.all([
+            readRoomViewCached(ROOM, { limit: 10 }),
+            readRoomViewCached(ROOM, { limit: 10 }),
+        ]);
         expect(ids(a.events)).toEqual(ids(b.events));
         expect(roomReadStats().eventsFiles).toBe(1);
     });

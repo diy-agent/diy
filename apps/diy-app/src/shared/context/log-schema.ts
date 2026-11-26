@@ -91,6 +91,9 @@ export function readLlmLog(text: string): LogReadResult {
  */
 export function describeAnomalies(as: readonly LogAnomaly[]): string {
     if (as.length === 0) return "";
-    const head = as.slice(0, 3).map((a) => `第 ${a.line} 行（${a.reason}）`).join("；");
+    const head = as
+        .slice(0, 3)
+        .map((a) => `第 ${a.line} 行（${a.reason}）`)
+        .join("；");
     return as.length > 3 ? `${head}；等共 ${as.length} 条` : head;
 }

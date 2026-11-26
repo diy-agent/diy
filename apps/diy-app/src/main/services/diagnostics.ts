@@ -27,7 +27,7 @@ const MAX_LOG_BYTES = 5 * 1024 * 1024;
 
 /** 日志路径：DIY_HOME/log/<name>.log（name 缺省 main） */
 export function logFile(diyHome: string, name = "main"): string {
-  return path.join(diyHome, "log", `${name}.log`);
+    return path.join(diyHome, "log", `${name}.log`);
 }
 
 let logFilePath = "";
@@ -40,53 +40,53 @@ let installedHome = "";
  * 返回的函数自身绝不抛错，可安全用在 stream 'data' 回调里。
  */
 export function createLogSink(diyHome: string, name: string): (line: string) => void {
-  const file = logFile(diyHome, name);
-  try {
-    mkdirSync(path.dirname(file), { recursive: true });
-  } catch {
-    /* 已存在 */
-  }
-  return (line: string) => {
+    const file = logFile(diyHome, name);
     try {
-      if (existsSync(file) && statSync(file).size > MAX_LOG_BYTES) {
-        renameSync(file, `${file}.1`);
-      }
-      appendFileSync(file, `${line.endsWith("\n") ? line : `${line}\n`}`, "utf-8");
+        mkdirSync(path.dirname(file), { recursive: true });
     } catch {
-      /* 写不进去就丢掉，绝不能反噬调用方 */
+        /* 已存在 */
     }
-  };
+    return (line: string) => {
+        try {
+            if (existsSync(file) && statSync(file).size > MAX_LOG_BYTES) {
+                renameSync(file, `${file}.1`);
+            }
+            appendFileSync(file, `${line.endsWith("\n") ? line : `${line}\n`}`, "utf-8");
+        } catch {
+            /* 写不进去就丢掉，绝不能反噬调用方 */
+        }
+    };
 }
 
 /** 追加一行（自身绝不抛错：日志失败不能拖垮主流程） */
 function appendLine(line: string): void {
-  if (!logFilePath) return;
-  try {
+    if (!logFilePath) return;
     try {
-      if (statSync(logFilePath).size > MAX_LOG_BYTES) {
-        renameSync(logFilePath, `${logFilePath}.1`);
-      }
+        try {
+            if (statSync(logFilePath).size > MAX_LOG_BYTES) {
+                renameSync(logFilePath, `${logFilePath}.1`);
+            }
+        } catch {
+            /* 文件还不存在 */
+        }
+        appendFileSync(logFilePath, line, "utf-8");
     } catch {
-      /* 文件还不存在 */
+        /* 磁盘/权限异常：放弃本行 */
     }
-    appendFileSync(logFilePath, line, "utf-8");
-  } catch {
-    /* 磁盘/权限异常：放弃本行 */
-  }
 }
 
 function fmt(args: unknown[]): string {
-  return args
-    .map((a) => {
-      if (typeof a === "string") return a;
-      if (a instanceof Error) return `${a.stack ?? a.message}`;
-      try {
-        return JSON.stringify(a);
-      } catch {
-        return String(a);
-      }
-    })
-    .join(" ");
+    return args
+        .map((a) => {
+            if (typeof a === "string") return a;
+            if (a instanceof Error) return `${a.stack ?? a.message}`;
+            try {
+                return JSON.stringify(a);
+            } catch {
+                return String(a);
+            }
+        })
+        .join(" ");
 }
 
 /**
@@ -97,59 +97,58 @@ function fmt(args: unknown[]): string {
  * @param name    日志名（main / serve / cli），用于区分三类常驻进程
  */
 export function installDiagnostics(diyHome: string, name = "main"): void {
-  logFilePath = logFile(diyHome, name);
-  installedHome = diyHome;
-  try {
-    mkdirSync(path.dirname(logFilePath), { recursive: true });
-  } catch {
-    /* 已存在 */
-  }
+    logFilePath = logFile(diyHome, name);
+    installedHome = diyHome;
+    try {
+        mkdirSync(path.dirname(logFilePath), { recursive: true });
+    } catch {
+        /* 已存在 */
+    }
 
-  // ── 1. EPIPE 防护 ──
-  // stdout/stderr 是对端已关闭的管道时，write 触发 'error' 事件；无监听则升级成
-  // uncaughtException。挂上空监听即吞掉：管道断了就安静降级为只写文件日志。
-  for (const stream of [process.stdout, process.stderr]) {
-    stream?.on?.("error", () => {});
-  }
+    // ── 1. EPIPE 防护 ──
+    // stdout/stderr 是对端已关闭的管道时，write 触发 'error' 事件；无监听则升级成
+    // uncaughtException。挂上空监听即吞掉：管道断了就安静降级为只写文件日志。
+    for (const stream of [process.stdout, process.stderr]) {
+        stream?.on?.("error", () => {});
+    }
 
-  // ── 2. tee console → 文件 ──
-  // 保留原始 stdout/stderr（终端与 dev 编排仍可见），同时镜像到文件供事后/tailing 排查。
-  const originals = {
-    log: console.log.bind(console),
-    info: console.info.bind(console),
-    warn: console.warn.bind(console),
-    error: console.error.bind(console),
-  };
-  const tee = (level: keyof typeof originals) =>
-    (...args: unknown[]) => {
-      appendLine(`[${localISOString()}] [${level.toUpperCase()}] ${fmt(args)}\n`);
-      originals[level](...args);
+    // ── 2. tee console → 文件 ──
+    // 保留原始 stdout/stderr（终端与 dev 编排仍可见），同时镜像到文件供事后/tailing 排查。
+    const originals = {
+        log: console.log.bind(console),
+        info: console.info.bind(console),
+        warn: console.warn.bind(console),
+        error: console.error.bind(console),
     };
-  console.log = tee("log");
-  console.info = tee("info");
-  console.warn = tee("warn");
-  console.error = tee("error");
+    const tee =
+        (level: keyof typeof originals) =>
+        (...args: unknown[]) => {
+            appendLine(`[${localISOString()}] [${level.toUpperCase()}] ${fmt(args)}\n`);
+            originals[level](...args);
+        };
+    console.log = tee("log");
+    console.info = tee("info");
+    console.warn = tee("warn");
+    console.error = tee("error");
 
-  // ── 3. 兜底异常 → 文件，且不弹框 ──
-  // 覆盖 Electron 默认 uncaughtException 对话框（其内置守卫是
-  // process.listenerCount("uncaughtException") > 1，自注册即抑制弹框）。
-  // 异常一律落文件、进程继续存活，保持「app 随时可被 CLI / playwright-cli 操作」的常驻性质。
-  //
-  // TODO(渲染层可观测性): 此处只覆盖主进程 JS。渲染进程是独立上下文，它的未捕获异常、
-  //   白屏崩溃（如 window.transport 缺失导致的 ChannelClientBinding TypeError）以及
-  //   render-process-gone 目前都无处留痕 —— 只能靠 playwright attach 看 console。
-  //   后续接 webContents.on("console-message")（建议只收 error 级 + 节流）
-  //   与 on("render-process-gone") 转写进本日志。
-  process.on("uncaughtException", (err) => {
-    appendLine(`[${localISOString()}] [FATAL] uncaughtException: ${fmt([err])}\n`);
-    originals.error(`[diy] 未捕获异常（已记入 ${logFilePath}，不弹框）:`, err);
-  });
-  process.on("unhandledRejection", (reason) => {
-    appendLine(`[${localISOString()}] [FATAL] unhandledRejection: ${fmt([reason])}\n`);
-    originals.error(`[diy] 未处理 Promise 拒绝（已记入 ${logFilePath}）:`, reason);
-  });
+    // ── 3. 兜底异常 → 文件，且不弹框 ──
+    // 覆盖 Electron 默认 uncaughtException 对话框（其内置守卫是
+    // process.listenerCount("uncaughtException") > 1，自注册即抑制弹框）。
+    // 异常一律落文件、进程继续存活，保持「app 随时可被 CLI / playwright-cli 操作」的常驻性质。
+    //
+    // TODO(渲染层可观测性): 此处只覆盖主进程 JS。渲染进程是独立上下文，它的未捕获异常、
+    //   白屏崩溃（如 window.transport 缺失导致的 ChannelClientBinding TypeError）以及
+    //   render-process-gone 目前都无处留痕 —— 只能靠 playwright attach 看 console。
+    //   后续接 webContents.on("console-message")（建议只收 error 级 + 节流）
+    //   与 on("render-process-gone") 转写进本日志。
+    process.on("uncaughtException", (err) => {
+        appendLine(`[${localISOString()}] [FATAL] uncaughtException: ${fmt([err])}\n`);
+        originals.error(`[diy] 未捕获异常（已记入 ${logFilePath}，不弹框）:`, err);
+    });
+    process.on("unhandledRejection", (reason) => {
+        appendLine(`[${localISOString()}] [FATAL] unhandledRejection: ${fmt([reason])}\n`);
+        originals.error(`[diy] 未处理 Promise 拒绝（已记入 ${logFilePath}）:`, reason);
+    });
 
-  appendLine(
-    `\n${"─".repeat(60)}\n[${localISOString()}] [INFO] === ${name} 进程启动 pid=${process.pid} ===\n`,
-  );
+    appendLine(`\n${"─".repeat(60)}\n[${localISOString()}] [INFO] === ${name} 进程启动 pid=${process.pid} ===\n`);
 }

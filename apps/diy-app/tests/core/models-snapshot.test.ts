@@ -82,12 +82,19 @@ describe("snapshotCounts", () => {
 });
 
 describe("diffSnapshot", () => {
-    const p = (id: string, models: string[]) => provider(id, MODELS_DEV_NPM_ALLOW[0], models) as unknown as SpecProvider;
+    const p = (id: string, models: string[]) =>
+        provider(id, MODELS_DEV_NPM_ALLOW[0], models) as unknown as SpecProvider;
     const prev = { a: p("a", ["m1", "m2"]), b: p("b", ["m3"]) } as Record<string, SpecProvider>;
 
     it("无变化 → changed=false 且没有增删", () => {
         const d = diffSnapshot(prev, structuredClone(prev));
-        expect(d).toEqual({ changed: false, addedProviders: [], removedProviders: [], addedModels: 0, removedModels: 0 });
+        expect(d).toEqual({
+            changed: false,
+            addedProviders: [],
+            removedProviders: [],
+            addedModels: 0,
+            removedModels: 0,
+        });
     });
 
     it("provider 上/下线 + 模型增删都数清", () => {

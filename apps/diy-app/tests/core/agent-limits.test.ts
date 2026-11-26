@@ -15,9 +15,9 @@ describe("resolveLimits", () => {
         expect(resolveLimits({ maxSteps: -1 }, { DIY_LOCAL_MAX_OUTPUT_TOKENS: "abc" }).maxSteps).toBe(
             DEFAULT_LIMITS.maxSteps,
         );
-        expect(
-            resolveLimits({ maxSteps: -1 }, { DIY_LOCAL_MAX_OUTPUT_TOKENS: "abc" }).maxOutputTokens,
-        ).toBe(DEFAULT_LIMITS.maxOutputTokens);
+        expect(resolveLimits({ maxSteps: -1 }, { DIY_LOCAL_MAX_OUTPUT_TOKENS: "abc" }).maxOutputTokens).toBe(
+            DEFAULT_LIMITS.maxOutputTokens,
+        );
     });
     it("env 空串视为未设置", () => {
         expect(resolveLimits(null, { DIY_LOCAL_MAX_STEPS: "" }).maxSteps).toBe(DEFAULT_LIMITS.maxSteps);

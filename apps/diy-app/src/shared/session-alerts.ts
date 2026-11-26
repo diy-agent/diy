@@ -84,11 +84,7 @@ export const ALERT_QUEUE_ACTION_LABEL = "看留言";
  * @param next 这一次快照
  * @param opts.autoPull 用户的「自动拉回」开关（缺省开）；关掉只降级为 L1 toast，**不丢提示**
  */
-export function alertsOf(
-    prev: Record<string, NavRow>,
-    next: NavRow[],
-    opts: { autoPull: boolean },
-): SessionAlert[] {
+export function alertsOf(prev: Record<string, NavRow>, next: NavRow[], opts: { autoPull: boolean }): SessionAlert[] {
     const out: SessionAlert[] = [];
     for (const r of next) {
         const p = prev[r.uri];

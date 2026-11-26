@@ -55,7 +55,9 @@ import type { BlockNode } from "../../src/main/services/local-blocks";
 const chatSource = (): string =>
     readdirSync(join(__dirname, "..", "..", "src", "renderer_solid", "components", "local-chat"))
         .filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))
-        .map((f) => readFileSync(join(__dirname, "..", "..", "src", "renderer_solid", "components", "local-chat", f), "utf-8"))
+        .map((f) =>
+            readFileSync(join(__dirname, "..", "..", "src", "renderer_solid", "components", "local-chat", f), "utf-8"),
+        )
         .join("\n");
 
 function n(
@@ -137,7 +139,7 @@ describe("liveTailOf：活动块（就地画在文档序里）", () => {
     it("**正文也是「收取中的数据」**：text 一生效，活动块就是它（2026-10-11 口径修正）", () => {
         // 旧规则（R17）活动块只认过程叶子 ⇒ 正文流在框**下面**，正文流完再遇到工具时
         // 又整段跳回框上面（用户实测的"消失跳位"）。新口径：中间载体装**所有**收取中的东西。
-        const t = turn(tool("x1"), say("a1", ));
+        const t = turn(tool("x1"), say("a1"));
         expect(liveTailOf(t, true)!.id).toBe("a1");
     });
 
@@ -153,7 +155,7 @@ describe("liveTailOf：活动块（就地画在文档序里）", () => {
     it("取的是**文档序最后一个非用户叶子**（think/tool/text 混排也一样）", () => {
         const t = turn(think("k1"), tool("x1"), think("k2", false));
         expect(liveTailOf(t, true)!.id).toBe("k2");
-        const t2 = turn(think("k1"), tool("x1"), say("a1", ));
+        const t2 = turn(think("k1"), tool("x1"), say("a1"));
         expect(liveTailOf(t2, true)!.id).toBe("a1");
     });
 });
@@ -247,9 +249,7 @@ describe("contentItems：3 级起的中间区（正文逐条 + 连续过程一�
     /** 视图：正文/用户/error 取 id，过程段取「首叶子 id + 段内 id 表」 */
     const view = (its: ReturnType<typeof contentItems>) =>
         its.map((i) =>
-            i.kind === "proc"
-                ? { proc: i.key, parts: i.parts.map((n) => n.id) }
-                : { kind: i.kind, id: i.node.id },
+            i.kind === "proc" ? { proc: i.key, parts: i.parts.map((n) => n.id) } : { kind: i.kind, id: i.node.id },
         );
 
     it("正文各自成项（不折行），连续过程折成一行 bar —— 文档序原样", () => {
@@ -499,11 +499,7 @@ describe("expandableOf：这一行点开会不会多出东西", () => {
 });
 
 describe("turnRows：过程历史行（**不含结尾槽**）", () => {
-    const t = turn(
-        step("s1", [user("u1")]),
-        step("s2", [think("k1"), tool("x1")]),
-        step("s3", [say("a1")]),
-    );
+    const t = turn(step("s1", [user("u1")]), step("s2", [think("k1"), tool("x1")]), step("s3", [say("a1")]));
     const shape = (rows: ReturnType<typeof turnRows>) =>
         rows.map((r) => (r.kind === "proc" ? `proc:${r.parts.map((p) => p.id).join(",")}` : `${r.kind}:${r.key}`));
 
@@ -594,9 +590,7 @@ describe("tailOf：结尾槽的四种形态（自暴露 · 恒显）", () => {
     });
 
     it("异常结束但末件是正文 → 结论已覆盖，不再叠一个结束点", () => {
-        expect(tailOf(ended("aborted", { source: "abort" }, [tool("x1"), say("a1")]), null)!.kind).toBe(
-            "conclusion",
-        );
+        expect(tailOf(ended("aborted", { source: "abort" }, [tool("x1"), say("a1")]), null)!.kind).toBe("conclusion");
     });
 });
 
@@ -665,12 +659,9 @@ describe("结束点（endleaf）tag 的 tooltip：必须跟着 endReason 走", (
     // review ##253 小项4：notice 是 main 写下的"更细的那句"，**每个分支都该压过模板文案**
     // （原来只有 completed 分支读它）。
     it("max-tokens 带 notice → 用 notice（与 completed 分支同一优先级）", () => {
-        const t = n(
-            "turn",
-            "t1",
-            { endReason: { type: "max-tokens", data: {} }, notice: "长思考撞上限" },
-            [step("s1", [think("k1")])],
-        );
+        const t = n("turn", "t1", { endReason: { type: "max-tokens", data: {} }, notice: "长思考撞上限" }, [
+            step("s1", [think("k1")]),
+        ]);
         expect(endLeafTip(t)).toBe("长思考撞上限");
     });
 

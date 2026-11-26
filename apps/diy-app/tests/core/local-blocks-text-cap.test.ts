@@ -9,7 +9,14 @@
 //   ④ 默认关：main 侧那份 store 是投递真源（`blocksToMessages` 靠全文重建 messages），裁了就是丢上下文。
 
 import { describe, it, expect } from "vitest";
-import { BlockStore, RENDER_TEXT_CAP, compactOps, displayText, toTree, type Op } from "../../src/main/services/local-blocks";
+import {
+    BlockStore,
+    RENDER_TEXT_CAP,
+    compactOps,
+    displayText,
+    toTree,
+    type Op,
+} from "../../src/main/services/local-blocks";
 import { parseCutMarkers } from "@diy-agent/context/format/cut-marker";
 
 const store = () => new BlockStore({ textCap: RENDER_TEXT_CAP });

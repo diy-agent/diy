@@ -12,41 +12,41 @@
  * 消费端慢时的正确行为是背压到上游（`push` 端是本地内存数组，不是网络），而不是悄悄丢帧。
  */
 export class AsyncQueue<T> {
-  private q: T[] = [];
-  private resolvers: Array<(v: IteratorResult<T>) => void> = [];
-  private closed = false;
+    private q: T[] = [];
+    private resolvers: Array<(v: IteratorResult<T>) => void> = [];
+    private closed = false;
 
-  push(v: T): void {
-    if (this.closed) return;
-    if (this.resolvers.length > 0) {
-      this.resolvers.shift()!({ value: v, done: false });
-    } else {
-      this.q.push(v);
-    }
-  }
-
-  close(): void {
-    this.closed = true;
-    while (this.resolvers.length > 0) {
-      this.resolvers.shift()!({ value: undefined as unknown as T, done: true });
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: (): Promise<IteratorResult<T>> => {
-        if (this.q.length > 0) {
-          return Promise.resolve({ value: this.q.shift()!, done: false });
+    push(v: T): void {
+        if (this.closed) return;
+        if (this.resolvers.length > 0) {
+            this.resolvers.shift()!({ value: v, done: false });
+        } else {
+            this.q.push(v);
         }
-        if (this.closed) {
-          return Promise.resolve({ value: undefined as unknown as T, done: true });
+    }
+
+    close(): void {
+        this.closed = true;
+        while (this.resolvers.length > 0) {
+            this.resolvers.shift()!({ value: undefined as unknown as T, done: true });
         }
-        return new Promise((resolve) => {
-          this.resolvers.push(resolve);
-        });
-      },
-    };
-  }
+    }
+
+    [Symbol.asyncIterator](): AsyncIterator<T> {
+        return {
+            next: (): Promise<IteratorResult<T>> => {
+                if (this.q.length > 0) {
+                    return Promise.resolve({ value: this.q.shift()!, done: false });
+                }
+                if (this.closed) {
+                    return Promise.resolve({ value: undefined as unknown as T, done: true });
+                }
+                return new Promise((resolve) => {
+                    this.resolvers.push(resolve);
+                });
+            },
+        };
+    }
 }
 
 /**
@@ -62,40 +62,36 @@ export class AsyncQueue<T> {
  * （症状：`subscriberCount` 虚高，直到下一条事件才归零）。监听 abort 把队列关掉即可让悬挂的
  * `next()` 立刻以 done 恢复，两条出口等价、都只跑一次。
  */
-export function withCleanup<T>(
-  q: AsyncQueue<T>,
-  cleanup: () => void,
-  signal?: AbortSignal,
-): AsyncIterable<T> {
-  let done = false;
-  const onAbort = () => {
-    q.close(); // 唤醒悬挂的 next()（此后有缓冲帧仍可读，close 只是不再阻塞）
-    once();
-  };
-  const once = () => {
-    if (done) return;
-    done = true;
-    signal?.removeEventListener("abort", onAbort);
-    cleanup();
-  };
-  // 断连早于订阅（signal 已 abort）：立即收尾，不留悬挂
-  if (signal?.aborted) onAbort();
-  else signal?.addEventListener("abort", onAbort, { once: true });
-  return {
-    [Symbol.asyncIterator]: () => {
-      const inner = q[Symbol.asyncIterator]();
-      return {
-        next: () =>
-          inner.next().then((r) => {
-            if (r.done) once();
-            return r;
-          }),
-        return: () => {
-          q.close();
-          once();
-          return Promise.resolve({ value: undefined, done: true as const });
+export function withCleanup<T>(q: AsyncQueue<T>, cleanup: () => void, signal?: AbortSignal): AsyncIterable<T> {
+    let done = false;
+    const onAbort = () => {
+        q.close(); // 唤醒悬挂的 next()（此后有缓冲帧仍可读，close 只是不再阻塞）
+        once();
+    };
+    const once = () => {
+        if (done) return;
+        done = true;
+        signal?.removeEventListener("abort", onAbort);
+        cleanup();
+    };
+    // 断连早于订阅（signal 已 abort）：立即收尾，不留悬挂
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+    return {
+        [Symbol.asyncIterator]: () => {
+            const inner = q[Symbol.asyncIterator]();
+            return {
+                next: () =>
+                    inner.next().then((r) => {
+                        if (r.done) once();
+                        return r;
+                    }),
+                return: () => {
+                    q.close();
+                    once();
+                    return Promise.resolve({ value: undefined, done: true as const });
+                },
+            };
         },
-      };
-    },
-  };
+    };
 }

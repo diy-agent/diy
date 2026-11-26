@@ -5,4 +5,4 @@
 // 那正是「测试都过、缓存还是失效」的来源。
 //
 // 本文件只做兼容转发；新代码直接 import 包。
-export * from '@diy-agent/context/snapshot';
+export * from "@diy-agent/context/snapshot";

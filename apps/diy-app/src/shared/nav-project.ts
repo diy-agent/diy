@@ -19,43 +19,43 @@ import { partitionByPin } from "./nav-pin";
 
 /** 项目引用（渲染组头 / 色标所需的全部信息） */
 export interface ProjectRef {
-  /** 项目 id（= URI 第二段） */
-  id: string;
-  /** 显示名：任务树的 project_label（如 `~/git/diy/diy`）；查不到时退化 id */
-  label: string;
-  /** 项目路径（title 提示用，可缺） */
-  path?: string;
+    /** 项目 id（= URI 第二段） */
+    id: string;
+    /** 显示名：任务树的 project_label（如 `~/git/diy/diy`）；查不到时退化 id */
+    label: string;
+    /** 项目路径（title 提示用，可缺） */
+    path?: string;
 }
 
 /** 从任务树抽「项目 id → 项目引用」索引（项目节点 = kind:"project"） */
 export function projectIndexOf(nodes: TaskNodeShape[]): Map<string, ProjectRef> {
-  const out = new Map<string, ProjectRef>();
-  for (const n of nodes) {
-    if (n.kind !== "project" || !n.project) continue;
-    out.set(n.project, {
-      id: n.project,
-      label: n.project_label ?? n.title ?? n.project,
-      path: n.project_path,
-    });
-  }
-  return out;
+    const out = new Map<string, ProjectRef>();
+    for (const n of nodes) {
+        if (n.kind !== "project" || !n.project) continue;
+        out.set(n.project, {
+            id: n.project,
+            label: n.project_label ?? n.title ?? n.project,
+            path: n.project_path,
+        });
+    }
+    return out;
 }
 
 /** 任务 URI → 项目 id；非任务 URI / 空 → ""（调用方按「无项目」处理） */
 export function projectOfCtx(ctx: string | null | undefined): string {
-  return ctx ? projectFromUri(ctx) : "";
+    return ctx ? projectFromUri(ctx) : "";
 }
 
 export interface NavProjectGroup<T> {
-  /** null = 该组 tab 没有项目归属（ctx 为空或非任务 URI） */
-  project: ProjectRef | null;
-  /** 组内 tab（置顶者在前，见 groupByProject 的 pinned 参数） */
-  tabs: T[];
-  /**
-   * 组内置顶项个数（= `tabs` 前缀里置顶的条数）。0 = 本组没有置顶项。
-   * 渲染侧用它画「置顶段 / 普通段」之间的分隔线（##356 ②的分隔线在 ##302 分组后按组内计）。
-   */
-  pinnedCount: number;
+    /** null = 该组 tab 没有项目归属（ctx 为空或非任务 URI） */
+    project: ProjectRef | null;
+    /** 组内 tab（置顶者在前，见 groupByProject 的 pinned 参数） */
+    tabs: T[];
+    /**
+     * 组内置顶项个数（= `tabs` 前缀里置顶的条数）。0 = 本组没有置顶项。
+     * 渲染侧用它画「置顶段 / 普通段」之间的分隔线（##356 ②的分隔线在 ##302 分组后按组内计）。
+     */
+    pinnedCount: number;
 }
 
 /**
@@ -86,56 +86,60 @@ let cacheOut: AnyGroup[] = [];
 
 /** 逐元素比：组序、组头（id/label/path）、组内置顶数、组内 tab 对象引用，全同才算「没变」 */
 function sameGroups(a: AnyGroup[], b: AnyGroup[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i]!;
-    const y = b[i]!;
-    if (x.project?.id !== y.project?.id || x.project?.label !== y.project?.label || x.project?.path !== y.project?.path)
-      return false;
-    if (x.pinnedCount !== y.pinnedCount) return false;
-    if (x.tabs.length !== y.tabs.length) return false;
-    for (let j = 0; j < x.tabs.length; j++) if (x.tabs[j] !== y.tabs[j]) return false;
-  }
-  return true;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        const x = a[i]!;
+        const y = b[i]!;
+        if (
+            x.project?.id !== y.project?.id ||
+            x.project?.label !== y.project?.label ||
+            x.project?.path !== y.project?.path
+        )
+            return false;
+        if (x.pinnedCount !== y.pinnedCount) return false;
+        if (x.tabs.length !== y.tabs.length) return false;
+        for (let j = 0; j < x.tabs.length; j++) if (x.tabs[j] !== y.tabs[j]) return false;
+    }
+    return true;
 }
 
 export function groupByProject<T extends { ctx: string | null; key?: string }>(
-  tabs: T[],
-  index: Map<string, ProjectRef>,
-  pinnedKeys?: ReadonlySet<string>,
+    tabs: T[],
+    index: Map<string, ProjectRef>,
+    pinnedKeys?: ReadonlySet<string>,
 ): NavProjectGroup<T>[] {
-  const groups: NavProjectGroup<T>[] = [];
-  const byId = new Map<string, NavProjectGroup<T>>();
-  for (const t of tabs) {
-    const pid = projectOfCtx(t.ctx);
-    let g = byId.get(pid);
-    if (!g) {
-      g = { project: pid ? (index.get(pid) ?? { id: pid, label: pid }) : null, tabs: [], pinnedCount: 0 };
-      byId.set(pid, g);
-      groups.push(g);
+    const groups: NavProjectGroup<T>[] = [];
+    const byId = new Map<string, NavProjectGroup<T>>();
+    for (const t of tabs) {
+        const pid = projectOfCtx(t.ctx);
+        let g = byId.get(pid);
+        if (!g) {
+            g = { project: pid ? (index.get(pid) ?? { id: pid, label: pid }) : null, tabs: [], pinnedCount: 0 };
+            byId.set(pid, g);
+            groups.push(g);
+        }
+        g.tabs.push(t);
     }
-    g.tabs.push(t);
-  }
-  // 置顶分区在**组内**做（复用 ##356 的 partitionByPin：区内保序、只分区不排序 ——
-  // 同一份规则只有一个实现）。喂进来的顺序若已分区（App 喂 navTabs().all），这里是恒等变换，
-  // 只是顺带报出每组的前缀条数；喂未分区的顺序则真的把组内置顶项提上来。
-  if (pinnedKeys) {
-    for (const g of groups) {
-      const { pinned, rest } = partitionByPin(g.tabs, (t) => t.key ?? "", pinnedKeys);
-      g.tabs = [...pinned, ...rest];
-      g.pinnedCount = pinned.length;
+    // 置顶分区在**组内**做（复用 ##356 的 partitionByPin：区内保序、只分区不排序 ——
+    // 同一份规则只有一个实现）。喂进来的顺序若已分区（App 喂 navTabs().all），这里是恒等变换，
+    // 只是顺带报出每组的前缀条数；喂未分区的顺序则真的把组内置顶项提上来。
+    if (pinnedKeys) {
+        for (const g of groups) {
+            const { pinned, rest } = partitionByPin(g.tabs, (t) => t.key ?? "", pinnedKeys);
+            g.tabs = [...pinned, ...rest];
+            g.pinnedCount = pinned.length;
+        }
     }
-  }
-  // 输入变了而输出逐元素相同 → 复用旧结果（保住外层 For 的 DOM）
-  if (cacheOut.length > 0 && sameGroups(groups as AnyGroup[], cacheOut)) return cacheOut as NavProjectGroup<T>[];
-  cacheOut = groups as AnyGroup[];
-  return groups;
+    // 输入变了而输出逐元素相同 → 复用旧结果（保住外层 For 的 DOM）
+    if (cacheOut.length > 0 && sameGroups(groups as AnyGroup[], cacheOut)) return cacheOut as NavProjectGroup<T>[];
+    cacheOut = groups as AnyGroup[];
+    return groups;
 }
 
 /** nav 的一个渲染段：置顶区（跨项目，恒在最上）或某个项目组 */
 export interface NavSection<T> extends NavProjectGroup<T> {
-  /** true = 置顶区（##466）：各行来自不同项目，project 恒为 null。缺省 = 普通项目组 */
-  pinned?: boolean;
+    /** true = 置顶区（##466）：各行来自不同项目，project 恒为 null。缺省 = 普通项目组 */
+    pinned?: boolean;
 }
 
 /**
@@ -151,25 +155,25 @@ export interface NavSection<T> extends NavProjectGroup<T> {
  * 代价：置顶区内父子不保证相邻，缩进因此由 taskDepths 的栈判据兜底（祖先不在上方就不缩进）。
  */
 export function navSections<T extends { ctx: string | null; key?: string }>(
-  tabs: T[],
-  index: Map<string, ProjectRef>,
-  pinnedKeys?: readonly string[],
+    tabs: T[],
+    index: Map<string, ProjectRef>,
+    pinnedKeys?: readonly string[],
 ): NavSection<T>[] {
-  if (!pinnedKeys || pinnedKeys.length === 0) {
-    // 原样返回 groupByProject 的结果（它自己做了引用复用 —— nav 的 DOM 复用靠它）
-    return groupByProject(tabs, index) as NavSection<T>[];
-  }
-  const set = new Set(pinnedKeys);
-  const byKey = new Map(tabs.map((t) => [t.key ?? "", t]));
-  // 置顶区内顺序 = 调用方给的有序数组；已关掉的 tab 的键自动落空（App 侧 prune 也会清）
-  const pinned = pinnedKeys.map((k) => byKey.get(k)).filter((t): t is T => !!t);
-  const rest = tabs.filter((t) => !set.has(t.key ?? ""));
-  const out: NavSection<T>[] = [];
-  if (pinned.length > 0) {
-    out.push({ pinned: true, project: null, tabs: pinned, pinnedCount: pinned.length });
-  }
-  for (const g of groupByProject(rest, index)) out.push({ ...g, pinned: false });
-  return out;
+    if (!pinnedKeys || pinnedKeys.length === 0) {
+        // 原样返回 groupByProject 的结果（它自己做了引用复用 —— nav 的 DOM 复用靠它）
+        return groupByProject(tabs, index) as NavSection<T>[];
+    }
+    const set = new Set(pinnedKeys);
+    const byKey = new Map(tabs.map((t) => [t.key ?? "", t]));
+    // 置顶区内顺序 = 调用方给的有序数组；已关掉的 tab 的键自动落空（App 侧 prune 也会清）
+    const pinned = pinnedKeys.map((k) => byKey.get(k)).filter((t): t is T => !!t);
+    const rest = tabs.filter((t) => !set.has(t.key ?? ""));
+    const out: NavSection<T>[] = [];
+    if (pinned.length > 0) {
+        out.push({ pinned: true, project: null, tabs: pinned, pinnedCount: pinned.length });
+    }
+    for (const g of groupByProject(rest, index)) out.push({ ...g, pinned: false });
+    return out;
 }
 
 /**
@@ -178,9 +182,9 @@ export function navSections<T extends { ctx: string | null; key?: string }>(
  * 在**收起态（rail，装不下组头文字）**也读得出来。
  */
 export function projectHue(id: string): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
-  return h;
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
+    return h;
 }
 
 /**
@@ -190,5 +194,5 @@ export function projectHue(id: string): number {
  * 而色相是运行期从 id 算出来的（动态拼 class 名会静默不生成 → 全是透明）。
  */
 export function projectColor(id: string): string {
-  return `oklch(70% 0.13 ${projectHue(id)})`;
+    return `oklch(70% 0.13 ${projectHue(id)})`;
 }

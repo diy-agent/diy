@@ -44,54 +44,54 @@ export const CONCLUSION_LINES_MAX = 40;
 // ─── 缓存字段（get/set/reset，内部吞异常 + 留痕） ─────────────
 
 export interface CacheField<T> {
-  readonly key: string;
-  readonly defaultValue: T;
-  get(): T;
-  set(v: T): void;
-  reset(): void;
+    readonly key: string;
+    readonly defaultValue: T;
+    get(): T;
+    set(v: T): void;
+    reset(): void;
 }
 
 interface CacheFieldSpec<T> {
-  /** 反序列化 + 校验；返回 null 表示无效 → 回默认值 */
-  parse?: (raw: string) => T | null;
-  serialize: (v: T) => string;
-  defaultValue: T;
+    /** 反序列化 + 校验；返回 null 表示无效 → 回默认值 */
+    parse?: (raw: string) => T | null;
+    serialize: (v: T) => string;
+    defaultValue: T;
 }
 
 function field<T>(key: string, spec: CacheFieldSpec<T>): CacheField<T> {
-  return {
-    key,
-    defaultValue: spec.defaultValue,
-    get() {
-      try {
-        const raw = localStorage.getItem(key);
-        if (raw === null) return spec.defaultValue;
-        const v = spec.parse ? spec.parse(raw) : (raw as unknown as T);
-        if (v === null) {
-          console.warn(`[ui-state] ${key} 解析失败，回默认值:`, raw);
-          return spec.defaultValue;
-        }
-        return v;
-      } catch (e) {
-        console.warn(`[ui-state] ${key} 读取失败，回默认值:`, e);
-        return spec.defaultValue;
-      }
-    },
-    set(v) {
-      try {
-        localStorage.setItem(key, spec.serialize(v));
-      } catch (e) {
-        console.warn(`[ui-state] ${key} 写入失败（忽略，仅影响下次默认值）:`, e);
-      }
-    },
-    reset() {
-      try {
-        localStorage.removeItem(key);
-      } catch {
-        /* 存储不可用忽略 */
-      }
-    },
-  };
+    return {
+        key,
+        defaultValue: spec.defaultValue,
+        get() {
+            try {
+                const raw = localStorage.getItem(key);
+                if (raw === null) return spec.defaultValue;
+                const v = spec.parse ? spec.parse(raw) : (raw as unknown as T);
+                if (v === null) {
+                    console.warn(`[ui-state] ${key} 解析失败，回默认值:`, raw);
+                    return spec.defaultValue;
+                }
+                return v;
+            } catch (e) {
+                console.warn(`[ui-state] ${key} 读取失败，回默认值:`, e);
+                return spec.defaultValue;
+            }
+        },
+        set(v) {
+            try {
+                localStorage.setItem(key, spec.serialize(v));
+            } catch (e) {
+                console.warn(`[ui-state] ${key} 写入失败（忽略，仅影响下次默认值）:`, e);
+            }
+        },
+        reset() {
+            try {
+                localStorage.removeItem(key);
+            } catch {
+                /* 存储不可用忽略 */
+            }
+        },
+    };
 }
 
 // ─── 字段池（属性名 = key 完全一致，单一事实来源） ─────────
@@ -119,318 +119,318 @@ export const PERSONA_LEFT_W_MAX = 720;
 
 /** 视图 cache 字段池：Caches.<模块>_<组件>_<用途>.get()/.set()/.reset() */
 export const Caches = {
-  /** 任务树：展开节点集 */
-  diy_task_tree_expanded: field("diy_task_tree_expanded", {
-    parse: (raw) => {
-      try {
-        const a = JSON.parse(raw);
-        return Array.isArray(a) ? (a.filter((x) => typeof x === "string") as string[]) : null;
-      } catch {
-        return null;
-      }
-    },
-    serialize: (v) => JSON.stringify(v),
-    defaultValue: [] as string[],
-  }),
-  /** 任务树：排序（`<键>:<asc|desc>`）。
-   *  parse 只校验**形状**（键名 + 方向），不校验键是否是我们认识的排序键 ——
-   *  键清单属于 TaskTree 的业务知识（`src/shared/task-list.ts`），
-   *  这里替下游做判断会重现「parse 越权过滤元素」的旧坑（见 diy_tabs_opened 注释）。
-   *  不认识的键由 TaskTree 回落默认排序。 */
-  diy_task_tree_sort: field<string>("diy_task_tree_sort", {
-    parse: (raw) => (/^[a-z_]+:(asc|desc)$/.test(raw) ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "created:asc",
-  }),
-  /**
-   * 通知信箱的**已读水位**（##436 块 3）：最后一条「已看过」的条目 id（空 = 全未读）。
-   *
-   * 为什么落视图 cache 而不是新开一份账本文件：它记的是「用户看到哪儿了」，不是业务事实 ——
-   * 丢了只会多报未读（`shared/inbox.unreadCountOf` 对"水位找不到"就是全部算未读）。
-   * 与 `sessionStore` 的会话已读水位（`diy_sessions_seen`）同一取向：core 不需要知道谁看过什么。
-   */
-  diy_inbox_last_read: field<string>("diy_inbox_last_read", {
-    parse: (raw) => (raw.length <= 120 ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "",
-  }),
-  /** 任务树：搜索关键词（视图 cache：丢了只是清掉搜索框，无数据损失） */
-  diy_task_tree_query: field<string>("diy_task_tree_query", {
-    parse: (raw) => (raw.length <= 200 ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "",
-  }),
-  /** 任务树：滚动容器 scrollTop（>=1 才恢复，0 表示未滚动过） */
-  diy_task_tree_scroll: field("diy_task_tree_scroll", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return Number.isFinite(v) && v >= 1 ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: 0,
-  }),
-  /** 会话总览：范围切片（`all` = 含账本历史 / `session` = 只看本次启动活跃过的）。
-   *  parse 只校验**形状**（这两个字面量），不校验它是不是"有意义的范围" ——
-   *  取值域属于业务知识（`src/shared/session-query.ts`），这里替下游判断会重现「parse 越权」的旧坑。 */
-  diy_session_overview_scope: field<string>("diy_session_overview_scope", {
-    parse: (raw) => (raw === "all" || raw === "session" ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "all",
-  }),
-  /** 会话总览：状态切片（逗号分隔；空串 = 不按切片过滤）。认识的键由 session-query 收窄。 */
-  diy_session_overview_slices: field<string>("diy_session_overview_slices", {
-    parse: (raw) => (raw.length <= 200 ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "",
-  }),
-  /** 会话总览：搜索词（视图 cache：丢了只是清掉搜索框，无数据损失） */
-  diy_session_overview_query: field<string>("diy_session_overview_query", {
-    parse: (raw) => (raw.length <= 200 ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "",
-  }),
-  /** 会话总览：排序（`<键>:<asc|desc>`）。同 diy_task_tree_sort：只校验形状，键清单归 session-query。 */
-  diy_session_overview_sort: field<string>("diy_session_overview_sort", {
-    parse: (raw) => (/^[a-zA-Z_]+:(asc|desc)$/.test(raw) ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "attention:asc",
-  }),
-  /** 任务详情面板宽度（px，范围 360-4000；渲染时另受窗口上限约束，见 TaskDetailPanel.panelMax） */
-  diy_task_detail_width: field("diy_task_detail_width", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return v >= 360 && v <= 4000 ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: 560,
-  }),
-  /** 任务内容的两列布局里**左列**（属性 + 任务树）的宽度（px）。
-   *
-   *  左列是「查资料」性质的窄栏，宽度固定、由用户调；右列（正文）吃掉剩余宽度 ——
-   *  否则正文一长就把窄栏一起拉宽，两块都变成巨宽（视觉上很难受）。
-   *  窄容器（<480px：任务执行页左栏 / 悬停覆盖层）压根不走两列，此值不生效。 */
-  diy_task_detail_left_width: field("diy_task_detail_left_width", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return v >= TASK_DETAIL_LEFT_MIN && v <= TASK_DETAIL_LEFT_MAX ? v : null;
-    },
-    serialize: (v) => String(v),
-    // 280 是「560px 面板里左列约一半」的取值：再宽正文就只剩一条缝了
-    defaultValue: 280,
-  }),
-  /** agent 人物面板高度（px）。拖动下缘调高 / 双击手柄复位后落盘；0 = 未设置（用 2/3 视口）。 */
-  diy_persona_drawer_height: field("diy_persona_drawer_height", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return v >= PERSONA_DRAWER_H_MIN && v <= PERSONA_DRAWER_H_MAX ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: 0,
-  }),
-  /** agent 人物面板左列（人物列表）宽度（px）。拖动中缝调宽 / 双击复位后落盘；0 = 未设置（用 1/3 宽）。 */
-  diy_persona_left_width: field("diy_persona_left_width", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return v >= PERSONA_LEFT_W_MIN && v <= PERSONA_LEFT_W_MAX ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: 0,
-  }),
-  /** 侧栏（左侧导航）展开宽度（px）。拖动右缘调宽 / 双击手柄复位后落盘，重启恢复。
-   *  收起态 rail 宽度（2.5rem）不在这里 —— 那是固定几何，不是用户偏好。 */
-  diy_nav_width: field("diy_nav_width", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return v >= NAV_W_MIN && v <= NAV_W_MAX ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: NAV_W_DEFAULT,
-  }),
+    /** 任务树：展开节点集 */
+    diy_task_tree_expanded: field("diy_task_tree_expanded", {
+        parse: (raw) => {
+            try {
+                const a = JSON.parse(raw);
+                return Array.isArray(a) ? (a.filter((x) => typeof x === "string") as string[]) : null;
+            } catch {
+                return null;
+            }
+        },
+        serialize: (v) => JSON.stringify(v),
+        defaultValue: [] as string[],
+    }),
+    /** 任务树：排序（`<键>:<asc|desc>`）。
+     *  parse 只校验**形状**（键名 + 方向），不校验键是否是我们认识的排序键 ——
+     *  键清单属于 TaskTree 的业务知识（`src/shared/task-list.ts`），
+     *  这里替下游做判断会重现「parse 越权过滤元素」的旧坑（见 diy_tabs_opened 注释）。
+     *  不认识的键由 TaskTree 回落默认排序。 */
+    diy_task_tree_sort: field<string>("diy_task_tree_sort", {
+        parse: (raw) => (/^[a-z_]+:(asc|desc)$/.test(raw) ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "created:asc",
+    }),
+    /**
+     * 通知信箱的**已读水位**（##436 块 3）：最后一条「已看过」的条目 id（空 = 全未读）。
+     *
+     * 为什么落视图 cache 而不是新开一份账本文件：它记的是「用户看到哪儿了」，不是业务事实 ——
+     * 丢了只会多报未读（`shared/inbox.unreadCountOf` 对"水位找不到"就是全部算未读）。
+     * 与 `sessionStore` 的会话已读水位（`diy_sessions_seen`）同一取向：core 不需要知道谁看过什么。
+     */
+    diy_inbox_last_read: field<string>("diy_inbox_last_read", {
+        parse: (raw) => (raw.length <= 120 ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "",
+    }),
+    /** 任务树：搜索关键词（视图 cache：丢了只是清掉搜索框，无数据损失） */
+    diy_task_tree_query: field<string>("diy_task_tree_query", {
+        parse: (raw) => (raw.length <= 200 ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "",
+    }),
+    /** 任务树：滚动容器 scrollTop（>=1 才恢复，0 表示未滚动过） */
+    diy_task_tree_scroll: field("diy_task_tree_scroll", {
+        parse: (raw) => {
+            const v = Number(raw);
+            return Number.isFinite(v) && v >= 1 ? v : null;
+        },
+        serialize: (v) => String(v),
+        defaultValue: 0,
+    }),
+    /** 会话总览：范围切片（`all` = 含账本历史 / `session` = 只看本次启动活跃过的）。
+     *  parse 只校验**形状**（这两个字面量），不校验它是不是"有意义的范围" ——
+     *  取值域属于业务知识（`src/shared/session-query.ts`），这里替下游判断会重现「parse 越权」的旧坑。 */
+    diy_session_overview_scope: field<string>("diy_session_overview_scope", {
+        parse: (raw) => (raw === "all" || raw === "session" ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "all",
+    }),
+    /** 会话总览：状态切片（逗号分隔；空串 = 不按切片过滤）。认识的键由 session-query 收窄。 */
+    diy_session_overview_slices: field<string>("diy_session_overview_slices", {
+        parse: (raw) => (raw.length <= 200 ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "",
+    }),
+    /** 会话总览：搜索词（视图 cache：丢了只是清掉搜索框，无数据损失） */
+    diy_session_overview_query: field<string>("diy_session_overview_query", {
+        parse: (raw) => (raw.length <= 200 ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "",
+    }),
+    /** 会话总览：排序（`<键>:<asc|desc>`）。同 diy_task_tree_sort：只校验形状，键清单归 session-query。 */
+    diy_session_overview_sort: field<string>("diy_session_overview_sort", {
+        parse: (raw) => (/^[a-zA-Z_]+:(asc|desc)$/.test(raw) ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "attention:asc",
+    }),
+    /** 任务详情面板宽度（px，范围 360-4000；渲染时另受窗口上限约束，见 TaskDetailPanel.panelMax） */
+    diy_task_detail_width: field("diy_task_detail_width", {
+        parse: (raw) => {
+            const v = Number(raw);
+            return v >= 360 && v <= 4000 ? v : null;
+        },
+        serialize: (v) => String(v),
+        defaultValue: 560,
+    }),
+    /** 任务内容的两列布局里**左列**（属性 + 任务树）的宽度（px）。
+     *
+     *  左列是「查资料」性质的窄栏，宽度固定、由用户调；右列（正文）吃掉剩余宽度 ——
+     *  否则正文一长就把窄栏一起拉宽，两块都变成巨宽（视觉上很难受）。
+     *  窄容器（<480px：任务执行页左栏 / 悬停覆盖层）压根不走两列，此值不生效。 */
+    diy_task_detail_left_width: field("diy_task_detail_left_width", {
+        parse: (raw) => {
+            const v = Number(raw);
+            return v >= TASK_DETAIL_LEFT_MIN && v <= TASK_DETAIL_LEFT_MAX ? v : null;
+        },
+        serialize: (v) => String(v),
+        // 280 是「560px 面板里左列约一半」的取值：再宽正文就只剩一条缝了
+        defaultValue: 280,
+    }),
+    /** agent 人物面板高度（px）。拖动下缘调高 / 双击手柄复位后落盘；0 = 未设置（用 2/3 视口）。 */
+    diy_persona_drawer_height: field("diy_persona_drawer_height", {
+        parse: (raw) => {
+            const v = Number(raw);
+            return v >= PERSONA_DRAWER_H_MIN && v <= PERSONA_DRAWER_H_MAX ? v : null;
+        },
+        serialize: (v) => String(v),
+        defaultValue: 0,
+    }),
+    /** agent 人物面板左列（人物列表）宽度（px）。拖动中缝调宽 / 双击复位后落盘；0 = 未设置（用 1/3 宽）。 */
+    diy_persona_left_width: field("diy_persona_left_width", {
+        parse: (raw) => {
+            const v = Number(raw);
+            return v >= PERSONA_LEFT_W_MIN && v <= PERSONA_LEFT_W_MAX ? v : null;
+        },
+        serialize: (v) => String(v),
+        defaultValue: 0,
+    }),
+    /** 侧栏（左侧导航）展开宽度（px）。拖动右缘调宽 / 双击手柄复位后落盘，重启恢复。
+     *  收起态 rail 宽度（2.5rem）不在这里 —— 那是固定几何，不是用户偏好。 */
+    diy_nav_width: field("diy_nav_width", {
+        parse: (raw) => {
+            const v = Number(raw);
+            return v >= NAV_W_MIN && v <= NAV_W_MAX ? v : null;
+        },
+        serialize: (v) => String(v),
+        defaultValue: NAV_W_DEFAULT,
+    }),
 
-  /** nav 任务项的**置顶键集合**（##356 ②）。键 = tab key（`<pageId>:<ctx>`），
-   *  与 `diy_tabs_opened` 同源；顺序无意义（展示顺序由 tab 列表决定，见 shared/nav-pin）。
-   *
-   *  为什么落视图 cache 而不是任务数据：置顶是「我看哪些」的视图偏好，不是任务事实
-   *  （tabStore 的持久化契约只存 `{pageId, ctx}` 两个真输入）。丢了只是失去置顶，无数据损失。
-   *
-   *  ⚠️ 与 `diy_tabs_opened` 同款：这里只校验「是不是数组」，**不做元素级清洗**
-   *  （元素类型收敛在 store/navPinStore 读盘处）。 */
-  diy_nav_pinned: field<unknown[]>("diy_nav_pinned", {
-    parse: (raw) => {
-      try {
-        const a: unknown = JSON.parse(raw);
-        return Array.isArray(a) ? a : null;
-      } catch {
-        return null;
-      }
-    },
-    serialize: (v) => JSON.stringify(v),
-    defaultValue: [] as unknown[],
-  }),
-  /** 打开的 tab。**只存真信息**：`{ pageId, ctx }[]`，顺序即显示顺序。
-   *
-   *  派生数据（key / parent / taskAncestors）**不落盘**，由 tabStore 从注册表与任务树
-   *  现算 —— 曾经它们被一起写进来，于是任务改父后导航结构永远显示旧快照（165）。
-   *  解析后的富视图见 store/tabStore 的 TabItem。
-   *
-   *  ⚠️ 这里只做「是数组吗」这一层判断，**不在这里过滤元素**：
-   *  元素级的清洗（结构不对的条目丢掉、旧格式纯 URI 字符串升级、派生字段丢弃）在
-   *  tabStore.load() 里 —— 那里知道条目长什么样，本文件不知道。
-   *
-   *  曾经这里写 `a.filter(x => typeof x === "string")`，而 tabStore 已升级为写对象，
-   *  于是写进去的对象被读回时全被滤掉 → **重启后打开的 tab 清零**（真实故障）。
-   *  教训：视图 cache 的 parse 只该校验「整体形状」，别替下游做元素级业务判断。 */
-  diy_tabs_opened: field<unknown[]>("diy_tabs_opened", {
-    parse: (raw) => {
-      try {
-        const a: unknown = JSON.parse(raw);
-        return Array.isArray(a) ? a : null;
-      } catch {
-        return null;
-      }
-    },
-    serialize: (v) => JSON.stringify(v),
-    defaultValue: [] as unknown[],
-  }),
-  /** 各 page 的布局用户态（area 隐藏/最大化 + track 尺寸覆盖）。
-   *  视图 cache：丢了只是回到开发者默认布局，无数据损失。
-   *  key = pageId，结构见 store/layoutStore 的 PageLayoutState。 */
-  diy_layout_state: field<Record<string, unknown>>("diy_layout_state", {
-    parse: (raw) => {
-      try {
-        const o: unknown = JSON.parse(raw);
-        return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, unknown>) : null;
-      } catch {
-        return null;
-      }
-    },
-    serialize: (v) => JSON.stringify(v),
-    defaultValue: {},
-  }),
-  /** 当前激活的 tab URI（不在 opened 里 = 回落到任务树） */
-  diy_tabs_active: field<string>("diy_tabs_active", {
-    parse: (raw) => (raw && raw.length > 0 ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "",
-  }),
-  /** 1 级「摘要结论」的可视行数（**默认 3**；结论下缘拖拽调整，见 LocalChatPage 的结论拖条），
-   *  parse 夹在 1-40。
-   *  MD 渲染/原文开关对摘要同样生效（2026-10-11 反馈：摘要态强制原文是错的）。 */
-  diy_chat_conclusion_lines: field<number>("diy_chat_conclusion_lines", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return Number.isInteger(v) && v >= CONCLUSION_LINES_MIN && v <= CONCLUSION_LINES_MAX ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: CONCLUSION_LINES_DEFAULT,
-  }),
-  /** 聊天**全局展开级别**（1-4，见 lib/chat-fold 的 TurnLevel）：顶部 `n/4 展开` 按钮。
-   *  它是"我习惯看多细"的长期偏好，故落盘；单轮的手动覆盖不落盘（轮次 id 无限增长）。 */
-  diy_chat_level: field<number>("diy_chat_level", {
-    parse: (raw) => {
-      const v = Number(raw);
-      return isTurnLevel(v) ? v : null;
-    },
-    serialize: (v) => String(v),
-    defaultValue: DEFAULT_TURN_LEVEL,
-  }),
-  /** 聊天正文渲染模式（true=Markdown 富文本，false=原文） */
-  diy_chat_md: field<boolean>("diy_chat_md", {
-    parse: (raw) => (raw === "1" ? true : raw === "0" ? false : null),
-    serialize: (v) => (v ? "1" : "0"),
-    defaultValue: true,
-  }),
-  /** 界面样式（皮肤）：竖栏 / 卡片。**系统整体样式**偏好，非聊天页私有开关 ——
-   *  改它 = 整个界面换一套风格（本期只落地 agent 输出区，其余页面暂无差异）。 */
-  diy_app_skin: field<DiySkin>("diy_app_skin", {
-    parse: (raw) => (raw === "rail" || raw === "card" ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "card",
-  }),
-  /** 主题偏好（白名单 dark/light） */
-  diy_app_theme: field<DiyTheme>("diy_app_theme", {
-    parse: (raw) => (raw === "dark" || raw === "light" ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "dark",
-  }),
-  /** 试验场编辑器配色（见 lib/editor-theme 的清单；"diy" = 跟随应用主题） */
-  diy_lab_editor_theme: field<string>("diy_lab_editor_theme", {
-    parse: (raw) => (raw && raw.length < 40 ? raw : null),
-    serialize: (v) => v,
-    defaultValue: "diy",
-  }),
-  /** 上下文树页（ctxlab）的折叠块展开态：key = history/stats/structure/vardiff/sysdiff/rtdiff/stepsess。
-   *  与提示词页 labViews 同性质（用户选择，切页/重开不该回到默认），故走同一入口。
-   *  （`ui view expand ctx.<key> open|closed` 也走这里；已删的 `change`/`request` 不再有键。） */
-  diy_ctxlab_fold: field<Record<string, boolean>>("diy_ctxlab_fold", {
-    parse: (raw) => {
-      try {
-        const o: unknown = JSON.parse(raw);
-        return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, boolean>) : null;
-      } catch {
-        return null;
-      }
-    },
-    serialize: (v) => JSON.stringify(v),
-    defaultValue: {
-      // 左栏：结构树（划分操作）默认展开，变更列表收起（看变化时才展开）
-      structure: true,
-      history: false,
-      // 中栏两块 diff 默认展开（它们是这一页的主角）
-      sysdiff: true,
-      rtdiff: true,
-    },
-  }),
-  /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：
-   *  否则拖动左栏会按比例缩放所有列，永远有列看不全；这里存下来后拖左栏不再改变列宽，
-   *  表比可视区宽就往左栏出横向滚动条。parse 只收合法数字并夹在 32-1200 之间。 */
-  diy_lab_cols_vars: jsonCols("diy_lab_cols_vars", [96, 224]),
-  diy_lab_cols_vals: jsonCols("diy_lab_cols_vals", [110, 210]),
-  diy_lab_cols_trace: jsonCols("diy_lab_cols_trace", [96, 96, 84, 48]),
-  /** 试验场未存盘草稿（project → { relpath → 正文 }）。
-   *  存这里而不是组件 signal：App.tsx 用 <Show> 挂死页面，切页即卸载 → 半编辑内容全丢。
-   *  按 project 分桶，切到别的项目不会看到/不会写入上一个项目的草稿。 */
-  diy_lab_drafts: field<Record<string, Record<string, string>>>("diy_lab_drafts", {
-    parse: (raw) => {
-      try {
-        const o: unknown = JSON.parse(raw);
-        if (!o || typeof o !== "object" || Array.isArray(o)) return null;
-        const out: Record<string, Record<string, string>> = {};
-        for (const [pid, bucket] of Object.entries(o as Record<string, unknown>)) {
-          if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) continue;
-          const m: Record<string, string> = {};
-          for (const [rel, body] of Object.entries(bucket as Record<string, unknown>)) {
-            if (typeof body === "string") m[rel] = body;
-          }
-          if (Object.keys(m).length > 0) out[pid] = m;
-        }
-        return out;
-      } catch {
-        return null;
-      }
-    },
-    serialize: (v) => JSON.stringify(v),
-    defaultValue: {},
-  }),
+    /** nav 任务项的**置顶键集合**（##356 ②）。键 = tab key（`<pageId>:<ctx>`），
+     *  与 `diy_tabs_opened` 同源；顺序无意义（展示顺序由 tab 列表决定，见 shared/nav-pin）。
+     *
+     *  为什么落视图 cache 而不是任务数据：置顶是「我看哪些」的视图偏好，不是任务事实
+     *  （tabStore 的持久化契约只存 `{pageId, ctx}` 两个真输入）。丢了只是失去置顶，无数据损失。
+     *
+     *  ⚠️ 与 `diy_tabs_opened` 同款：这里只校验「是不是数组」，**不做元素级清洗**
+     *  （元素类型收敛在 store/navPinStore 读盘处）。 */
+    diy_nav_pinned: field<unknown[]>("diy_nav_pinned", {
+        parse: (raw) => {
+            try {
+                const a: unknown = JSON.parse(raw);
+                return Array.isArray(a) ? a : null;
+            } catch {
+                return null;
+            }
+        },
+        serialize: (v) => JSON.stringify(v),
+        defaultValue: [] as unknown[],
+    }),
+    /** 打开的 tab。**只存真信息**：`{ pageId, ctx }[]`，顺序即显示顺序。
+     *
+     *  派生数据（key / parent / taskAncestors）**不落盘**，由 tabStore 从注册表与任务树
+     *  现算 —— 曾经它们被一起写进来，于是任务改父后导航结构永远显示旧快照（165）。
+     *  解析后的富视图见 store/tabStore 的 TabItem。
+     *
+     *  ⚠️ 这里只做「是数组吗」这一层判断，**不在这里过滤元素**：
+     *  元素级的清洗（结构不对的条目丢掉、旧格式纯 URI 字符串升级、派生字段丢弃）在
+     *  tabStore.load() 里 —— 那里知道条目长什么样，本文件不知道。
+     *
+     *  曾经这里写 `a.filter(x => typeof x === "string")`，而 tabStore 已升级为写对象，
+     *  于是写进去的对象被读回时全被滤掉 → **重启后打开的 tab 清零**（真实故障）。
+     *  教训：视图 cache 的 parse 只该校验「整体形状」，别替下游做元素级业务判断。 */
+    diy_tabs_opened: field<unknown[]>("diy_tabs_opened", {
+        parse: (raw) => {
+            try {
+                const a: unknown = JSON.parse(raw);
+                return Array.isArray(a) ? a : null;
+            } catch {
+                return null;
+            }
+        },
+        serialize: (v) => JSON.stringify(v),
+        defaultValue: [] as unknown[],
+    }),
+    /** 各 page 的布局用户态（area 隐藏/最大化 + track 尺寸覆盖）。
+     *  视图 cache：丢了只是回到开发者默认布局，无数据损失。
+     *  key = pageId，结构见 store/layoutStore 的 PageLayoutState。 */
+    diy_layout_state: field<Record<string, unknown>>("diy_layout_state", {
+        parse: (raw) => {
+            try {
+                const o: unknown = JSON.parse(raw);
+                return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, unknown>) : null;
+            } catch {
+                return null;
+            }
+        },
+        serialize: (v) => JSON.stringify(v),
+        defaultValue: {},
+    }),
+    /** 当前激活的 tab URI（不在 opened 里 = 回落到任务树） */
+    diy_tabs_active: field<string>("diy_tabs_active", {
+        parse: (raw) => (raw && raw.length > 0 ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "",
+    }),
+    /** 1 级「摘要结论」的可视行数（**默认 3**；结论下缘拖拽调整，见 LocalChatPage 的结论拖条），
+     *  parse 夹在 1-40。
+     *  MD 渲染/原文开关对摘要同样生效（2026-10-11 反馈：摘要态强制原文是错的）。 */
+    diy_chat_conclusion_lines: field<number>("diy_chat_conclusion_lines", {
+        parse: (raw) => {
+            const v = Number(raw);
+            return Number.isInteger(v) && v >= CONCLUSION_LINES_MIN && v <= CONCLUSION_LINES_MAX ? v : null;
+        },
+        serialize: (v) => String(v),
+        defaultValue: CONCLUSION_LINES_DEFAULT,
+    }),
+    /** 聊天**全局展开级别**（1-4，见 lib/chat-fold 的 TurnLevel）：顶部 `n/4 展开` 按钮。
+     *  它是"我习惯看多细"的长期偏好，故落盘；单轮的手动覆盖不落盘（轮次 id 无限增长）。 */
+    diy_chat_level: field<number>("diy_chat_level", {
+        parse: (raw) => {
+            const v = Number(raw);
+            return isTurnLevel(v) ? v : null;
+        },
+        serialize: (v) => String(v),
+        defaultValue: DEFAULT_TURN_LEVEL,
+    }),
+    /** 聊天正文渲染模式（true=Markdown 富文本，false=原文） */
+    diy_chat_md: field<boolean>("diy_chat_md", {
+        parse: (raw) => (raw === "1" ? true : raw === "0" ? false : null),
+        serialize: (v) => (v ? "1" : "0"),
+        defaultValue: true,
+    }),
+    /** 界面样式（皮肤）：竖栏 / 卡片。**系统整体样式**偏好，非聊天页私有开关 ——
+     *  改它 = 整个界面换一套风格（本期只落地 agent 输出区，其余页面暂无差异）。 */
+    diy_app_skin: field<DiySkin>("diy_app_skin", {
+        parse: (raw) => (raw === "rail" || raw === "card" ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "card",
+    }),
+    /** 主题偏好（白名单 dark/light） */
+    diy_app_theme: field<DiyTheme>("diy_app_theme", {
+        parse: (raw) => (raw === "dark" || raw === "light" ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "dark",
+    }),
+    /** 试验场编辑器配色（见 lib/editor-theme 的清单；"diy" = 跟随应用主题） */
+    diy_lab_editor_theme: field<string>("diy_lab_editor_theme", {
+        parse: (raw) => (raw && raw.length < 40 ? raw : null),
+        serialize: (v) => v,
+        defaultValue: "diy",
+    }),
+    /** 上下文树页（ctxlab）的折叠块展开态：key = history/stats/structure/vardiff/sysdiff/rtdiff/stepsess。
+     *  与提示词页 labViews 同性质（用户选择，切页/重开不该回到默认），故走同一入口。
+     *  （`ui view expand ctx.<key> open|closed` 也走这里；已删的 `change`/`request` 不再有键。） */
+    diy_ctxlab_fold: field<Record<string, boolean>>("diy_ctxlab_fold", {
+        parse: (raw) => {
+            try {
+                const o: unknown = JSON.parse(raw);
+                return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, boolean>) : null;
+            } catch {
+                return null;
+            }
+        },
+        serialize: (v) => JSON.stringify(v),
+        defaultValue: {
+            // 左栏：结构树（划分操作）默认展开，变更列表收起（看变化时才展开）
+            structure: true,
+            history: false,
+            // 中栏两块 diff 默认展开（它们是这一页的主角）
+            sysdiff: true,
+            rtdiff: true,
+        },
+    }),
+    /** 试验场表格列宽（px 数组，按表分字段）。**表的列宽必须与容器宽度解耦**：
+     *  否则拖动左栏会按比例缩放所有列，永远有列看不全；这里存下来后拖左栏不再改变列宽，
+     *  表比可视区宽就往左栏出横向滚动条。parse 只收合法数字并夹在 32-1200 之间。 */
+    diy_lab_cols_vars: jsonCols("diy_lab_cols_vars", [96, 224]),
+    diy_lab_cols_vals: jsonCols("diy_lab_cols_vals", [110, 210]),
+    diy_lab_cols_trace: jsonCols("diy_lab_cols_trace", [96, 96, 84, 48]),
+    /** 试验场未存盘草稿（project → { relpath → 正文 }）。
+     *  存这里而不是组件 signal：App.tsx 用 <Show> 挂死页面，切页即卸载 → 半编辑内容全丢。
+     *  按 project 分桶，切到别的项目不会看到/不会写入上一个项目的草稿。 */
+    diy_lab_drafts: field<Record<string, Record<string, string>>>("diy_lab_drafts", {
+        parse: (raw) => {
+            try {
+                const o: unknown = JSON.parse(raw);
+                if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+                const out: Record<string, Record<string, string>> = {};
+                for (const [pid, bucket] of Object.entries(o as Record<string, unknown>)) {
+                    if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) continue;
+                    const m: Record<string, string> = {};
+                    for (const [rel, body] of Object.entries(bucket as Record<string, unknown>)) {
+                        if (typeof body === "string") m[rel] = body;
+                    }
+                    if (Object.keys(m).length > 0) out[pid] = m;
+                }
+                return out;
+            } catch {
+                return null;
+            }
+        },
+        serialize: (v) => JSON.stringify(v),
+        defaultValue: {},
+    }),
 };
 
 /** 列宽数组字段：JSON 存整数数组（列宽 px），越界/脏数据回退默认值 */
 function jsonCols(key: string, fallback: number[]) {
-  return field<number[]>(key, {
-    parse: (raw) => {
-      try {
-        const o: unknown = JSON.parse(raw);
-        if (!Array.isArray(o) || o.length !== fallback.length) return null;
-        const nums = o.map((v) => (typeof v === "number" ? Math.round(v) : NaN));
-        if (nums.some((v) => !Number.isFinite(v) || v < 32 || v > 1200)) return null;
-        return nums;
-      } catch {
-        return null;
-      }
-    },
-    serialize: (v) => JSON.stringify(v),
-    defaultValue: fallback,
-  });
+    return field<number[]>(key, {
+        parse: (raw) => {
+            try {
+                const o: unknown = JSON.parse(raw);
+                if (!Array.isArray(o) || o.length !== fallback.length) return null;
+                const nums = o.map((v) => (typeof v === "number" ? Math.round(v) : NaN));
+                if (nums.some((v) => !Number.isFinite(v) || v < 32 || v > 1200)) return null;
+                return nums;
+            } catch {
+                return null;
+            }
+        },
+        serialize: (v) => JSON.stringify(v),
+        defaultValue: fallback,
+    });
 }
 
 /** 已注册字段（clearUiCache 枚举用：字段池即全部，新增字段自动纳入） */
@@ -438,64 +438,64 @@ const allFields: CacheField<unknown>[] = Object.values(Caches);
 
 /** 历史上散落的旧 key（历次命名迭代）：清理时一并捎走，避免升级残留 */
 const LEGACY_KEYS = [
-  // 带 cache 段的下划线版（diy_cache_ui_*）
-  "diy_cache_ui_task_tree_expanded",
-  "diy_cache_ui_task_tree_scroll",
-  "diy_cache_ui_task_detail_width",
-  "diy_cache_ui_chat_density",
-  "diy_cache_ui_app_theme",
-  // 点分路径版（diy.cache.ui.* / diy.ui.cache.*）
-  "diy.cache.ui.task.tree.expanded",
-  "diy.cache.ui.task.tree.scroll",
-  "diy.cache.ui.task.detail.width",
-  "diy.cache.ui.chat.density",
-  "diy.cache.ui.chat.md",
-  "diy.cache.ui.app.theme",
-  "diy.ui.cache.task-tree.expanded",
-  "diy.ui.cache.task-tree.scroll",
-  "diy.ui.cache.detail-width",
-  "diy.ui.cache.chat-density",
-  "diy.ui.cache.theme",
-  // 最早的裸 key
-  "diy-task-tree-expanded",
-  "diy-task-tree-scroll",
-  "diy-detail-width",
-  "diy-local-density",
-  "diy-theme",
-  // 三档密度（脉络/阅读/审计）2026-10-04 取消 → 改「正常/大纲」两态，旧 key 一并清
-  "diy_chat_density",
-  "diy_chat_compact",
-  "diy_chat_compact_lines",
-  // 「正常/大纲」两态 2026-10-11 取消 → 改**展开级别**（全局 `n/4 展开` + 单轮覆盖），
-  // 模式开关与旧行数 key 一并清
-  "diy_chat_outline",
-  "diy_chat_outline_lines",
-  // 试验场早期直写的宽度 key（已收进字段池）
-  "lab4.leftW",
-  "lab4.rightW",
-  "diy_lab_open",
+    // 带 cache 段的下划线版（diy_cache_ui_*）
+    "diy_cache_ui_task_tree_expanded",
+    "diy_cache_ui_task_tree_scroll",
+    "diy_cache_ui_task_detail_width",
+    "diy_cache_ui_chat_density",
+    "diy_cache_ui_app_theme",
+    // 点分路径版（diy.cache.ui.* / diy.ui.cache.*）
+    "diy.cache.ui.task.tree.expanded",
+    "diy.cache.ui.task.tree.scroll",
+    "diy.cache.ui.task.detail.width",
+    "diy.cache.ui.chat.density",
+    "diy.cache.ui.chat.md",
+    "diy.cache.ui.app.theme",
+    "diy.ui.cache.task-tree.expanded",
+    "diy.ui.cache.task-tree.scroll",
+    "diy.ui.cache.detail-width",
+    "diy.ui.cache.chat-density",
+    "diy.ui.cache.theme",
+    // 最早的裸 key
+    "diy-task-tree-expanded",
+    "diy-task-tree-scroll",
+    "diy-detail-width",
+    "diy-local-density",
+    "diy-theme",
+    // 三档密度（脉络/阅读/审计）2026-10-04 取消 → 改「正常/大纲」两态，旧 key 一并清
+    "diy_chat_density",
+    "diy_chat_compact",
+    "diy_chat_compact_lines",
+    // 「正常/大纲」两态 2026-10-11 取消 → 改**展开级别**（全局 `n/4 展开` + 单轮覆盖），
+    // 模式开关与旧行数 key 一并清
+    "diy_chat_outline",
+    "diy_chat_outline_lines",
+    // 试验场早期直写的宽度 key（已收进字段池）
+    "lab4.leftW",
+    "lab4.rightW",
+    "diy_lab_open",
 ];
 
 /** 清空全部视图 cache：注册字段池 + 前缀兜底（防未来直写漏注册）+ 旧 key 兼容。返回删除条数。 */
 export function clearUiCache(): number {
-  let n = 0;
-  const del = (k: string) => {
-    try {
-      if (localStorage.getItem(k) !== null) {
-        localStorage.removeItem(k);
-        n++;
-      }
-    } catch {
-      /* 存储不可用忽略 */
+    let n = 0;
+    const del = (k: string) => {
+        try {
+            if (localStorage.getItem(k) !== null) {
+                localStorage.removeItem(k);
+                n++;
+            }
+        } catch {
+            /* 存储不可用忽略 */
+        }
+    };
+    const keys = new Set(allFields.map((f) => f.key));
+    // 先收集再删：枚举 localStorage.key(i) 时删除会使下标前移
+    for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("diy_")) keys.add(k);
     }
-  };
-  const keys = new Set(allFields.map((f) => f.key));
-  // 先收集再删：枚举 localStorage.key(i) 时删除会使下标前移
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k && k.startsWith("diy_")) keys.add(k);
-  }
-  for (const k of keys) del(k);
-  for (const k of LEGACY_KEYS) del(k);
-  return n;
+    for (const k of keys) del(k);
+    for (const k of LEGACY_KEYS) del(k);
+    return n;
 }

@@ -25,7 +25,7 @@
 // `<session>/compaction.json` 里的 `cutSeq` 重放同一次切分。状态读写由宿主注入
 // （本文件不碰 fs，便于单测）。
 
-import type { ChatMessage, Compactor, LlmPort } from "@diy-agent/session";
+import type { ChatMessage, Compactor, LlmPort } from '@diy-agent/session';
 import {
     type CompactableMessage,
     emptySummary,
@@ -38,7 +38,7 @@ import {
     summaryHasContent,
     triggerTokensOf,
     type SummaryData,
-} from "@diy-agent/compaction";
+} from '@diy-agent/compaction';
 
 /** 落盘的压缩状态（`<session>/compaction.json`） */
 export interface BotCompactionState {
@@ -58,14 +58,14 @@ export interface BotCompactionState {
 /** 压缩事件（宿主拿去做日志 / 观测；UI 那条痕走消息流里的 agent-notice） */
 export type BotCompactionEvent =
     | {
-          readonly kind: "compacted";
+          readonly kind: 'compacted';
           readonly dropped: number;
           readonly retainedTokens: number;
           readonly windowTokens: number;
           readonly hasSummary: boolean;
           readonly at: string;
       }
-    | { readonly kind: "failed"; readonly error: string; readonly at: string };
+    | { readonly kind: 'failed'; readonly error: string; readonly at: string };
 
 export interface BotCompactorOptions {
     /** 模型窗口上限（token）；`null` = 未知 ⇒ 永不自动压缩（不猜数） */
@@ -99,7 +99,7 @@ export const SUMMARY_INPUT_MAX_CHARS = 60_000;
 const SUMMARY_HEAD_CHARS = 20_000;
 
 /** 一条 agent-notice 的 data 标记（`wireOf` 不解释它；只用于识别「这条是压缩痕迹」） */
-const NOTICE_MARK = "compaction";
+const NOTICE_MARK = 'compaction';
 
 /**
  * 造一个 bot 压缩器。
@@ -160,11 +160,11 @@ export function createBotCompactor(options: BotCompactorOptions): BotCompactor {
             }));
             const range = selectCompactableRange(compactable, {
                 windowTokens,
-                costOf: (m) => estimateTokensOf(JSON.stringify(m.content ?? "")),
+                costOf: (m) => estimateTokensOf(JSON.stringify(m.content ?? '')),
             });
             if (range === null) return history;
             // system 消息（行为指令 / 系统上下文）一律不丢：切点必须在它之后
-            const head = all.findIndex((message) => message.role !== "system");
+            const head = all.findIndex((message) => message.role !== 'system');
             if (head >= 0 && range.cut <= head) return history;
 
             const dropped = all.slice(0, range.cut);
@@ -192,35 +192,35 @@ export function createBotCompactor(options: BotCompactorOptions): BotCompactor {
             stepTokens = null;
 
             const rebuilt: ChatMessage[] = [];
-            if (summaryText !== "") {
+            if (summaryText !== '') {
                 rebuilt.push({
-                    role: "user",
-                    type: "human",
+                    role: 'user',
+                    type: 'human',
                     text: summaryText,
                     at: now().getTime(),
-                    data: { summary: { kind: "history-summary", turns: summary.turns } },
+                    data: { summary: { kind: 'history-summary', turns: summary.turns } },
                 });
             }
             const notice = [
                 `上下文已压缩：丢弃 ${range.dropped} 条早前消息（保留 ${range.retainedTokens} token，窗口 ${windowTokens}）。`,
-                summaryText === "" ? "摘要未生成，需要细节请查会话日志。" : "以上是摘要，据此接续。",
-            ].join("");
+                summaryText === '' ? '摘要未生成，需要细节请查会话日志。' : '以上是摘要，据此接续。',
+            ].join('');
             rebuilt.push(noticeOf(notice, at));
             rebuilt.push(...kept);
 
             note({
-                kind: "compacted",
+                kind: 'compacted',
                 dropped: range.dropped,
                 retainedTokens: range.retainedTokens,
                 windowTokens,
-                hasSummary: summaryText !== "",
+                hasSummary: summaryText !== '',
                 at,
             });
             return rebuilt;
         } catch (error) {
             // ⑤ 降级：不压，原历史照常投递；痕迹留在消息流里（同一轮不会重复插）
             const message = error instanceof Error ? error.message : String(error);
-            note({ kind: "failed", error: message, at });
+            note({ kind: 'failed', error: message, at });
             // 连续失败不刷屏：最近几条里已有失败痕迹就不再插
             if (hasFailureNotice(history)) return history;
             return [...history, noticeOf(`上下文压缩失败（本轮不压，下轮再试）：${message}`, at)];
@@ -229,22 +229,24 @@ export function createBotCompactor(options: BotCompactorOptions): BotCompactor {
 
     /** 对被丢弃段生成结构化摘要；任何失败都退化成空摘要（压缩照做，只是没摘要） */
     async function summarize(dropped: readonly ChatMessage[]): Promise<SummaryData> {
-        const turns = dropped.filter((message) => message.type === "human").length;
+        const turns = dropped.filter((message) => message.type === 'human').length;
         const text = clipForSummary(dropped);
-        if (text === "") return emptySummary(turns);
-        let raw = "";
+        if (text === '') return emptySummary(turns);
+        let raw = '';
         for await (const delta of options.llm.chat(
-            [{ role: "user", text: summaryExtractionPrompt(text, turns) }],
+            [{ role: 'user', text: summaryExtractionPrompt(text, turns) }],
             options.model === undefined ? {} : { model: options.model },
         )) {
-            if (delta.type === "text") raw += delta.text;
+            if (delta.type === 'text') raw += delta.text;
         }
         const parsed = parseSummary(raw);
         if (parsed === null) {
-            note({ kind: "failed", error: "摘要返回的不是合法 JSON（压缩继续，摘要为空）", at: now().toISOString() });
+            note({ kind: 'failed', error: '摘要返回的不是合法 JSON（压缩继续，摘要为空）', at: now().toISOString() });
             return emptySummary(turns);
         }
-        return summaryHasContent(parsed) || parsed.turns > 0 ? { ...parsed, turns: parsed.turns || turns } : emptySummary(turns);
+        return summaryHasContent(parsed) || parsed.turns > 0
+            ? { ...parsed, turns: parsed.turns || turns }
+            : emptySummary(turns);
     }
 
     return {
@@ -275,13 +277,13 @@ export function applyPriorBoundary(
     const kept = history.slice(cut);
     const rebuilt: ChatMessage[] = [];
     const summaryText = renderSummaryFallback(prev.summary);
-    if (summaryText !== "") {
+    if (summaryText !== '') {
         rebuilt.push({
             seq: prev.cutSeq,
-            role: "user",
-            type: "human",
+            role: 'user',
+            type: 'human',
             text: summaryText,
-            data: { summary: { kind: "history-summary", turns: prev.summary.turns } },
+            data: { summary: { kind: 'history-summary', turns: prev.summary.turns } },
         });
     }
     rebuilt.push(...kept);
@@ -292,27 +294,24 @@ export function applyPriorBoundary(
 function hasFailureNotice(history: readonly ChatMessage[]): boolean {
     return history
         .slice(-3)
-        .some((message) => message.type === "agent-notice" && (message.text ?? "").startsWith("上下文压缩失败"));
+        .some((message) => message.type === 'agent-notice' && (message.text ?? '').startsWith('上下文压缩失败'));
 }
 
 /** 历史 → token 粗估（CJK 感知，与 compaction 包同一把尺子） */
 function estimateHistory(messages: readonly ChatMessage[]): number {
-    return messages.reduce(
-        (sum, message) => sum + estimateTokensOf(JSON.stringify(messageContent(message) ?? "")),
-        0,
-    );
+    return messages.reduce((sum, message) => sum + estimateTokensOf(JSON.stringify(messageContent(message) ?? '')), 0);
 }
 
 /** 一条消息的正文（文本 + 结构载荷；工具结果都在 `data` 里） */
 function messageContent(message: ChatMessage): unknown {
-    return message.text ?? message.data ?? "";
+    return message.text ?? message.data ?? '';
 }
 
 function safeJson(value: unknown): string {
     try {
-        return JSON.stringify(value) ?? "";
+        return JSON.stringify(value) ?? '';
     } catch {
-        return "";
+        return '';
     }
 }
 
@@ -320,11 +319,11 @@ function safeJson(value: unknown): string {
 function clipForSummary(dropped: readonly ChatMessage[]): string {
     const lines = dropped
         .map((message) => {
-            const who = message.role === "user" ? "用户" : message.role === "tool" ? "工具结果" : message.role;
-            const text = message.text ?? (message.data === undefined ? "" : safeJson(message.data));
+            const who = message.role === 'user' ? '用户' : message.role === 'tool' ? '工具结果' : message.role;
+            const text = message.text ?? (message.data === undefined ? '' : safeJson(message.data));
             return `[${who}] ${text}`;
         })
-        .join("\n");
+        .join('\n');
     if (lines.length <= SUMMARY_INPUT_MAX_CHARS) return lines;
     const head = lines.slice(0, SUMMARY_HEAD_CHARS);
     const tail = lines.slice(-(SUMMARY_INPUT_MAX_CHARS - SUMMARY_HEAD_CHARS));
@@ -334,10 +333,10 @@ function clipForSummary(dropped: readonly ChatMessage[]): string {
 /** 一条压缩痕迹（`agent-notice`：进消息流 / 进 UI，也进下一轮上下文） */
 function noticeOf(text: string, at: string): ChatMessage {
     return {
-        role: "assistant",
-        type: "agent-notice",
+        role: 'assistant',
+        type: 'agent-notice',
         text,
         at: Date.parse(at),
-        data: { [NOTICE_MARK]: { kind: "notice" } },
+        data: { [NOTICE_MARK]: { kind: 'notice' } },
     };
 }

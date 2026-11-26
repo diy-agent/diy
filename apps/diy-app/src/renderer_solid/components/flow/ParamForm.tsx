@@ -20,7 +20,15 @@
  */
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import { notificationStore } from "../../store/notificationStore";
-import { paramKv, paramValueOf, saveParams, type FlowInstanceView, type FlowParamEntry, type ParamScalar, type ParamValue } from "../../lib/flow-view";
+import {
+    paramKv,
+    paramValueOf,
+    saveParams,
+    type FlowInstanceView,
+    type FlowParamEntry,
+    type ParamScalar,
+    type ParamValue,
+} from "../../lib/flow-view";
 
 /** 值 → 控件文本（`list` 用逗号分隔 —— 与 CLI `--param` 同一形态） */
 function toText(v: ParamValue): string {
@@ -108,8 +116,8 @@ export function ParamForm(props: { view: FlowInstanceView; uri: string; onSaved?
 
             <Show when={!editable()}>
                 <div class="rounded border border-base-300 bg-base-300/30 p-2 opacity-70" data-flow-params-note="">
-                    换配置 = **另起一次运行**：实例已进入工作流（position = {props.view.position}），内核与宿主都拒改参数值。
-                    要改请清掉该任务目录的 `flow/` 后重开。
+                    换配置 = **另起一次运行**：实例已进入工作流（position = {props.view.position}
+                    ），内核与宿主都拒改参数值。 要改请清掉该任务目录的 `flow/` 后重开。
                 </div>
             </Show>
 
@@ -132,7 +140,9 @@ export function ParamForm(props: { view: FlowInstanceView; uri: string; onSaved?
                                                     disabled={!editable()}
                                                     data-flow-param-input={e.path}
                                                     checked={draft()[e.path] === true}
-                                                    onInput={(ev) => setDraft({ ...draft(), [e.path]: ev.currentTarget.checked })}
+                                                    onInput={(ev) =>
+                                                        setDraft({ ...draft(), [e.path]: ev.currentTarget.checked })
+                                                    }
                                                 />
                                             </Show>
                                             <Show when={e.type === "enum"}>
@@ -148,7 +158,9 @@ export function ParamForm(props: { view: FlowInstanceView; uri: string; onSaved?
                                                                     data-flow-param-input={e.path}
                                                                     value={opt}
                                                                     checked={draft()[e.path] === opt}
-                                                                    onInput={() => setDraft({ ...draft(), [e.path]: opt })}
+                                                                    onInput={() =>
+                                                                        setDraft({ ...draft(), [e.path]: opt })
+                                                                    }
                                                                 />
                                                                 <span>{opt}</span>
                                                             </span>
@@ -165,7 +177,12 @@ export function ParamForm(props: { view: FlowInstanceView; uri: string; onSaved?
                                                     min={e.min}
                                                     max={e.max}
                                                     value={toText(draft()[e.path] ?? e.default)}
-                                                    onInput={(ev) => setDraft({ ...draft(), [e.path]: fromText(e, ev.currentTarget.value) })}
+                                                    onInput={(ev) =>
+                                                        setDraft({
+                                                            ...draft(),
+                                                            [e.path]: fromText(e, ev.currentTarget.value),
+                                                        })
+                                                    }
                                                 />
                                                 <Show when={e.unit}>
                                                     <span class="opacity-60">{e.unit}</span>
@@ -179,7 +196,12 @@ export function ParamForm(props: { view: FlowInstanceView; uri: string; onSaved?
                                                     data-flow-param-input={e.path}
                                                     placeholder={e.type === "list" ? "逗号分隔，如 a,b,c" : undefined}
                                                     value={toText(draft()[e.path] ?? e.default)}
-                                                    onInput={(ev) => setDraft({ ...draft(), [e.path]: fromText(e, ev.currentTarget.value) })}
+                                                    onInput={(ev) =>
+                                                        setDraft({
+                                                            ...draft(),
+                                                            [e.path]: fromText(e, ev.currentTarget.value),
+                                                        })
+                                                    }
                                                 />
                                             </Show>
                                             <span class="ml-auto font-mono opacity-40" title="类型">
@@ -196,14 +218,23 @@ export function ParamForm(props: { view: FlowInstanceView; uri: string; onSaved?
 
             <Show when={editable() && props.view.paramsSchema.length > 0}>
                 <div class="flex items-center gap-2">
-                    <button class="btn btn-xs btn-primary" disabled={saving()} data-flow-params-save="" onClick={() => void save()}>
+                    <button
+                        class="btn btn-xs btn-primary"
+                        disabled={saving()}
+                        data-flow-params-save=""
+                        onClick={() => void save()}
+                    >
                         {saving() ? "保存中…" : "保存参数"}
                     </button>
                     <span class="opacity-50">落盘 = 任务目录 flow/state.json（权威真源）</span>
                 </div>
             </Show>
             <Show when={error()}>
-                {(msg) => <div class="text-error" data-flow-params-error="">{msg()}</div>}
+                {(msg) => (
+                    <div class="text-error" data-flow-params-error="">
+                        {msg()}
+                    </div>
+                )}
             </Show>
         </div>
     );

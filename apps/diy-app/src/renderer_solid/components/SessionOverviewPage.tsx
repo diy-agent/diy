@@ -202,7 +202,9 @@ export function SessionOverviewPage() {
     const [scope, setScope] = createSignal<SessionScope>(parseScope(Caches.diy_session_overview_scope.get()));
     const [slices, setSlices] = createSignal<SessionSlice[]>(parseSlices(Caches.diy_session_overview_slices.get()));
     const [query, setQuery] = createSignal<string>(Caches.diy_session_overview_query.get());
-    const [sort, setSort] = createSignal<SessionQuerySpec["sort"]>(parseSessionSort(Caches.diy_session_overview_sort.get()));
+    const [sort, setSort] = createSignal<SessionQuerySpec["sort"]>(
+        parseSessionSort(Caches.diy_session_overview_sort.get()),
+    );
 
     const spec = createMemo<SessionQuerySpec>(() => ({
         scope: scope(),
@@ -335,7 +337,10 @@ export function SessionOverviewPage() {
             {/* ── 切片 / 过滤条 ─────────────────────────────────────────── */}
             <div class="shrink-0 flex items-center gap-x-3 gap-y-2 flex-wrap text-body border border-base-300 rounded-lg px-2 py-1.5">
                 {/* 范围：账本历史要不要一起列 */}
-                <div class="join" title="范围：全部 = 含账本落盘的历史会话（跨启动）· 本次启动 = 只看注册表里本进程活跃过的">
+                <div
+                    class="join"
+                    title="范围：全部 = 含账本落盘的历史会话（跨启动）· 本次启动 = 只看注册表里本进程活跃过的"
+                >
                     <button
                         class={`btn btn-xs join-item ${scope() === "all" ? "btn-primary" : "btn-ghost"}`}
                         onClick={() => applyScope("all")}
@@ -356,7 +361,11 @@ export function SessionOverviewPage() {
                         {(s) => (
                             <button
                                 class={`btn btn-xs gap-1 ${
-                                    slices().includes(s.key) ? "btn-primary" : counts()[s.key] > 0 ? "" : "btn-ghost opacity-50"
+                                    slices().includes(s.key)
+                                        ? "btn-primary"
+                                        : counts()[s.key] > 0
+                                          ? ""
+                                          : "btn-ghost opacity-50"
                                 }`}
                                 title={`${s.title}（点一下按它过滤，可多选；再点取消）`}
                                 disabled={counts()[s.key] === 0 && !slices().includes(s.key)}
@@ -378,7 +387,11 @@ export function SessionOverviewPage() {
                     onInput={(e) => applyQuery(e.currentTarget.value)}
                 />
 
-                <button class="btn btn-ghost btn-xs" title="清空所有过滤条件（范围 / 切片 / 搜索 / 排序）" onClick={resetFilters}>
+                <button
+                    class="btn btn-ghost btn-xs"
+                    title="清空所有过滤条件（范围 / 切片 / 搜索 / 排序）"
+                    onClick={resetFilters}
+                >
                     清空过滤
                 </button>
             </div>
@@ -482,7 +495,10 @@ export function SessionOverviewPage() {
                                                 </td>
                                                 {/* 未读（1 轮 = 1 条；跨启动）—— 单独一列，可排序 */}
                                                 <td class="text-body">
-                                                    <Show when={r.unread > 0} fallback={<span class="opacity-40">—</span>}>
+                                                    <Show
+                                                        when={r.unread > 0}
+                                                        fallback={<span class="opacity-40">—</span>}
+                                                    >
                                                         <span
                                                             class="badge badge-primary badge-xs"
                                                             title="距你上次看这个会话，它又跑完了这么多轮（1 轮 = 1 条未读消息；跨启动）"
@@ -493,16 +509,22 @@ export function SessionOverviewPage() {
                                                 </td>
                                                 {/* 步数：在跑 → 进度条；否则累计（跨启动） */}
                                                 <td class="text-body">
-                                                    <Show when={prog()} fallback={
-                                                        <Show
-                                                            when={r.steps !== undefined}
-                                                            fallback={<span class="opacity-40">—</span>}
-                                                        >
-                                                            <span class="font-mono" title="会话累计步数（注册表本进程 ∪ 账本落盘，跨启动）">
-                                                                {r.steps} 步
-                                                            </span>
-                                                        </Show>
-                                                    }>
+                                                    <Show
+                                                        when={prog()}
+                                                        fallback={
+                                                            <Show
+                                                                when={r.steps !== undefined}
+                                                                fallback={<span class="opacity-40">—</span>}
+                                                            >
+                                                                <span
+                                                                    class="font-mono"
+                                                                    title="会话累计步数（注册表本进程 ∪ 账本落盘，跨启动）"
+                                                                >
+                                                                    {r.steps} 步
+                                                                </span>
+                                                            </Show>
+                                                        }
+                                                    >
                                                         {(p) => (
                                                             <>
                                                                 <span class="font-mono">{p().text}</span>
@@ -547,7 +569,9 @@ export function SessionOverviewPage() {
                                                         </span>
                                                     </Show>
                                                 </td>
-                                                <td class="text-body font-mono opacity-80">{entry()?.viewers ?? "—"}</td>
+                                                <td class="text-body font-mono opacity-80">
+                                                    {entry()?.viewers ?? "—"}
+                                                </td>
                                                 <td
                                                     class="text-body font-mono opacity-80 whitespace-nowrap"
                                                     title={`轮次起始 ${entry()?.turn?.startedAt ?? "—"}`}

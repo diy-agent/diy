@@ -25,7 +25,9 @@ const elapsed = async <T>(p: Promise<T>): Promise<[T, number]> => {
 
 describe("runBash 退出宽限（##454）", () => {
     it("`bash -c 'sleep 999 &'`（无显式 timeout）⇒ 孤儿宽限到点就返回，不再挂 999s", async () => {
-        const [run, ms] = await elapsed(runBash(`bash -c 'sleep 999 &'`, process.cwd(), limits, undefined, undefined, 0));
+        const [run, ms] = await elapsed(
+            runBash(`bash -c 'sleep 999 &'`, process.cwd(), limits, undefined, undefined, 0),
+        );
         // ##560 的 ORPHAN_GRACE_MS = 1500；留一倍余量给满载并行
         expect(ms).toBeLessThan(4_000);
         expect(run.outcome).toBe("ok");
@@ -43,7 +45,9 @@ describe("runBash 退出宽限（##454）", () => {
     }, 10_000);
 
     it("同步语义不变：sleep 1 && echo done ⇒ 等到 done，约 1s", async () => {
-        const [run, ms] = await elapsed(runBash("sleep 1 && echo done", process.cwd(), limits, undefined, undefined, 0));
+        const [run, ms] = await elapsed(
+            runBash("sleep 1 && echo done", process.cwd(), limits, undefined, undefined, 0),
+        );
         expect(ms).toBeGreaterThan(700);
         expect(run.text).toContain("done");
         expect(run.outcome).toBe("ok");
@@ -59,7 +63,9 @@ describe("runBash 退出宽限（##454）", () => {
     }, 20_000);
 
     it("退出前的输出仍在：echo + 后台孙进程 ⇒ 文本含 echo 的内容", async () => {
-        const [run] = await elapsed(runBash(`echo hello-t454; bash -c 'sleep 999 &'`, process.cwd(), limits, undefined, undefined, 0));
+        const [run] = await elapsed(
+            runBash(`echo hello-t454; bash -c 'sleep 999 &'`, process.cwd(), limits, undefined, undefined, 0),
+        );
         expect(run.text).toContain("hello-t454");
         expect(run.outcome).toBe("ok");
     }, 10_000);

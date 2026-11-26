@@ -11,7 +11,13 @@
 import { previewOf } from "@diy-agent/context/wire-render";
 import { getValue, isPlainObject, placeOf, rendererOf } from "@diy-agent/context/tree";
 import { hashValue } from "@diy-agent/context/hash";
-import { buildDelivery, PLACE_CANDIDATES, unitPaths, type Delivery, type DeliveryPart } from "@diy-agent/context/delivery";
+import {
+    buildDelivery,
+    PLACE_CANDIDATES,
+    unitPaths,
+    type Delivery,
+    type DeliveryPart,
+} from "@diy-agent/context/delivery";
 import type { ContextPath, ContextTreeState } from "@diy-agent/context/types";
 
 // 单元名单与投递构造住在 delivery.ts（真发与预览共用那一条链），这里只做转出，
@@ -123,11 +129,14 @@ export function buildLab(
         source: "当前任务的真实上下文（assembleGlobals 的产物）",
         wireVersion: d.wireVersion,
         tree: treeNodes,
-        rules: d.tree.places.slice().sort().map((place) => ({
-            place,
-            renders: renderUnits(d.tree, place),
-            reason: reasonFor(place),
-        })),
+        rules: d.tree.places
+            .slice()
+            .sort()
+            .map((place) => ({
+                place,
+                renders: renderUnits(d.tree, place),
+                reason: reasonFor(place),
+            })),
         text: d.text,
         data: d.data,
         request,

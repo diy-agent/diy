@@ -27,392 +27,406 @@ import { BlockStore, type Op } from "../../src/main/services/local-blocks";
 
 let PROJECT = "1";
 beforeAll(() => {
-  process.env["OPENCODE_API_KEY"] = "test-key"; // 桩模型不用它，但 chat 入口会校验
-  PROJECT = createProject(join(diyHome(), "steer-work"));
+    process.env["OPENCODE_API_KEY"] = "test-key"; // 桩模型不用它，但 chat 入口会校验
+    PROJECT = createProject(join(diyHome(), "steer-work"));
 });
 
 let seq = 0;
 function newUri(): string {
-  return createTask({ title: `插话测试 ${++seq}`, project: PROJECT });
+    return createTask({ title: `插话测试 ${++seq}`, project: PROJECT });
 }
 
 // ─── 桩模型：按调用序返回预置流 ────────────────────────
 
 const usage: LanguageModelV3Usage = {
-  inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
-  outputTokens: { total: 5, text: 5, reasoning: 0 },
+    inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+    outputTokens: { total: 5, text: 5, reasoning: 0 },
 };
 
 function stream(parts: LanguageModelV3StreamPart[]): LanguageModelV3StreamResult {
-  return {
-    stream: new ReadableStream<LanguageModelV3StreamPart>({
-      start(c) {
-        for (const p of parts) c.enqueue(p);
-        c.close();
-      },
-    }),
-  };
+    return {
+        stream: new ReadableStream<LanguageModelV3StreamPart>({
+            start(c) {
+                for (const p of parts) c.enqueue(p);
+                c.close();
+            },
+        }),
+    };
 }
 
 /** 一段纯文本答复（含 finish，= 该段结束） */
 function textReply(text: string): LanguageModelV3StreamResult {
-  return stream([
-    { type: "stream-start", warnings: [] },
-    { type: "text-start", id: "t" },
-    { type: "text-delta", id: "t", delta: text },
-    { type: "text-end", id: "t" },
-    { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage },
-  ]);
+    return stream([
+        { type: "stream-start", warnings: [] },
+        { type: "text-start", id: "t" },
+        { type: "text-delta", id: "t", delta: text },
+        { type: "text-end", id: "t" },
+        { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage },
+    ]);
 }
 
 /** 一次工具调用（会让 SDK 继续下一步，除非步数用尽） */
 function toolCallReply(callId: string, command: string): LanguageModelV3StreamResult {
-  return stream([
-    { type: "stream-start", warnings: [] },
-    { type: "tool-input-start", id: callId, toolName: "bash" },
-    { type: "tool-input-delta", id: callId, delta: JSON.stringify({ command }) },
-    { type: "tool-input-end", id: callId },
-    { type: "tool-call", toolCallId: callId, toolName: "bash", input: JSON.stringify({ command }) },
-    { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_calls" }, usage },
-  ]);
+    return stream([
+        { type: "stream-start", warnings: [] },
+        { type: "tool-input-start", id: callId, toolName: "bash" },
+        { type: "tool-input-delta", id: callId, delta: JSON.stringify({ command }) },
+        { type: "tool-input-end", id: callId },
+        { type: "tool-call", toolCallId: callId, toolName: "bash", input: JSON.stringify({ command }) },
+        { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_calls" }, usage },
+    ]);
 }
 
 /** 造一个按序吐流的桩模型；越界复用最末一条（避免测试因多一次请求就崩） */
 function stubModel(replies: LanguageModelV3StreamResult[]) {
-  let call = 0;
-  const model = new MockLanguageModelV3({
-    provider: "stub",
-    modelId: "stub-model",
-    doStream: () => Promise.resolve(replies[Math.min(call++, replies.length - 1)]!),
-  });
-  return model;
+    let call = 0;
+    const model = new MockLanguageModelV3({
+        provider: "stub",
+        modelId: "stub-model",
+        doStream: () => Promise.resolve(replies[Math.min(call++, replies.length - 1)]!),
+    });
+    return model;
 }
 
 /** 上游第 i 次请求里出现的全部文本（user/assistant 两侧都算，用来判断"模型看见没看见"） */
 function promptText(model: MockLanguageModelV3, callIndex: number): string {
-  const prompt = model.doStreamCalls[callIndex]?.prompt ?? [];
-  const out: string[] = [];
-  for (const msg of prompt as Array<{ content: unknown }>) {
-    const content = msg.content;
-    if (typeof content === "string") out.push(content);
-    else if (Array.isArray(content)) {
-      for (const part of content as Array<{ type?: string; text?: string }>) {
-        if (typeof part.text === "string") out.push(part.text);
-      }
+    const prompt = model.doStreamCalls[callIndex]?.prompt ?? [];
+    const out: string[] = [];
+    for (const msg of prompt as Array<{ content: unknown }>) {
+        const content = msg.content;
+        if (typeof content === "string") out.push(content);
+        else if (Array.isArray(content)) {
+            for (const part of content as Array<{ type?: string; text?: string }>) {
+                if (typeof part.text === "string") out.push(part.text);
+            }
+        }
     }
-  }
-  return out.join("\n");
+    return out.join("\n");
 }
 
 /** 跑一轮对话，返回全部 op */
 async function run(
-  uri: string,
-  message: string,
-  model: MockLanguageModelV3,
-  mgr: LocalAgentManager = new LocalAgentManager(() => model as unknown as LanguageModel),
+    uri: string,
+    message: string,
+    model: MockLanguageModelV3,
+    mgr: LocalAgentManager = new LocalAgentManager(() => model as unknown as LanguageModel),
 ): Promise<Op[]> {
-  const ops: Op[] = [];
-  for await (const op of mgr.chat(uri, message)) ops.push(op);
-  return ops;
+    const ops: Op[] = [];
+    for await (const op of mgr.chat(uri, message)) ops.push(op);
+    return ops;
 }
 
 /** 某 kind 的块 id（按出现序） */
 const idsOf = (ops: Op[], kind: string): string[] =>
-  ops.filter((o) => o.op === "start" && o.kind === kind).map((o) => (o as { id: string }).id);
+    ops.filter((o) => o.op === "start" && o.kind === kind).map((o) => (o as { id: string }).id);
 
 beforeEach(() => {
-  // 队列落盘在任务目录，每个用例用自己的任务 URI，无需清理
+    // 队列落盘在任务目录，每个用例用自己的任务 URI，无需清理
 });
 
 describe("超预算早退：不记账、不投递（用户的话必须还在队列里）", () => {
-  it("系统上下文越框时不发请求：无开场块、插话未出队、轮次仍闭合", async () => {
-    const uri = newUri();
-    // ⚠️ 真发已切 Context Tree 投递：预算按**投递**的 system 容器算（稳定项，含 AGENTS.md 链），
-    // 模版覆盖（identity.md 那类）已不进真发 —— 与 cli.intent.template 的超预算用例同手法：
-    // 给链上塞大内容。链必含 $DIY_HOME/AGENTS.md（appLevel 无条件进链；任务自己的 AGENTS.md
-    // 被 chainOf skip，写任务目录不生效）。
-    const agentsFile = join(diyHome(), "AGENTS.md");
-    writeFileSync(agentsFile, "x".repeat(70 * 1024), "utf-8");
-    try {
-      const q = new SteerQueue();
-      q.add(uri, "next-turn", "排队等着的话");
-      const model = stubModel([textReply("答复")]);
+    it("系统上下文越框时不发请求：无开场块、插话未出队、轮次仍闭合", async () => {
+        const uri = newUri();
+        // ⚠️ 真发已切 Context Tree 投递：预算按**投递**的 system 容器算（稳定项，含 AGENTS.md 链），
+        // 模版覆盖（identity.md 那类）已不进真发 —— 与 cli.intent.template 的超预算用例同手法：
+        // 给链上塞大内容。链必含 $DIY_HOME/AGENTS.md（appLevel 无条件进链；任务自己的 AGENTS.md
+        // 被 chainOf skip，写任务目录不生效）。
+        const agentsFile = join(diyHome(), "AGENTS.md");
+        writeFileSync(agentsFile, "x".repeat(70 * 1024), "utf-8");
+        try {
+            const q = new SteerQueue();
+            q.add(uri, "next-turn", "排队等着的话");
+            const model = stubModel([textReply("答复")]);
 
-      const ops = await run(uri, "开始", model);
+            const ops = await run(uri, "开始", model);
 
-      // 确实走了超预算分支，且**根本没发请求**
-      expect(
-        ops.some((o) => o.op === "start" && o.kind === "error" && (o as { meta?: { source?: string } }).meta?.source === "budget"),
-      ).toBe(true);
-      expect(model.doStreamCalls).toHaveLength(0);
+            // 确实走了超预算分支，且**根本没发请求**
+            expect(
+                ops.some(
+                    (o) =>
+                        o.op === "start" &&
+                        o.kind === "error" &&
+                        (o as { meta?: { source?: string } }).meta?.source === "budget",
+                ),
+            ).toBe(true);
+            expect(model.doStreamCalls).toHaveLength(0);
 
-      // 回归 P1：插话**没有**被出队吞掉（曾经把出队放在判预算之前 → 用户的话凭空消失）
-      expect(new SteerQueue().list(uri).map((i) => i.text)).toEqual(["排队等着的话"]);
+            // 回归 P1：插话**没有**被出队吞掉（曾经把出队放在判预算之前 → 用户的话凭空消失）
+            expect(new SteerQueue().list(uri).map((i) => i.text)).toEqual(["排队等着的话"]);
 
-      // 回归 P1：也不许留下开场 user 块（模型没见过的话不能进对话流，
-      // 否则 blocksToMessages 会把它当真实历史，发给后续每一轮）
-      expect(
-        ops.some(
-          (o) => o.op === "start" && o.kind === "text" && (o as { meta?: { role?: string } }).meta?.role === "user",
-        ),
-      ).toBe(false);
+            // 回归 P1：也不许留下开场 user 块（模型没见过的话不能进对话流，
+            // 否则 blocksToMessages 会把它当真实历史，发给后续每一轮）
+            expect(
+                ops.some(
+                    (o) =>
+                        o.op === "start" &&
+                        o.kind === "text" &&
+                        (o as { meta?: { role?: string } }).meta?.role === "user",
+                ),
+            ).toBe(false);
 
-      // 拒绝发送也是一轮完整生命周期：必须闭合，不留僵尸轮次
-      const turn = ops.find((o) => o.op === "start" && o.kind === "turn");
-      expect(turn).toBeTruthy();
-      expect(ops.some((o) => o.op === "stop" && o.id === turn!.id)).toBe(true);
-    } finally {
-      rmSync(agentsFile, { force: true });
-    }
-  });
+            // 拒绝发送也是一轮完整生命周期：必须闭合，不留僵尸轮次
+            const turn = ops.find((o) => o.op === "start" && o.kind === "turn");
+            expect(turn).toBeTruthy();
+            expect(ops.some((o) => o.op === "stop" && o.id === turn!.id)).toBe(true);
+        } finally {
+            rmSync(agentsFile, { force: true });
+        }
+    });
 });
 
 describe("插话 next-step 模式：进入下一个模型步", () => {
-  it("模型还在调工具时：下一步的请求里就带上了插话；本步的请求里没有", async () => {
-    const uri = newUri();
-    new SteerQueue().add(uri, "next-step", "插一句：记得用 --no-gpg-sign");
-    const model = stubModel([
-      toolCallReply("c1", "echo one"),
-      textReply("好了"),
-    ]);
+    it("模型还在调工具时：下一步的请求里就带上了插话；本步的请求里没有", async () => {
+        const uri = newUri();
+        new SteerQueue().add(uri, "next-step", "插一句：记得用 --no-gpg-sign");
+        const model = stubModel([toolCallReply("c1", "echo one"), textReply("好了")]);
 
-    await run(uri, "开始干活", model);
+        await run(uri, "开始干活", model);
 
-    // 第一步：模型还没看到插话（它是在这一步之后才被插进来的）
-    expect(promptText(model, 0)).not.toContain("记得用 --no-gpg-sign");
-    // 第二步：必须看到 —— 这就是"插入到下一步"
-    expect(promptText(model, 1)).toContain("记得用 --no-gpg-sign");
-    // 投递后队列清空（否则会被投第二次）
-    expect(new SteerQueue().list(uri)).toEqual([]);
-  });
+        // 第一步：模型还没看到插话（它是在这一步之后才被插进来的）
+        expect(promptText(model, 0)).not.toContain("记得用 --no-gpg-sign");
+        // 第二步：必须看到 —— 这就是"插入到下一步"
+        expect(promptText(model, 1)).toContain("记得用 --no-gpg-sign");
+        // 投递后队列清空（否则会被投第二次）
+        expect(new SteerQueue().list(uri)).toEqual([]);
+    });
 
-  it("模型一步就给出最终答复时：**不往本轮尾巴续**，插话当下一轮的开场白", async () => {
-    // 这条是设计取舍的锁定：曾经有过"段末续段"（= dsh 的 turn-stopping 语义）——
-    // 模型写完最终答复后，再往**同一个 turn** 里塞一段把 step 插话递出去。
-    // 废除它的理由：模型说"做完了"就说明没有下一步了，硬续一段只会得到
-    // 「assistant 总结 → user 插话 → assistant 又总结」的夹层；收益仅是早一个
-    // **本来就会立刻发生**的轮次边界生效，代价是轮次结构/usage/停止边界都要为夹层做特例。
-    const uri = newUri();
-    new SteerQueue().add(uri, "next-step", "补一句：还要跑测试");
-    const model = stubModel([textReply("我先答完"), textReply("收到插话后的答复")]);
+    it("模型一步就给出最终答复时：**不往本轮尾巴续**，插话当下一轮的开场白", async () => {
+        // 这条是设计取舍的锁定：曾经有过"段末续段"（= dsh 的 turn-stopping 语义）——
+        // 模型写完最终答复后，再往**同一个 turn** 里塞一段把 step 插话递出去。
+        // 废除它的理由：模型说"做完了"就说明没有下一步了，硬续一段只会得到
+        // 「assistant 总结 → user 插话 → assistant 又总结」的夹层；收益仅是早一个
+        // **本来就会立刻发生**的轮次边界生效，代价是轮次结构/usage/停止边界都要为夹层做特例。
+        const uri = newUri();
+        new SteerQueue().add(uri, "next-step", "补一句：还要跑测试");
+        const model = stubModel([textReply("我先答完"), textReply("收到插话后的答复")]);
 
-    const ops = await run(uri, "问个问题", model);
+        const ops = await run(uri, "问个问题", model);
 
-    expect(model.doStreamCalls).toHaveLength(2);
-    expect(promptText(model, 1)).toContain("补一句：还要跑测试");
-    // 两个**轮次**（不是同一个轮次里的两段）
-    const turns = ops.filter((o) => o.op === "start" && o.kind === "turn") as Array<{ id: string }>;
-    expect(turns).toHaveLength(2);
-    // 第一轮里没有插话块 —— 夹层必须不存在（这正是本条要钉住的）
-    const t1 = turns[0]!.id;
-    expect(
-      ops.some(
-        (o) =>
-          o.op === "start" && o.kind === "text" && (o as { parent?: string }).parent === t1
-            && (o as { meta?: { steer?: string } }).meta?.steer,
-      ),
-    ).toBe(false);
-    // 插话是第二轮的**开场** user 块（文档序第一）
-    const t2 = turns[1]!.id;
-    const opening = ops.find(
-      (o) => o.op === "start" && o.kind === "text" && (o as { parent?: string }).parent === t2,
-    ) as { meta?: { steer?: string; steerId?: string } };
-    expect(opening.meta?.steer).toBe("next-step");
-    // 块 meta 里带上队列项 id（steer/N），排障时能回查是哪次插话
-    expect(opening.meta?.steerId).toMatch(/^steer\/\d+$/);
-    expect(new SteerQueue().list(uri)).toEqual([]);
-  });
+        expect(model.doStreamCalls).toHaveLength(2);
+        expect(promptText(model, 1)).toContain("补一句：还要跑测试");
+        // 两个**轮次**（不是同一个轮次里的两段）
+        const turns = ops.filter((o) => o.op === "start" && o.kind === "turn") as Array<{ id: string }>;
+        expect(turns).toHaveLength(2);
+        // 第一轮里没有插话块 —— 夹层必须不存在（这正是本条要钉住的）
+        const t1 = turns[0]!.id;
+        expect(
+            ops.some(
+                (o) =>
+                    o.op === "start" &&
+                    o.kind === "text" &&
+                    (o as { parent?: string }).parent === t1 &&
+                    (o as { meta?: { steer?: string } }).meta?.steer,
+            ),
+        ).toBe(false);
+        // 插话是第二轮的**开场** user 块（文档序第一）
+        const t2 = turns[1]!.id;
+        const opening = ops.find(
+            (o) => o.op === "start" && o.kind === "text" && (o as { parent?: string }).parent === t2,
+        ) as { meta?: { steer?: string; steerId?: string } };
+        expect(opening.meta?.steer).toBe("next-step");
+        // 块 meta 里带上队列项 id（steer/N），排障时能回查是哪次插话
+        expect(opening.meta?.steerId).toMatch(/^steer\/\d+$/);
+        expect(new SteerQueue().list(uri)).toEqual([]);
+    });
 
-  it("队列为空：不续段（不多打一次上游请求）", async () => {
-    const uri = newUri();
-    const model = stubModel([textReply("就这样")]);
-    await run(uri, "你好", model);
-    expect(model.doStreamCalls).toHaveLength(1);
-  });
+    it("队列为空：不续段（不多打一次上游请求）", async () => {
+        const uri = newUri();
+        const model = stubModel([textReply("就这样")]);
+        await run(uri, "你好", model);
+        expect(model.doStreamCalls).toHaveLength(1);
+    });
 
-  it("插话块写进 ops（崩溃/重启后重放仍看得到「谁插的话」）", async () => {
-    const uri = newUri();
-    new SteerQueue().add(uri, "next-step", "落盘检查");
-    const model = stubModel([toolCallReply("c1", "echo x"), textReply("done")]);
-    const ops = await run(uri, "开始", model);
-    const delta = ops.find(
-      (o) => o.op === "delta" && (o as { fields?: { content?: string } }).fields?.content === "落盘检查",
-    );
-    expect(delta).toBeTruthy();
-    // 块 id 出现在 start 里，且带 steer=step
-    const id = (delta as { id: string }).id;
-    expect(
-      ops.some(
-        (o) => o.op === "start" && (o as { id?: string }).id === id
-          && (o as { meta?: { steer?: string } }).meta?.steer === "next-step",
-      ),
-    ).toBe(true);
-  });
+    it("插话块写进 ops（崩溃/重启后重放仍看得到「谁插的话」）", async () => {
+        const uri = newUri();
+        new SteerQueue().add(uri, "next-step", "落盘检查");
+        const model = stubModel([toolCallReply("c1", "echo x"), textReply("done")]);
+        const ops = await run(uri, "开始", model);
+        const delta = ops.find(
+            (o) => o.op === "delta" && (o as { fields?: { content?: string } }).fields?.content === "落盘检查",
+        );
+        expect(delta).toBeTruthy();
+        // 块 id 出现在 start 里，且带 steer=step
+        const id = (delta as { id: string }).id;
+        expect(
+            ops.some(
+                (o) =>
+                    o.op === "start" &&
+                    (o as { id?: string }).id === id &&
+                    (o as { meta?: { steer?: string } }).meta?.steer === "next-step",
+            ),
+        ).toBe(true);
+    });
 });
 
 describe("插话 next-turn 模式：本轮结束后自动开下一轮", () => {
-  it("本轮跑完 → 自动开新一轮，插话作为新一轮的 user 消息", async () => {
-    const uri = newUri();
-    new SteerQueue().add(uri, "next-turn", "下一轮再做这件事");
-    const model = stubModel([textReply("第一轮答复"), textReply("第二轮答复")]);
+    it("本轮跑完 → 自动开新一轮，插话作为新一轮的 user 消息", async () => {
+        const uri = newUri();
+        new SteerQueue().add(uri, "next-turn", "下一轮再做这件事");
+        const model = stubModel([textReply("第一轮答复"), textReply("第二轮答复")]);
 
-    const ops = await run(uri, "先做第一件事", model);
+        const ops = await run(uri, "先做第一件事", model);
 
-    expect(model.doStreamCalls).toHaveLength(2);
-    expect(promptText(model, 1)).toContain("下一轮再做这件事");
-    // 两个 turn：turn 模式的语义就是"新的一次对话"
-    expect(idsOf(ops, "turn")).toHaveLength(2);
-    const marks = ops.filter(
-      (o) => o.op === "start" && (o as { meta?: { steer?: string } }).meta?.steer === "next-turn",
-    );
-    expect(marks).toHaveLength(1);
-    expect(new SteerQueue().list(uri)).toEqual([]);
-  });
-
-  it("同一轮内多条 next-step：下一步一次性全投（不是一条一步）", async () => {
-    // 对齐 dsh 的 claim()：next-step 在步边界一次全取（多条合并成同一批）。
-    const uri = newUri();
-    const q = new SteerQueue();
-    q.add(uri, "next-step", "step 甲");
-    q.add(uri, "next-step", "step 乙");
-    const model = stubModel([toolCallReply("c1", "echo x"), textReply("完成")]);
-    const ops = await run(uri, "开始", model);
-
-    // 两条都在**第二次请求**里（同一步），而不是各占一步
-    expect(model.doStreamCalls).toHaveLength(2);
-    expect(promptText(model, 0)).not.toContain("step 甲");
-    expect(promptText(model, 1)).toContain("step 甲");
-    expect(promptText(model, 1)).toContain("step 乙");
-    expect(new SteerQueue().list(uri)).toEqual([]);
-    // 两个插话块都在（各带 steer=next-step 标记）
-    const steerBlocks = ops.filter(
-      (o) => o.op === "start" && (o as { meta?: { steer?: string } }).meta?.steer === "next-step",
-    );
-    expect(steerBlocks).toHaveLength(2);
-  });
-
-  it("轮末整批：队列里剩下的全部（两种模式）作为下一轮开场一次性发出", async () => {
-    const uri = newUri();
-    const q = new SteerQueue();
-    q.add(uri, "next-step", "先提交的 step");
-    q.add(uri, "next-step", "再一条 step");
-    q.add(uri, "next-turn", "后提交的 turn");
-    const model = stubModel([textReply("答复1"), textReply("答复2")]);
-    const ops = await run(uri, "开始", model);
-
-    // 首轮一条请求；轮末把 3 条一次投进第二轮 → 共 2 次请求（不再"每轮一条"）
-    expect(model.doStreamCalls).toHaveLength(2);
-    const second = promptText(model, 1);
-    expect(second).toContain("先提交的 step");
-    expect(second).toContain("再一条 step");
-    expect(second).toContain("后提交的 turn");
-    expect(new SteerQueue().list(uri)).toEqual([]);
-    // 只开两轮：整批投递把多条合并进同一轮
-    expect(idsOf(ops, "turn")).toHaveLength(2);
-    // 三条都是第二轮的**开场块**（同一轮内多个 user 块，按队列顺序）
-    const opening = ops.filter(
-      (o) => o.op === "start" && o.kind === "text" && (o as { meta?: { role?: string } }).meta?.role === "user",
-    ) as Array<{ id: string }>;
-    const secondTurnId = idsOf(ops, "turn")[1]!;
-    expect(opening.filter((o) => o.id.startsWith(secondTurnId))).toHaveLength(3);
-  });
-
-  it("排队多条 next-turn：一次发完，不是一轮一条", async () => {
-    const uri = newUri();
-    const q = new SteerQueue();
-    q.add(uri, "next-turn", "第一句");
-    q.add(uri, "next-turn", "第二句");
-    q.add(uri, "next-turn", "第三句");
-    const model = stubModel([textReply("答复1"), textReply("答复2")]);
-    await run(uri, "开始", model);
-
-    // 关键：2 次请求（= 1 个续轮），而不是 4 次（每轮一条）
-    expect(model.doStreamCalls).toHaveLength(2);
-    const second = promptText(model, 1);
-    for (const t of ["第一句", "第二句", "第三句"]) expect(second).toContain(t);
-    expect(new SteerQueue().list(uri)).toEqual([]);
-  });
-
-  it("连续插话到轮次上限：剩余插话留在队列里 + 显式 error 块（不静默吞）", async () => {
-    const uri = newUri();
-    const q = new SteerQueue();
-    q.add(uri, "next-turn", "第0条");
-    // 上限只在"本轮里又冒出新的插话"时才可能撞上：整批投递已经把轮末积压一次消化完，
-    // 所以让桩模型每次请求都再排一条（模拟用户在本轮里继续插话）。
-    let enqueued = 0;
-    const model = new MockLanguageModelV3({
-      provider: "stub",
-      modelId: "stub-model",
-      doStream: () => {
-        enqueued += 1;
-        q.add(uri, "next-turn", `第${enqueued}条`);
-        return Promise.resolve(textReply("答复"));
-      },
+        expect(model.doStreamCalls).toHaveLength(2);
+        expect(promptText(model, 1)).toContain("下一轮再做这件事");
+        // 两个 turn：turn 模式的语义就是"新的一次对话"
+        expect(idsOf(ops, "turn")).toHaveLength(2);
+        const marks = ops.filter(
+            (o) => o.op === "start" && (o as { meta?: { steer?: string } }).meta?.steer === "next-turn",
+        );
+        expect(marks).toHaveLength(1);
+        expect(new SteerQueue().list(uri)).toEqual([]);
     });
 
-    const ops = await run(uri, "开始", model);
+    it("同一轮内多条 next-step：下一步一次性全投（不是一条一步）", async () => {
+        // 对齐 dsh 的 claim()：next-step 在步边界一次全取（多条合并成同一批）。
+        const uri = newUri();
+        const q = new SteerQueue();
+        q.add(uri, "next-step", "step 甲");
+        q.add(uri, "next-step", "step 乙");
+        const model = stubModel([toolCallReply("c1", "echo x"), textReply("完成")]);
+        const ops = await run(uri, "开始", model);
 
-    // 第 1 次请求 = 用户自己的消息；第 2..8 次 = 每轮吃掉上一轮新排的那条
-    // → 共 MAX_STEER_ROUNDS 次请求；第 8 轮末尾判到上限，**什么都不取**直接收尾
-    expect(model.doStreamCalls).toHaveLength(MAX_STEER_ROUNDS);
-    // 上限那一刻新排的那条还在盘上（可取消 / 再发一条消息触发）
-    expect(new SteerQueue().list(uri).map((i) => i.text)).toEqual([`第${MAX_STEER_ROUNDS}条`]);
-    const err = ops.find((o) => o.op === "start" && o.kind === "error" && (o as { meta?: { source?: string } }).meta?.source === "steer") as
-      | { op: "start"; id: string; parent?: string }
-      | undefined;
-    expect(err).toBeTruthy();
+        // 两条都在**第二次请求**里（同一步），而不是各占一步
+        expect(model.doStreamCalls).toHaveLength(2);
+        expect(promptText(model, 0)).not.toContain("step 甲");
+        expect(promptText(model, 1)).toContain("step 甲");
+        expect(promptText(model, 1)).toContain("step 乙");
+        expect(new SteerQueue().list(uri)).toEqual([]);
+        // 两个插话块都在（各带 steer=next-step 标记）
+        const steerBlocks = ops.filter(
+            (o) => o.op === "start" && (o as { meta?: { steer?: string } }).meta?.steer === "next-step",
+        );
+        expect(steerBlocks).toHaveLength(2);
+    });
 
-    // ── 呈现断言：提示必须**挂在本轮 turn 下**，不能是根块 ──
-    // 只断言"op 存在"不够：曾经这条 op 不带 parent，fold 后成了**根块**，而 UI 的根渲染
-    // 分支只认 turn → 用户看到的是「[未知根 error]」，等于提示没写（设计承诺的
-    // "显式提示、不静默吞"落空）。所以这里按 UI 的读法（fold 后的块树）断言归属。
-    const store = new BlockStore();
-    for (const op of ops) store.apply(op);
-    expect(err!.parent).toBeTruthy();
-    const errBlock = store.blocks.get(err!.id)!;
-    expect(errBlock.parent).toBe(err!.parent);
-    expect(store.blocks.get(errBlock.parent!)!.kind).toBe("turn");
-    // 且它是**最后一个** turn 的下挂块（提示属于撞上限的那一轮，不是首轮）
-    const roots = store.roots();
-    expect(roots.every((r) => r.kind === "turn")).toBe(true);
-    expect(roots[roots.length - 1]!.id).toBe(errBlock.parent);
-    // id 唯一性 / 折叠无 issue：曾经 id 用「队列首条 id + -limit」，同任务二次撞上限
-    // 且首条未变时会撞车 → 「重复 start」被丢弃、随后的 delta 却累进旧块（文案拼接）
-    expect(err!.id).toContain("limit");
-    expect(store.issues).toEqual([]);
-  });
+    it("轮末整批：队列里剩下的全部（两种模式）作为下一轮开场一次性发出", async () => {
+        const uri = newUri();
+        const q = new SteerQueue();
+        q.add(uri, "next-step", "先提交的 step");
+        q.add(uri, "next-step", "再一条 step");
+        q.add(uri, "next-turn", "后提交的 turn");
+        const model = stubModel([textReply("答复1"), textReply("答复2")]);
+        const ops = await run(uri, "开始", model);
 
-  it("没有插话就不多开轮（单轮结束即止）", async () => {
-    const uri = newUri();
-    const model = stubModel([textReply("一次性答复")]);
-    const ops = await run(uri, "你好", model);
-    expect(idsOf(ops, "turn")).toHaveLength(1);
-    expect(idsOf(ops, "step")).toHaveLength(1);
-  });
+        // 首轮一条请求；轮末把 3 条一次投进第二轮 → 共 2 次请求（不再"每轮一条"）
+        expect(model.doStreamCalls).toHaveLength(2);
+        const second = promptText(model, 1);
+        expect(second).toContain("先提交的 step");
+        expect(second).toContain("再一条 step");
+        expect(second).toContain("后提交的 turn");
+        expect(new SteerQueue().list(uri)).toEqual([]);
+        // 只开两轮：整批投递把多条合并进同一轮
+        expect(idsOf(ops, "turn")).toHaveLength(2);
+        // 三条都是第二轮的**开场块**（同一轮内多个 user 块，按队列顺序）
+        const opening = ops.filter(
+            (o) => o.op === "start" && o.kind === "text" && (o as { meta?: { role?: string } }).meta?.role === "user",
+        ) as Array<{ id: string }>;
+        const secondTurnId = idsOf(ops, "turn")[1]!;
+        expect(opening.filter((o) => o.id.startsWith(secondTurnId))).toHaveLength(3);
+    });
+
+    it("排队多条 next-turn：一次发完，不是一轮一条", async () => {
+        const uri = newUri();
+        const q = new SteerQueue();
+        q.add(uri, "next-turn", "第一句");
+        q.add(uri, "next-turn", "第二句");
+        q.add(uri, "next-turn", "第三句");
+        const model = stubModel([textReply("答复1"), textReply("答复2")]);
+        await run(uri, "开始", model);
+
+        // 关键：2 次请求（= 1 个续轮），而不是 4 次（每轮一条）
+        expect(model.doStreamCalls).toHaveLength(2);
+        const second = promptText(model, 1);
+        for (const t of ["第一句", "第二句", "第三句"]) expect(second).toContain(t);
+        expect(new SteerQueue().list(uri)).toEqual([]);
+    });
+
+    it("连续插话到轮次上限：剩余插话留在队列里 + 显式 error 块（不静默吞）", async () => {
+        const uri = newUri();
+        const q = new SteerQueue();
+        q.add(uri, "next-turn", "第0条");
+        // 上限只在"本轮里又冒出新的插话"时才可能撞上：整批投递已经把轮末积压一次消化完，
+        // 所以让桩模型每次请求都再排一条（模拟用户在本轮里继续插话）。
+        let enqueued = 0;
+        const model = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub-model",
+            doStream: () => {
+                enqueued += 1;
+                q.add(uri, "next-turn", `第${enqueued}条`);
+                return Promise.resolve(textReply("答复"));
+            },
+        });
+
+        const ops = await run(uri, "开始", model);
+
+        // 第 1 次请求 = 用户自己的消息；第 2..8 次 = 每轮吃掉上一轮新排的那条
+        // → 共 MAX_STEER_ROUNDS 次请求；第 8 轮末尾判到上限，**什么都不取**直接收尾
+        expect(model.doStreamCalls).toHaveLength(MAX_STEER_ROUNDS);
+        // 上限那一刻新排的那条还在盘上（可取消 / 再发一条消息触发）
+        expect(new SteerQueue().list(uri).map((i) => i.text)).toEqual([`第${MAX_STEER_ROUNDS}条`]);
+        const err = ops.find(
+            (o) =>
+                o.op === "start" &&
+                o.kind === "error" &&
+                (o as { meta?: { source?: string } }).meta?.source === "steer",
+        ) as { op: "start"; id: string; parent?: string } | undefined;
+        expect(err).toBeTruthy();
+
+        // ── 呈现断言：提示必须**挂在本轮 turn 下**，不能是根块 ──
+        // 只断言"op 存在"不够：曾经这条 op 不带 parent，fold 后成了**根块**，而 UI 的根渲染
+        // 分支只认 turn → 用户看到的是「[未知根 error]」，等于提示没写（设计承诺的
+        // "显式提示、不静默吞"落空）。所以这里按 UI 的读法（fold 后的块树）断言归属。
+        const store = new BlockStore();
+        for (const op of ops) store.apply(op);
+        expect(err!.parent).toBeTruthy();
+        const errBlock = store.blocks.get(err!.id)!;
+        expect(errBlock.parent).toBe(err!.parent);
+        expect(store.blocks.get(errBlock.parent!)!.kind).toBe("turn");
+        // 且它是**最后一个** turn 的下挂块（提示属于撞上限的那一轮，不是首轮）
+        const roots = store.roots();
+        expect(roots.every((r) => r.kind === "turn")).toBe(true);
+        expect(roots[roots.length - 1]!.id).toBe(errBlock.parent);
+        // id 唯一性 / 折叠无 issue：曾经 id 用「队列首条 id + -limit」，同任务二次撞上限
+        // 且首条未变时会撞车 → 「重复 start」被丢弃、随后的 delta 却累进旧块（文案拼接）
+        expect(err!.id).toContain("limit");
+        expect(store.issues).toEqual([]);
+    });
+
+    it("没有插话就不多开轮（单轮结束即止）", async () => {
+        const uri = newUri();
+        const model = stubModel([textReply("一次性答复")]);
+        const ops = await run(uri, "你好", model);
+        expect(idsOf(ops, "turn")).toHaveLength(1);
+        expect(idsOf(ops, "step")).toHaveLength(1);
+    });
 });
 
 describe("插话不破坏既有会话语义", () => {
-  it("工具链路完整：tool 块 done + turn 收尾（stop）+ usage 回填", async () => {
-    const uri = newUri();
-    const model = stubModel([toolCallReply("c1", "echo hi"), textReply("完成")]);
-    const ops = await run(uri, "跑个命令", model);
-    expect(ops.some((o) => o.op === "patch" && (o as { fields?: { status?: string } }).fields?.status === "done")).toBe(true);
-    const turnId = idsOf(ops, "turn")[0]!;
-    expect(ops.some((o) => o.op === "stop" && (o as { id: string }).id === turnId)).toBe(true);
-    expect(ops.some((o) => o.op === "patch" && (o as { fields?: { usage?: unknown } }).fields?.usage)).toBe(true);
-  });
+    it("工具链路完整：tool 块 done + turn 收尾（stop）+ usage 回填", async () => {
+        const uri = newUri();
+        const model = stubModel([toolCallReply("c1", "echo hi"), textReply("完成")]);
+        const ops = await run(uri, "跑个命令", model);
+        expect(
+            ops.some((o) => o.op === "patch" && (o as { fields?: { status?: string } }).fields?.status === "done"),
+        ).toBe(true);
+        const turnId = idsOf(ops, "turn")[0]!;
+        expect(ops.some((o) => o.op === "stop" && (o as { id: string }).id === turnId)).toBe(true);
+        expect(ops.some((o) => o.op === "patch" && (o as { fields?: { usage?: unknown } }).fields?.usage)).toBe(true);
+    });
 
-  it("投递过的插话不会在下一轮重复出现（取出即落盘删除）", async () => {
-    const uri = newUri();
-    new SteerQueue().add(uri, "next-step", "只该出现一次");
-    const model = stubModel([toolCallReply("c1", "echo a"), textReply("完成")]);
-    await run(uri, "开始", model);
-    // 第二次对话（新 manager 实例 = 重启，队列从盘上读）
-    const mgr2 = new LocalAgentManager(() => model as unknown as LanguageModel);
-    const model2 = stubModel([textReply("第二次答复")]);
-    await run(uri, "再来一次", model2, mgr2);
-    expect(promptText(model2, 0)).not.toContain("只该出现一次");
-  });
+    it("投递过的插话不会在下一轮重复出现（取出即落盘删除）", async () => {
+        const uri = newUri();
+        new SteerQueue().add(uri, "next-step", "只该出现一次");
+        const model = stubModel([toolCallReply("c1", "echo a"), textReply("完成")]);
+        await run(uri, "开始", model);
+        // 第二次对话（新 manager 实例 = 重启，队列从盘上读）
+        const mgr2 = new LocalAgentManager(() => model as unknown as LanguageModel);
+        const model2 = stubModel([textReply("第二次答复")]);
+        await run(uri, "再来一次", model2, mgr2);
+        expect(promptText(model2, 0)).not.toContain("只该出现一次");
+    });
 });
 
 // ─── 消费端断开**不再**打断轮次（##305）─────────────
@@ -431,121 +445,124 @@ describe("插话不破坏既有会话语义", () => {
  * （症状是"落盘失败 ENOENT"，看着像产品坏了，其实是测试的路径过期）。
  */
 function opsPathOf(uri: string): string {
-  return opsFile(uri);
+    return opsFile(uri);
 }
 const opsFileOf = (uri: string): Promise<string> => Promise.resolve(opsPathOf(uri));
 
 /** 读该任务的 ops.jsonl 原始文本（不存在 = 空串） */
 function opsRaw(uri: string): string {
-  const fp = opsPathOf(uri);
-  return existsSync(fp) ? readFileSync(fp, "utf-8") : "";
+    const fp = opsPathOf(uri);
+    return existsSync(fp) ? readFileSync(fp, "utf-8") : "";
 }
 
 /** 该任务 ops 里 turn-end 审计条数 */
 function turnEndAuditCount(uri: string): number {
-  const fp = join(diyHome(), "log", "agent-bash.jsonl");
-  if (!existsSync(fp)) return 0;
-  return readFileSync(fp, "utf-8")
-    .split("\n")
-    .filter((l) => l.includes('"turn-end"') && l.includes(uri)).length;
+    const fp = join(diyHome(), "log", "agent-bash.jsonl");
+    if (!existsSync(fp)) return 0;
+    return readFileSync(fp, "utf-8")
+        .split("\n")
+        .filter((l) => l.includes('"turn-end"') && l.includes(uri)).length;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** 轮询等待：驱动（driveTurn）是**分离的异步任务**，断言必须等它跑到位 */
 async function waitFor(cond: () => boolean, timeoutMs: number, label: string): Promise<void> {
-  const t0 = Date.now();
-  while (!cond()) {
-    if (Date.now() - t0 > timeoutMs) throw new Error(`waitFor 超时：${label}`);
-    await sleep(10);
-  }
+    const t0 = Date.now();
+    while (!cond()) {
+        if (Date.now() - t0 > timeoutMs) throw new Error(`waitFor 超时：${label}`);
+        await sleep(10);
+    }
 }
 
 /** 桩模型：同步吐 head，隔 gapMs 再吐 tail 并正常收尾 —— 制出"直播中"的窗口供断开 */
 function delayedTextReply(head: string, tail: string, gapMs: number): LanguageModelV3StreamResult {
-  return {
-    stream: new ReadableStream<LanguageModelV3StreamPart>({
-      start(c) {
-        c.enqueue({ type: "stream-start", warnings: [] });
-        c.enqueue({ type: "text-start", id: "t" });
-        c.enqueue({ type: "text-delta", id: "t", delta: head });
-        setTimeout(() => {
-          c.enqueue({ type: "text-delta", id: "t", delta: tail });
-          c.enqueue({ type: "text-end", id: "t" });
-          c.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
-          c.close();
-        }, gapMs);
-      },
-    }),
-  };
+    return {
+        stream: new ReadableStream<LanguageModelV3StreamPart>({
+            start(c) {
+                c.enqueue({ type: "stream-start", warnings: [] });
+                c.enqueue({ type: "text-start", id: "t" });
+                c.enqueue({ type: "text-delta", id: "t", delta: head });
+                setTimeout(() => {
+                    c.enqueue({ type: "text-delta", id: "t", delta: tail });
+                    c.enqueue({ type: "text-end", id: "t" });
+                    c.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
+                    c.close();
+                }, gapMs);
+            },
+        }),
+    };
 }
 
 describe("消费端断开不再打断轮次（##305）", () => {
-  it("断开后：本轮照常跑完（断后产出仍落盘、turn 收 stop、activeTurns 摘除、审计留痕）", async () => {
-    const uri = newUri();
-    const model = stubModel([delayedTextReply("断开前", "断开后仍产出", 300)]);
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+    it("断开后：本轮照常跑完（断后产出仍落盘、turn 收 stop、activeTurns 摘除、审计留痕）", async () => {
+        const uri = newUri();
+        const model = stubModel([delayedTextReply("断开前", "断开后仍产出", 300)]);
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
-    const it = mgr.chat(uri, "会中途断开的轮次");
-    // 消费到"直播中"（首个 delta 已落盘），然后在流中途断开
-    let cut = false;
-    for (let i = 0; i < 20; i++) {
-      const r = await it.next();
-      if (r.done) break;
-      const op = r.value as Op;
-      if (op.op === "delta" && (op.fields as { content?: string }).content === "断开前") {
-        cut = true;
-        break;
-      }
-    }
-    expect(cut, "应到达直播中状态再断开").toBe(true);
-    expect(activeTurnList().some((t) => t.taskUri === uri)).toBe(true); // 断开前确实在跑
+        const it = mgr.chat(uri, "会中途断开的轮次");
+        // 消费到"直播中"（首个 delta 已落盘），然后在流中途断开
+        let cut = false;
+        for (let i = 0; i < 20; i++) {
+            const r = await it.next();
+            if (r.done) break;
+            const op = r.value as Op;
+            if (op.op === "delta" && (op.fields as { content?: string }).content === "断开前") {
+                cut = true;
+                break;
+            }
+        }
+        expect(cut, "应到达直播中状态再断开").toBe(true);
+        expect(activeTurnList().some((t) => t.taskUri === uri)).toBe(true); // 断开前确实在跑
 
-    // 消费端断开：这正是 http-server-binding 的 stream.on('close') → g.return() 做的事
-    await it.return({ failed: false } as never);
-    await sleep(60);
-    // **关键**：断开不再掐掉轮次（旧语义这里已 abort 并以 aborted{detached} 收场）
-    expect(activeTurnList().some((t) => t.taskUri === uri), "断开后轮次仍在跑").toBe(true);
+        // 消费端断开：这正是 http-server-binding 的 stream.on('close') → g.return() 做的事
+        await it.return({ failed: false } as never);
+        await sleep(60);
+        // **关键**：断开不再掐掉轮次（旧语义这里已 abort 并以 aborted{detached} 收场）
+        expect(
+            activeTurnList().some((t) => t.taskUri === uri),
+            "断开后轮次仍在跑",
+        ).toBe(true);
 
-    // 轮次自己跑完：断后的产出照旧落进 ops（不是只吐给没人看的流）
-    await waitFor(() => opsRaw(uri).includes("断开后仍产出"), 5000, "断后产出落盘");
-    await waitFor(() => !activeTurnList().some((t) => t.taskUri === uri), 5000, "轮次收尾");
+        // 轮次自己跑完：断后的产出照旧落进 ops（不是只吐给没人看的流）
+        await waitFor(() => opsRaw(uri).includes("断开后仍产出"), 5000, "断后产出落盘");
+        await waitFor(() => !activeTurnList().some((t) => t.taskUri === uri), 5000, "轮次收尾");
 
-    const ops = opsRaw(uri)
-      .split("\n")
-      .filter((l) => l.trim())
-      .map((l) => JSON.parse(l) as { op: string; id: string; kind?: string });
-    const turn = ops.find((o) => o.op === "start" && o.kind === "turn")!;
-    expect(turn).toBeTruthy();
-    expect(ops.some((o) => o.op === "stop" && o.id === turn.id)).toBe(true);
-    const steps = ops.filter((o) => o.op === "start" && o.kind === "step");
-    for (const st of steps) expect(ops.some((o) => o.op === "stop" && o.id === st.id)).toBe(true);
-    expect(turnEndAuditCount(uri)).toBeGreaterThan(0);
-  });
+        const ops = opsRaw(uri)
+            .split("\n")
+            .filter((l) => l.trim())
+            .map((l) => JSON.parse(l) as { op: string; id: string; kind?: string });
+        const turn = ops.find((o) => o.op === "start" && o.kind === "turn")!;
+        expect(turn).toBeTruthy();
+        expect(ops.some((o) => o.op === "stop" && o.id === turn.id)).toBe(true);
+        const steps = ops.filter((o) => o.op === "start" && o.kind === "step");
+        for (const st of steps) expect(ops.some((o) => o.op === "stop" && o.id === st.id)).toBe(true);
+        expect(turnEndAuditCount(uri)).toBeGreaterThan(0);
+    });
 
-  it("断开时队列还有留言：轮次不下线，轮末整批带走（不丢、不双投）", async () => {
-    const uri = newUri();
-    new SteerQueue().add(uri, "next-turn", "断开前排队的话");
-    const model = stubModel([delayedTextReply("一", "二", 300), textReply("第二轮答复")]);
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+    it("断开时队列还有留言：轮次不下线，轮末整批带走（不丢、不双投）", async () => {
+        const uri = newUri();
+        new SteerQueue().add(uri, "next-turn", "断开前排队的话");
+        const model = stubModel([delayedTextReply("一", "二", 300), textReply("第二轮答复")]);
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
-    const it = mgr.chat(uri, "会中途断开的轮次");
-    for (let i = 0; i < 20; i++) {
-      const r = await it.next();
-      if (r.done) break;
-      const op = r.value as Op;
-      if (op.op === "delta" && (op.fields as { content?: string }).content === "一") break;
-    }
-    await it.return({ failed: false } as never);
+        const it = mgr.chat(uri, "会中途断开的轮次");
+        for (let i = 0; i < 20; i++) {
+            const r = await it.next();
+            if (r.done) break;
+            const op = r.value as Op;
+            if (op.op === "delta" && (op.fields as { content?: string }).content === "一") break;
+        }
+        await it.return({ failed: false } as never);
 
-    // 第一轮跑完 → 队列里的留言被整批带走，作为**第二轮开场**（不丢）
-    await waitFor(() => opsRaw(uri).includes("断开前排队的话"), 5000, "留言被投递");
-    await waitFor(() => turnEndAuditCount(uri) >= 2, 5000, "两轮都收尾");
-    await waitFor(() => new SteerQueue().list(uri).length === 0, 5000, "队列已出清");
+        // 第一轮跑完 → 队列里的留言被整批带走，作为**第二轮开场**（不丢）
+        await waitFor(() => opsRaw(uri).includes("断开前排队的话"), 5000, "留言被投递");
+        await waitFor(() => turnEndAuditCount(uri) >= 2, 5000, "两轮都收尾");
+        await waitFor(() => new SteerQueue().list(uri).length === 0, 5000, "队列已出清");
 
-    // 不双投：留言只落一次
-    expect((opsRaw(uri).match(/断开前排队的话/g) ?? []).length).toBe(1);
-  });
+        // 不双投：留言只落一次
+        expect((opsRaw(uri).match(/断开前排队的话/g) ?? []).length).toBe(1);
+    });
 });
 
 // ─── 插话的落位点：start-step，而不是 prepareStep ─────────
@@ -598,8 +615,10 @@ describe("插话认领与落位分离（落位点 = start-step）", () => {
         // 结构不变式：插话块必须排在**第一个 step 的全部内容之后、第二个 step 开始之前**
         const flat = ops.map((o) => ({ op: o.op, kind: (o as { kind?: string }).kind, id: (o as { id: string }).id }));
         const steerIdx = flat.findIndex(
-            (o) => o.op === "start" && o.kind === "text"
-                && (ops[flat.indexOf(o)] as { meta?: { steer?: string } }).meta?.steer === "next-step",
+            (o) =>
+                o.op === "start" &&
+                o.kind === "text" &&
+                (ops[flat.indexOf(o)] as { meta?: { steer?: string } }).meta?.steer === "next-step",
         );
         const stepStarts = flat.map((o, i) => ({ ...o, i })).filter((o) => o.op === "start" && o.kind === "step");
         expect(stepStarts).toHaveLength(2);
@@ -618,222 +637,218 @@ describe("插话认领与落位分离（落位点 = start-step）", () => {
 // 两个入口共用同一条路：chatQueued（入队后唤醒 / 立即发送时无轮次）与 flushSteers（立即发送）。
 
 describe("##303 空闲时的留言：chatQueued —— 队列内容作一轮开场", () => {
-  it("空闲时用队列开一轮：多条整批进开场（同一轮、模型真看见），投递后出队", async () => {
-    const uri = newUri();
-    const q = new SteerQueue();
-    q.add(uri, "next-turn", "第一句");
-    q.add(uri, "next-step", "第二句");
-    const model = stubModel([textReply("收到")]);
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+    it("空闲时用队列开一轮：多条整批进开场（同一轮、模型真看见），投递后出队", async () => {
+        const uri = newUri();
+        const q = new SteerQueue();
+        q.add(uri, "next-turn", "第一句");
+        q.add(uri, "next-step", "第二句");
+        const model = stubModel([textReply("收到")]);
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
-    // 前提断言：此刻确实**没有**活跃轮次（否则这条测的就不是"空闲"这条路径了）
-    expect(mgr.busy(uri)).toBe(false);
+        // 前提断言：此刻确实**没有**活跃轮次（否则这条测的就不是"空闲"这条路径了）
+        expect(mgr.busy(uri)).toBe(false);
 
-    const ops: Op[] = [];
-    for await (const op of mgr.chatQueued(uri)) ops.push(op);
+        const ops: Op[] = [];
+        for await (const op of mgr.chatQueued(uri)) ops.push(op);
 
-    // 整批一次发：只打一次上游，两句话都在**第一次请求**里
-    expect(model.doStreamCalls).toHaveLength(1);
-    expect(promptText(model, 0)).toContain("第一句");
-    expect(promptText(model, 0)).toContain("第二句");
-    // 开场 user 块两条，各带自己的投递时机与队列 id（重放/排障能对号入座）
-    const openings = ops.filter(
-      (o) =>
-        o.op === "start" && o.kind === "text" &&
-        (o as { meta?: { role?: string } }).meta?.role === "user",
-    ) as Array<{ meta?: { steer?: string; steerId?: string } }>;
-    expect(openings.map((o) => o.meta?.steer)).toEqual(["next-turn", "next-step"]);
-    expect(openings.map((o) => o.meta?.steerId)).toEqual(["steer/1", "steer/2"]);
-    // 投递即出队：下一轮不会再投一遍
-    expect(q.list(uri)).toEqual([]);
-  });
+        // 整批一次发：只打一次上游，两句话都在**第一次请求**里
+        expect(model.doStreamCalls).toHaveLength(1);
+        expect(promptText(model, 0)).toContain("第一句");
+        expect(promptText(model, 0)).toContain("第二句");
+        // 开场 user 块两条，各带自己的投递时机与队列 id（重放/排障能对号入座）
+        const openings = ops.filter(
+            (o) => o.op === "start" && o.kind === "text" && (o as { meta?: { role?: string } }).meta?.role === "user",
+        ) as Array<{ meta?: { steer?: string; steerId?: string } }>;
+        expect(openings.map((o) => o.meta?.steer)).toEqual(["next-turn", "next-step"]);
+        expect(openings.map((o) => o.meta?.steerId)).toEqual(["steer/1", "steer/2"]);
+        // 投递即出队：下一轮不会再投一遍
+        expect(q.list(uri)).toEqual([]);
+    });
 
-  it("队列为空：不产任何 op、不打上游（「开一轮」的前提是有话可说）", async () => {
-    const uri = newUri();
-    const model = stubModel([textReply("不该被调用")]);
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
-    const ops: Op[] = [];
-    for await (const op of mgr.chatQueued(uri)) ops.push(op);
-    expect(ops).toEqual([]);
-    expect(model.doStreamCalls).toHaveLength(0);
-  });
+    it("队列为空：不产任何 op、不打上游（「开一轮」的前提是有话可说）", async () => {
+        const uri = newUri();
+        const model = stubModel([textReply("不该被调用")]);
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+        const ops: Op[] = [];
+        for await (const op of mgr.chatQueued(uri)) ops.push(op);
+        expect(ops).toEqual([]);
+        expect(model.doStreamCalls).toHaveLength(0);
+    });
 });
 
 describe("##303 flushSteers —— 立即发送（显式入口）", () => {
-  it("空闲：立刻开一轮，队列内容作开场白（与入队后唤醒同一条路）", async () => {
-    const uri = newUri();
-    new SteerQueue().add(uri, "next-turn", "立即发出去");
-    const model = stubModel([textReply("好")]);
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+    it("空闲：立刻开一轮，队列内容作开场白（与入队后唤醒同一条路）", async () => {
+        const uri = newUri();
+        new SteerQueue().add(uri, "next-turn", "立即发出去");
+        const model = stubModel([textReply("好")]);
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
-    const ops: Op[] = [];
-    for await (const op of mgr.flushSteers(uri)) ops.push(op);
+        const ops: Op[] = [];
+        for await (const op of mgr.flushSteers(uri)) ops.push(op);
 
-    expect(model.doStreamCalls).toHaveLength(1);
-    expect(promptText(model, 0)).toContain("立即发出去");
-    expect(ops.some((o) => o.op === "start" && o.kind === "turn")).toBe(true);
-    expect(new SteerQueue().list(uri)).toEqual([]);
-  });
-
-  it("有活跃轮次：只加急（全部转 next-step），不开新轮、不打扰上游", async () => {
-    const uri = newUri();
-    const q = new SteerQueue();
-    q.add(uri, "next-turn", "加急这句");
-    // 真造一个"有活跃轮次"：起一轮并推到 running（第一次请求**挂住**不放）。
-    // 不再手工往注册表里塞假条目 —— 那个入口（noteTurnStart）已随 ##240 review1 P2-3 收敛掉，
-    // 而"忙不忙"的判据就是 chat() 排队守卫用的同一个 turns 注册表（`mgr.busy()`）。
-    let releaseFirst!: () => void;
-    const hang = new Promise<void>((r) => (releaseFirst = r));
-    const model = new MockLanguageModelV3({
-      provider: "stub",
-      modelId: "stub-model",
-      doStream: () => hang.then(() => textReply("答复")),
+        expect(model.doStreamCalls).toHaveLength(1);
+        expect(promptText(model, 0)).toContain("立即发出去");
+        expect(ops.some((o) => o.op === "start" && o.kind === "turn")).toBe(true);
+        expect(new SteerQueue().list(uri)).toEqual([]);
     });
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
-    const first = mgr.chat(uri, "先跑起来");
-    await first.next(); // 推进到 running
-    expect(mgr.busy(uri)).toBe(true);
-    // ##305 之后轮次是**分离驱动**的：随时可查"忙不忙"，但上游请求何时发出要看驱动进度
-    // （忙 ≠ 首条 op 已到模型）。对齐到"首轮请求真发出去了"再测加急，否则数请求数没意义。
-    await waitFor(() => model.doStreamCalls.length === 1, 2000, "首轮请求已发出");
+    it("有活跃轮次：只加急（全部转 next-step），不开新轮、不打扰上游", async () => {
+        const uri = newUri();
+        const q = new SteerQueue();
+        q.add(uri, "next-turn", "加急这句");
+        // 真造一个"有活跃轮次"：起一轮并推到 running（第一次请求**挂住**不放）。
+        // 不再手工往注册表里塞假条目 —— 那个入口（noteTurnStart）已随 ##240 review1 P2-3 收敛掉，
+        // 而"忙不忙"的判据就是 chat() 排队守卫用的同一个 turns 注册表（`mgr.busy()`）。
+        let releaseFirst!: () => void;
+        const hang = new Promise<void>((r) => (releaseFirst = r));
+        const model = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub-model",
+            doStream: () => hang.then(() => textReply("答复")),
+        });
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
-    const ops: Op[] = [];
-    for await (const op of mgr.flushSteers(uri)) ops.push(op);
+        const first = mgr.chat(uri, "先跑起来");
+        await first.next(); // 推进到 running
+        expect(mgr.busy(uri)).toBe(true);
+        // ##305 之后轮次是**分离驱动**的：随时可查"忙不忙"，但上游请求何时发出要看驱动进度
+        // （忙 ≠ 首条 op 已到模型）。对齐到"首轮请求真发出去了"再测加急，否则数请求数没意义。
+        await waitFor(() => model.doStreamCalls.length === 1, 2000, "首轮请求已发出");
 
-    expect(ops).toEqual([]); // 不开轮 → 不产 op
-    expect(model.doStreamCalls).toHaveLength(1); // "现在"能到达的点是下一步，不是新请求
-    expect(q.list(uri).map((i) => [i.mode, i.text])).toEqual([["next-step", "加急这句"]]);
+        const ops: Op[] = [];
+        for await (const op of mgr.flushSteers(uri)) ops.push(op);
 
-    // 收摊：放行首轮，让它在轮末把加急那条带走（否则留一个悬挂的生成器）
-    releaseFirst();
-    for await (const _op of first) void _op;
-  });
+        expect(ops).toEqual([]); // 不开轮 → 不产 op
+        expect(model.doStreamCalls).toHaveLength(1); // "现在"能到达的点是下一步，不是新请求
+        expect(q.list(uri).map((i) => [i.mode, i.text])).toEqual([["next-step", "加急这句"]]);
 
-  it("队列为空：什么都不做（幂等）", async () => {
-    const uri = newUri();
-    const model = stubModel([textReply("不该被调用")]);
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
-    const ops: Op[] = [];
-    for await (const op of mgr.flushSteers(uri)) ops.push(op);
-    expect(ops).toEqual([]);
-    expect(model.doStreamCalls).toHaveLength(0);
-  });
+        // 收摊：放行首轮，让它在轮末把加急那条带走（否则留一个悬挂的生成器）
+        releaseFirst();
+        for await (const _op of first) void _op;
+    });
+
+    it("队列为空：什么都不做（幂等）", async () => {
+        const uri = newUri();
+        const model = stubModel([textReply("不该被调用")]);
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+        const ops: Op[] = [];
+        for await (const op of mgr.flushSteers(uri)) ops.push(op);
+        expect(ops).toEqual([]);
+        expect(model.doStreamCalls).toHaveLength(0);
+    });
 });
 
 describe("会话正在生成中再发消息（##306 / ##180 第 1 步）：不拒绝，改排队", () => {
-  it("第二个客户端发消息 → 不抛错，回一条排队回执，本轮收尾后整批投递", async () => {
-    const uri = newUri();
-    const model = stubModel([textReply("第一条的答复"), textReply("排队那条的答复")]);
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+    it("第二个客户端发消息 → 不抛错，回一条排队回执，本轮收尾后整批投递", async () => {
+        const uri = newUri();
+        const model = stubModel([textReply("第一条的答复"), textReply("排队那条的答复")]);
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
-    // 客户端 A：起一轮并推到「已在跑」。generator 是惰性的 —— next() 之前
-    // sess.running 仍是空，所以必须真推一次才模拟出"会话在跑"。
-    const first = mgr.chat(uri, "第一条");
-    const head = await first.next();
-    expect(head.done).toBe(false);
+        // 客户端 A：起一轮并推到「已在跑」。generator 是惰性的 —— next() 之前
+        // sess.running 仍是空，所以必须真推一次才模拟出"会话在跑"。
+        const first = mgr.chat(uri, "第一条");
+        const head = await first.next();
+        expect(head.done).toBe(false);
 
-    // 客户端 B：同一任务、同一会话再发一条 —— 旧行为是 throw「……正在生成中」
-    const opsB = await run(uri, "第二条", model, mgr);
+        // 客户端 B：同一任务、同一会话再发一条 —— 旧行为是 throw「……正在生成中」
+        const opsB = await run(uri, "第二条", model, mgr);
 
-    // ① 回执块：kind=error 且 source=queue（error 块不参与 LLM 投影，不会被当成真实发言）
-    const notice = opsB.find(
-      (o) =>
-        o.op === "start" &&
-        o.kind === "error" &&
-        (o as { meta?: { source?: string } }).meta?.source === "queue",
-    );
-    expect(notice).toBeTruthy();
-    // ② 回执必须带内容：空流退出 = 用户分不清"已排队"与"被吞了"
-    expect(
-      opsB.some((o) =>
-        String((o as { fields?: { message?: string } }).fields?.message ?? "").includes("已排队"),
-      ),
-    ).toBe(true);
-    // ③ 回执自己那一轮闭合（不留僵尸轮）
-    expect(opsB.some((o) => o.op === "stop" && o.id === notice!.id)).toBe(true);
+        // ① 回执块：kind=error 且 source=queue（error 块不参与 LLM 投影，不会被当成真实发言）
+        const notice = opsB.find(
+            (o) =>
+                o.op === "start" &&
+                o.kind === "error" &&
+                (o as { meta?: { source?: string } }).meta?.source === "queue",
+        );
+        expect(notice).toBeTruthy();
+        // ② 回执必须带内容：空流退出 = 用户分不清"已排队"与"被吞了"
+        expect(
+            opsB.some((o) => String((o as { fields?: { message?: string } }).fields?.message ?? "").includes("已排队")),
+        ).toBe(true);
+        // ③ 回执自己那一轮闭合（不留僵尸轮）
+        expect(opsB.some((o) => o.op === "stop" && o.id === notice!.id)).toBe(true);
 
-    // 继续跑完 A：本轮收尾后自动开下一轮，把排队那条投出去
-    const opsA: Op[] = [head.value!];
-    for await (const op of first) opsA.push(op);
+        // 继续跑完 A：本轮收尾后自动开下一轮，把排队那条投出去
+        const opsA: Op[] = [head.value!];
+        for await (const op of first) opsA.push(op);
 
-    // ④ 模型第二次请求里确实带上了"第二条"（真的投递了，不只是记了一笔）
-    expect(promptText(model, 1)).toContain("第二条");
-    // ⑤ 投递后队列清空（否则会被投第二次）
-    expect(new SteerQueue().list(uri)).toEqual([]);
-    // ⑥ 两轮结构：第一条那轮 + 排队那条自动开的下一轮
-    expect(opsA.filter((o) => o.op === "start" && o.kind === "turn").length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("生成中连灌 30 条：轮末一次整批投走（多 1 次请求），不撞 MAX_STEER_ROUNDS", async () => {
-    // review306 发现②的决策证据：条数上限（1000）与续轮上限（8）是**两个维度** ——
-    // 整批投递下 30 条排队消息 = 1 次续轮请求消化完，不消耗 30 轮，故 8 轮上限
-    // 拦不到"第二客户端 9 条以后全卡死"（那担忧基于"一条一轮"的误解）。
-    const uri = newUri();
-    // 第一次请求挂住（= running 可自由保持），第二次正常结束
-    let releaseFirst!: () => void;
-    const firstHang = new Promise<void>((r) => (releaseFirst = r));
-    let calls = 0;
-    const hanging = new MockLanguageModelV3({
-      provider: "stub",
-      modelId: "stub-model",
-      doStream: () => {
-        calls += 1;
-        // 第 1 次请求挂住（= running 可自由保持），之后正常结束
-        if (calls === 1) return firstHang.then(() => textReply("第一条的答复"));
-        return Promise.resolve(textReply("排队批的答复"));
-      },
+        // ④ 模型第二次请求里确实带上了"第二条"（真的投递了，不只是记了一笔）
+        expect(promptText(model, 1)).toContain("第二条");
+        // ⑤ 投递后队列清空（否则会被投第二次）
+        expect(new SteerQueue().list(uri)).toEqual([]);
+        // ⑥ 两轮结构：第一条那轮 + 排队那条自动开的下一轮
+        expect(opsA.filter((o) => o.op === "start" && o.kind === "turn").length).toBeGreaterThanOrEqual(2);
     });
-    const mgr = new LocalAgentManager(() => hanging as unknown as LanguageModel);
 
-    const first = mgr.chat(uri, "第一条");
-    await first.next(); // 推进到 running
+    it("生成中连灌 30 条：轮末一次整批投走（多 1 次请求），不撞 MAX_STEER_ROUNDS", async () => {
+        // review306 发现②的决策证据：条数上限（1000）与续轮上限（8）是**两个维度** ——
+        // 整批投递下 30 条排队消息 = 1 次续轮请求消化完，不消耗 30 轮，故 8 轮上限
+        // 拦不到"第二客户端 9 条以后全卡死"（那担忧基于"一条一轮"的误解）。
+        const uri = newUri();
+        // 第一次请求挂住（= running 可自由保持），第二次正常结束
+        let releaseFirst!: () => void;
+        const firstHang = new Promise<void>((r) => (releaseFirst = r));
+        let calls = 0;
+        const hanging = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub-model",
+            doStream: () => {
+                calls += 1;
+                // 第 1 次请求挂住（= running 可自由保持），之后正常结束
+                if (calls === 1) return firstHang.then(() => textReply("第一条的答复"));
+                return Promise.resolve(textReply("排队批的答复"));
+            },
+        });
+        const mgr = new LocalAgentManager(() => hanging as unknown as LanguageModel);
 
-    // 生成中连灌 30 条（旧守卫下每条都 throw；现应全部排队）
-    for (let i = 1; i <= 30; i++) {
-      const opsB: Op[] = [];
-      for await (const op of mgr.chat(uri, `排队消息 ${i}`)) opsB.push(op);
-      expect(opsB.some((o) => o.op === "start" && o.kind === "error")).toBe(true);
-    }
-    expect(new SteerQueue().list(uri)).toHaveLength(30);
+        const first = mgr.chat(uri, "第一条");
+        await first.next(); // 推进到 running
 
-    // 放行首轮 → 轮末整批取走 30 条
-    releaseFirst();
-    const opsA: Op[] = [];
-    for await (const op of first) opsA.push(op);
+        // 生成中连灌 30 条（旧守卫下每条都 throw；现应全部排队）
+        for (let i = 1; i <= 30; i++) {
+            const opsB: Op[] = [];
+            for await (const op of mgr.chat(uri, `排队消息 ${i}`)) opsB.push(op);
+            expect(opsB.some((o) => o.op === "start" && o.kind === "error")).toBe(true);
+        }
+        expect(new SteerQueue().list(uri)).toHaveLength(30);
 
-    // ① 上游只多 1 次请求：首轮 + 1 次整批续轮（不是 30 轮、更不撞 8 轮上限）
-    expect(hanging.doStreamCalls).toHaveLength(2);
-    // ② 30 条全在第二次请求的 prompt 里（一条不丢）
-    const second = promptText(hanging, 1);
-    for (let i = 1; i <= 30; i++) expect(second).toContain(`排队消息 ${i}`);
-    // ③ 队列清空 + 上限提示块不存在（没撞上限）
-    expect(new SteerQueue().list(uri)).toEqual([]);
-    expect(opsA.some((o) => o.op === "start" && o.kind === "error")).toBe(false);
-  });
+        // 放行首轮 → 轮末整批取走 30 条
+        releaseFirst();
+        const opsA: Op[] = [];
+        for await (const op of first) opsA.push(op);
 
-  it("排队的那条走缺省 next-step：插进正在跑的轮次的下一个模型步，不另开一轮（##360）", async () => {
-    const uri = newUri();
-    const model = stubModel([toolCallReply("c1", "echo a"), textReply("第一轮"), textReply("第二轮")]);
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+        // ① 上游只多 1 次请求：首轮 + 1 次整批续轮（不是 30 轮、更不撞 8 轮上限）
+        expect(hanging.doStreamCalls).toHaveLength(2);
+        // ② 30 条全在第二次请求的 prompt 里（一条不丢）
+        const second = promptText(hanging, 1);
+        for (let i = 1; i <= 30; i++) expect(second).toContain(`排队消息 ${i}`);
+        // ③ 队列清空 + 上限提示块不存在（没撞上限）
+        expect(new SteerQueue().list(uri)).toEqual([]);
+        expect(opsA.some((o) => o.op === "start" && o.kind === "error")).toBe(false);
+    });
 
-    const first = mgr.chat(uri, "开始");
-    const head = await first.next(); // 第 1 个 op = 本轮 turn 开场（消费掉，下面连同一起算）
+    it("排队的那条走缺省 next-step：插进正在跑的轮次的下一个模型步，不另开一轮（##360）", async () => {
+        const uri = newUri();
+        const model = stubModel([toolCallReply("c1", "echo a"), textReply("第一轮"), textReply("第二轮")]);
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
-    await run(uri, "排队的话", model, mgr);
+        const first = mgr.chat(uri, "开始");
+        const head = await first.next(); // 第 1 个 op = 本轮 turn 开场（消费掉，下面连同一起算）
 
-    // 缺省时机自 ##360 起是 next-step：它在本轮**下一个模型步**（第 2 次请求 = 工具步之后）
-    // 之前就被注入 —— 不必等本轮收尾，这正是"95% 的插话要的是马上生效"的落点。
-    const opsA: Op[] = [head.value!];
-    for await (const op of first) opsA.push(op);
-    expect(promptText(model, 1)).toContain("排队的话");
-    // 投完即空：同一批只投一次（不会既插进本轮、又留到下一轮再投一遍）
-    expect(new SteerQueue().list(uri)).toEqual([]);
-    // 全程只有一轮：上游总共 2 次请求（工具步 + 收尾步），没有为排队那条另开一轮。
-    // 想"排到本轮之后"的用户在界面上把该条切成 next-turn，那条路径由上面 next-turn 用例覆盖。
-    expect(opsA.filter((o) => o.op === "start" && o.kind === "turn")).toHaveLength(1);
-    expect(model.doStreamCalls).toHaveLength(2);
-  });
+        await run(uri, "排队的话", model, mgr);
+
+        // 缺省时机自 ##360 起是 next-step：它在本轮**下一个模型步**（第 2 次请求 = 工具步之后）
+        // 之前就被注入 —— 不必等本轮收尾，这正是"95% 的插话要的是马上生效"的落点。
+        const opsA: Op[] = [head.value!];
+        for await (const op of first) opsA.push(op);
+        expect(promptText(model, 1)).toContain("排队的话");
+        // 投完即空：同一批只投一次（不会既插进本轮、又留到下一轮再投一遍）
+        expect(new SteerQueue().list(uri)).toEqual([]);
+        // 全程只有一轮：上游总共 2 次请求（工具步 + 收尾步），没有为排队那条另开一轮。
+        // 想"排到本轮之后"的用户在界面上把该条切成 next-turn，那条路径由上面 next-turn 用例覆盖。
+        expect(opsA.filter((o) => o.op === "start" && o.kind === "turn")).toHaveLength(1);
+        expect(model.doStreamCalls).toHaveLength(2);
+    });
 });
 
 // ─── 排队回执的 id 契约 + 上限注入（##306 review2）─────────────────────
@@ -845,119 +860,127 @@ describe("会话正在生成中再发消息（##306 / ##180 第 1 步）：不�
 
 /** ops.jsonl 里排队回执的块 id（按出现序）：`kind=error` + `meta.source=queue` 的那些 */
 function receiptIds(uri: string): string[] {
-  return opsRaw(uri)
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => JSON.parse(l) as Op)
-    .filter(
-      (o) =>
-        o.op === "start" &&
-        o.kind === "error" &&
-        (o as { meta?: { source?: string } }).meta?.source === "queue",
-    )
-    .map((o) => (o as { id: string }).id);
+    return opsRaw(uri)
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as Op)
+        .filter(
+            (o) =>
+                o.op === "start" &&
+                o.kind === "error" &&
+                (o as { meta?: { source?: string } }).meta?.source === "queue",
+        )
+        .map((o) => (o as { id: string }).id);
 }
 
 /** 整份 ops.jsonl 重放（= 重启 / 切页后 loadHistory 走的路）后的折叠问题清单 */
 function replayIssues(uri: string): string[] {
-  const store = new BlockStore();
-  for (const line of opsRaw(uri).split("\n").filter(Boolean)) store.apply(JSON.parse(line) as Op);
-  return store.issues.map((i) => i.reason);
+    const store = new BlockStore();
+    for (const line of opsRaw(uri).split("\n").filter(Boolean)) store.apply(JSON.parse(line) as Op);
+    return store.issues.map((i) => i.reason);
 }
 
 describe("排队回执的 id 契约（##306 review2 发现 C）", () => {
-  it("生成中连发 30 条：回执块一一对应（id 两两不同）+ 整份 ops 重放零 issues", async () => {
-    const uri = newUri();
-    // 第一次请求挂住 → 会话保持 running，后续 chat() 全走 enqueueWhileRunning
-    let release!: () => void;
-    const hang = new Promise<void>((r) => (release = r));
-    const model = new MockLanguageModelV3({
-      provider: "stub",
-      modelId: "stub-model",
-      doStream: () => hang.then(() => textReply("答复")),
+    it("生成中连发 30 条：回执块一一对应（id 两两不同）+ 整份 ops 重放零 issues", async () => {
+        const uri = newUri();
+        // 第一次请求挂住 → 会话保持 running，后续 chat() 全走 enqueueWhileRunning
+        let release!: () => void;
+        const hang = new Promise<void>((r) => (release = r));
+        const model = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub-model",
+            doStream: () => hang.then(() => textReply("答复")),
+        });
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+
+        const first = mgr.chat(uri, "第一条");
+        await first.next(); // 推进到 running
+
+        const N = 30;
+        for (let i = 1; i <= N; i++) await run(uri, `排队消息 ${i}`, model, mgr);
+
+        // ① 落盘的回执条数 = 发出去的消息数
+        const ids = receiptIds(uri);
+        expect(ids).toHaveLength(N);
+        // ② id 两两不同：否则 BlockStore 的「重复 start」会丢掉后来的 start，
+        //    那条回执的 delta 就累加到上一条上（文案拼接、stop 提前闭合）
+        expect(new Set(ids).size).toBe(N);
+        // ③ 重放零 issues（重复 start / parent 不存在都会记在这里）
+        expect(replayIssues(uri)).toEqual([]);
+
+        release();
+        for await (const _op of first) void _op;
     });
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
-    const first = mgr.chat(uri, "第一条");
-    await first.next(); // 推进到 running
+    it("投递完再排一条：回执 id 不撞历史里那条（队列序号从头来，回执轮不能被顶掉）", async () => {
+        // 为什么单列一条：队列条目序号**在队列清空后从头来**（newSteerId 只保证队列内唯一），
+        // 而回执轮落进 ops.jsonl 就长期留在史书里 —— 「投递完 → 再排一条」必然重现 `steer/1`。
+        // 若回执轮 id 只由条目 id 决定（`qt-steer/1`），第二集那条会被重放丢弃。
+        const uri = newUri();
+        let releaseA!: () => void;
+        let releaseB!: () => void;
+        const hangA = new Promise<void>((r) => (releaseA = r));
+        const hangB = new Promise<void>((r) => (releaseB = r));
+        let call = 0;
+        const model = new MockLanguageModelV3({
+            provider: "stub",
+            modelId: "stub-model",
+            // 第 1、3 次请求各挂住一次：两次都制造"会话在跑、可以入队"的窗口。
+            // 第 2、4 次是**投递轮**（排队的话被取走时开的续轮）—— 必须立刻答复，
+            // 否则 drain 时卡在未放行的 promise 上（这正是本用例第一次写错的地方）。
+            doStream: () => {
+                const n = ++call;
+                if (n === 1) return hangA.then(() => textReply("A 轮答复"));
+                if (n === 3) return hangB.then(() => textReply("B 轮答复"));
+                return Promise.resolve(textReply(`投递轮 ${n}`));
+            },
+        });
+        const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
-    const N = 30;
-    for (let i = 1; i <= N; i++) await run(uri, `排队消息 ${i}`, model, mgr);
+        // 第一集：A 轮在跑时排一条（队列序号 steer/1）→ 放行 A → 轮末投递掉，队列清空
+        const a = mgr.chat(uri, "A 轮开场");
+        await a.next();
+        await run(uri, "第一集排队", model, mgr);
+        expect(new SteerQueue().list(uri).map((it) => it.id)).toEqual(["steer/1"]);
+        releaseA();
+        for await (const _op of a) void _op;
+        expect(new SteerQueue().list(uri)).toEqual([]);
 
-    // ① 落盘的回执条数 = 发出去的消息数
-    const ids = receiptIds(uri);
-    expect(ids).toHaveLength(N);
-    // ② id 两两不同：否则 BlockStore 的「重复 start」会丢掉后来的 start，
-    //    那条回执的 delta 就累加到上一条上（文案拼接、stop 提前闭合）
-    expect(new Set(ids).size).toBe(N);
-    // ③ 重放零 issues（重复 start / parent 不存在都会记在这里）
-    expect(replayIssues(uri)).toEqual([]);
+        // 第二集：B 轮在跑时又排一条 —— 队列又是空的，条目 id 回到 steer/1
+        const b = mgr.chat(uri, "B 轮开场");
+        await b.next();
+        await run(uri, "第二集排队", model, mgr);
+        expect(new SteerQueue().list(uri).map((it) => it.id)).toEqual(["steer/1"]);
+        releaseB();
+        for await (const _op of b) void _op;
 
-    release();
-    for await (const _op of first) void _op;
-  });
-
-  it("投递完再排一条：回执 id 不撞历史里那条（队列序号从头来，回执轮不能被顶掉）", async () => {
-    // 为什么单列一条：队列条目序号**在队列清空后从头来**（newSteerId 只保证队列内唯一），
-    // 而回执轮落进 ops.jsonl 就长期留在史书里 —— 「投递完 → 再排一条」必然重现 `steer/1`。
-    // 若回执轮 id 只由条目 id 决定（`qt-steer/1`），第二集那条会被重放丢弃。
-    const uri = newUri();
-    let releaseA!: () => void;
-    let releaseB!: () => void;
-    const hangA = new Promise<void>((r) => (releaseA = r));
-    const hangB = new Promise<void>((r) => (releaseB = r));
-    let call = 0;
-    const model = new MockLanguageModelV3({
-      provider: "stub",
-      modelId: "stub-model",
-      // 第 1、3 次请求各挂住一次：两次都制造"会话在跑、可以入队"的窗口。
-      // 第 2、4 次是**投递轮**（排队的话被取走时开的续轮）—— 必须立刻答复，
-      // 否则 drain 时卡在未放行的 promise 上（这正是本用例第一次写错的地方）。
-      doStream: () => {
-        const n = ++call;
-        if (n === 1) return hangA.then(() => textReply("A 轮答复"));
-        if (n === 3) return hangB.then(() => textReply("B 轮答复"));
-        return Promise.resolve(textReply(`投递轮 ${n}`));
-      },
+        // ① 两个回执块，且**不是**同一个 id（撞了就只剩一条，重放还会记 issue）
+        const ids = receiptIds(uri);
+        expect(ids).toHaveLength(2);
+        expect(new Set(ids).size).toBe(2);
+        // ② 回执轮 id 携带条目 id（一一对应可回查），第二集那条不是裸 `steer/1` 的重复
+        const turnIds = opsRaw(uri)
+            .split("\n")
+            .filter(Boolean)
+            .map((l) => JSON.parse(l) as Op)
+            .filter(
+                (o) =>
+                    o.op === "start" &&
+                    o.kind === "turn" &&
+                    (o as { meta?: { source?: string } }).meta?.source === "queue",
+            )
+            .map((o) => ({
+                id: (o as { id: string }).id,
+                steerId: (o as { meta?: { steerId?: string } }).meta?.steerId,
+            }));
+        expect(turnIds.map((t) => t.steerId)).toEqual(["steer/1", "steer/1"]);
+        expect(turnIds[0]!.id).not.toBe(turnIds[1]!.id);
+        // ③ 整份 ops 重放零 issues（含第二集那条回执的 parent 引用）
+        expect(replayIssues(uri)).toEqual([]);
     });
-    const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
-
-    // 第一集：A 轮在跑时排一条（队列序号 steer/1）→ 放行 A → 轮末投递掉，队列清空
-    const a = mgr.chat(uri, "A 轮开场");
-    await a.next();
-    await run(uri, "第一集排队", model, mgr);
-    expect(new SteerQueue().list(uri).map((it) => it.id)).toEqual(["steer/1"]);
-    releaseA();
-    for await (const _op of a) void _op;
-    expect(new SteerQueue().list(uri)).toEqual([]);
-
-    // 第二集：B 轮在跑时又排一条 —— 队列又是空的，条目 id 回到 steer/1
-    const b = mgr.chat(uri, "B 轮开场");
-    await b.next();
-    await run(uri, "第二集排队", model, mgr);
-    expect(new SteerQueue().list(uri).map((it) => it.id)).toEqual(["steer/1"]);
-    releaseB();
-    for await (const _op of b) void _op;
-
-    // ① 两个回执块，且**不是**同一个 id（撞了就只剩一条，重放还会记 issue）
-    const ids = receiptIds(uri);
-    expect(ids).toHaveLength(2);
-    expect(new Set(ids).size).toBe(2);
-    // ② 回执轮 id 携带条目 id（一一对应可回查），第二集那条不是裸 `steer/1` 的重复
-    const turnIds = opsRaw(uri)
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as Op)
-      .filter((o) => o.op === "start" && o.kind === "turn" && (o as { meta?: { source?: string } }).meta?.source === "queue")
-      .map((o) => ({ id: (o as { id: string }).id, steerId: (o as { meta?: { steerId?: string } }).meta?.steerId }));
-    expect(turnIds.map((t) => t.steerId)).toEqual(["steer/1", "steer/1"]);
-    expect(turnIds[0]!.id).not.toBe(turnIds[1]!.id);
-    // ③ 整份 ops 重放零 issues（含第二集那条回执的 parent 引用）
-    expect(replayIssues(uri)).toEqual([]);
-  });
 });
 
-  it("Date.now 冻结（同毫秒连发 5 条）：回执 id 仍两两不同 + 重放零 issues", async () => {
+it("Date.now 冻结（同毫秒连发 5 条）：回执 id 仍两两不同 + 重放零 issues", async () => {
     // **这是发现 C 的确定性复现**：旧写法 `qt${Date.now()}` 的自然时序每条 ≈17ms，
     // 靠"连发"复现不出撞号（连 50 条并发也各自落在不同毫秒）—— 把时钟冻住才暴露
     // "它靠时间巧合成立"。实测：旧写法本用例 = 唯一 id 1 / 重复 4 / 重放 8 条「重复 start」；
@@ -966,9 +989,9 @@ describe("排队回执的 id 契约（##306 review2 发现 C）", () => {
     let release!: () => void;
     const hang = new Promise<void>((r) => (release = r));
     const model = new MockLanguageModelV3({
-      provider: "stub",
-      modelId: "stub-model",
-      doStream: () => hang.then(() => textReply("答复")),
+        provider: "stub",
+        modelId: "stub-model",
+        doStream: () => hang.then(() => textReply("答复")),
     });
     const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
 
@@ -978,9 +1001,9 @@ describe("排队回执的 id 契约（##306 review2 发现 C）", () => {
     const N = 5;
     const spy = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     try {
-      for (let i = 1; i <= N; i++) await run(uri, `排队 ${i}`, model, mgr);
+        for (let i = 1; i <= N; i++) await run(uri, `排队 ${i}`, model, mgr);
     } finally {
-      spy.mockRestore();
+        spy.mockRestore();
     }
 
     const ids = receiptIds(uri);
@@ -990,42 +1013,42 @@ describe("排队回执的 id 契约（##306 review2 发现 C）", () => {
 
     release();
     for await (const _op of first) void _op;
-  });
+});
 
 describe("插话队列条数上限经 manager 注入（##306 review2 发现 D）", () => {
-  it("DIY_LOCAL_MAX_STEER_QUEUE 生效：第 4 条被拒且提示可操作，队列仍 3 条（拒入队不落盘）", async () => {
-    const prev = process.env["DIY_LOCAL_MAX_STEER_QUEUE"];
-    process.env["DIY_LOCAL_MAX_STEER_QUEUE"] = "3";
-    try {
-      const uri = newUri();
-      let release!: () => void;
-      const hang = new Promise<void>((r) => (release = r));
-      const model = new MockLanguageModelV3({
-        provider: "stub",
-        modelId: "stub-model",
-        doStream: () => hang.then(() => textReply("答复")),
-      });
-      const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
-      expect(mgr.getLimits().maxSteerQueue).toBe(3); // getLimits 首用时读 env（此后缓存）
+    it("DIY_LOCAL_MAX_STEER_QUEUE 生效：第 4 条被拒且提示可操作，队列仍 3 条（拒入队不落盘）", async () => {
+        const prev = process.env["DIY_LOCAL_MAX_STEER_QUEUE"];
+        process.env["DIY_LOCAL_MAX_STEER_QUEUE"] = "3";
+        try {
+            const uri = newUri();
+            let release!: () => void;
+            const hang = new Promise<void>((r) => (release = r));
+            const model = new MockLanguageModelV3({
+                provider: "stub",
+                modelId: "stub-model",
+                doStream: () => hang.then(() => textReply("答复")),
+            });
+            const mgr = new LocalAgentManager(() => model as unknown as LanguageModel);
+            expect(mgr.getLimits().maxSteerQueue).toBe(3); // getLimits 首用时读 env（此后缓存）
 
-      const first = mgr.chat(uri, "第一条");
-      await first.next(); // 推进到 running
+            const first = mgr.chat(uri, "第一条");
+            await first.next(); // 推进到 running
 
-      for (let i = 1; i <= 3; i++) {
-        const opsB = await run(uri, `排队 ${i}`, model, mgr);
-        expect(opsB.some((o) => o.op === "start" && o.kind === "error")).toBe(true);
-      }
-      // 第 4 条：走 mgr.chat() 拿到拒绝（不是队列层的自证）—— manager 真注入了上限
-      await expect(run(uri, "第四条", model, mgr)).rejects.toThrow(/上限 3 条/);
-      // 拒入队不落盘：队列仍是 3 条（先判后写），且第 4 条的回执块一个也没有
-      expect(new SteerQueue().list(uri)).toHaveLength(3);
-      expect(receiptIds(uri)).toHaveLength(3);
+            for (let i = 1; i <= 3; i++) {
+                const opsB = await run(uri, `排队 ${i}`, model, mgr);
+                expect(opsB.some((o) => o.op === "start" && o.kind === "error")).toBe(true);
+            }
+            // 第 4 条：走 mgr.chat() 拿到拒绝（不是队列层的自证）—— manager 真注入了上限
+            await expect(run(uri, "第四条", model, mgr)).rejects.toThrow(/上限 3 条/);
+            // 拒入队不落盘：队列仍是 3 条（先判后写），且第 4 条的回执块一个也没有
+            expect(new SteerQueue().list(uri)).toHaveLength(3);
+            expect(receiptIds(uri)).toHaveLength(3);
 
-      release();
-      for await (const _op of first) void _op;
-    } finally {
-      if (prev === undefined) delete process.env["DIY_LOCAL_MAX_STEER_QUEUE"];
-      else process.env["DIY_LOCAL_MAX_STEER_QUEUE"] = prev;
-    }
-  });
+            release();
+            for await (const _op of first) void _op;
+        } finally {
+            if (prev === undefined) delete process.env["DIY_LOCAL_MAX_STEER_QUEUE"];
+            else process.env["DIY_LOCAL_MAX_STEER_QUEUE"] = prev;
+        }
+    });
 });

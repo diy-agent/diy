@@ -183,9 +183,7 @@ describe("通知组装（rule.discriminated-union：type 同级 = 公共字段�
 
     it("id 唯一（同一毫秒多条也不撞）", () => {
         const now = new Date("2026-10-19T00:00:00Z");
-        const ids = new Set(
-            Array.from({ length: 5 }, () => envNoticeFromDisk(sample(10 * MiB), "poll", now)?.id),
-        );
+        const ids = new Set(Array.from({ length: 5 }, () => envNoticeFromDisk(sample(10 * MiB), "poll", now)?.id));
         expect(ids.size).toBe(5);
     });
 });
@@ -205,7 +203,10 @@ describe("slotOf（去重键 —— main 与 renderer **同源**，##384 review1
     it("**同一卷的不同采样路径**同槽（mount 是采样点、dev 才是卷身份；##384 review2 R1）", () => {
         // 反例现场：`/` 与 `/Users/ccc/.diy/projects/4/tasks/166` 在 macOS 上是同一个 dev
         const polled = envNoticeFromDisk(sample(100 * MiB, 500 * GiB, "/", 16777220), "poll")!;
-        const werr = envNoticeFromDisk(sample(100 * MiB, 500 * GiB, "/Users/ccc/.diy/projects/4/tasks/166", 16777220), "poll")!;
+        const werr = envNoticeFromDisk(
+            sample(100 * MiB, 500 * GiB, "/Users/ccc/.diy/projects/4/tasks/166", 16777220),
+            "poll",
+        )!;
         expect(slotOf(polled)).toBe(slotOf(werr));
     });
 

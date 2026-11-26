@@ -95,12 +95,7 @@ export function followPlan(opts: {
  * 相对容器顶的偏移（≤0）。目标 = 让块顶重新落在离容器顶 `offset` 处。
  * 超界由 `clampScrollTop` 收口（内容被删/变矮时宁可停在边界，也不给出非法值）。
  */
-export function anchorScrollTop(
-    blockTop: number,
-    offset: number,
-    scrollHeight: number,
-    clientHeight: number,
-): number {
+export function anchorScrollTop(blockTop: number, offset: number, scrollHeight: number, clientHeight: number): number {
     return clampScrollTop(blockTop - offset, scrollHeight, clientHeight);
 }
 
@@ -174,7 +169,6 @@ export function anchorTick(
     const quiet = st.quiet + 1;
     return { setTop: null, state: { lastSt: m.scrollTop, quiet, userLeft: false }, stop: quiet >= m.quietFrames };
 }
-
 
 // ─── 事件流（room 面板 / 房间页）的跟随态（##377 第 19 刀）─────────────────────
 //

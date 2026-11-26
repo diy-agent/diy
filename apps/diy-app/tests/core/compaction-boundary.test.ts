@@ -46,22 +46,14 @@ describe("边界锚点 keepFromOpIndex（回归：压缩后发的消息消失）
     });
 
     it("全清后**追加新轮**：锚点不变，新轮被保留（不再被吞）", () => {
-        const withNew: OpLike[] = [
-            ...t1,
-            { op: "start", id: "a3", kind: "turn" },
-            { op: "stop", id: "a3" },
-        ];
+        const withNew: OpLike[] = [...t1, { op: "start", id: "a3", kind: "turn" }, { op: "stop", id: "a3" }];
         const b = resolveBoundary([clearAllLedger(t1.length)])!;
         // 新轮 a3 从下标 4 起 —— 正是锚点位置 → 命中
         expect(turnIdAtOrAfterOp(withNew, b.keepFromOpIndex)).toBe("a3");
     });
 
     it("history 的切片语义：ops.slice(keepFromOpIndex) 保留新轮、丢弃压缩前的轮", () => {
-        const withNew: OpLike[] = [
-            ...t1,
-            { op: "start", id: "a3", kind: "turn" },
-            { op: "stop", id: "a3" },
-        ];
+        const withNew: OpLike[] = [...t1, { op: "start", id: "a3", kind: "turn" }, { op: "stop", id: "a3" }];
         const b = resolveBoundary([clearAllLedger(t1.length)])!;
         const sliced = withNew.slice(b.keepFromOpIndex);
         expect(listTurnIds(sliced)).toEqual(["a3"]);
@@ -69,7 +61,11 @@ describe("边界锚点 keepFromOpIndex（回归：压缩后发的消息消失）
 
     it("老账本缺 keepFromOpIndex → 回退 -1（下游按 keptFromTurnId 推导，不崩）", () => {
         const legacy = JSON.stringify({
-            kind: "compact", v: 1, id: "L", ts: "L", by: "cli",
+            kind: "compact",
+            v: 1,
+            id: "L",
+            ts: "L",
+            by: "cli",
             policy: normalizePolicy({ budgetBytes: 0, toolResult: { render: "asis" } }),
             boundary: { keptFromTurnId: null, keptTurns: 0, droppedTurns: 1 },
             before: { turns: 1, messages: 2, bytes: 10, estTokens: 3 },

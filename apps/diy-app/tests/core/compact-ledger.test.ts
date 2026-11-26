@@ -96,7 +96,11 @@ describe("④ 预算事件的**过滤器表达**（历史回溯可还原投递�
         const uri = newUri();
         seedOps(uri);
         // 无边界 → 全部保留（单区间 [1, N]）
-        const rec = getLocalAgent().compact(uri, { mode: "budget", toolResult: { render: "asis" }, summary: false }, "cli") as {
+        const rec = getLocalAgent().compact(
+            uri,
+            { mode: "budget", toolResult: { render: "asis" }, summary: false },
+            "cli",
+        ) as {
             details?: { kept?: [number, number][] };
         };
         expect(rec.details?.kept?.length).toBe(1);
@@ -105,7 +109,11 @@ describe("④ 预算事件的**过滤器表达**（历史回溯可还原投递�
 
         const uri2 = newUri();
         seedOps(uri2);
-        const rec2 = getLocalAgent().compact(uri2, { mode: "budget", toolResult: { render: "asis" }, summary: false }, "cli") as {
+        const rec2 = getLocalAgent().compact(
+            uri2,
+            { mode: "budget", toolResult: { render: "asis" }, summary: false },
+            "cli",
+        ) as {
             details?: { kept?: [number, number][] };
         };
         // 没有「清零」这种说法了：没有边界时保留区间是全覆盖
@@ -199,7 +207,14 @@ describe("③ measure 事件：空壳 predicted 不写", () => {
             { type: "text-end", id: "t" },
             { type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage },
         ];
-        return { stream: new ReadableStream({ start(c) { for (const p of parts) c.enqueue(p); c.close(); } }) };
+        return {
+            stream: new ReadableStream({
+                start(c) {
+                    for (const p of parts) c.enqueue(p);
+                    c.close();
+                },
+            }),
+        };
     }
     const stub = () =>
         new MockLanguageModelV3({
@@ -229,7 +244,10 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
     it("policy / boundary / size / cost / details 五块 + v4 的 plan **版本指针**，且 keptTurns 归 size（不是锚点）", () => {
         const uri = newUri();
         seedOps(uri);
-        const rec = getLocalAgent().compact(uri, { toolResult: { render: "asis" } }, "cli") as unknown as Record<string, unknown>;
+        const rec = getLocalAgent().compact(uri, { toolResult: { render: "asis" } }, "cli") as unknown as Record<
+            string,
+            unknown
+        >;
         expect(rec.kind).toBe("compact");
         // ##344 M2 的 plan 快照 → ##378 起只记**内容寻址版本**（全文在 $DIY_HOME/plan-store/）
         expect(rec.v).toBe(5); // ##431：v5 = 明细瘦身
@@ -275,7 +293,18 @@ describe("④ v3 分组形状：看 JSON 就知道每块回答什么（D5「结�
             before: { turns: 3, messages: 6, bytes: 300, estTokens: 75 },
             after: { turns: 0, messages: 0, bytes: 0, estTokens: 0 },
             taxShare: 0.37,
-            clipped: [{ id: "c1", tool: "bash", render: "headtail", origLines: 9, origBytes: 90, keptLines: 3, keptBytes: 30, origPath: "p" }],
+            clipped: [
+                {
+                    id: "c1",
+                    tool: "bash",
+                    render: "headtail",
+                    origLines: 9,
+                    origBytes: 90,
+                    keptLines: 3,
+                    keptBytes: 30,
+                    origPath: "p",
+                },
+            ],
             summaryText: "摘要",
         });
         const [e] = parseCompactLog(v1);

@@ -24,28 +24,28 @@ export const STEER_ID_PREFIX = "steer/";
 
 /** 队列里最大序号（无匹配 / 空队列 = 0） */
 function maxSeq(items: readonly SteerItem[]): number {
-  let max = 0;
-  for (const it of items) {
-    // 只认完整形式 `steer/<十进制>`：手工写进文件的怪 id（如 "steer/1x"、"s1"）不参与计数，
-    // 否则一次误写会让后续序号跳到奇怪的值
-    const m = /^steer\/(\d+)$/.exec(it.id);
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  return max;
+    let max = 0;
+    for (const it of items) {
+        // 只认完整形式 `steer/<十进制>`：手工写进文件的怪 id（如 "steer/1x"、"s1"）不参与计数，
+        // 否则一次误写会让后续序号跳到奇怪的值
+        const m = /^steer\/(\d+)$/.exec(it.id);
+        if (m) max = Math.max(max, Number(m[1]));
+    }
+    return max;
 }
 
 /** 队列存储端口（单测注入内存实现；生产就是任务目录里的 drafts.yaml） */
 export interface SteerQueuePort {
-  read(uri: string): SteerItem[];
-  write(uri: string, items: SteerItem[]): void;
+    read(uri: string): SteerItem[];
+    write(uri: string, items: SteerItem[]): void;
 }
 
 /** 生产端口：与草稿同文件（readDrafts 已解析 steers） */
 export const fileSteerPort: SteerQueuePort = {
-  read: (uri) => readDrafts(uri)?.steers ?? [],
-  write: (uri, items) => {
-    writeSteers(uri, items);
-  },
+    read: (uri) => readDrafts(uri)?.steers ?? [],
+    write: (uri, items) => {
+        writeSteers(uri, items);
+    },
 };
 
 /**
@@ -59,118 +59,120 @@ export const fileSteerPort: SteerQueuePort = {
  * 队列清空后再来又是 `steer/1` —— 历史日志里的旧 `steer/1` 与它不同时存在，不构成歧义。
  */
 export function newSteerId(items: readonly SteerItem[]): string {
-  return `${STEER_ID_PREFIX}${maxSeq(items) + 1}`;
+    return `${STEER_ID_PREFIX}${maxSeq(items) + 1}`;
 }
 
 export class SteerQueue {
-  constructor(
-    private readonly port: SteerQueuePort = fileSteerPort,
+    constructor(
+        private readonly port: SteerQueuePort = fileSteerPort,
+        /**
+         * 队列条数上限（##306）。做成**函数**而不是数字：上限是运行时配置
+         * （默认值 < `$DIY_HOME/local/limits.json` < `DIY_LOCAL_MAX_STEER_QUEUE`），
+         * 同一个 manager 实例里重启后生效的下次入队即按新值算；单测直接传常量。
+         * 缺省 Infinity = 不设限 —— 只有 manager 会注入真实上限，历史调用点与测试不受影响。
+         */
+        private readonly limitOf: () => number = () => Number.POSITIVE_INFINITY,
+    ) {}
+
+    /** 队列快照（顺序 = 投递顺序） */
+    list(uri: string): SteerItem[] {
+        return this.port.read(uri);
+    }
+
+    /** 入队（FIFO 尾部）。空内容直接拒绝：空插话投进去只会污染提示词 */
+    add(
+        uri: string,
+        mode: SteerMode,
+        text: string,
+        now: Date = new Date(),
+        author?: string,
+        notify?: NotifyItem,
+    ): SteerItem[] {
+        const body = text.trim();
+        if (!body) throw new Error("插话内容为空");
+        if (!(STEER_MODES as readonly string[]).includes(mode)) {
+            throw new Error(`未知插话模式 ${String(mode)}（合法值：${STEER_MODES.join("/")}）`);
+        }
+        // 先读队列再算 id（读→写之间没有 await，JS 单线程下不会被别的 add 插进来）
+        const existing = this.port.read(uri);
+        // 条数上限（##306）：闸门放在**唯一入队口** —— 插话（steer add）与「会话在跑时排队的新消息」
+        // 共用同一个队列，也就该共用同一个上限；两个入口各自计数会把队列撑成两倍。
+        // 超限**抛错**而不是静默丢弃：丢的是用户已经打出来的话，必须让调用方看见
+        // （UI 据此保留输入框内容、CLI 非零退出）—— 静默丢弃正是「用户白打」。
+        const limit = this.limitOf();
+        if (existing.length >= limit) {
+            throw new Error(
+                `插话队列已满（上限 ${limit} 条），本条未入队：等已排队的投递完或先取消一部分，` +
+                    `也可调高上限（limits.json 的 maxSteerQueue / 环境变量 DIY_LOCAL_MAX_STEER_QUEUE）`,
+            );
+        }
+        const item: SteerItem = {
+            id: newSteerId(existing),
+            mode,
+            text: body,
+            created: localISOString(now),
+            // 署名随队列项一起落盘（##166 §40 A）：排队可能跨轮次，投递时再问"谁说的"已无从查起
+            ...(author ? { author } : {}),
+            // 结构化机器事件（job 结束等）：投递时走 notify，不走 chat（##442 2026-10-27）
+            ...(notify ? { notify } : {}),
+        };
+        const items = [...existing, item];
+        this.port.write(uri, items);
+        return items;
+    }
+
+    /** 取消一条（不存在时幂等返回原队列：重复点✕不该报错） */
+    remove(uri: string, id: string): SteerItem[] {
+        const items = this.list(uri).filter((it) => it.id !== id);
+        this.port.write(uri, items);
+        return items;
+    }
+
+    /** 切换一条插话的投递时机：next-turn ⇄ next-step。 */
+    toggleMode(uri: string, id: string): SteerItem[] {
+        const items = this.list(uri).map((it) =>
+            it.id === id
+                ? { ...it, mode: it.mode === "next-turn" ? ("next-step" as const) : ("next-turn" as const) }
+                : it,
+        );
+        this.port.write(uri, items);
+        return items;
+    }
+
     /**
-     * 队列条数上限（##306）。做成**函数**而不是数字：上限是运行时配置
-     * （默认值 < `$DIY_HOME/local/limits.json` < `DIY_LOCAL_MAX_STEER_QUEUE`），
-     * 同一个 manager 实例里重启后生效的下次入队即按新值算；单测直接传常量。
-     * 缺省 Infinity = 不设限 —— 只有 manager 会注入真实上限，历史调用点与测试不受影响。
+     * 重排队列（界面上的拖拽排序）。
+     *
+     * 入参是**期望的完整顺序**（id 列表），而不是"把 X 移到第 N 位"这类相对指令：
+     * 顺序本身就是投递顺序，界面上拖完时它已经算出了目标排列，直接提交这份排列最直白，
+     * 也让服务端不必猜"移到第 N 位"在移除源项后该落在哪（这类 ±1 语义是 off-by-one 的温床）。
+     *
+     * 以**盘上队列为权威**收敛（并发安全）：orderedIds 里不存在的 id 忽略（那条可能刚被投递掉），
+     * 盘上有而 orderedIds 没提到的项按原相对顺序**追加到尾部**（可能是刚被别处 add 进来的）——
+     * 两条都保证"不因为一次拖拽丢掉用户的话"。
      */
-    private readonly limitOf: () => number = () => Number.POSITIVE_INFINITY,
-  ) {}
-
-  /** 队列快照（顺序 = 投递顺序） */
-  list(uri: string): SteerItem[] {
-    return this.port.read(uri);
-  }
-
-  /** 入队（FIFO 尾部）。空内容直接拒绝：空插话投进去只会污染提示词 */
-  add(
-    uri: string,
-    mode: SteerMode,
-    text: string,
-    now: Date = new Date(),
-    author?: string,
-    notify?: NotifyItem,
-  ): SteerItem[] {
-    const body = text.trim();
-    if (!body) throw new Error("插话内容为空");
-    if (!(STEER_MODES as readonly string[]).includes(mode)) {
-      throw new Error(`未知插话模式 ${String(mode)}（合法值：${STEER_MODES.join("/")}）`);
+    reorder(uri: string, orderedIds: readonly string[]): SteerItem[] {
+        const current = this.list(uri);
+        const byId = new Map(current.map((it) => [it.id, it]));
+        const next: SteerItem[] = [];
+        for (const id of orderedIds) {
+            const it = byId.get(id);
+            if (it) {
+                next.push(it);
+                byId.delete(id);
+            }
+        }
+        for (const it of current) if (byId.has(it.id)) next.push(it);
+        this.port.write(uri, next);
+        return next;
     }
-    // 先读队列再算 id（读→写之间没有 await，JS 单线程下不会被别的 add 插进来）
-    const existing = this.port.read(uri);
-    // 条数上限（##306）：闸门放在**唯一入队口** —— 插话（steer add）与「会话在跑时排队的新消息」
-    // 共用同一个队列，也就该共用同一个上限；两个入口各自计数会把队列撑成两倍。
-    // 超限**抛错**而不是静默丢弃：丢的是用户已经打出来的话，必须让调用方看见
-    // （UI 据此保留输入框内容、CLI 非零退出）—— 静默丢弃正是「用户白打」。
-    const limit = this.limitOf();
-    if (existing.length >= limit) {
-      throw new Error(
-        `插话队列已满（上限 ${limit} 条），本条未入队：等已排队的投递完或先取消一部分，` +
-          `也可调高上限（limits.json 的 maxSteerQueue / 环境变量 DIY_LOCAL_MAX_STEER_QUEUE）`,
-      );
+
+    /** 只读某一模式的全部插话，不动队列（next-step 的批量认领阶段用）。 */
+    peekMode(uri: string, mode: SteerMode): SteerItem[] {
+        return this.list(uri).filter((it) => it.mode === mode);
     }
-    const item: SteerItem = {
-      id: newSteerId(existing),
-      mode,
-      text: body,
-      created: localISOString(now),
-      // 署名随队列项一起落盘（##166 §40 A）：排队可能跨轮次，投递时再问"谁说的"已无从查起
-      ...(author ? { author } : {}),
-      // 结构化机器事件（job 结束等）：投递时走 notify，不走 chat（##442 2026-10-27）
-      ...(notify ? { notify } : {}),
-    };
-    const items = [...existing, item];
-    this.port.write(uri, items);
-    return items;
-  }
 
-  /** 取消一条（不存在时幂等返回原队列：重复点✕不该报错） */
-  remove(uri: string, id: string): SteerItem[] {
-    const items = this.list(uri).filter((it) => it.id !== id);
-    this.port.write(uri, items);
-    return items;
-  }
-
-  /** 切换一条插话的投递时机：next-turn ⇄ next-step。 */
-  toggleMode(uri: string, id: string): SteerItem[] {
-    const items = this.list(uri).map((it) =>
-      it.id === id ? { ...it, mode: it.mode === "next-turn" ? ("next-step" as const) : ("next-turn" as const) } : it,
-    );
-    this.port.write(uri, items);
-    return items;
-  }
-
-  /**
-   * 重排队列（界面上的拖拽排序）。
-   *
-   * 入参是**期望的完整顺序**（id 列表），而不是"把 X 移到第 N 位"这类相对指令：
-   * 顺序本身就是投递顺序，界面上拖完时它已经算出了目标排列，直接提交这份排列最直白，
-   * 也让服务端不必猜"移到第 N 位"在移除源项后该落在哪（这类 ±1 语义是 off-by-one 的温床）。
-   *
-   * 以**盘上队列为权威**收敛（并发安全）：orderedIds 里不存在的 id 忽略（那条可能刚被投递掉），
-   * 盘上有而 orderedIds 没提到的项按原相对顺序**追加到尾部**（可能是刚被别处 add 进来的）——
-   * 两条都保证"不因为一次拖拽丢掉用户的话"。
-   */
-  reorder(uri: string, orderedIds: readonly string[]): SteerItem[] {
-    const current = this.list(uri);
-    const byId = new Map(current.map((it) => [it.id, it]));
-    const next: SteerItem[] = [];
-    for (const id of orderedIds) {
-      const it = byId.get(id);
-      if (it) {
-        next.push(it);
-        byId.delete(id);
-      }
+    /** 清空队列（清空会话时用：会话都没了，排队中的插话无处可投） */
+    clear(uri: string): void {
+        this.port.write(uri, []);
     }
-    for (const it of current) if (byId.has(it.id)) next.push(it);
-    this.port.write(uri, next);
-    return next;
-  }
-
-  /** 只读某一模式的全部插话，不动队列（next-step 的批量认领阶段用）。 */
-  peekMode(uri: string, mode: SteerMode): SteerItem[] {
-    return this.list(uri).filter((it) => it.mode === mode);
-  }
-
-  /** 清空队列（清空会话时用：会话都没了，排队中的插话无处可投） */
-  clear(uri: string): void {
-    this.port.write(uri, []);
-  }
 }

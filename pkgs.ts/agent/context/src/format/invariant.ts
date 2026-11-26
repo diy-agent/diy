@@ -29,11 +29,11 @@ export class InvariantError extends Error {
     /** 现场（值 / 步序 / 期望 → 实际），进日志与 issue 草稿 */
     readonly detail: string;
     /** 自带结论：判据随对象走，`triageOf` 不必再猜 */
-    readonly triage = "defect" as const;
+    readonly triage = 'defect' as const;
 
-    constructor(code: string, detail = "") {
+    constructor(code: string, detail = '') {
         super(detail ? `${code}: ${detail}` : code);
-        this.name = "InvariantError";
+        this.name = 'InvariantError';
         this.code = code;
         this.detail = detail;
     }
@@ -55,6 +55,5 @@ export function invariant(cond: unknown, code: string, detail?: string): asserts
         // 写错 code 本身是编程错误：此时再抛 InvariantError 会把「错了的码」也判成 defect，故抛裸错
         throw new Error(`[invariant] 非法 code "${code}"：须形如 <域>/<kebab-case>（域 = llm|fs|net|rpc|agent|db|ui）`);
     }
-    throw new InvariantError(code, detail ?? "");
+    throw new InvariantError(code, detail ?? '');
 }
-

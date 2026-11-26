@@ -81,7 +81,8 @@ export function inputGate(i: InputGateInput): InputGate {
     const chars = countChars(i.text);
     const bytes = byteLenOf(i.text);
     const estTokens = estimateTokens(bytes);
-    const limit = Number.isFinite(i.limitChars) && i.limitChars > 0 ? Math.floor(i.limitChars) : DEFAULT_INPUT_LIMIT_CHARS;
+    const limit =
+        Number.isFinite(i.limitChars) && i.limitChars > 0 ? Math.floor(i.limitChars) : DEFAULT_INPUT_LIMIT_CHARS;
     const win =
         i.contextLimitTokens != null && Number.isFinite(i.contextLimitTokens) && i.contextLimitTokens > 0
             ? Math.floor(i.contextLimitTokens)

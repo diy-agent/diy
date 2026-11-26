@@ -12,12 +12,7 @@
 import { createSignal } from "solid-js";
 import { Caches } from "../lib/ui-state";
 import { resolveLayout, trackPairAfterDrag, type Layout, type TrackSize } from "../../shared/grid-layout";
-import {
-    applyHiddenViews,
-    defaultBinding,
-    type Binding,
-    type PageDef,
-} from "../../shared/view-registry";
+import { applyHiddenViews, defaultBinding, type Binding, type PageDef } from "../../shared/view-registry";
 
 export interface PageLayoutState {
     /** areaId → 隐藏（最小化）。缺省 = 显示 */

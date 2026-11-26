@@ -779,11 +779,7 @@ function makeBucket(key: string, views: StepView[]): UsageBucket {
  *   键序 = `USAGE_FIELDS` 顺序 → 表头顺序天然稳定。
  * · 空输入 → `[]`（不返回一行全 `–` 的假合计）。
  */
-export function aggregateUsage(
-    rows: readonly StepUsageRecord[],
-    gran: Gran,
-    filter?: UsageFilter,
-): UsageRow[] {
+export function aggregateUsage(rows: readonly StepUsageRecord[], gran: Gran, filter?: UsageFilter): UsageRow[] {
     const picked = filter ? rows.filter((r) => (r[filter.field] ?? "—") === filter.value) : rows;
     const map = new Map<string, StepView[]>();
     for (const r of picked) {

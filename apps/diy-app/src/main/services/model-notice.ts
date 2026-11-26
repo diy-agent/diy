@@ -66,7 +66,11 @@ const MAX_LOCAL_CHARS = 300;
  * 一堆异常里正则猜 —— 判据函数留给"上游回了个东西，要判它算不算模型不可用"的场景。
  * 两类入口都产出同一种通知，bar 因此不必知道自己是被谁触发的。
  */
-export function unavailableNoticeFromLocal(message: string, ctx: ModelNoticeContext, now = new Date()): ModelUnavailableNotice {
+export function unavailableNoticeFromLocal(
+    message: string,
+    ctx: ModelNoticeContext,
+    now = new Date(),
+): ModelUnavailableNotice {
     return {
         id: `mu-${now.getTime()}-${++seq}`,
         ts: localISOString(now),

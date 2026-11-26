@@ -80,11 +80,7 @@ export const MAX_STACK_CHARS = 8000;
 export function buildErrorReport(e: unknown, ctx: ErrorReportContext, now: Date = new Date()): ErrorReport {
     const o = (typeof e === "object" && e !== null ? e : null) as Record<string, unknown> | null;
     const name =
-        e instanceof Error
-            ? e.name || "Error"
-            : o && typeof o["name"] === "string" && o["name"]
-              ? o["name"]
-              : typeof e;
+        e instanceof Error ? e.name || "Error" : o && typeof o["name"] === "string" && o["name"] ? o["name"] : typeof e;
     const stack = (e instanceof Error ? e.stack : undefined) ?? (o && typeof o["stack"] === "string" ? o["stack"] : "");
     return {
         ts: localISOString(now),

@@ -34,10 +34,7 @@ export interface ContextStatRecord {
  * 曾把这里写成"全部存在的 path 算变化"，于是每个任务首轮把 41 个 path 全记成变化，
  * 从不变过的 `diy`/`guard`/`rules` 被显示成"变了 39 次 · 7.2%"（review RV-15）。
  */
-export function changedPaths(
-    prev: Record<string, string> | null,
-    next: Record<string, string>,
-): string[] {
+export function changedPaths(prev: Record<string, string> | null, next: Record<string, string>): string[] {
     if (!prev) return [];
     const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
     return [...keys].filter((k) => prev[k] !== next[k]).sort();

@@ -15,54 +15,56 @@ import { writeFileAtomic } from "./atomic-write";
 import * as yaml from "js-yaml";
 import { isKnownModel, reasoningOf } from "../../shared/models";
 import {
-  BUILTIN_PERSONAS,
-  PersonasFileSchema,
-  type Persona,
-  type PersonaDef,
-  type PersonasFile,
+    BUILTIN_PERSONAS,
+    PersonasFileSchema,
+    type Persona,
+    type PersonaDef,
+    type PersonasFile,
 } from "../../shared/persona";
 import { parseTaskFile } from "./state";
 
 export function personasFile(home: string): string {
-  return join(home, "personas.yaml");
+    return join(home, "personas.yaml");
 }
 
 /** 内置默认（文件缺失/不可解析时的唯一权威） */
 function builtinFile(): PersonasFile {
-  return BUILTIN_PERSONAS;
+    return BUILTIN_PERSONAS;
 }
 
 function builtinPersona(): Persona {
-  const [id, def] = Object.entries(BUILTIN_PERSONAS.personas)[0]!;
-  return { id, ...def };
+    const [id, def] = Object.entries(BUILTIN_PERSONAS.personas)[0]!;
+    return { id, ...def };
 }
 
 export function loadPersonas(home: string): PersonasFile {
-  const p = personasFile(home);
-  if (!existsSync(p)) return builtinFile();
-  let raw: unknown;
-  try {
-    raw = yaml.load(readFileSync(p, "utf-8"));
-  } catch (e) {
-    // 解析失败是**可见降级**：内置人物继续可用，但必须出声（否则用户改了文件却"没反应"）
-    console.warn(`[persona] ${p} 解析失败，用内置默认人物:`, e);
-    return builtinFile();
-  }
-  const parsed = PersonasFileSchema.safeParse(raw);
-  if (!parsed.success) {
-    console.warn(`[persona] ${p} 结构不符（${parsed.error.issues.map((i) => i.path.join(".")).join(",")}），用内置默认人物`);
-    return builtinFile();
-  }
-  if (Object.keys(parsed.data.personas).length === 0) {
-    console.warn(`[persona] ${p} 里没有任何人物，用内置默认人物`);
-    return builtinFile();
-  }
-  return parsed.data;
+    const p = personasFile(home);
+    if (!existsSync(p)) return builtinFile();
+    let raw: unknown;
+    try {
+        raw = yaml.load(readFileSync(p, "utf-8"));
+    } catch (e) {
+        // 解析失败是**可见降级**：内置人物继续可用，但必须出声（否则用户改了文件却"没反应"）
+        console.warn(`[persona] ${p} 解析失败，用内置默认人物:`, e);
+        return builtinFile();
+    }
+    const parsed = PersonasFileSchema.safeParse(raw);
+    if (!parsed.success) {
+        console.warn(
+            `[persona] ${p} 结构不符（${parsed.error.issues.map((i) => i.path.join(".")).join(",")}），用内置默认人物`,
+        );
+        return builtinFile();
+    }
+    if (Object.keys(parsed.data.personas).length === 0) {
+        console.warn(`[persona] ${p} 里没有任何人物，用内置默认人物`);
+        return builtinFile();
+    }
+    return parsed.data;
 }
 
 /** 写入 personas.yaml（原子：tmp → rename）。结构非法直接抛（写侧不允许存下坏数据）。 */
 export function savePersonas(home: string, file: PersonasFile): void {
-  writeFileAtomic(personasFile(home), yaml.dump(PersonasFileSchema.parse(file), { indent: 2, noRefs: true }));
+    writeFileAtomic(personasFile(home), yaml.dump(PersonasFileSchema.parse(file), { indent: 2, noRefs: true }));
 }
 
 /**
@@ -70,22 +72,22 @@ export function savePersonas(home: string, file: PersonasFile): void {
  * 否则退到人物表里的第一个；再否则退到内置 id（三条规则都只依赖文件本身，不含环境探测）。
  */
 export function defaultPersonaId(home: string): string {
-  const file = loadPersonas(home);
-  if (Object.hasOwn(file.personas, file.default)) return file.default;
-  const first = Object.keys(file.personas)[0];
-  return first ?? Object.keys(BUILTIN_PERSONAS.personas)[0]!;
+    const file = loadPersonas(home);
+    if (Object.hasOwn(file.personas, file.default)) return file.default;
+    const first = Object.keys(file.personas)[0];
+    return first ?? Object.keys(BUILTIN_PERSONAS.personas)[0]!;
 }
 
 /** 列出全部人物（含内置兜底）；顺序 = 文件里的书写顺序（UI 选择器照此展示） */
 export function listPersonas(home: string): Persona[] {
-  const file = loadPersonas(home);
-  return Object.entries(file.personas).map(([id, def]) => ({ id, ...def }));
+    const file = loadPersonas(home);
+    return Object.entries(file.personas).map(([id, def]) => ({ id, ...def }));
 }
 
 /** 按 **id** 取人物（引用键；唯一可靠寻址方式） */
 export function personaById(home: string, id: string): Persona | null {
-  const def = loadPersonas(home).personas[id];
-  return def ? { id, ...def } : null;
+    const def = loadPersonas(home).personas[id];
+    return def ? { id, ...def } : null;
 }
 
 /**
@@ -93,14 +95,14 @@ export function personaById(home: string, id: string): Persona | null {
  * 名字不保证唯一（两个人物可以同名），命中多个时取第一个并出声。
  */
 export function personaByIdOrName(home: string, key: string): Persona | null {
-  const direct = personaById(home, key);
-  if (direct) return direct;
-  const hits = listPersonas(home).filter((p) => p.name === key);
-  if (hits.length === 0) return null;
-  if (hits.length > 1) {
-    console.warn(`[persona] 名字「${key}」对应 ${hits.length} 个人物，取 ${hits[0]!.id}（同名不唯一，建议用 id）`);
-  }
-  return hits[0]!;
+    const direct = personaById(home, key);
+    if (direct) return direct;
+    const hits = listPersonas(home).filter((p) => p.name === key);
+    if (hits.length === 0) return null;
+    if (hits.length > 1) {
+        console.warn(`[persona] 名字「${key}」对应 ${hits.length} 个人物，取 ${hits[0]!.id}（同名不唯一，建议用 id）`);
+    }
+    return hits[0]!;
 }
 
 /**
@@ -111,14 +113,14 @@ export function personaByIdOrName(home: string, key: string): Persona | null {
  * （与 `chainOf` 那条 `isAppDir` 修复同一类病灶：home 参数传进来了却没用，隔离静默失效）。
  */
 function taskPersonaId(home: string, taskUri: string): string | undefined {
-  const fp = join(home, taskUri, "AGENTS.md");
-  if (!existsSync(fp)) return undefined;
-  try {
-    return parseTaskFile(readFileSync(fp, "utf-8"))?.persona;
-  } catch (e) {
-    console.warn(`[persona] ${fp} 解析失败，按「跟随缺省」处理:`, e);
-    return undefined;
-  }
+    const fp = join(home, taskUri, "AGENTS.md");
+    if (!existsSync(fp)) return undefined;
+    try {
+        return parseTaskFile(readFileSync(fp, "utf-8"))?.persona;
+    } catch (e) {
+        console.warn(`[persona] ${fp} 解析失败，按「跟随缺省」处理:`, e);
+        return undefined;
+    }
 }
 
 /**
@@ -130,19 +132,19 @@ function taskPersonaId(home: string, taskUri: string): string | undefined {
  * 不允许静默换成某个"猜的"模型。
  */
 export function personaForTask(home: string, taskUri: string): Persona {
-  const fallback = (): Persona => personaById(home, defaultPersonaId(home)) ?? builtinPersona();
-  if (!taskUri) return fallback();
-  const id = taskPersonaId(home, taskUri);
-  if (!id) {
-    // **正常情况**：任务没写 persona 键 = 跟随缺省（新建任务的默认状态）。
-    // 不再出声 —— 这是设计中的常态，不是异常（以前"创建时物化"才会有"字段缺失=异常"的假设）。
-    // 手删字段与"跟随缺省"因此在语义上**合一**：都是"不固定，用缺省"，无需区分。
+    const fallback = (): Persona => personaById(home, defaultPersonaId(home)) ?? builtinPersona();
+    if (!taskUri) return fallback();
+    const id = taskPersonaId(home, taskUri);
+    if (!id) {
+        // **正常情况**：任务没写 persona 键 = 跟随缺省（新建任务的默认状态）。
+        // 不再出声 —— 这是设计中的常态，不是异常（以前"创建时物化"才会有"字段缺失=异常"的假设）。
+        // 手删字段与"跟随缺省"因此在语义上**合一**：都是"不固定，用缺省"，无需区分。
+        return fallback();
+    }
+    const found = personaById(home, id);
+    if (found) return found;
+    console.warn(`[persona] 任务 ${taskUri} 指向不存在的人物「${id}」，本轮回落「${fallback().name}」`);
     return fallback();
-  }
-  const found = personaById(home, id);
-  if (found) return found;
-  console.warn(`[persona] 任务 ${taskUri} 指向不存在的人物「${id}」，本轮回落「${fallback().name}」`);
-  return fallback();
 }
 
 /**
@@ -152,11 +154,11 @@ export function personaForTask(home: string, taskUri: string): Persona {
  * 调用方（CLI / UI）据此判“该让用户改配置”而不是“该重试/报障”。
  */
 export class PersonaInvalidError extends Error {
-  override readonly name = "PersonaInvalidError" as const;
-  readonly code = "agent/persona-invalid";
-  constructor(message: string) {
-    super(message);
-  }
+    override readonly name = "PersonaInvalidError" as const;
+    readonly code = "agent/persona-invalid";
+    constructor(message: string) {
+        super(message);
+    }
 }
 
 /**
@@ -165,16 +167,16 @@ export class PersonaInvalidError extends Error {
  *   推理强度必须在该模型 supported 内（各模型词表不同，见 shared/models.ts）
  */
 export function assertPersonaDef(def: PersonaDef): void {
-  if (!isKnownModel(def.model)) {
-    throw new Error(`未知模型 ${def.model}（可选：见 diy agent local models）`);
-  }
-  const r = reasoningOf(def.model);
-  if (!r.supported.includes(def.reasoningEffort)) {
-    throw new Error(`模型 ${def.model} 不支持推理强度 ${def.reasoningEffort}（可选：${r.supported.join("/")}）`);
-  }
-  // 输出软上限（##429）：非法值当场拒，别存一个“看着有、实际被忽略”的数
-  if (def.maxOutputTokens !== undefined && (!Number.isFinite(def.maxOutputTokens) || def.maxOutputTokens <= 0)) {
-    // error-code-ok: code 由 PersonaInvalidError 类固定为 agent/persona-invalid（写入侧参数校验，不归 defect）
-    throw new PersonaInvalidError(`输出软上限 maxOutputTokens 必须是正数（当前 ${String(def.maxOutputTokens)}）`);
-  }
+    if (!isKnownModel(def.model)) {
+        throw new Error(`未知模型 ${def.model}（可选：见 diy agent local models）`);
+    }
+    const r = reasoningOf(def.model);
+    if (!r.supported.includes(def.reasoningEffort)) {
+        throw new Error(`模型 ${def.model} 不支持推理强度 ${def.reasoningEffort}（可选：${r.supported.join("/")}）`);
+    }
+    // 输出软上限（##429）：非法值当场拒，别存一个“看着有、实际被忽略”的数
+    if (def.maxOutputTokens !== undefined && (!Number.isFinite(def.maxOutputTokens) || def.maxOutputTokens <= 0)) {
+        // error-code-ok: code 由 PersonaInvalidError 类固定为 agent/persona-invalid（写入侧参数校验，不归 defect）
+        throw new PersonaInvalidError(`输出软上限 maxOutputTokens 必须是正数（当前 ${String(def.maxOutputTokens)}）`);
+    }
 }

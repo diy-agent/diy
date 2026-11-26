@@ -148,10 +148,7 @@ export function UsageTable(props: UsageTableProps) {
     /** 表体：合计行（若该视图有）+ 数据行（同一条列表，保证同一次重建） */
     const listed = createMemo(() => {
         const t = total();
-        return [
-            ...(t ? [{ row: t, total: true }] : []),
-            ...shown().map((row) => ({ row, total: false })),
-        ];
+        return [...(t ? [{ row: t, total: true }] : []), ...shown().map((row) => ({ row, total: false }))];
     });
 
     /** 步键 → 该步生效的压缩事件（事件账在 compact.jsonl，本表只做投射） */

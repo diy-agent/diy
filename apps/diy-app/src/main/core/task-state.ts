@@ -6,15 +6,15 @@
 import { z } from "zod";
 
 export const TASK_STATES = [
-  "pending",
-  "active",
-  "done",
-  "cancelled",
-  "blocked",
-  "shelved",
-  "new",
-  "open",
-  "closed",
+    "pending",
+    "active",
+    "done",
+    "cancelled",
+    "blocked",
+    "shelved",
+    "new",
+    "open",
+    "closed",
 ] as const;
 
 export type TaskState = (typeof TASK_STATES)[number];
@@ -23,18 +23,18 @@ export const TaskStateSchema = z.enum(TASK_STATES);
 
 /** 任务状态 → DaisyUI 圆点颜色 class（单一真相源，所有组件从此处取色） */
 export const TASK_STATE_COLORS: Record<string, string> = {
-  pending: "bg-warning",
-  active: "bg-info",
-  done: "bg-success",
-  blocked: "bg-error",
-  cancelled: "bg-neutral",
-  shelved: "bg-neutral",
-  new: "bg-accent",
-  open: "bg-info",
-  closed: "bg-neutral",
+    pending: "bg-warning",
+    active: "bg-info",
+    done: "bg-success",
+    blocked: "bg-error",
+    cancelled: "bg-neutral",
+    shelved: "bg-neutral",
+    new: "bg-accent",
+    open: "bg-info",
+    closed: "bg-neutral",
 };
 
 /** 取任务状态的圆点颜色 class（未知状态退化 bg-info） */
 export function taskStateColor(state: string | undefined): string {
-  return TASK_STATE_COLORS[state ?? ""] ?? "bg-info";
+    return TASK_STATE_COLORS[state ?? ""] ?? "bg-info";
 }

@@ -3,18 +3,21 @@
  *
  * 跑：`npx tsx pkgs.ts/core/rpc/examples/service/01-basic/run.ts`
  */
-import { z } from "zod";
-import { RpcSchema } from "../../../../src/index";
+import { z } from 'zod';
+import { RpcSchema } from '../../../../src/index';
 
-export const mathRoutes = RpcSchema.group({ children: {
-    math: RpcSchema.group({ children: {
+export const mathRoutes = RpcSchema.group({
+  children: {
+    math: RpcSchema.group({
+      children: {
         add: RpcSchema.unary({
-            input: { a: z.number(), b: z.number() },
-            output: z.number(),
-            desc: "a + b",
+          input: { a: z.number(), b: z.number() },
+          output: z.number(),
+          desc: 'a + b',
         }),
         /** 空 input 也要声明成 `{}`（调用时传 `{}`） */
         version: RpcSchema.unary({ input: {}, output: z.string() }),
-    } }),
-} });
-
+      },
+    }),
+  },
+});

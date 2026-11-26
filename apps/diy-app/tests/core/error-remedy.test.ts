@@ -61,7 +61,11 @@ const CASES: Case[] = [
     { name: "没有任何事实 → null", input: {}, expect: null },
     { name: "上游 5xx → null（服务端抖动，不是配置问题）", input: { ctx: { httpStatus: 503 } }, expect: null },
     { name: "步数上限（llm/step-limit）→ null（不是配置能修的）", input: { code: "llm/step-limit" }, expect: null },
-    { name: "磁盘满（fs/disk-full）→ null（另一条通道：环境感知顶栏条）", input: { code: "fs/disk-full" }, expect: null },
+    {
+        name: "磁盘满（fs/disk-full）→ null（另一条通道：环境感知顶栏条）",
+        input: { code: "fs/disk-full" },
+        expect: null,
+    },
 ];
 
 describe("remedyOf（表驱动）", () => {

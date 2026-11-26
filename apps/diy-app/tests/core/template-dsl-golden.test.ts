@@ -13,98 +13,104 @@
 //      golden 随之更新（golden 是"当前内置模版的逐字节快照"，模版演进时按此处说明同步）
 // ═══════════════════════════════════════════════════════════════
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { renderSystemDsl, type AssembleGlobals } from '../../src/main/services/prompt-registry';
-import { reqlogValue } from '@diy-agent/context/schema/reqlog';
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { renderSystemDsl, type AssembleGlobals } from "../../src/main/services/prompt-registry";
+import { reqlogValue } from "@diy-agent/context/schema/reqlog";
 
 // 读快照前先归一 `\r\n` → `\n`：渲染结果一律 LF，而 Windows 的 autocrlf=true 会把工作区快照
 // checkout 成 CRLF ⇒ 不归一时这条逐字节比较在任何 Windows 机器上都必红（已顺手把
 // `.gitattributes` 里 `*.golden.txt` 钉成 eol=lf，这里是第二道保险）。
-const golden = readFileSync(join(__dirname, '..', 'fixtures', 'system.golden.txt'), 'utf-8').replace(/\r\n/g, '\n');
+const golden = readFileSync(join(__dirname, "..", "fixtures", "system.golden.txt"), "utf-8").replace(/\r\n/g, "\n");
 
 /** 与生成 golden 时完全相同的输入（只是换成命名空间版变量） */
 const GLOBALS: AssembleGlobals = {
     // 人物段随 identity.md v2 加入；golden 用的是内置缺省人物的名字与行为指令
-    persona: { name: '大副', instructions: '每次回答前先称一声「sir」。' },
-    diy: { cli: '/repo/diy.sh', home: '/tmp/diy-home' },
-    project: { path: '/repo' },
+    persona: { name: "大副", instructions: "每次回答前先称一声「sir」。" },
+    diy: { cli: "/repo/diy.sh", home: "/tmp/diy-home" },
+    project: { path: "/repo" },
     task: {
-        uri: 'projects/4/tasks/4',
-        title: '评审任务',
-        state: 'active',
+        uri: "projects/4/tasks/4",
+        title: "评审任务",
+        state: "active",
         // 任务头字段（##322 起随任务节点一起进上下文树；模版线不用它们，但契约要求齐全）
-        parent: '',
-        created: '2026-01-01T00:00:00.000Z',
-        updated: '2026-01-02T00:00:00.000Z',
-        change_type: 'fix',
-        module: 'agent/ui',
-        priority: 'P1',
-        persona: '',
-        body: '正文里有 & 与 <x> 这类字符。',
-        dir: '/tmp/diy-home/projects/4/tasks/4',
+        parent: "",
+        created: "2026-01-01T00:00:00.000Z",
+        updated: "2026-01-02T00:00:00.000Z",
+        change_type: "fix",
+        module: "agent/ui",
+        priority: "P1",
+        persona: "",
+        body: "正文里有 & 与 <x> 这类字符。",
+        dir: "/tmp/diy-home/projects/4/tasks/4",
     },
     // legacy 的 cwd_note 是 "\n注意：…"；现在文案进模版，变量只留事实与原因
-    cwd: { path: '/repo', note: '项目目录不存在，工具实际在任务目录下执行', isFallback: true, isTaskDir: true, isAppDir: false },
+    cwd: {
+        path: "/repo",
+        note: "项目目录不存在，工具实际在任务目录下执行",
+        isFallback: true,
+        isTaskDir: true,
+        isAppDir: false,
+    },
     chain: [
-        { path: '/Users/ccc/AGENTS.md', scope: '/Users/ccc', content: '根规则 & 全局约定' },
-        { path: '/repo/AGENTS.md', scope: '/repo', content: '仓库规则 <docs>' },
+        { path: "/Users/ccc/AGENTS.md", scope: "/Users/ccc", content: "根规则 & 全局约定" },
+        { path: "/repo/AGENTS.md", scope: "/repo", content: "仓库规则 <docs>" },
     ],
     skills: [],
     // 模版节的渲染结果（真发投递节点，见 prompt-registry 的 DELIVERED_SECTIONS）：
     // 本用例只走模版线（renderSystemDsl 渲染 _system.md），不读这三项 —— 它们的真实渲染
     // 由 assembleGlobals 产出（覆盖见 tests/core/prompt-registry.test.ts 与 context-delivery.test.ts）。
-    identity: '',
-    rules: '',
-    guard: '',
+    identity: "",
+    rules: "",
+    guard: "",
     // 同理：reqlog 也进 Context Tree 投递（不是 _system.md），模版线用不到 —— 给一份合成值把契约补齐
-    reqlog: reqlogValue({ home: '/tmp/diy-home', dirRel: 'log/network', fileName: '2026-10-15.jsonl' }),
+    reqlog: reqlogValue({ home: "/tmp/diy-home", dirRel: "log/network", fileName: "2026-10-15.jsonl" }),
 };
 
-describe('DSL 装配 === 换引擎前的 system（逐字节，两处有意差异除外）', () => {
-    it('整份 system 与 golden 相同', () => {
+describe("DSL 装配 === 换引擎前的 system（逐字节，两处有意差异除外）", () => {
+    it("整份 system 与 golden 相同", () => {
         const system = renderSystemDsl({ globals: GLOBALS });
         expect(system).toBe(`${golden}\n`);
     });
 
-    it('差异只有已知的两处换行（去掉它们后必须完全相等）', () => {
+    it("差异只有已知的两处换行（去掉它们后必须完全相等）", () => {
         const system = renderSystemDsl({ globals: GLOBALS });
-        expect(system.replace(/\n$/, '')).toBe(golden);
+        expect(system.replace(/\n$/, "")).toBe(golden);
     });
 
     it('节顺序与节间分隔正确（空行 = 旧代码的 join("\\n\\n")）', () => {
         const system = renderSystemDsl({ globals: GLOBALS });
-        const order = ['<diy>', '<project_context>', '<task>', '<rules>', '<guard>'];
+        const order = ["<diy>", "<project_context>", "<task>", "<rules>", "<guard>"];
         const positions = order.map((t) => system.indexOf(t));
         expect(positions.every((p) => p > -1)).toBe(true);
         expect([...positions].sort((a, b) => a - b)).toEqual(positions);
         for (const t of order.slice(1)) expect(system).toContain(`\n\n${t}`);
     });
 
-    it('skills 为空数组时整节不出现；有技能时插在 rules 之后', () => {
-        expect(renderSystemDsl({ globals: GLOBALS })).not.toContain('<skills>');
+    it("skills 为空数组时整节不出现；有技能时插在 rules 之后", () => {
+        expect(renderSystemDsl({ globals: GLOBALS })).not.toContain("<skills>");
         const withSkills = renderSystemDsl({
-            globals: { ...GLOBALS, skills: [{ name: 'diy-dev', desc: '开发流程' }] },
+            globals: { ...GLOBALS, skills: [{ name: "diy-dev", desc: "开发流程" }] },
         });
-        expect(withSkills).toContain('<skills>\n- diy-dev：开发流程\n</skills>');
-        expect(withSkills.indexOf('<skills>')).toBeGreaterThan(withSkills.indexOf('</rules>'));
-        expect(withSkills.indexOf('<skills>')).toBeLessThan(withSkills.indexOf('<guard>'));
+        expect(withSkills).toContain("<skills>\n- diy-dev：开发流程\n</skills>");
+        expect(withSkills.indexOf("<skills>")).toBeGreaterThan(withSkills.indexOf("</rules>"));
+        expect(withSkills.indexOf("<skills>")).toBeLessThan(withSkills.indexOf("<guard>"));
     });
 
     it('链上每层一个 <project_instructions>，层间空行与旧 join("\\n\\n") 一致', () => {
         const system = renderSystemDsl({ globals: GLOBALS });
         expect(system).toContain(
             '<project_instructions path="/Users/ccc/AGENTS.md" scope="/Users/ccc">\n根规则 & 全局约定\n</project_instructions>' +
-                '\n\n' +
+                "\n\n" +
                 '<project_instructions path="/repo/AGENTS.md" scope="/repo">\n仓库规则 <docs>\n</project_instructions>',
         );
     });
 
-    it('正文里的 <pid> / & 等字符零转义（输出标签是纯文本）', () => {
+    it("正文里的 <pid> / & 等字符零转义（输出标签是纯文本）", () => {
         const system = renderSystemDsl({ globals: GLOBALS });
-        expect(system).toContain('projects/<pid>/tasks/<tid>/AGENTS.md');
-        expect(system).toContain('正文里有 & 与 <x> 这类字符。');
-        expect(system).not.toContain('&lt;');
+        expect(system).toContain("projects/<pid>/tasks/<tid>/AGENTS.md");
+        expect(system).toContain("正文里有 & 与 <x> 这类字符。");
+        expect(system).not.toContain("&lt;");
     });
 });

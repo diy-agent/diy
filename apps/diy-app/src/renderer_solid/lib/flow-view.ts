@@ -59,7 +59,11 @@ export async function fetchArtifact(uri: string, node: string, seq?: number): Pr
         return { ok: false, reason: "主进程未提供 `diy flow view` 命令（##337 未合入）" };
     }
     try {
-        const out = await (fn as (input: { uri: string; node?: string; seq?: number }) => Promise<unknown>)({ uri, node, seq });
+        const out = await (fn as (input: { uri: string; node?: string; seq?: number }) => Promise<unknown>)({
+            uri,
+            node,
+            seq,
+        });
         return { ok: true, value: (out ?? null) as FlowArtifactView | null };
     } catch (e) {
         return { ok: false, reason: e instanceof Error ? e.message : String(e) };
@@ -73,7 +77,10 @@ export async function fetchArtifact(uri: string, node: string, seq?: number): Pr
  * 抽这一层是为了让「每个驻留各带自己的 seq」能被**单测**钉死（无 Electron 也能证），
  * 而那正是本条 bug 的判据。
  */
-export async function loadArtifacts(uri: string, visits: readonly FlowVisitBrief[]): Promise<Record<string, ArtifactState>> {
+export async function loadArtifacts(
+    uri: string,
+    visits: readonly FlowVisitBrief[],
+): Promise<Record<string, ArtifactState>> {
     return collectArtifacts(uri, visits, fetchArtifact);
 }
 
@@ -82,7 +89,9 @@ export async function loadArtifacts(uri: string, visits: readonly FlowVisitBrief
 // ═══════════════════════════════════════════════════════════════
 
 /** 探测结果：`ok: false` = 命令尚未在 main 上 / 调用失败 —— **不是**「这个打回没有发言」 */
-export type ThreadsProbe = { readonly ok: true; readonly value: FlowThreadsView } | { readonly ok: false; readonly reason: string };
+export type ThreadsProbe =
+    | { readonly ok: true; readonly value: FlowThreadsView }
+    | { readonly ok: false; readonly reason: string };
 
 /**
  * 取讨论线程（`flow thread list`）。

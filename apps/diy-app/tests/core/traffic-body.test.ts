@@ -21,11 +21,15 @@ const capture = (over: Partial<BodyCapture> = {}): BodyCapture => ({
 
 describe("bodyValue：未截断", () => {
     it("能解析成 JSON ⇒ 给结构（不是字符串）", () => {
-        expect(bodyValue(capture({ truncated: false, head: '{"a":1}', tail: "", totalBytes: 7 }), null)).toEqual({ a: 1 });
+        expect(bodyValue(capture({ truncated: false, head: '{"a":1}', tail: "", totalBytes: 7 }), null)).toEqual({
+            a: 1,
+        });
     });
 
     it("不是 JSON ⇒ 原样给文本", () => {
-        expect(bodyValue(capture({ truncated: false, head: "not json", tail: "", totalBytes: 8 }), null)).toBe("not json");
+        expect(bodyValue(capture({ truncated: false, head: "not json", tail: "", totalBytes: 8 }), null)).toBe(
+            "not json",
+        );
     });
 
     it("没有正文 ⇒ 给调用方的说明（GET 请求等）", () => {
@@ -35,7 +39,7 @@ describe("bodyValue：未截断", () => {
 });
 
 describe("bodyValue：被存档截断（archive，不是 wire）", () => {
-    it("插一条 `<cut scope=\"archive\">`，两个数字都如实（total / kept）", () => {
+    it('插一条 `<cut scope="archive">`，两个数字都如实（total / kept）', () => {
         const v = String(bodyValue(capture(), null));
         const [m, ...rest] = parseCutMarkers(v);
         expect(rest).toEqual([]);

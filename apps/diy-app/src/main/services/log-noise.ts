@@ -17,12 +17,12 @@
 
 /** 一条已知噪音的登记项 */
 export interface NoiseRule {
-  /** 匹配依据：消息**子串**（用 Chromium 原文，别写成正则/改词） */
-  pattern: string;
-  /** 机器码：日志里出现的分类名（grep 用，kebab-case） */
-  kind: string;
-  /** 为什么它是良性的：首次命中时随行落盘，省得人再去查 */
-  why: string;
+    /** 匹配依据：消息**子串**（用 Chromium 原文，别写成正则/改词） */
+    pattern: string;
+    /** 机器码：日志里出现的分类名（grep 用，kebab-case） */
+    kind: string;
+    /** 为什么它是良性的：首次命中时随行落盘，省得人再去查 */
+    why: string;
 }
 
 /**
@@ -34,40 +34,40 @@ export interface NoiseRule {
  * 「比真实用户可见的抖动」放大成了持续重排（##522 回归，已撤回）；先按噪音登记处理。
  */
 export const RENDERER_NOISE: readonly NoiseRule[] = [
-  {
-    pattern: "ResizeObserver loop completed with undelivered notifications",
-    kind: "resize-observer-loop",
-    why: "Chromium 布局循环告警：RO 回调里同步写布局导致同帧反复投递；不影响功能（丢弃的只是这一帧多余的投递）",
-  },
-  {
-    pattern: "ResizeObserver loop limit exceeded",
-    kind: "resize-observer-loop",
-    why: "同上（旧版 Chromium 的措辞，两条归一为同一 kind）",
-  },
+    {
+        pattern: "ResizeObserver loop completed with undelivered notifications",
+        kind: "resize-observer-loop",
+        why: "Chromium 布局循环告警：RO 回调里同步写布局导致同帧反复投递；不影响功能（丢弃的只是这一帧多余的投递）",
+    },
+    {
+        pattern: "ResizeObserver loop limit exceeded",
+        kind: "resize-observer-loop",
+        why: "同上（旧版 Chromium 的措辞，两条归一为同一 kind）",
+    },
 ];
 
 /** 按消息文本查登记表（未登记 = 真错误，交给调用方正常上报） */
 export function classifyRendererNoise(message: string): NoiseRule | null {
-  for (const r of RENDERER_NOISE) if (message.includes(r.pattern)) return r;
-  return null;
+    for (const r of RENDERER_NOISE) if (message.includes(r.pattern)) return r;
+    return null;
 }
 
 export interface NoiseMeterOptions {
-  /** 时钟（测试注入） */
-  now?: () => number;
-  /** 同类噪音的汇总间隔：首次立刻出，其后至少隔这么久才再出一行（缺省 60s） */
-  flushMs?: number;
-  /** 输出通道（缺省 console.warn —— 经 diagnostics 的 tee 会带进 main.log） */
-  emit?: (line: string) => void;
+    /** 时钟（测试注入） */
+    now?: () => number;
+    /** 同类噪音的汇总间隔：首次立刻出，其后至少隔这么久才再出一行（缺省 60s） */
+    flushMs?: number;
+    /** 输出通道（缺省 console.warn —— 经 diagnostics 的 tee 会带进 main.log） */
+    emit?: (line: string) => void;
 }
 
 interface MeterState {
-  hits: number;
-  /** 自上次输出以来还没打出来的条数 */
-  pending: number;
-  lastEmitAt: number;
-  /** 首次命中的原文（汇总行里带上，便于人认出是哪条） */
-  sample: string;
+    hits: number;
+    /** 自上次输出以来还没打出来的条数 */
+    pending: number;
+    lastEmitAt: number;
+    /** 首次命中的原文（汇总行里带上，便于人认出是哪条） */
+    sample: string;
 }
 
 /**
@@ -75,47 +75,47 @@ interface MeterState {
  * 幂等且无定时器（只在命中时看表），不需要清理。
  */
 export function createNoiseMeter(opts: NoiseMeterOptions = {}): {
-  note: (rule: NoiseRule, sample: string) => void;
-  flush: () => void;
+    note: (rule: NoiseRule, sample: string) => void;
+    flush: () => void;
 } {
-  const now = opts.now ?? (() => Date.now());
-  const flushMs = opts.flushMs ?? 60_000;
-  const emit = opts.emit ?? ((line: string) => console.warn(line));
-  const states = new Map<string, MeterState>();
+    const now = opts.now ?? (() => Date.now());
+    const flushMs = opts.flushMs ?? 60_000;
+    const emit = opts.emit ?? ((line: string) => console.warn(line));
+    const states = new Map<string, MeterState>();
 
-  const summary = (rule: NoiseRule, s: MeterState, sinceMs: number): string => {
-    const window = sinceMs >= 1000 ? `${Math.round(sinceMs / 1000)}s` : "本帧";
-    return `[noise:${rule.kind}] 近 ${window} 内 ${s.pending} 条（累计 ${s.hits}）—— ${s.sample}`;
-  };
+    const summary = (rule: NoiseRule, s: MeterState, sinceMs: number): string => {
+        const window = sinceMs >= 1000 ? `${Math.round(sinceMs / 1000)}s` : "本帧";
+        return `[noise:${rule.kind}] 近 ${window} 内 ${s.pending} 条（累计 ${s.hits}）—— ${s.sample}`;
+    };
 
-  return {
-    note(rule, sample) {
-      const t = now();
-      const s = states.get(rule.kind);
-      if (!s) {
-        // 首次：原文 + 解释一起落盘（这一行就是「它算啥」的答案）
-        states.set(rule.kind, { hits: 1, pending: 0, lastEmitAt: t, sample });
-        emit(`[noise:${rule.kind}] 首次出现（后续只计数汇总）—— ${sample}｜已知良性：${rule.why}`);
-        return;
-      }
-      s.hits += 1;
-      s.pending += 1;
-      if (t - s.lastEmitAt >= flushMs) {
-        emit(summary(rule, s, t - s.lastEmitAt));
-        s.pending = 0;
-        s.lastEmitAt = t;
-      }
-    },
-    /** 进程退出前调用：把窗口内没打出来的计数补一行（不丢信息） */
-    flush() {
-      const t = now();
-      for (const [kind, s] of states) {
-        if (s.pending === 0) continue;
-        const rule = RENDERER_NOISE.find((r) => r.kind === kind);
-        emit(summary(rule ?? { kind, pattern: "", why: "" }, s, t - s.lastEmitAt));
-        s.pending = 0;
-        s.lastEmitAt = t;
-      }
-    },
-  };
+    return {
+        note(rule, sample) {
+            const t = now();
+            const s = states.get(rule.kind);
+            if (!s) {
+                // 首次：原文 + 解释一起落盘（这一行就是「它算啥」的答案）
+                states.set(rule.kind, { hits: 1, pending: 0, lastEmitAt: t, sample });
+                emit(`[noise:${rule.kind}] 首次出现（后续只计数汇总）—— ${sample}｜已知良性：${rule.why}`);
+                return;
+            }
+            s.hits += 1;
+            s.pending += 1;
+            if (t - s.lastEmitAt >= flushMs) {
+                emit(summary(rule, s, t - s.lastEmitAt));
+                s.pending = 0;
+                s.lastEmitAt = t;
+            }
+        },
+        /** 进程退出前调用：把窗口内没打出来的计数补一行（不丢信息） */
+        flush() {
+            const t = now();
+            for (const [kind, s] of states) {
+                if (s.pending === 0) continue;
+                const rule = RENDERER_NOISE.find((r) => r.kind === kind);
+                emit(summary(rule ?? { kind, pattern: "", why: "" }, s, t - s.lastEmitAt));
+                s.pending = 0;
+                s.lastEmitAt = t;
+            }
+        },
+    };
 }

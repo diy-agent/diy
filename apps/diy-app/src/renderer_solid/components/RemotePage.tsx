@@ -122,9 +122,7 @@ export function RemotePage() {
                     : null,
             );
             setMembers(st?.data.memberships ?? []);
-            setLink(
-                lk?.data ? { hubNodeId: lk.data.hubNodeId, hubEndpoint: lk.data.hubEndpoint } : null,
-            );
+            setLink(lk?.data ? { hubNodeId: lk.data.hubNodeId, hubEndpoint: lk.data.hubEndpoint } : null);
             setConnection((conn?.data.state as HubConnectionState | undefined) ?? null);
             setError(null);
         } catch (e) {
@@ -232,14 +230,23 @@ export function RemotePage() {
                 <div class="card-body py-3 gap-2">
                     <div class="flex items-center justify-between">
                         <h2 class="card-title text-base">设备</h2>
-                        <button class="btn btn-xs" disabled={inFlight()} data-remote-refresh onClick={() => void refresh()}>
+                        <button
+                            class="btn btn-xs"
+                            disabled={inFlight()}
+                            data-remote-refresh
+                            onClick={() => void refresh()}
+                        >
                             {inFlight() ? "刷新中…" : "刷新"}
                         </button>
                     </div>
 
                     <Show
                         when={grouped().length > 0}
-                        fallback={<p class="text-sm opacity-60" data-remote-empty>没发现其他设备（mDNS / tailscale / local）。</p>}
+                        fallback={
+                            <p class="text-sm opacity-60" data-remote-empty>
+                                没发现其他设备（mDNS / tailscale / local）。
+                            </p>
+                        }
                     >
                         <For each={grouped()}>
                             {(g) => (
@@ -271,7 +278,10 @@ export function RemotePage() {
                                                     >
                                                         {row.address ?? row.name}
                                                     </span>
-                                                    <span class="shrink-0 w-16 text-xs opacity-50 font-mono" data-remote-pid>
+                                                    <span
+                                                        class="shrink-0 w-16 text-xs opacity-50 font-mono"
+                                                        data-remote-pid
+                                                    >
                                                         {row.pid === undefined ? "—" : String(row.pid)}
                                                     </span>
                                                     {/* 两列分开（2026-11-05 用户裁）：连接 ≠ 授权 */}
@@ -282,7 +292,9 @@ export function RemotePage() {
                                                         {CONNECTION_LABEL[row.connection]}
                                                     </span>
                                                     <span class="shrink-0 w-20" data-remote-trust={row.trust}>
-                                                        <span class={TRUST_CLASS[row.trust]}>{TRUST_LABEL[row.trust]}</span>
+                                                        <span class={TRUST_CLASS[row.trust]}>
+                                                            {TRUST_LABEL[row.trust]}
+                                                        </span>
                                                     </span>
                                                     <details
                                                         class="dropdown dropdown-end shrink-0"
@@ -297,20 +309,31 @@ export function RemotePage() {
                                                         </summary>
                                                         <ul class="dropdown-content menu bg-base-100 rounded-box shadow z-30 w-52 p-1">
                                                             <li>
-                                                                <button data-remote-action="detail" onClick={() => setDetailKey(row.key)}>
+                                                                <button
+                                                                    data-remote-action="detail"
+                                                                    onClick={() => setDetailKey(row.key)}
+                                                                >
                                                                     详情
                                                                 </button>
                                                             </li>
                                                             <Show when={devicePairingAllowed(row)}>
                                                                 <li>
-                                                                    <button data-remote-action="invite" onClick={() => openHub("host")}>
+                                                                    <button
+                                                                        data-remote-action="invite"
+                                                                        onClick={() => openHub("host")}
+                                                                    >
                                                                         添加为卫星节点
                                                                     </button>
                                                                 </li>
                                                                 <li>
                                                                     <button
                                                                         data-remote-action="join"
-                                                                        onClick={() => openHub("join", joinUrlFor(row.discovered!.endpoint))}
+                                                                        onClick={() =>
+                                                                            openHub(
+                                                                                "join",
+                                                                                joinUrlFor(row.discovered!.endpoint),
+                                                                            )
+                                                                        }
                                                                     >
                                                                         申请成为它的卫星
                                                                     </button>
@@ -321,7 +344,9 @@ export function RemotePage() {
                                                                     <li>
                                                                         <button
                                                                             data-remote-action="web"
-                                                                            onClick={() => void openWeb(deviceEndpoint(row) ?? "")}
+                                                                            onClick={() =>
+                                                                                void openWeb(deviceEndpoint(row) ?? "")
+                                                                            }
                                                                             title={url()}
                                                                         >
                                                                             web 远程访问
@@ -334,7 +359,9 @@ export function RemotePage() {
                                                                     <button
                                                                         class="text-error"
                                                                         data-remote-action="revoke"
-                                                                        onClick={() => void doRevoke(row.member!.nodeId)}
+                                                                        onClick={() =>
+                                                                            void doRevoke(row.member!.nodeId)
+                                                                        }
                                                                     >
                                                                         移除
                                                                     </button>
@@ -483,7 +510,11 @@ export function RemotePage() {
 
                             <div class="modal-action flex-wrap gap-1">
                                 <Show when={devicePairingAllowed(row())}>
-                                    <button class="btn btn-sm" data-remote-detail-action="invite" onClick={() => openHub("host")}>
+                                    <button
+                                        class="btn btn-sm"
+                                        data-remote-detail-action="invite"
+                                        onClick={() => openHub("host")}
+                                    >
                                         添加为卫星节点
                                     </button>
                                     <button

@@ -57,7 +57,7 @@ describe("summaryHasContent / emptySummary", () => {
 describe("renderSummaryFallback（模版缺失时的兜底）", () => {
     it("有内容 → 带 <summary> 包裹、只出非空段", () => {
         const t = renderSummaryFallback(sample);
-        expect(t).toContain("<summary turns=\"3\">");
+        expect(t).toContain('<summary turns="3">');
         expect(t).toContain("关键结论：");
         expect(t).toContain("src/main/services/local-agent.ts：加压缩边界");
         expect(t).toContain("未完成：");
@@ -80,7 +80,7 @@ describe("summaryExtractionPrompt", () => {
 describe("summaryPlaceholder", () => {
     it("给出模版骨架与变量名（预览里先生成前可见）", () => {
         const t = summaryPlaceholder(emptySummary(2));
-        expect(t).toContain("<summary turns=\"2\">");
+        expect(t).toContain('<summary turns="2">');
         expect(t).toContain("{{summary.conclusions}}");
     });
 });
@@ -98,7 +98,10 @@ describe("summary.md 模版渲染（引擎）", () => {
         expect(text).toContain("</summary>");
     });
     it("空段整段不出现（:if 生效）", () => {
-        const t = renderSystemDsl({ globals: { summary: { ...emptySummary(1), conclusions: ["只此一条"] } }, entry: "summary.md" });
+        const t = renderSystemDsl({
+            globals: { summary: { ...emptySummary(1), conclusions: ["只此一条"] } },
+            entry: "summary.md",
+        });
         expect(t).toContain("关键结论：");
         expect(t).not.toContain("改动文件：");
         expect(t).not.toContain("未完成：");

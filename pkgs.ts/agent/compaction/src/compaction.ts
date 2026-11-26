@@ -18,19 +18,19 @@
 //   而「生效边界」本来就是一个纯逻辑量 —— 记下来就够了。旧内容因此天然可查、可撤销（undo），
 //   「彻底删除」仍归现有 clear（物理删文件）。
 
-import { z } from "zod";
-import { cutMarker } from "@diy-agent/context/format/cut-marker";
+import { z } from 'zod';
+import { cutMarker } from '@diy-agent/context/format/cut-marker';
 
 // ─── ① 策略 ───────────────────────────────────────────
 
 /** 工具输出的处理方式（只作用于**投递**，UI 与落盘永远保留原文） */
 export type ToolResultMode =
     /** 原样（不裁） */
-    | "asis"
+    | 'asis'
     /** 头尾裁剪：保留前 N 行 + 后 M 行，中间写 marker（原文可寻回） */
-    | "headtail"
+    | 'headtail'
     /** 只留调用 + 路径：整段输出换成一句指向原文的提示 */
-    | "callpath";
+    | 'callpath';
 
 /** 头尾裁剪参数（默认值来自 ##230 会话实测定，勿凭感觉改） */
 export interface HeadTailPolicy {
@@ -83,25 +83,25 @@ export const DEFAULT_HEADTAIL: HeadTailPolicy = {
  * 还是"输出 token 数"；而 provider 的 part 类型本就叫 `tool-result` —— 用同一个词，零歧义。
  * 判别键同理：`render`（这条工具结果**怎么呈现给模型**）比 `mode` 具体。
  */
-export const ToolResultPolicySchema = z.discriminatedUnion("render", [
-    z.object({ render: z.literal("asis").describe("原样（不裁）") }),
+export const ToolResultPolicySchema = z.discriminatedUnion('render', [
+    z.object({ render: z.literal('asis').describe('原样（不裁）') }),
     z.object({
-        render: z.literal("headtail").describe("头尾裁剪：保留前 head 行 + 后 tail 行，中间写 marker"),
+        render: z.literal('headtail').describe('头尾裁剪：保留前 head 行 + 后 tail 行，中间写 marker'),
         // 私有参数收进 renderData —— 与 modeData 同一原则：**归属在结构里**，不靠注释
         renderData: z
             .object({
-                head: z.number().describe("保留头部行数"),
-                tail: z.number().describe("保留尾部行数"),
-                maxLineChars: z.number().describe("单行超长截断阈值（字符）"),
-                maxKeepBytes: z.number().describe("保留总量兜底（字节），防「一行超长」钻空子"),
+                head: z.number().describe('保留头部行数'),
+                tail: z.number().describe('保留尾部行数'),
+                maxLineChars: z.number().describe('单行超长截断阈值（字符）'),
+                maxKeepBytes: z.number().describe('保留总量兜底（字节），防「一行超长」钻空子'),
             })
-            .describe("headtail 私有参数（只此支有）"),
+            .describe('headtail 私有参数（只此支有）'),
     }),
-    z.object({ render: z.literal("callpath").describe("只留调用 + 原文路径") }),
+    z.object({ render: z.literal('callpath').describe('只留调用 + 原文路径') }),
 ]);
 
 /** 「是否额外算一份历史摘要」——与 `mode` 同级（所有算法共有），不进 `modeData` */
-const SummaryField = z.boolean().describe("是否额外算一份历史摘要（暂未启用；预留字段）");
+const SummaryField = z.boolean().describe('是否额外算一份历史摘要（暂未启用；预留字段）');
 
 /** 策略真源：**只有 budget 一种算法**（`reset` / `keep` 已删除 —— 用户 2026-10-07，未发布无需兼容）。
  *
@@ -110,27 +110,26 @@ const SummaryField = z.boolean().describe("是否额外算一份历史摘要（�
  */
 export const CompactPolicySchema = z.object({
     mode: z
-        .literal("budget")
-        .describe("⚠️ 已废弃（不决定投递）：保留只是为了旧配置与旧调用点仍能解析。投递选择只看 `history.limit`"),
+        .literal('budget')
+        .describe('⚠️ 已废弃（不决定投递）：保留只是为了旧配置与旧调用点仍能解析。投递选择只看 `history.limit`'),
     // ##432 清理（用户 2026-10-25）：`modeData.budgetBytes` **整体删除** —— 名字本身也不留。
     // 历史上限只剩 `history.limit.limitTokens`（token）；旧配置里的 `budgetBytes` 由读侧
     // 一次性映射成 token 上限 + 出声（见 `auto-compact.ts::normalizeAutoCompact`），写回即新形状。
     modeData: z
         .object({
-            toolResult: ToolResultPolicySchema.describe("工具结果在配置的呈现"),
+            toolResult: ToolResultPolicySchema.describe('工具结果在配置的呈现'),
         })
-        .describe("budget 算法私有参数（只此支有）"),
+        .describe('budget 算法私有参数（只此支有）'),
     summary: SummaryField,
 });
 export type ToolResultPolicy = z.infer<typeof ToolResultPolicySchema>;
 export type BudgetPolicy = z.infer<typeof CompactPolicySchema>;
 export type CompactPolicy = z.infer<typeof CompactPolicySchema>;
-export type CompactMode = CompactPolicy["mode"];
-
+export type CompactMode = CompactPolicy['mode'];
 
 /** 预算缺省的工具结果呈现（头尾裁剪：长输出留头尾、中间省略，原文可回取） */
 export const DEFAULT_TOOL_RESULT_POLICY: ToolResultPolicy = {
-    render: "headtail",
+    render: 'headtail',
     renderData: {
         head: DEFAULT_HEADTAIL.headLines,
         tail: DEFAULT_HEADTAIL.tailLines,
@@ -141,7 +140,7 @@ export const DEFAULT_TOOL_RESULT_POLICY: ToolResultPolicy = {
 
 /** 策略真源（UI/CLI 的缺省）：工具结果头尾裁剪 + 不算摘要 */
 export const DEFAULT_COMPACT_POLICY: BudgetPolicy = {
-    mode: "budget",
+    mode: 'budget',
     modeData: { toolResult: DEFAULT_TOOL_RESULT_POLICY },
     summary: false,
 };
@@ -161,10 +160,10 @@ export function toolResultOf(p: CompactPolicy): ToolResultPolicy {
 // 形状遵 `rule.discriminated-union`：判别键 `type` 同级 = 所有分支共有；分支私有参数进 `data`。
 /** headtail 的私有参数（触发阈值 = head + tail，见 HeadTailPolicy） */
 export const HeadTailParamsSchema = z.object({
-    head: z.number().int().nonnegative().describe("保留头部行数"),
-    tail: z.number().int().nonnegative().describe("保留尾部行数"),
-    maxLineChars: z.number().int().positive().describe("单行超长截断阈值（字符）"),
-    maxKeepBytes: z.number().int().positive().describe("保留总量字节兜底"),
+    head: z.number().int().nonnegative().describe('保留头部行数'),
+    tail: z.number().int().nonnegative().describe('保留尾部行数'),
+    maxLineChars: z.number().int().positive().describe('单行超长截断阈值（字符）'),
+    maxKeepBytes: z.number().int().positive().describe('保留总量字节兜底'),
 });
 export type HeadTailParams = z.infer<typeof HeadTailParamsSchema>;
 
@@ -172,23 +171,25 @@ export type HeadTailParams = z.infer<typeof HeadTailParamsSchema>;
  * clip 的**真源 schema**（zod）—— 因为 clip 要**从配置读进来**（`history.keep[].clip`，##344 M2），
  * 校验必须在写盘前发生（非法 clip 形状 → 拒绝写、给理由）。类型由 schema 推出，杜绝两处漂移。
  */
-export const ClipSpecSchema = z.discriminatedUnion("type", [
+export const ClipSpecSchema = z.discriminatedUnion('type', [
     z.object({
-        type: z.literal("full").describe("不裁（保底最近 N 步要的就是字节保真：headtail 一动，「留下的结果被裁成头尾」就治不了）"),
+        type: z
+            .literal('full')
+            .describe('不裁（保底最近 N 步要的就是字节保真：headtail 一动，「留下的结果被裁成头尾」就治不了）'),
     }),
-    z.object({ type: z.literal("path").describe("只留调用 + 原文路径") }),
+    z.object({ type: z.literal('path').describe('只留调用 + 原文路径') }),
     z.object({
-        type: z.literal("headtail").describe("头尾保留 + 中间 marker（私有参数进 data）"),
-        data: HeadTailParamsSchema.describe("headtail 私有参数（只此支有）"),
+        type: z.literal('headtail').describe('头尾保留 + 中间 marker（私有参数进 data）'),
+        data: HeadTailParamsSchema.describe('headtail 私有参数（只此支有）'),
     }),
 ]);
 export type ClipSpec = z.infer<typeof ClipSpecSchema>;
 
 /** 全局策略（旧形状）→ clip 缺省值（**降级**：M1 之前只有这一档） */
 export function clipSpecOf(tr: ToolResultPolicy): ClipSpec {
-    if (tr.render === "asis") return { type: "full" };
-    if (tr.render === "callpath") return { type: "path" };
-    return { type: "headtail", data: { ...tr.renderData } };
+    if (tr.render === 'asis') return { type: 'full' };
+    if (tr.render === 'callpath') return { type: 'path' };
+    return { type: 'headtail', data: { ...tr.renderData } };
 }
 
 /**
@@ -196,9 +197,9 @@ export function clipSpecOf(tr: ToolResultPolicy): ClipSpec {
  * 选择阶段算成本、渲染阶段真裁，两段必须走同一份换算 —— 否则「预算按 A 算、发出去是 B」。
  */
 export function toToolResultPolicy(clip: ClipSpec): ToolResultPolicy {
-    if (clip.type === "full") return { render: "asis" };
-    if (clip.type === "path") return { render: "callpath" };
-    return { render: "headtail", renderData: { ...clip.data } };
+    if (clip.type === 'full') return { render: 'asis' };
+    if (clip.type === 'path') return { render: 'callpath' };
+    return { render: 'headtail', renderData: { ...clip.data } };
 }
 
 // ── 推理文本裁剪（reasoning clip · ##374 T2）──
@@ -216,8 +217,8 @@ export function toToolResultPolicy(clip: ClipSpec): ToolResultPolicy {
 
 /** headtail（推理）的私有参数：按**字符**保头（+可选尾） */
 export const ReasoningHeadTailParamsSchema = z.object({
-    headChars: z.number().int().positive().describe("保留头部字符数（≥1 —— 裁到空 = 等于没传 = 上游 400）"),
-    tailChars: z.number().int().nonnegative().describe("保留尾部字符数（0 = 只保头）"),
+    headChars: z.number().int().positive().describe('保留头部字符数（≥1 —— 裁到空 = 等于没传 = 上游 400）'),
+    tailChars: z.number().int().nonnegative().describe('保留尾部字符数（0 = 只保头）'),
 });
 export type ReasoningHeadTailParams = z.infer<typeof ReasoningHeadTailParamsSchema>;
 
@@ -225,11 +226,11 @@ export type ReasoningHeadTailParams = z.infer<typeof ReasoningHeadTailParamsSche
  * 推理裁剪的真源 schema（zod）—— 与 `ClipSpecSchema` 同构：判别键 `type` 同级 = 公共字段，
  * 分支私有参数进 `data`。它要**从配置读进来**（`history.keep[].reasoningClip`）⇒ 写盘前必须校验。
  */
-export const ReasoningClipSpecSchema = z.discriminatedUnion("type", [
-    z.object({ type: z.literal("full").describe("不裁（保底级要的是推理字节保真）") }),
+export const ReasoningClipSpecSchema = z.discriminatedUnion('type', [
+    z.object({ type: z.literal('full').describe('不裁（保底级要的是推理字节保真）') }),
     z.object({
-        type: z.literal("headtail").describe("保头（+可选尾）+ 中间 marker；按**字符**（推理是散文，不按行）"),
-        data: ReasoningHeadTailParamsSchema.describe("headtail 私有参数（只此支有）"),
+        type: z.literal('headtail').describe('保头（+可选尾）+ 中间 marker；按**字符**（推理是散文，不按行）'),
+        data: ReasoningHeadTailParamsSchema.describe('headtail 私有参数（只此支有）'),
     }),
 ]);
 export type ReasoningClipSpec = z.infer<typeof ReasoningClipSpecSchema>;
@@ -243,7 +244,7 @@ export type ReasoningClipSpec = z.infer<typeof ReasoningClipSpecSchema>;
  * 取 600 = **保守**（保住约一段话的开头，含模型的判断依据）。
  */
 export const DEFAULT_REASONING_CLIP = {
-    type: "headtail",
+    type: 'headtail',
     data: { headChars: 600, tailChars: 0 },
 } as const;
 
@@ -271,7 +272,7 @@ export function clipReasoningText(text: string, clip: ReasoningClipSpec | null |
         keptChars: origChars,
         droppedChars: 0,
     });
-    if (!clip || clip.type === "full" || text === "") return same();
+    if (!clip || clip.type === 'full' || text === '') return same();
 
     const headN = Math.min(clip.data.headChars, origChars);
     const tailN = Math.min(clip.data.tailChars, Math.max(0, origChars - headN));
@@ -279,9 +280,9 @@ export function clipReasoningText(text: string, clip: ReasoningClipSpec | null |
     if (dropped <= 0) return same(); // 本来就短 ⇒ 不动（也保证"极短也不裁空"）
 
     // ##425：wire 档（发给模型的那份就是残缺的；推理原文不在任何地方可回取）
-    const marker = `\n${cutMarker({ by: "reasoning-clip", scope: "wire", why: "budget", unit: "chars", total: origChars, kept: headN + tailN })}\n`;
+    const marker = `\n${cutMarker({ by: 'reasoning-clip', scope: 'wire', why: 'budget', unit: 'chars', total: origChars, kept: headN + tailN })}\n`;
     // head 至少留 1 字符（headChars ≥ 1 由 schema 保证）：空串 = 没传 = 400，这条断言是硬底线
-    const out = `${text.slice(0, Math.max(1, headN))}${marker}${tailN > 0 ? text.slice(origChars - tailN) : ""}`;
+    const out = `${text.slice(0, Math.max(1, headN))}${marker}${tailN > 0 ? text.slice(origChars - tailN) : ''}`;
     return { text: out, clipped: true, origChars, keptChars: out.length, droppedChars: dropped };
 }
 
@@ -302,53 +303,62 @@ export interface FlatCompactPolicy {
 /** 策略 → 扁平 */
 export function flatPolicyOf(p: CompactPolicy): FlatCompactPolicy {
     const tr = p.modeData.toolResult;
-    const d = tr.render === "headtail" ? tr.renderData : null;
+    const d = tr.render === 'headtail' ? tr.renderData : null;
     const ht = d
-        ? { triggerLines: d.head + d.tail, headLines: d.head, tailLines: d.tail, maxLineChars: d.maxLineChars, maxKeepBytes: d.maxKeepBytes }
+        ? {
+              triggerLines: d.head + d.tail,
+              headLines: d.head,
+              tailLines: d.tail,
+              maxLineChars: d.maxLineChars,
+              maxKeepBytes: d.maxKeepBytes,
+          }
         : { ...DEFAULT_HEADTAIL };
     return { toolResult: tr.render, headtail: ht, summary: p.summary };
 }
 
 const posNum = (v: unknown, d: number, min = 0): number =>
-    typeof v === "number" && Number.isFinite(v) && v >= min ? Math.floor(v) : d;
+    typeof v === 'number' && Number.isFinite(v) && v >= min ? Math.floor(v) : d;
 
 /** 工具结果策略的宽松读（`{render:"headtail", renderData:{…}}` 或扁平 `{render:"headtail", head,…}`） */
 function readToolResult(raw: unknown, ht: Partial<HeadTailPolicy>): ToolResultPolicy {
     const htOf = (o: Record<string, unknown>): ToolResultPolicy => {
-        const rd = (o["renderData"] ?? o) as Record<string, unknown>;
+        const rd = (o['renderData'] ?? o) as Record<string, unknown>;
         return {
-            render: "headtail",
+            render: 'headtail',
             renderData: {
-                head: posNum(rd["head"], ht.headLines ?? DEFAULT_HEADTAIL.headLines, 0),
-                tail: posNum(rd["tail"], ht.tailLines ?? DEFAULT_HEADTAIL.tailLines, 0),
-                maxLineChars: posNum(rd["maxLineChars"], ht.maxLineChars ?? DEFAULT_HEADTAIL.maxLineChars, 1),
-                maxKeepBytes: posNum(rd["maxKeepBytes"], ht.maxKeepBytes ?? DEFAULT_HEADTAIL.maxKeepBytes, 1),
+                head: posNum(rd['head'], ht.headLines ?? DEFAULT_HEADTAIL.headLines, 0),
+                tail: posNum(rd['tail'], ht.tailLines ?? DEFAULT_HEADTAIL.tailLines, 0),
+                maxLineChars: posNum(rd['maxLineChars'], ht.maxLineChars ?? DEFAULT_HEADTAIL.maxLineChars, 1),
+                maxKeepBytes: posNum(rd['maxKeepBytes'], ht.maxKeepBytes ?? DEFAULT_HEADTAIL.maxKeepBytes, 1),
             },
         };
     };
-    if (raw !== null && typeof raw === "object") {
+    if (raw !== null && typeof raw === 'object') {
         const o = raw as Record<string, unknown>;
-        const m = o["render"] ?? o["mode"];
-        if (m === "headtail") return htOf(o);
-        return m === "callpath" ? { render: "callpath" } : { render: "asis" };
+        const m = o['render'] ?? o['mode'];
+        if (m === 'headtail') return htOf(o);
+        return m === 'callpath' ? { render: 'callpath' } : { render: 'asis' };
     }
-    if (raw === "headtail") return htOf({});
-    if (raw === "callpath") return { render: "callpath" };
-    return { render: "asis" };
+    if (raw === 'headtail') return htOf({});
+    if (raw === 'callpath') return { render: 'callpath' };
+    return { render: 'asis' };
 }
 
 /** 宽松归一：任意输入（真源 `{mode,modeData}` 或扁平 `{toolResult,…}`）→ 合法策略（旧 `budgetBytes` 忽略） */
 export function normalizePolicy(p: unknown): CompactPolicy {
     const src = (p ?? {}) as Record<string, unknown>;
-    const md = (src["modeData"] ?? src) as Record<string, unknown>;
-    const ht = (src["headtail"] ?? {}) as Partial<HeadTailPolicy>;
-    const trRaw = md["toolResult"] ?? src["toolResult"];
+    const md = (src['modeData'] ?? src) as Record<string, unknown>;
+    const ht = (src['headtail'] ?? {}) as Partial<HeadTailPolicy>;
+    const trRaw = md['toolResult'] ?? src['toolResult'];
     return {
-        mode: "budget",
+        mode: 'budget',
         modeData: {
-            toolResult: trRaw !== undefined || ht.headLines !== undefined ? readToolResult(trRaw, ht) : DEFAULT_TOOL_RESULT_POLICY,
+            toolResult:
+                trRaw !== undefined || ht.headLines !== undefined
+                    ? readToolResult(trRaw, ht)
+                    : DEFAULT_TOOL_RESULT_POLICY,
         },
-        summary: src["summary"] === true,
+        summary: src['summary'] === true,
     };
 }
 
@@ -408,7 +418,7 @@ export const HARD_MAX_TOOL_RESULT_BYTES = 100 * 1024;
 
 /** 触及硬顶时强制使用的裁剪参数（头 2000 行 / 尾 2000 行 / 单行 4000 字符 / 总 100 KB） */
 const HARD_CAP_POLICY: ToolResultPolicy = {
-    render: "headtail",
+    render: 'headtail',
     renderData: { head: 2000, tail: 2000, maxLineChars: 4000, maxKeepBytes: HARD_MAX_TOOL_RESULT_BYTES },
 };
 
@@ -423,12 +433,12 @@ const HARD_CAP_POLICY: ToolResultPolicy = {
  *     语法统一走 `shared/cut-marker`（##425）：`<cut by=… scope="wire" … resume="<path>"/>`。
  */
 export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOpts = {}): ToolClipResult {
-    const origLines = text === "" ? 0 : text.split("\n").length;
+    const origLines = text === '' ? 0 : text.split('\n').length;
     const origBytes = utf8Bytes(text);
     // 硬顶（##406）：**先于**任何级声明生效 —— `full` / `asis` 都翻不过去。
     // 不递归：把策略就地换成硬顶 headtail，继续走下面同一条路径。
     const toolResult: ToolResultPolicy =
-        origBytes > HARD_MAX_TOOL_RESULT_BYTES && raw.render !== "callpath" ? HARD_CAP_POLICY : raw;
+        origBytes > HARD_MAX_TOOL_RESULT_BYTES && raw.render !== 'callpath' ? HARD_CAP_POLICY : raw;
     const same = (): ToolClipResult => ({
         text,
         clipped: false,
@@ -440,19 +450,19 @@ export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOp
         droppedBytes: 0,
     });
 
-    if (toolResult.render === "asis") return same();
+    if (toolResult.render === 'asis') return same();
 
-    const lines = text.split("\n");
+    const lines = text.split('\n');
     // ##425：wire 档 —— 发给模型的那份被裁；原文落盘时给 `resume`（模型可 `read` 回取），
     // 没落盘就不给（指向一个不存在的文件比不说还坏）。
     const resume = opts.origPath;
 
-    if (toolResult.render === "callpath") {
-        if (text === "") return same();
+    if (toolResult.render === 'callpath') {
+        if (text === '') return same();
         const marker = cutMarker({
-            by: "tool-result-callpath",
-            scope: "wire",
-            why: "budget",
+            by: 'tool-result-callpath',
+            scope: 'wire',
+            why: 'budget',
             total: origLines,
             kept: 0,
             ...(resume ? { resume } : {}),
@@ -471,14 +481,20 @@ export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOp
 
     // headtail（参数直接来自分支 —— 判别式联合的意义就在这：不必判"该不该有这些参数"）
     const rd = toolResult.renderData;
-    const ht = { triggerLines: rd.head + rd.tail, headLines: rd.head, tailLines: rd.tail, maxLineChars: rd.maxLineChars, maxKeepBytes: rd.maxKeepBytes };
+    const ht = {
+        triggerLines: rd.head + rd.tail,
+        headLines: rd.head,
+        tailLines: rd.tail,
+        maxLineChars: rd.maxLineChars,
+        maxKeepBytes: rd.maxKeepBytes,
+    };
     const overLines = origLines > ht.triggerLines;
     const overBytes = origBytes > ht.maxKeepBytes;
     const longLine = lines.some((l) => l.length > ht.maxLineChars);
     if (!overLines && !overBytes && !longLine) return same();
     // 行数没超、字节也没超，只是个别行超长 → 只做单行截断，不写「中间省略」marker（没省略任何行）
     if (!overLines && !overBytes) {
-        const out = lines.map((l) => truncLine(l, ht.maxLineChars)).join("\n");
+        const out = lines.map((l) => truncLine(l, ht.maxLineChars)).join('\n');
         return {
             text: out,
             clipped: true,
@@ -499,14 +515,14 @@ export function clipToolResult(text: string, raw: ToolResultPolicy, opts: ClipOp
         // ##425：wire 档。`total` / `kept` 都按**行**（与 `unit` 同量纲）；
         // 行内超长被 `maxLineChars` 再截的部分不另报 —— marker 只回答「中间少了多少行」。
         const marker = cutMarker({
-            by: "tool-output",
-            scope: "wire",
-            why: "budget",
+            by: 'tool-output',
+            scope: 'wire',
+            why: 'budget',
             total: origLines,
             kept: headN + tailN,
             ...(resume ? { resume } : {}),
         });
-        return [...head, marker, ...tail].join("\n");
+        return [...head, marker, ...tail].join('\n');
     };
     let out = build();
     // 字节兜底：按 4:1 的比例同步收缩 head/tail，直到进预算（至少各留… 头留 1 行、尾可为 0）
@@ -571,8 +587,8 @@ export function makeDeliveryTransform(
         seen.add(id);
         collect?.push({
             id,
-            tool: "",
-            render: eff.type === "path" ? "callpath" : "headtail",
+            tool: '',
+            render: eff.type === 'path' ? 'callpath' : 'headtail',
             origLines: r.origLines,
             origBytes: r.origBytes,
             keptLines: r.keptLines,
@@ -715,13 +731,13 @@ export interface ClippedToolDetail {
  */
 export type CompactTrigger =
     /** 用户手动点的（含 CLI） */
-    | "manual"
+    | 'manual'
     /** 系统上下文（system 容器）变了 → 前缀缓存必**作废**（invalidated） */
-    | "systemContextChanged"
+    | 'systemContextChanged'
     /** 缓存**过期**（旧口径：距上次请求 > 生效 TTL）—— ##442 已删该触发器，只为读老账本保留 */
-    | "cacheExpired"
+    | 'cacheExpired'
     /** 上下文窗口占用超上限（撞墙即压） */
-    | "contextWindowOver";
+    | 'contextWindowOver';
 
 /**
  * **plan 快照**（旧字段，仅供读旧账本；##432 起新事件不再写它）。
@@ -738,7 +754,7 @@ export interface CompactPlanSnapshot {
     /** 旧账本里的历史字节上限（**旧口径**；新事件不写，读侧只用于展示"当时是什么"） */
     budgetBytes?: number;
     /** 这套 plan 从哪来：`config` = 用户/agent 配的；`default` = 配置没写、回落代码缺省管道 */
-    source: "config" | "default";
+    source: 'config' | 'default';
     /** **v4**：内容寻址版本 id（`plan-<sha12>`）—— 旧账本的指针，回查已不可用（CAS 已删） */
     planVersion?: string;
     /** **v3 旧事件**的级列表原文（`{ type, must?, limit?, clip?, data }`）；新事件**不写**，读侧兼容 */
@@ -761,7 +777,7 @@ export interface CompactPlanSnapshot {
  * 无需迁移；新写的都是 v2。
  */
 export interface CompactEventRecord {
-    kind: "compact";
+    kind: 'compact';
     /**
      * v2 = 只有 `policy`（旋钮）；v3 = 多一条 `plan` 快照（##344 M2）；**v4 = plan 只记版本指针**（##378）；
      * **v5 = 明细瘦身**（##431：不再写 `details.dropped` 全文与 `details.clipped` 明细，只留计数与 id 清单）。
@@ -778,7 +794,7 @@ export interface CompactEventRecord {
      */
     schema?: number;
     /** 谁触发的（"auto" 是自动压缩；理由见 trigger） */
-    by: "ui" | "cli" | "auto";
+    by: 'ui' | 'cli' | 'auto';
     /** 为什么压（手动/系统上下文变/缓存过期/窗口超限） */
     trigger: CompactTrigger;
     /** 用户拧的旋钮 */
@@ -856,7 +872,7 @@ export interface CompactEventRecord {
             /** 走 summary.md 模版渲染出的文本 */
             text: string | null;
             /** 结构化数据（再生成/预览占位用；见 shared/context/summary.ts） */
-            data: import("./summary.js").SummaryData | null;
+            data: import('./summary.js').SummaryData | null;
             cost: number | null;
         };
     };
@@ -864,11 +880,11 @@ export interface CompactEventRecord {
 
 /** v1 平铺账（历史遗留形状；只用于**读**，`normalizeCompactEvent` 把它归一成 v2） */
 interface CompactEventRecordV1 {
-    kind: "compact";
+    kind: 'compact';
     v: 1;
     id: string;
     ts: string;
-    by: "ui" | "cli";
+    by: 'ui' | 'cli';
     policy: CompactPolicy;
     boundary: {
         keptFromTurnId: string | null;
@@ -887,7 +903,7 @@ interface CompactEventRecordV1 {
     droppedDetail?: DroppedTurnDetail[];
     clipped?: ClippedToolDetail[];
     summaryText?: string | null;
-    summaryData?: import("./summary.js").SummaryData | null;
+    summaryData?: import('./summary.js').SummaryData | null;
     summaryCost?: number | null;
 }
 
@@ -913,13 +929,13 @@ function normalizeCompactEvent(e: CompactEventRecord | CompactEventRecordV1): Co
         v1.rebuildCost !== undefined ||
         v1.backfillSteps !== undefined;
     return {
-        kind: "compact",
+        kind: 'compact',
         v: 2,
         id: v1.id,
         ts: v1.ts,
         by: v1.by,
         // v1 没有 trigger 概念：旧账一律视为手动
-        trigger: "manual",
+        trigger: 'manual',
         policy: v1.policy,
         boundary: {
             keptFromTurnId: v1.boundary.keptFromTurnId,
@@ -974,7 +990,7 @@ function normalizeCompactEvent(e: CompactEventRecord | CompactEventRecordV1): Co
  * 因为 ##230 的教训正是「朴素估算高估 30~45%」，两个数并排存才能验证修正模型准不准。
  */
 export interface MeasureEventRecord {
-    kind: "measure";
+    kind: 'measure';
     v: 1;
     ref: string;
     ts: string;
@@ -992,7 +1008,7 @@ export interface MeasureEventRecord {
 }
 
 export interface UndoEventRecord {
-    kind: "undo";
+    kind: 'undo';
     v: 1;
     ref: string;
     ts: string;
@@ -1003,15 +1019,15 @@ export type CompactLogEvent = CompactEventRecord | MeasureEventRecord | UndoEven
 /** 从 jsonl 文本解析账本（坏行跳过 —— 账本坏了不该连带整个会话不可用） */
 export function parseCompactLog(text: string): CompactLogEvent[] {
     const out: CompactLogEvent[] = [];
-    for (const raw of text.split("\n")) {
+    for (const raw of text.split('\n')) {
         const line = raw.trim();
         if (!line) continue;
         try {
             const e = JSON.parse(line) as CompactLogEvent | CompactEventRecordV1;
-            if (!e || typeof e !== "object" || typeof (e as { kind?: unknown }).kind !== "string") continue;
+            if (!e || typeof e !== 'object' || typeof (e as { kind?: unknown }).kind !== 'string') continue;
             // 读侧归一：v1 平铺账 → v2 分组（旧账本无需迁移，下游只见一种形状）；
             // policy 也统一走 normalizePolicy（v2 扁平 / v1 旧形 → v3 modeData）——下游 accessor 只认一种。
-            if (e.kind === "compact") {
+            if (e.kind === 'compact') {
                 const rec = normalizeCompactEvent(e);
                 out.push({ ...rec, policy: normalizePolicy(rec.policy) });
             } else {
@@ -1050,10 +1066,10 @@ export function resolveBoundary(events: readonly CompactLogEvent[]): EffectiveBo
     const alive = new Map<string, CompactEventRecord>();
     const order: string[] = [];
     for (const e of events) {
-        if (e.kind === "compact") {
+        if (e.kind === 'compact') {
             if (!alive.has(e.id)) order.push(e.id);
             alive.set(e.id, e);
-        } else if (e.kind === "undo") {
+        } else if (e.kind === 'undo') {
             alive.delete(e.ref);
         }
     }
@@ -1064,9 +1080,7 @@ export function resolveBoundary(events: readonly CompactLogEvent[]): EffectiveBo
         compactId: c.id,
         keptFromTurnId: c.boundary.keptFromTurnId,
         keepFromOpIndex: c.boundary.keepFromOpIndex ?? -1,
-        ...(c.boundary.keptFromOpsOffset !== undefined
-            ? { keptFromOpsOffset: c.boundary.keptFromOpsOffset }
-            : {}),
+        ...(c.boundary.keptFromOpsOffset !== undefined ? { keptFromOpsOffset: c.boundary.keptFromOpsOffset } : {}),
         ...(c.boundary.keptFromLlmLine !== undefined ? { keptFromLlmLine: c.boundary.keptFromLlmLine } : {}),
         ...(c.boundary.opsBytes !== undefined ? { opsBytes: c.boundary.opsBytes } : {}),
         schema: c.schema ?? OPS_SCHEMA_CURRENT,
@@ -1090,7 +1104,7 @@ export interface OpLike {
 export function indexOfTurn(ops: readonly OpLike[], turnId: string): number {
     for (let i = 0; i < ops.length; i++) {
         const o = ops[i]!;
-        if (o.op === "start" && o.kind === "turn" && o.id === turnId) return i;
+        if (o.op === 'start' && o.kind === 'turn' && o.id === turnId) return i;
     }
     return -1;
 }
@@ -1116,7 +1130,7 @@ export function sliceOpsFromTurn<T extends OpLike>(ops: readonly T[], sinceTurnI
 export function turnIdAtOrAfterOp(ops: readonly OpLike[], idx: number): string | null {
     for (let i = Math.max(0, idx); i < ops.length; i++) {
         const o = ops[i]!;
-        if (o.op === "start" && o.kind === "turn") return o.id;
+        if (o.op === 'start' && o.kind === 'turn') return o.id;
     }
     return null;
 }
@@ -1124,7 +1138,7 @@ export function turnIdAtOrAfterOp(ops: readonly OpLike[], idx: number): string |
 /** 会话里所有 turn 的 id（按出现顺序） */
 export function listTurnIds(ops: readonly OpLike[]): string[] {
     const out: string[] = [];
-    for (const o of ops) if (o.op === "start" && o.kind === "turn") out.push(o.id);
+    for (const o of ops) if (o.op === 'start' && o.kind === 'turn') out.push(o.id);
     return out;
 }
 
@@ -1173,7 +1187,7 @@ export function estimateTokens(bytes: number): number {
 // 故本文件的**唯一用途**是「生成的快照」—— 真源仍是账本；快照丢了就按账本重建，重建结果必须与之等价。
 
 /** 状态快照的文件名（会话目录下的旁路 JSON，不是 jsonl 流水） */
-export const COMPACT_STATE_FILENAME = "compact-state.json";
+export const COMPACT_STATE_FILENAME = 'compact-state.json';
 
 /**
  * 一次压缩的**当前值**（从账本条目提取，纯数据）。
@@ -1243,8 +1257,8 @@ export function boundaryOfPoint(p: CompactPointState): EffectiveBoundary {
 /** 一条 compact 事件引用过的工具原文 id（v5 的 `clippedIds` 优先；老行回落 `clipped` 明细） */
 export function clippedIdsOfEvent(rec: CompactEventRecord): string[] {
     const out = new Set<string>();
-    for (const id of rec.details?.clippedIds?.ids ?? []) if (typeof id === "string" && id) out.add(id);
-    for (const c of rec.details?.clipped ?? []) if (typeof c?.id === "string" && c.id) out.add(c.id);
+    for (const id of rec.details?.clippedIds?.ids ?? []) if (typeof id === 'string' && id) out.add(id);
+    for (const c of rec.details?.clipped ?? []) if (typeof c?.id === 'string' && c.id) out.add(c.id);
     return [...out];
 }
 
@@ -1255,46 +1269,48 @@ export function clippedIdsOfEvent(rec: CompactEventRecord): string[] {
  * 用 zod 会把 shared 变成 schema 定义处，而账单的可选字段一多，schema 就比校验函数更长。
  */
 export function normalizeCompactState(raw: unknown): CompactState | null {
-    if (!raw || typeof raw !== "object") return null;
+    if (!raw || typeof raw !== 'object') return null;
     const o = raw as Record<string, unknown>;
-    if (o["v"] !== 1) return null;
-    const b = o["boundary"];
+    if (o['v'] !== 1) return null;
+    const b = o['boundary'];
     let boundary: CompactPointState | null = null;
     if (b !== null && b !== undefined) {
-        if (typeof b !== "object") return null;
+        if (typeof b !== 'object') return null;
         const p = b as Record<string, unknown>;
-        if (typeof p["compactId"] !== "string" || !p["compactId"]) return null;
-        if (typeof p["keptFromTurnId"] !== "string" && p["keptFromTurnId"] !== null) return null;
+        if (typeof p['compactId'] !== 'string' || !p['compactId']) return null;
+        if (typeof p['keptFromTurnId'] !== 'string' && p['keptFromTurnId'] !== null) return null;
         const num = (k: string): number | undefined => {
             const value = p[k];
-            return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+            return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
         };
-        const off = num("keptFromOpsOffset");
-        const line = num("keptFromLlmLine");
-        const bytes = num("opsBytes");
-        const at = num("at");
+        const off = num('keptFromOpsOffset');
+        const line = num('keptFromLlmLine');
+        const bytes = num('opsBytes');
+        const at = num('at');
         boundary = {
-            compactId: p["compactId"],
-            schema: num("schema") ?? OPS_SCHEMA_CURRENT,
-            keptFromTurnId: (p["keptFromTurnId"] as string | null) ?? null,
-            keepFromOpIndex: num("keepFromOpIndex") ?? -1,
+            compactId: p['compactId'],
+            schema: num('schema') ?? OPS_SCHEMA_CURRENT,
+            keptFromTurnId: (p['keptFromTurnId'] as string | null) ?? null,
+            keepFromOpIndex: num('keepFromOpIndex') ?? -1,
             ...(off !== undefined ? { keptFromOpsOffset: off } : {}),
             ...(line !== undefined ? { keptFromLlmLine: line } : {}),
             ...(bytes !== undefined ? { opsBytes: bytes } : {}),
             ...(at !== undefined ? { at } : {}),
-            ts: typeof p["ts"] === "string" ? p["ts"] : (p["compactId"] as string),
-            policy: normalizePolicy(p["policy"]),
+            ts: typeof p['ts'] === 'string' ? p['ts'] : (p['compactId'] as string),
+            policy: normalizePolicy(p['policy']),
         };
     } else if (b === undefined) {
         return null; // 缺键 ≠ 「无边界」：这是坏文件，交调用方回落
     }
-    const ids = Array.isArray(o["opIds"]) ? (o["opIds"] as unknown[]).filter((x): x is string => typeof x === "string" && !!x) : [];
-    const measure = o["measure"];
+    const ids = Array.isArray(o['opIds'])
+        ? (o['opIds'] as unknown[]).filter((x): x is string => typeof x === 'string' && !!x)
+        : [];
+    const measure = o['measure'];
     return {
         v: 1,
         boundary,
         opIds: ids,
-        ...(measure && typeof measure === "object" ? { measure: measure as MeasureEventRecord } : {}),
-        ...(typeof o["savedAt"] === "string" ? { savedAt: o["savedAt"] } : {}),
+        ...(measure && typeof measure === 'object' ? { measure: measure as MeasureEventRecord } : {}),
+        ...(typeof o['savedAt'] === 'string' ? { savedAt: o['savedAt'] } : {}),
     };
 }

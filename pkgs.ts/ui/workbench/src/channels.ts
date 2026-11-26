@@ -1,11 +1,11 @@
 // channels.ts — 主进程与 renderer 之间的唯一契约（preload 也用这份常量，避免字符串两处写）。
-import type { PageInfo } from "./page.js";
+import type { PageInfo } from './page.js';
 
 /** renderer 问「有哪些页面」 */
-export const PAGE_LIST_CHANNEL = "workbench:list-pages";
+export const PAGE_LIST_CHANNEL = 'workbench:list-pages';
 
 /** renderer 调某个页面的一个方法（转发到插件） */
-export const PAGE_INVOKE_CHANNEL = "page:invoke";
+export const PAGE_INVOKE_CHANNEL = 'page:invoke';
 
 export interface PageInvokeRequest {
     readonly pageId: string;
@@ -29,4 +29,4 @@ export interface WorkbenchBridge {
  * 通道名单一是有意的：rpc 的 transport 自带「renderer 就绪闸门」与取消/流式，
  * 每多一条手写通道就多一份要自己维护的时序与生命周期。
  */
-export const RPC_CHANNEL = "workbench-rpc";
+export const RPC_CHANNEL = 'workbench-rpc';

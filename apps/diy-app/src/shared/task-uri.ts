@@ -10,11 +10,11 @@ export const TASK_URI_RE = /^projects\/([^/]+)\/tasks\/([^/]+)$/;
 
 /** 从任务 URI 推导 project id；非法/不匹配返回空串（调用方自行决定如何报错） */
 export function projectFromUri(uri: string): string {
-  const m = uri.match(/^projects\/([^/]+)\/tasks\//);
-  return m?.[1] ?? "";
+    const m = uri.match(/^projects\/([^/]+)\/tasks\//);
+    return m?.[1] ?? "";
 }
 
 /** 是否是任务 URI（`projects/<pid>/tasks/<tid>`）。剪枝 / 守卫一律用它，别各处手写正则 */
 export function isTaskUri(uri: string | null | undefined): boolean {
-  return typeof uri === "string" && TASK_URI_RE.test(uri);
+    return typeof uri === "string" && TASK_URI_RE.test(uri);
 }

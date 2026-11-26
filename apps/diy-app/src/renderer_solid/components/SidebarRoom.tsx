@@ -139,9 +139,7 @@ export function SidebarRoom() {
     let panelRef: HTMLDivElement | undefined;
     let hideTimer: number | undefined;
     /** 会话区宽度（拖宽改它；最大化态在它之外**另加**成员栏，故整体变宽而会话区不变） */
-    const [width, setWidth] = createSignal<number>(
-        Number(localStorage.getItem(W_KEY)) || W_DEFAULT,
-    );
+    const [width, setWidth] = createSignal<number>(Number(localStorage.getItem(W_KEY)) || W_DEFAULT);
     const [roomId, setRoomId] = createSignal<string | null>(null);
     const [room, setRoom] = createSignal<Room | null>(null);
     const [events, setEvents] = createSignal<RoomEvent[]>([]);
@@ -218,8 +216,7 @@ export function SidebarRoom() {
         const i = list.findIndex((m) => m.id === id);
         return memberAvatar(i >= 0 ? list[i]! : { id }, i);
     };
-    const colorOf = (id: string): string =>
-        memberColor(room()?.members.find((x) => x.id === id) ?? { id });
+    const colorOf = (id: string): string => memberColor(room()?.members.find((x) => x.id === id) ?? { id });
 
     const hint = createMemo(() => {
         const r = room();
@@ -636,9 +633,7 @@ export function SidebarRoom() {
                         <span class="text-body font-medium truncate" title={roomId() ?? ""}>
                             {room()?.title || "侧边栏"}
                         </span>
-                        <span class="badge badge-xs badge-ghost shrink-0">
-                            {room()?.members.length ?? 0} 人
-                        </span>
+                        <span class="badge badge-xs badge-ghost shrink-0">{room()?.members.length ?? 0} 人</span>
                         {/* view 级操作（##166 §38.3）：room 的「当前接受者」在这里，不在成员行内 */}
                         {/* 已读游标（探针用）：面板里"现在推到哪条了" —— 判据要能问出这句话。
                             直接读服务端那份（`room.get` 带回的 `lastSeen`），不在前端另存一份。 */}
@@ -667,11 +662,7 @@ export function SidebarRoom() {
                         </button>
                         <button
                             class="btn btn-xs btn-ghost"
-                            title={
-                                pinned()
-                                    ? "取消固定（恢复「移走自动收起」）"
-                                    : "固定常驻（不随鼠标移走关闭）"
-                            }
+                            title={pinned() ? "取消固定（恢复「移走自动收起」）" : "固定常驻（不随鼠标移走关闭）"}
                             onClick={() => setPinned((v) => !v)}
                             data-sidebar-pin
                         >
@@ -684,207 +675,237 @@ export function SidebarRoom() {
                         <div class="flex-1 flex flex-col min-w-0">
                             {/* 事件流（外层 relative：「回到最新」按钮的立足点，不随内容滚动） */}
                             <div class="relative flex-1 min-h-0 flex flex-col">
-                            <div
-                                class="flex-1 overflow-auto px-2.5 py-1.5 space-y-1.5"
-                                ref={(el) => {
-                                    streamRef = el;
-                                    setFollow({ ...streamFollowInit }); // 打开面板：从最新看起
-                                    if (el) queueMicrotask(() => pinBottom(el, true));
-                                }}
-                                onScroll={(e) => {
-                                    // ⚠️ 跟随态只由**人滚的**决定：钉底带出来的 scroll 事件不算
-                                    // （判据在 lib/chat-scroll.onStreamScroll）
-                                    const el = e.currentTarget;
-                                    setFollow(
-                                        onStreamScroll(followNow(), {
-                                            scrollTop: el.scrollTop,
-                                            scrollHeight: el.scrollHeight,
-                                            clientHeight: el.clientHeight,
-                                        }),
-                                    );
-                                }}
-                                data-sidebar-events
-                            >
-                                <Show when={events().length === 0}>
-                                    <div class="text-caption opacity-50">
-                                        还没有发言。最大化后点成员卡的 @ 寻址，或直接打字（投给当前接受者）。
-                                    </div>
-                                </Show>
-                                <For each={events()}>
-                                    {(e) => {
-                                        const mine = () => e.author === human()?.id;
-                                        const author = () => room()?.members.find((m) => m.id === e.author);
-                                        const st = () => turns()[e.id];
-                                        const isFolded = () => folded()[e.id] === true;
-                                        createEffect(() => {
-                                            if (e.kind !== "reply" || !e.ref || st()) return;
-                                            void loadTurn(e.id);
-                                        });
-                                        return (
-                                            <>
-                                                {/* 「新消息从这里开始」分界线（##377 第 28 刀）：
+                                <div
+                                    class="flex-1 overflow-auto px-2.5 py-1.5 space-y-1.5"
+                                    ref={(el) => {
+                                        streamRef = el;
+                                        setFollow({ ...streamFollowInit }); // 打开面板：从最新看起
+                                        if (el) queueMicrotask(() => pinBottom(el, true));
+                                    }}
+                                    onScroll={(e) => {
+                                        // ⚠️ 跟随态只由**人滚的**决定：钉底带出来的 scroll 事件不算
+                                        // （判据在 lib/chat-scroll.onStreamScroll）
+                                        const el = e.currentTarget;
+                                        setFollow(
+                                            onStreamScroll(followNow(), {
+                                                scrollTop: el.scrollTop,
+                                                scrollHeight: el.scrollHeight,
+                                                clientHeight: el.clientHeight,
+                                            }),
+                                        );
+                                    }}
+                                    data-sidebar-events
+                                >
+                                    <Show when={events().length === 0}>
+                                        <div class="text-caption opacity-50">
+                                            还没有发言。最大化后点成员卡的 @ 寻址，或直接打字（投给当前接受者）。
+                                        </div>
+                                    </Show>
+                                    <For each={events()}>
+                                        {(e) => {
+                                            const mine = () => e.author === human()?.id;
+                                            const author = () => room()?.members.find((m) => m.id === e.author);
+                                            const st = () => turns()[e.id];
+                                            const isFolded = () => folded()[e.id] === true;
+                                            createEffect(() => {
+                                                if (e.kind !== "reply" || !e.ref || st()) return;
+                                                void loadTurn(e.id);
+                                            });
+                                            return (
+                                                <>
+                                                    {/* 「新消息从这里开始」分界线（##377 第 28 刀）：
                                                     `newFrom` 是**进面板那一刻**的快照 —— 已读前移后它仍留着，
                                                     否则点开的那一瞬标记就消失了（等于没标）。 */}
-                                                <Show when={newFrom() !== null && e.id === newFrom()}>
-                                                    <div
-                                                        class="flex items-center gap-1.5 py-0.5"
-                                                        data-sidebar-newfrom={e.id}
-                                                    >
-                                                        <div class="h-px flex-1 bg-error/40" />
-                                                        <span class="text-caption text-error shrink-0">新消息</span>
-                                                        <div class="h-px flex-1 bg-error/40" />
-                                                    </div>
-                                                </Show>
-                                            <div
-                                                class={`flex ${mine() ? "justify-end" : "justify-start"}`}
-                                                data-sidebar-event
-                                                data-sidebar-kind={e.kind}
-                                                data-sidebar-author={e.author}
-                                                data-sidebar-delivered={e.delivered ? "true" : "false"}
-                                            >
-                                                <div class="max-w-[92%] flex flex-col">
-                                                    <Show when={!mine()}>
-                                                        <div class="flex items-center gap-1.5 mb-0.5">
-                                                            <div
-                                                                class="w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0"
-                                                                style={{
-                                                                    background: `${colorOf(e.author)}33`,
-                                                                    border: `1px solid ${colorOf(e.author)}`,
-                                                                }}
-                                                                data-sidebar-avatar={e.author}
-                                                            >
-                                                                {avatarOf(e.author)}
-                                                            </div>
-                                                            <span
-                                                                class="text-caption font-medium"
-                                                                style={{ color: colorOf(e.author) }}
-                                                            >
-                                                                {author()?.name ?? shortName(e.author)}
-                                                            </span>
-                                                            <span class="text-caption opacity-40">{hms(e.ts)}</span>
-                                                            <Show when={e.to.length > 0}>
-                                                                <span class="text-caption opacity-40">
-                                                                    → {e.to.map((t) => memberName(room(), t)).join(" / ")}
-                                                                </span>
-                                                            </Show>
-                                                        </div>
-                                                    </Show>
-                                                    <div
-                                                        class={`rounded-lg px-3 py-1.5 text-prose whitespace-pre-wrap ${
-                                                            e.kind === "say" ? "bg-primary/15" : "bg-base-200"
-                                                        }`}
-                                                    >
-                                                        {e.text || <span class="opacity-50">（无正文）</span>}
-                                                    </div>
-                                                    {/* 笔记（##166 §38.2）：**中性**标记 —— 不是投递失败，也不该像故障 */}
-                                                    <Show when={e.routing === "note"}>
+                                                    <Show when={newFrom() !== null && e.id === newFrom()}>
                                                         <div
-                                                            class="mt-0.5 flex items-center gap-1"
-                                                            data-sidebar-note={e.id}
+                                                            class="flex items-center gap-1.5 py-0.5"
+                                                            data-sidebar-newfrom={e.id}
                                                         >
-                                                            <span class="badge badge-xs badge-ghost opacity-70">
-                                                                笔记
-                                                            </span>
-                                                            <span class="text-caption opacity-40">
-                                                                不投递，只进房间历史
-                                                            </span>
+                                                            <div class="h-px flex-1 bg-error/40" />
+                                                            <span class="text-caption text-error shrink-0">新消息</span>
+                                                            <div class="h-px flex-1 bg-error/40" />
                                                         </div>
                                                     </Show>
-                                                    <Show when={(e.deliveries?.length ?? 0) > 0}>
-                                                        <div class="flex flex-wrap gap-1 mt-0.5">
-                                                            <For each={e.deliveries}>
-                                                                {(d) => (
-                                                                    <span
-                                                                        class={`badge badge-xs ${statusClass(d.status)}`}
-                                                                        title={d.error ?? d.note ?? ""}
-                                                                        data-sidebar-delivery={`${e.id}:${d.memberId}`}
-                                                                        data-sidebar-status={d.status}
+                                                    <div
+                                                        class={`flex ${mine() ? "justify-end" : "justify-start"}`}
+                                                        data-sidebar-event
+                                                        data-sidebar-kind={e.kind}
+                                                        data-sidebar-author={e.author}
+                                                        data-sidebar-delivered={e.delivered ? "true" : "false"}
+                                                    >
+                                                        <div class="max-w-[92%] flex flex-col">
+                                                            <Show when={!mine()}>
+                                                                <div class="flex items-center gap-1.5 mb-0.5">
+                                                                    <div
+                                                                        class="w-4 h-4 rounded-full flex items-center justify-center text-[10px] shrink-0"
+                                                                        style={{
+                                                                            background: `${colorOf(e.author)}33`,
+                                                                            border: `1px solid ${colorOf(e.author)}`,
+                                                                        }}
+                                                                        data-sidebar-avatar={e.author}
                                                                     >
-                                                                        {memberName(room(), d.memberId)} · {deliveryStateText(d)}
+                                                                        {avatarOf(e.author)}
+                                                                    </div>
+                                                                    <span
+                                                                        class="text-caption font-medium"
+                                                                        style={{ color: colorOf(e.author) }}
+                                                                    >
+                                                                        {author()?.name ?? shortName(e.author)}
                                                                     </span>
-                                                                )}
-                                                            </For>
-                                                        </div>
-                                                    </Show>
-                                                    <Show when={e.error}>
-                                                        <div class="text-caption text-error mt-0.5" data-sidebar-undelivered>
-                                                            {e.kind === "say" ? "未投递：" : ""}
-                                                            {e.error}
-                                                        </div>
-                                                    </Show>
-                                                    {/* 过程进度：同一份数据（成员会话的那一轮）、同一套渲染（TurnView） */}
-                                                    <Show when={e.kind === "reply" && e.ref}>
-                                                        <div
-                                                            class="mt-0.5 rounded-lg border border-base-300 bg-base-100/60"
-                                                            data-sidebar-progress={e.id}
-                                                        >
-                                                            <button
-                                                                class="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-caption"
-                                                                onClick={() =>
-                                                                    setFolded((p) => ({ ...p, [e.id]: !isFolded() }))
-                                                                }
-                                                                data-sidebar-progress-toggle={e.id}
+                                                                    <span class="text-caption opacity-40">
+                                                                        {hms(e.ts)}
+                                                                    </span>
+                                                                    <Show when={e.to.length > 0}>
+                                                                        <span class="text-caption opacity-40">
+                                                                            →{" "}
+                                                                            {e.to
+                                                                                .map((t) => memberName(room(), t))
+                                                                                .join(" / ")}
+                                                                        </span>
+                                                                    </Show>
+                                                                </div>
+                                                            </Show>
+                                                            <div
+                                                                class={`rounded-lg px-3 py-1.5 text-prose whitespace-pre-wrap ${
+                                                                    e.kind === "say" ? "bg-primary/15" : "bg-base-200"
+                                                                }`}
                                                             >
-                                                                <span class="opacity-60">{isFolded() ? "▸" : "▾"}</span>
-                                                                <span>过程进度</span>
-                                                                <span class="opacity-50">
-                                                                    {shortName(e.author)} · {st()?.turnId ?? e.ref!.turnId}
-                                                                </span>
-                                                                <Show when={st()?.live}>
-                                                                    <span class="badge badge-xs badge-info">直播中</span>
-                                                                </Show>
-                                                            </button>
-                                                            <Show when={!isFolded()}>
-                                                                <div class="px-2 pb-1.5">
-                                                                    <Show when={st()?.error}>
-                                                                        <div class="text-caption text-error">{st()!.error}</div>
-                                                                    </Show>
-                                                                    <Show when={!st()}>
-                                                                        <div class="text-caption opacity-60">正在取这一轮…</div>
-                                                                    </Show>
-                                                                    <Show when={st()?.turn}>
-                                                                        <ChatView
-                                                                            source={{
-                                                                                trees: () => {
-                                                                                    const t = st()?.turn;
-                                                                                    return t ? [t] : [];
-                                                                                },
-                                                                                live: () => st()?.live === true,
-                                                                            }}
-                                                                        >
-                                                                            <TurnView
-                                                                                turnId={e.ref!.turnId}
-                                                                                pin={pin()}
-                                                                                level={2}
-                                                                                histOpen={true}
-                                                                                onCycle={() => undefined}
-                                                                                conclusionLines={3}
-                                                                                onResizeLines={() => undefined}
-                                                                                onToggle={(bid, force) =>
-                                                                                    setPin((p) => ({ ...p, [bid]: force ?? !p[bid] }))
-                                                                                }
-                                                                                onFull={() => undefined}
-                                                                                liveTurnId={st()?.live ? e.ref!.turnId : null}
-                                                                                md={true}
-                                                                                usageHover={null}
-                                                                                onHoverUsage={() => undefined}
-                                                                                onHoverEndUsage={() => undefined}
-                                                                                usageDetail={null}
-                                                                                onDetailUsage={() => undefined}
-                                                                            />
-                                                                        </ChatView>
+                                                                {e.text || <span class="opacity-50">（无正文）</span>}
+                                                            </div>
+                                                            {/* 笔记（##166 §38.2）：**中性**标记 —— 不是投递失败，也不该像故障 */}
+                                                            <Show when={e.routing === "note"}>
+                                                                <div
+                                                                    class="mt-0.5 flex items-center gap-1"
+                                                                    data-sidebar-note={e.id}
+                                                                >
+                                                                    <span class="badge badge-xs badge-ghost opacity-70">
+                                                                        笔记
+                                                                    </span>
+                                                                    <span class="text-caption opacity-40">
+                                                                        不投递，只进房间历史
+                                                                    </span>
+                                                                </div>
+                                                            </Show>
+                                                            <Show when={(e.deliveries?.length ?? 0) > 0}>
+                                                                <div class="flex flex-wrap gap-1 mt-0.5">
+                                                                    <For each={e.deliveries}>
+                                                                        {(d) => (
+                                                                            <span
+                                                                                class={`badge badge-xs ${statusClass(d.status)}`}
+                                                                                title={d.error ?? d.note ?? ""}
+                                                                                data-sidebar-delivery={`${e.id}:${d.memberId}`}
+                                                                                data-sidebar-status={d.status}
+                                                                            >
+                                                                                {memberName(room(), d.memberId)} ·{" "}
+                                                                                {deliveryStateText(d)}
+                                                                            </span>
+                                                                        )}
+                                                                    </For>
+                                                                </div>
+                                                            </Show>
+                                                            <Show when={e.error}>
+                                                                <div
+                                                                    class="text-caption text-error mt-0.5"
+                                                                    data-sidebar-undelivered
+                                                                >
+                                                                    {e.kind === "say" ? "未投递：" : ""}
+                                                                    {e.error}
+                                                                </div>
+                                                            </Show>
+                                                            {/* 过程进度：同一份数据（成员会话的那一轮）、同一套渲染（TurnView） */}
+                                                            <Show when={e.kind === "reply" && e.ref}>
+                                                                <div
+                                                                    class="mt-0.5 rounded-lg border border-base-300 bg-base-100/60"
+                                                                    data-sidebar-progress={e.id}
+                                                                >
+                                                                    <button
+                                                                        class="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-caption"
+                                                                        onClick={() =>
+                                                                            setFolded((p) => ({
+                                                                                ...p,
+                                                                                [e.id]: !isFolded(),
+                                                                            }))
+                                                                        }
+                                                                        data-sidebar-progress-toggle={e.id}
+                                                                    >
+                                                                        <span class="opacity-60">
+                                                                            {isFolded() ? "▸" : "▾"}
+                                                                        </span>
+                                                                        <span>过程进度</span>
+                                                                        <span class="opacity-50">
+                                                                            {shortName(e.author)} ·{" "}
+                                                                            {st()?.turnId ?? e.ref!.turnId}
+                                                                        </span>
+                                                                        <Show when={st()?.live}>
+                                                                            <span class="badge badge-xs badge-info">
+                                                                                直播中
+                                                                            </span>
+                                                                        </Show>
+                                                                    </button>
+                                                                    <Show when={!isFolded()}>
+                                                                        <div class="px-2 pb-1.5">
+                                                                            <Show when={st()?.error}>
+                                                                                <div class="text-caption text-error">
+                                                                                    {st()!.error}
+                                                                                </div>
+                                                                            </Show>
+                                                                            <Show when={!st()}>
+                                                                                <div class="text-caption opacity-60">
+                                                                                    正在取这一轮…
+                                                                                </div>
+                                                                            </Show>
+                                                                            <Show when={st()?.turn}>
+                                                                                <ChatView
+                                                                                    source={{
+                                                                                        trees: () => {
+                                                                                            const t = st()?.turn;
+                                                                                            return t ? [t] : [];
+                                                                                        },
+                                                                                        live: () => st()?.live === true,
+                                                                                    }}
+                                                                                >
+                                                                                    <TurnView
+                                                                                        turnId={e.ref!.turnId}
+                                                                                        pin={pin()}
+                                                                                        level={2}
+                                                                                        histOpen={true}
+                                                                                        onCycle={() => undefined}
+                                                                                        conclusionLines={3}
+                                                                                        onResizeLines={() => undefined}
+                                                                                        onToggle={(bid, force) =>
+                                                                                            setPin((p) => ({
+                                                                                                ...p,
+                                                                                                [bid]: force ?? !p[bid],
+                                                                                            }))
+                                                                                        }
+                                                                                        onFull={() => undefined}
+                                                                                        liveTurnId={
+                                                                                            st()?.live
+                                                                                                ? e.ref!.turnId
+                                                                                                : null
+                                                                                        }
+                                                                                        md={true}
+                                                                                        usageHover={null}
+                                                                                        onHoverUsage={() => undefined}
+                                                                                        onHoverEndUsage={() =>
+                                                                                            undefined
+                                                                                        }
+                                                                                        usageDetail={null}
+                                                                                        onDetailUsage={() => undefined}
+                                                                                    />
+                                                                                </ChatView>
+                                                                            </Show>
+                                                                        </div>
                                                                     </Show>
                                                                 </div>
                                                             </Show>
                                                         </div>
-                                                    </Show>
-                                                </div>
-                                            </div>
-                                            </>
-                                        );
-                                    }}
-                                </For>
-                            </div>
+                                                    </div>
+                                                </>
+                                            );
+                                        }}
+                                    </For>
+                                </div>
                                 {/* 上翻阅读时绝不打扰，但要给一条「回去」的路 —— 否则新消息会静默堆积 */}
                                 <Show when={!stick()}>
                                     <button
@@ -958,7 +979,6 @@ export function SidebarRoom() {
                                 </div>
                             </div>
                         </div>
-
                     </div>
                 </div>
 

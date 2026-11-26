@@ -12,35 +12,35 @@
 import type { InstanceSelf, RevealResult } from "../../shared/instance-row";
 
 export interface WindowOps {
-  /** 请出窗口：不存在就重建（窗口关了但进程常驻是常态），然后前置 + 全屏 */
-  reveal(): RevealResult;
-  /** 当前窗口状态；无窗口 → null（serve 模式 / 窗口已关） */
-  state(): InstanceSelf["window"];
+    /** 请出窗口：不存在就重建（窗口关了但进程常驻是常态），然后前置 + 全屏 */
+    reveal(): RevealResult;
+    /** 当前窗口状态；无窗口 → null（serve 模式 / 窗口已关） */
+    state(): InstanceSelf["window"];
 }
 
 let ops: WindowOps | null = null;
 
 /** main/index.ts 在窗口逻辑就绪后注入；传 null 撤销（测试用） */
 export function setWindowOps(next: WindowOps | null): void {
-  ops = next;
+    ops = next;
 }
 
 /** 请出本实例窗口。未注入（serve 模式）→ 明确失败原因，绝不静默返回成功 */
 export function revealSelf(): RevealResult {
-  if (!ops) return { ok: false, reason: "本实例没有窗口（serve 模式 / 未运行 GUI）", fullScreen: false };
-  try {
-    return ops.reveal();
-  } catch (e) {
-    return { ok: false, reason: `唤起失败：${e instanceof Error ? e.message : String(e)}`, fullScreen: false };
-  }
+    if (!ops) return { ok: false, reason: "本实例没有窗口（serve 模式 / 未运行 GUI）", fullScreen: false };
+    try {
+        return ops.reveal();
+    } catch (e) {
+        return { ok: false, reason: `唤起失败：${e instanceof Error ? e.message : String(e)}`, fullScreen: false };
+    }
 }
 
 /** 当前窗口状态；未注入 / 无窗口 → null */
 export function windowState(): InstanceSelf["window"] {
-  if (!ops) return null;
-  try {
-    return ops.state();
-  } catch {
-    return null;
-  }
+    if (!ops) return null;
+    try {
+        return ops.state();
+    } catch {
+        return null;
+    }
 }

@@ -126,7 +126,10 @@ describe("金额分解（##211 §四.2：取 pi 口径，思考不重复计）",
 
     it("不可测桶 → 金额也是 null（按 0 算是静默低估）", () => {
         const rates = ratesOf(OPENCODE_GO_SNAPSHOT.find((m) => m.id === "mimo-v2.6-flash")!.cost, 100)!;
-        const c = costBreakdown(rates, bucketsOf({ inputTokens: 100, inputTokenDetails: { noCacheTokens: 100 }, outputTokens: 5 }));
+        const c = costBreakdown(
+            rates,
+            bucketsOf({ inputTokens: 100, inputTokenDetails: { noCacheTokens: 100 }, outputTokens: 5 }),
+        );
         expect(c.cacheWrite).toBeNull();
     });
 
@@ -158,13 +161,16 @@ describe("窗口占用 / 缓存命中率", () => {
     it("页脚两种口径并存且**不可相除**：累加值（重发成本）≠ 窗口分子（上下文）", () => {
         // 实测场景（2026-10-02）：一轮 40 步，累加 986k，而真实上下文只有最后一步的 44k。
         // 界面上这两个数并排显示 —— 不标注范围就会被读成"窗口 96%"。
-        const step = (n: number) => bucketsOf({
-            inputTokens: n, inputTokenDetails: { noCacheTokens: 1000, cacheReadTokens: n - 1000 }, outputTokens: 100,
-        });
+        const step = (n: number) =>
+            bucketsOf({
+                inputTokens: n,
+                inputTokenDetails: { noCacheTokens: 1000, cacheReadTokens: n - 1000 },
+                outputTokens: 100,
+            });
         const cumulative = sumBuckets([step(20_000), step(24_000)]);
         const patch = turnUsagePatch(cumulative, step(24_000), null, 1_000_000, 2);
-        expect(patch.inputTotal).toBe(44_000);      // 累加（解释"这轮为什么贵"）
-        expect(patch.windowTotal).toBe(24_100);     // 最后一步（上下文压力）
+        expect(patch.inputTotal).toBe(44_000); // 累加（解释"这轮为什么贵"）
+        expect(patch.windowTotal).toBe(24_100); // 最后一步（上下文压力）
         expect(patch.lastInputTotal).toBe(24_000);
         expect(patch.lastOutputTotal).toBe(100);
         expect(patch.steps).toBe(2);
@@ -179,9 +185,17 @@ describe("窗口占用 / 缓存命中率", () => {
     it("窗口占用分子**不是**累加值：最后一步才是上下文压力", () => {
         const cumulative = sumBuckets([
             bucketsOf({ inputTokens: 1000, inputTokenDetails: { noCacheTokens: 1000 }, outputTokens: 100 }),
-            bucketsOf({ inputTokens: 1500, inputTokenDetails: { noCacheTokens: 200, cacheReadTokens: 1300 }, outputTokens: 50 }),
+            bucketsOf({
+                inputTokens: 1500,
+                inputTokenDetails: { noCacheTokens: 200, cacheReadTokens: 1300 },
+                outputTokens: 50,
+            }),
         ]);
-        const last = bucketsOf({ inputTokens: 1500, inputTokenDetails: { noCacheTokens: 200, cacheReadTokens: 1300 }, outputTokens: 50 });
+        const last = bucketsOf({
+            inputTokens: 1500,
+            inputTokenDetails: { noCacheTokens: 200, cacheReadTokens: 1300 },
+            outputTokens: 50,
+        });
         const patch = turnUsagePatch(cumulative, last, null, 10_000);
         expect(patch.total).toBe(2650); // 累加（解释"这轮为什么贵"）
         expect(patch.windowTotal).toBe(1550); // 最后一步（上下文压力）
@@ -195,7 +209,17 @@ describe("窗口占用 / 缓存命中率", () => {
         expect(none.cost).toBeNull();
         expect(none.unpriced).toBe(2);
         // 有价目的部分和：仍如实带上无价目步数（UI 打 * 且不把合计当完整值）
-        const partial = turnUsagePatch(step, step, { noCache: 0.1, cacheRead: 0, cacheWrite: null, text: 0.2, reasoning: 0, total: 0.3 }, 10_000, 3, undefined, null, null, 1);
+        const partial = turnUsagePatch(
+            step,
+            step,
+            { noCache: 0.1, cacheRead: 0, cacheWrite: null, text: 0.2, reasoning: 0, total: 0.3 },
+            10_000,
+            3,
+            undefined,
+            null,
+            null,
+            1,
+        );
         expect(partial.cost?.total).toBeCloseTo(0.3, 9);
         expect(partial.unpriced).toBe(1);
         // 缺省（老调用点 / 全有价目）= 0，不是 undefined —— 读侧不必再兜一层
@@ -230,7 +254,10 @@ describe("聚合（UI 明细/看板与 CLI 报表共用）", () => {
         expect(groups[0]!.steps.map((s) => s.record.step)).toEqual([1, 2]);
         expect(groups[0]!.buckets.inputTotal).toBe(764 * 2);
         expect(groups[0]!.last.record.step).toBe(2); // 窗口占用取最后一步
-        expect(groups[0]!.cost!.total).toBeCloseTo(groups[0]!.steps.reduce((s, v) => s + v.cost!.total, 0), 12);
+        expect(groups[0]!.cost!.total).toBeCloseTo(
+            groups[0]!.steps.reduce((s, v) => s + v.cost!.total, 0),
+            12,
+        );
     });
 
     it("按 人物 分行（模型/面/档位是步级属性，不进分组键）", () => {
@@ -254,8 +281,16 @@ describe("聚合（UI 明细/看板与 CLI 报表共用）", () => {
 
     it("不可测桶聚合保持 null（不被 0 污染）", () => {
         const b = sumBuckets([
-            bucketsOf({ inputTokens: 10, inputTokenDetails: { noCacheTokens: 10, cacheReadTokens: 0 }, outputTokens: 1 }),
-            bucketsOf({ inputTokens: 20, inputTokenDetails: { noCacheTokens: 5, cacheReadTokens: 15 }, outputTokens: 2 }),
+            bucketsOf({
+                inputTokens: 10,
+                inputTokenDetails: { noCacheTokens: 10, cacheReadTokens: 0 },
+                outputTokens: 1,
+            }),
+            bucketsOf({
+                inputTokens: 20,
+                inputTokenDetails: { noCacheTokens: 5, cacheReadTokens: 15 },
+                outputTokens: 2,
+            }),
         ]);
         expect(b.cacheWrite).toBeNull();
         const c = sumCosts([
@@ -320,8 +355,17 @@ describe("速度（stepRate / avgRate；##349 口径 = token ÷ **总耗时**，
 
     it("ai-sdk 已给 effectiveOutputTokensPerSecond 时**直接取它**（真值来自上游计时，口径逐字一致）", () => {
         // 实测形状：mimo 一步 response 26.5s（含 ttft 2.57s）/ out 1390 → 52.42 tok/s
-        expect(stepRate(perf({ stepTimeMs: 26542.9, responseTimeMs: 26518.8, timeToFirstOutputMs: 2565.5, effectiveOutputTokensPerSecond: 52.421 }), 1390))
-            .toBeCloseTo(52.42, 1);
+        expect(
+            stepRate(
+                perf({
+                    stepTimeMs: 26542.9,
+                    responseTimeMs: 26518.8,
+                    timeToFirstOutputMs: 2565.5,
+                    effectiveOutputTokensPerSecond: 52.421,
+                }),
+                1390,
+            ),
+        ).toBeCloseTo(52.42, 1);
     });
 
     it("缺 effectiveOutputTokensPerSecond → 用 总输出 ÷ 响应耗时 现算（同一口径的两条来源）", () => {
@@ -349,18 +393,22 @@ describe("速度（stepRate / avgRate；##349 口径 = token ÷ **总耗时**，
 
     it("avgRate：Σ输出 ÷ Σ响应耗时（以耗时为权）= 单步式子的多步特例", () => {
         // 步A 3s/300tok + 步B 10s/100tok = 400 / 13s = 30.77（算术平均会是 65 —— 必须不等）
-        expect(avgRate([
-            { performance: perf({ responseTimeMs: 3000 }), outputTokens: 300 },
-            { performance: perf({ responseTimeMs: 10000 }), outputTokens: 100 },
-        ])).toBeCloseTo(30.77, 1);
+        expect(
+            avgRate([
+                { performance: perf({ responseTimeMs: 3000 }), outputTokens: 300 },
+                { performance: perf({ responseTimeMs: 10000 }), outputTokens: 100 },
+            ]),
+        ).toBeCloseTo(30.77, 1);
     });
 
     it("avgRate：没计时 / 没输出的步不进分母（不把「没数的步」当零耗时把均值抬高）", () => {
-        expect(avgRate([
-            { performance: perf({ responseTimeMs: 10000 }), outputTokens: 1000 },
-            { performance: undefined, outputTokens: 500 }, // 老记录没计时
-            { performance: perf({ responseTimeMs: 4000 }), outputTokens: 0 }, // 空步没输出
-        ])).toBeCloseTo(100, 5); // 只算第一步
+        expect(
+            avgRate([
+                { performance: perf({ responseTimeMs: 10000 }), outputTokens: 1000 },
+                { performance: undefined, outputTokens: 500 }, // 老记录没计时
+                { performance: perf({ responseTimeMs: 4000 }), outputTokens: 0 }, // 空步没输出
+            ]),
+        ).toBeCloseTo(100, 5); // 只算第一步
         expect(avgRate([])).toBeNull();
         expect(avgRate([{ performance: perf({ responseTimeMs: 0 }), outputTokens: 1 }])).toBeNull();
     });

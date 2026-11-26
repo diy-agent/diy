@@ -6,12 +6,7 @@
 //   · 单张表的某段非法 → 丢该段 + 告警（一张表坏一段，不该把整个模型目录拖死）
 // 宁可算 base 价（可解释），不可静默按错的峰价收钱。
 import { readFileSync } from "node:fs";
-import {
-    ModelsDevDiyFileSchema,
-    resolveWindow,
-    windowSummary,
-    type WindowTable,
-} from "../../shared/cost-windows";
+import { ModelsDevDiyFileSchema, resolveWindow, windowSummary, type WindowTable } from "../../shared/cost-windows";
 import { MODELS_DEV_DIY_FILE, type WindowChoice } from "../../shared/model-config";
 import { dataFile } from "./data-file";
 
@@ -28,7 +23,10 @@ function load(): Loaded {
     const issues: string[] = [];
     const p = dataFile(MODELS_DEV_DIY_FILE);
     if (!p) {
-        return (_loaded = { windows: {}, issues: [`${MODELS_DEV_DIY_FILE} 缺失 → 引用时段表的档一律不命中（退 base 价）`] });
+        return (_loaded = {
+            windows: {},
+            issues: [`${MODELS_DEV_DIY_FILE} 缺失 → 引用时段表的档一律不命中（退 base 价）`],
+        });
     }
     let windows: WindowTable = {};
     try {

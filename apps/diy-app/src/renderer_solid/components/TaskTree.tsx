@@ -36,7 +36,6 @@ import { fmtCost } from "../../shared/usage";
 // dnd-kit/solid 未直接导出 DragEndEvent，从 onDragEnd 回调参数提取
 type DragEndEvent = Parameters<NonNullable<DragDropProviderProps["onDragEnd"]>>[0];
 
-
 interface FlatRow {
     key: string;
     kind: "project" | "task";
@@ -144,10 +143,7 @@ function StateSelector(props: { uri: string; state: string }) {
 
     return (
         <span class="relative inline-block" onClick={(e) => e.stopPropagation()}>
-            <button
-                class={"btn btn-xs btn-ghost gap-1 normal-case font-normal"}
-                onClick={() => setOpen((p) => !p)}
-            >
+            <button class={"btn btn-xs btn-ghost gap-1 normal-case font-normal"} onClick={() => setOpen((p) => !p)}>
                 <span class={`w-2 h-2 rounded-full inline-block ${taskStateColor(props.state)}`} />
                 {stateLabel[props.state] ?? props.state}
             </button>
@@ -239,7 +235,9 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
     const saveExpanded = (s: Set<string>) => {
         try {
             Caches.diy_task_tree_expanded.set([...s]);
-        } catch { /* 存储不可用忽略 */ }
+        } catch {
+            /* 存储不可用忽略 */
+        }
     };
     const [expanded, setExpanded] = createSignal<Set<string>>(loadExpanded());
     const [sort, setSort] = createSignal<SortSpec>(parseSort(Caches.diy_task_tree_sort.get()));
@@ -247,21 +245,27 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
     /** 搜索焦点：第几个命中（0 基）。换搜索词 → 归零 */
     const [focusIdx, setFocusIdx] = createSignal(0);
     let searchRef: HTMLInputElement | undefined;
-    const bindSearch = (el: HTMLInputElement) => { searchRef = el; };
+    const bindSearch = (el: HTMLInputElement) => {
+        searchRef = el;
+    };
 
     const applySort = (key: SortKey) => {
         const next = toggleSort(sort(), key);
         setSort(next);
         try {
             Caches.diy_task_tree_sort.set(formatSort(next));
-        } catch { /* 存储不可用忽略 */ }
+        } catch {
+            /* 存储不可用忽略 */
+        }
     };
     const applyQuery = (v: string) => {
         setQuery(v);
         setFocusIdx(0);
         try {
             Caches.diy_task_tree_query.set(v);
-        } catch { /* 存储不可用忽略 */ }
+        } catch {
+            /* 存储不可用忽略 */
+        }
     };
 
     // 展开判定：**项目默认展开、任务默认折叠**（两种节点语义相反，故 key 的成员含义相反）
@@ -297,7 +301,13 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
         for (const uri of taskUris()) {
             const e = sessionStore.byUri(uri);
             const row = e
-                ? sessionRowOf(e, sessionStore.seenTurnsOf(uri), sessionStore.maxSteps, sessionStore.nowMs, sessionStore.turnsOf(uri))
+                ? sessionRowOf(
+                      e,
+                      sessionStore.seenTurnsOf(uri),
+                      sessionStore.maxSteps,
+                      sessionStore.nowMs,
+                      sessionStore.turnsOf(uri),
+                  )
                 : null;
             const cost = usageLedgerStore.costOf(uri);
             // token / 最后消息：注册表（本进程）与账本（跨启动，含本进程）**取大** ——
@@ -324,7 +334,7 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
             sort: sort(),
             query: query(),
             isExpanded,
-            sessionOf: (n) => (n.uri ? sessionValues().get(n.uri) ?? null : null),
+            sessionOf: (n) => (n.uri ? (sessionValues().get(n.uri) ?? null) : null),
         }),
     );
 
@@ -396,7 +406,14 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
         if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
         e.preventDefault();
         const cur = selectable().indexOf(taskStore.selectedUri as string);
-        const next = e.key === "ArrowDown" ? (cur < selectable().length - 1 ? cur + 1 : 0) : cur > 0 ? cur - 1 : selectable().length - 1;
+        const next =
+            e.key === "ArrowDown"
+                ? cur < selectable().length - 1
+                    ? cur + 1
+                    : 0
+                : cur > 0
+                  ? cur - 1
+                  : selectable().length - 1;
         if (selectable()[next]) taskStore.selectTask(selectable()[next]);
     };
 
@@ -470,7 +487,9 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
     const onScroll = (e: Event) => {
         try {
             Caches.diy_task_tree_scroll.set((e.currentTarget as HTMLDivElement).scrollTop);
-        } catch { /* 存储不可用忽略 */ }
+        } catch {
+            /* 存储不可用忽略 */
+        }
     };
 
     // ── dnd-kit/solid 拖拽改父级 / 提升层级 ──
@@ -603,7 +622,13 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
                     />
                 </Show>
 
-                <div class="flex-1 overflow-auto min-w-0" tabindex={0} onKeyDown={handleKeyDown} ref={scrollRef} onScroll={onScroll}>
+                <div
+                    class="flex-1 overflow-auto min-w-0"
+                    tabindex={0}
+                    onKeyDown={handleKeyDown}
+                    ref={scrollRef}
+                    onScroll={onScroll}
+                >
                     <table class="table table-sm w-full">
                         <thead class="sticky top-0 bg-base-100 z-10">
                             {/* 表头**整行由 SORT_KEYS 生成**：清单既是列顺序也是可排序键的唯一真相源。
@@ -621,7 +646,9 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
                                                     ? "min-w-[220px]"
                                                     : col.key === "session"
                                                       ? "min-w-[110px] whitespace-nowrap"
-                                                      : col.key === "tokens" || col.key === "cost" || col.key === "lastActivity"
+                                                      : col.key === "tokens" ||
+                                                          col.key === "cost" ||
+                                                          col.key === "lastActivity"
                                                         ? "whitespace-nowrap"
                                                         : ""
                                             }
@@ -651,7 +678,9 @@ export function TaskTree(props: { reveal?: { uri: string; nonce: number } | null
                                             row={row}
                                             expanded={expanded()}
                                             onToggle={toggle}
-                                            focused={(searching() && row.key === focusUri()) || row.key === revealFlash()}
+                                            focused={
+                                                (searching() && row.key === focusUri()) || row.key === revealFlash()
+                                            }
                                             onRequestDelete={() =>
                                                 setPendingDelete({
                                                     kind: "task",
@@ -756,10 +785,7 @@ function ProjectRow(props: {
                         {row.node.title}
                     </span>
                     <CreateTaskSheet projectId={row.projectId} projectLabel={row.node.title ?? ""} />
-                    <DeleteEntryButton
-                        title="删除项目（连带其下全部任务）"
-                        onRequest={props.onRequestDelete}
-                    />
+                    <DeleteEntryButton title="删除项目（连带其下全部任务）" onRequest={props.onRequestDelete} />
                 </span>
             </td>
             {/* 项目行的其余列：项目路径（原 URI 列的语义，项目自身没有任务字段） */}
@@ -826,9 +852,11 @@ function TaskRow(props: {
     /** 会话列 tooltip：把判据说全（与 chip / 总览的 tipOf 同源） */
     const sessionTip = () => {
         const e = sessionStore.byUri(row.key);
-        return e ? `${e.id}
+        return e
+            ? `${e.id}
 最后活动 ${e.lastActivity}
-看客 ${e.viewers} · 待投递 ${e.queue}` : "";
+看客 ${e.viewers} · 待投递 ${e.queue}`
+            : "";
     };
     const drag = useDraggable({
         get id() {
@@ -900,16 +928,16 @@ function TaskRow(props: {
                     {/* 层级菜单（##356 ①）：原先这里是「＋ = 直接开新建子任务对话框」，
                         只有一条路 —— 已有任务要挂到它下面只能拖。改为菜单给两条路。 */}
                     <TaskAddMenu projectId={row.projectId} projectLabel={row.node.title ?? ""} parentUri={row.key} />
-                    <DeleteEntryButton
-                        title="删除任务（子任务升为一级，不随删）"
-                        onRequest={props.onRequestDelete}
-                    />
+                    <DeleteEntryButton title="删除任务（子任务升为一级，不随删）" onRequest={props.onRequestDelete} />
                 </span>
                 {/* 正文命中片段：行内第二行（不新增 <tr>，否则树的行序/键盘导航要重新定义）。
                     纯文本单行展示——不做 Markdown 渲染：片段是"定位线索"，渲染只会增加噪音。 */}
                 <Show when={row.snippet}>
                     {(s) => (
-                        <div class="text-body opacity-60 truncate leading-tight" title={`${s().before}${s().match}${s().after}`}>
+                        <div
+                            class="text-body opacity-60 truncate leading-tight"
+                            title={`${s().before}${s().match}${s().after}`}
+                        >
                             <span>{s().before}</span>
                             <mark class="bg-warning/40 text-inherit rounded-sm px-0.5">{s().match}</mark>
                             <span>{s().after}</span>
@@ -964,7 +992,10 @@ function TaskRow(props: {
                     )}
                 </Show>
             </td>
-            <td class="text-body whitespace-nowrap font-mono opacity-80" title={`会话累计 ${fmtTokens(tokens() ?? 0)} tokens（账本 usage.jsonl 现算，跨启动；注册表口径只含本进程）`}>
+            <td
+                class="text-body whitespace-nowrap font-mono opacity-80"
+                title={`会话累计 ${fmtTokens(tokens() ?? 0)} tokens（账本 usage.jsonl 现算，跨启动；注册表口径只含本进程）`}
+            >
                 <Show when={tokens() !== undefined} fallback={<Dash />}>
                     {fmtTokens(tokens()!)}
                 </Show>

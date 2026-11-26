@@ -348,7 +348,12 @@ export const botConfigPageView: PageView = {
                     // 新建后选中刚建的那个（按 name 找：create 返回的是整张快照）
                     const created = creating ? next.bots.find((bot) => bot.name === name) : undefined;
                     if (created !== undefined) {
-                        form = { id: created.id, name: created.name, instructions: created.instructions, model: created.model ?? '' };
+                        form = {
+                            id: created.id,
+                            name: created.name,
+                            instructions: created.instructions,
+                            model: created.model ?? '',
+                        };
                         testBotId = created.id;
                     } else if (form.id !== null) {
                         form = { ...form, name, instructions: payload.instructions, model };

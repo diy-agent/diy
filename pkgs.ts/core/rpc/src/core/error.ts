@@ -69,9 +69,7 @@ export interface _ErrorPayload {
  */
 function isZodError(err: unknown): boolean {
   return (
-    typeof err === 'object' &&
-    err !== null &&
-    Array.isArray((err as { issues?: unknown }).issues)
+    typeof err === 'object' && err !== null && Array.isArray((err as { issues?: unknown }).issues)
   );
 }
 

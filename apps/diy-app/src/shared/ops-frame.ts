@@ -7,9 +7,9 @@
 import type { Op } from "../main/services/local-blocks";
 
 export type OpsFrame =
-  /** 建流首帧：此刻水位。订阅方据此校准 appliedSeq（此后批次从 seq+1 起） */
-  | { kind: "hello"; epoch: number; seq: number }
-  /** 一段连续 op（`fromSeq` = 首行的行号） */
-  | { kind: "batch"; epoch: number; fromSeq: number; ops: Op[] }
-  /** 会话被清空（epoch 已换发）→ 订阅方必须重建块树 */
-  | { kind: "reset"; epoch: number };
+    /** 建流首帧：此刻水位。订阅方据此校准 appliedSeq（此后批次从 seq+1 起） */
+    | { kind: "hello"; epoch: number; seq: number }
+    /** 一段连续 op（`fromSeq` = 首行的行号） */
+    | { kind: "batch"; epoch: number; fromSeq: number; ops: Op[] }
+    /** 会话被清空（epoch 已换发）→ 订阅方必须重建块树 */
+    | { kind: "reset"; epoch: number };

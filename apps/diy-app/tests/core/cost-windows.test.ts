@@ -6,7 +6,13 @@
 // 「静默按错档收钱」，所以坏段的语义（丢段 + 出声）必须钉住。
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ModelsDevDiyFileSchema, resolveWindow, windowSummary, WINDOW_ID_RE, type WindowDef } from "../../src/shared/cost-windows";
+import {
+    ModelsDevDiyFileSchema,
+    resolveWindow,
+    windowSummary,
+    WINDOW_ID_RE,
+    type WindowDef,
+} from "../../src/shared/cost-windows";
 
 /** DeepSeek 官方峰段（两段，UTC）：01:00–04:00 与 06:00–10:00 */
 const DS: WindowDef = {
@@ -60,11 +66,15 @@ describe("windowSummary（UI 下拉 / CLI 输出的人读摘要）", () => {
         expect(windowSummary(DS)).toBe("01:00–04:00Z, 06:00–10:00Z · CN-mon-fri-ex-holiday");
     });
     it("无日历 → 只列段", () => {
-        expect(windowSummary({ ranges: [{ start: "22:00:00+08:00", end: "02:00:00+08:00" }] })).toBe("22:00–02:00+08:00");
+        expect(windowSummary({ ranges: [{ start: "22:00:00+08:00", end: "02:00:00+08:00" }] })).toBe(
+            "22:00–02:00+08:00",
+        );
     });
     it("坏段标出来（让人看见问题，不是静默吞掉）：不可解析 → 原样；偏移不一致 → 标注", () => {
         expect(windowSummary({ ranges: [{ start: "01:00", end: "04:00:00+08:00" }] })).toBe("01:00→04:00:00+08:00");
-        expect(windowSummary({ ranges: [{ start: "01:00:00+08:00", end: "04:00:00Z" }] })).toBe("01:00–04:00(偏移不一致)");
+        expect(windowSummary({ ranges: [{ start: "01:00:00+08:00", end: "04:00:00Z" }] })).toBe(
+            "01:00–04:00(偏移不一致)",
+        );
     });
 });
 
@@ -89,7 +99,10 @@ describe("WINDOW_ID_RE（id 会被写进 YAML，禁冒号以免与限定名混�
 
 describe("仓库内置的扩展层真文件（手写资产：typo 会静默变坏，故在这里把住）", () => {
     const readJson = (name: string) =>
-        JSON.parse(readFileSync(new URL(`../../src/main/data/${name}`, import.meta.url), "utf-8")) as Record<string, unknown>;
+        JSON.parse(readFileSync(new URL(`../../src/main/data/${name}`, import.meta.url), "utf-8")) as Record<
+            string,
+            unknown
+        >;
     const diy = ModelsDevDiyFileSchema.parse(readJson("models.dev.diy.json"));
     const calendarIds = Object.keys((readJson("calendars.json")["calendars"] ?? {}) as Record<string, unknown>);
 

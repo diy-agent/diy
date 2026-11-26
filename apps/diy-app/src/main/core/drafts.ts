@@ -67,8 +67,8 @@ export type SteerMode = (typeof STEER_MODES)[number];
  * 与 LEGACY_DENSITY（1-4 → 语义值）同一手法：兼容放在**读**侧，写侧永远只写现值。
  */
 const LEGACY_STEER_MODE: Record<string, SteerMode> = {
-  step: "next-step",
-  turn: "next-turn",
+    step: "next-step",
+    turn: "next-turn",
 };
 
 /**
@@ -79,25 +79,25 @@ const LEGACY_STEER_MODE: Record<string, SteerMode> = {
  * 顺序即 FIFO 投递顺序（文本本身就是消息，不可重排、不可静默丢弃）。
  */
 export interface SteerItem {
-  /** 队列内唯一 id，形如 `steer/1`（"实体/序号"；取消定位 / 渲染 key / CLI 参数） */
-  id: string;
-  mode: SteerMode;
-  text: string;
-  /** 入队时间（ISO） */
-  created: string;
-  /**
-   * **结构化机器事件**（可选）：job 结束等不是"人说的话"，投递时走 `notify:`
-   * 而不是 `chat:`（见 ##442 用户 2026-10-27 字段规格）。
-   *
-   * `text` 仍保留（UI 列表 / CLI 预览用），wire 上以 `notify[0].text` 为准。
-   */
-  notify?: NotifyItem;
-  /**
-   * 发言者署名（##166 §40 A）：入队时是谁说的，投递时原样落到 user 块 `meta.author`。
-   * 省略 = 本任务本人。**存在队列项里而不是投递时才问** —— 排队可能跨轮次 / 跨小时，
-   * 那时"谁说的"早已无从查起。
-   */
-  author?: string;
+    /** 队列内唯一 id，形如 `steer/1`（"实体/序号"；取消定位 / 渲染 key / CLI 参数） */
+    id: string;
+    mode: SteerMode;
+    text: string;
+    /** 入队时间（ISO） */
+    created: string;
+    /**
+     * **结构化机器事件**（可选）：job 结束等不是"人说的话"，投递时走 `notify:`
+     * 而不是 `chat:`（见 ##442 用户 2026-10-27 字段规格）。
+     *
+     * `text` 仍保留（UI 列表 / CLI 预览用），wire 上以 `notify[0].text` 为准。
+     */
+    notify?: NotifyItem;
+    /**
+     * 发言者署名（##166 §40 A）：入队时是谁说的，投递时原样落到 user 块 `meta.author`。
+     * 省略 = 本任务本人。**存在队列项里而不是投递时才问** —— 排队可能跨轮次 / 跨小时，
+     * 那时"谁说的"早已无从查起。
+     */
+    author?: string;
 }
 
 /**
@@ -114,7 +114,7 @@ export interface SteerItem {
  * 为什么是纯函数：它决定 L2（抢焦点）的准入，不能在 main / renderer 里各写一遍。
  */
 export function isHumanAuthor(author: string | undefined): boolean {
-  return typeof author === "string" && author.startsWith("human:");
+    return typeof author === "string" && author.startsWith("human:");
 }
 
 /**
@@ -126,37 +126,37 @@ export function isHumanAuthor(author: string | undefined): boolean {
  * 无法迁移的版本 → readDrafts 返回 null 并留痕（不静默降级）。
  */
 const MIGRATIONS: Record<number, (o: Record<string, unknown>) => Record<string, unknown>> = {
-  1: (o) => {
-    const fields: Record<string, unknown> = { ...(o["fields"] as Record<string, unknown> | undefined) };
-    delete fields["detail"];
-    return { ...o, version: 2, fields };
-  },
-  2: (o) => ({ ...o, version: 3 }),
+    1: (o) => {
+        const fields: Record<string, unknown> = { ...(o["fields"] as Record<string, unknown> | undefined) };
+        delete fields["detail"];
+        return { ...o, version: 2, fields };
+    },
+    2: (o) => ({ ...o, version: 3 }),
 };
 
 export interface DraftsFile {
-  /** 草稿落盘时 AGENTS.md 的 updated。用于检测「草稿期间任务被外部改过」 */
-  base_updated?: string;
-  saved?: string;
-  fields: Partial<Record<DraftField, string>>;
-  /** 已提交待投递的插话队列（FIFO）。空 = 无；写侧可省 */
-  steers?: SteerItem[];
+    /** 草稿落盘时 AGENTS.md 的 updated。用于检测「草稿期间任务被外部改过」 */
+    base_updated?: string;
+    saved?: string;
+    fields: Partial<Record<DraftField, string>>;
+    /** 已提交待投递的插话队列（FIFO）。空 = 无；写侧可省 */
+    steers?: SteerItem[];
 }
 
 export interface ParsedDrafts extends DraftsFile {
-  kind: string;
-  version: number;
-  task: string;
-  /** 读侧恒为数组（缺省 = 空队列），调用方不必再做 null 判断 */
-  steers: SteerItem[];
+    kind: string;
+    version: number;
+    task: string;
+    /** 读侧恒为数组（缺省 = 空队列），调用方不必再做 null 判断 */
+    steers: SteerItem[];
 }
 
 export function draftsFilePath(uri: string): string {
-  return join(taskSystemDir(uri), "drafts.yaml");
+    return join(taskSystemDir(uri), "drafts.yaml");
 }
 
 function isDraftField(k: string): k is DraftField {
-  return (DRAFT_FIELDS as readonly string[]).includes(k);
+    return (DRAFT_FIELDS as readonly string[]).includes(k);
 }
 
 /**
@@ -166,22 +166,22 @@ function isDraftField(k: string): k is DraftField {
  * 不必区分 clear/set 两个接口。故此处返回两个集合而非单个。
  */
 function splitFields(fields: Partial<Record<DraftField, string>>): {
-  sets: Partial<Record<DraftField, string>>;
-  removes: DraftField[];
+    sets: Partial<Record<DraftField, string>>;
+    removes: DraftField[];
 } {
-  const sets: Partial<Record<DraftField, string>> = {};
-  const removes: DraftField[] = [];
-  for (const [k, v] of Object.entries(fields)) {
-    if (typeof v !== "string") continue;
-    if (!isDraftField(k)) {
-      // 拼错字段名会让草稿「写进去但永远读不出来」，必须出声
-      console.warn(`[drafts] 忽略未知字段 ${k}（白名单见 DRAFT_FIELDS）`);
-      continue;
+    const sets: Partial<Record<DraftField, string>> = {};
+    const removes: DraftField[] = [];
+    for (const [k, v] of Object.entries(fields)) {
+        if (typeof v !== "string") continue;
+        if (!isDraftField(k)) {
+            // 拼错字段名会让草稿「写进去但永远读不出来」，必须出声
+            console.warn(`[drafts] 忽略未知字段 ${k}（白名单见 DRAFT_FIELDS）`);
+            continue;
+        }
+        if (v === "") removes.push(k);
+        else sets[k] = v;
     }
-    if (v === "") removes.push(k);
-    else sets[k] = v;
-  }
-  return { sets, removes };
+    return { sets, removes };
 }
 
 /**
@@ -191,55 +191,53 @@ function splitFields(fields: Partial<Record<DraftField, string>>): {
  * 但必须留痕 —— 静默吞掉会让「草稿莫名消失」无从排查。
  */
 export function readDrafts(uri: string): ParsedDrafts | null {
-  const fp = draftsFilePath(uri);
-  if (!existsSync(fp)) return null;
-  let raw: unknown;
-  try {
-    raw = yaml.load(readFileSync(fp, "utf-8"));
-  } catch (e) {
-    console.warn(`[drafts] yaml 解析失败，忽略 ${fp}:`, e);
-    return null;
-  }
-  if (!raw || typeof raw !== "object") {
-    console.warn(`[drafts] 内容非对象，忽略 ${fp}`);
-    return null;
-  }
-  const obj = raw as Record<string, unknown>;
-  if (obj["kind"] !== DRAFTS_KIND) {
-    console.warn(`[drafts] kind 不符（${String(obj["kind"])}），忽略 ${fp}`);
-    return null;
-  }
-  // 版本迁移：能迁的升到当前版本（值仍在内存，下次落盘即为新版）；不能迁的忽略并留痕。
-  // 丢不起的数据不静默降级 —— 但「明确的、有损可查的迁移」比直接丢弃整份草稿好。
-  let version = Number(obj["version"]);
-  let guard = 0;
-  while (version !== DRAFTS_VERSION) {
-    const migrate = MIGRATIONS[version];
-    if (!migrate || guard++ > 16) {
-      console.warn(
-        `[drafts] 版本 ${String(obj["version"])} 无法迁移到 ${DRAFTS_VERSION}，忽略 ${fp}`,
-      );
-      return null;
+    const fp = draftsFilePath(uri);
+    if (!existsSync(fp)) return null;
+    let raw: unknown;
+    try {
+        raw = yaml.load(readFileSync(fp, "utf-8"));
+    } catch (e) {
+        console.warn(`[drafts] yaml 解析失败，忽略 ${fp}:`, e);
+        return null;
     }
-    Object.assign(obj, migrate(obj));
-    version = Number(obj["version"]);
-  }
-  const rawFields = obj["fields"];
-  const fields: Partial<Record<DraftField, string>> = {};
-  if (rawFields && typeof rawFields === "object") {
-    for (const [k, v] of Object.entries(rawFields as Record<string, unknown>)) {
-      if (typeof v === "string" && isDraftField(k) && v !== "") fields[k] = v;
+    if (!raw || typeof raw !== "object") {
+        console.warn(`[drafts] 内容非对象，忽略 ${fp}`);
+        return null;
     }
-  }
-  return {
-    kind: DRAFTS_KIND,
-    version,
-    task: String(obj["task"] ?? uri),
-    base_updated: obj["base_updated"] === undefined ? undefined : String(obj["base_updated"]),
-    saved: obj["saved"] === undefined ? undefined : String(obj["saved"]),
-    fields,
-    steers: parseSteers(obj["steers"]),
-  };
+    const obj = raw as Record<string, unknown>;
+    if (obj["kind"] !== DRAFTS_KIND) {
+        console.warn(`[drafts] kind 不符（${String(obj["kind"])}），忽略 ${fp}`);
+        return null;
+    }
+    // 版本迁移：能迁的升到当前版本（值仍在内存，下次落盘即为新版）；不能迁的忽略并留痕。
+    // 丢不起的数据不静默降级 —— 但「明确的、有损可查的迁移」比直接丢弃整份草稿好。
+    let version = Number(obj["version"]);
+    let guard = 0;
+    while (version !== DRAFTS_VERSION) {
+        const migrate = MIGRATIONS[version];
+        if (!migrate || guard++ > 16) {
+            console.warn(`[drafts] 版本 ${String(obj["version"])} 无法迁移到 ${DRAFTS_VERSION}，忽略 ${fp}`);
+            return null;
+        }
+        Object.assign(obj, migrate(obj));
+        version = Number(obj["version"]);
+    }
+    const rawFields = obj["fields"];
+    const fields: Partial<Record<DraftField, string>> = {};
+    if (rawFields && typeof rawFields === "object") {
+        for (const [k, v] of Object.entries(rawFields as Record<string, unknown>)) {
+            if (typeof v === "string" && isDraftField(k) && v !== "") fields[k] = v;
+        }
+    }
+    return {
+        kind: DRAFTS_KIND,
+        version,
+        task: String(obj["task"] ?? uri),
+        base_updated: obj["base_updated"] === undefined ? undefined : String(obj["base_updated"]),
+        saved: obj["saved"] === undefined ? undefined : String(obj["saved"]),
+        fields,
+        steers: parseSteers(obj["steers"]),
+    };
 }
 
 /**
@@ -247,44 +245,44 @@ export function readDrafts(uri: string): ParsedDrafts | null {
  * 一条坏记录不该让整个任务的草稿/队列都读不出来；但静默吞掉会让「插话莫名消失」无从排查。
  */
 function parseSteers(raw: unknown): SteerItem[] {
-  if (!Array.isArray(raw)) {
-    if (raw !== undefined) console.warn("[drafts] steers 不是数组，按空队列处理");
-    return [];
-  }
-  const out: SteerItem[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") {
-      console.warn("[drafts] 忽略非对象的插话项");
-      continue;
+    if (!Array.isArray(raw)) {
+        if (raw !== undefined) console.warn("[drafts] steers 不是数组，按空队列处理");
+        return [];
     }
-    const o = item as Record<string, unknown>;
-    // 先过历史值映射（step/turn → next-step/next-turn），再做合法性校验
-    const rawMode = String(o["mode"] ?? "");
-    const mode = LEGACY_STEER_MODE[rawMode] ?? rawMode;
-    // trim 后为空也算空：add 侧拒空靠 trim（steer-queue），读侧不设防就会出现
-    // "手写进文件的空白插话" —— 它投出去只会污染提示词（同一条不变式，两侧都要守）
-    if (typeof o["id"] !== "string" || typeof o["text"] !== "string" || o["text"].trim() === "") {
-      console.warn("[drafts] 忽略结构不完整的插话项（需要 id + 非空白 text）");
-      continue;
+    const out: SteerItem[] = [];
+    for (const item of raw) {
+        if (!item || typeof item !== "object") {
+            console.warn("[drafts] 忽略非对象的插话项");
+            continue;
+        }
+        const o = item as Record<string, unknown>;
+        // 先过历史值映射（step/turn → next-step/next-turn），再做合法性校验
+        const rawMode = String(o["mode"] ?? "");
+        const mode = LEGACY_STEER_MODE[rawMode] ?? rawMode;
+        // trim 后为空也算空：add 侧拒空靠 trim（steer-queue），读侧不设防就会出现
+        // "手写进文件的空白插话" —— 它投出去只会污染提示词（同一条不变式，两侧都要守）
+        if (typeof o["id"] !== "string" || typeof o["text"] !== "string" || o["text"].trim() === "") {
+            console.warn("[drafts] 忽略结构不完整的插话项（需要 id + 非空白 text）");
+            continue;
+        }
+        if (!(STEER_MODES as readonly string[]).includes(mode)) {
+            console.warn(`[drafts] 忽略未知插话模式 ${mode}（合法值：${STEER_MODES.join("/")}）`);
+            continue;
+        }
+        out.push({
+            id: o["id"],
+            mode: mode as SteerMode,
+            text: o["text"],
+            created: typeof o["created"] === "string" ? o["created"] : "",
+            // ⚠️ 读侧是**白名单重建**：写侧（steer-queue.add）加了字段，这里必须同步，
+            // 否则下一次 `读→改→写`（add / remove / toggleMode / reorder）就把新字段洗掉 ——
+            // 症状是"刚发的有署名、过一会儿署名没了"（##166 §26.3 坑 1 实测：首条丢、次条在）。
+            ...(typeof o["author"] === "string" && o["author"] ? { author: o["author"] } : {}),
+            // ⚠️ 白名单重建：写侧加了 notify，这里必须同步（否则下一次读→改→写就洗掉）
+            ...(o["notify"] && typeof o["notify"] === "object" ? { notify: o["notify"] as NotifyItem } : {}),
+        });
     }
-    if (!(STEER_MODES as readonly string[]).includes(mode)) {
-      console.warn(`[drafts] 忽略未知插话模式 ${mode}（合法值：${STEER_MODES.join("/")}）`);
-      continue;
-    }
-    out.push({
-      id: o["id"],
-      mode: mode as SteerMode,
-      text: o["text"],
-      created: typeof o["created"] === "string" ? o["created"] : "",
-      // ⚠️ 读侧是**白名单重建**：写侧（steer-queue.add）加了字段，这里必须同步，
-      // 否则下一次 `读→改→写`（add / remove / toggleMode / reorder）就把新字段洗掉 ——
-      // 症状是"刚发的有署名、过一会儿署名没了"（##166 §26.3 坑 1 实测：首条丢、次条在）。
-      ...(typeof o["author"] === "string" && o["author"] ? { author: o["author"] } : {}),
-      // ⚠️ 白名单重建：写侧加了 notify，这里必须同步（否则下一次读→改→写就洗掉）
-      ...(o["notify"] && typeof o["notify"] === "object" ? { notify: o["notify"] as NotifyItem } : {}),
-    });
-  }
-  return out;
+    return out;
 }
 
 /**
@@ -295,15 +293,15 @@ function parseSteers(raw: unknown): SteerItem[] {
  * - 失败**抛错**（不静默）：半编辑数据丢失必须让调用方看到并提示用户
  */
 export function writeDrafts(
-  uri: string,
-  fields: Partial<Record<DraftField, string>>,
-  baseUpdated?: string,
+    uri: string,
+    fields: Partial<Record<DraftField, string>>,
+    baseUpdated?: string,
 ): DraftsFile {
-  const { sets, removes } = splitFields(fields);
-  const existing = readDrafts(uri);
-  const merged: Partial<Record<DraftField, string>> = { ...existing?.fields, ...sets };
-  for (const f of removes) delete merged[f];
-  return persist(uri, { fields: merged, steers: existing?.steers ?? [] }, existing?.base_updated ?? baseUpdated);
+    const { sets, removes } = splitFields(fields);
+    const existing = readDrafts(uri);
+    const merged: Partial<Record<DraftField, string>> = { ...existing?.fields, ...sets };
+    for (const f of removes) delete merged[f];
+    return persist(uri, { fields: merged, steers: existing?.steers ?? [] }, existing?.base_updated ?? baseUpdated);
 }
 
 /**
@@ -313,9 +311,9 @@ export function writeDrafts(
  * 谁写谁只动自己那一块（否则"提交插话"会顺手清掉用户正在打的草稿）。
  */
 export function writeSteers(uri: string, steers: SteerItem[]): SteerItem[] {
-  const existing = readDrafts(uri);
-  persist(uri, { fields: existing?.fields ?? {}, steers }, existing?.base_updated);
-  return steers;
+    const existing = readDrafts(uri);
+    persist(uri, { fields: existing?.fields ?? {}, steers }, existing?.base_updated);
+    return steers;
 }
 
 /**
@@ -326,30 +324,30 @@ export function writeSteers(uri: string, steers: SteerItem[]): SteerItem[] {
  * 空（既无字段又无队列）→ 删文件，不留空壳。
  */
 function persist(
-  uri: string,
-  data: { fields: Partial<Record<DraftField, string>>; steers: SteerItem[] },
-  baseUpdated?: string,
+    uri: string,
+    data: { fields: Partial<Record<DraftField, string>>; steers: SteerItem[] },
+    baseUpdated?: string,
 ): DraftsFile {
-  const fp = draftsFilePath(uri);
-  const { fields, steers } = data;
-  if (Object.keys(fields).length === 0 && steers.length === 0) {
-    rmSync(fp, { force: true });
-    return { fields: {}, steers: [] };
-  }
-  const now = localISOString();
-  const body: ParsedDrafts = {
-    kind: DRAFTS_KIND,
-    version: DRAFTS_VERSION,
-    task: uri,
-    // 已有 base_updated 优先保留：草稿的「基点」是首次落盘时的任务版本
-    base_updated: baseUpdated,
-    saved: now,
-    fields,
-    steers,
-  };
-  // 原子写（##382 收敛到 core/atomic-write.ts）：草稿被 UI 读、被写侧写，不能出现半截文件
-  writeFileAtomic(fp, yaml.dump(body, { indent: 2, noRefs: true, lineWidth: 120 }));
-  return { base_updated: body.base_updated, saved: now, fields, steers };
+    const fp = draftsFilePath(uri);
+    const { fields, steers } = data;
+    if (Object.keys(fields).length === 0 && steers.length === 0) {
+        rmSync(fp, { force: true });
+        return { fields: {}, steers: [] };
+    }
+    const now = localISOString();
+    const body: ParsedDrafts = {
+        kind: DRAFTS_KIND,
+        version: DRAFTS_VERSION,
+        task: uri,
+        // 已有 base_updated 优先保留：草稿的「基点」是首次落盘时的任务版本
+        base_updated: baseUpdated,
+        saved: now,
+        fields,
+        steers,
+    };
+    // 原子写（##382 收敛到 core/atomic-write.ts）：草稿被 UI 读、被写侧写，不能出现半截文件
+    writeFileAtomic(fp, yaml.dump(body, { indent: 2, noRefs: true, lineWidth: 120 }));
+    return { base_updated: body.base_updated, saved: now, fields, steers };
 }
 
 /**
@@ -367,10 +365,10 @@ function persist(
  * 否则 CLI 传一次空数组就把用户排队中的插话一起删了。
  */
 export function clearDrafts(uri: string, fields?: DraftField[]): void {
-  const existing = readDrafts(uri);
-  if (!existing) return;
-  const remaining = { ...existing.fields };
-  const targets = fields ?? (Object.keys(remaining) as DraftField[]);
-  for (const f of targets) delete remaining[f];
-  persist(uri, { fields: remaining, steers: existing.steers }, existing.base_updated);
+    const existing = readDrafts(uri);
+    if (!existing) return;
+    const remaining = { ...existing.fields };
+    const targets = fields ?? (Object.keys(remaining) as DraftField[]);
+    for (const f of targets) delete remaining[f];
+    persist(uri, { fields: remaining, steers: existing.steers }, existing.base_updated);
 }

@@ -55,7 +55,8 @@ async function startStub(): Promise<Stub> {
         req.on("end", () => {
             res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
             res.write(chatChunk({ role: "assistant" }));
-            for (const line of ["桩上游正文第 1 行", "桩上游正文第 2 行"]) res.write(chatChunk({ content: `${line}${NL}` }));
+            for (const line of ["桩上游正文第 1 行", "桩上游正文第 2 行"])
+                res.write(chatChunk({ content: `${line}${NL}` }));
             res.write(
                 chatChunk({}, "stop", {
                     prompt_tokens: STUB_PROMPT_TOKENS,
@@ -116,10 +117,28 @@ afterAll(async () => {
 function seedSixtyPercentTurn(taskUri: string): void {
     const tid = "t1767225600000"; // 2026-01-01
     const usage = {
-        inputTotal: 600000, outputTotal: 100, cacheRead: 500000, total: 600100, noCache: 100000,
-        cacheWrite: null, text: 70, reasoning: 30, windowTotal: 600100, lastInputTotal: 600000,
-        lastOutputTotal: 100, steps: 1, lastStepRate: 120.5, contextLimit: 1000000,
-        cost: { noCache: 0.014, cacheRead: 0.0014, cacheWrite: null, text: 0.00002, reasoning: 0.000008, total: 0.015428 },
+        inputTotal: 600000,
+        outputTotal: 100,
+        cacheRead: 500000,
+        total: 600100,
+        noCache: 100000,
+        cacheWrite: null,
+        text: 70,
+        reasoning: 30,
+        windowTotal: 600100,
+        lastInputTotal: 600000,
+        lastOutputTotal: 100,
+        steps: 1,
+        lastStepRate: 120.5,
+        contextLimit: 1000000,
+        cost: {
+            noCache: 0.014,
+            cacheRead: 0.0014,
+            cacheWrite: null,
+            text: 0.00002,
+            reasoning: 0.000008,
+            total: 0.015428,
+        },
     };
     const o = (v: unknown) => JSON.stringify(v);
     const lines = [

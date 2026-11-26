@@ -119,7 +119,7 @@ export function unitTools(host: UnitHost): ToolSet {
                 '',
                 '粒度参考：一个母项下 2~5 条叶子；超过 7 条说明该再分一层。',
                 '`key` 必填：**它就是这条 unit 的 id**，也是以后 parent 引用它的名字 —— ' +
-                '起短名（`state`、`cancel-tool`，小写英文 / 数字 / - _，≤24）。同批任意项的 key 都能引用（在它后面也行）。',
+                    '起短名（`state`、`cancel-tool`，小写英文 / 数字 / - _，≤24）。同批任意项的 key 都能引用（在它后面也行）。',
                 'body 写验收口径。',
                 '',
                 '**不要**在这里排先后、写批次：账本只回答「要做成哪些东西」，先做哪个由你每轮自己挑。',
@@ -131,12 +131,19 @@ export function unitTools(host: UnitHost): ToolSet {
                             key: z
                                 .string()
                                 .regex(KEY_PATTERN, 'key 只能是小写字母开头的小写英文 / 数字 / - _，≤24 字符')
-                                .describe('这条 unit 的 id（自起的短名，如 state / cancel-tool）；后面的项与以后的操作都用它引用'),
-                            title: z.string().min(1).describe('一件能被验收的产出（不是动作：写「什么改好了」，不是「改哪个文件」）'),
+                                .describe(
+                                    '这条 unit 的 id（自起的短名，如 state / cancel-tool）；后面的项与以后的操作都用它引用',
+                                ),
+                            title: z
+                                .string()
+                                .min(1)
+                                .describe('一件能被验收的产出（不是动作：写「什么改好了」，不是「改哪个文件」）'),
                             body: z
                                 .string()
                                 .optional()
-                                .describe('可选：这条需求要解决什么（背景 / 范围 / 注意点）——**验收口径不写这里**，写 accept'),
+                                .describe(
+                                    '可选：这条需求要解决什么（背景 / 范围 / 注意点）——**验收口径不写这里**，写 accept',
+                                ),
                             accept: z
                                 .string()
                                 .optional()
@@ -157,9 +164,7 @@ export function unitTools(host: UnitHost): ToolSet {
                 const batchKeys = new Set<string>();
                 for (const item of items) {
                     if (!KEY_PATTERN.test(item.key)) {
-                        throw new Error(
-                            `key 只能用 小写字母开头的小写英文 / 数字 / - _（≤24 字符）：${item.key}`,
-                        );
+                        throw new Error(`key 只能用 小写字母开头的小写英文 / 数字 / - _（≤24 字符）：${item.key}`);
                     }
                     if (batchKeys.has(item.key)) throw new Error(`同批 key 重复：${item.key}`);
                     batchKeys.add(item.key);
@@ -220,7 +225,10 @@ export function unitTools(host: UnitHost): ToolSet {
             inputSchema: z.object({
                 id: z.string(),
                 title: z.string().min(1).optional(),
-                body: z.string().optional().describe('这条需求要解决什么（背景 / 范围）—— 进展不要写这里（进展用 journal）'),
+                body: z
+                    .string()
+                    .optional()
+                    .describe('这条需求要解决什么（背景 / 范围）—— 进展不要写这里（进展用 journal）'),
                 accept: z.string().optional().describe('怎么算做完：一句话能判断完/未完的判据'),
                 parent: z.string().nullable().optional().describe('换挂点：给母项的 key；传 null = 提到顶层'),
                 status: z.enum(UNIT_STATUSES).optional().describe('open / doing / done（只有叶子能改）'),

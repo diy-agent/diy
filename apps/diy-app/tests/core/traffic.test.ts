@@ -49,12 +49,16 @@ function fireReq(opt?: { headers?: Record<string, string>; body?: string }): Fak
         headers: headersArr(headers),
     };
     channel("undici:request:create").publish({ request: req });
-    if (opt?.body !== undefined) channel("undici:request:bodyChunkSent").publish({ request: req, chunk: enc(opt.body) });
+    if (opt?.body !== undefined)
+        channel("undici:request:bodyChunkSent").publish({ request: req, chunk: enc(opt.body) });
     return req;
 }
 
 function fireRes(req: FakeReq, status: number, headers: Record<string, string>, body?: string): void {
-    channel("undici:request:headers").publish({ request: req, response: { statusCode: status, headers: headersBufArr(headers) } });
+    channel("undici:request:headers").publish({
+        request: req,
+        response: { statusCode: status, headers: headersBufArr(headers) },
+    });
     if (body !== undefined) channel("undici:request:bodyChunkReceived").publish({ request: req, chunk: enc(body) });
     channel("undici:request:trailers").publish({ request: req, trailers: [] });
 }
@@ -136,7 +140,12 @@ describe("traffic（undici diagnostics_channel）", () => {
 
     it("400：记下上游错误体（扁平错误 + trace_id）", () => {
         const req = fireReq({ body: "{}" });
-        fireRes(req, 400, { "content-type": "application/json" }, JSON.stringify({ message: "invalid request error trace_id: 1662a9a0", type: "invalid_request_error" }));
+        fireRes(
+            req,
+            400,
+            { "content-type": "application/json" },
+            JSON.stringify({ message: "invalid request error trace_id: 1662a9a0", type: "invalid_request_error" }),
+        );
 
         const r = traffic.snapshot().records[0];
         expect(r.status).toBe(400);
@@ -397,7 +406,8 @@ describe("traffic（undici diagnostics_channel）", () => {
             response: { statusCode: 200, headers: headersBufArr({ "content-type": "application/json" }) },
         });
         const chunk = "y".repeat(1024);
-        for (let i = 0; i < 40; i++) channel("undici:request:bodyChunkReceived").publish({ request: req, chunk: enc(chunk) });
+        for (let i = 0; i < 40; i++)
+            channel("undici:request:bodyChunkReceived").publish({ request: req, chunk: enc(chunk) });
         channel("undici:request:trailers").publish({ request: req, trailers: [] });
         const b = traffic.snapshot().records[0].resBody!;
         expect(b.truncated).toBe(true);
@@ -421,9 +431,9 @@ describe("traffic（undici diagnostics_channel）", () => {
     });
 
     it("读取失效：文件不存在 → 抛 TrafficLogError（界面据此提示）", () => {
-        expect(() =>
-            traffic.readLog({ file: "log/network/1999-01-01.jsonl", offset: 0, len: 10 }),
-        ).toThrow(TrafficLogError);
+        expect(() => traffic.readLog({ file: "log/network/1999-01-01.jsonl", offset: 0, len: 10 })).toThrow(
+            TrafficLogError,
+        );
     });
 
     it("首尾法截断：多字节字符边界不切出半个字（无替换字符）", () => {

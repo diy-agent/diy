@@ -5,10 +5,15 @@
  */
 
 export function splitListOption(value: string | string[] | undefined): string[] | undefined {
-  if (value === undefined) return undefined;
-  const parts = Array.isArray(value) ? value : value.split(",");
-  const out = parts
-    .map((v) => v.trim().replace(/^\[|\]$/g, "").replace(/^"|"$/g, ""))
-    .filter((v) => v !== "");
-  return out.length > 0 ? out : undefined;
+    if (value === undefined) return undefined;
+    const parts = Array.isArray(value) ? value : value.split(",");
+    const out = parts
+        .map((v) =>
+            v
+                .trim()
+                .replace(/^\[|\]$/g, "")
+                .replace(/^"|"$/g, ""),
+        )
+        .filter((v) => v !== "");
+    return out.length > 0 ? out : undefined;
 }

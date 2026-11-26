@@ -96,7 +96,13 @@ function LogCleanupPanel(props: { onClose: () => void; onDone?: () => void }) {
     /** 「只留最近 N 天」：勾上比截止日更早的文件（等价于主进程的 keepDays） */
     const selectOlderThan = () => {
         const cut = cutoffStr(keepDays());
-        setChecked(new Set(cleanable().filter((r) => r.date < cut).map((r) => r.file)));
+        setChecked(
+            new Set(
+                cleanable()
+                    .filter((r) => r.date < cut)
+                    .map((r) => r.file),
+            ),
+        );
     };
 
     const doClean = async (files: string[]) => {
@@ -175,7 +181,10 @@ function LogCleanupPanel(props: { onClose: () => void; onDone?: () => void }) {
                     <button class="btn btn-xs" onClick={selectOlderThan} data-testid="traffic-log-select-old">
                         选中更早的
                     </button>
-                    <button class="btn btn-xs btn-ghost" onClick={() => setChecked(new Set(cleanable().map((r) => r.file)))}>
+                    <button
+                        class="btn btn-xs btn-ghost"
+                        onClick={() => setChecked(new Set(cleanable().map((r) => r.file)))}
+                    >
                         全选可清理
                     </button>
                     <button class="btn btn-xs btn-ghost" onClick={() => setChecked(new Set<string>())}>
@@ -216,7 +225,8 @@ function LogCleanupPanel(props: { onClose: () => void; onDone?: () => void }) {
                 <div class="flex items-center gap-2 border-t border-base-300 px-3 py-2">
                     <span class="text-caption opacity-70">
                         <Show when={picked().length > 0} fallback={<>未选中任何文件（今天那个不参与清理）</>}>
-                            将删除 {picked().length} 个 · 释放 {fmtBytes(pickedBytes())} · <span class="text-error">不可恢复</span>
+                            将删除 {picked().length} 个 · 释放 {fmtBytes(pickedBytes())} ·{" "}
+                            <span class="text-error">不可恢复</span>
                         </Show>
                     </span>
                     <div class="flex-1" />

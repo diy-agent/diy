@@ -6,12 +6,12 @@
 //   ② 缩进：层级 = 已打开的祖先个数 → 只在祖先开着时缩进（否则指向不存在的父）
 import { describe, expect, it } from "vitest";
 import {
-  insertionIndex,
-  normalizeOrder,
-  pageParentKeyOf,
-  taskDepths,
-  taskIndentOf,
-  type TabLike,
+    insertionIndex,
+    normalizeOrder,
+    pageParentKeyOf,
+    taskDepths,
+    taskIndentOf,
+    type TabLike,
 } from "../../src/shared/tab-order";
 
 const A = "projects/1/tasks/a";
@@ -21,10 +21,10 @@ const X = "projects/1/tasks/x";
 
 /** 任务 tab（ancestors = 任务祖先链，从根到直接父） */
 const task = (uri: string, ancestors?: string[]): TabLike => ({
-  key: `task-run:${uri}`,
-  pageId: "task-run",
-  ctx: uri,
-  taskAncestors: ancestors,
+    key: `task-run:${uri}`,
+    pageId: "task-run",
+    ctx: uri,
+    taskAncestors: ancestors,
 });
 
 /** 页面注册表的 parentPage 查询（测试里只关心 lab → task-run） */
@@ -32,161 +32,161 @@ const parentPageOf = (pid: string) => (pid === "lab" ? "task-run" : undefined);
 const lab = (uri: string): TabLike => ({ key: `lab:${uri}`, pageId: "lab", ctx: uri, parent: `task-run:${uri}` });
 
 describe("taskIndentOf —— 层级 = 已打开的祖先个数", () => {
-  it("祖先没开 → 不缩进（不指向不存在的父）", () => {
-    const c = task(C, [A, B]);
-    expect(taskIndentOf(c, [c])).toBe(0);
-  });
+    it("祖先没开 → 不缩进（不指向不存在的父）", () => {
+        const c = task(C, [A, B]);
+        expect(taskIndentOf(c, [c])).toBe(0);
+    });
 
-  it("直接父开着 → 1 级", () => {
-    const b = task(B, [A]);
-    const c = task(C, [A, B]);
-    expect(taskIndentOf(c, [b, c])).toBe(1);
-  });
+    it("直接父开着 → 1 级", () => {
+        const b = task(B, [A]);
+        const c = task(C, [A, B]);
+        expect(taskIndentOf(c, [b, c])).toBe(1);
+    });
 
-  it("祖父与父都开着 → 2 级", () => {
-    const a = task(A);
-    const b = task(B, [A]);
-    const c = task(C, [A, B]);
-    expect(taskIndentOf(c, [a, b, c])).toBe(2);
-  });
+    it("祖父与父都开着 → 2 级", () => {
+        const a = task(A);
+        const b = task(B, [A]);
+        const c = task(C, [A, B]);
+        expect(taskIndentOf(c, [a, b, c])).toBe(2);
+    });
 
-  it("只有祖父开着（父没开）→ 仍算 1 级（相对已开项表达从属）", () => {
-    const a = task(A);
-    const c = task(C, [A, B]);
-    expect(taskIndentOf(c, [a, c])).toBe(1);
-  });
+    it("只有祖父开着（父没开）→ 仍算 1 级（相对已开项表达从属）", () => {
+        const a = task(A);
+        const c = task(C, [A, B]);
+        expect(taskIndentOf(c, [a, c])).toBe(1);
+    });
 
-  it("顶级任务与无关任务 → 0", () => {
-    expect(taskIndentOf(task(A), [task(A)])).toBe(0);
-    expect(taskIndentOf(task(X), [task(A)])).toBe(0);
-  });
+    it("顶级任务与无关任务 → 0", () => {
+        expect(taskIndentOf(task(A), [task(A)])).toBe(0);
+        expect(taskIndentOf(task(X), [task(A)])).toBe(0);
+    });
 
-  it("非任务 tab（无 ancestors）→ 0", () => {
-    expect(taskIndentOf(lab(A), [lab(A), task(A)])).toBe(0);
-  });
+    it("非任务 tab（无 ancestors）→ 0", () => {
+        expect(taskIndentOf(lab(A), [lab(A), task(A)])).toBe(0);
+    });
 });
 
 describe("taskDepths —— 缩进只在「祖先就在上方」时成立（##466 ②）", () => {
-  it("置顶把子项提到无关任务下面 → 不缩进（不把它读成那人的子）", () => {
-    const b = task(B, [A]);
-    const c = task(C, [A, B]);
-    const u = task(X); // 顶级、无关（置顶段里排在 c 上面）
-    // 全量顺序（祖先就在上方）→ 2 级
-    expect(taskDepths([task(A), b, c], () => false).get(c.key)).toBe(2);
-    // 置顶段顺序（祖先不在本段）→ 0 级（真实场景：266 的父 87 不在置顶段 → 不挂在 166 下）
-    expect(taskDepths([u, c], () => false).get(c.key)).toBe(0);
-  });
+    it("置顶把子项提到无关任务下面 → 不缩进（不把它读成那人的子）", () => {
+        const b = task(B, [A]);
+        const c = task(C, [A, B]);
+        const u = task(X); // 顶级、无关（置顶段里排在 c 上面）
+        // 全量顺序（祖先就在上方）→ 2 级
+        expect(taskDepths([task(A), b, c], () => false).get(c.key)).toBe(2);
+        // 置顶段顺序（祖先不在本段）→ 0 级（真实场景：266 的父 87 不在置顶段 → 不挂在 166 下）
+        expect(taskDepths([u, c], () => false).get(c.key)).toBe(0);
+    });
 
-  it("父就在上方 → 逐层 1 / 2 级；兄弟不被上一个兄弟的子树带偏", () => {
-    const a = task(A);
-    const b = task(B, [A]);
-    const c = task(C, [A, B]);
-    const d = task(X, [A]); // a 的另一个子（兄弟）
-    const depths = taskDepths([a, b, c, d], () => false);
-    expect([a, b, c, d].map((t) => depths.get(t.key))).toEqual([0, 1, 2, 1]);
-  });
+    it("父就在上方 → 逐层 1 / 2 级；兄弟不被上一个兄弟的子树带偏", () => {
+        const a = task(A);
+        const b = task(B, [A]);
+        const c = task(C, [A, B]);
+        const d = task(X, [A]); // a 的另一个子（兄弟）
+        const depths = taskDepths([a, b, c, d], () => false);
+        expect([a, b, c, d].map((t) => depths.get(t.key))).toEqual([0, 1, 2, 1]);
+    });
 
-  it("祖先与它之间隔着无关行 → 不缩进（缩进必须有「就在上方」兜底）", () => {
-    const a = task(A);
-    const x = task(X);
-    const c = task(C, [A, B]); // 祖父 A 在上方，但中间隔着无关的 x
-    const depths = taskDepths([a, x, c], () => false);
-    // 缩进 1 级 = 指着 x 说「我是它的子」，那是撒谎 → 只能平铺
-    expect(depths.get(c.key)).toBe(0);
-  });
+    it("祖先与它之间隔着无关行 → 不缩进（缩进必须有「就在上方」兜底）", () => {
+        const a = task(A);
+        const x = task(X);
+        const c = task(C, [A, B]); // 祖父 A 在上方，但中间隔着无关的 x
+        const depths = taskDepths([a, x, c], () => false);
+        // 缩进 1 级 = 指着 x 说「我是它的子」，那是撒谎 → 只能平铺
+        expect(depths.get(c.key)).toBe(0);
+    });
 
-  it("子页面不推栈（不充当别人的父），自己的层级与父一致", () => {
-    const a = task(A);
-    const l = lab(A);
-    const b = task(B, [A]);
-    const depths = taskDepths([a, l, b], (t) => t.pageId === "lab");
-    expect(depths.get(l.key)).toBe(0);
-    expect(depths.get(b.key)).toBe(1); // 若子页面推了栈，这里会变成 2
-  });
+    it("子页面不推栈（不充当别人的父），自己的层级与父一致", () => {
+        const a = task(A);
+        const l = lab(A);
+        const b = task(B, [A]);
+        const depths = taskDepths([a, l, b], (t) => t.pageId === "lab");
+        expect(depths.get(l.key)).toBe(0);
+        expect(depths.get(b.key)).toBe(1); // 若子页面推了栈，这里会变成 2
+    });
 });
 
 describe("insertionIndex —— 排序规则的唯一实现", () => {
-  it("场景：先开 a/b/c，再开 a → a 插到 a/b/c **之前**（相邻）", () => {
-    const c = task(C, [A, B]);
-    const a = task(A);
-    expect(insertionIndex(a, [c], parentPageOf)).toBe(0);
-  });
+    it("场景：先开 a/b/c，再开 a → a 插到 a/b/c **之前**（相邻）", () => {
+        const c = task(C, [A, B]);
+        const a = task(A);
+        expect(insertionIndex(a, [c], parentPageOf)).toBe(0);
+    });
 
-  it("场景：a 已开，再开 a/b/c → 插到 a 之后（相邻）", () => {
-    const a = task(A);
-    const c = task(C, [A, B]);
-    expect(insertionIndex(c, [a], parentPageOf)).toBe(1);
-  });
+    it("场景：a 已开，再开 a/b/c → 插到 a 之后（相邻）", () => {
+        const a = task(A);
+        const c = task(C, [A, B]);
+        expect(insertionIndex(c, [a], parentPageOf)).toBe(1);
+    });
 
-  it("跨过整个家族：a 已开 + 已有兄弟 b，再开 c → 排在 b 之后", () => {
-    const a = task(A);
-    const b = task(B, [A]);
-    const c = task(C, [A, B]);
-    expect(insertionIndex(c, [a, b], parentPageOf)).toBe(2);
-  });
+    it("跨过整个家族：a 已开 + 已有兄弟 b，再开 c → 排在 b 之后", () => {
+        const a = task(A);
+        const b = task(B, [A]);
+        const c = task(C, [A, B]);
+        expect(insertionIndex(c, [a, b], parentPageOf)).toBe(2);
+    });
 
-  it("插到**最近**已打开祖先之后（直接父优先于祖父）", () => {
-    const a = task(A);
-    const b = task(B, [A]);
-    const c = task(C, [A, B]);
-    expect(insertionIndex(c, [a, b, task(X)], parentPageOf)).toBe(2); // 紧跟 b，不是紧跟 a
-  });
+    it("插到**最近**已打开祖先之后（直接父优先于祖父）", () => {
+        const a = task(A);
+        const b = task(B, [A]);
+        const c = task(C, [A, B]);
+        expect(insertionIndex(c, [a, b, task(X)], parentPageOf)).toBe(2); // 紧跟 b，不是紧跟 a
+    });
 
-  it("祖先都没开 → 队尾", () => {
-    const c = task(C, [A, B]);
-    expect(insertionIndex(c, [task(X)], parentPageOf)).toBe(1);
-  });
+    it("祖先都没开 → 队尾", () => {
+        const c = task(C, [A, B]);
+        expect(insertionIndex(c, [task(X)], parentPageOf)).toBe(1);
+    });
 
-  it("页面子页面优先：lab 紧跟其 task-run 父之后", () => {
-    const a = task(A);
-    const l = lab(A);
-    expect(insertionIndex(l, [a, task(X)], parentPageOf)).toBe(1);
-  });
+    it("页面子页面优先：lab 紧跟其 task-run 父之后", () => {
+        const a = task(A);
+        const l = lab(A);
+        expect(insertionIndex(l, [a, task(X)], parentPageOf)).toBe(1);
+    });
 
-  it("空列表 → 0", () => {
-    expect(insertionIndex(task(A), [], parentPageOf)).toBe(0);
-  });
+    it("空列表 → 0", () => {
+        expect(insertionIndex(task(A), [], parentPageOf)).toBe(0);
+    });
 });
 
 describe("normalizeOrder —— 历史数据也要规范化", () => {
-  it("散开的父子被收拢，父在前", () => {
-    const c = task(C, [A, B]);
-    const a = task(A);
-    const x = task(X);
-    const out = normalizeOrder([c, x, a], parentPageOf);
-    expect(out.map((t) => t.ctx)).toEqual([X, A, C]);
-  });
+    it("散开的父子被收拢，父在前", () => {
+        const c = task(C, [A, B]);
+        const a = task(A);
+        const x = task(X);
+        const out = normalizeOrder([c, x, a], parentPageOf);
+        expect(out.map((t) => t.ctx)).toEqual([X, A, C]);
+    });
 
-  it("同族内保持原相对顺序（稳定，不打乱用户顺序）", () => {
-    const a = task(A);
-    const b = task(B, [A]);
-    const c = task(C, [A]);
-    const out = normalizeOrder([c, a, b], parentPageOf);
-    // a 在前；c、b 都是 a 的子且原顺序 c 先于 b
-    expect(out.map((t) => t.ctx)).toEqual([A, C, B]);
-  });
+    it("同族内保持原相对顺序（稳定，不打乱用户顺序）", () => {
+        const a = task(A);
+        const b = task(B, [A]);
+        const c = task(C, [A]);
+        const out = normalizeOrder([c, a, b], parentPageOf);
+        // a 在前；c、b 都是 a 的子且原顺序 c 先于 b
+        expect(out.map((t) => t.ctx)).toEqual([A, C, B]);
+    });
 
-  it("页面子页面紧跟父（lab 与 task-run 相邻）", () => {
-    const a = task(A);
-    const l = lab(A);
-    const x = task(X);
-    const out = normalizeOrder([l, x, a], parentPageOf);
-    expect(out.map((t) => t.key)).toEqual([`task-run:${X}`, `task-run:${A}`, `lab:${A}`]);
-  });
+    it("页面子页面紧跟父（lab 与 task-run 相邻）", () => {
+        const a = task(A);
+        const l = lab(A);
+        const x = task(X);
+        const out = normalizeOrder([l, x, a], parentPageOf);
+        expect(out.map((t) => t.key)).toEqual([`task-run:${X}`, `task-run:${A}`, `lab:${A}`]);
+    });
 
-  it("**绝不丢 tab**：环 / 异常数据也全部保留", () => {
-    const a: TabLike = { key: "task-run:x", pageId: "task-run", ctx: "x", taskAncestors: ["y"] };
-    const b: TabLike = { key: "task-run:y", pageId: "task-run", ctx: "y", taskAncestors: ["x"] };
-    const out = normalizeOrder([a, b], parentPageOf);
-    expect(out).toHaveLength(2);
-    expect(new Set(out.map((t) => t.key))).toEqual(new Set(["task-run:x", "task-run:y"]));
-  });
+    it("**绝不丢 tab**：环 / 异常数据也全部保留", () => {
+        const a: TabLike = { key: "task-run:x", pageId: "task-run", ctx: "x", taskAncestors: ["y"] };
+        const b: TabLike = { key: "task-run:y", pageId: "task-run", ctx: "y", taskAncestors: ["x"] };
+        const out = normalizeOrder([a, b], parentPageOf);
+        expect(out).toHaveLength(2);
+        expect(new Set(out.map((t) => t.key))).toEqual(new Set(["task-run:x", "task-run:y"]));
+    });
 
-  it("空列表 / 单项列表原样", () => {
-    expect(normalizeOrder([], parentPageOf)).toEqual([]);
-    const one = task(A);
-    expect(normalizeOrder([one], parentPageOf)).toEqual([one]);
-  });
+    it("空列表 / 单项列表原样", () => {
+        expect(normalizeOrder([], parentPageOf)).toEqual([]);
+        const one = task(A);
+        expect(normalizeOrder([one], parentPageOf)).toEqual([one]);
+    });
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -202,55 +202,55 @@ describe("normalizeOrder —— 历史数据也要规范化", () => {
 // ═══════════════════════════════════════════════════════════
 
 describe("关父 tab 后：孤儿项紧跟仍开着的祖先，不挂到无关任务下（226 回归）", () => {
-  it("直接父已关、祖父仍开 → 孙插在祖父之后、无关根之前", () => {
-    const a = task(A);
-    const c = task(C, [A, B]); // 父 B 已关（不在 opened 里），A 仍开
-    const x = task(X);
-    // 顺序 = 关 B 后落盘的 entries：A 族在前，X 后开在队尾
-    const out = normalizeOrder([a, c, x], parentPageOf);
-    expect(out.map((t) => t.ctx)).toEqual([A, C, X]);
-  });
+    it("直接父已关、祖父仍开 → 孙插在祖父之后、无关根之前", () => {
+        const a = task(A);
+        const c = task(C, [A, B]); // 父 B 已关（不在 opened 里），A 仍开
+        const x = task(X);
+        // 顺序 = 关 B 后落盘的 entries：A 族在前，X 后开在队尾
+        const out = normalizeOrder([a, c, x], parentPageOf);
+        expect(out.map((t) => t.ctx)).toEqual([A, C, X]);
+    });
 
-  it("缩进不说谎：孙的上一项必须是它开着的祖先", () => {
-    const a = task(A);
-    const c = task(C, [A, B]);
-    const x = task(X);
-    const out = normalizeOrder([a, c, x], parentPageOf);
-    expect(taskIndentOf(c, out)).toBe(1); // A 开着 → 1 级
-    const ic = out.findIndex((t) => t.ctx === C);
-    expect(ic).toBeGreaterThan(0);
-    expect(out[ic - 1]!.ctx).toBe(A); // 缩进指着的正是它上方那项
-  });
+    it("缩进不说谎：孙的上一项必须是它开着的祖先", () => {
+        const a = task(A);
+        const c = task(C, [A, B]);
+        const x = task(X);
+        const out = normalizeOrder([a, c, x], parentPageOf);
+        expect(taskIndentOf(c, out)).toBe(1); // A 开着 → 1 级
+        const ic = out.findIndex((t) => t.ctx === C);
+        expect(ic).toBeGreaterThan(0);
+        expect(out[ic - 1]!.ctx).toBe(A); // 缩进指着的正是它上方那项
+    });
 
-  it("多个孤儿按原顺序成串，不与无关根交错", () => {
-    const a = task(A);
-    const c = task(C, [A, B]);
-    const y: TabLike = { key: `task-run:${X}2`, pageId: "task-run", ctx: `${X}2`, taskAncestors: [A, B] };
-    const x = task(X);
-    const out = normalizeOrder([a, c, y, x], parentPageOf);
-    expect(out.map((t) => t.ctx)).toEqual([A, C, `${X}2`, X]);
-  });
+    it("多个孤儿按原顺序成串，不与无关根交错", () => {
+        const a = task(A);
+        const c = task(C, [A, B]);
+        const y: TabLike = { key: `task-run:${X}2`, pageId: "task-run", ctx: `${X}2`, taskAncestors: [A, B] };
+        const x = task(X);
+        const out = normalizeOrder([a, c, y, x], parentPageOf);
+        expect(out.map((t) => t.ctx)).toEqual([A, C, `${X}2`, X]);
+    });
 
-  it("对照：祖父也没开 → 孤儿是顶级项，按原顺序、不缩进", () => {
-    const c = task(C, [A, B]);
-    const x = task(X);
-    const out = normalizeOrder([c, x], parentPageOf);
-    expect(out.map((t) => t.ctx)).toEqual([C, X]);
-    expect(taskIndentOf(c, out)).toBe(0);
-  });
+    it("对照：祖父也没开 → 孤儿是顶级项，按原顺序、不缩进", () => {
+        const c = task(C, [A, B]);
+        const x = task(X);
+        const out = normalizeOrder([c, x], parentPageOf);
+        expect(out.map((t) => t.ctx)).toEqual([C, X]);
+        expect(taskIndentOf(c, out)).toBe(0);
+    });
 });
 
 describe("pageParentKeyOf —— 页面层次判据（与排序同源）", () => {
-  it("显式 parent 优先", () => {
-    expect(pageParentKeyOf(lab(A), parentPageOf)).toBe(`task-run:${A}`);
-  });
+    it("显式 parent 优先", () => {
+        expect(pageParentKeyOf(lab(A), parentPageOf)).toBe(`task-run:${A}`);
+    });
 
-  it("无 parent 时由注册表 parentPage 推（ctx 相同）", () => {
-    const l: TabLike = { key: `lab:${A}`, pageId: "lab", ctx: A };
-    expect(pageParentKeyOf(l, parentPageOf)).toBe(`task-run:${A}`);
-  });
+    it("无 parent 时由注册表 parentPage 推（ctx 相同）", () => {
+        const l: TabLike = { key: `lab:${A}`, pageId: "lab", ctx: A };
+        expect(pageParentKeyOf(l, parentPageOf)).toBe(`task-run:${A}`);
+    });
 
-  it("无父页面 → undefined", () => {
-    expect(pageParentKeyOf(task(A), parentPageOf)).toBeUndefined();
-  });
+    it("无父页面 → undefined", () => {
+        expect(pageParentKeyOf(task(A), parentPageOf)).toBeUndefined();
+    });
 });

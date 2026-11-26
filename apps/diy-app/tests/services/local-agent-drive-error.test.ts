@@ -51,9 +51,10 @@ describe("驱动异常的可观测性（R5）", () => {
             await new Promise((r) => setTimeout(r, 30)); // 等驱动自己撞上装配期异常
 
             const logged = errSpy.mock.calls.some((c) => String(c[0]).includes("无人订阅"));
-            expect(logged, `驱动异常在无订阅者时必须落日志；实际 console.error 调用：${JSON.stringify(errSpy.mock.calls)}`).toBe(
-                true,
-            );
+            expect(
+                logged,
+                `驱动异常在无订阅者时必须落日志；实际 console.error 调用：${JSON.stringify(errSpy.mock.calls)}`,
+            ).toBe(true);
         } finally {
             errSpy.mockRestore();
             rmSync(fakeAgents, { recursive: true, force: true });

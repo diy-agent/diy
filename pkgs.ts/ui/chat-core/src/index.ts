@@ -27,14 +27,7 @@ export {
     type BotProgress,
 } from './progress';
 export { ConversationStore, type ConversationModel } from './store';
-export {
-    endFooterOf,
-    settleFactsOf,
-    tokenText,
-    turnSettleOf,
-    type EndFooter,
-    type TurnSettle,
-} from './end-footer';
+export { endFooterOf, settleFactsOf, tokenText, turnSettleOf, type EndFooter, type TurnSettle } from './end-footer';
 export {
     buildTimeline,
     type TimelineDelivery,

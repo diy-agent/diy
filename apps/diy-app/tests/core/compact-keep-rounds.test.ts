@@ -16,7 +16,11 @@ import { appendTurnRecord, readBoundary } from "../../src/main/services/local-tu
 /** usage.jsonl 的一行：`keptRoundsView` 的轮序就是从这里来的（不是从 turns 账） */
 function usageLine(turnId: string, i: number, tokens: number): string {
     return JSON.stringify({
-        ts: new Date().toISOString(), turnId, step: 1, model: "test", apiFace: "chat",
+        ts: new Date().toISOString(),
+        turnId,
+        step: 1,
+        model: "test",
+        apiFace: "chat",
         usage: { inputTokens: tokens, outputTokens: 10 },
     });
 }
@@ -48,14 +52,22 @@ describe("compaction：keepRounds = 0 是全清", () => {
         // 轮记录必须存在：全清边界要靠「最后一轮的 ops 锚点」写 keptFromOpsOffset，
         // 没有它 resolveOpsReplay 只能老实全读（= 旧历史照旧投递，##266 的现象）。
         appendTurnRecord(task, {
-            turnId: "t1001", at: new Date().toISOString(), state: "ok", user: "第1轮的问题",
-            texts: [{ seq: 0, text: "第1轮的回答" }], refFirstOp: { offset: 0, seq: 0, len: 0 },
+            turnId: "t1001",
+            at: new Date().toISOString(),
+            state: "ok",
+            user: "第1轮的问题",
+            texts: [{ seq: 0, text: "第1轮的回答" }],
+            refFirstOp: { offset: 0, seq: 0, len: 0 },
         });
         const off2 = statSync(fp).size; // 第二轮第一条 op 的起点
         appendFileSync(fp, turnLines(2).join("\n") + "\n");
         appendTurnRecord(task, {
-            turnId: "t1002", at: new Date().toISOString(), state: "ok", user: "第2轮的问题",
-            texts: [{ seq: 0, text: "第2轮的回答" }], refFirstOp: { offset: off2, seq: 8, len: 0 },
+            turnId: "t1002",
+            at: new Date().toISOString(),
+            state: "ok",
+            user: "第2轮的问题",
+            texts: [{ seq: 0, text: "第2轮的回答" }],
+            refFirstOp: { offset: off2, seq: 8, len: 0 },
         });
         seedUsage(task, [usageLine("t1001", 1, 1000), usageLine("t1002", 2, 2000)]);
         const sizeBefore = statSync(fp).size;
@@ -67,7 +79,7 @@ describe("compaction：keepRounds = 0 是全清", () => {
 
         const boundary = readBoundary(task);
         expect(boundary).not.toBeNull();
-        expect(boundary!.cut.turnId).toBeNull();        // 全清的判据
+        expect(boundary!.cut.turnId).toBeNull(); // 全清的判据
         expect(boundary!.cut.llmLine).toBeGreaterThan(0);
 
         // 投递起点必须是文件尾 —— 这才叫「不带旧历史上去」
@@ -86,8 +98,12 @@ describe("compaction：keepRounds = 0 是全清", () => {
         const newTurn = turnLines(3);
         appendFileSync(fp, newTurn.join("\n") + "\n");
         appendTurnRecord(task, {
-            turnId: "t1003", at: new Date().toISOString(), state: "ok", user: "第3轮的问题",
-            texts: [{ seq: 0, text: "第3轮的回答" }], refFirstOp: { offset: off3, seq: 16, len: 0 },
+            turnId: "t1003",
+            at: new Date().toISOString(),
+            state: "ok",
+            user: "第3轮的问题",
+            texts: [{ seq: 0, text: "第3轮的回答" }],
+            refFirstOp: { offset: off3, seq: 16, len: 0 },
         });
         // 新一轮的用量也要进 usage（轮序从那里来）
         const uf = join(_home(), sessionFileRel(task, "usage"));
@@ -96,7 +112,7 @@ describe("compaction：keepRounds = 0 是全清", () => {
         expect(after.keptCount).toBe(1);
         expect(after.rounds[0]!.label).toBe("轮3");
         expect(after.droppedCount).toBe(2);
-        expect(existsSync(opsFile(task))).toBe(true);  // ops 原文保留（压缩不删历史）
+        expect(existsSync(opsFile(task))).toBe(true); // ops 原文保留（压缩不删历史）
     });
 
     it("keepRounds = 1 时保留最后一轮（切点落在轮首）", () => {
@@ -105,20 +121,28 @@ describe("compaction：keepRounds = 0 是全清", () => {
         const fp = opsFile(task);
         writeFileSync(fp, turnLines(1).join("\n") + "\n");
         appendTurnRecord(task, {
-            turnId: "t1001", at: new Date().toISOString(), state: "ok", user: "第1轮的问题",
-            texts: [{ seq: 0, text: "第1轮的回答" }], refFirstOp: { offset: 0, seq: 0, len: 0 },
+            turnId: "t1001",
+            at: new Date().toISOString(),
+            state: "ok",
+            user: "第1轮的问题",
+            texts: [{ seq: 0, text: "第1轮的回答" }],
+            refFirstOp: { offset: 0, seq: 0, len: 0 },
         });
         const off2 = statSync(fp).size; // 第二轮第一条 op 的起点
         appendFileSync(fp, turnLines(2).join("\n") + "\n");
         appendTurnRecord(task, {
-            turnId: "t1002", at: new Date().toISOString(), state: "ok", user: "第2轮的问题",
-            texts: [{ seq: 0, text: "第2轮的回答" }], refFirstOp: { offset: 0, seq: 8, len: 0 },
+            turnId: "t1002",
+            at: new Date().toISOString(),
+            state: "ok",
+            user: "第2轮的问题",
+            texts: [{ seq: 0, text: "第2轮的回答" }],
+            refFirstOp: { offset: 0, seq: 8, len: 0 },
         });
 
         const manager = new LocalAgentManager();
         const r = manager.compactToKeepRounds(task, 1);
         expect(r!.keptRounds).toBe(1);
         const boundary = readBoundary(task);
-        expect(boundary!.cut.turnId).toBe("t1002");      // 第二轮 = 最后一轮
+        expect(boundary!.cut.turnId).toBe("t1002"); // 第二轮 = 最后一轮
     });
 });

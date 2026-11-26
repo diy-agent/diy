@@ -12,14 +12,15 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
+import { fmtDuration, fmtTokens, sessionRowOf, stepsNow, stepsProgressOf } from "../../src/shared/session-overview";
 import {
-    fmtDuration,
-    fmtTokens,
-    sessionRowOf,
-    stepsNow,
-    stepsProgressOf,
-} from "../../src/shared/session-overview";
-import { abnormalEndOf, activityOf, newTurnsOf, queueViewOf, stalledOf, STALL_MS } from "../../src/shared/session-state";
+    abnormalEndOf,
+    activityOf,
+    newTurnsOf,
+    queueViewOf,
+    stalledOf,
+    STALL_MS,
+} from "../../src/shared/session-state";
 import type { SessionEntry } from "../../src/shared/registry-frame";
 
 const T0 = "2026-10-15T10:00:00.000Z";
@@ -74,7 +75,11 @@ describe("主状态轴：working / idle", () => {
     });
 
     it("步数进度：有上限给 k/max，没上限只给已跑（不编一个 200 出来）", () => {
-        expect(stepsProgressOf(running({ totalSteps: 7 }), 200)).toMatchObject({ done: 10, limit: 200, text: "10/200" });
+        expect(stepsProgressOf(running({ totalSteps: 7 }), 200)).toMatchObject({
+            done: 10,
+            limit: 200,
+            text: "10/200",
+        });
         expect(stepsProgressOf(running(), null)).toMatchObject({ done: 3, limit: null, pct: null, text: "3 步" });
         // 超出上限（上限被调小过 / 竞态）不许画成 >100%
         expect(stepsProgressOf(running({ totalSteps: 400 }), 200).pct).toBe(1);
@@ -130,16 +135,18 @@ describe("异常退出 / chip", () => {
     it("非 completed 的收尾才算「异常退出」（completed 不报警）", () => {
         expect(abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "completed", data: {} } }))).toBe(false);
         expect(
-            abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "error", data: { source: "llm", message: "x" } } })),
+            abnormalEndOf(
+                entry({ turnCount: 1, lastEndReason: { type: "error", data: { source: "llm", message: "x" } } }),
+            ),
         ).toBe(true);
         // ##393（##266 2026-10-20 拍板）：`aborted:user` / 旧版 `abort` 都是**你自己按的停止** ⇒ 预期内，
         // 不算「异常退出」；真正分不清的那种是 `aborted:detached`（断流）
-        expect(abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "user" } } }))).toBe(
-            false,
-        );
-        expect(abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "abort" } } }))).toBe(
-            false,
-        );
+        expect(
+            abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "user" } } })),
+        ).toBe(false);
+        expect(
+            abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "abort" } } })),
+        ).toBe(false);
         expect(
             abnormalEndOf(entry({ turnCount: 1, lastEndReason: { type: "aborted", data: { source: "detached" } } })),
         ).toBe(true);
@@ -166,7 +173,12 @@ describe("异常退出 / chip", () => {
     });
 
     it("空闲且无事 → 已结束的终态圆（图标是状态，不是噪音：仍然渲染）", () => {
-        const row = sessionRowOf(entry({ turnCount: 3, lastEndReason: { type: "completed", data: {} } }), 100, 200, NOW);
+        const row = sessionRowOf(
+            entry({ turnCount: 3, lastEndReason: { type: "completed", data: {} } }),
+            100,
+            200,
+            NOW,
+        );
         expect(row.attention).toBe(4);
         expect(row.glyph.shape).toBe("ended");
         expect(row.state).toBe("已对话");

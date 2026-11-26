@@ -11,17 +11,17 @@ import { resolve } from "node:path";
  */
 
 export default defineConfig({
-  build: {
-    outDir: `build/prod/cli`,
-    // SSR 模式（node 环境）：vite 自动外部化 node 内建 + node_modules 依赖，
-    // 无需手写 external 列表。见 https://vite.dev/guide/ssr
-    ssr: true,
-    lib: {
-      entry: resolve(__dirname, "src/cli/index.ts"),
-      formats: ["es"],
-      fileName: "index",
+    build: {
+        outDir: `build/prod/cli`,
+        // SSR 模式（node 环境）：vite 自动外部化 node 内建 + node_modules 依赖，
+        // 无需手写 external 列表。见 https://vite.dev/guide/ssr
+        ssr: true,
+        lib: {
+            entry: resolve(__dirname, "src/cli/index.ts"),
+            formats: ["es"],
+            fileName: "index",
+        },
+        minify: false,
+        sourcemap: false,
     },
-    minify: false,
-    sourcemap: false,
-  },
 });

@@ -186,18 +186,32 @@ function turnUsageModel(usage: unknown): UsageModel {
     if (isLegacyUsage(usage)) {
         const l = usage as { in?: number; out?: number; cached?: number; total?: number };
         return {
-            legacy: true, mixed: false,
-            noCache: null, cacheRead: l.cached ?? null, cacheWrite: null,
-            inputTotal: l.in ?? null, text: null, reasoning: null,
-            outputTotal: l.out ?? null, total: l.total ?? null, cost: null,
+            legacy: true,
+            mixed: false,
+            noCache: null,
+            cacheRead: l.cached ?? null,
+            cacheWrite: null,
+            inputTotal: l.in ?? null,
+            text: null,
+            reasoning: null,
+            outputTotal: l.out ?? null,
+            total: l.total ?? null,
+            cost: null,
         };
     }
     const p = usage as TurnUsagePatch;
     return {
-        legacy: false, mixed: false,
-        noCache: p.noCache, cacheRead: p.cacheRead, cacheWrite: p.cacheWrite,
-        inputTotal: p.inputTotal, text: p.text, reasoning: p.reasoning,
-        outputTotal: p.outputTotal, total: p.total, cost: p.cost ?? null,
+        legacy: false,
+        mixed: false,
+        noCache: p.noCache,
+        cacheRead: p.cacheRead,
+        cacheWrite: p.cacheWrite,
+        inputTotal: p.inputTotal,
+        text: p.text,
+        reasoning: p.reasoning,
+        outputTotal: p.outputTotal,
+        total: p.total,
+        cost: p.cost ?? null,
     };
 }
 
@@ -223,8 +237,17 @@ export interface SessionUsageAgg {
 
 export function aggregateSessionUsage(trees: BlockNode[]): SessionUsageAgg {
     const a: SessionUsageAgg = {
-        turns: 0, legacyTurns: 0, noCache: 0, cacheRead: 0, cacheWrite: null,
-        inputTotal: 0, text: 0, reasoning: 0, outputTotal: 0, total: 0, cost: null,
+        turns: 0,
+        legacyTurns: 0,
+        noCache: 0,
+        cacheRead: 0,
+        cacheWrite: null,
+        inputTotal: 0,
+        text: 0,
+        reasoning: 0,
+        outputTotal: 0,
+        total: 0,
+        cost: null,
         unpriced: 0,
     };
     const costs: CostBreakdown[] = [];
@@ -267,9 +290,15 @@ function sessionUsageModel(a: SessionUsageAgg): UsageModel | null {
     return {
         legacy: a.legacyTurns === a.turns,
         mixed: a.legacyTurns > 0 && a.legacyTurns < a.turns,
-        noCache: a.noCache, cacheRead: a.cacheRead, cacheWrite: a.cacheWrite,
-        inputTotal: a.inputTotal, text: a.text, reasoning: a.reasoning,
-        outputTotal: a.outputTotal, total: a.total, cost: a.cost,
+        noCache: a.noCache,
+        cacheRead: a.cacheRead,
+        cacheWrite: a.cacheWrite,
+        inputTotal: a.inputTotal,
+        text: a.text,
+        reasoning: a.reasoning,
+        outputTotal: a.outputTotal,
+        total: a.total,
+        cost: a.cost,
     };
 }
 
@@ -314,7 +343,9 @@ function UsageTableTree(props: { m: UsageModel }) {
             <td>{label}</td>
             <td class="text-right tabular-nums">{optCell(tokens)}</td>
             <td />
-            <td class="text-right tabular-nums" title={hint}>{money == null ? "–" : `$${fmtCost(money)}`}</td>
+            <td class="text-right tabular-nums" title={hint}>
+                {money == null ? "–" : `$${fmtCost(money)}`}
+            </td>
             <td />
         </tr>
     );
@@ -329,8 +360,12 @@ function UsageTableTree(props: { m: UsageModel }) {
         costFrac: number | null,
     ) => (
         <tr title={costHint ?? tokHint}>
-            <td class="pl-3 opacity-80" title={tokHint}>{label}</td>
-            <td class="text-right tabular-nums" title={tokHint}>{optCell(tokens)}</td>
+            <td class="pl-3 opacity-80" title={tokHint}>
+                {label}
+            </td>
+            <td class="text-right tabular-nums" title={tokHint}>
+                {optCell(tokens)}
+            </td>
             <td>{pctBar(tokFrac)}</td>
             <td class="text-right tabular-nums" title={costHint ?? tokHint}>
                 {c() == null || costV == null ? <span class="opacity-50">–</span> : `$${fmtCost(costV)}`}
@@ -358,40 +393,68 @@ function UsageTableTree(props: { m: UsageModel }) {
             <tbody class="text-body">
                 {groupRow("总输入", m().inputTotal, input$(), "= 非缓存 + 缓存读 + 缓存写 的金额")}
                 {childRow(
-                    "├ 非缓存", m().noCache, "未命中前缀缓存、按全价计（本轮各步累计）",
-                    c()?.noCache ?? null, "非缓存金额",
-                    innerFrac(m().noCache, totTok()), innerFrac(c()?.noCache ?? null, totCost()),
+                    "├ 非缓存",
+                    m().noCache,
+                    "未命中前缀缓存、按全价计（本轮各步累计）",
+                    c()?.noCache ?? null,
+                    "非缓存金额",
+                    innerFrac(m().noCache, totTok()),
+                    innerFrac(c()?.noCache ?? null, totCost()),
                 )}
                 {childRow(
-                    "├ 缓存读", m().cacheRead, "暖输入，按缓存读单价计（本轮各步累计）",
-                    c()?.cacheRead ?? null, "缓存读金额",
-                    innerFrac(m().cacheRead, totTok()), innerFrac(c()?.cacheRead ?? null, totCost()),
+                    "├ 缓存读",
+                    m().cacheRead,
+                    "暖输入，按缓存读单价计（本轮各步累计）",
+                    c()?.cacheRead ?? null,
+                    "缓存读金额",
+                    innerFrac(m().cacheRead, totTok()),
+                    innerFrac(c()?.cacheRead ?? null, totCost()),
                 )}
                 {childRow(
-                    "└ 缓存写", m().cacheWrite,
+                    "└ 缓存写",
+                    m().cacheWrite,
                     m().cacheWrite == null ? "该 API 面不可测（不是 0；符号 –）" : "写入前缀缓存（本轮各步累计）",
                     c()?.cacheWrite ?? null,
                     c()?.cacheWrite == null ? "该 API 面不可测（不是 0；符号 –）" : "缓存写金额",
-                    innerFrac(m().cacheWrite, totTok()), innerFrac(c()?.cacheWrite ?? null, totCost()),
+                    innerFrac(m().cacheWrite, totTok()),
+                    innerFrac(c()?.cacheWrite ?? null, totCost()),
                 )}
                 {groupRow("总输出", m().outputTotal, output$(), "= 文本 + 思考 的金额（思考不另加价）")}
-                <Show when={!m().mixed} fallback={
-                    <tr>
-                        <td class="pl-3 opacity-80" colSpan={5} title="混有旧记录轮，文本/思考拆不开">└ 文本 / 思考 — 混有旧记录轮，不拆分</td>
-                    </tr>
-                }>
+                <Show
+                    when={!m().mixed}
+                    fallback={
+                        <tr>
+                            <td class="pl-3 opacity-80" colSpan={5} title="混有旧记录轮，文本/思考拆不开">
+                                └ 文本 / 思考 — 混有旧记录轮，不拆分
+                            </td>
+                        </tr>
+                    }
+                >
                     {childRow(
-                        "├ 文本输出", m().text, "总输出的子集",
-                        c()?.text ?? null, "文本输出金额",
-                        innerFrac(m().text, totTok()), innerFrac(c()?.text ?? null, totCost()),
+                        "├ 文本输出",
+                        m().text,
+                        "总输出的子集",
+                        c()?.text ?? null,
+                        "文本输出金额",
+                        innerFrac(m().text, totTok()),
+                        innerFrac(c()?.text ?? null, totCost()),
                     )}
                     {childRow(
-                        "└ 思考输出", m().reasoning, "= AI SDK reasoningTokens；总输出的子集，计价不另加",
-                        c()?.reasoning ?? null, "思考输出金额（已含在 output 单价里，此处为拆解展示）",
-                        innerFrac(m().reasoning, totTok()), innerFrac(c()?.reasoning ?? null, totCost()),
+                        "└ 思考输出",
+                        m().reasoning,
+                        "= AI SDK reasoningTokens；总输出的子集，计价不另加",
+                        c()?.reasoning ?? null,
+                        "思考输出金额（已含在 output 单价里，此处为拆解展示）",
+                        innerFrac(m().reasoning, totTok()),
+                        innerFrac(c()?.reasoning ?? null, totCost()),
                     )}
                 </Show>
-                {groupRow("合计", m().total, c()?.total ?? null, m().mixed ? "混有旧记录轮，为部分和" : "各步按当时生效单价计算后相加")}
+                {groupRow(
+                    "合计",
+                    m().total,
+                    c()?.total ?? null,
+                    m().mixed ? "混有旧记录轮，为部分和" : "各步按当时生效单价计算后相加",
+                )}
             </tbody>
         </table>
     );
@@ -401,14 +464,21 @@ function UsageTableTree(props: { m: UsageModel }) {
 function LegacyRows(props: { m: UsageModel }) {
     return (
         <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-body">
-            <dt class="opacity-60">总输入</dt><dd class="text-right tabular-nums" title="旧记录：无四桶拆分">{optCell(props.m.inputTotal)}</dd>
-            <dt class="opacity-60">总输出</dt><dd class="text-right tabular-nums" title="旧记录：无四桶拆分">{optCell(props.m.outputTotal)}</dd>
-            <dt class="opacity-60">缓存读</dt><dd class="text-right tabular-nums">{optCell(props.m.cacheRead)}</dd>
-            <dt class="opacity-60">Σ 合计</dt><dd class="text-right tabular-nums">{optCell(props.m.total)}</dd>
+            <dt class="opacity-60">总输入</dt>
+            <dd class="text-right tabular-nums" title="旧记录：无四桶拆分">
+                {optCell(props.m.inputTotal)}
+            </dd>
+            <dt class="opacity-60">总输出</dt>
+            <dd class="text-right tabular-nums" title="旧记录：无四桶拆分">
+                {optCell(props.m.outputTotal)}
+            </dd>
+            <dt class="opacity-60">缓存读</dt>
+            <dd class="text-right tabular-nums">{optCell(props.m.cacheRead)}</dd>
+            <dt class="opacity-60">Σ 合计</dt>
+            <dd class="text-right tabular-nums">{optCell(props.m.total)}</dd>
         </dl>
     );
 }
-
 
 // ─── 窗口占用环（L1 常显 + L2 卡顶；数据 = turn patch 的最后一步口径） ───
 
@@ -417,16 +487,20 @@ function LegacyRows(props: { m: UsageModel }) {
  * （turn patch 每步实时推 `windowTotal/contextLimit`，与 L3 账本同源同口径）。
  * 找不到 → null（不编 0%）。
  */
-function currentWindow(
-    trees: BlockNode[],
-): {
+function currentWindow(trees: BlockNode[]): {
     total: number;
     contextLimit: number;
     rate: number;
     prompt: number | null;
     parts: { systemBytes: number; toolsBytes: number } | null;
 } | null {
-    type W = { total: number; contextLimit: number; rate: number; prompt: number | null; parts: { systemBytes: number; toolsBytes: number } | null };
+    type W = {
+        total: number;
+        contextLimit: number;
+        rate: number;
+        prompt: number | null;
+        parts: { systemBytes: number; toolsBytes: number } | null;
+    };
     let best: W | null = null;
     let bestId = -1;
     for (const t of trees) {
@@ -438,7 +512,13 @@ function currentWindow(
         bestId = n;
         // prompt = 最后一步输入（账本精确）；老记录缺字段 → null（构成行降级为 –）
         const prompt = u.lastInputTotal ?? (u.lastOutputTotal != null ? u.windowTotal - u.lastOutputTotal : null);
-        best = { total: u.windowTotal, contextLimit: u.contextLimit, rate: u.windowTotal / u.contextLimit, prompt, parts: u.contextParts ?? null };
+        best = {
+            total: u.windowTotal,
+            contextLimit: u.contextLimit,
+            rate: u.windowTotal / u.contextLimit,
+            prompt,
+            parts: u.contextParts ?? null,
+        };
     }
     return best;
 }
@@ -642,11 +722,15 @@ function CacheAgeBar(props: { model: string | null; session: string | null }) {
  * 粉/淡红没有 daisyUI 语义色，用 tailwind 色阶（pink-400 / red-300）。
  */
 const ringClass = (rate: number): string =>
-    rate >= 0.8 ? "text-error"
-    : rate >= 0.6 ? "text-red-300"
-    : rate >= 0.4 ? "text-pink-400"
-    : rate >= 0.2 ? "text-warning"
-    : "text-primary";
+    rate >= 0.8
+        ? "text-error"
+        : rate >= 0.6
+          ? "text-red-300"
+          : rate >= 0.4
+            ? "text-pink-400"
+            : rate >= 0.2
+              ? "text-warning"
+              : "text-primary";
 
 /** 环的 --value（0-100，留一位小数） */
 const ringValue = (rate: number): string => String(Math.min(100, Math.round(rate * 1000) / 10));
@@ -694,10 +778,12 @@ function RingBar(props: { rate: number; size: string; thickness: string; center?
  * · 历史消息 = 该步 prompt（账本精确）− 上两段估算（减法；含 runtime 尾部消息、工具输出）
  * 三者缺数据（本版前的老记录）→ null → UI 显示 `–`，不编 0。
  */
-function partsOf(x: {
+function partsOf(x: { prompt: number | null; parts: { systemBytes: number; toolsBytes: number } | null }): {
+    system: number | null;
+    tools: number | null;
+    messages: number | null;
     prompt: number | null;
-    parts: { systemBytes: number; toolsBytes: number } | null;
-}): { system: number | null; tools: number | null; messages: number | null; prompt: number | null } {
+} {
     if (!x.parts) return { system: null, tools: null, messages: null, prompt: x.prompt };
     const system = Math.round(x.parts.systemBytes / 4);
     const tools = Math.round(x.parts.toolsBytes / 4);
@@ -761,14 +847,17 @@ export function WindowRing(props: { uri: string | null }) {
     /** 保留量（token）—— ##442 固定 = 窗口 × 0.16；窗口未知 ⇒ 0 */
     // 门槛 = 卡或抽屉真的开着：本组件常挂（会话页脚常驻），无门槛则**每次切会话页**都白打一次
     // `autoCompactStatus`（##321 复核补记的次级成本；非主因，但同属"抽屉关着也算"）。
-    const [limitRes] = createResource(() => (open() || drawerOpen() ? props.uri : null), async (u) => {
-        if (!u) return null;
-        const st = (await localChatStore.autoCompactStatus(u)) as {
-            facts?: { windowLimitTokens?: number | null };
-        };
-        const w = st?.facts?.windowLimitTokens;
-        return typeof w === "number" && w > 0 ? Math.floor(w * 0.16) : 0;
-    });
+    const [limitRes] = createResource(
+        () => (open() || drawerOpen() ? props.uri : null),
+        async (u) => {
+            if (!u) return null;
+            const st = (await localChatStore.autoCompactStatus(u)) as {
+                facts?: { windowLimitTokens?: number | null };
+            };
+            const w = st?.facts?.windowLimitTokens;
+            return typeof w === "number" && w > 0 ? Math.floor(w * 0.16) : 0;
+        },
+    );
     const limitTok = (): number => limitRes() ?? 0;
     /** 压缩后估算 token：固定开支（system+工具）+ 保留量（窗口 × 0.16） */
     const afterTokens = (): number | null => {
@@ -847,23 +936,36 @@ export function WindowRing(props: { uri: string | null }) {
                                     );
                                 const row = (label: string, v: number | null, hint: string) => (
                                     <>
-                                        <dt class="opacity-60" title={hint}>{label}</dt>
+                                        <dt class="opacity-60" title={hint}>
+                                            {label}
+                                        </dt>
                                         <dd class="text-right tabular-nums" title={hint}>
                                             {v == null ? <span class="opacity-50">–</span> : `~${fmtTokens(v)}`}
                                         </dd>
-                                        <dd class="text-right" title="该段 ÷ prompt（账本精确）">{pct(v)}</dd>
+                                        <dd class="text-right" title="该段 ÷ prompt（账本精确）">
+                                            {pct(v)}
+                                        </dd>
                                     </>
                                 );
                                 return (
                                     <>
-                                        <dt class="opacity-60" title="最后一步 总输入+总输出 ÷ 上限（账本精确，与环同源）">当前 / 上限</dt>
+                                        <dt
+                                            class="opacity-60"
+                                            title="最后一步 总输入+总输出 ÷ 上限（账本精确，与环同源）"
+                                        >
+                                            当前 / 上限
+                                        </dt>
                                         <dd class="text-right tabular-nums">
                                             {fmtTokens(win().total)} / {fmtTokens(win().contextLimit)}
                                         </dd>
                                         <dd class="text-right opacity-40">—</dd>
                                         {row("系统提示词", p.system, "真发 system 容器字节 ÷ 4（估算）")}
                                         {row("工具定义", p.tools, "真发 tools 定义 JSON 字节 ÷ 4（估算）")}
-                                        {row("历史消息", p.messages, "该步 prompt（账本精确）− 系统 − 工具（含 runtime 消息与工具输出）")}
+                                        {row(
+                                            "历史消息",
+                                            p.messages,
+                                            "该步 prompt（账本精确）− 系统 − 工具（含 runtime 消息与工具输出）",
+                                        )}
                                     </>
                                 );
                             })()}
@@ -916,7 +1018,10 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
     /** 压缩面板控制器（供 tab 栏执行按钮 + 压缩 tab 内容共享）。
      *  第二个参数 = **成本闸门**：抽屉关着时组件仍挂在树上，不加门槛则任何会话页一打开
      *  就全量算一次压缩预案（78MB 会话 8~16s 卡住 main，见 ##321）。 */
-    const ctl = useCompactPanel(() => props.uri ?? "", () => props.open);
+    const ctl = useCompactPanel(
+        () => props.uri ?? "",
+        () => props.open,
+    );
 
     // 压缩事件账（步视图的「压缩点位」列 + 徽章 hover 的边界）——限读尾部（##431）
     const [compactPage, { refetch: refetchCompactEvents }] = createResource(
@@ -960,13 +1065,16 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
             <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
-                    class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}
+                    class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl"
+                    style={DM.style()}
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div class={`flex shrink-0 items-center gap-2 border-b px-4 ${VIEW_BAR_H}`}>
                         <div class="truncate text-title font-medium">
                             窗口构成
-                            <span class="ml-2 text-body font-normal opacity-60">为 agent 优化：该动谁（提示词 / 历史 / 工具）</span>
+                            <span class="ml-2 text-body font-normal opacity-60">
+                                为 agent 优化：该动谁（提示词 / 历史 / 工具）
+                            </span>
                         </div>
                         <div class="join ml-auto shrink-0" role="group" aria-label="窗口构成视图">
                             <button
@@ -1008,53 +1116,61 @@ export function ContextPartsDrawer(props: { open: boolean; uri: string | null; o
                             </div>
                         }
                     >
-                    <div class="min-h-0 flex-1 overflow-auto p-4">
-                        {/* ##423 ③：会话/本轮的两个数（压缩次数 / 投递次数）此前哪里都看不到 */}
-                        <Show when={steps().length > 0}>
-                            <div
-                                class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-caption opacity-80"
-                                data-delivery-stats
-                            >
-                                <span>
-                                    本会话：<b class="tabular-nums">{steps().length}</b> 次投递（= 步数）·
-                                    <b class="tabular-nums">{new Set(steps().map((r) => r.turnId)).size}</b> 轮 · 压缩{" "}
-                                    <b class="tabular-nums">{compactList().filter((e) => e.kind === "compact").length}</b> 次
-                                    （自动 {compactList().filter((e) => e.kind === "compact" && e.by === "auto").length} / 手动{" "}
-                                    {compactList().filter((e) => e.kind === "compact" && e.by !== "auto").length}）
-                                </span>
-                                <Show when={latestTurnId()}>
-                                    {(id) => (
-                                        <span title="本轮步数 = 本轮投递次数；压缩 = 本轮生效（下一个轮首请求用上新历史）的压缩事件数">
-                                            本轮 {id()}：<b class="tabular-nums">{steps().filter((r) => r.turnId === id()).length}</b> 步 · 压缩生效{" "}
-                                            <b class="tabular-nums">{turnCompactCount(id())}</b> 次
-                                        </span>
-                                    )}
-                                </Show>
-                            </div>
-                        </Show>
-
-                        {/* 构成 = 统一表的一个视图（group=窗口构成）：与逐步同列定义，只是列子集 + 仅 step 粒度 */}
-                        <UsageTable
-                            rows={steps()}
-                            view="contextParts"
-                            compactEvents={compactEvents()}
-                            boundary={badgeBoundary()}
-                        />
-
-                        <div class="mt-2 text-caption opacity-60">
-                            ~ = 字节 ÷ 4 估算（中英混排会偏差）；历史消息 = 同行 prompt（账本精确）− 系统 − 工具；
-                            占比 = 该段 ÷ 同行 prompt。
-                            <br />
-                            `–` = 该记录未落盘构成（本版前的旧轮）；窗口% = 该步 总输入+总输出 ÷ 上限（与环同源）；
-                            压缩列 = 该步（请求）的压缩：**投递**=按当前配置（每轮首重建，**无需事件**）→ 悬停看预算/丢几条；
-                            **压缩**=触发/手动事件（点开看算法/过滤器/规模）。
-                            <Show when={compactPage()?.truncated}>
-                                <div class="mt-1 text-warning" data-compact-truncated>
-                                    ⓘ 更早的压缩记录未加载（审计日志，可清理）—— 只标注了最近 200 条压缩事件
+                        <div class="min-h-0 flex-1 overflow-auto p-4">
+                            {/* ##423 ③：会话/本轮的两个数（压缩次数 / 投递次数）此前哪里都看不到 */}
+                            <Show when={steps().length > 0}>
+                                <div
+                                    class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-caption opacity-80"
+                                    data-delivery-stats
+                                >
+                                    <span>
+                                        本会话：<b class="tabular-nums">{steps().length}</b> 次投递（= 步数）·
+                                        <b class="tabular-nums">{new Set(steps().map((r) => r.turnId)).size}</b> 轮 ·
+                                        压缩{" "}
+                                        <b class="tabular-nums">
+                                            {compactList().filter((e) => e.kind === "compact").length}
+                                        </b>{" "}
+                                        次 （自动{" "}
+                                        {compactList().filter((e) => e.kind === "compact" && e.by === "auto").length} /
+                                        手动{" "}
+                                        {compactList().filter((e) => e.kind === "compact" && e.by !== "auto").length}）
+                                    </span>
+                                    <Show when={latestTurnId()}>
+                                        {(id) => (
+                                            <span title="本轮步数 = 本轮投递次数；压缩 = 本轮生效（下一个轮首请求用上新历史）的压缩事件数">
+                                                本轮 {id()}：
+                                                <b class="tabular-nums">
+                                                    {steps().filter((r) => r.turnId === id()).length}
+                                                </b>{" "}
+                                                步 · 压缩生效 <b class="tabular-nums">{turnCompactCount(id())}</b> 次
+                                            </span>
+                                        )}
+                                    </Show>
                                 </div>
                             </Show>
+
+                            {/* 构成 = 统一表的一个视图（group=窗口构成）：与逐步同列定义，只是列子集 + 仅 step 粒度 */}
+                            <UsageTable
+                                rows={steps()}
+                                view="contextParts"
+                                compactEvents={compactEvents()}
+                                boundary={badgeBoundary()}
+                            />
+
+                            <div class="mt-2 text-caption opacity-60">
+                                ~ = 字节 ÷ 4 估算（中英混排会偏差）；历史消息 = 同行 prompt（账本精确）− 系统 − 工具；
+                                占比 = 该段 ÷ 同行 prompt。
+                                <br />
+                                `–` = 该记录未落盘构成（本版前的旧轮）；窗口% = 该步 总输入+总输出 ÷ 上限（与环同源）；
+                                压缩列 = 该步（请求）的压缩：**投递**=按当前配置（每轮首重建，**无需事件**）→
+                                悬停看预算/丢几条； **压缩**=触发/手动事件（点开看算法/过滤器/规模）。
+                                <Show when={compactPage()?.truncated}>
+                                    <div class="mt-1 text-warning" data-compact-truncated>
+                                        ⓘ 更早的压缩记录未加载（审计日志，可清理）—— 只标注了最近 200 条压缩事件
+                                    </div>
+                                </Show>
+                            </div>
                         </div>
-                    </div>
                     </Show>
                 </div>
             </div>
@@ -1132,11 +1248,7 @@ export function UsageHoverCard(props: {
         const below = p.edge + 8; // 触发边下方
         const above = p.edge - 8 - h; // 触发边上方
         const top =
-            p.above && above >= 8
-                ? above
-                : below + h <= vh - 8
-                  ? below
-                  : Math.max(8, Math.min(below, vh - h - 8)); // 两头都放不下 → 夹进视口
+            p.above && above >= 8 ? above : below + h <= vh - 8 ? below : Math.max(8, Math.min(below, vh - h - 8)); // 两头都放不下 → 夹进视口
         el.style.top = `${top}px`;
         el.style.bottom = "";
     };
@@ -1171,7 +1283,9 @@ export function UsageHoverCard(props: {
         <Show when={props.state && pos() && model()}>
             <Portal>
                 <div
-                    ref={(x: HTMLDivElement) => { el = x; }}
+                    ref={(x: HTMLDivElement) => {
+                        el = x;
+                    }}
                     class="fixed z-[70] max-h-[calc(100vh-16px)] overflow-y-auto rounded-box border border-base-300 bg-base-100 shadow-2xl"
                     data-card={props.state!.id}
                     style={{ width: `${CARD_W}px` }}
@@ -1208,9 +1322,12 @@ export function UsageHoverCard(props: {
                     </Show>
                     {/* 缓存时效柱（##477 追加）：与上面的环**不同维度**（时间 vs token），环保持不动 */}
                     <CacheAgeBar model={currentModelRef(localChatStore.trees)} session={localChatStore.currentUri} />
-                    <Show when={model()} fallback={
-                        <div class="px-3 py-2 text-body opacity-60">暂无用量记录（该会话还没跑出带用量的轮次）</div>
-                    }>
+                    <Show
+                        when={model()}
+                        fallback={
+                            <div class="px-3 py-2 text-body opacity-60">暂无用量记录（该会话还没跑出带用量的轮次）</div>
+                        }
+                    >
                         {(m) => (
                             <div class="px-3 py-2" classList={{ "opacity-70": m().legacy }}>
                                 <Show when={!m().legacy} fallback={<LegacyRows m={m()} />}>
@@ -1305,14 +1422,18 @@ export function TurnUsageBar(props: {
     const Rate = () => (
         <Show when={rate() != null}>
             <span
-                class={isLive()
-                    ? `${CLIP} tabular-nums text-caption text-accent animate-pulse`
-                    : `${CLIP} tabular-nums text-caption opacity-60`}
+                class={
+                    isLive()
+                        ? `${CLIP} tabular-nums text-caption text-accent animate-pulse`
+                        : `${CLIP} tabular-nums text-caption opacity-60`
+                }
                 data-turn-live-rate={isLive() ? "1" : undefined}
                 data-turn-rate={isLive() ? undefined : "1"}
-                title={isLive()
-                    ? "实时速度 ⚡ = 本轮最近一步的总输出 ÷ 该步响应耗时（含首字等待 TTFT），每步结束刷新一次"
-                    : "轮均速度 ⌀ = 本轮总输出 ÷ 本轮各步响应耗时之和（含首字等待 TTFT）"}
+                title={
+                    isLive()
+                        ? "实时速度 ⚡ = 本轮最近一步的总输出 ÷ 该步响应耗时（含首字等待 TTFT），每步结束刷新一次"
+                        : "轮均速度 ⌀ = 本轮总输出 ÷ 本轮各步响应耗时之和（含首字等待 TTFT）"
+                }
             >
                 {isLive() ? "⚡" : "⌀"} {Math.round(rate()!)} tok/s
             </span>
@@ -1374,10 +1495,7 @@ export function TurnUsageBar(props: {
                 <span class="flex-1" />
                 <Stat />
                 <Rate />
-                <span
-                    class={`${CLIP} opacity-60`}
-                    title="旧记录：无四桶/金额"
-                >
+                <span class={`${CLIP} opacity-60`} title="旧记录：无四桶/金额">
                     tokens ↑{fmtInt(l().in ?? 0)} ↓{fmtInt(l().out ?? 0)}（Σ{fmtInt(l().total ?? 0)}）
                     <span class="ml-1">（旧记录：无四桶/金额）</span>
                 </span>
@@ -1422,7 +1540,8 @@ export function TurnUsageBar(props: {
                         data-turn-usage-cost
                         title={p().unpriced ? `本轮 ${p().unpriced} 步无价目：金额只是已计价部分之和` : undefined}
                     >
-                        {p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}{p().cost && p().unpriced ? "*" : ""}
+                        {p().cost ? `$${fmtCost(p().cost!.total)}` : "$—"}
+                        {p().cost && p().unpriced ? "*" : ""}
                     </span>
                 </button>
             </div>
@@ -1555,7 +1674,9 @@ function FmtBody(props: { text: () => string }) {
                     复制
                 </button>
             </div>
-            <pre class="whitespace-pre overflow-x-auto rounded-box border border-base-300 bg-base-200 p-3 font-mono text-caption leading-relaxed">{props.text()}</pre>
+            <pre class="whitespace-pre overflow-x-auto rounded-box border border-base-300 bg-base-200 p-3 font-mono text-caption leading-relaxed">
+                {props.text()}
+            </pre>
         </div>
     );
 }
@@ -1600,7 +1721,8 @@ function TurnDetailSummary(props: { group: TurnGroup | null }) {
                 </div>
                 <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-body">
                     <span>
-                        <span class="opacity-60">步数</span> <span class="font-medium tabular-nums">{g()!.steps.length}</span>
+                        <span class="opacity-60">步数</span>{" "}
+                        <span class="font-medium tabular-nums">{g()!.steps.length}</span>
                     </span>
                     <span>
                         <span class="opacity-60">缓存命中</span>{" "}
@@ -1610,7 +1732,9 @@ function TurnDetailSummary(props: { group: TurnGroup | null }) {
                     </span>
                     <span>
                         <span class="opacity-60">合计</span>{" "}
-                        <span class="font-medium tabular-nums">{g()!.cost ? `$${fmtCost(g()!.cost!.total)}` : "n/a"}</span>
+                        <span class="font-medium tabular-nums">
+                            {g()!.cost ? `$${fmtCost(g()!.cost!.total)}` : "n/a"}
+                        </span>
                     </span>
                     <Show when={g()!.unpriced > 0}>
                         <span class="text-warning">{g()!.unpriced} 步无金额快照，合计为部分和</span>
@@ -1628,7 +1752,8 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
         if (props.turnId && u) void localChatStore.refreshUsage(u);
     });
     const rows = () => (props.turnId ? localChatStore.usage.filter((r) => r.turnId === props.turnId) : []);
-    const group = () => (props.turnId ? groupByTurn(localChatStore.usage).find((g) => g.turnId === props.turnId) ?? null : null);
+    const group = () =>
+        props.turnId ? (groupByTurn(localChatStore.usage).find((g) => g.turnId === props.turnId) ?? null) : null;
     const clock = () => (props.turnId ? fmtTurnStamp(props.turnId) : null);
     /** 表格 / MD 源码 / 账本源码（两键皆不亮 = 表格；再点已亮键回表格） */
     const [fmtView, setFmtView] = createSignal<"table" | "md" | "raw">("table");
@@ -1636,7 +1761,10 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
     /** MD 导出与表格同一份列定义（`usageTableMd`），不再各写一套表头 */
     const mdText = () =>
         props.turnId ? usageTableMd(localChatStore.usage, "step", { field: "turnId", value: props.turnId }) : "";
-    const rawText = () => rows().map((r) => JSON.stringify(r)).join("\n");
+    const rawText = () =>
+        rows()
+            .map((r) => JSON.stringify(r))
+            .join("\n");
 
     const DM = useDrawerMax();
     return (
@@ -1647,7 +1775,8 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
             <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
-                    class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}
+                    class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl"
+                    style={DM.style()}
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div class={`flex shrink-0 items-center gap-2 border-b px-4 ${VIEW_BAR_H}`}>
@@ -1666,35 +1795,42 @@ export function TurnUsageDetailDrawer(props: { turnId: string | null; live: bool
                         </button>
                     </div>
                     <div class="min-h-0 flex-1 overflow-auto p-4">
-                    <Show when={fmtView() === "table"} fallback={<FmtBody text={() => (fmtView() === "md" ? mdText() : rawText())} />}>
-                    <Show
-                        when={rows().length > 0}
-                        fallback={
-                            /* 两种"还没有记录"必须分开说 —— 把正常态说成故障会让人白查一圈（D1）：
+                        <Show
+                            when={fmtView() === "table"}
+                            fallback={<FmtBody text={() => (fmtView() === "md" ? mdText() : rawText())} />}
+                        >
+                            <Show
+                                when={rows().length > 0}
+                                fallback={
+                                    /* 两种"还没有记录"必须分开说 —— 把正常态说成故障会让人白查一圈（D1）：
                                · 本轮还在跑：账本按步追加，此刻可能确实还没落到文件 → 正常，等一下；
                                · 本轮已停：确实没有记录（会话早于用量落盘上线，或写入失败）。 */
-                            <div class="text-body opacity-50">
-                                {props.live
-                                    ? "本轮还在进行中，逐步账本按步写入，稍后即可见。"
-                                    : "这一轮没有逐步记录（该会话早于用量落盘上线，或账本写入失败）。"}
-                            </div>
-                        }
-                    >
-                        <TurnDetailSummary group={group()} />
-                        {/* 表 = 统一表的一个视图（group=step + turnId 过滤），不再有「本轮专用表」 */}
-                        <Show when={props.turnId}>
-                            {(id) => (
-                                <UsageTable rows={localChatStore.usage} view="step" filter={{ field: "turnId", value: id() }} />
-                            )}
+                                    <div class="text-body opacity-50">
+                                        {props.live
+                                            ? "本轮还在进行中，逐步账本按步写入，稍后即可见。"
+                                            : "这一轮没有逐步记录（该会话早于用量落盘上线，或账本写入失败）。"}
+                                    </div>
+                                }
+                            >
+                                <TurnDetailSummary group={group()} />
+                                {/* 表 = 统一表的一个视图（group=step + turnId 过滤），不再有「本轮专用表」 */}
+                                <Show when={props.turnId}>
+                                    {(id) => (
+                                        <UsageTable
+                                            rows={localChatStore.usage}
+                                            view="step"
+                                            filter={{ field: "turnId", value: id() }}
+                                        />
+                                    )}
+                                </Show>
+                                {/* 合计句式：等式写法是口径规范（禁止"输出 X · 思考 Y"并列句） */}
+                                <div class="mt-2 text-caption opacity-60">
+                                    合计$ = 非缓存$ + 缓存读$ + 缓存写$ + 文本$ + 思考$；思考是总输出的拆解子项，
+                                    <span class="font-medium">不重复加</span>。缓存写 `n/a` = 该 API 面不可测（不是
+                                    0）。 单价按**每步**当时的生效档算（同一轮内 tier 也可能翻档），故逐行给快照。
+                                </div>
+                            </Show>
                         </Show>
-                        {/* 合计句式：等式写法是口径规范（禁止"输出 X · 思考 Y"并列句） */}
-                        <div class="mt-2 text-caption opacity-60">
-                            合计$ = 非缓存$ + 缓存读$ + 缓存写$ + 文本$ + 思考$；思考是总输出的拆解子项，
-                            <span class="font-medium">不重复加</span>。缓存写 `n/a` = 该 API 面不可测（不是 0）。
-                            单价按**每步**当时的生效档算（同一轮内 tier 也可能翻档），故逐行给快照。
-                        </div>
-                    </Show>
-                    </Show>
                     </div>
                 </div>
             </div>
@@ -1770,14 +1906,29 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
         return list.length ? stepView(list[list.length - 1]!) : null;
     };
     const rate = () => (last() ? windowRate(last()!.buckets, last()!.record.contextLimit) : null);
-    const tiers = () => [...new Set(steps().map((r) => r.rates?.tier).filter((t): t is string => !!t))];
+    const tiers = () => [
+        ...new Set(
+            steps()
+                .map((r) => r.rates?.tier)
+                .filter((t): t is string => !!t),
+        ),
+    ];
     /** 时段档（峰/谷）——与上下文档位是**两轴**，分开显示（见 shared/usage.ts ratesOf） */
-    const windows = () => [...new Set(steps().map((r) => r.rates?.window).filter((t): t is string => !!t))];
+    const windows = () => [
+        ...new Set(
+            steps()
+                .map((r) => r.rates?.window)
+                .filter((t): t is string => !!t),
+        ),
+    ];
     /** 表格 / MD 源码 / 账本源码（两键皆不亮 = 表格；再点已亮键回表格） */
     const [fmtView, setFmtView] = createSignal<"table" | "md" | "raw">("table");
     const toggleFmt = (v: "md" | "raw") => setFmtView((x) => (x === v ? "table" : v));
     const mdText = () => usageTableMd(steps(), effView(), filter());
-    const rawText = () => steps().map((r) => JSON.stringify(r)).join("\n");
+    const rawText = () =>
+        steps()
+            .map((r) => JSON.stringify(r))
+            .join("\n");
 
     const GROUPS: { v: UsageView; label: string }[] = [
         { v: "step", label: "逐步" },
@@ -1794,7 +1945,8 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
             <div class="fixed inset-0 z-50 flex flex-col" data-find-surface onClick={props.onClose}>
                 <div class="absolute inset-0 bg-black/30" />
                 <div
-                    class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl" style={DM.style()}
+                    class="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-base-300 bg-base-100 shadow-2xl"
+                    style={DM.style()}
                     onClick={(e) => e.stopPropagation()}
                 >
                     <div class={`flex shrink-0 items-center gap-2 border-b px-4 ${VIEW_BAR_H}`}>
@@ -1822,82 +1974,91 @@ export function UsageDrawer(props: { open: boolean; uri: string | null; onClose:
                         </button>
                     </div>
                     <div class="min-h-0 flex-1 overflow-auto p-4">
-                    <Show when={fmtView() === "table"} fallback={<FmtBody text={() => (fmtView() === "md" ? mdText() : rawText())} />}>
-                    <Show
-                        when={steps().length > 0}
-                        fallback={
-                            <div class="text-body opacity-60">
-                                还没有用量记录。跑一轮本地 agent 后，每步会写入用量账本（详见应用日志）。
-                            </div>
-                        }
-                    >
-                        {/* 窗口占用：用户点名的「最重要的一个数」——距上限多远、何时该重置（不是表格字段） */}
-                        <div class="mb-3 rounded-box border border-base-300 p-3">
-                            <div class="mb-1 flex items-baseline justify-between">
-                                <span class="text-body opacity-70">窗口占用（= 总输入 + 总输出，取最近一步）</span>
-                                <span class={`text-prose font-medium ${pctClass(rate())}`}>{pctText(rate())}</span>
-                            </div>
-                            <progress
-                                class={`progress w-full ${rate() != null && rate()! >= 0.9 ? "progress-error" : rate() != null && rate()! >= 0.75 ? "progress-warning" : "progress-success"}`}
-                                value={Math.min(100, (rate() ?? 0) * 100)}
-                                max="100"
-                            />
-                            <div class="mt-1 text-body opacity-60">
-                                {last()
-                                    ? `${fmtInt(last()!.buckets.total)} / ${last()!.record.contextLimit ? fmtInt(last()!.record.contextLimit!) : "—"} tokens（= 总输入 ${fmtInt(last()!.buckets.inputTotal)} + 总输出 ${fmtInt(last()!.buckets.outputTotal)}）`
-                                    : "—"}
-                            </div>
-                        </div>
+                        <Show
+                            when={fmtView() === "table"}
+                            fallback={<FmtBody text={() => (fmtView() === "md" ? mdText() : rawText())} />}
+                        >
+                            <Show
+                                when={steps().length > 0}
+                                fallback={
+                                    <div class="text-body opacity-60">
+                                        还没有用量记录。跑一轮本地 agent 后，每步会写入用量账本（详见应用日志）。
+                                    </div>
+                                }
+                            >
+                                {/* 窗口占用：用户点名的「最重要的一个数」——距上限多远、何时该重置（不是表格字段） */}
+                                <div class="mb-3 rounded-box border border-base-300 p-3">
+                                    <div class="mb-1 flex items-baseline justify-between">
+                                        <span class="text-body opacity-70">
+                                            窗口占用（= 总输入 + 总输出，取最近一步）
+                                        </span>
+                                        <span class={`text-prose font-medium ${pctClass(rate())}`}>
+                                            {pctText(rate())}
+                                        </span>
+                                    </div>
+                                    <progress
+                                        class={`progress w-full ${rate() != null && rate()! >= 0.9 ? "progress-error" : rate() != null && rate()! >= 0.75 ? "progress-warning" : "progress-success"}`}
+                                        value={Math.min(100, (rate() ?? 0) * 100)}
+                                        max="100"
+                                    />
+                                    <div class="mt-1 text-body opacity-60">
+                                        {last()
+                                            ? `${fmtInt(last()!.buckets.total)} / ${last()!.record.contextLimit ? fmtInt(last()!.record.contextLimit!) : "—"} tokens（= 总输入 ${fmtInt(last()!.buckets.inputTotal)} + 总输出 ${fmtInt(last()!.buckets.outputTotal)}）`
+                                            : "—"}
+                                    </div>
+                                </div>
 
-                        {/* 面包屑：下钻后回得去（同一张表换参数，栈里只记「从哪来」） */}
-                        <Show when={stack().length > 0}>
-                            <div class="mb-2 flex flex-wrap items-center gap-1 text-caption" data-usage-crumbs>
-                                <button class="btn btn-ghost btn-xs" data-usage-back onClick={back}>
-                                    ← 返回
-                                </button>
-                                <span class="opacity-60">会话</span>
-                                <For each={stack()}>
-                                    {(t) => (
-                                        <>
-                                            <span class="opacity-40">›</span>
-                                            <span class="font-medium">{t.label}</span>
-                                        </>
-                                    )}
-                                </For>
-                            </div>
+                                {/* 面包屑：下钻后回得去（同一张表换参数，栈里只记「从哪来」） */}
+                                <Show when={stack().length > 0}>
+                                    <div class="mb-2 flex flex-wrap items-center gap-1 text-caption" data-usage-crumbs>
+                                        <button class="btn btn-ghost btn-xs" data-usage-back onClick={back}>
+                                            ← 返回
+                                        </button>
+                                        <span class="opacity-60">会话</span>
+                                        <For each={stack()}>
+                                            {(t) => (
+                                                <>
+                                                    <span class="opacity-40">›</span>
+                                                    <span class="font-medium">{t.label}</span>
+                                                </>
+                                            )}
+                                        </For>
+                                    </div>
+                                </Show>
+
+                                <div class="mb-1 text-caption opacity-60" data-usage-scope>
+                                    {effView() === "step" ? "每行一步（点「按轮」看合计；轮内明细从这里下钻）" : null}
+                                    {effView() === "turn" ? "每行一轮（点行看该轮逐步）" : null}
+                                    {effView() === "persona" ? "每行一个人物（点行看该人物的轮）" : null}
+                                    {effView() === "session" ? "整个会话一行（合计口径，与其余视图同源）" : null}
+                                    {effView() === "contextParts"
+                                        ? "每行一次请求的构成（字节÷4 估算，标 ~；高层不求和）"
+                                        : null}
+                                </div>
+
+                                <UsageTable
+                                    rows={steps()}
+                                    view={effView()}
+                                    filter={filter()}
+                                    compactEvents={compactPage()?.events ?? []}
+                                    boundary={boundary()}
+                                    onDrill={drill}
+                                />
+
+                                <div class="mt-2 text-caption opacity-60">
+                                    单价依据 models.dev
+                                    {steps().find((r) => r.rates?.asOf)?.rates?.asOf
+                                        ? `@${steps().find((r) => r.rates?.asOf)!.rates!.asOf}`
+                                        : ""}
+                                    {" · "}
+                                    生效档位：{tiers().length ? tiers().join(", ") : "—"}
+                                    {windows().length ? ` · 时段：${windows().join(", ")}` : ""}
+                                    <br />
+                                    `合计$` = 非缓存 + 缓存读 + 缓存写 + 文本 + 思考；思考是总输出的拆解子项，
+                                    <span class="font-medium">不重复加</span>。缓存写 `–` = 该 API 面不可测（不是 0）。
+                                </div>
+                            </Show>
                         </Show>
-
-                        <div class="mb-1 text-caption opacity-60" data-usage-scope>
-                            {effView() === "step" ? "每行一步（点「按轮」看合计；轮内明细从这里下钻）" : null}
-                            {effView() === "turn" ? "每行一轮（点行看该轮逐步）" : null}
-                            {effView() === "persona" ? "每行一个人物（点行看该人物的轮）" : null}
-                            {effView() === "session" ? "整个会话一行（合计口径，与其余视图同源）" : null}
-                            {effView() === "contextParts" ? "每行一次请求的构成（字节÷4 估算，标 ~；高层不求和）" : null}
-                        </div>
-
-                        <UsageTable
-                            rows={steps()}
-                            view={effView()}
-                            filter={filter()}
-                            compactEvents={compactPage()?.events ?? []}
-                            boundary={boundary()}
-                            onDrill={drill}
-                        />
-
-                        <div class="mt-2 text-caption opacity-60">
-                            单价依据 models.dev
-                            {steps().find((r) => r.rates?.asOf)?.rates?.asOf
-                                ? `@${steps().find((r) => r.rates?.asOf)!.rates!.asOf}`
-                                : ""}
-                            {" · "}
-                            生效档位：{tiers().length ? tiers().join(", ") : "—"}
-                            {windows().length ? ` · 时段：${windows().join(", ")}` : ""}
-                            <br />
-                            `合计$` = 非缓存 + 缓存读 + 缓存写 + 文本 + 思考；思考是总输出的拆解子项，
-                            <span class="font-medium">不重复加</span>。缓存写 `–` = 该 API 面不可测（不是 0）。
-                        </div>
-                    </Show>
-                    </Show>
                     </div>
                 </div>
             </div>

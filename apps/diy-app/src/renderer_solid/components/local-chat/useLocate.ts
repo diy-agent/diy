@@ -44,7 +44,17 @@ export interface LocateDeps {
 
 export function useLocate(d: LocateDeps) {
     // 依赖一律按名解构：搬出来的正文**逐字不动**（只把 `scrollRef` 换成 `d.scrollEl()`）。
-    const { uri, layout, writeScrollTop, anchorRowIndex, renderedTurnIds, setStick, histOpenOf, setFoldMarks, setPinned } = d;
+    const {
+        uri,
+        layout,
+        writeScrollTop,
+        anchorRowIndex,
+        renderedTurnIds,
+        setStick,
+        histOpenOf,
+        setFoldMarks,
+        setPinned,
+    } = d;
     // ─── 数据层检索的定位（##389）──────────────────────────────────────────────
     // 三条路（判据 = 目标轮在不在块树里 / 在不在窗口里）：
     //   ① 在树、只在窗口外 → 纯滚动（`scrollToTurn`，不碰数据）；
@@ -267,13 +277,20 @@ export function useLocate(d: LocateDeps) {
     const locateJobTarget = (t: ChatNavTarget) => {
         clearHitHighlight();
         // steer 锚点先翻译成 轮/块 —— 之后**只有一条**定位路径（不另写一套滚动/展开逻辑）
-        const resolved = t.turnId && t.blockId ? { turnId: t.turnId, blockId: t.blockId } : t.steerId ? steerAnchorOf(t.steerId) : null;
+        const resolved =
+            t.turnId && t.blockId
+                ? { turnId: t.turnId, blockId: t.blockId }
+                : t.steerId
+                  ? steerAnchorOf(t.steerId)
+                  : null;
         const fromInbox = t.origin === "inbox";
         if (localChatStore.view.live) {
             pendingBlockLocate = t;
             notificationStore.addToast(
                 "info",
-                resolved ? `这一轮正在生成：结束后自动定位到${fromInbox ? "那条留言" : "那次工具调用"}` : "这一轮正在生成：结束后再看你的留言",
+                resolved
+                    ? `这一轮正在生成：结束后自动定位到${fromInbox ? "那条留言" : "那次工具调用"}`
+                    : "这一轮正在生成：结束后再看你的留言",
                 chatNotice(
                     fromInbox ? "通知信箱 · 去来源会话（##436）" : "作业来源 · locateJobTarget（##408）",
                     resolved
@@ -293,15 +310,17 @@ export function useLocate(d: LocateDeps) {
                     fromInbox ? "通知信箱 · 去来源会话（##436）" : "作业来源 · locateJobTarget（##408）",
                     fromInbox
                         ? `留言锚点（steerId=${t.steerId ?? "无"}）在已加载的块树里找不到 —— 它插进的那一轮可能还没跑，或历史被压缩。` +
-                          "**视图未移动**；原文请回信箱面板读（那里存了未截断的留言）。"
+                              "**视图未移动**；原文请回信箱面板读（那里存了未截断的留言）。"
                         : `锚点 轮 ${t.turnId ?? "?"} / 块 ${t.blockId ?? "?"} 不在已加载的块树里（压缩历史或日志轮转）⇒ 视图**未移动**；` +
-                          "作业面板里的 settle 输出与 logs/<runId>.log 才是这次的原文",
+                              "作业面板里的 settle 输出与 logs/<runId>.log 才是这次的原文",
                     DETAIL_CHAT_FIND,
                 ),
             );
             return;
         }
-        const inTree = localChatStore.trees.some((tr) => tr.id === resolved.turnId || containsBlockId(tr, resolved.blockId));
+        const inTree = localChatStore.trees.some(
+            (tr) => tr.id === resolved.turnId || containsBlockId(tr, resolved.blockId),
+        );
         if (!inTree) {
             notificationStore.addToast(
                 "info",

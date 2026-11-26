@@ -31,6 +31,15 @@ export { isTruthy, falsyReason, resolvePath, resolveForOutput } from './scope.js
 export type { DynamicFrame, RenderContext } from './scope.js';
 
 export { analyze, analyzeNodes, collectDynamicRefs } from './analyze.js';
-export type { Analysis, AnalyzeOptions, ConditionRef, IncludeRef, LintIssue, LoopRef, PathRef, VarSpec } from './analyze.js';
+export type {
+    Analysis,
+    AnalyzeOptions,
+    ConditionRef,
+    IncludeRef,
+    LintIssue,
+    LoopRef,
+    PathRef,
+    VarSpec,
+} from './analyze.js';
 
 export type { ForNode, IfNode, IncludeArg, IncludeNode, InterpNode, Node, TagNode, TextNode } from './ast.js';

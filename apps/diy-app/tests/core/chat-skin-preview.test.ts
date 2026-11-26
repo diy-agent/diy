@@ -32,121 +32,126 @@ const preview = readFileSync(resolve(appDir, "../../pkgs.ts/ui/kit/src/ChatSkinP
  * 故直接切到 EOF；它一旦不再是最后一段，这里会连带失败（比静默漏检好）。
  */
 function skinSelectorBlock(): string {
-  const start = css.indexOf('[data-skin="card"]');
-  expect(start, "index.css 里找不到 [data-skin] 段").toBeGreaterThan(-1);
-  return css.slice(start);
+    const start = css.indexOf('[data-skin="card"]');
+    expect(start, "index.css 里找不到 [data-skin] 段").toBeGreaterThan(-1);
+    return css.slice(start);
 }
 
 describe("皮肤小样（ChatSkinPreview）与 index.css 规则一致", () => {
-  it("`[data-skin]` 段用到的每个 data 钩子都在小样里出现", () => {
-    const block = skinSelectorBlock();
-    const hooks = new Set<string>();
-    for (const m of block.matchAll(/\[(data-[a-z-]+)(?:=["'][^"']*["'])?\]/g)) hooks.add(m[1]!);
-    expect(hooks.size).toBeGreaterThan(0);
-    const missing = [...hooks].filter((h) => !preview.includes(h));
-    expect(missing, `小样缺这些钩子（切皮肤时小样不会变）：${missing.join(", ")}`).toEqual([]);
-  });
-
-  it("小样带 `diy-chat` scope 类（皮肤变量与规则都挂在它下面）", () => {
-    // css 的 [data-skin] 规则全部限定在 `.diy-chat` 内 ⇒ 小样没这个类就一条都不命中
-    const block = skinSelectorBlock();
-    expect(block).toContain(".diy-chat");
-    // 允许类名在 class 字符串里（如 class="diy-chat …"）
-    expect(preview).toMatch(/class=[^>]*diy-chat/);
-  });
-
-  it("卡 = `[data-block-id]` 那块**自己**（形状不挂在行头上）", () => {
-    // 2026-10-12 用户 R6：「v4 卡片是包含形式的，现在是缩紧单卡」—— 卡必须挂在块上，
-    // 才可能把"展开后的正文与子层"包在里面；挂在行头上就只剩一行高。
-    // 反面判据：不许再把卡画在 `[data-block-tag="proc-bar"] > [role="button"]` 上。
-    const block = skinSelectorBlock();
-    expect(block).toMatch(/\[data-skin="card"\] \.diy-chat \[data-block-id\]/);
-    expect(block).not.toContain('> [role="button"]');
-    expect(preview).toMatch(/data-block-tag="proc-bar"[\s\S]{0,200}data-proc-children/);
-  });
-
-  it("小样覆盖两个吃色态（data-failing / data-has-error），否则看不出「只有错误吃色」", () => {
-    expect(preview).toContain("data-failing");
-    expect(preview).toContain("data-has-error");
-  });
-
-  it("折叠条是**一根条**（条里嵌图标）：一个点击区，不拆两件", () => {
-    // 2026-10-12 用户 R6：「竖 bar 和折叠箭头是分离的，这样有 2 个点击区」——
-    // 拆两件（贴条锚块、图标锚行头）时行头被卡内留白推右 16px，同一行的条与箭头错开一格。
-    // 判据：小样里 `[data-row-band]` 必须**包住** `[data-row-handle]`（同嵌套才是同形状）。
-    expect(preview).toMatch(/data-row-band[\s\S]{0,120}data-row-handle/);
-    // 条整块高 + 图标由一个**常数**定首行居中（两皮肤同一套：见 `.diy-chat` 上的两个变量）
-    const block = skinSelectorBlock();
-    expect(block).toMatch(/\[data-row-band\][\s\S]{0,200}top: 0;[\s\S]{0,80}bottom: 0;/);
-    expect(block).toMatch(/--diy-gut-top/);
-  });
-
-  it("小样给出**折叠条列**与**子层容器**（行首留白 / 层级缩进的落点）", () => {
-    // 这两条是 2026-10-12 用户口径的落点：小样少了任何一个，设置页里就"看着没变"
-    expect(preview).toMatch(/data-row-band/);
-    expect(preview).toMatch(/data-row-head/);
-    expect(preview).toMatch(/data-proc-children/);
-    // 行头必须**真在**块里（与真实 DOM 同嵌套），只写两个属性不算 —— 小样的价值是形状一致
-    expect(preview).toMatch(/data-block-id[\s\S]{0,400}data-row-head/);
-  });
-
-  // review ##253 RV-4：同一行的开合动作**不该有两个 tab 停靠点**。
-  // 故条默认 `aria-hidden` + 不进 tab 序，只有"行头不是控件"的正文行才传 `sole`。
-  it("折叠条默认**不进 tab 序**（键盘/读屏只认行头那一个开关）", () => {
-    const gutter = readFileSync(resolve(appDir, "../../pkgs.ts/ui/kit/src/RowGutter.tsx"), "utf8");
-    expect(gutter).toMatch(/const focusable = \(\) => can\(\) && !!props\.sole;/);
-    expect(gutter).toMatch(/tabindex=\{focusable\(\) \? 0 : undefined\}/);
-    expect(gutter).toMatch(/role=\{focusable\(\) \? "button" : undefined\}/);
-    expect(gutter).toMatch(/aria-hidden=\{focusable\(\) \? undefined : "true"\}/);
-    // `sole` 只有一个调用点：正文行（它的行头是正文本身，不是 DisclosureHead）
-    const chat = chatSource();
-    expect([...chat.matchAll(/sole=\{/g)].length, "sole 只该给正文行（行头没开关的那一行）").toBe(1);
-  });
-
-  // review ##253 RV-5 / RV-6 / 小项1：**纯函数绿 ≠ 接线对**。
-  // 这三处缺陷都在"组件喂给纯函数的东西"上 —— 单测直接喂对的输入，永远抓不到。
-  // 故这里对 `LocalChatPage.tsx` 做**接线断言**（本文件已有 `sole` 那一条同款先例）。
-  describe("接线：纯函数喂对了没有", () => {
-    const chat = chatSource();
-
-    it("RV-5：结束点的 tooltip 用 **turn** 算，不是用尾叶子算", () => {
-      // `endLeafTip` 读 `turn.attrs.endReason`，而 `EndLeafBox` 的 `node` 是尾叶子（还要拿去画
-      // `ProcBody`）—— 组件内自算会恒走"结束原因未知"那一支，连新记录也这么说（说反了）。
-      expect(chat, "tip 不能拿叶子算（endReason 只在 turn 上）").not.toMatch(/endLeafTip\(n\(\)\)/);
-      const at = chat.indexOf("<EndLeafBox");
-      const call = chat.slice(at, at + 400);
-      expect(call, "EndLeafBox 的 node 是尾叶子（它还要拿去画 ProcBody）").toMatch(/node=\{leafById\(/);
-      expect(call, "tip 由调用方用 turn 算好传进来").toMatch(/tip=\{endLeafTip\(t\(\)\)\}/);
+    it("`[data-skin]` 段用到的每个 data 钩子都在小样里出现", () => {
+        const block = skinSelectorBlock();
+        const hooks = new Set<string>();
+        for (const m of block.matchAll(/\[(data-[a-z-]+)(?:=["'][^"']*["'])?\]/g)) hooks.add(m[1]!);
+        expect(hooks.size).toBeGreaterThan(0);
+        const missing = [...hooks].filter((h) => !preview.includes(h));
+        expect(missing, `小样缺这些钩子（切皮肤时小样不会变）：${missing.join(", ")}`).toEqual([]);
     });
 
-    it("RV-6：正文行的折叠判据与 clampLines **同源**（不再按原始行数）", () => {
-      // 旧写法 `countLines(raw()) > props.lines` 与 `clampLines`（跳前导空行）不是一套
-      // ⇒ 以空行开头的正文给出一个"点开毫无变化"的箭头。
-      // 判据只留在 chat-fold 一处：组件里不许再有"原始行数"这套（注释里提到旧写法不算）
-      expect(chat, "第二套行数判据必须删掉").not.toMatch(/const countLines =/);
-      expect(chat, "canFold 不许再按原始行数判").not.toMatch(/canFold = \(\) => countLines/);
-      // 判据仍然是**同源**（`omitted` 来自 `clampLines`），但形式已从「每次调 clampLines」
-      // 改成「读 memo 的 `clamped()`」（##93 性能：原来 canFold 与 view 各算一次，每帧两遍全文 split）。
-      // 所以这里钉两件事：canFold 由 `omitted` 派生、且 `clamped` 确实来自 `clampLines`。
-      expect(chat, "canFold 必须读 clampLines 的 omitted").toMatch(/const canFold = \(\) => clamped\(\)\.omitted > 0;/);
-      expect(chat, "clamped 必须由 clampLines 算").toMatch(/clampLines\(raw\(\), props\.lines/);
+    it("小样带 `diy-chat` scope 类（皮肤变量与规则都挂在它下面）", () => {
+        // css 的 [data-skin] 规则全部限定在 `.diy-chat` 内 ⇒ 小样没这个类就一条都不命中
+        const block = skinSelectorBlock();
+        expect(block).toContain(".diy-chat");
+        // 允许类名在 class 字符串里（如 class="diy-chat …"）
+        expect(preview).toMatch(/class=[^>]*diy-chat/);
     });
 
-    it("小项1：直播中的正文**不承诺**可展开，条显示态取 `folded()`", () => {
-      // 直播中 `folded()` 恒 false（还没定稿）⇒ 条若写"收起"+箭头，点了当帧毫无变化。
-      expect(chat).toMatch(/can=\{canFold\(\) && b\(\)\.stopped\}/);
-      expect(chat).toMatch(/open=\{!folded\(\)\}/);
+    it("卡 = `[data-block-id]` 那块**自己**（形状不挂在行头上）", () => {
+        // 2026-10-12 用户 R6：「v4 卡片是包含形式的，现在是缩紧单卡」—— 卡必须挂在块上，
+        // 才可能把"展开后的正文与子层"包在里面；挂在行头上就只剩一行高。
+        // 反面判据：不许再把卡画在 `[data-block-tag="proc-bar"] > [role="button"]` 上。
+        const block = skinSelectorBlock();
+        expect(block).toMatch(/\[data-skin="card"\] \.diy-chat \[data-block-id\]/);
+        expect(block).not.toContain('> [role="button"]');
+        expect(preview).toMatch(/data-block-tag="proc-bar"[\s\S]{0,200}data-proc-children/);
     });
-  });
 
-  it("小样覆盖条与行头的**两种真实结构**（别只看一种就以为结构统一）", () => {
-    // CDP 实测真实 DOM 两种都有：人物栏把条**放进**行头里；过程行 / 正文行是**同层兄弟**。
-    // 小样两种都要有 —— 否则"小样显示的差异"不等于"真实的差异"（本文件的第一原则）。
-    const row = preview.slice(preview.indexOf("function ProcRow"), preview.indexOf("export function ChatSkinPreview"));
-    expect(row, "过程行：条与行头同层（条在前）").toMatch(/<Gutter[\s\S]{0,200}data-row-head/);
-    // `lastIndexOf`：头注里也提过这个钩子名，取 JSX 那一处
-    const at = preview.lastIndexOf('data-testid="turn-header"');
-    const head = preview.slice(at, preview.indexOf("</div>", at));
-    expect(head, "人物栏：条嵌在行头里").toMatch(/data-row-head=[\s\S]{0,400}<Gutter/);
-  });
+    it("小样覆盖两个吃色态（data-failing / data-has-error），否则看不出「只有错误吃色」", () => {
+        expect(preview).toContain("data-failing");
+        expect(preview).toContain("data-has-error");
+    });
+
+    it("折叠条是**一根条**（条里嵌图标）：一个点击区，不拆两件", () => {
+        // 2026-10-12 用户 R6：「竖 bar 和折叠箭头是分离的，这样有 2 个点击区」——
+        // 拆两件（贴条锚块、图标锚行头）时行头被卡内留白推右 16px，同一行的条与箭头错开一格。
+        // 判据：小样里 `[data-row-band]` 必须**包住** `[data-row-handle]`（同嵌套才是同形状）。
+        expect(preview).toMatch(/data-row-band[\s\S]{0,120}data-row-handle/);
+        // 条整块高 + 图标由一个**常数**定首行居中（两皮肤同一套：见 `.diy-chat` 上的两个变量）
+        const block = skinSelectorBlock();
+        expect(block).toMatch(/\[data-row-band\][\s\S]{0,200}top: 0;[\s\S]{0,80}bottom: 0;/);
+        expect(block).toMatch(/--diy-gut-top/);
+    });
+
+    it("小样给出**折叠条列**与**子层容器**（行首留白 / 层级缩进的落点）", () => {
+        // 这两条是 2026-10-12 用户口径的落点：小样少了任何一个，设置页里就"看着没变"
+        expect(preview).toMatch(/data-row-band/);
+        expect(preview).toMatch(/data-row-head/);
+        expect(preview).toMatch(/data-proc-children/);
+        // 行头必须**真在**块里（与真实 DOM 同嵌套），只写两个属性不算 —— 小样的价值是形状一致
+        expect(preview).toMatch(/data-block-id[\s\S]{0,400}data-row-head/);
+    });
+
+    // review ##253 RV-4：同一行的开合动作**不该有两个 tab 停靠点**。
+    // 故条默认 `aria-hidden` + 不进 tab 序，只有"行头不是控件"的正文行才传 `sole`。
+    it("折叠条默认**不进 tab 序**（键盘/读屏只认行头那一个开关）", () => {
+        const gutter = readFileSync(resolve(appDir, "../../pkgs.ts/ui/kit/src/RowGutter.tsx"), "utf8");
+        expect(gutter).toMatch(/const focusable = \(\) => can\(\) && !!props\.sole;/);
+        expect(gutter).toMatch(/tabindex=\{focusable\(\) \? 0 : undefined\}/);
+        expect(gutter).toMatch(/role=\{focusable\(\) \? "button" : undefined\}/);
+        expect(gutter).toMatch(/aria-hidden=\{focusable\(\) \? undefined : "true"\}/);
+        // `sole` 只有一个调用点：正文行（它的行头是正文本身，不是 DisclosureHead）
+        const chat = chatSource();
+        expect([...chat.matchAll(/sole=\{/g)].length, "sole 只该给正文行（行头没开关的那一行）").toBe(1);
+    });
+
+    // review ##253 RV-5 / RV-6 / 小项1：**纯函数绿 ≠ 接线对**。
+    // 这三处缺陷都在"组件喂给纯函数的东西"上 —— 单测直接喂对的输入，永远抓不到。
+    // 故这里对 `LocalChatPage.tsx` 做**接线断言**（本文件已有 `sole` 那一条同款先例）。
+    describe("接线：纯函数喂对了没有", () => {
+        const chat = chatSource();
+
+        it("RV-5：结束点的 tooltip 用 **turn** 算，不是用尾叶子算", () => {
+            // `endLeafTip` 读 `turn.attrs.endReason`，而 `EndLeafBox` 的 `node` 是尾叶子（还要拿去画
+            // `ProcBody`）—— 组件内自算会恒走"结束原因未知"那一支，连新记录也这么说（说反了）。
+            expect(chat, "tip 不能拿叶子算（endReason 只在 turn 上）").not.toMatch(/endLeafTip\(n\(\)\)/);
+            const at = chat.indexOf("<EndLeafBox");
+            const call = chat.slice(at, at + 400);
+            expect(call, "EndLeafBox 的 node 是尾叶子（它还要拿去画 ProcBody）").toMatch(/node=\{leafById\(/);
+            expect(call, "tip 由调用方用 turn 算好传进来").toMatch(/tip=\{endLeafTip\(t\(\)\)\}/);
+        });
+
+        it("RV-6：正文行的折叠判据与 clampLines **同源**（不再按原始行数）", () => {
+            // 旧写法 `countLines(raw()) > props.lines` 与 `clampLines`（跳前导空行）不是一套
+            // ⇒ 以空行开头的正文给出一个"点开毫无变化"的箭头。
+            // 判据只留在 chat-fold 一处：组件里不许再有"原始行数"这套（注释里提到旧写法不算）
+            expect(chat, "第二套行数判据必须删掉").not.toMatch(/const countLines =/);
+            expect(chat, "canFold 不许再按原始行数判").not.toMatch(/canFold = \(\) => countLines/);
+            // 判据仍然是**同源**（`omitted` 来自 `clampLines`），但形式已从「每次调 clampLines」
+            // 改成「读 memo 的 `clamped()`」（##93 性能：原来 canFold 与 view 各算一次，每帧两遍全文 split）。
+            // 所以这里钉两件事：canFold 由 `omitted` 派生、且 `clamped` 确实来自 `clampLines`。
+            expect(chat, "canFold 必须读 clampLines 的 omitted").toMatch(
+                /const canFold = \(\) => clamped\(\)\.omitted > 0;/,
+            );
+            expect(chat, "clamped 必须由 clampLines 算").toMatch(/clampLines\(raw\(\), props\.lines/);
+        });
+
+        it("小项1：直播中的正文**不承诺**可展开，条显示态取 `folded()`", () => {
+            // 直播中 `folded()` 恒 false（还没定稿）⇒ 条若写"收起"+箭头，点了当帧毫无变化。
+            expect(chat).toMatch(/can=\{canFold\(\) && b\(\)\.stopped\}/);
+            expect(chat).toMatch(/open=\{!folded\(\)\}/);
+        });
+    });
+
+    it("小样覆盖条与行头的**两种真实结构**（别只看一种就以为结构统一）", () => {
+        // CDP 实测真实 DOM 两种都有：人物栏把条**放进**行头里；过程行 / 正文行是**同层兄弟**。
+        // 小样两种都要有 —— 否则"小样显示的差异"不等于"真实的差异"（本文件的第一原则）。
+        const row = preview.slice(
+            preview.indexOf("function ProcRow"),
+            preview.indexOf("export function ChatSkinPreview"),
+        );
+        expect(row, "过程行：条与行头同层（条在前）").toMatch(/<Gutter[\s\S]{0,200}data-row-head/);
+        // `lastIndexOf`：头注里也提过这个钩子名，取 JSX 那一处
+        const at = preview.lastIndexOf('data-testid="turn-header"');
+        const head = preview.slice(at, preview.indexOf("</div>", at));
+        expect(head, "人物栏：条嵌在行头里").toMatch(/data-row-head=[\s\S]{0,400}<Gutter/);
+    });
 });

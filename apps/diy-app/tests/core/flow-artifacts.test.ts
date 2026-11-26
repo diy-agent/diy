@@ -79,7 +79,10 @@ describe("产物取数：逐驻留（##320 review1 P1-1）", () => {
             throw new Error("调用炸了"); // 命令在但出错
         });
         expect(out[visitKey("implement", 1)]).toEqual({ kind: "none" });
-        expect(out[visitKey("review", 1)]).toEqual({ kind: "unavailable", reason: "主进程未提供 `diy flow view` 命令（##337 未合入）" });
+        expect(out[visitKey("review", 1)]).toEqual({
+            kind: "unavailable",
+            reason: "主进程未提供 `diy flow view` 命令（##337 未合入）",
+        });
         expect(out[visitKey("ci", 1)]).toEqual({ kind: "unavailable", reason: "调用炸了" });
     });
 

@@ -33,8 +33,8 @@
 //     outputClipChars 6000 兜着，实测单块 ≤1.1MB、单轮 ≤8.7MB），放开限制后窗口会退化
 //     → 终局方案（固定 step 数 + 补桩）或 appender 侧分段闭合。
 //   · 轮首也非 100% 干净：t184 有 8 条跨轮 `stop 未知块`（无害，由「忽略并记 issue」的既有策略覆盖）。
-import { createHash } from "node:crypto";
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { createHash } from 'node:crypto';
+import { closeSync, openSync, readSync, statSync } from 'node:fs';
 
 /**
  * 轮首行的字面前缀（`JSON.stringify({op,id,kind,...})` ⇒ 键序 op → id → …）。
@@ -49,7 +49,7 @@ export const SEEK_CHUNK_BYTES = 256 * 1024;
 /** 单行读取上限 —— 轮首行只带 meta（model/reasoningEffort），几百字节；超了就不可能是轮首行。 */
 const MAX_LINE_BYTES = 64 * 1024;
 
-const NEEDLE = Buffer.from(TURN_PREFIX, "utf-8");
+const NEEDLE = Buffer.from(TURN_PREFIX, 'utf-8');
 
 /** 读 `[from, to)` 的全部字节。**必须循环读满**：短读（信号打断）会把 `allocUnsafe` 的未初始化区
  *  当数据（与 local-agent 的 readOpsRange 同策略，那里踩过"永久跳掉一段对话"的坑）。 */
@@ -69,9 +69,9 @@ function readRange(fd: number, from: number, to: number): Buffer {
 function readLineAt(fd: number, at: number): string {
     const buf = Buffer.allocUnsafe(MAX_LINE_BYTES);
     const got = readSync(fd, buf, 0, MAX_LINE_BYTES, at);
-    if (got <= 0) return "";
+    if (got <= 0) return '';
     const nl = buf.subarray(0, got).indexOf(0x0a);
-    return buf.subarray(0, nl < 0 ? got : nl).toString("utf-8");
+    return buf.subarray(0, nl < 0 ? got : nl).toString('utf-8');
 }
 
 /** 单字节（越界返回 -1）—— 仅用于块边界处判断"命中点是不是行首"。 */
@@ -93,7 +93,7 @@ function isTurnStartLine(fd: number, at: number): boolean {
     if (!line) return false;
     try {
         const op = JSON.parse(line) as { op?: unknown; kind?: unknown };
-        return op.op === "start" && op.kind === "turn";
+        return op.op === 'start' && op.kind === 'turn';
     } catch {
         return false; // 半行 / 被截断 / 内容行
     }
@@ -118,7 +118,7 @@ export function seekTurnStartAtOrBefore(fp: string, targetOffset: number): numbe
     }
     if (size <= 0) return 0;
     const target = Math.min(targetOffset, size);
-    const fd = openSync(fp, "r");
+    const fd = openSync(fp, 'r');
     try {
         // 右界取 `target + needle` 而非 `target`：候选**允许恰好在 target**（此时窗口 = 预算），
         // 而判定一条模式要读到它的完整字节（开区间会漏掉正好压在 target 上的轮首）。
@@ -132,8 +132,7 @@ export function seekTurnStartAtOrBefore(fp: string, targetOffset: number): numbe
                 const hit = buf.lastIndexOf(NEEDLE, Math.min(pos - 1, buf.length - 1));
                 if (hit < 0) break;
                 const at = from + hit;
-                if (at <= target && isLineStart(fd, buf, from, hit) && isTurnStartLine(fd, at))
-                    return at;
+                if (at <= target && isLineStart(fd, buf, from, hit) && isTurnStartLine(fd, at)) return at;
                 pos = hit; // 继续往左找
             }
             if (from === 0) return 0; // 找到文件头都没有轮首 → 全量（安全降级）
@@ -203,19 +202,19 @@ interface CursorBody {
 /** 文件前 4KB 的短指纹（读不到 ⇒ 空串，token 必然判失效）。 */
 function fileSig(fp: string): string {
     try {
-        const fd = openSync(fp, "r");
+        const fd = openSync(fp, 'r');
         try {
             const buf = Buffer.allocUnsafe(CURSOR_SIG_BYTES);
             const got = readSync(fd, buf, 0, CURSOR_SIG_BYTES, 0);
-            return createHash("sha256")
+            return createHash('sha256')
                 .update(buf.subarray(0, Math.max(0, got)))
-                .digest("hex")
+                .digest('hex')
                 .slice(0, 16);
         } finally {
             closeSync(fd);
         }
     } catch {
-        return "";
+        return '';
     }
 }
 
@@ -231,7 +230,7 @@ export function encodeCursor(fp: string, at: number): string {
         /* 文件不在 = size 0；sig 也是空串，token 必然判失效 */
     }
     const body: CursorBody = { v: CURSOR_V, at, size, sig: fileSig(fp) };
-    return Buffer.from(JSON.stringify(body), "utf-8").toString("base64url");
+    return Buffer.from(JSON.stringify(body), 'utf-8').toString('base64url');
 }
 
 /**
@@ -246,13 +245,13 @@ export function encodeCursor(fp: string, at: number): string {
 export function decodeCursor(token: string, fp: string): number | null {
     let body: CursorBody;
     try {
-        body = JSON.parse(Buffer.from(token, "base64url").toString("utf-8")) as CursorBody;
+        body = JSON.parse(Buffer.from(token, 'base64url').toString('utf-8')) as CursorBody;
     } catch {
         return null;
     }
     if (body?.v !== CURSOR_V) return null;
-    if (typeof body.at !== "number" || !Number.isInteger(body.at) || body.at < 0) return null;
-    if (typeof body.size !== "number") return null;
+    if (typeof body.at !== 'number' || !Number.isInteger(body.at) || body.at < 0) return null;
+    if (typeof body.size !== 'number') return null;
     let sizeNow: number;
     try {
         sizeNow = statSync(fp).size;
@@ -268,7 +267,7 @@ export function decodeCursor(token: string, fp: string): number | null {
 export function isTurnStartAt(fp: string, at: number): boolean {
     let fd: number;
     try {
-        fd = openSync(fp, "r");
+        fd = openSync(fp, 'r');
     } catch {
         return false;
     }

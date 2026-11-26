@@ -42,7 +42,9 @@ function seedHome(opts: { withGoatConfig?: boolean } = {}): string {
         join(home, "model.yaml"),
         yaml.dump({
             stdProviders: { "opencode-go": { accounts: [{ type: "apiKey", data: { value: "sk-x" } }] } },
-            ...(opts.withGoatConfig ? { customProviders: { goat: { accounts: [{ type: "apiKey", data: { value: "sk-y" } }] } } } : {}),
+            ...(opts.withGoatConfig
+                ? { customProviders: { goat: { accounts: [{ type: "apiKey", data: { value: "sk-y" } }] } } }
+                : {}),
         }),
     );
     return home;
@@ -107,17 +109,41 @@ describe("setCost — custom spec 落点", () => {
 
     it("合并语义：只改给的字段，其余保持", () => {
         const home = seedHome();
-        setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", input: 1, output: 2, cacheRead: 0.1 });
+        setModelCost(home, {
+            provider: "custom:goat",
+            model: "gpt-5.5",
+            target: "auto",
+            input: 1,
+            output: 2,
+            cacheRead: 0.1,
+        });
         const r = setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", output: 3 });
         expect(r.cost).toEqual({ input: 1, output: 3, cache_read: 0.1 });
     });
 
     it("--clear-fields 清字段；全清后整个 cost 块删除（不留 cost: {}）", () => {
         const home = seedHome();
-        setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", input: 1, output: 2, baseLabel: "x" });
-        let r = setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", clearFields: ["cache_read"] });
+        setModelCost(home, {
+            provider: "custom:goat",
+            model: "gpt-5.5",
+            target: "auto",
+            input: 1,
+            output: 2,
+            baseLabel: "x",
+        });
+        let r = setModelCost(home, {
+            provider: "custom:goat",
+            model: "gpt-5.5",
+            target: "auto",
+            clearFields: ["cache_read"],
+        });
         expect(r.cost).toEqual({ input: 1, output: 2, baseLabel: "x" });
-        r = setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", clearFields: ["input", "output", "baseLabel"] });
+        r = setModelCost(home, {
+            provider: "custom:goat",
+            model: "gpt-5.5",
+            target: "auto",
+            clearFields: ["input", "output", "baseLabel"],
+        });
         expect(r.cost).toBeNull();
         expect(r.effective).toBeNull();
         expect(loadCustomSpecs(home)["goat"]?.models?.["gpt-5.5"]?.cost).toBeUndefined();
@@ -127,8 +153,24 @@ describe("setCost — custom spec 落点", () => {
         const home = seedHome();
         setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", input: 1, output: 2 });
         setModelTiers(home, {
-            provider: "custom:goat", model: "gpt-5.5", target: "auto",
-            tiers: [{ input: 5, output: 6, tier: { type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: "CN-business-day", label: "peak" } } }],
+            provider: "custom:goat",
+            model: "gpt-5.5",
+            target: "auto",
+            tiers: [
+                {
+                    input: 5,
+                    output: 6,
+                    tier: {
+                        type: "utc-range",
+                        data: {
+                            start: "01:00:00+08:00",
+                            end: "04:00:00+08:00",
+                            calendar: "CN-business-day",
+                            label: "peak",
+                        },
+                    },
+                },
+            ],
         });
         const r = setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", clear: true });
         expect(r.cost).toBeNull();
@@ -138,14 +180,21 @@ describe("setCost — custom spec 落点", () => {
 
     it("没给任何字段 → 拒绝（不静默成功）", () => {
         const home = seedHome();
-        expect(() => setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto" })).toThrow(/没有要改的字段/);
+        expect(() => setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto" })).toThrow(
+            /没有要改的字段/,
+        );
     });
 });
 
 describe("setCost — std 覆盖落点", () => {
     it("首次写覆盖以 spec 价为基线（只填 input 不丢 models.dev 的输出/缓存价）", () => {
         const home = seedHome();
-        const r = setModelCost(home, { provider: "opencode-go", model: "deepseek-v4.1-flash", target: "auto", input: 0.9 });
+        const r = setModelCost(home, {
+            provider: "opencode-go",
+            model: "deepseek-v4.1-flash",
+            target: "auto",
+            input: 0.9,
+        });
         expect(r.target).toBe("override");
         expect(r.file).toBe(join(home, "model.yaml"));
         expect(r.seededFromSpec).toBe(true);
@@ -159,7 +208,12 @@ describe("setCost — std 覆盖落点", () => {
     it("--clear 后回退 spec 价（effective 看得到回退，cost 为 null）", () => {
         const home = seedHome();
         setModelCost(home, { provider: "opencode-go", model: "deepseek-v4.1-flash", target: "auto", input: 0.9 });
-        const r = setModelCost(home, { provider: "opencode-go", model: "deepseek-v4.1-flash", target: "auto", clear: true });
+        const r = setModelCost(home, {
+            provider: "opencode-go",
+            model: "deepseek-v4.1-flash",
+            target: "auto",
+            clear: true,
+        });
         expect(r.cost).toBeNull();
         expect(r.effective?.input).toBe(0.15);
         expect(loadModelConfig(home).stdProviders["opencode-go"]?.models).toBeUndefined();
@@ -168,7 +222,13 @@ describe("setCost — std 覆盖落点", () => {
     it("override 存在时写 spec：effective 仍报 override 价（回执不许说谎 —— 生效的是覆盖）", () => {
         const home = seedHome({ withGoatConfig: true }); // 两个落点都可写
         setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "override", input: 9 });
-        const r = setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "spec", input: 1, output: 2 });
+        const r = setModelCost(home, {
+            provider: "custom:goat",
+            model: "gpt-5.5",
+            target: "spec",
+            input: 1,
+            output: 2,
+        });
         expect(r.target).toBe("spec");
         expect(r.cost?.input).toBe(1); // 该落点写进去了
         expect(r.effective?.input).toBe(9); // 但生效的仍是 override（override > spec）
@@ -176,24 +236,32 @@ describe("setCost — std 覆盖落点", () => {
 
     it("std 用 --target spec → 出声拒绝（models.dev 的价在 snapshot 里，改不了 spec）", () => {
         const home = seedHome();
-        expect(() => setModelCost(home, { provider: "opencode-go", model: "deepseek-v4.1-flash", target: "spec", input: 1 })).toThrow(/--target override/);
+        expect(() =>
+            setModelCost(home, { provider: "opencode-go", model: "deepseek-v4.1-flash", target: "spec", input: 1 }),
+        ).toThrow(/--target override/);
     });
 });
 
 describe("setCost — 误用与边界", () => {
     it("override 落点要求 provider 已在 model.yaml（无账号无从落）", () => {
         const home = seedHome(); // goat 未配置
-        expect(() => setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "override", input: 1 })).toThrow(/override 要有账号/);
+        expect(() =>
+            setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "override", input: 1 }),
+        ).toThrow(/override 要有账号/);
     });
 
     it("模型不在 spec 里 → 报错并给出可用 id（该走 override）", () => {
         const home = seedHome();
-        expect(() => setModelCost(home, { provider: "custom:goat", model: "nope", target: "auto", input: 1 })).toThrow(/gpt-5\.5/);
+        expect(() => setModelCost(home, { provider: "custom:goat", model: "nope", target: "auto", input: 1 })).toThrow(
+            /gpt-5\.5/,
+        );
     });
 
     it("不存在的 provider → 报错", () => {
         const home = seedHome();
-        expect(() => setModelCost(home, { provider: "custom:nope", model: "x", target: "auto", input: 1 })).toThrow(/不在 models.dev 收录里/);
+        expect(() => setModelCost(home, { provider: "custom:nope", model: "x", target: "auto", input: 1 })).toThrow(
+            /不在 models.dev 收录里/,
+        );
     });
 });
 
@@ -202,14 +270,21 @@ describe("setTiers", () => {
         input: 0.5,
         output: 3,
         cache_read: 0.1,
-        tier: { type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: "CN-business-day", label: "peak" } },
+        tier: {
+            type: "utc-range",
+            data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: "CN-business-day", label: "peak" },
+        },
     } as const;
     const ctx = { input: 1, output: 6, tier: { type: "context", data: { size: 128000 } } } as const;
 
     it("replace 只动 utc-range：**context 档原位保留**（写在它前面的还在前面）", () => {
         const home = seedHome();
         setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", tiers: [ctx, peak] });
-        const again = { ...peak, output: 9, tier: { type: "utc-range", data: { start: "05:00:00+08:00", end: "06:00:00+08:00", label: "peak2" } } } as const;
+        const again = {
+            ...peak,
+            output: 9,
+            tier: { type: "utc-range", data: { start: "05:00:00+08:00", end: "06:00:00+08:00", label: "peak2" } },
+        } as const;
         const r = setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", tiers: [again] });
         expect(r.tierCount).toBe(1);
         const tiers = loadCustomSpecs(home)["goat"]?.models?.["gpt-5.5"]?.cost?.tiers ?? [];
@@ -222,27 +297,46 @@ describe("setTiers", () => {
         const home = seedHome();
         setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", tiers: [ctx] });
         setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", tiers: [peak], append: true });
-        expect(loadCustomSpecs(home)["goat"]?.models?.["gpt-5.5"]?.cost?.tiers?.map((t) => t.tier?.type)).toEqual(["context", "utc-range"]);
+        expect(loadCustomSpecs(home)["goat"]?.models?.["gpt-5.5"]?.cost?.tiers?.map((t) => t.tier?.type)).toEqual([
+            "context",
+            "utc-range",
+        ]);
 
         const dropped = setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", drop: 0 });
         expect(dropped.tierCount).toBe(0);
-        expect(loadCustomSpecs(home)["goat"]?.models?.["gpt-5.5"]?.cost?.tiers?.map((t) => t.tier?.type)).toEqual(["context"]);
+        expect(loadCustomSpecs(home)["goat"]?.models?.["gpt-5.5"]?.cost?.tiers?.map((t) => t.tier?.type)).toEqual([
+            "context",
+        ]);
 
         setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", tiers: [peak], append: true });
         const cleared = setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", clear: true });
         expect(cleared.tierCount).toBe(0);
-        expect(loadCustomSpecs(home)["goat"]?.models?.["gpt-5.5"]?.cost?.tiers?.map((t) => t.tier?.type)).toEqual(["context"]);
+        expect(loadCustomSpecs(home)["goat"]?.models?.["gpt-5.5"]?.cost?.tiers?.map((t) => t.tier?.type)).toEqual([
+            "context",
+        ]);
     });
 
     it("三种模式必须给一个：都不给 / 给两个 → 报错", () => {
         const home = seedHome();
-        expect(() => setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto" })).toThrow(/三种模式只能给一个/);
-        expect(() => setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", tiers: [peak], clear: true })).toThrow(/三种模式只能给一个/);
+        expect(() => setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto" })).toThrow(
+            /三种模式只能给一个/,
+        );
+        expect(() =>
+            setModelTiers(home, {
+                provider: "custom:goat",
+                model: "gpt-5.5",
+                target: "auto",
+                tiers: [peak],
+                clear: true,
+            }),
+        ).toThrow(/三种模式只能给一个/);
     });
 
     it("drop 越界 → 报错（列出实际条数）", () => {
         const home = seedHome();
-        expect(() => setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", drop: 0 })).toThrow(/只有 0 条时段档/);
+        expect(() =>
+            setModelTiers(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", drop: 0 }),
+        ).toThrow(/只有 0 条时段档/);
     });
 });
 
@@ -252,8 +346,19 @@ describe("回执的 warnings（价会在哪类请求上算不出 / 算错）", (
         const r = setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", output: 2 });
         expect(r.warnings.join()).toMatch(/base 档缺完整价/);
         const r2 = setModelTiers(home, {
-            provider: "custom:goat", model: "gpt-5.5", target: "auto",
-            tiers: [{ input: 1, output: 2, tier: { type: "utc-range", data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: "Mars-business-day" } } }],
+            provider: "custom:goat",
+            model: "gpt-5.5",
+            target: "auto",
+            tiers: [
+                {
+                    input: 1,
+                    output: 2,
+                    tier: {
+                        type: "utc-range",
+                        data: { start: "01:00:00+08:00", end: "04:00:00+08:00", calendar: "Mars-business-day" },
+                    },
+                },
+            ],
         });
         expect(r2.warnings.join()).toMatch(/引用日历 Mars-business-day 不存在/);
         expect(r2.tierCount).toBe(1); // 保存仍成功（该窗永不命中，退 base 价）
@@ -261,7 +366,13 @@ describe("回执的 warnings（价会在哪类请求上算不出 / 算错）", (
 
     it("无价目 → 明说金额为 null（不是 0）", () => {
         const home = seedHome();
-        const r = setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", input: 1, output: 2 });
+        const r = setModelCost(home, {
+            provider: "custom:goat",
+            model: "gpt-5.5",
+            target: "auto",
+            input: 1,
+            output: 2,
+        });
         expect(r.warnings).toEqual([]);
         const cleared = setModelCost(home, { provider: "custom:goat", model: "gpt-5.5", target: "auto", clear: true });
         expect(cleared.warnings.join()).toMatch(/金额为 null/);

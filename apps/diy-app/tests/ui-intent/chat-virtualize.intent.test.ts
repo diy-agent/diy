@@ -101,7 +101,8 @@ const domStats = (): Promise<DomStats> =>
             ` heapMB: Math.round(((performance).memory?.usedJSHeapSize ?? 0) / 1048576) }; })()`,
     );
 
-const domTurns = () => ui.query<string[]>(`[...document.querySelectorAll('[data-turn-id]')].map(e => e.getAttribute('data-turn-id'))`);
+const domTurns = () =>
+    ui.query<string[]>(`[...document.querySelectorAll('[data-turn-id]')].map(e => e.getAttribute('data-turn-id'))`);
 
 const scrollTo = (top: number) =>
     ui.query<number>(
@@ -131,7 +132,11 @@ describe("大会话 DOM 虚拟化（##301）：渲染端", () => {
     it("首载：DOM 只装视口附近的轮，与总会话轮数无关", async () => {
         await ui.bringToFront();
         await fx.sh.getJson(`./diy.sh ui tab open ${uri}`);
-        await waitUntil(async () => (await domStats()).turns, (n) => n > 0, { label: "首载上屏" });
+        await waitUntil(
+            async () => (await domStats()).turns,
+            (n) => n > 0,
+            { label: "首载上屏" },
+        );
         const s = await domStats();
         console.log(`[##301] 首载：turns=${s.turns}/${TURNS} nodes=${s.nodes} heap=${s.heapMB}MB`);
         expect(s.turns).toBeGreaterThan(0);
@@ -179,7 +184,11 @@ describe("大会话 DOM 虚拟化（##301）：渲染端", () => {
         writeFileSync(fp2, buildOps(12), "utf-8");
 
         await fx.sh.getJson(`./diy.sh ui tab open ${uri2}`);
-        await waitUntil(async () => (await domStats()).turns, (n) => n > 0, { label: "小会话首载上屏" });
+        await waitUntil(
+            async () => (await domStats()).turns,
+            (n) => n > 0,
+            { label: "小会话首载上屏" },
+        );
         // 也滚到顶（补完全部段）—— 与非虚拟化版"上滚累积到全铺"是同一场景
         for (let i = 0; i < 12 + 2; i++) {
             const hasOlder = await ui.query<boolean>(`document.body.textContent.includes("上滚加载更早的消息")`);
@@ -188,7 +197,9 @@ describe("大会话 DOM 虚拟化（##301）：渲染端", () => {
             await new Promise((r) => setTimeout(r, 400));
         }
         const small = await domStats();
-        console.log(`[##301] 12 轮会话滚到顶：turns=${small.turns}/12 nodes=${small.nodes}；48 轮会话：nodes=${bigNodes}`);
+        console.log(
+            `[##301] 12 轮会话滚到顶：turns=${small.turns}/12 nodes=${small.nodes}；48 轮会话：nodes=${bigNodes}`,
+        );
         // 判据（本任务的验收线）：DOM 节点数**与会话轮数无关** ⇒ 两者同量级。
         // 非虚拟化版这里是 4 倍关系（12 轮 ≈ 360 节点 / 48 轮 ≈ 1441 节点）。
         expect(small.nodes).toBeGreaterThan(0);

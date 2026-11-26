@@ -117,7 +117,13 @@ describe('diy2.models.list', () => {
             { name: 'spare', configured: false },
         ]);
         expect(acme.models).toEqual([
-            { id: 'fast', name: 'Acme Fast', contextWindow: 128000, maxOutputTokens: 4096, cost: { input: 1, output: 2 } },
+            {
+                id: 'fast',
+                name: 'Acme Fast',
+                contextWindow: 128000,
+                maxOutputTokens: 4096,
+                cost: { input: 1, output: 2 },
+            },
         ]);
     });
 

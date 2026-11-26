@@ -27,11 +27,7 @@ import {
     errorReportKey,
     ErrorRateLimiter,
 } from "../../src/shared/error-report";
-import {
-    errorLogFile,
-    reportError,
-    resetErrorReportLimiter,
-} from "../../src/main/services/error-report";
+import { errorLogFile, reportError, resetErrorReportLimiter } from "../../src/main/services/error-report";
 import { collectTurn } from "../../src/main/services/room-service";
 import type { Op } from "../../src/main/services/local-blocks";
 import { localISOString } from "@diy-agent/time";

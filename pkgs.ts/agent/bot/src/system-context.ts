@@ -14,9 +14,9 @@
 //   · 有长度上限（缺省 8 KB），超了按优先级截断并**标注**
 //   · 组装失败**不抛**（降级为缺席）—— 上下文构造失败 = 人发不出消息
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve, sep } from 'node:path';
 
 /** 系统上下文的缺省字节上限（UTF-8）—— 与 diy-app 的 system 预算同量级 */
 export const SYSTEM_CONTEXT_MAX_BYTES = 8192;
@@ -50,7 +50,7 @@ export interface SystemContextResult {
     readonly omitted: readonly string[];
 }
 
-const EMPTY: SystemContextResult = { text: "", bytes: 0, chain: [], omitted: [] };
+const EMPTY: SystemContextResult = { text: '', bytes: 0, chain: [], omitted: [] };
 
 /**
  * AGENTS.md 链：从工作目录逐层向上到 `$HOME`，外层在前；再加 `$DIY_HOME/AGENTS.md`。
@@ -71,7 +71,7 @@ export function agentsChainOf(options: { home: string; cwd?: string }): AgentsFi
     const seen = new Set<string>();
     const files: string[] = [];
     for (let dir = start; ; dir = dirname(dir)) {
-        const file = join(dir, "AGENTS.md");
+        const file = join(dir, 'AGENTS.md');
         if (!seen.has(file) && existsSync(file)) {
             seen.add(file);
             files.push(file);
@@ -79,22 +79,22 @@ export function agentsChainOf(options: { home: string; cwd?: string }): AgentsFi
         if (dir === stop || dir === dirname(dir)) break;
     }
     files.reverse(); // 外层在前
-    const appLevel = join(options.home, "AGENTS.md");
+    const appLevel = join(options.home, 'AGENTS.md');
     if (!seen.has(appLevel) && existsSync(appLevel)) files.unshift(appLevel);
 
     const out: AgentsFileRef[] = [];
     for (const file of files) {
         const content = readText(file);
-        if (content !== "") out.push({ path: file, scope: dirname(file), content });
+        if (content !== '') out.push({ path: file, scope: dirname(file), content });
     }
     return out;
 }
 
 function readText(file: string): string {
     try {
-        return readFileSync(file, "utf-8").trim();
+        return readFileSync(file, 'utf-8').trim();
     } catch {
-        return "";
+        return '';
     }
 }
 
@@ -120,7 +120,7 @@ export function buildSystemContext(options: SystemContextOptions): SystemContext
         let used = 0;
         for (let i = 0; i < parts.length; i += 1) {
             const part = parts[i]!;
-            const cost = Buffer.byteLength(part.text, "utf-8") + 2; // +2 = 段间空行
+            const cost = Buffer.byteLength(part.text, 'utf-8') + 2; // +2 = 段间空行
             if (used + cost <= budget) {
                 kept.push(part.text);
                 used += cost;
@@ -134,11 +134,11 @@ export function buildSystemContext(options: SystemContextOptions): SystemContext
         if (omitted.length > 0) {
             // 截断必须**可见**：静默截断会让人以为「规则只有这些」
             kept.push(
-                `<!-- 系统上下文超过上限 ${String(budget)} 字节：已省略 ${String(omitted.length)} 段（${omitted.join("、")}） -->`,
+                `<!-- 系统上下文超过上限 ${String(budget)} 字节：已省略 ${String(omitted.length)} 段（${omitted.join('、')}） -->`,
             );
         }
-        const text = kept.join("\n\n");
-        return { text, bytes: Buffer.byteLength(text, "utf-8"), chain, omitted };
+        const text = kept.join('\n\n');
+        return { text, bytes: Buffer.byteLength(text, 'utf-8'), chain, omitted };
     } catch {
         // 组装失败 = 降级为缺席：上下文构造失败不该让人发不出消息
         return EMPTY;

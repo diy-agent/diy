@@ -9,9 +9,11 @@ import { httpHarness, channelHarness } from '../test/harness';
  * `/* ignore * /`。channel 侧 bidi 已发 `end{error: STREAM_ERROR}`。
  * 判据：上游迭代抛错后，输出流必须以错误落定，不得静默完成。
  */
-const api = RpcSchema.group({ children: {
-  echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.number(), chunkOut: z.number() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    echo: RpcSchema.bidiStream({ input: {}, chunkIn: z.number(), chunkOut: z.number() }),
+  },
+});
 
 async function* brokenChunks() {
   yield 1;
@@ -21,7 +23,7 @@ async function* brokenChunks() {
 async function run(name: string, harness: typeof httpHarness | typeof channelHarness) {
   const { binding, client, dispose } = await harness.start();
   const cli = createTypedClient(client, api);
-  binding._on("echo", api.echo, async function* ({ stream }) {
+  binding._on('echo', api.echo, async function* ({ stream }) {
     for await (const v of stream) yield v as number;
   });
   try {
@@ -45,7 +47,9 @@ async function main() {
   const channel = await run('channel', channelHarness);
   console.log('[bidi-upload-source-error]', { http, channel });
   if (http === 'SWALLOWED') {
-    console.error('FAIL: http bidi upload AsyncIterable error swallowed (clientStream fixed, bidi not)');
+    console.error(
+      'FAIL: http bidi upload AsyncIterable error swallowed (clientStream fixed, bidi not)',
+    );
     process.exitCode = 1;
   } else if (channel === 'SWALLOWED') {
     console.error('FAIL: channel bidi upload error swallowed');
@@ -55,4 +59,7 @@ async function main() {
   }
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

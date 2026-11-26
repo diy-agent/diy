@@ -8,14 +8,14 @@
 // 一次都没发生过，已删除（编造场景比没有场景更坏：会让下游为不存在的情况写防御代码）。
 
 // ── 正常路径（真模型录制）──
-export { textOnly } from "./gen/text-only.gen.js";
-export { think } from "./gen/think.gen.js";
-export { toolOk } from "./gen/tool-ok.gen.js";
-export { toolError } from "./gen/tool-error.gen.js";
-export { toolMultiStep } from "./gen/tool-multi-step.gen.js";
-export { abort } from "./gen/abort.gen.js";
+export { textOnly } from './gen/text-only.gen.js';
+export { think } from './gen/think.gen.js';
+export { toolOk } from './gen/tool-ok.gen.js';
+export { toolError } from './gen/tool-error.gen.js';
+export { toolMultiStep } from './gen/tool-multi-step.gen.js';
+export { abort } from './gen/abort.gen.js';
 
 // ── 错误路径（真实样本，按出现次数排序）──
-export { endpointUnavailable } from "./gen/endpoint-unavailable.gen.js"; // 429 server_error × 21
-export { reasoningNotPassed } from "./gen/reasoning-not-passed.gen.js";   // 400 invalid_request_error × 15（真 bug）
-export { rateLimit } from "./gen/rate-limit.gen.js";                      // 429 rate_limit_error × 3
+export { endpointUnavailable } from './gen/endpoint-unavailable.gen.js'; // 429 server_error × 21
+export { reasoningNotPassed } from './gen/reasoning-not-passed.gen.js'; // 400 invalid_request_error × 15（真 bug）
+export { rateLimit } from './gen/rate-limit.gen.js'; // 429 rate_limit_error × 3

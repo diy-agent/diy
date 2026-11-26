@@ -3,7 +3,10 @@ import { assertNoticeMeta, type NoticeMeta } from "../lib/notice";
 
 export type ToastType = "info" | "success" | "error";
 /** toast 上的一个动作按钮（##358 D3 的 `[回到]`）—— 提示不该逼用户自己去翻 nav */
-export interface ToastAction { label: string; onClick: () => void; }
+export interface ToastAction {
+    label: string;
+    onClick: () => void;
+}
 
 /**
  * 一条 toast。**除了文案，还必须带二级信息**（##391 R1）：
@@ -47,7 +50,11 @@ const aggregateKey = (source: string, message: string) => `${source}\u0000${mess
 function scheduleRemoval(id: string, duration: number): void {
     const old = timers.get(id);
     if (old !== undefined) clearTimeout(old);
-    if (duration > 0) timers.set(id, setTimeout(() => notificationStore.removeToast(id), duration));
+    if (duration > 0)
+        timers.set(
+            id,
+            setTimeout(() => notificationStore.removeToast(id), duration),
+        );
     else timers.delete(id);
 }
 
@@ -74,7 +81,9 @@ function push(t: Toast, duration: number, aggregate: boolean): string {
 }
 
 export const notificationStore = {
-    get toasts() { return toasts(); },
+    get toasts() {
+        return toasts();
+    },
     /**
      * 弹一条**带二级信息**的提示（##391 起这是唯一正路）。
      *

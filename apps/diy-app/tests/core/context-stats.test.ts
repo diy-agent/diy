@@ -49,7 +49,7 @@ describe("summarizeStats：聚合口径", () => {
     const records = [
         rec("2026-09-26T01:00:00Z", ["diy", "chain.0"]),
         rec("2026-09-26T02:00:00Z", ["chain.0"]),
-        rec("2026-09-26T03:00:00Z", []),                       // 没变的一轮：计入 turns，不计入任何 path
+        rec("2026-09-26T03:00:00Z", []), // 没变的一轮：计入 turns，不计入任何 path
         rec("2026-09-26T04:00:00Z", ["chain.0", "task.body"]),
     ];
 

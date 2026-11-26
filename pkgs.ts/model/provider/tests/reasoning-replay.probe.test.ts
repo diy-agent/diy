@@ -30,28 +30,28 @@
 // 留档策略：这条是**协议约束**（不是某次上游抽风），长期保留，不归档。
 // ═══════════════════════════════════════════════════════════════════════
 
-import { describe, expect, it, vi } from "vitest";
-import { streamText, type ModelMessage } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { ensureReasoningReplay } from "../src/reasoning-replay.js";
+import { describe, expect, it, vi } from 'vitest';
+import { streamText, type ModelMessage } from 'ai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { ensureReasoningReplay } from '../src/reasoning-replay.js';
 
 /** 真实会话里的两种 assistant 形态（取自 projects_4_tasks_402） */
 const withReasoning = (id: string): ModelMessage => ({
-    role: "assistant",
+    role: 'assistant',
     content: [
-        { type: "reasoning", text: "先看看目录结构" },
-        { type: "tool-call", toolCallId: id, toolName: "read", input: { path: "a.txt" } },
+        { type: 'reasoning', text: '先看看目录结构' },
+        { type: 'tool-call', toolCallId: id, toolName: 'read', input: { path: 'a.txt' } },
     ],
 });
 
 const withoutReasoning = (id: string): ModelMessage => ({
-    role: "assistant",
-    content: [{ type: "tool-call", toolCallId: id, toolName: "read", input: { path: "a.txt" } }],
+    role: 'assistant',
+    content: [{ type: 'tool-call', toolCallId: id, toolName: 'read', input: { path: 'a.txt' } }],
 });
 
 const toolResult = (id: string): ModelMessage => ({
-    role: "tool",
-    content: [{ type: "tool-result", toolCallId: id, toolName: "read", output: { type: "text", value: "内容" } }],
+    role: 'tool',
+    content: [{ type: 'tool-result', toolCallId: id, toolName: 'read', output: { type: 'text', value: '内容' } }],
 });
 
 /**
@@ -61,37 +61,37 @@ const toolResult = (id: string): ModelMessage => ({
  * 真的出现在 HTTP body 上，是 SDK 的实现细节 —— 升级可能变。这是唯一能证明修复有效的判据。
  */
 async function captureWire(messages: ModelMessage[]): Promise<{ role: string; reasoning_content?: unknown }[]> {
-    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
     let captured: { messages: { role: string; reasoning_content?: unknown }[] } | null = null;
     const provider = createOpenAICompatible({
-        name: "probe",
-        baseURL: "http://127.0.0.1:1/unreachable",
-        apiKey: "probe-no-key",
+        name: 'probe',
+        baseURL: 'http://127.0.0.1:1/unreachable',
+        apiKey: 'probe-no-key',
         transformRequestBody: (args) => {
             captured = args as unknown as { messages: { role: string; reasoning_content?: unknown }[] };
             return args;
         },
         fetch: (async () =>
-            new Response(JSON.stringify({ error: { message: "captured" } }), {
+            new Response(JSON.stringify({ error: { message: 'captured' } }), {
                 status: 400,
-                headers: { "content-type": "application/json" },
+                headers: { 'content-type': 'application/json' },
             })) as typeof fetch,
     });
     try {
-        const r = streamText({ model: provider("deepseek-v4.1-flash"), messages, maxRetries: 0 });
+        const r = streamText({ model: provider('deepseek-v4.1-flash'), messages, maxRetries: 0 });
         for await (const _ of r.fullStream) void _;
     } catch {
         /* 桩返回 400 ⇒ SDK 抛错，body 已到手 */
     }
     quiet.mockRestore();
-    if (captured === null) throw new Error("没截到 wire body");
+    if (captured === null) throw new Error('没截到 wire body');
     return captured.messages;
 }
 
-describe("probe：多步会话第 N 步 400", () => {
+describe('probe：多步会话第 N 步 400', () => {
     /** 造一段真实形状的多步历史：交替「有 reasoning / 无 reasoning」共 40 步 */
     function history(steps = 40): ModelMessage[] {
-        const out: ModelMessage[] = [{ role: "user", content: "把这个仓库的测试跑一遍" }];
+        const out: ModelMessage[] = [{ role: 'user', content: '把这个仓库的测试跑一遍' }];
         for (let i = 0; i < steps; i += 1) {
             out.push(i % 2 === 0 ? withReasoning(`c${i}`) : withoutReasoning(`c${i}`));
             out.push(toolResult(`c${i}`));
@@ -99,50 +99,50 @@ describe("probe：多步会话第 N 步 400", () => {
         return out;
     }
 
-    it("【核心】不修 ⇒ 无 reasoning 的 assistant 在 wire 上缺字段；修后 ⇒ 每条都有", async () => {
+    it('【核心】不修 ⇒ 无 reasoning 的 assistant 在 wire 上缺字段；修后 ⇒ 每条都有', async () => {
         const msgs = history();
         // 不修：直接发 —— 模拟 bug 发生时的状态
         const broken = await captureWire(msgs);
-        const brokenAssistants = broken.filter((m) => m.role === "assistant");
+        const brokenAssistants = broken.filter((m) => m.role === 'assistant');
         const missing = brokenAssistants.filter((m) => m.reasoning_content === undefined);
-        expect(missing.length, "对照组应当能看到「缺字段」的现象").toBeGreaterThan(0);
+        expect(missing.length, '对照组应当能看到「缺字段」的现象').toBeGreaterThan(0);
 
         // 修后：套 ensureReasoningReplay 再发
         const fixed = await captureWire(ensureReasoningReplay(msgs, { thinking: true, deepseek: true }));
-        const fixedAssistants = fixed.filter((m) => m.role === "assistant");
+        const fixedAssistants = fixed.filter((m) => m.role === 'assistant');
         expect(fixedAssistants.length).toBe(brokenAssistants.length); // 条数不变
         for (const m of fixedAssistants) {
-            expect(m.reasoning_content, "每条 assistant 在 wire 上都必须有 reasoning_content").toBeDefined();
+            expect(m.reasoning_content, '每条 assistant 在 wire 上都必须有 reasoning_content').toBeDefined();
         }
     });
 
-    it("有真思考的那条：wire 上是**真内容**，不是被覆盖成空串", async () => {
-        const msgs = [withReasoning("r1"), toolResult("r1")];
+    it('有真思考的那条：wire 上是**真内容**，不是被覆盖成空串', async () => {
+        const msgs = [withReasoning('r1'), toolResult('r1')];
         const wire = await captureWire(ensureReasoningReplay(msgs, { thinking: true, deepseek: true }));
-        const a = wire.find((m) => m.role === "assistant");
-        expect(typeof a?.reasoning_content).toBe("string");
-        expect(a?.reasoning_content).not.toBe("");
+        const a = wire.find((m) => m.role === 'assistant');
+        expect(typeof a?.reasoning_content).toBe('string');
+        expect(a?.reasoning_content).not.toBe('');
     });
 
     // 两条独立用例（不合并循环）：同一测试里连开两个 provider 时，第二个的
     // transformRequestBody 有时接不到 wire（SDK 内部对同 shape 请求有缓存），分开更稳。
-    it("非 thinking ⇒ 不补", async () => {
+    it('非 thinking ⇒ 不补', async () => {
         const msgs: ModelMessage[] = [
-            { role: "user", content: "读一下 a.txt" },
-            withoutReasoning("x1"),
-            toolResult("x1"), // tool-call 必须配对，否则 SDK 在 fetch 前就拒绝
+            { role: 'user', content: '读一下 a.txt' },
+            withoutReasoning('x1'),
+            toolResult('x1'), // tool-call 必须配对，否则 SDK 在 fetch 前就拒绝
         ];
         const wire = await captureWire(ensureReasoningReplay(msgs, { thinking: false, deepseek: true }));
-        expect(wire.find((m) => m.role === "assistant")?.reasoning_content).toBeUndefined();
+        expect(wire.find((m) => m.role === 'assistant')?.reasoning_content).toBeUndefined();
     });
 
-    it("非 deepseek ⇒ 不补（空串是否被接受只有 deepseek 有证据）", async () => {
+    it('非 deepseek ⇒ 不补（空串是否被接受只有 deepseek 有证据）', async () => {
         const msgs: ModelMessage[] = [
-            { role: "user", content: "读一下 a.txt" },
-            withoutReasoning("x2"),
-            toolResult("x2"),
+            { role: 'user', content: '读一下 a.txt' },
+            withoutReasoning('x2'),
+            toolResult('x2'),
         ];
         const wire = await captureWire(ensureReasoningReplay(msgs, { thinking: true, deepseek: false }));
-        expect(wire.find((m) => m.role === "assistant")?.reasoning_content).toBeUndefined();
+        expect(wire.find((m) => m.role === 'assistant')?.reasoning_content).toBeUndefined();
     });
 });

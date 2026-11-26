@@ -39,7 +39,11 @@ export interface TailLines {
  * @param maxLines 最多要多少行（≤0 ⇒ 空结果）
  * @param chunkBytes 每块字节数（缺省 64 KB；单行超过它就自动多读几块）
  */
-export async function readTailLines(file: string, maxLines: number, chunkBytes = DEFAULT_CHUNK_BYTES): Promise<TailLines> {
+export async function readTailLines(
+    file: string,
+    maxLines: number,
+    chunkBytes = DEFAULT_CHUNK_BYTES,
+): Promise<TailLines> {
     if (maxLines <= 0) return { lines: [], atStart: false, bytesRead: 0 };
     let fh;
     try {

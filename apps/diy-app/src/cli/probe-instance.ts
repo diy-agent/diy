@@ -16,9 +16,9 @@ import { sameDataHome } from "../main/core/instance-identity";
 
 /** 探活结果：mine = 本数据根的实例；other = 别人家的实例占着这个端口；none = 端口上没人应答 */
 export type InstanceProbe =
-  | { kind: "mine"; port: number; diyHome: string; pid: number; env: string }
-  | { kind: "other"; port: number; diyHome: string; pid: number; env: string }
-  | { kind: "none"; port: number };
+    | { kind: "mine"; port: number; diyHome: string; pid: number; env: string }
+    | { kind: "other"; port: number; diyHome: string; pid: number; env: string }
+    | { kind: "none"; port: number };
 
 /**
  * 探测某端口上的实例身份。
@@ -26,21 +26,15 @@ export type InstanceProbe =
  * @param home 本 CLI 的数据根（判定「是不是我的实例」的唯一依据）
  * @param timeoutMs 探活上限（连上并取回身份的总预算）
  */
-export async function probeInstance(
-  port: number,
-  home: string,
-  timeoutMs = 1500,
-): Promise<InstanceProbe> {
-  try {
-    // 协议实现在 main/services/instance-probe.ts（**全仓唯一一份**）：连接、envelope 形态
-    // `{ input, meta }`、超时预算都在那里 —— 本函数只管「拿回来的是不是我的数据根」这条判据。
-    const info = await fetchAppInfo(port, timeoutMs);
-    const common = { port, diyHome: info.diyHome, pid: info.pid, env: info.env };
-    return sameDataHome(info.diyHome, home)
-      ? { kind: "mine", ...common }
-      : { kind: "other", ...common };
-  } catch {
-    // 连不上 / 超时 / 回包不合契约（如对端根本没有这个方法）→ 当作「这里没有可复用的实例」
-    return { kind: "none", port };
-  }
+export async function probeInstance(port: number, home: string, timeoutMs = 1500): Promise<InstanceProbe> {
+    try {
+        // 协议实现在 main/services/instance-probe.ts（**全仓唯一一份**）：连接、envelope 形态
+        // `{ input, meta }`、超时预算都在那里 —— 本函数只管「拿回来的是不是我的数据根」这条判据。
+        const info = await fetchAppInfo(port, timeoutMs);
+        const common = { port, diyHome: info.diyHome, pid: info.pid, env: info.env };
+        return sameDataHome(info.diyHome, home) ? { kind: "mine", ...common } : { kind: "other", ...common };
+    } catch {
+        // 连不上 / 超时 / 回包不合契约（如对端根本没有这个方法）→ 当作「这里没有可复用的实例」
+        return { kind: "none", port };
+    }
 }

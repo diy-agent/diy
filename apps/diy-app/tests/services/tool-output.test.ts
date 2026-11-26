@@ -15,11 +15,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { buildTools, DEFAULT_LIMITS, type LocalAgentLimits } from "../../src/main/services/local-agent";
-import {
-    TOOL_OUTPUT_MAX_BYTES,
-    TOOL_OUTPUT_MAX_LINES,
-    capToolOutput,
-} from "../../src/main/services/tool-output";
+import { TOOL_OUTPUT_MAX_BYTES, TOOL_OUTPUT_MAX_LINES, capToolOutput } from "../../src/main/services/tool-output";
 import { READ_MAX_BYTES, READ_MAX_LINES, formatReadOutput, readFileWindow } from "../../src/main/core/file-read";
 import { parseCutMarkers, type CutMarker } from "@diy-agent/context/format/cut-marker";
 
@@ -28,7 +24,11 @@ const BIG_LINES = 60_000; // ≈ 0.5MB 的「cat 大文件」现场
 
 beforeAll(() => {
     workDir = mkdtempSync(join(tmpdir(), "diy-toolout-test-"));
-    writeFileSync(join(workDir, "big.txt"), Array.from({ length: BIG_LINES }, (_, i) => `行 ${i + 1}`).join("\n"), "utf-8");
+    writeFileSync(
+        join(workDir, "big.txt"),
+        Array.from({ length: BIG_LINES }, (_, i) => `行 ${i + 1}`).join("\n"),
+        "utf-8",
+    );
 });
 afterAll(() => rmSync(workDir, { recursive: true, force: true }));
 

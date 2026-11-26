@@ -191,12 +191,16 @@ describe("泳道视图页（##320）", () => {
         const uri = await freshInstance("open");
         await openFlowPage(uri);
 
-        expect(await ui.query<string>(`document.querySelector('[data-flow-position]').textContent.trim()`)).toContain("未进入");
+        expect(await ui.query<string>(`document.querySelector('[data-flow-position]').textContent.trim()`)).toContain(
+            "未进入",
+        );
         expect(await ui.query<number>(`document.querySelectorAll('[data-flow-lane]').length`)).toBe(0);
         expect(await ui.query<number>(`document.querySelectorAll('[data-flow-visit]').length`)).toBe(0);
         // 参数表单：未进入 ⇒ 可编辑（有保存按钮），且控件在
         expect(await ui.query<number>(`document.querySelectorAll('[data-flow-params-save]').length`)).toBe(1);
-        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-param-input]').length`)).toBeGreaterThan(0);
+        expect(await ui.query<number>(`document.querySelectorAll('[data-flow-param-input]').length`)).toBeGreaterThan(
+            0,
+        );
         // 节点详情：art 三段链区在（未接入时写「待接入」）
         expect(await ui.query<number>(`document.querySelectorAll('[data-flow-detail]').length`)).toBe(1);
     });
@@ -219,7 +223,10 @@ describe("泳道视图页（##320）", () => {
         const got = await waitUntil(
             async () => {
                 const r = await fx.sh.getJson(`./diy.sh flow params get ${uri}`);
-                const values = ((r.data as Record<string, unknown>)?.values ?? {}) as Record<string, Record<string, unknown>>;
+                const values = ((r.data as Record<string, unknown>)?.values ?? {}) as Record<
+                    string,
+                    Record<string, unknown>
+                >;
                 return values["review"]?.["reviewers"];
             },
             (v) => v === 3,
@@ -227,7 +234,9 @@ describe("泳道视图页（##320）", () => {
         );
         expect(got).toBe(3);
         // 表单本身也反映了新值
-        expect(await ui.query<string>(`document.querySelector('[data-flow-param-input="review.reviewers"]').value`)).toBe("3");
+        expect(
+            await ui.query<string>(`document.querySelector('[data-flow-param-input="review.reviewers"]').value`),
+        ).toBe("3");
     });
 
     it("推进与打回：折线每步一张卡、连线数 = 驻留数 − 1、打回是红虚线；参数表单转只读", async () => {
@@ -258,7 +267,9 @@ describe("泳道视图页（##320）", () => {
         // 此刻当前位置是 implement（打回回来），出边只有 → review ⇒ 图上就是折线里那 4 条泳道
         // （`ci` / `approve` / `merge` 要等 review 当当前节点时才看得见 —— 真数据的边界，不编造）。
         expect(
-            await ui.query<string[]>(`[...document.querySelectorAll('[data-flow-lane]')].map((e) => e.dataset.flowLane)`),
+            await ui.query<string[]>(
+                `[...document.querySelectorAll('[data-flow-lane]')].map((e) => e.dataset.flowLane)`,
+            ),
         ).toEqual(["clarify", "design", "implement", "review"]);
         // 折线：5 次驻留、4 条线（3 蓝 1 红）；同一节点二次驻留标「第 2 次」
         expect(await ui.query<number>(`document.querySelectorAll('path[data-wire-kind="next"]').length`)).toBe(3);
@@ -266,7 +277,9 @@ describe("泳道视图页（##320）", () => {
         expect(await ui.query<number>(`document.querySelectorAll('[data-flow-seq="2"]').length`)).toBe(1);
 
         // **线真的画出来了**（§14.8 的教训：path 数为 0 / 长度为 0 = 白画）
-        const lens = await ui.query<number[]>(`[...document.querySelectorAll('[data-flow-wires] path[data-wire-kind]')].map(p => p.getTotalLength())`);
+        const lens = await ui.query<number[]>(
+            `[...document.querySelectorAll('[data-flow-wires] path[data-wire-kind]')].map(p => p.getTotalLength())`,
+        );
         expect(lens.length).toBe(4);
         for (const l of lens) expect(l).toBeGreaterThan(20);
 
@@ -288,7 +301,9 @@ describe("泳道视图页（##320）", () => {
         // 详情面板：guard 逐条标「不可观测」；hint 原文可见
         expect(await ui.query<number>(`document.querySelectorAll('[data-flow-guard]').length`)).toBeGreaterThan(0);
         expect(await ui.query<string>(`document.querySelector('[data-flow-guard]').textContent`)).toContain("不可观测");
-        expect(await ui.query<string>(`document.querySelector('[data-flow-detail-hint]').textContent.length`)).toBeGreaterThan(0);
+        expect(
+            await ui.query<string>(`document.querySelector('[data-flow-detail-hint]').textContent.length`),
+        ).toBeGreaterThan(0);
     });
 
     it("层叠一次性画清：背景(0) → 连线(2) → 节点(3)，`wires` 是 pointer-events:none", async () => {
@@ -347,7 +362,9 @@ describe("泳道视图页（##320）", () => {
         // 有 5 次驻留（clarify/design/implement/review/implement），**打回线在第 4→5 行**，
         // 不滚下去就只采得到前两条蓝线、红线恒 0（这正是本用例先前红的原因）。
         // 滚到底后同一屏里既有「implement → review」的蓝线（第 3→4 行）也有打回红线 —— 两色一次采到。
-        await ui.query<number>(`(() => { const sc = document.querySelector('[data-flow-stage]').parentElement; sc.scrollTop = sc.scrollHeight; return sc.scrollTop; })()`);
+        await ui.query<number>(
+            `(() => { const sc = document.querySelector('[data-flow-stage]').parentElement; sc.scrollTop = sc.scrollHeight; return sc.scrollTop; })()`,
+        );
         const a = await stagePixels();
         expect(a.w).toBeGreaterThan(100); // 舞台真的截到了
         expect(a.h).toBeGreaterThan(100);
@@ -363,8 +380,12 @@ describe("泳道视图页（##320）", () => {
             "__t320_pixel_hidden",
         );
         const b = await stagePixels();
-        expect(b.red, `B 态红像素=${b.red}（被底纹盖住应≈0；A 态 ${a.red}）`).toBeLessThanOrEqual(Math.max(2, a.red * 0.1));
-        expect(b.blue, `B 态蓝像素=${b.blue}（被底纹盖住应≈0；A 态 ${a.blue}）`).toBeLessThanOrEqual(Math.max(2, a.blue * 0.1));
+        expect(b.red, `B 态红像素=${b.red}（被底纹盖住应≈0；A 态 ${a.red}）`).toBeLessThanOrEqual(
+            Math.max(2, a.red * 0.1),
+        );
+        expect(b.blue, `B 态蓝像素=${b.blue}（被底纹盖住应≈0；A 态 ${a.blue}）`).toBeLessThanOrEqual(
+            Math.max(2, a.blue * 0.1),
+        );
 
         // 实测数字留在日志里：判据要能被**复核**，不能只有一句「绿了」（##166 §14.8 的立场）
         console.error(
@@ -428,9 +449,7 @@ describe("泳道视图页（##320）", () => {
             expect(cards["review#1"]).toContain("待接入");
             expect(cards["review#2"]).toContain("##337");
         }
-        console.error(
-            `[##320 产物区] ##337 ${ready ? "已接入" : "未接入"} ⇒ 各卡文本：${JSON.stringify(cards)}`,
-        );
+        console.error(`[##320 产物区] ##337 ${ready ? "已接入" : "未接入"} ⇒ 各卡文本：${JSON.stringify(cards)}`);
     });
 });
 
@@ -451,13 +470,17 @@ describe("讨论线程视图（##342）", () => {
         await cliAdvance(uri, "review"); // → review
         const one = join(fx.HOME, "ui-opinion-one.txt");
         writeFileSync(one, "UI-ONE：边界条件没覆盖", "utf-8");
-        const b1 = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion "${one}" --author '评审 agent'`);
+        const b1 = await fx.sh.run(
+            `./diy.sh flow bounce ${uri} --to implement --opinion "${one}" --author '评审 agent'`,
+        );
         expect(b1.code, b1.stderr).toBe(0);
         // 出口 (a) 撤销打回（合法 next 边）→ 再打回一次 ⇒ 两条**不同锚点**的线程（不串台）
         await cliAdvance(uri, "review");
         const two = join(fx.HOME, "ui-opinion-two.txt");
         writeFileSync(two, "UI-TWO：第二轮意见", "utf-8");
-        const b2 = await fx.sh.run(`./diy.sh flow bounce ${uri} --to implement --opinion "${two}" --author '评审 agent'`);
+        const b2 = await fx.sh.run(
+            `./diy.sh flow bounce ${uri} --to implement --opinion "${two}" --author '评审 agent'`,
+        );
         expect(b2.code, b2.stderr).toBe(0);
 
         await openFlowPage(uri);
@@ -468,7 +491,9 @@ describe("讨论线程视图（##342）", () => {
             { label: "讨论区两条线程", timeoutMs: 10000 },
         );
         expect(
-            await ui.query<string[]>(`[...document.querySelectorAll('[data-flow-thread]')].map(e => e.dataset.flowThread)`),
+            await ui.query<string[]>(
+                `[...document.querySelectorAll('[data-flow-thread]')].map(e => e.dataset.flowThread)`,
+            ),
         ).toEqual(["review->implement#2", "review->implement#3"]);
         expect(await ui.query<number>(`document.querySelectorAll('[data-flow-thread-real="1"]').length`)).toBe(2);
         // 缺省活跃线程 = 最后一条打回 ⇒ 它的意见正文在面板上（原话可见）
@@ -481,7 +506,9 @@ describe("讨论线程视图（##342）", () => {
             { label: "最新意见可见", timeoutMs: 8000 },
         );
         // 发言的作者也在（谁说的）
-        expect(await ui.query<string>(`document.querySelector('[data-flow-post-author]').textContent`)).toBe("评审 agent");
+        expect(await ui.query<string>(`document.querySelector('[data-flow-post-author]').textContent`)).toBe(
+            "评审 agent",
+        );
         // 没有错误位（旁注好好的）
         expect(await ui.query<number>(`document.querySelectorAll('[data-flow-thread-error]').length`)).toBe(0);
 

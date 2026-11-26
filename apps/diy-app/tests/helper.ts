@@ -11,11 +11,11 @@ import { diyHome } from "../src/main/core/state";
  * 在测试临时目录下创建 ~/.diy/state.yaml
  */
 export function createStateYaml(data: Record<string, unknown>): string {
-  const home = diyHome();
-  mkdirSync(home, { recursive: true });
-  const p = join(home, "state.yaml");
-  writeFileSync(p, yaml.dump(data, { indent: 2, noRefs: true }), "utf-8");
-  return p;
+    const home = diyHome();
+    mkdirSync(home, { recursive: true });
+    const p = join(home, "state.yaml");
+    writeFileSync(p, yaml.dump(data, { indent: 2, noRefs: true }), "utf-8");
+    return p;
 }
 
 /**
@@ -23,24 +23,24 @@ export function createStateYaml(data: Record<string, unknown>): string {
  * 返回任务 URI
  */
 export function createTaskFile(params: {
-  uri: string;
-  title?: string;
-  state?: string;
-  subject?: string;
-  body?: string;
+    uri: string;
+    title?: string;
+    state?: string;
+    subject?: string;
+    body?: string;
 }): string {
-  const { uri, title, state, subject, body } = params;
-  const home = diyHome();
-  const taskPath = join(home, "task", uri, "AGENTS.md");
-  mkdirSync(join(home, "task", uri), { recursive: true });
+    const { uri, title, state, subject, body } = params;
+    const home = diyHome();
+    const taskPath = join(home, "task", uri, "AGENTS.md");
+    mkdirSync(join(home, "task", uri), { recursive: true });
 
-  const front: Record<string, string | undefined> = { title, state, subject };
-  const cleaned: Record<string, string> = {};
-  for (const [k, v] of Object.entries(front)) {
-    if (v !== undefined) cleaned[k] = v;
-  }
+    const front: Record<string, string | undefined> = { title, state, subject };
+    const cleaned: Record<string, string> = {};
+    for (const [k, v] of Object.entries(front)) {
+        if (v !== undefined) cleaned[k] = v;
+    }
 
-  const fm = yaml.dump(cleaned, { indent: 2, noRefs: true });
-  writeFileSync(taskPath, `---\n${fm}---\n${body ?? ""}`, "utf-8");
-  return uri;
+    const fm = yaml.dump(cleaned, { indent: 2, noRefs: true });
+    writeFileSync(taskPath, `---\n${fm}---\n${body ?? ""}`, "utf-8");
+    return uri;
 }

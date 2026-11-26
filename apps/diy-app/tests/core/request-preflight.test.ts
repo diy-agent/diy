@@ -7,7 +7,12 @@ import { estimateRequest, tighterHistoryCapBytes, PREFLIGHT_RATIO } from "../../
 
 describe("estimateRequest：窗口占用判定", () => {
     it("窗口未知 ⇒ 不判定（没有判据就不报警）", () => {
-        const e = estimateRequest({ systemBytes: 400_000, toolsBytes: 0, messagesBytes: 400_000, contextLimitTokens: null });
+        const e = estimateRequest({
+            systemBytes: 400_000,
+            toolsBytes: 0,
+            messagesBytes: 400_000,
+            contextLimitTokens: null,
+        });
         expect(e.contextLimitTokens).toBeNull();
         expect(e.ratio).toBeNull();
         expect(e.over).toBe(false);
@@ -60,8 +65,18 @@ describe("CJK 感知 token（##442 step 6 P0-3）", () => {
 
     it("bytesPerToken 传给 cap：中文 3 字节/token ⇒ 同一窗口的字节额度更小", () => {
         const win = 100_000;
-        const ascii = tighterHistoryCapBytes({ contextLimitTokens: win, systemBytes: 0, toolsBytes: 0, bytesPerToken: 4 });
-        const cjk = tighterHistoryCapBytes({ contextLimitTokens: win, systemBytes: 0, toolsBytes: 0, bytesPerToken: 3 });
+        const ascii = tighterHistoryCapBytes({
+            contextLimitTokens: win,
+            systemBytes: 0,
+            toolsBytes: 0,
+            bytesPerToken: 4,
+        });
+        const cjk = tighterHistoryCapBytes({
+            contextLimitTokens: win,
+            systemBytes: 0,
+            toolsBytes: 0,
+            bytesPerToken: 3,
+        });
         expect(cjk).toBeLessThan(ascii);
         expect(cjk).toBe(Math.floor(win * 3 * PREFLIGHT_RATIO) - 8 * 1024);
     });
@@ -81,7 +96,12 @@ describe("tighterHistoryCapBytes：压到预检线以内，历史还能占多少
     });
 
     it("预留可覆盖（测试 / 特殊口径）", () => {
-        const cap = tighterHistoryCapBytes({ contextLimitTokens: 100_000, systemBytes: 0, toolsBytes: 0, reserveBytes: 0 });
+        const cap = tighterHistoryCapBytes({
+            contextLimitTokens: 100_000,
+            systemBytes: 0,
+            toolsBytes: 0,
+            reserveBytes: 0,
+        });
         expect(cap).toBe(100_000 * 4 * PREFLIGHT_RATIO);
     });
 });

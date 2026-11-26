@@ -27,9 +27,11 @@ afterEach(() => {
 });
 
 const el = (tag = "div"): FakeElement =>
-  (globalThis as unknown as { document: { createElement(t: string): FakeElement } }).document.createElement(
-    tag,
-  );
+  (
+    globalThis as unknown as {
+      document: { createElement(t: string): FakeElement };
+    }
+  ).document.createElement(tag);
 
 /** 子树里所有带某个 class 的元素。 */
 function collect(root: FakeElement, cls: string): FakeElement[] {
@@ -156,8 +158,10 @@ describe("特性：误用异步尾部函数会立刻报错（而不是静默空�
     const mount = el();
     const app = new DslApp({ mount: mount as unknown as HTMLElement });
 
-    expect(() => app.div({}, (() => Promise.resolve()) as never)).toThrow(/只支持同步/);
-    expect(() => app.span({}, (function* () {}) as never)).toThrow(/只支持同步/);
+    expect(() => app.div({}, (() => Promise.resolve()) as never)).toThrow(
+      /只支持同步/,
+    );
+    expect(() => app.span({}, function* () {} as never)).toThrow(/只支持同步/);
   });
 });
 

@@ -11,8 +11,8 @@ import { AsyncQueue, withCleanup } from "./async-queue";
 export type WatchChangeEvent = "state-change" | "task-change" | "agent-change";
 
 export interface FileChangeEvent {
-  event: WatchChangeEvent;
-  ts: number;
+    event: WatchChangeEvent;
+    ts: number;
 }
 
 /** chokidar 会发给我们的事件名（本模块只关心这 5 个） */
@@ -40,21 +40,21 @@ const isTaskDoc = (p: string): boolean => p.endsWith("AGENTS.md") || p.includes(
  * 会让「保存一次提示词模版」也重载任务树（名不副实 + 日志噪音）。
  */
 export function classifyWatchEvent(ev: WatchFsEvent, p: string): WatchChangeEvent | null {
-  // ⚠️ **先把分隔符归一成 `/`**：chokidar 在 Windows 上给的是
-  // `C:\\Users\\…\\projects\\1\\tasks\\2\\AGENTS.md`（反斜杠），而下面所有判据都按 `/` 写。
-  // 不归一的后果不是“少分类”——是**每条事件都返回 null**：UI 根本收不到 task-change，
-  // 于是新建/改名/删除任务后 nav 树不刷新、tab 不跟、详情不更新（实测 intent：
-  // `ui-nav-search` 12 条全红——建完任务搜不到；其余“建完看不到”的 UI 用例连带失败）。
-  // POSIX 上 chokidar 本就用 `/`，这行是无害的等价变换。
-  const q = p.replace(/\\/g, "/");
-  if (q.endsWith("state.yaml")) return ev === "change" ? "state-change" : null;
-  if (q.includes("/projects/")) {
-    if (ev === "addDir" || ev === "unlinkDir") return "task-change";
-    if (ev === "change") return PROJECT_META_RE.test(q) || isTaskDoc(q) ? "task-change" : null;
-    return isTaskDoc(q) ? "task-change" : null; // add / unlink：与 change 判据对齐
-  }
-  if (q.includes("/agents/")) return ev === "change" ? "agent-change" : null;
-  return null;
+    // ⚠️ **先把分隔符归一成 `/`**：chokidar 在 Windows 上给的是
+    // `C:\\Users\\…\\projects\\1\\tasks\\2\\AGENTS.md`（反斜杠），而下面所有判据都按 `/` 写。
+    // 不归一的后果不是“少分类”——是**每条事件都返回 null**：UI 根本收不到 task-change，
+    // 于是新建/改名/删除任务后 nav 树不刷新、tab 不跟、详情不更新（实测 intent：
+    // `ui-nav-search` 12 条全红——建完任务搜不到；其余“建完看不到”的 UI 用例连带失败）。
+    // POSIX 上 chokidar 本就用 `/`，这行是无害的等价变换。
+    const q = p.replace(/\\/g, "/");
+    if (q.endsWith("state.yaml")) return ev === "change" ? "state-change" : null;
+    if (q.includes("/projects/")) {
+        if (ev === "addDir" || ev === "unlinkDir") return "task-change";
+        if (ev === "change") return PROJECT_META_RE.test(q) || isTaskDoc(q) ? "task-change" : null;
+        return isTaskDoc(q) ? "task-change" : null; // add / unlink：与 change 判据对齐
+    }
+    if (q.includes("/agents/")) return ev === "change" ? "agent-change" : null;
+    return null;
 }
 
 // ── FileWatcher：单例，按需启停 chokidar ──
@@ -74,94 +74,96 @@ export function classifyWatchEvent(ev: WatchFsEvent, p: string): WatchChangeEven
  * 消费者 close/abort 后自动移除订阅，最后一个取消后 chokidar 关闭。
  */
 class FileWatcher {
-  private watcher: FSWatcher | null = null;
-  private queues = new Set<AsyncQueue<FileChangeEvent>>();
-  private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    private watcher: FSWatcher | null = null;
+    private queues = new Set<AsyncQueue<FileChangeEvent>>();
+    private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  /**
-   * 订阅文件变更事件流（RPC serverStream 直接 yield 此 async iterable）。
-   *
-   * `signal`（RPC 传输断开）必传：无变更事件期间断连时，消费端的 `return()` 会悬挂在
-   * 未决的 `next()` 后，订阅要等下一条文件事件才释放（末订阅者的 chokidar 也跟着多活）。
-   */
-  subscribe(signal?: AbortSignal): AsyncIterable<FileChangeEvent> {
-    const q = new AsyncQueue<FileChangeEvent>();
-    this.queues.add(q);
-    if (this.queues.size === 1) this._start();
-    // 消费端 return()（close/abort）→ 移除订阅；末订阅者走后关掉 chokidar
-    return withCleanup(
-      q,
-      () => {
-        this.queues.delete(q);
-        if (this.queues.size === 0) this._stop();
-      },
-      signal,
-    );
-  }
-
-  private _emit(event: WatchChangeEvent): void {
-    if (this.debounceTimers.has(event)) clearTimeout(this.debounceTimers.get(event)!);
-    this.debounceTimers.set(
-      event,
-      setTimeout(() => {
-        this.debounceTimers.delete(event);
-        for (const q of this.queues) q.push({ event, ts: Date.now() });
-      }, 500),
-    );
-  }
-
-  private _start(): void {
-    const home = diyHome();
-    this.watcher = watch(
-      [join(home, "state.yaml"), join(home, "projects/"), join(home, "agents/")],
-      { ignoreInitial: true, depth: 5, persistent: true, awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 } },
-    );
-    // 事件分类只经 classifyWatchEvent（判据单源，见其注释）：五个事件一视同仁地过它，
-    // 避免「change 认 /tasks/、unlink 只认 AGENTS.md」这类不对称再次出现。
-    const FS_EVENTS: WatchFsEvent[] = ["add", "addDir", "change", "unlink", "unlinkDir"];
-    for (const ev of FS_EVENTS) {
-      this.watcher.on(ev, (p: string) => {
-        const cls = classifyWatchEvent(ev, p);
-        if (cls) this._emit(cls);
-      });
+    /**
+     * 订阅文件变更事件流（RPC serverStream 直接 yield 此 async iterable）。
+     *
+     * `signal`（RPC 传输断开）必传：无变更事件期间断连时，消费端的 `return()` 会悬挂在
+     * 未决的 `next()` 后，订阅要等下一条文件事件才释放（末订阅者的 chokidar 也跟着多活）。
+     */
+    subscribe(signal?: AbortSignal): AsyncIterable<FileChangeEvent> {
+        const q = new AsyncQueue<FileChangeEvent>();
+        this.queues.add(q);
+        if (this.queues.size === 1) this._start();
+        // 消费端 return()（close/abort）→ 移除订阅；末订阅者走后关掉 chokidar
+        return withCleanup(
+            q,
+            () => {
+                this.queues.delete(q);
+                if (this.queues.size === 0) this._stop();
+            },
+            signal,
+        );
     }
-  }
 
-  private _stop(): void {
-    void this._stopAsync();
-  }
-
-  /** 停监听并**等它真的关掉**（chokidar 的 close() 是异步的） */
-  private async _stopAsync(): Promise<void> {
-    const w = this.watcher;
-    this.watcher = null;
-    for (const timer of this.debounceTimers.values()) clearTimeout(timer);
-    this.debounceTimers.clear();
-    if (w) await w.close();
-  }
-
-  /**
-   * 删数据目录期间**暂停监听**（Windows 必需）。
-   *
-   * 为什么：chokidar 在 Windows 上为每个被监听的子目录持有句柄（本模块 watch 的是
-   * `$DIY_HOME/projects/`，`depth: 5`），删 `projects/<id>` 时它正在扫 `tasks/` ——
-   * 两边相撞的结果是 **`EPERM: operation not permitted, scandir …\projects\<id>\tasks`**
-   * （实测 `diy.sh project remove <id>` 直接 exit=1；已验证：不在 app 实例里删同一个目录则一切正常
-   *  ⇒ 不是 OS/杀毒，就是本 watcher 的句柄）。
-   * 这条病会连锁：intent 里所有「建了再删」的用例都跟着红。
-   *
-   * 语义：停 → 跑 fn → 重启（chokidar 重启是幂等的，会重扫一遍并补发 add 事件；
-   * 删除本身不需要事件）。没有订阅者时不重启。
-   */
-  async pauseDuring<T>(fn: () => T | Promise<T>): Promise<T> {
-    const running = this.watcher !== null;
-    if (running) await this._stopAsync();
-    try {
-      return await fn();
-    } finally {
-      if (running && this.queues.size > 0) this._start();
+    private _emit(event: WatchChangeEvent): void {
+        if (this.debounceTimers.has(event)) clearTimeout(this.debounceTimers.get(event)!);
+        this.debounceTimers.set(
+            event,
+            setTimeout(() => {
+                this.debounceTimers.delete(event);
+                for (const q of this.queues) q.push({ event, ts: Date.now() });
+            }, 500),
+        );
     }
-  }
+
+    private _start(): void {
+        const home = diyHome();
+        this.watcher = watch([join(home, "state.yaml"), join(home, "projects/"), join(home, "agents/")], {
+            ignoreInitial: true,
+            depth: 5,
+            persistent: true,
+            awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
+        });
+        // 事件分类只经 classifyWatchEvent（判据单源，见其注释）：五个事件一视同仁地过它，
+        // 避免「change 认 /tasks/、unlink 只认 AGENTS.md」这类不对称再次出现。
+        const FS_EVENTS: WatchFsEvent[] = ["add", "addDir", "change", "unlink", "unlinkDir"];
+        for (const ev of FS_EVENTS) {
+            this.watcher.on(ev, (p: string) => {
+                const cls = classifyWatchEvent(ev, p);
+                if (cls) this._emit(cls);
+            });
+        }
+    }
+
+    private _stop(): void {
+        void this._stopAsync();
+    }
+
+    /** 停监听并**等它真的关掉**（chokidar 的 close() 是异步的） */
+    private async _stopAsync(): Promise<void> {
+        const w = this.watcher;
+        this.watcher = null;
+        for (const timer of this.debounceTimers.values()) clearTimeout(timer);
+        this.debounceTimers.clear();
+        if (w) await w.close();
+    }
+
+    /**
+     * 删数据目录期间**暂停监听**（Windows 必需）。
+     *
+     * 为什么：chokidar 在 Windows 上为每个被监听的子目录持有句柄（本模块 watch 的是
+     * `$DIY_HOME/projects/`，`depth: 5`），删 `projects/<id>` 时它正在扫 `tasks/` ——
+     * 两边相撞的结果是 **`EPERM: operation not permitted, scandir …\projects\<id>\tasks`**
+     * （实测 `diy.sh project remove <id>` 直接 exit=1；已验证：不在 app 实例里删同一个目录则一切正常
+     *  ⇒ 不是 OS/杀毒，就是本 watcher 的句柄）。
+     * 这条病会连锁：intent 里所有「建了再删」的用例都跟着红。
+     *
+     * 语义：停 → 跑 fn → 重启（chokidar 重启是幂等的，会重扫一遍并补发 add 事件；
+     * 删除本身不需要事件）。没有订阅者时不重启。
+     */
+    async pauseDuring<T>(fn: () => T | Promise<T>): Promise<T> {
+        const running = this.watcher !== null;
+        if (running) await this._stopAsync();
+        try {
+            return await fn();
+        } finally {
+            if (running && this.queues.size > 0) this._start();
+        }
+    }
 }
 
 export const fileWatcher = new FileWatcher();

@@ -65,7 +65,10 @@ beforeAll(() => {
 });
 
 /** 每个用例一个全新任务（折叠缓存 / 会话缓存不互相污染） */
-function newTask(opsText: string, ledger?: (ctx: { from: number; llmLine: number; size: number }) => unknown[]): {
+function newTask(
+    opsText: string,
+    ledger?: (ctx: { from: number; llmLine: number; size: number }) => unknown[],
+): {
     uri: string;
     fp: string;
 } {
@@ -85,10 +88,7 @@ function newTask(opsText: string, ledger?: (ctx: { from: number; llmLine: number
     return { uri, fp };
 }
 
-function compactEvent(
-    ctx: { from: number; llmLine: number; size: number },
-    over: Partial<CompactEventRecord> = {},
-) {
+function compactEvent(ctx: { from: number; llmLine: number; size: number }, over: Partial<CompactEventRecord> = {}) {
     return {
         kind: "compact",
         v: 4,
@@ -138,9 +138,7 @@ describe("history()：UI 重放的起点 = 压缩账本偏移", () => {
     });
 
     it("账本偏移不是轮首（手改 / 旧版）⇒ 退全量（半个轮会把块树折成根）", () => {
-        const { uri } = newTask(CANON, (ctx) => [
-            compactEvent({ ...ctx, from: ctx.from + 3, llmLine: 7 }),
-        ]);
+        const { uri } = newTask(CANON, (ctx) => [compactEvent({ ...ctx, from: ctx.from + 3, llmLine: 7 })]);
         expect(turnIdsOf(manager.history(uri))).toHaveLength(TURNS);
     });
 });
@@ -152,7 +150,11 @@ describe("折叠缓存：compactOps 不重算、issue 不重打", () => {
         const b = manager.history(uri);
         expect(b).toBe(a); // 同一份引用 = 没重算 compactOps
         // 轮末追加一条新 op ⇒ 块树变了 ⇒ 必须重算（不能拿旧折叠流糊弄）
-        appendFileSync(fp, `${JSON.stringify({ op: "start", id: "t0007", kind: "turn", meta: { model: "0@test/m" } })}\n`, "utf-8");
+        appendFileSync(
+            fp,
+            `${JSON.stringify({ op: "start", id: "t0007", kind: "turn", meta: { model: "0@test/m" } })}\n`,
+            "utf-8",
+        );
         const c = manager.history(uri);
         expect(c).not.toBe(a);
         expect(turnIdsOf(c)).toContain("t0007");

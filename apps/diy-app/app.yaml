@@ -10,18 +10,18 @@ name: diy-app
 title: diy 管控台
 
 launches:
-  - id: lab
-    title: 开发（lab）
-    command: ./sha.sh lab
-    # 变体各自一个数据根：lab 与 prod 同时跑才不会抢单实例锁
-    entries:
-      # 只声明 app —— 解析器目前只认 app / web 两种 entry（service 会整条被当成坏文件丢掉）
-      - kind: app
-        title: Electron 窗口
+    - id: lab
+      title: 开发（lab）
+      command: ./sha.sh lab
+      # 变体各自一个数据根：lab 与 prod 同时跑才不会抢单实例锁
+      entries:
+          # 只声明 app —— 解析器目前只认 app / web 两种 entry（service 会整条被当成坏文件丢掉）
+          - kind: app
+            title: Electron 窗口
 
-  - id: staging
-    title: 预生产（prod 构建 + 隔离数据）
-    command: ./sha.sh staging
-    entries:
-      - kind: app
-        title: Electron 窗口
+    - id: staging
+      title: 预生产（prod 构建 + 隔离数据）
+      command: ./sha.sh staging
+      entries:
+          - kind: app
+            title: Electron 窗口

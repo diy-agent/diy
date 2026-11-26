@@ -109,20 +109,24 @@ describe("runBash 的收尾（##419）", () => {
     });
 
     // POSIX::setsid 在 Windows 上不存在（Git Bash 的 perl 里 setsid 不可用）⇒ 造不出「脱离进程组的孙进程」
-    it.skipIf(process.platform === "win32")("④ 后台作业持管道（离开进程组）时按超时返回，不永挂", async () => {
-        const t0 = Date.now();
-        // POSIX::setsid：孙进程换 session/pgid ⇒ killProcessGroup 打空、且它继承着 stdout 管道
-        const cmd = `perl -e 'use POSIX; POSIX::setsid(); sleep 20' & echo started`;
-        const run = await runBash(cmd, process.cwd(), limits(500));
-        const ms = Date.now() - t0;
-        const { head, body } = splitHead(run.text);
+    it.skipIf(process.platform === "win32")(
+        "④ 后台作业持管道（离开进程组）时按超时返回，不永挂",
+        async () => {
+            const t0 = Date.now();
+            // POSIX::setsid：孙进程换 session/pgid ⇒ killProcessGroup 打空、且它继承着 stdout 管道
+            const cmd = `perl -e 'use POSIX; POSIX::setsid(); sleep 20' & echo started`;
+            const run = await runBash(cmd, process.cwd(), limits(500));
+            const ms = Date.now() - t0;
+            const { head, body } = splitHead(run.text);
 
-        expect(ms).toBeLessThan(5_000); // 改前：永不返回（close 要等 20s 的孙进程放手）
-        expect(run.outcome).toBe("timeout");
-        expect(head["timed_out"]).toBe("true");
-        expect(body).toContain("started"); // 已经收到的输出不许丢
-        expect(body).toContain("[命令超时被杀]");
-    }, 15_000);
+            expect(ms).toBeLessThan(5_000); // 改前：永不返回（close 要等 20s 的孙进程放手）
+            expect(run.outcome).toBe("timeout");
+            expect(head["timed_out"]).toBe("true");
+            expect(body).toContain("started"); // 已经收到的输出不许丢
+            expect(body).toContain("[命令超时被杀]");
+        },
+        15_000,
+    );
 
     it("⑤b 投递层截断只改头里 truncated 位，正文逐字不碰", () => {
         const text = "---\nok: true\ntruncated: false\n---\n正文里的 truncated: false 不许被改";

@@ -8,7 +8,13 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { describe, it, expect } from "vitest";
-import { addStepUsage, newUsageAcc, setTurnUsage, cacheHitRate, type TurnUsage } from "../../src/main/services/turn-usage";
+import {
+    addStepUsage,
+    newUsageAcc,
+    setTurnUsage,
+    cacheHitRate,
+    type TurnUsage,
+} from "../../src/main/services/turn-usage";
 
 /** 一步的 usage（形状照抄真实上游实测数据：zen/go + mimo-v2.6-flash） */
 const step = (input: number, cached: number, out = 10): TurnUsage => ({
@@ -33,7 +39,12 @@ describe("usage 账本", () => {
     it("流尾权威值覆盖（含 cached）：totalUsage 缺字段时保留累加值", () => {
         const acc = newUsageAcc();
         addStepUsage(acc, step(100, 50, 10));
-        setTurnUsage(acc, { inputTokens: 120, outputTokens: 12, totalTokens: 132, inputTokenDetails: { cacheReadTokens: 96 } });
+        setTurnUsage(acc, {
+            inputTokens: 120,
+            outputTokens: 12,
+            totalTokens: 132,
+            inputTokenDetails: { cacheReadTokens: 96 },
+        });
         expect(acc).toEqual({ in: 120, out: 12, cached: 96, total: 132 });
         // 半截 usage（只有 input）：其余字段不动
         setTurnUsage(acc, { inputTokens: 200 });

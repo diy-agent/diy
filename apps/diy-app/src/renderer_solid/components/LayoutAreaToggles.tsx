@@ -17,9 +17,7 @@ import { layoutStore } from "../store/layoutStore";
 export function LayoutAreaToggles(props: { page: PageDef; ctx: string | null }) {
     const menuAreas = () => {
         const has = areasWithViews(props.page, props.ctx, layoutStore.bindingFor(props.page, props.ctx));
-        return props.page.layout.areas
-            .map((area, idx) => ({ area, idx }))
-            .filter((x) => has.has(x.area.id));
+        return props.page.layout.areas.map((area, idx) => ({ area, idx })).filter((x) => has.has(x.area.id));
     };
     // area 序号（① ② ③ …）：按钮先用序号替代图标（动态绘制随 grid 结构变化的图标待定）
     const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];

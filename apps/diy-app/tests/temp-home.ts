@@ -25,7 +25,7 @@ export const TEST_HOME_PREFIXES = [TEST_HOME_PREFIX, SETUP_HOME_PREFIX] as const
 
 /** 目录名是否本套件所造（两道校验之一，见 removeIsolatedHome） */
 function isOursName(name: string): boolean {
-  return TEST_HOME_PREFIXES.some((p) => name.startsWith(p));
+    return TEST_HOME_PREFIXES.some((p) => name.startsWith(p));
 }
 
 /**
@@ -37,8 +37,8 @@ function isOursName(name: string): boolean {
  * 用 `relative` 判：上跳（`..`）或绝对路径（不同盘）都算「不在其中」。
  */
 function isUnderTmp(home: string, tmp: string): boolean {
-  const rel = relative(tmp, home);
-  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+    const rel = relative(tmp, home);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 /**
@@ -52,13 +52,13 @@ function isUnderTmp(home: string, tmp: string): boolean {
  * 累积到 1583 个 / 2.9GB（4 天）。磁盘无限涨，每次跑测试都在给系统临时区加压。
  */
 export function removeIsolatedHome(home: string): void {
-  const tmp = tmpdir();
-  if (!isUnderTmp(home, tmp) || !isOursName(basename(home))) return;
-  try {
-    rmSync(home, { recursive: true, force: true });
-  } catch {
-    /* 删不掉就留着（下次 sweep 再试），绝不影响测试结论 */
-  }
+    const tmp = tmpdir();
+    if (!isUnderTmp(home, tmp) || !isOursName(basename(home))) return;
+    try {
+        rmSync(home, { recursive: true, force: true });
+    } catch {
+        /* 删不掉就留着（下次 sweep 再试），绝不影响测试结论 */
+    }
 }
 
 /**
@@ -72,26 +72,26 @@ export function removeIsolatedHome(home: string): void {
  * `expected 0 to be greater than or equal to 1`）。用例传自己的沙箱根即可完全隔离。
  */
 export function sweepStaleTestHomes(ageMs = 24 * 60 * 60 * 1000, root: string = tmpdir()): number {
-  const tmp = root;
-  let removed = 0;
-  let names: string[];
-  try {
-    names = readdirSync(tmp);
-  } catch {
-    return 0;
-  }
-  const cutoff = Date.now() - ageMs;
-  for (const name of names) {
-    if (!isOursName(name)) continue;
-    const p = join(tmp, name);
+    const tmp = root;
+    let removed = 0;
+    let names: string[];
     try {
-      if (statSync(p).mtimeMs < cutoff) {
-        rmSync(p, { recursive: true, force: true });
-        removed++;
-      }
+        names = readdirSync(tmp);
     } catch {
-      /* 竞态（正好被别人删了）→ 忽略 */
+        return 0;
     }
-  }
-  return removed;
+    const cutoff = Date.now() - ageMs;
+    for (const name of names) {
+        if (!isOursName(name)) continue;
+        const p = join(tmp, name);
+        try {
+            if (statSync(p).mtimeMs < cutoff) {
+                rmSync(p, { recursive: true, force: true });
+                removed++;
+            }
+        } catch {
+            /* 竞态（正好被别人删了）→ 忽略 */
+        }
+    }
+    return removed;
 }

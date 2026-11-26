@@ -49,40 +49,39 @@ const [selectedMissing, setSelectedMissing] = createSignal(false);
 
 let loadSeq = 0;
 async function loadTree() {
-  const seq = ++loadSeq;
-  setLoading(true);
-  try {
-    const r = await diyService.diy.task.tree({});
-    // 过期响应丢弃：watch 的 task-change 可能连发触发并发 loadTree，旧请求后到会
-    // 把树覆盖回旧快照 —— 树「短暂回退」会让下游的 diff（如 tab 清理）误判任务消失
-    if (seq !== loadSeq) return;
-    setNodes(r.data);
-    setTreeLoaded(true);
-  } finally {
-    if (seq === loadSeq) setLoading(false);
-  }
+    const seq = ++loadSeq;
+    setLoading(true);
+    try {
+        const r = await diyService.diy.task.tree({});
+        // 过期响应丢弃：watch 的 task-change 可能连发触发并发 loadTree，旧请求后到会
+        // 把树覆盖回旧快照 —— 树「短暂回退」会让下游的 diff（如 tab 清理）误判任务消失
+        if (seq !== loadSeq) return;
+        setNodes(r.data);
+        setTreeLoaded(true);
+    } finally {
+        if (seq === loadSeq) setLoading(false);
+    }
 }
 
 async function selectTask(uri: string | null) {
-  setSelectedUri(uri);
-  setSelectedTask(null);
-  setSelectedMissing(false);
-  if (!uri) return;
-  const r = await diyService.diy.task.detail({ uri });
-  // 期间用户切了别的任务 → 丢弃（否则 A 的响应会写到 B 的选中态上）
-  if (selectedUri() !== uri) return;
-  // 明确终态：任务不存在（判据在 shared/task-load，与契约同源）。**不静默 return** ——
-  // 面板据此显示「任务不存在」+ 出路，而不是一直「加载中…」。
-  if (getTaskVerdict(r) !== "ok" || !r.data) {
-    setSelectedMissing(true);
-    return;
-  }
-  // 草稿先灌入再放行任务：详情面板是「选中任务即创建」的组件，构造时就要读到草稿
-  // 来判定是否恢复编辑态；反过来则会以「无草稿」初始化，表现为草稿丢失。
-  draftStore.seed(uri, r.data.ui_drafts ?? null, r.data.updated);
-  setSelectedTask(r.data);
+    setSelectedUri(uri);
+    setSelectedTask(null);
+    setSelectedMissing(false);
+    if (!uri) return;
+    const r = await diyService.diy.task.detail({ uri });
+    // 期间用户切了别的任务 → 丢弃（否则 A 的响应会写到 B 的选中态上）
+    if (selectedUri() !== uri) return;
+    // 明确终态：任务不存在（判据在 shared/task-load，与契约同源）。**不静默 return** ——
+    // 面板据此显示「任务不存在」+ 出路，而不是一直「加载中…」。
+    if (getTaskVerdict(r) !== "ok" || !r.data) {
+        setSelectedMissing(true);
+        return;
+    }
+    // 草稿先灌入再放行任务：详情面板是「选中任务即创建」的组件，构造时就要读到草稿
+    // 来判定是否恢复编辑态；反过来则会以「无草稿」初始化，表现为草稿丢失。
+    draftStore.seed(uri, r.data.ui_drafts ?? null, r.data.updated);
+    setSelectedTask(r.data);
 }
-
 
 /**
  * 重新拉当前任务详情（改了任务字段后用，如切换 agent 人物）。
@@ -90,25 +89,25 @@ async function selectTask(uri: string | null) {
  * 期间用户切了任务就丢弃结果，避免把 A 的旧数据写回 B。
  */
 async function refreshSelected(): Promise<void> {
-  const u = selectedUri();
-  if (!u) return;
-  const r = await diyService.diy.task.detail({ uri: u });
-  if (selectedUri() !== u) return;
-  // 刷新时任务已没了 → 同一个「不存在」终态（别把旧详情留在屏上假装还在）
-  if (getTaskVerdict(r) !== "ok" || !r.data) {
-    setSelectedTask(null);
-    setSelectedMissing(true);
-    return;
-  }
-  if (r.data.uri !== selectedUri()) return;
-  draftStore.seed(u, r.data.ui_drafts ?? null, r.data.updated);
-  setSelectedTask(r.data);
-  setSelectedMissing(false);
+    const u = selectedUri();
+    if (!u) return;
+    const r = await diyService.diy.task.detail({ uri: u });
+    if (selectedUri() !== u) return;
+    // 刷新时任务已没了 → 同一个「不存在」终态（别把旧详情留在屏上假装还在）
+    if (getTaskVerdict(r) !== "ok" || !r.data) {
+        setSelectedTask(null);
+        setSelectedMissing(true);
+        return;
+    }
+    if (r.data.uri !== selectedUri()) return;
+    draftStore.seed(u, r.data.ui_drafts ?? null, r.data.updated);
+    setSelectedTask(r.data);
+    setSelectedMissing(false);
 }
 
 async function setState(uri: string, state: string) {
-  await editTask(uri, { state: state as any });
-  await loadTree();
+    await editTask(uri, { state: state as any });
+    await loadTree();
 }
 
 // 单例：以「值 getter」暴露信号（组件当值用）。读 taskStore.nodes 即读 nodes()，
@@ -123,32 +122,44 @@ async function setState(uri: string, state: string) {
  * （渲染/交互场景树早已加载 → 命中即返回，零成本。）
  */
 async function ensureTasks(uris: (string | null | undefined)[]): Promise<void> {
-  const wanted = uris.filter((u): u is string => !!u);
-  if (wanted.length === 0) return;
-  const all = new Set<string>();
-  const walk = (ns: TreeNode[]) => {
-    for (const n of ns) {
-      if (n.uri) all.add(n.uri);
-      if (n.children) walk(n.children);
-    }
-  };
-  walk(nodes());
-  if (wanted.every((u) => all.has(u))) return;
-  await loadTree();
+    const wanted = uris.filter((u): u is string => !!u);
+    if (wanted.length === 0) return;
+    const all = new Set<string>();
+    const walk = (ns: TreeNode[]) => {
+        for (const n of ns) {
+            if (n.uri) all.add(n.uri);
+            if (n.children) walk(n.children);
+        }
+    };
+    walk(nodes());
+    if (wanted.every((u) => all.has(u))) return;
+    await loadTree();
 }
 
 export const taskStore = {
-  get nodes() { return nodes(); },
-  get selectedUri() { return selectedUri(); },
-  get selectedTask() { return selectedTask(); },
-  get loading() { return loading(); },
-  /** 树是否成功加载过（供剪枝判「树还没到」vs「任务真没了」） */
-  get treeLoaded() { return treeLoaded(); },
-  /** 选中任务不存在（详情面板据此渲染终态，而不是「加载中…」） */
-  get selectedMissing() { return selectedMissing(); },
-  loadTree,
-  ensureTasks,
-  selectTask,
-  refreshSelected,
-  setState,
+    get nodes() {
+        return nodes();
+    },
+    get selectedUri() {
+        return selectedUri();
+    },
+    get selectedTask() {
+        return selectedTask();
+    },
+    get loading() {
+        return loading();
+    },
+    /** 树是否成功加载过（供剪枝判「树还没到」vs「任务真没了」） */
+    get treeLoaded() {
+        return treeLoaded();
+    },
+    /** 选中任务不存在（详情面板据此渲染终态，而不是「加载中…」） */
+    get selectedMissing() {
+        return selectedMissing();
+    },
+    loadTree,
+    ensureTasks,
+    selectTask,
+    refreshSelected,
+    setState,
 };

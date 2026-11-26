@@ -37,7 +37,11 @@ function pad(s: string, w: number): string {
 
 function table(header: string[], rows: string[][]): string {
     const widths = header.map((h, i) => Math.max(dispWidth(h), ...rows.map((r) => dispWidth(r[i] ?? ""))));
-    const line = (cells: string[]): string => cells.map((c, i) => pad(c, widths[i]!)).join("  ").trimEnd();
+    const line = (cells: string[]): string =>
+        cells
+            .map((c, i) => pad(c, widths[i]!))
+            .join("  ")
+            .trimEnd();
     return [line(header), ...rows.map(line)].join("\n");
 }
 
@@ -70,7 +74,22 @@ export function renderUsageSteps(steps: StepUsageRecord[], opts: UsageTableOpts 
     // 排查「这一步到底属于哪一轮」要来回数——而那正是最常问的问题。
     const turnNo = new Map<string, number>();
     for (const r of steps) if (!turnNo.has(r.turnId)) turnNo.set(r.turnId, turnNo.size + 1);
-    const header = ["轮.步", "人物", "模型", "面", "档位", "非缓存", "缓存读", "缓存写", "总输出(文本+思考)", "耗时", "TTFT", "速度", "窗口%", "合计$"];
+    const header = [
+        "轮.步",
+        "人物",
+        "模型",
+        "面",
+        "档位",
+        "非缓存",
+        "缓存读",
+        "缓存写",
+        "总输出(文本+思考)",
+        "耗时",
+        "TTFT",
+        "速度",
+        "窗口%",
+        "合计$",
+    ];
     if (opts.cost) header.splice(14, 0, "非缓存$", "缓存读$", "缓存写$", "文本$", "思考$");
     const rows = list.map((r) => {
         const v = stepView(r);
@@ -118,7 +137,19 @@ export function renderUsageByAgent(steps: StepUsageRecord[], opts: UsageTableOpt
     const list = opts.last && opts.last > 0 ? steps.slice(-opts.last) : steps;
     const groups = groupByAgent(list);
     if (groups.length === 0) return "（还没有用量记录）";
-    const header = ["人物", "步", "总输入(非缓存+读+写)", "总输出(文本+思考)", "非缓存$", "缓存读$", "缓存写$", "文本$", "思考$", "合计$", "单价依据"];
+    const header = [
+        "人物",
+        "步",
+        "总输入(非缓存+读+写)",
+        "总输出(文本+思考)",
+        "非缓存$",
+        "缓存读$",
+        "缓存写$",
+        "文本$",
+        "思考$",
+        "合计$",
+        "单价依据",
+    ];
     const rows = groups.map((g) => [
         g.persona,
         String(g.stepCount),
@@ -131,7 +162,9 @@ export function renderUsageByAgent(steps: StepUsageRecord[], opts: UsageTableOpt
         g.cost ? fmtCost(g.cost.reasoning) : "n/a",
         g.cost ? fmtCost(g.cost.total) : "n/a",
         g.tiers.length || g.windows.length
-            ? [g.tiers.length ? `tier=${g.tiers.join(",")}` : "", g.windows.length ? `时段=${g.windows.join(",")}` : ""].filter(Boolean).join(" · ")
+            ? [g.tiers.length ? `tier=${g.tiers.join(",")}` : "", g.windows.length ? `时段=${g.windows.join(",")}` : ""]
+                  .filter(Boolean)
+                  .join(" · ")
             : "—",
     ]);
     return table(header, rows);

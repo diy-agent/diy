@@ -36,7 +36,12 @@ function batch(): AskRequest {
         askId: 'a2',
         questions: [
             { id: 'env', question: '环境变量口径怎么定？', kind: 'choice', options: [{ value: 'keep', label: 'B' }] },
-            { id: 'topo', question: 'dev 的进程拓扑怎么改？', kind: 'choice', options: [{ value: 'single', label: 'A' }] },
+            {
+                id: 'topo',
+                question: 'dev 的进程拓扑怎么改？',
+                kind: 'choice',
+                options: [{ value: 'single', label: 'A' }],
+            },
             { id: 'scope', question: '本轮落地到哪一步？', kind: 'text' },
         ],
         at: 0,
@@ -143,11 +148,7 @@ describe('能否提交', () => {
 
     it('多题：答完一部分不算答完，全部答完才能提交', () => {
         const request = batch();
-        expect(unansweredOf(request, EMPTY_ASK_DRAFT).map((question) => question.id)).toEqual([
-            'env',
-            'topo',
-            'scope',
-        ]);
+        expect(unansweredOf(request, EMPTY_ASK_DRAFT).map((question) => question.id)).toEqual(['env', 'topo', 'scope']);
         let draft = setChoice(EMPTY_ASK_DRAFT, 'env', 'keep', false);
         expect(isReady(request, draft)).toBe(false);
         draft = setChoice(draft, 'topo', 'single', false);

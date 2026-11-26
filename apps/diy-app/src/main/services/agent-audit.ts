@@ -20,94 +20,97 @@ import { join } from "node:path";
 import { localISOString } from "@diy-agent/time";
 
 export type AuditPhase =
-  | "turn-start"
-  | "turn-end"
-  | "bash-start"
-  /** 后台模式（##408 刀 8）：`result` = 进程 id（它结束了另算，不出审计事件） */
-  | "bash-background"
-  | "bash-end"
-  | "bash-blocked"
-  /** `write` 工具的整文件写（##414）：`command` = 相对路径，`result` = `+N/-M` */
-  | "file-write"
-  /** `edit` 工具的局部编辑（##415）：写前 / 写后各一条，路径在 `path` */
-  | "file-edit-start"
-  | "file-edit-end";
+    | "turn-start"
+    | "turn-end"
+    | "bash-start"
+    /** 后台模式（##408 刀 8）：`result` = 进程 id（它结束了另算，不出审计事件） */
+    | "bash-background"
+    | "bash-end"
+    | "bash-blocked"
+    /** `write` 工具的整文件写（##414）：`command` = 相对路径，`result` = `+N/-M` */
+    | "file-write"
+    /** `edit` 工具的局部编辑（##415）：写前 / 写后各一条，路径在 `path` */
+    | "file-edit-start"
+    | "file-edit-end";
 
 export interface AuditEntry {
-  /** ISO 时间戳 */
-  ts: string;
-  phase: AuditPhase;
-  /** 写入者进程 pid（主进程 = app pid） */
-  pid: number;
-  taskUri?: string;
-  model?: string;
-  cwd?: string;
-  /** 完整命令（bash 类） */
-  command?: string;
-  /** 目标文件（file-edit 类，相对 cwd） */
-  path?: string;
-  /** 耗时 ms（bash-end） */
-  ms?: number;
-  /** 结果摘要，截断（bash-end/拦截原因） */
-  result?: string;
-  /**
-   * 轮末三档判据（##394，turn-end 专用）：`defect` / `external-recognized` / `external-unknown`。
-   * **预期内不写**（`completed` / 用户停止）—— 审计是"出过什么事"的账，不是每轮的流水。
-   */
-  triage?: string;
-  /** 上面那档的归一化 code（`llm/step-limit` 这类；无码不写） */
-  code?: string;
+    /** ISO 时间戳 */
+    ts: string;
+    phase: AuditPhase;
+    /** 写入者进程 pid（主进程 = app pid） */
+    pid: number;
+    taskUri?: string;
+    model?: string;
+    cwd?: string;
+    /** 完整命令（bash 类） */
+    command?: string;
+    /** 目标文件（file-edit 类，相对 cwd） */
+    path?: string;
+    /** 耗时 ms（bash-end） */
+    ms?: number;
+    /** 结果摘要，截断（bash-end/拦截原因） */
+    result?: string;
+    /**
+     * 轮末三档判据（##394，turn-end 专用）：`defect` / `external-recognized` / `external-unknown`。
+     * **预期内不写**（`completed` / 用户停止）—— 审计是"出过什么事"的账，不是每轮的流水。
+     */
+    triage?: string;
+    /** 上面那档的归一化 code（`llm/step-limit` 这类；无码不写） */
+    code?: string;
 }
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const TAIL_BYTES = 128 * 1024;
 
 export function auditFile(home: string): string {
-  return join(home, "log", "agent-bash.jsonl");
+    return join(home, "log", "agent-bash.jsonl");
 }
 
 /** 追加一条审计（同步 + 自动轮转）。失败不影响主流程，但要出声。 */
 export function appendAudit(home: string, entry: Omit<AuditEntry, "ts" | "pid"> & { ts?: string }): void {
-  try {
-    const p = auditFile(home);
-    mkdirSync(join(home, "log"), { recursive: true });
     try {
-      if (statSync(p).size > MAX_BYTES) renameSync(p, `${p}.1`);
-    } catch {
-      /* 首次写入或轮转失败都无所谓 */
+        const p = auditFile(home);
+        mkdirSync(join(home, "log"), { recursive: true });
+        try {
+            if (statSync(p).size > MAX_BYTES) renameSync(p, `${p}.1`);
+        } catch {
+            /* 首次写入或轮转失败都无所谓 */
+        }
+        const row: AuditEntry = { ts: entry.ts ?? localISOString(), pid: process.pid, ...entry };
+        appendFileSync(p, `${JSON.stringify(row)}\n`, "utf-8");
+    } catch (e) {
+        console.warn("[agent-audit] 审计写入失败:", e);
     }
-    const row: AuditEntry = { ts: entry.ts ?? localISOString(), pid: process.pid, ...entry };
-    appendFileSync(p, `${JSON.stringify(row)}\n`, "utf-8");
-  } catch (e) {
-    console.warn("[agent-audit] 审计写入失败:", e);
-  }
 }
 
 /** 读文件尾部的审计条目（丢弃可能被截断的首行） */
 export function tailAudit(home: string, n = 20): AuditEntry[] {
-  const p = auditFile(home);
-  if (!existsSync(p)) return [];
-  try {
-    const size = statSync(p).size;
-    const len = Math.min(size, TAIL_BYTES);
-    const fd = openSync(p, "r");
-    const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, size - len);
-    closeSync(fd);
-    const lines = buf.toString("utf-8").split("\n").filter((l) => l.trim());
-    if (len < size && lines.length > 0) lines.shift(); // 首行大概率截断
-    const out: AuditEntry[] = [];
-    for (const l of lines.slice(-n)) {
-      try {
-        out.push(JSON.parse(l) as AuditEntry);
-      } catch {
-        /* 半行忽略 */
-      }
+    const p = auditFile(home);
+    if (!existsSync(p)) return [];
+    try {
+        const size = statSync(p).size;
+        const len = Math.min(size, TAIL_BYTES);
+        const fd = openSync(p, "r");
+        const buf = Buffer.alloc(len);
+        readSync(fd, buf, 0, len, size - len);
+        closeSync(fd);
+        const lines = buf
+            .toString("utf-8")
+            .split("\n")
+            .filter((l) => l.trim());
+        if (len < size && lines.length > 0) lines.shift(); // 首行大概率截断
+        const out: AuditEntry[] = [];
+        for (const l of lines.slice(-n)) {
+            try {
+                out.push(JSON.parse(l) as AuditEntry);
+            } catch {
+                /* 半行忽略 */
+            }
+        }
+        return out;
+    } catch {
+        return [];
     }
-    return out;
-  } catch {
-    return [];
-  }
 }
 
 /**
@@ -124,20 +127,20 @@ export function tailAudit(home: string, n = 20): AuditEntry[] {
  *   3. 都没有（如重启后回看上次崩溃）才退回审计尾部，且此时已按 taskUri 配对。
  */
 export function crashScene(home: string): string {
-  const parts: string[] = [];
-  const turns = activeTurnList();
-  if (turns.length > 0) {
-    const desc = turns
-      .map((t) => `${t.taskUri}(model=${t.model ?? "?"} since=${t.since}${t.cwd ? ` cwd=${t.cwd}` : ""})`)
-      .join(", ");
-    parts.push(`活跃轮次 ${turns.length} 个: ${desc}`);
-  }
-  const touch = lastRenderer();
-  if (touch) {
-    parts.push(`渲染进程最后交互 ${touch.channel}${touch.taskUri ? ` task=${touch.taskUri}` : ""} @${touch.at}`);
-  }
-  if (parts.length === 0) return `无内存上下文（可能为启动期崩溃） | 审计尾部: ${crashContext(home)}`;
-  return `${parts.join(" | ")} | 审计尾部: ${crashContext(home)}`;
+    const parts: string[] = [];
+    const turns = activeTurnList();
+    if (turns.length > 0) {
+        const desc = turns
+            .map((t) => `${t.taskUri}(model=${t.model ?? "?"} since=${t.since}${t.cwd ? ` cwd=${t.cwd}` : ""})`)
+            .join(", ");
+        parts.push(`活跃轮次 ${turns.length} 个: ${desc}`);
+    }
+    const touch = lastRenderer();
+    if (touch) {
+        parts.push(`渲染进程最后交互 ${touch.channel}${touch.taskUri ? ` task=${touch.taskUri}` : ""} @${touch.at}`);
+    }
+    if (parts.length === 0) return `无内存上下文（可能为启动期崩溃） | 审计尾部: ${crashContext(home)}`;
+    return `${parts.join(" | ")} | 审计尾部: ${crashContext(home)}`;
 }
 
 /**
@@ -147,31 +150,31 @@ export function crashScene(home: string): string {
  * 多任务并发时拼出根本不存在的组合（实例见 runtime-context.ts 头注释）。
  */
 export function crashContext(home: string): string {
-  const rows = tailAudit(home, 40);
-  if (rows.length === 0) return "无 agent 审计记录";
-  const lastTurn = [...rows].reverse().find((r) => r.phase === "turn-start");
-  const parts: string[] = [];
-  if (lastTurn) {
-    parts.push(`轮次 task=${lastTurn.taskUri ?? "?"} model=${lastTurn.model ?? "?"} 起始=${lastTurn.ts}`);
-    const sameTask = [...rows]
-      .reverse()
-      .find((r) => isBashPhase(r.phase) && (r.taskUri === lastTurn.taskUri || !r.taskUri));
-    if (sameTask) {
-      const cmd = (sameTask.command ?? "").replace(/\s+/g, " ").slice(0, 300);
-      parts.push(`最近命令[${sameTask.phase}] ${sameTask.ts} cwd=${sameTask.cwd ?? "?"} :: ${cmd}`);
+    const rows = tailAudit(home, 40);
+    if (rows.length === 0) return "无 agent 审计记录";
+    const lastTurn = [...rows].reverse().find((r) => r.phase === "turn-start");
+    const parts: string[] = [];
+    if (lastTurn) {
+        parts.push(`轮次 task=${lastTurn.taskUri ?? "?"} model=${lastTurn.model ?? "?"} 起始=${lastTurn.ts}`);
+        const sameTask = [...rows]
+            .reverse()
+            .find((r) => isBashPhase(r.phase) && (r.taskUri === lastTurn.taskUri || !r.taskUri));
+        if (sameTask) {
+            const cmd = (sameTask.command ?? "").replace(/\s+/g, " ").slice(0, 300);
+            parts.push(`最近命令[${sameTask.phase}] ${sameTask.ts} cwd=${sameTask.cwd ?? "?"} :: ${cmd}`);
+        } else {
+            parts.push("（该任务无命令记录）");
+        }
     } else {
-      parts.push("（该任务无命令记录）");
+        const lastCmd = [...rows].reverse().find((r) => isBashPhase(r.phase));
+        if (lastCmd) {
+            const cmd = (lastCmd.command ?? "").replace(/\s+/g, " ").slice(0, 300);
+            parts.push(`无轮次记录，最近命令[${lastCmd.phase}] task=${lastCmd.taskUri ?? "?"} ${lastCmd.ts} :: ${cmd}`);
+        }
     }
-  } else {
-    const lastCmd = [...rows].reverse().find((r) => isBashPhase(r.phase));
-    if (lastCmd) {
-      const cmd = (lastCmd.command ?? "").replace(/\s+/g, " ").slice(0, 300);
-      parts.push(`无轮次记录，最近命令[${lastCmd.phase}] task=${lastCmd.taskUri ?? "?"} ${lastCmd.ts} :: ${cmd}`);
-    }
-  }
-  return parts.join(" | ") || `${rows.length} 条审计但无轮次/命令`;
+    return parts.join(" | ") || `${rows.length} 条审计但无轮次/命令`;
 }
 
 function isBashPhase(p: AuditPhase): boolean {
-  return p === "bash-start" || p === "bash-end" || p === "bash-blocked";
+    return p === "bash-start" || p === "bash-end" || p === "bash-blocked";
 }

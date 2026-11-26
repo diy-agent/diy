@@ -172,16 +172,36 @@ describe("triageOfTurnEnd · 轮末映射（只映射，不动值域）", () => 
     const cases: Array<[string, TurnEndReason, string | null, string | null]> = [
         ["completed", { type: "completed", data: {} }, null, null],
         ["max-steps", { type: "max-steps", data: { steps: 30, limit: 30 } }, "external-recognized", "llm/step-limit"],
-        ["max-tokens", { type: "max-tokens", data: { maxOutputTokens: 8192 } }, "external-recognized", "llm/token-limit"],
+        [
+            "max-tokens",
+            { type: "max-tokens", data: { maxOutputTokens: 8192 } },
+            "external-recognized",
+            "llm/token-limit",
+        ],
         ["aborted:user", { type: "aborted", data: { source: "user" } }, null, null],
-        ["aborted:detached", { type: "aborted", data: { source: "detached" } }, "external-unknown", "agent/aborted-detached"],
+        [
+            "aborted:detached",
+            { type: "aborted", data: { source: "detached" } },
+            "external-unknown",
+            "agent/aborted-detached",
+        ],
         // legacy：旧版停止按钮没带 reason（`src/shared/turn-end.ts:15-19` 头注）⇒ 同样是用户停止，
         // 判 null 而不是 unknown —— 否则历史「点停止」整批进裁定池（##266 review1 R1）。
         ["aborted:abort(legacy 用户停止)", { type: "aborted", data: { source: "abort" } }, null, null],
         ["interrupted", { type: "interrupted", data: {} }, "external-unknown", "agent/interrupted"],
-        ["error:budget", { type: "error", data: { source: "budget", message: "budget" } }, "external-recognized", "llm/budget-exceeded"],
+        [
+            "error:budget",
+            { type: "error", data: { source: "budget", message: "budget" } },
+            "external-recognized",
+            "llm/budget-exceeded",
+        ],
         ["error:llm", { type: "error", data: { source: "llm", message: "boom" } }, "external-unknown", "llm/error"],
-        ["error:stream", { type: "error", data: { source: "stream", message: "cut" } }, "external-unknown", "llm/stream-error"],
+        [
+            "error:stream",
+            { type: "error", data: { source: "stream", message: "cut" } },
+            "external-unknown",
+            "llm/stream-error",
+        ],
     ];
 
     it.each(cases)("%s", (_name, reason, triage, code) => {
@@ -211,9 +231,19 @@ describe("triageOfTurnEnd · 轮末映射（只映射，不动值域）", () => 
             "external-recognized",
             "agent/app-crash",
         ],
-        ["interrupted:minidump", { type: "interrupted", data: { why: "crash:minidump" } }, "external-recognized", "agent/app-crash"],
+        [
+            "interrupted:minidump",
+            { type: "interrupted", data: { why: "crash:minidump" } },
+            "external-recognized",
+            "agent/app-crash",
+        ],
         // 认不出的 why 必须回落 unknown —— 「能命名才命名」，不许硬猜
-        ["interrupted:未知 why", { type: "interrupted", data: { why: "app-exit:whatever" } }, "external-unknown", "agent/interrupted"],
+        [
+            "interrupted:未知 why",
+            { type: "interrupted", data: { why: "app-exit:whatever" } },
+            "external-unknown",
+            "agent/interrupted",
+        ],
     ];
     it.each(named)("可命名/不可命名的中断：%s", (_name, reason, triage, code) => {
         const v = triageOfTurnEnd(reason);

@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { buildTools } from "../../src/main/services/local-agent";
 import { DEFAULT_LIMITS, type LocalAgentLimits } from "../../src/main/services/local-agent";
 
-let workDir: string;   // 模拟 cwd（项目目录）
+let workDir: string; // 模拟 cwd（项目目录）
 let outsideDir: string; // cwd 之外的绝对路径
 
 beforeAll(() => {
@@ -30,7 +30,11 @@ beforeAll(() => {
     writeFileSync(join(workDir, "relative.txt"), "relative-ok", "utf-8");
     writeFileSync(join(outsideDir, "absolute.txt"), "absolute-ok", "utf-8");
     // 50 行样本：**在 beforeAll 建**（原先由某个用例顺手建，shuffle 后顺序一变就 ENOENT）
-    writeFileSync(join(workDir, "many.txt"), Array.from({ length: 50 }, (_, i) => `row${i + 1}`).join("\n") + "\n", "utf-8");
+    writeFileSync(
+        join(workDir, "many.txt"),
+        Array.from({ length: 50 }, (_, i) => `row${i + 1}`).join("\n") + "\n",
+        "utf-8",
+    );
 });
 
 afterAll(() => {

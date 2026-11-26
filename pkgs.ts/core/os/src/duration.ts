@@ -22,7 +22,7 @@ export function formatEtime(ms: number): string {
     const hours = Math.floor((total % 86_400) / 3600);
     const minutes = Math.floor((total % 3600) / 60);
     const seconds = total % 60;
-    const p2 = (n: number): string => String(n).padStart(2, "0");
+    const p2 = (n: number): string => String(n).padStart(2, '0');
     const clock = `${p2(minutes)}:${p2(seconds)}`;
     if (days > 0) return `${days}-${p2(hours)}:${clock}`;
     if (hours > 0) return `${p2(hours)}:${clock}`;

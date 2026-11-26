@@ -14,55 +14,55 @@ import { startElectronTest, type ElectronTest } from "../electron-test";
 import { waitUntil } from "../wait";
 
 interface ElectronFixture {
-  sh: ShellTest;
-  HOME: string;
-  electron: ElectronTest;
+    sh: ShellTest;
+    HOME: string;
+    electron: ElectronTest;
 }
 
 let fx: ElectronFixture;
 
 beforeAll(async () => {
-  const electron = await startElectronTest();
-  const HOME = electron.home;
-  fx = {
-    electron,
-    HOME,
-    sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
-  };
+    const electron = await startElectronTest();
+    const HOME = electron.home;
+    fx = {
+        electron,
+        HOME,
+        sh: new ShellTest({ cwd: join(__dirname, "..", "..", "..", ".."), env: { HOME, DIY_HOME: HOME } }),
+    };
 });
 
 afterAll(async () => {
-  await fx?.electron?.stop();
+    await fx?.electron?.stop();
 });
 
 /** 取 UI 树结构；ui.tree 返回结构化节点数组，递归收集可读文本供断言 */
 function collectText(nodes: any[], acc: string[] = []): string[] {
-  for (const n of nodes ?? []) {
-    if (n?.title) acc.push(String(n.title));
-    if (n?.uri) acc.push(String(n.uri));
-    if (n?.children) collectText(n.children, acc);
-  }
-  return acc;
+    for (const n of nodes ?? []) {
+        if (n?.title) acc.push(String(n.title));
+        if (n?.uri) acc.push(String(n.uri));
+        if (n?.children) collectText(n.children, acc);
+    }
+    return acc;
 }
 
 async function treeText(): Promise<string> {
-  const res = await fx.sh.getJson("./diy.sh ui tree");
-  return collectText((res.data as any)?.data ?? []).join("\n");
+    const res = await fx.sh.getJson("./diy.sh ui tree");
+    return collectText((res.data as any)?.data ?? []).join("\n");
 }
 
 describe("ui project create", () => {
-  it("经 renderer 入口创建项目 → ui tree 可见（与 App 按钮同一逻辑）", async () => {
-    const repo = `${fx.HOME}/uip`;
-    const r = await fx.sh.getJson(`./diy.sh ui project create "${repo}" --label UI创建`);
-    const id = String((r.data as any)?.data?.id);
-    expect(id).toMatch(/^\d+$/);
+    it("经 renderer 入口创建项目 → ui tree 可见（与 App 按钮同一逻辑）", async () => {
+        const repo = `${fx.HOME}/uip`;
+        const r = await fx.sh.getJson(`./diy.sh ui project create "${repo}" --label UI创建`);
+        const id = String((r.data as any)?.data?.id);
+        expect(id).toMatch(/^\d+$/);
 
-    // 树读取走 renderer→main 往返，负载高时可能慢一拍 → 有界轮询（慢与错分开）
-    expect(await waitUntil(treeText, (t) => t.includes("UI创建"), { label: "ui tree 出现 UI创建" })).toContain(
-      "UI创建",
-    );
+        // 树读取走 renderer→main 往返，负载高时可能慢一拍 → 有界轮询（慢与错分开）
+        expect(await waitUntil(treeText, (t) => t.includes("UI创建"), { label: "ui tree 出现 UI创建" })).toContain(
+            "UI创建",
+        );
 
-    // 清理（ui 无删除入口，走 main 直删）
-    await fx.sh.run(`./diy.sh project remove ${id}`);
-  });
+        // 清理（ui 无删除入口，走 main 直删）
+        await fx.sh.run(`./diy.sh project remove ${id}`);
+    });
 });

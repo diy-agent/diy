@@ -140,7 +140,9 @@ describe("turns.jsonl：正常写（一刀一条，形状定死）", () => {
                 return { role: (s.meta?.["role"] as string) ?? "", content: delta?.fields["content"] ?? "" };
             });
             expect(contents.filter((c) => c.role === "user").map((c) => c.content)).toEqual([rec.user]);
-            expect(rec.texts.map((t) => t.text)).toEqual(contents.filter((c) => c.role === "assistant").map((c) => c.content));
+            expect(rec.texts.map((t) => t.text)).toEqual(
+                contents.filter((c) => c.role === "assistant").map((c) => c.content),
+            );
         }
         // 第二轮的 ref 必须指向第二轮（偏移严格大于第一轮）
         expect(recs[1]!.ref.ops.offset).toBeGreaterThan(recs[0]!.ref.ops.offset);
@@ -264,7 +266,17 @@ describe("ref 校验：三种悬空各有判据", () => {
         const prev = readFileSync(fp, "utf-8");
         // 在行首插一行 ⇒ offset/len 仍指向原来那一行，但它的物理行号变成 2
         writeFileSync(fp, `${JSON.stringify({ op: "start", id: "t0", kind: "turn" })}\n${prev}`, "utf-8");
-        const shifted = { ...rec, ref: { ops: { ...rec.ref.ops, offset: rec.ref.ops.offset + Buffer.byteLength(`${JSON.stringify({ op: "start", id: "t0", kind: "turn" })}\n`) } } };
+        const shifted = {
+            ...rec,
+            ref: {
+                ops: {
+                    ...rec.ref.ops,
+                    offset:
+                        rec.ref.ops.offset +
+                        Buffer.byteLength(`${JSON.stringify({ op: "start", id: "t0", kind: "turn" })}\n`),
+                },
+            },
+        };
         expect(checkOpsRef(uri, shifted)).toEqual({ ok: false, reason: "seq" });
     });
 });
@@ -294,7 +306,9 @@ describe("降级链：ops 不可用时用 turns 重建只读文本历史", () =>
         const turns = w.ops.filter((o) => o.op === "start" && o.kind === "turn") as Extract<Op, { op: "start" }>[];
         expect(turns).toHaveLength(2);
         const contents = w.ops
-            .filter((o): o is Extract<Op, { op: "delta" }> => o.op === "delta" && typeof o.fields["content"] === "string")
+            .filter(
+                (o): o is Extract<Op, { op: "delta" }> => o.op === "delta" && typeof o.fields["content"] === "string",
+            )
             .map((o) => o.fields["content"]);
         expect(contents).toContain("第一问");
         expect(contents).toContain("第二问");
@@ -303,7 +317,9 @@ describe("降级链：ops 不可用时用 turns 重建只读文本历史", () =>
             (o): o is Extract<Op, { op: "patch" }> => o.op === "patch" && typeof o.fields["degraded"] === "object",
         );
         expect(patches).toHaveLength(2);
-        expect(patches.every((p) => (p.fields["degraded"] as { refDangling?: boolean }).refDangling === true)).toBe(true);
+        expect(patches.every((p) => (p.fields["degraded"] as { refDangling?: boolean }).refDangling === true)).toBe(
+            true,
+        );
 
         // `history()`（CLI 口径）同一份
         expect(fresh.history(uri).length).toBe(w.ops.length);

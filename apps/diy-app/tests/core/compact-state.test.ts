@@ -13,7 +13,16 @@ import { join } from "node:path";
 import { diyHome } from "../../src/main/core/state";
 import { createProject } from "../../src/main/core/project";
 import { createTask } from "../../src/main/core/task";
-import { compactFile, compactStateFile, getLocalAgent, readCompactLogFull, readCompactLogTail, resetOpsReplayCache, resolveOpsReplay, writeCompactState } from "../../src/main/services/local-agent";
+import {
+    compactFile,
+    compactStateFile,
+    getLocalAgent,
+    readCompactLogFull,
+    readCompactLogTail,
+    resetOpsReplayCache,
+    resolveOpsReplay,
+    writeCompactState,
+} from "../../src/main/services/local-agent";
 import { opsFile } from "../../src/main/core/local-paths";
 import { realFs } from "../../src/main/core/atomic-write";
 import { readJsonlTail } from "../../src/main/core/jsonl-tail";
@@ -54,7 +63,11 @@ function seedOps(uri: string, turns = 3): void {
 
 /** 真压一次（预算=0 ⇒ 全清零，必写账 + 必写快照） */
 function compress(uri: string): void {
-    getLocalAgent().compact(uri, { mode: "budget", budgetBytes: 0, toolResult: { render: "asis" }, summary: false }, "cli");
+    getLocalAgent().compact(
+        uri,
+        { mode: "budget", budgetBytes: 0, toolResult: { render: "asis" }, summary: false },
+        "cli",
+    );
 }
 
 /**
@@ -174,7 +187,9 @@ describe("① 懒迁移：老账（无快照）→ 生成快照，且与整份�
         const point = compactPointOf(rec as never, 42);
         const b = boundaryOfPoint(point);
         expect(b.compactId).toBe((rec as { id: string }).id);
-        expect(b.keptFromOpsOffset).toBe((rec as { boundary: { keptFromOpsOffset?: number } }).boundary.keptFromOpsOffset);
+        expect(b.keptFromOpsOffset).toBe(
+            (rec as { boundary: { keptFromOpsOffset?: number } }).boundary.keptFromOpsOffset,
+        );
         expect(b.keptFromLlmLine).toBe((rec as { boundary: { keptFromLlmLine?: number } }).boundary.keptFromLlmLine);
         expect(point.at).toBe(42);
     });
@@ -280,7 +295,12 @@ describe("④ 账本瘦身：v5 单条 ≤ 1 KB，且不再存明细", () => {
 
         const rec = JSON.parse(line) as {
             v: number;
-            details?: { dropped?: unknown; clipped?: unknown; droppedCount?: number; clippedIds?: { ids: string[]; count: number } };
+            details?: {
+                dropped?: unknown;
+                clipped?: unknown;
+                droppedCount?: number;
+                clippedIds?: { ids: string[]; count: number };
+            };
         };
         expect(rec.v).toBe(5);
         expect(rec.details?.dropped).toBeUndefined();
@@ -304,8 +324,26 @@ describe("④ 账本瘦身：v5 单条 ≤ 1 KB，且不再存明细", () => {
             trigger: "manual",
             policy: { mode: "budget", modeData: { budgetBytes: 0, toolResult: { render: "asis" } } },
             boundary: { keptFromTurnId: null, keepFromOpIndex: 0, opsBytes: 10 },
-            size: { before: { turns: 1, messages: 2, bytes: 100 }, after: { turns: 0, messages: 0, bytes: 0 }, keptTurns: 0, droppedTurns: 1 },
-            details: { clipped: [{ id: "tool-abc", tool: "bash", render: "headtail", origLines: 1, origBytes: 1, keptLines: 1, keptBytes: 1, origPath: "x" }] },
+            size: {
+                before: { turns: 1, messages: 2, bytes: 100 },
+                after: { turns: 0, messages: 0, bytes: 0 },
+                keptTurns: 0,
+                droppedTurns: 1,
+            },
+            details: {
+                clipped: [
+                    {
+                        id: "tool-abc",
+                        tool: "bash",
+                        render: "headtail",
+                        origLines: 1,
+                        origBytes: 1,
+                        keptLines: 1,
+                        keptBytes: 1,
+                        origPath: "x",
+                    },
+                ],
+            },
         };
         writeFileSync(compactFile(uri), `${JSON.stringify(legacy)}\n`, "utf-8");
         const events = parseCompactLog(readFileSync(compactFile(uri), "utf-8"));

@@ -21,33 +21,32 @@
 //
 // 本文件只放纯逻辑 + 一次 ps 采样，便于单测。
 
-
 export interface SelfProcessInfo {
-  /** 自身 pid */
-  pid: number;
-  /** 自身进程组 */
-  pgid: number;
-  /** 与自身同生共死的 pid 集合：祖先链 + 直接子进程 + 同进程组 + diy 进程全家 */
-  pids: Set<number>;
-  /** 上述进程的命令行（已转小写，用于 pattern 命中判定） */
-  cmdlines: string[];
-  /**
-   * 宿主自己的数据根（`DIY_HOME`）—— 「谁是我家人」的**唯一可靠判据**。
-   *
-   * 为什么不能靠命令行 / 路径判：同一个 `build/lab/main/index.mjs` 既可能是生产实例
-   * 也可能是 agent 自建的；只有环境变量里的 `DIY_HOME` 说得清。
-   * 空串 = 没拿到（调用方应退化为「只认祖先链」）。
-   */
-  home: string;
+    /** 自身 pid */
+    pid: number;
+    /** 自身进程组 */
+    pgid: number;
+    /** 与自身同生共死的 pid 集合：祖先链 + 直接子进程 + 同进程组 + diy 进程全家 */
+    pids: Set<number>;
+    /** 上述进程的命令行（已转小写，用于 pattern 命中判定） */
+    cmdlines: string[];
+    /**
+     * 宿主自己的数据根（`DIY_HOME`）—— 「谁是我家人」的**唯一可靠判据**。
+     *
+     * 为什么不能靠命令行 / 路径判：同一个 `build/lab/main/index.mjs` 既可能是生产实例
+     * 也可能是 agent 自建的；只有环境变量里的 `DIY_HOME` 说得清。
+     * 空串 = 没拿到（调用方应退化为「只认祖先链」）。
+     */
+    home: string;
 }
 
 export interface KillVerdict {
-  blocked: boolean;
-  /** 拦截原因（面向模型/日志，中文） */
-  reason: string;
+    blocked: boolean;
+    /** 拦截原因（面向模型/日志，中文） */
+    reason: string;
 }
 
-const PASS: KillVerdict = { blocked: false, reason: "" };
+const PASS: KillVerdict = { blocked: false, reason: '' };
 
 /** 只看"杀进程"语义；纯查询（pgrep/ps）不能命中 */
 const KILL_WORD = /\b(?:kill|pkill|killall)\b/;
@@ -61,43 +60,46 @@ const CANDIDATE = /"[^"]*"|'[^']*'|[A-Za-z0-9_./:@-]{3,}/g;
 const HOST_MARKER = /electron|\.diy\b|out\/main\/index\.mjs|electron_user_data/i;
 /** 常见 shell 词，参与匹配只会造成误伤 */
 const STOP = new Set([
-  "kill",
-  "pkill",
-  "killall",
-  "grep",
-  "pgrep",
-  "xargs",
-  "awk",
-  "print",
-  "echo",
-  "sleep",
-  "head",
-  "tail",
-  "wc",
-  "ps",
-  "aux",
-  "ef",
-  "bash",
-  "sh",
-  "null",
-  "dev",
-  "then",
-  "else",
-  "done",
-  "true",
-  "false",
-  "sort",
-  "uniq",
-  "sed",
-  "xargs",
-  "sudo",
-  "the",
-  "and",
-  "for",
+    'kill',
+    'pkill',
+    'killall',
+    'grep',
+    'pgrep',
+    'xargs',
+    'awk',
+    'print',
+    'echo',
+    'sleep',
+    'head',
+    'tail',
+    'wc',
+    'ps',
+    'aux',
+    'ef',
+    'bash',
+    'sh',
+    'null',
+    'dev',
+    'then',
+    'else',
+    'done',
+    'true',
+    'false',
+    'sort',
+    'uniq',
+    'sed',
+    'xargs',
+    'sudo',
+    'the',
+    'and',
+    'for',
 ]);
 
 function normalizeWord(raw: string): string {
-  return raw.replace(/^["']|["']$/g, "").trim().toLowerCase();
+    return raw
+        .replace(/^["']|["']$/g, '')
+        .trim()
+        .toLowerCase();
 }
 
 /**
@@ -105,29 +107,29 @@ function normalizeWord(raw: string): string {
  * 不还原的话，HOST_MARKER 会漏掉这类变体（实测被 agent 用过）。
  */
 export function normalizeCommand(command: string): string {
-  return command.replace(/\[([A-Za-z])\]/g, "$1");
+    return command.replace(/\[([A-Za-z])\]/g, '$1');
 }
 
 /** 排除选项、设备路径等噪声候选 */
 function isNoise(w: string): boolean {
-  if (w.startsWith("-")) return true;
-  if (w.startsWith("/dev/")) return true;
-  if (w.startsWith("/proc/")) return true;
-  return false;
+    if (w.startsWith('-')) return true;
+    if (w.startsWith('/dev/')) return true;
+    if (w.startsWith('/proc/')) return true;
+    return false;
 }
 
 /** 从命令里抽取"可能是杀进程目标"的候选词 */
 export function killTargetCandidates(command: string): string[] {
-  const out = new Set<string>();
-  for (const m of normalizeCommand(command).matchAll(CANDIDATE)) {
-    const w = normalizeWord(m[0]);
-    if (w.length < 3) continue;
-    if (STOP.has(w)) continue;
-    if (/^\d+$/.test(w)) continue;
-    if (isNoise(w)) continue;
-    out.add(w);
-  }
-  return [...out];
+    const out = new Set<string>();
+    for (const m of normalizeCommand(command).matchAll(CANDIDATE)) {
+        const w = normalizeWord(m[0]);
+        if (w.length < 3) continue;
+        if (STOP.has(w)) continue;
+        if (/^\d+$/.test(w)) continue;
+        if (isNoise(w)) continue;
+        out.add(w);
+    }
+    return [...out];
 }
 
 /**
@@ -136,9 +138,7 @@ export function killTargetCandidates(command: string): string[] {
  * 不切就会误拦（实测过）。管道不切，因为 `grep electron | xargs kill` 本身就是一条自杀链。
  */
 export function killSegments(command: string): string[] {
-  return command
-    .split(SEGMENT_SPLIT)
-    .filter((s) => KILL_WORD.test(s));
+    return command.split(SEGMENT_SPLIT).filter((s) => KILL_WORD.test(s));
 }
 
 /**
@@ -146,91 +146,91 @@ export function killSegments(command: string): string[] {
  * 保守优先：拿不准就拦（自杀的代价是白屏 + 无日志，误拦只是让模型换个做法）。
  */
 export function judgeSelfKill(
-  command: string,
-  self: SelfProcessInfo,
-  /**
-   * 查某个 pid 的 `DIY_HOME`（宿主注入 —— 走 `os.environmentsOf`）。
-   * 不传 = 不做「按数据根判家人」（退化成只看祖先链）。
-   */
-  homeOf?: (pid: number) => string | undefined,
+    command: string,
+    self: SelfProcessInfo,
+    /**
+     * 查某个 pid 的 `DIY_HOME`（宿主注入 —— 走 `os.environmentsOf`）。
+     * 不传 = 不做「按数据根判家人」（退化成只看祖先链）。
+     */
+    homeOf?: (pid: number) => string | undefined,
 ): KillVerdict {
-  const segments = killSegments(command);
-  if (segments.length === 0) return PASS;
+    const segments = killSegments(command);
+    if (segments.length === 0) return PASS;
 
-  for (const seg of segments) {
-    // 规则 1：显式 pid / -pgid 命中自身进程集合
-    const hits: number[] = [];
-    for (const m of seg.matchAll(KILL_SEGMENT)) {
-      const body = m[1] ?? "";
-      for (const t of body.matchAll(/(?<![\w.-])(\d{2,})(?![\w.])/g)) {
-        const n = Number(t[1]);
-        if (self.pids.has(n)) hits.push(n);
-      }
-      for (const t of body.matchAll(/(?:^|\s)-(\d{2,})(?=\s|$)/g)) {
-        if (Number(t[1]) === self.pgid) hits.push(Number(t[1]));
-      }
-    }
-    if (hits.length > 0) {
-      return {
-        blocked: true,
-        reason: `命令里的 pid 属于 diy 自身进程树（${[...new Set(hits)].join(", ")}；自身 pid=${self.pid}，pgid=${self.pgid}）`,
-      };
-    }
-
-    // 规则 1b：显式 pid **虽然不是自己的祖先**，但它的 DIY_HOME 就是宿主的数据根
-    //   ⇒ 它是「同一个 diy 实例」的兄弟进程（GPU / renderer / 用户另一个窗口）。
-    //   杀它 = 部分白屏，和杀祖先同类后果，所以拦。
-    //   反过来说：DIY_HOME 不同的（agent 自建的 dev/测试实例）**放行** —— 那正是
-    //   以前误拦、导致 agent 收不掉自己现场的那一类。
-    if (self.home !== '' && homeOf !== undefined) {
-      const sameHome: number[] = [];
-      for (const m of seg.matchAll(KILL_SEGMENT)) {
-        const body = m[1] ?? "";
-        for (const t of body.matchAll(/(?<![\w.-])(\d{2,})(?![\w.])/g)) {
-          const n = Number(t[1]);
-          if (self.pids.has(n)) continue; // 规则 1 已经覆盖
-          if (homeOf(n) === self.home) sameHome.push(n);
+    for (const seg of segments) {
+        // 规则 1：显式 pid / -pgid 命中自身进程集合
+        const hits: number[] = [];
+        for (const m of seg.matchAll(KILL_SEGMENT)) {
+            const body = m[1] ?? '';
+            for (const t of body.matchAll(/(?<![\w.-])(\d{2,})(?![\w.])/g)) {
+                const n = Number(t[1]);
+                if (self.pids.has(n)) hits.push(n);
+            }
+            for (const t of body.matchAll(/(?:^|\s)-(\d{2,})(?=\s|$)/g)) {
+                if (Number(t[1]) === self.pgid) hits.push(Number(t[1]));
+            }
         }
-      }
-      if (sameHome.length > 0) {
-        return {
-          blocked: true,
-          reason: `命令里的 pid 属于**同一个 diy 实例**（DIY_HOME=${self.home}）：${[...new Set(sameHome)].join(", ")}。收别的实例请按 DIY_HOME 区分后精确 kill。`,
-        };
-      }
+        if (hits.length > 0) {
+            return {
+                blocked: true,
+                reason: `命令里的 pid 属于 diy 自身进程树（${[...new Set(hits)].join(', ')}；自身 pid=${self.pid}，pgid=${self.pgid}）`,
+            };
+        }
+
+        // 规则 1b：显式 pid **虽然不是自己的祖先**，但它的 DIY_HOME 就是宿主的数据根
+        //   ⇒ 它是「同一个 diy 实例」的兄弟进程（GPU / renderer / 用户另一个窗口）。
+        //   杀它 = 部分白屏，和杀祖先同类后果，所以拦。
+        //   反过来说：DIY_HOME 不同的（agent 自建的 dev/测试实例）**放行** —— 那正是
+        //   以前误拦、导致 agent 收不掉自己现场的那一类。
+        if (self.home !== '' && homeOf !== undefined) {
+            const sameHome: number[] = [];
+            for (const m of seg.matchAll(KILL_SEGMENT)) {
+                const body = m[1] ?? '';
+                for (const t of body.matchAll(/(?<![\w.-])(\d{2,})(?![\w.])/g)) {
+                    const n = Number(t[1]);
+                    if (self.pids.has(n)) continue; // 规则 1 已经覆盖
+                    if (homeOf(n) === self.home) sameHome.push(n);
+                }
+            }
+            if (sameHome.length > 0) {
+                return {
+                    blocked: true,
+                    reason: `命令里的 pid 属于**同一个 diy 实例**（DIY_HOME=${self.home}）：${[...new Set(sameHome)].join(', ')}。收别的实例请按 DIY_HOME 区分后精确 kill。`,
+                };
+            }
+        }
+
+        // 规则 2：本段带 diy/Electron 自指特征 → 直接拦（覆盖 pkill -f electron / grep Electron | xargs kill）
+        if (HOST_MARKER.test(normalizeCommand(seg))) {
+            return {
+                blocked: true,
+                reason: '这条命令同时出现 kill 与 Electron/diy 特征（会波及宿主自身进程树）',
+            };
+        }
+
+        // 规则 3：pattern 命中自身命令行
+        const selfCmd = self.cmdlines.join('\n');
+        const matched = killTargetCandidates(seg).filter((w) => selfCmd.includes(w));
+        if (matched.length > 0) {
+            return {
+                blocked: true,
+                reason: `杀进程目标 pattern 命中 diy 自身命令行: ${matched.join(', ')}`,
+            };
+        }
+
+        // 规则 4：pkill/killall 没有任何可判定的目标 → 无法证明安全，拦
+        if (/\b(?:pkill|killall)\b/.test(seg)) {
+            const hasPidTarget = /(?<![\w.-])\d{2,}(?![\w.])/.test(seg);
+            if (!hasPidTarget) {
+                return {
+                    blocked: true,
+                    reason: 'pkill/killall 目标无法静态判定，可能波及 diy 自身进程',
+                };
+            }
+        }
     }
 
-    // 规则 2：本段带 diy/Electron 自指特征 → 直接拦（覆盖 pkill -f electron / grep Electron | xargs kill）
-    if (HOST_MARKER.test(normalizeCommand(seg))) {
-      return {
-        blocked: true,
-        reason: "这条命令同时出现 kill 与 Electron/diy 特征（会波及宿主自身进程树）",
-      };
-    }
-
-    // 规则 3：pattern 命中自身命令行
-    const selfCmd = self.cmdlines.join("\n");
-    const matched = killTargetCandidates(seg).filter((w) => selfCmd.includes(w));
-    if (matched.length > 0) {
-      return {
-        blocked: true,
-        reason: `杀进程目标 pattern 命中 diy 自身命令行: ${matched.join(", ")}`,
-      };
-    }
-
-    // 规则 4：pkill/killall 没有任何可判定的目标 → 无法证明安全，拦
-    if (/\b(?:pkill|killall)\b/.test(seg)) {
-      const hasPidTarget = /(?<![\w.-])\d{2,}(?![\w.])/.test(seg);
-      if (!hasPidTarget) {
-        return {
-          blocked: true,
-          reason: "pkill/killall 目标无法静态判定，可能波及 diy 自身进程",
-        };
-      }
-    }
-  }
-
-  return PASS;
+    return PASS;
 }
 
 // ⚠️ 已知精度问题（2026-09-16 实测复现，先留痕，暂不改判定）：
@@ -274,25 +274,25 @@ export function judgeSelfKill(
  * —— 那时它会变成 `ps eww` 读 DIY_HOME 的入参。
  */
 export function collectSelfInfo(
-  home: string,
-  hopOf: (pid: number) => { pid: number; ppid: number; command: string } | null,
+    home: string,
+    hopOf: (pid: number) => { pid: number; ppid: number; command: string } | null,
 ): SelfProcessInfo | null {
-  try {
-    // R9：只查**自己祖先链**（4 次单 pid），不拉全机快照。
-    // 直接子进程 / 同组不再枚举（guard 当前没有调用点；真要用再按需补窄查询）。
-    const pids = new Set<number>([process.pid]);
-    const cmdlines: string[] = [process.argv.join(" ").toLowerCase(), process.execPath.toLowerCase()];
-    let cur = process.ppid;
-    for (let i = 0; i < 4 && cur > 1; i++) {
-      const hop = hopOf(cur);
-      if (!hop) break;
-      pids.add(hop.pid);
-      cmdlines.push(hop.command.toLowerCase());
-      if (hop.ppid === cur) break;
-      cur = hop.ppid;
+    try {
+        // R9：只查**自己祖先链**（4 次单 pid），不拉全机快照。
+        // 直接子进程 / 同组不再枚举（guard 当前没有调用点；真要用再按需补窄查询）。
+        const pids = new Set<number>([process.pid]);
+        const cmdlines: string[] = [process.argv.join(' ').toLowerCase(), process.execPath.toLowerCase()];
+        let cur = process.ppid;
+        for (let i = 0; i < 4 && cur > 1; i++) {
+            const hop = hopOf(cur);
+            if (!hop) break;
+            pids.add(hop.pid);
+            cmdlines.push(hop.command.toLowerCase());
+            if (hop.ppid === cur) break;
+            cur = hop.ppid;
+        }
+        return { pid: process.pid, pgid: process.pid, pids, cmdlines, home };
+    } catch {
+        return null;
     }
-    return { pid: process.pid, pgid: process.pid, pids, cmdlines, home };
-  } catch {
-    return null;
-  }
 }

@@ -17,10 +17,10 @@
  * 外部引用在浏览器作用域里不存在。
  */
 export function textHit(hitText: string, want: string): boolean {
-  const t = hitText.replace(/\s+/g, "");
-  const w = want.replace(/\s+/g, "");
-  if (!w || !t || t.length > 200) return false;
-  return t.includes(w) || w.includes(t);
+    const t = hitText.replace(/\s+/g, "");
+    const w = want.replace(/\s+/g, "");
+    if (!w || !t || t.length > 200) return false;
+    return t.includes(w) || w.includes(t);
 }
 
 /**
@@ -34,6 +34,6 @@ export function textHit(hitText: string, want: string): boolean {
  * （见 pointHitsText；注入契约用例在 tests/core/ui-text.test.ts）。
  */
 export function textHitAny(cands: readonly (string | null | undefined)[], want: string): boolean {
-  for (const c of cands) if (c && textHit(c, want)) return true;
-  return false;
+    for (const c of cands) if (c && textHit(c, want)) return true;
+    return false;
 }

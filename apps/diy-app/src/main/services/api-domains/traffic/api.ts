@@ -101,12 +101,9 @@ export const trafficRoutes = RpcSchema.group({
         cleanLogs: RpcSchema.unary({
             desc: `清理磁盘流量日志（删整个按天文件）。files 或 keepDays 二选一；今天正在写入的文件一律不删；dryRun 只算不删`,
             input: {
-                files: z
-                    .array(z.string())
-                    .optional()
-                    .cliOption({
-                        desc: `要删的文件（相对 DIY_HOME），JSON 数组如 '["log/network/2026-10-01.jsonl"]'`,
-                    }),
+                files: z.array(z.string()).optional().cliOption({
+                    desc: `要删的文件（相对 DIY_HOME），JSON 数组如 '["log/network/2026-10-01.jsonl"]'`,
+                }),
                 keepDays: z
                     .number()
                     .int()
@@ -157,7 +154,6 @@ export const trafficRoutes = RpcSchema.group({
         }),
     },
 });
-
 
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。

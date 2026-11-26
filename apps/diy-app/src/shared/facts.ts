@@ -12,9 +12,9 @@
  *   2. 内核 `validateFacts` —— **语义**：subject 不许含 `#`、probe 档必须有命令、scope 三轴合法
  * 走 RPC 时两层都跑：zod 在入参，内核在落盘前（`@diy-agent/facts/node` 的 submit）。
  */
-import { z } from 'zod';
+import { z } from "zod";
 
-export const EnvSchema = z.enum(['production', 'development', 'test']);
+export const EnvSchema = z.enum(["production", "development", "test"]);
 
 export const ScopeSchema = z.object({
     env: z.union([EnvSchema, z.array(EnvSchema)]).optional(),
@@ -24,7 +24,7 @@ export const ScopeSchema = z.object({
 
 export const EvidenceSchema = z.object({
     /** 证据档：user（用户明说）· probe（命令可复现）· code（可定位）· inference（推断，默认 proposed） */
-    source: z.enum(['user', 'probe', 'code', 'inference']),
+    source: z.enum(["user", "probe", "code", "inference"]),
     /** 可定位证据 `<路径>:<行>`（仓库相对或 `~/` 开头） */
     at: z.string().optional(),
     /** 可执行探针命令（source=probe 必填） */
@@ -39,13 +39,13 @@ export const EvidenceSchema = z.object({
  * 关系边（判别联合：判别键同级 = 公共字段，分支私有进 `data`，见 rule.discriminated-union）。
  * 目标粒度**按关系而异**：`depends-on` 指 claim（跨环境取正确变体）、`supersedes` 指 fact id。
  */
-export const RefSchema = z.discriminatedUnion('rel', [
+export const RefSchema = z.discriminatedUnion("rel", [
     z.object({
-        rel: z.literal('depends-on'),
+        rel: z.literal("depends-on"),
         data: z.object({ toClaim: z.string(), when: ScopeSchema.optional() }),
     }),
     z.object({
-        rel: z.literal('supersedes'),
+        rel: z.literal("supersedes"),
         data: z.object({ toFactId: z.string(), within: ScopeSchema.optional() }),
     }),
 ]);
@@ -58,15 +58,15 @@ export const FactSchema = z.object({
     aspect: z.string(),
     value: z.string(),
     scope: ScopeSchema.optional(),
-    review: z.enum(['proposed', 'accepted', 'rejected']),
-    lifecycle: z.enum(['active', 'superseded', 'expired']),
+    review: z.enum(["proposed", "accepted", "rejected"]),
+    lifecycle: z.enum(["active", "superseded", "expired"]),
     evidence: EvidenceSchema,
     refs: z.array(RefSchema).optional(),
 });
 
 /** 一条问题（与 `@diy-agent/facts/node` 的 RepoProblem 同形：level 决定阻不阻断） */
 export const ProblemSchema = z.object({
-    level: z.enum(['error', 'warning']),
+    level: z.enum(["error", "warning"]),
     code: z.string(),
     detail: z.string(),
     facts: z.array(z.string()).optional(),
@@ -98,7 +98,7 @@ export const FactsStatusSchema = z.object({
             claims: z.number(),
             facts: z.number(),
             bytes: z.number(),
-            expose: z.enum(['full', 'index', 'none']),
+            expose: z.enum(["full", "index", "none"]),
         }),
     ),
     /** `full` 档字节和 / 预算（`used > limit` ⇒ problems 里有 `facts/expose-budget`） */
@@ -128,14 +128,8 @@ export const FactsGetSchema = z.object({
  * 只看 `resolved` 是否**全空**：多 claim 查询里「部分命中」是合法用法（命中就给了值），
  * 抛错或判失败都会毁掉它。返回体照旧给 `resolved: []` + `notes`，人要先看见原因再拿退出码。
  */
-export function factsGetExitCode({
-    rpcName,
-    result,
-}: {
-    rpcName: string;
-    result: unknown;
-}): number | undefined {
-    if (rpcName !== 'diy.facts.get') return undefined;
+export function factsGetExitCode({ rpcName, result }: { rpcName: string; result: unknown }): number | undefined {
+    if (rpcName !== "diy.facts.get") return undefined;
     const resolved = (result as { resolved?: unknown } | null | undefined)?.resolved;
     return Array.isArray(resolved) && resolved.length === 0 ? 1 : undefined;
 }
@@ -166,10 +160,7 @@ export const FactsBriefItemSchema = z.object({
             variants: z.number().optional().describe("变体数（>1 才出现）"),
             review: z.string().optional().describe("只在非 accepted 时出现"),
             lifecycle: z.string().optional().describe("只在非 active 时出现"),
-            file: z
-                .string()
-                .optional()
-                .describe("来源文件（该主题条目不同源时才逐条给；同源时见主题级 `file`）"),
+            file: z.string().optional().describe("来源文件（该主题条目不同源时才逐条给；同源时见主题级 `file`）"),
         }),
     ),
     notes: z.array(z.string()),
@@ -259,7 +250,6 @@ export const FactsAffectedSchema = z.object({
     ids: z.array(z.string()),
 });
 
-
 /** 真源原文（UI「原 YAML」视图）：不解析、不校验，读什么给什么 */
 export const FactsRawSchema = z.object({
     dir: z.string(),
@@ -272,7 +262,7 @@ export const FactsRawSchema = z.object({
 
 /** 投影结果：真源 → 给 LLM 看的形态（可换算法 / 按预算裁 / 变体解析成当前值） */
 export const FactsProjectSchema = z.object({
-    algorithm: z.enum(['yaml-nested', 'flat-gid', 'md-list']),
+    algorithm: z.enum(["yaml-nested", "flat-gid", "md-list"]),
     text: z.string(),
     bytes: z.number(),
     /** 真正渲染出来的 gid */
@@ -289,5 +279,5 @@ export const FactsProjectSchema = z.object({
  * 编译期护栏：schema 与内核 `Fact` 形状必须一致（不一致 → `tsc` 红，不用等运行时）。
  * 用 `extends` 而不是 `Equals`：schema 允许多出可选字段是无害的，**少了或类型不对**才是病。
  */
-export type _SchemaMatchesKernel = z.infer<typeof FactSchema> extends import('@diy-agent/facts').Fact ? true : never;
+export type _SchemaMatchesKernel = z.infer<typeof FactSchema> extends import("@diy-agent/facts").Fact ? true : never;
 export const _schemaShapeOk: _SchemaMatchesKernel = true;

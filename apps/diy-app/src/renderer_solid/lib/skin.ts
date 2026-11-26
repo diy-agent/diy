@@ -12,20 +12,20 @@ import { Caches, type DiySkin } from "./ui-state";
 export type { DiySkin };
 
 export function getSkin(): DiySkin {
-  return Caches.diy_app_skin.get();
+    return Caches.diy_app_skin.get();
 }
 
 export function applySkin(s: DiySkin): void {
-  document.documentElement.dataset.skin = s;
+    document.documentElement.dataset.skin = s;
 }
 
 export function setSkin(s: DiySkin): void {
-  Caches.diy_app_skin.set(s);
-  applySkin(s);
+    Caches.diy_app_skin.set(s);
+    applySkin(s);
 }
 
 /** 皮肤清单（设置页与其它入口共用的唯一真源：加皮肤只改这里） */
 export const SKINS: { key: DiySkin; label: string; hint: string }[] = [
-  { key: "rail", label: "竖栏", hint: "一条竖线贯穿；层级靠线与缩进，行不带卡片底" },
-  { key: "card", label: "卡片", hint: "每块一张卡；左侧色条标类型，只有错误/警告吃色" },
+    { key: "rail", label: "竖栏", hint: "一条竖线贯穿；层级靠线与缩进，行不带卡片底" },
+    { key: "card", label: "卡片", hint: "每块一张卡；左侧色条标类型，只有错误/警告吃色" },
 ];

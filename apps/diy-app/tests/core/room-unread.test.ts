@@ -16,10 +16,24 @@ import { appendEvent, ensureRoom, markRead, readRoom, roomDir } from "../../src/
 import { HUMAN_MEMBER_ID, MAIN_MEMBER_ID, unreadSince, type RoomEvent, type RoomMember } from "../../src/shared/room";
 
 const HUMAN: RoomMember = { id: HUMAN_MEMBER_ID, name: "chen56", kind: "human", backend: null, role: "我" };
-const DEV: RoomMember = { id: "agent:dev", name: "dev", kind: "agent", backend: { type: "task", data: { taskUri: "t/dev" } } };
+const DEV: RoomMember = {
+    id: "agent:dev",
+    name: "dev",
+    kind: "agent",
+    backend: { type: "task", data: { taskUri: "t/dev" } },
+};
 
 function ev(id: string, author: string, text = "x"): RoomEvent {
-    return { id, ts: "2026-10-20T00:00:00.000Z", channel: "default", kind: author.startsWith("agent:") ? "reply" : "say", author, to: [], text, delivered: false };
+    return {
+        id,
+        ts: "2026-10-20T00:00:00.000Z",
+        channel: "default",
+        kind: author.startsWith("agent:") ? "reply" : "say",
+        author,
+        to: [],
+        text,
+        delivered: false,
+    };
 }
 
 describe("unreadSince：未读条数 / 第一条未读 / 流尾落点", () => {
@@ -115,15 +129,18 @@ describe("markRead：人成员的阅读游标前移", () => {
     });
 
     // 同上：靠 chmod 0o555 造写失败，Windows 上不生效 ⇒ 跳过
-    it.skipIf(process.platform === "win32")("⑤ 写盘失败 ⇒ 不 reject（与 advanceLastSeen 同口径：游标丢了最坏多提示一条未读）", async () => {
-        ensureRoom("t6", { members: [HUMAN] });
-        await appendEvent("t6", ev("e1", "agent:dev"));
-        chmodSync(roomDir("t6"), 0o555);
-        try {
-            await expect(markRead("t6", "e1")).resolves.toBe(false);
-        } finally {
-            chmodSync(roomDir("t6"), 0o755);
-        }
-        expect(readRoom("t6")?.lastSeen[HUMAN_MEMBER_ID]).toBeUndefined();
-    });
+    it.skipIf(process.platform === "win32")(
+        "⑤ 写盘失败 ⇒ 不 reject（与 advanceLastSeen 同口径：游标丢了最坏多提示一条未读）",
+        async () => {
+            ensureRoom("t6", { members: [HUMAN] });
+            await appendEvent("t6", ev("e1", "agent:dev"));
+            chmodSync(roomDir("t6"), 0o555);
+            try {
+                await expect(markRead("t6", "e1")).resolves.toBe(false);
+            } finally {
+                chmodSync(roomDir("t6"), 0o755);
+            }
+            expect(readRoom("t6")?.lastSeen[HUMAN_MEMBER_ID]).toBeUndefined();
+        },
+    );
 });

@@ -13,8 +13,8 @@
 // 为什么按 ts 对时而不用边界：配置/历史分离后，投递按**当前配置**实时算（`pit.config-vs-history`），
 // 压缩事件只写一条快照；「哪次请求被这次配置改动影响」只能由**时间先后**判定（事件 ts ≤ 请求 ts）。
 
-import type { CompactEventRecord } from "./compaction.js";
-import { compareInstant } from "@diy-agent/time";
+import type { CompactEventRecord } from './compaction.js';
+import { compareInstant } from '@diy-agent/time';
 
 /** 定时所需的最小步信息（真身是 shared/usage 的 StepUsageRecord） */
 export interface StepRef {
@@ -42,7 +42,7 @@ export function mapCompactPointsToSteps(
     // 时刻按 instant 比：`ts` 串的偏移可能不同（老记录 `Z`、新记录 `+0800`），字典序会错位（##483）
     const ss = steps.slice().sort((a, b) => compareInstant(a.ts, b.ts));
     const evs = events
-        .filter((e) => e.kind === "compact")
+        .filter((e) => e.kind === 'compact')
         .slice()
         .sort((a, b) => compareInstant(a.ts, b.ts));
     const map = new Map<string, CompactEventRecord[]>();

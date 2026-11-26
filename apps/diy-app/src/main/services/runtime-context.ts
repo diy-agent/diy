@@ -26,19 +26,19 @@ import { sessionRegistry } from "./session-registry";
 import { localISOString } from "@diy-agent/time";
 
 export interface ActiveTurn {
-  taskUri: string;
-  model?: string;
-  cwd?: string;
-  /** 轮次起始 ISO 时间 */
-  since: string;
+    taskUri: string;
+    model?: string;
+    cwd?: string;
+    /** 轮次起始 ISO 时间 */
+    since: string;
 }
 
 export interface LastRendererTouch {
-  /** RPC channel 全名（如 diy.agent.local.chat） */
-  channel: string;
-  /** 该次调用涉及的任务（能从入参取到才有） */
-  taskUri?: string;
-  at: string;
+    /** RPC channel 全名（如 diy.agent.local.chat） */
+    channel: string;
+    /** 该次调用涉及的任务（能从入参取到才有） */
+    taskUri?: string;
+    at: string;
 }
 
 let lastRendererTouch: LastRendererTouch | null = null;
@@ -50,21 +50,21 @@ let lastRendererTouch: LastRendererTouch | null = null;
  * （不查 viewers、不读 queue 落盘），故这里同样无 I/O。
  */
 export function activeTurnList(): ActiveTurn[] {
-  return sessionRegistry.activeTurnList().map((t) => ({
-    taskUri: t.uri,
-    model: t.model,
-    cwd: t.cwd,
-    since: t.since,
-  }));
+    return sessionRegistry.activeTurnList().map((t) => ({
+        taskUri: t.uri,
+        model: t.model,
+        cwd: t.cwd,
+        since: t.since,
+    }));
 }
 
 /** 渲染进程交互留痕（主进程 RPC 入口调用）：它崩了之后我们才知道 UI 最后在动哪个任务 */
 export function noteRendererTouch(channel: string, taskUri?: string): void {
-  lastRendererTouch = { channel, taskUri, at: localISOString() };
+    lastRendererTouch = { channel, taskUri, at: localISOString() };
 }
 
 export function lastRenderer(): LastRendererTouch | null {
-  return lastRendererTouch;
+    return lastRendererTouch;
 }
 
 /**
@@ -72,6 +72,6 @@ export function lastRenderer(): LastRendererTouch | null {
  * 活跃轮次归注册表 ⇒ 这里连带清它（否则单测之间会串"僵尸轮次"）。
  */
 export function resetRuntimeContext(): void {
-  sessionRegistry.reset();
-  lastRendererTouch = null;
+    sessionRegistry.reset();
+    lastRendererTouch = null;
 }

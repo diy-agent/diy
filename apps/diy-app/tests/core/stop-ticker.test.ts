@@ -71,26 +71,32 @@ describe("StopTicker — 生命周期接线（镜像 localChatStore）", () => {
         const stopping: Record<string, boolean> = { a: false, b: false };
         const anyStopping = (): boolean => Object.values(stopping).some(Boolean);
         const ticker = new StopTicker(() => {}, { intervalMs: 100 });
-        const sync = (): void => ticker.sync(anyStopping());               // = syncStopTicker
-        const setStop = (k: string, v: boolean): void => { stopping[k] = v; sync(); }; // = setStopRequested
+        const sync = (): void => ticker.sync(anyStopping()); // = syncStopTicker
+        const setStop = (k: string, v: boolean): void => {
+            stopping[k] = v;
+            sync();
+        }; // = setStopRequested
 
-        setStop("a", true);                       // cancel(A) → 开表
+        setStop("a", true); // cancel(A) → 开表
         expect(ticker.running).toBe(true);
 
-        ticker.stop();                            // 切走 A（watch cleanup）→ 硬停表
+        ticker.stop(); // 切走 A（watch cleanup）→ 硬停表
         expect(ticker.running).toBe(false);
 
-        sync();                                   // 切回 A（watch/open 起始）→ 按全局停态重新开表
-        expect(ticker.running).toBe(true);        // 曾漏此步 → 恒 false，「强制中断」出口成死代码
+        sync(); // 切回 A（watch/open 起始）→ 按全局停态重新开表
+        expect(ticker.running).toBe(true); // 曾漏此步 → 恒 false，「强制中断」出口成死代码
 
-        setStop("a", false);                      // main 收尾 → refreshActive 清停态 → 停表
+        setStop("a", false); // main 收尾 → refreshActive 清停态 → 停表
         expect(ticker.running).toBe(false);
     });
 
     it("新一轮开始清停态即停表（send 清 stopRequestedAt 也须同步）", () => {
         const stopping = { a: false };
         const ticker = new StopTicker(() => {}, { intervalMs: 100 });
-        const setStop = (v: boolean): void => { stopping.a = v; ticker.sync(stopping.a); };
+        const setStop = (v: boolean): void => {
+            stopping.a = v;
+            ticker.sync(stopping.a);
+        };
 
         setStop(true);
         expect(ticker.running).toBe(true);

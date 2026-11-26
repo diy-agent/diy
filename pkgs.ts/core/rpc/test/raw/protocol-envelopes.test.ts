@@ -8,15 +8,25 @@ import { RpcSchema, createTypedClient } from '../../src/core';
 import { it } from 'vitest';
 import { z } from 'zod';
 
-const api = RpcSchema.group({ children: {
-  greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
-  count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.object({ val: z.number() }) }),
-  upload: RpcSchema.clientStream({
-    input: { tag: z.string() }, chunkIn: z.string(),
-    output: z.object({ tag: z.string(), items: z.array(z.string()) }),
-  }),
-  echo: RpcSchema.bidiStream({ input: { prefix: z.string() }, chunkIn: z.string(), chunkOut: z.string() }),
-} as const });
+const api = RpcSchema.group({
+  children: {
+    greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
+    count: RpcSchema.serverStream({
+      input: { to: z.number() },
+      output: z.object({ val: z.number() }),
+    }),
+    upload: RpcSchema.clientStream({
+      input: { tag: z.string() },
+      chunkIn: z.string(),
+      output: z.object({ tag: z.string(), items: z.array(z.string()) }),
+    }),
+    echo: RpcSchema.bidiStream({
+      input: { prefix: z.string() },
+      chunkIn: z.string(),
+      chunkOut: z.string(),
+    }),
+  } as const,
+});
 
 // ═══════════════════════════════════════════════════
 //  传输层录制器
@@ -28,11 +38,15 @@ interface EnvelopeLog {
 }
 
 function createLoggedMemTransportPair(): {
-  serverTx: EnvelopeTransport; clientTx: EnvelopeTransport; logs: EnvelopeLog[];
+  serverTx: EnvelopeTransport;
+  clientTx: EnvelopeTransport;
+  logs: EnvelopeLog[];
 } {
   const logs: EnvelopeLog[] = [];
-  const qServer: unknown[] = [], qClient: unknown[] = [];
-  const serverListeners = new Set<Function>(), clientListeners = new Set<Function>();
+  const qServer: unknown[] = [],
+    qClient: unknown[] = [];
+  const serverListeners = new Set<Function>(),
+    clientListeners = new Set<Function>();
 
   function drain() {
     while (qServer.length > 0) {
@@ -49,8 +63,32 @@ function createLoggedMemTransportPair(): {
   }
 
   return {
-    serverTx: { send(p) { qServer.push(p); setImmediate(drain); }, on(h) { serverListeners.add(h); return () => serverListeners.delete(h); }, onClose() { return () => {}; } },
-    clientTx: { send(p) { qClient.push(p); setImmediate(drain); }, on(h) { clientListeners.add(h); return () => clientListeners.delete(h); }, onClose() { return () => {}; } },
+    serverTx: {
+      send(p) {
+        qServer.push(p);
+        setImmediate(drain);
+      },
+      on(h) {
+        serverListeners.add(h);
+        return () => serverListeners.delete(h);
+      },
+      onClose() {
+        return () => {};
+      },
+    },
+    clientTx: {
+      send(p) {
+        qClient.push(p);
+        setImmediate(drain);
+      },
+      on(h) {
+        clientListeners.add(h);
+        return () => clientListeners.delete(h);
+      },
+      onClose() {
+        return () => {};
+      },
+    },
     logs,
   };
 }
@@ -83,9 +121,11 @@ function matchEnvelope(actual: Record<string, unknown>, pattern: Record<string, 
 
 function assertLog(logs: EnvelopeLog[], expected: LogPattern): void {
   if (logs.length !== expected.length) {
-    const e = JSON.stringify(expected.map(e => `${e.dir} ${e.type || e.kind}`));
-    const a = JSON.stringify(logs.map(l => `${l.dir} ${l.envelope.type}`));
-    throw new Error(`_Envelope count mismatch:\n  expected ${expected.length}: ${e}\n  got ${logs.length}: ${a}`);
+    const e = JSON.stringify(expected.map((e) => `${e.dir} ${e.type || e.kind}`));
+    const a = JSON.stringify(logs.map((l) => `${l.dir} ${l.envelope.type}`));
+    throw new Error(
+      `_Envelope count mismatch:\n  expected ${expected.length}: ${e}\n  got ${logs.length}: ${a}`,
+    );
   }
   for (let i = 0; i < expected.length; i++) {
     const exp = expected[i];
@@ -95,20 +135,25 @@ function assertLog(logs: EnvelopeLog[], expected: LogPattern): void {
     }
     if (!matchEnvelope(actual.envelope, exp)) {
       throw new Error(
-        `_Envelope #${i} mismatch:\n  expected: ${JSON.stringify(exp)}\n  actual:   ${JSON.stringify(actual.envelope)}`
+        `_Envelope #${i} mismatch:\n  expected: ${JSON.stringify(exp)}\n  actual:   ${JSON.stringify(actual.envelope)}`,
       );
     }
   }
 }
 
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let passed = 0;
 let failed = 0;
 
 function assert(cond: boolean, msg: string) {
-  if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-  else { failed++; throw new Error(msg); }
+  if (cond) {
+    passed++;
+    console.log(`  ✅ ${msg}`);
+  } else {
+    failed++;
+    throw new Error(msg);
+  }
 }
 
 async function testUnaryEnvelopes() {
@@ -117,9 +162,12 @@ async function testUnaryEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server._on("greet", { ...api.greet, name: 'greet' }, ({ input }) => `Hello ${input.name}!`);
+  server._on('greet', { ...api.greet, name: 'greet' }, ({ input }) => `Hello ${input.name}!`);
 
-  const res = await client.invoke<{ input: { name: string }; meta: unknown }, string>('greet', { input: { name: 'World' }, meta: {} });
+  const res = await client.invoke<{ input: { name: string }; meta: unknown }, string>('greet', {
+    input: { name: 'World' },
+    meta: {},
+  });
   assert(res === 'Hello World!', `result = ${res}`);
 
   assertLog(logs, [
@@ -134,14 +182,17 @@ async function testServerStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server._on("count", { ...api.count, name: 'count' }, async function* ({ input }) {
+  server._on('count', { ...api.count, name: 'count' }, async function* ({ input }) {
     for (let i = 0; i < input.to; i++) {
-      await new Promise(r => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
       yield { val: i };
     }
   });
 
-  const handle = await client.serverStream<{ input: { to: number }; meta: unknown }, { val: number }>('count', { input: { to: 2 }, meta: {} });
+  const handle = await client.serverStream<
+    { input: { to: number }; meta: unknown },
+    { val: number }
+  >('count', { input: { to: 2 }, meta: {} });
   const out: { val: number }[] = [];
   for await (const v of handle) out.push(v);
   assert(JSON.stringify(out) === '[{"val":0},{"val":1}]', `result = ${JSON.stringify(out)}`);
@@ -163,7 +214,7 @@ async function testCancelEnvelopes() {
   const client = new ChannelClientBinding(clientTx);
 
   let finallyRan = false;
-  server._on("count", { ...api.count, name: 'count' }, async function* ({ input }) {
+  server._on('count', { ...api.count, name: 'count' }, async function* ({ input }) {
     try {
       for (let i = 0; i < input.to; i++) {
         await sleep(30);
@@ -175,7 +226,10 @@ async function testCancelEnvelopes() {
   });
 
   // ① ack 后取消：消费端离开 → cancel{stream}（streamId 寻址），且取消后不得再流出 data/end
-  const handle = await client.serverStream<{ input: { to: number }; meta: unknown }, { val: number }>('count', { input: { to: 100 }, meta: {} });
+  const handle = await client.serverStream<
+    { input: { to: number }; meta: unknown },
+    { val: number }
+  >('count', { input: { to: 100 }, meta: {} });
   const iter = handle[Symbol.asyncIterator]();
   await iter.next(); // 收到第一帧（30ms 后）
   await iter.return?.(undefined); // 消费端离开 → cancel{stream}
@@ -191,12 +245,21 @@ async function testCancelEnvelopes() {
   // ② ack 之前取消：cancel 只能按 call.id 寻址（服务端经 _callStreams 换算 streamId）
   logs.length = 0;
   finallyRan = false;
-  clientTx.send({ type: 'call', id: 7, method: 'count', params: { input: { to: 100 } }, stream: true });
+  clientTx.send({
+    type: 'call',
+    id: 7,
+    method: 'count',
+    params: { input: { to: 100 } },
+    stream: true,
+  });
   clientTx.send({ type: 'cancel', id: 7 });
   await sleep(120);
   assert(finallyRan, 'ack 窗口 cancel{id} 也收尾 handler');
   assert(!logs.some((l) => l.envelope.type === 'data'), 'ack 窗口取消不应流出 data');
-  assert(logs.some((l) => l.dir === '>' && l.envelope.type === 'cancel' && l.envelope.id === 7), 'cancel 帧携带 call.id');
+  assert(
+    logs.some((l) => l.dir === '>' && l.envelope.type === 'cancel' && l.envelope.id === 7),
+    'cancel 帧携带 call.id',
+  );
 }
 
 async function testClientStreamEnvelopes() {
@@ -205,17 +268,22 @@ async function testClientStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server._on("upload", { ...api.upload, name: 'upload' }, async ({ input, stream }) => {
+  server._on('upload', { ...api.upload, name: 'upload' }, async ({ input, stream }) => {
     const items: string[] = [];
     for await (const c of stream) items.push(c);
     return { tag: input.tag, items };
   });
 
-  async function* gen() { yield 'a'; yield 'b'; }
+  async function* gen() {
+    yield 'a';
+    yield 'b';
+  }
 
-  const res = await client.clientStream<{ input: { tag: string }; meta: unknown }, string, { tag: string; items: string[] }>(
-    'upload', { input: { tag: 'demo' }, meta: {} }, gen(),
-  );
+  const res = await client.clientStream<
+    { input: { tag: string }; meta: unknown },
+    string,
+    { tag: string; items: string[] }
+  >('upload', { input: { tag: 'demo' }, meta: {} }, gen());
   assert(JSON.stringify(res.items) === '["a","b"]', `result = ${JSON.stringify(res)}`);
 
   assertLog(logs, [
@@ -234,16 +302,23 @@ async function testBidiStreamEnvelopes() {
   const server = new ChannelServerBinding(serverTx);
   const client = new ChannelClientBinding(clientTx);
 
-  server._on("echo", { ...api.echo, name: 'echo' }, async function* ({ input, stream }) {
+  server._on('echo', { ...api.echo, name: 'echo' }, async function* ({ input, stream }) {
     for await (const m of stream) {
       await sleep(1);
       yield `${input.prefix}: ${m}`;
     }
   });
 
-  async function* gen() { yield 'hello'; yield 'bye'; }
+  async function* gen() {
+    yield 'hello';
+    yield 'bye';
+  }
 
-  const replies = await client.bidiStream<{ input: { prefix: string }; meta: unknown }, string, string>('echo', { input: { prefix: 'got' }, meta: {} }, gen());
+  const replies = await client.bidiStream<
+    { input: { prefix: string }; meta: unknown },
+    string,
+    string
+  >('echo', { input: { prefix: 'got' }, meta: {} }, gen());
   const out: string[] = [];
   for await (const r of replies) out.push(r);
   assert(JSON.stringify(out) === '["got: hello","got: bye"]', `result = ${JSON.stringify(out)}`);
@@ -264,26 +339,28 @@ async function testRpcLayerEnvelopes() {
   console.log('\n── RPC 层信封序列 ──');
   const { serverTx, clientTx, logs } = createLoggedMemTransportPair();
 
-  const app = RpcSchema.group({ children: {
-    ping: RpcSchema.unary({
-      input: { msg: z.string() },
-      output: z.string(),
-    }),
+  const app = RpcSchema.group({
+    children: {
+      ping: RpcSchema.unary({
+        input: { msg: z.string() },
+        output: z.string(),
+      }),
 
-    upload: RpcSchema.clientStream({
-      input: { tag: z.string() },
-      chunkIn: z.number(),
-      output: z.object({ tag: z.string(), sum: z.number() }),
-    }),
-  } });
+      upload: RpcSchema.clientStream({
+        input: { tag: z.string() },
+        chunkIn: z.number(),
+        output: z.object({ tag: z.string(), sum: z.number() }),
+      }),
+    },
+  });
 
   // 本测试只验证线格式：binding.on 注册 handler
   //
   // ⚠️ 2026-11-06 起 `RpcSchema.group` **不再回写 meta.name**（router 退休），
   // 所以直接 `binding.on` 时要自己给 name —— 走 `defineService.bind` 则不用（它内部拼）。
   const binding = new ChannelServerBinding(serverTx);
-  binding._on("ping", { ...app.ping }, async ({ input }) => `pong: ${input.msg}`);
-  binding._on("upload", { ...app.upload }, async ({ input, stream }) => {
+  binding._on('ping', { ...app.ping }, async ({ input }) => `pong: ${input.msg}`);
+  binding._on('upload', { ...app.upload }, async ({ input, stream }) => {
     let sum = 0;
     for await (const v of stream) sum += v;
     return { tag: input.tag, sum };
@@ -293,14 +370,23 @@ async function testRpcLayerEnvelopes() {
   const pong = await rpcClient.ping({ msg: 'hi' });
   assert(pong === 'pong: hi', `ping = ${pong}`);
 
-  async function* gen() { yield 10; yield 20; }
+  async function* gen() {
+    yield 10;
+    yield 20;
+  }
   const u = await rpcClient.upload({ tag: 'x' }, gen());
   assert(u.sum === 30, `upload sum = ${u.sum}`);
 
   assertLog(logs, [
     { dir: '>', type: 'call', method: 'ping', params: { input: { msg: 'hi' }, meta: {} } },
     { dir: '<', type: 'call', id: 'any', result: 'pong: hi' },
-    { dir: '>', type: 'call', method: 'upload', stream: true, params: { input: { tag: 'x' }, meta: {} } },
+    {
+      dir: '>',
+      type: 'call',
+      method: 'upload',
+      stream: true,
+      params: { input: { tag: 'x' }, meta: {} },
+    },
     { dir: '<', type: 'call', id: 'any', stream: 'any' },
     { dir: '>', type: 'data', stream: 'any', value: 10 },
     { dir: '>', type: 'data', stream: 'any', value: 20 },
@@ -319,7 +405,8 @@ async function main() {
 
   console.log(`\n${'═'.repeat(40)}`);
   console.log(`通过: ${passed}  失败: ${failed}`);
-
 }
 
-it('protocol-envelopes: 信封序列', async () => { await main(); });
+it('protocol-envelopes: 信封序列', async () => {
+  await main();
+});

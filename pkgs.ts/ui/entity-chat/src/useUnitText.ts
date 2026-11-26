@@ -14,10 +14,7 @@ const POLL_MS = 5000;
  * `enabled=false` 时不拉取（保留上次结果）：源码形态是「按需看一眼」，
  * 跟树的 5 秒轮询一起跑纯属白花 RPC 与 DOM 重排。
  */
-export function useUnitText(
-    roomId: string,
-    enabled = true,
-): { view: UnitTextView | null; error: string | null } {
+export function useUnitText(roomId: string, enabled = true): { view: UnitTextView | null; error: string | null } {
     const [view, setView] = React.useState<UnitTextView | null>(null);
     const [error, setError] = React.useState<string | null>(null);
 

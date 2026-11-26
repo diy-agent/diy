@@ -124,7 +124,6 @@ export const jobRoutes = RpcSchema.group({
     },
 });
 
-
 /**
  * 新模型（##87）：模块自带模块层，app 前缀由宿主给。
  * `server.use({ prefix: "diy", api: jobApi, handlers: { job: … } })`

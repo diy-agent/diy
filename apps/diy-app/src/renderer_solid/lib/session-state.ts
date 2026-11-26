@@ -13,12 +13,7 @@ import { draftStore } from "../store/draftStore";
 import { sessionStore } from "../store/sessionStore";
 import { taskStore } from "../store/taskStore";
 import { usageLedgerStore } from "../store/usageLedgerStore";
-import {
-    glyphOf,
-    sessionStateOf,
-    type SessionGlyphView,
-    type SessionState,
-} from "../../shared/session-state";
+import { glyphOf, sessionStateOf, type SessionGlyphView, type SessionState } from "../../shared/session-state";
 import { findNode } from "./task-lineage";
 
 /** 已完成的任务不再挂会话标记（用户明确：**任务没 done 才显示**） */
@@ -38,9 +33,7 @@ export interface SessionStateFallback {
  * 故 **draftStore 灌入过该任务就以它为准**（isSeeded 是判据）。
  */
 export function sessionStateFor(uri: string, fallback: SessionStateFallback = {}): SessionState {
-    const hasDraft = draftStore.isSeeded(uri)
-        ? draftStore.hasAny(uri, ["agent_input"])
-        : fallback.hasDraft === true;
+    const hasDraft = draftStore.isSeeded(uri) ? draftStore.hasAny(uri, ["agent_input"]) : fallback.hasDraft === true;
     return sessionStateOf({
         entry: sessionStore.byUri(uri),
         hasSession: fallback.hasSession === true,

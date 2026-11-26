@@ -11,11 +11,11 @@
 // 排版遵循引擎硬规则（同 defaults.ts）：控制标记可缩进（不产出字符），**输出文本必须顶格**。
 
 /** 模版 relpath（与 namespace 同形，便于以后若要并进清单时直接迁移） */
-export const FLOW_NODE_HINT_RELPATH = 'flow_node_hint.md';
+export const FLOW_NODE_HINT_RELPATH = "flow_node_hint.md";
 
 /** 工作流节点提示的模版集（只有一份；`renderSystemDsl` 的 entry 由 relpath 指定） */
 export const FLOW_PROMPT_DEFAULTS: Record<string, string> = {
-    'flow_node_hint.md': `---
+    "flow_node_hint.md": `---
 title: 工作流节点提示
 desc: 按工作流当前节点装配的提示（diy flow prompt 的产物；不进 _system.md 装配）
 version: 1

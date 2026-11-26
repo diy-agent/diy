@@ -12,19 +12,19 @@
  * 不改写取值：发给上游的始终是原始 provider 值（见 local-agent.ts 的 reasoning 参数）。
  */
 export const REASONING_EFFORT_LABELS: Record<string, string> = {
-  /** 哨兵：不发送任何推理参数（平台默认；见 shared/model-config.DEFAULT_EFFORT） */
-  default: "平台默认",
-  none: "关闭",
-  minimal: "最小",
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "超高",
-  ultra: "极高",
-  max: "最大",
+    /** 哨兵：不发送任何推理参数（平台默认；见 shared/model-config.DEFAULT_EFFORT） */
+    default: "平台默认",
+    none: "关闭",
+    minimal: "最小",
+    low: "低",
+    medium: "中",
+    high: "高",
+    xhigh: "超高",
+    ultra: "极高",
+    max: "最大",
 };
 
 /** provider 值 → 界面文案（未知值原词显示） */
 export function reasoningEffortLabel(effort: string): string {
-  return REASONING_EFFORT_LABELS[effort] ?? effort;
+    return REASONING_EFFORT_LABELS[effort] ?? effort;
 }

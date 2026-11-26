@@ -4,8 +4,8 @@
 import { z } from "zod";
 
 export const SteerItemSchema = z.object({
-  id: z.string(),
-  mode: z.enum(["next-step", "next-turn"]),
-  text: z.string(),
-  created: z.string(),
+    id: z.string(),
+    mode: z.enum(["next-step", "next-turn"]),
+    text: z.string(),
+    created: z.string(),
 });

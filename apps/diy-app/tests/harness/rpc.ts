@@ -13,12 +13,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-    ChannelClientBinding,
-    ChannelServerBinding,
-    createMemTransportPair,
-    createTypedClient,
-} from "@diy-agent/rpc";
+import { ChannelClientBinding, ChannelServerBinding, createMemTransportPair, createTypedClient } from "@diy-agent/rpc";
 import { HttpClientBinding } from "@diy-agent/rpc/http";
 import { apiDef } from "../../src/main/services/api-def";
 import { bindAppHandlers } from "../../src/main/services/api-impl";

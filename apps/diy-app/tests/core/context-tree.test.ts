@@ -413,10 +413,15 @@ describe("渲染行号映射（选中联动高亮的基础）", () => {
         let t = createTree();
         t = build(t, [
             { type: "patch", path: "diy.cli", op: "set", value: "/repo/diy.sh" },
-            { type: "patch", path: "chain", op: "set", value: [
-                { path: "/home/AGENTS.md", content: "第一层" },
-                { path: "/home/proj/AGENTS.md", content: "第二层" },
-            ] },
+            {
+                type: "patch",
+                path: "chain",
+                op: "set",
+                value: [
+                    { path: "/home/AGENTS.md", content: "第一层" },
+                    { path: "/home/proj/AGENTS.md", content: "第二层" },
+                ],
+            },
         ]);
         const traced = renderPathsTraced(t, ["chain", "diy"], TEST_PREAMBLE);
         const L = traced.text.split("\n");
@@ -450,17 +455,23 @@ describe("渲染行号映射（选中联动高亮的基础）", () => {
 
     it("数组元素（下标段）有独立行号，可单独定位", () => {
         let t = createTree();
-        t = build(t, [{ type: "patch", path: "list", op: "set", value: [
-            { name: "a", desc: "第一" },
-            { name: "b", desc: "第二" },
-        ] }]);
+        t = build(t, [
+            {
+                type: "patch",
+                path: "list",
+                op: "set",
+                value: [
+                    { name: "a", desc: "第一" },
+                    { name: "b", desc: "第二" },
+                ],
+            },
+        ]);
         const traced = renderPathsTraced(t, ["list"]);
         expect(traced.lines["list.0.name"]).toBeTruthy();
         expect(traced.lines["list.1.name"]).toBeTruthy();
         expect(traced.lines["list.0.name"]!.from).toBeLessThan(traced.lines["list.1.name"]!.from);
     });
 });
-
 
 describe("渲染：块标量的保真（真实数据踩出的两个坑）", () => {
     /** 用产出器渲染一个小请求体，回读并断言"解析的就是那段原文" */
@@ -479,7 +490,7 @@ describe("渲染：块标量的保真（真实数据踩出的两个坑）", () =
     });
 
     it("整段有公共缩进（源码类工具输出）→ 也必须 `|2`，否则这段缩进被吞掉", () => {
-        const code = "        let turnStopped = false;\n        // 收尾原因追踪\n        let lastAct = \"none\";\n";
+        const code = '        let turnStopped = false;\n        // 收尾原因追踪\n        let lastAct = "none";\n';
         const { text, value } = roundTrip(code);
         expect(value).toBe(code);
         expect(text).toContain("content: |2");

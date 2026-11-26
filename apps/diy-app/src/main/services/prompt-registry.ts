@@ -30,10 +30,10 @@ import { flattenVars } from "../../shared/var-tree";
 import { PROMPT_DEFAULTS } from "../prompts/defaults";
 import { FLOW_NODE_HINT_RELPATH, FLOW_PROMPT_DEFAULTS } from "../prompts/flow";
 import {
-  renderSummaryFallback,
-  summaryHasContent,
-  SUMMARY_TEMPLATE_RELPATH,
-  type SummaryData,
+    renderSummaryFallback,
+    summaryHasContent,
+    SUMMARY_TEMPLATE_RELPATH,
+    type SummaryData,
 } from "@diy-agent/compaction/summary";
 import { parseTaskFile } from "../core/state";
 import { resolveCwd } from "../core/cwd";
@@ -49,13 +49,13 @@ import { buildDocsIndex, summarizeDocsIndex } from "./docs-index";
 export type { AssembledSystem, PromptEntry };
 
 export interface PromptMeta {
-  title: string;
-  desc: string;
-  version: number;
-  /** 锁定 = 不可覆盖（命名约定：`_` 前缀 = 锁定，由 lint 保证一致） */
-  locked: boolean;
-  /** 锁定时展示给用户的理由 */
-  lockTip: string;
+    title: string;
+    desc: string;
+    version: number;
+    /** 锁定 = 不可覆盖（命名约定：`_` 前缀 = 锁定，由 lint 保证一致） */
+    locked: boolean;
+    /** 锁定时展示给用户的理由 */
+    lockTip: string;
 }
 
 /** 变量契约：由 shared/prompt-schema 的 AssembleGlobalsSchema 派生（单一真源在那里） */
@@ -67,12 +67,12 @@ export const SYSTEM_VARS: VarSpec[] = flattenVars(AssembleGlobalsSchema);
  * 它的变量不属于 AssembleGlobals（配置真源）——并进去会让 lint 以为它是 system 的一部分。
  */
 const SUMMARY_VARS: VarSpec[] = [
-  { path: "summary", type: "object" },
-  { path: "summary.turns", type: "number" },
-  { path: "summary.conclusions", type: "array" },
-  { path: "summary.changes", type: "array" },
-  { path: "summary.todos", type: "array" },
-  { path: "summary.open", type: "array" },
+    { path: "summary", type: "object" },
+    { path: "summary.turns", type: "number" },
+    { path: "summary.conclusions", type: "array" },
+    { path: "summary.changes", type: "array" },
+    { path: "summary.todos", type: "array" },
+    { path: "summary.open", type: "array" },
 ];
 
 /** 装配入口固定名（顺序与分隔的唯一真源） */
@@ -86,92 +86,92 @@ const FM_SEP = "---";
  * （末尾换行与节间分隔由模版自己负责）。
  */
 export function parseMd(raw: string): { meta: PromptMeta; body: string } {
-  const fallback: PromptMeta = { title: "", desc: "", version: 1, locked: false, lockTip: "" };
-  if (!raw.startsWith(FM_SEP)) return { meta: fallback, body: raw };
-  const end = raw.indexOf(FM_SEP, 3);
-  if (end === -1) return { meta: fallback, body: raw };
-  let front: Record<string, unknown> = {};
-  try {
-    front = (yaml.load(raw.slice(3, end).trim() || "{}") as Record<string, unknown>) ?? {};
-  } catch {
-    return { meta: fallback, body: raw.slice(end + 3).trim() };
-  }
-  return {
-    meta: {
-      title: String(front["title"] ?? ""),
-      desc: String(front["desc"] ?? ""),
-      version: Number(front["version"] ?? 1),
-      locked: front["locked"] === true,
-      lockTip: String(front["lockTip"] ?? ""),
-    },
-    body: raw.slice(end + 3).replace(/^\n/, ""),
-  };
+    const fallback: PromptMeta = { title: "", desc: "", version: 1, locked: false, lockTip: "" };
+    if (!raw.startsWith(FM_SEP)) return { meta: fallback, body: raw };
+    const end = raw.indexOf(FM_SEP, 3);
+    if (end === -1) return { meta: fallback, body: raw };
+    let front: Record<string, unknown> = {};
+    try {
+        front = (yaml.load(raw.slice(3, end).trim() || "{}") as Record<string, unknown>) ?? {};
+    } catch {
+        return { meta: fallback, body: raw.slice(end + 3).trim() };
+    }
+    return {
+        meta: {
+            title: String(front["title"] ?? ""),
+            desc: String(front["desc"] ?? ""),
+            version: Number(front["version"] ?? 1),
+            locked: front["locked"] === true,
+            lockTip: String(front["lockTip"] ?? ""),
+        },
+        body: raw.slice(end + 3).replace(/^\n/, ""),
+    };
 }
 
 /** relpath 白名单校验：只允许 manifest（PROMPT_DEFAULTS key）内条目，防 ../ 穿越。
  *  必须用 Object.hasOwn：`in` 会命中原型链（"toString"/"constructor"），后续取到函数再 startsWith 就崩成 500。 */
 export function assertRelpath(relpath: string): void {
-  const n = normalize(relpath);
-  if (!Object.hasOwn(PROMPT_DEFAULTS, n) || n.startsWith("..") || n.includes("\0")) {
-    throw new Error(`非法模版路径: ${relpath}`);
-  }
+    const n = normalize(relpath);
+    if (!Object.hasOwn(PROMPT_DEFAULTS, n) || n.startsWith("..") || n.includes("\0")) {
+        throw new Error(`非法模版路径: ${relpath}`);
+    }
 }
 
 function templateDir(home: string, projectId: string): string {
-  return join(home, "projects", projectId, "template");
+    return join(home, "projects", projectId, "template");
 }
 
 function metaPath(home: string, projectId: string): string {
-  return join(templateDir(home, projectId), ".meta.yaml");
+    return join(templateDir(home, projectId), ".meta.yaml");
 }
 
 function readMeta(home: string, projectId: string): Record<string, { baseVersion: number }> {
-  const p = metaPath(home, projectId);
-  if (!existsSync(p)) return {};
-  try {
-    return (yaml.load(readFileSync(p, "utf-8")) as Record<string, { baseVersion: number }>) ?? {};
-  } catch {
-    return {};
-  }
+    const p = metaPath(home, projectId);
+    if (!existsSync(p)) return {};
+    try {
+        return (yaml.load(readFileSync(p, "utf-8")) as Record<string, { baseVersion: number }>) ?? {};
+    } catch {
+        return {};
+    }
 }
 
 /** 写 sidecar；内容为空则删文件（否则 restore 会留下一个 `{}` 空壳，看着像残留）。 */
 function writeMeta(home: string, projectId: string, meta: Record<string, { baseVersion: number }>): void {
-  const p = metaPath(home, projectId);
-  if (Object.keys(meta).length === 0) {
-    rmSync(p, { force: true });
-    return;
-  }
-  writeFileAtomic(p, yaml.dump(meta, { indent: 2, noRefs: true }));
+    const p = metaPath(home, projectId);
+    if (Object.keys(meta).length === 0) {
+        rmSync(p, { force: true });
+        return;
+    }
+    writeFileAtomic(p, yaml.dump(meta, { indent: 2, noRefs: true }));
 }
 
 /** 覆盖正文按 md 解析只取 body：手写覆盖文件里的 frontmatter 是噪音，不得进请求。
  *  （内置走同一 parseMd，两边语义一致：只有正文生效，meta 一律来自内置） */
 function readOverride(fp: string): string {
-  return parseMd(readFileSync(fp, "utf-8")).body;
+    return parseMd(readFileSync(fp, "utf-8")).body;
 }
 
 /** 孤儿覆盖文件：躺在 template/ 里但 relpath 已不在 manifest（典型：改名/降级后的遗物）。
  *  它们既不生效也不上屏，用户不看磁盘就永远不知道 —— 所以装配时当成告警报出来。 */
 function orphanOverrides(home: string, projectId: string): string[] {
-  const root = templateDir(home, projectId);
-  if (!existsSync(root)) return [];
-  const out: string[] = [];
-  const walk = (dir: string, prefix: string, depth: number): void => {
-    if (depth > 2 || out.length > 20) return;
-    for (const ent of readdirSync(dir, { withFileTypes: true })) {
-      if (ent.name.startsWith(".")) continue; // .meta.yaml 等元数据不算孤儿
-      const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
-      if (ent.isDirectory()) walk(join(dir, ent.name), rel, depth + 1);
-      else if (!Object.hasOwn(PROMPT_DEFAULTS, rel)) out.push(rel);
+    const root = templateDir(home, projectId);
+    if (!existsSync(root)) return [];
+    const out: string[] = [];
+    const walk = (dir: string, prefix: string, depth: number): void => {
+        if (depth > 2 || out.length > 20) return;
+        for (const ent of readdirSync(dir, { withFileTypes: true })) {
+            if (ent.name.startsWith(".")) continue; // .meta.yaml 等元数据不算孤儿
+            const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
+            if (ent.isDirectory()) walk(join(dir, ent.name), rel, depth + 1);
+            else if (!Object.hasOwn(PROMPT_DEFAULTS, rel)) out.push(rel);
+        }
+    };
+    try {
+        walk(root, "", 0);
+    } catch {
+        return [];
     }
-  };
-  try {
-    walk(root, "", 0);
-  } catch {
-    return [];
-  }
-  return out;
+    return out;
 }
 
 /**
@@ -182,83 +182,88 @@ function orphanOverrides(home: string, projectId: string): string[] {
  *     压缩摘要，投递位置是会话首条消息而非 system，故不进 _system.md）
  */
 function entryIncludes(): Set<string> {
-  const raw = PROMPT_DEFAULTS[ENTRY_RELPATH] ?? "";
-  const { body } = parseMd(raw);
-  const out = new Set<string>();
-  for (const m of body.matchAll(/:include="([^"]+)"/g)) out.add(m[1]!.replace(/^\.\//, ""));
-  return out;
+    const raw = PROMPT_DEFAULTS[ENTRY_RELPATH] ?? "";
+    const { body } = parseMd(raw);
+    const out = new Set<string>();
+    for (const m of body.matchAll(/:include="([^"]+)"/g)) out.add(m[1]!.replace(/^\.\//, ""));
+    return out;
 }
 function roleOf(relpath: string): PromptEntry["role"] {
-  if (relpath === ENTRY_RELPATH) return "entry";
-  return entryIncludes().has(relpath) ? "section" : "fragment";
+    if (relpath === ENTRY_RELPATH) return "entry";
+    return entryIncludes().has(relpath) ? "section" : "fragment";
 }
 
-function entryOf(home: string, projectId: string, relpath: string, metaAll?: Record<string, { baseVersion: number }>): PromptEntry {
-  assertRelpath(relpath);
-  const { meta, body } = parseMd(PROMPT_DEFAULTS[relpath]!);
-  const fp = join(templateDir(home, projectId), relpath);
-  const hasOverride = existsSync(fp);
-  const current = hasOverride ? readOverride(fp) : body;
-  const baseVersion = (metaAll ?? readMeta(home, projectId))[relpath]?.baseVersion ?? null;
-  return {
-    ...meta,
-    relpath,
-    role: roleOf(relpath),
-    status: hasOverride ? "overridden" : "builtin",
-    current,
-    builtin: body,
-    baseVersion,
-    // baseVersion 为 null 但确实有覆盖文件 = 手工放进去的（非 save 写入），来源不可知 → 同样提示可能过期
-    stale: hasOverride && (baseVersion === null || baseVersion !== meta.version),
-  };
+function entryOf(
+    home: string,
+    projectId: string,
+    relpath: string,
+    metaAll?: Record<string, { baseVersion: number }>,
+): PromptEntry {
+    assertRelpath(relpath);
+    const { meta, body } = parseMd(PROMPT_DEFAULTS[relpath]!);
+    const fp = join(templateDir(home, projectId), relpath);
+    const hasOverride = existsSync(fp);
+    const current = hasOverride ? readOverride(fp) : body;
+    const baseVersion = (metaAll ?? readMeta(home, projectId))[relpath]?.baseVersion ?? null;
+    return {
+        ...meta,
+        relpath,
+        role: roleOf(relpath),
+        status: hasOverride ? "overridden" : "builtin",
+        current,
+        builtin: body,
+        baseVersion,
+        // baseVersion 为 null 但确实有覆盖文件 = 手工放进去的（非 save 写入），来源不可知 → 同样提示可能过期
+        stale: hasOverride && (baseVersion === null || baseVersion !== meta.version),
+    };
 }
 
 /** 列出全部模版（含状态/元数据，供树展示）。sidecar 只读一次，避免 per-entry 重读磁盘。 */
 export function listPrompts(home: string, projectId: string): PromptEntry[] {
-  const metaAll = readMeta(home, projectId);
-  return Object.keys(PROMPT_DEFAULTS).map((r) => entryOf(home, projectId, r, metaAll));
+    const metaAll = readMeta(home, projectId);
+    return Object.keys(PROMPT_DEFAULTS).map((r) => entryOf(home, projectId, r, metaAll));
 }
 
 /** 取单份模版（含内置/当前/stale，供查看与编辑） */
 export function getPrompt(home: string, projectId: string, relpath: string): PromptEntry {
-  return entryOf(home, projectId, relpath);
+    return entryOf(home, projectId, relpath);
 }
 
 /** 保存项目级覆盖（存正文 + sidecar 记内置版本）。不可覆盖的直接抛错。
  *  同时做体积校验：盖一个超大覆盖会让之后每一轮都被拒发（诊断成本很高），在写入前就拦住。 */
 export function savePrompt(home: string, projectId: string, relpath: string, content: string): PromptEntry {
-  const cur = entryOf(home, projectId, relpath);
-  if (cur.locked) throw new Error(`模版 ${relpath} 已锁定：${cur.lockTip}`);
-  const probe = assembleSystem(home, projectId, { drafts: { [relpath]: content } });
-  if (probe.overBudget) {
-    const kb = (n: number) => (n / 1024).toFixed(1);
-    throw new Error(
-      `覆盖体积超限：装配后 ${kb(probe.overBudget.used)} KB > 上限 ${kb(probe.overBudget.budget)} KB` +
-        `（已拒绝写入 —— 否则之后每一轮都会被拒发）。请精简后重试。`,
-    );
-  }
-  writeFileAtomic(join(templateDir(home, projectId), relpath), content);
-  const metaAll = readMeta(home, projectId);
-  metaAll[relpath] = { baseVersion: cur.version };
-  writeMeta(home, projectId, metaAll);
-  return entryOf(home, projectId, relpath);
+    const cur = entryOf(home, projectId, relpath);
+    if (cur.locked) throw new Error(`模版 ${relpath} 已锁定：${cur.lockTip}`);
+    const probe = assembleSystem(home, projectId, { drafts: { [relpath]: content } });
+    if (probe.overBudget) {
+        const kb = (n: number) => (n / 1024).toFixed(1);
+        throw new Error(
+            `覆盖体积超限：装配后 ${kb(probe.overBudget.used)} KB > 上限 ${kb(probe.overBudget.budget)} KB` +
+                `（已拒绝写入 —— 否则之后每一轮都会被拒发）。请精简后重试。`,
+        );
+    }
+    writeFileAtomic(join(templateDir(home, projectId), relpath), content);
+    const metaAll = readMeta(home, projectId);
+    metaAll[relpath] = { baseVersion: cur.version };
+    writeMeta(home, projectId, metaAll);
+    return entryOf(home, projectId, relpath);
 }
 
 /** 一键恢复（删覆盖文件 + 清 sidecar，幂等）。全恢复后连空目录一起收掉，不留 `{}` 残留。 */
 export function restorePrompt(home: string, projectId: string, relpath: string): PromptEntry {
-  assertRelpath(relpath);
-  rmSync(join(templateDir(home, projectId), relpath), { force: true });
-  const metaAll = readMeta(home, projectId);
-  delete metaAll[relpath];
-  writeMeta(home, projectId, metaAll);
-  if (Object.keys(metaAll).length === 0) {
-    try {
-      rmdirSync(templateDir(home, projectId)); // 非空（还有别的覆盖）时会抛，忽略即可
-    } catch {
-      /* 目录非空或不存在：都不是错误 */
+    assertRelpath(relpath);
+    rmSync(join(templateDir(home, projectId), relpath), { force: true });
+    const metaAll = readMeta(home, projectId);
+    delete metaAll[relpath];
+    writeMeta(home, projectId, metaAll);
+    if (Object.keys(metaAll).length === 0) {
+        try {
+            rmdirSync(templateDir(home, projectId)); // 非空（还有别的覆盖）时会抛，忽略即可
+        } catch {
+            /* 目录非空或不存在：都不是错误 */
+        }
     }
-  }
-  return entryOf(home, projectId, relpath);
+    return entryOf(home, projectId, relpath);
 }
 
 /** 系统上下文预算（字节）：与模型上下文窗口挂钩（窗口 × 5%，clamp 16KB~64KB） */
@@ -268,16 +273,16 @@ export const DEFAULT_SYSTEM_BUDGET_BYTES = SYSTEM_BUDGET_CAP_BYTES;
 
 /** 由模型上下文窗口（tokens）推导系统上下文预算（字节）；未知则用默认值 */
 export function systemBudgetForContext(contextLimitTokens?: number): number {
-  if (!contextLimitTokens || !Number.isFinite(contextLimitTokens) || contextLimitTokens <= 0) {
-    return DEFAULT_SYSTEM_BUDGET_BYTES;
-  }
-  const bytes = Math.floor(contextLimitTokens * 4 * SYSTEM_BUDGET_CONTEXT_SHARE); // 粗估 1 token ≈ 4 字节
-  return Math.max(16 * 1024, Math.min(SYSTEM_BUDGET_CAP_BYTES, bytes));
+    if (!contextLimitTokens || !Number.isFinite(contextLimitTokens) || contextLimitTokens <= 0) {
+        return DEFAULT_SYSTEM_BUDGET_BYTES;
+    }
+    const bytes = Math.floor(contextLimitTokens * 4 * SYSTEM_BUDGET_CONTEXT_SHARE); // 粗估 1 token ≈ 4 字节
+    return Math.max(16 * 1024, Math.min(SYSTEM_BUDGET_CAP_BYTES, bytes));
 }
 
 /** 任务文件路径（home 参数权威：不用 state.taskFilePath，那走全局 diyHome，隔离失效） */
 function taskFileAt(home: string, taskUri: string): string {
-  return taskUri ? join(home, taskUri, "AGENTS.md") : "";
+    return taskUri ? join(home, taskUri, "AGENTS.md") : "";
 }
 
 /**
@@ -289,15 +294,15 @@ function taskFileAt(home: string, taskUri: string): string {
  * "键不存在"更能表达"未设置"。
  */
 export function taskOf(home: string, taskUri: string): Record<string, string> | null {
-  const fp = taskFileAt(home, taskUri);
-  if (!fp || !existsSync(fp)) return null;
-  const meta = parseTaskFile(readFileSync(fp, "utf-8"));
-  if (!meta) return null;
-  // 头字段从 TASK_HEAD_FIELDS 派生（##322 review R3）：清单单一真源，三处手抄必漏一处
-  return {
-    ...Object.fromEntries(TASK_HEAD_FIELDS.map((f) => [f.key, (meta[f.key] as string | undefined) ?? ""])),
-    body: meta.body ?? "",
-  };
+    const fp = taskFileAt(home, taskUri);
+    if (!fp || !existsSync(fp)) return null;
+    const meta = parseTaskFile(readFileSync(fp, "utf-8"));
+    if (!meta) return null;
+    // 头字段从 TASK_HEAD_FIELDS 派生（##322 review R3）：清单单一真源，三处手抄必漏一处
+    return {
+        ...Object.fromEntries(TASK_HEAD_FIELDS.map((f) => [f.key, (meta[f.key] as string | undefined) ?? ""])),
+        body: meta.body ?? "",
+    };
 }
 
 /**
@@ -315,18 +320,18 @@ export function taskOf(home: string, taskUri: string): Record<string, string> | 
  * 内容 trim（这是**数据准备**：链内容是变量值，不是模版源）
  */
 export function chainOf(home: string, cwd: string, taskUri: string, isAppDir = false): AssembleGlobals["chain"] {
-  // 实现在 @diy-agent/agents-chain（2026-11-05 抽包）：那条链的判据全是实测踩出来的，
-  // 和任务/上下文树都无关 —— bot 也需要同一套。这里只做 diy-app 特有的两件参数化：
-  //   · skipFiles：任务本体的 AGENTS.md 是**正文**不是规则，不能进链
-  //   · appOnly：项目/任务目录都不存在时，cwd 是 process.cwd()（启动 shell 的偶然位置），
-  //     不该爬它的链（见 agents-chain 的 appOnly 注释）
-  const ownTaskFile = taskFileAt(home, taskUri);
-  return agentsChain({
-    appHome: home,
-    cwd,
-    skipFiles: ownTaskFile ? [ownTaskFile] : [],
-    appOnly: isAppDir,
-  });
+    // 实现在 @diy-agent/agents-chain（2026-11-05 抽包）：那条链的判据全是实测踩出来的，
+    // 和任务/上下文树都无关 —— bot 也需要同一套。这里只做 diy-app 特有的两件参数化：
+    //   · skipFiles：任务本体的 AGENTS.md 是**正文**不是规则，不能进链
+    //   · appOnly：项目/任务目录都不存在时，cwd 是 process.cwd()（启动 shell 的偶然位置），
+    //     不该爬它的链（见 agents-chain 的 appOnly 注释）
+    const ownTaskFile = taskFileAt(home, taskUri);
+    return agentsChain({
+        appHome: home,
+        cwd,
+        skipFiles: ownTaskFile ? [ownTaskFile] : [],
+        appOnly: isAppDir,
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -337,19 +342,19 @@ export function chainOf(home: string, cwd: string, taskUri: string, isAppDir = f
 
 /** 从模板常量构建 include resolver（locked 由 frontmatter 声明） */
 export function makeTemplatesResolver(
-  templates: Record<string, string>,
-  overrides?: Record<string, string>,
+    templates: Record<string, string>,
+    overrides?: Record<string, string>,
 ): IncludeResolver {
-  return {
-    resolve(relpath) {
-      // 模版内写的是 "./xxx.md"；注册表的键是不带 "./" 的 relpath
-      const key = relpath.replace(/^\.\//, "");
-      const raw = overrides?.[key] ?? templates[key];
-      if (raw === undefined) return null;
-      const { meta, body } = parseMd(raw);
-      return { source: body, locked: meta.locked };
-    },
-  };
+    return {
+        resolve(relpath) {
+            // 模版内写的是 "./xxx.md"；注册表的键是不带 "./" 的 relpath
+            const key = relpath.replace(/^\.\//, "");
+            const raw = overrides?.[key] ?? templates[key];
+            if (raw === undefined) return null;
+            const { meta, body } = parseMd(raw);
+            return { source: body, locked: meta.locked };
+        },
+    };
 }
 
 /**
@@ -358,24 +363,30 @@ export function makeTemplatesResolver(
  */
 /** 装配渲染（带结构 trace）：试验场「模版结构树」用它，真发只用 text */
 export function renderSystemDslTraced(opts: {
-  globals: AssembleGlobals | Record<string, unknown>;
-  templates?: Record<string, string>;
-  overrides?: Record<string, string>;
-  resolve?: IncludeResolver["resolve"];
-  entry?: string;
+    globals: AssembleGlobals | Record<string, unknown>;
+    templates?: Record<string, string>;
+    overrides?: Record<string, string>;
+    resolve?: IncludeResolver["resolve"];
+    entry?: string;
 }): { text: string; trace: TraceNode[] } {
-  const templates = opts.templates ?? PROMPT_DEFAULTS;
-  const entry = opts.entry ?? ENTRY_RELPATH;
-  const raw = templates[entry];
-  if (raw === undefined) throw new Error(`缺少装配入口模版：${entry}`);
-  const { meta, body } = parseMd(raw);
-  const resolver: IncludeResolver = { resolve: opts.resolve ?? makeTemplatesResolver(templates, opts.overrides).resolve };
-  const res = renderWithTrace(body, { globals: opts.globals as Record<string, unknown> }, {
-    resolver,
-    file: entry,
-    locked: meta.locked,
-  });
-  return { text: res.text, trace: res.trace };
+    const templates = opts.templates ?? PROMPT_DEFAULTS;
+    const entry = opts.entry ?? ENTRY_RELPATH;
+    const raw = templates[entry];
+    if (raw === undefined) throw new Error(`缺少装配入口模版：${entry}`);
+    const { meta, body } = parseMd(raw);
+    const resolver: IncludeResolver = {
+        resolve: opts.resolve ?? makeTemplatesResolver(templates, opts.overrides).resolve,
+    };
+    const res = renderWithTrace(
+        body,
+        { globals: opts.globals as Record<string, unknown> },
+        {
+            resolver,
+            file: entry,
+            locked: meta.locked,
+        },
+    );
+    return { text: res.text, trace: res.trace };
 }
 
 /**
@@ -384,31 +395,27 @@ export function renderSystemDslTraced(opts: {
  * 摘要是动态内容，投递位置是「新会话首条上下文消息」，放 system 会砸前缀缓存。
  * 模版缺失/损坏 → 回退纯文本渲染（renderSummaryFallback），不让承接能力整个哑掉。
  */
-export function renderSummarySection(
-  home: string,
-  projectId: string,
-  data: SummaryData,
-): string {
-  if (!summaryHasContent(data)) return "";
-  try {
-    const resolve = projectIncludeResolver(home, projectId);
-    const text = renderSystemDsl({ globals: { summary: data }, resolve, entry: SUMMARY_TEMPLATE_RELPATH });
-    return text.trim() ? text.trim() : renderSummaryFallback(data);
-  } catch (e) {
-    console.warn("[prompt-registry] 摘要模版渲染失败，回退纯文本:", e);
-    return renderSummaryFallback(data);
-  }
+export function renderSummarySection(home: string, projectId: string, data: SummaryData): string {
+    if (!summaryHasContent(data)) return "";
+    try {
+        const resolve = projectIncludeResolver(home, projectId);
+        const text = renderSystemDsl({ globals: { summary: data }, resolve, entry: SUMMARY_TEMPLATE_RELPATH });
+        return text.trim() ? text.trim() : renderSummaryFallback(data);
+    } catch (e) {
+        console.warn("[prompt-registry] 摘要模版渲染失败，回退纯文本:", e);
+        return renderSummaryFallback(data);
+    }
 }
 
 /** 只取文本（真发路径；不分配 trace） */
 export function renderSystemDsl(opts: {
-  globals: AssembleGlobals | Record<string, unknown>;
-  templates?: Record<string, string>;
-  overrides?: Record<string, string>;
-  resolve?: IncludeResolver["resolve"];
-  entry?: string;
+    globals: AssembleGlobals | Record<string, unknown>;
+    templates?: Record<string, string>;
+    overrides?: Record<string, string>;
+    resolve?: IncludeResolver["resolve"];
+    entry?: string;
 }): string {
-  return renderSystemDslTraced(opts).text;
+    return renderSystemDslTraced(opts).text;
 }
 
 /**
@@ -419,7 +426,7 @@ export function renderSystemDsl(opts: {
  * `hint` 已经过内核 `renderHint` 插值，本函数只负责把它装进节点标签里。
  */
 export function renderFlowNodeHint(globals: Record<string, unknown>): string {
-  return renderSystemDsl({ globals, templates: FLOW_PROMPT_DEFAULTS, entry: FLOW_NODE_HINT_RELPATH });
+    return renderSystemDsl({ globals, templates: FLOW_PROMPT_DEFAULTS, entry: FLOW_NODE_HINT_RELPATH });
 }
 
 /**
@@ -428,18 +435,18 @@ export function renderFlowNodeHint(globals: Record<string, unknown>): string {
  * 否则"页面上改的 identity.md"与"真发投出去的身份节"会各读各的（界面说谎的老毛病）。
  */
 export function projectIncludeResolver(
-  home: string,
-  projectId: string,
-  drafts?: Record<string, string>,
+    home: string,
+    projectId: string,
+    drafts?: Record<string, string>,
 ): IncludeResolver["resolve"] {
-  return (relpath) => {
-    const key = relpath.replace(/^\.\//, "");
-    if (!Object.hasOwn(PROMPT_DEFAULTS, key)) return null;
-    const draft = drafts?.[key];
-    const entry = entryOf(home, projectId, key);
-    const source = draft !== undefined ? parseMd(draft).body : entry.current;
-    return { source, locked: entry.locked };
-  };
+    return (relpath) => {
+        const key = relpath.replace(/^\.\//, "");
+        if (!Object.hasOwn(PROMPT_DEFAULTS, key)) return null;
+        const draft = drafts?.[key];
+        const entry = entryOf(home, projectId, key);
+        const source = draft !== undefined ? parseMd(draft).body : entry.current;
+        return { source, locked: entry.locked };
+    };
 }
 
 /**
@@ -448,43 +455,43 @@ export function projectIncludeResolver(
  * "等于预算"必须放行，只有**严格大于**才拒发。
  */
 export function systemOverBudget(
-  usedBytes: number,
-  contextLimitTokens?: number,
+    usedBytes: number,
+    contextLimitTokens?: number,
 ): { used: number; budget: number } | null {
-  const used = Math.floor(usedBytes);
-  const budget = systemBudgetForContext(contextLimitTokens);
-  return used > budget ? { used, budget } : null;
+    const used = Math.floor(usedBytes);
+    const budget = systemBudgetForContext(contextLimitTokens);
+    return used > budget ? { used, budget } : null;
 }
 
 /** 静态体检：把模版里的 lint（如控制属性误用）汇总成告警，不阻断装配 */
 function lintWarnings(home: string, projectId: string): string[] {
-  const out: string[] = [];
-  // 命名约定：`_` 前缀 = 锁定，双向一致（否则名字会骗人）
-  for (const [relpath, raw] of Object.entries(PROMPT_DEFAULTS)) {
-    const { meta } = parseMd(raw);
-    const underscored = relpath.startsWith("_");
-    if (underscored !== meta.locked) {
-      out.push(
-        `命名与锁定不一致：${relpath} ${underscored ? "带 _ 前缀" : "不带 _ 前缀"}，但 locked=${meta.locked}` +
-          `（规则：_ 前缀 = 锁定）`,
-      );
+    const out: string[] = [];
+    // 命名约定：`_` 前缀 = 锁定，双向一致（否则名字会骗人）
+    for (const [relpath, raw] of Object.entries(PROMPT_DEFAULTS)) {
+        const { meta } = parseMd(raw);
+        const underscored = relpath.startsWith("_");
+        if (underscored !== meta.locked) {
+            out.push(
+                `命名与锁定不一致：${relpath} ${underscored ? "带 _ 前缀" : "不带 _ 前缀"}，但 locked=${meta.locked}` +
+                    `（规则：_ 前缀 = 锁定）`,
+            );
+        }
     }
-  }
-  if (!parseMd(PROMPT_DEFAULTS[ENTRY_RELPATH] ?? "").meta.locked) {
-    out.push(`装配入口 ${ENTRY_RELPATH} 必须锁定（改它会改节顺序与分隔）`);
-  }
-  for (const relpath of Object.keys(PROMPT_DEFAULTS)) {
-    const entry = entryOf(home, projectId, relpath);
-    try {
-      const vars = relpath === SUMMARY_TEMPLATE_RELPATH ? SUMMARY_VARS : SYSTEM_VARS;
-      for (const issue of analyze(entry.current, { file: relpath, vars }).lint) {
-        out.push(`${relpath}:${issue.loc.line}:${issue.loc.col} ${issue.message}`);
-      }
-    } catch (e) {
-      out.push(`${relpath} 语法检查失败：${(e as Error).message}`);
+    if (!parseMd(PROMPT_DEFAULTS[ENTRY_RELPATH] ?? "").meta.locked) {
+        out.push(`装配入口 ${ENTRY_RELPATH} 必须锁定（改它会改节顺序与分隔）`);
     }
-  }
-  return out;
+    for (const relpath of Object.keys(PROMPT_DEFAULTS)) {
+        const entry = entryOf(home, projectId, relpath);
+        try {
+            const vars = relpath === SUMMARY_TEMPLATE_RELPATH ? SUMMARY_VARS : SYSTEM_VARS;
+            for (const issue of analyze(entry.current, { file: relpath, vars }).lint) {
+                out.push(`${relpath}:${issue.loc.line}:${issue.loc.col} ${issue.message}`);
+            }
+        } catch (e) {
+            out.push(`${relpath} 语法检查失败：${(e as Error).message}`);
+        }
+    }
+    return out;
 }
 
 /**
@@ -493,105 +500,105 @@ function lintWarnings(home: string, projectId: string): string[] {
  * contextLimitTokens：当前模型的上下文窗口（tokens），决定预算；缺省用硬上限。
  */
 export function assembleSystem(
-  home: string,
-  projectId: string,
-  opts: {
-    taskUri?: string;
-    skills?: Array<{ name: string; desc: string }>;
-    drafts?: Record<string, string>;
-    diyCli?: string;
-    contextLimitTokens?: number;
-    /** 附带结构 trace（试验场「模版结构树」用；真发不传，省一次 trace 分配） */
-    trace?: boolean;
-  } = {},
+    home: string,
+    projectId: string,
+    opts: {
+        taskUri?: string;
+        skills?: Array<{ name: string; desc: string }>;
+        drafts?: Record<string, string>;
+        diyCli?: string;
+        contextLimitTokens?: number;
+        /** 附带结构 trace（试验场「模版结构树」用；真发不传，省一次 trace 分配） */
+        trace?: boolean;
+    } = {},
 ): AssembledSystem {
-  const taskUri = opts.taskUri ?? "";
-  const task = taskOf(home, taskUri);
-  const cwdRes = resolveCwd(home, taskUri);
-  const warnings: string[] = [];
-  const orphans = orphanOverrides(home, projectId);
-  if (orphans.length > 0) {
-    warnings.push(
-      `检测到 ${orphans.length} 个不再生效的覆盖文件（relpath 不在内置清单，已改名/降级遗留）：` +
-        `${orphans.join(", ")}。它们既不生效也不上屏，请手工删除或改用当前 relpath 重新保存。`,
-    );
-  }
-  const diyCli = opts.diyCli ?? readRuntimeConfig().cli ?? "";
-  if (!diyCli) {
-    // 兜底不能让提示词说谎：dev（electron-dev 未注入）/ 非 CLI 启动时会出现
-    warnings.push(
-      "未注入 DIY_CLI（当前进程环境没有该变量）：提示词里的「命令行入口」会退化成裸 diy，在 worktree 里会打到生产数据根。检查启动脚本是否注入 DIY_CLI。",
-    );
-  }
-  const globals = assembleGlobals(home, projectId, {
-    taskUri,
-    skills: opts.skills,
-    // 空串要转成 undefined：providers 侧用 `??` 兜底「diy（未注入 DIY_CLI，勿照抄）」，
-    // 传 "" 会把兜底键吞掉 → 模版渲染成空入口，而提示词里就少了一句「未注入」（测试守护的就是这条）
-    diyCli: diyCli || undefined,
-    // 草稿也要进"节渲染"：模版编辑器里没保存的 identity.md 改动，预览与投递都该立刻反映
-    drafts: opts.drafts,
-  });
+    const taskUri = opts.taskUri ?? "";
+    const task = taskOf(home, taskUri);
+    const cwdRes = resolveCwd(home, taskUri);
+    const warnings: string[] = [];
+    const orphans = orphanOverrides(home, projectId);
+    if (orphans.length > 0) {
+        warnings.push(
+            `检测到 ${orphans.length} 个不再生效的覆盖文件（relpath 不在内置清单，已改名/降级遗留）：` +
+                `${orphans.join(", ")}。它们既不生效也不上屏，请手工删除或改用当前 relpath 重新保存。`,
+        );
+    }
+    const diyCli = opts.diyCli ?? readRuntimeConfig().cli ?? "";
+    if (!diyCli) {
+        // 兜底不能让提示词说谎：dev（electron-dev 未注入）/ 非 CLI 启动时会出现
+        warnings.push(
+            "未注入 DIY_CLI（当前进程环境没有该变量）：提示词里的「命令行入口」会退化成裸 diy，在 worktree 里会打到生产数据根。检查启动脚本是否注入 DIY_CLI。",
+        );
+    }
+    const globals = assembleGlobals(home, projectId, {
+        taskUri,
+        skills: opts.skills,
+        // 空串要转成 undefined：providers 侧用 `??` 兜底「diy（未注入 DIY_CLI，勿照抄）」，
+        // 传 "" 会把兜底键吞掉 → 模版渲染成空入口，而提示词里就少了一句「未注入」（测试守护的就是这条）
+        diyCli: diyCli || undefined,
+        // 草稿也要进"节渲染"：模版编辑器里没保存的 identity.md 改动，预览与投递都该立刻反映
+        drafts: opts.drafts,
+    });
 
-  const resolveInclude = projectIncludeResolver(home, projectId, opts.drafts);
-  // 注入与变量契约漂移要响亮（schema 是单一真源，类型层面已保证；这里兜住运行时手改）
-  const check = AssembleGlobalsSchema.safeParse(globals);
-  if (!check.success) {
-    warnings.push(
-      `注入 globals 与变量契约（AssembleGlobalsSchema）不符：` +
-        check.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；"),
-    );
-  }
-  const rendered = renderSystemDslTraced({ globals, resolve: resolveInclude });
-  const system = rendered.text;
-  warnings.push(...lintWarnings(home, projectId));
-  const used = Buffer.byteLength(system, "utf-8");
-  const overBudget = systemOverBudget(used, opts.contextLimitTokens ? opts.contextLimitTokens : undefined);
-  return {
-    system,
-    overBudget,
-    warnings,
-    trace: opts.trace ? rendered.trace : null,
-    // 实际注入值原样回传：「变量值」view 与模版结构树的「值」列共用同一份事实
-    values: globals as unknown as Record<string, unknown>,
-  };
+    const resolveInclude = projectIncludeResolver(home, projectId, opts.drafts);
+    // 注入与变量契约漂移要响亮（schema 是单一真源，类型层面已保证；这里兜住运行时手改）
+    const check = AssembleGlobalsSchema.safeParse(globals);
+    if (!check.success) {
+        warnings.push(
+            `注入 globals 与变量契约（AssembleGlobalsSchema）不符：` +
+                check.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；"),
+        );
+    }
+    const rendered = renderSystemDslTraced({ globals, resolve: resolveInclude });
+    const system = rendered.text;
+    warnings.push(...lintWarnings(home, projectId));
+    const used = Buffer.byteLength(system, "utf-8");
+    const overBudget = systemOverBudget(used, opts.contextLimitTokens ? opts.contextLimitTokens : undefined);
+    return {
+        system,
+        overBudget,
+        warnings,
+        trace: opts.trace ? rendered.trace : null,
+        // 实际注入值原样回传：「变量值」view 与模版结构树的「值」列共用同一份事实
+        values: globals as unknown as Record<string, unknown>,
+    };
 }
 
 /** 投递出去的模版节：`globals` 的键名 → 模版 relpath（键名就是它在投递里的节点名） */
 export const DELIVERED_SECTIONS = {
-  identity: "identity.md",
-  rules: "rules.md",
-  guard: "_guard.md",
+    identity: "identity.md",
+    rules: "rules.md",
+    guard: "_guard.md",
 } as const;
 
 /** 构造注入 globals（单一真源；与 SYSTEM_VARS 的一致性由测试守护） */
 export function assembleGlobals(
-  home: string,
-  projectId: string,
-  opts: {
-    taskUri?: string;
-    skills?: Array<{ name: string; desc: string }>;
-    diyCli?: string;
-    /** 未存盘草稿（relpath → 正文）：模版编辑器里没保存的改动也即时反映到投递 */
-    drafts?: Record<string, string>;
-    /**
-     * 房间上下文（##377 第 26 刀）：`roomRuntimeFact().value` 原样传进来。
-     *
-     * 为什么由调用方给、而不在这里现读：它依赖「这一轮看哪间房 / 排除哪条 say」——
-     * 自起轮 = 本任务的房间；投递轮 = **来源**房间 + 正文里那一条。装配层不知道这些。
-     * 传 `null` / 缺省 = 不注入（任务没有房间时与迁移前逐字不变）。
-     *
-     * ⚠ 类型走 `import type`：本文件不进 zod 补丁顺序的坑（##322），别改成值导入。
-     */
-    room?: RoomRuntimeValue | null;
-    /**
-     * 自量（##404 / ##9 提案）：窗口占用 / 上一步消耗 / 本轮累计。由调用方（runTurn）给 ——
-     * 它才知道本轮的现场（`stepN` / `turnCost`）与本进程里的上一步账；装配层现读就要读账本（热路径 IO）。
-     * 传 `null` / 缺省 = 不注入（预览页、首轮首步 ⇒ 与未接入前逐字不变）。
-     */
-    self?: SelfValue | null;
-  } = {},
+    home: string,
+    projectId: string,
+    opts: {
+        taskUri?: string;
+        skills?: Array<{ name: string; desc: string }>;
+        diyCli?: string;
+        /** 未存盘草稿（relpath → 正文）：模版编辑器里没保存的改动也即时反映到投递 */
+        drafts?: Record<string, string>;
+        /**
+         * 房间上下文（##377 第 26 刀）：`roomRuntimeFact().value` 原样传进来。
+         *
+         * 为什么由调用方给、而不在这里现读：它依赖「这一轮看哪间房 / 排除哪条 say」——
+         * 自起轮 = 本任务的房间；投递轮 = **来源**房间 + 正文里那一条。装配层不知道这些。
+         * 传 `null` / 缺省 = 不注入（任务没有房间时与迁移前逐字不变）。
+         *
+         * ⚠ 类型走 `import type`：本文件不进 zod 补丁顺序的坑（##322），别改成值导入。
+         */
+        room?: RoomRuntimeValue | null;
+        /**
+         * 自量（##404 / ##9 提案）：窗口占用 / 上一步消耗 / 本轮累计。由调用方（runTurn）给 ——
+         * 它才知道本轮的现场（`stepN` / `turnCost`）与本进程里的上一步账；装配层现读就要读账本（热路径 IO）。
+         * 传 `null` / 缺省 = 不注入（预览页、首轮首步 ⇒ 与未接入前逐字不变）。
+         */
+        self?: SelfValue | null;
+    } = {},
 ): AssembleGlobals {
-  // 业务全在 context-providers.ts；这里只做「建 providers → 拼树 → 校验」
-  return assembleFromProviders(standardProviders({ home, projectId }, opts));
+    // 业务全在 context-providers.ts；这里只做「建 providers → 拼树 → 校验」
+    return assembleFromProviders(standardProviders({ home, projectId }, opts));
 }

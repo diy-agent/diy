@@ -132,10 +132,7 @@ export function BrainPage(props: { uri: string }): JSX.Element {
     const load = async (): Promise<BrainStep[]> => {
         const snap = await diyService.diy.traffic.snapshot({ withRecords: true });
         const recs = (snap.records as unknown as Rec[]).filter(
-            (r) =>
-                r.taskUri === props.uri &&
-                typeof r.stepSeq === "number" &&
-                (r.attemptInStep ?? 1) === 1,
+            (r) => r.taskUri === props.uri && typeof r.stepSeq === "number" && (r.attemptInStep ?? 1) === 1,
         );
         // 同一 (turnId, stepSeq) 只留首试（重试链是流量页的事；这里一步算一次钱）
         const seen = new Set<string>();
@@ -208,8 +205,10 @@ export function BrainPage(props: { uri: string }): JSX.Element {
         return list.find((s) => s.step === want) ?? list[list.length - 1]!;
     };
 
-    const trend = () => mindTrend(steps().map((s) => ({ step: s.step, reqBytes: s.rec.reqBytes ?? s.totalBytes, byGroup: s.byGroup })));
-    const dups = () => repeatReads(steps().map((s) => ({ step: s.step, toolCalls: s.messages.flatMap((m) => m.toolCalls) })));
+    const trend = () =>
+        mindTrend(steps().map((s) => ({ step: s.step, reqBytes: s.rec.reqBytes ?? s.totalBytes, byGroup: s.byGroup })));
+    const dups = () =>
+        repeatReads(steps().map((s) => ({ step: s.step, toolCalls: s.messages.flatMap((m) => m.toolCalls) })));
 
     /** 上一步 / 下一步（消息列表里翻步用；两端夹住，不循环 —— 循环会让人以为数据回绕了） */
     const go = (delta: number): void => {
@@ -261,9 +260,15 @@ export function BrainPage(props: { uri: string }): JSX.Element {
     const Fold = (p: { k: string; label: string; extra?: string; children: JSX.Element }): JSX.Element => {
         const open = (): boolean => fold()[p.k] !== false;
         return (
-            <div class="flex min-h-0 flex-col rounded-lg border border-base-300" classList={{ "flex-1 min-h-[140px]": open() }}>
+            <div
+                class="flex min-h-0 flex-col rounded-lg border border-base-300"
+                classList={{ "flex-1 min-h-[140px]": open() }}
+            >
                 <div class="flex w-full items-center gap-1 bg-base-300 px-2 py-1 text-body font-bold tracking-wide">
-                    <button class="flex items-center gap-1 opacity-80 hover:opacity-100" onClick={() => setFold({ ...fold(), [p.k]: !open() })}>
+                    <button
+                        class="flex items-center gap-1 opacity-80 hover:opacity-100"
+                        onClick={() => setFold({ ...fold(), [p.k]: !open() })}
+                    >
                         <span>{open() ? "▾" : "▸"}</span>
                         <span>{p.label}</span>
                     </button>
@@ -280,17 +285,28 @@ export function BrainPage(props: { uri: string }): JSX.Element {
 
     const budgetPane = (): JSX.Element => {
         const s = cur();
-        if (!s) return <div class="p-2 opacity-60">没有可分析的真发请求（本任务的流量记录为空或没有步号）。真发一轮后按「⟳ 刷新」。</div>;
+        if (!s)
+            return (
+                <div class="p-2 opacity-60">
+                    没有可分析的真发请求（本任务的流量记录为空或没有步号）。真发一轮后按「⟳ 刷新」。
+                </div>
+            );
         const req = s.rec.reqBytes ?? s.totalBytes;
         return (
             <div class="flex flex-col gap-1 p-1">
                 {/* 步选择条 */}
                 <div class="flex flex-wrap items-center gap-1">
-                    <span class="badge badge-xs badge-outline font-mono" title={`本轮第 ${s.stepSeq} 步 · turn ${s.turnId.slice(0, 8)}`}>{`#${s.step}（本轮第 ${s.stepSeq} 步）`}</span>
+                    <span
+                        class="badge badge-xs badge-outline font-mono"
+                        title={`本轮第 ${s.stepSeq} 步 · turn ${s.turnId.slice(0, 8)}`}
+                    >{`#${s.step}（本轮第 ${s.stepSeq} 步）`}</span>
                     <span class="font-mono text-caption opacity-70">{s.rec.model}</span>
                     <span
                         class="badge badge-xs"
-                        classList={{ "badge-success": s.rec.status !== null && s.rec.status < 400, "badge-error": s.rec.status === null || s.rec.status >= 400 }}
+                        classList={{
+                            "badge-success": s.rec.status !== null && s.rec.status < 400,
+                            "badge-error": s.rec.status === null || s.rec.status >= 400,
+                        }}
                     >
                         {s.rec.status ?? "无响应"}
                     </span>
@@ -342,9 +358,16 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                                             const why = explainSegment(seg.key, PLACE_REASONS);
                                             return (
                                                 <div class="flex flex-wrap items-center gap-1">
-                                                    <span class={`badge badge-xs ${PLACE_CLS[why.place] ?? "badge-ghost"}`}>{why.place}</span>
+                                                    <span
+                                                        class={`badge badge-xs ${PLACE_CLS[why.place] ?? "badge-ghost"}`}
+                                                    >
+                                                        {why.place}
+                                                    </span>
                                                     <span class="badge badge-xs badge-outline">{why.kind}</span>
-                                                    <span class="max-w-[36ch] truncate text-caption opacity-60" title={why.reason}>
+                                                    <span
+                                                        class="max-w-[36ch] truncate text-caption opacity-60"
+                                                        title={why.reason}
+                                                    >
                                                         {why.reason}
                                                     </span>
                                                 </div>
@@ -403,9 +426,23 @@ export function BrainPage(props: { uri: string }): JSX.Element {
         const historyShare = s.totalBytes > 0 ? s.byGroup.history / s.totalBytes : 0;
         const cells: { k: string; v: string; hint: string; bad?: boolean }[] = [
             { k: "投入", v: fmtBytes(req), hint: "这一步真发出去的请求字节（含历史重发）" },
-            { k: "历史占比", v: pct(s.byGroup.history, s.totalBytes), hint: "历史重发 / 本次总字节 —— 高于 70% 说明脑容量被过去占满", bad: historyShare > 0.7 },
-            { k: "动作数", v: s.outMessages === null ? "—" : String(s.outMessages), hint: "本步之后新增的 assistant/tool 消息数（没有下一步就无法量）" },
-            { k: "停滞", v: s.stalled ? "是" : "否", hint: "下一步用户只说了「继续 / ？」—— 上一步没推进", bad: s.stalled },
+            {
+                k: "历史占比",
+                v: pct(s.byGroup.history, s.totalBytes),
+                hint: "历史重发 / 本次总字节 —— 高于 70% 说明脑容量被过去占满",
+                bad: historyShare > 0.7,
+            },
+            {
+                k: "动作数",
+                v: s.outMessages === null ? "—" : String(s.outMessages),
+                hint: "本步之后新增的 assistant/tool 消息数（没有下一步就无法量）",
+            },
+            {
+                k: "停滞",
+                v: s.stalled ? "是" : "否",
+                hint: "下一步用户只说了「继续 / ？」—— 上一步没推进",
+                bad: s.stalled,
+            },
         ];
         return (
             <div class="flex flex-col gap-1 p-1">
@@ -460,15 +497,31 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                 {/* 曲线：req（总投入）与 history（历史重发）两条，归一化到同一坐标 */}
                 <div class="rounded border border-base-300 bg-base-100 p-1">
                     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" class="h-24 w-full">
-                        <polyline points={pts((x) => x.historyBytes)} fill="none" stroke="currentColor" class="text-error" stroke-width="0.8" vector-effect="non-scaling-stroke" />
-                        <polyline points={pts((x) => x.reqBytes)} fill="none" stroke="currentColor" class="text-primary" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+                        <polyline
+                            points={pts((x) => x.historyBytes)}
+                            fill="none"
+                            stroke="currentColor"
+                            class="text-error"
+                            stroke-width="0.8"
+                            vector-effect="non-scaling-stroke"
+                        />
+                        <polyline
+                            points={pts((x) => x.reqBytes)}
+                            fill="none"
+                            stroke="currentColor"
+                            class="text-primary"
+                            stroke-width="0.8"
+                            vector-effect="non-scaling-stroke"
+                        />
                     </svg>
                     <div class="flex gap-3 text-caption opacity-70">
                         <span class="flex items-center gap-1">
-                            <span class="inline-block h-0.5 w-3 bg-primary" />总投入
+                            <span class="inline-block h-0.5 w-3 bg-primary" />
+                            总投入
                         </span>
                         <span class="flex items-center gap-1">
-                            <span class="inline-block h-0.5 w-3 bg-error" />历史重发
+                            <span class="inline-block h-0.5 w-3 bg-error" />
+                            历史重发
                         </span>
                     </div>
                 </div>
@@ -499,13 +552,24 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                                         <td class="text-right font-mono">{s.step}</td>
                                         <td class="text-right font-mono">{fmtBytes(req)}</td>
                                         <td class="text-right font-mono opacity-70">{fmtBytes(s.byGroup.history)}</td>
-                                        <td class="text-right font-mono" classList={{ "text-error": share > 0.7, "text-warning": share > 0.5 && share <= 0.7 }}>
+                                        <td
+                                            class="text-right font-mono"
+                                            classList={{
+                                                "text-error": share > 0.7,
+                                                "text-warning": share > 0.5 && share <= 0.7,
+                                            }}
+                                        >
                                             {pct(s.byGroup.history, s.totalBytes)}
                                         </td>
                                         <td class="text-right font-mono">{s.outMessages ?? "—"}</td>
                                         <td class="whitespace-nowrap">
                                             <Show when={s.stalled}>
-                                                <span class="badge badge-xs badge-warning" title="下一步用户只说了「继续 / ？」">停滞</span>
+                                                <span
+                                                    class="badge badge-xs badge-warning"
+                                                    title="下一步用户只说了「继续 / ？」"
+                                                >
+                                                    停滞
+                                                </span>
                                             </Show>
                                         </td>
                                     </tr>
@@ -524,7 +588,9 @@ export function BrainPage(props: { uri: string }): JSX.Element {
             <div class="flex flex-col gap-1 p-1">
                 <Show
                     when={d.length > 0}
-                    fallback={<div class="text-caption opacity-60">没有重复读（同工具 + 同参数的调用都只出现一次）。</div>}
+                    fallback={
+                        <div class="text-caption opacity-60">没有重复读（同工具 + 同参数的调用都只出现一次）。</div>
+                    }
                 >
                     <table class="table table-xs">
                         <thead>
@@ -570,8 +636,16 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                     <button class="btn btn-xs btn-ghost" disabled={i <= 0} onClick={() => go(-1)} title="上一步">
                         ◀
                     </button>
-                    <span class="badge badge-xs badge-outline font-mono" title={`turn ${s.turnId}`}>{`#${s.step}（本轮第 ${s.stepSeq} 步）`}</span>
-                    <button class="btn btn-xs btn-ghost" disabled={i >= list.length - 1} onClick={() => go(1)} title="下一步">
+                    <span
+                        class="badge badge-xs badge-outline font-mono"
+                        title={`turn ${s.turnId}`}
+                    >{`#${s.step}（本轮第 ${s.stepSeq} 步）`}</span>
+                    <button
+                        class="btn btn-xs btn-ghost"
+                        disabled={i >= list.length - 1}
+                        onClick={() => go(1)}
+                        title="下一步"
+                    >
                         ▶
                     </button>
                     <span class="font-mono opacity-60">{s.turnId.slice(0, 8)}</span>
@@ -585,7 +659,11 @@ export function BrainPage(props: { uri: string }): JSX.Element {
     const parts: Record<string, () => JSX.Element> = {
         "brain.budget": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
-                <Fold k="budget" label="脑容量账（这一次思考）" extra={cur() ? `${fmtBytes(cur()!.totalBytes)} / ${segsOf(cur()!).length} 段` : "无数据"}>
+                <Fold
+                    k="budget"
+                    label="脑容量账（这一次思考）"
+                    extra={cur() ? `${fmtBytes(cur()!.totalBytes)} / ${segsOf(cur()!).length} 段` : "无数据"}
+                >
                     {budgetPane()}
                 </Fold>
                 <Fold k="score" label="记分 v0（可量的事实）" extra={cur() ? `#${cur()!.step}` : "—"}>
@@ -595,7 +673,11 @@ export function BrainPage(props: { uri: string }): JSX.Element {
         ),
         "brain.messages": () => (
             <div class="flex h-full min-h-0 flex-col gap-1 overflow-y-auto p-1 text-body">
-                <Fold k="messages" label="发出去的消息（逐条审阅）" extra={cur() ? `${cur()!.messages.length} 条 · #${cur()!.step}` : "无数据"}>
+                <Fold
+                    k="messages"
+                    label="发出去的消息（逐条审阅）"
+                    extra={cur() ? `${cur()!.messages.length} 条 · #${cur()!.step}` : "无数据"}
+                >
                     {messagesPane()}
                 </Fold>
             </div>
@@ -646,7 +728,8 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                         {enabling() ? "开启中…" : "开启全量录制，再真发一轮"}
                     </button>
                     <span class="opacity-50">
-                        （等价于流量页「记录完整请求内容」/ `traffic setFullCapture true`；本页字节仍按 `reqBytes` 出行，只是拆不出段）
+                        （等价于流量页「记录完整请求内容」/ `traffic setFullCapture true`；本页字节仍按 `reqBytes`
+                        出行，只是拆不出段）
                     </span>
                 </div>
             </Show>
@@ -661,7 +744,9 @@ export function BrainPage(props: { uri: string }): JSX.Element {
                     ctx={props.uri}
                     layout={findPage(PAGE)!.layout}
                     binding={layoutStore.bindingFor(findPage(PAGE)!, props.uri)}
-                    renderView={(viewId) => parts[viewId]?.() ?? <div class="p-3 text-body opacity-60">未注册的 view: {viewId}</div>}
+                    renderView={(viewId) =>
+                        parts[viewId]?.() ?? <div class="p-3 text-body opacity-60">未注册的 view: {viewId}</div>
+                    }
                 />
             </div>
         </div>
