@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { instructionsOf } from '../src/agent';
+import { unitBoard } from '../src/units';
 import { buildRoomSystemContext, createRoomContext } from '../src/system-context';
 import { clearWatchCache } from '../src/watch-cache';
 
@@ -107,7 +108,8 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
             cwd: repo,
             skillsRoot: join(tmp(), 'skills'),
         });
-        expect(ctx.open().system).not.toContain('\ntask:');
+        // 同上：顶层键在 `vars:` 下缩进两格；写 `\ntask:` 永远为真 = 白测
+        expect(ctx.open().system).not.toContain('  task:');
     });
 
     it('docs 索引：docs/plans 的篇数进 vars', () => {
@@ -140,6 +142,77 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         const step = ctx.step();
         expect(step.delta?.paths).toContain('journal');
         expect(step.user).toContain('B 会炸');
+        expect(ctx.system).toBe(open.system);
+    });
+
+    it('units：全量注入缩进树 → 「现在能挑哪几条」不用先调工具', () => {
+        const repo = tmp();
+        // 用真的纯函数算 board：注入与视图 / 工具是同一份派生量，别在测试里手捏形状
+        const facts = [
+            { id: 'dom', title: '取消语义', status: 'open' as const, seq: 1, parent: null },
+            { id: 'a', title: '读现状', status: 'done' as const, seq: 2, parent: 'dom' },
+            { id: 'b', title: '写领域函数', status: 'open' as const, seq: 3, parent: 'dom' },
+            { id: 'view', title: '视图', status: 'open' as const, seq: 4, parent: null },
+            { id: 'c', title: '注入上下文', status: 'open' as const, seq: 5, parent: 'view' },
+        ];
+        const ctx = createRoomContext({
+            spec: { id: 'task:t-1', type: 'task', data: { title: '任务一' } },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+            units: () => unitBoard(facts),
+        });
+        const system = ctx.open().system;
+        expect(system).toContain('units:');
+        // ready / doing 是行动指令；done 不点名 —— 树行里的标记就是答案
+        expect(system).toContain('ready:');
+        expect(system).toContain('b');
+        expect(system).not.toContain('blocked:');
+        expect(system).not.toContain('layers:');
+        expect(system).not.toContain('batches:');
+        // 树是缩进文本：一行一个节点，状态用标记
+        expect(system).toContain('tree:');
+        expect(system).toContain('- [ ] 取消语义 (dom)');
+        expect(system).toContain('  - [x] 读现状 (a)');
+        expect(system).toContain('  - [>] 写领域函数 (b)');
+        // 账本不定先后：另一个母项下的叶子同样能挑（不再有「← 等 dom」）
+        expect(system).toContain('  - [>] 注入上下文 (c)');
+        expect(system).not.toContain('← 等');
+    });
+
+    it('units：空图整节缺席（不造空壳冒充）', () => {
+        const repo = tmp();
+        const ctx = createRoomContext({
+            spec: { id: 'task:t-1', type: 'task', data: { title: '任务一' } },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+            units: () => unitBoard([], []),
+        });
+        // 变量树顶层都在 `vars:` 下，所以缩进两格才是真断言（写 `\nunits:` 永远为真 = 白测）
+        expect(ctx.open().system).not.toContain('  units:');
+    });
+
+    it('units：推状态只走 units 增量，system 逐字不动（不破前缀缓存）', () => {
+        const repo = tmp();
+        const facts = [
+            { id: 'u1', title: '第一步', status: 'open' as const, seq: 1 },
+            { id: 'u2', title: '第二步', status: 'open' as const, seq: 2 },
+        ];
+        const ctx = createRoomContext({
+            spec: { id: 'task:t-1', type: 'task', data: { title: '任务一' } },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+            units: () => unitBoard(facts, [{ taskId: 'x', from: 'u1', to: 'u2' }]),
+        });
+        const open = ctx.open();
+        expect(open.system).toContain('第一步');
+
+        ctx.step();
+        ctx.commit();
+        facts[0]!.status = 'done';
+        const step = ctx.step();
+        expect(step.delta?.paths).toContain('units');
+        // u1 做完 ⇒ u2 从 blocked 挪到 ready：增量里就该看得见这个转变
+        expect(step.user).toContain('u2');
         expect(ctx.system).toBe(open.system);
     });
 

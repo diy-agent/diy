@@ -28,6 +28,7 @@ import { RoomLog, type RoomEntry } from './room-log';
 import { createRoomContext } from './system-context';
 import { buildRoomTools } from './tools/index';
 import { createToolOutputCapper } from './tool-output';
+import { unitBoard, type UnitBoard } from './units';
 import { jobNoticeOf, jobOwnerOf, type JobOwner } from './jobs';
 import type { JobDoneEvent, RunRegistry } from '@diy-agent/jobs/node';
 import type { CompactEvent } from './compaction';
@@ -805,6 +806,10 @@ export class RoomActor {
                       onJournal: (input) => {
                           this.deps.store.appendJournal(this.id, input);
                       },
+                      // unit 是 task 私有的：非任务房间不给这套工具（它们没有图，也没有 #号可挂）
+                      ...(this.deps.spec.type === 'task'
+                          ? { units: { store: this.deps.store, taskId: this.id } }
+                          : {}),
                   });
         this.toolsByBot.set(botId, tools);
         return tools;
@@ -816,6 +821,12 @@ export class RoomActor {
     }
 
     private toolsHint(): string {
+        // 任务房间才有 unit 图：不点名的话模型会把步骤写进正文（那之后就没人能回答「现在能做哪些」）
+        const unitHint =
+            this.deps.spec.type === 'task'
+                ? '\n任务的拆解用 unit_* 工具长成一张图（先 unit_list 看现状，再 unit_add / unit_update / ' +
+                  'unit_drop / unit_link）：别把步骤只写在正文里。开做一条标 doing，做完标 done。'
+                : '';
         const jobHint =
             this.deps.jobs === undefined
                 ? ''
@@ -829,6 +840,7 @@ export class RoomActor {
             '需要用户做决定时**必须**调用 ask（选项 / 表单）：不要在正文里提问，' +
             '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。' +
             'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。' +
+            unitHint +
             jobHint
         );
     }
@@ -881,6 +893,14 @@ export class RoomActor {
         }
     }
 
+    /**
+     * 当前任务的需求账本树。工具与上下文走**同一个入口**：
+     * 不然「agent 改完看到的」与「注入 system 的」会各算一份，迟早不一致。
+     */
+    private unitBoardOf(): UnitBoard {
+        return unitBoard(this.deps.store.listUnits(this.id));
+    }
+
     /** 某个成员的上下文会话；没有 cwd 的房间不建（与工具同判据） */
     private contextSessionOf(bot: Bot): ContextSession {
         const existing = this.contexts.get(bot.id);
@@ -892,6 +912,7 @@ export class RoomActor {
             cwd,
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
             journal: () => this.deps.store.journalOf(this.id),
+            ...(this.deps.spec.type === 'task' ? { units: () => this.unitBoardOf() } : {}),
             members: () => {
                 const primary = this.primary();
                 return this.members().map((bot) => ({

@@ -8,7 +8,7 @@
 //   ① **limit 真的不读全文**：倒读字节数 < 文件的一小部分（用 `roomReadStats().eventsTailBytes` 证明）；
 //   ② **坏行只影响自身**：跳过 + 计数，其余照常返回（整份失败 / 静默吞掉都不行）；
 //   ③ **文件签名缓存**：同一房间在一次刷新窗口里只读一次盘；文件变了立刻读到新的（不是 TTL）；
-//   ④ **5 MB / 2600 条样本上的耗时 < 20 ms** + 读期间主进程事件循环 lag p99 < 50 ms。
+//   ④ **5 MB / 2600 条样本上的耗时 < 20 ms（三次取最短）** + 读期间主进程事件循环 lag p99 < 50 ms。
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -183,7 +183,7 @@ describe("③ 文件签名缓存 / 读盘合并", () => {
 });
 
 describe("④ 5 MB / 2600 条样本：耗时与事件循环 lag", () => {
-    it("room.get(limit: 300) < 20 ms；读期间 event loop lag p99 < 50 ms", async () => {
+    it("room.get(limit: 300) < 20 ms（三次取最短）；读期间 event loop lag p99 < 50 ms", async () => {
         seed(2600, 320); // 每条约 2 KB ⇒ 文件 ~5 MB
         const size = statSync(roomEventsPath(ROOM)).size;
         expect(size).toBeGreaterThan(4 * 1024 * 1024);
@@ -195,20 +195,25 @@ describe("④ 5 MB / 2600 条样本：耗时与事件循环 lag", () => {
         const hist = monitorEventLoopDelay({ resolution: 10 });
         hist.enable();
         const times: number[] = [];
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 3; i++) {
             const t0 = performance.now();
             const view = await readRoomView(ROOM, { limit: 300 });
             times.push(performance.now() - t0);
             expect(view.events).toHaveLength(300);
         }
         hist.disable();
-        times.sort((a, b) => a - b);
-        // 判据：中位数 < 20 ms（改前同口径是 ~60 ms；生产 5 MB 外推 ~700 ms）。
-        // ⚠️ Windows 放宽到 3 倍（60 ms）：这不是给定目标，是两个平台**测同一段 JSON 解析**的真实差异
-        // （文件缓存 / Defender 扫描 / 并行跑其它测试时都计入），实测并行下中位 32.9 ms。
-        // 判据要守的是「不能退化回 ~60 ms 那个量级」，放大到 3 倍仍能拦住（60 → 180 才漏）。
+        // 判据：**三次取最短** < 20 ms（改前同口径是 ~60 ms；生产 5 MB 外推 ~700 ms）。
+        //
+        // 为什么取最短而不是中位数（2026-11-25 用户裁）：全量 test-unit 会起 40+ 个 vitest
+        // worker 抢同一台机器，墙钟测到的其实是「这一毫秒有没有被调度走」。中位数在这种
+        // 环境下几乎每次都被抬到 20 ms 以上（实测单文件单跑恒绿），于是这条守卫从「拦退化」
+        // 变成「每次都要人工复核一遍」。取最短 = 同一段代码路径上至少有一次没被打断，
+        // 真出现 3 倍退化（60 → 180 那个量级）时三次都会慢，仍然拦得住。
+        //
+        // ⚠️ Windows 放宽到 3 倍（60 ms）：这不是给定目标，是两个平台**测同一段 JSON 解析**
+        // 的真实差异（文件缓存 / Defender 扫描 / 并行跑其它测试时都计入）。
         const budgetMs = process.platform === "win32" ? 60 : 20;
-        expect(times[2]!).toBeLessThan(budgetMs);
+        expect(Math.min(...times)).toBeLessThan(budgetMs);
         expect(hist.percentile(99) / 1e6).toBeLessThan(budgetMs * 2.5);
     });
 

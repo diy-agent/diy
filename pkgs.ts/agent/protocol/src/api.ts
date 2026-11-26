@@ -139,6 +139,24 @@ export const journalApi = RpcSchema.group({
     },
 });
 
+/**
+ * 任务的需求账本树（要做成哪些东西）。**只读**：writer 只有 agent 的 `unit_*` 工具，
+ * 界面是旁观窗口。
+ */
+export const unitsApi = RpcSchema.group({
+    children: {
+        list: RpcSchema.unary({ input: { id: Id }, output: Any }),
+        /**
+         * 模型实际读到的那段文本（`units` 节的 YAML）。
+         *
+         * 为什么要开这个口子：界面能画树、能画图，但「模型到底读到了什么」此前只能靠 demo 推断。
+         * 文本由 `unitsContextValue()` 生成、`toYaml()` 落字 —— 与上下文注入同一份代码，
+         * 所以这里显示的不是「另一种表达」，就是原文。
+         */
+        text: RpcSchema.unary({ input: { id: Id }, output: Any }),
+    },
+});
+
 export const linksApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: { id: Id }, output: Any }),
@@ -194,6 +212,7 @@ export const diy2Api = RpcSchema.group({
         drafts: draftsApi,
         journal: journalApi,
         models: modelsApi,
+        units: unitsApi,
         links: linksApi,
         jobs: jobsApi,
     },

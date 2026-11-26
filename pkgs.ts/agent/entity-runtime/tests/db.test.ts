@@ -435,6 +435,70 @@ describe('提问（asks）持久化', () => {
     });
 });
 
+describe('unit（需求账本树的节点）', () => {
+    const add = (store: ReturnType<typeof openStore>, taskId: string, title: string) =>
+        store.saveUnit({ taskId, title, body: '', status: 'open' });
+
+    it('新 unit 分配 u1 / u2…（task 内递增，删掉的号不回收）', () => {
+        const store = openStore(':memory:');
+        expect(add(store, 't1', 'a').id).toBe('u1');
+        expect(add(store, 't1', 'b').id).toBe('u2');
+        expect(store.removeUnit('t1', 'u2')).toBe(true);
+        // 删了 u2，下一个还是 u3 —— 聊天里引用过的号永远对得上
+        expect(add(store, 't1', 'c').id).toBe('u3');
+        expect(add(store, 't2', '别的任务').id).toBe('u1');
+    });
+
+    it('listUnits 按创建序；更新保留 seq / createdAt 与 id', () => {
+        const store = openStore(':memory:');
+        const first = add(store, 't1', 'a');
+        add(store, 't1', 'b');
+        const updated = store.saveUnit({ taskId: 't1', id: first.id, title: 'a2', body: '说明', status: 'doing' });
+        expect(updated.id).toBe('u1');
+        expect(updated.seq).toBe(first.seq);
+        expect(updated.createdAt).toBe(first.createdAt);
+        expect(store.listUnits('t1').map((unit) => unit.title)).toEqual(['a2', 'b']);
+        expect(store.unitOf('t1', 'u1')?.status).toBe('doing');
+    });
+
+    it('显式 id 但不存在 → 抛（新号只能由 counters 发）', () => {
+        const store = openStore(':memory:');
+        expect(() => store.saveUnit({ taskId: 't1', id: 'u9', title: 'x', body: '', status: 'open' })).toThrow(
+            /不存在/,
+        );
+    });
+
+    it('parent 挂点：改 parent 不动 seq / createdAt；不能挂成自己', () => {
+        const store = openStore(':memory:');
+        const dom = add(store, 't1', '母项');
+        const leaf = add(store, 't1', '叶');
+        const moved = store.saveUnit({ taskId: 't1', id: leaf.id, title: leaf.title, body: '', status: 'open', parent: dom.id });
+        expect(moved.parent).toBe(dom.id);
+        expect(moved.seq).toBe(leaf.seq);
+        expect(() =>
+            store.saveUnit({ taskId: 't1', id: dom.id, title: '母项', body: '', status: 'open', parent: dom.id }),
+        ).toThrow(/自己的父/);
+        // 删得幂等
+        expect(store.removeUnit('t1', leaf.id)).toBe(true);
+        expect(store.removeUnit('t1', leaf.id)).toBe(false);
+    });
+
+    it('deleteRoom 连带清掉节点 / 发号游标（unit 没有外键可跟，没人替它清）', () => {
+        const store = openStore(':memory:');
+        store.saveRoom(room);
+        const a = add(store, room.id, 'a').id;
+        const b = add(store, room.id, 'b').id;
+        store.saveUnit({ taskId: room.id, id: b, title: 'b', body: '', status: 'open', parent: a });
+
+        store.deleteRoom(room.id);
+
+        expect(store.listUnits(room.id)).toEqual([]);
+        // 游标一起清：「号不回收」说的是同一个任务内；任务本身没了就没有「同任务内」了
+        store.saveRoom(room);
+        expect(add(store, room.id, 'c').id).toBe('u1');
+    });
+});
+
 describe('撤掉中断事实（deleteInterruptedFacts）', () => {
     // 只撤「那一轮、那个 bot」的：turnId 是房间级的，@all 时两个 bot 共享一个 turnId
     it('按 turnId + botId 精确删，不误伤同轮的别人、也不误伤别的轮', () => {

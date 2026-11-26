@@ -51,6 +51,63 @@ export interface RpcChatClientOptions {
 /** 房间 → 话题名（与 server 的 `room:<id>` 一一对应） */
 const topicOf = (entityId: string): string => `room:${entityId}`;
 
+/**
+ * 需求账本树上的一个节点（与 `@diy-agent/entity-runtime` 的 `UnitBoardRow` 同形）。
+ *
+ * 2026-11-25 裁：账本只记「要做什么」，所以这里没有 deps / layer —— 谁先做、一次做几条
+ * 是执行时的判断，不进账本（模型每轮自己从 `ready` 里挑）。
+ */
+export interface UnitItem {
+    id: string;
+    title: string;
+    body: string;
+    /** **有效**状态：叶子 = 落库值；母项（有子）= 由子派生（全 done → done） */
+    status: 'open' | 'doing' | 'done';
+    /** 树上的父（母项）；null = 根 */
+    parent: string | null;
+    /** 子节点（按书写顺序排） */
+    children: string[];
+    /** 有子 = 母项（本身不执行） */
+    group: boolean;
+    /** 树深（根 = 0）：视图按它缩进 */
+    depth: number;
+    /** 书写顺序（同一父下的稳定次序） */
+    seq: number;
+}
+
+/** 需求账本树的视图快照：树 + ready/doing（现在能挑的） */
+export interface UnitBoardView {
+    /** **树的先序**（根按创建序，子同）：视图照这个顺序缩进就是树 */
+    rows: UnitItem[];
+    /** 根节点 id（树的先序） */
+    roots: string[];
+    /** 现在能挑的：只有叶子（母项不进这里） */
+    ready: string[];
+    doing: string[];
+    /** 派生状态为 done 的全部节点（含子都做完的母项） */
+    done: string[];
+    /** 母项（有子）的 id */
+    groups: string[];
+    /** 父指向一个不存在的 id（脏数据 / 先建子后建父的中间态）：这些节点当根处理并报出来 */
+    danglingParents: string[];
+}
+
+/**
+ * `units` 节原文（模型读到的就是它）。
+ *
+ * `mode` 说明服务端走的是哪条路：`full` 给全树，`summary` 是超过硬线后退成的摘要 ——
+ * 界面要能把「为什么我看得到全树、模型只看到 ready」说清楚，否则容易以为上下文丢了。
+ */
+export interface UnitTextView {
+    /** 原文（空字符串 = 这个任务还没有拆分，整节缺席） */
+    text: string;
+    /** 字符数（界面上标「≈ 多少 tok」用，与 ContextPanel 同一口径 *0.78） */
+    chars: number;
+    mode: 'full' | 'summary' | 'empty';
+    /** 树行数（`full` 时才有意义；摘要形态是 0） */
+    treeLines: number;
+}
+
 /** 一条草稿（服务端 rooms/drafts 的返回项） */
 export interface DraftEntry {
     field: string;
@@ -175,6 +232,16 @@ export class RpcChatClient implements ChatClient {
             lines?: number,
         ): Promise<{ found: boolean; tail?: { text: string; lines: number; droppedBytes: number } }> =>
             this.call('jobs.tail', { id, ...(lines === undefined ? {} : { lines }) }),
+    };
+
+    /**
+     * 任务的需求账本树。**只读**：writer 只有 agent 的 `unit_*` 工具，
+     * 界面是旁观窗口 —— 想改就在聊天里说。
+     */
+    readonly units = {
+        list: (id: string): Promise<UnitBoardView> => this.call('units.list', { id }),
+        /** 模型实际读到的 `units` 节原文（YAML）：树视图与图视图共用这一段，不是两份 */
+        text: (id: string): Promise<UnitTextView> => this.call('units.text', { id }),
     };
 
     readonly links = {
