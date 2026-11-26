@@ -28,6 +28,7 @@ import { RoomLog, type RoomEntry } from './room-log';
 import { createRoomContext } from './system-context';
 import { buildRoomTools } from './tools/index';
 import { createToolOutputCapper } from './tool-output';
+import { unitBoard, type UnitBoard } from './units';
 import { jobNoticeOf, jobOwnerOf, type JobOwner } from './jobs';
 import type { JobDoneEvent, RunRegistry } from '@diy-agent/jobs/node';
 import type { CompactEvent } from './compaction';
@@ -75,10 +76,15 @@ export interface RoomActorDeps {
     /** 房间的工作目录；不传 = 不给文件/命令工具（只用内置 get_time） */
     cwd?: string;
     /**
-     * 应用数据根（diy2 = `DIY2_HOME`）：`<home>/AGENTS.md` 进规则链首、并允许读设备级知识库。
+     * 应用数据根（diy2 = 实例 home）：`<home>/AGENTS.md` 进规则链首。
      * 不传 = 没有应用级规范（测试 / 无 app 宿主）。
      */
     home?: string;
+    /**
+     * 设备根（diy2 = 生产 home `~/.diy2`）：设备级知识库 `<设备根>/knowledge`。
+     * 不传 = 不投设备库（与 `home` 分开：lab 实例的应用根是 `run/diy2/lab`，设备库仍在生产根）。
+     */
+    deviceHome?: string;
     /** 是否开放 shell（缺省开放） */
     shell?: boolean;
     /**
@@ -393,8 +399,15 @@ export class RoomActor {
     /**
      * 崩溃恢复：把还没送达的投递重新投一遍。
      * `delivering` 视为未送到（进程中途挂了，模型回复也没落盘）。
+     *
+     * **返回 Promise 且内部串行**（2026-11-25）：以前是 `void post()` 一口气全排出去，
+     * 于是启动时十几个房间同时向网关发请求 —— 一屏 429，再加上各自的压缩，UI 一打开
+     * 就是灾难（## turn 180 的实测）。现在一个投递跑到收尾（post 的 Promise 在轮结束时
+     * resolve）再放下一个；卡住的轮有 StallWatchdog 兜住，不会把后面永久堵死。
+     *
+     * 单个投递失败不中断其余：失败已经在 session 里落成事实，这里只记一行。
      */
-    recover(): void {
+    async recover(): Promise<void> {
         for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
             const bot = this.member(delivery.botId);
             if (bot === undefined) continue;
@@ -418,7 +431,26 @@ export class RoomActor {
             const entry = this.log
                 .all()
                 .find((item) => item.kind === 'say' && item.messageId === delivery.messageId);
-            void this.sessionOf(bot).post({
+            await this.postOrWarn(bot, delivery, text, entry, turn);
+        }
+    }
+
+    /**
+     * 续跑一条投递，失败只留一行线索（不拖住后面）。
+     *
+     * 为什么不在 `recover` 里内联 try/catch：那段已经有 5 个可空参数，再套一层就别想读了。
+     * post 自己会把失败落成事实（delivery `state: failed` + notice）—— 这里只是不把
+     * 「一条坏消息」升缆成「整台实例后面的房间都不续跑」。
+     */
+    private async postOrWarn(
+        bot: Bot,
+        delivery: ReturnType<Store['pendingDeliveries']>[number],
+        text: string,
+        entry: RoomEntry | undefined,
+        turn: Turn | undefined,
+    ): Promise<void> {
+        try {
+            await this.sessionOf(bot).post({
                 messageId: delivery.messageId,
                 text,
                 mode: delivery.mode ?? 'next-step',
@@ -427,6 +459,8 @@ export class RoomActor {
                 ...(entry === undefined ? {} : { entry }),
                 ...(turn === undefined ? {} : { turn }),
             });
+        } catch (error) {
+            console.warn(`[room:${this.id}] 续跑投递失败：${(error as Error).message}`);
         }
     }
 
@@ -459,6 +493,33 @@ export class RoomActor {
         return this.members()
             .map((bot) => bot.id)
             .filter((botId) => this.speaking.has(botId));
+    }
+
+    /**
+     * 还没开始跑的投递（`queued` / `delivering`），按成员计数。
+     *
+     * 「排队中」是**系统状态**而不是「要你动手」：重启后的待续跑（`recover()` 那条路）、
+     * 连发几条还没轮到它，都落在这里。以前 UI 完全看不见这一段 —— 房间看起来
+     * 「什么都没发生」，其实它排着队；反过来「红 N」里也混不进它们。
+     */
+    queuedByBot(): Map<string, number> {
+        // 「排队」= 还没轮到它。**正在跑的那个成员手上握着一条投递**（`queued` 或 `delivering`
+        // 都实测见过），那条是它此刻这一轮，不是排队 —— 不排除它，界面就会出现
+        // 「在跑却写排队中」（用户 2026-11-26 报的就是这个）。
+        // 判据只看「在不在跑」，不看投递状态：状态机里 `delivering` 只在部分路径打，
+        // 靠它区分会把在跑的那条当成排队。
+        const counts = new Map<string, number>();
+        for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
+            counts.set(delivery.botId, (counts.get(delivery.botId) ?? 0) + 1);
+        }
+        // 在跑的成员减一（它手上那条）：剩多少条才是真排着的
+        for (const botId of this.runningBots()) {
+            const n = counts.get(botId);
+            if (n === undefined) continue;
+            if (n <= 1) counts.delete(botId);
+            else counts.set(botId, n - 1);
+        }
+        return counts;
     }
 
     /**
@@ -761,6 +822,10 @@ export class RoomActor {
                       onJournal: (input) => {
                           this.deps.store.appendJournal(this.id, input);
                       },
+                      // unit 是 task 私有的：非任务房间不给这套工具（它们没有图，也没有 #号可挂）
+                      ...(this.deps.spec.type === 'task'
+                          ? { units: { store: this.deps.store, taskId: this.id } }
+                          : {}),
                   });
         this.toolsByBot.set(botId, tools);
         return tools;
@@ -772,6 +837,18 @@ export class RoomActor {
     }
 
     private toolsHint(): string {
+        // 任务房间才有账本树。措辞分两段（2026-11-26 实测后改）：先给触发条件，再给节奏 ——
+        // 只写「拆解用 unit_*」时模型的反应是「先 unit_list 看一眼，然后直接动手写代码」，
+        // 账本始终是空的（用户实测：不明确说「把这件事拆成几步」它就不建）。
+        const unitHint =
+            this.deps.spec.type === 'task'
+                ? '\n**先落账本再动手**：接到需求（或需求变了）时，先判断这件事是不是不止一步 —— ' +
+                  '是就用 unit_add 把它拆成 2~5 条「能被验收的产出」（母项 → 子项，body 写验收口径），' +
+                  '然后再开工；只有一步的小改（改个文案 / 跑个命令 / 看一眼状态）不要建。' +
+                  '\n**每轮从账本里挑活**：上下文 units 节的 ready 就是现在能挑的（不必先 unit_list），' +
+                  '挑 1~3 条做；开做标 doing、做完标 done，需求变了就让树跟着变（unit_update / unit_drop）。' +
+                  '别把步骤只写在正文里，也别等做完再补树 —— 账本是给人看进度的唯一地方。'
+                : '';
         const jobHint =
             this.deps.jobs === undefined
                 ? ''
@@ -785,6 +862,7 @@ export class RoomActor {
             '需要用户做决定时**必须**调用 ask（选项 / 表单）：不要在正文里提问，' +
             '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。' +
             'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。' +
+            unitHint +
             jobHint
         );
     }
@@ -837,6 +915,14 @@ export class RoomActor {
         }
     }
 
+    /**
+     * 当前任务的需求账本树。工具与上下文走**同一个入口**：
+     * 不然「agent 改完看到的」与「注入 system 的」会各算一份，迟早不一致。
+     */
+    private unitBoardOf(): UnitBoard {
+        return unitBoard(this.deps.store.listUnits(this.id));
+    }
+
     /** 某个成员的上下文会话；没有 cwd 的房间不建（与工具同判据） */
     private contextSessionOf(bot: Bot): ContextSession {
         const existing = this.contexts.get(bot.id);
@@ -847,7 +933,9 @@ export class RoomActor {
             spec: this.deps.spec,
             cwd,
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
+            ...(this.deps.deviceHome === undefined ? {} : { deviceHome: this.deps.deviceHome }),
             journal: () => this.deps.store.journalOf(this.id),
+            ...(this.deps.spec.type === 'task' ? { units: () => this.unitBoardOf() } : {}),
             members: () => {
                 const primary = this.primary();
                 return this.members().map((bot) => ({

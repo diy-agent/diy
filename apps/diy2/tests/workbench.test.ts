@@ -245,6 +245,17 @@ describe('pageFor：未知类型不许掉进任务页', () => {
         expect(genericPage.center.id).toBe('conversation');
     });
 
+    it('任务页的 detail 区住「目标」与「详情」= 自然变成 tab（不动骨架）', () => {
+        // 需求账本树是任务本体的一部分（与正文同级），而「详情」已经在那；
+        // 两个 view 同一区域 = 界面自己长 tab，不需要新增区域 / 改模板约束。
+        // 「目标」在前（默认选中 = 数组首位）：账本是这一页最常看的东西。
+        // 依赖图（units-dag）随「不记执行规划」删掉；「文本」并进了「目标」做成源码开关
+        // （2026-11-25 裁：同一份数据的两种读法，不该摆成两个并列 tab）。
+        expect(viewsIn(wbViews, 'task', 'detail').map((item) => item.id)).toEqual(['units', 'detail']);
+        // 项目没有内部拆分（unit 是 task 私有的轻实体）
+        expect(viewsIn(wbViews, 'project', 'detail').map((item) => item.id)).toEqual(['detail']);
+    });
+
     it('每个模板的每个区域都有 view 落进去（否则那块永远是空白，且单 view 区域不给 ⋯）', () => {
         for (const def of [pageFor('task'), pageFor('project'), genericPage]) {
             for (const side of def.areas) {

@@ -19,6 +19,7 @@ import {
 import type { NavContext, NavSource } from '../nav';
 import { actions, useIsCurrentRoom, useLastActivityOf, useRooms, useRunningOf } from '../store';
 import { projectNamesOf } from './projects';
+import { Button } from '@diy-agent/ui-shadcn';
 
 /** 历史任务区展开状态：默认展开（用户要的是“方便回头看”，默认收起等于又藏起来了） */
 const HISTORY_OPEN_KEY = 'entity-chat:history-open';
@@ -87,17 +88,19 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
             )}
             {/* 重新打开：历史行上唯一的常驻动作（另一颗「删除」在 hover 之外没有入口，
                 本区本来就不提供删除 —— 要删先去项目树里打开它）。 */}
-            <button
+            <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={(event) => {
                     event.stopPropagation();
                     void actions.setRoomStatus(room.id, 'open');
                 }}
                 title="重新打开这个任务（回到它所属项目的树里）"
                 aria-label="打开任务"
-                className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="shrink-0 text-muted-foreground"
             >
                 <RotateCcw className="size-3.5" />
-            </button>
+            </Button>
             {/* 只有一个时间单元（256px 侧栏里名字 + 项目 tag 已经占满一行）：
                 显示关闭时刻（= 排序键，**绝对时间**），相对写法放悬停。
                 没有 closedAt 的老数据是「—」。 */}
@@ -137,11 +140,13 @@ function HistoryBlock({ context }: { context: NavContext }) {
         // —— 它们就在这里，按关闭时间倒序，行上带项目 tag。
         <div className={open ? 'mt-1 border-t pt-2' : 'mt-1'} data-sidebar-history>
             {open ? (
-                <button
+                <Button
+                    variant="ghost"
+                    size="xs"
                     onClick={toggleHistory}
                     title={historyOpen ? '收起历史任务' : `展开历史任务（${closedTasks.length}）`}
                     aria-expanded={historyOpen}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground hover:bg-muted/60"
+                    className="h-auto w-full justify-start gap-2 px-2 py-1 text-xs tracking-wide text-muted-foreground"
                 >
                     {historyOpen ? (
                         <ChevronDown className="size-3 shrink-0" />
@@ -153,16 +158,18 @@ function HistoryBlock({ context }: { context: NavContext }) {
                     <span className="ml-auto rounded-full border px-1.5 text-[10px] tabular-nums">
                         {closedTasks.length}
                     </span>
-                </button>
+                </Button>
             ) : (
-                <button
+                <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={context.host.onExpandSidebar}
                     title={`历史任务（${closedTasks.length}）—— 点开展开侧栏`}
                     aria-label={`历史任务（${closedTasks.length}）`}
-                    className="flex w-full items-center justify-center rounded-lg py-2 text-muted-foreground hover:bg-muted/60"
+                    className="w-full justify-center py-2 text-muted-foreground"
                 >
                     <Archive className="size-4" />
-                </button>
+                </Button>
             )}
             {open && historyOpen && (
                 <div className="mt-0.5 max-h-72 overflow-y-auto">

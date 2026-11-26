@@ -222,10 +222,13 @@ for (const e of entries) {
     const segs = (subj ?? '').split('.');
     const mdRel = segs.length > 1 ? [...segs.slice(0, -1), `${segs.at(-1)}.md`].join('/') : `${subj}/${subj}.md`;
     // 两库都查：项目库优先、设备级库兜底 —— 与 `diy2 facts get` 同一解析面。
-    // 通用硬约束（rule/* tool/tool dev/* ref/ref …）的真源在 ~/.diy/knowledge，
-    // 项目库 2026-11-22 删了逐字节相同的副本，只查项目库会把这些指针全判成悬空。
+    // 通用硬约束（rule/* tool/tool dev/* ref/ref …）的真源在设备库，项目库 2026-11-22 删了
+    // 逐字节相同的副本，只查项目库会把这些指针全判成悬空。
+    // 设备库从 2026-11-26 起住 diy2 的 home `~/.diy2/knowledge`；`~/.diy/knowledge` 是给
+    // 旧布局（diy-app 口径）留的兼容路径，两个都查不会出错（后者是有意留的 symlink）。
     const mdCandidates = [
       path.join(ROOT, '.diy', 'knowledge', mdRel),
+      path.join(HOME, '.diy2', 'knowledge', mdRel),
       path.join(HOME, '.diy', 'knowledge', mdRel),
     ];
     // 标题比较按「归一空白」：`##  x`（多个空格）/ 行尾空格都算命中 —— 旧实现用
@@ -246,7 +249,7 @@ for (const e of entries) {
     if (!inKb && !files.some((f) => re.test(read(path.join(dir, f))))) {
       errors.push({
         kind: 'G2',
-        msg: `第 ${e.line} 行 \`${e.key}\`：知识库里没有 \`${claim}\`（找过 .diy/knowledge/${mdRel}、~/.diy/knowledge/${mdRel} 与 knowledge/facts/*.yaml）`,
+        msg: `第 ${e.line} 行 \`${e.key}\`：知识库里没有 \`${claim}\`（找过 .diy/knowledge/${mdRel}、~/.diy2/knowledge/${mdRel} 与 knowledge/facts/*.yaml）`,
       });
     }
     continue;

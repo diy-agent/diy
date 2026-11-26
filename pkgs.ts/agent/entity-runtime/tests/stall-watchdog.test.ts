@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     DEFAULT_STALL,
+    DEFAULT_UNBOUNDED_TOOLS,
     StallWatchdog,
     stallMessage,
     stallTimeoutsFromEnv,
@@ -171,6 +172,16 @@ describe('关掉与收尾', () => {
         clock.advance(1000);
         expect(stalls).toEqual([]);
         expect(clock.live()).toBe(0);
+    });
+});
+
+describe('缺省值（改之前先看这里）', () => {
+    // `toolMs` 是 ##560 的核心改动，但下面那些用例都**显式**传 toolMs（helper 的缺省就是 0），
+    // 于是没人锁住「生产缺省到底是多少」—— 改回 0 也能全绿，而那正是卡 15 分钟的根因。
+    it('toolMs 缺省 = 30 分钟，不是 0；ask 在豁免名单里', () => {
+        expect(DEFAULT_STALL.toolMs).toBe(1_800_000);
+        expect(DEFAULT_STALL.toolMs).toBeGreaterThan(0); // 0 = 不设上限，就是原来的 bug
+        expect([...DEFAULT_UNBOUNDED_TOOLS]).toContain('ask');
     });
 });
 

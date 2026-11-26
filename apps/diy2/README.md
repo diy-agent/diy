@@ -48,7 +48,7 @@ curl -s "http://127.0.0.1:$PORT/api/rooms"  # 数据面
 | -------------------------------- | ------- | --------------------- | ----------- | ----------------------------------- |
 | `./sha.sh dev` / `lab`           | lab     | `run/diy2/lab`        | development | 0（内核分配，落 `<home>/app.port`） |
 | `./sha.sh staging [--build]`     | staging | `run/diy2/staging`    | development | 0                                   |
-| `./sha.sh start`（= `diy2 web`） | prod    | `~/.diy/diy2`         | production  | 5192                                |
+| `./sha.sh start`（= `diy2 web`） | prod    | `~/.diy2`              | production  | 5192                                |
 
 产物目录**固定** `apps/diy2/build/prod/{web,server,cli}`（一个包目录一份产物）：多份并存靠
 worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目录。
@@ -58,7 +58,7 @@ worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目
 同一个解析器 —— 服务端入口 / dev 入口 / 每个 CLI 命令读的是同一份形状）：
 
 ```
-数据根   --home          > 缺省（生产 ~/.diy/diy2；**非生产必须显式给** —— 入口脚本传 run/diy2/<launch>）
+数据根   --home          > 缺省（生产 ~/.diy2；**非生产必须显式给** —— 入口脚本传 run/diy2/<launch>）
 端口     --port / -p     > <home>/app.port 记录（仅非生产） > 缺省
          （生产 5192，其余 0；生产不拿记录当监听端口，只拿它当**探活候选**）
 环境     --mode          （缺省由入口定：生产入口 production、dev 入口 development、测试 test）
@@ -74,7 +74,7 @@ worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目
   自报的 `home`（+ 注册表 `pid`）。
   所以 `diy2 web` 第二次敲会**复用**在跑的实例（`--restart` 才先停再起），不会 EADDRINUSE 崩，
   也不会连到别的数据根/别的 worktree 的实例上。
-- **非生产拒绝生产数据根**：`--home ~/.diy/diy2` 在 dev 入口直接报错（`--allow-prod-home` 才放行）。
+- **非生产拒绝生产数据根**：`--home ~/.diy2` 在 dev 入口直接报错（`--allow-prod-home` 才放行）。
   非生产也**不吃**记录里的 5192 —— 那会把生产门牌占住。
 - **非生产没给 `--home` → 报错退出**：不按 launch 推导（那条回落会把数据根放进产物树，`clean` 一跑就删库）。
 
@@ -92,7 +92,7 @@ diy2 web                # 起服务（前台，Ctrl-C 停）；已有同数据�
 diy2 web --open         # 就绪后打开浏览器（缺省不开）
 diy2 web -p 6000        # 换端口（0 = 内核分配）
 diy2 web --restart      # 先停同数据根实例再起
-diy2 web --home /tmp/x  # 换数据根（缺省 ~/.diy/diy2）
+diy2 web --home /tmp/x  # 换数据根（缺省 ~/.diy2）
 diy2 web --detach       # 起在后台（脚本 / 启动器用）
 diy2 list               # 本机所有 diy2 实例（`-j` / `--json` = 单行 JSON）
 diy2 stop [--all]       # 停本数据根（或本机全部；--worktree <dir> 只停那个 worktree）
@@ -107,7 +107,7 @@ diy2 --help             # 命令树。裸 `diy2` 同上 —— **不会**起服�
 
 ### 知识库：`diy2 facts`
 
-真源是 `.diy/knowledge/**/*.md`（项目库优先，`~/.diy/knowledge` 兜底），**不是**新的数据模型：
+真源是 `.diy/knowledge/**/*.md`（项目库优先，设备库 `~/.diy2/knowledge` 兜底），**不是**新的数据模型：
 
 ```bash
 diy2 facts brief rule              # 列目录（或文件 rule/dev、前缀 app*）下每条知识的小节 + 首句
@@ -150,7 +150,7 @@ UI 有两个可切换的表面（同一份时间线 + 同一个 store，只换�
 （第三面 assistant-ui 已于 2026-11-23 删除，理由见
 `docs/plans/2026-11-24-surface-parity.md`。）
 
-数据：`<数据根>/diy2.db`（node:sqlite；生产数据根 `~/.diy/diy2`，lab 见上表）。落盘的东西：
+数据：`<数据根>/diy2.db`（node:sqlite；生产数据根 `~/.diy2`，lab 见上表）。落盘的东西：
 
 - `rooms`：容器元数据（项目/任务的名字、type、data、modelKey）——重启后原样回来
 - `bot_roles`：**角色**（名字 / 颜色 / 人格 / 默认应答 / 模型 / 推理强度），一类房间共享一批

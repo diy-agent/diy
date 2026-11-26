@@ -357,6 +357,10 @@ _check_full_body() {
   run npx tsc --noEmit -p pkgs.ts/core/rpc/tsconfig.browser.json
   # 产物护栏：TS 包源码目录旁不得出现编译产物（实现见 scripts/check-no-emit.sh）
   run bash scripts/check-no-emit.sh
+  # dist 保鲜护栏（2026-11-26 事故）：运行时读 dist 的包，dist 不许比 src 旧 ——
+  # 否则本地跑的是旧产物，而 check / dev 都看不出来（`@diy-agent/tools` 的 dist 停在 11-24，
+  # 少了 await 让每次多步工具轮都被网关 400）。实现与判据见 scripts/check-dist-fresh.mjs
+  run node scripts/check-dist-fresh.mjs
   # 可执行位护栏：shell 脚本在 git 索引里必须 100755（Windows 提交会静默丢位，实现见 scripts/check-exec-bit.sh，详见 ##304(Windows 提交丢可执行位)）
   run bash scripts/check-exec-bit.sh
   # 本机 git 状态（##534）：hooksPath 是否还有效（坏路径会让钩子**静默**全部失效）+ local main
@@ -606,6 +610,25 @@ build-pkgs() {
         run node scripts/npm-publish.mjs "$_p" --prepare-only --out=dist
     done
     # profile（apps/*）**不进** build-pkgs：它们是产物入口不是能力包，按需各自 ./sha.sh build
+}
+
+sha.def "dist-fresh" \
+  --opt "--build:bool:发现不新就先 build-pkgs（增量）再复查" \
+  --desc "查 dist 是否新于源码（运行时读 dist；dev 与 check 都靠它）"
+
+# 为什么要这个命令：dev / check 都只看 src 的类型，而 30+ 个包**运行时读 dist** ——
+# 合了别人的改动却没 build 时，本地跑的是旧产物，且没有任何提示（2026-11-26 实测事故）。
+# `--build` 是 dev 用的姿势（发现不新就补一次，热路径 ~0.4s）；check 用裸跑 = 只拦不修。
+dist-fresh() {
+  local build
+  sha.parse "$@" || return $?
+  if node scripts/check-dist-fresh.mjs; then return 0; fi
+  if (( build )); then
+    echo "── dist 不新，先重建能力包（增量）"
+    build-pkgs
+    return
+  fi
+  return 1
 }
 
 sha.def "build" \

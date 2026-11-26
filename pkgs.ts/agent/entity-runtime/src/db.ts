@@ -126,6 +126,59 @@ export type TaskInput = Omit<TaskRecord, 'number' | 'createdAt' | 'updatedAt'> &
     updatedAt?: number;
 };
 
+/** unit 的三种状态。**没有 cancelled** —— 取消就是真删（痕迹留在 `unit.dropped` 事件里） */
+export const UNIT_STATUSES = ['open', 'doing', 'done'] as const;
+export type UnitStatus = (typeof UNIT_STATUSES)[number];
+
+function isUnitStatus(value: string): value is UnitStatus {
+    return (UNIT_STATUSES as readonly string[]).includes(value);
+}
+
+/**
+ * 任务内的工作单元（`task_units` 一行）—— **task 私有**，不是实体：
+ * 不占 #号、不进侧栏、不被 `entity_links` 引用。`id` 形如 `u1`、`u2`，**只在同一 task 内唯一**，
+ * 所以所有读写入口都必须带上 `taskId`（跨 task 会重号，这是刻意的：人读短、agent 引用短）。
+ *
+ * 2026-11-25 用户裁：这里只记**需求**（要做成什么样），不记执行规划。
+ * 于是只有一条关系 —— `parent`（这块需求由哪几块组成）；没有依赖边、没有分层、没有批次。
+ * 为什么：人的对齐只到「要做哪些事」，而「先做哪个、一次做几条」是执行时的判断，写进账本
+ * 反而要人提前排一遍序，排完还得维护。bot 每次自己从树里挑（见 `units.ts` 的 `ready`）。
+ */
+export interface UnitRecord {
+    taskId: string;
+    id: string;
+    title: string;
+    /** 这一步做什么 + 验收口径（不是任务方案全文：方案在 task.body） */
+    body: string;
+    status: UnitStatus;
+    /**
+     * 树上的父（功能域 / 母项）id；`null` = 根。
+     *
+     * 唯一的层级关系：父子表达「这块需求由哪几块组成」，就是人说话时的递归切分。
+     * 它不带执行含义 —— 有子的节点是容器（自己不动手），叶子才是可动手的一条。
+     */
+    parent: string | null;
+    /** 创建序：只用于稳定排序（同父兄弟的先后也按它），不随状态变化重排 */
+    seq: number;
+    createdAt: number;
+    updatedAt: number;
+}
+
+/** 写 unit：`id` / `seq` / 时间戳缺省由 store 补（新 unit 的 id 走 counters，永不回收） */
+export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt'> & {
+    id?: string;
+    /** 父（功能域）；缺省 = 沿用库里已有的，库里也没有就是根 */
+    parent?: string | null;
+    createdAt?: number;
+    updatedAt?: number;
+    /**
+     * 显式给的 id 允许**是新的**（agent 自起的 key，见 `tools/units.ts` 的 `unit_add`）。
+     * 缺省 false：`u<n>` 号只能由 counters 发，否则「不回收」就破了。
+     * 已存在的 id 永远走更新，`allowNewId` 不影响它。
+     */
+    allowNewId?: boolean;
+};
+
 export interface ProjectRecord {
     id: string;
     name: string;
@@ -191,6 +244,15 @@ export interface Store {
     projectOf(id: string): ProjectRecord | undefined;
     saveProject(project: ProjectInput): ProjectRecord;
 
+    // ── 任务的需求账本树（task 私有；只有 parent 一条关系）──────
+    /** 某任务的全部 unit（创建序）。**不是实体**：没有 number / 不进侧栏 */
+    listUnits(taskId: string): UnitRecord[];
+    unitOf(taskId: string, unitId: string): UnitRecord | undefined;
+    /** upsert；新 unit 分配 `u<n>`（不回收），显式给的 id 必须已存在 */
+    saveUnit(unit: UnitInput): UnitRecord;
+    /** 删一个 unit；返回是否真删了（幂等） */
+    removeUnit(taskId: string, unitId: string): boolean;
+
     // ── 关系（替代父子）──────────────────────────────────────
     /**
      * 建一条有向关系。校验：kind 合法、两端实体存在、不自连；
@@ -219,6 +281,24 @@ export interface Store {
     appendItem(roomId: string, item: Item): Item;
     /** 追加一条任务日志（append-only；回放用 `journalOf`） */
     appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number }): JournalEntry;
+    /**
+     * 追加一条领域事件（通用）。命名约定同 journal：`<type>.<verb>`（实体类型做前缀）。
+     * unit 变更走这里（`task.unit.added` 等）而**不走 journal**：journal 五种 kind 的服务对象是
+     * 人，且最近 24 条要进 system 上下文 —— unit 变频率高，塞进去会把真决策挤出去。
+     */
+    appendEvent(input: {
+        event: string;
+        subject: string;
+        actor?: string | null;
+        data?: unknown;
+        at?: number;
+    }): number;
+    /** 某个实体的事件（新→旧）；`prefix` 非空时只取该前缀（如 `task.unit.`） */
+    eventsOf(
+        subject: string,
+        prefix?: string,
+        limit?: number,
+    ): Array<{ seq: number; at: number; event: string; data: unknown }>;
     /** 最近 N 条任务日志（时间正序；缺省 24） */
     journalOf(roomId: string, limit?: number): JournalEntry[];
     setMembers(roomId: string, members: readonly RoomMember[]): void;
@@ -283,6 +363,33 @@ export interface Store {
      * 索引扫描而不是全表扫（实测差 20 倍，见建表处）。那条索引是这条查询的一部分，别删。
      */
     lastItemAtByRoom(): Record<string, number>;
+    /**
+     * 记下「这个房间我读到 seq 了」—— 只前进不后退（同一房间被旧客户端的迟到上报
+     * 拉回去就永远有未读了）。
+     *
+     * 不给 `seq` = 推到这个房间**当前最后一条** —— 这正是 UI 要的语义（“我在看这个房间”，
+     * 它不需要知道全局 seq 是多少；UI 从此不必订阅 items 只为了算一个数字）。
+     */
+    markRead(roomId: string, seq?: number): void;
+    /** 这个房间当前读到哪一条了（没读过 = undefined，不是 0）。 */
+    readSeqOf(roomId: string): number | undefined;
+    /** 这个房间最后一条 item 的 seq（没有 = undefined） */
+    maxSeqOf(roomId: string): number | undefined;
+    /**
+     * 每个房间的**未读结论数**：`seq > 已读水位` 且 `type = 'chat'` 且「不是我发的」。
+     *
+     * **没有水位记录的房间算 0**（不是“全未读”）：未读是 2026-11-26 才有的功能，
+     * 若把历史全当未读，每个老房间一上来就是几百（实测 `99+`）—— 那是“历史上说过多少话”，
+     * 不是“还有几条没看”。所以水位缺省取“这个房间当前最后一条”：从现在开始算。
+     *
+     * 只数**发言**（结论），不数事件 —— 用户 2026-11-26 的原话：“按 room 的结论数统计，
+     * 而不是事件数，不然几千的很多”。一个 turn 里几十条 tool 调用、几条 notice 都算进去，
+     * 侧栏角标就不再是“还有几条没看”，而是“这个房间历史上跑过多少步”。
+     *
+     * 不算的还有我自己发的话（`author.role === 'human'`）—— 那是我刚打的，不必提醒我。
+     * 没读过的房间从 0 起算（第一次打开前全是未读）。0 不占键。
+     */
+    unreadByRoom(): Record<string, number>;
     /**
      * 每个 bot 在给定房间里的**最后一条 item**（「上一轮怎么结束的」的唯一来源）。
      *
@@ -559,6 +666,23 @@ export function openStore(file: string): Store {
             next INTEGER NOT NULL
         );
         INSERT OR IGNORE INTO counters (scope, next) VALUES ('task', 1);
+        -- 任务的需求账本树（**不是实体**：不占 #号、不进侧栏、不进 entity_links）。
+        -- 主键 (task_id, id)：id 只在同一 task 内唯一，人读短、agent 引用短。
+        -- 2026-11-25 裁：只记「要做什么」的父子结构，执行规划不落库（见 UnitRecord 注释）
+        CREATE TABLE IF NOT EXISTS task_units (
+            task_id    TEXT NOT NULL,
+            id         TEXT NOT NULL,
+            title      TEXT NOT NULL,
+            body       TEXT NOT NULL DEFAULT '',
+            status     TEXT NOT NULL DEFAULT 'open',
+            -- 树上的父（母项）。NULL = 根
+            parent_id  TEXT,
+            seq        INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (task_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS task_units_task ON task_units(task_id, seq);
         CREATE TABLE IF NOT EXISTS room_members (
             entity_id TEXT NOT NULL,
             bot_id TEXT NOT NULL,
@@ -583,6 +707,17 @@ export function openStore(file: string): Store {
             value TEXT NOT NULL,
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (owner_id, field)
+        );
+        -- 已读水位：「这个房间我看到哪一条了」（2026-11-26）。
+        --
+        -- 按**房间**记而不是按 bot 记：人是唯一读者 —— 谁发的都无所谓，
+        -- 只要「我」没看过就是未读。企业的多人场景不在当前模型内（没有身份）。
+        -- seq 取自 entity_items.seq（全局自增，单调可比）：跨房间的绝对值不重要，
+        -- 只要同一条流里单调就能「比大小」。—— 只前进不后退（markRead 里取 MAX）。
+        CREATE TABLE IF NOT EXISTS room_read (
+            entity_id TEXT PRIMARY KEY,
+            last_read_seq INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
         );
         -- 实体关系：core kind（related / blocks / duplicate）或插件 kind（<plugin_id>/<kind>）
         CREATE TABLE IF NOT EXISTS entity_links (
@@ -670,6 +805,19 @@ export function openStore(file: string): Store {
         db.exec('ALTER TABLE tasks ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
         db.exec('UPDATE tasks SET updated_at = created_at WHERE updated_at = 0');
     }
+
+    // 老库补列：task_units.parent_id（分解树）。历史行没有分解树概念，一律当根
+    const unitColumns = new Set(
+        (db.prepare('PRAGMA table_info(task_units)').all() as Array<Record<string, unknown>>).map((row) =>
+            String(row['name']),
+        ),
+    );
+    if (!unitColumns.has('parent_id')) db.exec('ALTER TABLE task_units ADD COLUMN parent_id TEXT');
+    // 2026-11-25：依赖边与交付批次整体退役（只留需求账本树）。旧库里的两张表直接删 ——
+    // 它们是纯派生侧的记录，删掉不丢「要做什么」。task_units.batch_id 是老库的死列：
+    // SQLite 不能删列，代码也再不读写它，留着不影响任何判据。
+    db.exec('DROP TABLE IF EXISTS unit_deps');
+    db.exec('DROP TABLE IF EXISTS unit_batches');
 
     /** room_members → roomId: members[]（members() 与 listRooms() 共用） */
     const readMembers = (): Record<string, RoomMember[]> => {
@@ -797,6 +945,114 @@ export function openStore(file: string): Store {
     const readTask = (id: string): TaskRecord | undefined => {
         const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined;
         return row === undefined ? undefined : readTaskRow(row);
+    };
+
+    // ── unit（任务私有的需求账本树）──────────────────────────
+    //
+    // 与 entity_links 是**两套结构**：实体关系图（task ↔ task，有外键）和任务内部的父子树。
+    // 不复用 entity_links 是因为 unit 不是实体（无 identity 行 / 不进侧栏 / 不占 #号）——
+    // 而 entity_links 有 `REFERENCES entities(id)` 外键。
+
+    const readUnitRow = (row: Record<string, unknown>): UnitRecord => ({
+        taskId: String(row['task_id']),
+        id: String(row['id']),
+        title: String(row['title']),
+        body: String(row['body']),
+        status: String(row['status']) as UnitStatus,
+        parent: row['parent_id'] === null || row['parent_id'] === undefined ? null : String(row['parent_id']),
+        seq: Number(row['seq']),
+        createdAt: Number(row['created_at']),
+        updatedAt: Number(row['updated_at']),
+    });
+
+    const readUnit = (taskId: string, unitId: string): UnitRecord | undefined => {
+        const row = db.prepare('SELECT * FROM task_units WHERE task_id = ? AND id = ?').get(taskId, unitId) as
+            | Record<string, unknown>
+            | undefined;
+        return row === undefined ? undefined : readUnitRow(row);
+    };
+
+    /**
+     * 分配 unit id（`u1` / `u2`…）。scope 按 task 分开 —— 删掉的号**不会被后来者顶替**
+     *（同 task 内 u3 永远是 u3），这也是「聊天里引用过的号还能对得上」的前提。
+     */
+    const allocateUnitId = (taskId: string): string => {
+        const row = db
+            .prepare(
+                'INSERT INTO counters (scope, next) VALUES (?, 2) ' +
+                    'ON CONFLICT(scope) DO UPDATE SET next = next + 1 RETURNING next - 1 AS n',
+            )
+            .get(`unit:${taskId}`) as { n: number };
+        return `u${Number(row.n)}`;
+    };
+
+    const writeUnit = (unit: UnitInput): UnitRecord => {
+        const title = unit.title.trim();
+        if (title === '') throw new Error('unit 的 title 不能为空');
+        if (!isUnitStatus(unit.status)) {
+            throw new Error(`unit 状态不合法：${unit.status}（只有 ${UNIT_STATUSES.join(' / ')}）`);
+        }
+        const previous = unit.id === undefined ? undefined : readUnit(unit.taskId, unit.id);
+        // 显式给的 id 必须已存在 —— 除非调用方声明它就是新 key（`allowNewId`）。
+        // 默认严格：`u<n>` 的「不回收」靠这条守住，随手传 id 不该悄悄建节点。
+        if (unit.id !== undefined && previous === undefined) {
+            if (unit.allowNewId !== true) {
+                throw new Error(`unit 不存在：${unit.id}（新 unit 不要传 id，由 store 分配）`);
+            }
+            if (unit.id.trim() === '') throw new Error('unit 的 id 不能为空');
+        }
+        const now = Date.now();
+        const nextSeq =
+            (db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM task_units WHERE task_id = ?').get(unit.taskId) as {
+                n: number;
+            }).n;
+        const record: UnitRecord = {
+            taskId: unit.taskId,
+            id: previous?.id ?? unit.id ?? allocateUnitId(unit.taskId),
+            title,
+            body: unit.body,
+            status: unit.status,
+            // 缺省沿用（改 title 不该顺手把挂点抹掉）；新节点缺省 = 根
+            parent: unit.parent === undefined ? (previous?.parent ?? null) : unit.parent,
+            seq: previous?.seq ?? Number(nextSeq),
+            createdAt: previous?.createdAt ?? unit.createdAt ?? now,
+            updatedAt: unit.updatedAt ?? now,
+        };
+        if (record.parent === record.id) throw new Error(`unit 不能是自己的父：${record.id}`);
+        db.prepare(
+            'INSERT INTO task_units (task_id, id, title, body, status, parent_id, seq, created_at, updated_at) ' +
+                'VALUES (?,?,?,?,?,?,?,?,?) ' +
+                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, status=?, parent_id=?, updated_at=?',
+        ).run(
+            record.taskId,
+            record.id,
+            record.title,
+            record.body,
+            record.status,
+            record.parent,
+            record.seq,
+            record.createdAt,
+            record.updatedAt,
+            record.title,
+            record.body,
+            record.status,
+            record.parent,
+            record.updatedAt,
+        );
+        return record;
+    };
+
+    /**
+     * 删一条 unit。
+     *
+     * 有子节点的母项也能删（树是账本，不是外键）：`task_units` 上父只是个 id 字符串，
+     * 删掉母项不会连带删子项 —— 那些子项就成了「悬空父」，`unitBoard` 按根处理
+     * （与「悬空父不制造幽灵节点」同一条判据）。要连子一起删，调方自己逐条删；
+     * `unit_drop` 工具会顺手把它们提到上一级，比留成悬空更好读。
+     */
+    const dropUnit = (taskId: string, unitId: string): boolean => {
+        const result = db.prepare('DELETE FROM task_units WHERE task_id = ? AND id = ?').run(taskId, unitId);
+        return Number(result.changes) > 0;
     };
 
     /** 内容是否真的变了（changed 才盖 updated_at、才重写 task.md） */
@@ -1183,6 +1439,48 @@ export function openStore(file: string): Store {
             if (dataRoot !== undefined && task !== undefined) mirror(() => appendJournalLine(dataRoot, task, entry));
             return entry;
         },
+        appendEvent(input: {
+            event: string;
+            subject: string;
+            actor?: string | null;
+            data?: unknown;
+            at?: number;
+        }): number {
+            const result = db
+                .prepare('INSERT INTO events (at, event, subject, actor, data) VALUES (?,?,?,?,?)')
+                .run(
+                    input.at ?? Date.now(),
+                    input.event,
+                    input.subject,
+                    input.actor ?? null,
+                    JSON.stringify(input.data ?? {}),
+                );
+            return Number(result.lastInsertRowid);
+        },
+        eventsOf(subject: string, prefix = '', limit = 50) {
+            // prefix 直接当 LIKE 前缀用（内部调用方只传固定串，不拼不可信输入）
+            const rows = (
+                prefix === ''
+                    ? db
+                          .prepare('SELECT seq, at, event, data FROM events WHERE subject = ? ORDER BY seq DESC LIMIT ?')
+                          .all(subject, limit)
+                    : db
+                          .prepare(
+                              'SELECT seq, at, event, data FROM events WHERE subject = ? AND event LIKE ? ' +
+                                  'ORDER BY seq DESC LIMIT ?',
+                          )
+                          .all(subject, `${prefix}%`, limit)
+            ) as Array<Record<string, unknown>>;
+            return rows.map((row) => {
+                let data: unknown = {};
+                try {
+                    data = JSON.parse(String(row['data']));
+                } catch {
+                    /* 坏 data 不该让整串事件读不出来 */
+                }
+                return { seq: Number(row['seq']), at: Number(row['at']), event: String(row['event']), data };
+            });
+        },
         journalOf(roomId: string, limit = 24): JournalEntry[] {
             const rows = db
                 .prepare('SELECT seq, at, data FROM events WHERE subject = ? AND event = ? ORDER BY seq DESC LIMIT ?')
@@ -1273,6 +1571,11 @@ export function openStore(file: string): Store {
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM asks WHERE entity_id = ?').run(roomId);
             db.prepare('DELETE FROM drafts WHERE owner_id = ?').run(roomId);
+            // unit 不是实体（没有外键可跟），删房间时**得自己清**：否则整张分解图留在库里当孤儿，
+            // 而它没有任何其他入口能被发现（侧栏看不见、任务没了、RPC 也不会再查它）。
+            // 发号游标一起清 —— 「号不回收」说的是同一个任务内，任务本身没了就没有「同任务内」了
+            db.prepare('DELETE FROM task_units WHERE task_id = ?').run(roomId);
+            db.prepare('DELETE FROM counters WHERE scope = ?').run(`unit:${roomId}`);
             // 对话框草稿（synthetic scope，见 docs/drafts-design.md）挂在房间后面：
             // `dlg:<用途>:<roomId>`。删房间时一起清，不等 TTL
             db.prepare("DELETE FROM drafts WHERE owner_id LIKE ? ESCAPE '\\'").run(`dlg:%:${likeEscape(roomId)}`);
@@ -1350,6 +1653,21 @@ export function openStore(file: string): Store {
                 .prepare('DELETE FROM entity_links WHERE from_id = ? AND to_id = ? AND kind = ?')
                 .run(from, to, kind);
             return Number(result.changes) > 0;
+        },
+        listUnits(taskId: string): UnitRecord[] {
+            const rows = db.prepare('SELECT * FROM task_units WHERE task_id = ? ORDER BY seq ASC').all(taskId) as Array<
+                Record<string, unknown>
+            >;
+            return rows.map(readUnitRow);
+        },
+        unitOf(taskId: string, unitId: string): UnitRecord | undefined {
+            return readUnit(taskId, unitId);
+        },
+        saveUnit(unit: UnitInput): UnitRecord {
+            return writeUnit(unit);
+        },
+        removeUnit(taskId: string, unitId: string): boolean {
+            return dropUnit(taskId, unitId);
         },
         linksOf(id: string): LinkSets {
             const outRows = db
@@ -1611,6 +1929,68 @@ export function openStore(file: string): Store {
             for (const row of rows) {
                 const at = Number(row['last']);
                 if (Number.isFinite(at) && at > 0) out[String(row['entity_id'])] = at;
+            }
+            return out;
+        },
+        maxSeqOf(roomId: string): number | undefined {
+            const row = db.prepare('SELECT MAX(seq) AS seq FROM entity_items WHERE entity_id = ?').get(roomId) as
+                | Record<string, unknown>
+                | undefined;
+            const seq = row === undefined ? NaN : Number(row['seq']);
+            return Number.isFinite(seq) && seq > 0 ? seq : undefined;
+        },
+        markRead(roomId: string, seq?: number): void {
+            // 不传 seq = 推到这个房间当前的最后一条（见接口注释）。
+            // 不用 `this.maxSeqOf`：store 可能被解构使用（`const { markRead } = store`），
+            // 那样 this 就丢了 —— 直接写一段同样的查询，5 行重复换一个不会静的磊。
+            let target = seq;
+            if (target === undefined) {
+                const row = db.prepare('SELECT MAX(seq) AS seq FROM entity_items WHERE entity_id = ?').get(roomId) as
+                    | Record<string, unknown>
+                    | undefined;
+                const max = row === undefined ? NaN : Number(row['seq']);
+                target = Number.isFinite(max) && max > 0 ? max : undefined;
+            }
+            if (target === undefined) return;
+            db.prepare(
+                `INSERT INTO room_read (entity_id, last_read_seq, updated_at) VALUES (?, ?, ?)
+                 ON CONFLICT(entity_id) DO UPDATE SET
+                     last_read_seq = MAX(room_read.last_read_seq, excluded.last_read_seq),
+                     updated_at = excluded.updated_at`,
+            ).run(roomId, Math.floor(target), Date.now());
+        },
+        readSeqOf(roomId: string): number | undefined {
+            const row = db.prepare('SELECT last_read_seq FROM room_read WHERE entity_id = ?').get(roomId) as
+                | Record<string, unknown>
+                | undefined;
+            if (row === undefined) return undefined;
+            const seq = Number(row['last_read_seq']);
+            return Number.isFinite(seq) ? seq : undefined;
+        },
+        unreadByRoom(): Record<string, number> {
+            // 一条 GROUP BY 算完（侧栏一次就够，别逐房间问）。
+            // **只数 `chat`**：tool / notice / error 都是“过程”，按它们计数会炸成几千
+            // （用户 2026-11-26 报的）；`author.role <> 'human'` 排掉我自己刚打的。
+            // 量级：2.7 万条 items 实测几十 ms，且只有 rooms.list（30s 一次）会调它。
+            const rows = db
+                .prepare(
+                    `SELECT i.entity_id AS entity_id, COUNT(*) AS n
+                       FROM entity_items i
+                       LEFT JOIN room_read r ON r.entity_id = i.entity_id
+                      WHERE i.seq > COALESCE(
+                                r.last_read_seq,
+                                -- 没读过 = 从现在开始算（历史不算未读）：取该房间当前最后一条
+                                (SELECT MAX(seq) FROM entity_items WHERE entity_id = i.entity_id)
+                            )
+                        AND json_extract(i.item, '$.type') = 'chat'
+                        AND COALESCE(json_extract(i.item, '$.author.role'), '') <> 'human'
+                      GROUP BY i.entity_id`,
+                )
+                .all() as Array<Record<string, unknown>>;
+            const out: Record<string, number> = {};
+            for (const row of rows) {
+                const n = Number(row['n']);
+                if (Number.isFinite(n) && n > 0) out[String(row['entity_id'])] = n;
             }
             return out;
         },

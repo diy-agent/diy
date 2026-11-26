@@ -27,7 +27,7 @@ options:
   --mode <production|development|test>  运行环境（缺省 production）
   --launch <名字>                        入口名（缺省由环境推：prod / lab / test）
   -p, --port <n>                         端口；0 = 内核分配（缺省：生产 5192）
-      --home <dir>                       数据根（缺省：生产 ~/.diy/diy2；非生产**必须显式给**）
+      --home <dir>                       数据根（缺省：生产 ~/.diy2；非生产**必须显式给**）
       --name <名字>                       实例名
       --tools <shell|files>              工具面
       --web-dir <dir>                    UI 产物目录（缺省 <buildRoot>/web）
@@ -133,7 +133,8 @@ await announce(config, port);
 
 // 续跑排在**监听之后**（##554）：它一调就会发 LLM 请求。放在这里的意思是「门先打开，
 // 重活再慢慢做」—— 用户在 UI 里看到的是实例已经可用，而不是一屏启动期错误日志。
-app.resume();
+// 后台跑、不 await：它是串行背景活（可能跑很久），启动不等它
+void app.resume();
 
 const shutdown = (signal: string): void => {
     boot.info(`${signal} → 关闭`);

@@ -311,7 +311,7 @@ body.wb-resizing-y * {
 
 .wb-area-bar:hover > .wb-area-menu,
 .wb-area-menu:focus-visible,
-.wb-area-menu.on {
+.wb-area-menu[aria-expanded='true'] {
     opacity: 1;
 }
 
@@ -337,7 +337,7 @@ body.wb-resizing-y * {
     font-size: 12px;
 }
 
-.wb-menu button {
+.wb-menu [data-slot='dropdown-menu-radio-item'] {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -350,12 +350,14 @@ body.wb-resizing-y * {
     cursor: pointer;
 }
 
-.wb-menu button:hover {
+.wb-menu [data-slot='dropdown-menu-radio-item']:hover,
+.wb-menu [data-slot='dropdown-menu-radio-item'][data-highlighted] {
     color: var(--wb-fg);
     background: var(--wb-tint);
 }
 
-.wb-menu button.on {
+.wb-menu [data-slot='dropdown-menu-radio-item'][data-checked],
+.wb-menu [data-slot='dropdown-menu-radio-item'][aria-checked='true'] {
     color: var(--wb-accent-fg);
     background: var(--wb-accent-soft);
 }

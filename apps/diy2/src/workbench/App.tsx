@@ -15,48 +15,26 @@
 //
 // 导航自己的收起按钮已停用（`showToggle={false}`）：标题栏左端那颗做的是同一件事。
 
-import { LayerProvider } from '@astryxdesign/core/Layer';
-import { Theme } from '@astryxdesign/core/theme';
-import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import {
     ActiveJobsGlyph,
     JobsPanel,
-    navigate,
     RoomDialogsProvider,
-    roomAddressOf,
     Sidebar,
-    useAddress,
     useLoaded,
-    useModelSetup,
     useRoomDialogs,
     useRoomDialogsContext,
-    useRooms,
     useSelectedRoom,
 } from '@diy-agent/entity-chat';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Menu, Settings } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import '../index.css';
-import '@astryxdesign/core/astryx.css';
-import '@astryxdesign/theme-neutral/theme.css';
-import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
-import { GearGlyph, NavGlyph } from './glyphs';
 import { type PageDef } from './model';
-import { pageFor, settingsPage, wbViews } from './pages';
-import { SETTINGS_ADDRESS, SETTINGS_PAGE } from './settings';
+import { pageFor, wbViews } from './pages';
 import { useChrome, Window, type WindowContribution } from './window';
-
-// ── 设置：一页真页（有地址） ──────────────────────────────────────────────────
-//
-// 设置**曾经**是壳里的一个 `screen` 状态（对话 / 设置二选一）。那是错的：
-//   · 左边导航还在、房间还能点，点了却没反应 —— 地址说在看房间、界面还是设置；
-//   · 浏览器后退退不出去，链接贴不住，刷新回来又跳回对话。
-// 改成页类型 `settings` 之后，这些全部变成 store 本来就有的能力（`navigate` / popstate），
-// 而「点别的页就切不回去」这件事不再需要专门修：点房间 = 导航到房间地址，屏幕自然换了。
-//
-// 页的身份与地址在 `settings.ts`（那边也顺手把页注册进地址体系）。
 
 // ── 全局层：导航 ───────────────────────────────────────────────────────────────
 
@@ -102,44 +80,6 @@ function NavRail({ nav }: { nav: NavState }) {
     );
 }
 
-// ── 模型配置的横幅 ─────────────────────────────────────────────────
-
-/**
- * 顶部横幅：这个实例的模型配置**不全**（没 model.yaml / 缺目录快照）。
- *
- * 为什么是横幅而不是拦住整页：没有 model.yaml 时服务端照样起（房间 / 会话 / 工具都正常），
- * 只有「发一轮」和「选模型」会失败 —— 把整页拦下反而让人看不到自己已有的房间。
- * 横幅只说三件事：缺什么、缺在哪、怎么补（全是可复制的路径 / 命令）。
- */
-function ModelConfigBanner({ onConfigure }: { onConfigure?: () => void }) {
-    const setup = useModelSetup();
-    // 首屏之前 store 里是「正常」（见 store 的初始值）：没问过服务端就不指控
-    if (setup.configured && !setup.snapshotMissing) return null;
-    return (
-        <div className="wb-banner" role="status">
-            <span className="wb-banner-title">模型配置不全</span>
-            {setup.configured ? null : (
-                <span>
-                    没有 model.yaml（<code>{setup.modelConfigPath}</code>）—— 不会去别处找
-                </span>
-            )}
-            {setup.snapshotMissing ? (
-                <span>
-                    缺目录快照 <code>data/models.dev.json</code>（标准 provider 全没有规格）
-                </span>
-            ) : null}
-            <span className="wb-banner-hint">
-                填充：仓库根跑 <code>./scripts/seed-run-home.sh &lt;数据根&gt;</code>
-            </span>
-            {onConfigure === undefined ? null : (
-                <button className="wb-banner-action" onClick={onConfigure}>
-                    去配置 →
-                </button>
-            )}
-        </div>
-    );
-}
-
 // ── 页实例 ────────────────────────────────────────────────────────────────────
 
 /**
@@ -175,31 +115,9 @@ function PageShell({
 }
 
 function Host() {
-    const address = useAddress();
     const room = useSelectedRoom();
-    const rooms = useRooms();
     const loaded = useLoaded();
     const dialogs = useRoomDialogs();
-
-    /**
-     * 看的是设置页还是某个房间 —— **从地址推**，不另存一份状态。
-     *
-     * 为什么是关键点：模型配置是「这个实例能不能开工」的前置，它必须在**没有房间**时也能进
-     * （全新数据根、model.yaml 还没写），所以它是页、不是房间的附属物；
-     * 但又不能是壳里的私货状态，否则导航、后退、刷新三处都会跟它打架（见文件头）。
-     */
-    const isSettings = address.page === SETTINGS_PAGE;
-
-    /**
-     * 在设置页时 `useSelectedRoom()` 是空的（地址不是 room 页）—— 齿轮要「返回对话」
-     * 就得知道**回到哪一间**。记最后一次真看过的房间；没有就落到第一个。
-     */
-    const lastRoomId = useRef<string>('');
-    const roomId = room?.id;
-    useEffect(() => {
-        if (roomId !== undefined) lastRoomId.current = roomId;
-    }, [roomId]);
-    const backTo = rooms.find((item) => item.id === lastRoomId.current) ?? rooms[0];
 
     // 导航的开关提到了壳这一层：标题栏左端要放它的按钮，而标题栏是整宽的一条
     const [open, setOpen] = useState(loadNavOpen);
@@ -234,7 +152,7 @@ function Host() {
                     {
                         id: 'nav',
                         label: open ? '收起导航' : '展开导航',
-                        glyph: <NavGlyph />,
+                        glyph: <Menu className="wb-glyph" />,
                         on: open,
                         onClick: toggle,
                     },
@@ -245,9 +163,7 @@ function Host() {
                 // 宿主不跟着重渲，否则每有人开跑就要把整页的根走一遍。
                 //
                 // 2026-11-25 合 main 时的取舍：旧的分支在这里还挂了一颗 `sessions`（"会话 N" / 改成
-                // "Bot" 的活动图标），而 main 的 PR #552 已把「在跑 / 等回答 / 上一轮出错 / 空闲」
-                // 统一收进 `bots` 那颗（BotsOverlay，二级浮层 + 三级全量表格）。两套入口会同时
-                // 显示两个 Bot，所以去掉了旧那颗，只留作业这颗。
+                // "Bot" 的活动图标），已去掉，只留作业这颗（Bot 状态浮层随 bot-overview 一起移除）。
                 id: 'activity',
                 activity: [
                     {
@@ -267,59 +183,25 @@ function Host() {
                 tools: [
                     {
                         id: 'settings',
-                        // 同一颗按钮来回切：设置页里它显示为按下态，再点一下回对话。
-                        // 房内「模型设置」对话框（选模型）仍然在侧栏/房间头，两件事不冲突：
-                        // 那个改的是**这个房间**用哪个模型，这里改的是**这个实例**有什么可用。
-                        label: isSettings ? '返回对话' : '设置',
-                        glyph: <GearGlyph />,
-                        on: isSettings,
+                        label: '设置',
+                        glyph: <Settings className="wb-glyph" />,
                         onClick: () => {
-                            // 来回切 = 两个不同的地址：设置页 ↔ 刚才那间房，走同一条导航
-                            if (isSettings) {
-                                if (backTo !== undefined) navigate(roomAddressOf(backTo));
-                                return;
-                            }
-                            navigate(SETTINGS_ADDRESS);
+                            dialogs.openSettings();
                         },
                     },
                 ],
             },
         ],
         // `jumpToFirstRunning*` 是模块级命令（不依赖 props），所以不必进依赖表；
-        [open, toggle, dialogs, screen, isSettings, backTo],
+        // `setJobsOpen` 是 setState（引用恒定），同理。
+        [open, toggle, dialogs],
     );
-
-    /** 去设置（横幅上的「去配置」）—— 同一件导航，不是另一条路 */
-    const openSettings = useCallback(() => {
-        navigate(SETTINGS_ADDRESS);
-    }, []);
-
-    // 设置页：**没有房间也能进**（这正是「没配置 → 去配置」那条路）
-    if (isSettings) {
-        return (
-            <RoomDialogsProvider value={dialogs}>
-                <div className="wb-shell">
-                    <ModelConfigBanner />
-                    <PageShell
-                        key={settingsPage.type}
-                        page={settingsPage}
-                        nav={nav}
-                        global={global}
-                        chrome={chrome}
-                        onChromeChange={setChrome}
-                    />
-                </div>
-                {dialogs.element}
-            </RoomDialogsProvider>
-        );
-    }
 
     // 没有房间时**也要**有导航：新建第一个房间的入口就在左栏，把它藏起来等于没法开工
     if (!room) {
         return (
             <RoomDialogsProvider value={dialogs}>
                 <div className="wb-shell">
-                    <ModelConfigBanner onConfigure={openSettings} />
                     <Window contributions={global} chrome={chrome} onChromeChange={setChrome} />
                     <div className="wb-body">
                         <NavRail nav={nav} />
@@ -339,7 +221,6 @@ function Host() {
     return (
         <RoomDialogsProvider value={dialogs}>
             <div className="wb-shell">
-                <ModelConfigBanner onConfigure={openSettings} />
                 <PageShell
                     key={page.type}
                     page={page}
@@ -357,11 +238,8 @@ function Host() {
 
 /** 工作台 = 主题壳 + 标题栏 + 全局导航 + 一页区域树 */
 export function WorkbenchApp() {
-    return (
-        <Theme theme={neutralTheme} mode="dark">
-            <LayerProvider>
-                <Host />
-            </LayerProvider>
-        </Theme>
-    );
+    // 2026-11-26：外层那两层 Astryx 的 Theme / LayerProvider 随 Astryx 面一起删了。
+    // 主题现在是 shadcn 的 `.dark` 变量（styles.css 的 `:root.dark` 段）+ workbench 自己的
+    // `--wb-*`；两者都是 CSS 变量，不需要 React 侧的 provider。
+    return <Host />;
 }

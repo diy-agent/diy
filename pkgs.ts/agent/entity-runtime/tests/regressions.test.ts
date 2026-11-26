@@ -139,7 +139,7 @@ describe('P0 回归', () => {
 
         // 进程被杀（这里用重建房间等价）：第二轮仍在库里挂着“投递中”
         const restarted = h.rebuild();
-        restarted.room.recover();
+        void restarted.room.recover();
         // 判据用 calls 而不是 h.runs：这里注入的是自定义 run，只有 harness 的脚本 run 才往 runs 里记
         await waitFor(() => calls >= 4);
         await waitFor(() => !restarted.room.busy());
@@ -189,7 +189,7 @@ describe('P0 回归', () => {
         h.store.saveSession(h.spec.id, BOT_A.id, { ...snapshot, logSeq: 2 });
 
         const restarted = h.rebuild();
-        restarted.room.recover();
+        void restarted.room.recover();
         await waitFor(() => restarted.runs.length > 0);
         await waitFor(() => !restarted.room.busy());
 

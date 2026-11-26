@@ -154,7 +154,11 @@ export function buildTools(ctx: ToolsContext): ToolSet {
                 try {
                     return await withFileEditQueue(abs, () => {
                         const r = editFile(abs, label, edits, (p, c) => writeFileAtomic(p, c));
-                        const text = describeEditResult(label, r);
+                        // 给模型的文案带绝对路径（与 read / write 对齐）：只回显相对的
+                        // `pkgs.ts/foo.ts` 看不出解析到主仓还是 worktree（## E2 踩过两次）。
+                        // 审计与 patch 头仍用相对 label（短、diff 头也习惯相对）。
+                        const shown = label === abs ? label : `${label} → ${abs}`;
+                        const text = describeEditResult(shown, r);
                         audit({
                             phase: "file-edit-end",
                             cwd,

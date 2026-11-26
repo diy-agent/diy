@@ -16,6 +16,7 @@
 @import '@diy-agent/entity-chat/styles.css';
 
 @source '../../../pkgs.ts/ui/entity-chat/src';
+@source '../../../pkgs.ts/ui/shadcn/src';
 @source './';
 
 @layer base {

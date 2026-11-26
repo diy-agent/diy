@@ -11,6 +11,8 @@ import * as React from 'react';
 
 import type { CompactEventInfo, CompactionProgress, Room, SessionInfo } from '@diy-agent/chat-core';
 
+import { Button, Input, Popover, PopoverContent, PopoverTrigger } from '@diy-agent/ui-shadcn';
+
 import { contextWindowOf } from '../models';
 import { actions, conversationOf, useProviders, useStore } from '../store';
 import { CopyButton } from './CopyButton';
@@ -75,38 +77,37 @@ function Row({
     const runningProgress = progress?.state === 'running' ? progress : undefined;
     const running = runningProgress !== undefined;
     const active = busy || running;
-    const elapsed = runningProgress === undefined ? 0 : Math.max(0, Math.round((now - runningProgress.startedAt) / 1000));
+    const elapsed =
+        runningProgress === undefined ? 0 : Math.max(0, Math.round((now - runningProgress.startedAt) / 1000));
     return (
         <div className="border-t px-3 py-2 first:border-t-0">
             <div className="flex items-center gap-2">
-                <span className="text-[12px] font-medium">{session.name}</span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-xs font-medium">{session.name}</span>
+                <span className="text-xs text-muted-foreground">
                     {stats.entries} 条 · ≈{fmt(used)} tok
                 </span>
-                <button
-                    onClick={onCompact}
-                    disabled={active}
-                    className="ml-auto flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] hover:bg-muted disabled:opacity-50"
-                >
+                <Button variant="outline" size="xs" onClick={onCompact} disabled={active} className="ml-auto gap-1">
                     <Scissors className={`size-3 ${running ? 'animate-pulse' : ''}`} />
                     {active ? (isSummaryStrategy(stats.strategy) ? '摘要中…' : '压缩中…') : '压缩'}
-                </button>
+                </Button>
                 {running && onCancel !== undefined && (
-                    <button
+                    <Button
+                        variant="ghost"
+                        size="xs"
                         onClick={onCancel}
                         title="撤掉这次压缩（已折叠的部分不生效）"
-                        className="rounded border px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
+                        className="text-muted-foreground"
                     >
                         取消
-                    </button>
+                    </Button>
                 )}
             </div>
             {runningProgress !== undefined && (
-                <div className="mt-0.5 text-[10px] text-amber-600">
+                <div className="mt-0.5 text-xs text-amber-600">
                     摘要中… 已跑 {elapsed}s · 保留最近 {runningProgress.budget.keepTurns} 轮
                 </div>
             )}
-            <div className="mt-0.5 flex flex-wrap gap-x-2 text-[10px] text-muted-foreground">
+            <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
                 <span>策略 {strategyLabel(stats.strategy)}</span>
                 <span>压过 {stats.compactions} 次</span>
                 {stats.collapsed > 0 && <span>已折叠 {stats.collapsed} 条</span>}
@@ -114,18 +115,22 @@ function Row({
                 {stats.usage !== undefined && <span>上轮实测 {fmt(stats.usage.inputTokens)} tok</span>}
             </div>
             {(summaryState !== undefined || stats.summary !== undefined) && (
-                <div className="mt-0.5 flex items-start gap-1.5 text-[10px] text-muted-foreground">
+                <div className="mt-0.5 flex items-start gap-1.5 text-xs text-muted-foreground">
                     {summaryState !== undefined && (
-                        <span className={lastEvent?.summaryError === undefined ? '' : 'text-amber-600'}>· {summaryState}</span>
+                        <span className={lastEvent?.summaryError === undefined ? '' : 'text-amber-600'}>
+                            · {summaryState}
+                        </span>
                     )}
                     {stats.summary !== undefined && (
                         <>
-                            <button
+                            <Button
+                                variant="outline"
+                                size="xs"
                                 onClick={() => setShowSummary((value) => !value)}
-                                className="ml-auto shrink-0 rounded border px-1 py-0.5 text-[10px] hover:bg-muted"
+                                className="ml-auto shrink-0"
                             >
                                 {showSummary ? '收起摘要' : '看摘要'}
-                            </button>
+                            </Button>
                             <CopyButton
                                 text={stats.summary}
                                 title="复制摘要"
@@ -136,7 +141,7 @@ function Row({
                 </div>
             )}
             {showSummary && stats.summary !== undefined && (
-                <pre className="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-1.5 text-[10px] leading-snug whitespace-pre-wrap">
+                <pre className="mt-1 max-h-40 overflow-auto rounded border bg-muted/40 p-1.5 text-xs leading-snug whitespace-pre-wrap">
                     {stats.summary}
                 </pre>
             )}
@@ -225,11 +230,16 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
     };
 
     return (
-        <span className="relative inline-flex">
-            <button
-                onClick={() => setOpen((value) => !value)}
-                title="查看每个 bot 的上下文占用，手动压缩"
-                className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+        <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger
+                render={
+                    <Button
+                        variant="outline"
+                        size="xs"
+                        title="查看每个 bot 的上下文占用，手动压缩"
+                        className="gap-1 text-muted-foreground"
+                    />
+                }
             >
                 <Gauge className={`size-3 ${runningCount > 0 ? 'animate-pulse text-amber-600' : ''}`} />
                 {runningCount > 0 ? (
@@ -242,85 +252,76 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
                         {ratio !== undefined && <span className="opacity-60">({Math.round(ratio * 100)}%)</span>}
                     </>
                 )}
-            </button>
+            </PopoverTrigger>
 
-            {open && (
-                <>
-                    <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-                    <div
-                        className={`absolute left-0 z-50 w-[360px] rounded-md border bg-background shadow-lg ${
-                            side === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
-                        }`}
+            {/* 底栏在屏幕底部：默认向上弹（side=up），侧栏里那种向下 */}
+            <PopoverContent side={side === 'up' ? 'top' : 'bottom'} align="start" className="w-[360px] p-0">
+                <div className="flex items-center gap-2 px-3 py-2">
+                    <span className="text-xs font-medium">上下文</span>
+                    <span className="text-xs text-muted-foreground">
+                        {windowTokens === undefined ? '窗口未知' : `窗口 ${fmt(windowTokens)} tok`} · 各 bot 独立压缩
+                    </span>
+                    <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={compressAll}
+                        disabled={busy !== null || runningCount > 0 || sessions.length === 0}
+                        className="ml-auto"
                     >
-                        <div className="flex items-center gap-2 px-3 py-2">
-                            <span className="text-[11px] font-medium">上下文</span>
-                            <span className="text-[10px] text-muted-foreground">
-                                {windowTokens === undefined ? '窗口未知' : `窗口 ${fmt(windowTokens)} tok`} · 各 bot
-                                独立压缩
-                            </span>
-                            <button
-                                onClick={compressAll}
-                                disabled={busy !== null || runningCount > 0 || sessions.length === 0}
-                                className="ml-auto rounded border px-1.5 py-0.5 text-[10px] hover:bg-muted disabled:opacity-50"
-                            >
-                                全部压缩
-                            </button>
-                        </div>
+                        全部压缩
+                    </Button>
+                </div>
 
-                        <div className="flex items-center gap-1.5 border-t px-3 py-1.5 text-[10px] text-muted-foreground">
-                            <span>保留最近</span>
-                            <input
-                                type="number"
-                                min={0}
-                                value={keep}
-                                onChange={(event) => setKeepTurns(Number(event.target.value))}
-                                className="w-12 rounded border bg-transparent px-1 text-right"
+                <div className="flex items-center gap-1.5 border-t px-3 py-1.5 text-xs text-muted-foreground">
+                    <span>保留最近</span>
+                    <Input
+                        type="number"
+                        min={0}
+                        value={keep}
+                        onChange={(event) => setKeepTurns(Number(event.target.value))}
+                        className="w-12 rounded border bg-transparent px-1 text-right"
+                    />
+                    <span>轮 · 自动压缩按窗口水位触发</span>
+                </div>
+
+                {sessions.length === 0 ? (
+                    <p className="border-t px-3 py-3 text-xs text-muted-foreground">还没有会话（发一条消息再回来看）</p>
+                ) : (
+                    sessions.map((session) => {
+                        const progress = runningBy(session.botId);
+                        return (
+                            <Row
+                                key={session.botId}
+                                session={session}
+                                busy={busy === session.botId}
+                                {...(progress === undefined ? {} : { progress })}
+                                now={now}
+                                onCompact={() => void compress(session.botId)}
+                                {...(progress === undefined
+                                    ? {}
+                                    : { onCancel: () => void cancelCompact(progress.compactId) })}
                             />
-                            <span>轮 · 自动压缩按窗口水位触发</span>
-                        </div>
+                        );
+                    })
+                )}
 
-                        {sessions.length === 0 ? (
-                            <p className="border-t px-3 py-3 text-[11px] text-muted-foreground">
-                                还没有会话（发一条消息再回来看）
-                            </p>
-                        ) : (
-                            sessions.map((session) => {
-                                const progress = runningBy(session.botId);
-                                return (
-                                    <Row
-                                        key={session.botId}
-                                        session={session}
-                                        busy={busy === session.botId}
-                                        {...(progress === undefined ? {} : { progress })}
-                                        now={now}
-                                        onCompact={() => void compress(session.botId)}
-                                        {...(progress === undefined
-                                            ? {}
-                                            : { onCancel: () => void cancelCompact(progress.compactId) })}
-                                    />
-                                );
-                            })
-                        )}
-
-                        {/*
+                {/*
                           诊断面：默认折叠 —— 「一眼答出卡在哪」，不是日常信息（计划 5.3）。
                           用按钮而不是 <details>：details 折叠时**内容仍然挂载**，那份订阅会继续
                           每次 state 变化重渲（正是这个任务要治的病）。按钮控制才会真的卸载。
                         */}
-                        <button
-                            onClick={() => setShowPending((value) => !value)}
-                            className="flex w-full items-center gap-1 border-t px-3 py-1.5 text-[10px] text-muted-foreground hover:bg-muted"
-                        >
-                            {showPending ? '▾' : '▸'} 进展（谁卡在哪）
-                        </button>
-                        {showPending && <PendingTable roomId={room.id} />}
+                <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setShowPending((value) => !value)}
+                    className="w-full justify-start gap-1 border-t px-3 text-muted-foreground"
+                >
+                    {showPending ? '▾' : '▸'} 进展（谁卡在哪）
+                </Button>
+                {showPending && <PendingTable roomId={room.id} />}
 
-                        {note !== null && (
-                            <p className="border-t px-3 py-2 text-[10px] text-muted-foreground">{note}</p>
-                        )}
-                    </div>
-                </>
-            )}
-        </span>
+                {note !== null && <p className="border-t px-3 py-2 text-xs text-muted-foreground">{note}</p>}
+            </PopoverContent>
+        </Popover>
     );
 }

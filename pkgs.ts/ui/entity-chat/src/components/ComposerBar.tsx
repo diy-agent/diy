@@ -15,6 +15,7 @@ import { BotConfigChip } from './BotConfigChip';
 import { ContextPanel } from './ContextPanel';
 import { JobsChip } from './JobsChip';
 import type { Room } from '../model';
+import { Button } from '@diy-agent/ui-shadcn';
 
 export function ComposerBar({ room, onManageRoles }: { room: Room; onManageRoles?: () => void }) {
     return (
@@ -35,13 +36,15 @@ function StopAll({ roomId }: { roomId: string }) {
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
     if (!state.running) return null;
     return (
-        <button
+        <Button
+            variant="outline"
+            size="xs"
             onClick={() => conversation.cancel()}
             title="停掉这一轮的全部成员"
-            className="ml-auto flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="ml-auto gap-1 text-muted-foreground"
         >
             <Square className="size-2.5" />
             全部停止
-        </button>
+        </Button>
     );
 }

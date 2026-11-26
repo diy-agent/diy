@@ -12,7 +12,8 @@
 
 import { MessageSquare, SquareTerminal } from 'lucide-react';
 import * as React from 'react';
-import { createPortal } from 'react-dom';
+
+import { Button, Popover, PopoverContent, PopoverTrigger } from '@diy-agent/ui-shadcn';
 
 import { roomTitle } from '../model';
 import { actions, useActiveJobs, useRunningOf, useRunningSessionRooms } from '../store';
@@ -26,25 +27,33 @@ function Glyph({ icon, label, count, title }: { icon: React.ReactNode; label: st
             title={title}
         >
             <span className={live ? 'animate-pulse' : ''}>{icon}</span>
-            <span className="text-[10px] leading-none">{label}</span>
-            <span className="text-[10px] tabular-nums leading-none">{count}</span>
+            <span className="text-xs leading-none">{label}</span>
+            <span className="text-xs tabular-nums leading-none">{count}</span>
         </span>
     );
 }
 
-function RunningRoomRow({ room, onSelect }: { room: ReturnType<typeof useRunningSessionRooms>[number]; onSelect: () => void }) {
+function RunningRoomRow({
+    room,
+    onSelect,
+}: {
+    room: ReturnType<typeof useRunningSessionRooms>[number];
+    onSelect: () => void;
+}) {
     const count = useRunningOf(room.id);
     if (count === 0) return null;
     return (
-        <button
+        <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onSelect}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+            className="h-auto w-full justify-start gap-2 px-2 py-1.5 text-left text-xs"
         >
             <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />
             <span className="min-w-0 flex-1 truncate">{roomTitle(room)}</span>
-            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{count} 个成员在跑</span>
-        </button>
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{count} 个成员在跑</span>
+        </Button>
     );
 }
 
@@ -56,51 +65,50 @@ function RunningRoomRow({ room, onSelect }: { room: ReturnType<typeof useRunning
 export function ActiveSessionsGlyph() {
     const runningRooms = useRunningSessionRooms();
     const count = runningRooms.length;
-    const [anchor, setAnchor] = React.useState<DOMRect | null>(null);
-    const close = React.useCallback(() => setAnchor(null), []);
-    React.useEffect(() => {
-        if (anchor === null) return;
-        const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
-        window.addEventListener('keydown', onKeyDown);
-        return () => window.removeEventListener('keydown', onKeyDown);
-    }, [anchor, close]);
+    // 弹层的开合、外点关闭、Esc、碰撞翻转都交给官方 Popover
+    const [open, setOpen] = React.useState(false);
+    const close = React.useCallback(() => setOpen(false), []);
     const title = count === 0 ? '没有 Bot 在跑' : `${count} 个 Bot 在跑，点击查看列表`;
     return (
-        <>
-            <button
-                type="button"
-                className={[
-                    // 尺寸与左侧那颗「后台任务」（壳的 22px 按钮）逐像素对齐：高度 22、左右 padding 6
-                    'inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded border border-transparent px-1.5 leading-none hover:bg-muted',
-                    count > 0 ? 'text-emerald-400' : 'text-muted-foreground/70',
-                ].join(' ')}
-                title={title}
-                aria-label={`Bot ${count}，查看正在运行的 Bot`}
-                onClick={(event) => {
-                    event.stopPropagation();
-                    // 必须在这里就把 rect 取出来：updater 是在**下次渲染时**才执行的，
-                    // 那时 React 已把事件对象的 currentTarget 置空 → 取矩形会抛
-                    // 「null.getBoundingClientRect」→ 整棵组件树崩掉（2026-11-25 实测：点一下黑屏）。
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    setAnchor((current) => (current === null ? rect : null));
-                }}
+        <Popover open={open} onOpenChange={setOpen}>
+            {/* 这颗 chip 与壳里那颗「后台任务」逐像素对齐（22px）：Button 的尺寸阶梯从
+                h-6(24) 起，所以用 h-[22px] 覆盖回来 —— 换来的是统一的 focus ring 与 disabled 态 */}
+            <PopoverTrigger
+                render={
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        className={[
+                            'h-[22px] gap-1 whitespace-nowrap px-1.5 leading-none',
+                            count > 0 ? 'text-emerald-400' : 'text-muted-foreground/70',
+                        ].join(' ')}
+                        title={title}
+                        aria-label={`Bot ${count}，查看正在运行的 Bot`}
+                    />
+                }
             >
-                <span className={count > 0 ? 'animate-pulse' : ''}><MessageSquare className="size-3.5" /></span>
-                <span className="text-[10px] leading-none">Bot</span>
-                <span className="text-[10px] tabular-nums leading-none">{count}</span>
-            </button>
-            {anchor !== null && createPortal(
-                <>
-                    <button aria-label="关闭 Bot 列表" className="fixed inset-0 z-[999] cursor-default" onClick={close} />
-                    <div role="dialog" aria-label="正在运行的 Bot" className="fixed z-[1000] w-72 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 296)), top: anchor.bottom + 4 }}>
-                        <div className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground">正在运行的 Bot · {count}</div>
-                        {runningRooms.map((room) => <RunningRoomRow key={room.id} room={room} onSelect={() => { actions.select(room.id); close(); }} />)}
-                        {count === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">当前没有运行中的 Bot</p>}
-                    </div>
-                </>,
-                document.body,
-            )}
-        </>
+                <span className={count > 0 ? 'animate-pulse' : ''}>
+                    <MessageSquare className="size-3.5" />
+                </span>
+                <span className="text-xs leading-none">Bot</span>
+                <span className="text-xs tabular-nums leading-none">{count}</span>
+            </PopoverTrigger>
+            <PopoverContent side="bottom" align="start" aria-label="正在运行的 Bot" className="w-72 p-1">
+                <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">正在运行的 Bot · {count}</div>
+                {runningRooms.map((room) => (
+                    <RunningRoomRow
+                        key={room.id}
+                        room={room}
+                        onSelect={() => {
+                            actions.select(room.id);
+                            close();
+                        }}
+                    />
+                ))}
+                {count === 0 && <p className="px-2 py-3 text-xs text-muted-foreground">当前没有运行中的 Bot</p>}
+            </PopoverContent>
+        </Popover>
     );
 }
 
@@ -112,11 +120,7 @@ export function ActiveJobsGlyph() {
             icon={<SquareTerminal className="size-3.5" />}
             label="后台任务"
             count={count}
-            title={
-                count === 0
-                    ? '没有后台任务在跑'
-                    : `${count} 个后台任务在跑（本实例全部，点击看全部）`
-            }
+            title={count === 0 ? '没有后台任务在跑' : `${count} 个后台任务在跑（本实例全部，点击看全部）`}
         />
     );
 }

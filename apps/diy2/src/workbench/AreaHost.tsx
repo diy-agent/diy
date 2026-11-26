@@ -48,7 +48,14 @@ import {
     type PointerEvent as ReactPointerEvent,
     type ReactNode,
 } from 'react';
-import { createPortal } from 'react-dom';
+
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuRadioGroup,
+    DropdownMenuRadioItem,
+    DropdownMenuTrigger,
+} from '@diy-agent/ui-shadcn';
 
 import {
     activeOf,
@@ -304,74 +311,39 @@ const MENU_WIDTH = 132;
 function ModeMenu({ areaId, count }: { areaId: string; count: number }) {
     const api = useWb();
     const allowed = api.allowedModes(areaId);
-    const [at, setAt] = useState<{ x: number; y: number } | null>(null);
     const now = api.modeOf(areaId);
-
-    // 点外面 / 按 Esc 就收 —— 菜单是瞬时的，不需要「点确定」
-    useEffect(() => {
-        if (at === null) return;
-        const away = (event: PointerEvent) => {
-            const target = event.target as Element | null;
-            if (target !== null && target.closest('.wb-menu') !== null) return;
-            setAt(null);
-        };
-        const esc = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') setAt(null);
-        };
-        document.addEventListener('pointerdown', away, true);
-        document.addEventListener('keydown', esc);
-        return () => {
-            document.removeEventListener('pointerdown', away, true);
-            document.removeEventListener('keydown', esc);
-        };
-    }, [at]);
 
     // 单 view 或模板锁定形态时，形态不是个选择 —— 不给一颗点了没用的按钮
     if (count < 2 || allowed.length < 2) return null;
 
+    // 2026-11-26：外点关闭 / Esc / 定位 / 翻转全交给官方 DropdownMenu。
+    // 之前是 portal 到 body + fixed 坐标 + 手挂 pointerdown/keydown 三件套。
+    // 视觉仍走 `.wb-menu`（工作台自己的深色骨架），只是把 CSS 里的 `button` 选择器
+    // 换成了官方 item 的 data-slot —— 见 workbench.css。
     return (
-        <>
-            <button
-                type="button"
-                className={at === null ? 'wb-area-menu' : 'wb-area-menu on'}
-                title="呈现形态（只换摆法，不动骨架）"
-                aria-label="呈现形态"
-                aria-haspopup="menu"
-                aria-expanded={at !== null}
-                onClick={(event) => {
-                    if (at !== null) {
-                        setAt(null);
-                        return;
-                    }
-                    const box = event.currentTarget.getBoundingClientRect();
-                    setAt({ x: Math.max(6, box.right - MENU_WIDTH), y: box.bottom + 4 });
-                }}
+        <DropdownMenu>
+            <DropdownMenuTrigger
+                render={
+                    <button
+                        type="button"
+                        className="wb-area-menu"
+                        title="呈现形态（只换摆法，不动骨架）"
+                        aria-label="呈现形态"
+                    />
+                }
             >
                 <span aria-hidden="true">⋯</span>
-            </button>
-            {at === null
-                ? null
-                : createPortal(
-                      <div className="wb-menu" role="menu" style={{ left: at.x, top: at.y, width: MENU_WIDTH }}>
-                          {allowed.map((mode) => (
-                              <button
-                                  key={mode}
-                                  type="button"
-                                  role="menuitemradio"
-                                  aria-checked={mode === now}
-                                  className={mode === now ? 'on' : undefined}
-                                  onClick={() => {
-                                      api.setMode(areaId, mode);
-                                      setAt(null);
-                                  }}
-                              >
-                                  {MODE_LABEL[mode]}
-                              </button>
-                          ))}
-                      </div>,
-                      document.body,
-                  )}
-        </>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="wb-menu" style={{ width: MENU_WIDTH }}>
+                <DropdownMenuRadioGroup value={now} onValueChange={(mode: string) => api.setMode(areaId, mode as Mode)}>
+                    {allowed.map((mode) => (
+                        <DropdownMenuRadioItem key={mode} value={mode}>
+                            {MODE_LABEL[mode]}
+                        </DropdownMenuRadioItem>
+                    ))}
+                </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+        </DropdownMenu>
     );
 }
 

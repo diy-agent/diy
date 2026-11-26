@@ -11,6 +11,17 @@ import { roomTitle, type Room } from '../model';
 import { X } from 'lucide-react';
 import * as React from 'react';
 
+import {
+    Button,
+    Input,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+    Textarea,
+} from '@diy-agent/ui-shadcn';
+
 import { actions, diy2, useRooms } from '../store';
 
 function textOf(value: unknown): string {
@@ -185,56 +196,58 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
     return (
         <aside className="flex w-[340px] shrink-0 flex-col border-l">
             <header className="flex items-center gap-2 border-b px-3 py-2">
-                <span className="text-[12px] font-medium">任务</span>
+                <span className="text-xs font-medium">任务</span>
                 {number !== undefined && (
-                    <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">#{number}</span>
+                    <span className="rounded bg-muted px-1 text-xs text-muted-foreground">#{number}</span>
                 )}
-                <span className="truncate text-[11px] text-muted-foreground">{roomTitle(room)}</span>
+                <span className="truncate text-xs text-muted-foreground">{roomTitle(room)}</span>
                 {onClose !== undefined && (
-                    <button
+                    <Button
+                        variant="ghost"
+                        size="icon-xs"
                         onClick={onClose}
                         title="收起"
-                        className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted"
+                        className="ml-auto text-muted-foreground"
                     >
                         <X className="size-3.5" />
-                    </button>
+                    </Button>
                 )}
             </header>
 
             <div className="flex-1 space-y-3 overflow-y-auto p-3">
-                <label className="block text-[11px] text-muted-foreground">
+                <label className="block text-xs text-muted-foreground">
                     标题（一句话：这个任务要做什么）
-                    <input
+                    <Input
                         value={title}
                         onChange={(event) => setTitle(event.target.value)}
                         onKeyDown={(event) => {
                             if (event.key === 'Enter') void save();
                         }}
                         placeholder="任务名；侧栏与项目树显示的就是这一句"
-                        className="mt-1 w-full rounded border bg-transparent p-2 text-[12px] text-foreground outline-none focus:border-ring"
+                        className="mt-1 w-full rounded border bg-transparent p-2 text-xs text-foreground outline-none focus:border-ring"
                     />
                 </label>
 
-                <label className="block text-[11px] text-muted-foreground">
+                <label className="block text-xs text-muted-foreground">
                     正文（方案 / 边界 / 验收口径）
-                    <textarea
+                    <Textarea
                         value={body}
                         onChange={(event) => setBody(event.target.value)}
                         onKeyDown={onKeyDown}
                         rows={14}
                         placeholder="长期信息写这里；改完保存，下一步 agent 只收到 task.body 增量"
-                        className="mt-1 w-full resize-y rounded border bg-transparent p-2 font-mono text-[12px] text-foreground outline-none focus:border-ring"
+                        className="mt-1 w-full resize-y rounded border bg-transparent p-2 font-mono text-xs text-foreground outline-none focus:border-ring"
                     />
                 </label>
 
                 <div className="border-t pt-2">
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>相关任务</span>
                         <span>{links.out.length + links.in.length} 条</span>
                     </div>
                     <ul className="mt-1 space-y-1">
                         {links.out.length + links.in.length === 0 && (
-                            <li className="text-[11px] text-muted-foreground">还没有关联</li>
+                            <li className="text-xs text-muted-foreground">还没有关联</li>
                         )}
                         {links.out.map((link) => (
                             <LinkRow
@@ -257,40 +270,45 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                     </ul>
 
                     <div className="mt-1 flex items-center gap-1">
-                        <select
-                            value={target}
-                            onChange={(event) => setTarget(event.target.value)}
-                            className="min-w-0 flex-1 rounded border bg-transparent px-1 py-0.5 text-[11px]"
+                        <Select
+                            value={target === '' ? null : target}
+                            onValueChange={(next) => setTarget(next === null ? '' : String(next))}
                         >
-                            <option value="">关联到…</option>
-                            {others.map((item) => (
-                                <option key={item.id} value={item.id}>
-                                    {taskLabel(item)}
-                                </option>
-                            ))}
-                        </select>
-                        <select
-                            value={kind}
-                            onChange={(event) => setKind(event.target.value)}
-                            className="rounded border bg-transparent px-1 py-0.5 text-[11px]"
-                        >
-                            {LINK_KINDS.map((item) => (
-                                <option key={item.value} value={item.value}>
-                                    {item.label}
-                                </option>
-                            ))}
-                        </select>
-                        <button
+                            <SelectTrigger size="sm" className="min-w-0 flex-1">
+                                <SelectValue placeholder="关联到…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {others.map((item) => (
+                                    <SelectItem key={item.id} value={item.id}>
+                                        {taskLabel(item)}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <Select value={kind} onValueChange={(next) => setKind(String(next))}>
+                            <SelectTrigger size="sm">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {LINK_KINDS.map((item) => (
+                                    <SelectItem key={item.value} value={item.value}>
+                                        {item.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <Button
+                            variant="outline"
+                            size="xs"
                             onClick={() => void addLink()}
                             disabled={target === '' || linking}
-                            className="rounded border px-1.5 py-0.5 text-[11px] hover:bg-muted disabled:opacity-50"
                         >
                             {linking ? '…' : '＋'}
-                        </button>
+                        </Button>
                     </div>
                 </div>
 
-                <div className="space-y-1 text-[11px] text-muted-foreground">
+                <div className="space-y-1 text-xs text-muted-foreground">
                     <div>状态：{textOf(room.data['status']) || 'open'}</div>
                     <div>项目：{project === undefined ? '—' : roomTitle(project)}</div>
                     <div className="break-all" title={taskDir}>
@@ -300,20 +318,20 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                 </div>
 
                 <div className="border-t pt-2">
-                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>日志</span>
                         <span>{entries.length} 条</span>
                     </div>
                     <ul className="mt-1 space-y-1">
                         {entries.length === 0 && (
-                            <li className="text-[11px] text-muted-foreground">
+                            <li className="text-xs text-muted-foreground">
                                 还没有记录（agent 可用 journal 工具写决策 / 踩坑）
                             </li>
                         )}
                         {entries.map((entry) => (
-                            <li key={entry.seq} className="text-[11px] leading-snug">
+                            <li key={entry.seq} className="text-xs leading-snug">
                                 <span className="mr-1 text-muted-foreground">{timeOf(entry.at)}</span>
-                                <span className="mr-1 rounded bg-muted px-1 text-[10px]">{entry.kind}</span>
+                                <span className="mr-1 rounded bg-muted px-1 text-xs">{entry.kind}</span>
                                 <span>{entry.text}</span>
                             </li>
                         ))}
@@ -322,14 +340,10 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
             </div>
 
             <footer className="flex items-center gap-2 border-t px-3 py-2">
-                <button
-                    onClick={() => void save()}
-                    disabled={!dirty || saving}
-                    className="rounded border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-50"
-                >
+                <Button variant="outline" size="sm" onClick={() => void save()} disabled={!dirty || saving}>
                     {saving ? '保存中…' : '保存'}
-                </button>
-                <span className="text-[10px] text-muted-foreground">
+                </Button>
+                <span className="text-xs text-muted-foreground">
                     {note ?? (dirty ? '有未保存改动' : '⌘/Ctrl+Enter 保存')}
                 </span>
             </footer>
@@ -349,15 +363,27 @@ function LinkRow({
     onRemove: () => void;
 }) {
     return (
-        <li className="flex items-center gap-1 text-[11px]">
+        <li className="flex items-center gap-1 text-xs">
             <span className="text-muted-foreground">{mark}</span>
-            <span className="rounded bg-muted px-1 text-[10px]">{kindLabel(link.kind)}</span>
-            <button onClick={onOpen} className="min-w-0 flex-1 truncate text-left hover:underline" title={link.label}>
+            <span className="rounded bg-muted px-1 text-xs">{kindLabel(link.kind)}</span>
+            <Button
+                variant="link"
+                size="xs"
+                onClick={onOpen}
+                className="h-auto min-w-0 flex-1 justify-start truncate p-0"
+                title={link.label}
+            >
                 {link.label}
-            </button>
-            <button onClick={onRemove} title="取消关联" className="rounded p-0.5 text-muted-foreground hover:bg-muted">
+            </Button>
+            <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={onRemove}
+                title="取消关联"
+                className="text-muted-foreground"
+            >
                 <X className="size-3" />
-            </button>
+            </Button>
         </li>
     );
 }

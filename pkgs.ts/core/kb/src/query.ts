@@ -8,7 +8,7 @@
 // 只读投影 —— brief（目录级首句）/ get（单节正文）/ find（全文检索）。它省的是 token 与
 // 格式，不是数据模型；写侧仍然是 `writeEntry / writeIndex / moveEntry`。
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
 import { bodyOf, scanKb } from './index.js';
@@ -181,8 +181,34 @@ export function findIn(root: string, keywords: readonly string[], limit = 50): K
     return hits;
 }
 
-/** 设备级知识库根：`$DIY_HOME/knowledge`（diy-app 口径）> `~/.diy/knowledge` */
-export function globalKbRoot(home: string | undefined, homedir: string): string {
-    const base = home !== undefined && home.trim() !== '' ? home.trim() : join(homedir, '.diy');
+/**
+ * 设备级知识库根：`<设备根>/knowledge`，缺省 `<设备根>` = `~/.diy2`。
+ *
+ * 为什么不读 `DIY_HOME`（2026-11-26 裁）：`DIY_HOME` 在 diy2 里表示**实例数据根**
+ * （生产 `~/.diy2`，lab 是 `run/diy2/lab`），在 diy-app 时代却表示「设备数据根」。
+ * 两语义一撞，设备库就被算成「实例根下的 knowledge」：生产实测算成
+ * `~/.diy/diy2/knowledge`（不存在）→ 所有 bot 的上下文里一条设备条目都没有。
+ * 现在设备根是**显式参数**：由宿主注入（生产 = home 本身，lab 指生产根），
+ * 缺省 `~/.diy2` 兜住「宿主没给」的场合。
+ */
+export function deviceKbRoot(home: string | undefined, homedir: string): string {
+    const base = home !== undefined && home.trim() !== '' ? home.trim() : join(homedir, '.diy2');
     return join(base, 'knowledge');
+}
+
+/**
+ * 两个知识库根是不是**同一份**（比较 realpath，不是字符串）。
+ *
+ * 为什么需要（2026-11-26 实测）：`~/.diy/knowledge` 是给旧读者留的 symlink，指向
+ * `~/.diy2/knowledge`。`kbRootOf(cwd)` 从家目录出发会命中那个 symlink —— 只比 `resolve`
+ * 字符串会把它当成「另一个项目库」：同一个库被扫两遍（`facts status` 报 11 条 overlap、
+ * 上下文里设备条目被标成 `scope: project`、被项目库优先规则真蒙住）。
+ * realpath 失败（路径不存在）时回落字符串比较。
+ */
+export function sameKbRoot(a: string, b: string): boolean {
+    try {
+        return realpathSync(a) === realpathSync(b);
+    } catch {
+        return resolve(a) === resolve(b);
+    }
 }

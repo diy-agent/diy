@@ -370,27 +370,16 @@ describe("系统上下文进 system（##516）", () => {
         return messages.find((message) => message.role === "system")?.text ?? "";
     };
 
-    it("新建会话时写一次：AGENTS.md 链 + facts 摘要都在 system 里", async () => {
+    it("新建会话时写一次：AGENTS.md 链 + 知识库索引都在 system 里", async () => {
         const home = makeHome();
         writeFileSync(join(home, "AGENTS.md"), "应用级规则：对话一律中文", "utf-8");
-        mkdirSync(join(home, "knowledge", "facts"), { recursive: true });
-        writeFileSync(join(home, "knowledge", "subjects.yaml"), "subjects:\n  alpha:\n    description: 主题甲\n", "utf-8");
+        // 知识库是 **md 文件树**（2026-11-19 起 yaml 事实库退役）：索引投路径 / desc / 节数，
+        // 正文不进上下文。这条测试原来写的是 subjects.yaml + facts/*.yaml，退役后
+        // 只剩 AGENTS.md 那一半能过 —— 已改成写 md（判据不变：两半都要在 system 里）。
+        mkdirSync(join(home, "knowledge", "rule"), { recursive: true });
         writeFileSync(
-            join(home, "knowledge", "facts", "t.yaml"),
-            [
-                "domain: test",
-                "facts:",
-                "  alpha#default:",
-                "    value: v",
-                "    id: test.alpha",
-                "    review: accepted",
-                "    lifecycle: active",
-                "    evidence:",
-                "      source: user",
-                '      at: "~/AGENTS.md:1"',
-                '      verifiedAt: "2026-11-03"',
-                "",
-            ].join("\n"),
+            join(home, "knowledge", "rule", "alpha.md"),
+            ["---", "desc: 主题甲", "---", "", "## 用法", "", "KB_BODY_ONLY", ""].join("\n"),
             "utf-8",
         );
         const seen: unknown[] = [];
@@ -401,6 +390,8 @@ describe("系统上下文进 system（##516）", () => {
         expect(system).toContain("应用级规则：对话一律中文");
         expect(system).toContain("知识库索引");
         expect(system).toContain("alpha");
+        // 索引不投正文（正文靠模型自己去读那个文件）
+        expect(system).not.toContain("KB_BODY_ONLY");
     });
 
     it("判据 3：改 AGENTS.md 后新建会话看到新内容，老会话不变", async () => {

@@ -32,7 +32,23 @@ export {
     type Store,
     type TaskInput,
     type TaskRecord,
+    UNIT_STATUSES,
+    type UnitInput,
+    type UnitRecord,
+    type UnitStatus,
 } from './db';
+export {
+    unitBoard,
+    unitTreeLines,
+    unitsContextValue,
+    unitsContextText,
+    type UnitBoard,
+    type UnitBoardRow,
+    type UnitFacts,
+    type UnitHead,
+    type UnitsContextText,
+    type UnitsContextValue,
+} from './units';
 export {
     CORE_TYPES,
     LINK_KINDS,

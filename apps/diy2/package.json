@@ -8,12 +8,10 @@
         "prepublishOnly": "./sha.sh build"
     },
     "dependencies": {
-        "@astryxdesign/core": "0.7.17-canary.geeb3d7c",
-        "@astryxdesign/lab": "0.7.17-canary.geeb3d7c",
-        "@astryxdesign/theme-neutral": "0.7.17-canary.geeb3d7c",
         "@diy-agent/chat-transport-rpc": "*",
         "@diy-agent/entity-chat": "*",
         "@diy-agent/entity-runtime": "*",
+        "@diy-agent/ui-shadcn": "*",
         "@diy-agent/log": "*",
         "@diy-agent/model-catalog": "*",
         "@diy-agent/protocol": "*",
@@ -21,6 +19,7 @@
         "@opentelemetry/api-logs": "^0.223.0",
         "@opentelemetry/sdk-logs": "^3.0.0",
         "@tanstack/react-form": "^1.33.5",
+        "lucide-react": "^0.545.0",
         "react": "^19.3.1",
         "react-dom": "^19.3.1",
         "ws": "^8.21.0"

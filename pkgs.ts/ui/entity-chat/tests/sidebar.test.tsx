@@ -118,6 +118,98 @@ describe('侧栏按注册表渲染', () => {
         expect(rowOf(html, '/room/task/t-open')).not.toContain('bg-accent');
     });
 
+    it('排队中的投递在行上看得到（灰旋转，且不被读成「在跑」）', async () => {
+        // 刀 2：以前 `deliveries` 的 queued / delivering（含重启后的待续跑）在界面完全看不见 ——
+        // 房间看着“什么都没发生”，其实它排着队
+        setDiy2Client({
+            rooms: {
+                list: async () => rooms.map((room) => ({ ...room, queued: room.id === 'task:t-open' ? 2 : 0 })),
+            },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const html = render();
+        const queuedRow = rowOf(html, '/room/task/t-open');
+        expect(queuedRow).toContain('aria-label="有投递在排队"');
+        expect(queuedRow).toContain('排队中 2 条');
+        expect(queuedRow).not.toContain('aria-label="正在运行"'); // 排队 ≠ 在跑，两颗是两种语义
+        // 全侧栏**只有那一颗**（没排队的行不跟风画）。用整份 html 数而不是 rowOf：
+        // 历史块里的行没有 `group relative flex w-full` 这个切分点，rowOf 会切到别的行去。
+        expect(html.match(/aria-label="有投递在排队"/g) ?? []).toHaveLength(1);
+    });
+
+    it('未读在行上看得见（蓝点）—— 与「等你回答」的 ? 分得开', async () => {
+        setDiy2Client({
+            rooms: {
+                list: async () => rooms.map((room) => ({ ...room, unread: room.id === 'task:t-open' ? 3 : 0 })),
+            },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const html = render();
+        const unreadRow = rowOf(html, '/room/task/t-open');
+        expect(unreadRow).toContain('aria-label="有未读消息"');
+        expect(unreadRow).toContain('3 条未读');
+        // 未读 ≠ 等你回答：那颗 ? 不该因为未读就冒出来
+        expect(unreadRow).not.toContain('aria-label="有提问等你回答"');
+        expect(html.match(/aria-label="有未读消息"/g) ?? []).toHaveLength(1);
+    });
+
+    it('上一轮出错时侧栏任务图标变红（与三级表格同一份事实）', async () => {
+        setDiy2Client({
+            rooms: {
+                list: async () => rooms.map((room) => ({ ...room, broken: room.id === 'task:t-open' ? 1 : 0 })),
+            },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const html = render();
+        expect(rowOf(html, '/room/task/t-open')).toContain('text-rose-400');
+        expect(rowOf(html, '/room/task/t-open')).toContain('上一轮出错');
+        expect(html.match(/text-rose-400/g) ?? []).toHaveLength(1);
+    });
+
+    it('最后活动用紧凑相对式（刚才 / 5m / 1d），绝对时刻进 tooltip', async () => {
+        const fiveMinutesAgo = Date.now() - 5 * 60_000;
+        setDiy2Client({
+            rooms: {
+                list: async () =>
+                    rooms.map((room) =>
+                        room.id === 'task:t-open' ? { ...room, lastActivityAt: fiveMinutesAgo } : room,
+                    ),
+            },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const row = rowOf(render(), '/room/task/t-open');
+        expect(row).toContain('>5m<'); // 用户 2026-11-26：改回 1m / 1d 这种紧凑式
+        expect(row).toContain('最后活动 20'); // tooltip 里是绝对时刻
+    });
+
     it('每个项目行都在行上提供新建任务按钮，不依赖三点菜单或空项目占位', () => {
         const html = render();
         expect(html).toContain('aria-label="在「diy」下新建任务"');

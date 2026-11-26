@@ -10,18 +10,21 @@ import { Cpu } from 'lucide-react';
 
 import { modelLabel } from '../models';
 import { useProviders } from '../store';
+import { Button } from '@diy-agent/ui-shadcn';
 
 export function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
     const providers = useProviders();
     const label = modelLabel(providers, value);
     return (
-        <button
+        <Button
+            variant="outline"
+            size="xs"
             onClick={onClick}
             title={`${label} · 点击切换`}
-            className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted"
+            className="gap-1 font-mono text-muted-foreground"
         >
             <Cpu className="size-3" />
             {label.split(' · ')[0]}
-        </button>
+        </Button>
     );
 }

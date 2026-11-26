@@ -6,11 +6,24 @@
 // 回到底部 / 空态都补齐），第三面 assistant-ui 已删（它 2491 行 registry 件里大半能力
 // 没有对应事实可接，见 docs/plans/2026-11-24-surface-parity.md）。
 //
-// 缺省是哪一面由壳层决定（App.tsx 取 'astryx'），这里不排序含义。
+// 2026-11-25 裁决（见 surface-parity 文档 §7）：**Astryx 面冻结为参考实现** ——
+// 不再追新功能、不进「每次 UI 改动双面验证」的门，只保编译通过与一条冒烟；
+// 缺省面改为 shadcn。翻回 Astryx 只为两件事：核对某个交互该长什么样，
+// 或者 canary 依赖炸了要临时换回。2~4 周真实使用后复查是否删除。
+//
+// 2026-11-26 裁决（用户）：**Astryx 面标记为废弃（deprecated）**。区别在于措辞与
+// 后续动作：「冻结」是「先别动它」，「废弃」是「不要再往上加东西，且随时可删」。
+// 具体落到三件事：① 注册表的 hint 与 UI 上的 tab 标明废弃；② 新代码不 import 这一面；
+// ③ 删除的前置条件只剩一条 —— 见 `docs/plans/2026-11-24-surface-parity.md` §7 末尾。
+//
+// 缺省是哪一面由壳层决定（现在取 'shadcn'），这里不排序含义。
+//
+// 2026-11-26：Astryx 面**已删除**（本文件只剩 shadcn 一条）。数组与 `ChatSurface` 形状
+// 刻意保留 —— 壳层（tab、visited 缓存、surface.ts 的 store）都按「可能是多面」写的，
+// 少一条不需要改它们；将来真要加第三面，只需在这里多一条。
 
 import type { FC, ReactNode } from 'react';
 
-import { AstryxSurface } from './astryx/Surface';
 import { ShadcnSurface } from './shadcn/Surface';
 
 export interface ChatSurface {
@@ -27,6 +40,10 @@ export interface ChatSurface {
 }
 
 export const SURFACES: ChatSurface[] = [
-    { id: 'astryx', name: 'Astryx', hint: '设计系统 Chat 组件 + chat-core', Component: AstryxSurface },
-    { id: 'shadcn', name: 'shadcn', hint: '原生 Tailwind + chat-core，无 chat 库', Component: ShadcnSurface },
+    {
+        id: 'shadcn',
+        name: 'shadcn',
+        hint: '原生 Tailwind + chat-core，无 chat 库',
+        Component: ShadcnSurface,
+    },
 ];

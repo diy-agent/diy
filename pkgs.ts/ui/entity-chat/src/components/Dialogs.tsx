@@ -1,11 +1,20 @@
 import * as React from 'react';
 
+import { Button, Input } from '@diy-agent/ui-shadcn';
+
 import { DIR_SUGGESTIONS, roomTitle, type Room } from '../model';
 import { ModelPicker } from './ModelPicker';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@diy-agent/ui-shadcn';
 
 /**
- * 弹窗外壳：点遮罩 / Esc 关闭（Esc 挂在 document 上 —— 弹窗里的 input 不一定拿得到焦点）。
- * `size` 默认 md；`wide` 留给需要多条表格列的弹窗（28rem 塞不下四列）。
+ * 弹窗外壳 = shadcn `Dialog` 的薄适配层（2026-11-23 换掉自建实现）。
+ *
+ * 自建版只有「遮罩点击 + document 上的 Esc」，缺 focus trap / `role=dialog` /
+ * `aria-modal` / 初始焦点 / 关闭后焦点还原 / 滚动锁；Esc 挂 document 还会在
+ * 嵌套弹窗时一次把外层一起关掉。这些现在全由 Base UI 的 Dialog 原语负责。
+ *
+ * 保留 `Modal` 这个名字与签名，让 5 个业务弹窗（新建项目 / 新建任务 / 删除确认 /
+ * 加成员 / 模型与设置）零改动。`size` 默认 md；`wide` 留给需要多条表格列的弹窗。
  */
 export function Modal({
     title,
@@ -18,24 +27,20 @@ export function Modal({
     onClose: () => void;
     size?: 'md' | 'wide';
 }) {
-    React.useEffect(() => {
-        const onKey = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') onClose();
-        };
-        document.addEventListener('keydown', onKey);
-        return () => document.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-            <div
-                className={`w-full rounded-xl border bg-background p-4 ${size === 'wide' ? 'max-w-3xl' : 'max-w-md'}`}
-                onClick={(event) => event.stopPropagation()}
-            >
-                <h2 className="mb-3 text-sm font-semibold">{title}</h2>
+        <Dialog
+            open
+            onOpenChange={(next) => {
+                if (!next) onClose();
+            }}
+        >
+            <DialogContent className={size === 'wide' ? 'sm:max-w-3xl' : 'sm:max-w-md'}>
+                <DialogHeader>
+                    <DialogTitle>{title}</DialogTitle>
+                </DialogHeader>
                 {children}
-            </div>
-        </div>
+            </DialogContent>
+        </Dialog>
     );
 }
 
@@ -54,7 +59,7 @@ export function CreateProjectDialog({
             <div className="space-y-3 text-sm">
                 <label className="block">
                     <span className="mb-1 block text-xs text-muted-foreground">项目名</span>
-                    <input
+                    <Input
                         autoFocus
                         value={name}
                         onChange={(event) => setName(event.target.value)}
@@ -64,41 +69,44 @@ export function CreateProjectDialog({
                 </label>
                 <label className="block">
                     <span className="mb-1 block text-xs text-muted-foreground">目录</span>
-                    <input
+                    <Input
                         value={dir}
                         onChange={(event) => setDir(event.target.value)}
                         className="w-full rounded-lg border bg-card px-2 py-1.5 font-mono text-xs outline-none"
                     />
                     <div className="mt-1.5 flex flex-wrap gap-1">
                         {DIR_SUGGESTIONS.map((item) => (
-                            <button
+                            <Button
                                 key={item}
+                                variant="outline"
+                                size="xs"
                                 onClick={() => setDir(item)}
-                                className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                                className="text-muted-foreground"
                             >
                                 {item}
-                            </button>
+                            </Button>
                         ))}
                     </div>
                 </label>
-                <p className="rounded-lg border border-dashed px-2 py-1.5 text-[11px] text-muted-foreground">
+                <p className="rounded-lg border border-dashed px-2 py-1.5 text-xs text-muted-foreground">
                     会同时创建这个项目的 bot，名字 = 项目名（项目专属，不是全局 bot）
                 </p>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     取消
-                </button>
-                <button
+                </Button>
+                <Button
                     disabled={name.trim() === '' || dir.trim() === ''}
                     onClick={() => {
                         onSubmit({ name: name.trim(), dir: dir.trim() });
                         onClose();
                     }}
-                    className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-40"
+                    variant="default"
+                    size="lg"
                 >
                     创建
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -146,7 +154,7 @@ export function CreateTaskDialog({
             <div className="space-y-3 text-sm">
                 <label className="block">
                     <span className="mb-1 block text-xs text-muted-foreground">任务名（一句话：这个任务要做什么）</span>
-                    <input
+                    <Input
                         autoFocus
                         value={name}
                         onChange={(event) => setName(event.target.value)}
@@ -159,26 +167,22 @@ export function CreateTaskDialog({
                     />
                 </label>
                 {error !== null && (
-                    <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px]">
+                    <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs">
                         {error}
                     </p>
                 )}
-                <p className="rounded-lg border border-dashed px-2 py-1.5 text-[11px] text-muted-foreground">
+                <p className="rounded-lg border border-dashed px-2 py-1.5 text-xs text-muted-foreground">
                     会自动建一个同名任务 bot；状态默认 open，点名字前的状态图标改成
                     closed，它就从项目树挪进「历史任务」。
                 </p>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     取消
-                </button>
-                <button
-                    disabled={name.trim() === '' || busy}
-                    onClick={submit}
-                    className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-40"
-                >
+                </Button>
+                <Button disabled={name.trim() === '' || busy} onClick={submit} variant="default" size="lg">
                     创建
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -209,23 +213,24 @@ export function ConfirmDeleteDialog({
                         它下面的 {taskCount} 个任务会一起删掉。
                     </p>
                 )}
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                     专属 bot 一并清掉；被其他容器借用的 bot 不动。仓库里的文件不删。
                 </p>
             </div>
             <div className="mt-4 flex justify-end gap-2">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     取消
-                </button>
-                <button
+                </Button>
+                <Button
+                    variant="destructive"
+                    size="lg"
                     onClick={() => {
                         onConfirm();
                         onClose();
                     }}
-                    className="rounded-lg bg-destructive px-3 py-1.5 text-sm text-white"
                 >
                     删除
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -246,9 +251,9 @@ export function ModelDialog({
         <Modal title={title} onClose={onClose}>
             <ModelPicker value={value} onChange={onChange} />
             <div className="mt-4 flex justify-end">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     完成
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -271,7 +276,7 @@ export function SettingsDialog({
                     <ModelPicker value={defaultModelKey} onChange={onChangeDefault} />
                 </div>
 
-                <div className="rounded-lg border border-dashed p-2 text-[11px] leading-relaxed text-muted-foreground">
+                <div className="rounded-lg border border-dashed p-2 text-xs leading-relaxed text-muted-foreground">
                     <p className="mb-1 font-medium text-foreground">当前目录（照 diy 的 provider 结构）</p>
                     <p>
                         provider = 端点 + 账户列表 + 模型目录；key = <code>account@provider/model</code>。
@@ -280,9 +285,9 @@ export function SettingsDialog({
                 </div>
             </div>
             <div className="mt-4 flex justify-end">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     完成
-                </button>
+                </Button>
             </div>
         </Modal>
     );

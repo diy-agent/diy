@@ -28,11 +28,14 @@ import {
     JOURNAL_KINDS,
     RoomActor,
     createJobRegistry,
+    createTurnLookup,
     defaultModelKeyOf,
     modelProviders,
     newEntityId,
     openStore,
     snapshotPath,
+    unitBoard,
+    unitsContextText,
 } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
@@ -310,6 +313,8 @@ function actorOf(spec: Room): RoomActor {
             onCompact: (bot, event) => logCompact(spec.id, bot, event),
             ...(cwd === undefined ? {} : { cwd }),
             home: config.home,
+            // 设备库住生产根（`~/.diy2/knowledge`），不跟着 lab 的实例根漂
+            deviceHome: config.deviceHome,
             shell: config.tools !== 'files',
             jobs: { registry: jobs },
             ...(config.maxSteps === undefined ? {} : { maxSteps: config.maxSteps }),
@@ -481,9 +486,23 @@ function seed(): void {
  * 拆出来是因为**时机**：以前它在 `seed()` 末尾、`listen()` 之前跟着跑，于是「端口还没人
  * 能连」时三个房间的续跑已经各自 await compact() → 主请求，UI 一打开看到的就是一屏
  * 429 / 压缩日志。现在由入口在 listen 成功后调（生产 `index.ts`、dev `dev.ts`）。
+ *
+ * **串行**（2026-11-25）：房间一个一个续，前一个跑到收尾（`recover()` 的 Promise 在
+ * 那一轮结束时 resolve）再放下一个。以前一口气全排出去，房间一多就是同一秒里十几个
+ * 请求撞网关（turn 180 实测：三次启动压缩 5.8s / 6.5s / 17.3s，前两次压完仍超预算）。
+ * 串行的代价是「最后一个房间要等前面都跑完」—— 但这是背景活，界面在 listen 之后
+ * 就已经可用，不存在“等它才看到 UI”。
+ *
+ * 单个房间抛错不阻断后面：`recover()` 内部已经逐条兜住，这里再兜一层房间级的。
  */
-function resume(): void {
-    for (const actor of rooms.values()) actor.recover();
+async function resume(): Promise<void> {
+    for (const [roomId, actor] of rooms) {
+        try {
+            await actor.recover();
+        } catch (error) {
+            log.warn('续跑房间失败，继续下一个', { roomId, error: (error as Error).message });
+        }
+    }
 }
 
 // 装配动作（seed + 草稿清理）在 `createDiy2App` 里做：顶层语句等于「import 即启动」，
@@ -640,7 +659,8 @@ export interface Diy2App {
      * **必须在监听之后调**（##554 后续）：它一调就会发 LLM 请求，而在监听之前点火等于
      * 「UI 还没人能连上，模型配额已经开始烧」—— 启动顺序里最贵的这一步不该抢在门打开之前。
      */
-    resume: () => void;
+    /** 串行续跑所有房间（拿到 Promise 是为了测试 / 优雅关闭能等它）；入口不必 await */
+    resume: () => Promise<void>;
     /**
      * 处理一条 HTTP upgrade（`/rpc` 归这里，返回 true；其余返回 false 交给别人 ——
      * dev 里 vite 的 HMR 也走 upgrade 通道，**不要动不是自己的 socket**）。
@@ -652,6 +672,11 @@ export interface Diy2App {
     /** 关闭所有 SSE / WS 订阅（进程退出 / dev 重启前调用；sqlite 由进程退出收尾） */
     close: () => void;
 }
+
+/*
+ * 「某个成员上一轮的结局」查询器已移到 `@diy-agent/entity-runtime` 的 `createTurnLookup`
+ * （`rooms.list` 与 `bots.rows` 共用一份，判据在 `bot-status.ts`）。
+ */
 
 /**
  * 装配一个 diy2 应用（**不监听端口**）。
@@ -720,6 +745,11 @@ export async function createDiy2App(opts: {
                     const draftOwners = store.draftOwnersByKind();
                     const withInputDraft = new Set(draftOwners.input);
                     const lastItemAt = store.lastItemAtByRoom();
+                    // 未读：一次算完全实例（一条 GROUP BY），不逐房间问
+                    const unread = store.unreadByRoom();
+                    // 「上一轮出错的成员」：侧栏图标要变红（用户 2026-11-26：表格说「出错」而侧栏
+                    // 图标没变，两处不一致）。数据与 `bots.rows` 同源（`turnLookupOf`），不各算一份。
+                    const turnOf = createTurnLookup(store);
                     return [...rooms.values()].map((actor) => {
                         const id = actor.spec.id;
                         const at = lastItemAt[id];
@@ -727,11 +757,26 @@ export async function createDiy2App(opts: {
                         const pendingAsks = pendingRequests.length;
                         // 在跑成员数：与全局活动帧同源（`runningBots`），这里只是「列表里顺带一份」，
                         // 给那些还没建活动流的老客户端一个初值
-                        const running = actor.runningBots().length;
+                        const runningBots = actor.runningBots();
+                        const running = runningBots.length;
+                        // 上一轮结局不是 done 的成员数 —— **不排除在跑的**（用户 2026-11-26 原话：
+                        // “表格说「出错」，左侧导航栏的任务图标也应该变状态”）。
+                        // 之前排除在跑的理由是“它此刻正在挣扎”，但那样恰好把最该看见的情况
+                        // （上轮被中断、这轮在重试）藏掉了：表格里写着「上轮 · 中断」，图标却什么都不说。
+                        // 两件事本来就能并存 —— 红图标 = 上一轮有问题，绿点 = 此刻在跑。
+                        let broken = 0;
+                        for (const member of actor.spec.members) {
+                            const turn = turnOf(id, member.botId);
+                            if (turn !== undefined && turn.outcome !== 'done') broken += 1;
+                        }
+                        // 排队中的投递（含重启后的待续跑）：以前列表里没有这个数，
+                        // 于是房间「看着没事、其实排着队」或「明明在干、只是还没轮到它」都看不见
+                        const queued = [...actor.queuedByBot().values()].reduce((sum, n) => sum + n, 0);
                         return {
                             ...actor.spec,
                             hasDraft: withInputDraft.has(id),
                             ...(running === 0 ? {} : { running }),
+                            ...(queued === 0 ? {} : { queued }),
                             ...(pendingAsks === 0 ? {} : { pendingAsks }),
                             // 带题干：侧栏 ? 的 tooltip 要说清「问的是什么」，只说个数进房间还得自己翻
                             ...(pendingAsks === 0
@@ -742,6 +787,8 @@ export async function createDiy2App(opts: {
                                       ),
                                   }),
                             ...(at === undefined ? {} : { lastActivityAt: at }),
+                            ...((unread[id] ?? 0) === 0 ? {} : { unread: unread[id] }),
+                            ...(broken === 0 ? {} : { broken }),
                         };
                     });
                 },
@@ -804,6 +851,14 @@ export async function createDiy2App(opts: {
                         broadcast(roomId, { kind: 'done' });
                     }
                     return { id: input.id, deleted: victims };
+                },
+                /**
+                 * 上报未读水位（房间打开且页面可见时由 UI 调）。
+                 * 只前进不后退 —— 多个标签页 / 迟到的旧上报不能把水位拉回去。
+                 */
+                markRead: async ({ input }) => {
+                    store.markRead(input.id, input.seq);
+                    return { ok: true, seq: store.readSeqOf(input.id) ?? input.seq };
                 },
             },
             roles: {
@@ -1044,6 +1099,21 @@ export async function createDiy2App(opts: {
                     writeDefaultModel(config.home, modelKey);
                     return modelConfigView();
                 },
+            },
+            /**
+             * 任务的**需求账本树**（只读）。writer 只有 agent 的 `unit_*` 工具，
+             * 界面是旁观者的窗口 —— 想改就在聊天里说。推导在 `unitBoard`（同一份纯函数）。
+             */
+            units: {
+                list: async ({ input }) => unitBoard(store.listUnits(input.id)),
+                /**
+                 * 模型读到的 `units` 节原文。
+                 *
+                 * 与上下文注入**同一份代码**（`unitsContextText()`）：界面若自己再拼一遍文本，
+                 * 两边迟早在溢出退化 / 哪些条目点名上分叉，而人看这一页恰恰是在核对
+                 * 「模型到底读到了什么」。
+                 */
+                text: async ({ input }) => unitsContextText(unitBoard(store.listUnits(input.id))),
             },
             links: {
                 list: async ({ input }) => {

@@ -20,6 +20,7 @@ import {
     EntityChatApp,
     navigate,
     TaskPanel,
+    UnitBoardView,
     useAddress,
     useSelectedRoom,
     type Room,
@@ -207,6 +208,22 @@ function TaskDetail({ room }: { room: Room }) {
     );
 }
 
+/**
+ * 目标：需求账本树（缩进列表），带一个「看源码」开关切到模型读到的 YAML 原文。
+ *
+ * 为什么树和源码在同一个视图里而不是两个 tab（2026-11-25 用户裁）：它们是同一份数据的
+ * 两种读法 —— 一个是扫一眼，一个是核对模型输入。两个 tab 会让人以为有两份东西。
+ */
+function UnitsBody() {
+    const room = useSelectedRoom();
+    if (!room) return <Empty>没有选中房间</Empty>;
+    return (
+        <div className="wb-fill">
+            <UnitBoardView room={room} />
+        </div>
+    );
+}
+
 /** 房间信息（项目页 / 未知类型页共用）：id / type / data 长什么样 —— 只读 */
 function InfoCard({ room }: { room: Room }) {
     const data = Object.entries(room.data ?? {});
@@ -344,6 +361,12 @@ function Empty({ children }: { children: string }) {
 }
 
 export const wbViews = [
+    defineView({
+        id: 'units',
+        title: '目标',
+        placement: { task: { area: 'detail' } },
+        render: () => <UnitsBody />,
+    }),
     defineView({
         id: 'detail',
         title: '详情',
