@@ -94,9 +94,24 @@ describe("writeFileWhole", () => {
         expect(r.isNew).toBe(false);
         expect(r.added).toBe(3);
         expect(r.removed).toBe(1);
-        expect(formatWriteResult(r)).toContain("写入 f.txt（+3/-1 行");
+        // 回执带「相对 → 绝对」（## E2）：只写 `写入 f.txt` 看不出解析到主仓还是 worktree
+        expect(formatWriteResult(r)).toMatch(/写入 f\.txt → \/\S+（\+3\/-1 行/);
         expect(r.diff).toContain("-b");
         expect(r.diff).toContain("+B");
+    });
+
+    it("回执带解析后的绝对路径（## E2：相对回显看不出写到哪个仓）", () => {
+        const r = writeFileWhole(root, "where.txt", "x\n");
+        // absPath 一定是绝对的，且落在 realpath 后的 cwd 下（macOS tmpdir 有 /var → /private/var）
+        expect(r.absPath.startsWith("/")).toBe(true);
+        expect(r.absPath).toBe(realpathSync(join(root, "where.txt")));
+        const text = formatWriteResult(r);
+        expect(text).toContain(`写入 where.txt → ${r.absPath}`);
+        // 传绝对路径时不重复回显（`path === absPath` ⇒ 只写一遍）
+        const abs = writeFileWhole(root, r.absPath, "y\n");
+        expect(abs.path).toBe(abs.absPath);
+        expect(formatWriteResult(abs)).toContain(`写入 ${abs.absPath}（`);
+        expect(formatWriteResult(abs)).not.toContain("→");
     });
 
     it("内容超上限 → fs/content-too-large，文案含实际字节与上限", () => {
