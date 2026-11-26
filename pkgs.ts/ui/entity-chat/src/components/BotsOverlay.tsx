@@ -19,6 +19,7 @@ import {
     ATTENTION_DOT,
     ATTENTION_INK,
     ATTENTION_TEXT,
+    attentionLabelOf,
     attentionOf,
     countByAttention,
     type AttentionKind,
@@ -32,7 +33,7 @@ import {
 import { diy2 } from '../store';
 
 /** 筛选 = 关注度词表（与标题栏徽标同一套词，点哪个就看哪一类） */
-export type Filter = 'attention' | 'all' | AttentionKind;
+export type Filter = 'all' | AttentionKind;
 
 /**
  * 筛选钮（**带数字**）：数字与徽标、与 tab 都从 `countByAttention` 来 —— 三处读一份，
@@ -44,19 +45,21 @@ function filterItems(counts: ReturnType<typeof countByAttention>): Array<{ id: F
         label,
         ...(dot === undefined ? {} : { dot }),
     });
+    // 不再有「要看的 N」那一筛（用户 2026-11-26：删掉）：它就是「非空闲」，与下面五类
+    // 重复——同一批人用两个名字叫，反而让人算不清。要看的就是「除了空闲」这类，
+    // 二级浮层已经专门在干这件事（`visibleInOverlay`）。
     const items: Array<{ id: Filter; label: string; dot?: string }> = [
-        item('attention', `要看的 ${counts.visible}`),
         item('all', `全部 ${counts.broken + counts.blocked + counts.queued + counts.live + counts.idle}`),
     ];
     for (const kind of ['broken', 'blocked', 'queued', 'live', 'idle'] as const) {
-        if (counts[kind] === 0 && kind !== 'broken') continue; // 空的类不占位（点了也没东西）
+        // 空的类不占位（连「出错 0」也不画：一颗永远可能是 0 的筛选钮只会占地方、让人以为有问题）
+        if (counts[kind] === 0) continue;
         items.push(item(kind, `${ATTENTION_TEXT[kind]} ${counts[kind]}`, ATTENTION_DOT[kind]));
     }
     return items;
 }
 
 function matches(row: BotRow, filter: Filter): boolean {
-    if (filter === 'attention') return visibleInOverlay(row);
     if (filter === 'all') return true;
     return attentionOf(row) === filter;
 }
@@ -89,12 +92,8 @@ function BriefRow({ row, onRetry }: { row: BotRow; onRetry: (row: BotRow) => voi
     const kind = attentionOf(row);
     const canRetry = kind === 'broken';
     // 一眼看懂「谁 / 在哪 / 这一行属于哪一类」：出错的写为什么，排队的写排了几条
-    const detail =
-        kind === 'broken'
-            ? outcomeTextOf(row)
-            : kind === 'queued'
-              ? `排队 ${row.queued ?? 0} 条`
-              : STATE_TEXT[row.state];
+    // 出错的写「为什么」（结局即原因），其余写关注度标签（在跑时会带上排队数）
+    const detail = kind === 'broken' ? outcomeTextOf(row) : attentionLabelOf(row);
     return (
         <div className="flex items-center gap-2 px-3 py-1.5">
             <StateDot row={row} />
@@ -143,14 +142,17 @@ function TableRow({
             <span className="w-[200px] shrink-0 truncate text-[11px] text-muted-foreground" title={row.roomTitle}>
                 {row.roomTitle}
             </span>
-            <span className="w-[84px] shrink-0 text-[10px] text-muted-foreground">{ATTENTION_TEXT[attentionOf(row)]}</span>
+            <span className="w-[92px] shrink-0 text-[10px] text-muted-foreground">{attentionLabelOf(row)}</span>
+            {/* 结局是**上一轮**怎么结束的，与左边那列「此刻」不是同一个时间点 ——
+                不写明时态就会被读成同一件事（用户 2026-11-26 看到的「排队中 + 中断」：
+                其实是一个正在跑的成员，上一轮被进程中断过）。 */}
             <span
                 className={`min-w-0 flex-1 truncate text-[11px] ${
                     row.outcome === undefined || row.outcome === 'done' ? 'text-muted-foreground' : 'text-rose-300'
                 }`}
-                title={outcomeTextOf(row)}
+                title={`上一轮：${outcomeTextOf(row)}`}
             >
-                {outcomeTextOf(row)}
+                上轮 · {outcomeTextOf(row)}
             </span>
             <span className="w-[86px] shrink-0 text-right font-mono text-[10px] text-muted-foreground">
                 {row.lastTurnAt === undefined ? '—' : fmtAt(row.lastTurnAt, now)}
@@ -182,7 +184,7 @@ export function BotsOverlay({
     initialFilter,
 }: BotsOverlayProps) {
     const [mode, setMode] = React.useState<'brief' | 'full'>(initialMode === 'full' || initialFilter !== undefined ? 'full' : 'brief');
-    const [filter, setFilter] = React.useState<Filter>(initialFilter ?? 'attention');
+    const [filter, setFilter] = React.useState<Filter>(initialFilter ?? 'all');
     const [checked, setChecked] = React.useState<ReadonlySet<string>>(new Set());
     const [flash, setFlash] = React.useState<string | null>(null);
     const [sending, setSending] = React.useState(false);
@@ -236,6 +238,19 @@ export function BotsOverlay({
     };
 
     const selected = shown.filter((row) => checked.has(keyOf(row)));
+    /** 全选 = 当前**筛出来的这批**（不是全实例：筛了「出错」却把在跑也选上很奇怪） */
+    const allChecked = shown.length > 0 && shown.every((row) => checked.has(keyOf(row)));
+    const toggleAll = (on: boolean): void => {
+        setChecked((previous) => {
+            const next = new Set(previous);
+            for (const row of shown) {
+                const key = keyOf(row);
+                if (on) next.add(key);
+                else next.delete(key);
+            }
+            return next;
+        });
+    };
 
     return (
         <div className="fixed inset-0 z-50" role="dialog" aria-label="Bot 状态">
@@ -306,15 +321,31 @@ export function BotsOverlay({
                             />
                         ))
                     ) : (
-                        shown.map((row) => (
-                            <TableRow
-                                key={keyOf(row)}
-                                row={row}
-                                now={now}
-                                checked={checked.has(keyOf(row))}
-                                onCheck={toggle}
-                            />
-                        ))
+                        <>
+                            {/* 表头：全选当前筛选结果。以前只能一条一条勾，批量重试实际上用不起来 */}
+                            <label className="flex cursor-pointer items-center gap-2 border-b border-border/60 bg-muted/30 px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted/50">
+                                <input
+                                    type="checkbox"
+                                    checked={allChecked}
+                                    onChange={(event) => toggleAll(event.target.checked)}
+                                    className="size-3"
+                                    aria-label="全选"
+                                />
+                                全选{' '}
+                                <span className="tabular-nums">
+                                    已选 {selected.length} / {shown.length}
+                                </span>
+                            </label>
+                            {shown.map((row) => (
+                                <TableRow
+                                    key={keyOf(row)}
+                                    row={row}
+                                    now={now}
+                                    checked={checked.has(keyOf(row))}
+                                    onCheck={toggle}
+                                />
+                            ))}
+                        </>
                     )}
                 </div>
 
@@ -333,7 +364,7 @@ export function BotsOverlay({
                                 onClick={() => setMode('brief')}
                                 className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
                             >
-                                ‹ 只看要看的
+                                ‹ 只看活动的
                             </button>
                             <button
                                 onClick={() => {

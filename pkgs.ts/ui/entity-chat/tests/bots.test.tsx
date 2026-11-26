@@ -12,6 +12,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import {
+    attentionLabelOf,
     attentionOf,
     countByAttention,
     needsYou,
@@ -83,11 +84,20 @@ describe('countByAttention —— 分类计数（点开一定对得上）', () =
         expect(counts.broken + counts.blocked + counts.queued + counts.live + counts.idle).toBe(rows.length);
     });
 
-    it('排队单独数（在跑 + 排队不会互相吃掉）', () => {
-        const counts = countByAttention([row({ state: 'running', queued: 3 }), row({ state: 'idle', queued: 1 })]);
-        expect(counts.queued).toBe(2); // 每行只归一类：排队优先于在跑/空闲
-        expect(counts.live).toBe(0);
-        expect(attentionOf(row({ state: 'running', queued: 3 }))).toBe('queued');
+    it('在跑优先于排队：正在干活的成员不能被归成「排队中」', () => {
+        // 2026-11-26 用户报的那行：状态「排队中」+ 结局「中断」—— 其实它正在跑，
+        // 只是 `queuedByBot` 把手上那条 delivering 也算成了排队
+        const running = row({ state: 'running', queued: 3 });
+        expect(attentionOf(running)).toBe('live');
+        // 但排队数不能丢：行上两个字都说
+        expect(attentionLabelOf(running)).toBe('在跑 · 排 3');
+
+        const counts = countByAttention([running, row({ state: 'idle', queued: 1 })]);
+        expect(counts.live).toBe(1);
+        expect(counts.queued).toBe(1); // 只有“没在跑但排着”的算排队
+
+        expect(attentionOf(row({ state: 'idle', queued: 1 }))).toBe('queued');
+        expect(attentionLabelOf(row({ state: 'idle', queued: 1 }))).toBe('排队中');
     });
 });
 
@@ -153,16 +163,37 @@ describe('二级浮层', () => {
 });
 
 describe('三级表格', () => {
-    it('默认筛选与二级一致：空闲的不出现', () => {
+    it('默认「全部」：空闲的也在（「要看的」那一筛已删）', () => {
         const html = render([row({ botName: '在跑的', state: 'running' }), row({ botName: '闲着的', state: 'idle' })], 'full');
-        expect(html).toContain('要看的');
+        expect(html).not.toContain('>要看的 '); // 2026-11-26 用户：那个筛选 tab 删掉
+        expect(html).toContain('全部 2');
         expect(html).toContain('在跑的');
-        expect(html).not.toContain('闲着的');
+        expect(html).toContain('闲着的');
     });
 
-    it('带批量入口与「只看要看的」回退', () => {
+    it('空的类别不占筛选钮（连「出错 0」也不画）', () => {
+        const html = render([row({ botName: '闲着的', state: 'idle' })], 'full');
+        expect(html).not.toContain('出错 0');
+        expect(html).toContain('空闲 1');
+    });
+
+    it('有全选：一键勾中当前筛出来的这批', () => {
+        const html = render([row({ botName: 'a', state: 'needs-attention' }), row({ botName: 'b', state: 'running' })], 'full');
+        expect(html).toContain('aria-label="全选"');
+        expect(html).toContain('已选 0 / 2');
+    });
+
+    it('结局列写「上轮 ·」，不与左边的「此刻」读成一件事', () => {
+        const html = render([row({ state: 'running', outcome: 'interrupted' })], 'full');
+        expect(html).toContain('上轮 · 中断（上一轮没跑完）');
+        // 状态列是「此刻」：正在跑就写正在跑
+        expect(html).toContain('在跑');
+    });
+
+    it('带批量入口与回二级浮层的回退', () => {
         const html = render([row({ state: 'needs-attention' })], 'full');
         expect(html).toContain('重试选中（0）');
-        expect(html).toContain('只看要看的');
+        // 文案从「只看要看的」改成「只看活动的」：前者与已删掉的那个筛选 tab 撞名
+        expect(html).toContain('只看活动的');
     });
 });
