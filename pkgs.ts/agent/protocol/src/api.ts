@@ -97,6 +97,20 @@ export const rolesApi = RpcSchema.group({
         }),
         /** 删角色；某类型最后一个角色不许删（否则那类房间没人应答） */
         remove: RpcSchema.unary({ input: { id: Id }, output: Any }),
+        /** 类型默认配置（2026-11-26）：几百个 bot 共享一套 model / effort，bot 只存 override */
+        config: RpcSchema.group({
+            children: {
+                list: RpcSchema.unary({ input: {}, output: Any }),
+                set: RpcSchema.unary({
+                    input: {
+                        type: z.string().min(1),
+                        modelKey: z.string().nullable().optional(),
+                        reasoningEffort: z.string().nullable().optional(),
+                    },
+                    output: Any,
+                }),
+            },
+        }),
     },
 });
 

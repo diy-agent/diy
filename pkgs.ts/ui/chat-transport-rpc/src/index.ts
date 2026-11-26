@@ -24,6 +24,7 @@ import type {
 import type {
     ActivityFrame,
     BotRole,
+    RoleConfig,
     JobRunRow,
     ModelCatalogModel,
     ModelCatalogProvider,
@@ -222,6 +223,14 @@ export class RpcChatClient implements ChatClient {
             this.call('roles.create', input),
         update: (input: RoleInput & { id: string }): Promise<BotRole> => this.call('roles.update', input),
         remove: (id: string): Promise<unknown> => this.call('roles.remove', { id }),
+        config: {
+            list: (): Promise<RoleConfig[]> => this.call('roles.config.list', {}),
+            set: (input: {
+                type: string;
+                modelKey?: string | null;
+                reasoningEffort?: string | null;
+            }): Promise<RoleConfig> => this.call('roles.config.set', input),
+        },
     };
 
     readonly drafts = {

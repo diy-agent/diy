@@ -13,7 +13,7 @@ import {
     type SessionInfo,
 } from '@diy-agent/chat-core';
 import { RpcChatClient } from '@diy-agent/chat-transport-rpc';
-import { botOfRole, type BotRole } from '@diy-agent/protocol';
+import { botOfRole, type BotRole, type RoleConfig } from '@diy-agent/protocol';
 import * as React from 'react';
 
 import {
@@ -93,6 +93,8 @@ interface ShellState {
     rooms: Room[];
     /** 角色表（真源 `bot_roles`）：成员由它与房间类型派生，界面上「谁在这个房间」靠它 */
     roles: BotRole[];
+    /** 类型默认配置（`role_config`）：bot 的 modelKey 走 override ?? 类型默认 */
+    roleConfigs: RoleConfig[];
     /** 角色 id → 房间里的化身。派生的投影，让老代码（按 bot 查名字/颜色）不用改 */
     bots: Record<string, Bot>;
     /**
@@ -180,6 +182,7 @@ interface ShellState {
 let state: ShellState = {
     rooms: [],
     roles: [],
+    roleConfigs: [],
     bots: {},
     // id 为空 = 「还没定」，首屏由 resolveAddress 从地址栏或第一个房间补上
     address: addressOf(DEFAULT_PAGE, ''),
@@ -766,10 +769,14 @@ export async function refreshCatalog(): Promise<void> {
  */
 export async function refreshRoles(): Promise<void> {
     const roles = await client.roles.list();
+    // 类型默认配置：老客户端 / 测试的假客户端可能没有这个通道，容错成空（role_config 空时行为不变）
+    const roleConfigs: RoleConfig[] = (await client.roles.config?.list?.()) ?? [];
+    const configOf = (type: string) => roleConfigs.find((config) => config.type === type);
     emit({
         ...state,
         roles,
-        bots: Object.fromEntries(roles.map((role) => [role.id, botOfRole(role)])),
+        roleConfigs,
+        bots: Object.fromEntries(roles.map((role) => [role.id, botOfRole(role, configOf(role.type))])),
     });
 }
 
@@ -815,6 +822,8 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         client.roles.list(),
         client.models.list(),
     ]);
+    // 类型默认配置：老客户端 / 测试的假客户端可能没有这个通道，容错成空（role_config 空时行为不变）
+    const roleConfigs: RoleConfig[] = (await client.roles.config?.list?.()) ?? [];
     // 侧栏 ✎ 的初始值：不用打开过房间；本端改过的 owner 由 drafts 自己说了算
     drafts.seed(rooms);
     // 「最后活动」跟着同一次列表请求回来，不逐房间查（那会是 N+1）
@@ -893,8 +902,11 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         unread,
         broken,
         roles,
+        roleConfigs,
         // 化身从角色派生（名字 / 颜色 / 人格 / 模型唯一的转换点）：成员名单仍然按房间的 spec 过滤
-        bots: Object.fromEntries(roles.map((role) => [role.id, botOfRole(role)])),
+        bots: Object.fromEntries(
+            roles.map((role) => [role.id, botOfRole(role, roleConfigs.find((c) => c.type === role.type))]),
+        ),
         loaded: true,
         // 地址没变就沿用旧引用：`useAddress()` 的快照就是它，同值换新对象等于给整张侧栏
         // 发一次「变了」的信号。`pickAddress` 多数分支会给旧对象，但 fallback / 首屏那条

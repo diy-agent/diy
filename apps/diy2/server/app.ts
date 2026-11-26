@@ -48,6 +48,7 @@ import type {
     Author,
     Bot,
     BotRole,
+    RoleConfig,
     JobRunRow,
     ModelConfigSnapshot,
     Room,
@@ -911,6 +912,23 @@ export async function createDiy2App(opts: {
                     store.deleteRole(role.id);
                     refreshRoomsOf(role.type);
                     return { ok: true };
+                },
+                config: {
+                    list: async () => store.listRoleConfigs(),
+                    set: async ({ input }) => {
+                        const config: RoleConfig = {
+                            type: input.type.trim(),
+                            modelKey: input.modelKey === undefined || input.modelKey === '' ? null : input.modelKey,
+                            reasoningEffort:
+                                input.reasoningEffort === undefined || input.reasoningEffort === ''
+                                    ? null
+                                    : input.reasoningEffort,
+                            updatedAt: Date.now(),
+                        };
+                        store.setRoleConfig(config);
+                        refreshRoomsOf(config.type);
+                        return config;
+                    },
                 },
             },
             chat: {
