@@ -527,7 +527,8 @@ export class BotSession {
         this.turnUsage = undefined;
         // 先广播"这一轮开始了"：房间据此把上一个回合留下的未答提问判过期（ask.ts 的寿命规则）
         this.emit({ type: 'turn.start', turn, startedAt });
-        const projector = new Projector(this.authorOf(), turn.turn);
+        // 错误条目带上本轮实际用的模型：403 / 无订阅这类失败，事后只能从 log 里翻
+        const projector = new Projector(this.authorOf(), turn.turn, { modelKey: this.modelKey });
         const abort = new AbortController();
         this.abort = abort;
 
@@ -776,7 +777,11 @@ export class BotSession {
         signal?: AbortSignal;
     }): Promise<CompactEvent | null> {
         const budget = options.budget ?? this.budgetWith({});
-        const before = { entries: this.transcript.length, chars: estimateChars(this.transcript), tokens: estimateTokens(this.transcript) };
+        const before = {
+            entries: this.transcript.length,
+            chars: estimateChars(this.transcript),
+            tokens: estimateTokens(this.transcript),
+        };
         const startedAt = Date.now();
         const compactId = options.compactId ?? `c-${startedAt.toString(36)}`;
         const visible = options.manual === true;
@@ -872,10 +877,7 @@ export class BotSession {
             const text = typeof content === 'string' ? content : '';
             previousSummary = text.replace(COLLAPSED_PREFIX, '').trim();
         }
-        const content = [
-            ...(this.collapsed > 0 ? [collapsedLabel(this.collapsed)] : []),
-            summary ?? previousSummary,
-        ]
+        const content = [...(this.collapsed > 0 ? [collapsedLabel(this.collapsed)] : []), summary ?? previousSummary]
             .filter((part): part is string => typeof part === 'string' && part.trim() !== '')
             .join('\n\n');
         this.transcript.unshift({ message: { role: 'user', content }, origin: 'note' });

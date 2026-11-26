@@ -895,12 +895,14 @@ export async function createDiy2App(opts: {
                         });
                         if (targets.length === 0) continue;
                         started.push({ roomId, botIds: targets });
-                        void actor.say({ text: RETRY_TEXT, author: HUMAN, recipients: targets }).catch((error: unknown) => {
-                            broadcast(roomId, {
-                                kind: 'error',
-                                message: error instanceof Error ? error.message : String(error),
+                        void actor
+                            .say({ text: RETRY_TEXT, author: HUMAN, recipients: targets })
+                            .catch((error: unknown) => {
+                                broadcast(roomId, {
+                                    kind: 'error',
+                                    message: error instanceof Error ? error.message : String(error),
+                                });
                             });
-                        });
                     }
                     return { started, skipped };
                 },
@@ -946,6 +948,23 @@ export async function createDiy2App(opts: {
                         // 不能由客户端拿条目时刻去估（收轮时会跟 turn.end 给的 startedAt 跳一下）
                         runningTurns: actor.runningTurns(),
                     };
+                },
+                wait: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    const sinceSeq = input.sinceSeq ?? 0;
+                    const deadline = Date.now() + (input.timeoutMs ?? 30_000);
+                    // 轮询间隔：本地 sqlite 读一条 eq 读 200 次/秒不痛；再密就是给自己找 IO
+                    const POLL_MS = 200;
+                    for (;;) {
+                        const fresh = actor.items(sinceSeq);
+                        if (fresh.length > 0) {
+                            // 只回最近 50 条：长轮询是「醒来看看」，不是拉全量（拉全量是 history 的事）
+                            const tail = fresh.slice(-50);
+                            return { timedOut: false, seq: tail[tail.length - 1]?.seq ?? sinceSeq, items: tail };
+                        }
+                        if (Date.now() >= deadline) return { timedOut: true, seq: sinceSeq, items: [] };
+                        await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+                    }
                 },
                 chat: async ({ input }) => {
                     const actor = requireRoom(input.id);

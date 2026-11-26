@@ -22,4 +22,8 @@
   },
   "include": ["src/**/*"],
   "exclude": ["tests/**/*", "test/**/*", "examples/**/*"]
+,
+  "references": [
+    { "path": "../../core/rpc/tsconfig.build.json" }
+  ]
 }

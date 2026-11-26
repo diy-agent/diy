@@ -75,7 +75,11 @@ export const botsApi = RpcSchema.group({
             output: Any,
         }),
         create: RpcSchema.unary({
-            input: { name: z.string().min(1), homeRoomId: z.string().optional(), modelKey: z.string().min(1).optional() },
+            input: {
+                name: z.string().min(1),
+                homeRoomId: z.string().optional(),
+                modelKey: z.string().min(1).optional(),
+            },
             output: Any,
         }),
         /** 改 bot（名字 / 人格 / 模型 / 归属） */
@@ -98,6 +102,23 @@ export const chatApi = RpcSchema.group({
     children: {
         /** 打开房间要的三份：items / deliveries / asks（answered 一起回） */
         history: RpcSchema.unary({ input: { id: Id }, output: Any }),
+        /**
+         * 等房间出现新条目（长轮询）。
+         *
+         * 给 agent 自己的循环用：全是 unary 的 RPC 面下，`run_code` 想「盯」一件事
+         * 只能 `sleep` 轮询 —— 短了浪费轮次、长了错过时机。这条把「等」变成一次调用。
+         * 有新条目立即返回；等到 `timeoutMs` 没动静就 `timedOut: true`（**不算错误**）。
+         */
+        wait: RpcSchema.unary({
+            input: {
+                id: Id,
+                /** 只要 seq 大于它的条目；缺省 0 = 从第一条起（调用方通常传上一轮的 `seq`） */
+                sinceSeq: z.number().int().min(0).optional(),
+                /** 最多等多久（毫秒）；缺省 30s，封顶 120s（再长就该转后台作业） */
+                timeoutMs: z.number().int().min(0).max(120_000).optional(),
+            },
+            output: Any,
+        }),
         /** 发一条消息（受理即返；事件从 /rpc 的 room 流进来） */
         chat: RpcSchema.unary({ input: { id: Id, text: z.string().min(1) }, output: Any }),
         cancel: RpcSchema.unary({

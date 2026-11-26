@@ -26,6 +26,14 @@ export class Projector {
     constructor(
         private readonly author: Author,
         private readonly turn: number,
+        /**
+         * 带进错误条目的上下文。
+         *
+         * 为什么必须：模型失败（403 / 无订阅 / 模型不存在）时，history 里只剩一句上游的话，
+         * 「用的是哪个模型」只在 `log/app/*.log` 里有 —— 而换模型排查时那正是第一需要的字段
+         *（同一条消息可能配 3 层 modelKey）。
+         */
+        private readonly meta: { modelKey?: string } = {},
     ) {}
 
     /**
@@ -225,7 +233,10 @@ export class Projector {
                     status: 'failed',
                     author: this.author,
                     type: 'error',
-                    data: { message: event.message },
+                    data: {
+                        message: event.message,
+                        ...(this.meta.modelKey === undefined ? {} : { modelKey: this.meta.modelKey }),
+                    },
                 };
                 this.items.set(err.id, err);
                 ops.push(err);
