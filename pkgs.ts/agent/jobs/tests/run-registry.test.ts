@@ -286,14 +286,15 @@ describe("RunRegistry（抽包后的行为，##515 3a）", () => {
         const reg = new RunRegistry({ rootDir, onChange: () => (changes += 1) });
         try {
             const info = await reg.spawn({ command: "echo x", cwd: process.cwd() });
-            expect(changes).toBeGreaterThanOrEqual(1); // 起
-            // 基准必须在 `wait` **之前**取：wait 的 resolve 与「收口那条 onChange」谁先谁后
-            // 本来就不保证（实测收口先到 ⇒ 老写法 `afterSpawn` 已经把收口那次算进去，
-            // 断言变成 `2 > 2` 恒假）。这里要钉的是「收口也叫了一次」，不是两者的先后。
-            const beforeDone = changes;
             await reg.wait(info.id, 10_000);
             await sleep(50);
-            expect(changes).toBeGreaterThan(beforeDone); // 收口
+            // 断言**总数**而不是「谁先谁后」：`echo x` 只有几毫秒，起与收口两条 onChange
+            // 可能都在本行之前就发完了（实测 beforeDone 已经等于 2 ⇒ `2 > 2` 恒假）。
+            // 这一例要钉的是「起、收口各叫一次」+「不轮询」，两件事都与先后无关。
+            expect(changes).toBeGreaterThanOrEqual(2);
+            const settled = changes;
+            await sleep(200);
+            expect(changes).toBe(settled); // 表没变 ⇒ 不再叫（轮询会让它一直涨）
         } finally {
             reg.clear();
             rmSync(rootDir, { recursive: true, force: true });
