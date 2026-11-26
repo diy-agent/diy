@@ -10,12 +10,14 @@
 //   · 拉起 = 起 `build/prod/server/index.mjs`（**独立进程**，argv 是它唯一的输入面）。
 //
 // 前台 vs 后台：前台 `stdio: 'inherit'`（日志直接进终端，Ctrl-C 一起退）；
-// 后台 `detached + unref`，然后靠探活等它就绪（端口未知时只能这样等，`app.port` 不证明存活）。
+// 后台 fd1/fd2 接到 `<home>/log/stdout.log`（append + 超限滚动，见 ./detach-log ——
+// 不再 `stdio: 'ignore'` 丢输出，省得调用方自己 nohup >> /tmp 散落），
+// detached + unref 后靠探活等它就绪（端口未知时只能这样等，`app.port` 不证明存活）。
 //
 // 依赖方向：本文件**不** import instance.ts（否则 instance → web → instance 成环，
 // 顶层求值时 webProcedure 还在 TDZ 里）；共用的 probeMine / stopOne 各自在自己的模块。
 
-import { spawn } from 'node:child_process';
+import { spawn, type StdioOptions } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
@@ -23,6 +25,7 @@ import { RpcSchema } from '@diy-agent/rpc';
 
 import { resolveConfig, serverEntryOf, webDirOf, type Diy2Config } from '../../server/config';
 import { probeMine } from '../../server/probe';
+import { closeDetachLog, detachLogPath, openDetachLog } from './detach-log';
 import { configShape, toArgv, toOverrides } from './options';
 import { stopOne } from './stop';
 
@@ -124,13 +127,25 @@ export function webHandler(moduleDir: string) {
         const argv = [entry, ...toArgv(overrides)];
 
         if (input.detach === true) {
-            const child = spawn(process.execPath, argv, { detached: true, stdio: 'ignore' });
+            // 输出统一落 `<home>/log/stdout.log`；打不开就退回 ignore（日志不许挡启动）
+            const logFd = openDetachLog(config.home);
+            const stdio: StdioOptions = logFd === null ? 'ignore' : ['ignore', logFd, logFd];
+            let child: ReturnType<typeof spawn>;
+            try {
+                child = spawn(process.execPath, argv, { detached: true, stdio });
+            } finally {
+                closeDetachLog(logFd); // 子进程有自己的副本；父进程这份用完就关
+            }
             child.unref();
             const info = await waitForInstance(config);
             if (info === null) {
-                throw new Error(`后台实例没起来（看 ${config.home} 的日志，或去掉 --detach 前台跑一次看输出）`);
+                throw new Error(
+                    `后台实例没起来（看 ${detachLogPath(config.home)}，或去掉 --detach 前台跑一次看输出）`,
+                );
             }
-            console.log(`diy2 后台已起：${urlOf(info.port)}（pid=${info.pid} home=${info.home}）`);
+            console.log(
+                `diy2 后台已起：${urlOf(info.port)}（pid=${info.pid} home=${info.home} 日志 ${detachLogPath(info.home)}）`,
+            );
             if (input.open === true) openBrowser(urlOf(info.port));
             return { port: info.port, pid: info.pid, home: info.home, reused: false };
         }
