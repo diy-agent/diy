@@ -1,0 +1,11 @@
+# git blame 时跳过的提交
+#
+# 用法（每台机器一次）：
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub 网页版的 blame 会自动识别这个文件。
+#
+# 规则：只放**纯格式化 / 纯改名**这类「逻辑零改动」的提交 —— 它们会让每一行的
+# blame 都指向格式化那一刀，把真正的作者信息盖掉。
+
+# 2026-11-27 全仓 oxfmt 格式化（1097 文件：缩进 2→4 / 引号统一双引号 / 长行换行）
+a9cbd3bcbbf05787560513b2504b1201de260a6c
