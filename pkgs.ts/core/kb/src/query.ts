@@ -181,8 +181,17 @@ export function findIn(root: string, keywords: readonly string[], limit = 50): K
     return hits;
 }
 
-/** 设备级知识库根：`$DIY_HOME/knowledge`（diy-app 口径）> `~/.diy/knowledge` */
-export function globalKbRoot(home: string | undefined, homedir: string): string {
-    const base = home !== undefined && home.trim() !== '' ? home.trim() : join(homedir, '.diy');
+/**
+ * 设备级知识库根：`<设备根>/knowledge`，缺省 `<设备根>` = `~/.diy2`。
+ *
+ * 为什么不读 `DIY_HOME`（2026-11-26 裁）：`DIY_HOME` 在 diy2 里表示**实例数据根**
+ * （生产 `~/.diy2`，lab 是 `run/diy2/lab`），在 diy-app 时代却表示「设备数据根」。
+ * 两语义一撞，设备库就被算成「实例根下的 knowledge」：生产实测算成
+ * `~/.diy/diy2/knowledge`（不存在）→ 所有 bot 的上下文里一条设备条目都没有。
+ * 现在设备根是**显式参数**：由宿主注入（生产 = home 本身，lab 指生产根），
+ * 缺省 `~/.diy2` 兜住「宿主没给」的场合。
+ */
+export function deviceKbRoot(home: string | undefined, homedir: string): string {
+    const base = home !== undefined && home.trim() !== '' ? home.trim() : join(homedir, '.diy2');
     return join(base, 'knowledge');
 }

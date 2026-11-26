@@ -46,12 +46,42 @@ describe('buildRoomSystemContext', () => {
         expect(text).not.toContain('KB_BODY_ONLY');
     });
 
-    it('没有 home 时不读设备级库（不出现 scope=global）', () => {
+    it('没有 deviceHome 时不读设备级库（不出现 scope=global）', () => {
         const repo = tmp();
         seedKb(repo, 'rule/dev.md', '开发规则', [['a', 'x']]);
         const text = buildRoomSystemContext({ cwd: repo });
         expect(text).toContain('scope: project');
         expect(text).not.toContain('scope: global');
+    });
+
+    it('deviceHome 给了就读设备库，且 `DIY_HOME` 完全不参与', () => {
+        const repo = tmp();
+        seedKb(repo, 'rule/dev.md', '开发规则', [['a', 'x']]);
+        // 设备库：`<deviceHome>/knowledge`（seedKb 写的是 `<根>/.diy/knowledge`）
+        const deviceRoot = tmp();
+        seedKb(deviceRoot, 'tool/tool.md', '工具偏好（设备级）', [['cdp', 'CDP 走 playwright-cli attach']]);
+        const saved = process.env['DIY_HOME'];
+        // 脏值：diy2 实例里 `DIY_HOME` = 实例数据根（实测 `~/.diy/diy2`），旧实现拿它算设备根
+        process.env['DIY_HOME'] = join(tmp(), 'instance-home');
+        try {
+            const text = buildRoomSystemContext({ cwd: repo, deviceHome: join(deviceRoot, '.diy') });
+            expect(text).toContain('path: tool/tool.md');
+            expect(text).toContain('工具偏好（设备级）');
+            expect(text).toContain('scope: global');
+        } finally {
+            if (saved === undefined) delete process.env['DIY_HOME'];
+            else process.env['DIY_HOME'] = saved;
+        }
+    });
+
+    it('折叠索引保留前几个文件名：目录里有什么看得见（不再只剩「N 个文件」）', () => {
+        const repo = tmp();
+        seedKb(repo, 'app/alpha.md', 'A', [['a', 'x']]);
+        seedKb(repo, 'app/beta.md', 'B', [['b', 'x']]);
+        seedKb(repo, 'app/gamma.md', 'C', [['c', 'x']]);
+        const text = buildRoomSystemContext({ cwd: repo });
+        expect(text).toContain('app/');
+        expect(text).toContain('alpha');
     });
 
     it('空目录：没有链/知识库，但 diy / cwd 仍在信封里', () => {

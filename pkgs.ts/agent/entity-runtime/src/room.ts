@@ -76,10 +76,15 @@ export interface RoomActorDeps {
     /** 房间的工作目录；不传 = 不给文件/命令工具（只用内置 get_time） */
     cwd?: string;
     /**
-     * 应用数据根（diy2 = `DIY2_HOME`）：`<home>/AGENTS.md` 进规则链首、并允许读设备级知识库。
+     * 应用数据根（diy2 = 实例 home）：`<home>/AGENTS.md` 进规则链首。
      * 不传 = 没有应用级规范（测试 / 无 app 宿主）。
      */
     home?: string;
+    /**
+     * 设备根（diy2 = 生产 home `~/.diy2`）：设备级知识库 `<设备根>/knowledge`。
+     * 不传 = 不投设备库（与 `home` 分开：lab 实例的应用根是 `run/diy2/lab`，设备库仍在生产根）。
+     */
+    deviceHome?: string;
     /** 是否开放 shell（缺省开放） */
     shell?: boolean;
     /**
@@ -911,6 +916,7 @@ export class RoomActor {
             spec: this.deps.spec,
             cwd,
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
+            ...(this.deps.deviceHome === undefined ? {} : { deviceHome: this.deps.deviceHome }),
             journal: () => this.deps.store.journalOf(this.id),
             ...(this.deps.spec.type === 'task' ? { units: () => this.unitBoardOf() } : {}),
             members: () => {
