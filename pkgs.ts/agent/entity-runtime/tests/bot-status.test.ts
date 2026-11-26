@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { botLastTurnOf, needsHuman, outcomeOfFact, outcomeText, withTurnFact } from '../src/bot-status';
+import { botLastTurnOf, createTurnLookup, needsHuman, outcomeOfFact, outcomeText, withTurnFact } from '../src/bot-status';
 import { endItems } from '../src/end-reason';
 import { openStore } from '../src/db';
 import type { Item } from '../src/types';
@@ -202,5 +202,56 @@ describe('needsHuman / outcomeText', () => {
         expect(outcomeText('failed')).toBe('运行失败');
         expect(outcomeText('truncated')).toBe('被输出上限截断');
         expect(outcomeText('interrupted')).toBe('中断（上一轮没跑完）');
+    });
+});
+
+describe('createTurnLookup —— 事实必须属于当前这一轮', () => {
+    const bot = 'bot:a';
+    const room = 'room:x';
+
+    it('不被旧轮带 botId 的 interrupted 盖掉（“导航图标红着，进去却没问题”）', () => {
+        // 用户 2026-11-26 报的 #29 任务分解 dag：最新一轮 job-done 退出码 0，
+        // 却被几轮之前 seq 更小的 interrupted 盖成了「出错」——
+        // 因为 `lastFactPerTurn` 按 owner（COALESCE(botId, turnId)）分组，
+        // 一个 bot 在它那里只留一条，那条是旧轮的。
+        const store = openStore(':memory:');
+        store.appendItem(
+            room,
+            item({ type: 'chat', data: { text: '结论' }, turnId: 'turn-new', turn: 95 }, bot),
+        );
+        store.appendItem(
+            room,
+            item({
+                type: 'notice',
+                data: { text: '上一轮没跑完', kind: 'interrupted', botId: bot },
+                turnId: 'turn-old',
+                turn: 94,
+            }),
+        );
+        store.appendItem(
+            room,
+            item({ type: 'notice', data: { text: '后台进程结束', kind: 'job-done' }, turnId: 'turn-new', turn: 95 }),
+        );
+
+        const lookup = createTurnLookup(store);
+        // job-done 不是结局（`NOTICE_OUTCOMES` 里没有）→ 维持 bot 最后条目推出来的 done
+        expect(lookup(room, bot)?.outcome).toBe('done');
+    });
+
+    it('当前轮自己的 interrupted 仍然算（红图标要有据）', () => {
+        const store = openStore(':memory:');
+        store.appendItem(room, item({ type: 'chat', data: { text: '说了一半' }, turnId: 'turn-1', turn: 1 }, bot));
+        store.appendItem(
+            room,
+            item({
+                type: 'notice',
+                data: { text: '没跑完', kind: 'interrupted', botId: bot },
+                turnId: 'turn-1',
+                turn: 1,
+            }),
+        );
+
+        const lookup = createTurnLookup(store);
+        expect(lookup(room, bot)?.outcome).toBe('interrupted');
     });
 });

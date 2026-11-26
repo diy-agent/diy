@@ -26,17 +26,16 @@ import { openLog } from './log';
 import {
     JOURNAL_KINDS,
     RoomActor,
-    botLastTurnOf,
     createJobRegistry,
+    createTurnLookup,
     defaultModelKeyOf,
     modelProviders,
     newEntityId,
     openStore,
     unitBoard,
     unitsContextText,
-    withTurnFact,
 } from '@diy-agent/entity-runtime';
-import type { BotLastTurn, CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
+import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
 import { diy2Api } from '@diy-agent/protocol';
 import type {
@@ -570,39 +569,10 @@ export interface Diy2App {
     close: () => void;
 }
 
-/**
- * 「某个成员上一轮的结局」查询器 —— `rooms.list`（侧栏红图标）与 `bots.rows`（三级表格）**共用一份**。
- *
- * 两个来源必须合成：bot 自己最后一条 item 给 turnId，而**结局**在轮级事实（notice / error）里
- * （论证见 `bot-status.ts` 头部）。各算一份迟早走散 —— 用户 2026-11-26 看到的就是
- * “表格说「出错」，侧栏图标却什么事都没有”。
- *
- * 成本：两条全表 json 分组查询（靠 `items_author_seq` / `items_fact_owner_seq` 表达式索引，
- * 实测 25ms + 54ms）。`rooms.list` 30s 一次、`bots.rows` 每次打开浮层一次，可以接受。
+/*
+ * 「某个成员上一轮的结局」查询器已移到 `@diy-agent/entity-runtime` 的 `createTurnLookup`
+ * （`rooms.list` 与 `bots.rows` 共用一份，判据在 `bot-status.ts`）。
  */
-function turnLookupOf(store: ReturnType<typeof openStore>):
-    (roomId: string, botId: string) => BotLastTurn | undefined {
-    const last = new Map<string, BotLastTurn>();
-    for (const { roomId, item } of store.lastItemPerBot()) {
-        const turn = botLastTurnOf(roomId, item);
-        if (turn !== undefined) last.set(`${roomId}\u0000${turn.botId}`, turn);
-    }
-    // 轮级事实（不带 author 的 notice / error）只能单独认领。
-    // key 用 `owner`（= 事实自带的 botId，老数据退回 turnId）—— 一轮里 @all 的
-    // 各 bot 共享 turnId，只按它查会把 A 的截断盖到 B 头上。
-    const facts = new Map<string, Item>();
-    for (const { roomId, owner, item } of store.lastFactPerTurn()) {
-        facts.set(`${roomId}\u0000${owner}`, item);
-    }
-    return (roomId, botId) => {
-        const own = last.get(`${roomId}\u0000${botId}`);
-        if (own === undefined) return undefined;
-        return withTurnFact(
-            own,
-            facts.get(`${roomId}\u0000${own.botId}`) ?? facts.get(`${roomId}\u0000${own.turnId}`),
-        );
-    };
-}
 
 /**
  * 装配一个 diy2 应用（**不监听端口**）。
@@ -675,7 +645,7 @@ export async function createDiy2App(opts: {
                     const unread = store.unreadByRoom();
                     // 「上一轮出错的成员」：侧栏图标要变红（用户 2026-11-26：表格说「出错」而侧栏
                     // 图标没变，两处不一致）。数据与 `bots.rows` 同源（`turnLookupOf`），不各算一份。
-                    const turnOf = turnLookupOf(store);
+                    const turnOf = createTurnLookup(store);
                     return [...rooms.values()].map((actor) => {
                         const id = actor.spec.id;
                         const at = lastItemAt[id];
@@ -811,7 +781,7 @@ export async function createDiy2App(opts: {
                  */
                 rows: async () => {
                     const bots = new Map(store.listBots().map((bot) => [bot.id, bot]));
-                    const turnOf = turnLookupOf(store);
+                    const turnOf = createTurnLookup(store);
                     const rows: BotRow[] = [];
                     for (const actor of rooms.values()) {
                         const spec = actor.spec;
