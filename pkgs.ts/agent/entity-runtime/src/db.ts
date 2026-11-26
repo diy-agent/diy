@@ -148,8 +148,26 @@ export interface UnitRecord {
     taskId: string;
     id: string;
     title: string;
-    /** 这一步做什么 + 验收口径（不是任务方案全文：方案在 task.body） */
+    /** 这条需求要解决什么（背景 / 范围）。**验收口径不写这里** —— 它有自己的字段 `accept` */
     body: string;
+    /**
+     * 「怎么算做完」——一句话能判断完/未完的判据。
+     *
+     * 为什么单独一个字段（2026-11-26 用户裁）：原先验收口径埋在 `body` 里，模型经常忘，
+     * 人也没法快速核对（body 里既有背景又有口径，还得找出哪句是判据）。
+     * 做成字段之后：缺了能看得见（界面标「未写验收」）、提示词也有一条明确的填空要求。
+     * 空串 = 还没写（不假装有）。
+     */
+    accept: string;
+    /**
+     * 这条需求来自**哪句人话**（`entity_items.id`，形如 `u-mwwtvgiy-1`）；空串 = 不知道
+     * （老数据 / 非人类触发）。
+     *
+     * 为什么要它（2026-11-26 用户）：人核对账本时第一个问题永远是「这是我要的吗」，
+     * 而现在只能翻聊天记录去猜。由宿主在**本轮触发消息**上自动盖章 —— 不靠模型填
+     * （模型根本看不到消息 id，让它编只会编错）。
+     */
+    source: string;
     status: UnitStatus;
     /**
      * 树上的父（功能域 / 母项）id；`null` = 根。
@@ -165,8 +183,21 @@ export interface UnitRecord {
 }
 
 /** 写 unit：`id` / `seq` / 时间戳缺省由 store 补（新 unit 的 id 走 counters，永不回收） */
-export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt'> & {
+export type UnitInput = Omit<
+    UnitRecord,
+    'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt' | 'accept' | 'source'
+> & {
     id?: string;
+    /**
+     * 「怎么算做完」。缺省 = 沿用库里已有的（更新时）；新建缺省就是空串 = 还没写。
+     * **不做成必填**：老代码 / 老数据里没有这一栏，逼着所有调用点补一遍只会让人随手写个占位串。
+     */
+    accept?: string;
+    /**
+     * 来自哪句人话（`entity_items.id`）。缺省沿用库里已有的；新建缺省空串。
+     * 同样**不设成必填**：宿主盖章是锦上添花，缺了不该让写入失败。
+     */
+    source?: string;
     /** 父（功能域）；缺省 = 沿用库里已有的，库里也没有就是根 */
     parent?: string | null;
     createdAt?: number;
@@ -332,6 +363,14 @@ export interface Store {
     appendRoomEntry(roomId: string, entry: RoomEntry): void;
     roomEntries(roomId: string): RoomEntry[];
     itemsOf(roomId: string, afterSeq?: number): Item[];
+    /**
+     * 按**条目 id** 取若干条（`unit.source_message_id` 指向它）。找不到的 id 静默缺席 ——
+     * 消息可能已被剪 / 老数据没有来源，调用方按「不知道」处理，不要报错。
+     *
+     * 为什么不复用 `itemsOf(roomId)` 再过滤：那是把整个房间的消息全 `JSON.parse` 一遍
+     * 就为拿 N 条原话；而这张表随历史线性涨（界面上 5 秒轮询一次）。一次 `IN` 查询只读命中的行。
+     */
+    itemsByIds(ids: readonly string[]): Item[];
     /**
      * 某个房间**最后 n 条**（仍按 seq 升序返回）。
      *
@@ -670,6 +709,10 @@ export function openStore(file: string): Store {
             id         TEXT NOT NULL,
             title      TEXT NOT NULL,
             body       TEXT NOT NULL DEFAULT '',
+            -- 「怎么算做完」：空串 = 还没写（界面会标出来）
+            accept     TEXT NOT NULL DEFAULT '',
+            -- 来自哪句人话（entity_items.id）：宿主按「本轮触发的那条消息」自动盖章
+            source_message_id TEXT NOT NULL DEFAULT '',
             status     TEXT NOT NULL DEFAULT 'open',
             -- 树上的父（母项）。NULL = 根
             parent_id  TEXT,
@@ -799,6 +842,12 @@ export function openStore(file: string): Store {
         ),
     );
     if (!unitColumns.has('parent_id')) db.exec('ALTER TABLE task_units ADD COLUMN parent_id TEXT');
+    // 老库补列：accept（「怎么算做完」）。历史行一律空串 = 还没写 —— 界面会标「未写验收」，
+    // 不假装有（拿 body 去兜底等于把「没写」藏起来，人就没法靠它挑活）。
+    if (!unitColumns.has('accept')) db.exec("ALTER TABLE task_units ADD COLUMN accept TEXT NOT NULL DEFAULT ''");
+    // 老库补列：source（这条需求来自哪句话）。历史行一律空串 = 不知道 —— 界面不编造来源。
+    if (!unitColumns.has('source_message_id'))
+        db.exec("ALTER TABLE task_units ADD COLUMN source_message_id TEXT NOT NULL DEFAULT ''");
     // 2026-11-25：依赖边与交付批次整体退役（只留需求账本树）。旧库里的两张表直接删 ——
     // 它们是纯派生侧的记录，删掉不丢「要做什么」。task_units.batch_id 是老库的死列：
     // SQLite 不能删列，代码也再不读写它，留着不影响任何判据。
@@ -941,6 +990,8 @@ export function openStore(file: string): Store {
         id: String(row['id']),
         title: String(row['title']),
         body: String(row['body']),
+        accept: row['accept'] === null || row['accept'] === undefined ? '' : String(row['accept']),
+        source: row['source_message_id'] === null || row['source_message_id'] === undefined ? '' : String(row['source_message_id']),
         status: String(row['status']) as UnitStatus,
         parent: row['parent_id'] === null || row['parent_id'] === undefined ? null : String(row['parent_id']),
         seq: Number(row['seq']),
@@ -994,6 +1045,10 @@ export function openStore(file: string): Store {
             id: previous?.id ?? unit.id ?? allocateUnitId(unit.taskId),
             title,
             body: unit.body,
+            // 缺省沿用（改标题不该把已写好的验收口径抹掉）
+            accept: unit.accept ?? previous?.accept ?? '',
+            // 来源同理：只在显式给的时候覆盖（重跑一遍 unit_add 不会把来源抹成空）
+            source: unit.source ?? previous?.source ?? '',
             status: unit.status,
             // 缺省沿用（改 title 不该顺手把挂点抹掉）；新节点缺省 = 根
             parent: unit.parent === undefined ? (previous?.parent ?? null) : unit.parent,
@@ -1003,14 +1058,16 @@ export function openStore(file: string): Store {
         };
         if (record.parent === record.id) throw new Error(`unit 不能是自己的父：${record.id}`);
         db.prepare(
-            'INSERT INTO task_units (task_id, id, title, body, status, parent_id, seq, created_at, updated_at) ' +
-                'VALUES (?,?,?,?,?,?,?,?,?) ' +
-                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, status=?, parent_id=?, updated_at=?',
+            'INSERT INTO task_units (task_id, id, title, body, accept, source_message_id, status, parent_id, seq, created_at, updated_at) ' +
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?) ' +
+                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, accept=?, source_message_id=?, status=?, parent_id=?, updated_at=?',
         ).run(
             record.taskId,
             record.id,
             record.title,
             record.body,
+            record.accept,
+            record.source,
             record.status,
             record.parent,
             record.seq,
@@ -1018,6 +1075,8 @@ export function openStore(file: string): Store {
             record.updatedAt,
             record.title,
             record.body,
+            record.accept,
+            record.source,
             record.status,
             record.parent,
             record.updatedAt,
@@ -1720,6 +1779,29 @@ export function openStore(file: string): Store {
                 .prepare('SELECT seq, item FROM entity_items WHERE entity_id = ? AND seq > ? ORDER BY seq ASC')
                 .all(roomId, afterSeq) as Record<string, unknown>[];
             return rows.map((row) => ({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) }));
+        },
+        itemsByIds(ids: readonly string[]): Item[] {
+            const wanted = [...new Set(ids.filter((id) => id !== ''))];
+            if (wanted.length === 0) return [];
+            // 房间不限定：`entity_items` 的 id 是全局唯一的（`u-…`），而来源可能指向别的房间
+            // （bot 在 A 房间被叫到、需求落在自己家任务上）。这里只按 id 取，不要多加 `entity_id = ?`
+            // 那种「看起来更安全」的条件 —— 它会把跨房间的来源静默变成「不知道」。
+            const rows = db
+                .prepare(
+                    `SELECT seq, item FROM entity_items WHERE json_extract(item, '$.id') IN (${wanted
+                        .map(() => '?')
+                        .join(',')})`,
+                )
+                .all(...wanted) as Record<string, unknown>[];
+            const items: Item[] = [];
+            for (const row of rows) {
+                try {
+                    items.push({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) });
+                } catch {
+                    continue; // 坏行不该让整批来源都读不出来（与 lastItemPerBot 同策）
+                }
+            }
+            return items;
         },
         lastItemsOf(roomId: string, n: number): Item[] {
             const rows = db

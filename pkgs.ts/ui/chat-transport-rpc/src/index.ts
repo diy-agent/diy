@@ -61,6 +61,25 @@ export interface UnitItem {
     id: string;
     title: string;
     body: string;
+    /**
+     * 「怎么算做完」：一句话能判断完/未完的判据。空串 = 还没写（界面上标「未写验收」）。
+     *
+     * 为什么与 body 分开（2026-11-26 用户裁）：body 里既装背景又装口径时，模型经常忘、
+     * 人也没法一眼核对；拆成字段之后「没写」是**看得见**的。
+     */
+    accept: string;
+    /**
+     * 这条需求来自哪句人话（消息 id，如 `u-mwwtvgiy-1`）；空串 = 不知道（老数据）。
+     * 界面用它回答「这是我要的吗」—— 点一下能回到那条消息。
+     */
+    source: string;
+    /**
+     * `source` 解开后的「谁 + 原话」：树节点上直接显示，不用点进别处才知道是谁提的。
+     *
+     * **没有这个键 = 不知道**（老数据 / 消息已被剪 / 非人类触发）—— 界面别编一个假来源，
+     * 只把 ↩ 跳转留着。原话是服务端截断过的（`…` 结尾还有下文）。
+     */
+    sourceQuote?: SourceQuoteView;
     /** **有效**状态：叶子 = 落库值；母项（有子）= 由子派生（全 done → done） */
     status: 'open' | 'doing' | 'done';
     /** 树上的父（母项）；null = 根 */
@@ -73,6 +92,20 @@ export interface UnitItem {
     depth: number;
     /** 书写顺序（同一父下的稳定次序） */
     seq: number;
+}
+
+/**
+ * 一条需求的来源原话（`source` 解开之后）。
+ *
+ * `role` 用来区分「人提的」与「agent 自己落的」：两者都该看得见，但分量不一样 ——
+ * 只把 human 当「需求」，其余的最多算「待确认的自作主张」。
+ */
+export interface SourceQuoteView {
+    /** 发言人名字（消息 `author.name`）；空串 = 那条消息没署名 */
+    author: string;
+    role: 'human' | 'bot' | 'system' | '';
+    /** 原话（已截断，一行） */
+    text: string;
 }
 
 /** 需求账本树的视图快照：树 + ready/doing（现在能挑的） */

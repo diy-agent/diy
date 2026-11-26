@@ -26,6 +26,7 @@ import type { Compactor } from './compaction';
 import { ASK_DRAFT_PREFIX, type Store } from './db';
 import { RoomLog, type RoomEntry } from './room-log';
 import { createRoomContext } from './system-context';
+import { envelopeHint, promptReminder, resolveRemindMode, type RemindMode } from './units-remind';
 import { buildRoomTools } from './tools/index';
 import { createToolOutputCapper } from './tool-output';
 import { unitBoard, type UnitBoard } from './units';
@@ -394,15 +395,22 @@ export class RoomActor {
         // 变量增量不在这里算：它属于**模型步**（session 的 prepareStep 每步取一次），
         // 这样 say / 恢复重投 / agent 间结论走的是同一条路，不会有「时机不同就漏一把」。
         await Promise.all(
-            recipients.map((bot) =>
-                this.sessionOf(bot).post({
-                    messageId: saved.id,
-                    text,
-                    mode: input.mode ?? 'next-step',
-                    turn,
-                    entry,
-                }),
-            ),
+            recipients.map(async (bot) => {
+                // 盖章：这一轮是这个成员被**这条消息**叫醒的（unit_add 靠它记来源）
+                this.turnSources.set(bot.id, saved.id);
+                try {
+                    await this.sessionOf(bot).post({
+                        messageId: saved.id,
+                        text,
+                        mode: input.mode ?? 'next-step',
+                        turn,
+                        entry,
+                    });
+                } finally {
+                    // 收尾就撤：来源只对「这一轮」有效，留着会让下一轮的条目认错爹
+                    if (this.turnSources.get(bot.id) === saved.id) this.turnSources.delete(bot.id);
+                }
+            }),
         );
     }
 
@@ -460,6 +468,7 @@ export class RoomActor {
         turn: Turn | undefined,
     ): Promise<void> {
         try {
+            this.turnSources.set(bot.id, delivery.messageId);
             await this.sessionOf(bot).post({
                 messageId: delivery.messageId,
                 text,
@@ -471,6 +480,8 @@ export class RoomActor {
             });
         } catch (error) {
             console.warn(`[room:${this.id}] 续跑投递失败：${(error as Error).message}`);
+        } finally {
+            if (this.turnSources.get(bot.id) === delivery.messageId) this.turnSources.delete(bot.id);
         }
     }
 
@@ -835,7 +846,15 @@ export class RoomActor {
                       },
                       // unit 是 task 私有的：非任务房间不给这套工具（它们没有图，也没有 #号可挂）
                       ...(this.deps.spec.type === 'task'
-                          ? { units: { store: this.deps.store, taskId: this.id } }
+                          ? {
+                                units: {
+                                    store: this.deps.store,
+                                    taskId: this.id,
+                                    remind: this.remindMode,
+                                    // 「这条需求来自哪句话」：由宿主按**本轮触发消息**盖章
+                                    sourceOf: () => this.turnSources.get(botId),
+                                },
+                            }
                           : {}),
                   });
         this.toolsByBot.set(botId, tools);
@@ -847,19 +866,53 @@ export class RoomActor {
         return this.deps.cwd !== undefined;
     }
 
+    /**
+     * 提醒档位（`units-remind.ts`）：开房时读一次（环境变量 → `<home>/units-remind.txt`）。
+     * 实验要在同一个实例上连跑几档，所以按**房间**读而不是进程启动时读死。
+     */
+    private get remindMode(): RemindMode {
+        this.remindModeCache ??= resolveRemindMode({
+            ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
+        });
+        return this.remindModeCache;
+    }
+    private remindModeCache?: RemindMode;
+
+    /**
+     * 每个成员**这一轮**是被哪条消息叫醒的（`entity_items.id`）。
+     *
+     * 用途：`unit_add` 落条目时自动盖「来源」（模型看不到 message id，让它填只会编错）。
+     * 为什么按成员分表而不是一个字段：多个 bot 可以同时被不同消息叫醒，一个字段会互相覆盖。
+     */
+    private readonly turnSources = new Map<string, string>();
+
+    /**
+     * B 档的判据：账本是否空 / 上次账本变更之后有没有人发言。
+     *
+     * 「有人发言」用 items 里最后一条 human 的时间比，而不是维护一个额外的水位 ——
+     * 水位要在写路径上记得更新（多一个会忘的地方），而时间比较是幂等的。
+     */
+    private unitsRemindState(): { empty: boolean; humanSince: boolean } {
+        const board = this.unitBoardOf();
+        if (board.rows.length === 0) return { empty: true, humanSince: true };
+        const items = this.deps.store.itemsOf(this.id);
+        let lastHuman = 0;
+        for (const item of items) {
+            const author = (item as { author?: { role?: string } }).author;
+            if (author?.role !== 'human') continue;
+            const at = (item as { at?: number }).at ?? 0;
+            if (at > lastHuman) lastHuman = at;
+        }
+        const lastUnitAt = this.deps.store
+            .listUnits(this.id)
+            .reduce((max, unit) => (unit.updatedAt > max ? unit.updatedAt : max), 0);
+        return { empty: false, humanSince: lastHuman > lastUnitAt };
+    }
+
     private toolsHint(): string {
-        // 任务房间才有账本树。措辞分两段（2026-11-26 实测后改）：先给触发条件，再给节奏 ——
-        // 只写「拆解用 unit_*」时模型的反应是「先 unit_list 看一眼，然后直接动手写代码」，
-        // 账本始终是空的（用户实测：不明确说「把这件事拆成几步」它就不建）。
-        const unitHint =
-            this.deps.spec.type === 'task'
-                ? '\n**先落账本再动手**：接到需求（或需求变了）时，先判断这件事是不是不止一步 —— ' +
-                  '是就用 unit_add 把它拆成 2~5 条「能被验收的产出」（母项 → 子项，body 写验收口径），' +
-                  '然后再开工；只有一步的小改（改个文案 / 跑个命令 / 看一眼状态）不要建。' +
-                  '\n**每轮从账本里挑活**：上下文 units 节的 ready 就是现在能挑的（不必先 unit_list），' +
-                  '挑 1~3 条做；开做标 doing、做完标 done，需求变了就让树跟着变（unit_update / unit_drop）。' +
-                  '别把步骤只写在正文里，也别等做完再补树 —— 账本是给人看进度的唯一地方。'
-                : '';
+        // 任务房间才有账本树。三处提醒的开关在 `units-remind.ts`（实验用 `DIY2_UNITS_REMIND`
+        // 或 `<home>/units-remind.txt` 换档）：这里只放 A 档（常驻提示词）那一段。
+        const unitHint = this.deps.spec.type === 'task' ? promptReminder(this.remindMode) : '';
         const jobHint =
             this.deps.jobs === undefined
                 ? ''
@@ -946,7 +999,13 @@ export class RoomActor {
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
             ...(this.deps.deviceHome === undefined ? {} : { deviceHome: this.deps.deviceHome }),
             journal: () => this.deps.store.journalOf(this.id),
-            ...(this.deps.spec.type === 'task' ? { units: () => this.unitBoardOf() } : {}),
+            ...(this.deps.spec.type === 'task'
+                ? {
+                      units: () => this.unitBoardOf(),
+                      // B 档：账本空 / 上一轮有人发言时，在 units 节挂一行提醒
+                      unitsHint: () => envelopeHint(this.remindMode, this.unitsRemindState()),
+                  }
+                : {}),
             members: () => {
                 const primary = this.primary();
                 return this.members().map((bot) => ({

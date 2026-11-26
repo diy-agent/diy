@@ -67,6 +67,11 @@ export interface RoomContextOptions {
     readonly journal?: () => readonly JournalEntry[];
     /** 任务的需求账本树：宿主给取数函数；不传 = 不投 units 节 */
     readonly units?: () => UnitBoard;
+    /**
+     * 账本节里那一行提醒（`units-remind.ts` 的 B 档）：**每轮现算** ——
+     * 「账本空 / 上一轮有人发言」这类状态只有宿主知道。不传 = 不出 hint。
+     */
+    readonly unitsHint?: () => string | undefined;
     /** 房间成员（@ 键 / 是否主人格）：不传 = 不投 room 节 */
     readonly members?: () => readonly { id: string; name: string; key: string; main: boolean }[];
 }
@@ -240,12 +245,14 @@ function journalProvider(get?: () => readonly JournalEntry[]): ContextProvider {
  * 值的算法在 `unitsContextValue()`（`units.ts`）：界面「目标」视图的源码形态调同一个函数，
  * 所以「模型读到的」和「人看到的」不可能分叉。这里只负责挂 key。
  */
-function unitsProvider(get?: () => UnitBoard): ContextProvider {
+function unitsProvider(get?: () => UnitBoard, hint?: () => string | undefined): ContextProvider {
     return {
         key: 'units',
         provide: () => {
             const board = get?.();
-            return board === undefined ? undefined : unitsContextValue(board);
+            if (board === undefined) return undefined;
+            // hint 每轮现算（账本空 / 上一轮有人发言 —— 见 `units-remind.ts` 的 B 档）
+            return unitsContextValue(board, hint?.());
         },
     };
 }
@@ -358,7 +365,7 @@ export function roomProviders(opts: RoomContextOptions): ContextProvider[] {
         docsProvider(opts.cwd),
         roomProvider(opts),
         journalProvider(opts.journal),
-        unitsProvider(opts.units),
+        unitsProvider(opts.units, opts.unitsHint),
         taskProvider(opts.spec, opts.cwd),
     ];
 }

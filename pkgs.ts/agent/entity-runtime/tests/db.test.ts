@@ -461,6 +461,77 @@ describe('unit（需求账本树的节点）', () => {
         expect(store.unitOf('t1', 'u1')?.status).toBe('doing');
     });
 
+    it('itemsByIds：按条目 id 批量取（跨房间也认），未知 id 静默缺席', () => {
+        const store = openStore(':memory:');
+        const r1: Room = { ...room, id: 'r1' };
+        const r2: Room = { ...room, id: 'r2' };
+        store.saveRoom(r1);
+        store.saveRoom(r2);
+        const chat = (id: string): Item => ({
+            id,
+            seq: 0,
+            turn: 1,
+            turnId: 't1',
+            type: 'chat',
+            at: 1,
+            status: 'done',
+            author: { id: 'human:我', name: '我', color: '#000', role: 'human' },
+            data: { text: id },
+        });
+        const a = store.appendItem(r1.id, chat('u-a'));
+        const b = store.appendItem(r2.id, chat('u-b'));
+        const got = store.itemsByIds([a.id, b.id, 'u-gone']);
+        expect(got.map((item) => item.id).sort()).toEqual([a.id, b.id].sort());
+        // 去重与空集：不去重会白读一遍；空集不该拼出 `IN ()`
+        expect(store.itemsByIds([a.id, a.id]).length).toBe(1);
+        expect(store.itemsByIds([])).toEqual([]);
+        expect(store.itemsByIds(['', ''])).toEqual([]);
+    });
+
+    it('accept（怎么算做完）落库、能改、改 title 不会把它抹掉', () => {
+        const store = openStore(':memory:');
+        const unit = store.saveUnit({
+            taskId: 't1',
+            title: '导出可用',
+            body: '',
+            accept: '点一下真的落文件，且首末轮都在',
+            status: 'open',
+        });
+        expect(unit.accept).toBe('点一下真的落文件，且首末轮都在');
+        // 只改 title：accept 必须留着（「改个错别字」不该把验收口径清空）
+        const renamed = store.saveUnit({ taskId: 't1', id: unit.id, title: '导出能用', body: '', status: 'open' });
+        expect(renamed.accept).toBe('点一下真的落文件，且首末轮都在');
+        // 显式改 accept
+        const fixed = store.saveUnit({
+            taskId: 't1',
+            id: unit.id,
+            title: renamed.title,
+            body: '',
+            accept: '文件里首轮、末轮、别人的话都在',
+            status: 'open',
+        });
+        expect(store.unitOf('t1', unit.id)?.accept).toBe('文件里首轮、末轮、别人的话都在');
+        expect(store.listUnits('t1').map((row) => row.accept)).toEqual([fixed.accept]);
+    });
+
+    it('source（来自哪句人话）落库；缺省空串，更新时不会被抹掉', () => {
+        const store = openStore(':memory:');
+        const unit = store.saveUnit({
+            taskId: 't1',
+            title: '导出可用',
+            body: '',
+            status: 'open',
+            source: 'u-mwwtvgiy-1',
+        });
+        expect(unit.source).toBe('u-mwwtvgiy-1');
+        // 不带 source 的更新（改状态）不能让来源丢掉
+        const done = store.saveUnit({ taskId: 't1', id: unit.id, title: unit.title, body: '', status: 'done' });
+        expect(done.source).toBe('u-mwwtvgiy-1');
+        // 没有来源的条目（老数据 / 非人类触发）一律空串，别编
+        const bare = store.saveUnit({ taskId: 't1', title: 'b', body: '', status: 'open' });
+        expect(bare.source).toBe('');
+    });
+
     it('显式 id 但不存在 → 抛（新号只能由 counters 发）', () => {
         const store = openStore(':memory:');
         expect(() => store.saveUnit({ taskId: 't1', id: 'u9', title: 'x', body: '', status: 'open' })).toThrow(
