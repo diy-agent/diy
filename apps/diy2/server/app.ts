@@ -25,7 +25,6 @@ import { APP_ID, type Diy2Config } from './config';
 import { openLog } from './log';
 
 import {
-    JOURNAL_KINDS,
     RoomActor,
     createJobRegistry,
     createCachedTurnLookup,
@@ -42,7 +41,6 @@ import { diy2Api } from '@diy-agent/protocol';
 import type {
     ActivityFrame,
     AskAnswer,
-    AskQuestionAnswer,
     AskRequest,
     Author,
     Bot,
@@ -67,8 +65,6 @@ const FALLBACK_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 function defaultModelKey(): string {
     return defaultModelKeyOf() ?? FALLBACK_MODEL;
 }
-/** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
-const ASK_DRAFT_TTL = 30 * 60 * 1000;
 /** 对话框草稿：synthetic owner 不随房间级联删，超过这么久没人再来就清掉 */
 const DIALOG_DRAFT_TTL = 7 * 24 * 60 * 60 * 1000;
 const HUMAN: Author = { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
@@ -466,31 +462,6 @@ function json(res: ServerResponse, status: number, body: unknown): void {
     res.end(JSON.stringify(body));
 }
 
-async function readBody<T>(req: IncomingMessage): Promise<T> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk as Buffer);
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
-}
-
-/**
- * 读 body 的统一入口：坏 JSON / 读流失败都要有回包。
- * 之前每个 `void readBody(...).then(...)` 都没 catch —— 客户端发一段坏 JSON
- * 就是"请求永不响应 + unhandled rejection"，Node 默认把后者当崩溃。
- */
-function onBody<T>(req: IncomingMessage, res: ServerResponse, handler: (body: T) => void | Promise<void>): void {
-    readBody<T>(req)
-        .then(handler)
-        .catch(() => {
-            if (!res.writableEnded) json(res, 400, { error: 'invalid JSON body' });
-        });
-}
-
-/**
- * synthetic scope 的 owner 白名单（`dlg:<用途>:<roomId>`）：`dlg:` 是保留前缀，
- * 房间 id 是 `<type>-<base36>` / `proj:xxx`，不会撞上。
- */
-const DIALOG_DRAFT_OWNER = /^dlg:[a-z][a-z0-9-]{0,40}:[A-Za-z0-9:._-]{1,120}$/;
-
 /** 单条草稿上限：超了宁可拒（413）也不静默截断用户打的字 */
 function tooLargeDraft(value: unknown): boolean {
     const serialized = JSON.stringify(value);
@@ -565,7 +536,6 @@ const HISTORY_LIMIT = 400;
 
 const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const parts = url.pathname.split('/').filter(Boolean);
 
     try {
         // GET /api/info —— 实例自报身份（探活判据：`app` + `home`）。端口/pid 都是缓存，
@@ -960,12 +930,14 @@ export async function createDiy2App(opts: {
                         });
                         if (targets.length === 0) continue;
                         started.push({ roomId, botIds: targets });
-                        void actor.say({ text: RETRY_TEXT, author: HUMAN, recipients: targets }).catch((error: unknown) => {
-                            broadcast(roomId, {
-                                kind: 'error',
-                                message: error instanceof Error ? error.message : String(error),
+                        void actor
+                            .say({ text: RETRY_TEXT, author: HUMAN, recipients: targets })
+                            .catch((error: unknown) => {
+                                broadcast(roomId, {
+                                    kind: 'error',
+                                    message: error instanceof Error ? error.message : String(error),
+                                });
                             });
-                        });
                     }
                     return { started, skipped };
                 },
