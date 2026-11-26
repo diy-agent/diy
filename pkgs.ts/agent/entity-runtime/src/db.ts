@@ -558,7 +558,12 @@ export function openStore(file: string): Store {
             model_key TEXT,
             reasoning_effort TEXT,
             created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
+            updated_at INTEGER NOT NULL,
+            -- per-task bot（2026-11-26）：domain 归属。type 级角色（模板）为 null，向后兼容
+            domain_type TEXT,
+            domain_id TEXT,
+            -- 人设代码贡献点（persona_ref）：null = 用 instructions 文本（向后兼容）
+            persona_ref TEXT
         );
         -- 「每类型至多一个 primary」不靠应用层自觉：应用层漏一次就是一段时间的双应答
         CREATE UNIQUE INDEX IF NOT EXISTS bot_roles_primary ON bot_roles(type) WHERE primary_flag = 1;
@@ -805,6 +810,16 @@ export function openStore(file: string): Store {
         db.exec('ALTER TABLE session_state RENAME COLUMN bot_id TO bot_role_id');
     }
 
+    // 老库补列：bot_roles 的 per-task 归属（2026-11-26）。老行 domain 全为 null = type 级角色（模板）
+    const botColumns = new Set(
+        (db.prepare('PRAGMA table_info(bot_roles)').all() as Array<Record<string, unknown>>).map((row) =>
+            String(row['name']),
+        ),
+    );
+    for (const column of ['domain_type', 'domain_id', 'persona_ref']) {
+        if (!botColumns.has(column)) db.exec(`ALTER TABLE bot_roles ADD COLUMN ${column}`);
+    }
+
     // 占位模型键不是「选了模型」：老库的房间行里还留着 `none@none/none`，房间头会显示成
     // `none`，发送时又会被当成一个有效 key 而失败。读的时候已经当空串，这里把存量行改掉。
     for (const table of ['tasks', 'projects']) {
@@ -865,6 +880,9 @@ export function openStore(file: string): Store {
         reasoningEffort: row['reasoning_effort'] === null ? null : String(row['reasoning_effort']),
         createdAt: Number(row['created_at']),
         updatedAt: Number(row['updated_at']),
+        domainType: row['domain_type'] === null ? null : String(row['domain_type']),
+        domainId: row['domain_id'] === null ? null : String(row['domain_id']),
+        personaRef: row['persona_ref'] === null ? null : String(row['persona_ref']),
     });
 
     const toRoleConfig = (row: Record<string, unknown>): RoleConfig => ({
@@ -1417,11 +1435,12 @@ export function openStore(file: string): Store {
                     );
                 }
                 db.prepare(
-                    'INSERT INTO bot_roles (id, type, name, color, instructions, primary_flag, model_key, reasoning_effort, created_at, updated_at) ' +
-                        'VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
+                    'INSERT INTO bot_roles (id, type, name, color, instructions, primary_flag, model_key, reasoning_effort, created_at, updated_at, domain_type, domain_id, persona_ref) ' +
+                        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
                         'name=excluded.name, color=excluded.color, instructions=excluded.instructions, ' +
                         'primary_flag=excluded.primary_flag, model_key=excluded.model_key, ' +
-                        'reasoning_effort=excluded.reasoning_effort, updated_at=excluded.updated_at',
+                        'reasoning_effort=excluded.reasoning_effort, updated_at=excluded.updated_at, ' +
+                        'domain_type=excluded.domain_type, domain_id=excluded.domain_id, persona_ref=excluded.persona_ref',
                 ).run(
                     role.id,
                     role.type,
@@ -1433,6 +1452,9 @@ export function openStore(file: string): Store {
                     role.reasoningEffort,
                     role.createdAt,
                     role.updatedAt,
+                    role.domainType ?? null,
+                    role.domainId ?? null,
+                    role.personaRef ?? null,
                 );
                 db.exec('COMMIT');
             } catch (error) {

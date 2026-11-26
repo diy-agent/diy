@@ -73,6 +73,12 @@ export interface BotRole {
     reasoningEffort: string | null;
     createdAt: number;
     updatedAt: number;
+    /** per-task bot 的 domain 归属：project / task / 任意自定义；null = type 级角色（模板） */
+    domainType?: string | null;
+    /** domain 归属的 id（任务 id / 项目 id）；null = type 级角色 */
+    domainId?: string | null;
+    /** 人设代码贡献点；null = 用 instructions 文本 */
+    personaRef?: string | null;
 }
 
 /**
