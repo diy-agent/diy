@@ -16,7 +16,7 @@
 // 它是 listbox 语义（role=option + aria-selected + 键盘上下选），而 `Button` 自带 role/样式
 // 会与 option 语义打架；这里手写是为了可访问性，不是因为组件层不够用。
 
-import { AlertTriangle, ChevronDown, Send, Square } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Loader2, Send, Square, Terminal as TerminalIcon, X as XIcon } from 'lucide-react';
 import * as React from 'react';
 
 import {
@@ -38,10 +38,21 @@ import {
     Bubble,
     BubbleContent,
     Button,
+    CodeBlock,
+    CodeBlockContent,
+    CodeBlockHeader,
+    CodeBlockTitle,
     InputGroup,
     InputGroupAddon,
     InputGroupButton,
     InputGroupTextarea,
+    Trace,
+    TraceCollapsible,
+    TraceCollapsibleContent,
+    TraceCollapsibleTrigger,
+    TraceIcon,
+    TraceLine,
+    TraceTitle,
     Message,
     MessageAvatar,
     MessageContent,
@@ -114,22 +125,82 @@ function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool'
 }
 
 function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: boolean }) {
-    // 后台作业（job / bash background）单独成卡：普通工具行只剩 name + 截断 target，
-    // 而用户要看的是 run id / 状态 / 退出码 / 输出（判据在 chat-core 的 `jobOf`）
+    // 后台作业（job / bash background）单独成卡：普通工具行只剩 name + target，而用户要看的
+    // 是 run id / 状态 / 退出码 / 输出（判据在 chat-core 的 `jobOf`）
     const job = jobOf(tool);
     if (job !== undefined) return <JobCard view={job} live={live} />;
+
     const target = toolTargetOf(tool);
     const status = TOOL_STATUS[tool.state];
-    const mark = status === 'running' ? '◌' : status === 'ok' ? '✓' : '✗';
-    return (
-        <div
-            className={`flex items-center gap-1.5 py-0.5 text-xs ${status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}
-        >
-            <span>{mark}</span>
-            <span className="font-mono">{tool.name}</span>
-            {target !== undefined && <span className="truncate font-mono opacity-80">{target}</span>}
-        </div>
+    const failed = status === 'error';
+    const asText = (value: unknown): string | undefined => {
+        if (value === undefined || value === null) return undefined;
+        if (typeof value === 'string') return value === '' ? undefined : value;
+        try {
+            return JSON.stringify(value, null, 2);
+        } catch {
+            return String(value);
+        }
+    };
+    const input = asText(tool.args);
+    const output = asText(tool.result);
+    // 官方 ai-elements 的 Tool 就是「Trace 里一行 + 有输出时套一层 Collapsible」：
+    // 标题说清发生了什么（Running / Ran / Failed），展开体分 Input / Output 两块。
+    const title =
+        status === 'running'
+            ? written('正在运行', tool.name, target)
+            : failed
+              ? written('失败', tool.name, target)
+              : written('已运行', tool.name, target);
+
+    const head = (
+        <TraceLine>
+            <TraceIcon>{failed ? <XIcon /> : <TerminalIcon />}</TraceIcon>
+            <TraceTitle className="truncate">{title}</TraceTitle>
+            {live && status === 'running' && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+        </TraceLine>
     );
+
+    // 没有 args / result 就没什么可展开的 —— 保持纯一行（官方也是这个规则：
+    // 「a plain TraceLine while it runs, a TraceCollapsible once its output arrives」）
+    if (input === undefined && output === undefined) {
+        return <Trace className={`my-1 ${failed ? 'text-destructive' : ''}`}>{head}</Trace>;
+    }
+
+    return (
+        <Trace className={`my-1 ${failed ? 'text-destructive' : ''}`}>
+            <TraceCollapsible defaultOpen={failed}>
+                <TraceCollapsibleTrigger>{head}</TraceCollapsibleTrigger>
+                <TraceCollapsibleContent>
+                    {input !== undefined && (
+                        <CodeBlock size="sm" className="mb-1.5">
+                            <CodeBlockHeader>
+                                <CodeBlockTitle>入参</CodeBlockTitle>
+                            </CodeBlockHeader>
+                            <CodeBlockContent wrap className="max-h-48">
+                                {input}
+                            </CodeBlockContent>
+                        </CodeBlock>
+                    )}
+                    {output !== undefined && (
+                        <CodeBlock size="sm" variant={failed ? 'destructive' : 'default'}>
+                            <CodeBlockHeader>
+                                <CodeBlockTitle>{failed ? '错误' : '输出'}</CodeBlockTitle>
+                            </CodeBlockHeader>
+                            <CodeBlockContent wrap className="max-h-64">
+                                {output}
+                            </CodeBlockContent>
+                        </CodeBlock>
+                    )}
+                </TraceCollapsibleContent>
+            </TraceCollapsible>
+        </Trace>
+    );
+}
+
+/** 「动词 + 工具名 + 目标」拼成一行标题：目标太长时由外层 truncate 收尾 */
+function written(verb: string, name: string, target: string | undefined): string {
+    return target === undefined ? `${verb} ${name}` : `${verb} ${name} ${target}`;
 }
 
 function ErrorBox({ text }: { text: string }) {
