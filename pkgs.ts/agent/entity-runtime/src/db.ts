@@ -377,6 +377,10 @@ export interface Store {
     /**
      * 每个房间的**未读结论数**：`seq > 已读水位` 且 `type = 'chat'` 且「不是我发的」。
      *
+     * **没有水位记录的房间算 0**（不是“全未读”）：未读是 2026-11-26 才有的功能，
+     * 若把历史全当未读，每个老房间一上来就是几百（实测 `99+`）—— 那是“历史上说过多少话”，
+     * 不是“还有几条没看”。所以水位缺省取“这个房间当前最后一条”：从现在开始算。
+     *
      * 只数**发言**（结论），不数事件 —— 用户 2026-11-26 的原话：“按 room 的结论数统计，
      * 而不是事件数，不然几千的很多”。一个 turn 里几十条 tool 调用、几条 notice 都算进去，
      * 侧栏角标就不再是“还有几条没看”，而是“这个房间历史上跑过多少步”。
@@ -1788,7 +1792,11 @@ export function openStore(file: string): Store {
                     `SELECT i.entity_id AS entity_id, COUNT(*) AS n
                        FROM entity_items i
                        LEFT JOIN room_read r ON r.entity_id = i.entity_id
-                      WHERE i.seq > COALESCE(r.last_read_seq, 0)
+                      WHERE i.seq > COALESCE(
+                                r.last_read_seq,
+                                -- 没读过 = 从现在开始算（历史不算未读）：取该房间当前最后一条
+                                (SELECT MAX(seq) FROM entity_items WHERE entity_id = i.entity_id)
+                            )
                         AND json_extract(i.item, '$.type') = 'chat'
                         AND COALESCE(json_extract(i.item, '$.author.role'), '') <> 'human'
                       GROUP BY i.entity_id`,

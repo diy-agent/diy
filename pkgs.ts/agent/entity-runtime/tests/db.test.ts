@@ -613,8 +613,22 @@ describe('未读水位（room_read）', () => {
         data: { text: '这一轮被截断了', kind: 'max-tokens' },
     });
 
+    it('没有水位记录的房间算 0（历史不算未读，否则老房间一上来就 99+）', () => {
+        const store = openStore(':memory:');
+        store.appendItem(room.id, chat('b1', 'bot'));
+        store.appendItem(room.id, chat('b2', 'bot'));
+        // 从没打开过 = 从现在开始算（不是“全未读”）
+        expect(store.unreadByRoom()).toEqual({});
+        // 打开一次（落地水位）之后到来的才算
+        store.markRead(room.id);
+        store.appendItem(room.id, chat('b3', 'bot'));
+        expect(store.unreadByRoom()).toEqual({ [room.id]: 1 });
+    });
+
     it('未读只数**结论**（bot 的发言）：我自己说的、工具步骤、轮级事实都不算', () => {
         const store = openStore(':memory:');
+        store.appendItem(room.id, chat('b0', 'bot'));
+        store.markRead(room.id); // 先把历史推平，只看之后的
         store.appendItem(room.id, chat('h1', 'human')); // 我发的 → 不算
         store.appendItem(room.id, chat('b1', 'bot')); // 结论 → 算
         store.appendItem(room.id, notice('n1')); // 轮级事实 → 不算（是“过程”）
