@@ -23,7 +23,7 @@ import * as React from 'react';
 
 import type { JobRunRow } from '@diy-agent/chat-transport-rpc';
 
-import { Button } from '@diy-agent/ui-shadcn';
+import { Button, HoverCard, HoverCardContent, HoverCardTrigger } from '@diy-agent/ui-shadcn';
 
 import { diy2 } from '../store';
 
@@ -32,9 +32,6 @@ const POLL_RUNNING_MS = 1200;
 /** 闲时（只看得到历史）慢一点：这条表没有别的推送来源 */
 const POLL_IDLE_MS = 5000;
 /** 指针离开 chip 到移进卡的宽限（照 diy1 `armHoverClose` 的 160ms） */
-const HOVER_CLOSE_MS = 160;
-/** 悬停卡宽（diy1 的 `CARD_W` 是 448，这里一行更短，够放「标题 + 时长 + id」） */
-const CARD_W = 380;
 
 const isRunning = (row: JobRunRow): boolean => row.state === 'running';
 
@@ -144,65 +141,6 @@ function BriefRow({ row, now }: { row: JobRunRow; now: number }) {
             <span className="shrink-0 font-mono text-xs text-muted-foreground/70" title={row.id}>
                 {row.id.slice(-4)}
             </span>
-        </div>
-    );
-}
-
-function HoverCard({
-    rows,
-    now,
-    rect,
-    onEnter,
-    onLeave,
-    onDetail,
-}: {
-    rows: JobRunRow[];
-    now: number;
-    rect: DOMRect;
-    onEnter: () => void;
-    onLeave: () => void;
-    onDetail: () => void;
-}) {
-    const running = rows.filter(isRunning);
-    const finished = rows.filter((row) => !isRunning(row)).slice(0, 3);
-    // 卡开在 chip **上方**（chip 在输入框底栏，下面没地方）；左边夹进视口
-    const width = Math.min(CARD_W, window.innerWidth - 16);
-    const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8));
-    return (
-        <div
-            className="fixed z-50 overflow-hidden rounded-lg border bg-background shadow-xl"
-            style={{ left, bottom: window.innerHeight - rect.top + 6, width }}
-            onPointerEnter={onEnter}
-            onPointerLeave={onLeave}
-        >
-            <div className="flex items-center gap-2 border-b px-3 py-1.5">
-                <ListTree className="size-3 text-muted-foreground" />
-                <span className="text-xs font-medium">后台任务</span>
-                <span className="text-xs text-muted-foreground">
-                    本房间 · {running.length === 0 ? '没有在跑的' : `${running.length} 个在跑`}
-                </span>
-                <Button variant="ghost" size="xs" onClick={onDetail} className="ml-auto text-muted-foreground">
-                    明细 ›
-                </Button>
-            </div>
-            <div className="py-1">
-                {running.map((row) => (
-                    <BriefRow key={row.id} row={row} now={now} />
-                ))}
-                {running.length === 0 && (
-                    <p className="px-3 py-2 text-xs text-muted-foreground">
-                        {finished.length === 0 ? '还没有后台任务记录' : '现在没有在跑的（下面是最近结束的）'}
-                    </p>
-                )}
-                {finished.length > 0 && (
-                    <>
-                        <div className="mt-1 border-t px-3 pb-0.5 pt-1 text-xs text-muted-foreground">最近结束</div>
-                        {finished.map((row) => (
-                            <BriefRow key={row.id} row={row} now={now} />
-                        ))}
-                    </>
-                )}
-            </div>
         </div>
     );
 }
@@ -471,10 +409,10 @@ function JobsDrawer({
 
 export function JobsChip() {
     const [drawerOpen, setDrawerOpen] = React.useState(false);
-    const [rect, setRect] = React.useState<DOMRect | null>(null);
+    // 悬停卡片开着时也要有数据（官方 HoverCard 自己管开合，我们只跟着它的 open 拉数）
+    const [hoverOpen, setHoverOpen] = React.useState(false);
     const [now, setNow] = React.useState(() => Date.now());
-    const closeTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-    const { rows, error, reload } = useJobs(drawerOpen || rect !== null);
+    const { rows, error, reload } = useJobs(drawerOpen || hoverOpen);
 
     // 秒表：只在本机跳（服务端给的 durationMs 是「拉的那一刻」，两次拉之间靠它补）
     React.useEffect(() => {
@@ -482,31 +420,6 @@ export function JobsChip() {
         const timer = setInterval(() => setNow(Date.now()), 1000);
         return () => clearInterval(timer);
     }, [rows]);
-
-    React.useEffect(
-        () => () => {
-            if (closeTimer.current !== undefined) clearTimeout(closeTimer.current);
-        },
-        [],
-    );
-
-    const cancelClose = () => {
-        if (closeTimer.current !== undefined) {
-            clearTimeout(closeTimer.current);
-            closeTimer.current = undefined;
-        }
-    };
-    const openTip = (element: HTMLElement) => {
-        cancelClose();
-        setRect(element.getBoundingClientRect());
-    };
-    const closeSoon = () => {
-        cancelClose();
-        closeTimer.current = setTimeout(() => {
-            closeTimer.current = undefined;
-            setRect(null);
-        }, HOVER_CLOSE_MS);
-    };
 
     const running = rows.filter(isRunning);
     const oldest = running.reduce<number>((longest, row) => Math.max(longest, now - row.startedAt), 0);
@@ -518,53 +431,86 @@ export function JobsChip() {
 
     return (
         <>
-            {/* 这颗 chip 与壳里「后台任务」按钮逐像素对齐（22px）：Button 从 h-6 起，
-                所以用 h-[22px] 覆盖回来 */}
-            <Button
-                variant="ghost"
-                size="xs"
-                onPointerEnter={(event) => openTip(event.currentTarget)}
-                onPointerLeave={closeSoon}
-                onClick={() => {
-                    setRect(null);
-                    setDrawerOpen(true);
-                }}
-                title={
-                    error !== null
-                        ? `后台任务账本拉取失败：${error}`
-                        : idle
-                          ? `后台任务（本房间）：现在没有在跑的，点开看历史（共 ${rows.length} 条）`
-                          : '后台任务（本房间）：悬停看简要，点开看明细'
-                }
-                className="h-[22px] gap-1 border border-transparent px-1.5 text-muted-foreground"
-            >
-                <span className="relative flex size-2 items-center justify-center">
-                    {!idle && <span className="absolute size-2 animate-ping rounded-full bg-emerald-500/60" />}
-                    <span
-                        className={
-                            idle
-                                ? 'size-1.5 rounded-full bg-muted-foreground/40'
-                                : 'size-1.5 rounded-full bg-emerald-500'
-                        }
-                    />
-                </span>
-                后台任务{idle ? '' : ` ${running.length}`}
-                {!idle && <span className="tabular-nums opacity-60">{fmtDur(oldest)}</span>}
-            </Button>
+            <HoverCard open={hoverOpen} onOpenChange={setHoverOpen}>
+                {/* 这颗 chip 与壳里「后台任务」按钮逐像素对齐（22px）：Button 从 h-6 起，
+                    所以用 h-[22px] 覆盖回来 */}
+                <HoverCardTrigger
+                    render={
+                        <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => setDrawerOpen(true)}
+                            title={
+                                error !== null
+                                    ? `后台任务账本拉取失败：${error}`
+                                    : idle
+                                      ? `后台任务（本房间）：现在没有在跑的，点开看历史（共 ${rows.length} 条）`
+                                      : '后台任务（本房间）：悬停看简要，点开看明细'
+                            }
+                            className="h-[22px] gap-1 border border-transparent px-1.5 text-muted-foreground"
+                        />
+                    }
+                >
+                    <span className="relative flex size-2 items-center justify-center">
+                        {!idle && <span className="absolute size-2 animate-ping rounded-full bg-emerald-500/60" />}
+                        <span
+                            className={
+                                idle
+                                    ? 'size-1.5 rounded-full bg-muted-foreground/40'
+                                    : 'size-1.5 rounded-full bg-emerald-500'
+                            }
+                        />
+                    </span>
+                    后台任务{idle ? '' : ` ${running.length}`}
+                    {!idle && <span className="tabular-nums opacity-60">{fmtDur(oldest)}</span>}
+                </HoverCardTrigger>
 
-            {rect !== null && (
-                <HoverCard
-                    rows={rows}
-                    now={now}
-                    rect={rect}
-                    onEnter={cancelClose}
-                    onLeave={closeSoon}
-                    onDetail={() => {
-                        setRect(null);
-                        setDrawerOpen(true);
-                    }}
-                />
-            )}
+                <HoverCardContent side="top" align="start" className="w-[380px] p-0">
+                    <div className="flex items-center gap-2 border-b px-3 py-1.5">
+                        <ListTree className="size-3 text-muted-foreground" />
+                        <span className="text-xs font-medium">后台任务</span>
+                        <span className="text-xs text-muted-foreground">
+                            本房间 · {running.length === 0 ? '没有在跑的' : `${running.length} 个在跑`}
+                        </span>
+                        <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => {
+                                setHoverOpen(false);
+                                setDrawerOpen(true);
+                            }}
+                            className="ml-auto text-muted-foreground"
+                        >
+                            明细 ›
+                        </Button>
+                    </div>
+                    <div className="py-1">
+                        {running.map((row) => (
+                            <BriefRow key={row.id} row={row} now={now} />
+                        ))}
+                        {running.length === 0 && (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">
+                                {rows.filter((row) => !isRunning(row)).length === 0
+                                    ? '还没有后台任务记录'
+                                    : '现在没有在跑的（下面是最近结束的）'}
+                            </p>
+                        )}
+                        {rows.filter((row) => !isRunning(row)).length > 0 && (
+                            <>
+                                <div className="mt-1 border-t px-3 pt-1 pb-0.5 text-xs text-muted-foreground">
+                                    最近结束
+                                </div>
+                                {rows
+                                    .filter((row) => !isRunning(row))
+                                    .slice(0, 3)
+                                    .map((row) => (
+                                        <BriefRow key={row.id} row={row} now={now} />
+                                    ))}
+                            </>
+                        )}
+                    </div>
+                </HoverCardContent>
+            </HoverCard>
 
             {drawerOpen && <JobsDrawer rows={rows} now={now} onClose={() => setDrawerOpen(false)} onKilled={reload} />}
         </>
