@@ -10,7 +10,7 @@ import * as React from 'react';
 
 import { statusMeta, taskStatusOf, type Room } from '../model';
 import { isPlainLeftClick } from './link';
-import { Input } from '@diy-agent/ui-shadcn';
+import { Button, Input } from '@diy-agent/ui-shadcn';
 
 /**
  * 就地改名的文本。`mode`：
@@ -151,7 +151,12 @@ export function EditableName({
     }
 
     return (
-        <button
+        // 可编辑名称的「非链接」分支：外观完全由调用方的 labelClass 决定（侧栏行 / 面板标题
+        // 各不同），所以高度、内边距、对齐、字重全部压回中性，只借 Button 的 focus ring 与
+        // disabled/键盘行为。
+        <Button
+            variant="ghost"
+            size="xs"
             onClick={() => {
                 onClick?.();
                 if (mode === 'click') start();
@@ -160,10 +165,10 @@ export function EditableName({
                 if (mode === 'double') start();
             }}
             title={label}
-            className={labelClass}
+            className={`h-auto justify-start p-0 font-inherit hover:bg-transparent ${labelClass}`}
         >
             {value}
-        </button>
+        </Button>
     );
 }
 

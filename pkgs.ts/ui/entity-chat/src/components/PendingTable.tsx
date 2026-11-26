@@ -14,6 +14,8 @@ import type { Bot, BotProgress } from '@diy-agent/chat-core';
 import { awaitingText, elapsedText, idleNowOf } from '@diy-agent/chat-core';
 import * as React from 'react';
 
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@diy-agent/ui-shadcn';
+
 import { conversationOf, useStore } from '../store';
 
 const STAGE_TEXT = { quiet: '正常', slow: '偏慢', stalled: '失联' } as const;
@@ -33,30 +35,34 @@ export function PendingRows({
     }
 
     return (
-        <table className="w-full border-t text-xs">
-            <thead className="text-muted-foreground">
-                <tr>
-                    <th className="px-3 py-1 text-left font-normal">成员</th>
-                    <th className="px-1 py-1 text-left font-normal">在等</th>
-                    <th className="px-1 py-1 text-right font-normal">多久没动</th>
-                    <th className="px-1 py-1 text-left font-normal">心跳</th>
-                    <th className="px-3 py-1 text-left font-normal">档位</th>
-                </tr>
-            </thead>
-            <tbody>
+        // 官方的 Table 是 h-10 / p-2 的常规表；这张是诊断条，要的是密（py-1），
+        // 所以每格把高度与内边距压回去，其余（行分隔线、hover、white-space）沿用组件的
+        <Table className="border-t text-xs">
+            <TableHeader className="text-muted-foreground">
+                <TableRow className="hover:bg-transparent">
+                    <TableHead className="h-auto px-3 py-1 font-normal">成员</TableHead>
+                    <TableHead className="h-auto px-1 py-1 font-normal">在等</TableHead>
+                    <TableHead className="h-auto px-1 py-1 text-right font-normal">多久没动</TableHead>
+                    <TableHead className="h-auto px-1 py-1 font-normal">心跳</TableHead>
+                    <TableHead className="h-auto px-3 py-1 font-normal">档位</TableHead>
+                </TableRow>
+            </TableHeader>
+            <TableBody>
                 {rows.map(([botId, progress]) => (
-                    <tr key={botId} className={progress.stage === 'stalled' ? 'text-destructive' : ''}>
-                        <td className="px-3 py-1">{bots[botId]?.name ?? botId}</td>
-                        <td className="px-1 py-1 font-mono">{awaitingText(progress.awaiting)}</td>
-                        <td className="px-1 py-1 text-right tabular-nums">{elapsedText(idleNowOf(progress, now))}</td>
-                        <td className="px-1 py-1">
+                    <TableRow key={botId} className={progress.stage === 'stalled' ? 'text-destructive' : ''}>
+                        <TableCell className="px-3 py-1">{bots[botId]?.name ?? botId}</TableCell>
+                        <TableCell className="px-1 py-1 font-mono">{awaitingText(progress.awaiting)}</TableCell>
+                        <TableCell className="px-1 py-1 text-right tabular-nums">
+                            {elapsedText(idleNowOf(progress, now))}
+                        </TableCell>
+                        <TableCell className="px-1 py-1">
                             {progress.alive ? <span className="text-emerald-600">有</span> : '—'}
-                        </td>
-                        <td className="px-3 py-1">{STAGE_TEXT[progress.stage]}</td>
-                    </tr>
+                        </TableCell>
+                        <TableCell className="px-3 py-1">{STAGE_TEXT[progress.stage]}</TableCell>
+                    </TableRow>
                 ))}
-            </tbody>
-        </table>
+            </TableBody>
+        </Table>
     );
 }
 

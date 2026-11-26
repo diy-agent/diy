@@ -11,7 +11,16 @@ import { roomTitle, type Room } from '../model';
 import { X } from 'lucide-react';
 import * as React from 'react';
 
-import { Button, Input, Textarea } from '@diy-agent/ui-shadcn';
+import {
+    Button,
+    Input,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+    Textarea,
+} from '@diy-agent/ui-shadcn';
 
 import { actions, diy2, useRooms } from '../store';
 
@@ -261,29 +270,33 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                     </ul>
 
                     <div className="mt-1 flex items-center gap-1">
-                        <select
-                            value={target}
-                            onChange={(event) => setTarget(event.target.value)}
-                            className="min-w-0 flex-1 rounded border bg-transparent px-1 py-0.5 text-xs"
+                        <Select
+                            value={target === '' ? null : target}
+                            onValueChange={(next) => setTarget(next === null ? '' : String(next))}
                         >
-                            <option value="">关联到…</option>
-                            {others.map((item) => (
-                                <option key={item.id} value={item.id}>
-                                    {taskLabel(item)}
-                                </option>
-                            ))}
-                        </select>
-                        <select
-                            value={kind}
-                            onChange={(event) => setKind(event.target.value)}
-                            className="rounded border bg-transparent px-1 py-0.5 text-xs"
-                        >
-                            {LINK_KINDS.map((item) => (
-                                <option key={item.value} value={item.value}>
-                                    {item.label}
-                                </option>
-                            ))}
-                        </select>
+                            <SelectTrigger size="sm" className="min-w-0 flex-1">
+                                <SelectValue placeholder="关联到…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {others.map((item) => (
+                                    <SelectItem key={item.id} value={item.id}>
+                                        {taskLabel(item)}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <Select value={kind} onValueChange={(next) => setKind(String(next))}>
+                            <SelectTrigger size="sm">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {LINK_KINDS.map((item) => (
+                                    <SelectItem key={item.value} value={item.value}>
+                                        {item.label}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
                         <Button
                             variant="outline"
                             size="xs"
