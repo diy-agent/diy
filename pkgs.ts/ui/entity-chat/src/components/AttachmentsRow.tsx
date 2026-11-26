@@ -1,56 +1,17 @@
 // AttachmentsRow —— 待发附件的缩略图行（输入框上方那一排）
 //
-// 为什么用内联样式而不是 Tailwind / 设计系统组件：这一排要同时出现在两面
-// （shadcn 全裸 Tailwind、Astryx 走设计系统）。两套样式里各写一份 = 将来必然漂移，
-// 而它只有「一行可滚的方块 + 一个叉」，用不着任何框架能力。
+// 用语义变量 + Tailwind 刻度，不写 hex / 不写任意值（DESIGN.md：`rounded-[7px]` 这类一律不要；
+// 颜色只走 `bg-muted` / `border` / `foreground`）。这样暗色主题跟着走，不会出现
+// 「亮色下好看、暗色下一块死黑」。
+//
+// 2026-11-26 曾在两个 surface（shadcn / Astryx）之间共用，所以当时用了内联样式；
+// Astryx 面已删，理由消失，改回正常写法。
 
 import * as React from 'react';
 
 import type { AttachmentRef } from '@diy-agent/protocol';
 
 import type { PendingAttachment } from './useComposerAttachments';
-
-const THUMB = 56;
-
-const rowStyle: React.CSSProperties = {
-    display: 'flex',
-    gap: 8,
-    flexWrap: 'wrap',
-    padding: '4px 0',
-};
-
-const chipStyle: React.CSSProperties = {
-    position: 'relative',
-    width: THUMB,
-    height: THUMB,
-    borderRadius: 8,
-    overflow: 'hidden',
-    border: '1px solid rgba(127,127,127,0.35)',
-    background: 'rgba(127,127,127,0.12)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 10,
-    lineHeight: 1.2,
-    textAlign: 'center',
-    padding: 2,
-};
-
-const removeStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: 1,
-    right: 1,
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    border: 'none',
-    cursor: 'pointer',
-    background: 'rgba(0,0,0,0.65)',
-    color: '#fff',
-    fontSize: 11,
-    lineHeight: '16px',
-    padding: 0,
-};
 
 /** 非图片附件显示「扩展名 + 大小」 —— 没有缩略图也要能看出这是什么 */
 function fallbackLabel(ref: AttachmentRef): string {
@@ -71,20 +32,33 @@ export function AttachmentsRow({
 }): React.ReactElement | null {
     if (items.length === 0 && busy !== true) return null;
     return (
-        <div style={rowStyle} aria-label="待发送的附件">
+        <div className="flex flex-wrap gap-2 py-1" aria-label="待发送的附件">
             {items.map((item) => (
-                <div key={item.ref.id} style={chipStyle} title={`${item.name}（${item.ref.mime}）`}>
+                <div
+                    key={item.ref.id}
+                    className="relative flex size-14 items-center justify-center overflow-hidden rounded-lg border bg-muted p-0.5 text-center text-[10px] leading-tight"
+                    title={`${item.name}（${item.ref.mime}）`}
+                >
                     {item.preview === undefined ? (
-                        <span style={{ whiteSpace: 'pre-line' }}>{fallbackLabel(item.ref)}</span>
+                        <span className="whitespace-pre-line">{fallbackLabel(item.ref)}</span>
                     ) : (
-                        <img src={item.preview} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img src={item.preview} alt={item.name} className="size-full object-cover" />
                     )}
-                    <button type="button" style={removeStyle} title="移除" onClick={() => onRemove(item.ref)}>
+                    <button
+                        type="button"
+                        className="absolute right-0.5 top-0.5 size-4 cursor-pointer rounded-full bg-foreground/70 text-[10px] leading-4 text-background"
+                        title="移除"
+                        onClick={() => onRemove(item.ref)}
+                    >
                         ×
                     </button>
                 </div>
             ))}
-            {busy === true && <div style={{ ...chipStyle, fontSize: 10 }}>上传中…</div>}
+            {busy === true && (
+                <div className="flex size-14 items-center justify-center rounded-lg border bg-muted text-[10px]">
+                    上传中…
+                </div>
+            )}
         </div>
     );
 }

@@ -66,8 +66,6 @@ function useAttachmentUrl(
     return state;
 }
 
-const IMAGE_LIMIT = { maxWidth: 280, maxHeight: 220, borderRadius: 10 } as const;
-
 function ImageAttachment({
     ref: attachment,
     read,
@@ -90,23 +88,15 @@ function ImageAttachment({
             alt={attachment.displayName}
             title={attachment.displayName}
             onClick={() => onOpen?.(url)}
-            style={{ ...IMAGE_LIMIT, objectFit: 'contain', cursor: onOpen === undefined ? 'default' : 'zoom-in' }}
+            // 尺寸用 Tailwind 刻度（max-h-56 = 224px / max-w-72 = 288px），不写任意值
+            className={`max-h-56 max-w-72 rounded-lg object-contain ${onOpen === undefined ? '' : 'cursor-zoom-in'}`}
         />
     );
 }
 
 function Box({ children, title }: { children: React.ReactNode; title: string }): React.ReactElement {
     return (
-        <div
-            title={title}
-            style={{
-                padding: '6px 10px',
-                borderRadius: 8,
-                border: '1px solid rgba(127,127,127,0.35)',
-                fontSize: 11,
-                opacity: 0.85,
-            }}
-        >
+        <div title={title} className="rounded-lg border px-2.5 py-1.5 text-[11px] text-muted-foreground">
             {children}
         </div>
     );
@@ -143,7 +133,7 @@ export function MessageAttachments({
 }: MessageAttachmentsProps): React.ReactElement | null {
     if (refs === undefined || refs.length === 0) return null;
     return (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 4 }}>
+        <div className="mb-1 flex flex-wrap gap-1.5">
             {refs.map((attachment) =>
                 attachment.kind === 'image' ? (
                     <ImageAttachment
