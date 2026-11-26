@@ -381,11 +381,22 @@ const MessageList = React.memo(function MessageList({
     roomId: string;
     onStopBot?: (botId: string) => void;
 }) {
+    // **只有最后一条用户消息**是锚点。之前写的是「每条 user 都是」，126 条消息的会话里就有
+    // 37 个锚点 —— 组件的锚点解析（取可见区内最后一个）在这种密度下会把初始位置定到最上面，
+    // 于是进房间 / 发完消息就停在历史顶部（用户报的「自动滚到最上面」）。
+    // 语义上锚点本来也该是「当前这一轮的起点」，历史回合没有资格当参考系。
+    const lastUserKey = React.useMemo(() => {
+        for (let index = entries.length - 1; index >= 0; index -= 1) {
+            if (entries[index]!.kind === 'user') return entries[index]!.key;
+        }
+        return undefined;
+    }, [entries]);
+
     return (
         <>
             {entries.map((entry) => (
-                // scrollAnchor 挂在用户回合：新问题落在顶部、回复在它下面流式长出
-                <MessageScrollerItem key={entry.key} messageId={entry.key} scrollAnchor={entry.kind === 'user'}>
+                // 最后一条用户消息当锚点：新问题落在顶部、回复在它下面流式长出
+                <MessageScrollerItem key={entry.key} messageId={entry.key} scrollAnchor={entry.key === lastUserKey}>
                     {/* content-visibility：离开视口的条目跳过布局/绘制 */}
                     <div style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
                         <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
