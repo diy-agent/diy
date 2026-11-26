@@ -679,6 +679,13 @@ function Composer({
                             if (files.length > 0) {
                                 event.preventDefault();
                                 attachments.addFiles(files);
+                                return;
+                            }
+                            // 有「文件」类型却读不到内容（少数浏览器/终端只给文件引用不给字节）：
+                            // 说清楚该怎么绕，别静默什么都不做
+                            if (transfer.types.includes('Files')) {
+                                event.preventDefault();
+                                attachments.warn('这条粘贴没带文件内容，拿不到图片字节 —— 把文件拖进来，或点回形针选');
                             }
                         }}
                         onKeyDown={(event) => {

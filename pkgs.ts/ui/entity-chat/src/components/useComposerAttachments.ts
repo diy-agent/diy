@@ -46,6 +46,13 @@ export interface ComposerAttachments {
     clear: () => void;
     /** 发送时的 refs（没有就 undefined，别给空数组） */
     refs: readonly AttachmentRef[] | undefined;
+    /**
+     * 由调用方报一句「这次动作没成功」的原因（比如粘贴只给了文件引用、拿不到字节）。
+     *
+     * 为什么要这个口子：粘贴失败必须是**看得见**的 —— 静默什么都不做，
+     * 用户分不清「浏览器没给文件」和「这功能根本没做」。
+     */
+    warn: (message: string) => void;
 }
 
 function previewOf(file: File): string | undefined {
@@ -168,6 +175,8 @@ export function useComposerAttachments(model: ConversationModel, roomId: string)
         });
     }, []);
 
+    const warn = React.useCallback((message: string) => setError(message), []);
+
     return {
         items,
         supported,
@@ -177,5 +186,6 @@ export function useComposerAttachments(model: ConversationModel, roomId: string)
         remove,
         clear: dropAll,
         refs: items.length === 0 ? undefined : items.map((item) => item.ref),
+        warn,
     };
 }
