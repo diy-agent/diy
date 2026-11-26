@@ -95,6 +95,56 @@ export function withTurnFact(turn: BotLastTurn, fact: Item | undefined): BotLast
     };
 }
 
+/** `createTurnLookup` 要的两个投影（结构类型：bot-status 不依赖 db） */
+export interface TurnFactSource {
+    lastItemPerBot(): Array<{ roomId: string; item: Item }>;
+    lastFactPerTurn(): Array<{ roomId: string; owner: string; item: Item }>;
+}
+
+/**
+ * 造一个「(房间, bot) → 它最后一轮的结局」查询器。
+ *
+ * `rooms.list`（侧栏红图标）与 `bots.rows`（三级表格）**共用一份** —— 各算一份迟早走散，
+ * 用户 2026-11-26 看到的就是“表格说「出错」，侧栏图标却什么事都没有”。
+ *
+ * 两个来源必须合成：bot 自己最后一条 item 给 turnId，**结局**在轮级事实里。
+ * 成本：两条全表 json 分组查询（靠 `items_author_seq` / `items_fact_owner_seq` 表达式索引，
+ * 实测 25ms + 54ms）；`rooms.list` 30s 一次、`bots.rows` 开浮层一次，可以接受。
+ */
+export function createTurnLookup(
+    source: TurnFactSource,
+): (roomId: string, botId: string) => BotLastTurn | undefined {
+    const last = new Map<string, BotLastTurn>();
+    for (const { roomId, item } of source.lastItemPerBot()) {
+        const turn = botLastTurnOf(roomId, item);
+        if (turn !== undefined) last.set(`${roomId}\u0000${turn.botId}`, turn);
+    }
+    // 轮级事实（不带 author 的 notice / error）只能单独认领。
+    // key 用 `owner`（= 事实自带的 botId，老数据退回 turnId）—— 一轮里 @all 的
+    // 各 bot 共享 turnId，只按它查会把 A 的截断盖到 B 头上。
+    const facts = new Map<string, Item>();
+    for (const { roomId, owner, item } of source.lastFactPerTurn()) {
+        facts.set(`${roomId}\u0000${owner}`, item);
+    }
+    return (roomId, botId) => {
+        const own = last.get(`${roomId}\u0000${botId}`);
+        if (own === undefined) return undefined;
+        /** 事实必须属于**当前这一轮**，否则丢弃（见下面那条注释） */
+        const pick = (key: string): Item | undefined => {
+            const fact = facts.get(key);
+            if (fact === undefined) return undefined;
+            // `owner=botId` 这条键会命中**很早那一轮**带 botId 的 `interrupted`
+            // （`lastFactPerTurn` 按 owner 分组，一个 bot 在它那里只留一条）——
+            // 拿它盖当前轮的结局，就会出现「导航图标红着，进去却没看到问题」
+            // （用户 2026-11-26 报的 #29 任务分解 dag：最新一轮是 job-done 退出码 0，
+            // 却被 34387 之前、seq 28915 那条 turn-mww2bir6 的 interrupted 盖成“出错”）。
+            // 没有 turnId 的老事实接受（那时落盘还没带这个字段）。
+            return fact.turnId === undefined || fact.turnId === own.turnId ? fact : undefined;
+        };
+        return withTurnFact(own, pick(`${roomId}\u0000${own.turnId}`) ?? pick(`${roomId}\u0000${own.botId}`));
+    };
+}
+
 /**
  * 这个结局要不要人动手。
  *
