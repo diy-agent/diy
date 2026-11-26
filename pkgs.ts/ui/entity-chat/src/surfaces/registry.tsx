@@ -11,6 +11,11 @@
 // 缺省面改为 shadcn。翻回 Astryx 只为两件事：核对某个交互该长什么样，
 // 或者 canary 依赖炸了要临时换回。2~4 周真实使用后复查是否删除。
 //
+// 2026-11-26 裁决（用户）：**Astryx 面标记为废弃（deprecated）**。区别在于措辞与
+// 后续动作：「冻结」是「先别动它」，「废弃」是「不要再往上加东西，且随时可删」。
+// 具体落到三件事：① 注册表的 hint 与 UI 上的 tab 标明废弃；② 新代码不 import 这一面；
+// ③ 删除的前置条件只剩一条 —— 见 `docs/plans/2026-11-24-surface-parity.md` §7 末尾。
+//
 // 缺省是哪一面由壳层决定（现在取 'shadcn'），这里不排序含义。
 
 import type { FC, ReactNode } from 'react';
@@ -34,8 +39,14 @@ export interface ChatSurface {
 export const SURFACES: ChatSurface[] = [
     {
         id: 'astryx',
-        name: 'Astryx',
-        hint: '设计系统 Chat 组件 + chat-core',
+        /**
+         * @deprecated 2026-11-26 用户裁：本面已废弃，只作参考实现保留。
+         *
+         * 不接新功能、不做双面验证；`useWindowed` 升级成真虚拟化之后即删。
+         * 缺省面是 shadcn —— 新代码请照着 `surfaces/shadcn/` 写。
+         */
+        name: 'Astryx（废弃）',
+        hint: '已废弃：设计系统 Chat 组件的参考实现，不接新功能',
         Component: AstryxSurface,
     },
     {
