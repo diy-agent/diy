@@ -13,7 +13,7 @@
 import { ChevronRight, Loader2, Play, X } from 'lucide-react';
 import * as React from 'react';
 
-import { Button, Input } from '@diy-agent/ui-shadcn';
+import { Button, Input, Sheet, SheetContent } from '@diy-agent/ui-shadcn';
 
 import type { BotRow } from '@diy-agent/chat-transport-rpc';
 
@@ -195,13 +195,14 @@ export function BotsOverlay({ rows, error, loaded, reload, onClose, initialMode 
 
     const selected = shown.filter((row) => checked.has(keyOf(row)));
 
+    // 遮罩 / Esc / 焦点陷阱交给官方 Sheet(side=top)；两种形态只是高度不同
     return (
-        <div className="fixed inset-0 z-50" role="dialog" aria-label="Bot 状态">
-            <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-            <div
-                className={`absolute inset-x-0 top-0 flex flex-col border-b border-border bg-background shadow-xl ${
-                    mode === 'full' ? 'h-[70vh]' : 'max-h-[60vh]'
-                }`}
+        <Sheet open onOpenChange={(next) => !next && onClose()}>
+            <SheetContent
+                side="top"
+                showCloseButton={false}
+                aria-label="Bot 状态"
+                className={`h-auto gap-0 p-0 ${mode === 'full' ? 'h-[70vh]' : 'max-h-[60vh]'}`}
             >
                 <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
                     <span className="text-xs font-medium">{mode === 'brief' ? 'Bot · 要你看的' : 'Bot · 全部'}</span>
@@ -290,7 +291,7 @@ export function BotsOverlay({ rows, error, loaded, reload, onClose, initialMode 
                         </>
                     )}
                 </div>
-            </div>
-        </div>
+            </SheetContent>
+        </Sheet>
     );
 }
