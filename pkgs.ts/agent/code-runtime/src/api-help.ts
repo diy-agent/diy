@@ -33,8 +33,8 @@ export function apiHelpOf(
                     mode: meta._streamMode,
                 };
             })
-            // 父命令（`group`）不是可调方法：列进去只会让模型试一次必然失败的调用
-            .filter((item) => item.mode !== 'group')
+            // 不再 filter group：`_flattenRouter` 用 `_routeLeaves`，父命令本来就进不来。
+            // 多一层「防御」实际是第二份真相 —— flatten 将来变了会静默对不上。
             .sort((a, b) => a.path.localeCompare(b.path))
     );
 }

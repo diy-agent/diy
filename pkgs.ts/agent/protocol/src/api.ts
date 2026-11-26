@@ -114,7 +114,12 @@ export const chatApi = RpcSchema.group({
                 id: Id,
                 /** 只要 seq 大于它的条目；缺省 0 = 从第一条起（调用方通常传上一轮的 `seq`） */
                 sinceSeq: z.number().int().min(0).optional(),
-                /** 最多等多久（毫秒）；缺省 30s，封顶 120s（再长就该转后台作业） */
+                /**
+                 * 最多等多久（毫秒）；缺省 10s，封顶 120s（再长就该转后台作业）。
+                 *
+                 * 缺省值要**明显小于** `run_code` 的 30s 预算：两者叠着用时（代码里 `await` 它），
+                 * 等得比外层预算长就变成「一用就撞超时」—— 而且 `vm` 杀不掉 await 之后的等待。
+                 */
                 timeoutMs: z.number().int().min(0).max(120_000).optional(),
             },
             output: Any,

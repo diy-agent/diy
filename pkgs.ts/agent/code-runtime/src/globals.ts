@@ -47,6 +47,9 @@ function makeSleep(signal: AbortSignal | undefined): (ms: number) => Promise<voi
                 signal?.removeEventListener('abort', onAbort);
                 resolve();
             }, ms);
+            // 必须 unref：这个 timer 用的是**主进程的** setTimeout（不在引擎那本账上），
+            // 模型写 `sleep(3600_000)` 然后 run 超时收场，没 unref 的话它会挂着一小时。
+            timer.unref?.();
             signal?.addEventListener('abort', onAbort, { once: true });
         });
 }

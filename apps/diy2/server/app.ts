@@ -952,7 +952,8 @@ export async function createDiy2App(opts: {
                 wait: async ({ input }) => {
                     const actor = requireRoom(input.id);
                     const sinceSeq = input.sinceSeq ?? 0;
-                    const deadline = Date.now() + (input.timeoutMs ?? 30_000);
+                    // 10s：要明显小于 run_code 的 30s 预算（见 protocol 里那条注释）
+                    const deadline = Date.now() + (input.timeoutMs ?? 10_000);
                     // 轮询间隔：本地 sqlite 读一条 eq 读 200 次/秒不痛；再密就是给自己找 IO
                     const POLL_MS = 200;
                     for (;;) {

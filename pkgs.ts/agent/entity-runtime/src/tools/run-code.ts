@@ -11,8 +11,13 @@ import { z } from 'zod';
 
 import { formatApiHelp, makeGlobals, type ApiHelpItem, type CodeRuntime } from '@diy-agent/code-runtime';
 
-/** 一条代码的缺省预算：比 bash 短得多 —— 代码里不该出现「跑十分钟」的活（那该转后台作业） */
-export const DEFAULT_RUN_CODE_TIMEOUT_MS = 10_000;
+/**
+ * 一条代码的缺省预算：比 bash 短得多 —— 代码里不该出现「跑十分钟」的活（那该转后台作业）。
+ *
+ * 为什么给 30s 而不是 10s：`chat.wait` 是个合法用法（写 `await api.chat.wait({timeoutMs})` 守一件事），
+ * 预算比它小的话「一用就撞超时」；差距留得够开，模型中招的概率才低。
+ */
+export const DEFAULT_RUN_CODE_TIMEOUT_MS = 30_000;
 
 export interface RunCodeHost {
     /** 执行引擎（策略位：进程内 vm / worker / 子进程，换实现不改这里） */
