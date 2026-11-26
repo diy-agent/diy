@@ -182,6 +182,14 @@ export type RoomRow = Room & {
      * （用户 2026-11-26 报的）。与 `bots.rows` 的 `needs-attention` 同源（`turnLookupOf`）。
      */
     broken?: number;
+    /**
+     * 「最新一条投递失败」的成员数（侧栏「未送达」标记）。0 不写。
+     *
+     * 与 `queued` 是两件事：queued 是还没轮到 / 待续跑，failed 是消息确实没送到；
+     * 与 `broken` 也不是一件事：broken 是 bot 上一轮跑坏了，failed 是你的话没递进去。
+     * 只按每个成员最新一条消息收敛 —— 旧的 failed 被后来的 delivered 覆盖后不再报。
+     */
+    failed?: number;
 };
 
 export class RpcChatClient implements ChatClient {

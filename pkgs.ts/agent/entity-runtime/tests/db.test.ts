@@ -661,6 +661,88 @@ describe('分组查询走表达式索引', () => {
     });
 });
 
+describe('未送达投影（failedByRoom）', () => {
+    const msg = (id: string, turn: number): Item => ({
+        id,
+        seq: 0,
+        turn,
+        turnId: `t${turn}`,
+        at: Date.now(),
+        status: 'done',
+        author: { id: 'human:我', name: '我', color: '#fff', role: 'human' },
+        type: 'chat',
+        data: { text: id },
+    });
+    const deliver = (
+        store: ReturnType<typeof openStore>,
+        roomId: string,
+        messageId: string,
+        botId: string,
+        state: 'failed' | 'delivered' | 'queued',
+        turn: number,
+    ): void => {
+        store.appendItem(roomId, msg(messageId, turn));
+        // 投递的 messageId 本来就是 say 条目落的；序号也从这里取（real 库同路径）
+        const seq = store.roomEntries(roomId).reduce((max, entry) => Math.max(max, entry.seq), 0) + 1;
+        store.appendRoomEntry(roomId, {
+            seq,
+            at: Date.now(),
+            kind: 'say',
+            author: { id: 'human:我', name: '我', color: '#fff', role: 'human' },
+            text: messageId,
+            messageId,
+            turn,
+            turnId: `t${turn}`,
+        });
+        store.setDelivery({ roomId, messageId, botId, state, turn });
+    };
+
+    it('按成员算最新一条投递：旧 failed 被后来的 delivered 覆盖后不再报', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm-old', 'b1', 'failed', 1);
+        expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
+
+        deliver(store, room.id, 'm-new', 'b1', 'delivered', 2);
+        expect(store.failedByRoom()).toEqual({});
+    });
+
+    it('既有旧 failed 又有新 failed：只算一个成员，不按历史行数累加', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm1', 'b1', 'failed', 1);
+        deliver(store, room.id, 'm2', 'b1', 'failed', 2);
+        expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
+    });
+
+    it('多个成员各自看最新一条，只数仍然失败的那几个', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm1', 'b1', 'failed', 1);
+        deliver(store, room.id, 'm2', 'b2', 'failed', 1);
+        deliver(store, room.id, 'm3', 'b2', 'delivered', 2);
+        expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
+    });
+
+    it('最新一条重新排队（恢复待续跑）不算未送达，只算排队', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm1', 'b1', 'failed', 1);
+        deliver(store, room.id, 'm2', 'b1', 'queued', 2);
+        expect(store.failedByRoom()).toEqual({});
+    });
+
+    it('同一轮多条消息靠时间线 seq 分先后（turn 相同也不能误判）', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm1', 'b1', 'failed', 1);
+        deliver(store, room.id, 'm2', 'b1', 'delivered', 1);
+        expect(store.failedByRoom()).toEqual({});
+    });
+
+    it('不串房间：0 的房间不占键', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm1', 'b1', 'failed', 1);
+        deliver(store, 'task:other', 'm1', 'b1', 'delivered', 1);
+        expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
+    });
+});
+
 describe('未读水位（room_read）', () => {
     const chat = (id: string, role: 'human' | 'bot'): Item => ({
         id,

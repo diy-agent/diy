@@ -5,7 +5,7 @@
 //  用户报的就是「项目/任务无法修改名称」）。
 // 行为统一在这里：回车提交、Esc 取消、失焦提交，提交失败由 store 亮错误。
 
-import { CircleCheck, CircleDot } from 'lucide-react';
+import { CircleCheck, CircleDot, Folder } from 'lucide-react';
 import * as React from 'react';
 
 import { statusMeta, taskStatusOf, type Room } from '../model';
@@ -192,7 +192,17 @@ const STATUS_ICON = {
     closed: CircleCheck,
 } as const;
 
-/** 只画形状（无交互）：收起态 rail 的行本身就是一个 button，里面不能再嵌 button */
+/**
+ * 只画形状（无交互）：收起态 rail 的行本身就是一个 link，里面不能再嵌 button。
+ *
+ * 形状 = 容器种类所说的那件事：
+ *   · 任务 → open / closed（`STATUS_ICON`，GitHub issue 读法）；
+ *   · 项目 → 文件夹（它没有 open / closed）。**但状态装饰一样有**（2026-11-26 用户：
+ *     「项目也是 bot，也需要有和任务一样的状态图标信息」）—— 项目房间自己也有 bot、
+ *     有轮次（`proj:diy` 那行实测跑过 131 轮），所以「上一轮出错」「正在运行」对项目同样成立。
+ *     只看**它自己**，不聚合子任务：子行自己会亮，聚合会让同一个状态在树上出现两次
+ *     （2026-11-25 用户报的「空会话也有轮次中呼吸」）。
+ */
 export function StatusGlyph({
     room,
     className = '',
@@ -210,18 +220,20 @@ export function StatusGlyph({
      *
      * 用户 2026-11-26：“表格说「出错」，左侧导航栏的任务图标也应该变状态”——一个是表格、
      * 一个是侧栏，两处必须读同一份事实（`rooms.list` 的 `broken` 与 `bots.rows` 同源）。
-     * 只改颜色不改形状：形状说的是 open / closed，那是另一件事。
+     * 只改颜色不改形状：形状说的是 open / closed（项目是文件夹），那是另一件事。
      */
     broken?: boolean;
 }) {
-    if (room.type !== 'task') return null;
-    const status = taskStatusOf(room);
-    const meta = statusMeta(status);
-    const Icon = STATUS_ICON[status];
+    const isProject = room.type === 'project';
+    if (!isProject && room.type !== 'task') return null;
+    const meta = isProject ? undefined : statusMeta(taskStatusOf(room));
+    const Icon = isProject ? Folder : STATUS_ICON[taskStatusOf(room)];
+    // 颜色：出错一律红（盖掉状态色）；项目平时是自己那颗天蓝，任务按 open / closed
+    const ink = broken ? 'text-rose-400' : (meta?.text ?? 'text-sky-400');
     return (
         <span
-            className={`relative inline-flex shrink-0 ${broken ? 'text-rose-400' : meta.text} ${className}`}
-            title={`${broken ? '上一轮出错 · ' : ''}${running ? '正在运行 · ' : ''}状态：${meta.label}`}
+            className={`relative inline-flex shrink-0 ${ink} ${className}`}
+            title={`${broken ? '上一轮出错 · ' : ''}${running ? '正在运行 · ' : ''}${isProject ? '项目' : `状态：${meta?.label ?? 'open'}`}`}
         >
             <Icon className={iconClass} strokeWidth={2.4} />
             {running && (
