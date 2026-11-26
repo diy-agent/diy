@@ -31,18 +31,21 @@ export function AttentionCapsules({ counts, onPick, onOpen }: AttentionCapsulesP
                 type="button"
                 onClick={onOpen}
                 title="Bot 状态：都闲着（点开看全表）"
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/60"
+                className="flex items-center gap-1 text-[10px] text-muted-foreground"
             >
                 <span className="size-1.5 rounded-full bg-zinc-600" />
                 都闲着
             </button>
         );
     }
+    // 标题栏只有 28px 高、右端还挤着作业 / 设置 / 布局三组按钮：**两类以上只写数字**。
+    // 只有一类时带上文字（“4 出错” 一眼就懂，不必 hover）—— 多类时四颗带中文会宽到把
+    // 其他按钮挤没（2026-11-25 用户报“挤在一起了”）。文字进 title，浮层 tab 里仍是全称。
+    const showLabel = live.length === 1;
     return (
         <span
             onClick={onOpen}
-            title="Bot 状态（点间隙看全部）"
-            className="flex cursor-pointer items-center gap-0.5 rounded px-1 py-0.5 hover:bg-muted/60"
+            className="flex items-center gap-1"
         >
             {live.map((kind) => (
                 <button
@@ -53,11 +56,13 @@ export function AttentionCapsules({ counts, onPick, onOpen }: AttentionCapsulesP
                         onPick(kind);
                     }}
                     title={`${ATTENTION_TEXT[kind]} ${counts[kind]} 个 —— 点开只看这一类`}
-                    className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] ${ATTENTION_INK[kind]}`}
+                    // 不自带背景 / padding：外层（宿主那颗按钮）已经有 hover 与间距，
+                    // 内层再加一层背景就成了“两块叠在一起”的观感（2026-11-25 用户报挤）
+                    className={`flex items-center gap-1 text-[10px] ${ATTENTION_INK[kind]}`}
                 >
-                    <span className={`size-1.5 rounded-full ${ATTENTION_DOT[kind]}`} />
+                    <span className={`size-1.5 shrink-0 rounded-full ${ATTENTION_DOT[kind]}`} />
                     <span className="tabular-nums">{counts[kind]}</span>
-                    <span className="text-muted-foreground">{ATTENTION_TEXT[kind]}</span>
+                    {showLabel ? <span className="text-muted-foreground">{ATTENTION_TEXT[kind]}</span> : null}
                 </button>
             ))}
         </span>

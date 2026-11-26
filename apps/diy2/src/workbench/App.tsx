@@ -42,7 +42,7 @@ import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
-import { GearGlyph, NavGlyph } from './glyphs';
+import { BotGlyph, GearGlyph, NavGlyph } from './glyphs';
 import { type PageDef } from './model';
 import { pageFor, wbViews } from './pages';
 import { useChrome, Window, type WindowContribution } from './window';
@@ -217,17 +217,28 @@ function Host() {
                         id: 'bots',
                         label: 'Bot 状态',
                         // 分类徽标本身就是入口：点某一颗 → 浮层预选那一类（点「出错 4」直接看到那 4 个）；
-                        // 点间隙 → 打开默认浮层。只有「出错」用红，其余各一色（`AttentionCapsules`）。
+                        // 点图标 / 间隙 → 打开默认浮层。只有「出错」用红，其余各一色。
+                        //
+                        // `standalone`：徽标里是 `<button>`，再被 window 包一层 button 就是**嵌 button**（非法 DOM，
+                        // 也是“挤在一起”那屏的一部分）—— 所以交互由 glyph 自己拿。
+                        standalone: true,
                         glyph: (
-                            <AttentionCapsules
-                                counts={counts}
-                                onPick={(kind) => openBots(kind)}
-                                onOpen={() => openBots()}
-                            />
+                            // 与同排按钮**同一种外观**（22px 高、同样的 hover / 圆角）：
+                            // `wb-tb-btn` 给尺寸与 hover，`wb-tb-activity` 把宽度改成跟内容走。
+                            // 只管 Tailwind 的 padding / 高度，这一排就会看起来“挤”且不齐。
+                            <span
+                                onClick={() => openBots()}
+                                title="Bot 状态（点间隙看全部）"
+                                className="wb-tb-btn wb-tb-activity gap-1.5"
+                            >
+                                <BotGlyph count={0} />
+                                <AttentionCapsules
+                                    counts={counts}
+                                    onPick={(kind) => openBots(kind)}
+                                    onOpen={() => openBots()}
+                                />
+                            </span>
                         ),
-                        onClick: () => {
-                            openBots();
-                        },
                     },
                     {
                         id: 'settings',
