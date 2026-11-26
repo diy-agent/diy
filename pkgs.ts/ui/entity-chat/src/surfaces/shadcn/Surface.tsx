@@ -482,7 +482,13 @@ function Composer({
             .send(text)
             .then(() => draft.clearIfMatches(text))
             .catch(() => undefined)
-            .finally(() => setSubmitting(false));
+            .finally(() => {
+                setSubmitting(false);
+                // 发完把焦点还给输入框。点发送键会让它变成 disabled，焦点掉到 <body>；
+                // 之后按方向键/空格/PageDown 就不再滚消息区，而是滚整个页面 ——
+                // 用户报的「发言后焦点跳到历史最上面」就是这一步丢的。
+                textareaRef.current?.focus();
+            });
     };
 
     return (
