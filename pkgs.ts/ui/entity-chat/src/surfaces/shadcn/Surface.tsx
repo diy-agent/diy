@@ -85,7 +85,12 @@ function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool'
     }
     return (
         <div className="my-1">
-            <Button variant="ghost" size="xs" className="text-xs text-muted-foreground" onClick={() => setOpen((value) => !value)}>
+            <Button
+                variant="ghost"
+                size="xs"
+                className="text-xs text-muted-foreground"
+                onClick={() => setOpen((value) => !value)}
+            >
                 <ChevronDown className={`size-3 transition-transform ${open ? '' : '-rotate-90'}`} />
                 工具调用 <span className="tabular-nums">({tools.length})</span>
             </Button>
@@ -260,9 +265,7 @@ function EntryView({
                     <span className="font-medium" style={{ color: entry.author?.color }}>
                         {entry.author?.name ?? 'bot'}
                     </span>
-                    <span className="text-xs text-muted-foreground">
-                        {timeOf(entry.turn?.startedAt ?? entry.at)}
-                    </span>
+                    <span className="text-xs text-muted-foreground">{timeOf(entry.turn?.startedAt ?? entry.at)}</span>
                     {copyable !== '' && (
                         // 悬停才浮现：常驻的复制按钮会让每条回复都多一行视觉噪音
                         <CopyButton
@@ -399,9 +402,7 @@ function MentionMenu({
                     >
                         <span className="size-1.5 rounded-full" style={{ background: candidate.color }} />
                         <span className="truncate">{candidate.name}</span>
-                        {candidate.isOwner && (
-                            <span className="ml-auto text-xs text-muted-foreground">owner</span>
-                        )}
+                        {candidate.isOwner && <span className="ml-auto text-xs text-muted-foreground">owner</span>}
                     </button>
                 </li>
             ))}
@@ -478,77 +479,85 @@ function Composer({
                     草稿未保存：{draft.error ?? '网络错误'}（重试中，内容还在）
                 </div>
             )}
-            {/* 大框 = 输入行 + 底栏一行（上下文 / 模型 / 作业）。底栏在大框**内部**，
-                与「其他 agent」同一个形状：写字的地方和这轮用什么在一起，不再另占一条。 */}
-            <div className="relative rounded-xl border bg-card px-3 pb-1.5 pt-2">
+            {/*
+             * 官方 prompt-input 的形状（2026-11-26 对齐 docs/ai-elements/base/prompt-input）：
+             * 一个 InputGroup 就是整个输入区 —— 文本域 + 底栏（工具与发送都在框内）。
+             * 之前是「手写圆角大框 + 里面再套一个 InputGroup + 外面再接一条 ComposerBar」，
+             * 于是有两层边框，而工具条其实落在框外，看起来就还是个单行输入框。
+             */}
+            <div className="relative">
                 {menuOpen && (
-                    <MentionMenu
-                        candidates={matches}
-                        activeIndex={active}
-                        onPick={pick}
-                        onHover={setActive}
-                    />
+                    <MentionMenu candidates={matches} activeIndex={active} onPick={pick} onHover={setActive} />
                 )}
-                {/* 输入行：InputGroup = 官方所说的「输入框组合」（外框 + 内嵌按钮 + 底栏） */}
                 <InputGroup>
-                <InputGroupTextarea
-                    ref={textareaRef}
-                    value={draft.text}
-                    onChange={(event) => {
-                        draft.setText(event.target.value);
-                        setDismissed(false);
-                    }}
-                    onKeyDown={(event) => {
-                        // 浮层开着时：上下选、Enter/Tab 确认、Esc 关。这几键不能落到「发送」上。
-                        if (menuOpen) {
-                            if (event.key === 'Escape') {
-                                event.preventDefault();
-                                setDismissed(true);
-                                return;
-                            }
-                            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                                if (matches.length === 0) return;
-                                event.preventDefault();
-                                setActive((current) => moveActive(current, event.key === 'ArrowDown' ? 1 : -1, matches.length));
-                                return;
-                            }
-                            if (event.key === 'Enter' || event.key === 'Tab') {
-                                const picked = matches[active];
-                                if (picked !== undefined) {
+                    <InputGroupTextarea
+                        ref={textareaRef}
+                        value={draft.text}
+                        onChange={(event) => {
+                            draft.setText(event.target.value);
+                            setDismissed(false);
+                        }}
+                        onKeyDown={(event) => {
+                            // 浮层开着时：上下选、Enter/Tab 确认、Esc 关。这几键不能落到「发送」上。
+                            if (menuOpen) {
+                                if (event.key === 'Escape') {
                                     event.preventDefault();
-                                    pick(picked.name);
+                                    setDismissed(true);
                                     return;
                                 }
+                                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                    if (matches.length === 0) return;
+                                    event.preventDefault();
+                                    setActive((current) =>
+                                        moveActive(current, event.key === 'ArrowDown' ? 1 : -1, matches.length),
+                                    );
+                                    return;
+                                }
+                                if (event.key === 'Enter' || event.key === 'Tab') {
+                                    const picked = matches[active];
+                                    if (picked !== undefined) {
+                                        event.preventDefault();
+                                        pick(picked.name);
+                                        return;
+                                    }
+                                }
                             }
-                        }
-                        // IME 组字中的 Enter 是上屏，不是发送
-                        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                            event.preventDefault();
-                            send();
-                        }
-                    }}
-                    rows={1}
-                    placeholder="和这个实体对话…（@ 选 bot，Enter 发送，Shift+Enter 换行）"
-                    className="max-h-40 min-h-0 px-3 py-2 text-sm"
-                />
-                <InputGroupAddon align="block-end" className="justify-end pr-1.5 pb-1">
-                    {running ? (
-                        <InputGroupButton size="icon-sm" title="停止生成" onClick={() => conversation.cancel()}>
-                            <Square className="size-4" />
-                        </InputGroupButton>
-                    ) : (
-                        <InputGroupButton
-                            size="icon-sm"
-                            title="发送"
-                            disabled={draft.text.trim() === '' || submitting}
-                            onClick={send}
-                        >
-                            <Send className="size-4" />
-                        </InputGroupButton>
-                    )}
-                </InputGroupAddon>
+                            // IME 组字中的 Enter 是上屏，不是发送
+                            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                                event.preventDefault();
+                                send();
+                            }
+                        }}
+                        rows={1}
+                        placeholder="和这个实体对话…（@ 选 bot）"
+                        className="max-h-40 flex-none p-3 text-sm"
+                    />
+                    {/* 底栏：工具在左、发送在右（官方 prompt-input 的摆法）。
+                    工具条原先在框外单独一行，现在回到框内 —— 这也是用户 2026-11-24 的原话。 */}
+                    <InputGroupAddon align="block-end" className="gap-1 pr-1.5 pb-1">
+                        {extras}
+                        {running ? (
+                            <InputGroupButton
+                                size="icon-sm"
+                                className="ml-auto"
+                                title="停止生成"
+                                onClick={() => conversation.cancel()}
+                            >
+                                <Square className="size-4" />
+                            </InputGroupButton>
+                        ) : (
+                            <InputGroupButton
+                                size="icon-sm"
+                                className="ml-auto"
+                                title="发送"
+                                disabled={draft.text.trim() === '' || submitting}
+                                onClick={send}
+                            >
+                                <Send className="size-4" />
+                            </InputGroupButton>
+                        )}
+                    </InputGroupAddon>
                 </InputGroup>
-                {extras !== undefined && <div className="mt-1.5 border-t pt-1.5">{extras}</div>}
             </div>
         </div>
     );
@@ -613,12 +622,7 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
                     <MessageScrollerButton className="rounded-full" />
                 </MessageScroller>
             </MessageScrollerProvider>
-            <Composer
-                conversation={conversation}
-                roomId={targetId}
-                running={state.running}
-                extras={composerExtras}
-            />
+            <Composer conversation={conversation} roomId={targetId} running={state.running} extras={composerExtras} />
         </div>
     );
 }
