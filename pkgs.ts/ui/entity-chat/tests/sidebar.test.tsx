@@ -214,6 +214,57 @@ describe('侧栏按注册表渲染', () => {
         expect(html.match(/text-rose-400/g) ?? []).toHaveLength(1);
     });
 
+    it('未送达是另一个维度：红叉不混进排队 / 未读 / 上一轮出错，任务与项目都画', async () => {
+        setDiy2Client({
+            rooms: {
+                list: async () =>
+                    rooms.map((room) => {
+                        if (room.id === 'task:t-open') return { ...room, failed: 2, queued: 1 };
+                        if (room.id === 'proj:diy') return { ...room, failed: 1 };
+                        return room;
+                    }),
+            },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const html = render();
+        const taskRow = rowOf(html, '/room/task/t-open');
+        const projectRow = rowOf(html, '/room/proj/diy');
+        expect(taskRow).toContain('aria-label="有消息未送达"');
+        expect(taskRow).toContain('2 个成员的最新消息未送达');
+        expect(taskRow).toContain('aria-label="有投递在排队"');
+        expect(projectRow).toContain('aria-label="有消息未送达"');
+        // 没喂 broken 就别自己把图标染红：未送达 ≠ 上一轮跑坏
+        expect(taskRow).not.toContain('上一轮出错');
+        expect(html.match(/aria-label="有消息未送达"/g) ?? []).toHaveLength(2);
+    });
+
+    it('rail 收起态也有未送达红叉（没有文字，靠形状 + 颜色读）', async () => {
+        setDiy2Client({
+            rooms: {
+                list: async () => rooms.map((room) => ({ ...room, failed: room.id === 'proj:diy' ? 1 : 0 })),
+            },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const html = renderToStaticMarkup(<Sidebar {...HOST} open={false} />);
+        expect(html).toContain('aria-label="有消息未送达"');
+        expect(html.match(/aria-label="有消息未送达"/g) ?? []).toHaveLength(1);
+        expect(html).toContain('个成员的消息未送达'); // 链接 title 在 rail 里承担说明
+    });
+
     it('最后活动用紧凑相对式（刚才 / 5m / 1d），绝对时刻进 tooltip', async () => {
         const fiveMinutesAgo = Date.now() - 5 * 60_000;
         setDiy2Client({

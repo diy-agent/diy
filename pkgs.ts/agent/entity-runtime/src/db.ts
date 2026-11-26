@@ -338,6 +338,14 @@ export interface Store {
     listDeliveries(roomId: string): Delivery[];
     /** 崩溃恢复：还没送达的投递（queued / delivering） */
     pendingDeliveries(roomId: string): Array<DeliveryInput & { messageId: string }>;
+    /**
+     * 每个容器中「最新一条投递失败」的成员数（侧栏「未送达」标记）。0 不占键。
+     *
+     * 必须按**成员收敛到最新一条消息**，不能数历史 failed 行：旧消息插话失败、后来新消息
+     * 正常送达时，房间不该永远挂着「未送达」。排队的投递由 `queuedByBot` 另算，也不该
+     * 在这里重复报 failed；只有最新一条确实是 failed 才算。
+     */
+    failedByRoom(): Record<string, number>;
     /** 房间还没处理完的消息正文（按 messageId） */
     textOf(roomId: string, messageId: string): string | undefined;
     saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void;
@@ -498,6 +506,17 @@ function isEmptyDraft(value: unknown): boolean {
     if (typeof value === 'object')
         return Object.values(value as Record<string, unknown>).every((item) => isEmptyDraft(item));
     return false;
+}
+
+/** 同一 (房间, bot) 的两条投递，后者是不是更新的一条（轮次 → 消息 seq → 状态更新时刻） */
+function isLaterDelivery(
+    a: { turn: number; seq: number; at: number; messageId: string },
+    b: { turn: number; seq: number; at: number; messageId: string },
+): boolean {
+    if (a.turn !== b.turn) return a.turn > b.turn;
+    if (a.seq !== b.seq) return a.seq > b.seq;
+    if (a.at !== b.at) return a.at > b.at;
+    return a.messageId > b.messageId;
 }
 
 // ── Room（旧线上形状）↔ 域记录 ─────────────────────────────────────
@@ -1673,6 +1692,56 @@ export function openStore(file: string): Store {
                 ...(row['turn'] === null ? {} : { turn: Number(row['turn']) }),
                 ...(row['turn_id'] === null ? {} : { turnId: String(row['turn_id']) }),
             }));
+        },
+        failedByRoom(): Record<string, number> {
+            // 一个 bot 在同一房间可能有多条历史 failed（旧插话没送进去、崩溃重投失败…）。
+            // 只有「它最新那条消息」的投递状态才代表现在：先按轮次，再按消息在本房间
+            // 时间线上的落盘 seq，最后才用状态更新时刻兜底（老消息没有 turn 字段）。
+            // 这里刻意不把 queued / delivering 当失败：那些由 `queuedByBot` 单独画排队。
+            //
+            // 不在 SQL 里按 message_id 连 entity_items：实测那条路在本机真库上要 11s
+            // （json_extract 连接找不到可用索引），而这个是 `rooms.list` 的 30s 轮询的一部分。
+            // 改用 room_entries 的 say 条目取消息序号 —— 投递的 messageId 本来就是它落的，
+            // 而且这张表只有条目流的一小部分（真库实测 2.1k vs entity_items 36.9k）。
+            const seqOfMessage = new Map<string, number>();
+            for (const row of db
+                .prepare(
+                    "SELECT entity_id, seq, json_extract(entry, '$.messageId') AS message_id FROM room_entries " +
+                        "WHERE json_extract(entry, '$.kind') = 'say'",
+                )
+                .all() as Array<{ entity_id: string; seq: number; message_id: string | null }>) {
+                if (row.message_id === null) continue;
+                seqOfMessage.set(`${String(row.entity_id)}\u0000${String(row.message_id)}`, Number(row.seq));
+            }
+
+            type Latest = { state: string; turn: number; seq: number; at: number; messageId: string };
+            const latest = new Map<string, Latest>();
+            const rows = db
+                .prepare('SELECT entity_id, bot_id, message_id, state, turn, updated_at FROM deliveries')
+                .all() as Array<Record<string, unknown>>;
+            for (const row of rows) {
+                const roomId = String(row['entity_id']);
+                const botId = String(row['bot_id']);
+                const messageId = String(row['message_id']);
+                const candidate: Latest = {
+                    state: String(row['state']),
+                    turn: row['turn'] === null ? -1 : Number(row['turn']),
+                    seq: seqOfMessage.get(`${roomId}\u0000${messageId}`) ?? -1,
+                    at: Number(row['updated_at']),
+                    messageId,
+                };
+                const key = `${roomId}\u0000${botId}`;
+                const current = latest.get(key);
+                if (current === undefined || isLaterDelivery(candidate, current)) latest.set(key, candidate);
+            }
+
+            const failed: Record<string, number> = {};
+            for (const [key, row] of latest) {
+                if (row.state !== 'failed') continue;
+                const roomId = key.slice(0, key.indexOf('\u0000'));
+                failed[roomId] = (failed[roomId] ?? 0) + 1;
+            }
+            return failed;
         },
         textOf(roomId: string, messageId: string): string | undefined {
             const row = db

@@ -7,6 +7,7 @@ import {
     CheckCircle2,
     ChevronDown,
     ChevronRight,
+    CircleX,
     HelpCircle,
     ListPlus,
     Loader2,
@@ -38,6 +39,7 @@ import {
     usePendingAskTitlesOf,
     useQueuedOf,
     useBrokenOf,
+    useFailedOf,
     useRunningOf,
     useUnreadOf,
 } from '../store';
@@ -122,6 +124,11 @@ export function RoomRowView({
     const unread = useUnreadOf(room.id);
     /** 上一轮出错的成员数：图标变红（与三级表格同一份事实，见 `StatusGlyph` 的 `broken`） */
     const broken = useBrokenOf(room.id);
+    /**
+     * 最新一条投递失败的成员数（另一个维度）：你的话没送进去，不是 bot 跑坏了。
+     * 与 `queued` 也分开——那颗灰旋转说「马上要动」，这颗红叉说「没送到」。
+     */
+    const failed = useFailedOf(room.id);
     const [renaming, setRenaming] = React.useState(false);
     /** 任务当前是 open（行尾显「关闭」还是「打开」—— 状态只有这一个判据） */
     const openTask = !isProject && taskStatusOf(room) === 'open';
@@ -142,7 +149,7 @@ export function RoomRowView({
                     event.preventDefault();
                     actions.select(room.id);
                 }}
-                title={`${room.type}：${roomTitle(room)}${broken > 0 ? `（${broken} 个成员上一轮出错）` : ''}${running ? '（正在运行）' : ''}${queued > 0 ? `（排队 ${queued} 条）` : ''}${pendingAsk > 0 ? `（${askHint}）` : ''}${unread > 0 ? `（${unread} 条未读）` : ''}`}
+                title={`${room.type}：${roomTitle(room)}${broken > 0 ? `（${broken} 个成员上一轮出错）` : ''}${failed > 0 ? `（${failed} 个成员的消息未送达）` : ''}${running ? '（正在运行）' : ''}${queued > 0 ? `（排队 ${queued} 条）` : ''}${pendingAsk > 0 ? `（${askHint}）` : ''}${unread > 0 ? `（${unread} 条未读）` : ''}`}
                 className={`relative flex w-full items-center justify-center rounded-lg py-2 ${
                     active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
                 }`}
@@ -160,6 +167,17 @@ export function RoomRowView({
                         className="absolute bottom-1 left-1"
                     >
                         <Loader2 className="size-2.5 animate-spin text-zinc-400" />
+                    </span>
+                )}
+                {/* 未送达：红叉挂在图标右下角（rail 里没有文字，形状 + 颜色必须能单独读懂）。
+                    它和「上一轮出错」的红图标是两件事：一个是没送到的话，一个是跑坏了的轮。 */}
+                {failed > 0 && (
+                    <span
+                        title={`${failed} 个成员的最新消息未送达`}
+                        aria-label="有消息未送达"
+                        className="absolute -bottom-0.5 -right-0.5 inline-flex rounded-full bg-background text-rose-400"
+                    >
+                        <CircleX className="size-3" strokeWidth={2.5} />
                     </span>
                 )}
                 {hasDraft && (
@@ -235,6 +253,19 @@ export function RoomRowView({
                     className="shrink-0"
                 >
                     <Loader2 className="size-3.5 animate-spin text-zinc-400" />
+                </span>
+            )}
+
+            {/* 未送达：红叉（与房内那条 destructive 气泡同色 —— 两处说的是同一件事）。
+                项目与任务都画：项目房间自己也有 bot，也会有投递失败。 */}
+            {failed > 0 && (
+                <span
+                    title={`${failed} 个成员的最新消息未送达`}
+                    aria-label="有消息未送达"
+                    className="flex shrink-0 items-center gap-0.5 text-rose-400"
+                >
+                    <CircleX className="size-3" strokeWidth={2.5} />
+                    {failed > 1 && <span className="text-xs tabular-nums">{failed}</span>}
                 </span>
             )}
 

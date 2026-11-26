@@ -728,6 +728,9 @@ export async function createDiy2App(opts: {
                     const lastItemAt = timed('rooms.list.lastItemAtByRoom', () => store.lastItemAtByRoom());
                     // 未读：一次算完全实例（一条 GROUP BY），不逐房间问
                     const unread = timed('rooms.list.unreadByRoom', () => store.unreadByRoom());
+                    // 未送达：同样一次算完全实例。按 (房间, bot) 收敛到各自最新一条投递，
+                    // 历史 failed 不永久占位（旧消息失败、后来新消息送达就算过去了）。
+                    const failedByRoom = timed('rooms.list.failedByRoom', () => store.failedByRoom());
                     // 「上一轮出错的成员」：侧栏图标要变红（用户 2026-11-26：表格说「出错」而侧栏
                     // 图标没变，两处不一致）。数据与 `bots.rows` 同源（`turnLookupOf`），不各算一份。
                     // 打点包住**取数**那一下：命中缓存时是个 Map 查（<1ms），未命中才是 529ms
@@ -753,6 +756,7 @@ export async function createDiy2App(opts: {
                         // 排队中的投递（含重启后的待续跑）：以前列表里没有这个数，
                         // 于是房间「看着没事、其实排着队」或「明明在干、只是还没轮到它」都看不见
                         const queued = [...actor.queuedByBot().values()].reduce((sum, n) => sum + n, 0);
+                        const failed = failedByRoom[id] ?? 0;
                         return {
                             ...actor.spec,
                             hasDraft: withInputDraft.has(id),
@@ -770,6 +774,7 @@ export async function createDiy2App(opts: {
                             ...(at === undefined ? {} : { lastActivityAt: at }),
                             ...((unread[id] ?? 0) === 0 ? {} : { unread: unread[id] }),
                             ...(broken === 0 ? {} : { broken }),
+                            ...(failed === 0 ? {} : { failed }),
                         };
                     });
                 },
