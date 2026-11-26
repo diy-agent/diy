@@ -86,13 +86,14 @@ name/limit/cost，<b>把 reasoning_options 丢了</b>，所以 UI 硬编码 5 �
                     <span class="s">"high"</span>,<span class="s">"xhigh"</span>,<span class="s">"max"</span>] }
   ]
 }</pre>
-    <div class="sec">UI：选项按钮组 = values 原样列出</div>
+    <div class="sec">UI：选项按钮组 = 「缺省」+ values 原样列出</div>
     <div class="opts">
+      <button class="opt">缺省</button>
       <button class="opt" aria-pressed="true">none</button>
       <button class="opt">low</button><button class="opt">medium</button>
       <button class="opt">high</button><button class="opt">xhigh</button><button class="opt">max</button>
     </div>
-    <div class="hint">换模型默认选 <b>values[0] = none</b>。另一模型 gpt-oss-20b 只有 low/medium/high → 只画 3 颗按钮，默认 low。<b>档位随模型变</b>，不是固定 5 档。</div>
+    <div class="hint">换模型默认选 <b>values[0] = none</b>（当前按下）；点「缺省」= 存 null、不带该参数交给 provider。另一模型 gpt-oss-20b 只有 low/medium/high → 只画「缺省」+3 颗，默认 low。<b>档位随模型变</b>，不是固定 5 档。</div>
   </div>
 
   <!-- 2. toggle -->
@@ -105,12 +106,13 @@ name/limit/cost，<b>把 reasoning_options 丢了</b>，所以 UI 硬编码 5 �
   <span class="k">"reasoning"</span>: true,
   <span class="k">"reasoning_options"</span>: [ { <span class="k">"type"</span>: <span class="s">"toggle"</span> } ]
 }</pre>
-    <div class="sec">UI：开关，没有档位</div>
+    <div class="sec">UI：恒显示的「缺省」占位 + 开/关</div>
     <div class="opts">
-      <button class="opt" aria-pressed="true">开启推理</button>
+      <button class="opt" aria-pressed="true">缺省</button>
+      <button class="opt">开启推理</button>
       <button class="opt">关闭</button>
     </div>
-    <div class="hint">没有 effort 值列表。存 <b>null</b>（不带 reasoningEffort 参数）= 交给模型自己的默认；要关就传 "none"。</div>
+    <div class="hint">没有 effort 档位列表，但<b>仍然显示「缺省」占位符</b>（默认选中）。存 null = 不带参数交给模型。开/关是额外能力，不是 effort 档。</div>
   </div>
 
   <!-- 3. budget_tokens -->
@@ -125,9 +127,10 @@ name/limit/cost，<b>把 reasoning_options 丢了</b>，所以 UI 硬编码 5 �
     { <span class="k">"type"</span>: <span class="s">"budget_tokens"</span>, <span class="k">"min"</span>: <span class="n">1024</span> }
   ]
 }</pre>
-    <div class="sec">UI：数字输入（下限 min）</div>
+    <div class="sec">UI：恒显示的「缺省」占位 + 数字输入</div>
+    <div class="opts"><button class="opt" aria-pressed="true">缺省</button><button class="opt">自定义预算</button></div>
     <div class="chipbar"><span class="chip">预算 token <input type="number" value="1024" min="1024" style="width:90px;border:0;outline:none;font:inherit"></span></div>
-    <div class="hint">存的是数字预算，不是档位字符串。当前 UI 的 5 档对这种模型完全不适用。</div>
+    <div class="hint">默认「缺省」（存 null）。选「自定义预算」才填数字（下限 min=1024）。存的是数字，不是 effort 档字符串。</div>
   </div>
 
   <!-- 4. [] 空 -->
@@ -140,8 +143,9 @@ name/limit/cost，<b>把 reasoning_options 丢了</b>，所以 UI 硬编码 5 �
   <span class="k">"reasoning"</span>: true,
   <span class="k">"reasoning_options"</span>: []
 }</pre>
-    <div class="sec">UI：不画 effort 控件</div>
-    <div class="hint"><b>推理恒开</b>，没有可调项。effort 控件整段不显示（不是画一个空按钮）。存 null。</div>
+    <div class="sec">UI：只有「缺省」占位（无其它档位）</div>
+    <div class="opts"><button class="opt" aria-pressed="true">缺省</button></div>
+    <div class="hint"><b>推理恒开</b>，没有可调档位，但按你的要求仍显示「缺省」占位符。存 null。</div>
   </div>
 
   <!-- 5. 无字段 -->
@@ -154,8 +158,9 @@ name/limit/cost，<b>把 reasoning_options 丢了</b>，所以 UI 硬编码 5 �
   <span class="k">"reasoning"</span>: false
   <span class="c">// 没有 reasoning_options 字段</span>
 }</pre>
-    <div class="sec">UI：不画 effort 控件</div>
-    <div class="hint">模型不支持推理，effort 控件不显示，role.reasoning_effort 清空。</div>
+    <div class="sec">UI：只有「缺省」占位（无其它档位）</div>
+    <div class="opts"><button class="opt" aria-pressed="true">缺省</button></div>
+    <div class="hint">模型不支持推理，没有 effort 档位，但 UI 仍显示「缺省」占位符保持一致。存 null。</div>
   </div>
 
   <!-- 6. 链路 + 极简显示 -->
@@ -191,12 +196,13 @@ options = info.reasoning.defaultEffort === <span class="k">undefined</span>
     deepseek 自己声明了默认（high/low/max/off），所以它的选项里<b>没有</b>这一项。effort 档位每个模型不同，全从模型信息来。
   </div>
   <div class="rule">
-    <b>我们要的"简化为只有选项、其余内化"：</b>比 dsh 再进一步 —— 连 "Provider default" 那一项也不给用户。
-    模型信息里解析出 <code>efforts[]</code> 和一个 <code>defaultEffort</code>（有就用它，没有就取 efforts[0]）；
-    UI <b>只列具体 effort</b>，换模型时自动写成该模型的 defaultEffort。toggle/budget/空/无推理 → 不显示推理强度控件，存 null。
+    <b>我们的方案（用户 2026-11-26 定）：恒显示「缺省」占位，认知与 dsh 一致。</b>
+    模型信息里解析出 <code>efforts[]</code>；UI 永远先列一颗<b>「缺省」</b>（= 存 null，不带参数交给 provider，等同 dsh 的 Provider default），
+    后面跟该模型的 efforts 档位。<b>即便模型没有 effort（toggle / budget / 空 / 无推理），也显示「缺省」占位符</b>，只是没有其它档位。
+    换模型时默认选第一个 effort（若有），可随时点「缺省」回退。
   </div>
   <div class="rule">
-    <b>存储不变 + 旧值校验：</b>仍是 <code>bot_roles.reasoning_effort TEXT</code> 一个字符串，不加表。旧值保留；
+    <b>存储不变 + 旧值校验：</b>仍是 <code>bot_roles.reasoning_effort TEXT</code> 一个字符串，不加表；null = 「缺省」。旧值保留；
     若当前模型 efforts 里没有这个值，面板里高亮提示重选（不擅自改库）。
   </div>
 </div>
