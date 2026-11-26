@@ -14,6 +14,7 @@
         "@diy-agent/chat-transport-rpc": "*",
         "@diy-agent/entity-chat": "*",
         "@diy-agent/entity-runtime": "*",
+        "@diy-agent/ui-shadcn": "*",
         "@diy-agent/log": "*",
         "@diy-agent/protocol": "*",
         "@diy-agent/rpc": "*",
