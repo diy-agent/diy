@@ -4,13 +4,13 @@
 // 留在壳里会让壳重新认识 room 这个概念；壳只知道「有几个来源、按 order 渲染」。
 
 import {
+    Hourglass,
     CheckCircle2,
     ChevronDown,
     ChevronRight,
     Folder,
     HelpCircle,
     ListPlus,
-    Loader2,
     Pencil,
     PenLine,
     RotateCcw,
@@ -20,14 +20,7 @@ import * as React from 'react';
 
 import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
-import {
-    formatActivityAgo,
-    formatAtAbsolute,
-    roomTitle,
-    taskNumberOf,
-    taskStatusOf,
-    type Room,
-} from '../model';
+import { formatActivityAgo, formatAtAbsolute, roomTitle, taskNumberOf, taskStatusOf, type Room } from '../model';
 import { Button } from '@diy-agent/ui-shadcn';
 
 import { pendingAskHintOf } from '../pendingAsk';
@@ -43,12 +36,38 @@ import {
     useUnreadOf,
 } from '../store';
 import { isPlainLeftClick } from './link';
+/**
+ * 一个房间（room）的全部状态，以及它们各自在哪儿露面。
+ *
+ * 用户 2026-11-26 问「导航栏那个转圈到底是啥，跟聊天窗口对不上」—— 根因是**同一个图标
+ * 说了两件事**：转圈（Loader2）看着像「在跑」，实际表示的是「消息在排队」。两件事分开画：
+ *
+ * | 事实（store 字段） | 含义 | 侧栏（本文） | 标题栏 | 聊天窗口 |
+ * |---|---|---|---|---|
+ * | `running` | 有成员正在干活 | StatusGlyph 绿点呼吸 | bots 的 live 胶囊 | `ActiveGlyphs` 的「Bot N」 |
+ * | `queued` | 投递排队 / 投递中（含重启待续跑） | **灰沙漏**（曾经是转圈） | bots 的 queued 胶囊 | 无（它不发生在窗口里） |
+ * | `pendingAsks` | 等你回答 | 蓝色 `?` | bots 的 blocked 胶囊 | AskCard（卡片本体） |
+ * | `unread` | 有未读结果 | 图标角上的蓝徽标 | 无（属于房间，不属于实例） | 无 |
+ * | `broken` | 上一轮出错（不含在跑的） | 状态图标变红 | bots 的 broken 胶囊（红） | 消息流里的错误条 |
+ * | `hasDraft` | 有没提交的草稿 | 琥珀笔 | 无 | 输入框里有字 |
+ * | `activeJobs` | 后台作业在跑（实例级） | 无 | jobs 那颗（本实例全部） | 输入框底栏那颗（本房间） |
+ *
+ * 三条判据（改这一行前先看）：
+ * 1. **「在跑」只有一个源**：`state.running`（`useRunningSessionRooms` 也从它派生），
+ *    侧栏与标题栏读的是同一张表，不会一个说在跑一个说没跑。
+ * 2. **系统状态不抢「要你动手」的位置**：queued / unread 不进标题栏的红色胶囊 —— 红色只留给出错。
+ * 3. **颜色不重复表达同一件事**：行底色只说「当前在看哪一行」，运行态只画在图标那颗点上。
+ */
+
 import { MenuButton } from './Menu';
 import { EditableName, StatusGlyph } from './RoomName';
 
-// 行尾的低频动作收进 `MenuButton`（components/Menu.tsx，与房间头 kebab 共用）：
-// 以前是 hover 才浮现的三颗按钮 —— 那是「藏起来的能力」，用户 2026-11-24 明确要收进三点菜单。
-// 高频的关闭 / 打开留行上常驻。
+// 行尾的低频动作收进 `MenuButton`（components/Menu.tsx，与房间头 kebab 共用）。
+//
+// 2026-11-26 用户裁：**这些按钮改成 hover 才现身**（`opacity-0 group-hover:opacity-100`）。
+// 之前是常驻的，结果在一列固定宽度的侧栏里，按钮占掉的横向空间比标题自己还多 ——
+// 标题被 truncate 得只剩几个字。hover 才现的代价是「藏起来的能力」，用户明确接受了这个取舍。
+// 键盘可达性靠 `focus-visible` / `focus-within` 兜住（Tab 到它时一样会显形）。
 
 export interface RoomRowProps {
     room: Room;
@@ -153,15 +172,16 @@ export function RoomRowView({
                     )}
                     {unread > 0 && <UnreadBadge count={unread} />}
                 </span>
-                {/* 排队：灰 + 转 —— 跟绿色呼吸的「在跑」分开（它不是同一件事：
-                    在跑 = 已经在动；排队 = 马上要动，包括重启后的待续跑） */}
+                {/* 排队：灰**沙漏**（用户 2026-11-26：转圈会被读成「正在跑」，跟聊天窗口那颗
+                    Bot N（真在跑）对不上 —— 两个词说的是两件事）。
+                    在跑 = 已经有东西在动（StatusGlyph 的绿点呼吸）；排队 = 还没轮到它。 */}
                 {queued > 0 && !isProject && (
                     <span
-                        title={`排队中 ${queued} 条（含重启后的待续跑）`}
-                        aria-label="有投递在排队"
+                        title={`${queued} 条消息在排队等 bot 接收（含重启后待续跑）—— 不是在跑`}
+                        aria-label="有消息在排队"
                         className="absolute bottom-1 left-1"
                     >
-                        <Loader2 className="size-2.5 animate-spin text-zinc-400" />
+                        <Hourglass className="size-2.5 text-zinc-400" />
                     </span>
                 )}
                 {hasDraft && (
@@ -191,7 +211,7 @@ export function RoomRowView({
 
     return (
         <div
-            className={`group relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
+            className={`group relative flex w-full items-center gap-2 rounded-lg px-2 py-1 text-xs ${
                 // 底色只表「当前在看哪一行」。**运行态不碰底色**（2026-11-25 用户报「选中状态错乱」：
                 // 两行共用 bg-accent，一列里看着都像选中）—— 运行只画在状态图标那颗呼吸点上。
                 active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
@@ -232,14 +252,15 @@ export function RoomRowView({
                     单独占一列会把每一行都拉宽，而它大多数时候是 0。 */}
                 {unread > 0 && <UnreadBadge count={unread} />}
             </span>
-            {/* 排队（与 compact 态同一颗：灰 + 转）—— 重启后待续跑的投递在这一行看得见了 */}
+            {/* 排队（与 compact 态同一颗：灰沙漏）—— 重启后待续跑的投递在这一行看得见了。
+                用沙漏不用转圈：转圈与「正在跑」同形，用户会以为这行在干活（2026-11-26 报）。 */}
             {queued > 0 && !isProject && (
                 <span
-                    title={`排队中 ${queued} 条（含重启后的待续跑）`}
-                    aria-label="有投递在排队"
+                    title={`${queued} 条消息在排队等 bot 接收（含重启后待续跑）—— 不是在跑`}
+                    aria-label="有消息在排队"
                     className="shrink-0"
                 >
-                    <Loader2 className="size-3.5 animate-spin text-zinc-400" />
+                    <Hourglass className="size-3.5 text-zinc-400" />
                 </span>
             )}
 
@@ -269,7 +290,7 @@ export function RoomRowView({
                     }}
                     title={`在「${roomTitle(room)}」下新建任务`}
                     aria-label={`在「${roomTitle(room)}」下新建任务`}
-                    className="shrink-0 text-muted-foreground"
+                    className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                 >
                     <ListPlus className="size-3.5" />
                 </Button>
@@ -331,13 +352,15 @@ export function RoomRowView({
                     }}
                     title={openTask ? '关闭这个任务（收进历史，不再挂在项目树下）' : '重新打开这个任务'}
                     aria-label={openTask ? '关闭任务' : '打开任务'}
-                    className="shrink-0 text-muted-foreground"
+                    className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                 >
                     {openTask ? <CheckCircle2 className="size-3.5" /> : <RotateCcw className="size-3.5" />}
                 </Button>
             )}
 
             <MenuButton
+                // 低频动作：hover / 键盘 focus 才现身，常态把这一列的宽度还给标题
+                className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
                 items={[
                     {
                         key: 'rename',

@@ -13,7 +13,7 @@
 import { ChevronRight, Loader2, Play, X } from 'lucide-react';
 import * as React from 'react';
 
-import { Button, Input, Sheet, SheetContent } from '@diy-agent/ui-shadcn';
+import { Button, Sheet, SheetContent } from '@diy-agent/ui-shadcn';
 
 import type { BotRow } from '@diy-agent/chat-transport-rpc';
 
@@ -31,7 +31,7 @@ import {
     sortRows,
     visibleInOverlay,
 } from '../bots';
-import { diy2 } from '../store';
+import { actions, diy2 } from '../store';
 
 /** 筛选 = 关注度词表（与标题栏徽标同一套词，点哪个就看哪一类） */
 export type Filter = 'all' | AttentionKind;
@@ -88,8 +88,50 @@ function StateDot({ row }: { row: BotRow }) {
     return <span className={`size-1.5 shrink-0 rounded-full ${ATTENTION_DOT[kind]}`} />;
 }
 
+/**
+ * 房间名 = 一条**能点**的链接：点了就选中那个房间（浮层随之关掉）。
+ *
+ * 用户 2026-11-26：「表格里的 room（任务 / 项目）应该可以点击导航到对应会话」——
+ * 之前它只是灰字，看见「哪个任务出错」之后还得自己回侧栏去找。
+ *
+ * 三级表格整行是一个 `<label>`（点一下 = 勾选），所以这里必须 preventDefault，
+ * 否则点链接会顺带把这一行勾上。
+ */
+function RoomLink({
+    row,
+    className = '',
+    onOpenRoom,
+}: {
+    row: BotRow;
+    className?: string;
+    onOpenRoom: (roomId: string) => void;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onOpenRoom(row.roomId);
+            }}
+            title={`打开「${row.roomTitle}」`}
+            className={`truncate text-left text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline ${className}`}
+        >
+            {row.roomTitle}
+        </button>
+    );
+}
+
 /** 二级浮层的一行：谁、在哪、要你干什么 */
-function BriefRow({ row, onRetry }: { row: BotRow; onRetry: (row: BotRow) => void }) {
+function BriefRow({
+    row,
+    onRetry,
+    onOpenRoom,
+}: {
+    row: BotRow;
+    onRetry: (row: BotRow) => void;
+    onOpenRoom: (roomId: string) => void;
+}) {
     const kind = attentionOf(row);
     const canRetry = kind === 'broken';
     // 一眼看懂「谁 / 在哪 / 这一行属于哪一类」：出错的写为什么，排队的写排了几条
@@ -98,10 +140,10 @@ function BriefRow({ row, onRetry }: { row: BotRow; onRetry: (row: BotRow) => voi
     return (
         <div className="flex items-center gap-2 px-3 py-1.5">
             <StateDot row={row} />
-            <span className="truncate text-xs font-medium" style={{ color: row.botColor }}>
-                {row.botName}
-            </span>
-            <span className="truncate text-xs text-muted-foreground">{row.roomTitle}</span>
+            {/* bot 名不染 color：用户 2026-11-26 指出「彩色给人一种可以点击的感觉，其实点了没啥用」。
+                要区分的「谁」已经在名字本身与左边那颗状态点上，颜色留给状态。 */}
+            <span className="truncate text-xs font-medium text-foreground">{row.botName}</span>
+            <RoomLink row={row} onOpenRoom={onOpenRoom} />
             <span className="ml-auto shrink-0 text-xs text-muted-foreground">{detail}</span>
             {canRetry ? (
                 <Button variant="ghost" size="icon-xs" onClick={() => onRetry(row)} title="发一条「继续」接着干">
@@ -118,11 +160,13 @@ function TableRow({
     now,
     checked,
     onCheck,
+    onOpenRoom,
 }: {
     row: BotRow;
     now: number;
     checked: boolean;
     onCheck: (row: BotRow, checked: boolean) => void;
+    onOpenRoom: (roomId: string) => void;
 }) {
     return (
         <label className="flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-1.5 hover:bg-muted/40">
@@ -137,12 +181,8 @@ function TableRow({
             <StateDot row={row} />
             {/* bot 名带 `@`：它与右边的房间名**可能字字相同**（用户 2026-11-26 看到
                 两行一样的「聊天性能问题...」分不清谁是谁）。`@` 就是对话里叫它的写法。 */}
-            <span className="w-[92px] shrink-0 truncate text-xs" style={{ color: row.botColor }}>
-                @{row.botName}
-            </span>
-            <span className="w-[200px] shrink-0 truncate text-xs text-muted-foreground" title={row.roomTitle}>
-                {row.roomTitle}
-            </span>
+            <span className="w-[92px] shrink-0 truncate text-xs text-foreground">@{row.botName}</span>
+            <RoomLink row={row} className="w-[200px] shrink-0" onOpenRoom={onOpenRoom} />
             <span className="w-[92px] shrink-0 text-xs text-muted-foreground">{attentionLabelOf(row)}</span>
             {/* 结局是**上一轮**怎么结束的，与左边那列「此刻」不是同一个时间点 ——
                 不写明时态就会被读成同一件事（用户 2026-11-26 看到的「排队中 + 中断」：
@@ -192,6 +232,15 @@ export function BotsOverlay({
     const [flash, setFlash] = React.useState<string | null>(null);
     const [sending, setSending] = React.useState(false);
     const [now, setNow] = React.useState(() => Date.now());
+
+    // 点房间名 = 选中那个房间 + 关掉浮层（浮层是模态的，留着会挡住刚跳过去的会话）
+    const openRoom = React.useCallback(
+        (roomId: string) => {
+            actions.select(roomId);
+            onClose();
+        },
+        [onClose],
+    );
 
     const sorted = React.useMemo(() => sortRows(rows), [rows]);
     const counts = React.useMemo(() => countByAttention(rows), [rows]);
@@ -324,6 +373,7 @@ export function BotsOverlay({
                                 onRetry={(target) => {
                                     void retry([target]);
                                 }}
+                                onOpenRoom={openRoom}
                             />
                         ))
                     ) : (
@@ -349,6 +399,7 @@ export function BotsOverlay({
                                     now={now}
                                     checked={checked.has(keyOf(row))}
                                     onCheck={toggle}
+                                    onOpenRoom={openRoom}
                                 />
                             ))}
                         </>
