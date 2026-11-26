@@ -522,9 +522,13 @@ function newBot(name: string, homeRoomId: string, persona: string): Bot {
  * 不需要把 9.5MB 的 stdout 发到浏览器。完整原文仍在库里（`toolout/` + items），
  * 要全文从服务端取 —— 截断处会写明原文多少字，不假装这就是全部。
  *
+ * **为什么从 2000 再降到 400（同日二改）**：回包体积 = 条数 × 阈值。这个房间有
+ * **5404 条 tool**，2000 字/条合计仍有 **10.7MB**（复测），parse + 渲染还是 2.7 秒的
+ * longtask。400 字够看「这条命令干了什么、结果头几行」，合计降到 ~2MB 量级。
+ *
  * 只裁 **history 这一条路**（侧栏 / `bots.rows` 不碰它）。
  */
-const HISTORY_TOOL_RESULT_CHARS = 2000;
+const HISTORY_TOOL_RESULT_CHARS = 400;
 
 /**
  * 把历史里的超大 tool 结果裁到 `HISTORY_TOOL_RESULT_CHARS`（不改变其他条目）。
