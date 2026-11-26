@@ -3,8 +3,6 @@
 // 这里不碰 HTTP、不碰 SSE、不碰真模型：用内存 sqlite + 脚本化 run。
 // 要锁的是「Room 这一个概念」：路由、回合、结论、投递、成员覆盖。
 
-import { describe, expect, it } from 'vitest';
-
 import type { RunOptions } from '../../src/agent';
 import type { Compactor } from '../../src/compaction';
 import { openStore, type Store } from '../../src/db';

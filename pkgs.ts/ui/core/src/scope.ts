@@ -89,6 +89,8 @@ export class ScopeNode {
     this._disposed = true;
     for (let i = this._disposers.length - 1; i >= 0; i--) this._disposers[i]();
     this._disposers.length = 0;
+    // 快照必须：`dispose()` 可能改 `this.children`
+    // oxlint-disable-next-line no-useless-spread
     for (const child of [...this.children]) child.dispose();
     this.children.length = 0;
     this._signals.clear();

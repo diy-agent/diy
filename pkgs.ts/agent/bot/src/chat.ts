@@ -22,38 +22,38 @@
 //   · 纯读（snapshot）不排队
 //   · 消息按会话各排一条队列（同一会话两条 send 串行；不同会话互不阻塞）
 
-import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { localISOString } from "@diy-agent/time";
-import { createSession, type AgentSession, type ChatMessage, type LlmPort, type SessionStore, type TokenUsage } from "@diy-agent/session";
-import { openJsonlSessionStore } from "@diy-agent/session-store-jsonl";
-import { openMemorySessionStore } from "@diy-agent/session";
-import { agentsChain } from "@diy-agent/agents-chain";
-import { kbRootOf, scanKb } from "@diy-agent/kb";
-import { skillsOf } from "@diy-agent/skills";
-import { homedir } from "node:os";
-import { createBotAgent, type BotAgent } from "./agent.js";
-import { createOpenAiCompatible, resolveProviderConfig } from "@diy-agent/llm-provider";
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { localISOString } from '@diy-agent/time';
+import {
+    type AgentSession,
+    type ChatMessage,
+    type LlmPort,
+    type SessionStore,
+    type TokenUsage,
+} from '@diy-agent/session';
+import { openJsonlSessionStore } from '@diy-agent/session-store-jsonl';
+import { openMemorySessionStore } from '@diy-agent/session';
+import { agentsChain } from '@diy-agent/agents-chain';
+import { kbRootOf, scanKb } from '@diy-agent/kb';
+import { skillsOf } from '@diy-agent/skills';
+import { homedir } from 'node:os';
+import { createBotAgent, type BotAgent } from './agent.js';
+import { createOpenAiCompatible, resolveProviderConfig } from '@diy-agent/llm-provider';
 import {
     costOf,
     listAccountStates,
     loadCatalog,
     readAccountValue,
     type ModelCatalogEntry,
-} from "@diy-agent/model-catalog";
-import { toolArgsFromInput } from "@diy-agent/session";
-import { createBot, createFirstBot as createFirstBotIn, newSessionId } from "./bot.js";
-import { nextBotId } from "./uri.js";
-import {
-    applyPriorBoundary,
-    createBotCompactor,
-    type BotCompactionState,
-    type BotCompactor,
-} from "./compaction.js";
-import { buildSystemContext } from "./system-context.js";
-import { runToolCalls, type BotToolSet, type PendingToolCall } from "./tools.js";
-import type { Bot, BotConfig, BotStore } from "./types.js";
-import { createFileBotStore } from "./store-fs.js";
+} from '@diy-agent/model-catalog';
+import { createBot, createFirstBot as createFirstBotIn, newSessionId } from './bot.js';
+import { nextBotId } from './uri.js';
+import { applyPriorBoundary, createBotCompactor, type BotCompactionState, type BotCompactor } from './compaction.js';
+import { buildSystemContext } from './system-context.js';
+import { type BotToolSet } from './tools.js';
+import type { Bot, BotConfig, BotStore } from './types.js';
+import { createFileBotStore } from './store-fs.js';
 import {
     wireOf,
     type BotChatHost,
@@ -67,7 +67,7 @@ import {
     type ModelChoices,
     type WireMessage,
     type CompactInfo,
-} from "./protocol.js";
+} from './protocol.js';
 
 /** `meta.json` 的形状（会话自己的身份；消息正文在桶里） */
 interface SessionMeta {
@@ -94,9 +94,9 @@ interface StepUsage {
  * 「用户从没选过模型却已经在聊」的病因。
  */
 export const FIRST_BOT_DRAFT = {
-    id: "bot-1",
-    name: "大王助手",
-    instructions: "你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。",
+    id: 'bot-1',
+    name: '大王助手',
+    instructions: '你是「大王助手」，在 diy 的聊天窗口里陪大王干活。回答要短、要具体，能查证的不靠猜。',
 } as const;
 
 /**
@@ -110,17 +110,17 @@ export function workspaceOf(home: string, botId: string): string {
 }
 
 function workspaceNote(home: string, botId: string): string {
-    if (home === "") return "";
+    if (home === '') return '';
     const dir = workspaceOf(home, botId);
     return [
         `你的工作目录是 ${dir}。`,
-        "相对路径按它解析，shell 命令默认在这里执行；目录不存在时先建。",
-        "这不是权限边界：你仍可以读写任何路径。但新建文件、试验脚本、下载物默认放工作目录里，",
-        "不要在主仓或用户的项目目录里留临时产物。",
+        '相对路径按它解析，shell 命令默认在这里执行；目录不存在时先建。',
+        '这不是权限边界：你仍可以读写任何路径。但新建文件、试验脚本、下载物默认放工作目录里，',
+        '不要在主仓或用户的项目目录里留临时产物。',
         // 实测（2026-11-04）：deepseek 会把 `bash` 写成 `Bash`（学 Claude 的命名），
         // 于是 ai-sdk 直接抛 NoSuchToolError，整轮变成「没反应」。点明一下成本最低。
-        "调用工具时工具名**一律小写**（`bash` / `read` / `write` / `edit` / `job`），不要写成 `Bash`。",
-    ].join("");
+        '调用工具时工具名**一律小写**（`bash` / `read` / `write` / `edit` / `job`），不要写成 `Bash`。',
+    ].join('');
 }
 
 export interface BotChatOptions {
@@ -182,11 +182,11 @@ export interface BotChatOptions {
  * 无 `@` 时 account 为 undefined（裸 provider 的老写法仍可用）。
  */
 export function splitModelKey(key: string): { account?: string; providerId: string; modelId: string } {
-    const slash = key.indexOf("/");
-    if (slash <= 0 || slash === key.length - 1) return { providerId: key, modelId: "" };
+    const slash = key.indexOf('/');
+    if (slash <= 0 || slash === key.length - 1) return { providerId: key, modelId: '' };
     const providerSeg = key.slice(0, slash);
     const modelId = key.slice(slash + 1);
-    const at = providerSeg.lastIndexOf("@");
+    const at = providerSeg.lastIndexOf('@');
     if (at <= 0) return { providerId: providerSeg, modelId };
     return { account: providerSeg.slice(0, at), providerId: providerSeg.slice(at + 1), modelId };
 }
@@ -214,38 +214,38 @@ export function createSerial(): Serial {
 /** 建一个 bot 对话宿主（懒打开：第一次调用才读目录 / 建目录） */
 /** 技能节点的结构说明（与 `@diy-agent/skills` 的 provider 同一份） */
 const SKILLS_HELP = {
-    type: "array",
-    desc: "技能清单（空则整节跳过）",
+    type: 'array',
+    desc: '技能清单（空则整节跳过）',
     items: {
-        name: { type: "string", desc: "技能名" },
-        desc: { type: "string", desc: "说明（含触发词）" },
-        path: { type: "string", desc: "SKILL.md 路径（要看全文就 read 它）" },
+        name: { type: 'string', desc: '技能名' },
+        desc: { type: 'string', desc: '说明（含触发词）' },
+        path: { type: 'string', desc: 'SKILL.md 路径（要看全文就 read 它）' },
     },
 };
 
 /** AGENTS.md 链的节点说明 */
 const CHAIN_HELP = {
-    type: "array",
-    desc: "AGENTS.md 链（逐层，从最外层到最深处）",
+    type: 'array',
+    desc: 'AGENTS.md 链（逐层，从最外层到最深处）',
     items: {
-        path: { type: "string", desc: "AGENTS.md 路径" },
-        scope: { type: "string", desc: "生效目录" },
-        content: { type: "string", desc: "正文" },
+        path: { type: 'string', desc: 'AGENTS.md 路径' },
+        scope: { type: 'string', desc: '生效目录' },
+        content: { type: 'string', desc: '正文' },
     },
 };
 
 /** 知识库节点的说明 */
 const KB_HELP = {
-    type: "object",
-    desc: "知识库索引（md 文件；要内容直接读那个文件）。项目库优先、全局库兜底",
+    type: 'object',
+    desc: '知识库索引（md 文件；要内容直接读那个文件）。项目库优先、全局库兜底',
     entries: {
-        type: "array",
-        desc: "每个 md 一条（按路径排序）；空则整节跳过",
+        type: 'array',
+        desc: '每个 md 一条（按路径排序）；空则整节跳过',
         items: {
-            path: { type: "string", desc: "相对知识库根的路径" },
-            desc: { type: "string", desc: "这个文件讲什么" },
-            sections: { type: "number", desc: "多少个 ## 小节" },
-            scope: { type: "string", desc: "project / global" },
+            path: { type: 'string', desc: '相对知识库根的路径' },
+            desc: { type: 'string', desc: '这个文件讲什么' },
+            sections: { type: 'number', desc: '多少个 ## 小节' },
+            scope: { type: 'string', desc: 'project / global' },
         },
     },
 };
@@ -259,8 +259,8 @@ const KB_HELP = {
  */
 function botKb(cwd: string, home: string): unknown {
     const roots = [
-        { dir: kbRootOf(cwd), scope: "project" },
-        { dir: join(home, "knowledge"), scope: "global" },
+        { dir: kbRootOf(cwd), scope: 'project' },
+        { dir: join(home, 'knowledge'), scope: 'global' },
     ];
     const byPath = new Map<string, { path: string; desc: string; sections: number; scope: string }>();
     for (const { dir, scope } of [...roots].reverse()) {
@@ -274,15 +274,13 @@ function botKb(cwd: string, home: string): unknown {
 
 export function createBotChat(options: BotChatOptions): BotChatHost {
     const home = options.home;
-    const root = options.sessionsDir ?? join(home, "sessions", "chat");
+    const root = options.sessionsDir ?? join(home, 'sessions', 'chat');
     // bot 身份在 `<home>/bots/`；会话归属落在会话自己的目录里（方案 B）
     const botStore = options.botStore ?? createFileBotStore({ home, sessionsDir: root });
     const persist = options.persist ?? false;
     const openSessionStore =
         options.openSessionStore ??
-        (persist
-            ? (_id: string, dir: string) => openJsonlSessionStore({ dir })
-            : () => openMemorySessionStore());
+        (persist ? (_id: string, dir: string) => openJsonlSessionStore({ dir }) : () => openMemorySessionStore());
     /** 内存模式：meta 也只活在进程里（不写 `sessions/chat/<id>/meta.json`） */
     const persistMeta = options.persistMeta ?? persist;
     const metaMemory = new Map<string, SessionMeta>();
@@ -379,9 +377,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
 
     /** 模型 key：`account@provider/model`（无 account 时退回 `provider/model`） */
     const keyOf = (entry: ModelCatalogEntry | null, account?: string): string =>
-        entry === null
-            ? ""
-            : `${account === undefined ? "" : `${account}@`}${entry.providerId}/${entry.modelId}`;
+        entry === null ? '' : `${account === undefined ? '' : `${account}@`}${entry.providerId}/${entry.modelId}`;
 
     const writeMeta = async (meta: SessionMeta): Promise<void> => {
         if (!persistMeta) {
@@ -390,7 +386,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         }
         const dir = join(root, meta.id);
         await mkdir(dir, { recursive: true });
-        await writeFile(join(dir, "meta.json"), `${JSON.stringify(meta, null, 4)}\n`, "utf-8");
+        await writeFile(join(dir, 'meta.json'), `${JSON.stringify(meta, null, 4)}\n`, 'utf-8');
     };
 
     const readMetaOf = async (id: string): Promise<SessionMeta | null> =>
@@ -426,7 +422,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 const now = localISOString();
                 const meta: SessionMeta = {
                     id: newSessionId(),
-                    title: "新会话",
+                    title: '新会话',
                     model: bot.model,
                     createdAt: now,
                     updatedAt: now,
@@ -441,9 +437,9 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     const readCompaction = async (sessionId: string): Promise<BotCompactionState | null> => {
         if (!persistMeta) return compactMemory.get(sessionId) ?? null;
         try {
-            const raw = await readFile(join(root, sessionId, "compaction.json"), "utf-8");
+            const raw = await readFile(join(root, sessionId, 'compaction.json'), 'utf-8');
             const parsed: unknown = JSON.parse(raw);
-            if (parsed === null || typeof parsed !== "object") return null;
+            if (parsed === null || typeof parsed !== 'object') return null;
             return parsed as BotCompactionState;
         } catch {
             // 文件不存在 / 坏了 = 从没压过（不猜）
@@ -458,15 +454,30 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         }
         const dir = join(root, sessionId);
         await mkdir(dir, { recursive: true });
-        await writeFile(join(dir, "compaction.json"), `${JSON.stringify(state, null, 4)}\n`, "utf-8");
+        await writeFile(join(dir, 'compaction.json'), `${JSON.stringify(state, null, 4)}\n`, 'utf-8');
     };
 
     /** 正在打开中的会话（同一 id 并发打开只跑一次；打开是**每个会话自己**的事，不进全局 act） */
-    const opening = new Map<string, Promise<{ store: SessionStore; session: AgentSession; agent: BotAgent; meta: SessionMeta; compactor: BotCompactor }>>();
+    const opening = new Map<
+        string,
+        Promise<{
+            store: SessionStore;
+            session: AgentSession;
+            agent: BotAgent;
+            meta: SessionMeta;
+            compactor: BotCompactor;
+        }>
+    >();
 
     const opened = async (
         id: string,
-    ): Promise<{ store: SessionStore; session: AgentSession; agent: BotAgent; meta: SessionMeta; compactor: BotCompactor }> => {
+    ): Promise<{
+        store: SessionStore;
+        session: AgentSession;
+        agent: BotAgent;
+        meta: SessionMeta;
+        compactor: BotCompactor;
+    }> => {
         const hit = open.get(id);
         if (hit !== undefined) return hit;
         const pending = opening.get(id);
@@ -482,15 +493,21 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
 
     const openSession = async (
         id: string,
-    ): Promise<{ store: SessionStore; session: AgentSession; agent: BotAgent; meta: SessionMeta; compactor: BotCompactor }> => {
+    ): Promise<{
+        store: SessionStore;
+        session: AgentSession;
+        agent: BotAgent;
+        meta: SessionMeta;
+        compactor: BotCompactor;
+    }> => {
         const dir = join(root, id);
         const meta = await readMetaOf(id);
         if (meta === null) throw new Error(`没有会话 ${id}`);
         // ##498：模型以 **bot 的当前配置**为准（一个 bot 一条长期会话，改模型就是改这条会话）
         const ownerId = await botStore.ownerOf(id);
         const owner = ownerId === null ? null : await botStore.load(ownerId);
-        const modelKey = owner !== null && owner.model.trim() !== "" ? owner.model : meta.model;
-        const instructions = owner?.instructions.trim() ?? "";
+        const modelKey = owner !== null && owner.model.trim() !== '' ? owner.model : meta.model;
+        const instructions = owner?.instructions.trim() ?? '';
         // ##480：装配器是决定者 —— 传实例而不是策略名：将来换远程 store 只改这一行，
         // 不存在 switch 分派。
         const store = await openSessionStore(id, dir);
@@ -506,10 +523,10 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         const contextText =
             initialMessages.length === 0
                 ? buildSystemContext({ home: options.home, cwd: workspaceOf(options.home, ownerId ?? id) }).text
-                : "";
+                : '';
         const systemText = [instructions, contextText, workspaceNote(options.home, ownerId ?? id)]
-            .filter((x) => x !== "")
-            .join("\n\n");
+            .filter((x) => x !== '')
+            .join('\n\n');
         const { modelId } = splitModelKey(modelKey);
         const llm = llmFor(modelKey);
         // ##517：上下文压缩（窗口未知 ⇒ 不压；判据 / 摘要 prompt 全部来自 @diy-agent/compaction）
@@ -517,7 +534,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         const compactor = createBotCompactor({
             windowTokens: entry?.contextWindow ?? null,
             llm,
-            ...(modelId === "" ? {} : { model: modelId }),
+            ...(modelId === '' ? {} : { model: modelId }),
             loadState: () => readCompaction(id),
             saveState: (state) => writeCompaction(id, state),
         });
@@ -533,12 +550,12 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
             model: modelId,
             instructions: systemText,
             providers: [
-                { key: "diy", provide: () => ({ cli: "", home: options.home }) },
+                { key: 'diy', provide: () => ({ cli: '', home: options.home }) },
                 {
-                    key: "cwd",
+                    key: 'cwd',
                     provide: () => ({
                         path: workspace,
-                        note: "",
+                        note: '',
                         isFallback: false,
                         isTaskDir: false,
                         isAppDir: false,
@@ -549,14 +566,18 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 // → 仓库 AGENTS.md 里的全局规则一条都进不来（比缺 kb 严重）。
                 // `appHome` 传一个不存在的路径：bot 没有「应用级规范」这个概念。
                 {
-                    key: "chain",
+                    key: 'chain',
                     help: CHAIN_HELP,
-                    provide: () => agentsChain({ appHome: join(options.home, "__no_app__"), cwd: workspace }),
+                    provide: () => agentsChain({ appHome: join(options.home, '__no_app__'), cwd: workspace }),
                 },
                 // 知识库：两层（项目 `<cwd>/.diy/knowledge` 优先、全局 `$DIY_HOME/knowledge` 兜底），
                 // 与 diy-app 的 kbProvider 同判据（PR #445）。只投目录不投正文 —— 要看就 read 那个文件。
-                { key: "kb", help: KB_HELP, provide: () => botKb(workspace, options.home) },
-                { key: "skills", help: SKILLS_HELP, provide: () => skillsOf({ cwd: workspace, globalRoot: join(homedir(), ".agents") }) },
+                { key: 'kb', help: KB_HELP, provide: () => botKb(workspace, options.home) },
+                {
+                    key: 'skills',
+                    help: SKILLS_HELP,
+                    provide: () => skillsOf({ cwd: workspace, globalRoot: join(homedir(), '.agents') }),
+                },
             ],
             initialMessages,
             initialSnapshot: null,
@@ -576,7 +597,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         name: config.name,
         instructions: config.instructions,
         model: config.model,
-        needsModel: config.needsModel === true || config.model.trim() === "",
+        needsModel: config.needsModel === true || config.model.trim() === '',
         ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
         sessionCount: (await botStore.sessionsOf(config.id)).length,
         createdAt: config.createdAt,
@@ -623,19 +644,24 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
             return { bots: [], bot: null, messages: [], metrics: null };
         }
         // 存量 bot 没选过模型（##497）：UI 要先拦到配置页 —— 这里也不能替它开会话
-        if (active.needsModel === true || active.model.trim() === "") {
+        if (active.needsModel === true || active.model.trim() === '') {
             return { bots, bot: await botView(active), messages: [], metrics: null };
         }
         // 长期会话：第一次进来才建（幂等；建过就一直是它 —— 判据 3/4）
         const ref = await handleOf(active).primary();
         const current = await opened(ref.id);
         const messages: readonly WireMessage[] = wireOf(current.session.messages);
-        return { bots, bot: await botView(active), messages, metrics: metricsOf(active, ref.id, current.session.usage) };
+        return {
+            bots,
+            bot: await botView(active),
+            messages,
+            metrics: metricsOf(active, ref.id, current.session.usage),
+        };
     };
 
     /** 模型必须是目录里的（##497：没有「跟随宿主缺省」这条路） */
     const checkModel = (model: string): string => {
-        if (model.trim() === "") throw new Error("必须先选一个模型（bot 的 model 必填）");
+        if (model.trim() === '') throw new Error('必须先选一个模型（bot 的 model 必填）');
         // 三段式：account@provider/model —— 按 provider+model 查目录，account 只影响取哪个 key
         const { providerId, modelId } = splitModelKey(model);
         const found = catalog().some((entry) => entry.providerId === providerId && entry.modelId === modelId);
@@ -670,7 +696,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 defaultModel:
                     first === undefined
                         ? null
-                        : `${first.account === undefined ? "" : `${first.account}@`}${first.providerId}/${first.modelId}`,
+                        : `${first.account === undefined ? '' : `${first.account}@`}${first.providerId}/${first.modelId}`,
             };
         },
 
@@ -692,7 +718,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
         createBot(input: BotDraftInput): Promise<BotChatSnapshot> {
             return act(async () => {
                 const name = input.name.trim();
-                if (name === "") throw new Error("新 bot 必须有个名字");
+                if (name === '') throw new Error('新 bot 必须有个名字');
                 const existing = await botStore.list();
                 if (existing.some((config) => config.name === name)) {
                     throw new Error(`已经有同名 bot「${name}」`);
@@ -702,9 +728,9 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 const config: BotConfig = {
                     id: nextBotId(existing.map((item) => item.id)),
                     name,
-                    instructions: input.instructions ?? "",
+                    instructions: input.instructions ?? '',
                     model,
-                    ...(input.reasoningEffort === undefined || input.reasoningEffort === ""
+                    ...(input.reasoningEffort === undefined || input.reasoningEffort === ''
                         ? {}
                         : { reasoningEffort: input.reasoningEffort }),
                     createdAt: at,
@@ -722,13 +748,13 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                 const current = await botStore.load(input.id);
                 if (current === null) throw new Error(`没有 bot ${input.id}`);
                 const name = (input.name ?? current.name).trim();
-                if (name === "") throw new Error("名字不能为空");
+                if (name === '') throw new Error('名字不能为空');
                 const model = input.model === undefined ? current.model : checkModel(input.model);
                 const instructions = input.instructions ?? current.instructions;
                 const effort =
                     input.reasoningEffort === undefined
                         ? current.reasoningEffort
-                        : input.reasoningEffort.trim() === ""
+                        : input.reasoningEffort.trim() === ''
                           ? undefined
                           : input.reasoningEffort;
                 const next: BotConfig = {
@@ -736,9 +762,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                     name,
                     instructions,
                     model,
-                    ...(current.primarySessionId === undefined
-                        ? {}
-                        : { primarySessionId: current.primarySessionId }),
+                    ...(current.primarySessionId === undefined ? {} : { primarySessionId: current.primarySessionId }),
                     ...(effort === undefined ? {} : { reasoningEffort: effort }),
                     ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
                     createdAt: current.createdAt,
@@ -782,21 +806,21 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
 
         /** 压缩点（旧宿主：从当前消息线推导，只供面板展示；旧宿主的压缩是自动的） */
         async compactInfo(): Promise<CompactInfo> {
-            const snap = await snapshotNow()
+            const snap = await snapshotNow();
             const rounds = snap.messages
-                .filter((m) => m.role === "user")
+                .filter((m) => m.role === 'user')
                 .map((m, i) => ({
                     label: `轮${i + 1}`,
-                    title: ((m.blocks[0]?.data as { text?: string } | undefined)?.text ?? "").slice(0, 40),
+                    title: ((m.blocks[0]?.data as { text?: string } | undefined)?.text ?? '').slice(0, 40),
                     tokens: 0,
                     kept: true,
-                }))
-            return { rounds, droppedCount: 0 }
+                }));
+            return { rounds, droppedCount: 0 };
         },
 
         /** 显式压缩：**旧宿主不支持**（它的压缩由窗口判据自动触发）—— 明确报错，不假装成功 */
         async compact(): Promise<BotChatSnapshot> {
-            throw new Error("当前宿主不支持显式压缩：用 DIY_CHAT_AGENT=1 启动（Agent 宿主支持按轮压缩）")
+            throw new Error('当前宿主不支持显式压缩：用 DIY_CHAT_AGENT=1 启动（Agent 宿主支持按轮压缩）');
         },
 
         send(text, onDelta): Promise<BotChatSnapshot> {
@@ -804,7 +828,7 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
             // 不同会话 / bot 增删改 互不阻塞（LLM 回复可能几十秒，不该把整个 UI 卡住）
             return (async () => {
                 const active = await activeConfig();
-                if (active === null) throw new Error("还没有 bot —— 先建一个（首启引导）");
+                if (active === null) throw new Error('还没有 bot —— 先建一个（首启引导）');
                 const ref = await handleOf(active).primary();
                 return queueFor(ref.id)(async () => {
                     const { session, agent, meta, compactor } = await opened(ref.id);
@@ -830,21 +854,21 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                             ...(active.maxOutputTokens === undefined
                                 ? {}
                                 : { maxOutputTokens: active.maxOutputTokens }),
-                            ...(effort === undefined || effort === "default"
+                            ...(effort === undefined || effort === 'default'
                                 ? {}
-                                : effort === "none"
-                                  ? { providerOptions: { reasoning: "none" } }
+                                : effort === 'none'
+                                  ? { providerOptions: { reasoning: 'none' } }
                                   : { providerOptions: { openaiCompatible: { reasoningEffort: effort } } }),
                         })) {
-                            if (delta.type === "text" || delta.type === "tool-call" || delta.type === "tool-result") {
+                            if (delta.type === 'text' || delta.type === 'tool-call' || delta.type === 'tool-result') {
                                 onDelta(wireOf(session.messages));
                             }
                         }
                     } catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
                         session.append({
-                            role: "assistant",
-                            type: "agent-notice",
+                            role: 'assistant',
+                            type: 'agent-notice',
                             text: `本轮失败：${message}`,
                         });
                         onDelta(wireOf(session.messages));
@@ -863,13 +887,15 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
                     });
                     // ##517：下一轮的压缩阈值按「这一步实际撑开的上下文」判（实测优先）
                     compactor.noteStepTokens(
-                        usageAfter.inputTokens - usageBefore.inputTokens + (usageAfter.outputTokens - usageBefore.outputTokens),
+                        usageAfter.inputTokens -
+                            usageBefore.inputTokens +
+                            (usageAfter.outputTokens - usageBefore.outputTokens),
                     );
 
                     const grown = session.messages.length - before;
                     const next: SessionMeta = {
                         ...meta,
-                        title: meta.title === "新会话" && messages.length > 0 ? titleFrom(text) : meta.title,
+                        title: meta.title === '新会话' && messages.length > 0 ? titleFrom(text) : meta.title,
                         updatedAt: localISOString(),
                         messageCount: meta.messageCount + Math.max(grown, 0),
                     };
@@ -885,89 +911,26 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
 /** 工具步缺省上限（##514：够一个中等任务，又不至于把一整晚烧进去） */
 export const DEFAULT_MAX_TOOL_STEPS = 20;
 
-/**
- * 一轮对话的**工具循环**（##514 第 3 步）：调模型 → 模型点工具 → 执行 → 结果喂回去 → 再调，
- * 直到模型不再调工具或步数上限。
- *
- * 为什么不用甲（在 bot 层反复调 `session.send`）：`send` 恒追加 **user** 消息，
- * 而工具结果在协议上必须是 `role:'tool'` 且按 `tool_call_id` 配对 —— 混成 user 正文
- * 上游会拒（或有模型行为不可预测）。所以用 session 的 `continueWithToolResults()`：
- * 落盘 / 压缩 / usage 统计与 `send` 完全同一套（两者共用 `runTurn()`）。
- *
- * 超限取舍（用户已确认口径）：**不报错、不静默死循环** ——
- * 剩余未执行的调用仍各落一条「未执行」结果（历史必须合法：assistant 的 tool-call
- * 不能没有对应结果），再追加一条 notice 说明截断原因，然后结束这一轮。
- */
-async function runToolLoop(input: {
-    readonly session: AgentSession;
-    readonly text: string;
-    readonly tools: BotToolSet | undefined;
-    readonly maxTools: number;
-    readonly onDelta: (messages: readonly WireMessage[]) => void;
-}): Promise<void> {
-    const { session, text, tools, maxTools, onDelta } = input;
-    const push = (): void => onDelta(wireOf(session.messages));
-
-    let stream = session.send(text);
-    let usedTools = 0;
-    for (;;) {
-        const calls: PendingToolCall[] = [];
-        for await (const delta of stream) {
-            // 工具调用 / 结果也推 —— 否则「只调工具、不吐正文」的那几步在 UI 上是黑的
-            if (delta.type === "text" || delta.type === "tool-call" || delta.type === "tool-result") push();
-            if (delta.type === "tool-call") {
-                calls.push({ id: delta.id, name: delta.name, input: toolArgsFromInput(delta.input) });
-            }
-        }
-        if (calls.length === 0) return;
-
-        if (tools === undefined || usedTools >= maxTools) {
-            // 不能执行也必须回结果：assistant 的 tool-call 悬空会让下一轮请求不合法
-            const reason =
-                tools === undefined ? "[未执行] 本会话没有装工具" : `[未执行] 已达工具步上限 ${maxTools}`;
-            const skipped = calls.map((call) => ({ id: call.id, name: call.name, content: reason }));
-            for await (const delta of session.continueWithToolResults(skipped)) {
-                if (delta.type === "text" || delta.type === "tool-call" || delta.type === "tool-result") push();
-            }
-            session.append({
-                role: "assistant",
-                type: "agent-notice",
-                text:
-                    tools === undefined
-                        ? "模型要求调工具，但本会话没有装工具；调用未执行。"
-                        : `工具循环已达上限（${maxTools} 步），本轮停止；剩余调用未执行。`,
-            });
-            push();
-            return;
-        }
-
-        usedTools += 1;
-        const results = await runToolCalls(calls, tools);
-        stream = session.continueWithToolResults(results);
-    }
-}
-
-
 function titleFrom(text: string): string {
-    const oneLine = text.replace(/\s+/g, " ").trim();
-    return oneLine.length > 20 ? `${oneLine.slice(0, 20)}…` : oneLine || "新会话";
+    const oneLine = text.replace(/\s+/g, ' ').trim();
+    return oneLine.length > 20 ? `${oneLine.slice(0, 20)}…` : oneLine || '新会话';
 }
 
 async function readMeta(dir: string): Promise<SessionMeta | null> {
     try {
-        const raw = await readFile(join(dir, "meta.json"), "utf-8");
+        const raw = await readFile(join(dir, 'meta.json'), 'utf-8');
         const parsed: unknown = JSON.parse(raw);
-        if (parsed === null || typeof parsed !== "object") return null;
+        if (parsed === null || typeof parsed !== 'object') return null;
         const meta = parsed as Partial<Record<keyof SessionMeta, unknown>>;
-        if (typeof meta.id !== "string" || typeof meta.title !== "string" || typeof meta.model !== "string")
+        if (typeof meta.id !== 'string' || typeof meta.title !== 'string' || typeof meta.model !== 'string')
             return null;
         return {
             id: meta.id,
             title: meta.title,
             model: meta.model,
-            createdAt: typeof meta.createdAt === "string" ? meta.createdAt : localISOString(new Date(0)),
-            updatedAt: typeof meta.updatedAt === "string" ? meta.updatedAt : localISOString(new Date(0)),
-            messageCount: typeof meta.messageCount === "number" ? meta.messageCount : 0,
+            createdAt: typeof meta.createdAt === 'string' ? meta.createdAt : localISOString(new Date(0)),
+            updatedAt: typeof meta.updatedAt === 'string' ? meta.updatedAt : localISOString(new Date(0)),
+            messageCount: typeof meta.messageCount === 'number' ? meta.messageCount : 0,
         };
     } catch {
         return null;

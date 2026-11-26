@@ -491,9 +491,7 @@ export class RoomActor {
                     : { turn: delivery.turn, turnId: delivery.turnId ?? `turn-${delivery.messageId}` };
             // 这条投递对应的公共条目（只有 say 带 messageId）。拿到它才能问 session
             // 「你上下文里到底有没有它」—— 不传的话 session 无处可查，只像个眼瞎的盲标。
-            const entry = this.log
-                .all()
-                .find((item) => item.kind === 'say' && item.messageId === delivery.messageId);
+            const entry = this.log.all().find((item) => item.kind === 'say' && item.messageId === delivery.messageId);
             await this.postOrWarn(bot, delivery, text, entry, turn);
         }
     }
@@ -781,6 +779,8 @@ export class RoomActor {
         this.deps.store.saveRoom(this.deps.spec);
         // 退出的成员把 session 一并丢掉（再进来会按日志重建）
         const keep = new Set(members.map((member) => member.botId));
+        // 快照必须：循环体里 `this.sessions.delete`（边遍历边改会跳过）
+        // oxlint-disable-next-line no-useless-spread
         for (const botId of [...this.sessions.keys()]) {
             if (keep.has(botId)) continue;
             this.sessions.delete(botId);
@@ -917,6 +917,8 @@ export class RoomActor {
      */
     private get remindMode(): RemindMode {
         this.remindModeCache ??= resolveRemindMode({
+            // exactOptionalPropertyTypes：不传就不带这个键
+            // oxlint-disable-next-line no-useless-spread
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
         });
         return this.remindModeCache;

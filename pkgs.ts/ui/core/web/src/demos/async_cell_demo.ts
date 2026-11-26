@@ -2,8 +2,10 @@ import { DomApp, type DomColumn } from "../../../src/providers/dom.js";
 
 /** 异步刷新块 + 并发隔离。对照 examples/features/async_cell_demo.pn.py。 */
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-const now = (): string => new Date().toLocaleTimeString("zh-CN", { hour12: false });
+const sleep = (ms: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, ms));
+const now = (): string =>
+  new Date().toLocaleTimeString("zh-CN", { hour12: false });
 
 export function asyncCellDemo(el: HTMLElement): void {
   const app = new DomApp({ mount: el });
@@ -11,7 +13,12 @@ export function asyncCellDemo(el: HTMLElement): void {
   const startAll = app.signal(0);
 
   app.label("# 🚀 异步刷新块 · 并发隔离");
-  app.button({ name: "🚀 Launch All", onClick: () => { startAll.value++; } });
+  app.button({
+    name: "🚀 Launch All",
+    onClick: () => {
+      startAll.value++;
+    },
+  });
 
   app.row(() => {
     taskCard("A", "🔴", 400);
@@ -23,9 +30,17 @@ export function asyncCellDemo(el: HTMLElement): void {
     app.column((card) => {
       // 每个任务独立的局部信号
       const localRun = card.signal(0);
-      card.button({ name: `Run ${name}`, onClick: () => { localRun.value++; } });
+      card.button({
+        name: `Run ${name}`,
+        onClick: () => {
+          localRun.value++;
+        },
+      });
 
       // 独立 cell：读全局 + 局部信号（首段同步读 → 自动成为依赖）
+      // 这个 demo 用的是「一路 await、不中途 yield」的写法：cell 接受它，
+      // 但生成器签名本身没有 yield，oxlint 会报
+      // oxlint-disable-next-line require-yield
       card.column().cell(async function* (n: DomColumn) {
         const trigger = startAll.value + localRun.value;
         if (trigger === 0) {

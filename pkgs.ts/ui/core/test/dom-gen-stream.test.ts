@@ -6,7 +6,12 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { html, mountStream, type GenNode, type Spec } from "../src/providers/dom-gen.js";
+import {
+  html,
+  mountStream,
+  type GenNode,
+  type Spec,
+} from "../src/providers/dom-gen.js";
 
 // ── 假节点 ──────────────────────────────────────────────────
 
@@ -154,7 +159,9 @@ describe("mountStream", () => {
     const p = probe();
     const s = source<string>();
     const ac = new AbortController();
-    mountStream(p.node, s.it, (v) => html.div({ text: v }), { signal: ac.signal });
+    mountStream(p.node, s.it, (v) => html.div({ text: v }), {
+      signal: ac.signal,
+    });
 
     s.push("a");
     await flush();
@@ -184,7 +191,8 @@ describe("mountStream", () => {
 
     expect(p.inserted.map((x) => x.text)).toEqual(["ok"]);
     expect(onError).toHaveBeenCalledTimes(1);
-    expect((onError.mock.calls[0]?.[0] as Error).message).toBe("boom");
+    const firstError = onError.mock.calls[0]?.[0];
+    expect((firstError as Error | undefined)?.message).toBe("boom");
   });
 
   it("源正常结束时自然退出（不报错、不调 return）", async () => {

@@ -12,9 +12,9 @@
 // 旧位置 `~/.diy-instances` 保留一次性搬移：**只在读侧触发**（写侧只写新目录），
 // 搬完就没人再读旧的；搬不动（权限）只告警，不影响继续跑。
 
-import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs';
+import { homedir, userInfo } from 'node:os';
+import { join } from 'node:path';
 
 /** 真实家目录（不读 $HOME：测试 / 隔离实例会改写它） */
 export function realHomeDir(): string {
@@ -27,21 +27,21 @@ export function realHomeDir(): string {
 
 /** dev 根目录（`DIY_DEV_HOME` 可覆盖；缺省 `~/.diy/dev`） */
 export function devRoot(env: NodeJS.ProcessEnv = process.env): string {
-    const override = env["DIY_DEV_HOME"];
-    if (override !== undefined && override.trim() !== "") return override.trim();
-    return join(realHomeDir(), ".diy", "dev");
+    const override = env['DIY_DEV_HOME'];
+    if (override !== undefined && override.trim() !== '') return override.trim();
+    return join(realHomeDir(), '.diy', 'dev');
 }
 
 /** 实例注册表目录（`DIY_INSTANCE_REGISTRY` 可覆盖，测试隔离用）；缺省 `<devRoot>/apps` */
 export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
-    const override = env["DIY_INSTANCE_REGISTRY"];
-    if (override !== undefined && override.trim() !== "") return override.trim();
-    return join(devRoot(env), "apps");
+    const override = env['DIY_INSTANCE_REGISTRY'];
+    if (override !== undefined && override.trim() !== '') return override.trim();
+    return join(devRoot(env), 'apps');
 }
 
 /** 旧位置（一次性搬迁的来源）：`~/.diy-instances` */
-export function legacyRegistryDir(env: NodeJS.ProcessEnv = process.env): string {
-    return join(realHomeDir(), ".diy-instances");
+export function legacyRegistryDir(_env: NodeJS.ProcessEnv = process.env): string {
+    return join(realHomeDir(), '.diy-instances');
 }
 
 /** 确保注册表目录存在（写侧调用） */
@@ -57,7 +57,12 @@ export function ensureRegistryDir(env: NodeJS.ProcessEnv = process.env): string 
  * `.json` 文件按 pid 命名，新目录已有同名文件时**不覆盖**（新目录一定更新）。
  * 搬完旧目录即删（空目录也删）——避免下次再扫一遍。
  */
-export function migrateLegacyRegistry(env: NodeJS.ProcessEnv = process.env): { moved: number; skipped: number; from: string; to: string } {
+export function migrateLegacyRegistry(env: NodeJS.ProcessEnv = process.env): {
+    moved: number;
+    skipped: number;
+    from: string;
+    to: string;
+} {
     const from = legacyRegistryDir(env);
     const to = registryDir(env);
     const result = { moved: 0, skipped: 0, from, to };
@@ -74,7 +79,7 @@ export function migrateLegacyRegistry(env: NodeJS.ProcessEnv = process.env): { m
         return result;
     }
     for (const name of names) {
-        if (!name.endsWith(".json")) continue;
+        if (!name.endsWith('.json')) continue;
         const target = join(to, name);
         if (existsSync(target)) {
             result.skipped++;

@@ -6,7 +6,7 @@
 // 一个 transport 上挂两个 binding（rpc 支持双端同挂）：
 //   ChannelClientBinding  → 页面调主进程（listPages / invoke）
 //   ChannelServerBinding  → 主进程调页面（意图测试命令 fill / click / waitState / readState）
-import { ChannelClientBinding, ChannelServerBinding, createScopedClient, createTypedClient } from '@diy-agent/rpc';
+import { ChannelClientBinding, ChannelServerBinding, createScopedClient } from '@diy-agent/rpc';
 import type { EnvelopeTransport } from '@diy-agent/rpc';
 import { rendererRoutes, workbenchRoutes } from './protocol.js';
 import type { WorkbenchBridge } from './channels.js';

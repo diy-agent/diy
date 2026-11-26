@@ -53,7 +53,7 @@ export class Projector {
      * 文案**不写死原因**：收尾可能是「人按停」也可能是「工具结果没回来」（tool-mismatch）。
      * 说成"被取消"会让 tool-mismatch 那一路骗人 —— 到底为什么停，由 `endItems()` 说。
      */
-    finalize(now = Date.now()): Item[] {
+    finalize(_now = Date.now()): Item[] {
         const ops: Item[] = [];
         for (const [id, open] of this.items) {
             if (open.status !== 'streaming') continue;

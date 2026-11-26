@@ -164,9 +164,8 @@ export function assertFullyBound(
   })(root as unknown as Record<string, unknown>, 'diy');
 
   for (const p of excludePrefixes) {
-    for (const k of [...expected]) if (k.startsWith(p)) expected.delete(k);
-  }
-  for (const p of excludePrefixes) {
+    // 快照必须：循环体里面在 `expected` 上删元素（边遍历边改会跳过元素）
+    // oxlint-disable-next-line no-useless-spread
     for (const k of [...expected]) if (k.startsWith(p)) expected.delete(k);
   }
   const registered = new Set(binding.listRegistered());

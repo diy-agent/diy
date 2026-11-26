@@ -1,4 +1,9 @@
-import { GenApp, html, mountStream, Signal, type GenNode } from "../../../src/browser.js";
+import {
+  GenApp,
+  html,
+  mountStream,
+  type GenNode,
+} from "../../../src/browser.js";
 
 /**
  * async cell —— **B 风格**对照 `async_cell_demo.ts`（A 风格：`cell(async function* (n))`）。
@@ -9,8 +14,10 @@ import { GenApp, html, mountStream, Signal, type GenNode } from "../../../src/br
  * 关键差异：**A 重跑会整块清空重建；B 的 mountStream 根本不重跑**（历史行保留）。
  */
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-const now = (): string => new Date().toLocaleTimeString("zh-CN", { hour12: false });
+const sleep = (ms: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, ms));
+const now = (): string =>
+  new Date().toLocaleTimeString("zh-CN", { hour12: false });
 
 interface Task {
   name: string;
@@ -34,6 +41,8 @@ async function* taskFlow(t: Task): AsyncGenerator<string> {
 }
 
 function clearNode(node: GenNode): void {
+  // 快照必须：循环体里 `remove(k)` 会改 keyedChildren
+  // oxlint-disable-next-line no-useless-spread
   for (const k of [...(node.keyedChildren?.keys() ?? [])]) node.remove(k);
 }
 
@@ -50,14 +59,22 @@ export function asyncCellGenDemo(el: HTMLElement): void {
     stops[i]?.();
     clearNode(node);
     const id = ++runId;
-    stops[i] = mountStream(node, taskFlow(t), (line) => html.div({ class: "panel-line", text: line }), {
-      key: (_line, k) => `${i}:${id}:${k}`,
-    });
+    stops[i] = mountStream(
+      node,
+      taskFlow(t),
+      (line) => html.div({ class: "panel-line", text: line }),
+      {
+        key: (_line, k) => `${i}:${id}:${k}`,
+      },
+    );
   };
 
   app.render(
     html.div({ class: "panel-body" }, function* () {
-      yield html.div({ class: "panel-tag", text: "B · yield html.div() + mountStream" });
+      yield html.div({
+        class: "panel-tag",
+        text: "B · yield html.div() + mountStream",
+      });
       yield html.button({
         class: "panel-btn",
         text: "🚀 Launch All",
@@ -69,17 +86,18 @@ export function asyncCellGenDemo(el: HTMLElement): void {
           const idx = i;
           const t = TASKS[idx] as Task;
           yield html.div({ class: "panel-card" }, function* () {
-            yield html.div({ class: "panel-card-title", text: `Task ${t.name} (${t.delay}ms)` });
+            yield html.div({
+              class: "panel-card-title",
+              text: `Task ${t.name} (${t.delay}ms)`,
+            });
             yield html.button({
               class: "panel-btn",
               text: `Run ${t.name}`,
               onClick: () => runOne(idx),
             });
-            yield html
-              .div({ class: "panel-lines" })
-              .unsafe((n: GenNode) => {
-                nodes[idx] = n;
-              });
+            yield html.div({ class: "panel-lines" }).unsafe((n: GenNode) => {
+              nodes[idx] = n;
+            });
           });
         }
       });

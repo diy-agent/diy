@@ -14,12 +14,7 @@
  *   4. 值的类型由 zod 推导：`color` 只能取 auto/always/never，非法值在解析期报错
  */
 import { z } from 'zod';
-import {
-  ChannelServerBinding,
-  ChannelClientBinding,
-  RpcSchema,
-  defineService,
-} from '../../../src/index';
+import { ChannelServerBinding, ChannelClientBinding, RpcSchema } from '../../../src/index';
 import { createMemTransportPair } from '../../../test/helpers';
 import { CliApp } from '../../../src/cli/index';
 
@@ -53,10 +48,18 @@ class CliExit extends Error {
 async function main(): Promise<void> {
   const [serverTx, clientTx] = createMemTransportPair();
   const server = new ChannelServerBinding(serverTx);
-  server.use({ prefix: "demo", api: rootRoutes, handlers: { task: {
-    list: ({ input }) =>
-      Array.from({ length: input.limit ?? 2 }, (_, i) => ({ uri: `projects/1/tasks/${i + 1}` })),
-  } } });
+  server.use({
+    prefix: 'demo',
+    api: rootRoutes,
+    handlers: {
+      task: {
+        list: ({ input }) =>
+          Array.from({ length: input.limit ?? 2 }, (_, i) => ({
+            uri: `projects/1/tasks/${i + 1}`,
+          })),
+      },
+    },
+  });
   const client = new ChannelClientBinding(clientTx);
 
   const run = async (argv: string[]) => {

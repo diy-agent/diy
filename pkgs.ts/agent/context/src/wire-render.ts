@@ -14,15 +14,15 @@
 // YAML 自己实现而不引 js-yaml：输出必须**逐字节可预测**（golden 测试拿它当基准），
 // 且 shared/ 要能进 renderer 包（零 node 依赖）。
 
-import { render as renderTemplate } from "@diy-agent/template";
-import { getValue, hasValue, isPlainObject } from "./tree.js";
-import type { ContextPath, ContextTreeState } from "./types.js";
+import { render as renderTemplate } from '@diy-agent/template';
+import { getValue, hasValue, isPlainObject } from './tree.js';
+import type { ContextPath, ContextTreeState } from './types.js';
 
-const YAML_RESERVED = new Set(["true", "false", "null", "yes", "no", "on", "off", "~", ""]);
+const YAML_RESERVED = new Set(['true', 'false', 'null', 'yes', 'no', 'on', 'off', '~', '']);
 
 /** 前导空格数（块缩进判定用） */
 function leadingSpaces(s: string): number {
-    return s.length - s.replace(/^ +/, "").length;
+    return s.length - s.replace(/^ +/, '').length;
 }
 
 /** 尾部换行数（决定块标量 chomping） */
@@ -51,17 +51,17 @@ function trailingNewlines(s: string): number {
  * 只在需要时才写指示符：常规文本仍是 `|`，与旧输出逐字节一致（golden 不受影响）。
  */
 function blockScalarOf(text: string, indent: number): { marker: string; lines: string[] } {
-    const blk = "  ".repeat(indent + 1);
+    const blk = '  '.repeat(indent + 1);
     const k = trailingNewlines(text);
-    const chomp = k === 0 ? "-" : "";
+    const chomp = k === 0 ? '-' : '';
     const body = k >= 1 ? text.slice(0, -1) : text;
-    const lines = body.split("\n").map((l) => (l.length > 0 ? blk + l : ""));
+    const lines = body.split('\n').map((l) => (l.length > 0 ? blk + l : ''));
     const nonEmpty = lines.filter((l) => l.length > 0);
     // 注意：判的是**内容自身**的前导空格（减掉统一加的 blk），不是渲染后的行缩进
     const first = nonEmpty.length > 0 ? leadingSpaces(nonEmpty[0]!) - blk.length : 0;
     // 首行**有**前导空格 → 必须 `|2`：自动判定会把「首行缩进」当成块缩进，
     // 于是内容的公共缩进被悄悄削掉（整段代码缩进消失），或后续浅行直接掉出块。
-    const indicator = first === 0 ? "" : "2";
+    const indicator = first === 0 ? '' : '2';
     return { marker: `|${indicator}${chomp}`, lines };
 }
 
@@ -69,6 +69,8 @@ function blockScalarOf(text: string, indent: number): { marker: string; lines: s
  * 块标量**表达不了**的字符：YAML 只允许可打印字符（+ tab / 换行）。
  * 终端 ANSI 色码（ESC）、\r、C0/C1 控制字符都只有双引号转义风格能承载。
  */
+// 这里匹配的就是**控制字符本身**（ESC / \r / C0/C1）—— 不是笔误：
+// oxlint-disable-next-line no-control-regex
 const BLOCK_UNSAFE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/;
 
 /**
@@ -88,16 +90,16 @@ function multilineIn(text: string, indent: number): { marker: string; lines: str
 
 /** 多行字符串 = 需要用块标量输出 */
 function isMultiline(v: unknown): v is string {
-    return typeof v === "string" && v.includes("\n");
+    return typeof v === 'string' && v.includes('\n');
 }
 
 /** 单行标量 → YAML 字面量（该加引号就加，保证可回读） */
 function scalarYaml(v: unknown): string {
-    if (v === null || v === undefined) return "null";
-    if (typeof v === "number") return Number.isFinite(v) ? String(v) : "null";
-    if (typeof v === "boolean") return v ? "true" : "false";
-    if (typeof v !== "string") return JSON.stringify(v);
-    const plain = /^[A-Za-z0-9_/][A-Za-z0-9_./@ :\-]*$/.test(v) && !YAML_RESERVED.has(v);
+    if (v === null || v === undefined) return 'null';
+    if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'null';
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    if (typeof v !== 'string') return JSON.stringify(v);
+    const plain = /^[A-Za-z0-9_/][A-Za-z0-9_./@ :-]*$/.test(v) && !YAML_RESERVED.has(v);
     return plain ? v : JSON.stringify(v);
 }
 
@@ -124,12 +126,12 @@ interface EmitSink {
 
 /** 内嵌块 → 若干行：说明头按注释、数据递归产出（行号映射随产出直接收集，与文本同源） */
 function emitEmbed(emb: EmbedSpec, indent: number, path: ContextPath, sink: EmitSink): void {
-    const pad = "  ".repeat(indent);
+    const pad = '  '.repeat(indent);
     const start = sink.lines.length + 1;
     for (const line of emb.guide ?? []) {
-        sink.lines.push(line.length === 0 ? "" : line.startsWith("#") ? `${pad}${line}` : `${pad}# ${line}`);
+        sink.lines.push(line.length === 0 ? '' : line.startsWith('#') ? `${pad}${line}` : `${pad}# ${line}`);
     }
-    emitValue(emb.value, indent, "", sink);
+    emitValue(emb.value, indent, '', sink);
     if (path) sink.spans.set(path, { from: start, to: sink.lines.length });
 }
 
@@ -139,12 +141,12 @@ function emitEmbed(emb: EmbedSpec, indent: number, path: ContextPath, sink: Emit
  * 连 `diy.cli:` 一起亮比只亮值更好认）。
  */
 function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink): void {
-    const pad = "  ".repeat(indent);
+    const pad = '  '.repeat(indent);
     const mark = (fromLine: number): void => {
         if (path) sink.spans.set(path, { from: fromLine + 1, to: sink.lines.length });
     };
     // 内嵌 YAML 文本（请求预览）：就地展开为子节点 —— 解析的就是这段原文本身
-    const emb = typeof v === "string" ? sink.embeds?.get(v) : undefined;
+    const emb = typeof v === 'string' ? sink.embeds?.get(v) : undefined;
     if (emb) {
         emitEmbed(emb, indent, path, sink);
         return;
@@ -169,11 +171,11 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
                 const markItem = (): void => {
                     sink.spans.set(childPath, { from: before + 1, to: sink.lines.length });
                 };
-                const emb = typeof item === "string" ? sink.embeds?.get(item) : undefined;
+                const emb = typeof item === 'string' ? sink.embeds?.get(item) : undefined;
                 if (emb) {
                     // 序列元素是内嵌块：`-` 单独一行，块（注释 + 数据）缩进对齐
                     sink.lines.push(`${pad}-`);
-                    emitEmbed(emb, indent + 1, "", sink);
+                    emitEmbed(emb, indent + 1, '', sink);
                     markItem();
                 } else if (isMultiline(item)) {
                     const { marker, lines } = multilineIn(item, indent);
@@ -211,11 +213,11 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
                 const val = v[k];
                 const childPath = path ? `${path}.${k}` : k;
                 const childFrom = sink.lines.length;
-                const emb = typeof val === "string" ? sink.embeds?.get(val) : undefined;
+                const emb = typeof val === 'string' ? sink.embeds?.get(val) : undefined;
                 if (emb) {
                     // 内嵌块：key 独立一行，块内容（注释 + 解析结果）缩进一级
                     sink.lines.push(`${pad}${k}:`);
-                    emitEmbed(emb, indent + 1, "", sink);
+                    emitEmbed(emb, indent + 1, '', sink);
                     sink.spans.set(childPath, { from: childFrom + 1, to: sink.lines.length });
                     continue;
                 }
@@ -248,15 +250,15 @@ function emitValue(v: unknown, indent: number, path: ContextPath, sink: EmitSink
 /** 值 → YAML 文本（缩进 2 空格；空对象/空数组输出 `{}` / `[]`，与「该 path 没有值」区分） */
 export function toYaml(v: unknown, indent = 0): string {
     const sink: EmitSink = { lines: [], spans: new Map() };
-    emitValue(v, indent, "", sink);
-    return sink.lines.join("\n");
+    emitValue(v, indent, '', sink);
+    return sink.lines.join('\n');
 }
 
 /** 通用产出：值 → YAML 文本 + 行号映射（请求预览用；`embeds` 见 request.ts） */
 export function emitYamlTraced(v: unknown, embeds?: ReadonlyMap<string, EmbedSpec>): RenderedYaml {
     const sink: EmitSink = { lines: [], spans: new Map(), embeds };
-    emitValue(v, 0, "", sink);
-    return { text: sink.lines.join("\n"), lines: Object.fromEntries(sink.spans) };
+    emitValue(v, 0, '', sink);
+    return { text: sink.lines.join('\n'), lines: Object.fromEntries(sink.spans) };
 }
 
 /**
@@ -264,7 +266,7 @@ export function emitYamlTraced(v: unknown, embeds?: ReadonlyMap<string, EmbedSpe
  * `present` = 该 path 在值树里**确实有值**（undefined 视为无）——「没有值」与「值是 null /
  * 空对象」是两回事：前者不产出渲染单元（模板节点就是这种），后者要渲染成 `null` / `{}`。
  */
-export function leafPaths(values: unknown, base = "", present = true): ContextPath[] {
+export function leafPaths(values: unknown, base = '', present = true): ContextPath[] {
     if (!isPlainObject(values) || Object.keys(values).length === 0) {
         return present && base ? [base] : [];
     }
@@ -280,7 +282,7 @@ export function leafPaths(values: unknown, base = "", present = true): ContextPa
 /** 取子树（path 处的值） */
 function subtreeAt(values: Record<string, unknown>, path: ContextPath): unknown {
     let cur: unknown = values;
-    for (const seg of path.split(".")) {
+    for (const seg of path.split('.')) {
         if (!isPlainObject(cur)) return undefined;
         cur = cur[seg];
     }
@@ -293,7 +295,7 @@ function subtreeAt(values: Record<string, unknown>, path: ContextPath): unknown 
  */
 function buildView(state: ContextTreeState, node: unknown, path: string): unknown {
     const spec = state.renderers[path];
-    if (spec?.renderer === "template") {
+    if (spec?.renderer === 'template') {
         return renderTemplate(spec.source, { globals: state.values });
     }
     if (!isPlainObject(node)) return node;
@@ -302,10 +304,10 @@ function buildView(state: ContextTreeState, node: unknown, path: string): unknow
         out[k] = buildView(state, v, path ? `${path}.${k}` : k);
     }
     // 补：子树里「只有模板声明」的 path（值树里没有对应节点）
-    const prefix = path ? `${path}.` : "";
+    const prefix = path ? `${path}.` : '';
     for (const p of Object.keys(state.renderers)) {
         if (!p.startsWith(prefix) || p === path) continue;
-        const segs = (path ? p.slice(prefix.length) : p).split(".");
+        const segs = (path ? p.slice(prefix.length) : p).split('.');
         let cur = out;
         for (const s of segs.slice(0, -1)) {
             if (!isPlainObject(cur[s])) cur[s] = {};
@@ -322,7 +324,7 @@ export function renderUnitsOf(state: ContextTreeState, place: ContextPath): Cont
     const sub = subtreeAt(state.values, place);
     const leaves = leafPaths(sub, place, hasValue(state, place));
     const templates = Object.keys(state.renderers).filter(
-        (p) => state.renderers[p].renderer === "template" && (p === place || p.startsWith(`${place}.`)),
+        (p) => state.renderers[p].renderer === 'template' && (p === place || p.startsWith(`${place}.`)),
     );
     return [...new Set([...leaves, ...templates])].sort();
 }
@@ -330,7 +332,7 @@ export function renderUnitsOf(state: ContextTreeState, place: ContextPath): Cont
 /** 从视图里裁出某个 place 的子树 */
 function pick(view: unknown, path: ContextPath): unknown {
     let cur: unknown = view;
-    for (const s of path.split(".")) {
+    for (const s of path.split('.')) {
         if (!isPlainObject(cur) || !(s in cur)) return undefined;
         cur = cur[s];
     }
@@ -349,7 +351,7 @@ function merge(a: unknown, b: unknown): unknown {
 
 /** 把值挂到点分段路径上：`env.os` + v → `{env:{os:v}}` */
 function nest(path: ContextPath, value: unknown): unknown {
-    const segs = path.split(".");
+    const segs = path.split('.');
     let out: unknown = value;
     for (let i = segs.length - 1; i >= 0; i--) out = { [segs[i]]: out };
     return out;
@@ -357,7 +359,7 @@ function nest(path: ContextPath, value: unknown): unknown {
 
 /** 把一组 path 的子树拼成一个对象（多个 place 共享祖先时自动合并） */
 function composeSubset(state: ContextTreeState, paths: readonly ContextPath[]): unknown {
-    const view = buildView(state, state.values, "");
+    const view = buildView(state, state.values, '');
     let out: unknown = {};
     for (const p of paths) {
         const sub = pick(view, p);
@@ -379,7 +381,7 @@ export function subsetOf(state: ContextTreeState, paths: readonly ContextPath[])
  * 下一轮继续按旧值干活。`null` 是「存在但为空」之外的另一档，见 `ENVELOPE_ABOUT`。
  */
 export function subsetOfDelta(state: ContextTreeState, paths: readonly ContextPath[]): unknown {
-    const view = buildView(state, state.values, "");
+    const view = buildView(state, state.values, '');
     let out: unknown = {};
     for (const p of [...paths].sort()) {
         const sub = pick(view, p);
@@ -390,7 +392,7 @@ export function subsetOfDelta(state: ContextTreeState, paths: readonly ContextPa
 
 /** 渲染一组 path → YAML 文本（空则空串；path 先排序保证输出稳定） */
 export function renderPaths(state: ContextTreeState, paths: readonly ContextPath[]): string {
-    if (paths.length === 0) return "";
+    if (paths.length === 0) return '';
     return toYaml(composeSubset(state, [...paths].sort()));
 }
 
@@ -415,17 +417,17 @@ export function renderPathsTraced(
     /** 拼在最前面的纯文本说明（结构 / 解读规则）。见 guide.ts */
     preamble?: string,
 ): RenderedYaml {
-    if (paths.length === 0 && !preamble) return { text: "", lines: {} };
+    if (paths.length === 0 && !preamble) return { text: '', lines: {} };
     const sink: EmitSink = { lines: [], spans: new Map() };
 
     // 说明头先占位。**不需要额外偏移**：emitValue 记的行号本来就以 sink.lines 为准
     // （它读的就是「此刻已推入多少行」），所以 preamble 已被自然计入。
     if (preamble) {
-        sink.lines.push(...preamble.replace(/\n$/, "").split("\n"));
-        sink.lines.push("");
+        sink.lines.push(...preamble.replace(/\n$/, '').split('\n'));
+        sink.lines.push('');
     }
-    emitValue(composeSubset(state, [...paths].sort()), 0, "", sink);
-    return { text: sink.lines.join("\n"), lines: Object.fromEntries(sink.spans) };
+    emitValue(composeSubset(state, [...paths].sort()), 0, '', sink);
+    return { text: sink.lines.join('\n'), lines: Object.fromEntries(sink.spans) };
 }
 
 /** 渲染一个 place → YAML 文本 */
@@ -441,17 +443,17 @@ export function renderPlaces(state: ContextTreeState, places: readonly ContextPa
 /** 单节点预览（表格列用；多行折成单行） */
 export function previewOf(state: ContextTreeState, path: ContextPath, max = 72): string {
     const spec = state.renderers[path];
-    if (spec?.renderer === "template") {
+    if (spec?.renderer === 'template') {
         return oneLine(renderTemplate(spec.source, { globals: state.values }), max);
     }
     const value = getValue(state, path);
-    if (value === undefined) return "";
+    if (value === undefined) return '';
     return oneLine(isPlainObject(value) || Array.isArray(value) ? toYaml(value) : String(value), max);
 }
 
 /** 单行化（换行折成 ⏎，超长截断） */
 function oneLine(text: string, max: number): string {
-    const flat = text.replace(/\n/g, " ⏎ ");
+    const flat = text.replace(/\n/g, ' ⏎ ');
     return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 

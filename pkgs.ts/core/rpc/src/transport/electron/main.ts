@@ -29,7 +29,11 @@ function makeMain(getWebContents: () => WebContents, channel = 'rpc'): EnvelopeT
     if (dead) return;
     dead = true;
     for (const cb of closeCallbacks) {
-      try { cb(); } catch { /* 回调异常不扩散 */ }
+      try {
+        cb();
+      } catch {
+        /* 回调异常不扩散 */
+      }
     }
   };
 
@@ -76,7 +80,9 @@ function makeMain(getWebContents: () => WebContents, channel = 'rpc'): EnvelopeT
         if (gateQueue.length >= MAX_PRELOAD_QUEUE) {
           gatedDropped++;
           if (gatedDropped === 1 || gatedDropped % 50 === 0) {
-            console.warn(`[rpc] renderer 未就绪，已丢弃 ${gatedDropped} 条消息（上限 ${MAX_PRELOAD_QUEUE}）`);
+            console.warn(
+              `[rpc] renderer 未就绪，已丢弃 ${gatedDropped} 条消息（上限 ${MAX_PRELOAD_QUEUE}）`,
+            );
           }
           return;
         }
@@ -88,7 +94,9 @@ function makeMain(getWebContents: () => WebContents, channel = 'rpc'): EnvelopeT
     on: (h) => {
       const wrapped = (_event: unknown, ...args: unknown[]) => h(args[0] as _Envelope);
       ipcMain.on(channel, wrapped as any);
-      return () => { ipcMain.removeListener(channel, wrapped as any); };
+      return () => {
+        ipcMain.removeListener(channel, wrapped as any);
+      };
     },
     onClose: (cb) => {
       closeCallbacks.push(cb);
@@ -104,12 +112,6 @@ function makeMain(getWebContents: () => WebContents, channel = 'rpc'): EnvelopeT
     },
   };
 }
-
-/**
- * main → renderer 的**早期消息缓冲**上限（超出即丢弃并计数，防 renderer 永不就绪时堆积）。
- * 见 makeRenderer 的长注释：窗口创建到 renderer 注册绑定之间到达的消息必须留住。
- */
-const MAX_EARLY_PENDING = 256;
 
 /**
  * 渲染进程侧传输。
@@ -136,6 +138,9 @@ const MAX_EARLY_PENDING = 256;
  * 而 `import { ipcRenderer } from 'electron'` 在 Node ESM 下是**加载期**校验导出 ——
  * 主进程没有 ipcRenderer ⇒ 整份模块加载即抛 SyntaxError ⇒ 窗口起不来。
  */
-export function createMainTransport(getWebContents: () => WebContents, channel?: string): EnvelopeTransport {
+export function createMainTransport(
+  getWebContents: () => WebContents,
+  channel?: string,
+): EnvelopeTransport {
   return makeMain(getWebContents, channel);
 }

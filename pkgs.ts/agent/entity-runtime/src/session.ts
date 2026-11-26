@@ -576,6 +576,8 @@ export class BotSession {
         //（它是「读流的人」，事实质量高一档）；这里负责「让人早点看见」 ——
         // 按它的斩杀线派生提示档，另管它看不见的三样（工具 / compact / 整轮墙钟）。
         const watch = new ProgressWatch({
+            // exactOptionalPropertyTypes：不传就不带这个键
+            // oxlint-disable-next-line no-useless-spread
             ...(this.deps.progressPolicy === undefined ? {} : { policy: this.deps.progressPolicy }),
         });
         watch.start(turn.turnId);
@@ -823,7 +825,11 @@ export class BotSession {
         signal?: AbortSignal;
     }): Promise<CompactEvent | null> {
         const budget = options.budget ?? this.budgetWith({});
-        const before = { entries: this.transcript.length, chars: estimateChars(this.transcript), tokens: estimateTokens(this.transcript) };
+        const before = {
+            entries: this.transcript.length,
+            chars: estimateChars(this.transcript),
+            tokens: estimateTokens(this.transcript),
+        };
         const startedAt = Date.now();
         const compactId = options.compactId ?? `c-${startedAt.toString(36)}`;
         const visible = options.manual === true;
@@ -919,10 +925,7 @@ export class BotSession {
             const text = typeof content === 'string' ? content : '';
             previousSummary = text.replace(COLLAPSED_PREFIX, '').trim();
         }
-        const content = [
-            ...(this.collapsed > 0 ? [collapsedLabel(this.collapsed)] : []),
-            summary ?? previousSummary,
-        ]
+        const content = [...(this.collapsed > 0 ? [collapsedLabel(this.collapsed)] : []), summary ?? previousSummary]
             .filter((part): part is string => typeof part === 'string' && part.trim() !== '')
             .join('\n\n');
         this.transcript.unshift({ message: { role: 'user', content }, origin: 'note' });

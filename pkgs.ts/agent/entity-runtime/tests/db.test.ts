@@ -543,7 +543,14 @@ describe('unit（需求账本树的节点）', () => {
         const store = openStore(':memory:');
         const dom = add(store, 't1', '母项');
         const leaf = add(store, 't1', '叶');
-        const moved = store.saveUnit({ taskId: 't1', id: leaf.id, title: leaf.title, body: '', status: 'open', parent: dom.id });
+        const moved = store.saveUnit({
+            taskId: 't1',
+            id: leaf.id,
+            title: leaf.title,
+            body: '',
+            status: 'open',
+            parent: dom.id,
+        });
         expect(moved.parent).toBe(dom.id);
         expect(moved.seq).toBe(leaf.seq);
         expect(() =>
@@ -847,7 +854,7 @@ describe('lastItemsOf / countItemsOf —— 历史分页', () => {
         const tail = store.lastItemsOf(room.id, 3);
         expect(tail.length).toBe(3);
         // 升序（时间线顺序），且最后一条就是房间最新那条
-        expect(tail.map((item) => item.seq)).toEqual([...tail.map((item) => item.seq)].sort((a, b) => a - b));
+        expect(tail.map((item) => item.seq)).toEqual(tail.map((item) => item.seq).sort((a, b) => a - b));
         expect(tail[tail.length - 1]?.seq).toBe(store.seqOf(room.id));
     });
 
