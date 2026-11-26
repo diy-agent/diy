@@ -27,7 +27,7 @@ options:
   --mode <production|development|test>  运行环境（缺省 production）
   --launch <名字>                        入口名（缺省由环境推：prod / lab / test）
   -p, --port <n>                         端口；0 = 内核分配（缺省：生产 5192）
-      --home <dir>                       数据根（缺省：生产 ~/.diy/diy2；非生产**必须显式给**）
+      --home <dir>                       数据根（缺省：生产 ~/.diy2；非生产**必须显式给**）
       --name <名字>                       实例名
       --tools <shell|files>              工具面
       --web-dir <dir>                    UI 产物目录（缺省 <buildRoot>/web）

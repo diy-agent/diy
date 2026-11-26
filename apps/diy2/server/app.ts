@@ -245,6 +245,8 @@ function actorOf(spec: Room): RoomActor {
             onCompact: (bot, event) => logCompact(spec.id, bot, event),
             ...(cwd === undefined ? {} : { cwd }),
             home: config.home,
+            // 设备库住生产根（`~/.diy2/knowledge`），不跟着 lab 的实例根漂
+            deviceHome: config.deviceHome,
             shell: config.tools !== 'files',
             jobs: { registry: jobs },
             ...(config.maxSteps === undefined ? {} : { maxSteps: config.maxSteps }),

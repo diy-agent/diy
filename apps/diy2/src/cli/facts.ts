@@ -1,6 +1,6 @@
 // src/cli/facts.ts —— 知识的只读投影（`diy2 facts brief|get|find|status`）。
 //
-// 真源仍是 `.diy/knowledge/**/*.md`（项目库优先，`~/.diy/knowledge` 兜底），
+// 真源仍是 `.diy/knowledge/**/*.md`（项目库优先，设备库 `~/.diy2/knowledge` 兜底），
 // 与 `@diy-agent/kb` 的写侧共用同一套扫描；这里只做「少打点字、少花点 token」的投影：
 //   · brief  —— 目录/文件/前缀下每条知识的全部小节 + 首句（决定展开哪条）
 //   · get    —— `<路径>#<小节>` 取正文
@@ -9,13 +9,13 @@
 //
 // 语义是 2026-11 修订后的口径：文件仍是唯一真源，不建索引、不引入 claim / evidence。
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { z } from 'zod';
 import { RpcSchema } from '@diy-agent/rpc';
-import { briefOf, findIn, getSection, globalKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
+import { briefOf, findIn, getSection, deviceKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
 
 const Scope = z.enum(['project', 'global']);
 
@@ -49,12 +49,23 @@ const KbStats = z.object({
 
 /**
  * 项目库根：`kbRootOf(cwd)` 会一路走到 `$HOME` —— cwd 在任何用户目录下都会撞上
- * `~/.diy/knowledge`，那是**设备级库**，不是项目库。所以「与 global 同路径」时
- * 按「没有项目库」处理（给一个不存在的路径，scanKb 自然返回空）。
+ * 设备级库，那不是项目库。所以「与设备库同路径」时按「没有项目库」处理
+ * （给一个不存在的路径，scanKb 自然返回空）。
+ *
+ * 判据必须走 realpath：`~/.diy/knowledge` 是为了兼容旧读者留的 symlink，它指向
+ * `~/.diy2/knowledge` —— 只比 resolve 会当成两个不同的库，把设备库重复算成项目库。
  */
 function projectRootOf(global: string): string {
     const found = kbRootOf(process.cwd());
-    return resolve(found) === resolve(global) ? join(process.cwd(), '.diy', 'knowledge') : found;
+    return sameRealPath(found, global) ? join(process.cwd(), '.diy', 'knowledge') : found;
+}
+
+function sameRealPath(a: string, b: string): boolean {
+    try {
+        return realpathSync(a) === realpathSync(b);
+    } catch {
+        return resolve(a) === resolve(b);
+    }
 }
 
 /**
@@ -180,7 +191,9 @@ export function factsHandlers(deps?: FactsDeps): {
         };
     };
 } {
-    const global = deps?.globalRoot ?? globalKbRoot(process.env['DIY_HOME'], homedir());
+    // 设备库根 = 生产根 `~/.diy2`（缺省口径在 `deviceKbRoot` 里），**不读** `DIY_HOME` ——
+    // 在实例 shell 里它等于实例数据根，读它会让 `diy2 facts` 什么都读不到（2026-11-26 实测）。
+    const global = deps?.globalRoot ?? deviceKbRoot(undefined, homedir());
     const project = deps?.projectRoot ?? projectRootOf(global);
 
     const sectionsOf = (subject: string, maxChars: number) => [

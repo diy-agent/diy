@@ -71,8 +71,13 @@ export interface ConfigOverrides {
 
 export interface Diy2Config {
     app: typeof APP_ID;
-    /** 数据根（唯一写盘位置：diy2.db / app.port / 日志） */
+    /** 数据根（唯一写盘位置：diy2.db / app.port / 日志 / 设备级知识库） */
     home: string;
+    /**
+     * 设备根（`~/.diy2` = 生产数据根）：设备级知识库 `<设备根>/knowledge` 的位置。
+     * 与 `home` **分开**：lab 实例的 home 是 `run/diy2/lab`，设备库仍是这一份。
+     */
+    deviceHome: string;
     /** 运行环境（production 之外的专属能力判据）—— 由入口声明，不是参数 */
     env: Diy2Env;
     /** 入口名（prod / lab / staging / test…）：注册表自报 + 数据根缺省的分层名 */
@@ -122,6 +127,19 @@ export function realHomeDir(): string {
     }
 }
 
+/**
+ * diy2 的生产数据根：`~/.diy2`（与 diy1 的 `~/.diy` 并列）。
+ *
+ * 2026-11-26 裁：原来是 `~/.diy/diy2` —— 家目录里看不出「这是谁的」，且与 diy1 的设备根
+ * 上下级绞在一起（`DIY_HOME` 一变量两语义的孳生处之一）。现在 diy2 自己一级，设备库
+ * （`<home>/knowledge`）跟着 home 走，`DIY_HOME` 也就只有「实例数据根」一种含义。
+ *
+ * 为什么是函数不是常量：`realHomeDir()` 每次现取（测试 / 隔离实例换 HOME 才生效）。
+ */
+export function prodHomeDir(): string {
+    return join(realHomeDir(), '.diy2');
+}
+
 /** 路径归一（`..` / `./` / 尾斜杠 / 符号链接都能对上），用于「是不是同一个数据根」的判据 */
 export function samePath(a: string, b: string): boolean {
     return resolve(a) === resolve(b);
@@ -148,12 +166,17 @@ function sandboxLaunch(home: string): string | undefined {
 }
 
 /**
- * 生产数据根（**两个**：仓库级 `~/.diy` 与 diy2 自己的 `~/.diy/diy2`）。
- * 判据在这里只有一处；`resolveHome` 用它拦「dev 偷用生产根」。
+ * 生产数据根：diy2 的 `~/.diy2`，外加**历史两个**（`~/.diy` 与 `~/.diy/diy2`）。
+ * 判据只在这里一处；`resolveHome` 用它拦「dev 偷用生产根」，`describeConfig` 用它标「生产」。
+ * 旧两个留着是有用的：迁移前遗留的目录仍算生产根，dev 入口不会去写脏它。
  */
 export function isProdHome(home: string): boolean {
     const real = realHomeDir();
-    return samePath(home, join(real, '.diy')) || samePath(home, join(real, '.diy', 'diy2'));
+    return (
+        samePath(home, prodHomeDir()) ||
+        samePath(home, join(real, '.diy')) ||
+        samePath(home, join(real, '.diy', 'diy2'))
+    );
 }
 
 /** 是不是一个存在的文件 / 目录（不存在 / 没权限 / 路径怪 = false，不抛） */
@@ -226,7 +249,7 @@ export function cliEntryOf(appRoot: string): string {
 }
 
 /**
- * 数据根裁决：显式 `--home` 优先；生产缺省 `~/.diy/diy2`；**非生产没给直接抛错**。
+ * 数据根裁决：显式 `--home` 优先；生产缺省 `~/.diy2`；**非生产没给直接抛错**。
  *
  * 为什么不再按 launch 推导（2026-11-23 裁）：那条回落把数据根放进 `<appRoot>/build/<launch>/home`，
  * 也就是**产物树**里 —— `sha.sh clean` = `rm -rf ./build`，一次自愈就把库删了（真发生过）。
@@ -241,10 +264,10 @@ export function resolveHome(opts: {
 }): { home: string } {
     const explicit = opts.explicit?.trim();
     if (explicit === undefined || explicit === '') {
-        if (opts.mode === 'production') return { home: join(realHomeDir(), '.diy', 'diy2') };
+        if (opts.mode === 'production') return { home: prodHomeDir() };
         throw new Error(
             '非生产实例必须显式给数据根：--home <dir>（或 DIY2_HOME=<dir>）' +
-                ' —— 生产入口缺省 ~/.diy/diy2，非生产不再按 launch 推导路径',
+                ' —— 生产入口缺省 ~/.diy2，非生产不再按 launch 推导路径',
             { cause: { code: 'config/home-required' } },
         );
     }
@@ -366,8 +389,10 @@ export async function resolveConfig(opts?: {
     } else if (await isFile(join(home, 'model.yaml'))) {
         modelConfigPath = join(home, 'model.yaml');
     } else {
-        const prodConfig = join(realHomeDir(), '.diy', 'model.yaml');
-        if (samePath(dirname(home), join(realHomeDir(), '.diy')) && (await isFile(prodConfig))) {
+        // 生产根**下面**的数据根（`~/.diy2/<实例>`）回落生产根的配置；`run/diy2/lab` 这类沙箱
+        // 不回落 —— 「隔离了 sqlite 却仍用生产 key」是假隔离（见 modelConfigHint）。
+        const prodConfig = join(prodHomeDir(), 'model.yaml');
+        if (samePath(dirname(home), prodHomeDir()) && (await isFile(prodConfig))) {
             modelConfigPath = prodConfig;
         }
     }
@@ -375,6 +400,7 @@ export async function resolveConfig(opts?: {
     return {
         app: APP_ID,
         home,
+        deviceHome: prodHomeDir(),
         env: mode,
         launch,
         port,

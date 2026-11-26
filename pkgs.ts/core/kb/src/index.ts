@@ -466,7 +466,7 @@ export {
     findIn,
     firstSentence,
     getSection,
-    globalKbRoot,
+    deviceKbRoot,
     parseSections,
     pathsOf,
     type KbBriefItem,

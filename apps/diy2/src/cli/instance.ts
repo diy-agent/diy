@@ -66,7 +66,7 @@ export const instanceApi = RpcSchema.group({
                     output: z.object({ instances: z.array(InstanceRow) }),
                 }),
                 stop: RpcSchema.unary({
-                    desc: `停实例：缺省 = --home（缺省生产根 ~/.diy/diy2）；--all = 本机全部；--worktree <dir> = 那个 worktree 的全部`,
+                    desc: `停实例：缺省 = --home（缺省生产根 ~/.diy2）；--all = 本机全部；--worktree <dir> = 那个 worktree 的全部`,
                     input: {
                         ...configShape,
                         all: z.boolean().optional().cliOption({ desc: '停本机全部 diy2 实例' }),

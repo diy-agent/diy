@@ -7,7 +7,7 @@
 
 **一份产物**：`apps/<app>/build/prod/**`（vite `outDir` 写死，`DIY_VARIANT` 不参与）。
 
-**数据根只认显式值**：`DIY_HOME`（或 `--home`）。非生产没给 → **报错退出**（不推导、不回落）；生产入口缺省 `~/.diy`（diy2 `~/.diy/diy2`）。路径由入口脚本算 `run/<app>/<label>` 再传下去：
+**数据根只认显式值**：`DIY_HOME`（或 `--home`）。非生产没给 → **报错退出**（不推导、不回落）；生产入口缺省 diy2 `~/.diy2`（diy1 是 `~/.diy`）。路径由入口脚本算 `run/<app>/<label>` 再传下去：
 
 - `run/diy-app/lab`、`run/diy-app/staging/<slot>`、`run/diy-app/preview`
 - `run/diy2/lab`、`run/diy2/staging`

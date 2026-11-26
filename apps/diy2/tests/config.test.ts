@@ -37,9 +37,9 @@ afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** 与 config.ts 同一口径：真实家目录（不读 $HOME）+ `.diy/diy2` */
+/** 与 config.ts 同一口径：真实家目录（不读 $HOME）+ `.diy2` */
 function prodHome(): string {
-    return join(userInfo().homedir, '.diy', 'diy2');
+    return join(userInfo().homedir, '.diy2');
 }
 
 const APP_ROOT = join(import.meta.dirname, '..');
@@ -53,9 +53,10 @@ describe('defaultLaunch', () => {
 });
 
 describe('isProdHome', () => {
-    it('两个生产根都算（~/.diy 与 ~/.diy/diy2）', () => {
+    it('新生产根 + 两个历史生产根都算（~/.diy2 / ~/.diy / ~/.diy/diy2）', () => {
         expect(isProdHome(prodHome())).toBe(true);
         expect(isProdHome(join(userInfo().homedir, '.diy'))).toBe(true);
+        expect(isProdHome(join(userInfo().homedir, '.diy', 'diy2'))).toBe(true);
         expect(isProdHome('/tmp/whatever')).toBe(false);
     });
 });
@@ -88,7 +89,7 @@ describe('resolvePort', () => {
 });
 
 describe('resolveHome', () => {
-    it('生产缺省 ~/.diy/diy2；非生产**没给就报错**（不再按 launch 推导）', () => {
+    it('生产缺省 ~/.diy2；非生产**没给就报错**（不再按 launch 推导）', () => {
         expect(resolveHome({ mode: 'production' }).home).toBe(prodHome());
         expect(() => resolveHome({ mode: 'development' })).toThrow(/必须显式给数据根/);
         expect(() => resolveHome({ mode: 'test' })).toThrow(/必须显式给数据根/);
