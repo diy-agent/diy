@@ -57,7 +57,7 @@ function headOf(view: JobView, live: boolean): { tone: Tone; text: string } {
         case 'running':
             return live ? { tone: 'running', text: '在跑' } : { tone: 'muted', text: '没等到结束' };
         case 'exited':
-            return { tone: /退出码 0$/.test(view.outcome ?? '') ? 'ok' : 'bad', text: '已结束' };
+            return { tone: (view.outcome ?? '').endsWith('退出码 0') ? 'ok' : 'bad', text: '已结束' };
         case 'killed':
             return { tone: 'bad', text: '已被杀' };
         case 'failed':

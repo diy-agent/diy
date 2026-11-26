@@ -23,7 +23,6 @@ import { useHasDraft } from '../drafts';
 import {
     formatActivityAgo,
     formatAtAbsolute,
-    formatClock,
     roomTitle,
     taskNumberOf,
     taskStatusOf,

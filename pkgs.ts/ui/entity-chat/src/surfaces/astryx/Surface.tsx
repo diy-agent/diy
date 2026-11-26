@@ -26,7 +26,6 @@ import {
     ChatSystemMessage,
     ChatToolCalls,
     Markdown,
-    type ChatMessageStatus,
 } from '@astryxdesign/core';
 import { createStaticSource, type SearchableItem } from '@astryxdesign/core/Typeahead';
 import { ChatVirtualizer } from '@astryxdesign/lab';
@@ -292,31 +291,6 @@ function EntryView({
         </ChatMessage>
     );
 }
-
-/**
- * 消息列表单独 memo：输入框每敲一个字都会让 Surface 重渲染，
- * 但整棵消息树（含 Markdown 解析）不该跟着重算 —— 不 memo 的话长会话里输入会明显卡。
- */
-const MessageList = React.memo(function MessageList({
-    entries,
-    roomId,
-    onStopBot,
-}: {
-    entries: TimelineEntry[];
-    roomId: string;
-    onStopBot?: (botId: string) => void;
-}) {
-    return (
-        <>
-            {entries.map((entry) => (
-                // content-visibility：离开视口的条目跳过布局/绘制
-                <div key={entry.key} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
-                    <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
-                </div>
-            ))}
-        </>
-    );
-});
 
 /** 输入框独立成组件：draft 状态关在里面，敲字只重渲染输入框本身 */
 function AstryxComposer({

@@ -29,7 +29,6 @@ import {
     fmtAt,
     outcomeTextOf,
     sortRows,
-    STATE_TEXT,
     visibleInOverlay,
 } from '../bots';
 import { diy2 } from '../store';

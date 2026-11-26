@@ -28,7 +28,7 @@ import {
 import type { NavAddress } from './address';
 import { drafts, type DraftsTransport } from './drafts';
 import { isClosed, type TaskStatus } from './model';
-import { firstUsableModelKey, type ModelCatalogPayload, type Provider } from './models';
+import { firstUsableModelKey, type Provider } from './models';
 import { mergePendingAsks } from './pendingAsk';
 
 // ─── 会话（chat-core）─────────────────────────────────────────────

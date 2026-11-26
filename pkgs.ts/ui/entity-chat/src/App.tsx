@@ -5,7 +5,6 @@ import { SURFACES } from './surfaces/registry';
 import { RoomMenu, SurfaceTabs } from './components/ConversationBar';
 import { RoomStatusBar } from './components/RoomStatusBar';
 import { ComposerBar } from './components/ComposerBar';
-import { ContextPanel } from './components/ContextPanel';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
 import { type Room } from './model';
