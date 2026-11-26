@@ -20,7 +20,14 @@ export interface ConversationModel {
     cancel(): void;
     /** 只停某个成员（开会时用） */
     stop(botId?: string): void;
-    reload(): void;
+    /**
+     * 重新拉一次快照。
+     *
+     * 返回 Promise（失败也 resolve，原因落进 `state.error`）：调用方常在「拉完就用」的
+     * 场景里（导出 / 重试按钮），拿不到完成时刻就只能猜。忽略返回值的调用方照旧 ——
+     * 它就是 fire-and-forget。
+     */
+    reload(): Promise<void>;
 }
 
 export class ConversationStore implements ConversationModel {
@@ -73,7 +80,7 @@ export class ConversationStore implements ConversationModel {
         if (event.kind === 'ready') {
             // 首次连接一般不用重拉（构造时已经 load 过）；但那次也可能失败（后端还没起来），
             // 所以只在"已经拉成功过"时跳过。重连后一律补拉，填平断线期间丢的事件。
-            if (this.readySeen || !this.loadedOnce) this.reload();
+            if (this.readySeen || !this.loadedOnce) void this.reload();
             this.readySeen = true;
             return;
         }
@@ -81,9 +88,9 @@ export class ConversationStore implements ConversationModel {
     }
 
     /** 箭头方法：surface 可以把 reload 直接当回调传（不解绑 this） */
-    reload = (): void => {
+    reload = (): Promise<void> => {
         const token = ++this.loadToken;
-        void this.client
+        return this.client
             .load(this.entityId)
             .then((snapshot) => {
                 if (token !== this.loadToken) return;

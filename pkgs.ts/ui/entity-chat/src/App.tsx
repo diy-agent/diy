@@ -3,6 +3,7 @@ import * as React from 'react';
 
 import { SURFACES } from './surfaces/registry';
 import { RoomMenu, SurfaceTabs } from './components/ConversationBar';
+import { ExportButton } from './components/ExportButton';
 import { RoomStatusBar } from './components/RoomStatusBar';
 import { ComposerBar } from './components/ComposerBar';
 import { ContextPanel } from './components/ContextPanel';
@@ -59,6 +60,7 @@ const ConversationBar = React.memo(function ConversationBar({
                         <PanelRight className="size-3.5" />
                     </button>
                 )}
+                <ExportButton room={room} />
                 <RoomMenu room={room} onAddMember={onAddMember} onOpenSettings={onOpenSettings} />
             </span>
         </div>

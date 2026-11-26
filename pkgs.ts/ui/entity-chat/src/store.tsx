@@ -70,7 +70,8 @@ export function conversationOf(roomId: string): ConversationStore {
     if (store === undefined) {
         store = new ConversationStore(client, roomId);
         conversations.set(roomId, store);
-        store.reload();
+        // 首次挂载时的那次快照：fire-and-forget（surface 自己会订阅，到了就画）
+        void store.reload();
     } else {
         // 切走时释放过常驻流，回来要重新挂上
         store.attach();

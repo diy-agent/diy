@@ -32,6 +32,10 @@ export { Sidebar } from './components/Sidebar';
 // 对话区那一条的两样（表面切换 / 房间菜单）：宿主可以把它们摆进自己的区域标题栏
 // （工作台就是这么做的，`bar="host"` 时对话区不再自己画那一行）。
 export { RoomMenu, SurfaceTabs } from './components/ConversationBar';
+// 「导出当前对话」（.md）：宿主摆进自己的区域标题栏（工作台就摆在 kebab 左边）；
+// 渲染规则在 `exportMarkdown.ts`（纯函数），这个组件只负责取数 + 交给浏览器下载。
+export { ExportButton } from './components/ExportButton';
+export { exportFileName, roomToMarkdown, type MarkdownExportInput } from './exportMarkdown';
 export { TaskPanel } from './components/TaskPanel';
 // 作业卡片：两个 surface 共用（判据在 chat-core 的 `jobOf`）。导出是为了让
 // 选择型实验台能直接拿真组件摆样子 —— 别在 demo 里另画一份。

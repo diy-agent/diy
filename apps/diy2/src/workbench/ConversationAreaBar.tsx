@@ -8,7 +8,7 @@
 // `surface.ts` 模块 store 里；房间能力由这里从 `RoomDialogsProvider` 取），
 // 这一层只负责「摆到 bar 里去」。对话区自己那一行因此可以整条不画（`bar="host"`）。
 
-import { RoomMenu, SurfaceTabs, useRoomDialogsContext, useSelectedRoom } from '@diy-agent/entity-chat';
+import { ExportButton, RoomMenu, SurfaceTabs, useRoomDialogsContext, useSelectedRoom } from '@diy-agent/entity-chat';
 
 export function ConversationAreaBar() {
     const room = useSelectedRoom();
@@ -17,6 +17,7 @@ export function ConversationAreaBar() {
     return (
         <>
             <SurfaceTabs />
+            <ExportButton room={room} />
             <RoomMenu room={room} onAddMember={dialogs.openMember} onOpenSettings={dialogs.openSettings} />
         </>
     );

@@ -475,7 +475,7 @@ export function AstryxSurface({ targetId, composerExtras }: { targetId: string; 
                         container="section"
                         collapsible={false}
                         title={state.error}
-                        endContent={<Button size="sm" label="重试" onClick={() => conversation.reload()} />}
+                        endContent={<Button size="sm" label="重试" onClick={() => void conversation.reload()} />}
                     />
                 </div>
             )}
