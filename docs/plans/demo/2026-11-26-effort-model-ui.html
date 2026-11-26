@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>effort × model 数据结构与 UI 处理 · demo（真.models.dev 样例）</title>
+<style>
+:root{
+  --bg:#fff;--fg:#18181b;--card:#fff;--muted:#f4f4f5;--muted2:#fafafa;
+  --mf:#71717a;--border:#e4e4e7;--primary:#18181b;--pf:#fafafa;
+  --amber:#f59e0b;--sky:#38bdf8;--emerald:#10b981;--violet:#8b5cf6;--rose:#f43f5e;
+}
+*{box-sizing:border-box}
+body{font:13px/1.6 -apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC",system-ui,sans-serif;
+  color:var(--fg);background:var(--muted2);margin:0;padding:24px 28px 60px}
+h1{font-size:18px;margin:0 0 4px}
+.lead{color:var(--mf);font-size:12px;margin-bottom:20px;max-width:960px}
+.lead code{background:var(--muted);padding:1px 5px;border-radius:4px;font-size:11px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;max-width:1200px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.card.wide{grid-column:1/-1}
+.tag{display:inline-block;font-size:10px;font-weight:600;padding:1px 7px;border-radius:999px;border:1px solid var(--border);color:var(--mf)}
+.tag.effort{color:#2563eb;border-color:#bfdbfe;background:#eff6ff}
+.tag.toggle{color:#7c3aed;border-color:#ddd6fe;background:#f5f3ff}
+.tag.budget{color:#c2410c;border-color:#fed7aa;background:#fff7ed}
+.tag.empty{color:#0891b2;border-color:#a5f3fc;background:#ecfeff}
+.tag.none{color:var(--mf)}
+.card h2{font-size:13px;margin:10px 0 2px}
+.model{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--mf);margin-bottom:10px}
+.sec{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--mf);margin:10px 0 4px}
+pre{background:#0d1117;color:#c9d1d9;border-radius:8px;padding:9px 11px;font:11px/1.5 ui-monospace,Menlo,monospace;
+  overflow:auto;margin:0 0 6px;white-space:pre-wrap;word-break:break-all}
+pre .k{color:#79c0ff}pre .s{color:#a5d6ff}pre .n{color:#ffa657}pre .c{color:#6e7681}
+/* chip + 按钮组（仿 entity-chat 同构控件）*/
+.chipbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);border-radius:6px;
+  padding:3px 9px;font:11px ui-monospace,Menlo,monospace;background:#fff;cursor:pointer}
+.chip:hover{border-color:#71717a}
+.chip .eff{color:var(--violet);font-weight:600}
+.opts{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px}
+.opt{border:1px solid var(--border);border-radius:999px;padding:3px 11px;font-size:11px;color:var(--mf);background:#fff;cursor:pointer}
+.opt:hover{background:var(--muted)}
+.opt[aria-pressed=true]{border-color:var(--primary);background:var(--muted);color:var(--fg);font-weight:600}
+.opt.disabled{opacity:.45;cursor:not-allowed}
+.hint{font-size:11px;color:var(--mf);margin-top:6px}
+.hint b{color:var(--fg)}
+.rule{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 11px;font-size:12px;margin-top:8px}
+.rule b{color:#b45309}
+.flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;margin:8px 0}
+.flow .box{border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:#fff}
+.flow .arw{color:var(--mf)}
+.legend{font-size:11px;color:var(--mf);margin:14px 0 8px}
+.pi{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:10px;margin:2px}
+</style>
+</head>
+<body>
+<h1>effort × model：数据结构与 UI 处理</h1>
+<p class="lead">
+数据来自真 <code>~/.diy/diy2/data/models.dev.json</code>（292 provider）。每个模型的推理能力由
+<code>reasoning</code>(bool) + <code>reasoning_options</code>(数组) 描述。当前问题：我们 catalog 投影时只留了
+name/limit/cost，<b>把 reasoning_options 丢了</b>，所以 UI 硬编码 5 档、跟模型无关。
+本 demo 展示 5 种真实形态各该怎么呈现。<b>不加表</b> —— 数据本就在 models.dev 快照里。
+</p>
+
+<div class="legend">
+形态分布（全库）：
+<span class="pi">effort 档位 4402</span>
+<span class="pi">toggle 588</span>
+<span class="pi">budget_tokens 429</span>
+<span class="pi">[] 空但 reasoning=true 944</span>
+<span class="pi">无字段 reasoning=false 1392</span>
+</div>
+
+<div class="grid">
+
+  <!-- 1. effort 多档 -->
+  <div class="card">
+    <span class="tag effort">type = effort</span>
+    <h2>离散档位（各有自己的 values）</h2>
+    <div class="model">sandbase / openai/gpt-5.6-terra</div>
+    <div class="sec">原始 models.dev 数据</div>
+    <pre>{
+  <span class="k">"reasoning"</span>: true,
+  <span class="k">"reasoning_options"</span>: [
+    { <span class="k">"type"</span>: <span class="s">"effort"</span>,
+      <span class="k">"values"</span>: [<span class="s">"none"</span>,<span class="s">"low"</span>,<span class="s">"medium"</span>,
+                    <span class="s">"high"</span>,<span class="s">"xhigh"</span>,<span class="s">"max"</span>] }
+  ]
+}</pre>
+    <div class="sec">UI：选项按钮组 = values 原样列出</div>
+    <div class="opts">
+      <button class="opt" aria-pressed="true">none</button>
+      <button class="opt">low</button><button class="opt">medium</button>
+      <button class="opt">high</button><button class="opt">xhigh</button><button class="opt">max</button>
+    </div>
+    <div class="hint">换模型默认选 <b>values[0] = none</b>。另一模型 gpt-oss-20b 只有 low/medium/high → 只画 3 颗按钮，默认 low。<b>档位随模型变</b>，不是固定 5 档。</div>
+  </div>
+
+  <!-- 2. toggle -->
+  <div class="card">
+    <span class="tag toggle">type = toggle</span>
+    <h2>只能开 / 关</h2>
+    <div class="model">inferall / nvidia/nemotron-3.5-super-vl-120b-a12b</div>
+    <div class="sec">原始 models.dev 数据</div>
+    <pre>{
+  <span class="k">"reasoning"</span>: true,
+  <span class="k">"reasoning_options"</span>: [ { <span class="k">"type"</span>: <span class="s">"toggle"</span> } ]
+}</pre>
+    <div class="sec">UI：开关，没有档位</div>
+    <div class="opts">
+      <button class="opt" aria-pressed="true">开启推理</button>
+      <button class="opt">关闭</button>
+    </div>
+    <div class="hint">没有 effort 值列表。存 <b>null</b>（不带 reasoningEffort 参数）= 交给模型自己的默认；要关就传 "none"。</div>
+  </div>
+
+  <!-- 3. budget_tokens -->
+  <div class="card">
+    <span class="tag budget">type = budget_tokens</span>
+    <h2>按 token 预算</h2>
+    <div class="model">jiekou / claude-opus-4-20250514</div>
+    <div class="sec">原始 models.dev 数据</div>
+    <pre>{
+  <span class="k">"reasoning"</span>: true,
+  <span class="k">"reasoning_options"</span>: [
+    { <span class="k">"type"</span>: <span class="s">"budget_tokens"</span>, <span class="k">"min"</span>: <span class="n">1024</span> }
+  ]
+}</pre>
+    <div class="sec">UI：数字输入（下限 min）</div>
+    <div class="chipbar"><span class="chip">预算 token <input type="number" value="1024" min="1024" style="width:90px;border:0;outline:none;font:inherit"></span></div>
+    <div class="hint">存的是数字预算，不是档位字符串。当前 UI 的 5 档对这种模型完全不适用。</div>
+  </div>
+
+  <!-- 4. [] 空 -->
+  <div class="card">
+    <span class="tag empty">reasoning_options = []</span>
+    <h2>推理固定开，无选项</h2>
+    <div class="model">io-net / deepseek-ai/DeepSeek-R1-0528</div>
+    <div class="sec">原始 models.dev 数据</div>
+    <pre>{
+  <span class="k">"reasoning"</span>: true,
+  <span class="k">"reasoning_options"</span>: []
+}</pre>
+    <div class="sec">UI：不画 effort 控件</div>
+    <div class="hint"><b>推理恒开</b>，没有可调项。effort 控件整段不显示（不是画一个空按钮）。存 null。</div>
+  </div>
+
+  <!-- 5. 无字段 -->
+  <div class="card">
+    <span class="tag none">无 reasoning_options</span>
+    <h2>不支持推理</h2>
+    <div class="model">io-net / meta-llama/Llama-3.2-90B-Vision-Instruct</div>
+    <div class="sec">原始 models.dev 数据</div>
+    <pre>{
+  <span class="k">"reasoning"</span>: false
+  <span class="c">// 没有 reasoning_options 字段</span>
+}</pre>
+    <div class="sec">UI：不画 effort 控件</div>
+    <div class="hint">模型不支持推理，effort 控件不显示，role.reasoning_effort 清空。</div>
+  </div>
+
+  <!-- 6. 链路 + 极简显示 -->
+  <div class="card">
+    <span class="tag" style="color:var(--emerald);border-color:#a7f3d0;background:#ecfdf5">数据流</span>
+    <h2>沿目录链路透传，不加表</h2>
+    <div class="flow">
+      <span class="box">models.dev.json<br><code>reasoning_options</code></span>
+      <span class="arw">→</span>
+      <span class="box">RawSpecModel</span>
+      <span class="arw">→</span>
+      <span class="box">ModelCatalogModel<br><code>reasoningOptions</code></span>
+      <span class="arw">→</span>
+      <span class="box">协议 → UI<br>按 type 渲染</span>
+    </div>
+    <div class="sec">极简显示（三处同构 chip）</div>
+    <div class="chipbar"><span class="chip">main@opencode-go/gpt-5.6-terra <span class="eff">high</span></span></div>
+    <div class="hint">存储仍是 <code>bot_roles.reasoning_effort TEXT</code> 一个字符串，<b>不新增表</b>；只是档位候选取自该模型的 reasoning_options。</div>
+  </div>
+</div>
+
+<div class="card wide" style="margin-top:14px">
+  <h2 style="margin-top:0">关键规则（待你拍板后实现）</h2>
+  <div class="rule">
+    <b>换模型默认取第一个 effort：</b>选 effort 型模型 → 自动写 <code>values[0]</code>（如 gpt-5.6 是 none、gpt-oss 是 low）。
+    toggle / budget_tokens / 空 / 无 → 没有"第一个 effort"，默认存 null（不带参数）。
+  </div>
+  <div class="rule">
+    <b>没有"跟随"档：</b>去掉当前 UI 里的"跟随"按钮。旧描述"跟随模型缺省"语义上 = 存 null，但不再单独占一档 —— 非 effort 模型直接不显示推理强度控件。
+  </div>
+  <div class="rule">
+    <b>旧值处理：</b>已存的 medium/low/high 保留不删；UI 显示时若该值不在当前模型候选里，高亮让用户重选（不擅自改库）。
+  </div>
+</div>
+
+</body>
+</html>
