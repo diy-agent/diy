@@ -60,6 +60,7 @@ import { CopyButton } from '../../components/CopyButton';
 import { BotAvatar } from '../../components/BotAvatar';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
 import { openLinkInNewWindow } from '../../links';
+import { formatAtAbsolute, formatClock } from '../../model';
 import { ErrorBar } from '../../components/ErrorBar';
 import { CompactCutBar } from '../../components/CompactCutBar';
 import { JobCard } from '../../components/JobCard';
@@ -72,9 +73,16 @@ import { plainTextOf, runsOf, toolTargetOf, type Run } from '../shared';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
 
-function timeOf(at: number): string {
-    const date = new Date(at);
-    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+// 时间显示与 astryx 面共用同一份口径（model.ts）：
+// 看得见的是 `formatClock`（今天 HH:mm / 跨天带日期），悬停给 `formatAtAbsolute` 的完整版。
+// 之前这里自己写了一个只吐 HH:mm 的 timeOf —— 跨天对话分不清是哪天，也没有悬停提示。
+function Time({ at }: { at: number | undefined }) {
+    if (at === undefined) return null;
+    return (
+        <span title={formatAtAbsolute(at)} className="tabular-nums">
+            {formatClock(at)}
+        </span>
+    );
 }
 
 function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool' }>; live?: boolean }) {
@@ -223,7 +231,7 @@ function EntryView({
                             {entry.author?.name ?? 'bot'}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                            {timeOf(entry.turn?.startedAt ?? entry.at)}
+                            <Time at={entry.turn?.startedAt ?? entry.at} />
                         </span>
                     </div>
                     <TurnFooter entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
@@ -238,14 +246,17 @@ function EntryView({
         return (
             <Message align="end" className="my-3">
                 <MessageContent>
-                    <Bubble align="end" variant="muted">
+                    {/* 投递失败时整条气泡走 destructive —— 与 astryx 面的
+                        deliveryStatusOf(deliveries) 同一个判据（failed 才算，queued/delivering 不算：
+                        那时 bot 正在执行，界面上已经有执行中指示器，再标一次会重复） */}
+                    <Bubble align="end" variant={failed.length > 0 ? 'destructive' : 'muted'}>
                         <BubbleContent className="whitespace-pre-wrap break-words">{text}</BubbleContent>
                     </Bubble>
                     <div className="flex items-center gap-2 self-end pr-1 text-xs text-muted-foreground">
                         {failed.length > 0 && (
                             <span className="text-destructive">{failed.map((d) => `${d.name} 未送达`).join('、')}</span>
                         )}
-                        <span>{timeOf(entry.at)}</span>
+                        <Time at={entry.at} />
                     </div>
                 </MessageContent>
             </Message>
@@ -265,7 +276,9 @@ function EntryView({
                     <span className="font-medium" style={{ color: entry.author?.color }}>
                         {entry.author?.name ?? 'bot'}
                     </span>
-                    <span className="text-xs text-muted-foreground">{timeOf(entry.turn?.startedAt ?? entry.at)}</span>
+                    <span className="text-xs text-muted-foreground">
+                        <Time at={entry.turn?.startedAt ?? entry.at} />
+                    </span>
                     {copyable !== '' && (
                         // 悬停才浮现：常驻的复制按钮会让每条回复都多一行视觉噪音
                         <CopyButton
