@@ -821,11 +821,17 @@ export class RoomActor {
     }
 
     private toolsHint(): string {
-        // 任务房间才有 unit 图：不点名的话模型会把步骤写进正文（那之后就没人能回答「现在能做哪些」）
+        // 任务房间才有账本树。措辞分两段（2026-11-26 实测后改）：先给触发条件，再给节奏 ——
+        // 只写「拆解用 unit_*」时模型的反应是「先 unit_list 看一眼，然后直接动手写代码」，
+        // 账本始终是空的（用户实测：不明确说「把这件事拆成几步」它就不建）。
         const unitHint =
             this.deps.spec.type === 'task'
-                ? '\n任务的拆解用 unit_* 工具长成一张图（先 unit_list 看现状，再 unit_add / unit_update / ' +
-                  'unit_drop / unit_link）：别把步骤只写在正文里。开做一条标 doing，做完标 done。'
+                ? '\n**先落账本再动手**：接到需求（或需求变了）时，先判断这件事是不是不止一步 —— ' +
+                  '是就用 unit_add 把它拆成 2~5 条「能被验收的产出」（母项 → 子项，body 写验收口径），' +
+                  '然后再开工；只有一步的小改（改个文案 / 跑个命令 / 看一眼状态）不要建。' +
+                  '\n**每轮从账本里挑活**：上下文 units 节的 ready 就是现在能挑的（不必先 unit_list），' +
+                  '挑 1~3 条做；开做标 doing、做完标 done，需求变了就让树跟着变（unit_update / unit_drop）。' +
+                  '别把步骤只写在正文里，也别等做完再补树 —— 账本是给人看进度的唯一地方。'
                 : '';
         const jobHint =
             this.deps.jobs === undefined

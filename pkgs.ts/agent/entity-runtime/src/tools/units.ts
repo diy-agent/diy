@@ -85,7 +85,8 @@ export function unitTools(host: UnitHost): ToolSet {
         unit_list: tool({
             description:
                 '看这张需求账本树的当前状态：`tree` 是缩进树（`x`=做完 / `>`=现在能挑 / `~`=在做），' +
-                '`ready` 是现在可以挑的叶子。要改树之前先看它，拿准 id。',
+                '`ready` 是现在可以挑的叶子。**每轮的 system 上下文里已经有全树**（units 节），' +
+                '所以只在「要拿准某个 id / 想知道某条 body」时才调它，不必先查再动手。',
             inputSchema: z.object({}),
             execute: async () => briefBoard(host),
         }),
@@ -93,6 +94,7 @@ export function unitTools(host: UnitHost): ToolSet {
         unit_add: tool({
             description: [
                 '往账本树上加条目：**一次调用 = 一批**（整棵树一次给全最好）。',
+                '**接到需求、或需求变了的时候，这是第一步** —— 先把「要做成哪些东西」写下来，再动手。',
                 '',
                 '· `parent` 是**母项**：这块需求由哪些子块组成。不填 = 顶层。',
                 '',
