@@ -60,11 +60,12 @@ for (const mode of MODES) {
     else writeFileSync(flag, mode, 'utf8');
 
     const room = await call<{ id: string }>('diy2.rooms.create', {
-            name: `提醒-${mode}-${new Date().toISOString().slice(11, 19)}`,
-            type: 'task',
-            modelKey: MODEL,
-            data: { projectId: project.id },
-        },
+        name: `提醒-${mode}-${new Date().toISOString().slice(11, 19)}`,
+        type: 'task',
+        modelKey: MODEL,
+        // 沙箱 cwd：实验房间**不许**落在仓库里 —— 上一批 bot 真的动手改了 `units-remind.ts`
+        // （还改出了语法错，lab 进程直接挂）。这里给它一个空目录，让它只能读仓库、不能写。
+        data: { projectId: project.id, dir: process.env.SANDBOX ?? '/tmp/units-exp-sandbox' },
     });
     const t0 = Date.now();
     await call('diy2.chat.chat', { id: room.id, text: MSG });
