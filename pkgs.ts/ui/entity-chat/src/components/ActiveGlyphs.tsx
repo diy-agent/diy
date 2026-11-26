@@ -79,13 +79,14 @@ export function ActiveSessionsGlyph() {
     const title = count === 0 ? '没有 Bot 在跑' : `${count} 个 Bot 在跑，点击查看列表`;
     return (
         <>
-            {/* 保留手写 button：22px 高是为了与壳里那颗「后台任务」逐像素对齐，
-                Button 的尺寸阶梯从 h-6(24) 起，套上去会差 2px */}
-            <button
+            {/* 这颗 chip 与壳里那颗「后台任务」逐像素对齐（22px）：Button 的尺寸阶梯从
+                h-6(24) 起，所以用 h-[22px] 覆盖回来 —— 换来的是统一的 focus ring 与 disabled 态 */}
+            <Button
                 type="button"
+                variant="ghost"
+                size="xs"
                 className={[
-                    // 尺寸与左侧那颗「后台任务」（壳的 22px 按钮）逐像素对齐：高度 22、左右 padding 6
-                    'inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded border border-transparent px-1.5 leading-none hover:bg-muted',
+                    'h-[22px] gap-1 whitespace-nowrap px-1.5 leading-none',
                     count > 0 ? 'text-emerald-400' : 'text-muted-foreground/70',
                 ].join(' ')}
                 title={title}
@@ -104,13 +105,15 @@ export function ActiveSessionsGlyph() {
                 </span>
                 <span className="text-xs leading-none">Bot</span>
                 <span className="text-xs tabular-nums leading-none">{count}</span>
-            </button>
+            </Button>
             {anchor !== null &&
                 createPortal(
                     <>
-                        <button
+                        {/* 遮罩也走 Button：它是可点的（点外面关掉），只是没有任何视觉 */}
+                        <Button
+                            variant="ghost"
                             aria-label="关闭 Bot 列表"
-                            className="fixed inset-0 z-[999] cursor-default"
+                            className="fixed inset-0 z-[999] h-auto w-auto cursor-default rounded-none p-0 hover:bg-transparent"
                             onClick={close}
                         />
                         <div

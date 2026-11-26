@@ -518,9 +518,11 @@ export function JobsChip() {
 
     return (
         <>
-            {/* 保留手写 button：这颗 chip 与壳里「后台任务」按钮逐像素对齐（22px 高、
-                自定义 hover 提示），Button 的尺寸阶梯从 h-6 起，套上去会差 2px */}
-            <button
+            {/* 这颗 chip 与壳里「后台任务」按钮逐像素对齐（22px）：Button 从 h-6 起，
+                所以用 h-[22px] 覆盖回来 */}
+            <Button
+                variant="ghost"
+                size="xs"
                 onPointerEnter={(event) => openTip(event.currentTarget)}
                 onPointerLeave={closeSoon}
                 onClick={() => {
@@ -534,7 +536,7 @@ export function JobsChip() {
                           ? `后台任务（本房间）：现在没有在跑的，点开看历史（共 ${rows.length} 条）`
                           : '后台任务（本房间）：悬停看简要，点开看明细'
                 }
-                className="flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+                className="h-[22px] gap-1 border border-transparent px-1.5 text-muted-foreground"
             >
                 <span className="relative flex size-2 items-center justify-center">
                     {!idle && <span className="absolute size-2 animate-ping rounded-full bg-emerald-500/60" />}
@@ -548,7 +550,7 @@ export function JobsChip() {
                 </span>
                 后台任务{idle ? '' : ` ${running.length}`}
                 {!idle && <span className="tabular-nums opacity-60">{fmtDur(oldest)}</span>}
-            </button>
+            </Button>
 
             {rect !== null && (
                 <HoverCard
