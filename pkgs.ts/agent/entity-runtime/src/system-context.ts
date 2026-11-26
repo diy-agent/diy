@@ -24,7 +24,7 @@ import {
     type ContextProvider,
     type ContextSession,
 } from '@diy-agent/context';
-import { foldKbIndex, deviceKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
+import { foldKbIndex, deviceKbRoot, kbRootOf, sameKbRoot, scanKb } from '@diy-agent/kb';
 import { skillsOf } from '@diy-agent/skills';
 import { localISOString } from '@diy-agent/time';
 
@@ -78,7 +78,9 @@ function kbProvider(cwd: string, deviceHome: string | undefined): ContextProvide
     const global = deviceKbRoot(deviceHome, homedir());
     const project = kbRootOf(cwd);
     const roots: { dir: string; scope: 'project' | 'global' }[] = [];
-    if (resolve(project) !== resolve(global)) roots.push({ dir: project, scope: 'project' });
+    // 比较 realpath：`~/.diy/knowledge` 是设备库的兼容 symlink，按字符串比会把它当**另一个项目库**，
+    // 于是设备条目被标成 project（项目库优先一合并，设备库就真看不见了）。
+    if (!sameKbRoot(project, global)) roots.push({ dir: project, scope: 'project' });
     if (deviceHome !== undefined) roots.push({ dir: global, scope: 'global' });
 
     const compute = ():
