@@ -61,6 +61,13 @@ export interface UnitItem {
     id: string;
     title: string;
     body: string;
+    /**
+     * 「怎么算做完」：一句话能判断完/未完的判据。空串 = 还没写（界面上标「未写验收」）。
+     *
+     * 为什么与 body 分开（2026-11-26 用户裁）：body 里既装背景又装口径时，模型经常忘、
+     * 人也没法一眼核对；拆成字段之后「没写」是**看得见**的。
+     */
+    accept: string;
     /** **有效**状态：叶子 = 落库值；母项（有子）= 由子派生（全 done → done） */
     status: 'open' | 'doing' | 'done';
     /** 树上的父（母项）；null = 根 */

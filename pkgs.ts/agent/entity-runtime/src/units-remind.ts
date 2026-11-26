@@ -96,7 +96,8 @@ export const DECOMPOSE =
 /** 需求 vs 步骤的判据（A / C 共用同一份措辞；别在两处各写一句） */
 export const NEEDS_VS_STEPS =
     '**账本记需求，不记步骤**：一条 = 人能验收的「要做成什么」（「导出能用：点一下真落文件并说清落在哪」），' +
-    '不是「怎么做」（改哪个文件 / 跑什么命令 / 先做哪步）—— 那些属于执行过程，写 journal 或不写。';
+    '不是「怎么做」（改哪个文件 / 跑什么命令 / 先做哪步）—— 那些属于执行过程，写 journal 或不写。' +
+    '每条叶子都要写 `accept`（一句话能判断完 / 未完的判据）；没写的人一眼看得见，会回来问你。';
 
 /** A：常驻提示词（接在 toolsHint 末尾；`mode.prompt` 关着返回空串） */
 export function promptReminder(mode: RemindMode): string {

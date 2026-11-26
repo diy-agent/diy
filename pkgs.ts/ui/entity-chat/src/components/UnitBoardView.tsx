@@ -124,7 +124,14 @@ export function UnitBoardView({ room }: { room: Room }) {
                                 // 不显示 id：u9a 这种短名在树上只是噪音，需要时看 tooltip / 源码
                                 <div
                                     key={unit.id}
-                                    title={`${unit.id}${unit.body.trim() === '' ? '' : `\n${unit.body}`}`}
+                                    title={[
+                                        unit.id,
+                                        unit.title,
+                                        (unit.body ?? '').trim() === '' ? '' : `背景：${unit.body}`,
+                                        (unit.accept ?? '').trim() === '' ? '还没写「怎么算做完」' : `验收：${unit.accept}`,
+                                    ]
+                                        .filter((part) => part !== '')
+                                        .join('\n')}
                                     className={`flex items-baseline gap-1.5 whitespace-nowrap ${rowClass(unit, ready)}`}
                                     style={{ paddingLeft: `${unit.depth * 14}px` }}
                                 >
@@ -139,6 +146,17 @@ export function UnitBoardView({ room }: { room: Room }) {
                                     >
                                         {unit.title}
                                     </span>
+                                    {/* 缺「怎么算做完」= 这条没法被验收：标出来，别让人以为它是完整的
+                                        （用户 2026-11-26：「需求是可以验收的，步骤很难验收」）。
+                                        母项不标 —— 它的验收由子派生。 */}
+                                    {!unit.group && (unit.accept ?? '').trim() === '' && (
+                                        <span
+                                            className="shrink-0 rounded border border-amber-500/30 px-1 text-[10px] text-amber-600"
+                                            title="这条还没写「怎么算做完」：一句话能判断完/未完的判据"
+                                        >
+                                            未写验收
+                                        </span>
+                                    )}
                                 </div>
                             ))}
                         </div>

@@ -461,6 +461,32 @@ describe('unit（需求账本树的节点）', () => {
         expect(store.unitOf('t1', 'u1')?.status).toBe('doing');
     });
 
+    it('accept（怎么算做完）落库、能改、改 title 不会把它抹掉', () => {
+        const store = openStore(':memory:');
+        const unit = store.saveUnit({
+            taskId: 't1',
+            title: '导出可用',
+            body: '',
+            accept: '点一下真的落文件，且首末轮都在',
+            status: 'open',
+        });
+        expect(unit.accept).toBe('点一下真的落文件，且首末轮都在');
+        // 只改 title：accept 必须留着（「改个错别字」不该把验收口径清空）
+        const renamed = store.saveUnit({ taskId: 't1', id: unit.id, title: '导出能用', body: '', status: 'open' });
+        expect(renamed.accept).toBe('点一下真的落文件，且首末轮都在');
+        // 显式改 accept
+        const fixed = store.saveUnit({
+            taskId: 't1',
+            id: unit.id,
+            title: renamed.title,
+            body: '',
+            accept: '文件里首轮、末轮、别人的话都在',
+            status: 'open',
+        });
+        expect(store.unitOf('t1', unit.id)?.accept).toBe('文件里首轮、末轮、别人的话都在');
+        expect(store.listUnits('t1').map((row) => row.accept)).toEqual([fixed.accept]);
+    });
+
     it('显式 id 但不存在 → 抛（新号只能由 counters 发）', () => {
         const store = openStore(':memory:');
         expect(() => store.saveUnit({ taskId: 't1', id: 'u9', title: 'x', body: '', status: 'open' })).toThrow(

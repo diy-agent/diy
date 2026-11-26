@@ -32,6 +32,8 @@ export interface UnitBoardRow {
     id: string;
     title: string;
     body: string;
+    /** 「怎么算做完」（空串 = 还没写；界面与上下文都靠它标出来，别拿 body 兜底） */
+    accept: string;
     /**
      * **有效**状态：叶子 = 落库值；容器 = 由子派生（全 done → done，否则 open）。
      * 容器落库的 status 不参与判断 —— 只有叶子能被勾 done。
@@ -68,7 +70,7 @@ export interface UnitBoard {
 
 /** 只取算 board 要用的字段（测试里可以直接造这几项，不用凑齐 UnitRecord） */
 export type UnitFacts = Pick<UnitRecord, 'id' | 'title' | 'status' | 'seq'> &
-    Partial<Pick<UnitRecord, 'body' | 'parent' | 'taskId' | 'createdAt' | 'updatedAt'>>;
+    Partial<Pick<UnitRecord, 'body' | 'accept' | 'parent' | 'taskId' | 'createdAt' | 'updatedAt'>>;
 
 /**
  * 算一张 board。输入顺序不敏感；输出顺序稳定（树的先序 → 创建序 → id）。
@@ -165,6 +167,7 @@ export function unitBoard(units: readonly UnitFacts[]): UnitBoard {
             id,
             title: unit.title,
             body: unit.body ?? '',
+            accept: unit.accept ?? '',
             status: statusOf.get(id)!,
             parent: parentOf.get(id) ?? null,
             children: childrenOf.get(id) ?? [],
@@ -204,6 +207,9 @@ export function unitTreeLines(
         const mark = row.status === 'done' ? 'x' : ready.has(row.id) ? '>' : doing.has(row.id) ? '~' : ' ';
         const tail: string[] = [];
         if (options?.withBody === true && row.body !== '') tail.push(`body: ${row.body}`);
+        // 叶子缺验收口径 ⇒ 行尾点一句（「缺验收」）。这是**给人看的窟窿**，也让模型每轮都
+        // 看到自己欠着什么 —— 用户 2026-11-26：「需求是可以验收的，步骤很难验收」。
+        if (!row.group && row.accept.trim() === '') tail.push('缺验收');
         return `${indent}- [${mark}] ${row.title} (${row.id})${tail.length === 0 ? '' : `  ${tail.join('  ')}`}`;
     });
 }

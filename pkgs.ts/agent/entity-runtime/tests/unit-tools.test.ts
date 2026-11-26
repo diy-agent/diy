@@ -107,8 +107,8 @@ describe('unit 工具', () => {
         const added = (await toolOf(tools, 'unit_add').execute({
             items: [
                 { key: 'dom', title: '取消语义' },
-                { key: 'a', title: 'A', parent: 'dom' },
-                { key: 'b', title: 'B', parent: 'dom' },
+                { key: 'a', title: 'A', parent: 'dom', accept: '有单测' },
+                { key: 'b', title: 'B', parent: 'dom', accept: '有单测' },
             ],
         })) as { ready: string[] };
         // 两条叶子都能挑：账本不定先后

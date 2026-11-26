@@ -128,7 +128,17 @@ export function unitTools(host: UnitHost): ToolSet {
                                 .regex(KEY_PATTERN, 'key 只能是小写字母开头的小写英文 / 数字 / - _，≤24 字符')
                                 .describe('这条 unit 的 id（自起的短名，如 state / cancel-tool）；后面的项与以后的操作都用它引用'),
                             title: z.string().min(1).describe('一件能被验收的产出（不是动作：写「什么改好了」，不是「改哪个文件」）'),
-                            body: z.string().optional().describe('可选：验收口径 / 注意点'),
+                            body: z
+                                .string()
+                                .optional()
+                                .describe('可选：这条需求要解决什么（背景 / 范围 / 注意点）——**验收口径不写这里**，写 accept'),
+                            accept: z
+                                .string()
+                                .optional()
+                                .describe(
+                                    '怎么算做完：一句话能判断完/未完的判据（如「点导出真的落文件，且首末轮都在」）。' +
+                                        '**尽量写**：没写的人一眼看得见，会回来问你',
+                                ),
                             parent: z
                                 .string()
                                 .optional()
@@ -162,6 +172,7 @@ export function unitTools(host: UnitHost): ToolSet {
                         allowNewId: true,
                         title: item.title,
                         body: item.body ?? '',
+                        accept: item.accept ?? '',
                         status: 'open',
                         parent: item.parent ?? null,
                     });
@@ -202,11 +213,12 @@ export function unitTools(host: UnitHost): ToolSet {
             inputSchema: z.object({
                 id: z.string(),
                 title: z.string().min(1).optional(),
-                body: z.string().optional(),
+                body: z.string().optional().describe('这条需求要解决什么（背景 / 范围）—— 进展不要写这里（进展用 journal）'),
+                accept: z.string().optional().describe('怎么算做完：一句话能判断完/未完的判据'),
                 parent: z.string().nullable().optional().describe('换挂点：给母项的 key；传 null = 提到顶层'),
                 status: z.enum(UNIT_STATUSES).optional().describe('open / doing / done（只有叶子能改）'),
             }),
-            execute: async ({ id, title, body, parent, status }) => {
+            execute: async ({ id, title, body, accept, parent, status }) => {
                 const current = need(host, id);
                 if (status !== undefined) {
                     const row = boardOf(host).rows.find((item) => item.id === id);
@@ -233,12 +245,14 @@ export function unitTools(host: UnitHost): ToolSet {
                     id,
                     title: title ?? current.title,
                     body: body ?? current.body,
+                    accept: accept ?? current.accept,
                     status: status ?? current.status,
                     ...(parent === undefined ? {} : { parent }),
                 });
                 const fields = {
                     ...(title === undefined ? {} : { title }),
                     ...(body === undefined ? {} : { body }),
+                    ...(accept === undefined ? {} : { accept }),
                     ...(parent === undefined ? {} : { parent }),
                     ...(status === undefined ? {} : { status }),
                 };
@@ -269,6 +283,7 @@ export function unitTools(host: UnitHost): ToolSet {
                         id: child,
                         title: record.title,
                         body: record.body,
+                        accept: record.accept,
                         status: record.status,
                         parent: current.parent,
                     });
@@ -285,7 +300,9 @@ export function unitTools(host: UnitHost): ToolSet {
         }),
 
         unit_get: tool({
-            description: '看一条 unit 的全文（title / body / 母项 / 子 / 状态）。',
+            description:
+                '看一条 unit 的全文（title / body / accept / 母项 / 子 / 状态）。' +
+                '`accept` = 怎么算做完；空串表示还没写（该补）。',
             inputSchema: z.object({ id: z.string() }),
             execute: async ({ id }) => {
                 const unit = need(host, id);
@@ -294,6 +311,7 @@ export function unitTools(host: UnitHost): ToolSet {
                     id: unit.id,
                     title: unit.title,
                     body: unit.body,
+                    accept: unit.accept,
                     status: row?.status ?? unit.status,
                     parent: row?.parent ?? null,
                     children: row?.children ?? [],

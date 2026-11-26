@@ -148,8 +148,17 @@ export interface UnitRecord {
     taskId: string;
     id: string;
     title: string;
-    /** 这一步做什么 + 验收口径（不是任务方案全文：方案在 task.body） */
+    /** 这条需求要解决什么（背景 / 范围）。**验收口径不写这里** —— 它有自己的字段 `accept` */
     body: string;
+    /**
+     * 「怎么算做完」——一句话能判断完/未完的判据。
+     *
+     * 为什么单独一个字段（2026-11-26 用户裁）：原先验收口径埋在 `body` 里，模型经常忘，
+     * 人也没法快速核对（body 里既有背景又有口径，还得找出哪句是判据）。
+     * 做成字段之后：缺了能看得见（界面标「未写验收」）、提示词也有一条明确的填空要求。
+     * 空串 = 还没写（不假装有）。
+     */
+    accept: string;
     status: UnitStatus;
     /**
      * 树上的父（功能域 / 母项）id；`null` = 根。
@@ -646,6 +655,8 @@ export function openStore(file: string): Store {
             id         TEXT NOT NULL,
             title      TEXT NOT NULL,
             body       TEXT NOT NULL DEFAULT '',
+            -- 「怎么算做完」：空串 = 还没写（界面会标出来）
+            accept     TEXT NOT NULL DEFAULT '',
             status     TEXT NOT NULL DEFAULT 'open',
             -- 树上的父（母项）。NULL = 根
             parent_id  TEXT,
@@ -775,6 +786,9 @@ export function openStore(file: string): Store {
         ),
     );
     if (!unitColumns.has('parent_id')) db.exec('ALTER TABLE task_units ADD COLUMN parent_id TEXT');
+    // 老库补列：accept（「怎么算做完」）。历史行一律空串 = 还没写 —— 界面会标「未写验收」，
+    // 不假装有（拿 body 去兜底等于把「没写」藏起来，人就没法靠它挑活）。
+    if (!unitColumns.has('accept')) db.exec("ALTER TABLE task_units ADD COLUMN accept TEXT NOT NULL DEFAULT ''");
     // 2026-11-25：依赖边与交付批次整体退役（只留需求账本树）。旧库里的两张表直接删 ——
     // 它们是纯派生侧的记录，删掉不丢「要做什么」。task_units.batch_id 是老库的死列：
     // SQLite 不能删列，代码也再不读写它，留着不影响任何判据。
@@ -917,6 +931,7 @@ export function openStore(file: string): Store {
         id: String(row['id']),
         title: String(row['title']),
         body: String(row['body']),
+        accept: row['accept'] === null || row['accept'] === undefined ? '' : String(row['accept']),
         status: String(row['status']) as UnitStatus,
         parent: row['parent_id'] === null || row['parent_id'] === undefined ? null : String(row['parent_id']),
         seq: Number(row['seq']),
@@ -970,6 +985,8 @@ export function openStore(file: string): Store {
             id: previous?.id ?? unit.id ?? allocateUnitId(unit.taskId),
             title,
             body: unit.body,
+            // 缺省沿用（改标题不该把已写好的验收口径抹掉）
+            accept: unit.accept ?? previous?.accept ?? '',
             status: unit.status,
             // 缺省沿用（改 title 不该顺手把挂点抹掉）；新节点缺省 = 根
             parent: unit.parent === undefined ? (previous?.parent ?? null) : unit.parent,
@@ -979,14 +996,15 @@ export function openStore(file: string): Store {
         };
         if (record.parent === record.id) throw new Error(`unit 不能是自己的父：${record.id}`);
         db.prepare(
-            'INSERT INTO task_units (task_id, id, title, body, status, parent_id, seq, created_at, updated_at) ' +
-                'VALUES (?,?,?,?,?,?,?,?,?) ' +
-                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, status=?, parent_id=?, updated_at=?',
+            'INSERT INTO task_units (task_id, id, title, body, accept, status, parent_id, seq, created_at, updated_at) ' +
+                'VALUES (?,?,?,?,?,?,?,?,?,?) ' +
+                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, accept=?, status=?, parent_id=?, updated_at=?',
         ).run(
             record.taskId,
             record.id,
             record.title,
             record.body,
+            record.accept,
             record.status,
             record.parent,
             record.seq,
@@ -994,6 +1012,7 @@ export function openStore(file: string): Store {
             record.updatedAt,
             record.title,
             record.body,
+            record.accept,
             record.status,
             record.parent,
             record.updatedAt,
