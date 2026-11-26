@@ -232,6 +232,12 @@ export interface UnitsContextValue {
     tree?: string[];
     counts?: { open: number; doing: number; done: number };
     note?: string;
+    /**
+     * 提醒（`units-remind.ts` 的 B 档）：只在**有触发条件**时出现 ——
+     * 账本还空着 / 上一轮之后有人发言。空树时它是整节唯一的内容，所以空树也会因此
+     * 从「整节缺席」变成「一节带 hint 的值」。
+     */
+    hint?: string;
 }
 
 /**
@@ -244,19 +250,22 @@ export interface UnitsContextValue {
  * 去冗余：每个节点只在 `tree` 里出现一次（带状态）；`ready` / `doing` 再点名一次
  * 是因为那是**行动指令**，值得重复。`done` 不点名 —— 树行里的 `x` 就是答案。
  */
-export function unitsContextValue(board: UnitBoard): UnitsContextValue | undefined {
-    if (board.rows.length === 0) return undefined;
+export function unitsContextValue(board: UnitBoard, hint?: string): UnitsContextValue | undefined {
+    // 空树：没有 hint 就是整节缺席（不造空壳）；有 hint 时它就是这一节的**唯一**内容
+    if (board.rows.length === 0) return hint === undefined ? undefined : { ready: [], doing: [], hint };
     const rowOf = new Map(board.rows.map((row) => [row.id, row] as const));
     const head = (ids: string[]): UnitHead[] => ids.map((id) => ({ id, title: rowOf.get(id)?.title ?? '' }));
     const tree = unitTreeLines(board);
     const tooBig = tree.length > UNITS_FULL_MAX_LINES || tree.join('\n').length > UNITS_FULL_MAX_BYTES;
-    if (!tooBig) return { ready: head(board.ready), doing: head(board.doing), tree };
+    const extra = hint === undefined ? {} : { hint };
+    if (!tooBig) return { ready: head(board.ready), doing: head(board.doing), tree, ...extra };
     const count = (status: UnitStatus): number => board.rows.filter((row) => row.status === status).length;
     return {
         ready: head(board.ready),
         doing: head(board.doing),
         counts: { open: count('open'), doing: count('doing'), done: count('done') },
         note: `账本树较大（${board.rows.length} 条），只给现在能挑的；全树用 unit_list`,
+        ...extra,
     };
 }
 

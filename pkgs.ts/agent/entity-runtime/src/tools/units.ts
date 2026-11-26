@@ -14,12 +14,18 @@ import { z } from 'zod';
 
 import { UNIT_STATUSES, type Store, type UnitRecord } from '../db';
 import { unitBoard, unitTreeLines, type UnitBoard } from '../units';
+import { toolReminder, type RemindMode } from '../units-remind';
 
 /** 工具写入落点：只认 store + 一个 taskId（unit 是 task 私有的，id 只在该 task 内唯一） */
 export interface UnitHost {
     store: Store;
     /** 这个房间对应的任务 id；unit 都挂它 */
     taskId: string;
+    /**
+     * C 档提醒（`units-remind.ts`）：把「这句话里如果有新需求就先落一条」写进 `unit_add`
+     * 的描述。不传 = 不提醒（实验里的 `off` / `a` / `b` 档）。
+     */
+    remind?: RemindMode;
 }
 
 /** 事件名（`<type>.<verb>`，与 `task.journal` 同一套命名） */
@@ -93,6 +99,9 @@ export function unitTools(host: UnitHost): ToolSet {
 
         unit_add: tool({
             description: [
+                ...(toolReminder(host.remind ?? { prompt: false, envelope: false, tool: false }) === ''
+                    ? []
+                    : [toolReminder(host.remind as RemindMode)]),
                 '往账本树上加条目：**一次调用 = 一批**（整棵树一次给全最好）。',
                 '**接到需求、或需求变了的时候，这是第一步** —— 先把「要做成哪些东西」写下来，再动手。',
                 '',
