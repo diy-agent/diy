@@ -56,6 +56,8 @@ export interface JobView {
     raw: string;
 }
 
+// 要匹配的就是 ESC 字符本身（工具输出里的色码前缀）
+// oxlint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
 
 /** 去掉 ANSI 色码（工具输出里带 `\u001b[38;5;255;48;5;66;1m` 这类前缀） */

@@ -100,6 +100,8 @@ export class FakeElement {
     return child;
   }
   replaceChildren(...nodes: FakeElement[]): void {
+    // 快照必须：循环体里改的是子节点自己的 parent，但后续还要 length = 0
+    // oxlint-disable-next-line no-useless-spread
     for (const c of [...this.children]) c.parentNode = null;
     this.children.length = 0;
     this.ownText = "";
@@ -130,7 +132,8 @@ export class FakeElement {
 
   // ── 查询 ──────────────────────────────────────────────
   matches(sel: string): boolean {
-    if (sel.startsWith(".")) return this.className.split(/\s+/).includes(sel.slice(1));
+    if (sel.startsWith("."))
+      return this.className.split(/\s+/).includes(sel.slice(1));
     return this.tagName === sel.toUpperCase();
   }
   querySelectorAll(sel: string): FakeElement[] {
@@ -155,10 +158,15 @@ export class FakeElement {
     this.listeners.set(type, list);
   }
   removeEventListener(type: string, fn: (e: unknown) => void): void {
-    this.listeners.set(type, (this.listeners.get(type) ?? []).filter((f) => f !== fn));
+    this.listeners.set(
+      type,
+      (this.listeners.get(type) ?? []).filter((f) => f !== fn),
+    );
   }
   /** 测试手动派发（只派发本节点）。 */
   dispatch(type: string): void {
+    // 快照必须：监听器里可能反注册自己（边遍历边改会跳过）
+    // oxlint-disable-next-line no-useless-spread
     for (const fn of [...(this.listeners.get(type) ?? [])]) fn({ type });
   }
 }

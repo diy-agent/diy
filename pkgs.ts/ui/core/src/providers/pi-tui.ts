@@ -15,14 +15,10 @@ import {
   Input as PiInput,
   Spacer as PiSpacer,
 } from "@mariozechner/pi-tui";
-import type { Component, Container as PiContainer } from "@mariozechner/pi-tui";
+import type { Container as PiContainer } from "@mariozechner/pi-tui";
 import { visibleWidth } from "@mariozechner/pi-tui";
 import { effect, stop } from "@vue/reactivity";
-import {
-  ScopeNode,
-  ScopeConfig,
-  type ContextManager,
-} from "../scope.js";
+import { ScopeNode, ScopeConfig, type ContextManager } from "../scope.js";
 import { Signal } from "../signal.js";
 import {
   UIComponent,

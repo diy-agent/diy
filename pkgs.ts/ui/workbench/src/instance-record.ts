@@ -10,11 +10,10 @@
 //
 // 生命周期：启动写 → 退出删。「退出清理不保证执行」（SIGKILL / 崩溃），读侧另有 pid 存活过滤。
 
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { ensureRegistryDir, migrateLegacyRegistry, registryDir as registryDirOf } from "@diy-agent/dev-paths";
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { ensureRegistryDir, migrateLegacyRegistry, registryDir as registryDirOf } from '@diy-agent/dev-paths';
 
 /** 启动瞬间快照的一跳父进程 */
 export interface ParentHop {
@@ -40,7 +39,7 @@ export function registryDir(env: NodeJS.ProcessEnv = process.env): string {
 export function repoRootOf(start: string = process.cwd()): string {
     let dir = resolve(start);
     for (let i = 0; i < 12; i++) {
-        if (existsSync(join(dir, ".git"))) return dir;
+        if (existsSync(join(dir, '.git'))) return dir;
         const parent = dirname(dir);
         if (parent === dir) break;
         dir = parent;
@@ -48,20 +47,11 @@ export function repoRootOf(start: string = process.cwd()): string {
     return resolve(start);
 }
 
-/** 真实家目录（不读 $HOME：测试 / 隔离实例会改写它） */
-function realHomeDir(): string {
-    try {
-        return userInfo().homedir || homedir();
-    } catch {
-        return homedir();
-    }
-}
-
 /** 本地时区 ISO（与 diy-app 的 localISOString 同形：`2026-11-02T11:00:00.000+0800`） */
 export function localISOString(date: Date = new Date()): string {
-    const pad = (value: number, width = 2): string => String(Math.abs(value)).padStart(width, "0");
+    const pad = (value: number, width = 2): string => String(Math.abs(value)).padStart(width, '0');
     const offset = -date.getTimezoneOffset();
-    const sign = offset >= 0 ? "+" : "-";
+    const sign = offset >= 0 ? '+' : '-';
     return (
         `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
         `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}` +
@@ -74,18 +64,18 @@ export const PARENT_DEPTH = 4;
 
 /** 取一个进程的 ppid 与命令行；取不到 ⇒ null（Windows 不猜，直接截断） */
 export function processHop(pid: number): { hop: ParentHop; ppid: number } | null {
-    if (!Number.isFinite(pid) || pid <= 1 || process.platform === "win32") return null;
+    if (!Number.isFinite(pid) || pid <= 1 || process.platform === 'win32') return null;
     try {
-        const out = execFileSync("ps", ["-o", "ppid=", "-o", "command=", "-p", String(pid)], {
-            encoding: "utf-8",
+        const out = execFileSync('ps', ['-o', 'ppid=', '-o', 'command=', '-p', String(pid)], {
+            encoding: 'utf-8',
             timeout: 1500,
-            stdio: ["ignore", "pipe", "ignore"],
+            stdio: ['ignore', 'pipe', 'ignore'],
         }).trim();
-        const space = out.indexOf(" ");
+        const space = out.indexOf(' ');
         if (space <= 0) return null;
         const ppid = Number(out.slice(0, space));
         const command = out.slice(space + 1).trim();
-        if (!Number.isFinite(ppid) || command === "") return null;
+        if (!Number.isFinite(ppid) || command === '') return null;
         return { hop: { pid, command }, ppid };
     } catch {
         return null;
@@ -111,7 +101,7 @@ function writeAtomic(file: string, content: string): void {
     mkdirSync(dirname(file), { recursive: true });
     const tmp = join(dirname(file), `.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
     try {
-        writeFileSync(tmp, content, { encoding: "utf-8", mode: 0o600 });
+        writeFileSync(tmp, content, { encoding: 'utf-8', mode: 0o600 });
         renameSync(tmp, file);
     } catch (e) {
         try {
@@ -130,8 +120,8 @@ export function recordPath(dir: string, pid: number): string {
 /** 读数据根的 `instance-id`（有问题 / 不存在 ⇒ null；不写盘） */
 function readInstanceId(home: string): string | null {
     try {
-        const text = readFileSync(join(home, "instance-id"), "utf-8").trim();
-        return text === "" ? null : text;
+        const text = readFileSync(join(home, 'instance-id'), 'utf-8').trim();
+        return text === '' ? null : text;
     } catch {
         return null;
     }
@@ -144,15 +134,25 @@ function readInstanceId(home: string): string | null {
  * 方式，`instance-id` 区分不同数据根（生产 / 各 worktree 的 lab）。instance-id 读不出来时退化成
  * `<app>.<launch>`：宁可短一点，也不伪造一个看似合法的 id。
  */
-export function instanceUri(options: { readonly app: string; readonly launch?: string | null; readonly diyHome?: string }): string {
-    const tail = options.launch === undefined || options.launch === null ? options.app : `${options.app}.${options.launch}`;
+export function instanceUri(options: {
+    readonly app: string;
+    readonly launch?: string | null;
+    readonly diyHome?: string;
+}): string {
+    const tail =
+        options.launch === undefined || options.launch === null ? options.app : `${options.app}.${options.launch}`;
     const nodeId = options.diyHome === undefined ? null : readInstanceId(options.diyHome);
     return nodeId === null ? tail : `diy://${nodeId}/${tail}`;
 }
 
 /** 窗口标题：`<标题> — <实例 URI>`（无 app 名时原样返回，不让临时宿主也背上 URI） */
-export function instanceWindowTitle(options: { readonly title?: string; readonly app?: string; readonly launch?: string | null; readonly diyHome?: string }): string {
-    const base = options.title ?? "Workbench";
+export function instanceWindowTitle(options: {
+    readonly title?: string;
+    readonly app?: string;
+    readonly launch?: string | null;
+    readonly diyHome?: string;
+}): string {
+    const base = options.title ?? 'Workbench';
     if (options.app === undefined) return base;
     return `${base} — ${instanceUri({ app: options.app, launch: options.launch ?? null, diyHome: options.diyHome })}`;
 }
@@ -222,7 +222,7 @@ export function updateSelfRecord(
     const file = recordPath(dir, pid);
     let raw: string;
     try {
-        raw = readFileSync(file, "utf-8");
+        raw = readFileSync(file, 'utf-8');
     } catch {
         return false; // 记录还没写（或已被清）—— 回填不是关键路径，静默跳过
     }

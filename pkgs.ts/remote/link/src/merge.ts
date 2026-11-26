@@ -79,7 +79,7 @@ export function mergeDiscovered(items: readonly DiscoveredInstance[]): MergedIns
             existing.source = source;
         }
         for (const s of [...incoming, source]) if (!existing.sources.includes(s)) existing.sources.push(s);
-        if (raw.meta) existing.meta = { ...(existing.meta ?? {}), ...raw.meta };
+        if (raw.meta) existing.meta = { ...existing.meta, ...raw.meta };
         byEndpoint.set(existing.endpoint, existing);
         byEndpoint.set(endpoint, existing);
     }

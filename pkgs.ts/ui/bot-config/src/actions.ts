@@ -6,17 +6,11 @@
 //      **一个字节不落盘**，也不出现在会话列表（##474 判据 4）
 //   ③ 参数来自 renderer 的一律先校验成强类型（形状不对就抛，不猜）
 
-import {
-    createFileBotStore,
-    type BotConfig,
-    type BotId,
-    type BotStore,
-} from '@diy-agent/bot';
+import { createFileBotStore, type BotConfig, type BotStore } from '@diy-agent/bot';
 import { createOpenAiCompatible, resolveProviderConfig } from '@diy-agent/llm-provider';
 import { loadCatalog, readAccountValue, readDefaultModel, type ModelCatalogEntry } from '@diy-agent/model-catalog';
 import { createSession, type AgentSession, type ChatMessage, type LlmPort } from '@diy-agent/session';
 import { openMemorySessionStore } from '@diy-agent/session-store-memory';
-import { localISOString } from '@diy-agent/time';
 import { createBotAdmin } from '@diy-agent/bot/admin';
 import { BotConfigPageError } from './errors.js';
 import type { BotSnapshot, BotView, ModelOptionView, TestChatView, TestMessageView } from './shared.js';
@@ -48,7 +42,6 @@ export interface BotActions {
 /** 建一份动作表（每个页面实例一份：测试对话会按 bot 缓存内存会话，随页面关闭消失） */
 export function createBotActions(options: BotActionsOptions): BotActions {
     const home = options.home;
-    const now = options.clock ?? (() => new Date());
     const store: BotStore = options.store ?? createFileBotStore({ home, sessionsDir: sessionsDirOf(home) });
     // 业务规则（重名 / id 生成 / 模型必填）住在 @diy-agent/bot —— 换宿主也不用重写
     const admin = createBotAdmin({ home, store, ...(options.clock === undefined ? {} : { clock: options.clock }) });
@@ -192,9 +185,7 @@ function defaultLlmFor(home: string): (modelKey: string) => LlmPort {
         const at = modelKey.indexOf('/');
         const providerId = at <= 0 ? modelKey : modelKey.slice(0, at);
         const modelId = at <= 0 ? '' : modelKey.slice(at + 1);
-        const entry = loadCatalog(home).find(
-            (item) => item.providerId === providerId && item.modelId === modelId,
-        );
+        const entry = loadCatalog(home).find((item) => item.providerId === providerId && item.modelId === modelId);
         if (entry === undefined) {
             throw new BotConfigPageError('bot-config/unknown-model', `模型目录里没有 ${modelKey}`);
         }

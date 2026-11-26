@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ChatClient, StreamEvent } from '@diy-agent/chat-core';
 
-import { BOT_A, HUMAN, makeRoom, sleep, waitFor, type Harness } from './support/harness';
+import { BOT_A, makeRoom, sleep, type Harness } from './support/harness';
 import { DirectRoomClient } from './support/direct-client';
 
 type Factory = (harness: Harness) => ChatClient;

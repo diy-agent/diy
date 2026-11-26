@@ -14,13 +14,13 @@
 // 页面清单来自 plugins 清单，页面行为来自插件导出的 methods —— 加页面不改本包。
 
 import { app, BrowserWindow, screen } from 'electron';
-import { ChannelClientBinding, ChannelServerBinding, createScopedClient, createTypedClient } from '@diy-agent/rpc';
+import { ChannelClientBinding, ChannelServerBinding, createScopedClient } from '@diy-agent/rpc';
 import { createMainTransport } from '@diy-agent/rpc/electron/main';
 import { rendererRoutes, workbenchRoutes } from './protocol.js';
 import { WorkbenchError } from './errors.js';
 import { loadPages, type PluginEntry } from './loader.js';
 import type { PageContribution, PageInfo } from './page.js';
-import { PAGE_INVOKE_CHANNEL, PAGE_LIST_CHANNEL, RPC_CHANNEL, type PageInvokeRequest } from './channels.js';
+import { RPC_CHANNEL } from './channels.js';
 import { instanceWindowTitle, removeSelfRecord, writeSelfRecord } from './instance-record.js';
 import { sidecarWindowOptions } from './window.js';
 

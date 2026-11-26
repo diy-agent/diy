@@ -20,7 +20,6 @@ import {
 } from './_parser.js';
 import { _getCliOptionMeta } from '../core/_cli-meta.js';
 import { z } from 'zod';
-import { RpcSchema } from '../core/rpc.js';
 import { createScopedClient, mountService, type ScopedClient } from '../core/scope.js';
 import { ChannelClientBinding, ChannelServerBinding } from '../core/index.js';
 import { createMemTransportPair } from '../core/mem.js';

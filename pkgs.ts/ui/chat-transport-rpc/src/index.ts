@@ -197,6 +197,8 @@ export class RpcChatClient implements ChatClient {
 
     constructor(options: RpcChatClientOptions = {}) {
         this.hub = new StreamHub({
+            // exactOptionalPropertyTypes：不传就不带这个键
+            // oxlint-disable-next-line no-useless-spread
             ...(options.rpcUrl === undefined ? {} : { rpcUrl: options.rpcUrl }),
         });
     }
@@ -244,7 +246,9 @@ export class RpcChatClient implements ChatClient {
          */
         rows: (): Promise<{ rows: BotRow[] }> => this.call('bots.rows', {}),
         /** 批量「继续」：已在跑的会被服务端跳过（回包里报原因） */
-        retry: (targets: Array<{ roomId: string; botId: string }>): Promise<{
+        retry: (
+            targets: Array<{ roomId: string; botId: string }>,
+        ): Promise<{
             started: Array<{ roomId: string; botIds: string[] }>;
             skipped: Array<{ roomId: string; botId: string; reason: string }>;
         }> => this.call('bots.retry', { targets }),
@@ -360,11 +364,7 @@ export class RpcChatClient implements ChatClient {
         return data.sessions;
     }
 
-    async compact(
-        entityId: string,
-        botId: string,
-        options: { keepTurns?: number } = {},
-    ): Promise<CompactOutcome> {
+    async compact(entityId: string, botId: string, options: { keepTurns?: number } = {}): Promise<CompactOutcome> {
         return this.call<CompactOutcome>('chat.compact', { id: entityId, botId, ...options });
     }
 

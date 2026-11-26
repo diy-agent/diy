@@ -184,6 +184,8 @@ export class StreamHub {
     close(): void {
         this.closed = true;
         this.topics.clear();
+        // 快照必须：`stopTopic` 会从 `controllers` 里删（边遍历边改会跳过）
+        // oxlint-disable-next-line no-useless-spread
         for (const topic of [...this.controllers.keys()]) this.stopTopic(topic);
         this.transport?.close();
         this.transport = undefined;

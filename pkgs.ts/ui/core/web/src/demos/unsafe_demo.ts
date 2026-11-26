@@ -34,12 +34,16 @@ export function unsafeDemoA(mount: HTMLElement): void {
   // ① 容器模式：节点自己 insert/remove，按 items 对齐
   app.div({ class: "rows" }).unsafe((n) => {
     const want = new Set(items.value);
+    // 快照必须：循环体里 `n.remove(k)` 会改 keyedChildren
+    // oxlint-disable-next-line no-useless-spread
     for (const k of [...(n.keyedChildren?.keys() ?? [])]) {
-      if (typeof k === "string" && k.startsWith("row:") && !want.has(k)) n.remove(k);
+      if (typeof k === "string" && k.startsWith("row:") && !want.has(k))
+        n.remove(k);
     }
     for (const it of items.value) {
       const key = `row:${it}`;
-      if (!n.has(key)) n.insert((slot) => slot.div({ class: "row", text: it }), { key });
+      if (!n.has(key))
+        n.insert((slot) => slot.div({ class: "row", text: it }), { key });
     }
   });
 
@@ -50,7 +54,12 @@ export function unsafeDemoA(mount: HTMLElement): void {
         const c = n.parent(".extra");
         if (!c) return;
         if (ghost.value) {
-          if (!c.has("ghost")) c.insert((s) => s.div({ class: "row row-ghost", text: "来自 parent 插入" }), { key: "ghost" });
+          if (!c.has("ghost"))
+            c.insert(
+              (s) =>
+                s.div({ class: "row row-ghost", text: "来自 parent 插入" }),
+              { key: "ghost" },
+            );
         } else {
           c.remove("ghost");
         }
@@ -64,10 +73,27 @@ export function unsafeDemoA(mount: HTMLElement): void {
   });
 
   app.div({ class: "bar" }, (d) => {
-    d.button({ class: "btn", text: "＋行", onClick: () => (items.value = [...items.value, `行#${items.value.length + 1}`]) });
-    d.button({ class: "btn", text: "－行", onClick: () => (items.value = items.value.slice(0, -1)) });
-    d.button({ class: "btn", text: "切换 ghost", onClick: () => (ghost.value = !ghost.value) });
-    d.button({ class: "btn", text: "移除通知", onClick: () => (showNote.value = false) });
+    d.button({
+      class: "btn",
+      text: "＋行",
+      onClick: () =>
+        (items.value = [...items.value, `行#${items.value.length + 1}`]),
+    });
+    d.button({
+      class: "btn",
+      text: "－行",
+      onClick: () => (items.value = items.value.slice(0, -1)),
+    });
+    d.button({
+      class: "btn",
+      text: "切换 ghost",
+      onClick: () => (ghost.value = !ghost.value),
+    });
+    d.button({
+      class: "btn",
+      text: "移除通知",
+      onClick: () => (showNote.value = false),
+    });
   });
 
   expose("__unsafeA", () => ({
@@ -88,8 +114,11 @@ export function unsafeDemoB(mount: HTMLElement): void {
 
   const rowsSpec: Spec = html.div({ class: "rows" }).unsafe((n) => {
     const want = new Set(items.value);
+    // 快照必须：循环体里 `n.remove(k)` 会改 keyedChildren
+    // oxlint-disable-next-line no-useless-spread
     for (const k of [...(n.keyedChildren?.keys() ?? [])]) {
-      if (typeof k === "string" && k.startsWith("row:") && !want.has(k)) n.remove(k);
+      if (typeof k === "string" && k.startsWith("row:") && !want.has(k))
+        n.remove(k);
     }
     for (const it of items.value) {
       const key = `row:${it}`;
@@ -104,7 +133,11 @@ export function unsafeDemoB(mount: HTMLElement): void {
         const c = g.parent(".extra");
         if (!c) return;
         if (ghost.value) {
-          if (!c.has("ghost")) c.insert(html.div({ class: "row row-ghost", text: "来自 parent 插入" }), { key: "ghost" });
+          if (!c.has("ghost"))
+            c.insert(
+              html.div({ class: "row row-ghost", text: "来自 parent 插入" }),
+              { key: "ghost" },
+            );
         } else {
           c.remove("ghost");
         }
@@ -120,10 +153,27 @@ export function unsafeDemoB(mount: HTMLElement): void {
       if (!showNote.value) n.removeSelf();
     }),
     html.div({ class: "bar" }, function* () {
-      yield html.button({ class: "btn", text: "＋行", onClick: () => (items.value = [...items.value, `行#${items.value.length + 1}`]) });
-      yield html.button({ class: "btn", text: "－行", onClick: () => (items.value = items.value.slice(0, -1)) });
-      yield html.button({ class: "btn", text: "切换 ghost", onClick: () => (ghost.value = !ghost.value) });
-      yield html.button({ class: "btn", text: "移除通知", onClick: () => (showNote.value = false) });
+      yield html.button({
+        class: "btn",
+        text: "＋行",
+        onClick: () =>
+          (items.value = [...items.value, `行#${items.value.length + 1}`]),
+      });
+      yield html.button({
+        class: "btn",
+        text: "－行",
+        onClick: () => (items.value = items.value.slice(0, -1)),
+      });
+      yield html.button({
+        class: "btn",
+        text: "切换 ghost",
+        onClick: () => (ghost.value = !ghost.value),
+      });
+      yield html.button({
+        class: "btn",
+        text: "移除通知",
+        onClick: () => (showNote.value = false),
+      });
     }),
   );
 
