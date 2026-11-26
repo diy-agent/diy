@@ -96,8 +96,13 @@ export const botsApi = RpcSchema.group({
 
 export const chatApi = RpcSchema.group({
     children: {
-        /** 打开房间要的三份：items / deliveries / asks（answered 一起回） */
-        history: RpcSchema.unary({ input: { id: Id }, output: Any }),
+        /**
+         * 打开房间要的三份：items / deliveries / asks（answered 一起回）。
+         *
+         * `limit`：只要最近多少条（缺省由服务端定，见 `HISTORY_LIMIT`）；`0` / 负数 = 全量 ——
+         * 老客户端不传就是服务端缺省，所以这是**向后兼容**的加法（2026-11-26）。
+         */
+        history: RpcSchema.unary({ input: { id: Id, limit: z.number().int().optional() }, output: Any }),
         /** 发一条消息（受理即返；事件从 /rpc 的 room 流进来） */
         chat: RpcSchema.unary({ input: { id: Id, text: z.string().min(1) }, output: Any }),
         cancel: RpcSchema.unary({

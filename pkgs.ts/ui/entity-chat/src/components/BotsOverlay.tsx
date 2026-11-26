@@ -126,11 +126,13 @@ function TableRow({
 }) {
     return (
         <label className="flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-1.5 hover:bg-muted/40">
-            <Input
+            {/* 原生勾选框：官方 Input 是文本框形状（w-full / border / padding），
+                拿来渲染 checkbox 会带上一圈框与内边距 */}
+            <input
                 type="checkbox"
                 checked={checked}
                 onChange={(event) => onCheck(row, event.target.checked)}
-                className="size-3"
+                className="size-3.5 shrink-0 accent-sky-500"
             />
             <StateDot row={row} />
             {/* bot 名带 `@`：它与右边的房间名**可能字字相同**（用户 2026-11-26 看到
@@ -182,7 +184,9 @@ export function BotsOverlay({
     initialMode = 'brief',
     initialFilter,
 }: BotsOverlayProps) {
-    const [mode, setMode] = React.useState<'brief' | 'full'>(initialMode === 'full' || initialFilter !== undefined ? 'full' : 'brief');
+    const [mode, setMode] = React.useState<'brief' | 'full'>(
+        initialMode === 'full' || initialFilter !== undefined ? 'full' : 'brief',
+    );
     const [filter, setFilter] = React.useState<Filter>(initialFilter ?? 'all');
     const [checked, setChecked] = React.useState<ReadonlySet<string>>(new Set());
     const [flash, setFlash] = React.useState<string | null>(null);
@@ -287,7 +291,9 @@ export function BotsOverlay({
                                     size="xs"
                                     onClick={() => setFilter(item.id)}
                                     className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-xs ${
-                                        filter === item.id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/60'
+                                        filter === item.id
+                                            ? 'bg-muted text-foreground'
+                                            : 'text-muted-foreground hover:bg-muted/60'
                                     }`}
                                 >
                                     {item.dot === undefined ? null : (
@@ -308,9 +314,7 @@ export function BotsOverlay({
                         <p className="px-4 py-6 text-xs text-muted-foreground">正在读 bot 状态…</p>
                     ) : shown.length === 0 ? (
                         <p className="px-4 py-6 text-xs text-muted-foreground">
-                            {mode === 'brief'
-                                ? '都闲着 —— 没有在跑的、排队的、等你回答或出错的'
-                                : '这个筛选下没有 bot'}
+                            {mode === 'brief' ? '都闲着 —— 没有在跑的、排队的、等你回答或出错的' : '这个筛选下没有 bot'}
                         </p>
                     ) : mode === 'brief' ? (
                         shown.map((row) => (

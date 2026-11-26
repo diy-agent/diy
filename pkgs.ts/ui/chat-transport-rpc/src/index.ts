@@ -306,7 +306,13 @@ export class RpcChatClient implements ChatClient {
 
     // ── ChatClient ──────────────────────────────────────────────
 
-    async load(entityId: string): Promise<Snapshot> {
+    /**
+     * 拉一个房间的快照。
+     *
+     * `limit` 缺省 = 服务端缺省（只发最近 400 条）；传 `0` = **全量**（用户点“加载更早的”）。
+     * 见 `Snapshot.truncated` 的注释：6000 条的房间里全量回包 5.7 MB，parse + 渲染 2~5 秒。
+     */
+    async load(entityId: string, options?: { limit?: number }): Promise<Snapshot> {
         const history = await this.call<{
             items: Item[];
             deliveries: Delivery[];
@@ -314,9 +320,13 @@ export class RpcChatClient implements ChatClient {
             answered: Snapshot['answeredAsks'];
             speaking?: Snapshot['speaking'];
             runningTurns?: Snapshot['runningTurns'];
-        }>('chat.history', { id: entityId });
+            total?: number;
+            hasMore?: boolean;
+        }>('chat.history', { id: entityId, ...(options?.limit === undefined ? {} : { limit: options.limit }) });
         return {
             items: history.items,
+            ...(history.total === undefined ? {} : { totalItems: history.total }),
+            ...(history.hasMore === true ? { truncated: true } : {}),
             deliveries: history.deliveries,
             asks: history.asks ?? [],
             answeredAsks: history.answered ?? [],

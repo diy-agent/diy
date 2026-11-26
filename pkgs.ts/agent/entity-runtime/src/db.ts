@@ -371,6 +371,19 @@ export interface Store {
      * 就为拿 N 条原话；而这张表随历史线性涨（界面上 5 秒轮询一次）。一次 `IN` 查询只读命中的行。
      */
     itemsByIds(ids: readonly string[]): Item[];
+    /**
+     * 某个房间**最后 n 条**（仍按 seq 升序返回）。
+     *
+     * 为什么要有（2026-11-26 实测）：`chat.history` 一次回包 **5.7 MB** —— 6000+ 条 items
+     * 全量发给浏览器，JSON.parse + 渲染就是那 2~5 秒的长任务（用户「切任务很慢」）。
+     * 展示层只需要「最近的」；更早的历史由用户主动要（`limit<=0` 时仍走 `itemsOf` 全量）。
+     *
+     * 走 `items_entity(entity_id, seq)` 倒序取 n 行，只 JSON.parse 这 n 条 —— 服务端也省掉
+     * 了把几千条解析出来的开销。
+     */
+    lastItemsOf(roomId: string, n: number): Item[];
+    /** 条目总数（分页时要告诉界面“上面还有多少条”，别为了数它把全量都解析一遍） */
+    countItemsOf(roomId: string): number;
     seqOf(roomId: string): number;
     /** 某个容器的全部草稿（composer / ask:<id> …） */
     listDrafts(roomId: string): Draft[];
@@ -592,6 +605,17 @@ export function openStore(file: string): Store {
             seq
         ) WHERE json_extract(item, '$.author.id') IS NULL
             AND json_extract(item, '$.type') IN ('notice', 'error');
+        -- 未读计数（unreadByRoom）：按 (entity_id, type, role) 筛出 chat 再 GROUP BY。
+        -- 没有这条索引 = 全表 3.5 万行逐行 json_extract（**实测 926ms**），而 rooms.list
+        -- 首屏必经、每 30s 一次 —— 用户 2026-11-26 报“页面很慢”就是它。建完走覆盖索引
+        -- **2.2ms**（420 倍）。部分索引只收 chat 行（体积小）；
+        -- WHERE 必须与查询里的 json_extract(i.item, '$.type') = 'chat' 逐字一致才命中。
+        CREATE INDEX IF NOT EXISTS items_chat_role ON entity_items(
+            entity_id,
+            json_extract(item, '$.type'),
+            json_extract(item, '$.author.role'),
+            seq
+        ) WHERE json_extract(item, '$.type') = 'chat';
         -- 「这一轮报过中断吗」与「续跑时要撤掉哪条」都按 (kind, turnId, botId) 定位。
         -- 表里 kind='interrupted' 的行通常只有个位数，部分索引因此极小；
         -- WHERE 必须与 deleteInterruptedFacts 的过滤条件逐字一致才命中。
@@ -1778,6 +1802,21 @@ export function openStore(file: string): Store {
                 }
             }
             return items;
+        },
+        lastItemsOf(roomId: string, n: number): Item[] {
+            const rows = db
+                .prepare('SELECT seq, item FROM entity_items WHERE entity_id = ? ORDER BY seq DESC LIMIT ?')
+                .all(roomId, n) as Record<string, unknown>[];
+            // 倒序取完再翻回来：调用方要的是时间线顺序
+            return rows
+                .map((row) => ({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) }))
+                .reverse();
+        },
+        countItemsOf(roomId: string): number {
+            const row = db.prepare('SELECT COUNT(*) AS n FROM entity_items WHERE entity_id = ?').get(roomId) as
+                | { n: number }
+                | undefined;
+            return row?.n ?? 0;
         },
         seqOf(roomId: string): number {
             const row = db.prepare('SELECT MAX(seq) AS max FROM entity_items WHERE entity_id = ?').get(roomId) as

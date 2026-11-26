@@ -20,7 +20,8 @@ export interface ConversationModel {
     cancel(): void;
     /** 只停某个成员（开会时用） */
     stop(botId?: string): void;
-    reload(): void;
+    /** 重拉快照（`limit` 缺省 = 服务端缺省的分页；`0` = 全量） */
+    reload(limit?: number): void;
 }
 
 export class ConversationStore implements ConversationModel {
@@ -81,10 +82,10 @@ export class ConversationStore implements ConversationModel {
     }
 
     /** 箭头方法：surface 可以把 reload 直接当回调传（不解绑 this） */
-    reload = (): void => {
+    reload = (limit?: number): void => {
         const token = ++this.loadToken;
         void this.client
-            .load(this.entityId)
+            .load(this.entityId, limit === undefined ? undefined : { limit })
             .then((snapshot) => {
                 if (token !== this.loadToken) return;
                 this.loadedOnce = true;
@@ -92,6 +93,24 @@ export class ConversationStore implements ConversationModel {
             })
             .catch((error: unknown) => this.emit({ ...this.state, error: messageOf(error) }));
     };
+
+    /**
+     * 「加载更早的」：**每次把窗口翻一倍**，不是一次全量。
+     *
+     * 2026-11-26：`limit = 0` 是“全都要”—— 几百兆的会话点一下就回几百兆，
+     * JSON.parse + 渲染直接卡死。修了「进房间慢」不该在「看历史」上留一个更大的坑。
+     * 翻倍的好处：第一次只多拉一倍（400→800），大多数时候一次就够；真要看全部也能
+     * 点到头，而每一次回包都是可控的。
+     */
+    loadMore = (): void => this.reload(Math.max(400, this.state.items.length * 2));
+
+    /**
+     * 全量拉一次（`limit = 0`）。
+     *
+     * **界面不再用它**（见 `loadMore`）；留着是因为它仍是协议里合法的极值，
+     * 调试 / 导出这类“确实要全部”的调用方还有用。别在 UI 上直接调它。
+     */
+    loadAll = (): void => this.reload(0);
 
     private post = (command: Command): Promise<void> =>
         new Promise((resolve, reject) => {

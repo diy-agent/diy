@@ -381,11 +381,22 @@ const MessageList = React.memo(function MessageList({
     roomId: string;
     onStopBot?: (botId: string) => void;
 }) {
+    // **只有最后一条用户消息**是锚点。之前写的是「每条 user 都是」，126 条消息的会话里就有
+    // 37 个锚点 —— 组件的锚点解析（取可见区内最后一个）在这种密度下会把初始位置定到最上面，
+    // 于是进房间 / 发完消息就停在历史顶部（用户报的「自动滚到最上面」）。
+    // 语义上锚点本来也该是「当前这一轮的起点」，历史回合没有资格当参考系。
+    const lastUserKey = React.useMemo(() => {
+        for (let index = entries.length - 1; index >= 0; index -= 1) {
+            if (entries[index]!.kind === 'user') return entries[index]!.key;
+        }
+        return undefined;
+    }, [entries]);
+
     return (
         <>
             {entries.map((entry) => (
-                // scrollAnchor 挂在用户回合：新问题落在顶部、回复在它下面流式长出
-                <MessageScrollerItem key={entry.key} messageId={entry.key} scrollAnchor={entry.kind === 'user'}>
+                // 最后一条用户消息当锚点：新问题落在顶部、回复在它下面流式长出
+                <MessageScrollerItem key={entry.key} messageId={entry.key} scrollAnchor={entry.key === lastUserKey}>
                     {/* content-visibility：离开视口的条目跳过布局/绘制 */}
                     {/* data-message-id：账本条目上的「来自哪句话」靠它滚过来（见 askJump.ts::jumpToMessage） */}
                     <div
@@ -700,6 +711,22 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
             )}
             {/* 顶部常驻：描述的是「更早」，不跟消息一起滚走 —— 也免得干扰“滑到顶补一窗”的边界 */}
             <div className="px-6 pt-2">
+                {/*
+                 * 历史分页（2026-11-26）：服务端默认只发最近 400 条 —— 6000+ 条的房间里
+                 * 全量回包 5.7 MB，JSON.parse + 渲染就是 2~5 秒的长任务（切任务/点输入框卡）。
+                 *
+                 * 点它**不要再一次全量**（那是给“几百兆的会话”留的最大一个坑）：`loadMore`
+                 * 每次把窗口翻一倍，回包永远可控；真要看到头就多点几下。
+                 */}
+                {state.truncated === true && (
+                    <button
+                        onClick={() => conversation.loadMore()}
+                        title="每次加载当前的再一倍（不是一次全量）"
+                        className="my-1 w-full rounded border border-border/60 px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/60"
+                    >
+                        上面还有 {Math.max(0, (state.totalItems ?? 0) - state.items.length)} 条更早的消息未加载 · 点此再加载一倍
+                    </button>
+                )}
                 <CompactCutBar sessions={sessions} />
             </div>
             {/*

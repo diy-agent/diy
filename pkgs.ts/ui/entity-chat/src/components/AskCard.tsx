@@ -553,7 +553,11 @@ function QuestionBlock({
                                                     done ? '' : 'cursor-pointer hover:bg-muted'
                                                 } ${skin}`}
                                             >
-                                                <Input
+                                                {/* 勾选框用**原生** input：官方 `Input` 是文本框的形状
+                                                    （`h-8 w-full rounded-lg border px-2.5`），套在
+                                                    checkbox/radio 上会把它拉成占满整行的一大方块 ——
+                                                    用户 2026-11-26 报的「ask 显示很大」就是这里。 */}
+                                                <input
                                                     type={multiple ? 'checkbox' : 'radio'}
                                                     // 同名 radio 会把整批的题连成一组（只能选一个），必须按题分组；
                                                     // 带上 askId 才是**跨卡片**唯一 —— 单题卡题 id 恒为 q1（见 radioGroupName）
@@ -565,7 +569,7 @@ function QuestionBlock({
                                                             setChoice(previous, question.id, option.value, multiple),
                                                         )
                                                     }
-                                                    className="mt-0.5"
+                                                    className="mt-0.5 size-3.5 shrink-0 accent-sky-500"
                                                 />
                                                 <span>
                                                     <span className="font-medium">{option.label}</span>

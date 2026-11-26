@@ -71,6 +71,7 @@ export {
 export { adviceOf, endItems, endReasonOf, publishable, type EndFacts, type EndItemContext } from './end-reason';
 export {
     botLastTurnOf,
+    createCachedTurnLookup,
     createTurnLookup,
     needsHuman,
     outcomeOfFact,

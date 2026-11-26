@@ -457,6 +457,21 @@ export interface ActivityFrame {
 
 export interface Snapshot {
     items: Item[];
+    /**
+     * 这个房间**一共**有多少条 item（分页提示用：上面还有多少条没加载）。
+     *
+     * 缺省 `undefined` = 老服务端 / 已加载全量 —— 界面上就不说“还有更多”。
+     */
+    totalItems?: number;
+    /**
+     * 服务端只给了**最近一截**（`items` 不是从第一条开始的）。
+     *
+     * 为什么要有（2026-11-26 实测）：一个 6000+ 条的房间里 `chat.history` 一次回包
+     * **5.7 MB**，浏览器 JSON.parse + 渲染就是 2~5 秒的长任务 —— 用户感受到的
+     * “切任务很慢、点输入框要几秒”。现在默认只发最近的 400 条，这个标记告诉界面
+     * “上面还有更早的”，由用户主动要（`load(id, { limit: 0 })`）。
+     */
+    truncated?: boolean;
     deliveries: Delivery[];
     /** 还在等用户回答的提问（刷新页面后卡片要能恢复） */
     asks?: AskRequest[];
