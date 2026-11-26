@@ -19,6 +19,7 @@ import { roomTitle, type Room } from '../model';
 import { useUnitBoard } from '../useUnitBoard';
 import { useUnitText } from '../useUnitText';
 import type { UnitItem } from '@diy-agent/chat-transport-rpc';
+import { jumpToMessage } from '../askJump';
 
 /** 与服务端同一口径的粗略估算（中文 + 结构下约 0.78 tok / 字符，见 ContextPanel） */
 const TOKENS_PER_CHAR = 0.78;
@@ -153,12 +154,14 @@ export function UnitBoardView({ room }: { room: Room }) {
                                     {/* 有来源就点一个小圆点：说明这条需求是**某句人话**提出来的
                                         （不是 bot 自己编的），hover 看是哪条消息。没有来源的老数据不乱标。 */}
                                     {(unit.source ?? '') !== '' && (
-                                        <span
-                                            className="shrink-0 rounded-full bg-sky-500/40 px-1 text-[9px] leading-4 text-sky-700 dark:text-sky-300"
-                                            title={`来自消息 ${unit.source}`}
+                                        <button
+                                            type="button"
+                                            onClick={() => jumpToMessage(unit.source)}
+                                            className="shrink-0 cursor-pointer rounded-full bg-sky-500/40 px-1 text-[9px] leading-4 text-sky-700 hover:bg-sky-500/60 dark:text-sky-300"
+                                            title={`来自这条消息（${unit.source}）—— 点一下跳过去`}
                                         >
                                             ↩
-                                        </span>
+                                        </button>
                                     )}
                                     {!unit.group && (unit.accept ?? '').trim() === '' && (
                                         <span
