@@ -95,7 +95,7 @@ describe('侧栏按注册表渲染', () => {
         expect(html).toContain('孤儿容器');
     });
 
-    it('运行态只画在任务行的状态图标上：项目行不聚合子任务，行底色只表选中', async () => {
+    it('运行态画在状态图标上：项目行不聚合子任务，行底色只表选中', async () => {
         setDiy2Client({
             rooms: { list: async () => rooms.map((room) => ({ ...room, running: room.id === 'task:t-open' ? 1 : 0 })) },
             bots: { list: async () => [] },
@@ -110,10 +110,39 @@ describe('侧栏按注册表渲染', () => {
         const html = render();
         // 在跑的那一行：状态图标上有呼吸点
         expect(rowOf(html, '/room/task/t-open')).toContain('aria-label="正在运行"');
-        // 项目行不因子任务在跑而亮（项目是导航壳、自己没有会话；聚合会让同一个状态出现两次）
+        // 项目行**不聚合子任务**的运行态（子行自己会亮；聚合会让同一个状态在树上出现两次，
+        // 也被读成「项目在跑」——2026-11-25 用户报的「空会话也有轮次中呼吸」）
         expect(rowOf(html, '/room/proj/diy')).not.toContain('aria-label="正在运行"');
         // 底色只表「当前在看哪一行」：没选中这一行时，在跑的它也不带 bg-accent
         expect(rowOf(html, '/room/task/t-open')).not.toContain('bg-accent');
+    });
+
+    it('项目行也有任务行那套状态：自己出错变红 / 自己在跑呼吸 / 自己排队转', async () => {
+        // 用户 2026-11-26：「项目也是 bot，也需要有和任务一样的状态图标信息」。
+        // 项目房间自己就有成员和轮次（实数据里 `proj:diy` 跑了 131 轮），所以「上一轮出错」
+        // 「正在运行」「排队」对项目同样成立 —— 注意这三项都是**它自己的**，不是子任务的。
+        setDiy2Client({
+            rooms: {
+                list: async () =>
+                    rooms.map((room) =>
+                        room.id === 'proj:diy' ? { ...room, broken: 1, running: 1, queued: 2 } : room,
+                    ),
+            },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const projectRow = rowOf(render(), '/room/proj/diy');
+        expect(projectRow).toContain('text-rose-400'); // 上一轮出错
+        expect(projectRow).toContain('aria-label="正在运行"');
+        expect(projectRow).toContain('aria-label="有投递在排队"');
+        // 形状仍是文件夹（项目没有 open / closed）—— 变的是颜色与装饰，不是形状
+        expect(projectRow).toContain('lucide-folder');
     });
 
     it('排队中的投递在行上看得到（灰旋转，且不被读成「在跑」）', async () => {

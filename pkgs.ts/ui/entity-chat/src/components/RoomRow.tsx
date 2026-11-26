@@ -7,7 +7,6 @@ import {
     CheckCircle2,
     ChevronDown,
     ChevronRight,
-    Folder,
     HelpCircle,
     ListPlus,
     Loader2,
@@ -101,13 +100,17 @@ export function RoomRowView({
     // 这个容器此刻在跑几个人（全实例活动流；别的房间起停不重渲这一行）。
     // 只画在**状态图标上**（呼吸点），**不动行的底色**：底色是「当前在看哪一行」的唯一
     // 标记，两者共用一种底色时，一列里会有好几行看着都像被选中（2026-11-25 用户报
-    //「选中状态错乱」）。项目行不显示：项目是导航用的壳、自己没有会话 —— 聚合子任务的
-    // 运行态会让同一个状态在树上出现两次（子行自己会亮），也被读成「项目在跑」。
+    //「选中状态错乱」）。
+    //
+    // **项目也算**（2026-11-26 用户：「项目也是 bot，也需要有和任务一样的状态图标信息」）：
+    // 项目房间自己就有 bot、有自己的轮次（`proj:diy` 实测 131 轮），所以「在跑 / 上一轮
+    // 出错 / 排队」对项目同样成立。注意这与 2026-11-25 那条决定不矛盾：那条否掉的是
+    // **聚合子任务**的运行态（子行自己会亮，同一个状态在树上出现两次，还被读成“项目在跑”）；
+    // 这里只看这个项目房间自己的状态。
     const isProject = room.type === 'project';
-    const running = !isProject && useRunningOf(room.id) > 0;
+    const running = useRunningOf(room.id) > 0;
     /**
-     * 排队中的投递（含重启后的待续跑）。**无条件调 hook**（`running` 那行的短路写法
-     * 在项目/任务切换时会变 hook 数量）；项目行不显示 —— 项目自己没有会话。
+     * 排队中的投递（含重启后的待续跑）。与 `running` 同一个口径：项目房间自己的投递也算。
      */
     const queued = useQueuedOf(room.id);
     /**
@@ -124,13 +127,12 @@ export function RoomRowView({
     const openTask = !isProject && taskStatusOf(room) === 'open';
     /** 任务编号（非 task / 没编号 = undefined）。提出来是为了 narrow 后直接用 */
     const number = taskNumberOf(room);
-    const Icon = Folder;
     // 真地址：中键新标签页 / 右键复制链接由浏览器提供，别再拿 onClick 假装
     const href = formatAddress(roomAddressOf(room));
 
-    // 收起态（rail 56px）：**只留一个图标**。任务 = 状态图标（形状即状态，GitHub 读法），
-    // 项目 = 文件夹。行本身是链接，所以状态只能画成无交互的形状（StatusGlyph）——
-    // `<a>` 里再嵌一个能点的 button 就是非法嵌套。
+    // 收起态（rail 56px）：**只留一个图标**。形状 = 容器种类（任务 open/closed，项目 =
+    // 文件夹），状态装饰（出错红 / 在跑呼吸）两种容器一样有。行本身是链接，所以状态只能
+    // 画成无交互的形状（StatusGlyph）—— `<a>` 里再嵌一个能点的 button 就是非法嵌套。
     if (compact) {
         return (
             <a
@@ -146,16 +148,12 @@ export function RoomRowView({
                 }`}
             >
                 <span className="relative inline-flex shrink-0">
-                    {isProject ? (
-                        <Icon className="size-4 text-sky-400" />
-                    ) : (
-                        <StatusGlyph room={room} iconClass="size-4" running={running} broken={broken > 0} />
-                    )}
+                    <StatusGlyph room={room} iconClass="size-4" running={running} broken={broken > 0} />
                     {unread > 0 && <UnreadBadge count={unread} />}
                 </span>
                 {/* 排队：灰 + 转 —— 跟绿色呼吸的「在跑」分开（它不是同一件事：
                     在跑 = 已经在动；排队 = 马上要动，包括重启后的待续跑） */}
-                {queued > 0 && !isProject && (
+                {queued > 0 && (
                     <span
                         title={`排队中 ${queued} 条（含重启后的待续跑）`}
                         aria-label="有投递在排队"
@@ -200,7 +198,8 @@ export function RoomRowView({
             {/* 状态图标在**标题前**（用户：像 GitHub 的 open / closed）：行里唯一的前缀图标。
                 原先这里同时有「文件夹/清单图标 + 行尾状态胶囊 + 行尾默认应答色点」三件套，
                 同一个问题说了三遍 —— 用户报「信息太多」。
-                文件夹只留给项目（它没有状态）；任务的类型已经由“能点出状态”这件事自己说清了。 */}
+                项目没有 open / closed 这回事，形状是文件夹；但“出错红 / 在跑呼吸”两种容器
+                一样有（同一个 `StatusGlyph`，别在行里各写一遍）。 */}
             {/* 项目行最前面是折叠箭头：它在**行首**而不是行尾 —— 这里表示的是「下面那一堆子项」，
                 和 GitHub / 文件树一个读法。收起时行尾补一个未关闭任务数，否则看不出里面还有东西。 */}
             {isProject && onToggleCollapse !== undefined && (
@@ -220,20 +219,16 @@ export function RoomRowView({
                 </Button>
             )}
 
-            <span className="relative inline-flex shrink-0" title={isProject ? '项目' : undefined}>
-                {isProject ? (
-                    <Icon className="size-3.5 text-sky-400" />
-                ) : (
-                    // 只画形状，不接点击：状态切换现在有行尾那颗**显式**的关闭/打开按钮。
-                    // 一颗图标既当状态又当开关，双击误触就直接把任务关了（用户报过这个隐含交互）。
-                    <StatusGlyph room={room} iconClass="size-3.5" running={running} broken={broken > 0} />
-                )}
+            <span className="relative inline-flex shrink-0">
+                {/* 只画形状，不接点击：状态切换现在有行尾那颗**显式**的关闭/打开按钮。
+                    一颗图标既当状态又当开关，双击误触就直接把任务关了（用户报过这个隐含交互）。 */}
+                <StatusGlyph room={room} iconClass="size-3.5" running={running} broken={broken > 0} />
                 {/* 未读挂在**图标上**（用户 2026-11-26）：它属于“这个房间”，不属于某一行文字位置；
                     单独占一列会把每一行都拉宽，而它大多数时候是 0。 */}
                 {unread > 0 && <UnreadBadge count={unread} />}
             </span>
             {/* 排队（与 compact 态同一颗：灰 + 转）—— 重启后待续跑的投递在这一行看得见了 */}
-            {queued > 0 && !isProject && (
+            {queued > 0 && (
                 <span
                     title={`排队中 ${queued} 条（含重启后的待续跑）`}
                     aria-label="有投递在排队"
