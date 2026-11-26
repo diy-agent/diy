@@ -571,6 +571,40 @@ export interface Diy2App {
 }
 
 /**
+ * 「某个成员上一轮的结局」查询器 —— `rooms.list`（侧栏红图标）与 `bots.rows`（三级表格）**共用一份**。
+ *
+ * 两个来源必须合成：bot 自己最后一条 item 给 turnId，而**结局**在轮级事实（notice / error）里
+ * （论证见 `bot-status.ts` 头部）。各算一份迟早走散 —— 用户 2026-11-26 看到的就是
+ * “表格说「出错」，侧栏图标却什么事都没有”。
+ *
+ * 成本：两条全表 json 分组查询（靠 `items_author_seq` / `items_fact_owner_seq` 表达式索引，
+ * 实测 25ms + 54ms）。`rooms.list` 30s 一次、`bots.rows` 每次打开浮层一次，可以接受。
+ */
+function turnLookupOf(store: ReturnType<typeof openStore>):
+    (roomId: string, botId: string) => BotLastTurn | undefined {
+    const last = new Map<string, BotLastTurn>();
+    for (const { roomId, item } of store.lastItemPerBot()) {
+        const turn = botLastTurnOf(roomId, item);
+        if (turn !== undefined) last.set(`${roomId}\u0000${turn.botId}`, turn);
+    }
+    // 轮级事实（不带 author 的 notice / error）只能单独认领。
+    // key 用 `owner`（= 事实自带的 botId，老数据退回 turnId）—— 一轮里 @all 的
+    // 各 bot 共享 turnId，只按它查会把 A 的截断盖到 B 头上。
+    const facts = new Map<string, Item>();
+    for (const { roomId, owner, item } of store.lastFactPerTurn()) {
+        facts.set(`${roomId}\u0000${owner}`, item);
+    }
+    return (roomId, botId) => {
+        const own = last.get(`${roomId}\u0000${botId}`);
+        if (own === undefined) return undefined;
+        return withTurnFact(
+            own,
+            facts.get(`${roomId}\u0000${own.botId}`) ?? facts.get(`${roomId}\u0000${own.turnId}`),
+        );
+    };
+}
+
+/**
  * 装配一个 diy2 应用（**不监听端口**）。
  *
  * @param opts.config 运行配置（`./config` 的唯一真源）
@@ -639,6 +673,9 @@ export async function createDiy2App(opts: {
                     const lastItemAt = store.lastItemAtByRoom();
                     // 未读：一次算完全实例（一条 GROUP BY），不逐房间问
                     const unread = store.unreadByRoom();
+                    // 「上一轮出错的成员」：侧栏图标要变红（用户 2026-11-26：表格说「出错」而侧栏
+                    // 图标没变，两处不一致）。数据与 `bots.rows` 同源（`turnLookupOf`），不各算一份。
+                    const turnOf = turnLookupOf(store);
                     return [...rooms.values()].map((actor) => {
                         const id = actor.spec.id;
                         const at = lastItemAt[id];
@@ -646,7 +683,16 @@ export async function createDiy2App(opts: {
                         const pendingAsks = pendingRequests.length;
                         // 在跑成员数：与全局活动帧同源（`runningBots`），这里只是「列表里顺带一份」，
                         // 给那些还没建活动流的老客户端一个初值
-                        const running = actor.runningBots().length;
+                        const runningBots = actor.runningBots();
+                        const running = runningBots.length;
+                        // 在跑的成员不算“出错”（它此刻正在挣扎/干活）；其余看上一轮结局
+                        const runningSet = new Set(runningBots);
+                        let broken = 0;
+                        for (const member of actor.spec.members) {
+                            if (runningSet.has(member.botId)) continue;
+                            const turn = turnOf(id, member.botId);
+                            if (turn !== undefined && turn.outcome !== 'done') broken += 1;
+                        }
                         // 排队中的投递（含重启后的待续跑）：以前列表里没有这个数，
                         // 于是房间「看着没事、其实排着队」或「明明在干、只是还没轮到它」都看不见
                         const queued = [...actor.queuedByBot().values()].reduce((sum, n) => sum + n, 0);
@@ -666,6 +712,7 @@ export async function createDiy2App(opts: {
                                   }),
                             ...(at === undefined ? {} : { lastActivityAt: at }),
                             ...((unread[id] ?? 0) === 0 ? {} : { unread: unread[id] }),
+                            ...(broken === 0 ? {} : { broken }),
                         };
                     });
                 },
@@ -762,19 +809,7 @@ export async function createDiy2App(opts: {
                  */
                 rows: async () => {
                     const bots = new Map(store.listBots().map((bot) => [bot.id, bot]));
-                    const last = new Map<string, BotLastTurn>();
-                    for (const { roomId, item } of store.lastItemPerBot()) {
-                        const turn = botLastTurnOf(roomId, item);
-                        if (turn !== undefined) last.set(`${roomId}\u0000${turn.botId}`, turn);
-                    }
-                    // 轮级事实（不带 author 的 notice / error）只能单独认领：
-                    // 结局在它里面，不在 bot 自己那条最后的条目里（见 bot-status.ts 头部的论证）。
-                    // key 用 `owner`（= 事实自带的 botId，老数据退回 turnId）—— 一轮里 @all 的
-                    // 各 bot 共享 turnId，只按它查会把 A 的截断盖到 B 头上。
-                    const facts = new Map<string, Item>();
-                    for (const { roomId, owner, item } of store.lastFactPerTurn()) {
-                        facts.set(`${roomId}\u0000${owner}`, item);
-                    }
+                    const turnOf = turnLookupOf(store);
                     const rows: BotRow[] = [];
                     for (const actor of rooms.values()) {
                         const spec = actor.spec;
@@ -787,16 +822,7 @@ export async function createDiy2App(opts: {
                         }
                         for (const member of spec.members) {
                             const bot = bots.get(member.botId);
-                            const own = last.get(`${spec.id}\u0000${member.botId}`);
-                            const turn =
-                                own === undefined
-                                    ? undefined
-                                    : withTurnFact(
-                                          own,
-                                          // botId 命中优先（新数据），再退回 turnId（老数据）
-                                          facts.get(`${spec.id}\u0000${own.botId}`) ??
-                                              facts.get(`${spec.id}\u0000${own.turnId}`),
-                                      );
+                            const turn = turnOf(spec.id, member.botId);
                             const ask = asking.get(member.botId);
                             const state: BotState = running.has(member.botId)
                                 ? 'running'

@@ -142,6 +142,13 @@ export type RoomRow = Room & {
      * **它不参与「要你动手」的计数** —— 未读是“有结果了，去看看吧”，不是“卡住了”。
      */
     unread?: number;
+    /**
+     * 上一轮出错的成员数（在跑的不算）。
+     *
+     * 侧栏任务图标的颜色靠它：表格里写「出错」、侧栏图标却没事，两处会不一致
+     * （用户 2026-11-26 报的）。与 `bots.rows` 的 `needs-attention` 同源（`turnLookupOf`）。
+     */
+    broken?: number;
 };
 
 export class RpcChatClient implements ChatClient {

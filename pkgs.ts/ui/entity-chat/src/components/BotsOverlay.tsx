@@ -136,8 +136,10 @@ function TableRow({
                 className="size-3"
             />
             <StateDot row={row} />
+            {/* bot 名带 `@`：它与右边的房间名**可能字字相同**（用户 2026-11-26 看到
+                两行一样的「聊天性能问题...」分不清谁是谁）。`@` 就是对话里叫它的写法。 */}
             <span className="w-[92px] shrink-0 truncate text-[11px]" style={{ color: row.botColor }}>
-                {row.botName}
+                @{row.botName}
             </span>
             <span className="w-[200px] shrink-0 truncate text-[11px] text-muted-foreground" title={row.roomTitle}>
                 {row.roomTitle}
