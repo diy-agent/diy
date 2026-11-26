@@ -45,11 +45,12 @@ function render(counts: AttentionCounts): string {
 describe('AttentionCapsules —— 分类计数，不再是一个总数', () => {
     it('4 错 + 2 等 + 1 跑 = 三颗胶囊（没有一个「7」）', () => {
         const html = render(countByAttention(redSeven()));
-        // 多个类时**只写数字**（标题栏 28px 高，四颗带中文会把别的按钮挤没），
-        // 类名词进 title —— 所以这里查 title 而不能直接查可见文字
+        // 每颗 = 色点 + 数字 + **单字**（全称进 title）：四类全称共 ~278px 会把右边按钮挤没，
+        // 光数字又看不懂（实测那屏是 `🤖 6 3`，像一串乱数）
         expect(html).toContain('出错 4 个');
         expect(html).toContain('等你回答 2 个');
         expect(html).toContain('在跑 1 个');
+        for (const short of ['错', '等', '跑']) expect(html).toContain(`>${short}<`);
         // 三个数字各自出现；**不出现** 7（那就是被拆掉的那个总数）
         expect(html).toContain('>4<');
         expect(html).toContain('>2<');
@@ -58,9 +59,10 @@ describe('AttentionCapsules —— 分类计数，不再是一个总数', () => 
         expect(html).not.toContain('要你看');
     });
 
-    it('只有一类时才带中文（“4 出错” 一眼就懂，不必 hover）', () => {
-        const html = render(countByAttention([row({ state: 'needs-attention' }), row({ state: 'needs-attention' })]));
-        expect(html).toContain('出错');
+    it('每颗都带单字标签（不用 hover 也能读）', () => {
+        const html = render(countByAttention([row({ state: 'needs-attention' }), row({ state: 'idle', queued: 1 })]));
+        expect(html).toContain('>错<');
+        expect(html).toContain('>排<');
     });
 
     it('只有「出错」用红，其余一色不染红', () => {

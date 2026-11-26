@@ -45,6 +45,19 @@ export const ATTENTION_TEXT: Readonly<Record<AttentionKind, string>> = {
     idle: '空闲',
 };
 
+/**
+ * 标题栏那排徽标用**单字**标签（`6错 3等`）：28px 高的那一条放不下全称，
+ * 但完全裸着的数字又看不出是什么（用户 2026-11-25 报「挤在一起」，量的结果是
+ * `🤖 6 3` —— 两个数字紧贴着，读起来像一串乱数）。全称见 `ATTENTION_TEXT`。
+ */
+export const ATTENTION_SHORT: Readonly<Record<AttentionKind, string>> = {
+    broken: '错',
+    blocked: '等',
+    queued: '排',
+    live: '跑',
+    idle: '闲',
+};
+
 /** 色点（**只有 broken 用红**：其余四类各有自己的色，红色专属「出事了」） */
 export const ATTENTION_DOT: Readonly<Record<AttentionKind, string>> = {
     broken: 'bg-rose-400',
