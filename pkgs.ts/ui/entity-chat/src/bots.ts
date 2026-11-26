@@ -13,9 +13,22 @@ import type { BotRow } from '@diy-agent/chat-transport-rpc';
 
 import { diy2 } from './store';
 
-/** 有活人要看的状态时的轮询间隔 */
-const POLL_ACTIVE_MS = 1500;
-/** 全空闲时慢一档：这条表没有别的推送来源 */
+/**
+ * 浮层开着（人正盯着这张表）时的轮询间隔。
+ *
+ * 2026-11-26 从 1500ms 提到 2500ms：实测下这个数字决定了**整个页面**的手感 ——
+ * `bots.rows` 在服务端要跑两条全表 json 分组（529ms + 39ms），回包是全部房间 ×
+ * 全部成员（实测 95 行），前端 setRows 会让顶层的 `countByAttention` 重算、整块重渲。
+ * 1.5s 一轮 = 主线程每 1.5s 被撞一次，用户点输入框要排 1~3 秒的队。
+ */
+const POLL_ACTIVE_MS = 2500;
+/**
+ * 没人在看这张表时的轮询间隔。
+ *
+ * **不再因为「有 agent 在跑」就切快档**（那是 2026-11-26 之前的行为）：`busy` 会让
+ * 一个开着 3 个在跑房间的实例以 1.5s 的频率算全实例的行 —— 而用户根本没在弹层里，
+ * 只有标题栏那几颗靛标要活。标题栏靛标 6s 更新一次完全够看。
+ */
 const POLL_IDLE_MS = 6000;
 
 export const STATE_TEXT: Readonly<Record<BotRow['state'], string>> = {
@@ -208,6 +221,24 @@ export function sortRows(rows: readonly BotRow[]): BotRow[] {
     });
 }
 
+/**
+ * 行数据的**稳定签名**：判断「这次拉回来的和上次是不是同一份」。
+ *
+ * 不深比较整个对象（贵、且没必要）—— 只拼决定渲染的那几个字段：身份 / 状态 / 结局 /
+ * 排队数 / 最后动静 / 提问。任何一项变了才值得 setState（= 顶层重渲）。
+ *
+ * 背景（2026-11-26）：轮询回包里绝大多数时候内容一模一样，`setRows(新数组)` 却会让
+ * 顶层 `countByAttention` 重算、标题栏与抽屉整块重渲 —— 那是主线程被撞的元凶之一。
+ */
+function signatureOf(rows: readonly BotRow[]): string {
+    return rows
+        .map(
+            (row) =>
+                `${row.roomId}\u0000${row.botId}\u0000${row.state}\u0000${row.outcome ?? ''}\u0000${row.queued ?? 0}\u0000${row.lastTurnAt ?? 0}\u0000${row.askId ?? ''}`,
+        )
+        .join('\u0001');
+}
+
 export interface BotRowsState {
     rows: BotRow[];
     error: string | null;
@@ -229,16 +260,20 @@ function rowsApi(): { rows: () => Promise<{ rows: BotRow[] }> } | undefined {
 /**
  * `active` = 界面此刻是否看得见（弹层开着 / 抽屉开着）。看得见时用快档轮询，
  * 看不见也照拉（标题栏那颗计数要活着），只是慢一档。
+ *
+ * 2026-11-26：**「有 agent 在跑」不再算 active** —— 那会让一个跑着 3 个房间的实例
+ * 以快档循环算全实例的行，而用户根本没在看这张表。
  */
 export function useBotRows(active: boolean): BotRowsState {
     const [rows, setRows] = React.useState<BotRow[]>([]);
     const [error, setError] = React.useState<string | null>(null);
     const [loaded, setLoaded] = React.useState(false);
     const [tick, setTick] = React.useState(0);
-    const busy = rows.some((row) => row.state === 'running' || row.state === 'asking');
+
 
     React.useEffect(() => {
         let alive = true;
+        let lastSignature = '';
         const pull = () => {
             const api = rowsApi();
             if (api === undefined) {
@@ -249,7 +284,13 @@ export function useBotRows(active: boolean): BotRowsState {
                 .rows()
                 .then((back) => {
                     if (!alive) return;
-                    setRows(back.rows);
+                    // 内容没变就不 setState：`setRows(新数组)` 即使数据一模一样也会重渲
+                    // 顶层（counts → 标题栏 → 抽屉），而那正是“每 1.5s 撞一次主线程”的一半来源。
+                    const signature = signatureOf(back.rows);
+                    if (signature !== lastSignature) {
+                        lastSignature = signature;
+                        setRows(back.rows);
+                    }
                     setError(null);
                     setLoaded(true);
                 })
@@ -260,13 +301,14 @@ export function useBotRows(active: boolean): BotRowsState {
                 });
         };
         pull();
-        const every = active || busy ? POLL_ACTIVE_MS : POLL_IDLE_MS;
+        // 只有「人正看着这张表」才快档；`busy` 不再算（它在后台跑，用户看不见）
+        const every = active ? POLL_ACTIVE_MS : POLL_IDLE_MS;
         const timer = setInterval(pull, every);
         return () => {
             alive = false;
             clearInterval(timer);
         };
-    }, [active, busy, tick]);
+    }, [active, tick]);
 
     const reload = React.useCallback(() => setTick((value) => value + 1), []);
     return { rows, error, loaded, reload };

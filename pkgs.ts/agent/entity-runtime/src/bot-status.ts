@@ -114,6 +114,13 @@ export interface TurnFactSource {
 export function createTurnLookup(
     source: TurnFactSource,
 ): (roomId: string, botId: string) => BotLastTurn | undefined {
+    return buildTurnLookup(source);
+}
+
+/** `createTurnLookup` 的本体（缓存版要能直接拿它造一份新的） */
+function buildTurnLookup(
+    source: TurnFactSource,
+): (roomId: string, botId: string) => BotLastTurn | undefined {
     const last = new Map<string, BotLastTurn>();
     for (const { roomId, item } of source.lastItemPerBot()) {
         const turn = botLastTurnOf(roomId, item);
@@ -142,6 +149,35 @@ export function createTurnLookup(
             return fact.turnId === undefined || fact.turnId === own.turnId ? fact : undefined;
         };
         return withTurnFact(own, pick(`${roomId}\u0000${own.turnId}`) ?? pick(`${roomId}\u0000${own.botId}`));
+    };
+}
+
+/**
+ * 带 **TTL 缓存**的 turn lookup（2026-11-26，页面卡顿整治）。
+ *
+ * 为什么要缓存：`bots.rows` 与 `rooms.list` 每隔 1.5~6 秒拉一次，每次都要跑两条全表
+ * json 分组（实测 **529ms + 39ms**）—— 三个 agent 在跑时，这两条查询几乎不停地在跑，
+ * 而同一条连接上的其它请求（chat.load / 点击后的任何 RPC）只能排队。
+ *
+ * 为什么用 TTL 而不用「seq 变了就失效」：agent 在跑时**每秒都在写 item**，seq 永远在变，
+ * 那样缓存会 100% 命中不了。而这个数据的粒度本来就是「上一轮的结局」—— 它不依赖秒级
+ * 新鲜度（在跑 / 等回答是内存态，另有来源）。
+ *
+ * 默认 5s：比 `POLL_IDLE_MS`(6s) 短一点、比 `POLL_ACTIVE_MS`(2.5s) 长一倍，
+ * 即"人看着表"时每 2 次拉取共用一次计算，"没人看"时几乎每次都要重算（反正 6s 才一次）。
+ */
+export function createCachedTurnLookup(
+    source: TurnFactSource,
+    ttlMs = 5000,
+    now: () => number = Date.now,
+): (roomId: string, botId: string) => BotLastTurn | undefined {
+    let cached: { at: number; lookup: (roomId: string, botId: string) => BotLastTurn | undefined } | undefined;
+    return (roomId, botId) => {
+        const at = now();
+        if (cached === undefined || at - cached.at >= ttlMs) {
+            cached = { at, lookup: buildTurnLookup(source) };
+        }
+        return cached.lookup(roomId, botId);
     };
 }
 

@@ -28,7 +28,7 @@ import {
     JOURNAL_KINDS,
     RoomActor,
     createJobRegistry,
-    createTurnLookup,
+    createCachedTurnLookup,
     defaultModelKeyOf,
     modelProviders,
     newEntityId,
@@ -615,6 +615,17 @@ export async function createDiy2App(opts: {
 
     await mkdir(config.home, { recursive: true });
     store = openStore(config.dbPath);
+    /**
+     * 「某个成员上一轮的结局」查询器 —— **全进程一份、带 5s 缓存**（2026-11-26）。
+     *
+     * `rooms.list` 与 `bots.rows` 每隔 1.5~6 秒都要这一份数据，每次重建要跑两条全表
+     * json 分组（实测 529ms + 39ms）；三个 agent 在跑时它们几乎不停地跑，同连接的
+     * 其他请求（chat.load / 点击后的 RPC）只能排队。缓存的理由与 TTL 取舍见
+     * `createCachedTurnLookup` 的注释。
+     */
+    const lookupTurn = createCachedTurnLookup(store);
+    /** 打点包一层：命中缓存是 Map 查（不报），未命中的那 529ms 会在日志里指名 `turnLookup` */
+    const turnOf = (roomId: string, botId: string) => timed('turnLookup', () => lookupTurn(roomId, botId));
 
     // 作业账本要在 `seed()` / 首个房间之前建好：`actorOf` 装配工具时要用它。
     // 根目录 `<home>/log/job/runs`：与其余运行产物同根，清 home 就清干净。
@@ -664,7 +675,7 @@ export async function createDiy2App(opts: {
                     const unread = timed('rooms.list.unreadByRoom', () => store.unreadByRoom());
                     // 「上一轮出错的成员」：侧栏图标要变红（用户 2026-11-26：表格说「出错」而侧栏
                     // 图标没变，两处不一致）。数据与 `bots.rows` 同源（`turnLookupOf`），不各算一份。
-                    const turnOf = timed('rooms.list.createTurnLookup', () => createTurnLookup(store));
+                    // 打点包住**取数**那一下：命中缓存时是个 Map 查（<1ms），未命中才是 529ms
                     return [...rooms.values()].map((actor) => {
                         const id = actor.spec.id;
                         const at = lastItemAt[id];
@@ -800,8 +811,7 @@ export async function createDiy2App(opts: {
                  */
                 rows: async () => {
                     const bots = new Map(store.listBots().map((bot) => [bot.id, bot]));
-                    // 与 rooms.list 同一条重查询（两条全表 json 分组，实测 529ms + 39ms）
-                    const turnOf = timed('bots.rows.createTurnLookup', () => createTurnLookup(store));
+                    // 与 rooms.list 共用同一份（带缓存）的查询器，不各造一个
                     const rows: BotRow[] = [];
                     for (const actor of rooms.values()) {
                         const spec = actor.spec;

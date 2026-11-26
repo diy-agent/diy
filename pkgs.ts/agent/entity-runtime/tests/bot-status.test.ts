@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { botLastTurnOf, createTurnLookup, needsHuman, outcomeOfFact, outcomeText, withTurnFact } from '../src/bot-status';
+import { describe, expect, it, vi } from 'vitest';
+import {
+    botLastTurnOf,
+    createCachedTurnLookup,
+    createTurnLookup,
+    needsHuman,
+    outcomeOfFact,
+    outcomeText,
+    withTurnFact,
+} from '../src/bot-status';
 import { endItems } from '../src/end-reason';
 import { openStore } from '../src/db';
 import type { Item } from '../src/types';
@@ -253,5 +261,72 @@ describe('createTurnLookup —— 事实必须属于当前这一轮', () => {
 
         const lookup = createTurnLookup(store);
         expect(lookup(room, bot)?.outcome).toBe('interrupted');
+    });
+});
+
+describe('createCachedTurnLookup —— TTL 内共用一次全表计算', () => {
+    // 2026-11-26：`bots.rows` 每 1.5~2.5s 拉一次，每次都重建 turn lookup = 529ms+39ms 的全表
+    // json 分组；三个 agent 在跑时它们几乎不停地在跑，同连接的其它请求只能排队。
+    // 缓存正是为这个：**同一次窗口内只算一次**。
+    it('TTL 内重复查只算一次；过期后重算', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', {
+            id: 'i1',
+            seq: 0,
+            turn: 1,
+            turnId: 't1',
+            at: 1,
+            status: 'done',
+            author: { id: 'bot:1', name: 'b', color: '#fff', role: 'bot' },
+            type: 'chat',
+            data: { text: 'hi' },
+        });
+        const spy = vi.spyOn(store, 'lastItemPerBot');
+        let now = 1_000_000;
+        const lookup = createCachedTurnLookup(store, 5000, () => now);
+
+        lookup('r1', 'bot:1');
+        lookup('r1', 'bot:1');
+        lookup('r2', 'bot:9'); // 别的房间也共用这一份（缓存是**全实例**的）
+        expect(spy).toHaveBeenCalledTimes(1);
+
+        now += 5001;
+        lookup('r1', 'bot:1');
+        expect(spy).toHaveBeenCalledTimes(2);
+        spy.mockRestore();
+    });
+
+    it('过期后能看到新落盘的数据', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', {
+            id: 'i1',
+            seq: 0,
+            turn: 1,
+            turnId: 't1',
+            at: 1,
+            status: 'done',
+            author: { id: 'bot:1', name: 'b', color: '#fff', role: 'bot' },
+            type: 'chat',
+            data: { text: 'old' },
+        });
+        let now = 1_000_000;
+        const lookup = createCachedTurnLookup(store, 5000, () => now);
+        expect(lookup('r1', 'bot:1')?.turnId).toBe('t1');
+
+        store.appendItem('r1', {
+            id: 'i2',
+            seq: 0,
+            turn: 2,
+            turnId: 't2',
+            at: 2,
+            status: 'done',
+            author: { id: 'bot:1', name: 'b', color: '#fff', role: 'bot' },
+            type: 'chat',
+            data: { text: 'new' },
+        });
+        // 还在 TTL 内：看到的是上一份计算（这是**有意**的取舍，见 createCachedTurnLookup 的注释）
+        expect(lookup('r1', 'bot:1')?.turnId).toBe('t1');
+        now += 5001;
+        expect(lookup('r1', 'bot:1')?.turnId).toBe('t2');
     });
 });
