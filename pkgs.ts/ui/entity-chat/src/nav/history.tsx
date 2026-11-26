@@ -17,7 +17,7 @@ import {
     type Room,
 } from '../model';
 import type { NavContext, NavSource } from '../nav';
-import { actions, useIsCurrentRoom, useLastActivityOf, useRooms, useRunningOf } from '../store';
+import { actions, useBrokenOf, useIsCurrentRoom, useLastActivityOf, useRooms, useRunningOf } from '../store';
 import { projectNamesOf } from './projects';
 import { Button } from '@diy-agent/ui-shadcn';
 
@@ -52,7 +52,11 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
     const closedAt = closedAtOf(room);
     const activityAt = useLastActivityOf(room.id);
     const running = useRunningOf(room.id) > 0;
+    // 已关闭的任务一样可能「上一轮出错」：三处（项目树 / 历史 / 三级表格）读同一份
+    // 服务端投影，别只在前两处画红色、把这里落下
+    const broken = useBrokenOf(room.id);
     const detail: string[] = [];
+    if (broken > 0) detail.push(`${broken} 个成员上一轮出错`);
     if (closedAt !== undefined) {
         const absolute = formatClosedAtAbsolute(closedAt);
         const ago = formatClosedAgo(closedAt);
@@ -65,7 +69,7 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
                 active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
             }`}
         >
-            <StatusGlyph room={room} iconClass="size-3.5" running={running} />
+            <StatusGlyph room={room} iconClass="size-3.5" running={running} broken={broken > 0} />
             <a
                 href={formatAddress(roomAddressOf(room))}
                 onClick={(event) => {

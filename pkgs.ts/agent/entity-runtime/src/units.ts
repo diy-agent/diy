@@ -26,12 +26,39 @@
 import { toYaml } from '@diy-agent/context';
 
 import type { UnitRecord, UnitStatus } from './db';
+import type { Item } from './types';
+
+/**
+ * 一条 unit 的**来源原话**（`source` 那个消息 id 解开之后的样子）。
+ *
+ * 为什么要拆成「谁 + 原话」（2026-11-26 用户）：「这是我要的吗」这个问题，光有消息 id
+ * 答不了 —— id 要人再点一下、还得自己找是谁说的。发言人 + 原话摆在同一行才叫可核对。
+ */
+export interface SourceQuote {
+    /** 发言人名字（`Item.author.name`）；空串 = 那条消息没有署名（notice / 老数据） */
+    author: string;
+    /** 说话人身份：`human` 才是「人提的」；`bot` / `system` 是 agent 自己或系统触发 */
+    role: 'human' | 'bot' | 'system' | '';
+    /** 原话（**已截断**，`…` 结尾 = 还有下文；全文点那个按钮跳过去看） */
+    text: string;
+}
 
 /** 一个节点 + 它在树上的位置 */
 export interface UnitBoardRow {
     id: string;
     title: string;
     body: string;
+    /** 「怎么算做完」（空串 = 还没写；界面与上下文都靠它标出来，别拿 body 兜底） */
+    accept: string;
+    /** 来自哪句人话（`entity_items.id`；空串 = 不知道 —— 不编造来源） */
+    source: string;
+    /**
+     * `source` 解开后的原话（谁 + 说了什么）；**没有就不带这个键**（老数据 / 消息已删 / 非人类触发）。
+     *
+     * 为什么不塞进 `unitBoard`：它是纯函数、不碰 IO；解开消息是 store 的活，
+     * 由服务端拼好后经 `withSourceQuotes` 附上。
+     */
+    sourceQuote?: SourceQuote;
     /**
      * **有效**状态：叶子 = 落库值；容器 = 由子派生（全 done → done，否则 open）。
      * 容器落库的 status 不参与判断 —— 只有叶子能被勾 done。
@@ -68,7 +95,7 @@ export interface UnitBoard {
 
 /** 只取算 board 要用的字段（测试里可以直接造这几项，不用凑齐 UnitRecord） */
 export type UnitFacts = Pick<UnitRecord, 'id' | 'title' | 'status' | 'seq'> &
-    Partial<Pick<UnitRecord, 'body' | 'parent' | 'taskId' | 'createdAt' | 'updatedAt'>>;
+    Partial<Pick<UnitRecord, 'body' | 'accept' | 'source' | 'parent' | 'taskId' | 'createdAt' | 'updatedAt'>>;
 
 /**
  * 算一张 board。输入顺序不敏感；输出顺序稳定（树的先序 → 创建序 → id）。
@@ -165,6 +192,8 @@ export function unitBoard(units: readonly UnitFacts[]): UnitBoard {
             id,
             title: unit.title,
             body: unit.body ?? '',
+            accept: unit.accept ?? '',
+            source: unit.source ?? '',
             status: statusOf.get(id)!,
             parent: parentOf.get(id) ?? null,
             children: childrenOf.get(id) ?? [],
@@ -186,6 +215,68 @@ export function unitBoard(units: readonly UnitFacts[]): UnitBoard {
 }
 
 /**
+ * 原话截断上限：树上它只是一行注解，80 字足够认出「是不是我要的那句」；
+ * 剩下的点那一行跳回原消息看全文。
+ */
+export const SOURCE_QUOTE_MAX_CHARS = 80;
+
+/**
+ * 把一条消息解成「来源原话」（纯函数）。
+ *
+ * 只认**有正文**的消息：chat / notice 取 `data.text`，error 取 `data.message`；
+ * tool 条目没有正文、author 缺失的也不编造 —— 返回 `undefined`，界面上就是「不知道是谁提的」。
+ *
+ * 原话先压成一行（消息里的换行到树行上只会把树撑散），再按**码点**截断：
+ * 按 UTF-16 下标切会把 emoji / 生僻字切成半个字符。
+ */
+export function sourceQuoteOf(item: Item): SourceQuote | undefined {
+    const text =
+        item.type === 'chat' || item.type === 'notice'
+            ? item.data.text
+            : item.type === 'error'
+              ? item.data.message
+              : '';
+    const flat = text.replace(/\s+/g, ' ').trim();
+    if (flat === '') return undefined;
+    const chars = [...flat];
+    const clipped = chars.length > SOURCE_QUOTE_MAX_CHARS ? `${chars.slice(0, SOURCE_QUOTE_MAX_CHARS).join('')}…` : flat;
+    const role = item.author?.role;
+    return {
+        author: item.author?.name ?? '',
+        role: role === 'human' || role === 'bot' || role === 'system' ? role : '',
+        text: clipped,
+    };
+}
+
+/** `sourceQuoteOf` 的批量形态：按**消息 id** 建表，直接喂 `withSourceQuotes`。 */
+export function sourceQuotesOf(items: readonly Item[]): Map<string, SourceQuote> {
+    const quotes = new Map<string, SourceQuote>();
+    for (const item of items) {
+        const quote = sourceQuoteOf(item);
+        if (quote !== undefined) quotes.set(item.id, quote);
+    }
+    return quotes;
+}
+
+/**
+ * 给 board 的每一行附上「来源原话」（纯函数：`quotes` 由调用方从 store 取）。
+ *
+ * 没有 quote 的行原样返回 —— 不编造来源；`source` 为空的行走不到这里（本来就没来源）。
+ * 输入 board 不改（返回新对象），方便在 handler 里 `unitBoard(...)` 之后接着拼。
+ */
+export function withSourceQuotes(
+    board: UnitBoard,
+    quotes: ReadonlyMap<string, SourceQuote>,
+): UnitBoard {
+    if (quotes.size === 0) return board;
+    const rows = board.rows.map((row) => {
+        const quote = row.source === '' ? undefined : quotes.get(row.source);
+        return quote === undefined ? row : { ...row, sourceQuote: quote };
+    });
+    return { ...board, rows };
+}
+
+/**
  * 把 board 渲染成**缩进树文本**（一行一个节点）—— 给人看、也直接进 system 上下文。
  *
  * 为什么不是 JSON：树的形状用缩进就表达完了，JSON 要为每层付 `{"children":[...]}` 的税，
@@ -204,6 +295,9 @@ export function unitTreeLines(
         const mark = row.status === 'done' ? 'x' : ready.has(row.id) ? '>' : doing.has(row.id) ? '~' : ' ';
         const tail: string[] = [];
         if (options?.withBody === true && row.body !== '') tail.push(`body: ${row.body}`);
+        // 叶子缺验收口径 ⇒ 行尾点一句（「缺验收」）。这是**给人看的窟窿**，也让模型每轮都
+        // 看到自己欠着什么 —— 用户 2026-11-26：「需求是可以验收的，步骤很难验收」。
+        if (!row.group && row.accept.trim() === '') tail.push('缺验收');
         return `${indent}- [${mark}] ${row.title} (${row.id})${tail.length === 0 ? '' : `  ${tail.join('  ')}`}`;
     });
 }
@@ -232,6 +326,12 @@ export interface UnitsContextValue {
     tree?: string[];
     counts?: { open: number; doing: number; done: number };
     note?: string;
+    /**
+     * 提醒（`units-remind.ts` 的 B 档）：只在**有触发条件**时出现 ——
+     * 账本还空着 / 上一轮之后有人发言。空树时它是整节唯一的内容，所以空树也会因此
+     * 从「整节缺席」变成「一节带 hint 的值」。
+     */
+    hint?: string;
 }
 
 /**
@@ -244,19 +344,22 @@ export interface UnitsContextValue {
  * 去冗余：每个节点只在 `tree` 里出现一次（带状态）；`ready` / `doing` 再点名一次
  * 是因为那是**行动指令**，值得重复。`done` 不点名 —— 树行里的 `x` 就是答案。
  */
-export function unitsContextValue(board: UnitBoard): UnitsContextValue | undefined {
-    if (board.rows.length === 0) return undefined;
+export function unitsContextValue(board: UnitBoard, hint?: string): UnitsContextValue | undefined {
+    // 空树：没有 hint 就是整节缺席（不造空壳）；有 hint 时它就是这一节的**唯一**内容
+    if (board.rows.length === 0) return hint === undefined ? undefined : { ready: [], doing: [], hint };
     const rowOf = new Map(board.rows.map((row) => [row.id, row] as const));
     const head = (ids: string[]): UnitHead[] => ids.map((id) => ({ id, title: rowOf.get(id)?.title ?? '' }));
     const tree = unitTreeLines(board);
     const tooBig = tree.length > UNITS_FULL_MAX_LINES || tree.join('\n').length > UNITS_FULL_MAX_BYTES;
-    if (!tooBig) return { ready: head(board.ready), doing: head(board.doing), tree };
+    const extra = hint === undefined ? {} : { hint };
+    if (!tooBig) return { ready: head(board.ready), doing: head(board.doing), tree, ...extra };
     const count = (status: UnitStatus): number => board.rows.filter((row) => row.status === status).length;
     return {
         ready: head(board.ready),
         doing: head(board.doing),
         counts: { open: count('open'), doing: count('doing'), done: count('done') },
         note: `账本树较大（${board.rows.length} 条），只给现在能挑的；全树用 unit_list`,
+        ...extra,
     };
 }
 

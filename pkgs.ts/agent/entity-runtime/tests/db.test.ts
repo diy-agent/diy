@@ -461,6 +461,77 @@ describe('unit（需求账本树的节点）', () => {
         expect(store.unitOf('t1', 'u1')?.status).toBe('doing');
     });
 
+    it('itemsByIds：按条目 id 批量取（跨房间也认），未知 id 静默缺席', () => {
+        const store = openStore(':memory:');
+        const r1: Room = { ...room, id: 'r1' };
+        const r2: Room = { ...room, id: 'r2' };
+        store.saveRoom(r1);
+        store.saveRoom(r2);
+        const chat = (id: string): Item => ({
+            id,
+            seq: 0,
+            turn: 1,
+            turnId: 't1',
+            type: 'chat',
+            at: 1,
+            status: 'done',
+            author: { id: 'human:我', name: '我', color: '#000', role: 'human' },
+            data: { text: id },
+        });
+        const a = store.appendItem(r1.id, chat('u-a'));
+        const b = store.appendItem(r2.id, chat('u-b'));
+        const got = store.itemsByIds([a.id, b.id, 'u-gone']);
+        expect(got.map((item) => item.id).sort()).toEqual([a.id, b.id].sort());
+        // 去重与空集：不去重会白读一遍；空集不该拼出 `IN ()`
+        expect(store.itemsByIds([a.id, a.id]).length).toBe(1);
+        expect(store.itemsByIds([])).toEqual([]);
+        expect(store.itemsByIds(['', ''])).toEqual([]);
+    });
+
+    it('accept（怎么算做完）落库、能改、改 title 不会把它抹掉', () => {
+        const store = openStore(':memory:');
+        const unit = store.saveUnit({
+            taskId: 't1',
+            title: '导出可用',
+            body: '',
+            accept: '点一下真的落文件，且首末轮都在',
+            status: 'open',
+        });
+        expect(unit.accept).toBe('点一下真的落文件，且首末轮都在');
+        // 只改 title：accept 必须留着（「改个错别字」不该把验收口径清空）
+        const renamed = store.saveUnit({ taskId: 't1', id: unit.id, title: '导出能用', body: '', status: 'open' });
+        expect(renamed.accept).toBe('点一下真的落文件，且首末轮都在');
+        // 显式改 accept
+        const fixed = store.saveUnit({
+            taskId: 't1',
+            id: unit.id,
+            title: renamed.title,
+            body: '',
+            accept: '文件里首轮、末轮、别人的话都在',
+            status: 'open',
+        });
+        expect(store.unitOf('t1', unit.id)?.accept).toBe('文件里首轮、末轮、别人的话都在');
+        expect(store.listUnits('t1').map((row) => row.accept)).toEqual([fixed.accept]);
+    });
+
+    it('source（来自哪句人话）落库；缺省空串，更新时不会被抹掉', () => {
+        const store = openStore(':memory:');
+        const unit = store.saveUnit({
+            taskId: 't1',
+            title: '导出可用',
+            body: '',
+            status: 'open',
+            source: 'u-mwwtvgiy-1',
+        });
+        expect(unit.source).toBe('u-mwwtvgiy-1');
+        // 不带 source 的更新（改状态）不能让来源丢掉
+        const done = store.saveUnit({ taskId: 't1', id: unit.id, title: unit.title, body: '', status: 'done' });
+        expect(done.source).toBe('u-mwwtvgiy-1');
+        // 没有来源的条目（老数据 / 非人类触发）一律空串，别编
+        const bare = store.saveUnit({ taskId: 't1', title: 'b', body: '', status: 'open' });
+        expect(bare.source).toBe('');
+    });
+
     it('显式 id 但不存在 → 抛（新号只能由 counters 发）', () => {
         const store = openStore(':memory:');
         expect(() => store.saveUnit({ taskId: 't1', id: 'u9', title: 'x', body: '', status: 'open' })).toThrow(
@@ -587,6 +658,88 @@ describe('分组查询走表达式索引', () => {
             data: { text: '没跑完', kind: 'interrupted', botId: 'bot:1' },
         });
         expect(planOf(store, DELETE_INTERRUPTED)).toContain('items_interrupted');
+    });
+});
+
+describe('未送达投影（failedByRoom）', () => {
+    const msg = (id: string, turn: number): Item => ({
+        id,
+        seq: 0,
+        turn,
+        turnId: `t${turn}`,
+        at: Date.now(),
+        status: 'done',
+        author: { id: 'human:我', name: '我', color: '#fff', role: 'human' },
+        type: 'chat',
+        data: { text: id },
+    });
+    const deliver = (
+        store: ReturnType<typeof openStore>,
+        roomId: string,
+        messageId: string,
+        botId: string,
+        state: 'failed' | 'delivered' | 'queued',
+        turn: number,
+    ): void => {
+        store.appendItem(roomId, msg(messageId, turn));
+        // 投递的 messageId 本来就是 say 条目落的；序号也从这里取（real 库同路径）
+        const seq = store.roomEntries(roomId).reduce((max, entry) => Math.max(max, entry.seq), 0) + 1;
+        store.appendRoomEntry(roomId, {
+            seq,
+            at: Date.now(),
+            kind: 'say',
+            author: { id: 'human:我', name: '我', color: '#fff', role: 'human' },
+            text: messageId,
+            messageId,
+            turn,
+            turnId: `t${turn}`,
+        });
+        store.setDelivery({ roomId, messageId, botId, state, turn });
+    };
+
+    it('按成员算最新一条投递：旧 failed 被后来的 delivered 覆盖后不再报', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm-old', 'b1', 'failed', 1);
+        expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
+
+        deliver(store, room.id, 'm-new', 'b1', 'delivered', 2);
+        expect(store.failedByRoom()).toEqual({});
+    });
+
+    it('既有旧 failed 又有新 failed：只算一个成员，不按历史行数累加', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm1', 'b1', 'failed', 1);
+        deliver(store, room.id, 'm2', 'b1', 'failed', 2);
+        expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
+    });
+
+    it('多个成员各自看最新一条，只数仍然失败的那几个', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm1', 'b1', 'failed', 1);
+        deliver(store, room.id, 'm2', 'b2', 'failed', 1);
+        deliver(store, room.id, 'm3', 'b2', 'delivered', 2);
+        expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
+    });
+
+    it('最新一条重新排队（恢复待续跑）不算未送达，只算排队', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm1', 'b1', 'failed', 1);
+        deliver(store, room.id, 'm2', 'b1', 'queued', 2);
+        expect(store.failedByRoom()).toEqual({});
+    });
+
+    it('同一轮多条消息靠时间线 seq 分先后（turn 相同也不能误判）', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm1', 'b1', 'failed', 1);
+        deliver(store, room.id, 'm2', 'b1', 'delivered', 1);
+        expect(store.failedByRoom()).toEqual({});
+    });
+
+    it('不串房间：0 的房间不占键', () => {
+        const store = openStore(':memory:');
+        deliver(store, room.id, 'm1', 'b1', 'failed', 1);
+        deliver(store, 'task:other', 'm1', 'b1', 'delivered', 1);
+        expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
     });
 });
 

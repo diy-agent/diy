@@ -40,9 +40,9 @@ describe('标题栏活动指示器', () => {
         } as never);
         bootstrapStore();
         await new Promise((resolve) => setTimeout(resolve, 0));
-        // proj:one 自己也报「在跑」——project 行是导航壳，不该进这个数，否则数字比列表多一行
+        // closed 任务里的旧 turn 不进这个数（那是一个已经收工的房间里残留的一轮）
         listener?.({
-            rooms: [{ id: 'task:one', botIds: ['a', 'b'] }, { id: 'task:closed', botIds: ['c'] }, { id: 'proj:one', botIds: ['x'] }],
+            rooms: [{ id: 'task:one', botIds: ['a', 'b'] }, { id: 'task:closed', botIds: ['c'] }],
             jobs: 0,
         } as never);
 
@@ -50,13 +50,15 @@ describe('标题栏活动指示器', () => {
         expect(sessions).toContain('aria-label="Bot 1，查看正在运行的 Bot"');
     });
 
-    it('「算不算 Bot 在跑」只有一个判据：project / closed / 0 都不算', () => {
+    it('「算不算 Bot 在跑」只有一个判据：closed / 0 不算', () => {
         const room = (type: Room['type'], status?: string): Room =>
             ({ id: `${type}:x`, type, modelKey: 'm', data: { title: 'x', status }, botIds: [] }) as Room;
 
         expect(isRunningSession(room('task', 'open'), 2)).toBe(true);
         expect(isRunningSession(room('task', 'closed'), 2)).toBe(false);
-        expect(isRunningSession(room('project'), 2)).toBe(false);
         expect(isRunningSession(room('task', 'open'), 0)).toBe(false);
+        // 项目房间自己也有成员与轮次（用户 2026-11-26「项目也是 bot」）——
+        // 侧栏项目行会为它亮呼吸点（RoomRow），数字不数它就是「行上亮着、计数说 0」
+        expect(isRunningSession(room('project'), 2)).toBe(true);
     });
 });

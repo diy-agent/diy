@@ -22,7 +22,7 @@ const Data = z.record(z.string(), Any);
 
 export const roomsApi = RpcSchema.group({
     children: {
-        /** 列表 + 侧栏投影（hasDraft / pendingAsks / lastActivityAt / unread） */
+        /** 列表 + 侧栏投影（hasDraft / pendingAsks / lastActivityAt / unread / broken / failed） */
         list: RpcSchema.unary({ input: {}, output: Any }),
         create: RpcSchema.unary({
             input: {

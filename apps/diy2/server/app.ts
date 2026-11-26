@@ -25,7 +25,6 @@ import { APP_ID, type Diy2Config } from './config';
 import { openLog } from './log';
 
 import {
-    JOURNAL_KINDS,
     RoomActor,
     createJobRegistry,
     createCachedTurnLookup,
@@ -33,8 +32,10 @@ import {
     modelProviders,
     newEntityId,
     openStore,
+    sourceQuotesOf,
     unitBoard,
     unitsContextText,
+    withSourceQuotes,
 } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
@@ -42,7 +43,6 @@ import { diy2Api } from '@diy-agent/protocol';
 import type {
     ActivityFrame,
     AskAnswer,
-    AskQuestionAnswer,
     AskRequest,
     Author,
     Bot,
@@ -67,8 +67,6 @@ const FALLBACK_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 function defaultModelKey(): string {
     return defaultModelKeyOf() ?? FALLBACK_MODEL;
 }
-/** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
-const ASK_DRAFT_TTL = 30 * 60 * 1000;
 /** 对话框草稿：synthetic owner 不随房间级联删，超过这么久没人再来就清掉 */
 const DIALOG_DRAFT_TTL = 7 * 24 * 60 * 60 * 1000;
 const HUMAN: Author = { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
@@ -466,31 +464,6 @@ function json(res: ServerResponse, status: number, body: unknown): void {
     res.end(JSON.stringify(body));
 }
 
-async function readBody<T>(req: IncomingMessage): Promise<T> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk as Buffer);
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
-}
-
-/**
- * 读 body 的统一入口：坏 JSON / 读流失败都要有回包。
- * 之前每个 `void readBody(...).then(...)` 都没 catch —— 客户端发一段坏 JSON
- * 就是"请求永不响应 + unhandled rejection"，Node 默认把后者当崩溃。
- */
-function onBody<T>(req: IncomingMessage, res: ServerResponse, handler: (body: T) => void | Promise<void>): void {
-    readBody<T>(req)
-        .then(handler)
-        .catch(() => {
-            if (!res.writableEnded) json(res, 400, { error: 'invalid JSON body' });
-        });
-}
-
-/**
- * synthetic scope 的 owner 白名单（`dlg:<用途>:<roomId>`）：`dlg:` 是保留前缀，
- * 房间 id 是 `<type>-<base36>` / `proj:xxx`，不会撞上。
- */
-const DIALOG_DRAFT_OWNER = /^dlg:[a-z][a-z0-9-]{0,40}:[A-Za-z0-9:._-]{1,120}$/;
-
 /** 单条草稿上限：超了宁可拒（413）也不静默截断用户打的字 */
 function tooLargeDraft(value: unknown): boolean {
     const serialized = JSON.stringify(value);
@@ -565,7 +538,6 @@ const HISTORY_LIMIT = 400;
 
 const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const parts = url.pathname.split('/').filter(Boolean);
 
     try {
         // GET /api/info —— 实例自报身份（探活判据：`app` + `home`）。端口/pid 都是缓存，
@@ -726,6 +698,9 @@ export async function createDiy2App(opts: {
                     const lastItemAt = timed('rooms.list.lastItemAtByRoom', () => store.lastItemAtByRoom());
                     // 未读：一次算完全实例（一条 GROUP BY），不逐房间问
                     const unread = timed('rooms.list.unreadByRoom', () => store.unreadByRoom());
+                    // 未送达：同样一次算完全实例。按 (房间, bot) 收敛到各自最新一条投递，
+                    // 历史 failed 不永久占位（旧消息失败、后来新消息送达就算过去了）。
+                    const failedByRoom = timed('rooms.list.failedByRoom', () => store.failedByRoom());
                     // 「上一轮出错的成员」：侧栏图标要变红（用户 2026-11-26：表格说「出错」而侧栏
                     // 图标没变，两处不一致）。数据与 `bots.rows` 同源（`turnLookupOf`），不各算一份。
                     // 打点包住**取数**那一下：命中缓存时是个 Map 查（<1ms），未命中才是 529ms
@@ -751,6 +726,7 @@ export async function createDiy2App(opts: {
                         // 排队中的投递（含重启后的待续跑）：以前列表里没有这个数，
                         // 于是房间「看着没事、其实排着队」或「明明在干、只是还没轮到它」都看不见
                         const queued = [...actor.queuedByBot().values()].reduce((sum, n) => sum + n, 0);
+                        const failed = failedByRoom[id] ?? 0;
                         return {
                             ...actor.spec,
                             hasDraft: withInputDraft.has(id),
@@ -768,6 +744,7 @@ export async function createDiy2App(opts: {
                             ...(at === undefined ? {} : { lastActivityAt: at }),
                             ...((unread[id] ?? 0) === 0 ? {} : { unread: unread[id] }),
                             ...(broken === 0 ? {} : { broken }),
+                            ...(failed === 0 ? {} : { failed }),
                         };
                     });
                 },
@@ -960,12 +937,14 @@ export async function createDiy2App(opts: {
                         });
                         if (targets.length === 0) continue;
                         started.push({ roomId, botIds: targets });
-                        void actor.say({ text: RETRY_TEXT, author: HUMAN, recipients: targets }).catch((error: unknown) => {
-                            broadcast(roomId, {
-                                kind: 'error',
-                                message: error instanceof Error ? error.message : String(error),
+                        void actor
+                            .say({ text: RETRY_TEXT, author: HUMAN, recipients: targets })
+                            .catch((error: unknown) => {
+                                broadcast(roomId, {
+                                    kind: 'error',
+                                    message: error instanceof Error ? error.message : String(error),
+                                });
                             });
-                        });
                     }
                     return { started, skipped };
                 },
@@ -1118,7 +1097,14 @@ export async function createDiy2App(opts: {
              * 界面是旁观者的窗口 —— 想改就在聊天里说。推导在 `unitBoard`（同一份纯函数）。
              */
             units: {
-                list: async ({ input }) => unitBoard(store.listUnits(input.id)),
+                list: async ({ input }) => {
+                    const board = unitBoard(store.listUnits(input.id));
+                    // 「来自哪句话」要能当场核对：光有 message id，人还得自己点进去看是谁说的。
+                    // 所以这里把 source 解开成「发言人 + 原话」贴上（纯函数 `withSourceQuotes`），
+                    // 解不开的（消息已剪 / 老数据 / 非人类触发）就**不贴** —— 不知道比编一个强。
+                    const ids = board.rows.map((row) => row.source).filter((id) => id !== '');
+                    return withSourceQuotes(board, sourceQuotesOf(store.itemsByIds(ids)));
+                },
                 /**
                  * 模型读到的 `units` 节原文。
                  *
