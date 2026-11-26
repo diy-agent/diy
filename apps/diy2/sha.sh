@@ -202,6 +202,10 @@ dev() {
   sha.parse "$@" || return $?
 
   ensure_sync
+  # 能力包产物保鲜（2026-11-26 事故）：30+ 个包运行时读 dist，dev 却不重建 ——
+  # 合了别人的改动没 build 时本地跑的是旧产物，且毫无提示（tools 的 dist 停在 11-24，
+  # 少一个 await 就让每轮第二次工具调用被网关 400）。增量重编，热 ~0.4s。
+  run "$REPO_ROOT/sha.sh" dist-fresh --build
   local data_home="${home:-$(_run_home "${launch:-lab}")}"
   local -a args=(server/dev.ts --launch "${launch:-lab}" --home "$data_home")
   [[ -n $port ]] && args+=(--port "$port")
