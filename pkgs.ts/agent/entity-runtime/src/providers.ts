@@ -287,6 +287,7 @@ export function modelProviders(env: NodeJS.ProcessEnv = process.env): ProviderVi
             ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
             ...(entry.maxOutputTokens === undefined ? {} : { maxOutputTokens: entry.maxOutputTokens }),
             ...(entry.cost === undefined ? {} : { cost: entry.cost }),
+            ...(entry.reasoning === undefined ? {} : { reasoning: entry.reasoning }),
         });
     }
     return [...grouped.values()].sort((a, b) => a.id.localeCompare(b.id));

@@ -111,6 +111,7 @@ function modelConfigView(): ModelConfigSnapshot {
                 ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
                 ...(model.maxOutputTokens === undefined ? {} : { maxOutputTokens: model.maxOutputTokens }),
                 ...(model.cost === undefined ? {} : { cost: model.cost }),
+                ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
                 enabled: model.enabled,
             })),
         })),

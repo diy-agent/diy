@@ -655,6 +655,16 @@ export interface ModelCostView {
     cacheWrite?: number;
 }
 
+/**
+ * 推理强度候选（归一自 models.dev 的 reasoning_options，与 `@diy-agent/model-catalog` 同口径）。
+ * 只有 type=effort 的模型才有；缺省（不推理 / 不能选 effort）= 无此字段。
+ */
+export interface ModelReasoningView {
+    efforts: readonly string[];
+    /** 该模型第一档，换模型时的默认 effort */
+    defaultEffort: string;
+}
+
 /** 目录里的一个模型 */
 export interface ModelCatalogModel {
     id: string;
@@ -663,6 +673,7 @@ export interface ModelCatalogModel {
     contextWindow?: number;
     maxOutputTokens?: number;
     cost?: ModelCostView;
+    reasoning?: ModelReasoningView;
 }
 
 /** 一个 provider 的视图（**永不含 key 值**：账号只有名字与「填没填」） */
@@ -717,6 +728,7 @@ export interface ModelConfigModel {
     contextWindow?: number;
     maxOutputTokens?: number;
     cost?: ModelCostView;
+    reasoning?: ModelReasoningView;
     /** 过了 filter 就会进目录；false = 在目录里但被关掉了 */
     enabled: boolean;
 }

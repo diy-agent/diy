@@ -9,7 +9,16 @@
 //   · 写完即刷新 —— `roles.update` 会让 store 重拉角色表，房间头成员胶囊立刻跟上
 //   · 失败要看见 —— 服务端的话原样带到右栏顶部（「只剩这一个角色」这类话只有它知道）
 
-import { ModelSelectButton, roles, useRoles, type BotRole } from '@diy-agent/entity-chat';
+import {
+    EffortButtons,
+    ModelSelectButton,
+    modelOfKey,
+    roles,
+    useEffortOptions,
+    useProviders,
+    useRoles,
+    type BotRole,
+} from '@diy-agent/entity-chat';
 import { useForm } from '@tanstack/react-form';
 import * as React from 'react';
 
@@ -25,15 +34,6 @@ function typeLabel(type: string): string {
     return TYPE_LABEL[type] ?? type;
 }
 
-/** 推理强度档位：空 = 跟随模型/服务商缺省。选项按钮组而非下拉，方便一眼看全、一点即改 */
-const EFFORTS: ReadonlyArray<{ value: string; label: string }> = [
-    { value: '', label: '跟随' },
-    { value: 'minimal', label: 'minimal' },
-    { value: 'low', label: 'low' },
-    { value: 'medium', label: 'medium' },
-    { value: 'high', label: 'high' },
-];
-
 /** 从 TanStack Form 的 `meta.errors` 里拿第一条能显示的话 */
 function errorOf(errors: readonly unknown[]): string | undefined {
     for (const item of errors) {
@@ -48,6 +48,11 @@ function RoleEditor({ role }: { role: BotRole }) {
     const [error, setError] = React.useState<string>();
     const [busy, setBusy] = React.useState(false);
     const [saved, setSaved] = React.useState(false);
+
+    // 当前模型决定 effort 候选（来自 models.dev 的 reasoning_options）
+    const [currentModelKey, setCurrentModelKey] = React.useState(role.modelKey ?? '');
+    const { efforts } = useEffortOptions(currentModelKey);
+    const providers = useProviders();
 
     const form = useForm({
         defaultValues: {
@@ -164,6 +169,12 @@ function RoleEditor({ role }: { role: BotRole }) {
                                 value={field.state.value}
                                 onPick={(key) => {
                                     field.handleChange(key);
+                                    setCurrentModelKey(key);
+                                    // 换模型 = 默认取该模型第一档 effort（models.dev），没有就清空
+                                    form.setFieldValue(
+                                        'reasoningEffort',
+                                        modelOfKey(providers, key)?.reasoning?.defaultEffort ?? '',
+                                    );
                                     setSaved(false);
                                 }}
                             />
@@ -175,26 +186,18 @@ function RoleEditor({ role }: { role: BotRole }) {
                     {(field) => (
                         <section className="py-3">
                             <div className="mb-1.5 text-xs text-muted-foreground">推理强度</div>
-                            <div className="flex flex-wrap gap-1.5">
-                                {EFFORTS.map((item) => (
-                                    <button
-                                        key={item.value}
-                                        type="button"
-                                        aria-pressed={field.state.value === item.value}
-                                        onClick={() => {
-                                            field.handleChange(item.value);
-                                            setSaved(false);
-                                        }}
-                                        className={`rounded-full border px-2.5 py-0.5 text-[11px] ${
-                                            field.state.value === item.value
-                                                ? 'border-ring bg-muted font-medium'
-                                                : 'border-border text-muted-foreground hover:bg-muted/60'
-                                        }`}
-                                    >
-                                        {item.label}
-                                    </button>
-                                ))}
-                            </div>
+                            <EffortButtons
+                                value={field.state.value}
+                                efforts={efforts}
+                                busy={busy}
+                                onChange={(value) => {
+                                    field.handleChange(value);
+                                    setSaved(false);
+                                }}
+                            />
+                            <p className="mt-1.5 text-[10px] text-muted-foreground">
+                                档位来自当前模型的推理规格；「缺省」= 不指定，交给模型/服务商。
+                            </p>
                         </section>
                     )}
                 </form.Field>

@@ -11,19 +11,12 @@ import { ChevronRight, Cpu } from 'lucide-react';
 import * as React from 'react';
 
 import type { Room } from '../model';
+import { modelOfKey } from '../models';
 import { roles } from '../roles';
-import { useDefaultModelKey, useRoles } from '../store';
+import { useDefaultModelKey, useProviders, useRoles } from '../store';
+import { EffortButtons, useEffortOptions } from './EffortButtons';
 import { Modal } from './Dialogs';
 import { ModelSelectButton } from './ModelSelectPanel';
-
-/** 推理强度：空 = 跟随模型/服务商缺省。选项按钮组，一眼看全、一点即改 */
-const EFFORTS: ReadonlyArray<{ value: string; label: string }> = [
-    { value: '', label: '跟随' },
-    { value: 'minimal', label: 'minimal' },
-    { value: 'low', label: 'low' },
-    { value: 'medium', label: 'medium' },
-    { value: 'high', label: 'high' },
-];
 
 function typeLabel(type: string): string {
     return type === 'task' ? '任务' : type === 'project' ? '项目' : type;
@@ -37,6 +30,8 @@ export function BotConfigChip({ room, onManageRoles }: { room: Room; onManageRol
     const modelValue = role?.modelKey?.trim() ?? '';
     const effort = role?.reasoningEffort?.trim() ?? '';
     const effective = modelValue === '' ? (defaultKey ?? '') : modelValue;
+    const { efforts } = useEffortOptions(modelValue);
+    const providers = useProviders();
 
     const [open, setOpen] = React.useState(false);
     const [busy, setBusy] = React.useState(false);
@@ -83,30 +78,24 @@ export function BotConfigChip({ room, onManageRoles }: { room: Room; onManageRol
                             <div className="mb-1.5 text-[11px] text-muted-foreground">模型</div>
                             <ModelSelectButton
                                 value={modelValue}
-                                onPick={(key) => void save({ modelKey: key })}
+                                onPick={(key) =>
+                                    void save({
+                                        modelKey: key,
+                                        // 换模型 = 默认取该模型第一档 effort，没有就清空
+                                        reasoningEffort: modelOfKey(providers, key)?.reasoning?.defaultEffort ?? null,
+                                    })
+                                }
                             />
                         </section>
 
                         <section>
                             <div className="mb-1.5 text-[11px] text-muted-foreground">推理强度</div>
-                            <div className="flex flex-wrap gap-1.5">
-                                {EFFORTS.map((item) => (
-                                    <button
-                                        key={item.value}
-                                        type="button"
-                                        aria-pressed={effort === item.value}
-                                        disabled={busy}
-                                        onClick={() => void save({ reasoningEffort: item.value === '' ? null : item.value })}
-                                        className={`rounded-full border px-2.5 py-0.5 text-[11px] disabled:opacity-40 ${
-                                            effort === item.value
-                                                ? 'border-ring bg-muted font-medium'
-                                                : 'border-border text-muted-foreground hover:bg-muted/60'
-                                        }`}
-                                    >
-                                        {item.label}
-                                    </button>
-                                ))}
-                            </div>
+                            <EffortButtons
+                                value={effort}
+                                efforts={efforts}
+                                busy={busy}
+                                onChange={(value) => void save({ reasoningEffort: value === '' ? null : value })}
+                            />
                         </section>
 
                         {onManageRoles === undefined ? null : (

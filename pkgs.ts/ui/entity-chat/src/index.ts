@@ -34,7 +34,9 @@ export { Modal } from './components/Dialogs';
 export { ModelPicker } from './components/ModelPicker';
 // 三处同构的模型选择：默认模型配置 / bot 配置 / 聊天页配置共用这一份表格与胶囊
 export { ModelSelectPanel, ModelSelectButton } from './components/ModelSelectPanel';
-export { modelLabel } from './models';
+// 推理强度：档位来自模型（models.dev reasoning_options），缺省占位符对齐 dsh
+export { EffortButtons, useEffortOptions } from './components/EffortButtons';
+export { modelLabel, modelOfKey } from './models';
 export { Sidebar } from './components/Sidebar';
 // 对话区那一条的两样（表面切换 / 房间菜单）：宿主可以把它们摆进自己的区域标题栏
 // （工作台就是这么做的，`bar="host"` 时对话区不再自己画那一行）。

@@ -17,6 +17,7 @@ import type {
     CatalogOptions,
     ModelCatalogCost,
     ModelCatalogEntry,
+    ModelCatalogReasoning,
     ProviderAccounts,
 } from "./types.js";
 
@@ -43,6 +44,7 @@ interface RawModelOverride {
     readonly name?: string;
     readonly limit?: { readonly context?: number; readonly output?: number };
     readonly cost?: RawCost;
+    readonly reasoning_options?: readonly RawReasoningOption[];
 }
 
 interface RawProviderConfig {
@@ -56,10 +58,17 @@ interface RawModelYaml {
     readonly customProviders?: Readonly<Record<string, RawProviderConfig>>;
 }
 
+/** models.dev 的 reasoning_options 一项：只有 type=effort 且带 values 才归一成候选档位 */
+interface RawReasoningOption {
+    readonly type?: string;
+    readonly values?: readonly string[];
+}
+
 interface RawSpecModel {
     readonly name?: string;
     readonly limit?: { readonly context?: number; readonly output?: number };
     readonly cost?: RawCost;
+    readonly reasoning_options?: readonly RawReasoningOption[];
 }
 
 interface RawSpecProvider {
@@ -218,6 +227,7 @@ export interface AvailableModel {
     readonly contextWindow?: number;
     readonly maxOutputTokens?: number;
     readonly cost?: ModelCatalogCost;
+    readonly reasoning?: ModelCatalogReasoning;
     /** 过了 filter 就会真进目录；false = 在 spec 里但被关掉了 */
     readonly enabled: boolean;
 }
@@ -395,16 +405,35 @@ function isEnabled(modelId: string, filter: Filter): boolean {
     return true;
 }
 
+/**
+ * 把 models.dev 的 reasoning_options 归一成 UI 契约：只有 type=effort 且带非空 values
+ * 才算「可选 effort」，档位原样透传、第一档当默认。toggle / budget_tokens / 空 / 无 → 缺省。
+ * override 层若声明了 reasoning_options 就覆盖 spec 层（与 limit/cost 同一覆盖语义）。
+ */
+function reasoningOf(pair: ModelPair): ModelCatalogReasoning | undefined {
+    const raw = pair.override?.reasoning_options ?? pair.spec?.reasoning_options;
+    if (raw === undefined) return undefined;
+    for (const option of raw) {
+        if (option.type !== "effort") continue;
+        const values = (option.values ?? []).filter((value) => typeof value === "string" && value !== "");
+        if (values.length === 0) continue;
+        return { efforts: values, defaultEffort: values[0]! };
+    }
+    return undefined;
+}
+
 function modelViewOf(pair: ModelPair): Omit<AvailableModel, "enabled"> {
     const contextWindow = pair.override?.limit?.context ?? pair.spec?.limit?.context;
     const maxOutput = pair.override?.limit?.output ?? pair.spec?.limit?.output;
     const cost = pair.override?.cost !== undefined ? costOf(pair.override.cost) : costOf(pair.spec?.cost);
+    const reasoning = reasoningOf(pair);
     return {
         id: pair.modelId,
         name: pair.override?.name ?? pair.spec?.name ?? pair.modelId,
         ...(typeof contextWindow === "number" ? { contextWindow } : {}),
         ...(typeof maxOutput === "number" ? { maxOutputTokens: maxOutput } : {}),
         ...(cost === undefined ? {} : { cost }),
+        ...(reasoning === undefined ? {} : { reasoning }),
     };
 }
 
@@ -423,6 +452,7 @@ function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined
             ...(view.contextWindow === undefined ? {} : { contextWindow: view.contextWindow }),
             ...(view.maxOutputTokens === undefined ? {} : { maxOutputTokens: view.maxOutputTokens }),
             ...(view.cost === undefined ? {} : { cost: view.cost }),
+            ...(view.reasoning === undefined ? {} : { reasoning: view.reasoning }),
         });
     }
     return out;

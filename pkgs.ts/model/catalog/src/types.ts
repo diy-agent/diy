@@ -32,6 +32,20 @@ export interface ModelCatalogEntry {
     readonly maxOutputTokens?: number;
     /** 单价（$ / 1M tokens）；无价目 = 缺省（不算钱） */
     readonly cost?: ModelCatalogCost;
+    /**
+     * 推理强度候选（归一自 models.dev 的 reasoning_options）。只有 `type=effort` 的模型才有；
+     * toggle / budget_tokens / 空数组 / 无字段 → 缺省（不推理或不能选 effort）。
+     */
+    readonly reasoning?: ModelCatalogReasoning;
+}
+
+/**
+ * 推理能力：efforts = 该模型支持的具体档位（原样来自 models.dev values），
+ * defaultEffort = 该模型的第一档（dsh 的 efforts[0]，也是「换模型默认」要写的值）。
+ */
+export interface ModelCatalogReasoning {
+    readonly efforts: readonly string[];
+    readonly defaultEffort: string;
 }
 
 /** 目录里的价目（camelCase；与 model.yaml 的 snake_case 解耦） */
