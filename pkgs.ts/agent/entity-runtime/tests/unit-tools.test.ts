@@ -118,6 +118,18 @@ describe('unit 工具', () => {
         expect(listing.tree).toEqual(['- [ ] 取消语义 (dom)', '  - [>] A (a)', '  - [>] B (b)']);
     });
 
+    it('工具面没有「追加进展」的入口：update 只认需求字段（进展归 journal）', async () => {
+        // 用户 2026-11-26：账本被当成 log 的嫌疑，一半来自「什么都能往里写」。
+        // 这里钉住入口本身：unit_update 的入参里**没有** note / comment / progress / log 这类字段，
+        // 想记进展只能写 journal（那不是账本）。加字段的人会被这条测试拦住。
+        const { tools } = setup();
+        const update = toolOf(tools, 'unit_update') as unknown as { inputSchema: { shape: Record<string, unknown> } };
+        expect(Object.keys(update.inputSchema.shape).sort()).toEqual(['accept', 'body', 'id', 'parent', 'status', 'title']);
+        for (const forbidden of ['note', 'comment', 'progress', 'log', 'update', 'latest', 'changes']) {
+            expect(Object.keys(update.inputSchema.shape)).not.toContain(forbidden);
+        }
+    });
+
     it('unit_add 自动盖「来自哪句话」（宿主给的触发消息），模型不用也不能填', async () => {
         const { tools } = setup('t1', { sourceOf: () => 'u-mwwtvgiy-7' });
         const added = (await toolOf(tools, 'unit_add').execute({
