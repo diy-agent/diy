@@ -8,6 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { highlightCode, languageOf } from './highlight';
+import { Button } from '@diy-agent/ui-shadcn';
 
 export const Markdown = React.memo(function Markdown({
     text,
@@ -58,12 +59,14 @@ export const Markdown = React.memo(function Markdown({
                             <div className="my-2 overflow-hidden rounded-md border border-border/60">
                                 <div className="flex items-center justify-between bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
                                     <span className="lowercase">{language}</span>
-                                    <button
+                                    <Button
+                                        variant="ghost"
+                                        size="icon-xs"
                                         onClick={() => void navigator.clipboard?.writeText(code)}
-                                        className="rounded px-1 hover:bg-muted hover:text-foreground"
+                                        className="h-auto px-1"
                                     >
                                         复制
-                                    </button>
+                                    </Button>
                                 </div>
                                 <pre className="overflow-x-auto p-2.5 text-xs leading-relaxed">
                                     <code

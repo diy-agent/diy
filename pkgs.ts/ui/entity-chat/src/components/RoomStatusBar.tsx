@@ -23,6 +23,7 @@ import { jumpToAsk } from '../askJump';
 import { askChipOf, askChipTitleOf } from '../pendingAsk';
 import { conversationOf, useStore } from '../store';
 import { useNow } from './useNow';
+import { Button } from '@diy-agent/ui-shadcn';
 
 /** 一条 chip 的公共外形：两种状态只换颜色，不换骨架 */
 const CHIP = 'flex items-center gap-1.5 rounded-full border px-2 py-0.5';
@@ -63,12 +64,14 @@ export function StatusChips({ bots, asks, stuck, now, onJump }: StatusChipsProps
                         <span className="shrink-0">{owner?.name ?? '有成员'} 等你回答</span>
                         <span className="max-w-[18rem] truncate">{askChipOf(request.questions)}</span>
                         {waited !== '' && <span className="shrink-0 opacity-80">· {waited}</span>}
-                        <button
+                        <Button
+                            variant="ghost"
+                            size="xs"
                             onClick={() => onJump(request.askId)}
-                            className="ml-0.5 shrink-0 rounded px-1 font-medium underline-offset-2 hover:bg-amber-500/20"
+                            className="ml-0.5 h-auto shrink-0 px-1 font-medium"
                         >
                             去回答
-                        </button>
+                        </Button>
                     </span>
                 );
             })}

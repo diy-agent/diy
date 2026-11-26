@@ -12,6 +12,7 @@
 import { MoreHorizontal } from 'lucide-react';
 import * as React from 'react';
 import { createPortal } from 'react-dom';
+import { Button } from '@diy-agent/ui-shadcn';
 
 /** 浮层宽度（px）与「离锚点多远」——翻转 / 钳位都靠这两个数 */
 const WIDTH = 144;
@@ -81,7 +82,9 @@ export function MenuButton({
 
     return (
         <div ref={box} className={`relative shrink-0 ${className}`}>
-            <button
+            <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={(event) => {
                     // 行本身可点（选中房间）：菜单按钮不该把这一下也传下去
                     event.stopPropagation();
@@ -95,14 +98,13 @@ export function MenuButton({
                 }}
                 title={title}
                 aria-label={title}
+                // 展开时的底色由 variant 的 aria-expanded 样式给，不用再手拼 open ? 'bg-muted' : ''
                 aria-expanded={open}
                 aria-haspopup="menu"
-                className={`rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground ${
-                    open ? 'bg-muted text-foreground' : ''
-                }`}
+                className="text-muted-foreground"
             >
                 <MoreHorizontal className="size-3.5" />
-            </button>
+            </Button>
             {open &&
                 anchor !== null &&
                 createPortal(

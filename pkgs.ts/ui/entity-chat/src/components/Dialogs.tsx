@@ -77,13 +77,15 @@ export function CreateProjectDialog({
                     />
                     <div className="mt-1.5 flex flex-wrap gap-1">
                         {DIR_SUGGESTIONS.map((item) => (
-                            <button
+                            <Button
                                 key={item}
+                                variant="outline"
+                                size="xs"
                                 onClick={() => setDir(item)}
-                                className="rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+                                className="text-muted-foreground"
                             >
                                 {item}
-                            </button>
+                            </Button>
                         ))}
                     </div>
                 </label>
@@ -220,15 +222,16 @@ export function ConfirmDeleteDialog({
                 <Button variant="outline" size="lg" onClick={onClose}>
                     取消
                 </Button>
-                <button
+                <Button
+                    variant="destructive"
+                    size="lg"
                     onClick={() => {
                         onConfirm();
                         onClose();
                     }}
-                    className="rounded-lg bg-destructive px-3 py-1.5 text-sm text-white"
                 >
                     删除
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -269,20 +272,21 @@ export function AddMemberDialog({
                     ) : (
                         <div className="max-h-48 space-y-1 overflow-y-auto">
                             {available.map((bot) => (
-                                <button
+                                <Button
                                     key={bot.id}
+                                    variant="outline"
                                     onClick={() => {
                                         onPickExisting(bot.id);
                                         onClose();
                                     }}
-                                    className="flex w-full items-center gap-2 rounded-lg border px-2 py-1.5 text-left hover:bg-muted"
+                                    className="h-auto w-full justify-start gap-2 px-2 py-1.5 text-left"
                                 >
                                     <span className="size-2 shrink-0 rounded-full" style={{ background: bot.color }} />
                                     <span className="font-medium">{bot.name}</span>
                                     <span className="ml-auto truncate text-xs text-muted-foreground">
                                         来自 {homeName(bot)}
                                     </span>
-                                </button>
+                                </Button>
                             ))}
                         </div>
                     )}
@@ -345,9 +349,9 @@ export function ModelDialog({
         <Modal title={title} onClose={onClose}>
             <ModelPicker value={value} onChange={onChange} />
             <div className="mt-4 flex justify-end">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     完成
-                </button>
+                </Button>
             </div>
         </Modal>
     );
@@ -379,9 +383,9 @@ export function SettingsDialog({
                 </div>
             </div>
             <div className="mt-4 flex justify-end">
-                <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm">
+                <Button variant="outline" size="lg" onClick={onClose}>
                     完成
-                </button>
+                </Button>
             </div>
         </Modal>
     );

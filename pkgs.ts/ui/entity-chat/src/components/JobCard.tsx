@@ -22,6 +22,7 @@ import { ChevronRight } from 'lucide-react';
 import * as React from 'react';
 
 import type { JobView } from '@diy-agent/chat-core';
+import { Button } from '@diy-agent/ui-shadcn';
 
 /** 这次调用在干什么（`start` = 把命令转到后台，`done` = 收口通知，其余与 job 的 action 同名） */
 const ACTION_LABEL: Record<JobView['action'], string> = {
@@ -83,11 +84,13 @@ export function JobCard({
 
     return (
         <div className="my-1.5 rounded-md border border-border/60 bg-muted/25 text-xs leading-5">
-            <button
+            <Button
+                variant="ghost"
+                size="sm"
                 type="button"
                 onClick={() => setOpen((value) => !value)}
                 aria-expanded={open}
-                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left hover:bg-foreground/5"
+                className="h-auto w-full justify-start gap-1.5 px-2 py-1 text-left"
             >
                 <ChevronRight
                     className={`size-3 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`}
@@ -112,7 +115,7 @@ export function JobCard({
                 {view.tail !== undefined && view.tail !== '' && !open && (
                     <span className="shrink-0 text-xs text-muted-foreground/70">有输出</span>
                 )}
-            </button>
+            </Button>
 
             {open && (
                 <div className="space-y-1 border-t border-border/50 px-2 py-1.5">
