@@ -9,7 +9,25 @@
 // 正好测「给定这批行，画出来是什么样」。
 
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+/**
+ * 把浮层外壳换成**透传**（2026-11-27 修）。
+ *
+ * `BotsOverlay` 的外层是官方 `Sheet`（Base UI 的 Dialog）：它把内容挂进 portal，
+ * 而 portal 的挂在 SSR 下不跑（没有 effect）—— `renderToStaticMarkup` 只能拿到空串，
+ * 于是「浮层里画了什么」一条都测不到（换 Sheet 后的 10 个红）。
+ *
+ * 这些用例测的是**内容与口径**（谁该列、空态写什么、两道筛选是否一致），
+ * 不是 portal 怎么挂载 —— 后者属于真机/截图验证的范围。所以把外壳换成 Fragment。
+ */
+vi.mock('@diy-agent/ui-shadcn', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@diy-agent/ui-shadcn')>();
+    const React = await import('react');
+    const Passthrough = ({ children }: { children?: React.ReactNode }) =>
+        React.createElement(React.Fragment, null, children);
+    return { ...actual, Sheet: Passthrough, SheetContent: Passthrough };
+});
 
 import {
     attentionLabelOf,
@@ -164,7 +182,10 @@ describe('二级浮层', () => {
 
 describe('三级表格', () => {
     it('默认「全部」：空闲的也在（「要看的」那一筛已删）', () => {
-        const html = render([row({ botName: '在跑的', state: 'running' }), row({ botName: '闲着的', state: 'idle' })], 'full');
+        const html = render(
+            [row({ botName: '在跑的', state: 'running' }), row({ botName: '闲着的', state: 'idle' })],
+            'full',
+        );
         expect(html).not.toContain('>要看的 '); // 2026-11-26 用户：那个筛选 tab 删掉
         expect(html).toContain('全部 2');
         expect(html).toContain('在跑的');
@@ -178,7 +199,10 @@ describe('三级表格', () => {
     });
 
     it('有全选：一键勾中当前筛出来的这批', () => {
-        const html = render([row({ botName: 'a', state: 'needs-attention' }), row({ botName: 'b', state: 'running' })], 'full');
+        const html = render(
+            [row({ botName: 'a', state: 'needs-attention' }), row({ botName: 'b', state: 'running' })],
+            'full',
+        );
         expect(html).toContain('aria-label="全选"');
         expect(html).toContain('已选 0 / 2');
     });
