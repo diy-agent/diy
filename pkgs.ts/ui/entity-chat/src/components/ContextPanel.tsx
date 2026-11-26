@@ -11,7 +11,7 @@ import * as React from 'react';
 
 import type { CompactEventInfo, CompactionProgress, Room, SessionInfo } from '@diy-agent/chat-core';
 
-import { Button, Input } from '@diy-agent/ui-shadcn';
+import { Button, Input, Popover, PopoverContent, PopoverTrigger } from '@diy-agent/ui-shadcn';
 
 import { contextWindowOf } from '../models';
 import { actions, conversationOf, useProviders, useStore } from '../store';
@@ -230,13 +230,16 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
     };
 
     return (
-        <span className="relative inline-flex">
-            <Button
-                variant="outline"
-                size="xs"
-                onClick={() => setOpen((value) => !value)}
-                title="查看每个 bot 的上下文占用，手动压缩"
-                className="gap-1 text-muted-foreground"
+        <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger
+                render={
+                    <Button
+                        variant="outline"
+                        size="xs"
+                        title="查看每个 bot 的上下文占用，手动压缩"
+                        className="gap-1 text-muted-foreground"
+                    />
+                }
             >
                 <Gauge className={`size-3 ${runningCount > 0 ? 'animate-pulse text-amber-600' : ''}`} />
                 {runningCount > 0 ? (
@@ -249,87 +252,76 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
                         {ratio !== undefined && <span className="opacity-60">({Math.round(ratio * 100)}%)</span>}
                     </>
                 )}
-            </Button>
+            </PopoverTrigger>
 
-            {open && (
-                <>
-                    <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-                    <div
-                        className={`absolute left-0 z-50 w-[360px] rounded-md border bg-background shadow-lg ${
-                            side === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
-                        }`}
+            {/* 底栏在屏幕底部：默认向上弹（side=up），侧栏里那种向下 */}
+            <PopoverContent side={side === 'up' ? 'top' : 'bottom'} align="start" className="w-[360px] p-0">
+                <div className="flex items-center gap-2 px-3 py-2">
+                    <span className="text-xs font-medium">上下文</span>
+                    <span className="text-xs text-muted-foreground">
+                        {windowTokens === undefined ? '窗口未知' : `窗口 ${fmt(windowTokens)} tok`} · 各 bot 独立压缩
+                    </span>
+                    <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={compressAll}
+                        disabled={busy !== null || runningCount > 0 || sessions.length === 0}
+                        className="ml-auto"
                     >
-                        <div className="flex items-center gap-2 px-3 py-2">
-                            <span className="text-xs font-medium">上下文</span>
-                            <span className="text-xs text-muted-foreground">
-                                {windowTokens === undefined ? '窗口未知' : `窗口 ${fmt(windowTokens)} tok`} · 各 bot
-                                独立压缩
-                            </span>
-                            <Button
-                                variant="outline"
-                                size="xs"
-                                onClick={compressAll}
-                                disabled={busy !== null || runningCount > 0 || sessions.length === 0}
-                                className="ml-auto"
-                            >
-                                全部压缩
-                            </Button>
-                        </div>
+                        全部压缩
+                    </Button>
+                </div>
 
-                        <div className="flex items-center gap-1.5 border-t px-3 py-1.5 text-xs text-muted-foreground">
-                            <span>保留最近</span>
-                            <Input
-                                type="number"
-                                min={0}
-                                value={keep}
-                                onChange={(event) => setKeepTurns(Number(event.target.value))}
-                                className="w-12 rounded border bg-transparent px-1 text-right"
+                <div className="flex items-center gap-1.5 border-t px-3 py-1.5 text-xs text-muted-foreground">
+                    <span>保留最近</span>
+                    <Input
+                        type="number"
+                        min={0}
+                        value={keep}
+                        onChange={(event) => setKeepTurns(Number(event.target.value))}
+                        className="w-12 rounded border bg-transparent px-1 text-right"
+                    />
+                    <span>轮 · 自动压缩按窗口水位触发</span>
+                </div>
+
+                {sessions.length === 0 ? (
+                    <p className="border-t px-3 py-3 text-xs text-muted-foreground">还没有会话（发一条消息再回来看）</p>
+                ) : (
+                    sessions.map((session) => {
+                        const progress = runningBy(session.botId);
+                        return (
+                            <Row
+                                key={session.botId}
+                                session={session}
+                                busy={busy === session.botId}
+                                {...(progress === undefined ? {} : { progress })}
+                                now={now}
+                                onCompact={() => void compress(session.botId)}
+                                {...(progress === undefined
+                                    ? {}
+                                    : { onCancel: () => void cancelCompact(progress.compactId) })}
                             />
-                            <span>轮 · 自动压缩按窗口水位触发</span>
-                        </div>
+                        );
+                    })
+                )}
 
-                        {sessions.length === 0 ? (
-                            <p className="border-t px-3 py-3 text-xs text-muted-foreground">
-                                还没有会话（发一条消息再回来看）
-                            </p>
-                        ) : (
-                            sessions.map((session) => {
-                                const progress = runningBy(session.botId);
-                                return (
-                                    <Row
-                                        key={session.botId}
-                                        session={session}
-                                        busy={busy === session.botId}
-                                        {...(progress === undefined ? {} : { progress })}
-                                        now={now}
-                                        onCompact={() => void compress(session.botId)}
-                                        {...(progress === undefined
-                                            ? {}
-                                            : { onCancel: () => void cancelCompact(progress.compactId) })}
-                                    />
-                                );
-                            })
-                        )}
-
-                        {/*
+                {/*
                           诊断面：默认折叠 —— 「一眼答出卡在哪」，不是日常信息（计划 5.3）。
                           用按钮而不是 <details>：details 折叠时**内容仍然挂载**，那份订阅会继续
                           每次 state 变化重渲（正是这个任务要治的病）。按钮控制才会真的卸载。
                         */}
-                        <Button
-                            variant="ghost"
-                            size="xs"
-                            onClick={() => setShowPending((value) => !value)}
-                            className="w-full justify-start gap-1 border-t px-3 text-muted-foreground"
-                        >
-                            {showPending ? '▾' : '▸'} 进展（谁卡在哪）
-                        </Button>
-                        {showPending && <PendingTable roomId={room.id} />}
+                <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setShowPending((value) => !value)}
+                    className="w-full justify-start gap-1 border-t px-3 text-muted-foreground"
+                >
+                    {showPending ? '▾' : '▸'} 进展（谁卡在哪）
+                </Button>
+                {showPending && <PendingTable roomId={room.id} />}
 
-                        {note !== null && <p className="border-t px-3 py-2 text-xs text-muted-foreground">{note}</p>}
-                    </div>
-                </>
-            )}
-        </span>
+                {note !== null && <p className="border-t px-3 py-2 text-xs text-muted-foreground">{note}</p>}
+            </PopoverContent>
+        </Popover>
     );
 }
