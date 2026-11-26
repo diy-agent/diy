@@ -48,7 +48,7 @@ curl -s "http://127.0.0.1:$PORT/api/rooms"  # 数据面
 | -------------------------------- | ------- | --------------------- | ----------- | ----------------------------------- |
 | `./sha.sh dev` / `lab`           | lab     | `run/diy2/lab`        | development | 0（内核分配，落 `<home>/app.port`） |
 | `./sha.sh staging [--build]`     | staging | `run/diy2/staging`    | development | 0                                   |
-| `./sha.sh start`（= `diy2 web`） | prod    | `~/.diy2`         | production  | 5192                                |
+| `./sha.sh start`（= `diy2 web`） | prod    | `~/.diy2`              | production  | 5192                                |
 
 产物目录**固定** `apps/diy2/build/prod/{web,server,cli}`（一个包目录一份产物）：多份并存靠
 worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目录。

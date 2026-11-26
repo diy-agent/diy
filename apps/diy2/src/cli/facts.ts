@@ -9,13 +9,13 @@
 //
 // 语义是 2026-11 修订后的口径：文件仍是唯一真源，不建索引、不引入 claim / evidence。
 
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 import { z } from 'zod';
 import { RpcSchema } from '@diy-agent/rpc';
-import { briefOf, findIn, getSection, deviceKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
+import { briefOf, findIn, getSection, deviceKbRoot, kbRootOf, sameKbRoot, scanKb } from '@diy-agent/kb';
 
 const Scope = z.enum(['project', 'global']);
 
@@ -52,20 +52,18 @@ const KbStats = z.object({
  * 设备级库，那不是项目库。所以「与设备库同路径」时按「没有项目库」处理
  * （给一个不存在的路径，scanKb 自然返回空）。
  *
- * 判据必须走 realpath：`~/.diy/knowledge` 是为了兼容旧读者留的 symlink，它指向
- * `~/.diy2/knowledge` —— 只比 resolve 会当成两个不同的库，把设备库重复算成项目库。
+ * 判据必须走 realpath（`sameKbRoot`）：`~/.diy/knowledge` 是为了兼容旧读者留的 symlink，
+ * 它指向 `~/.diy2/knowledge` —— 只比 resolve 会当成两个不同的库，把设备库重复算成项目库。
+ *
+ * 「没有项目库」那个占位路径必须是**保证不存在**的：cwd 是家目录时 `.diy/knowledge`
+ * 本身就是设备库 symlink，拿它当占位符等于真扫到设备库（2026-11-26 实测：`facts status`
+ * 在 `~` 下报 project=11 条 + overlap same=11）。
  */
+const NO_PROJECT_KB = '.__no-project-kb__';
+
 function projectRootOf(global: string): string {
     const found = kbRootOf(process.cwd());
-    return sameRealPath(found, global) ? join(process.cwd(), '.diy', 'knowledge') : found;
-}
-
-function sameRealPath(a: string, b: string): boolean {
-    try {
-        return realpathSync(a) === realpathSync(b);
-    } catch {
-        return resolve(a) === resolve(b);
-    }
+    return sameKbRoot(found, global) ? join(process.cwd(), '.diy', 'knowledge', NO_PROJECT_KB) : found;
 }
 
 /**
@@ -115,7 +113,7 @@ export const factsApi = RpcSchema.group({
     children: {
         facts: RpcSchema.group({
             desc:
-                `知识库的只读投影（真源 = .diy/knowledge/**/*.md；项目库优先，~/.diy/knowledge 兜底）。` +
+                `知识库的只读投影（真源 = .diy/knowledge/**/*.md；项目库优先，设备库 ~/.diy2/knowledge 兜底）。` +
                 `\n\n**不知道先看哪条 → \`diy2 facts brief rule\`**（列目录下每条知识的小节 + 首句）；` +
                 `要正文用 \`diy2 facts get rule/dev#worktree\`；跨主题搜用 \`diy2 facts find 关键词\`。`,
             children: {

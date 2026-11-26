@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -82,6 +82,21 @@ describe('buildRoomSystemContext', () => {
         const text = buildRoomSystemContext({ cwd: repo });
         expect(text).toContain('app/');
         expect(text).toContain('alpha');
+    });
+
+    it('cwd 下的 `.diy/knowledge` 是设备库的 symlink 时，只算一份（scope=global）', () => {
+        const base = tmp();
+        const kbReal = join(base, 'devhome', 'knowledge');
+        mkdirSync(join(kbReal, 'tool'), { recursive: true });
+        writeFileSync(join(kbReal, 'tool', 'tool.md'), '---\ndesc: 设备工具\n---\n\n## cdp\n\n走 CDP\n');
+        const cwd = join(base, 'home');
+        mkdirSync(join(cwd, '.diy'), { recursive: true });
+        // 家目录下的兼容 symlink：`~/.diy/knowledge` → 设备库（2026-11-26 迁移后就是这么留的）
+        symlinkSync(kbReal, join(cwd, '.diy', 'knowledge'));
+
+        const text = buildRoomSystemContext({ cwd, deviceHome: join(base, 'devhome') });
+        expect(text).toContain('scope: global');
+        expect(text).not.toContain('scope: project');
     });
 
     it('空目录：没有链/知识库，但 diy / cwd 仍在信封里', () => {

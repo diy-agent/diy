@@ -467,6 +467,7 @@ export {
     firstSentence,
     getSection,
     deviceKbRoot,
+    sameKbRoot,
     parseSections,
     pathsOf,
     type KbBriefItem,
