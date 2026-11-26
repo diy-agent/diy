@@ -66,11 +66,13 @@ export {
 export { adviceOf, endItems, endReasonOf, publishable, type EndFacts, type EndItemContext } from './end-reason';
 export {
     botLastTurnOf,
+    createTurnLookup,
     needsHuman,
     outcomeOfFact,
     outcomeText,
     withTurnFact,
     type BotLastTurn,
+    type TurnFactSource,
 } from './bot-status';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';

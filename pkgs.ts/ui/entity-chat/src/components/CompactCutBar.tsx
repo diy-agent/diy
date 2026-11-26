@@ -16,6 +16,7 @@ import * as React from 'react';
 import type { SessionInfo } from '@diy-agent/chat-core';
 
 import { CopyButton } from './CopyButton';
+import { Button } from '@diy-agent/ui-shadcn';
 
 export function CompactCutBar({ sessions }: { sessions: readonly SessionInfo[] }) {
     const [open, setOpen] = React.useState(false);
@@ -33,22 +34,24 @@ export function CompactCutBar({ sessions }: { sessions: readonly SessionInfo[] }
 
     return (
         <div className="my-2">
-            <button
+            <Button
+                variant="ghost"
+                size="xs"
                 onClick={() => setOpen((value) => !value)}
                 title="被压缩的历史对 bot 不再可见，这里是压缩留下的摘要"
-                className="flex w-full items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+                className="h-auto w-full justify-start gap-1.5 px-0 text-muted-foreground"
             >
                 <Scissors className="size-3" />
                 <span>{label}</span>
                 {summaryCount > 0 && <span className="opacity-70">· 摘要 {summaryCount}</span>}
                 <ChevronDown className={`size-3 transition-transform ${open ? '' : '-rotate-90'}`} />
                 <span className="mx-1 h-px flex-1 bg-border" />
-            </button>
+            </Button>
             {open && (
                 <div className="mt-1 space-y-1.5 rounded border bg-muted/30 px-2 py-1.5">
                     {compacted.map((session) => (
                         <div key={session.botId}>
-                            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <span className="font-medium text-foreground">{session.name}</span>
                                 <span>折叠 {session.stats.collapsed} 条</span>
                                 <span>压过 {session.stats.compactions} 次</span>
@@ -62,7 +65,7 @@ export function CompactCutBar({ sessions }: { sessions: readonly SessionInfo[] }
                                     />
                                 )}
                             </div>
-                            <pre className="mt-0.5 max-h-32 overflow-auto text-[10px] leading-snug whitespace-pre-wrap text-muted-foreground">
+                            <pre className="mt-0.5 max-h-32 overflow-auto text-xs leading-snug whitespace-pre-wrap text-muted-foreground">
                                 {session.stats.summary ?? '（这一份上下文里没有摘要，只有折叠计数）'}
                             </pre>
                         </div>

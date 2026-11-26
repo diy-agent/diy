@@ -16,6 +16,8 @@
 import { elapsedText, settleFactsOf, turnSettleOf, type TimelineEntry } from '@diy-agent/chat-core';
 import * as React from 'react';
 
+import { Button } from '@diy-agent/ui-shadcn';
+
 import { formatAtAbsolute, formatClock } from '../model';
 import { RunningIndicator } from './RunningIndicator';
 import { useNow } from './useNow';
@@ -48,18 +50,22 @@ export function TurnFooter({
     const facts = settleFactsOf(entry.turn);
 
     return (
-        <div className="mt-2 flex items-center justify-between gap-3 border-t border-dashed pt-1.5 text-[12px] leading-4">
-            <div className={`flex min-w-0 items-center gap-1.5 ${live ? 'text-muted-foreground' : TONE_CLASS[settle?.tone ?? 'muted']}`}>
+        <div className="mt-2 flex items-center justify-between gap-3 border-t border-dashed pt-1.5 text-xs leading-4">
+            <div
+                className={`flex min-w-0 items-center gap-1.5 ${live ? 'text-muted-foreground' : TONE_CLASS[settle?.tone ?? 'muted']}`}
+            >
                 {live ? (
                     <>
                         {onStopBot !== undefined && entry.author !== undefined && (
-                            <button
+                            <Button
+                                variant="ghost"
+                                size="xs"
                                 onClick={() => onStopBot(entry.author!.id)}
                                 title="停这一轮"
-                                className="shrink-0 rounded px-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                                className="h-5 shrink-0 px-1 text-muted-foreground"
                             >
                                 停
-                            </button>
+                            </Button>
                         )}
                         {/* `since` / `stallable`：没有 progress 事实时（刚刷新）退到 180s 兜底；
                             waiting 不给 stallable —— 它的起点含已推进的内容，会误报（见 stuckHintOf） */}
@@ -79,9 +85,7 @@ export function TurnFooter({
                         <span className="shrink-0" title={settle?.detail ?? settle?.label}>
                             {settle?.label}
                         </span>
-                        {facts.length > 0 && (
-                            <span className="truncate opacity-80">· {facts.join(' · ')}</span>
-                        )}
+                        {facts.length > 0 && <span className="truncate opacity-80">· {facts.join(' · ')}</span>}
                     </>
                 )}
             </div>

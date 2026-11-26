@@ -16,23 +16,28 @@ import { actions } from '../store';
 import { useSurfaceId } from '../surface';
 import { SURFACES } from '../surfaces/registry';
 import { MenuButton } from './Menu';
+import { Button } from '@diy-agent/ui-shadcn';
 
 /** 表面切换：只是几颗 tab（壳 / 边框 / 内边距归调用方那一行）。 */
 export function SurfaceTabs() {
     const [value, set] = useSurfaceId();
+    // 只剩一面时不画 tab：一颗永远选中的按钮不提供任何选择，只是噪音
+    if (SURFACES.length < 2) return null;
     return (
         <div className="flex items-center gap-1">
             {SURFACES.map((surface) => (
-                <button
+                <Button
                     key={surface.id}
+                    variant="ghost"
+                    size="xs"
                     onClick={() => set(surface.id)}
                     title={surface.hint}
-                    className={`rounded-md px-2.5 py-0.5 text-xs ${
-                        value === surface.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
-                    }`}
+                    aria-pressed={value === surface.id}
+                    // 选中态手写（ghost 没有 aria-pressed 的默认样式）
+                    className={`${value === surface.id ? 'bg-accent text-foreground' : 'text-muted-foreground'}`}
                 >
                     {surface.name}
-                </button>
+                </Button>
             ))}
         </div>
     );
@@ -59,7 +64,12 @@ export function RoomMenu({
             title="房间操作"
             items={[
                 { key: 'member', label: '加成员', icon: <Plus className="size-3.5" />, onClick: onAddMember },
-                { key: 'settings', label: '房间设置', icon: <Settings className="size-3.5" />, onClick: onOpenSettings },
+                {
+                    key: 'settings',
+                    label: '房间设置',
+                    icon: <Settings className="size-3.5" />,
+                    onClick: onOpenSettings,
+                },
                 ...(openTask
                     ? [
                           {

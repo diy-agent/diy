@@ -13,6 +13,7 @@ import type { Room } from '../model';
 import { useNavSources, type NavContext, type NavHost } from '../nav';
 import { registerBuiltinNav } from '../nav/index';
 import { useAddress } from '../store';
+import { Button } from '@diy-agent/ui-shadcn';
 
 // 模块加载时注册内建来源（幂等）。放在这里而不是 App：侧栏是它们唯一的宿主，
 // 谁渲染侧栏谁就该保证来源在 —— 少了这一步，侧栏会安静地空白，没有任何报错。
@@ -158,22 +159,26 @@ export function Sidebar({
             {(open || showToggle) && (
                 <div className={`flex items-center border-b py-2 ${open ? 'gap-2 px-3' : 'justify-center px-1'}`}>
                     {open && (
-                        <button
+                        <Button
+                            variant="ghost"
+                            size="icon-xs"
                             onClick={onCreateProject}
                             title="从本机目录新建项目"
-                            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                            className="text-muted-foreground"
                         >
                             <Plus className="size-4" />
-                        </button>
+                        </Button>
                     )}
                     {showToggle && (
-                        <button
+                        <Button
+                            variant="ghost"
+                            size="icon-xs"
                             onClick={onToggle}
                             title={open ? '收起侧栏（⌘B）' : '展开侧栏（⌘B）'}
-                            className={`rounded p-1 text-muted-foreground hover:bg-muted ${open ? 'ml-auto' : ''}`}
+                            className={`text-muted-foreground ${open ? 'ml-auto' : ''}`}
                         >
                             {open ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
-                        </button>
+                        </Button>
                     )}
                 </div>
             )}
@@ -189,13 +194,15 @@ export function Sidebar({
             {(open || onOpenSettings !== undefined) && (
                 <div className={`flex items-center border-t py-2 ${open ? 'justify-end px-3' : 'justify-center'}`}>
                     {onOpenSettings !== undefined && (
-                        <button
+                        <Button
+                            variant="ghost"
+                            size="icon-xs"
                             onClick={onOpenSettings}
                             title="模型设置"
-                            className="rounded p-1 text-muted-foreground hover:bg-muted"
+                            className="text-muted-foreground"
                         >
                             <Settings className="size-4" />
-                        </button>
+                        </Button>
                     )}
                 </div>
             )}

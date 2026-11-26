@@ -23,6 +23,15 @@
 
 ⚠️ **开工前至少 brief 一次 `find/find`（这功能在哪）与 `rule`（硬约束，破了要返工）** —— 这两节原本每轮自动在眼前，现在改成你主动取。漏取的代价是不知道有这条约束，不是查不到（单主题 1~3 KB，索引本身每轮常驻）。
 
+## UI（硬规则，写任何界面代码前先看）
+
+1. **先读仓根 `DESIGN.md`** —— 色彩角色 / 字号 / 圆角 / 控件高度 / 组件选择 / Do&Don't / 已知坑全在那里。
+2. **组件优先 `@diy-agent/ui-shadcn`**：`button` / `input` / `textarea` / `select` / 弹窗 / 菜单 / tab 一律用它，不手写（手写 = 一份要单独维护的焦点管理与 aria）。
+3. **禁任意值**：不写 `bg-[#...]` / `text-[13px]` / `h-[38px]` / `rounded-[7px]`；只用语义变量与 Tailwind 刻度。
+4. **改完 UI 必验**：`./sha.sh lab --app diy2`（**单端口无 Electron**，浏览器直开 `app.port`）+ 无横向溢出（主壳验 1200/1280，组件级在 std-lab 验 375）+ console 零错误。
+
+> astryx 面已于 2026-11-26 **删除**（11-25 先冻结、11-26 标废弃后删）—— 现在只有 shadcn 一面，历史见 `docs/plans/2026-11-24-surface-parity.md` §7。
+
 ## 历史归档
 
 - `pkgs/` 下 Python 包（`diy-core`/`diy-app`/`diy-cli`/`diy-clirpc`/`diy-test`/`diy-ui`）仅归档，不演进

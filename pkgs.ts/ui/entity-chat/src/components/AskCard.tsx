@@ -29,6 +29,7 @@ import { Check, Clock, HelpCircle, MinusCircle } from 'lucide-react';
 import * as React from 'react';
 
 import type { AskAnswer, AskQuestion, AskRequest } from '@diy-agent/chat-core';
+import { Button, Input, Textarea } from '@diy-agent/ui-shadcn';
 
 import {
     answerOf,
@@ -203,36 +204,36 @@ export function AskCard({
                     */}
                     {multi && (
                         <div className="flex items-baseline gap-2">
-                            <div className="text-[12px] font-medium">
+                            <div className="text-xs font-medium">
                                 {done
                                     ? `这一批 ${request.questions.length} 题`
                                     : `需要你定 ${request.questions.length} 件事`}
                             </div>
                             {!done && optionals > 0 && (
-                                <span className="text-[10px] text-muted-foreground">{optionals} 题可选</span>
+                                <span className="text-xs text-muted-foreground">{optionals} 题可选</span>
                             )}
-                            {!done && expanded && (
-                                <span className="text-[10px] text-muted-foreground">一次提交就行</span>
-                            )}
+                            {!done && expanded && <span className="text-xs text-muted-foreground">一次提交就行</span>}
                             {!done && (
                                 // 展开是为了「对比着答」，翻页是为了「一次只想一题」—— 两种都要
-                                <button
+                                <Button
+                                    variant="link"
+                                    size="xs"
                                     onClick={() => setExpanded((value) => !value)}
-                                    className="ml-auto text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                                    className="ml-auto h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
                                 >
                                     {expanded ? '一题一页' : '全部展开'}
-                                </button>
+                                </Button>
                             )}
                         </div>
                     )}
                     {request.note !== undefined && (
-                        <div className="mt-0.5 text-[11px] text-muted-foreground">{request.note}</div>
+                        <div className="mt-0.5 text-xs text-muted-foreground">{request.note}</div>
                     )}
 
                     {paging && (
                         // 进度：`1/3` + 每条一题的小段（答过的变绿、跳过的变灰），点一段直接跳
                         <div className="mt-1 flex items-center gap-1.5">
-                            <span className="text-[10px] tabular-nums text-muted-foreground">
+                            <span className="text-xs tabular-nums text-muted-foreground">
                                 {current + 1}/{request.questions.length}
                             </span>
                             <div className="flex flex-1 gap-1">
@@ -247,6 +248,8 @@ export function AskCard({
                                                 ? 'bg-emerald-500/60'
                                                 : 'bg-muted';
                                     return (
+                                        // 这里保留手写 button：它是 4px 高的进度点，靠伪元素把可点区上下各撑
+                                        // 开 6px，Button 的尺寸与内边距体系（h-6 起）套不上
                                         <button
                                             key={question.id}
                                             onClick={() => setPage(index)}
@@ -310,7 +313,7 @@ export function AskCard({
                         {done ? (
                             // 已回答：只留一个状态痕迹，不再给按钮（重复提交只会得到 404）
                             <span
-                                className={`text-[11px] ${resolved?.cancelled === true || resolved?.expired === true ? 'text-muted-foreground' : 'text-emerald-500'}`}
+                                className={`text-xs ${resolved?.cancelled === true || resolved?.expired === true ? 'text-muted-foreground' : 'text-emerald-500'}`}
                             >
                                 {resolved?.expired === true
                                     ? `已过期${resolved.reason === undefined ? '' : `（${resolved.reason}）`}：提问者没等这个答案，已经继续工作了`
@@ -321,23 +324,29 @@ export function AskCard({
                         ) : (
                             <>
                                 {paging && (
-                                    <button
+                                    <Button
+                                        variant="outline"
+                                        size="xs"
                                         onClick={() => setPage(Math.max(0, current - 1))}
                                         disabled={current === 0 || busy}
-                                        className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-40"
+                                        className="text-muted-foreground"
                                     >
                                         上一题
-                                    </button>
+                                    </Button>
                                 )}
                                 {/*
                                     翻页模式下，非最后一页由「下一题」推进、最后一页才给提交；
                                     平铺（单题 / 已展开）直接提交。两种都是**一次提交整批**。
                                 */}
                                 {(!paging || current === last) && (
-                                    <button
+                                    <Button
+                                        variant="outline"
+                                        size="xs"
                                         onClick={() => void submit()}
                                         disabled={busy}
-                                        className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] hover:bg-sky-500/20 disabled:opacity-50"
+                                        // 主动作，但用 sky 而不是 primary：sky 在本卡里就是「模型在问你」的语义
+                                        // （与顶部 HelpCircle 同色），换成 primary 会和别处的主按钮抢戏
+                                        className="border-sky-500/40 bg-sky-500/10 hover:bg-sky-500/20"
                                     >
                                         {busy
                                             ? '提交中…'
@@ -346,16 +355,17 @@ export function AskCard({
                                               : request.questions[0]?.kind === 'choice'
                                                 ? '就这样'
                                                 : '提交'}
-                                    </button>
+                                    </Button>
                                 )}
                                 {paging && current < last && (
-                                    <button
+                                    <Button
+                                        variant="outline"
+                                        size="xs"
                                         onClick={() => setPage(current + 1)}
                                         disabled={busy}
-                                        className="rounded border px-2 py-0.5 text-[11px] hover:bg-muted disabled:opacity-50"
                                     >
                                         下一题
-                                    </button>
+                                    </Button>
                                 )}
                                 {/*
                                     不是「取消本轮」：那条停的是「正在生成」，而 ask 不阻塞、
@@ -363,22 +373,24 @@ export function AskCard({
                                     只会什么都不发生（服务器对 ask 也没有单条撤回的能力，以前）。
                                     现在只做一件事：把这一问作废，卡片收尾，不触发任何运行。
                                 */}
-                                <button
+                                <Button
+                                    variant="ghost"
+                                    size="xs"
                                     onClick={() => void withdraw()}
                                     disabled={busy}
-                                    className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-50"
+                                    className="text-muted-foreground"
                                 >
                                     {multi ? '撤掉这一批' : '撤掉这一问'}
-                                </button>
+                                </Button>
                                 {!ready && error === null && (
-                                    <span className="text-[10px] text-muted-foreground">{hint}</span>
+                                    <span className="text-xs text-muted-foreground">{hint}</span>
                                 )}
                             </>
                         )}
                     </div>
-                    {error !== null && <p className="mt-1 text-[10px] text-destructive">{error}</p>}
+                    {error !== null && <p className="mt-1 text-xs text-destructive">{error}</p>}
                     {error === null && showMissing && unanswered.length > 0 && (
-                        <p className="mt-1 text-[10px] text-destructive">
+                        <p className="mt-1 text-xs text-destructive">
                             还有 {unanswered.length} 题没答（题目标了「必答」；不想定就点「跳过」）
                         </p>
                     )}
@@ -424,36 +436,38 @@ function QuestionBlock({
         <div className={total > 1 ? 'rounded border border-border/60 px-2 py-1.5' : ''}>
             <div className="flex items-start gap-2">
                 {total > 1 && (
-                    <span className="mt-0.5 shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                    <span className="mt-0.5 shrink-0 rounded bg-muted px-1 text-xs text-muted-foreground">
                         {index + 1}/{total}
                     </span>
                 )}
                 <div className="min-w-0 flex-1">
                     <div
-                        className={`text-[12px] ${done && skipped ? 'text-muted-foreground line-through' : 'font-medium'}`}
+                        className={`text-xs ${done && skipped ? 'text-muted-foreground line-through' : 'font-medium'}`}
                     >
                         {question.question}
                         {question.required === false && (
-                            <span className="ml-1 text-[10px] font-normal text-muted-foreground">（可选）</span>
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">（可选）</span>
                         )}
                         {showMissing && !done && !isQuestionSatisfied(question, draft) && (
-                            <span className="ml-1 text-[10px] font-normal text-destructive">必答</span>
+                            <span className="ml-1 text-xs font-normal text-destructive">必答</span>
                         )}
                     </div>
                     {question.note !== undefined && (
-                        <div className="mt-0.5 text-[11px] text-muted-foreground">{question.note}</div>
+                        <div className="mt-0.5 text-xs text-muted-foreground">{question.note}</div>
                     )}
 
                     {skipped ? (
-                        <div className="mt-1 text-[11px] text-muted-foreground">
+                        <div className="mt-1 text-xs text-muted-foreground">
                             （跳过）
                             {!done && (
-                                <button
+                                <Button
+                                    variant="link"
+                                    size="xs"
                                     onClick={() => onChange((previous) => setSkipped(previous, question.id, false))}
-                                    className="ml-1 underline underline-offset-2 hover:text-foreground"
+                                    className="ml-1 h-auto p-0 text-muted-foreground hover:text-foreground"
                                 >
                                     撤销
-                                </button>
+                                </Button>
                             )}
                         </div>
                     ) : (
@@ -461,7 +475,7 @@ function QuestionBlock({
                             {question.kind === 'form' && (
                                 <div className="mt-1.5 flex flex-col gap-1.5">
                                     {(question.fields ?? []).map((field) => (
-                                        <label key={field.name} className="flex flex-col gap-0.5 text-[12px]">
+                                        <label key={field.name} className="flex flex-col gap-0.5 text-xs">
                                             <span className="text-muted-foreground">
                                                 {field.label}
                                                 {field.required === true && (
@@ -469,7 +483,7 @@ function QuestionBlock({
                                                 )}
                                             </span>
                                             {field.type === 'textarea' ? (
-                                                <textarea
+                                                <Textarea
                                                     readOnly={done}
                                                     disabled={done}
                                                     value={
@@ -489,10 +503,10 @@ function QuestionBlock({
                                                     }
                                                     placeholder={field.placeholder}
                                                     rows={2}
-                                                    className="rounded border bg-background px-2 py-1 text-[12px] outline-none"
+                                                    className="rounded border bg-background px-2 py-1 text-xs outline-none"
                                                 />
                                             ) : (
-                                                <input
+                                                <Input
                                                     type={field.type === 'number' ? 'number' : 'text'}
                                                     readOnly={done}
                                                     disabled={done}
@@ -512,7 +526,7 @@ function QuestionBlock({
                                                         )
                                                     }
                                                     placeholder={field.placeholder}
-                                                    className="rounded border bg-background px-2 py-1 text-[12px] outline-none"
+                                                    className="rounded border bg-background px-2 py-1 text-xs outline-none"
                                                 />
                                             )}
                                         </label>
@@ -535,11 +549,11 @@ function QuestionBlock({
                                         return (
                                             <label
                                                 key={option.value}
-                                                className={`flex items-start gap-2 rounded border px-2 py-1 text-[12px] ${
+                                                className={`flex items-start gap-2 rounded border px-2 py-1 text-xs ${
                                                     done ? '' : 'cursor-pointer hover:bg-muted'
                                                 } ${skin}`}
                                             >
-                                                <input
+                                                <Input
                                                     type={multiple ? 'checkbox' : 'radio'}
                                                     // 同名 radio 会把整批的题连成一组（只能选一个），必须按题分组；
                                                     // 带上 askId 才是**跨卡片**唯一 —— 单题卡题 id 恒为 q1（见 radioGroupName）
@@ -567,12 +581,12 @@ function QuestionBlock({
                                     {question.allowFreeform === true &&
                                         (done ? (
                                             answeredText.trim() === '' ? null : (
-                                                <div className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[12px]">
+                                                <div className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs">
                                                     其他：{answeredText}
                                                 </div>
                                             )
                                         ) : (
-                                            <input
+                                            <Input
                                                 value={draft.text}
                                                 onChange={(event) =>
                                                     onChange((previous) =>
@@ -580,7 +594,7 @@ function QuestionBlock({
                                                     )
                                                 }
                                                 placeholder="其他（直接输入）"
-                                                className="rounded border bg-background px-2 py-1 text-[12px] outline-none"
+                                                className="rounded border bg-background px-2 py-1 text-xs outline-none"
                                             />
                                         ))}
                                 </div>
@@ -588,25 +602,25 @@ function QuestionBlock({
 
                             {question.kind === 'text' &&
                                 (done ? (
-                                    <div className="mt-1.5 rounded border bg-background px-2 py-1 text-[12px] whitespace-pre-wrap">
+                                    <div className="mt-1.5 rounded border bg-background px-2 py-1 text-xs whitespace-pre-wrap">
                                         {answeredText.trim() === '' ? '（空）' : answeredText}
                                     </div>
                                 ) : (
-                                    <textarea
+                                    <Textarea
                                         value={draft.text}
                                         onChange={(event) =>
                                             onChange((previous) => setText(previous, question.id, event.target.value))
                                         }
                                         placeholder="输入你的回答…"
                                         rows={2}
-                                        className="mt-1.5 w-full rounded border bg-background px-2 py-1 text-[12px] outline-none"
+                                        className="mt-1.5 w-full rounded border bg-background px-2 py-1 text-xs outline-none"
                                     />
                                 ))}
                         </>
                     )}
 
                     {!done && total > 1 && !skipped && (
-                        <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                             {missing.length > 0 && <span>还有 {missing.length} 个必填项</span>}
                             {isQuestionReady(question, draft) && <span className="text-emerald-500">已答</span>}
                             {question.required === false && !isQuestionReady(question, draft) && <span>可留空</span>}
@@ -614,12 +628,14 @@ function QuestionBlock({
                                 显式跳过而不是"留空就好"：模型必须能区分「他不想定」和「他漏了」。
                                 dsh 用 {selected:[]} 占位、shadcn 用 status:'skipped'，两家独立收敛。
                             */}
-                            <button
+                            <Button
+                                variant="link"
+                                size="xs"
                                 onClick={() => onChange((previous) => setSkipped(previous, question.id, true))}
-                                className="underline underline-offset-2 hover:text-foreground"
+                                className="h-auto p-0"
                             >
                                 跳过
-                            </button>
+                            </Button>
                         </div>
                     )}
                 </div>
