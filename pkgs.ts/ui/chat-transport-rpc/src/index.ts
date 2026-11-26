@@ -135,6 +135,13 @@ export type RoomRow = Room & {
      * 待续跑的那几条，以前这一段在界面完全看不见。
      */
     queued?: number;
+    /**
+     * 未读条数（`seq > 已读水位` 且不是我发的），见 `room_read`。
+     *
+     * 与 `pendingAsks` 同一约定（0 不写）：侧栏画一颗蓝点。
+     * **它不参与「要你动手」的计数** —— 未读是“有结果了，去看看吧”，不是“卡住了”。
+     */
+    unread?: number;
 };
 
 export class RpcChatClient implements ChatClient {
@@ -174,6 +181,12 @@ export class RpcChatClient implements ChatClient {
         }): Promise<Room> => this.call('rooms.update', input),
         remove: (id: string): Promise<{ deleted?: string[] }> => this.call('rooms.remove', { id }),
         addMember: (id: string, botId: string): Promise<Room> => this.call('rooms.addMember', { id, botId }),
+        /**
+         * 上报未读水位（房间打开且页面可见时由 UI 调）。
+         * 服务端只前进不后退，所以重复 / 迟到的上报都安全。
+         */
+        markRead: (id: string, seq?: number): Promise<unknown> =>
+            this.call('rooms.markRead', seq === undefined ? { id } : { id, seq }),
     };
 
     readonly bots = {

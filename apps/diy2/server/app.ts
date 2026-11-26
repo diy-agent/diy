@@ -635,6 +635,8 @@ export async function createDiy2App(opts: {
                     const draftOwners = store.draftOwnersByKind();
                     const withInputDraft = new Set(draftOwners.input);
                     const lastItemAt = store.lastItemAtByRoom();
+                    // 未读：一次算完全实例（一条 GROUP BY），不逐房间问
+                    const unread = store.unreadByRoom();
                     return [...rooms.values()].map((actor) => {
                         const id = actor.spec.id;
                         const at = lastItemAt[id];
@@ -661,6 +663,7 @@ export async function createDiy2App(opts: {
                                       ),
                                   }),
                             ...(at === undefined ? {} : { lastActivityAt: at }),
+                            ...((unread[id] ?? 0) === 0 ? {} : { unread: unread[id] }),
                         };
                     });
                 },
@@ -728,6 +731,14 @@ export async function createDiy2App(opts: {
                         if (removed.has(bot.homeRoomId) && !referenced.has(bot.id)) store.deleteBot(bot.id);
                     }
                     return { id: input.id, deleted: victims };
+                },
+                /**
+                 * 上报未读水位（房间打开且页面可见时由 UI 调）。
+                 * 只前进不后退 —— 多个标签页 / 迟到的旧上报不能把水位拉回去。
+                 */
+                markRead: async ({ input }) => {
+                    store.markRead(input.id, input.seq);
+                    return { ok: true, seq: store.readSeqOf(input.id) ?? input.seq };
                 },
                 addMember: async ({ input }) => {
                     const actor = requireRoom(input.id);
