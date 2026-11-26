@@ -28,6 +28,7 @@
         "@ai-sdk/openai-compatible": "^3.0.92",
         "@diy-agent/agents-chain": "*",
         "@diy-agent/context": "*",
+        "@diy-agent/code-runtime": "*",
         "@diy-agent/compaction": "*",
         "@diy-agent/jobs": "*",
         "@diy-agent/kb": "*",

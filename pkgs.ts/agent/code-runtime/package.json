@@ -1,0 +1,35 @@
+{
+    "name": "@diy-agent/code-runtime",
+    "version": "0.1.0",
+    "private": true,
+    "description": "code-runtime：模型代码的执行引擎（策略化——引擎可换进程内/子进程，注入的 globals 契约不变）",
+    "license": "MIT",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./dist/index.js"
+        },
+        "./in-process": {
+            "types": "./src/in-process.ts",
+            "default": "./dist/in-process.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {
+        "@diy-agent/rpc": "*"
+    },
+    "devDependencies": {
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    }
+}
