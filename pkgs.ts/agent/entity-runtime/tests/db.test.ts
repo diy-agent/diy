@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { openStore, type TaskInput } from '../src/db';
-import type { Room } from '../src/types';
+import type { Item, Room } from '../src/types';
 
 const room: Room = {
     id: 'task-abc',
@@ -587,5 +587,63 @@ describe('分组查询走表达式索引', () => {
             data: { text: '没跑完', kind: 'interrupted', botId: 'bot:1' },
         });
         expect(planOf(store, DELETE_INTERRUPTED)).toContain('items_interrupted');
+    });
+});
+
+describe('未读水位（room_read）', () => {
+    const chat = (id: string, role: 'human' | 'bot'): Item => ({
+        id,
+        seq: 0,
+        turn: 1,
+        turnId: 't1',
+        at: Date.now(),
+        status: 'done',
+        author: { id: role === 'human' ? 'u1' : 'b1', name: role, color: '#fff', role },
+        type: 'chat',
+        data: { text: id },
+    });
+    /** 轮级事实：没有 author —— 它正是“有结果了”的信号，要算未读 */
+    const notice = (id: string): Item => ({
+        id,
+        seq: 0,
+        turnId: 't1',
+        at: Date.now(),
+        status: 'done',
+        type: 'notice',
+        data: { text: '这一轮被截断了', kind: 'max-tokens' },
+    });
+
+    it('未读 = 非我发的条目；我自己说的话不算', () => {
+        const store = openStore(':memory:');
+        store.appendItem(room.id, chat('h1', 'human')); // 我发的
+        store.appendItem(room.id, chat('b1', 'bot'));
+        store.appendItem(room.id, notice('n1'));
+        // 没读过 ⇒ 从 0 起算：bot 的 1 条 + notice 的 1 条 = 2
+        expect(store.unreadByRoom()).toEqual({ [room.id]: 2 });
+    });
+
+    it('markRead 不传 seq = 推到最后一条，清零', () => {
+        const store = openStore(':memory:');
+        store.appendItem(room.id, chat('b1', 'bot'));
+        store.markRead(room.id);
+        expect(store.unreadByRoom()).toEqual({});
+        expect(store.readSeqOf(room.id)).toBe(store.maxSeqOf(room.id));
+    });
+
+    it('只前进不后退：迟到的旧上报不能把水位拉回去', () => {
+        const store = openStore(':memory:');
+        store.appendItem(room.id, chat('b1', 'bot'));
+        const first = store.maxSeqOf(room.id)!;
+        store.markRead(room.id, first);
+        store.markRead(room.id, 1); // 旧客户端 / 迟到的上报
+        expect(store.readSeqOf(room.id)).toBe(first);
+    });
+
+    it('读到某一条为止：之后的还算未读', () => {
+        const store = openStore(':memory:');
+        const a = store.appendItem(room.id, chat('b1', 'bot'));
+        store.markRead(room.id, a.seq);
+        store.appendItem(room.id, chat('b2', 'bot'));
+        expect(store.unreadByRoom()).toEqual({ [room.id]: 1 });
     });
 });

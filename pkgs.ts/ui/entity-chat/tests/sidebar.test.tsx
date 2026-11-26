@@ -142,6 +142,29 @@ describe('侧栏按注册表渲染', () => {
         expect(html.match(/aria-label="有投递在排队"/g) ?? []).toHaveLength(1);
     });
 
+    it('未读在行上看得见（蓝点）—— 与「等你回答」的 ? 分得开', async () => {
+        setDiy2Client({
+            rooms: {
+                list: async () => rooms.map((room) => ({ ...room, unread: room.id === 'task:t-open' ? 3 : 0 })),
+            },
+            bots: { list: async () => [] },
+            models: { list: async () => ({ providers: [] }) },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const html = render();
+        const unreadRow = rowOf(html, '/room/task/t-open');
+        expect(unreadRow).toContain('aria-label="有未读消息"');
+        expect(unreadRow).toContain('3 条未读');
+        // 未读 ≠ 等你回答：那颗 ? 不该因为未读就冒出来
+        expect(unreadRow).not.toContain('aria-label="有提问等你回答"');
+        expect(html.match(/aria-label="有未读消息"/g) ?? []).toHaveLength(1);
+    });
+
     it('每个项目行都在行上提供新建任务按钮，不依赖三点菜单或空项目占位', () => {
         const html = render();
         expect(html).toContain('aria-label="在「diy」下新建任务"');

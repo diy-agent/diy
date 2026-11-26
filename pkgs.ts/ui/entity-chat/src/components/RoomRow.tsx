@@ -30,6 +30,7 @@ import {
     usePendingAskTitlesOf,
     useQueuedOf,
     useRunningOf,
+    useUnreadOf,
 } from '../store';
 import { isPlainLeftClick } from './link';
 import { MenuButton } from './Menu';
@@ -99,6 +100,13 @@ export function RoomRowView({
      * 在项目/任务切换时会变 hook 数量）；项目行不显示 —— 项目自己没有会话。
      */
     const queued = useQueuedOf(room.id);
+    /**
+     * 未读条数（打开即算读，见 `useMarkRoomRead`）。
+     *
+     * 它和 `?`（等你回答）是两件事：那个是“卡在你这”，这个是“有结果了、去看看吧” ——
+     * 所以用蓝点而不是天蓝的 ?，也不进标题栏那颗红点。
+     */
+    const unread = useUnreadOf(room.id);
     const [renaming, setRenaming] = React.useState(false);
     /** 任务当前是 open（行尾显「关闭」还是「打开」—— 状态只有这一个判据） */
     const openTask = !isProject && taskStatusOf(room) === 'open';
@@ -120,7 +128,7 @@ export function RoomRowView({
                     event.preventDefault();
                     actions.select(room.id);
                 }}
-                title={`${room.type}：${roomTitle(room)}${running ? '（正在运行）' : ''}${queued > 0 ? `（排队 ${queued} 条）` : ''}${pendingAsk > 0 ? `（${askHint}）` : ''}`}
+                title={`${room.type}：${roomTitle(room)}${running ? '（正在运行）' : ''}${queued > 0 ? `（排队 ${queued} 条）` : ''}${pendingAsk > 0 ? `（${askHint}）` : ''}${unread > 0 ? `（${unread} 条未读）` : ''}`}
                 className={`relative flex w-full items-center justify-center rounded-lg py-2 ${
                     active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
                 }`}
@@ -148,6 +156,13 @@ export function RoomRowView({
                         title="有未提交的草稿"
                         aria-label="有未提交的草稿"
                         className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-400"
+                    />
+                )}
+                {unread > 0 && (
+                    <span
+                        title={`${unread} 条未读`}
+                        aria-label="有未读消息"
+                        className="absolute left-1 top-1 size-1.5 rounded-full bg-blue-400"
                     />
                 )}
                 {pendingAsk > 0 && (
@@ -265,6 +280,19 @@ export function RoomRowView({
                 >
                     <HelpCircle className="size-3" />
                     {pendingAsk > 1 && <span className="text-[10px] tabular-nums">{pendingAsk}</span>}
+                </span>
+            )}
+
+            {/* 未读：蓝点（不是那块天蓝的 ?）—— 「有结果了去看」与「卡在你这」是两种意思。
+                进来这个房间就会灭（`useMarkRoomRead` 把水位推到最后一条）。 */}
+            {unread > 0 && (
+                <span
+                    title={`${unread} 条未读`}
+                    aria-label="有未读消息"
+                    className="flex shrink-0 items-center gap-0.5 text-blue-400"
+                >
+                    <span className="size-1.5 rounded-full bg-blue-400" />
+                    {unread > 1 && <span className="text-[10px] tabular-nums">{unread}</span>}
                 </span>
             )}
 

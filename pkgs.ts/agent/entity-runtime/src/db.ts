@@ -363,6 +363,26 @@ export interface Store {
      */
     lastItemAtByRoom(): Record<string, number>;
     /**
+     * 记下「这个房间我读到 seq 了」—— 只前进不后退（同一房间被旧客户端的迟到上报
+     * 拉回去就永远有未读了）。
+     *
+     * 不给 `seq` = 推到这个房间**当前最后一条** —— 这正是 UI 要的语义（“我在看这个房间”，
+     * 它不需要知道全局 seq 是多少；UI 从此不必订阅 items 只为了算一个数字）。
+     */
+    markRead(roomId: string, seq?: number): void;
+    /** 这个房间当前读到哪一条了（没读过 = undefined，不是 0）。 */
+    readSeqOf(roomId: string): number | undefined;
+    /** 这个房间最后一条 item 的 seq（没有 = undefined） */
+    maxSeqOf(roomId: string): number | undefined;
+    /**
+     * 每个房间的**未读条数**：`seq > 已读水位` 且「不是我发的」。
+     *
+     * 算进来的：bot 的发言、轮级事实（notice / error，没有 author）、system。
+     * 不算的：我自己发的话（`author.role === 'human'`）—— 那是我刚打的，不必提醒我。
+     * 没读过的房间从 0 起算（第一次打开前全是未读）。0 不占键。
+     */
+    unreadByRoom(): Record<string, number>;
+    /**
      * 每个 bot 在给定房间里的**最后一条 item**（「上一轮怎么结束的」的唯一来源）。
      *
      * 一轮收尾时 `endItems()` 产出的 notice / error 就是该轮最后落盘的条目，
@@ -652,6 +672,17 @@ export function openStore(file: string): Store {
             value TEXT NOT NULL,
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (owner_id, field)
+        );
+        -- 已读水位：「这个房间我看到哪一条了」（2026-11-26）。
+        --
+        -- 按**房间**记而不是按 bot 记：人是唯一读者 —— 谁发的都无所谓，
+        -- 只要「我」没看过就是未读。企业的多人场景不在当前模型内（没有身份）。
+        -- seq 取自 entity_items.seq（全局自增，单调可比）：跨房间的绝对值不重要，
+        -- 只要同一条流里单调就能「比大小」。—— 只前进不后退（markRead 里取 MAX）。
+        CREATE TABLE IF NOT EXISTS room_read (
+            entity_id TEXT PRIMARY KEY,
+            last_read_seq INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
         );
         -- 实体关系：core kind（related / blocks / duplicate）或插件 kind（<plugin_id>/<kind>）
         CREATE TABLE IF NOT EXISTS entity_links (
@@ -1706,6 +1737,63 @@ export function openStore(file: string): Store {
             for (const row of rows) {
                 const at = Number(row['last']);
                 if (Number.isFinite(at) && at > 0) out[String(row['entity_id'])] = at;
+            }
+            return out;
+        },
+        maxSeqOf(roomId: string): number | undefined {
+            const row = db.prepare('SELECT MAX(seq) AS seq FROM entity_items WHERE entity_id = ?').get(roomId) as
+                | Record<string, unknown>
+                | undefined;
+            const seq = row === undefined ? NaN : Number(row['seq']);
+            return Number.isFinite(seq) && seq > 0 ? seq : undefined;
+        },
+        markRead(roomId: string, seq?: number): void {
+            // 不传 seq = 推到这个房间当前的最后一条（见接口注释）。
+            // 不用 `this.maxSeqOf`：store 可能被解构使用（`const { markRead } = store`），
+            // 那样 this 就丢了 —— 直接写一段同样的查询，5 行重复换一个不会静的磊。
+            let target = seq;
+            if (target === undefined) {
+                const row = db.prepare('SELECT MAX(seq) AS seq FROM entity_items WHERE entity_id = ?').get(roomId) as
+                    | Record<string, unknown>
+                    | undefined;
+                const max = row === undefined ? NaN : Number(row['seq']);
+                target = Number.isFinite(max) && max > 0 ? max : undefined;
+            }
+            if (target === undefined) return;
+            db.prepare(
+                `INSERT INTO room_read (entity_id, last_read_seq, updated_at) VALUES (?, ?, ?)
+                 ON CONFLICT(entity_id) DO UPDATE SET
+                     last_read_seq = MAX(room_read.last_read_seq, excluded.last_read_seq),
+                     updated_at = excluded.updated_at`,
+            ).run(roomId, Math.floor(target), Date.now());
+        },
+        readSeqOf(roomId: string): number | undefined {
+            const row = db.prepare('SELECT last_read_seq FROM room_read WHERE entity_id = ?').get(roomId) as
+                | Record<string, unknown>
+                | undefined;
+            if (row === undefined) return undefined;
+            const seq = Number(row['last_read_seq']);
+            return Number.isFinite(seq) ? seq : undefined;
+        },
+        unreadByRoom(): Record<string, number> {
+            // 一条 GROUP BY 算完（侧栏一次就够，别逐房间问）。
+            // 「不是我发的」在 SQL 里判：`author.role` 要么 human（排除）、要么 bot/system，
+            // 要么整条没有 author（notice / error 是**轮级事实**，它们正是“有结果了”的信号，算未读）。
+            // 量级：2.7 万条 items 实测几十 ms，且只有 rooms.list（30s 一次）会调它。
+            const rows = db
+                .prepare(
+                    `SELECT i.entity_id AS entity_id, COUNT(*) AS n
+                       FROM entity_items i
+                       LEFT JOIN room_read r ON r.entity_id = i.entity_id
+                      WHERE i.seq > COALESCE(r.last_read_seq, 0)
+                        AND COALESCE(json_extract(i.item, '$.author.role'), '') <> 'human'
+                      GROUP BY i.entity_id`,
+                )
+                .all() as Array<Record<string, unknown>>;
+            const out: Record<string, number> = {};
+            for (const row of rows) {
+                const n = Number(row['n']);
+                if (Number.isFinite(n) && n > 0) out[String(row['entity_id'])] = n;
             }
             return out;
         },

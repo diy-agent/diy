@@ -9,7 +9,7 @@ import { ContextPanel } from './components/ContextPanel';
 import { TaskPanel } from './components/TaskPanel';
 import { Sidebar } from './components/Sidebar';
 import { type Room } from './model';
-import { actions, useError, useLoaded, useSelectedRoom } from './store';
+import { actions, useError, useLoaded, useMarkRoomRead, useSelectedRoom } from './store';
 import { useSurfaceId } from './surface';
 import { useRoomDialogs } from './useRoomDialogs';
 
@@ -100,6 +100,11 @@ export function App({
     const loaded = useLoaded();
     const error = useError();
     const room = useSelectedRoom();
+    /**
+     * 未读水位：「这个房间开着且页面可见」就报到最后一条（含新到达的）—— 判据在 hook 里。
+     * 没挂到别的组件上是因为它是**页面级**的事实（哪一页被看），与具体表面无关。
+     */
+    useMarkRoomRead(room?.id);
     // 弹窗（新建项目 / 建任务 / 加成员 / 设置 / 删房间 / 换模型）整体在 useRoomDialogs 里：
     // 工作台要用同一套，状态不能长在这一层。
     const dialogs = useRoomDialogs();
