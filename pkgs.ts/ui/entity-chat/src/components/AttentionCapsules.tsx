@@ -10,7 +10,7 @@
 // 数字与浮层、筛选 tab 同源（`countByAttention`）—— 三处读一份，点开一定对得上。
 
 import type { AttentionCounts, AttentionKind } from '../bots';
-import { ATTENTION_DOT, ATTENTION_INK, ATTENTION_TEXT } from '../bots';
+import { ATTENTION_DOT, ATTENTION_INK, ATTENTION_SHORT, ATTENTION_TEXT } from '../bots';
 
 /** 会出现在徽标上的四类：`idle` 不占位（空闲不是“状态”，是“没有状态”） */
 const COUNTED: readonly AttentionKind[] = ['broken', 'blocked', 'queued', 'live'];
@@ -38,10 +38,8 @@ export function AttentionCapsules({ counts, onPick, onOpen }: AttentionCapsulesP
             </button>
         );
     }
-    // 标题栏只有 28px 高、右端还挤着作业 / 设置 / 布局三组按钮：**两类以上只写数字**。
-    // 只有一类时带上文字（“4 出错” 一眼就懂，不必 hover）—— 多类时四颗带中文会宽到把
-    // 其他按钮挤没（2026-11-25 用户报“挤在一起了”）。文字进 title，浮层 tab 里仍是全称。
-    const showLabel = live.length === 1;
+    // 每颗 = 色点 + 数字 + **单字**（`6错` `3等`）：全称太长（四类共 278px 会把右边
+    // 按钮挤没），光数字又看不懂（实测那屏是 `🤖 6 3`，像一串乱数）。单字既省宽又能读。
     return (
         <span
             onClick={onOpen}
@@ -62,7 +60,7 @@ export function AttentionCapsules({ counts, onPick, onOpen }: AttentionCapsulesP
                 >
                     <span className={`size-1.5 shrink-0 rounded-full ${ATTENTION_DOT[kind]}`} />
                     <span className="tabular-nums">{counts[kind]}</span>
-                    {showLabel ? <span className="text-muted-foreground">{ATTENTION_TEXT[kind]}</span> : null}
+                    <span className="text-muted-foreground">{ATTENTION_SHORT[kind]}</span>
                 </button>
             ))}
         </span>
