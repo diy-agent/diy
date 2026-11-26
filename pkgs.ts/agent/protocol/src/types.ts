@@ -76,6 +76,23 @@ export interface BotRole {
 }
 
 /**
+ * 类型默认配置（2026-11-26）：一类工作对象共享的 model / effort。
+ *
+ * 为什么要有它：几百个任务 bot 不该各配一份模型 —— 只按类型配一套，
+ * bot_roles 上的 model_key / reasoning_effort 只在个别 bot 需要 override 时才填。
+ * 实际值 = bot 的 override ?? 类型默认 ?? 房间 ?? 全局默认。
+ */
+export interface RoleConfig {
+    /** 工作对象类型：project / task / 任意自定义（与 BotRole.type 同一个词表） */
+    type: string;
+    /** 模型限定名 `providerId/modelId`；null = 没配，继续继承房间 → 全局默认 */
+    modelKey: string | null;
+    /** 推理强度；null = 用模型/服务商缺省 */
+    reasoningEffort: string | null;
+    updatedAt: number;
+}
+
+/**
  * 角色在某个房间里的化身：运行时与前端补全实际消费的形状。
  *
  * 保留 `persona` 这个名字（而不是 `instructions`），因为房间侧的一切——成员解析、

@@ -10,7 +10,7 @@
 import { botOfRole, membersOfType } from '@diy-agent/protocol';
 import { describe, expect, it } from 'vitest';
 
-import type { BotRole } from '../src/types';
+import type { BotRole, RoleConfig } from '../src/types';
 
 function role(overrides: Partial<BotRole> & { id: string }): BotRole {
     return {
@@ -62,5 +62,28 @@ describe('botOfRole（角色 → 房间里的化身）', () => {
 
     it('角色自己选了模型就带出去（优先级：房间 > 角色 > 全局默认）', () => {
         expect(botOfRole(role({ id: 'r1', modelKey: 'acc@p/m' })).modelKey).toBe('acc@p/m');
+    });
+});
+
+describe('botOfRole 的模型解析：override ?? 类型默认（2026-11-26 role_config）', () => {
+    const config: RoleConfig = {
+        type: 'project',
+        modelKey: 'acc@prov/type-default',
+        reasoningEffort: 'low',
+        updatedAt: 0,
+    };
+
+    it('角色 modelKey 为 null 时走类型默认（几百个任务共享一套）', () => {
+        expect(botOfRole(role({ id: 'r1', modelKey: null }), config).modelKey).toBe('acc@prov/type-default');
+    });
+
+    it('角色填了 override 就覆盖类型默认', () => {
+        expect(botOfRole(role({ id: 'r1', modelKey: 'acc@prov/override' }), config).modelKey).toBe(
+            'acc@prov/override',
+        );
+    });
+
+    it('没有类型默认时保持空串（继续继承房间 → 全局默认）', () => {
+        expect(botOfRole(role({ id: 'r1', modelKey: null })).modelKey).toBe('');
     });
 });

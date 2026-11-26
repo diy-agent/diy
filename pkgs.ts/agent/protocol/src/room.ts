@@ -2,7 +2,7 @@
 //
 // 这里是唯一的实现点：后端路由、前端补全、UI 文案都从这里取，不再各写一份。
 
-import type { Bot, BotRole, Room, RoomMember } from './types';
+import type { Bot, BotRole, RoleConfig, Room, RoomMember } from './types';
 
 // ── 角色 → 成员（派生的唯一实现）─────────────────────────────────
 
@@ -26,14 +26,14 @@ export function membersOfType(roles: readonly BotRole[], type: string): RoomMemb
 }
 
 /** 角色 → 房间里的化身（`persona` / `modelKey` 的落点，唯一转换处） */
-export function botOfRole(role: BotRole): Bot {
+export function botOfRole(role: BotRole, config?: RoleConfig): Bot {
     return {
         id: role.id,
         name: role.name,
         color: role.color,
         persona: role.instructions,
-        // 空串与 null 同义（没填），房间侧靠 `||` 继续往下继承
-        modelKey: role.modelKey ?? '',
+        // 空串与 null 同义（没填）：先走 bot 的 override，再走类型默认，房间侧靠 `||` 继续往下继承
+        modelKey: role.modelKey || config?.modelKey || '',
     };
 }
 

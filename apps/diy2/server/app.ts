@@ -303,7 +303,7 @@ function actorOf(spec: Room): RoomActor {
             spec,
             store,
             // 房间向所有角色要身份：成员名单里只有该类型的角色，多给无害（members 按 spec 过滤）
-            bots: () => store.listRoles().map(botOfRole),
+            bots: () => store.listRoles().map((role) => botOfRole(role, store.getRoleConfig(role.type))),
             emit: (event) => {
                 broadcast(spec.id, event);
                 // turn 起停 = 全实例「谁在跑」的开销点：标题栏那颗图标与侧栏每一行都靠这个

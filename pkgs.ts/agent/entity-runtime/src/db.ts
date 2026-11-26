@@ -17,7 +17,7 @@ import type { TranscriptEntry, TokenUsage } from './compaction';
 import { isLinkKind } from './id';
 import type { RoomEntry } from './room-log';
 import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc } from './task-dir';
-import type { AskAnswer, AskRequest, Bot, BotRole, Delivery, InboxMode, Item, Room, RoomMember } from './types';
+import type { AskAnswer, AskRequest, Bot, BotRole, Delivery, InboxMode, Item, RoleConfig, Room, RoomMember } from './types';
 
 /** 一个 bot 在某个房间里的对话快照（持久化单位） */
 export interface SessionSnapshot {
@@ -215,6 +215,14 @@ export interface Store {
     /** 全部角色（按 type、建得早排序；房间成员由它们派生，见 protocol 的 membersOfType） */
     listRoles(): BotRole[];
     upsertRole(role: BotRole): void;
+
+    // ── 类型默认配置（role_config，2026-11-26）────────────────────
+    /** 全部类型默认配置 */
+    listRoleConfigs(): RoleConfig[];
+    /** 某类型的默认配置；没配过返回 undefined */
+    getRoleConfig(type: string): RoleConfig | undefined;
+    /** 写某类型的默认配置（upsert） */
+    setRoleConfig(config: RoleConfig): void;
 
     // ── 提问（ask 不阻塞，待答状态必须落库）──────────────────
     /** 写一条提问：新建 pending / 收尾时改成 answered | cancelled（幂等） */
@@ -555,6 +563,14 @@ export function openStore(file: string): Store {
         -- 「每类型至多一个 primary」不靠应用层自觉：应用层漏一次就是一段时间的双应答
         CREATE UNIQUE INDEX IF NOT EXISTS bot_roles_primary ON bot_roles(type) WHERE primary_flag = 1;
         CREATE INDEX IF NOT EXISTS bot_roles_type ON bot_roles(type, created_at);
+        -- 类型默认配置（2026-11-26）：几百个任务 bot 共享一套 model / effort，
+        -- 只有个别 bot 需要 override 时才在 bot_roles 上填（model_key / reasoning_effort 为 null = 走类型默认）。
+        CREATE TABLE IF NOT EXISTS role_config (
+            type TEXT PRIMARY KEY,
+            model_key TEXT,
+            reasoning_effort TEXT,
+            updated_at INTEGER NOT NULL
+        );
         -- 旧 bots 表不在这里建：新库不该有它。只在老库里存在，且迁移后改名为 bots_v0。
         CREATE TABLE IF NOT EXISTS entity_items (
             seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -848,6 +864,13 @@ export function openStore(file: string): Store {
         modelKey: row['model_key'] === null ? null : String(row['model_key']),
         reasoningEffort: row['reasoning_effort'] === null ? null : String(row['reasoning_effort']),
         createdAt: Number(row['created_at']),
+        updatedAt: Number(row['updated_at']),
+    });
+
+    const toRoleConfig = (row: Record<string, unknown>): RoleConfig => ({
+        type: String(row['type']),
+        modelKey: row['model_key'] === null ? null : String(row['model_key']),
+        reasoningEffort: row['reasoning_effort'] === null ? null : String(row['reasoning_effort']),
         updatedAt: Number(row['updated_at']),
     });
 
@@ -1416,6 +1439,22 @@ export function openStore(file: string): Store {
                 db.exec('ROLLBACK');
                 throw error;
             }
+        },
+        listRoleConfigs(): RoleConfig[] {
+            const rows = db.prepare('SELECT * FROM role_config ORDER BY type ASC').all() as Record<string, unknown>[];
+            return rows.map(toRoleConfig);
+        },
+        getRoleConfig(type: string): RoleConfig | undefined {
+            const row = db.prepare('SELECT * FROM role_config WHERE type = ?').get(type) as
+                | Record<string, unknown>
+                | undefined;
+            return row === undefined ? undefined : toRoleConfig(row);
+        },
+        setRoleConfig(config: RoleConfig): void {
+            db.prepare(
+                'INSERT INTO role_config (type, model_key, reasoning_effort, updated_at) VALUES (?,?,?,?) ' +
+                    'ON CONFLICT(type) DO UPDATE SET model_key=excluded.model_key, reasoning_effort=excluded.reasoning_effort, updated_at=excluded.updated_at',
+            ).run(config.type, config.modelKey, config.reasoningEffort, config.updatedAt);
         },
         appendItem(roomId: string, item: Item): Item {
             const result = db

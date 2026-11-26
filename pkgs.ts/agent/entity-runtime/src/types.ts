@@ -13,6 +13,7 @@ export type {
     Bot,
     BotOutcome,
     BotRole,
+    RoleConfig,
     Delivery,
     DeliveryState,
     Room,
