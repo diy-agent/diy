@@ -707,6 +707,19 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
             )}
             {/* 顶部常驻：描述的是「更早」，不跟消息一起滚走 —— 也免得干扰“滑到顶补一窗”的边界 */}
             <div className="px-6 pt-2">
+                {/*
+                 * 历史分页（2026-11-26）：服务端默认只发最近 400 条 —— 6000+ 条的房间里
+                 * 全量回包 5.7 MB，JSON.parse + 渲染就是 2~5 秒的长任务（切任务/点输入框卡）。
+                 * 这一颗把“上面还有多少”说清，要不要全量由人决定。
+                 */}
+                {state.truncated === true && (
+                    <button
+                        onClick={() => conversation.loadAll()}
+                        className="my-1 w-full rounded border border-border/60 px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/60"
+                    >
+                        上面还有 {Math.max(0, (state.totalItems ?? 0) - state.items.length)} 条更早的消息未加载 · 点此全部加载
+                    </button>
+                )}
                 <CompactCutBar sessions={sessions} />
             </div>
             {/*

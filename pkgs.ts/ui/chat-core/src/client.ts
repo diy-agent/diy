@@ -69,7 +69,12 @@ export interface CompactOutcome {
 
 export interface ChatClient {
     /** 拉历史快照（首屏 / 重载 / 重放） */
-    load(entityId: string): Promise<Snapshot>;
+    /**
+     * 拉快照。`limit` 缺省 = 服务端缺省的分页（只发最近一截）；`0` = 全量。
+     *
+     * 见 `Snapshot.truncated`：6000+ 条的房间里全量回包 5.7 MB，parse + 渲染 2~5 秒。
+     */
+    load(entityId: string, options?: { limit?: number }): Promise<Snapshot>;
 
     /**
      * 提交命令；事件通过 onEvent 回推。signal 取消只影响本地这次请求（不影响服务端的运行）。

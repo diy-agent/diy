@@ -20,7 +20,8 @@ export interface ConversationModel {
     cancel(): void;
     /** 只停某个成员（开会时用） */
     stop(botId?: string): void;
-    reload(): void;
+    /** 重拉快照（`limit` 缺省 = 服务端缺省的分页；`0` = 全量） */
+    reload(limit?: number): void;
 }
 
 export class ConversationStore implements ConversationModel {
@@ -81,10 +82,10 @@ export class ConversationStore implements ConversationModel {
     }
 
     /** 箭头方法：surface 可以把 reload 直接当回调传（不解绑 this） */
-    reload = (): void => {
+    reload = (limit?: number): void => {
         const token = ++this.loadToken;
         void this.client
-            .load(this.entityId)
+            .load(this.entityId, limit === undefined ? undefined : { limit })
             .then((snapshot) => {
                 if (token !== this.loadToken) return;
                 this.loadedOnce = true;
@@ -92,6 +93,9 @@ export class ConversationStore implements ConversationModel {
             })
             .catch((error: unknown) => this.emit({ ...this.state, error: messageOf(error) }));
     };
+
+    /** 全量拉一次（用户点「加载更早的」）：`limit = 0` 在协议里就是“全都要” */
+    loadAll = (): void => this.reload(0);
 
     private post = (command: Command): Promise<void> =>
         new Promise((resolve, reject) => {

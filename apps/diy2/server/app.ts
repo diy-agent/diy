@@ -555,6 +555,14 @@ export function trimToolResults(items: Item[]): Item[] {
 
 // ─── 路由 ─────────────────────────────────────────────────────────
 
+/**
+ * 聊天历史**默认只发最近的这么多条**（2026-11-26）。
+ *
+ * 数字来源：实测每条约 1 KB（裁过 tool 结果后），6000 条的房间里 5.7 MB 的回包会让
+ * 主线程一次性 parse + 渲染 2~5 秒。400 条 ≈ 400 KB，能盖住“打开就看到最近发生了什么”。
+ */
+const HISTORY_LIMIT = 400;
+
 const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const parts = url.pathname.split('/').filter(Boolean);
@@ -991,8 +999,17 @@ export async function createDiy2App(opts: {
             chat: {
                 history: async ({ input }) => {
                     const actor = requireRoom(input.id);
+                    // 分页（2026-11-26）：实测一次回包 **5.7 MB**（6000+ 条 items）——
+                    // 前端 JSON.parse + 渲染就是那 2~5 秒的长任务（用户“切任务很慢”）。
+                    // 默认只发**最近的 HISTORY_LIMIT 条**；`limit<=0` = 全量（用户点“加载更早”）。
+                    // `total`/`hasMore` 让界面能说清“上面还有多少条没加载”。
+                    const limit = input.limit ?? HISTORY_LIMIT;
+                    const items = limit > 0 ? actor.lastItems(limit) : actor.items(0);
+                    const total = limit > 0 ? actor.countItems() : items.length;
                     return {
-                        items: trimToolResults(actor.items(0)),
+                        items: trimToolResults(items),
+                        total,
+                        hasMore: items.length < total,
                         deliveries: actor.deliveries(),
                         asks: actor.pendingAskRequests(),
                         answered: actor.answeredAskRequests(),

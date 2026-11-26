@@ -298,6 +298,16 @@ export class RoomActor {
         return this.deps.store.itemsOf(this.id, afterSeq);
     }
 
+    /** 最后 n 条（时间线顺序）—— 展示层默认只要这一截，见 `Store.lastItemsOf` */
+    lastItems(n: number): Item[] {
+        return this.deps.store.lastItemsOf(this.id, n);
+    }
+
+    /** 条目总数（分页提示用） */
+    countItems(): number {
+        return this.deps.store.countItemsOf(this.id);
+    }
+
     deliveries(): Delivery[] {
         return this.deps.store.listDeliveries(this.id);
     }

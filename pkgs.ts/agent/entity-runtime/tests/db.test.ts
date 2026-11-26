@@ -671,3 +671,37 @@ describe('未读水位（room_read）', () => {
         expect(store.unreadByRoom()).toEqual({ [room.id]: 1 });
     });
 });
+
+describe('lastItemsOf / countItemsOf —— 历史分页', () => {
+    // 2026-11-26：`chat.history` 一次回包 5.7 MB（6000+ 条），前端 parse + 渲染 2~5 秒。
+    // 展示层默认只要最近一截 —— 这两个方法就是那一截的来源。
+    const botChat = (id: string): Item => ({
+        id,
+        seq: 0,
+        turn: 1,
+        turnId: 't1',
+        at: Date.now(),
+        status: 'done',
+        author: { id: 'bot:1', name: 'b', color: '#fff', role: 'bot' },
+        type: 'chat',
+        data: { text: id },
+    });
+
+    it('取最后 n 条（仍按 seq 升序），count 是全量条数', () => {
+        const store = openStore(':memory:');
+        for (let i = 1; i <= 10; i += 1) store.appendItem(room.id, botChat(`m${i}`));
+        expect(store.countItemsOf(room.id)).toBe(10);
+        const tail = store.lastItemsOf(room.id, 3);
+        expect(tail.length).toBe(3);
+        // 升序（时间线顺序），且最后一条就是房间最新那条
+        expect(tail.map((item) => item.seq)).toEqual([...tail.map((item) => item.seq)].sort((a, b) => a - b));
+        expect(tail[tail.length - 1]?.seq).toBe(store.seqOf(room.id));
+    });
+
+    it('n 大于总条数时给全部（不报错、不重复）', () => {
+        const store = openStore(':memory:');
+        store.appendItem(room.id, botChat('m1'));
+        store.appendItem(room.id, botChat('m2'));
+        expect(store.lastItemsOf(room.id, 50).length).toBe(2);
+    });
+});

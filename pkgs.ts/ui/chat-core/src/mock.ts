@@ -54,7 +54,7 @@ export class MockChatClient implements ChatClient {
 
     constructor(private readonly options: MockOptions = {}) {}
 
-    async load(entityId: string): Promise<Snapshot> {
+    async load(entityId: string, _options?: { limit?: number }): Promise<Snapshot> {
         // seed 只是「第一次 load 之前把条目铺好」，铺过就不再重复
         if (this.options.seed !== undefined && !this.items.has(entityId)) {
             const seeds = this.options.seed;
