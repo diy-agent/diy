@@ -22,11 +22,11 @@ describe('trimToolResults —— 历史回包瘦身', () => {
         expect(out).toBe(item);
     });
 
-    it('大结果裁到 400 字，并写明原文多少字（不假装是全部）', () => {
+    it('大结果裁到 120 字，并写明原文多少字（不假装是全部）', () => {
         const big = 'x'.repeat(9_500_000);
         const [out] = trimToolResults([tool(big)]);
         const result = (out as Extract<Item, { type: 'tool' }>).data.result as string;
-        expect(result.length).toBeLessThan(500);
+        expect(result.length).toBeLessThan(200);
         expect(result).toContain('原文 9500000 字');
     });
 
