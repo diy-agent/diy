@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { instructionsOf } from '../src/agent';
+import { unitBoard } from '../src/units';
 import { buildRoomSystemContext, createRoomContext } from '../src/system-context';
 import { clearWatchCache } from '../src/watch-cache';
 
@@ -45,12 +46,57 @@ describe('buildRoomSystemContext', () => {
         expect(text).not.toContain('KB_BODY_ONLY');
     });
 
-    it('没有 home 时不读设备级库（不出现 scope=global）', () => {
+    it('没有 deviceHome 时不读设备级库（不出现 scope=global）', () => {
         const repo = tmp();
         seedKb(repo, 'rule/dev.md', '开发规则', [['a', 'x']]);
         const text = buildRoomSystemContext({ cwd: repo });
         expect(text).toContain('scope: project');
         expect(text).not.toContain('scope: global');
+    });
+
+    it('deviceHome 给了就读设备库，且 `DIY_HOME` 完全不参与', () => {
+        const repo = tmp();
+        seedKb(repo, 'rule/dev.md', '开发规则', [['a', 'x']]);
+        // 设备库：`<deviceHome>/knowledge`（seedKb 写的是 `<根>/.diy/knowledge`）
+        const deviceRoot = tmp();
+        seedKb(deviceRoot, 'tool/tool.md', '工具偏好（设备级）', [['cdp', 'CDP 走 playwright-cli attach']]);
+        const saved = process.env['DIY_HOME'];
+        // 脏值：diy2 实例里 `DIY_HOME` = 实例数据根（实测 `~/.diy/diy2`），旧实现拿它算设备根
+        process.env['DIY_HOME'] = join(tmp(), 'instance-home');
+        try {
+            const text = buildRoomSystemContext({ cwd: repo, deviceHome: join(deviceRoot, '.diy') });
+            expect(text).toContain('path: tool/tool.md');
+            expect(text).toContain('工具偏好（设备级）');
+            expect(text).toContain('scope: global');
+        } finally {
+            if (saved === undefined) delete process.env['DIY_HOME'];
+            else process.env['DIY_HOME'] = saved;
+        }
+    });
+
+    it('折叠索引保留前几个文件名：目录里有什么看得见（不再只剩「N 个文件」）', () => {
+        const repo = tmp();
+        seedKb(repo, 'app/alpha.md', 'A', [['a', 'x']]);
+        seedKb(repo, 'app/beta.md', 'B', [['b', 'x']]);
+        seedKb(repo, 'app/gamma.md', 'C', [['c', 'x']]);
+        const text = buildRoomSystemContext({ cwd: repo });
+        expect(text).toContain('app/');
+        expect(text).toContain('alpha');
+    });
+
+    it('cwd 下的 `.diy/knowledge` 是设备库的 symlink 时，只算一份（scope=global）', () => {
+        const base = tmp();
+        const kbReal = join(base, 'devhome', 'knowledge');
+        mkdirSync(join(kbReal, 'tool'), { recursive: true });
+        writeFileSync(join(kbReal, 'tool', 'tool.md'), '---\ndesc: 设备工具\n---\n\n## cdp\n\n走 CDP\n');
+        const cwd = join(base, 'home');
+        mkdirSync(join(cwd, '.diy'), { recursive: true });
+        // 家目录下的兼容 symlink：`~/.diy/knowledge` → 设备库（2026-11-26 迁移后就是这么留的）
+        symlinkSync(kbReal, join(cwd, '.diy', 'knowledge'));
+
+        const text = buildRoomSystemContext({ cwd, deviceHome: join(base, 'devhome') });
+        expect(text).toContain('scope: global');
+        expect(text).not.toContain('scope: project');
     });
 
     it('空目录：没有链/知识库，但 diy / cwd 仍在信封里', () => {
@@ -107,7 +153,8 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
             cwd: repo,
             skillsRoot: join(tmp(), 'skills'),
         });
-        expect(ctx.open().system).not.toContain('\ntask:');
+        // 同上：顶层键在 `vars:` 下缩进两格；写 `\ntask:` 永远为真 = 白测
+        expect(ctx.open().system).not.toContain('  task:');
     });
 
     it('docs 索引：docs/plans 的篇数进 vars', () => {
@@ -140,6 +187,77 @@ describe('createRoomContext：任务字段是变量单元（改正文不重建 s
         const step = ctx.step();
         expect(step.delta?.paths).toContain('journal');
         expect(step.user).toContain('B 会炸');
+        expect(ctx.system).toBe(open.system);
+    });
+
+    it('units：全量注入缩进树 → 「现在能挑哪几条」不用先调工具', () => {
+        const repo = tmp();
+        // 用真的纯函数算 board：注入与视图 / 工具是同一份派生量，别在测试里手捏形状
+        const facts = [
+            { id: 'dom', title: '取消语义', status: 'open' as const, seq: 1, parent: null },
+            { id: 'a', title: '读现状', status: 'done' as const, seq: 2, parent: 'dom' },
+            { id: 'b', title: '写领域函数', status: 'open' as const, seq: 3, parent: 'dom' },
+            { id: 'view', title: '视图', status: 'open' as const, seq: 4, parent: null },
+            { id: 'c', title: '注入上下文', status: 'open' as const, seq: 5, parent: 'view' },
+        ];
+        const ctx = createRoomContext({
+            spec: { id: 'task:t-1', type: 'task', data: { title: '任务一' } },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+            units: () => unitBoard(facts),
+        });
+        const system = ctx.open().system;
+        expect(system).toContain('units:');
+        // ready / doing 是行动指令；done 不点名 —— 树行里的标记就是答案
+        expect(system).toContain('ready:');
+        expect(system).toContain('b');
+        expect(system).not.toContain('blocked:');
+        expect(system).not.toContain('layers:');
+        expect(system).not.toContain('batches:');
+        // 树是缩进文本：一行一个节点，状态用标记
+        expect(system).toContain('tree:');
+        expect(system).toContain('- [ ] 取消语义 (dom)');
+        expect(system).toContain('  - [x] 读现状 (a)');
+        expect(system).toContain('  - [>] 写领域函数 (b)');
+        // 账本不定先后：另一个母项下的叶子同样能挑（不再有「← 等 dom」）
+        expect(system).toContain('  - [>] 注入上下文 (c)');
+        expect(system).not.toContain('← 等');
+    });
+
+    it('units：空图整节缺席（不造空壳冒充）', () => {
+        const repo = tmp();
+        const ctx = createRoomContext({
+            spec: { id: 'task:t-1', type: 'task', data: { title: '任务一' } },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+            units: () => unitBoard([], []),
+        });
+        // 变量树顶层都在 `vars:` 下，所以缩进两格才是真断言（写 `\nunits:` 永远为真 = 白测）
+        expect(ctx.open().system).not.toContain('  units:');
+    });
+
+    it('units：推状态只走 units 增量，system 逐字不动（不破前缀缓存）', () => {
+        const repo = tmp();
+        const facts = [
+            { id: 'u1', title: '第一步', status: 'open' as const, seq: 1 },
+            { id: 'u2', title: '第二步', status: 'open' as const, seq: 2 },
+        ];
+        const ctx = createRoomContext({
+            spec: { id: 'task:t-1', type: 'task', data: { title: '任务一' } },
+            cwd: repo,
+            skillsRoot: join(tmp(), 'skills'),
+            units: () => unitBoard(facts, [{ taskId: 'x', from: 'u1', to: 'u2' }]),
+        });
+        const open = ctx.open();
+        expect(open.system).toContain('第一步');
+
+        ctx.step();
+        ctx.commit();
+        facts[0]!.status = 'done';
+        const step = ctx.step();
+        expect(step.delta?.paths).toContain('units');
+        // u1 做完 ⇒ u2 从 blocked 挪到 ready：增量里就该看得见这个转变
+        expect(step.user).toContain('u2');
         expect(ctx.system).toBe(open.system);
     });
 

@@ -22,7 +22,7 @@ const Data = z.record(z.string(), Any);
 
 export const roomsApi = RpcSchema.group({
     children: {
-        /** 列表 + 侧栏投影（hasDraft / pendingAsks / lastActivityAt） */
+        /** 列表 + 侧栏投影（hasDraft / pendingAsks / lastActivityAt / unread） */
         list: RpcSchema.unary({ input: {}, output: Any }),
         create: RpcSchema.unary({
             input: {
@@ -46,6 +46,18 @@ export const roomsApi = RpcSchema.group({
         remove: RpcSchema.unary({ input: { id: Id }, output: Any }),
         /** 把已有 bot 拉进房间（借用） */
         addMember: RpcSchema.unary({ input: { id: Id, botId: Id }, output: Any }),
+        /**
+         * 上报「这个房间我看到 seq 了」（未读水位，2026-11-26）。
+         *
+         * 客户端在**房间打开且页面可见**时上报（`seq` 不传 = 推到这个房间当前最后一条）；
+         * 服务端只前进不后退（迟到的旧上报不能把水位拉回去，否则那个房间永远有未读）。
+         *
+         * `seq` 留成可选是故意的：UI 表达的是“我在看这个房间”，它没有理由知道全局 seq。
+         */
+        markRead: RpcSchema.unary({
+            input: { id: Id, seq: z.number().int().nonnegative().optional() },
+            output: Any,
+        }),
     },
 });
 
@@ -139,6 +151,24 @@ export const journalApi = RpcSchema.group({
     },
 });
 
+/**
+ * 任务的需求账本树（要做成哪些东西）。**只读**：writer 只有 agent 的 `unit_*` 工具，
+ * 界面是旁观窗口。
+ */
+export const unitsApi = RpcSchema.group({
+    children: {
+        list: RpcSchema.unary({ input: { id: Id }, output: Any }),
+        /**
+         * 模型实际读到的那段文本（`units` 节的 YAML）。
+         *
+         * 为什么要开这个口子：界面能画树、能画图，但「模型到底读到了什么」此前只能靠 demo 推断。
+         * 文本由 `unitsContextValue()` 生成、`toYaml()` 落字 —— 与上下文注入同一份代码，
+         * 所以这里显示的不是「另一种表达」，就是原文。
+         */
+        text: RpcSchema.unary({ input: { id: Id }, output: Any }),
+    },
+});
+
 export const linksApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: { id: Id }, output: Any }),
@@ -194,6 +224,7 @@ export const diy2Api = RpcSchema.group({
         drafts: draftsApi,
         journal: journalApi,
         models: modelsApi,
+        units: unitsApi,
         links: linksApi,
         jobs: jobsApi,
     },

@@ -1,6 +1,6 @@
 // src/cli/facts.ts —— 知识的只读投影（`diy2 facts brief|get|find|status`）。
 //
-// 真源仍是 `.diy/knowledge/**/*.md`（项目库优先，`~/.diy/knowledge` 兜底），
+// 真源仍是 `.diy/knowledge/**/*.md`（项目库优先，设备库 `~/.diy2/knowledge` 兜底），
 // 与 `@diy-agent/kb` 的写侧共用同一套扫描；这里只做「少打点字、少花点 token」的投影：
 //   · brief  —— 目录/文件/前缀下每条知识的全部小节 + 首句（决定展开哪条）
 //   · get    —— `<路径>#<小节>` 取正文
@@ -11,11 +11,11 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 import { z } from 'zod';
 import { RpcSchema } from '@diy-agent/rpc';
-import { briefOf, findIn, getSection, globalKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
+import { briefOf, findIn, getSection, deviceKbRoot, kbRootOf, sameKbRoot, scanKb } from '@diy-agent/kb';
 
 const Scope = z.enum(['project', 'global']);
 
@@ -49,12 +49,21 @@ const KbStats = z.object({
 
 /**
  * 项目库根：`kbRootOf(cwd)` 会一路走到 `$HOME` —— cwd 在任何用户目录下都会撞上
- * `~/.diy/knowledge`，那是**设备级库**，不是项目库。所以「与 global 同路径」时
- * 按「没有项目库」处理（给一个不存在的路径，scanKb 自然返回空）。
+ * 设备级库，那不是项目库。所以「与设备库同路径」时按「没有项目库」处理
+ * （给一个不存在的路径，scanKb 自然返回空）。
+ *
+ * 判据必须走 realpath（`sameKbRoot`）：`~/.diy/knowledge` 是为了兼容旧读者留的 symlink，
+ * 它指向 `~/.diy2/knowledge` —— 只比 resolve 会当成两个不同的库，把设备库重复算成项目库。
+ *
+ * 「没有项目库」那个占位路径必须是**保证不存在**的：cwd 是家目录时 `.diy/knowledge`
+ * 本身就是设备库 symlink，拿它当占位符等于真扫到设备库（2026-11-26 实测：`facts status`
+ * 在 `~` 下报 project=11 条 + overlap same=11）。
  */
+const NO_PROJECT_KB = '.__no-project-kb__';
+
 function projectRootOf(global: string): string {
     const found = kbRootOf(process.cwd());
-    return resolve(found) === resolve(global) ? join(process.cwd(), '.diy', 'knowledge') : found;
+    return sameKbRoot(found, global) ? join(process.cwd(), '.diy', 'knowledge', NO_PROJECT_KB) : found;
 }
 
 /**
@@ -104,7 +113,7 @@ export const factsApi = RpcSchema.group({
     children: {
         facts: RpcSchema.group({
             desc:
-                `知识库的只读投影（真源 = .diy/knowledge/**/*.md；项目库优先，~/.diy/knowledge 兜底）。` +
+                `知识库的只读投影（真源 = .diy/knowledge/**/*.md；项目库优先，设备库 ~/.diy2/knowledge 兜底）。` +
                 `\n\n**不知道先看哪条 → \`diy2 facts brief rule\`**（列目录下每条知识的小节 + 首句）；` +
                 `要正文用 \`diy2 facts get rule/dev#worktree\`；跨主题搜用 \`diy2 facts find 关键词\`。`,
             children: {
@@ -180,7 +189,9 @@ export function factsHandlers(deps?: FactsDeps): {
         };
     };
 } {
-    const global = deps?.globalRoot ?? globalKbRoot(process.env['DIY_HOME'], homedir());
+    // 设备库根 = 生产根 `~/.diy2`（缺省口径在 `deviceKbRoot` 里），**不读** `DIY_HOME` ——
+    // 在实例 shell 里它等于实例数据根，读它会让 `diy2 facts` 什么都读不到（2026-11-26 实测）。
+    const global = deps?.globalRoot ?? deviceKbRoot(undefined, homedir());
     const project = deps?.projectRoot ?? projectRootOf(global);
 
     const sectionsOf = (subject: string, maxChars: number) => [

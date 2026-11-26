@@ -187,6 +187,14 @@ export const DIFF_MAX_BEFORE_BYTES = 2 * 1024 * 1024;
 export interface FileWriteResult {
     /** 展示用路径（调用方传进来的相对路径，原样回显） */
     path: string;
+    /**
+     * 解析后的**绝对**路径。
+     *
+     * 为什么要单给一个：只回显相对路径时，`写入 pkgs.ts/foo.ts` 看不出它解析到了
+     * **主仓还是 worktree** —— 两者都有 `pkgs.ts/foo.ts`，改错仓只能靠事后 git status 发现
+     * （2026-11-24 / 11-25 连踩两次）。`read` 一直是回显绝对路径的，这里与它对齐。
+     */
+    absPath: string;
     /** 实际写入字节数（含补回/剥掉的 BOM） */
     bytes: number;
     /** 新增行数；`null` = 原文件超上限未读，未统计 */
@@ -280,6 +288,7 @@ export function writeFileWhole(cwd: string, relPath: string, content: string, op
     writeFileAtomic(target, finalContent);
     return {
         path: relPath,
+        absPath: target,
         bytes,
         added: diff?.added ?? null,
         removed: diff?.removed ?? null,
@@ -304,6 +313,8 @@ export function formatWriteResult(r: FileWriteResult): string {
     const skipped = r.diffSkipped
         ? `；原文件 ${(r.beforeBytes / 1024 / 1024).toFixed(1)} MB，diff 略`
         : "";
-    const head = `写入 ${r.path}（${countsLabel(r)} 行，${kb}${flags}${skipped}）`;
+    // 相对路径回显看不出写到哪个仓（## E2 踩过两次）：与 read 对齐，两个不一样就都写出来
+    const where = r.path === r.absPath ? r.path : `${r.path} → ${r.absPath}`;
+    const head = `写入 ${where}（${countsLabel(r)} 行，${kb}${flags}${skipped}）`;
     return r.diff ? `${head}\n\n${r.diff}` : head;
 }

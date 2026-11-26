@@ -76,6 +76,26 @@ export const FactsCellSchema = z
 export type FactsCell = z.infer<typeof FactsCellSchema>;
 
 /**
+ * 任务分解图里的一个 unit 引用（只给定位与原因所需的最小信息）。
+ * 正文（body）不进上下文：要全文用 `unit_get`。
+ *
+ * 两种粒度：`UNIT_HEAD`（只有 id + 标题，给 ready / doing 这些行动指令）与 `UNIT_REF`
+ * （+ deps，给 `layers` 里的全图）。blocked / done 不单列 —— 它们是 `layers` 的派生读法。
+ */
+/** 一条 unit 在「行动指令」里的样子：只点名 id + 标题（前置在 `layers` 里） */
+const UNIT_HEAD = z.object({
+  id: z.string().describe("unit id（任务内唯一；拆图时自起的 key，如 state / cancel-tool）"),
+  title: z.string().describe("这一件是什么产出（能被验收，不是动作：写「什么改好了」，不是「改哪个文件」）"),
+  batch: z.string().optional().describe("所属交付批次 id；缺省 = 还没分批"),
+});
+
+const UNIT_REF = z.object({
+  id: z.string().describe("unit id（任务内唯一；拆图时自起的 key，如 state / cancel-tool）"),
+  title: z.string().describe("这一件是什么产出（能被验收，不是动作：写「什么改好了」，不是「改哪个文件」）"),
+  deps: z.array(z.string()).describe("前置 unit id：这些都 done 了才能做它（blocked 的原因就是它们）"),
+});
+
+/**
  * 注入 globals 的**契约（单一真源）**：
  *   · `flattenVars()` 派生出引擎静态校验用的扁平 VarSpec[]
  *   · `buildVarTree()` 派生出试验场「变量定义」view 的二维树（名字/类型 + 说明）
@@ -287,6 +307,33 @@ export const AssembleGlobalsSchema = z.object({
     })
     .optional()
     .describe("任务日志（append-only 的决策/踩坑/评审）：没有记录时整节缺席"),
+  units: z
+    .object({
+      ready: z.array(UNIT_HEAD).describe("现在能挑的叶子（账本里「还没做的」就是可以挑的）——「该做什么」只看它"),
+      doing: z.array(UNIT_HEAD).describe("正在做的叶子（不是单指针：账本不规定一次做几条）"),
+      tree: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "需求账本树（缩进文本，一行一个节点）：`- [x] 标题 (id)` 的标记 x=做完 / >=现在能挑 / ~=在做；" +
+            "缩进 = 父子（母项是分组，不执行）。树只记「要做成哪些东西」，先做哪个由模型每轮自己挑。" +
+            "树太大时整节缺席、只给 ready + counts",
+        ),
+      counts: z
+        .object({
+          open: z.number().int(),
+          doing: z.number().int(),
+          done: z.number().int(),
+        })
+        .optional()
+        .describe("各状态条数（只有树溢出、不给全树时才出现）"),
+      note: z.string().optional().describe("溢出时的提示：全树用 unit_list 按需查"),
+    })
+    .optional()
+    .describe(
+      "任务的需求账本树（母项 → 可验收的产出）：`tree` 是缩进文本的节点树，`ready` / `doing` 是行动指令。" +
+        "done 不点名 —— 树行里的 `x` 就是答案。空树整节缺席",
+    ),
   room: z
     .object({
       members: z

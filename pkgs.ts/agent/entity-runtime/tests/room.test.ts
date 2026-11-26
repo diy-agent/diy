@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import type { AgentEvent, RunOptions } from '../src/agent';
 import type { CompactionResult, Compactor } from '../src/compaction';
 import { openStore } from '../src/db';
 import type { Item, Room } from '../src/types';
@@ -127,6 +128,54 @@ describe('RoomActor', () => {
         expect(JSON.stringify(second.room.contextOf(BOT_A.id) ?? [])).toContain('diy 的回复');
     });
 
+    it('queuedByBot：排队中的投递按成员计数（queued + delivering，给 UI 画「排队中」）', () => {
+        // 刀 2 的服务端那一半：以前 `deliveries` 的排队态在界面完全看不见，
+        // 重启后的待续跑尤其 —— 房间看着没事，其实排着队
+        const store = openStore(':memory:');
+        for (const bot of [BOT_A, BOT_B]) store.upsertBot(bot);
+        const item = (id: string, seq: number): Item => ({
+            id,
+            seq,
+            order: seq,
+            turn: seq,
+            turnId: `turn-${seq}`,
+            at: Date.now(),
+            status: 'done',
+            author: HUMAN,
+            type: 'chat',
+            data: { text: id },
+        });
+        store.appendItem('room:1', item('u-1', 1));
+        store.appendItem('room:1', item('u-2', 2));
+        store.appendItem('room:1', item('u-3', 3));
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'queued' });
+        // BOT_A 不在跑 —— 这条 delivering 是**重启残留**（待续跑），要算排队
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-2', botId: BOT_A.id, state: 'delivering' });
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-3', botId: BOT_B.id, state: 'queued' });
+        // 已送达的不算排队
+        store.appendItem('room:1', item('u-4', 4));
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-4', botId: BOT_B.id, state: 'delivered' });
+
+        const h = makeRoom({ store });
+        expect(Object.fromEntries(h.room.queuedByBot())).toEqual({ [BOT_A.id]: 2, [BOT_B.id]: 1 });
+
+        // 跑完一条就少一条（UI 的灰旋转跟着灭）
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'delivered' });
+        expect(Object.fromEntries(h.room.queuedByBot())).toEqual({ [BOT_A.id]: 1, [BOT_B.id]: 1 });
+    });
+
+    it('正在跑的那条 delivering 不算排队（“在跑”不该被写成“排队中”）', async () => {
+        // 用户 2026-11-26 报的表里一行：状态写「排队中」、结局写「中断（上一轮没跑完）」。
+        // 原因：该 bot 正在跑（投递 = delivering），而 `queuedByBot` 把 delivering 也算排队。
+        const h = makeRoom({ hang: true });
+        void h.room.say({ text: '跑着', author: HUMAN });
+        await waitFor(() => h.room.runningBots().length > 0);
+        const runner = h.room.runningBots()[0];
+        expect(runner).toBeDefined();
+        expect(h.room.queuedByBot().get(runner!) ?? 0).toBe(0);
+        h.room.cancel();
+    });
+
     it('崩溃恢复：未送达的投递重新投一遍', async () => {
         const store = openStore(':memory:');
         const bots = [BOT_A, BOT_B];
@@ -156,9 +205,60 @@ describe('RoomActor', () => {
 
         const h = makeRoom({ store });
         expect(h.runs).toEqual([]);
-        h.room.recover();
+        void h.room.recover();
         await waitFor(() => h.room.deliveries()[0]?.state === 'delivered');
         expect(h.runs).toEqual(['diy']);
+    });
+
+    it('崩溃恢复是**串行**的：前一条跑到收尾，后一条才开始（不一起冲网关）', async () => {
+        // 判据只能靠「第一个卡着时第二个有没有开始」：一起排出去的话，第二轮的 run
+        // 会在第一个还没收尾时就 push 进 started，这一条就红了（2026-11-25 的那次一屏 429）。
+        const store = openStore(':memory:');
+        for (const bot of [BOT_A, BOT_B]) store.upsertBot(bot);
+        const item = (id: string, seq: number, text: string): Item => ({
+            id,
+            seq,
+            order: seq,
+            turn: seq,
+            turnId: `turn-${seq}`,
+            at: Date.now(),
+            status: 'done',
+            author: HUMAN,
+            type: 'chat',
+            data: { text },
+        });
+        store.appendItem('room:1', item('u-1', 1, '第一句'));
+        store.appendItem('room:1', item('u-2', 2, '第二句'));
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'queued', turn: 1, turnId: 'turn-1' });
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-2', botId: BOT_B.id, state: 'queued', turn: 2, turnId: 'turn-2' });
+
+        const started: string[] = [];
+        let release: (() => void) | undefined;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const run = async function* (input: RunOptions): AsyncIterable<AgentEvent> {
+            started.push(input.bot.name);
+            const turnId = input.turnId ?? 'turn';
+            const messageId = `msg-${started.length}`;
+            yield { seq: 1, type: 'run.started', turnId, messageId };
+            // 第一轮故意卡在这里：并行的实现会把第二轮也放出去
+            if (started.length === 1) await gate;
+            yield { seq: 2, type: 'text.delta', messageId, delta: `${input.bot.name} 的回复` };
+            yield { seq: 3, type: 'run.finished', turnId, finishReason: 'stop', steps: 1, maxOutputTokens: 0 };
+            yield { seq: 4, type: 'message.completed', messageId };
+            yield { seq: 5, type: 'run.completed', turnId };
+        } as (input: RunOptions) => AsyncIterable<AgentEvent>;
+
+        const h = makeRoom({ store, run });
+        void h.room.recover();
+        await waitFor(() => started.length === 1);
+        await sleep(5);
+        expect(started).toHaveLength(1); // 第一个还卡着，第二个没动
+
+        release!();
+        await waitFor(() => started.length === 2);
+        expect(started).toEqual(['diy', 'cops']);
     });
 
     it('running 事件：谁在说话由房间广播，结束时清空', async () => {
@@ -495,7 +595,7 @@ describe('中断的轮次', () => {
         });
 
         const restarted = h.rebuild();
-        restarted.room.recover();
+        void restarted.room.recover();
         await waitFor(() => restarted.room.deliveries().every((d) => d.state === 'delivered'));
 
         expect(interruptedOf(restarted)).toHaveLength(0);

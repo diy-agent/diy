@@ -8,7 +8,12 @@ import type { LocalAgentLimits } from "../../src/main/services/local-agent";
  *
  * 复现（修前实测 999s 挂死）：`bash -c "sleep 999 &"` —— 内层 sleep 继承了 stdout 写端，
  * 外层 bash 退出后它还在写，Node 的 'close'（stdio 全关之后）永远不到。修法是挂 'exit'：
- * 命令退出 = 结局已定，最多等 EXIT_GRACE_MS（200ms）就收尾。
+ * 命令退出 = 结局已定，最多再等一段宽限就收尾。
+ *
+ * ⚠️ 门槛跟着实现走（2026-11-26）：`@diy-agent/tools` 的 ##560 把「孙进程还握着写端」这一档
+ * 的宽限定成 `ORPHAN_GRACE_MS = 1500`（比原来 200ms 的 EXIT_GRACE_MS 更宽松，让「马上要放手」
+ * 的正常形态继续走 'close'，语义不变），所以这里的 ≤1s 断言过时了。结局仍是 `ok` + 正文带
+ * 「已断开后代进程」的 note（不杀孙进程，只断读端）。
  */
 const limits = { bashTimeoutMs: 300_000 } as unknown as LocalAgentLimits;
 
@@ -19,11 +24,14 @@ const elapsed = async <T>(p: Promise<T>): Promise<[T, number]> => {
 };
 
 describe("runBash 退出宽限（##454）", () => {
-    it("`bash -c 'sleep 999 &'`（无显式 timeout）⇒ ≤1s 返回，不再挂 999s", async () => {
+    it("`bash -c 'sleep 999 &'`（无显式 timeout）⇒ 孤儿宽限到点就返回，不再挂 999s", async () => {
         const [run, ms] = await elapsed(runBash(`bash -c 'sleep 999 &'`, process.cwd(), limits, undefined, undefined, 0));
-        expect(ms).toBeLessThan(1000);
+        // ##560 的 ORPHAN_GRACE_MS = 1500；留一倍余量给满载并行
+        expect(ms).toBeLessThan(4_000);
         expect(run.outcome).toBe("ok");
         expect(run.text).toContain("timeout_ms: 0");
+        // 收尾时说清楚「后台还在跑、后续输出不在这里」——不是静默成功
+        expect(run.text).toContain("已断开后代进程");
     }, 10_000);
 
     it("显式 timeout 被尊重：sleep 30 + timeout 800 ⇒ ~0.8s 返回 timed_out", async () => {

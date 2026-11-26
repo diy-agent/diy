@@ -133,7 +133,7 @@ boot.info('UI 走 vite（HMR 同端口）；改 server/ 或 entity-runtime 会�
 await announce(config, port);
 
 // 续跑同样排在监听之后（生产入口 `index.ts` 同一规矩）：先能连，再干活。
-app.resume();
+void app.resume();
 
 // ── 服务端代码变更 → 请看护循环重启 ──────────────────────────────
 // vite 的 HMR 只管浏览器侧模块图；`server/**` 与 `pkgs.ts/**`（工作区包源码）在服务端的

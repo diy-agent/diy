@@ -198,12 +198,21 @@ export function StatusGlyph({
     className = '',
     iconClass = 'size-4',
     running = false,
+    broken = false,
 }: {
     room: Room;
     className?: string;
     iconClass?: string;
     /** 这个容器此刻真有成员在跑：呼吸一下（**不加新元素**，也不抢状态图标本身的颜色） */
     running?: boolean;
+    /**
+     * 上一轮有成员出错（`needs-attention`）：图标**变红**。
+     *
+     * 用户 2026-11-26：“表格说「出错」，左侧导航栏的任务图标也应该变状态”——一个是表格、
+     * 一个是侧栏，两处必须读同一份事实（`rooms.list` 的 `broken` 与 `bots.rows` 同源）。
+     * 只改颜色不改形状：形状说的是 open / closed，那是另一件事。
+     */
+    broken?: boolean;
 }) {
     if (room.type !== 'task') return null;
     const status = taskStatusOf(room);
@@ -211,8 +220,8 @@ export function StatusGlyph({
     const Icon = STATUS_ICON[status];
     return (
         <span
-            className={`relative inline-flex shrink-0 ${meta.text} ${className}`}
-            title={`${running ? '正在运行 · ' : ''}状态：${meta.label}`}
+            className={`relative inline-flex shrink-0 ${broken ? 'text-rose-400' : meta.text} ${className}`}
+            title={`${broken ? '上一轮出错 · ' : ''}${running ? '正在运行 · ' : ''}状态：${meta.label}`}
         >
             <Icon className={iconClass} strokeWidth={2.4} />
             {running && (

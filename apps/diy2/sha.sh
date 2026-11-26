@@ -19,7 +19,7 @@
 # ── 三个运行面（同一个包 = 一份产物 build/prod/）──
 #   ./sha.sh dev       开发：单端口（vite 挂进服务端，HMR），数据根 run/diy2/lab
 #   ./sha.sh staging   验收：build/prod 产物 + 数据根 run/diy2/staging（改码不波及）
-#   ./sha.sh start     真生产：= `diy2 web`（~/.diy/diy2、端口 5192）
+#   ./sha.sh start     真生产：= `diy2 web`（~/.diy2、端口 5192）
 #   ./sha.sh build     出产物：build/prod/{web,server,cli}
 #
 # ── 参数面 ──
@@ -87,12 +87,12 @@ sha.def "staging" \
   --desc "验收：build/prod 产物 + 沙箱数据根 run/diy2/staging（改码不波及）"
 
 sha.def "start" \
-  --opt "--home:string:数据根（缺省 ~/.diy/diy2）" \
+  --opt "--home:string:数据根（缺省 ~/.diy2）" \
   --opt "-p,--port:int:端口（缺省 5192）" \
   --opt "--name:string:实例名" \
   --opt "--detach:bool:起在后台" \
   --opt "--open:bool:就绪后打开浏览器" \
-  --desc "真生产：= diy2 web（~/.diy/diy2、端口 5192）"
+  --desc "真生产：= diy2 web（~/.diy2、端口 5192）"
 
 sha.def "stop" \
   --opt "--home:string:只停这个数据根的实例" \
@@ -272,7 +272,7 @@ staging() {
   run node "${args[@]}"
 }
 
-# 真生产：全局命令语义（`bin/diy2`）—— 数据根 ~/.diy/diy2、端口 5192、生产环境。
+# 真生产：全局命令语义（`bin/diy2`）—— 数据根 ~/.diy2、端口 5192、生产环境。
 # 要构建产物先 ./sha.sh build。
 start() {
   local home port name detach open
@@ -324,7 +324,7 @@ stop() {
 # 本 worktree × 本标签的数据根（run/diy2/<label>）。
 #
 # 这里**自己算**而不问 `diy2 home`：CLI 是发布形态入口（环境固定 production），它的缺省
-# 数据根是 ~/.diy/diy2。非生产侧没有「缺省」可问 —— server/config.ts 只认显式 --home，
+# 数据根是 ~/.diy2。非生产侧没有「缺省」可问 —— server/config.ts 只认显式 --home，
 # 路径就该由入口脚本按 `run/<app>/<label>` 约定算出来传下去。
 home() {
   local home launch
@@ -336,7 +336,7 @@ port() {
   # 判据必须是**探活**（/api/info 自报的 home + 注册表 pid），不是 app.port：
   # 那个文件只是「上次用的端口」，进程死后它还留着，崩死（SIGKILL / 断电）时也不更新。
   #
-  # 必须显式给数据根：`diy2 port` 缺省是生产根（~/.diy/diy2）—— 不给就是去探生产实例。
+  # 必须显式给数据根：`diy2 port` 缺省是生产根（~/.diy2）—— 不给就是去探生产实例。
   local home launch json
   sha.parse "$@" || return $?
   local -a args=(port)

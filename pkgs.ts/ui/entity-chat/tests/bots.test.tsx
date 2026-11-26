@@ -11,7 +11,15 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { needsYou, outcomeTextOf, sortRows } from '../src/bots';
+import {
+    attentionLabelOf,
+    attentionOf,
+    countByAttention,
+    needsYou,
+    outcomeTextOf,
+    sortRows,
+    visibleInOverlay,
+} from '../src/bots';
 import { BotsOverlay } from '../src/components/BotsOverlay';
 import type { BotRow } from '@diy-agent/chat-transport-rpc';
 
@@ -36,24 +44,73 @@ function render(rows: BotRow[], initialMode?: 'brief' | 'full'): string {
     );
 }
 
-describe('needsYou —— 二级浮层的唯一口径', () => {
-    it('空闲之外都要人看', () => {
-        expect(needsYou(row({ state: 'idle' }))).toBe(false);
+describe('visibleInOverlay —— 二级浮层列谁（非空闲）', () => {
+    it('空闲之外都要列（含在跑与排队）', () => {
+        expect(visibleInOverlay(row({ state: 'idle' }))).toBe(false);
         for (const state of ['running', 'asking', 'needs-attention'] as const) {
-            expect(needsYou(row({ state }))).toBe(true);
+            expect(visibleInOverlay(row({ state }))).toBe(true);
         }
+        expect(visibleInOverlay(row({ state: 'idle', queued: 2 }))).toBe(true);
+    });
+});
+
+describe('needsYou —— 只算「真要你动手」的（标题栏那颗红点）', () => {
+    it('出错 + 等你回答算，在跑 / 排队不算', () => {
+        expect(needsYou(row({ state: 'needs-attention' }))).toBe(true);
+        expect(needsYou(row({ state: 'asking' }))).toBe(true);
+        // 2026-11-25 用户报的「红 7」：在跑被算进去了
+        expect(needsYou(row({ state: 'running' }))).toBe(false);
+        expect(needsYou(row({ state: 'idle', queued: 3 }))).toBe(false);
+        expect(needsYou(row({ state: 'idle' }))).toBe(false);
+    });
+});
+
+describe('countByAttention —— 分类计数（点开一定对得上）', () => {
+    it('每行只归一类：错 + 等你 + 排队 + 在跑 + 空闲 = 总数', () => {
+        const rows = [
+            ...Array.from({ length: 4 }, (_, i) => row({ botId: `e${i}`, state: 'needs-attention' })),
+            ...Array.from({ length: 2 }, (_, i) => row({ botId: `q${i}`, state: 'asking' })),
+            row({ botId: 'r1', state: 'running' }),
+            row({ botId: 'i1', state: 'idle' }),
+        ];
+        const counts = countByAttention(rows);
+        // 用户报的那个场景：标题栏红 7，点开是 4 错 + 2 等 + 1 跑
+        expect(counts.broken).toBe(4);
+        expect(counts.blocked).toBe(2);
+        expect(counts.live).toBe(1);
+        expect(counts.idle).toBe(1);
+        expect(counts.needsYou).toBe(6); // 红点只数 4 + 2，不再把「在跑」染红
+        expect(counts.visible).toBe(7);
+        expect(counts.broken + counts.blocked + counts.queued + counts.live + counts.idle).toBe(rows.length);
+    });
+
+    it('在跑优先于排队：正在干活的成员不能被归成「排队中」', () => {
+        // 2026-11-26 用户报的那行：状态「排队中」+ 结局「中断」—— 其实它正在跑，
+        // 只是 `queuedByBot` 把手上那条 delivering 也算成了排队
+        const running = row({ state: 'running', queued: 3 });
+        expect(attentionOf(running)).toBe('live');
+        // 但排队数不能丢：行上两个字都说
+        expect(attentionLabelOf(running)).toBe('在跑 · 排 3');
+
+        const counts = countByAttention([running, row({ state: 'idle', queued: 1 })]);
+        expect(counts.live).toBe(1);
+        expect(counts.queued).toBe(1); // 只有“没在跑但排着”的算排队
+
+        expect(attentionOf(row({ state: 'idle', queued: 1 }))).toBe('queued');
+        expect(attentionLabelOf(row({ state: 'idle', queued: 1 }))).toBe('排队中');
     });
 });
 
 describe('sortRows —— 急的排前面', () => {
-    it('在跑 > 等回答 > 需要看 > 空闲', () => {
+    it('出错 > 等你 > 排队 > 在跑 > 空闲', () => {
         const rows = [
-            row({ botId: 'd', state: 'idle' }),
-            row({ botId: 'c', state: 'needs-attention' }),
+            row({ botId: 'e', state: 'idle' }),
+            row({ botId: 'd', state: 'running' }),
+            row({ botId: 'c', state: 'idle', queued: 2 }),
             row({ botId: 'b', state: 'asking' }),
-            row({ botId: 'a', state: 'running' }),
+            row({ botId: 'a', state: 'needs-attention' }),
         ];
-        expect(sortRows(rows).map((item) => item.botId)).toEqual(['a', 'b', 'c', 'd']);
+        expect(sortRows(rows).map((item) => item.botId)).toEqual(['a', 'b', 'c', 'd', 'e']);
     });
 
     it('同状态按最后动静新→旧，没有动静的垫底', () => {
@@ -106,16 +163,37 @@ describe('二级浮层', () => {
 });
 
 describe('三级表格', () => {
-    it('默认筛选与二级一致：空闲的不出现', () => {
+    it('默认「全部」：空闲的也在（「要看的」那一筛已删）', () => {
         const html = render([row({ botName: '在跑的', state: 'running' }), row({ botName: '闲着的', state: 'idle' })], 'full');
-        expect(html).toContain('要看的');
+        expect(html).not.toContain('>要看的 '); // 2026-11-26 用户：那个筛选 tab 删掉
+        expect(html).toContain('全部 2');
         expect(html).toContain('在跑的');
-        expect(html).not.toContain('闲着的');
+        expect(html).toContain('闲着的');
     });
 
-    it('带批量入口与「只看要看的」回退', () => {
+    it('空的类别不占筛选钮（连「出错 0」也不画）', () => {
+        const html = render([row({ botName: '闲着的', state: 'idle' })], 'full');
+        expect(html).not.toContain('出错 0');
+        expect(html).toContain('空闲 1');
+    });
+
+    it('有全选：一键勾中当前筛出来的这批', () => {
+        const html = render([row({ botName: 'a', state: 'needs-attention' }), row({ botName: 'b', state: 'running' })], 'full');
+        expect(html).toContain('aria-label="全选"');
+        expect(html).toContain('已选 0 / 2');
+    });
+
+    it('结局列写「上轮 ·」，不与左边的「此刻」读成一件事', () => {
+        const html = render([row({ state: 'running', outcome: 'interrupted' })], 'full');
+        expect(html).toContain('上轮 · 中断（上一轮没跑完）');
+        // 状态列是「此刻」：正在跑就写正在跑
+        expect(html).toContain('在跑');
+    });
+
+    it('带批量入口与回二级浮层的回退', () => {
         const html = render([row({ state: 'needs-attention' })], 'full');
         expect(html).toContain('重试选中（0）');
-        expect(html).toContain('只看要看的');
+        // 文案从「只看要看的」改成「只看活动的」：前者与已删掉的那个筛选 tab 撞名
+        expect(html).toContain('只看活动的');
     });
 });

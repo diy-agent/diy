@@ -24,11 +24,12 @@ import {
     type ContextProvider,
     type ContextSession,
 } from '@diy-agent/context';
-import { foldKbIndex, globalKbRoot, kbRootOf, scanKb } from '@diy-agent/kb';
+import { foldKbIndex, deviceKbRoot, kbRootOf, sameKbRoot, scanKb } from '@diy-agent/kb';
 import { skillsOf } from '@diy-agent/skills';
 import { localISOString } from '@diy-agent/time';
 
 import type { JournalEntry } from './db';
+import { unitsContextValue, type UnitBoard } from './units';
 import { watchedValue } from './watch-cache';
 
 /** 房间上下文需要的 spec 形状（只读；与 `Room` 结构兼容） */
@@ -52,23 +53,35 @@ export interface RoomContextOptions {
     readonly spec: RoomContextSpec;
     /** 房间的工作目录（`data.dir`） */
     readonly cwd: string;
-    /** 应用数据根（diy2 = `DIY2_HOME`）：应用级 AGENTS.md + 设备级知识库 */
+    /** 应用数据根（diy2 = 实例 home）：应用级 AGENTS.md 从这里取 */
     readonly home?: string;
+    /**
+     * 设备根（diy2 = 生产 home `~/.diy2`）：设备级知识库 `<设备根>/knowledge`。
+     * 不传 = 不读设备库（测试 / 无 app 宿主）。与 `home` 分开是硬要求：lab 实例的 home
+     * 是 `run/diy2/lab`，但设备库仍住生产根 —— 两个概念一混，设备库就跟着实例根漂。
+     */
+    readonly deviceHome?: string;
     /** 全局 skills 根；缺省 `~/.agents`（测试可指向临时目录） */
     readonly skillsRoot?: string;
     /** 任务日志（append-only）：由宿主给取数函数；不传 = 不投 journal 节 */
     readonly journal?: () => readonly JournalEntry[];
+    /** 任务的需求账本树：宿主给取数函数；不传 = 不投 units 节 */
+    readonly units?: () => UnitBoard;
     /** 房间成员（@ 键 / 是否主人格）：不传 = 不投 room 节 */
     readonly members?: () => readonly { id: string; name: string; key: string; main: boolean }[];
 }
 
 /** 知识库索引（项目优先、设备兜底；形状与 `AssembleGlobalsSchema.kb` 一致） */
-function kbProvider(cwd: string, home: string | undefined): ContextProvider {
-    const global = globalKbRoot(process.env['DIY_HOME'], homedir());
+function kbProvider(cwd: string, deviceHome: string | undefined): ContextProvider {
+    // 设备根**显式给**（生产 = 实例 home 本身，lab 指生产根）；不给就不读设备库（测试 / 无 app 宿主）。
+    // 不能读 `DIY_HOME`：在 diy2 里它表示实例数据根，读它会把设备库算成 `<实例根>/knowledge`。
+    const global = deviceKbRoot(deviceHome, homedir());
     const project = kbRootOf(cwd);
     const roots: { dir: string; scope: 'project' | 'global' }[] = [];
-    if (resolve(project) !== resolve(global)) roots.push({ dir: project, scope: 'project' });
-    if (home !== undefined) roots.push({ dir: global, scope: 'global' });
+    // 比较 realpath：`~/.diy/knowledge` 是设备库的兼容 symlink，按字符串比会把它当**另一个项目库**，
+    // 于是设备条目被标成 project（项目库优先一合并，设备库就真看不见了）。
+    if (!sameKbRoot(project, global)) roots.push({ dir: project, scope: 'project' });
+    if (deviceHome !== undefined) roots.push({ dir: global, scope: 'global' });
 
     const compute = ():
         | { entries: Array<{ path: string; desc: string; sections: number; scope: 'project' | 'global' }> }
@@ -87,9 +100,10 @@ function kbProvider(cwd: string, home: string | undefined): ContextProvider {
             }
         }
         // 按目录折叠（##404 减负）：每轮固定前缀按文件平铺会随迁移线性涨，折叠只损失「逐文件 desc」。
-        // `showNames: 0` = 目录级（只给「N 个文件」，不给名字）：一个任务只碰 1~2 个目录，
-        // 逐目录列名字是白付的；要文件名就 `diy2 facts brief <目录>`。
-        const entries = foldKbIndex([...byPath.values()], { showNames: 0 });
+        // `showNames: 3` = 目录级 + 前 3 个文件名：只给「N 个文件」时 `app/tool.md` 这类标题
+        // 根本不出现在 system 里，bot 不知道它存在就不会去 `diy2 facts brief app`（实测代价：
+        // 「UI 类改动的打法」一条都没被用过）。3 个名字≈20 字节，比全列省、比零个有用。
+        const entries = foldKbIndex([...byPath.values()], { showNames: 3 });
         return entries.length === 0 ? undefined : { entries };
     };
 
@@ -219,6 +233,23 @@ function journalProvider(get?: () => readonly JournalEntry[]): ContextProvider {
     };
 }
 
+/**
+ * 任务的需求账本树。**全量注入**（2026-11-24 用户裁：先简单走）——
+ * 于是「现在能做哪几条」不需要多一次工具调用。
+ *
+ * 值的算法在 `unitsContextValue()`（`units.ts`）：界面「目标」视图的源码形态调同一个函数，
+ * 所以「模型读到的」和「人看到的」不可能分叉。这里只负责挂 key。
+ */
+function unitsProvider(get?: () => UnitBoard): ContextProvider {
+    return {
+        key: 'units',
+        provide: () => {
+            const board = get?.();
+            return board === undefined ? undefined : unitsContextValue(board);
+        },
+    };
+}
+
 /** 房间成员（低频）：模型要 @ 谁，得先知道房里有什么名字 */
 function roomProvider(opts: RoomContextOptions): ContextProvider {
     return {
@@ -323,10 +354,11 @@ export function roomProviders(opts: RoomContextOptions): ContextProvider[] {
             key: 'skills',
             provide: () => skillsValue(),
         },
-        kbProvider(opts.cwd, opts.home),
+        kbProvider(opts.cwd, opts.deviceHome),
         docsProvider(opts.cwd),
         roomProvider(opts),
         journalProvider(opts.journal),
+        unitsProvider(opts.units),
         taskProvider(opts.spec, opts.cwd),
     ];
 }
@@ -337,11 +369,12 @@ export function createRoomContext(opts: RoomContextOptions): ContextSession {
 }
 
 /** 兼容入口（#503 的测试与旧调用点）：只按 cwd/home 组装一次 system，不带任务 */
-export function buildRoomSystemContext(opts: { cwd: string; home?: string }): string {
+export function buildRoomSystemContext(opts: { cwd: string; home?: string; deviceHome?: string }): string {
     const session = createRoomContext({
         spec: { id: '', type: 'project', data: {} },
         cwd: opts.cwd,
         ...(opts.home === undefined ? {} : { home: opts.home }),
+        ...(opts.deviceHome === undefined ? {} : { deviceHome: opts.deviceHome }),
     });
     return session.open().system;
 }

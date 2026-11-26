@@ -25,6 +25,121 @@ export const STATE_TEXT: Readonly<Record<BotRow['state'], string>> = {
     idle: '空闲',
 };
 
+/**
+ * 「这个房间 / 这个成员此刻归哪一类」——**可并存的关注度**词表（2026-11-25 裁）。
+ *
+ * 与 `BotState` 的关系：`BotState` 是**互斥单值**（此刻最要紧的一件事，一行一个徽标用它）；
+ * 而汇总计数必须分类 —— 拿互斥值去 `filter(state !== 'idle')` 数出来的那个数字混了三种
+ * 语义，于是出现「标题栏红 7，点开是 4 错 + 2 等 + 1 跑」。
+ *
+ * 顺序 = 谁更该让人动：先错、再卡在你这、再系统在干活、最后才是「跑完了你没看」。
+ */
+export type AttentionKind = 'broken' | 'blocked' | 'queued' | 'live' | 'idle';
+
+/** 每一类的人话（徽标 / tab / tooltip 共用一处，不在各组件里各写一份） */
+export const ATTENTION_TEXT: Readonly<Record<AttentionKind, string>> = {
+    broken: '出错',
+    blocked: '等你回答',
+    queued: '排队中',
+    live: '在跑',
+    idle: '空闲',
+};
+
+/**
+ * 标题栏那排徽标用**单字**标签（`6错 3等`）：28px 高的那一条放不下全称，
+ * 但完全裸着的数字又看不出是什么（用户 2026-11-25 报「挤在一起」，量的结果是
+ * `🤖 6 3` —— 两个数字紧贴着，读起来像一串乱数）。全称见 `ATTENTION_TEXT`。
+ */
+export const ATTENTION_SHORT: Readonly<Record<AttentionKind, string>> = {
+    broken: '错',
+    blocked: '等',
+    queued: '排',
+    live: '跑',
+    idle: '闲',
+};
+
+/** 色点（**只有 broken 用红**：其余四类各有自己的色，红色专属「出事了」） */
+export const ATTENTION_DOT: Readonly<Record<AttentionKind, string>> = {
+    broken: 'bg-rose-400',
+    blocked: 'bg-amber-400',
+    queued: 'bg-zinc-400',
+    live: 'bg-emerald-400 animate-pulse',
+    idle: 'bg-zinc-600',
+};
+
+/** 文字的色（徽标旁的计数） */
+export const ATTENTION_INK: Readonly<Record<AttentionKind, string>> = {
+    broken: 'text-rose-400',
+    blocked: 'text-amber-400',
+    queued: 'text-zinc-400',
+    live: 'text-emerald-400',
+    idle: 'text-muted-foreground',
+};
+
+/**
+ * 一行 → 关注度。
+ *
+ * 优先序：出错 > 等你 > **在跑** > 排队 > 空闲。
+ *
+ * 「在跑」排在「排队」前面是 2026-11-26 修的：一个正在跑的成员手上就是这一轮，
+ * 它后面还可能排着几条 —— 把这种行归成「排队中」（原来的顺序）会让人以为它没在干活，
+ * 用户看到的就是「排队中 + 上轮中断」那种读不通的组合。
+ * 排队数并没有丢：`attentionLabelOf` 会在在跑的行上补一句「在跑 · 排 3」。
+ */
+export function attentionOf(row: BotRow): AttentionKind {
+    if (row.state === 'needs-attention') return 'broken';
+    if (row.state === 'asking') return 'blocked';
+    if (row.state === 'running') return 'live';
+    if ((row.queued ?? 0) > 0) return 'queued';
+    return 'idle';
+}
+
+/**
+ * 行上那个「状态」字样：在跑且排着队时两个都说（`在跑 · 排 3`）。
+ *
+ * 分类（`attentionOf`）必须互斥才能计数，但**一行可以同时是在跑和排着** ——
+ * 所以展示层不能直接用分类名，否则总有一个事实被吞掉。
+ */
+export function attentionLabelOf(row: BotRow): string {
+    const queued = row.queued ?? 0;
+    if (row.state === 'running' && queued > 0) return `在跑 · 排 ${queued}`;
+    return ATTENTION_TEXT[attentionOf(row)];
+}
+
+export interface AttentionCounts {
+    broken: number;
+    blocked: number;
+    queued: number;
+    live: number;
+    idle: number;
+    /** 二级浮层 / 默认筛选的口径：非空闲（含在跑、排队） */
+    visible: number;
+    /** 真正要人动手的：错 + 等你（**标题栏那颗红点只数这两个**） */
+    needsYou: number;
+}
+
+/**
+ * 一批行 → 分类计数。标题栏徽标、浮层 tab、侧栏全部读这一份。
+ *
+ * 每行**只归一类**，所以 `broken + blocked + queued + live + idle === rows.length` ——
+ * 这就是「点开能对上」的保证：红点不会出现 7 而点开只有 4+2+1。
+ */
+export function countByAttention(rows: readonly BotRow[]): AttentionCounts {
+    const counts: AttentionCounts = {
+        broken: 0,
+        blocked: 0,
+        queued: 0,
+        live: 0,
+        idle: 0,
+        visible: 0,
+        needsYou: 0,
+    };
+    for (const row of rows) counts[attentionOf(row)] += 1;
+    counts.needsYou = counts.broken + counts.blocked;
+    counts.visible = rows.length - counts.idle;
+    return counts;
+}
+
 /** 结局的一句话（与 entity-runtime 的 `outcomeText` 同一套说法，但那边是服务端文案，这边只管展示） */
 export function outcomeTextOf(row: BotRow): string {
     switch (row.outcome) {
@@ -55,23 +170,40 @@ export function outcomeTextOf(row: BotRow): string {
  * 用户 2026-11-25 定的口径：二级只列「活动的 + 出错的 + 等回答的」—— 也就是
  * 除 `idle` 之外全部。`idle` 是「上次正常说完、现在没动」，它只属于三级表格。
  */
-export function needsYou(row: BotRow): boolean {
-    return row.state !== 'idle';
+export function visibleInOverlay(row: BotRow): boolean {
+    return attentionOf(row) !== 'idle';
 }
 
-/** 同状态内的先后：在跑最前、等回答次之、需要看第三 —— 越靠上越急 */
-const STATE_ORDER: Readonly<Record<BotRow['state'], number>> = {
-    running: 0,
-    asking: 1,
-    'needs-attention': 2,
-    idle: 3,
+/**
+ * 这一行是不是**真要人动手**（上一轮出错 / 卡在你这）。
+ *
+ * 标题栏那颗数字只数这两个 —— 以前它是 `state !== 'idle'`，把「在跑」也染成红色，
+ * 于是「红 7、点开只有 4 个真出错」。在跑 / 排队是系统状态，不该催人。
+ */
+export function needsYou(row: BotRow): boolean {
+    const kind = attentionOf(row);
+    return kind === 'broken' || kind === 'blocked';
+}
+
+/**
+ * 排序顺序 = 关注度顺序：**要你处置的排最前**（先错、再等你、再排队、再在跑、最后空闲）。
+ *
+ * 以前是 `running > asking > needs-attention`（在跑最前），出错的沉在底下 ——
+ * 用户 2026-11-25 报的「红 7、点开只有 4 个真出错」，有一半就是被这个顺序埋掉的。
+ */
+const ATTENTION_RANK: Readonly<Record<AttentionKind, number>> = {
+    broken: 0,
+    blocked: 1,
+    queued: 2,
+    live: 3,
+    idle: 4,
 };
 
-/** 需要人看的排前面；同状态按「最后动静」新→旧（没有动静的垫底） */
+/** 需要人动的排前面；同类按「最后动静」新→旧（没有动静的垫底） */
 export function sortRows(rows: readonly BotRow[]): BotRow[] {
     return [...rows].sort((a, b) => {
-        const byState = STATE_ORDER[a.state] - STATE_ORDER[b.state];
-        if (byState !== 0) return byState;
+        const byRank = ATTENTION_RANK[attentionOf(a)] - ATTENTION_RANK[attentionOf(b)];
+        if (byRank !== 0) return byRank;
         return (b.lastTurnAt ?? 0) - (a.lastTurnAt ?? 0);
     });
 }

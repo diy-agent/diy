@@ -287,10 +287,13 @@ describe("RunRegistry（抽包后的行为，##515 3a）", () => {
         try {
             const info = await reg.spawn({ command: "echo x", cwd: process.cwd() });
             expect(changes).toBeGreaterThanOrEqual(1); // 起
+            // 基准必须在 `wait` **之前**取：wait 的 resolve 与「收口那条 onChange」谁先谁后
+            // 本来就不保证（实测收口先到 ⇒ 老写法 `afterSpawn` 已经把收口那次算进去，
+            // 断言变成 `2 > 2` 恒假）。这里要钉的是「收口也叫了一次」，不是两者的先后。
+            const beforeDone = changes;
             await reg.wait(info.id, 10_000);
-            const afterSpawn = changes;
             await sleep(50);
-            expect(changes).toBeGreaterThan(afterSpawn); // 收口
+            expect(changes).toBeGreaterThan(beforeDone); // 收口
         } finally {
             reg.clear();
             rmSync(rootDir, { recursive: true, force: true });

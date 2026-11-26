@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { briefOf, findIn, firstSentence, getSection, parseSections, pathsOf } from '../src/query';
+import { briefOf, deviceKbRoot, findIn, firstSentence, getSection, parseSections, pathsOf, sameKbRoot } from '../src/query';
 
 const dirs: string[] = [];
 function tmp(): string {
@@ -83,5 +83,32 @@ describe('pathsOf / briefOf / getSection / findIn', () => {
         expect(hits[0]!.line).toBeGreaterThan(0);
         expect(hits[0]!.snippet).toContain('worktree');
         expect(findIn(root, ['worktree', '不存在的词'])).toEqual([]);
+    });
+});
+
+describe('deviceKbRoot / sameKbRoot（设备根与「同一份库」的判据）', () => {
+    it('deviceKbRoot：显式设备根优先，缺省 ~/.diy2', () => {
+        expect(deviceKbRoot(undefined, '/h')).toBe('/h/.diy2/knowledge');
+        expect(deviceKbRoot('  ', '/h')).toBe('/h/.diy2/knowledge');
+        expect(deviceKbRoot('/dev-root', '/h')).toBe('/dev-root/knowledge');
+    });
+
+    it('sameKbRoot：symlink 指同一份库算同一个（~/.diy/knowledge → ~/.diy2/knowledge）', () => {
+        const base = tmp();
+        const real = join(base, 'diy2', 'knowledge');
+        mkdirSync(real, { recursive: true });
+        const link = join(base, 'diy', 'knowledge');
+        mkdirSync(join(base, 'diy'), { recursive: true });
+        symlinkSync(real, link);
+
+        expect(sameKbRoot(link, real)).toBe(true);
+        const other = join(base, 'proj', '.diy', 'knowledge');
+        mkdirSync(other, { recursive: true });
+        expect(sameKbRoot(other, real)).toBe(false);
+    });
+
+    it('sameKbRoot：路径不存在时回落字符串比较（不抛）', () => {
+        expect(sameKbRoot('/no/such/a', '/no/such/b')).toBe(false);
+        expect(sameKbRoot('/no/such/a', '/no/such/a')).toBe(true);
     });
 });

@@ -144,6 +144,23 @@ interface ShellState {
      * 「哪个任务在干活」—— 那正是用户要的（看得见的活）。
      */
     running: Record<string, number>;
+    /**
+     * 容器 id → 排队中的投递数（`queued` / `delivering`，含重启后的待续跑）。
+     *
+     * 与 `running` 同一约定（0 不占键）。它是**系统状态**不是“要你动手”：
+     * 侧栏用一颗灰旋转表达“排着队，马上轮到它”，不进标题栏那颗红点。
+     * 只有 `rooms.list` 一个来源（服务端每 30s 投影一次），没有活动流。
+     */
+    queued: Record<string, number>;
+    /**
+     * 容器 id → 未读条数（`seq > 已读水位` 且不是我发的，真源是 `room_read`）。
+     *
+     * 与 `pendingAsks` 同一约定（0 不占键）。它是**“有结果了，去看看吧”**，
+     * 不是“卡住了” —— 不进标题栏那颗红点，只在侧栏行上画一颗蓝点。
+     */
+    unread: Record<string, number>;
+    /** 容器 id → 上一轮出错的成员数（侧栏任务图标变红用；在跑的不算） */
+    broken: Record<string, number>;
     /** 在跑的后台作业数（实例级账本；标题栏那颗「作业 N」用它，不进房间表） */
     activeJobs: number;
     error?: string;
@@ -164,6 +181,9 @@ let state: ShellState = {
     pendingAsks: {},
     pendingAskTitles: {},
     running: {},
+    queued: {},
+    unread: {},
+    broken: {},
     activeJobs: 0,
 };
 const listeners = new Set<() => void>();
@@ -340,6 +360,101 @@ export function useRunningOf(roomId: string): number {
         () => state.running[roomId] ?? 0,
         () => state.running[roomId] ?? 0,
     );
+}
+
+/**
+ * 只订阅一个房间的「还有几条投递在排队」（侧栏灰旋转）。
+ *
+ * 与 `useRunningOf` 同理：单个数字订阅，别的房间排队变化不会重渲这一行。
+ */
+export function useQueuedOf(roomId: string): number {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.queued[roomId] ?? 0,
+        () => state.queued[roomId] ?? 0,
+    );
+}
+
+/**
+ * 只订阅一个房间的「还有几条没看过」（侧栏蓝点）。
+ *
+ * 与 `useRunningOf` 同理：单个数字订阅，别的房间未读变化不重渲这一行。
+ */
+export function useUnreadOf(roomId: string): number {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.unread[roomId] ?? 0,
+        () => state.unread[roomId] ?? 0,
+    );
+}
+
+/** 只订阅一个房间的「上一轮有几个成员出错」（侧栏图标颜色） */
+export function useBrokenOf(roomId: string): number {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.broken[roomId] ?? 0,
+        () => state.broken[roomId] ?? 0,
+    );
+}
+
+/**
+ * 上报「我在看这个房间」（未读水位）。传 `seq` 就报到那一条，不传 = **当前最后一条**。
+ *
+ * 老传输层没有这个能力就沉默：未读只是“更清楚”，不该因为上报失败而报错。
+ */
+export async function markRead(roomId: string, seq?: number): Promise<void> {
+    const api = client.rooms as { markRead?: (id: string, seq?: number) => Promise<unknown> } | undefined;
+    if (api?.markRead === undefined) return;
+    await api.markRead(roomId, seq);
+    // 乐观清掉本地的未读：否则侧栏蓝点要等下一次 `rooms.list`（30s 一次）才灭 ——
+    // 用户已经在这个房间里看着它了，“还有 3 条未读”再挂着 30 秒就是在骗人
+    if ((state.unread[roomId] ?? 0) > 0) {
+        const next = { ...state.unread };
+        delete next[roomId];
+        emit({ ...state, unread: next });
+    }
+}
+
+/**
+ * 「房间打开且页面可见」时把未读水位推到最后一条（2026-11-26 裁：打开即算读）。
+ *
+ * 三条口径：
+ * · **只在该房间被看**：切走就不再报（别的房间的未读要靠侧栏提醒）；
+ * · **页面可见才算**：后台标签页看不到新消息，不能算读；
+ * · **新条目到达也算看过**：订阅会话状态，bot 说完话就报（节流 1s，不跟着流逐字发请求）。
+ *
+ * 不做「滚到底才算读」：那是另一套（逐条已读 / 未读分割线），当前没这个需求。
+ */
+export function useMarkRoomRead(roomId: string | undefined): void {
+    React.useEffect(() => {
+        if (roomId === undefined || roomId === '') return;
+        let last = 0;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const report = (): void => {
+            if (document.visibilityState !== 'visible') return;
+            const wait = 1000 - (Date.now() - last);
+            if (wait > 0) {
+                if (timer === undefined) {
+                    timer = setTimeout(() => {
+                        timer = undefined;
+                        report();
+                    }, wait);
+                }
+                return;
+            }
+            last = Date.now();
+            void markRead(roomId).catch(() => undefined);
+        };
+        const store = conversationOf(roomId);
+        const off = store.subscribe(report);
+        report();
+        document.addEventListener('visibilitychange', report);
+        return () => {
+            off();
+            document.removeEventListener('visibilitychange', report);
+            if (timer !== undefined) clearTimeout(timer);
+        };
+    }, [roomId]);
 }
 
 /**
@@ -660,6 +775,22 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         }
     }
     const pendingAskTitles: Record<string, string[]> = { ...serverAskTitles };
+    // 排队中的投递：**只有列表这一个来源**（30s 轮询，没有活动流）。慢一档但够看 ——
+    // 它表达的是“马上要动”，不是“正在动”（正在动的有活动流实时推）
+    const queued: Record<string, number> = {};
+    for (const room of rooms) {
+        if (typeof room.queued === 'number' && room.queued > 0) queued[room.id] = room.queued;
+    }
+    // 未读：同一次列表请求回来（服务端一条 GROUP BY 算完全实例）
+    const unread: Record<string, number> = {};
+    for (const room of rooms) {
+        if (typeof room.unread === 'number' && room.unread > 0) unread[room.id] = room.unread;
+    }
+    // 上一轮出错的成员数：侧栏图标变红（与三级表格同源，不自己再算）
+    const broken: Record<string, number> = {};
+    for (const room of rooms) {
+        if (typeof room.broken === 'number' && room.broken > 0) broken[room.id] = room.broken;
+    }
     // 当前房间的题干以流为准（服务端那份可能落后几十秒）
     const liveTitles = liveRoomId === '' ? undefined : state.pendingAskTitles[liveRoomId];
     if (liveRoomId !== '' && liveTitles !== undefined) pendingAskTitles[liveRoomId] = [...liveTitles];
@@ -676,6 +807,9 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         pendingAsks,
         pendingAskTitles,
         running,
+        queued,
+        unread,
+        broken,
         bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])),
         loaded: true,
         // 地址没变就沿用旧引用：`useAddress()` 的快照就是它，同值换新对象等于给整张侧栏

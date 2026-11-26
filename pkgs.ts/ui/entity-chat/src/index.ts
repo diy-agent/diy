@@ -40,6 +40,7 @@ export { TaskPanel } from './components/TaskPanel';
 // 作业卡片：两个 surface 共用（判据在 chat-core 的 `jobOf`）。导出是为了让
 // 选择型实验台能直接拿真组件摆样子 —— 别在 demo 里另画一份。
 export { JobCard } from './components/JobCard';
+export { UnitBoardView } from './components/UnitBoardView';
 // 标题栏右端的两颗活动图标（会话 N / 作业 M）：壳只负责把它们摆进 tools，
 // 数字由组件自己订阅（全实例活动流）—— 宿主不会为「有人开跑」重渲一遍。
 export { ActiveJobsGlyph, ActiveSessionsGlyph } from './components/ActiveGlyphs';
@@ -50,8 +51,24 @@ export { JobsPanel } from './components/JobsChip';
 //
 // 数据与口径都在 `bots.ts` 里（`useBotRows` + `needsYou`）：宿主只负责在标题栏摆一颗
 // 按钮、把计数画上去，然后挂 `BotsOverlay` —— 两处不各算一遍。
-export { BotsOverlay, type BotsOverlayProps } from './components/BotsOverlay';
-export { needsYou, outcomeTextOf, STATE_TEXT, useBotRows, type BotRowsState } from './bots';
+export { BotsOverlay, type BotsOverlayProps, type Filter } from './components/BotsOverlay';
+// 标题栏那排分类计数徽标（出错 / 等你 / 排队 / 在跑）：数字与浮层、筛选 tab 同源
+export { AttentionCapsules, type AttentionCapsulesProps } from './components/AttentionCapsules';
+export {
+    attentionOf,
+    countByAttention,
+    needsYou,
+    visibleInOverlay,
+    ATTENTION_DOT,
+    ATTENTION_INK,
+    ATTENTION_TEXT,
+    outcomeTextOf,
+    STATE_TEXT,
+    useBotRows,
+    type AttentionCounts,
+    type AttentionKind,
+    type BotRowsState,
+} from './bots';
 export { RoomDialogsProvider, useRoomDialogs, useRoomDialogsContext } from './useRoomDialogs';
 export type { RoomDialogs } from './useRoomDialogs';
 

@@ -21,6 +21,9 @@ import { makeJobTool, type RunRegistry } from '@diy-agent/jobs/node';
 import type { AskGate } from '../ask';
 import { askTool } from './ask';
 import { journalTool } from './journal';
+import { unitTools, type UnitHost } from './units';
+
+export type { UnitHost } from './units';
 
 /**
  * 一条 bash 命令的缺省预算（毫秒）。
@@ -51,6 +54,11 @@ export interface RoomToolsOptions {
     askOwner?: string;
     /** 任务日志写入口；不传 = 没有 journal 工具 */
     onJournal?: (input: { kind: import('../db').JournalKind; text: string }) => void;
+    /**
+     * 任务的需求账本树（读写）；不传 = 没有 `unit_*` 工具。
+     * 非 task 房间不该传：unit 是 task 私有的，没有任务就没有图。
+     */
+    units?: UnitHost;
     /** 后台作业；不传 = bash 没有 `background`、也没有 `job` 工具 */
     jobs?: RoomJobs;
     /** 投递层截断（只改"发给模型的那一份"，execute 的返回值仍是全文）；可返回 Promise */
@@ -114,6 +122,7 @@ export function buildRoomTools(options: RoomToolsOptions): ToolSet {
     const ask = askTool(options.ask, options.askOwner);
     if (ask !== undefined) extra['ask'] = ask;
     if (options.onJournal !== undefined) extra['journal'] = journalTool(options.onJournal);
+    if (options.units !== undefined) Object.assign(extra, unitTools(options.units));
 
     return buildTools({ cwd, extraTools: extra });
 }
