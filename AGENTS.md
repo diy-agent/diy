@@ -30,7 +30,7 @@
 3. **禁任意值**：不写 `bg-[#...]` / `text-[13px]` / `h-[38px]` / `rounded-[7px]`；只用语义变量与 Tailwind 刻度。
 4. **改完 UI 必验**：`./sha.sh lab --app diy2`（**单端口无 Electron**，浏览器直开 `app.port`）+ 无横向溢出（主壳验 1200/1280，组件级在 std-lab 验 375）+ console 零错误。
 
-> astryx 面自 2026-11-25 起**冻结为参考实现**（新交互只做在 shadcn 面），见 `docs/plans/2026-11-24-surface-parity.md` §7。
+> astryx 面已于 2026-11-26 **删除**（11-25 先冻结、11-26 标废弃后删）—— 现在只有 shadcn 一面，历史见 `docs/plans/2026-11-24-surface-parity.md` §7。
 
 ## 历史归档
 

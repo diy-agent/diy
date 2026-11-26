@@ -21,6 +21,8 @@ import { Button } from '@diy-agent/ui-shadcn';
 /** 表面切换：只是几颗 tab（壳 / 边框 / 内边距归调用方那一行）。 */
 export function SurfaceTabs() {
     const [value, set] = useSurfaceId();
+    // 只剩一面时不画 tab：一颗永远选中的按钮不提供任何选择，只是噪音
+    if (SURFACES.length < 2) return null;
     return (
         <div className="flex items-center gap-1">
             {SURFACES.map((surface) => (
