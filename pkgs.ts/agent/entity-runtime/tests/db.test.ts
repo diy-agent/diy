@@ -461,6 +461,33 @@ describe('unit（需求账本树的节点）', () => {
         expect(store.unitOf('t1', 'u1')?.status).toBe('doing');
     });
 
+    it('itemsByIds：按条目 id 批量取（跨房间也认），未知 id 静默缺席', () => {
+        const store = openStore(':memory:');
+        const r1: Room = { ...room, id: 'r1' };
+        const r2: Room = { ...room, id: 'r2' };
+        store.saveRoom(r1);
+        store.saveRoom(r2);
+        const chat = (id: string): Item => ({
+            id,
+            seq: 0,
+            turn: 1,
+            turnId: 't1',
+            type: 'chat',
+            at: 1,
+            status: 'done',
+            author: { id: 'human:我', name: '我', color: '#000', role: 'human' },
+            data: { text: id },
+        });
+        const a = store.appendItem(r1.id, chat('u-a'));
+        const b = store.appendItem(r2.id, chat('u-b'));
+        const got = store.itemsByIds([a.id, b.id, 'u-gone']);
+        expect(got.map((item) => item.id).sort()).toEqual([a.id, b.id].sort());
+        // 去重与空集：不去重会白读一遍；空集不该拼出 `IN ()`
+        expect(store.itemsByIds([a.id, a.id]).length).toBe(1);
+        expect(store.itemsByIds([])).toEqual([]);
+        expect(store.itemsByIds(['', ''])).toEqual([]);
+    });
+
     it('accept（怎么算做完）落库、能改、改 title 不会把它抹掉', () => {
         const store = openStore(':memory:');
         const unit = store.saveUnit({

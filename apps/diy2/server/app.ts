@@ -32,8 +32,10 @@ import {
     modelProviders,
     newEntityId,
     openStore,
+    sourceQuotesOf,
     unitBoard,
     unitsContextText,
+    withSourceQuotes,
 } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
@@ -1026,7 +1028,14 @@ export async function createDiy2App(opts: {
              * 界面是旁观者的窗口 —— 想改就在聊天里说。推导在 `unitBoard`（同一份纯函数）。
              */
             units: {
-                list: async ({ input }) => unitBoard(store.listUnits(input.id)),
+                list: async ({ input }) => {
+                    const board = unitBoard(store.listUnits(input.id));
+                    // 「来自哪句话」要能当场核对：光有 message id，人还得自己点进去看是谁说的。
+                    // 所以这里把 source 解开成「发言人 + 原话」贴上（纯函数 `withSourceQuotes`），
+                    // 解不开的（消息已剪 / 老数据 / 非人类触发）就**不贴** —— 不知道比编一个强。
+                    const ids = board.rows.map((row) => row.source).filter((id) => id !== '');
+                    return withSourceQuotes(board, sourceQuotesOf(store.itemsByIds(ids)));
+                },
                 /**
                  * 模型读到的 `units` 节原文。
                  *

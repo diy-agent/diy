@@ -363,6 +363,14 @@ export interface Store {
     appendRoomEntry(roomId: string, entry: RoomEntry): void;
     roomEntries(roomId: string): RoomEntry[];
     itemsOf(roomId: string, afterSeq?: number): Item[];
+    /**
+     * 按**条目 id** 取若干条（`unit.source_message_id` 指向它）。找不到的 id 静默缺席 ——
+     * 消息可能已被剪 / 老数据没有来源，调用方按「不知道」处理，不要报错。
+     *
+     * 为什么不复用 `itemsOf(roomId)` 再过滤：那是把整个房间的消息全 `JSON.parse` 一遍
+     * 就为拿 N 条原话；而这张表随历史线性涨（界面上 5 秒轮询一次）。一次 `IN` 查询只读命中的行。
+     */
+    itemsByIds(ids: readonly string[]): Item[];
     seqOf(roomId: string): number;
     /** 某个容器的全部草稿（composer / ask:<id> …） */
     listDrafts(roomId: string): Draft[];
@@ -1747,6 +1755,29 @@ export function openStore(file: string): Store {
                 .prepare('SELECT seq, item FROM entity_items WHERE entity_id = ? AND seq > ? ORDER BY seq ASC')
                 .all(roomId, afterSeq) as Record<string, unknown>[];
             return rows.map((row) => ({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) }));
+        },
+        itemsByIds(ids: readonly string[]): Item[] {
+            const wanted = [...new Set(ids.filter((id) => id !== ''))];
+            if (wanted.length === 0) return [];
+            // 房间不限定：`entity_items` 的 id 是全局唯一的（`u-…`），而来源可能指向别的房间
+            // （bot 在 A 房间被叫到、需求落在自己家任务上）。这里只按 id 取，不要多加 `entity_id = ?`
+            // 那种「看起来更安全」的条件 —— 它会把跨房间的来源静默变成「不知道」。
+            const rows = db
+                .prepare(
+                    `SELECT seq, item FROM entity_items WHERE json_extract(item, '$.id') IN (${wanted
+                        .map(() => '?')
+                        .join(',')})`,
+                )
+                .all(...wanted) as Record<string, unknown>[];
+            const items: Item[] = [];
+            for (const row of rows) {
+                try {
+                    items.push({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) });
+                } catch {
+                    continue; // 坏行不该让整批来源都读不出来（与 lastItemPerBot 同策）
+                }
+            }
+            return items;
         },
         seqOf(roomId: string): number {
             const row = db.prepare('SELECT MAX(seq) AS max FROM entity_items WHERE entity_id = ?').get(roomId) as

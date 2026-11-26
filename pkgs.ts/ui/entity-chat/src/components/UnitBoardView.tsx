@@ -130,7 +130,9 @@ export function UnitBoardView({ room }: { room: Room }) {
                                         unit.title,
                                         (unit.body ?? '').trim() === '' ? '' : `背景：${unit.body}`,
                                         (unit.accept ?? '').trim() === '' ? '还没写「怎么算做完」' : `验收：${unit.accept}`,
-                                        (unit.source ?? '') === '' ? '' : `来自消息：${unit.source}`,
+                                        (unit.source ?? '') === ''
+                                            ? ''
+                                            : `来自：${unit.sourceQuote === undefined ? unit.source : `${unit.sourceQuote.author || '不知是谁'}「${unit.sourceQuote.text}」`}`,
                                     ]
                                         .filter((part) => part !== '')
                                         .join('\n')}
@@ -152,16 +154,28 @@ export function UnitBoardView({ room }: { room: Room }) {
                                         （用户 2026-11-26：「需求是可以验收的，步骤很难验收」）。
                                         母项不标 —— 它的验收由子派生。 */}
                                     {/* 有来源就点一个小圆点：说明这条需求是**某句人话**提出来的
-                                        （不是 bot 自己编的），hover 看是哪条消息。没有来源的老数据不乱标。 */}
+                                        （不是 bot 自己编的）。旁边直接写「谁 + 原话开头」——
+                                        光给一个消息 id，人还是要再点一下才知道是不是自己要的那句。 */}
                                     {(unit.source ?? '') !== '' && (
-                                        <button
-                                            type="button"
-                                            onClick={() => jumpToMessage(unit.source)}
-                                            className="shrink-0 cursor-pointer rounded-full bg-sky-500/40 px-1 text-[9px] leading-4 text-sky-700 hover:bg-sky-500/60 dark:text-sky-300"
-                                            title={`来自这条消息（${unit.source}）—— 点一下跳过去`}
-                                        >
-                                            ↩
-                                        </button>
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => jumpToMessage(unit.source)}
+                                                className="shrink-0 cursor-pointer rounded-full bg-sky-500/40 px-1 text-[9px] leading-4 text-sky-700 hover:bg-sky-500/60 dark:text-sky-300"
+                                                title={`跳到那条消息（${unit.source}）`}
+                                            >
+                                                ↩
+                                            </button>
+                                            {unit.sourceQuote !== undefined && (
+                                                <span
+                                                    className="shrink-0 max-w-[22rem] truncate text-[10px] text-muted-foreground"
+                                                    title={`${unit.sourceQuote.author === '' ? '不知是谁' : unit.sourceQuote.author}：${unit.sourceQuote.text}`}
+                                                >
+                                                    {unit.sourceQuote.author === '' ? '' : `${unit.sourceQuote.author}：`}
+                                                    {unit.sourceQuote.text}
+                                                </span>
+                                            )}
+                                        </>
                                     )}
                                     {!unit.group && (unit.accept ?? '').trim() === '' && (
                                         <span

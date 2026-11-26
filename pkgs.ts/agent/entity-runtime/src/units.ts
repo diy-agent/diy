@@ -26,6 +26,22 @@
 import { toYaml } from '@diy-agent/context';
 
 import type { UnitRecord, UnitStatus } from './db';
+import type { Item } from './types';
+
+/**
+ * 一条 unit 的**来源原话**（`source` 那个消息 id 解开之后的样子）。
+ *
+ * 为什么要拆成「谁 + 原话」（2026-11-26 用户）：「这是我要的吗」这个问题，光有消息 id
+ * 答不了 —— id 要人再点一下、还得自己找是谁说的。发言人 + 原话摆在同一行才叫可核对。
+ */
+export interface SourceQuote {
+    /** 发言人名字（`Item.author.name`）；空串 = 那条消息没有署名（notice / 老数据） */
+    author: string;
+    /** 说话人身份：`human` 才是「人提的」；`bot` / `system` 是 agent 自己或系统触发 */
+    role: 'human' | 'bot' | 'system' | '';
+    /** 原话（**已截断**，`…` 结尾 = 还有下文；全文点那个按钮跳过去看） */
+    text: string;
+}
 
 /** 一个节点 + 它在树上的位置 */
 export interface UnitBoardRow {
@@ -36,6 +52,13 @@ export interface UnitBoardRow {
     accept: string;
     /** 来自哪句人话（`entity_items.id`；空串 = 不知道 —— 不编造来源） */
     source: string;
+    /**
+     * `source` 解开后的原话（谁 + 说了什么）；**没有就不带这个键**（老数据 / 消息已删 / 非人类触发）。
+     *
+     * 为什么不塞进 `unitBoard`：它是纯函数、不碰 IO；解开消息是 store 的活，
+     * 由服务端拼好后经 `withSourceQuotes` 附上。
+     */
+    sourceQuote?: SourceQuote;
     /**
      * **有效**状态：叶子 = 落库值；容器 = 由子派生（全 done → done，否则 open）。
      * 容器落库的 status 不参与判断 —— 只有叶子能被勾 done。
@@ -189,6 +212,68 @@ export function unitBoard(units: readonly UnitFacts[]): UnitBoard {
         groups: rows.filter((row) => row.group).map((row) => row.id),
         danglingParents,
     };
+}
+
+/**
+ * 原话截断上限：树上它只是一行注解，80 字足够认出「是不是我要的那句」；
+ * 剩下的点那一行跳回原消息看全文。
+ */
+export const SOURCE_QUOTE_MAX_CHARS = 80;
+
+/**
+ * 把一条消息解成「来源原话」（纯函数）。
+ *
+ * 只认**有正文**的消息：chat / notice 取 `data.text`，error 取 `data.message`；
+ * tool 条目没有正文、author 缺失的也不编造 —— 返回 `undefined`，界面上就是「不知道是谁提的」。
+ *
+ * 原话先压成一行（消息里的换行到树行上只会把树撑散），再按**码点**截断：
+ * 按 UTF-16 下标切会把 emoji / 生僻字切成半个字符。
+ */
+export function sourceQuoteOf(item: Item): SourceQuote | undefined {
+    const text =
+        item.type === 'chat' || item.type === 'notice'
+            ? item.data.text
+            : item.type === 'error'
+              ? item.data.message
+              : '';
+    const flat = text.replace(/\s+/g, ' ').trim();
+    if (flat === '') return undefined;
+    const chars = [...flat];
+    const clipped = chars.length > SOURCE_QUOTE_MAX_CHARS ? `${chars.slice(0, SOURCE_QUOTE_MAX_CHARS).join('')}…` : flat;
+    const role = item.author?.role;
+    return {
+        author: item.author?.name ?? '',
+        role: role === 'human' || role === 'bot' || role === 'system' ? role : '',
+        text: clipped,
+    };
+}
+
+/** `sourceQuoteOf` 的批量形态：按**消息 id** 建表，直接喂 `withSourceQuotes`。 */
+export function sourceQuotesOf(items: readonly Item[]): Map<string, SourceQuote> {
+    const quotes = new Map<string, SourceQuote>();
+    for (const item of items) {
+        const quote = sourceQuoteOf(item);
+        if (quote !== undefined) quotes.set(item.id, quote);
+    }
+    return quotes;
+}
+
+/**
+ * 给 board 的每一行附上「来源原话」（纯函数：`quotes` 由调用方从 store 取）。
+ *
+ * 没有 quote 的行原样返回 —— 不编造来源；`source` 为空的行走不到这里（本来就没来源）。
+ * 输入 board 不改（返回新对象），方便在 handler 里 `unitBoard(...)` 之后接着拼。
+ */
+export function withSourceQuotes(
+    board: UnitBoard,
+    quotes: ReadonlyMap<string, SourceQuote>,
+): UnitBoard {
+    if (quotes.size === 0) return board;
+    const rows = board.rows.map((row) => {
+        const quote = row.source === '' ? undefined : quotes.get(row.source);
+        return quote === undefined ? row : { ...row, sourceQuote: quote };
+    });
+    return { ...board, rows };
 }
 
 /**

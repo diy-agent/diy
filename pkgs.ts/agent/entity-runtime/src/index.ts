@@ -38,10 +38,15 @@ export {
     type UnitStatus,
 } from './db';
 export {
+    SOURCE_QUOTE_MAX_CHARS,
+    sourceQuoteOf,
+    sourceQuotesOf,
     unitBoard,
     unitTreeLines,
     unitsContextValue,
     unitsContextText,
+    withSourceQuotes,
+    type SourceQuote,
     type UnitBoard,
     type UnitBoardRow,
     type UnitFacts,
