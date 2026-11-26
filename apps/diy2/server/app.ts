@@ -685,11 +685,13 @@ export async function createDiy2App(opts: {
                         // 给那些还没建活动流的老客户端一个初值
                         const runningBots = actor.runningBots();
                         const running = runningBots.length;
-                        // 在跑的成员不算“出错”（它此刻正在挣扎/干活）；其余看上一轮结局
-                        const runningSet = new Set(runningBots);
+                        // 上一轮结局不是 done 的成员数 —— **不排除在跑的**（用户 2026-11-26 原话：
+                        // “表格说「出错」，左侧导航栏的任务图标也应该变状态”）。
+                        // 之前排除在跑的理由是“它此刻正在挣扎”，但那样恰好把最该看见的情况
+                        // （上轮被中断、这轮在重试）藏掉了：表格里写着「上轮 · 中断」，图标却什么都不说。
+                        // 两件事本来就能并存 —— 红图标 = 上一轮有问题，绿点 = 此刻在跑。
                         let broken = 0;
                         for (const member of actor.spec.members) {
-                            if (runningSet.has(member.botId)) continue;
                             const turn = turnOf(id, member.botId);
                             if (turn !== undefined && turn.outcome !== 'done') broken += 1;
                         }
