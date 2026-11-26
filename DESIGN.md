@@ -16,7 +16,7 @@
 | 主题 | **dark-first**：`apps/diy2/index.html` 写死 `<html class="dark">`，无切换 | 只用 `.dark` 那套变量；不要写死浅色假设 |
 | 色板 | shadcn 官方 **neutral** 基准（oklch），未做品牌覆盖 | 想换品牌 → 按同名变量覆盖，**不改包内 styles.css** |
 | 字体 | `system-ui` 栈（`apps/diy2/src/index.css` 的 `body`）；包内 `--font-inter` 未真正加载 | 别在组件里指定字族 |
-| Preflight | **刻意不引**（Astryx 与 shadcn 共用一页，只能留一套 reset） | `<a>` 会回到 UA 默认蓝字+下划线 —— 见 §7 |
+| Preflight | **刻意不引**（当时 Astryx 与 shadcn 共用一页只能留一套 reset；Astryx 面已于 2026-11-26 删除，这条约束仍按保守留用） | `<a>` 会回到 UA 默认蓝字+下划线 —— 见 §7 |
 | 组件层 | `@diy-agent/ui-shadcn`，22 个 base-nova 组件（Base UI 原语） | 写 UI 先从这里取，别手写 |
 | 已验证的 showcase | `diy-research/pkgs.ts/ui-shadcn/std-lab`（63/63 组件有展示，`showcase-coverage.mjs` 通过） | 想知道「这个组件长什么样」去那里看 |
 
@@ -165,7 +165,7 @@ textarea.tsx  min-h-16（多行不跟这条）
 2. 控件高度改了就一起改（`h-8` 一族）。
 3. 长内容容器加 `min-w-0` / `overflow-x-auto`。
 4. 弹窗/菜单/选择器一律用组件层，别手写。
-5. 新交互先问「shadcn 面能不能画出来」——astryx 面已冻结（`docs/plans/2026-11-24-surface-parity.md` §7）。
+5. 只做在 shadcn 面 —— astryx 面已于 2026-11-26 **删除**（不是冻结），历史见 `docs/plans/2026-11-24-surface-parity.md` §7。
 6. 改完验宽度：**diy2 主壳按 1200×800（缺省窗口）与 1280 验无横向溢出**；组件/面板级的窄屏行为在 std-lab 验 375（主壳本身不响应式：侧栏 + 区域是桌面布局）。
 
 **Don't**
@@ -176,7 +176,7 @@ textarea.tsx  min-h-16（多行不跟这条）
 4. 不用 `font-bold`。
 5. 不在 `@diy-agent/ui-shadcn` 里放业务组合件。
 6. 不改包内 `styles.css` 的变量值来「适配某个页面」（要换主题就按同名变量覆盖）。
-7. 不引 Tailwind preflight（`@import 'tailwindcss'` 全量那种），会打断 Astryx 的排版 reset。
+7. 不引 Tailwind preflight（`@import 'tailwindcss'` 全量那种）：它会把各组件件的排版 reset 与语义变量一起打断，且历史上是为了与 Astryx 共用一页。
 
 ---
 
