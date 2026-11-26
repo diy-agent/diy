@@ -332,6 +332,19 @@ export interface Store {
     appendRoomEntry(roomId: string, entry: RoomEntry): void;
     roomEntries(roomId: string): RoomEntry[];
     itemsOf(roomId: string, afterSeq?: number): Item[];
+    /**
+     * 某个房间**最后 n 条**（仍按 seq 升序返回）。
+     *
+     * 为什么要有（2026-11-26 实测）：`chat.history` 一次回包 **5.7 MB** —— 6000+ 条 items
+     * 全量发给浏览器，JSON.parse + 渲染就是那 2~5 秒的长任务（用户「切任务很慢」）。
+     * 展示层只需要「最近的」；更早的历史由用户主动要（`limit<=0` 时仍走 `itemsOf` 全量）。
+     *
+     * 走 `items_entity(entity_id, seq)` 倒序取 n 行，只 JSON.parse 这 n 条 —— 服务端也省掉
+     * 了把几千条解析出来的开销。
+     */
+    lastItemsOf(roomId: string, n: number): Item[];
+    /** 条目总数（分页时要告诉界面“上面还有多少条”，别为了数它把全量都解析一遍） */
+    countItemsOf(roomId: string): number;
     seqOf(roomId: string): number;
     /** 某个容器的全部草稿（composer / ask:<id> …） */
     listDrafts(roomId: string): Draft[];
@@ -1707,6 +1720,21 @@ export function openStore(file: string): Store {
                 .prepare('SELECT seq, item FROM entity_items WHERE entity_id = ? AND seq > ? ORDER BY seq ASC')
                 .all(roomId, afterSeq) as Record<string, unknown>[];
             return rows.map((row) => ({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) }));
+        },
+        lastItemsOf(roomId: string, n: number): Item[] {
+            const rows = db
+                .prepare('SELECT seq, item FROM entity_items WHERE entity_id = ? ORDER BY seq DESC LIMIT ?')
+                .all(roomId, n) as Record<string, unknown>[];
+            // 倒序取完再翻回来：调用方要的是时间线顺序
+            return rows
+                .map((row) => ({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) }))
+                .reverse();
+        },
+        countItemsOf(roomId: string): number {
+            const row = db.prepare('SELECT COUNT(*) AS n FROM entity_items WHERE entity_id = ?').get(roomId) as
+                | { n: number }
+                | undefined;
+            return row?.n ?? 0;
         },
         seqOf(roomId: string): number {
             const row = db.prepare('SELECT MAX(seq) AS max FROM entity_items WHERE entity_id = ?').get(roomId) as
