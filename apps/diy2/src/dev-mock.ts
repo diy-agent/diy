@@ -15,8 +15,21 @@
 import type { AskRequest } from '@diy-agent/chat-core';
 import type { MockStep } from '@diy-agent/chat-core';
 
-/** 预置：一屏能看到全部形态 */
+/**
+ * 长会话填充：**只为把会话撑得比视口长**。
+ *
+ * 没有这一截，seed 那一屏全都在可视区里，滚动位置对不对根本看不出来 —— 而「发消息
+ * 时视口跳走」这类 bug 只有内容溢出时才会显形。
+ */
+const FILLER: MockStep[] = Array.from({ length: 24 }, (_, index) => ({
+    kind: 'chat' as const,
+    author: (index % 2 === 0 ? 'human' : 'bot') as 'human' | 'bot',
+    text: `填充第 ${index + 1} 条：这一行只是为了让会话比视口长，好看清滚动位置。`,
+}));
+
+/** 预置：一屏能看到全部形态（前面垫一截长会话，见 FILLER） */
 export const MOCK_SEED: MockStep[] = [
+    ...FILLER,
     { kind: 'chat', text: '把这三个房间的作业全部重新跑一遍，然后告诉我谁最慢。', author: 'human' },
     { kind: 'chat', text: '先看一眼作业账本，再决定并发几条。', author: 'bot' },
     {
