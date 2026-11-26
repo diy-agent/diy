@@ -217,6 +217,9 @@ describe('rooms → entities + tasks / projects', () => {
                 log_seq INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL,
                 PRIMARY KEY (entity_id, bot_id)
             );
+            CREATE TABLE entity_items (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT NOT NULL, item TEXT NOT NULL, at INTEGER NOT NULL
+            );
         `);
         for (const [id, name] of [
             ['task:t1', '任务一'],
@@ -246,6 +249,15 @@ describe('rooms → entities + tasks / projects', () => {
             0,
             1,
         );
+        // 历史消息：每个旧 bot 各一条。合并后 UI 按「消息 author.id ∈ 当前成员」显示，
+        // 不重写就会整段消失（数据在、看不见）—— 2026-11-26 实测。
+        for (const botId of ['bot-task:t1', 'bot-task:t2']) {
+            db.prepare('INSERT INTO entity_items (entity_id, item, at) VALUES (?,?,?)').run(
+                'task:t2',
+                JSON.stringify({ id: `m-${botId}`, type: 'chat', author: { id: botId, role: 'bot' }, data: { text: 'x' } }),
+                1_000,
+            );
+        }
         db.close();
 
         const store = openStore(file);
@@ -264,6 +276,9 @@ describe('rooms → entities + tasks / projects', () => {
             });
             // 会话键从 bot-task:t2 改成了它合并后的角色 id
             expect(store.loadSession('task:t2', 'bot-task:t1')?.turn).toBe(3);
+            // 历史消息的 author.id 也要跟着换成合并后的角色 id（否则 UI 对不上成员、整段隐藏）
+            const items = store.itemsOf('task:t2', 0) as Array<{ author?: { id: string } }>;
+            expect(items.map((item) => item.author?.id)).toEqual(['bot-task:t1', 'bot-task:t1']);
             // 列名也改过来了（新列名才是真源，旧名只在老库里出现）
             const columns = (store.db.prepare('PRAGMA table_info(session_state)').all() as Array<{ name: string }>).map(
                 (row) => row.name,

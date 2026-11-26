@@ -1093,6 +1093,16 @@ export function openStore(file: string): Store {
                     'DELETE FROM deliveries WHERE bot_id = ? AND entity_id IN (SELECT entity_id FROM deliveries WHERE bot_id = ?)',
                 ).run(from, to);
                 db.prepare('UPDATE deliveries SET bot_id = ? WHERE bot_id = ?').run(to, from);
+                // 历史消息里的作者 id 也要跟着换：界面按「消息 author.id ∈ 当前成员」决定
+                // 归属与是否显示 —— 不改的话，被合并掉的那批旧 bot 的消息会因对不上新角色 id
+                // 而在界面上整段消失（数据在库里、只是看不见）。2026-11-26 实测发现。
+                db.prepare(
+                    "UPDATE entity_items SET item = json_set(item, '$.author.id', ?) WHERE json_extract(item, '$.author.id') = ?",
+                ).run(to, from);
+                // 提问的 owner 同理：ask 卡片的归属/「谁问的」也按角色 id 认。
+                db.prepare(
+                    "UPDATE asks SET request = json_set(request, '$.owner', ?) WHERE json_extract(request, '$.owner') = ?",
+                ).run(to, from);
             }
             renameToBackup('bots', 'bots_v0');
             db.exec('COMMIT');

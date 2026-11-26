@@ -118,6 +118,7 @@ PRIMARY KEY (entity_id, bot_role_id)   <span class="c">← 2026-11-24 从 bot_id
     <li><b>分组键</b> = <code>type + persona</code>：同类型、同人格的 bot 折成一个角色（<code>id</code> 取组内第一个）。</li>
     <li><b>primary</b>：组内在 room_members 当过 primary 次数最多的那组，平手取最早。</li>
     <li><b>会话重写</b>：<code>UPDATE session_state SET bot_role_id = ? WHERE bot_role_id = ?</code>，old bot id → new 角色 id。</li>
+    <li><b>历史消息作者重写</b>（关键）：<code>entity_items</code> 里消息的 <code>author.id</code> 也按 old→new 改。界面按「消息 author.id ∈ 当前成员」决定显示，不重写就会被合并掉的旧 bot 的消息整段消失（<b>数据在库里、只是看不见</b>）—— 2026-11-26 实测踩到并已修，同批还重写了 <code>asks.owner</code>。</li>
     <li><b>撞键处理</b>：同一容器里两个 bot 合并成同一角色时，只留 <code>turn</code> 大的那份快照，丢的份数<strong>打日志</strong>（<code>[bot-role] 合并会话：…</code>）。</li>
     <li><b>旧表不删</b>：<code>bots</code> 改名 <code>bots_v0</code> 原样留档（同 <code>rooms_v0</code> 的路数）。</li>
     <li><b>幂等</b>：<code>migrateBots</code> 开头检查 <code>bots</code> 表是否存在，已迁移（只剩 bots_v0）就直接返回，不会重跑。</li>
@@ -148,7 +149,7 @@ PRIMARY KEY (entity_id, bot_role_id)   <span class="c">← 2026-11-24 从 bot_id
 只有「同一个房间、两个旧 bot 都被折进同一个角色」时才会撞键（同房间同角色只能有一份快照）。这种情况留 turn 大的（聊得多的那份），并打日志。真库实测<strong>没有触发</strong>（39 份会话零丢弃）。</div>
 <div class="warn"><b>Q：想回退怎么办？</b><br>
 <code>bots_v0</code> 原样保留 41 行旧定义，<code>session_state</code> 只是改列值、没删行。真要回退，从 bots_v0 可重建。迁移本身在事务里跑（<code>BEGIN IMMEDIATE … COMMIT</code>），中途失败整体 ROLLBACK。</div>
-<div class="note"><b>一句话：</b>机器人从「每房间私有」变成「每类型模板」，是<b>定义层</b>的折叠；<b>数据层</b>（会话、历史）按「房间 × 角色」存、与 bot 身份解耦，所以折叠定义不影响已有会话与历史。真库副本实测三项零变化。</div>
+<div class="note"><b>一句话：</b>机器人从「每房间私有」变成「每类型模板」，是<b>定义层</b>的折叠；<b>数据层</b>（会话、历史）按「房间 × 角色」存。折叠时要连<b>历史消息里的作者 id</b>一起改（否则数据在、界面看不见）—— 这个隐患实测发现并已修，修后新会话打开历史消息正常显示。</div>
 
 </div>
 </body>
