@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { bodyTransformFor, headersFor } from '@diy-agent/llm-provider/strategies';
 import {
+    canSeeImages,
     effectiveMaxOutputTokens,
     listAccountStates,
     loadCatalog,
@@ -163,6 +164,19 @@ function catalogEntry(key: ParsedModelKey, env: NodeJS.ProcessEnv): ModelCatalog
     );
 }
 
+/**
+ * 这个模型的**输入模态支不支持图**（`catalog-vision` 的能力位）。
+ *
+ * 判据故意保守：目录里没标 ⇒ 一律当「不收」（`canSeeImages` 的原话）。
+ * 往一个不收图的上游塞 image part，换回来的是 400 —— 用户看到的是一条报错，
+ * 而「先按文字发 + 说明一句」至少这一轮还能答。
+ */
+export function acceptsImagesOf(modelKey: string, env: NodeJS.ProcessEnv = process.env): boolean {
+    const key = maybeParseModelKey(modelKey);
+    if (key === undefined) return false;
+    return canSeeImages(catalogEntry(key, env));
+}
+
 /** 取某账号的 key；失败时把「数据根在哪」带进错误（否则只看到「没有这个账号」） */
 function accountKey(home: string, key: ParsedModelKey, env: NodeJS.ProcessEnv): string {
     try {
@@ -270,6 +284,7 @@ export function modelProviders(env: NodeJS.ProcessEnv = process.env): ProviderVi
             ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
             ...(entry.maxOutputTokens === undefined ? {} : { maxOutputTokens: entry.maxOutputTokens }),
             ...(entry.cost === undefined ? {} : { cost: entry.cost }),
+            ...(entry.input === undefined ? {} : { input: entry.input }),
         });
     }
     return [...grouped.values()].sort((a, b) => a.id.localeCompare(b.id));

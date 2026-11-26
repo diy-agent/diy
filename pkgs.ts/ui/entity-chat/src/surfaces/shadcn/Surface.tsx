@@ -67,6 +67,10 @@ import {
 } from '@diy-agent/ui-shadcn';
 
 import { AskCard } from '../../components/AskCard';
+import { AttachmentsRow } from '../../components/AttachmentsRow';
+import { MessageAttachments } from '../../components/MessageAttachments';
+import { useComposerAttachments } from '../../components/useComposerAttachments';
+import { acceptsImages } from '../../models';
 import { CopyButton } from '../../components/CopyButton';
 import { BotAvatar } from '../../components/BotAvatar';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
@@ -79,7 +83,7 @@ import { Markdown } from '../../components/Markdown';
 import { TurnFooter } from '../../components/TurnFooter';
 import { useDraft } from '../../drafts';
 import { useMentionCandidates } from '../../mentions';
-import { actions, conversationOf, useStore } from '../../store';
+import { actions, conversationOf, useProviders, useRooms, useStore } from '../../store';
 import { plainTextOf, runsOf, toolTargetOf, type Run } from '../shared';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
@@ -317,12 +321,22 @@ function EntryView({
         return (
             <Message align="end" className="my-3">
                 <MessageContent>
-                    {/* 投递失败时整条气泡走 destructive —— 与 astryx 面的
-                        deliveryStatusOf(deliveries) 同一个判据（failed 才算，queued/delivering 不算：
-                        那时 bot 正在执行，界面上已经有执行中指示器，再标一次会重复） */}
-                    <Bubble align="end" variant={failed.length > 0 ? 'destructive' : 'muted'}>
-                        <BubbleContent className="whitespace-pre-wrap break-words">{text}</BubbleContent>
-                    </Bubble>
+                    {/* 附件在气泡**上方**（图比文字更该先看到）；
+                        只有附件没有正文时不出空气泡 —— 空 Bubble 会留一道边 */}
+                    <MessageAttachments
+                        {...(entry.attachments === undefined ? {} : { refs: entry.attachments })}
+                        read={(attachment) =>
+                            conversationOf(roomId).readAttachment?.(attachment) ??
+                            Promise.reject(new Error('当前后端不支持附件'))
+                        }
+                    />
+                    {text !== '' && (
+                        // 投递失败时整条气泡走 destructive（failed 才算；queued/delivering 不算：
+                        // 那时 bot 正在执行，界面上已经有执行中指示器，再标一次会重复）
+                        <Bubble align="end" variant={failed.length > 0 ? 'destructive' : 'muted'}>
+                            <BubbleContent className="whitespace-pre-wrap break-words">{text}</BubbleContent>
+                        </Bubble>
+                    )}
                     <div className="flex items-center gap-2 self-end pr-1 text-xs text-muted-foreground">
                         {failed.length > 0 && (
                             <span className="text-destructive">{failed.map((d) => `${d.name} 未送达`).join('、')}</span>
@@ -525,6 +539,14 @@ function Composer({
     const [submitting, setSubmitting] = React.useState(false);
     const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
     const candidates = useMentionCandidates(roomId);
+    // 粘贴 / 拖拽 / 选图：上传在**发送之前**（失败的图还能重试，不会变成气泡里的裂图）
+    const attachments = useComposerAttachments(conversation, roomId);
+    // 贴了图、但当前模型不收图 —— 发之前就说清楚，别等上游 400（服务端也会兜一层）
+    const rooms = useRooms();
+    const providers = useProviders();
+    const noVision =
+        attachments.items.length > 0 &&
+        !acceptsImages(providers, rooms.find((room) => room.id === roomId)?.modelKey ?? '');
 
     /**
      * @ 补全的规则全在 chat-core（`mentionQuery` / `filterMentionCandidates` / `completeMention` /
@@ -561,12 +583,16 @@ function Composer({
 
     const send = () => {
         const text = draft.text.trim();
-        if (text === '' || submitting) return;
+        // 空正文 + 有附件是合法的（贴一张图什么都不打）
+        if ((text === '' && attachments.refs === undefined) || submitting) return;
         setSubmitting(true);
-        // 发送成功才清草稿；失败保留输入框里的字
+        // 发送成功才清草稿与附件；失败两者都留着（用户能重发，不用重新贴一遍）
         void conversation
-            .send(text)
-            .then(() => draft.clearIfMatches(text))
+            .send(text, attachments.refs)
+            .then(() => {
+                draft.clearIfMatches(text);
+                attachments.clear();
+            })
             .catch(() => undefined)
             .finally(() => {
                 setSubmitting(false);
@@ -590,7 +616,29 @@ function Composer({
              * 之前是「手写圆角大框 + 里面再套一个 InputGroup + 外面再接一条 ComposerBar」，
              * 于是有两层边框，而工具条其实落在框外，看起来就还是个单行输入框。
              */}
-            <div className="relative">
+            {/* 待发附件与提示：放在输入框**上方** —— 与「刚贴进来」的动作最近 */}
+            <AttachmentsRow items={attachments.items} onRemove={attachments.remove} busy={attachments.busy} />
+            {noVision && (
+                <div className="pb-1 text-xs text-destructive">
+                    当前模型不收图：这张图不会送进模型（想让它看，到底栏切一个带 🖼 的模型）
+                </div>
+            )}
+            {attachments.error !== undefined && (
+                <div className="pb-1 text-xs text-destructive">{attachments.error}</div>
+            )}
+            <div
+                className="relative"
+                onDragOver={(event) => {
+                    // 只有真的拖了文件才拦：否则「拖选文字」也会变成 drop 目标
+                    if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+                }}
+                onDrop={(event) => {
+                    const files = Array.from(event.dataTransfer.files);
+                    if (files.length === 0) return;
+                    event.preventDefault();
+                    attachments.addFiles(files);
+                }}
+            >
                 {menuOpen && (
                     <MentionMenu candidates={matches} activeIndex={active} onPick={pick} onHover={setActive} />
                 )}
@@ -601,6 +649,27 @@ function Composer({
                         onChange={(event) => {
                             draft.setText(event.target.value);
                             setDismissed(false);
+                        }}
+                        onPaste={(event) => {
+                            // 剪贴板里既有文字又有图时只拦「有文件」那一种：
+                            // 拦掉纯文字粘贴会让人没法在输入框里粘链接。
+                            // files 与 items 都看：不同来源（截图 / Finder 复制）会给其中一个空。
+                            const transfer = event.clipboardData;
+                            const fromItems = Array.from(transfer.items)
+                                .filter((item) => item.kind === 'file')
+                                .map((item) => item.getAsFile())
+                                .filter((file): file is File => file !== null);
+                            const seen = new Set<string>();
+                            const files = [...Array.from(transfer.files), ...fromItems].filter((file) => {
+                                const key = `${file.name}|${file.size}|${file.lastModified}`;
+                                if (seen.has(key)) return false;
+                                seen.add(key);
+                                return true;
+                            });
+                            if (files.length > 0) {
+                                event.preventDefault();
+                                attachments.addFiles(files);
+                            }
                         }}
                         onKeyDown={(event) => {
                             // 浮层开着时：上下选、Enter/Tab 确认、Esc 关。这几键不能落到「发送」上。
@@ -634,7 +703,7 @@ function Composer({
                             }
                         }}
                         rows={1}
-                        placeholder="和这个实体对话…（@ 选 bot）"
+                        placeholder="和这个实体对话…（@ 选 bot、粘贴/拖入图片）"
                         className="max-h-40 flex-none p-3 text-sm"
                     />
                     {/* 底栏：工具在左、发送在右（官方 prompt-input 的摆法）。
@@ -655,7 +724,7 @@ function Composer({
                                 size="icon-sm"
                                 className="ml-auto"
                                 title="发送"
-                                disabled={draft.text.trim() === '' || submitting}
+                                disabled={(draft.text.trim() === '' && attachments.refs === undefined) || submitting}
                                 onClick={send}
                             >
                                 <Send className="size-4" />

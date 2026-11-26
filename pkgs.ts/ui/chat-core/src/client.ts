@@ -4,6 +4,8 @@
 //   现在：@diy-agent/chat-transport-rpc
 //   将来：@diy-agent/chat-transport-rpc（diy-rpc 落地后直接换实现，core 不动）
 
+import type { AttachmentRef } from '@diy-agent/protocol';
+
 import type { ActivityFrame, AskAnswer, Command, Snapshot, StreamEvent } from './types';
 
 export interface TokenUsage {
@@ -88,6 +90,22 @@ export interface ChatClient {
         onEvent: (event: StreamEvent) => void,
         signal?: AbortSignal,
     ): Promise<void>;
+
+    /**
+     * 可选：把一份字节传进附件库（粘贴 / 拖拽 / 选图），拿回 ref。
+     *
+     * 缺这个方法 = 后端不支持附件（老服务端 / 纯 mock）—— 界面据此禁用贴图，
+     * 而不是让用户贴完图再发现发不出去。
+     */
+    putAttachment?(input: {
+        readonly name?: string;
+        readonly mime?: string;
+        readonly bytes: Uint8Array;
+        readonly source?: 'paste' | 'drop' | 'pick' | 'tool';
+    }): Promise<AttachmentRef>;
+
+    /** 可选：取回附件内容（显示缩略图 / 原图） */
+    readAttachment?(ref: AttachmentRef): Promise<{ base64: string; mime: string }>;
 
     /** 可选：上下文观测（后端支持才有） */
     sessions?(entityId: string): Promise<SessionInfo[]>;

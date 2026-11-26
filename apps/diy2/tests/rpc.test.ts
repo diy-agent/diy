@@ -4,7 +4,7 @@
 // 以及 `streams` 能看见「谁在订什么」。LLM 不参与（发消息会真跑模型）。
 
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -260,3 +260,81 @@ async function waitFor(assertion: () => boolean, at = Date.now()): Promise<void>
     await new Promise((resolve) => setTimeout(resolve, 10));
     return waitFor(assertion, at);
 }
+
+/** 一张 6×4 的 PNG 头（够嗅探 + 读尺寸） */
+function pngBytes(width = 6, height = 4): Buffer {
+    const be32 = (value: number): number[] => [
+        (value >>> 24) & 0xff,
+        (value >>> 16) & 0xff,
+        (value >>> 8) & 0xff,
+        value & 0xff,
+    ];
+    return Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        0, 0, 0, 0x0d,
+        0x49, 0x48, 0x44, 0x52,
+        ...be32(width),
+        ...be32(height),
+        8, 6, 0, 0, 0,
+        0, 0, 0, 0,
+    ]);
+}
+
+describe('附件：字节进 / 字节出', () => {
+    it('put 落进 <home>/blobs，get 取回同样字节（mime 以内容为准，不信名字）', async () => {
+        const transport = new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 }));
+        const binding = new ChannelClientBinding(transport);
+        try {
+            const bytes = pngBytes(1440, 900);
+            const ref = await binding.invoke<
+                unknown,
+                { type: string; relPath: string; mime: string; bytes: number; image?: { width: number; height: number } }
+            >('diy2.attachment.put', {
+                // 名字故意说谎：内容才是真的
+                input: { base64: bytes.toString('base64'), name: 'liar.jpg', source: 'paste' },
+            });
+
+            expect(ref.type).toBe('stored');
+            expect(ref.mime).toBe('image/png');
+            expect(ref.image).toEqual({ width: 1440, height: 900 });
+            expect(ref.bytes).toBe(bytes.byteLength);
+            // 磁盘形状：<日期>/<HHMMSS>-<batch>/NN-<名>.<mime 定的扩展名>
+            expect(ref.relPath).toMatch(/^\d{4}-\d{2}-\d{2}\/\d{6}-[0-9a-f]{8}\/01-liar\.png$/);
+            expect(readFileSync(join(home, 'blobs', ref.relPath)).equals(bytes)).toBe(true);
+
+            const got = await binding.invoke<unknown, { base64: string; mime: string }>('diy2.attachment.get', {
+                input: { ref },
+            });
+            expect(got.mime).toBe('image/png');
+            expect(Buffer.from(got.base64, 'base64').equals(bytes)).toBe(true);
+        } finally {
+            transport.close();
+        }
+    });
+
+    it('坏 ref 在边界上就被拒（relPath 逃逸 / 空内容）', async () => {
+        const transport = new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 }));
+        const binding = new ChannelClientBinding(transport);
+        try {
+            const base = {
+                type: 'stored',
+                id: 'x',
+                kind: 'image',
+                mime: 'image/png',
+                bytes: 1,
+                displayName: 'a.png',
+                source: 'paste',
+                createdAt: 1,
+            };
+            await expect(
+                binding.invoke('diy2.attachment.get', { input: { ref: { ...base, relPath: '../../etc/passwd' } } }),
+            ).rejects.toThrow(/相对路径|逃逸|unsafe/);
+
+            await expect(
+                binding.invoke('diy2.attachment.put', { input: { base64: '', source: 'paste' } }),
+            ).rejects.toThrow();
+        } finally {
+            transport.close();
+        }
+    });
+});

@@ -24,6 +24,7 @@ import type {
 
 import type {
     ActivityFrame,
+    AttachmentRef,
     BotRow,
     JobRunRow,
     ModelCatalogModel,
@@ -396,8 +397,52 @@ export class RpcChatClient implements ChatClient {
         // 先确保这个房间的流已经开着再发：否则「受理即返」之后的第一条事件可能没人接。
         // 失败也无所谓 —— 消息必须送到，事件由重连后的 ready + 补拉快照兜。
         await this.hub.ensure(topicOf(entityId));
-        await this.call('chat.chat', { id: entityId, text: command.text });
+        await this.call('chat.chat', {
+            id: entityId,
+            text: command.text,
+            ...(command.attachments === undefined ? {} : { attachments: command.attachments }),
+        });
     }
+
+    /**
+     * 上传一份字节（粘贴 / 拖拽 / 选图）→ 落 blobs → 拿回 ref。
+     *
+     * 为什么从界面直传而不是先落进消息：一次发送可能带几张图，任何一张失败都该在
+     * 「发送之前」就报错（用户还看得见它），而不是发出去之后在气泡里出现一个裂图。
+     */
+    async putAttachment(input: {
+        name?: string;
+        mime?: string;
+        bytes: Uint8Array;
+        source?: 'paste' | 'drop' | 'pick' | 'tool';
+    }): Promise<AttachmentRef> {
+        return this.call<AttachmentRef>('attachment.put', {
+            base64: toBase64(input.bytes),
+            ...(input.name === undefined ? {} : { name: input.name }),
+            ...(input.mime === undefined ? {} : { mime: input.mime }),
+            ...(input.source === undefined ? {} : { source: input.source }),
+        });
+    }
+
+    /** 取回附件内容（显示缩略图 / 原图） */
+    readAttachment(ref: AttachmentRef): Promise<{ base64: string; mime: string }> {
+        return this.call<{ base64: string; mime: string }>('attachment.get', { ref });
+    }
+}
+
+/**
+ * 字节 → base64（走 JSON 通道的唯一办法）。
+ *
+ * 分块 `String.fromCharCode(...)`：一次性展开几十万个参数会撞引擎的实参上限
+ * （`RangeError: Maximum call stack size exceeded`），1~3 MB 的截图足够触发。
+ */
+function toBase64(bytes: Uint8Array): string {
+    const CHUNK = 0x8000;
+    let binary = '';
+    for (let offset = 0; offset < bytes.byteLength; offset += CHUNK) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + CHUNK));
+    }
+    return btoa(binary);
 }
 
 export { StreamHub, topicOfRoom, type StreamHubOptions } from './hub';

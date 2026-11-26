@@ -16,15 +16,22 @@
 //   4. 压缩只影响自己：没有房间级水位，也没有共享摘要
 //   5. 同一房间运行中再发消息 → 沿用当前 turn（时间线不乱）
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import type { ModelMessage, ToolSet } from 'ai';
 
 import { effectiveModelOf, effectivePersonaOf, mentionsOf, primaryMemberOf } from '@diy-agent/protocol';
+import { createBlobStore } from '@diy-agent/attachment';
+import type { AttachmentRef } from '@diy-agent/attachment/types';
 import type { ContextSession } from '@diy-agent/context';
 
 import { AskGate, askAnswerHeading, describeAnswer, type AnswerOutcome, type AskResult } from './ask';
 import type { Compactor } from './compaction';
 import { ASK_DRAFT_PREFIX, type Store } from './db';
+import { acceptsImagesOf } from './providers';
 import { RoomLog, type RoomEntry } from './room-log';
+import type { AttachmentReader } from './session-images';
 import { createRoomContext } from './system-context';
 import { envelopeHint, promptReminder, resolveRemindMode, type RemindMode } from './units-remind';
 import { buildRoomTools } from './tools/index';
@@ -61,6 +68,19 @@ export interface SessionInfo {
     name: string;
     stats: SessionStats;
     compactions: ReturnType<BotSession['compactions']>;
+}
+
+/**
+ * 缺省读法：`<home>/blobs` 里取字节；`linked`（工作区文件）直接读原路径。
+ *
+ * 为什么 `linked` 也能读：用户拖进来的工作区图片不该为了一次看图而拷一份 ——
+ * 到发请求时按路径读一次就够了（原件被删就自然落到「未送达」）。
+ */
+function defaultAttachmentReader(home: string | undefined): AttachmentReader | undefined {
+    if (home === undefined) return undefined;
+    const blobs = createBlobStore({ root: join(home, 'blobs') });
+    return async (ref: AttachmentRef) =>
+        ref.type === 'linked' ? new Uint8Array(await readFile(ref.path)) : blobs.read(ref);
 }
 
 export interface RoomActorDeps {
@@ -103,6 +123,10 @@ export interface RoomActorDeps {
     now?: () => number;
     /** 「用户」在时间线上的身份（回答提问时以它投递）；缺省就是「我」 */
     human?: Author;
+    /** 覆盖附件读法（缺省从 `home` 推 blobs；测试注入内存表） */
+    readAttachment?: AttachmentReader;
+    /** 覆盖「这个模型收不收图」的判据（缺省查模型目录的能力位；测试注入常量） */
+    acceptsImages?: (modelKey: string) => boolean;
 }
 
 export class RoomActor {
@@ -155,8 +179,19 @@ export class RoomActor {
      */
     private readonly turnStarts = new Map<string, { turnId: string; startedAt: number }>();
     private lastRunningKey = '';
+    /**
+     * 附件 ref → 字节（传给每个 session）。
+     *
+     * 没有 `home` 也没有注入 ⇒ `undefined`：session 会在正文后补一行「附图未送达」，
+     * 而不是默默把图吃掉（测试 / 无 app 宿主就是这个状态）。
+     */
+    private readonly readAttachment: AttachmentReader | undefined;
+    /** 「这个模型收不收图」—— 缺省查模型目录，注入时按注入的来 */
+    private readonly acceptsImages: (modelKey: string) => boolean;
 
     constructor(private readonly deps: RoomActorDeps) {
+        this.readAttachment = deps.readAttachment ?? defaultAttachmentReader(deps.home);
+        this.acceptsImages = deps.acceptsImages ?? ((modelKey) => acceptsImagesOf(modelKey));
         // 公共日志从库里恢复（append-only，seq 接着走）
         this.log = new RoomLog(this.deps.store.roomEntries(this.id));
         this.gate = new AskGate({
@@ -333,9 +368,17 @@ export class RoomActor {
         recipients?: string[];
         mode?: InboxMode;
         quiet?: boolean;
+        /**
+         * 随消息带的附件（已落 blobs 的 ref）。
+         *
+         * 为什么允许 `text` 为空：贴一张图什么都不打是最常见的用法，逼人写一句话反而多余。
+         * 但「两者都空」仍然是错误（@ 路由也靠 text，完全空的消息没有意义）。
+         */
+        attachments?: readonly AttachmentRef[];
     }): Promise<void> {
         const text = input.text.trim();
-        if (text === '') throw new Error('text required');
+        const attachments = input.attachments ?? [];
+        if (text === '' && attachments.length === 0) throw new Error('text or attachments required');
 
         const participants = this.members();
         if (participants.length === 0) throw new Error('room has no bot');
@@ -356,7 +399,7 @@ export class RoomActor {
             status: 'done',
             author: input.author,
             type: 'chat',
-            data: { text },
+            data: attachments.length === 0 ? { text } : { text, attachments },
         };
         const saved = this.deps.store.appendItem(this.id, item);
         this.deps.emit({ kind: 'item', item: saved });
@@ -365,6 +408,8 @@ export class RoomActor {
             kind: 'say',
             author: input.author,
             text,
+            // 附件跟着条目走：别的 bot 读不到发送者的 blobs，只能靠 ref
+            ...(attachments.length === 0 ? {} : { attachments }),
             // 投递 / 公共条目对得上的唯一钥匙：崩溃恢复要靠它问 session「你读过这句没有」
             messageId: saved.id,
             turn: turn.turn,
@@ -1042,6 +1087,8 @@ export class RoomActor {
             ...(this.hasTools ? { toolsHint: this.toolsHint() } : {}),
             ...(systemContext === '' ? {} : { systemContext }),
             ...(context === null ? {} : { takeDelta: () => context.step().user, commitDelta: () => context.commit() }),
+            ...(this.readAttachment === undefined ? {} : { readAttachment: this.readAttachment }),
+            acceptsImages: this.acceptsImages,
         });
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));

@@ -13,6 +13,7 @@
 // 不做：路由、持久化、SSE —— 那些属于 RoomActor。
 
 import type { CompactionProgress } from '@diy-agent/protocol';
+import type { AttachmentRef } from '@diy-agent/attachment/types';
 import { experimental_createSteering, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 
 import { runAgent, DEFAULT_MAX_STEPS, type RunOptions } from './agent';
@@ -34,6 +35,7 @@ import { contextWindowOf, maxOutputTokensOf } from './providers';
 import { ProgressBroadcast, ProgressWatch, type ProgressPolicy } from './progress';
 import { Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
+import { AttachmentBytesCache, messageWithAttachments, type AttachmentReader } from './session-images';
 import type { AgentEvent, Author, Bot, DeliveryState, Item, ProgressStage, TurnEndReason } from './types';
 
 export interface CompactOptions {
@@ -175,11 +177,25 @@ export interface SessionDeps {
     progressPolicy?: Partial<ProgressPolicy>;
     /** 看门狗判定间隔（缺省 5000ms）；测试可调小 */
     progressTickMs?: number;
+    /**
+     * 把附件 ref 读成字节（宿主注入：diy2 读 `<home>/blobs`，测试用内存表）。
+     *
+     * 不传 = 附件不送进模型，只在正文后补一行「附图未送达」—— 没注入就静默丢图比不送更糟。
+     */
+    readAttachment?: AttachmentReader;
+    /**
+     * 这个模型收不收图（由房间按模型目录回答）。不传 = 当收（老行为 / 测试）。
+     *
+     * 判据在 entity-runtime 的 `providers.acceptsImagesOf`：目录里没标能力位 ⇒ 当**不收**。
+     */
+    acceptsImages?: (modelKey: string) => boolean;
 }
 
 interface QueueItem {
     messageId: string;
     text: string;
+    /** 本条消息带的附件（已落 blobs 的 ref）；本轮组装 prompt 时展开成 image part */
+    attachments?: readonly AttachmentRef[];
     mode: 'next-step' | 'next-turn';
     /** 容器分配的轮次（同一条用户消息的所有 bot 共享） */
     turn?: Turn;
@@ -193,6 +209,11 @@ interface QueueItem {
 export class BotSession {
     private readonly queue: QueueItem[] = [];
     private readonly listeners = new Set<(event: SessionEvent) => void>();
+    /**
+     * 已读过的附件字节（按 sha256 缓存）：同一张图在会话生命周期里只读一次盘。
+     * 会话级而非轮级 —— 历史里的图每天都要重发，每轮重读盘是纯浪费。
+     */
+    private readonly imageCache = new AttachmentBytesCache();
     /** 自己的原生对话（本轮之前的全部内容） */
     private transcript: TranscriptEntry[];
     /** 已 ingest、还没并进 transcript 的公共条目（运行中到达的要排在本轮产出之后） */
@@ -361,6 +382,10 @@ export class BotSession {
             origin: 'public',
             seq: entry.seq,
             ...(entry.turn === undefined ? {} : { turn: entry.turn }),
+            // 附件跟着走：ref 小（几百字节），落快照不心疼；字节等发请求时再读
+            ...(entry.kind === 'say' && entry.attachments !== undefined && entry.attachments.length > 0
+                ? { attachments: entry.attachments }
+                : {}),
         });
     }
 
@@ -401,9 +426,18 @@ export class BotSession {
         const mode = input.mode ?? 'next-step';
         const alreadyInContext = input.alreadyInContext ?? this.hasInContext(input.entry?.seq);
         const { promise, resolve } = withResolve();
+        // 附件从条目自己取：`say` 与「崩溃恢复重投」两条路都不用改调用点
+        const attachments =
+            input.entry?.kind === 'say' && input.entry.attachments !== undefined && input.entry.attachments.length > 0
+                ? input.entry.attachments
+                : undefined;
 
-        // 正在跑且是 next-step：直接交给 SDK，在下一个 step 边界插入
-        if (this.running && mode === 'next-step' && this.steering !== null) {
+        // 正在跑且是 next-step：直接交给 SDK，在下一个 step 边界插入。
+        //
+        // **但带附件的不能走 steer**：`steer()` 只能插文本，图会在这一轮里凭空消失
+        // （既没进 transcript、也没进 SDK 的上下文，要等重启回放才回来）。
+        // 降成入队 —— 下一轮带着图一起跑，代价是晚一点回答，换来的是图不丢。
+        if (this.running && mode === 'next-step' && this.steering !== null && attachments === undefined) {
             this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivering' });
             // 插话没成功（含 steer 自己抛错）的兜底：能降级就降成下一轮，否则至少把公共条目
             // 留在上下文里，并 resolve。不 resolve 会把 room.say 的 Promise.all 一起挂死
@@ -450,6 +484,7 @@ export class BotSession {
         this.queue.push({
             messageId: input.messageId,
             text: input.text,
+            ...(attachments === undefined ? {} : { attachments }),
             mode,
             turn: input.turn,
             entry: input.entry,
@@ -592,8 +627,18 @@ export class BotSession {
                 origin: 'public',
                 ...(item.turn === undefined ? {} : { turn: item.turn.turn }),
                 ...(item.entry === undefined ? {} : { seq: item.entry.seq }),
+                ...(item.attachments === undefined ? {} : { attachments: item.attachments }),
             }));
-        const messages: ModelMessage[] = [...this.transcript, ...userEntries].map((entry) => entry.message);
+        // 展开附件：transcript 里只有 ref，**这里**才读字节换成 ai-sdk 的 file part。
+        // 无附件的条目原样返回（不建数组），常规路径不多付一分钱。
+        // 本模型收不收图：不收就只留一句说明（塞 image part 会被上游 400）。
+        // 每轮算一次（模型可能刚被换过），代价与 maxOutputTokensOf 同一量级。
+        const acceptsImages = this.deps.acceptsImages?.(this.modelKey) ?? true;
+        const messages: ModelMessage[] = await Promise.all(
+            [...this.transcript, ...userEntries].map((entry) =>
+                messageWithAttachments(entry, this.deps.readAttachment, this.imageCache, { acceptsImages }),
+            ),
+        );
 
         const steering = experimental_createSteering();
         this.steering = steering;

@@ -58,6 +58,7 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/serial-queue": { dir: "pkgs.ts/core/serial-queue", entry: "src/index.ts" },
     "@diy-agent/dev-paths": { dir: "pkgs.ts/core/dev-paths", entry: "src/index.ts" },
     "@diy-agent/protocol": { dir: "pkgs.ts/agent/protocol", entry: "src/index.ts" },
+    "@diy-agent/attachment": { dir: "pkgs.ts/agent/attachment", entry: "src/index.ts" },
     "@diy-agent/entity-runtime": { dir: "pkgs.ts/agent/entity-runtime", entry: "src/index.ts" },
     "@diy-agent/agents-chain": { dir: "pkgs.ts/agent/agents-chain", entry: "src/index.ts" },
     "@diy-agent/skills": { dir: "pkgs.ts/agent/skills", entry: "src/index.ts" },
@@ -79,6 +80,8 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
  * （vite 报 `Cannot find package '@diy-agent/rpc/http'`）。新增这类包 = 这里加一行。
  */
 const SUBPATH_SOURCES: Record<string, string> = {
+    // 纯类型入口：给 `types: []` 的包（protocol）留一条不碰 node 的路径
+    "@diy-agent/attachment/types": "pkgs.ts/agent/attachment/src/types.ts",
     "@diy-agent/rpc/http": "pkgs.ts/core/rpc/src/transport/http/index.ts",
     "@diy-agent/rpc/ws": "pkgs.ts/core/rpc/src/transport/ws/index.ts",
     "@diy-agent/rpc/electron/main": "pkgs.ts/core/rpc/src/transport/electron/main.ts",
