@@ -1,22 +1,20 @@
-// Menu.tsx —— 「⋮ + 浮层」的小菜单。两处共用：侧栏行尾、房间头 kebab。
+// Menu.tsx —— 「⋮ + 下拉」的小菜单。两处共用：侧栏行尾、房间头 kebab。
 //
-// 为什么自写：仓库里没有 dropdown 组件（`kit` 只有 confirm / drawer 这些），而这件事
-// 不到 100 行 —— 为它引一整套组件库再包一层，比自己写更贵。
-// 行为只有两条：点 ⋮ 开合；点菜单外任意处关闭（含 Esc）。
+// 2026-11-26 换成官方 `DropdownMenu`（Base UI 的 Menu）。之前是自写 139 行：
+// portal 到 body + fixed 定位 + 手算上下翻转 + 左右钳位 + 外点关闭 + Esc + 滚动即关。
+// 那套能跑，但每一件都是官方组件本来就有的，而且有几处是自己补出来的：
+//   · 翻转/钳位是估出来的（`items.length * 26 + 8` 估高，估早了会误翻转）；
+//   · 滚动一律关闭（官方是跟着重定位，不会把菜单收掉）；
+//   · 键盘只有 Esc（官方有方向键/Home/End/Tab 循环与焦点还原）。
+// 换成组件后这些都不用管，只留一件事：**行本身可点**，所以点击不能冒泡到行上。
 //
-// 浮层必须 **portal 到 body + fixed 定位**（2026-11-25 修）：侧栏行在 `overflow-y-auto`
-// 的列表里、外面还套一层 `overflow-hidden`，`absolute` 浮层被这两层裁掉 —— 行在末位或
-// 列表滚到底时只看得见一条缝，菜单项点不到。`z-30` 对裁剪无效。
-// 上下方向按可用空间**翻转**（下方不够就往上弹），左右钳在视口内。
+// 历史备注（保留，将来若有人想换回手写版）：浮层必须 portal 出 `overflow-y-auto` 的
+// 列表与 `overflow-hidden` 的外层，否则行在末位时菜单被裁成一条缝。
 
 import { MoreHorizontal } from 'lucide-react';
 import * as React from 'react';
-import { createPortal } from 'react-dom';
-import { Button } from '@diy-agent/ui-shadcn';
 
-/** 浮层宽度（px）与「离锚点多远」——翻转 / 钳位都靠这两个数 */
-const WIDTH = 144;
-const GAP = 4;
+import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@diy-agent/ui-shadcn';
 
 export interface MenuItem {
     key: string;
@@ -35,105 +33,36 @@ export function MenuButton({
     title?: string;
     className?: string;
 }) {
-    const [open, setOpen] = React.useState(false);
-    const [anchor, setAnchor] = React.useState<DOMRect | null>(null);
-    const box = React.useRef<HTMLDivElement | null>(null);
-    const menu = React.useRef<HTMLDivElement | null>(null);
-    const close = React.useCallback(() => {
-        setOpen(false);
-        setAnchor(null);
-    }, []);
-
-    React.useEffect(() => {
-        if (!open) return;
-        // pointerdown 而不是 click：菜单项自己也是 click，用 click 会先关后触发（顺序不可靠）。
-        const onDown = (event: PointerEvent) => {
-            const target = event.target as Node;
-            if (!box.current?.contains(target) && !menu.current?.contains(target)) close();
-        };
-        const onKey = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') close();
-        };
-        // 锚点会随滚动 / 窗口变化跑位 —— 与其追，不如关掉（菜单是一次性动作）
-        const onMove = () => close();
-        document.addEventListener('pointerdown', onDown);
-        document.addEventListener('keydown', onKey);
-        window.addEventListener('resize', onMove);
-        window.addEventListener('scroll', onMove, true);
-        return () => {
-            document.removeEventListener('pointerdown', onDown);
-            document.removeEventListener('keydown', onKey);
-            window.removeEventListener('resize', onMove);
-            window.removeEventListener('scroll', onMove, true);
-        };
-    }, [open, close]);
-
-    const style: React.CSSProperties = React.useMemo(() => {
-        if (anchor === null) return {};
-        const below = window.innerHeight - anchor.bottom;
-        const above = anchor.top;
-        // 估算高度：菜单项 24px + 上下 padding；估高了会误翻转，估低了会溢出
-        const height = items.length * 26 + 8;
-        const top =
-            below >= height + GAP || below >= above ? anchor.bottom + GAP : Math.max(GAP, anchor.top - height - GAP);
-        const left = Math.max(GAP, Math.min(anchor.right - WIDTH, window.innerWidth - WIDTH - GAP));
-        return { top, left, width: WIDTH };
-    }, [anchor, items.length]);
-
     return (
-        <div ref={box} className={`relative shrink-0 ${className}`}>
-            <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={(event) => {
-                    // 行本身可点（选中房间）：菜单按钮不该把这一下也传下去
-                    event.stopPropagation();
-                    // rect 在这里就取：晚一步 React 已把 currentTarget 置空（updater 在渲染期跑）
-                    if (open) {
-                        close();
-                    } else {
-                        setAnchor(event.currentTarget.getBoundingClientRect());
-                        setOpen(true);
+        // 侧栏整行是个可点区域：菜单里的任何一下都不该同时选中房间
+        <div className={`shrink-0 ${className}`} onClick={(event) => event.stopPropagation()}>
+            <DropdownMenu>
+                <DropdownMenuTrigger
+                    render={
+                        <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            title={title}
+                            aria-label={title}
+                            className="text-muted-foreground"
+                        />
                     }
-                }}
-                title={title}
-                aria-label={title}
-                // 展开时的底色由 variant 的 aria-expanded 样式给，不用再手拼 open ? 'bg-muted' : ''
-                aria-expanded={open}
-                aria-haspopup="menu"
-                className="text-muted-foreground"
-            >
-                <MoreHorizontal className="size-3.5" />
-            </Button>
-            {open &&
-                anchor !== null &&
-                createPortal(
-                    <div
-                        ref={menu}
-                        role="menu"
-                        className="fixed z-[1000] overflow-hidden rounded-md border bg-popover py-1 shadow-md"
-                        style={style}
-                    >
-                        {items.map((item) => (
-                            <button
-                                key={item.key}
-                                role="menuitem"
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    close();
-                                    item.onClick();
-                                }}
-                                className={`flex w-full items-center gap-2 px-2 py-1 text-left text-xs hover:bg-muted ${
-                                    item.danger === true ? 'text-destructive' : ''
-                                }`}
-                            >
-                                {item.icon}
-                                {item.label}
-                            </button>
-                        ))}
-                    </div>,
-                    document.body,
-                )}
+                >
+                    <MoreHorizontal className="size-3.5" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-36">
+                    {items.map((item) => (
+                        <DropdownMenuItem
+                            key={item.key}
+                            variant={item.danger === true ? 'destructive' : 'default'}
+                            onClick={() => item.onClick()}
+                        >
+                            {item.icon}
+                            {item.label}
+                        </DropdownMenuItem>
+                    ))}
+                </DropdownMenuContent>
+            </DropdownMenu>
         </div>
     );
 }
