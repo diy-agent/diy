@@ -710,14 +710,17 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
                 {/*
                  * 历史分页（2026-11-26）：服务端默认只发最近 400 条 —— 6000+ 条的房间里
                  * 全量回包 5.7 MB，JSON.parse + 渲染就是 2~5 秒的长任务（切任务/点输入框卡）。
-                 * 这一颗把“上面还有多少”说清，要不要全量由人决定。
+                 *
+                 * 点它**不要再一次全量**（那是给“几百兆的会话”留的最大一个坑）：`loadMore`
+                 * 每次把窗口翻一倍，回包永远可控；真要看到头就多点几下。
                  */}
                 {state.truncated === true && (
                     <button
-                        onClick={() => conversation.loadAll()}
+                        onClick={() => conversation.loadMore()}
+                        title="每次加载当前的再一倍（不是一次全量）"
                         className="my-1 w-full rounded border border-border/60 px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/60"
                     >
-                        上面还有 {Math.max(0, (state.totalItems ?? 0) - state.items.length)} 条更早的消息未加载 · 点此全部加载
+                        上面还有 {Math.max(0, (state.totalItems ?? 0) - state.items.length)} 条更早的消息未加载 · 点此再加载一倍
                     </button>
                 )}
                 <CompactCutBar sessions={sessions} />
