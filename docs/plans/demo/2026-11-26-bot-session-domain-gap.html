@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>bot 与 session 的领域模型：当前实现 vs 目标模型</title>
+<style>
+:root{
+  --bg:#fff;--fg:#18181b;--card:#fff;--muted:#f4f4f5;--muted2:#fafafa;
+  --mf:#71717a;--border:#e4e4e7;--primary:#18181b;
+  --amber:#f59e0b;--sky:#38bdf8;--emerald:#10b981;--violet:#8b5cf6;--rose:#f43f5e;--blue:#2563eb;
+}
+*{box-sizing:border-box}
+body{font:13.5px/1.65 -apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC",system-ui,sans-serif;
+  color:var(--fg);background:var(--muted2);margin:0;padding:28px 30px 70px}
+.wrap{max-width:1060px;margin:0 auto}
+h1{font-size:21px;margin:0 0 6px}
+h2{font-size:15px;margin:26px 0 10px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+.lead{color:var(--mf);font-size:12.5px;margin-bottom:6px}
+code{background:var(--muted);padding:1px 5px;border-radius:4px;font:12px ui-monospace,Menlo,monospace}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;box-shadow:0 1px 2px rgba(0,0,0,.03);margin:12px 0}
+pre{background:#0d1117;color:#c9d1d9;border-radius:9px;padding:11px 13px;font:12px/1.55 ui-monospace,Menlo,monospace;overflow:auto;margin:8px 0;white-space:pre;line-height:1.5}
+pre .k{color:#79c0ff}pre .s{color:#a5d6ff}pre .n{color:#ffa657}pre .c{color:#6e7681}pre .t{color:#7ee787}
+table{border-collapse:collapse;width:100%;font-size:12.5px;margin:8px 0}
+th,td{border:1px solid var(--border);padding:7px 9px;text-align:left;vertical-align:top}
+th{background:var(--muted);font-weight:600;font-size:11.5px}
+td.bad{color:var(--rose);font-weight:600}
+td.ok{color:var(--emerald);font-weight:600}
+.note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 13px;font-size:12.5px;margin:10px 0}
+.note b{color:var(--blue)}
+.warn{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 13px;font-size:12.5px;margin:10px 0}
+.warn b{color:#b45309}
+.rose{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 13px;font-size:12.5px;margin:10px 0}
+.rose b{color:#b91c1c}
+ul{margin:6px 0;padding-left:22px}
+li{margin:4px 0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.two > div{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:#fff}
+.two .cur{border-color:#fca5a5;background:#fef2f2}
+.two .goal{border-color:#86efac;background:#f0fdf4}
+.badge{display:inline-block;font-size:10px;font-weight:700;padding:1px 8px;border-radius:999px;margin-bottom:8px}
+.badge.cur{background:#fee2e2;color:#b91c1c}
+.badge.goal{background:#dcfce7;color:#15803d}
+.flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;margin:10px 0}
+.flow .box{border:1px solid var(--border);border-radius:8px;padding:7px 11px;background:#fff}
+.flow .arw{color:var(--mf)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px;margin:8px 0}
+.kv dt{color:var(--mf);font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+.kv dd{margin:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>bot 与 session 的领域模型：当前实现 vs 目标模型</h1>
+<p class="lead">你的模型：<b>bot 就是一个连续无截止的 session</b>；任务是模块贡献的人设（代码概念、不存储、无 id），建任务时自动产生一个 mainbot、不能换；room 默认单聊；会议 = 新容器放公共记录、各 bot 仍用原 session。下面是当前代码逐条对照。</p>
+
+<div class="rose"><b>结论：有显著出入，而且是结构性的。</b>当前是「type 级全局角色 + per(房间,角色) session」；你要的是「per-task bot（=连续 session）+ 代码贡献点人设 + 会议用原 session」。核心差 3 处（bot 粒度、session 键、人设存储）。</div>
+
+<!-- ══════════ 1. 当前实现 ══════════ -->
+<h2>1. 当前实现（代码事实）</h2>
+<div class="card">
+  <dl class="kv">
+    <dt>BotRole</dt><dd><code>{ id, type, name, color, instructions, primary, modelKey, reasoningEffort }</code> —— 存表 <code>bot_roles</code>，<b>type 级</b>（<code>type: 'project' | 'task'</code>）</dd>
+    <dt>Bot</dt><dd>房间里的化身 = <code>botOfRole(role)</code> = <code>{ id, name, color, persona: instructions, modelKey }</code></dd>
+    <dt>session_state</dt><dd>主键 <code>(entity_id, bot_role_id)</code> —— <b>per（房间, 角色）</b></dd>
+    <dt>room_entries</dt><dd>房间的公共聊天记录，按 <code>entity_id + seq</code> 存（与 bot 无关）</dd>
+    <dt>房间成员</dt><dd><code>membersOfType(roles, type)</code> = 该 type 的<b>所有角色</b>自动派生（不是显式绑定）</dd>
+    <dt>seed</dt><dd>启动时全局预制 project/task 各几个角色（<code>listRoles().map(botOfRole)</code> 喂给每个房间）</dd>
+  </dl>
+<pre><span class="c">// session 键：per（房间 × 角色）</span>
+CREATE TABLE session_state (
+    entity_id    TEXT,   <span class="c">← 房间</span>
+    bot_role_id  TEXT,   <span class="c">← 角色（type 级）</span>
+    ...
+    PRIMARY KEY (entity_id, bot_role_id)
+);</pre>
+</div>
+
+<!-- ══════════ 2. 逐条对照 ══════════ -->
+<h2>2. 逐条对照</h2>
+<table>
+  <thead><tr><th style="width:15%">维度</th><th style="width:37%">当前实现</th><th style="width:35%">你的模型</th><th style="width:13%">出入</th></tr></thead>
+  <tbody>
+    <tr><td><b>bot 粒度</b></td><td>type 级：所有 task 房间共用「任务助手」</td><td>per-task：每个任务建一个 mainbot</td><td class="bad">✗ 结构性</td></tr>
+    <tr><td><b>bot = session</b></td><td>不对等：bot 是人设，session 是 per(房间,角色)</td><td>bot 就是连续无截止的 session</td><td class="bad">✗ 结构性</td></tr>
+    <tr><td><b>人设存储</b></td><td><code>bot_roles</code> 表存 id/name/instructions</td><td>任务模块贡献的代码概念，不存储、无 id（除非配模型）</td><td class="bad">✗ 最根本</td></tr>
+    <tr><td><b>启动时 bot</b></td><td>seed 建全局预制角色（有表记录）</td><td>没任务就没 bot，无数据库级人设</td><td class="bad">✗</td></tr>
+    <tr><td><b>room 成员</b></td><td><code>membersOfType</code> 自动派生该 type 所有角色</td><td>任务 room 单聊（一个 mainbot）；会议<b>显式</b>拉 bot</td><td class="bad">✗</td></tr>
+    <tr><td><b>会议</b></td><td>没有「跨 room 用原 session」机制（session per room）</td><td>新 room 放公共记录，各 bot 用原 session 保记忆</td><td class="bad">✗</td></tr>
+    <tr><td><b>跨 room 可见性</b></td><td>session per room，天然隔离</td><td>任务 room 不显示 bot 在其他 room 的活动</td><td class="ok">✓ 基本符合</td></tr>
+  </tbody>
+</table>
+
+<!-- ══════════ 3. 三个核心出入 ══════════ -->
+<h2>3. 三个核心出入（详解）</h2>
+
+<div class="card">
+  <h3 style="font-size:13.5px;margin:0 0 6px;color:var(--rose)">① bot 是 type 级全局角色，不是 per-task 实例</h3>
+  <p style="margin:0 0 6px">现在 <code>BotRole</code> 带 <code>type: 'task'</code>，所有 task 房间的成员都由 <code>membersOfType(roles, 'task')</code> 派生 —— <b>同一个「任务助手」服务所有任务</b>。你要的是每个任务创建时产生一个自己的 mainbot（像「小满」属于某个任务，不是所有任务的）。</p>
+<pre><span class="c">// 现在：一个角色服务所有 task 房间</span>
+task-mwjddcy0 → members: [任务助手(bot-mwh80b5n), ...]
+task-mwlxxv3u → members: [任务助手(bot-mwh80b5n), ...]  <span class="c">← 同一个 id</span></pre>
+</div>
+
+<div class="card">
+  <h3 style="font-size:13.5px;margin:0 0 6px;color:var(--rose)">② session 是 per(房间,角色)，不是 per bot 连续</h3>
+  <p style="margin:0 0 6px">主键 <code>(entity_id, bot_role_id)</code> 意味着<b>同一角色在不同房间各有一份 session</b>。你的「会议用原 session 保记忆」要求 session 跟着 bot 走、跨 room 连续 —— 当前做不到（换 room 就是新 session）。</p>
+<pre><span class="c">// 现在：session 绑房间，不绑 bot</span>
+session_state[task-A, 任务助手] = 会话1   <span class="c">← 同一 bot</span>
+session_state[task-B, 任务助手] = 会话2   <span class="c">← 两份，记忆不连</span>
+<span class="c">// 你要：session 绑 bot，跨 room 一份</span>
+session[bot-任务A的mainbot] = 连续会话  <span class="c">← 会议也用这份</span></pre>
+</div>
+
+<div class="card">
+  <h3 style="font-size:13.5px;margin:0 0 6px;color:var(--rose)">③ 人设存在表里，不是代码贡献点</h3>
+  <p style="margin:0 0 6px">你要的是：任务模块代码里定义一个「mainbot 人设贡献点」，<b>不存储、无 id</b>；建任务时用系统默认模型自动创建 bot；只有人设要单独配模型时才存。当前是 <code>bot_roles</code> 表存了 id/name/instructions —— 这是<b>最根本</b>的差异：人设从「表记录」变成「代码里的贡献点」。</p>
+<pre><span class="c">// 你要的形状（示意）</span>
+<span class="t">taskModule</span>.contributeBot({
+  role: <span class="s">'main'</span>,              <span class="c">// 人设概念，不是名字</span>
+  persona: <span class="s">'任务视角：做完要能自己验'</span>,
+  <span class="c">// 不配 model → 用系统默认模型，不落库</span>
+})
+<span class="c">// 建任务时：bot = { id: 自动生成, task: task-A, personaRef: taskModule.main, model: null }</span></pre>
+</div>
+
+<!-- ══════════ 4. 适配路径 ══════════ -->
+<h2>4. 能适配吗？分三块，从易到难</h2>
+<div class="card">
+  <ul>
+    <li><b>第 1 块（中等，收益最大）：session 键改 per bot。</b><code>session_state</code> 主键改 <code>(bot_id)</code>，<code>room_entries</code> 仍按 room 存公共记录。这样「会议用原 session 保记忆」自然成立，也是「bot = 连续 session」的落点。<b>不动 bot 粒度和人设存储，风险可控。</b></li>
+    <li><b>第 2 块（较大）：bot 改 per-task 创建。</b>任务创建时建一个 bot 记录（<code>bot_id + task_id + 可选模型覆盖</code>），而不是 seed 全局角色。房间成员从「派生」改为「显式绑定」（任务 room 绑自己的 mainbot；会议 room 绑拉进来的几个）。</li>
+    <li><b>第 3 块（最根本）：人设改代码贡献点。</b>人设不存表，任务模块代码里定义贡献点；bot 记录只存「哪个贡献点 + 可选模型覆盖」。这样「没任务就没 bot、无数据库级人设」成立。这要动任务模块的贡献机制和 seed。</li>
+  </ul>
+</div>
+<div class="note"><b>为什么建议先做第 1 块：</b>「记忆连续」是这套模型最核心的承诺，而它只取决于 session 键；bot 粒度和人设存储是「谁是谁」的组织方式，改起来牵动任务模块和 seed，风险高。先改 session 键能立刻验证「会议/跨 room 记忆」这个核心体验。</div>
+
+<!-- ══════════ 5. 决策点 ══════════ -->
+<h2>5. 待你拍板</h2>
+<div class="warn"><b>方向：</b>① 先只改 session 键为 per bot（试水，风险可控）；② 按目标模型整体重构（per-task bot + 代码贡献点人设 + per-bot session）；③ 先保持现状、只留这份分析。</div>
+<div class="warn"><b>若整体重构，一个关键点：</b>人设是否真的「不存表」？如果人设完全代码贡献、无 id，那「单独给人设配模型」就落在 <b>bot 记录</b>（per-task）上，而不是人设上 —— 需要确认这个归属。</div>
+
+</div>
+</body>
+</html>
