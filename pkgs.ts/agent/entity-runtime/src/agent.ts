@@ -16,6 +16,7 @@ import { logs, SeverityNumber } from '@opentelemetry/api-logs';
 import { z } from 'zod';
 
 import { friendlyError } from './errors';
+import { scrubMedia } from './media-scrub';
 import { maxOutputTokensOf, modelOf } from './providers';
 import { StallWatchdog, stallMessage, stallTimeoutsFromEnv, type StallInfo } from './stall-watchdog';
 import type { AgentEvent, Bot } from './types';
@@ -289,7 +290,8 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                         turnId,
                         toolCallId: part.toolCallId,
                         name: part.toolName,
-                        result: part.output,
+                        // 图已经交给模型看过了，事件里只留一行说明（这个事件会进 db）
+                        result: scrubMedia(part.output),
                     };
                     break;
                 case 'tool-error':

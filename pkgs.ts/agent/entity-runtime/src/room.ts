@@ -963,6 +963,12 @@ export class RoomActor {
                 ? ''
                 : '\n后台长活（构建 / 测试 / 装依赖）用 bash 的 background，再用 job 查状态 / 取输出 / 停；' +
                   '起完就别轮询，结束时会插话叫醒你。';
+        // 图片能力必须**明写**：不给这段，模型的反应是自己用 bash+curl 拼一份 raw API 调用
+        // 去看图（2026-11-26 实测：它跑了 6 条 bash、写了两份 payload，链路完全绕开本实例）。
+        const imageHint =
+            '\n**看图用 view_image，不要自己调模型 API**：要分析图片（截图 / 照片 / 图表）就把路径交给它 —— ' +
+            '「自己截图自己看」就是 `screencapture -x /tmp/x.png` 之后 `view_image({path:"/tmp/x.png"})`。' +
+            '绝不可以用 bash + curl 去请求模型端点看图：那条路绕开对话上下文，既白花 token，人也不知道你看了什么。';
         return (
             '可以用 read / write / edit 读写文件、用 bash 执行命令；' +
             `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
@@ -972,7 +978,8 @@ export class RoomActor {
             '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。' +
             'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。' +
             unitHint +
-            jobHint
+            jobHint +
+            imageHint
         );
     }
 

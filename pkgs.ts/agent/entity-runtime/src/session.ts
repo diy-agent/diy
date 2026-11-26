@@ -18,6 +18,7 @@ import { experimental_createSteering, type Experimental_Steering, type ModelMess
 
 import { runAgent, DEFAULT_MAX_STEPS, type RunOptions } from './agent';
 import { endItems, endReasonOf } from './end-reason';
+import { scrubMedia } from './media-scrub';
 import { friendlyError } from './errors';
 import {
     DEFAULT_BUDGET,
@@ -685,7 +686,8 @@ export class BotSession {
                 ...(this.deps.takeDelta === undefined ? {} : { takeDelta: this.deps.takeDelta }),
                 ...(this.deps.commitDelta === undefined ? {} : { commitDelta: this.deps.commitDelta }),
                 onStepTranscript: (added) => {
-                    for (const message of added) produced.push({ message, origin: 'self', turn: turn.turn });
+                    // transcript 会进快照落 db：媒体字节在模型那侧已经用过了，这里只留说明
+                    for (const message of added) produced.push({ message: scrubMedia(message), origin: 'self', turn: turn.turn });
                 },
                 onUsage: (usage) => {
                     this.lastUsage = usage;
