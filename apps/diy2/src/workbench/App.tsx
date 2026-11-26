@@ -15,9 +15,6 @@
 //
 // 导航自己的收起按钮已停用（`showToggle={false}`）：标题栏左端那颗做的是同一件事。
 
-import { LayerProvider } from '@astryxdesign/core/Layer';
-import { Theme } from '@astryxdesign/core/theme';
-import { neutralTheme } from '@astryxdesign/theme-neutral/built';
 import {
     ActiveJobsGlyph,
     AttentionCapsules,
@@ -37,9 +34,6 @@ import { Menu, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import '../index.css';
-import '@astryxdesign/core/astryx.css';
-import '@astryxdesign/theme-neutral/theme.css';
-import '@astryxdesign/lab/lab.css';
 import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
@@ -314,11 +308,8 @@ function Host() {
 
 /** 工作台 = 主题壳 + 标题栏 + 全局导航 + 一页区域树 */
 export function WorkbenchApp() {
-    return (
-        <Theme theme={neutralTheme} mode="dark">
-            <LayerProvider>
-                <Host />
-            </LayerProvider>
-        </Theme>
-    );
+    // 2026-11-26：外层那两层 Astryx 的 Theme / LayerProvider 随 Astryx 面一起删了。
+    // 主题现在是 shadcn 的 `.dark` 变量（styles.css 的 `:root.dark` 段）+ workbench 自己的
+    // `--wb-*`；两者都是 CSS 变量，不需要 React 侧的 provider。
+    return <Host />;
 }

@@ -10,8 +10,8 @@
 //   没有 progress（刚刷新、还没到第一条 tick）时只留「执行中」四个字 —— **不带秒**：
 //   轮次底行右侧已经有「已用 1m42s」，同一个时长说两遍就是两个数字在跳。
 //
-// 为什么用 Spinner：Astryx 的官方 loading 件（Feedback & Status 分类）；
-// 两面共用它才能视觉一致（shadcn 面没有自己的 loading 件）。
+// loading 件用 lucide 的 Loader2 + animate-spin：Astryx 面删掉后，全局只剩这一套图标，
+// 不再需要「两面共用一个加载件」这种理由。
 //
 // 为什么要报「疑似卡住」：秒数只说明"还在等"，不说明"在推进"。等上游首个字时
 // 一分钟一个字都不出，界面上和"正常在跑"一模一样 —— ##560 那次卡了 15 分钟，
@@ -24,8 +24,8 @@
 //   · 没有 `progress`（刚刷新 / 老服务端）⇒ 退回 `since` 秒数判 `stuckHintOf`（180s）。
 //     这条只是兜底：它只能看"这一轮开始多久了"，分不清"在跑"和"卡住"。
 
+import { Loader2 } from 'lucide-react';
 import { progressLineOf } from '@diy-agent/chat-core';
-import { Spinner } from '@astryxdesign/core';
 import * as React from 'react';
 
 import { useBotProgress } from './useBotProgress';
@@ -119,7 +119,7 @@ export function RunningIndicator({
                 aria-hidden="true"
                 style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
             >
-                <Spinner size="sm" shade="inherit" />
+                <Loader2 className="size-3 animate-spin" />
                 <span>{line}</span>
             </span>
             {/* 只在真卡住时才进 DOM ⇒ 读屏播一次，不随秒数重复 */}

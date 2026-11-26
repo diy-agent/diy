@@ -17,10 +17,13 @@
 // ③ 删除的前置条件只剩一条 —— 见 `docs/plans/2026-11-24-surface-parity.md` §7 末尾。
 //
 // 缺省是哪一面由壳层决定（现在取 'shadcn'），这里不排序含义。
+//
+// 2026-11-26：Astryx 面**已删除**（本文件只剩 shadcn 一条）。数组与 `ChatSurface` 形状
+// 刻意保留 —— 壳层（tab、visited 缓存、surface.ts 的 store）都按「可能是多面」写的，
+// 少一条不需要改它们；将来真要加第三面，只需在这里多一条。
 
 import type { FC, ReactNode } from 'react';
 
-import { AstryxSurface } from './astryx/Surface';
 import { ShadcnSurface } from './shadcn/Surface';
 
 export interface ChatSurface {
@@ -37,18 +40,6 @@ export interface ChatSurface {
 }
 
 export const SURFACES: ChatSurface[] = [
-    {
-        id: 'astryx',
-        /**
-         * @deprecated 2026-11-26 用户裁：本面已废弃，只作参考实现保留。
-         *
-         * 不接新功能、不做双面验证；`useWindowed` 升级成真虚拟化之后即删。
-         * 缺省面是 shadcn —— 新代码请照着 `surfaces/shadcn/` 写。
-         */
-        name: 'Astryx（废弃）',
-        hint: '已废弃：设计系统 Chat 组件的参考实现，不接新功能',
-        Component: AstryxSurface,
-    },
     {
         id: 'shadcn',
         name: 'shadcn',
