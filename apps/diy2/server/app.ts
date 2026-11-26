@@ -522,13 +522,17 @@ function newBot(name: string, homeRoomId: string, persona: string): Bot {
  * 不需要把 9.5MB 的 stdout 发到浏览器。完整原文仍在库里（`toolout/` + items），
  * 要全文从服务端取 —— 截断处会写明原文多少字，不假装这就是全部。
  *
- * **为什么从 2000 再降到 400（同日二改）**：回包体积 = 条数 × 阈值。这个房间有
- * **5404 条 tool**，2000 字/条合计仍有 **10.7MB**（复测），parse + 渲染还是 2.7 秒的
- * longtask。400 字够看「这条命令干了什么、结果头几行」，合计降到 ~2MB 量级。
+ * **体积是「条数 × 阈值 × 编码开销」**（同日三改，每改一次都实测）：
+ *   2000 字 × 5404 条 ≈ 10.7MB  → longtask 仍 2.7s
+ *    400 字 × 5404 条 ≈  6.8MB  → longtask 1.9s（中文 UTF-8 是 3 字节/字，400「字符」
+ *                                 在 JSON 里约 1.2KB，乘 5404 条就是 6.5MB）
+ *    120 字 × 5404 条 ≈  2.0MB  → 目标
+ * 一路降到 120：这里要的是「这条命令干了什么、结果开头什么样」，不是输出全文。
+ * 原文一直在库里，点开看全文那件事该由一条**单独取**的接口承担，不该塞进历史回包。
  *
  * 只裁 **history 这一条路**（侧栏 / `bots.rows` 不碰它）。
  */
-const HISTORY_TOOL_RESULT_CHARS = 400;
+const HISTORY_TOOL_RESULT_CHARS = 120;
 
 /**
  * 把历史里的超大 tool 结果裁到 `HISTORY_TOOL_RESULT_CHARS`（不改变其他条目）。
