@@ -2,7 +2,7 @@
 //
 // 用户原话：「作业跑完了需要消失，只需要 0 空状态即可，这样还能点进去看历史」——
 // 前半句说的是**那个跳动的绿点**要消失，不是整枚 chip。所以钉住两件事：
-//   1. 0 条在跑时 chip **仍然占位置**（第一版这里是 `return null`，等于把进历史账本的
+//   1. 0 条在跑时 chip **仍然占位置**（第一版这里是 `return null`，等于把进本进程作业表的
 //      唯一入口也一起藏了）；
 //   2. 0 条在跑时**不动**（没有 animate-ping）、也不写数字和时长 —— 空状态就长得像空状态。
 //
@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { belongsToRoom, JobsChip } from '../src/components/JobsChip';
 
 describe('作业 chip 的空状态', () => {
-    it('没有作业在跑时仍然渲染（历史账本的入口不许跟着消失）', () => {
+    it('没有作业在跑时仍然渲染（本进程作业表的入口不许跟着消失）', () => {
         const html = renderToStaticMarkup(<JobsChip />);
         // 2026-11-24 改名：「作业」→「后台任务」，并写清口径（本房间 / 本实例全部）
         expect(html).toContain('后台任务');
