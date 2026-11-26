@@ -18,12 +18,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDiy2App, type Diy2App } from '../server/app';
 import { resolveConfig } from '../server/config';
 
-
 const moduleDir = join(import.meta.dirname, '..');
 let home = '';
 let app: Diy2App;
 let server: Server;
-let base = '';
 let rpcUrl = '';
 
 beforeEach(async () => {
@@ -39,7 +37,6 @@ beforeEach(async () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     if (address === null || typeof address === 'string') throw new Error('没有端口');
-    base = `http://127.0.0.1:${address.port}/api`;
     rpcUrl = `ws://127.0.0.1:${address.port}/rpc`;
 });
 
@@ -135,7 +132,7 @@ describe('/rpc 房间事件流', () => {
         }
     });
 
-    it('空模型 key 进不了库：schema 层就拒（`??` 挡不住 `\'\'`）', async () => {
+    it("空模型 key 进不了库：schema 层就拒（`??` 挡不住 `''`）", async () => {
         const transport = new WsTransport(await connectWs(rpcUrl, { timeoutMs: 2_000 }));
         const binding = new ChannelClientBinding(transport);
         try {
