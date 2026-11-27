@@ -79,6 +79,11 @@ _DEV_OPTS=(
 sha.def "dev" "${_DEV_OPTS[@]}" --desc "开发：单端口（vite 挂进服务端，HMR），数据根 run/diy2/lab"
 sha.def "lab" "${_DEV_OPTS[@]}" --desc "同 dev（保留旧名）"
 
+sha.def "migrate" \
+  --opt "--db:string:要迁移的数据库文件（**先复制一份再跑**，迁移不可逆）" \
+  --opt "-p,--port:int=5179:迁移页端口" \
+  --desc "迁移页：单独起一个页面看迁移每一步（不碰主界面，也不碰主库）"
+
 sha.def "staging" \
   --opt "--home:string:数据根（缺省 run/diy2/staging）" \
   --opt "-p,--port:int:端口；0 = 内核分配" \
@@ -247,6 +252,30 @@ dev() {
 
 # lab = dev（`./sha.sh lab --app diy2` 从根入口进来时走这里）
 lab() { dev "$@"; }
+
+####################################################################################
+# 迁移页（独立进程，不挂主界面）
+####################################################################################
+
+# 为什么单独一条命令：迁移是**一次性、不可逆**的动作，不该藏在启动流程里。
+# 这个页面只服务一个库、只看迁移进度 —— 主界面一开就会拉 rooms/bots/models，
+# 那些请求在迁移没跑完时只会糊屏（用户 2026-11-27 要求）。
+#   cp ~/.diy2/diy2.db /tmp/rehearsal.db
+#   ./sha.sh migrate --db /tmp/rehearsal.db
+migrate() {
+  local db port
+  sha.parse "$@" || return $?
+  if [[ -z ${db:-} ]]; then
+    echo "${error}✗ 缺 --db（要迁移的数据库文件）${reset}" >&2
+    return 2
+  fi
+  if [[ ! -f $db ]]; then
+    echo "${error}✗ 数据库不存在：$db${reset}" >&2
+    return 2
+  fi
+  run "$REPO_ROOT/sha.sh" dist-fresh --build
+  run "$REPO_ROOT/node_modules/.bin/tsx" server/migrate.ts --db "$db" --port "${port:-5179}"
+}
 
 ####################################################################################
 # 起产物（staging / 生产）

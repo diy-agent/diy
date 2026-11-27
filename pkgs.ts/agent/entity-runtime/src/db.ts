@@ -523,7 +523,39 @@ function cleanModelKey(value: unknown): string {
     return text === PLACEHOLDER_MODEL_KEY ? '' : text;
 }
 
-export function openStore(file: string): Store {
+/**
+ * 一步迁移的进度事件（迁移页逐条显示）。
+ *
+ * `id` 是**稳定标识**（跨版本不变，页面靠它合并同一行的多次上报）；`title` 是给人看的中文名。
+ * 一个步骤会发生两次事件：`running`（开始）与 `done` / `skipped` / `failed`（结局）。
+ */
+export interface MigrationStepEvent {
+    id: string;
+    title: string;
+    state: 'running' | 'done' | 'skipped' | 'failed';
+    /** 这一步改了多少行（能算就报；「跳过」与「只改表结构」不带） */
+    changes?: number;
+    /** 一句话补充：跳过原因 / 失败原因 / 结果摘要 */
+    note?: string;
+    /** 从开始到结束的耗时（`running` 时没有） */
+    durationMs?: number;
+    /**
+     * 同一步内的子进度（长步骤用，页面画成 n/m）。
+     *
+     * 为什么需要：折 bots 在大库上要跑几秒到几十秒 —— 没有子进度的话，
+     * 页面就是一行「running」卡在那里，和死掉分不出来。
+     */
+    progress?: { done: number; total: number };
+}
+
+export type MigrationReporter = (event: MigrationStepEvent) => void;
+
+export interface OpenStoreOptions {
+    /** 迁移逐个上报（迁移页用）；不传 = 静默，启动路径不受影响 */
+    onMigrationStep?: MigrationReporter;
+}
+
+export function openStore(file: string, options: OpenStoreOptions = {}): Store {
     const db = new DatabaseSync(file === ':memory:' ? ':memory:' : file);
     // 数据根 = 数据库所在目录（`<home>/diy2.db` → `<home>/tasks/...`）；内存库没有磁盘产物
     const dataRoot = file === ':memory:' ? undefined : dirname(resolve(file));
@@ -540,6 +572,52 @@ export function openStore(file: string): Store {
     };
     // 域表用 ON DELETE CASCADE 挂在 entities 上；不打开这个 pragma 就只是注释
     db.exec('PRAGMA foreign_keys = ON');
+
+    const report: MigrationReporter = options.onMigrationStep ?? ((): void => undefined);
+    /** 在同一步内部上报子进度（步骤名不变，只换 done/total） */
+    const progress = (id: string, title: string, done: number, total: number): void => {
+        report({ id, title, state: 'running', progress: { done, total } });
+    };
+    /**
+     * 跑一步迁移，并把「开始 / 结局」报给迁移页。
+     *
+     * `skip` 返回一句话 = 这一步不适用于这个库（没这个表 / 列已存在）。
+     * 区分「跳过」与「默默无事发生」很重要：迁移页要能回答「为什么这一步什么都没做」。
+     */
+    const step = (
+        id: string,
+        title: string,
+        fn: () => void | { changes?: number; note?: string },
+        skip?: () => string | undefined,
+    ): void => {
+        const reason = skip?.();
+        if (reason !== undefined) {
+            report({ id, title, state: 'skipped', note: reason });
+            return;
+        }
+        const started = Date.now();
+        report({ id, title, state: 'running' });
+        try {
+            const result = fn();
+            report({
+                id,
+                title,
+                state: 'done',
+                durationMs: Date.now() - started,
+                ...(typeof result === 'object' && result !== null ? result : {}),
+            });
+        } catch (error) {
+            report({
+                id,
+                title,
+                state: 'failed',
+                durationMs: Date.now() - started,
+                note: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+        }
+    };
+
     /**
      * 表名改名（2026-11-27）：bot_roles → bot_profiles、role_config → bot_profile_defaults。
      *
@@ -551,14 +629,29 @@ export function openStore(file: string): Store {
             (row) => String(row['name']),
         ),
     );
-    if (!tableNames.has('bot_profiles') && tableNames.has('bot_roles')) {
-        db.exec('ALTER TABLE bot_roles RENAME TO bot_profiles');
-        db.exec('DROP INDEX IF EXISTS bot_roles_primary');
-        db.exec('DROP INDEX IF EXISTS bot_roles_type');
-    }
-    if (!tableNames.has('bot_profile_defaults') && tableNames.has('role_config')) {
-        db.exec('ALTER TABLE role_config RENAME TO bot_profile_defaults');
-    }
+    step(
+        'rename-bot-profiles',
+        '表名：bot_roles → bot_profiles',
+        () => {
+            db.exec('ALTER TABLE bot_roles RENAME TO bot_profiles');
+            db.exec('DROP INDEX IF EXISTS bot_roles_primary');
+            db.exec('DROP INDEX IF EXISTS bot_roles_type');
+        },
+        () =>
+            !tableNames.has('bot_profiles') && tableNames.has('bot_roles')
+                ? undefined
+                : '库里没有老的 bot_roles 表（新库或已改过）',
+    );
+    step(
+        'rename-bot-profile-defaults',
+        '表名：role_config → bot_profile_defaults',
+        () => db.exec('ALTER TABLE role_config RENAME TO bot_profile_defaults'),
+        () =>
+            !tableNames.has('bot_profile_defaults') && tableNames.has('role_config')
+                ? undefined
+                : '库里没有老的 role_config 表',
+    );
+    step('create-tables', '建表（缺什么补什么）', () => {
     db.exec(`
         -- 角色：一种工作对象类型上的固定席位（见 docs/plans/2026-11-24-bot-role.md）。
         -- 旧的 bots 表按「每个容器一个同名 bot」建，35 行里 27 行 persona 一模一样；
@@ -773,31 +866,40 @@ export function openStore(file: string): Store {
         CREATE INDEX IF NOT EXISTS events_subject ON events(subject, seq);
         CREATE INDEX IF NOT EXISTS events_event ON events(event, seq);
     `);
+    });
 
     // 迁移：老的 entity_bots（只有 id 列表）→ room_members（第一位为 primary）
     const legacy = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entity_bots'").get() as
         | { name: string }
         | undefined;
-    if (legacy !== undefined) {
-        const count = (db.prepare('SELECT COUNT(*) AS n FROM room_members').get() as { n: number }).n;
-        if (count === 0) {
-            const rows = db
-                .prepare('SELECT entity_id, bot_id, position FROM entity_bots ORDER BY entity_id, position')
-                .all() as Array<Record<string, unknown>>;
-            const insert = db.prepare(
-                'INSERT OR IGNORE INTO room_members (entity_id, bot_id, position, primary_flag) VALUES (?,?,?,?)',
-            );
-            for (const row of rows) {
-                insert.run(
-                    String(row['entity_id']),
-                    String(row['bot_id']),
-                    Number(row['position']),
-                    Number(row['position']) === 0 ? 1 : 0,
+    step(
+        'entity-bots-to-room-members',
+        '老表 entity_bots → room_members',
+        () => {
+            let changes = 0;
+            const count = (db.prepare('SELECT COUNT(*) AS n FROM room_members').get() as { n: number }).n;
+            if (count === 0) {
+                const rows = db
+                    .prepare('SELECT entity_id, bot_id, position FROM entity_bots ORDER BY entity_id, position')
+                    .all() as Array<Record<string, unknown>>;
+                const insert = db.prepare(
+                    'INSERT OR IGNORE INTO room_members (entity_id, bot_id, position, primary_flag) VALUES (?,?,?,?)',
                 );
+                for (const row of rows) {
+                    insert.run(
+                        String(row['entity_id']),
+                        String(row['bot_id']),
+                        Number(row['position']),
+                        Number(row['position']) === 0 ? 1 : 0,
+                    );
+                    changes += 1;
+                }
             }
-        }
-        db.exec('DROP TABLE entity_bots');
-    }
+            db.exec('DROP TABLE entity_bots');
+            return { changes };
+        },
+        () => (legacy === undefined ? '库里没有 entity_bots 表' : undefined),
+    );
 
     // 老库补列：mode / turn / turn_id
     const columns = new Set(
@@ -805,9 +907,20 @@ export function openStore(file: string): Store {
             String(row['name']),
         ),
     );
-    for (const column of ['mode', 'turn', 'turn_id']) {
-        if (!columns.has(column)) db.exec(`ALTER TABLE deliveries ADD COLUMN ${column}`);
-    }
+    step(
+        'deliveries-columns',
+        '补列：deliveries.mode / turn / turn_id',
+        () => {
+            const added: string[] = [];
+            for (const column of ['mode', 'turn', 'turn_id']) {
+                if (!columns.has(column)) {
+                    db.exec(`ALTER TABLE deliveries ADD COLUMN ${column}`);
+                    added.push(column);
+                }
+            }
+            return { note: added.length === 0 ? '列已齐' : `新增 ${added.join(' / ')}` };
+        },
+    );
 
     // 老库补列：session_state.log_seq（回放水位）
     const sessionColumns = new Set(
@@ -815,17 +928,26 @@ export function openStore(file: string): Store {
             String(row['name']),
         ),
     );
-    if (!sessionColumns.has('log_seq'))
-        db.exec('ALTER TABLE session_state ADD COLUMN log_seq INTEGER NOT NULL DEFAULT 0');
+    step('session-log-seq', '补列：session_state.log_seq（回放水位）', () => {
+        if (!sessionColumns.has('log_seq'))
+            db.exec('ALTER TABLE session_state ADD COLUMN log_seq INTEGER NOT NULL DEFAULT 0');
+        return { note: sessionColumns.has('log_seq') ? '列已存在' : '已新增' };
+    });
     // 会话键的列名改过两次：`bot_id`（旧）→ `bot_role_id`（2026-11-24）→ `bot_profile_id`（2026-11-27）。
     // 两个旧名都要能改过来 —— 只认一手老库会让中间那一代库启动就“no such column”。
-    if (!sessionColumns.has('bot_profile_id')) {
-        if (sessionColumns.has('bot_role_id')) {
-            db.exec('ALTER TABLE session_state RENAME COLUMN bot_role_id TO bot_profile_id');
-        } else if (sessionColumns.has('bot_id')) {
+    step(
+        'session-bot-column',
+        '列名：session_state.bot_id / bot_role_id → bot_profile_id',
+        () => {
+            if (sessionColumns.has('bot_role_id')) {
+                db.exec('ALTER TABLE session_state RENAME COLUMN bot_role_id TO bot_profile_id');
+                return { note: '从 bot_role_id 改过来' };
+            }
             db.exec('ALTER TABLE session_state RENAME COLUMN bot_id TO bot_profile_id');
-        }
-    }
+            return { note: '从最早的 bot_id 改过来' };
+        },
+        () => (sessionColumns.has('bot_profile_id') ? '列名已经是 bot_profile_id' : undefined),
+    );
 
     // 老库补列：bot_profiles 的 per-task 归属（2026-11-26）。老行 domain 全为 null = type 级角色（模板）
     const botColumns = new Set(
@@ -833,13 +955,23 @@ export function openStore(file: string): Store {
             String(row['name']),
         ),
     );
-    for (const column of ['domain_type', 'domain_id', 'persona_ref']) {
-        if (!botColumns.has(column)) db.exec(`ALTER TABLE bot_profiles ADD COLUMN ${column}`);
-    }
+    step('bot-profile-columns', '补列：bot_profiles.domain_type / domain_id / persona_ref', () => {
+        const added: string[] = [];
+        for (const column of ['domain_type', 'domain_id', 'persona_ref']) {
+            if (!botColumns.has(column)) {
+                db.exec(`ALTER TABLE bot_profiles ADD COLUMN ${column}`);
+                added.push(column);
+            }
+        }
+        return { note: added.length === 0 ? '列已齐' : `新增 ${added.join(' / ')}` };
+    });
 
     // 占位模型键不是「选了模型」：老库里还留着 `none@none/none`。
     // 房间级 model_key 已退役（2026-11-27，见 dropLegacyRoomModel），这里只清角色级的存量。
-    db.prepare('UPDATE bot_profiles SET model_key = NULL WHERE model_key = ?').run(PLACEHOLDER_MODEL_KEY);
+    step('clear-placeholder-model', '清掉占位模型键 none@none/none', () => {
+        const result = db.prepare('UPDATE bot_profiles SET model_key = NULL WHERE model_key = ?').run(PLACEHOLDER_MODEL_KEY);
+        return { changes: Number(result.changes) };
+    });
 
     // 老库补列：tasks.updated_at（P2 加的）。历史行没有「最后改动」概念，用 created_at 兜
     const taskColumns = new Set(
@@ -847,10 +979,12 @@ export function openStore(file: string): Store {
             String(row['name']),
         ),
     );
-    if (!taskColumns.has('updated_at')) {
+    step('tasks-updated-at', '补列：tasks.updated_at', () => {
+        if (taskColumns.has('updated_at')) return { note: '列已存在' };
         db.exec('ALTER TABLE tasks ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
-        db.exec('UPDATE tasks SET updated_at = created_at WHERE updated_at = 0');
-    }
+        const result = db.prepare('UPDATE tasks SET updated_at = created_at WHERE updated_at = 0').run();
+        return { note: `已新增并用 created_at 回填 ${String(result.changes)} 行` };
+    });
 
     // 老库补列：task_units.parent_id（分解树）。历史行没有分解树概念，一律当根
     const unitColumns = new Set(
@@ -858,12 +992,22 @@ export function openStore(file: string): Store {
             String(row['name']),
         ),
     );
-    if (!unitColumns.has('parent_id')) db.exec('ALTER TABLE task_units ADD COLUMN parent_id TEXT');
+    step('task-units-parent', '补列：task_units.parent_id（需求账本树）', () => {
+        if (unitColumns.has('parent_id')) return { note: '列已存在' };
+        db.exec('ALTER TABLE task_units ADD COLUMN parent_id TEXT');
+        return { note: '已新增（历史行一律当根）' };
+    });
     // 2026-11-25：依赖边与交付批次整体退役（只留需求账本树）。旧库里的两张表直接删 ——
     // 它们是纯派生侧的记录，删掉不丢「要做什么」。task_units.batch_id 是老库的死列：
     // SQLite 不能删列，代码也再不读写它，留着不影响任何判据。
-    db.exec('DROP TABLE IF EXISTS unit_deps');
-    db.exec('DROP TABLE IF EXISTS unit_batches');
+    step('drop-unit-deps', '删掉退役表 unit_deps / unit_batches', () => {
+        const present = (name: string): boolean =>
+            db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name = ?").get(name) !== undefined;
+        const dropped = ['unit_deps', 'unit_batches'].filter(present);
+        db.exec('DROP TABLE IF EXISTS unit_deps');
+        db.exec('DROP TABLE IF EXISTS unit_batches');
+        return { note: dropped.length === 0 ? '库里本来就没有' : `删掉 ${dropped.join(' / ')}` };
+    });
 
     /** room_members → roomId: members[]（members() 与 listRooms() 共用） */
     const readMembers = (): Record<string, RoomMember[]> => {
@@ -1383,7 +1527,16 @@ export function openStore(file: string): Store {
         const moved = [...remap.entries()].filter(([from, to]) => from !== to);
         db.exec('BEGIN IMMEDIATE');
         try {
+            // 映射先落临时表：下面两张 JSON 大表的 author.id / owner 要**一次扫完**。
+            // 以前是「每个映射都全表扫一遍」—— 真库 37 个映射 × 2274 条大 JSON ≈ 两分半，
+            // 全都卡在这一段，迁移页上一行 running 一动不动（2026-11-27 实测）。
+            db.exec('CREATE TEMP TABLE IF NOT EXISTS _bot_remap (from_id TEXT PRIMARY KEY, to_id TEXT NOT NULL)');
+            db.exec('DELETE FROM _bot_remap');
+            const addRemap = db.prepare('INSERT OR REPLACE INTO _bot_remap (from_id, to_id) VALUES (?,?)');
+
+            let done = 0;
             for (const [from, to] of moved) {
+                addRemap.run(from, to);
                 // 撞键：同一容器里两个 bot 合并成一个角色 ⇒ 留 turn 大的那份会话
                 const dropped = db
                     .prepare(
@@ -1398,16 +1551,24 @@ export function openStore(file: string): Store {
                     'DELETE FROM deliveries WHERE bot_id = ? AND entity_id IN (SELECT entity_id FROM deliveries WHERE bot_id = ?)',
                 ).run(from, to);
                 db.prepare('UPDATE deliveries SET bot_id = ? WHERE bot_id = ?').run(to, from);
+                done += 1;
+                if (done % 10 === 0 || done === moved.length) progress(FOLD_BOTS.id, FOLD_BOTS.title, done, moved.length);
+            }
+
+            if (moved.length > 0) {
                 // 历史消息里的作者 id 也要跟着换：界面按「消息 author.id ∈ 当前成员」决定
                 // 归属与是否显示 —— 不改的话，被合并掉的那批旧 bot 的消息会因对不上新角色 id
                 // 而在界面上整段消失（数据在库里、只是看不见）。2026-11-26 实测发现。
                 db.prepare(
-                    "UPDATE entity_items SET item = json_set(item, '$.author.id', ?) WHERE json_extract(item, '$.author.id') = ?",
-                ).run(to, from);
-                // 提问的 owner 同理：ask 卡片的归属/「谁问的」也按角色 id 认。
+                    "UPDATE entity_items SET item = json_set(item, '$.author.id', (SELECT to_id FROM _bot_remap WHERE from_id = json_extract(item, '$.author.id'))) " +
+                        "WHERE json_extract(item, '$.author.id') IN (SELECT from_id FROM _bot_remap)",
+                ).run();
+                progress(FOLD_BOTS.id, FOLD_BOTS.title, moved.length, moved.length);
+                // 提问的 owner 同理：ask 卡片的归属 /「谁问的」也按角色 id 认。
                 db.prepare(
-                    "UPDATE asks SET request = json_set(request, '$.owner', ?) WHERE json_extract(request, '$.owner') = ?",
-                ).run(to, from);
+                    "UPDATE asks SET request = json_set(request, '$.owner', (SELECT to_id FROM _bot_remap WHERE from_id = json_extract(request, '$.owner'))) " +
+                        "WHERE json_extract(request, '$.owner') IN (SELECT from_id FROM _bot_remap)",
+                ).run();
             }
             renameToBackup('bots', 'bots_v0');
             db.exec('COMMIT');
@@ -1441,10 +1602,26 @@ export function openStore(file: string): Store {
     const hasLegacyRooms =
         db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='rooms'").get() !== undefined;
     // 顺序有意义：先搬房间（journal 的 subject 要能解析到实体），再把 bots 折成角色，最后折日志
-    if (hasLegacyRooms) migrateLegacyRooms();
-    migrateBots();
-    migrateJournal();
-    dropLegacyRoomModel();
+    step('legacy-rooms', '老表 rooms → rooms_v0 + 实体/域行', () => migrateLegacyRooms(), () =>
+        hasLegacyRooms ? undefined : '库里没有老的 rooms 表',
+    );
+    const FOLD_BOTS = { id: 'fold-bots', title: '把 bots 折成 bot_profiles（按 type + 人设合并）' } as const;
+    step(
+        FOLD_BOTS.id,
+        FOLD_BOTS.title,
+        () => {
+            const before = (db.prepare('SELECT COUNT(*) AS n FROM bot_profiles').get() as { n: number }).n;
+            migrateBots();
+            const after = (db.prepare('SELECT COUNT(*) AS n FROM bot_profiles').get() as { n: number }).n;
+            return { note: `折叠前 ${String(before)} → 现在 ${String(after)} 个` };
+        },
+        () =>
+            db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='bots'").get() === undefined
+                ? '库里没有老的 bots 表'
+                : undefined,
+    );
+    step('legacy-journal', '把老日志折进 entities', () => migrateJournal());
+    step('drop-legacy-room-model', '退役房间级 model_key', () => dropLegacyRoomModel());
 
     return {
         db,
