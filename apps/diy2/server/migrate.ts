@@ -187,8 +187,6 @@ const PAGE = `<!doctype html>
   .btn{display:inline-block;padding:9px 20px;border-radius:9px;text-decoration:none;font-weight:700;
        font-size:14px;background:var(--ok);color:#07110d;border:0;cursor:pointer;margin-top:0}
   .btn:hover{filter:brightness(1.08)}
-  .btn.secondary{background:transparent;color:var(--muted);border:1px solid var(--line);font-weight:600}
-  .btn.secondary:hover{color:var(--fg);border-color:var(--skip);filter:none}
   .hint{color:var(--muted);font-size:12.5px;margin-top:12px}
   .hint:empty{display:none}
   .rows .check .ico{color:var(--ok)}
@@ -278,7 +276,10 @@ var elGo=document.getElementById('go'), elFill=document.getElementById('fill'),
 
 function log(t){ elLog.textContent += t + NL; elLog.scrollTop = elLog.scrollHeight; }
 function setVerdict(text, cls){ elVerdict.textContent = text; elVerdict.className = 'verdict ' + (cls||''); }
-function resetButton(){ elGo.disabled = false; elGo.textContent = '开始迁移'; elGo.className = 'btn primary'; }
+function resetButton(){
+  elGo.hidden = false; elGo.disabled = false;
+  elGo.textContent = '开始迁移'; elGo.className = 'btn primary';
+}
 function refresh(){
   var n = Object.keys(finished).length;
   elFill.style.width = (total ? Math.round(n * 100 / total) : 0) + '%';
@@ -344,12 +345,17 @@ function showResult(p){
     return;
   }
 
-  // 全部通过：主按钮换成「打开主界面」，开始按钮降为次要的「重新迁移」（迁移可重复跑）
-  elGo.className = 'btn secondary'; elGo.textContent = '重新迁移'; elGo.disabled = false;
+  // 全部通过：这一页的使命就结束了 —— **只留一个按钮**（打开主界面），
+  // 不要再摆一个「重新迁移」在旁边（用户 2026-11-27：两个按钮看着复杂）。
+  // 要重跑刷新本页即可，页面回到「开始迁移」。
   if(APP_URL){
+    elGo.hidden = true;
     elOpen.hidden = false; elOpen.href = APP_URL;
     elHint.textContent = '主界面在 ' + APP_URL + ' —— 那个实例必须是新代码起的，旧代码打开这个库会报 no such table。';
   } else {
+    // 没有主界面可开：至少留一个能点的（重跑），不能把按钮区弄空
+    elGo.hidden = false; elGo.className = 'btn primary';
+    elGo.textContent = '重新迁移'; elGo.disabled = false;
     elOpen.hidden = true;
     elHint.textContent = '没找到主实例端口（数据库旁边没有 app.port）。用 ./sha.sh start 或 ./sha.sh lab 起来后自己打开即可。';
   }
@@ -392,7 +398,7 @@ es.onmessage = function(m){
 };
 
 elGo.onclick = function(){
-  elGo.disabled = true; elGo.className = 'btn primary'; elGo.textContent = '迁移中…';
+  elGo.hidden = false; elGo.disabled = true; elGo.className = 'btn primary'; elGo.textContent = '迁移中…';
   finished = {}; total = TOTAL; refresh();
   elRows.innerHTML = '';
   Object.keys(planRows).forEach(function(k){
