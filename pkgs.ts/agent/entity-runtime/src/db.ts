@@ -514,7 +514,7 @@ function projectToRoom(project: ProjectRecord, members: RoomMember[]): Room {
  * 它不是「选了个模型」：读的时候当空串（= 继续继承），写的时候别再让它进去 ——
  * 否则界面会拼出「none · none@none」看着像配好了、发出去必失败。
  */
-const PLACEHOLDER_MODEL_KEY = 'none@none/none';
+export const PLACEHOLDER_MODEL_KEY = 'none@none/none';
 
 /** 读模型键：占位值 / null 都当「没选」（空串 = 继承） */
 function cleanModelKey(value: unknown): string {

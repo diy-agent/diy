@@ -14,7 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
-import { MIGRATION_STEPS } from '@diy-agent/entity-runtime';
+import { MIGRATION_STEPS, PLACEHOLDER_MODEL_KEY } from '@diy-agent/entity-runtime';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** 仓库根的 node_modules/.bin/tsx（HERE 是 apps/diy2/server，要往上**三层**到仓根） */
@@ -240,7 +240,7 @@ const PAGE = `<!doctype html>
 <details><summary>执行步骤（<span id="stepCount">0</span> / __TOTAL__）</summary><div class="rows" id="rows"></div></details>
 <details><summary>运行日志</summary><pre id="log"></pre></details>
 <script>
-var TOTAL=__TOTAL__, BEFORE_SESSIONS=__SESSIONS__, BEFORE_ENTRIES=__ENTRIES__;
+var TOTAL=__TOTAL__, BEFORE_SESSIONS=__SESSIONS__, BEFORE_ENTRIES=__ENTRIES__, COL_LABEL='__COL__';
 var APP_URL='__APP_URL__';
 var PLAN=__PLAN__;
 var finished={}, total=TOTAL, doneOk=false, planRows={};
@@ -268,10 +268,45 @@ var elGo=document.getElementById('go'), elFill=document.getElementById('fill'),
     row.querySelector('.dst').textContent = item.present ? item.to : '（本库没有，跳过）';
     row.querySelector('.note').textContent = item.note || '';
     var cell = row.querySelector('.state');
-    cell.textContent = item.present ? '等待' : '跳过';
+    cell.textContent = planInitialText(item);
+    if(item.done) cell.className = 'state s-done';
     planRows[item.step] = row;
     box.appendChild(row);
   });
+})();
+
+// 一项现在该显示什么（依据是库里的实际情况，不是点没点过按钮）
+function planInitialText(item){
+  if(item.done) return '已完成';
+  return item.present ? '待迁移' : '跳过';
+}
+
+// 打开页面时先把「库里现存的状态」反映出来：
+// 一个早就迁完的库不该再显示成「等待开始」。
+(function(){
+  var todo = PLAN.filter(function(it){ return !it.done; });
+  finished = {};
+  // 进度条意思是「**本次迁移**跑了多少」—— 还没开始就是 0。
+  // 只有「全部已就位」这种不用跑的情况，才直接画满。
+  if(todo.length === 0) PLAN.forEach(function(it){ finished[it.step] = true; });
+  total = TOTAL;
+  refresh();
+  if(todo.length === 0 && PLAN.length > 0){
+    setVerdict('✓ 这个库已经是迁移后的状态', 'ok');
+    elFill.className = 'fill ok';
+    elSub.textContent = '共 ' + PLAN.length + ' 项，全部已就位 —— 没有要迁的。';
+    if(APP_URL){
+      elGo.hidden = true;
+      elOpen.hidden = false; elOpen.href = APP_URL;
+      elHint.textContent = '主界面在 ' + APP_URL + ' —— 那个实例必须是新代码起的。';
+    } else {
+      elGo.textContent = '重新迁移';
+      elHint.textContent = '没找到主实例端口（数据库旁边没有 app.port）。用 ./sha.sh start 或 ./sha.sh lab 起来后自己打开即可。';
+    }
+  } else {
+    elSub.textContent = '共 ' + PLAN.length + ' 项，其中 ' + todo.length + ' 项待迁移。迁移前：会话 ' +
+      BEFORE_SESSIONS + ' 份 · 消息 ' + BEFORE_ENTRIES + ' 条 · 会话键列 ' + COL_LABEL;
+  }
 })();
 
 function log(t){ elLog.textContent += t + NL; elLog.scrollTop = elLog.scrollHeight; }
@@ -402,9 +437,10 @@ elGo.onclick = function(){
   finished = {}; total = TOTAL; refresh();
   elRows.innerHTML = '';
   Object.keys(planRows).forEach(function(k){
+    var item = PLAN.filter(function(it){ return it.step === k; })[0];
     var cell = planRows[k].querySelector('.state');
-    cell.className = 'state';
-    cell.textContent = PLAN.filter(function(it){ return it.step === k; })[0].present ? '等待' : '跳过';
+    cell.className = 'state' + (item.done ? ' s-done' : '');
+    cell.textContent = planInitialText(item);
   });
   elOpen.hidden = true; elHint.textContent = '';
   elLog.textContent = ''; elCur.textContent = ''; doneOk = false;
@@ -441,6 +477,13 @@ interface PlanItem {
     note: string;
     /** 这个库里到底有没有东西要迁 */
     present: boolean;
+    /**
+     * 这一项**现在是否已经完成**（从库里看出来的，不是从按钮状态推的）。
+     *
+     * 判据与迁移步骤里的 skip 判据一致：源表没了 / 列已经在 = 已完成。
+     * 有它，刷新页面才不会把一个已经迁完的库又显示成「等待开始」。
+     */
+    done: boolean;
 }
 
 function planOf(file: string): PlanItem[] {
@@ -475,7 +518,7 @@ function planOf(file: string): PlanItem[] {
             note: string,
             present: boolean,
         ): void => {
-            items.push({ step, from, to, rows, note, present });
+            items.push({ step, from, to, rows, note, present, done: doneOf[step] ?? false });
         };
         const countOf = (table: string): number => count(table);
 
@@ -485,6 +528,39 @@ function planOf(file: string): PlanItem[] {
         const deliveryCols = cols('deliveries');
         const taskCols = cols('tasks');
         const unitCols = cols('task_units');
+
+        // 每一项「现在做完了没有」—— 真源是库本身（与步骤里的 skip 判据一脉相承）。
+        // 没有这张表，页面刷新后就会把一个已迁完的库又显示成「等待开始」。
+        const placeholderLeft = (): boolean => {
+            if (!tables.has(profileTable)) return false;
+            return (
+                (db!.prepare(`SELECT 1 AS x FROM ${profileTable} WHERE model_key = ? LIMIT 1`).all(
+                    PLACEHOLDER_MODEL_KEY,
+                ) as unknown[]).length > 0
+            );
+        };
+        const doneOf: Record<string, boolean> = {
+            'rename-bot-profiles': !tables.has('bot_roles'),
+            'rename-bot-profile-defaults': !tables.has('role_config'),
+            'create-tables': tables.has('bot_profiles') && tables.has('bot_profile_defaults') && tables.has('events'),
+            'entity-bots-to-room-members': !tables.has('entity_bots'),
+            'deliveries-columns': ['mode', 'turn', 'turn_id'].every((column) => deliveryCols.has(column)),
+            'session-log-seq': sessionCols.has('log_seq'),
+            'session-bot-column': sessionCols.has('bot_profile_id'),
+            'bot-profile-columns': ['domain_type', 'domain_id', 'persona_ref'].every((column) =>
+                profileCols.has(column),
+            ),
+            'clear-placeholder-model': !placeholderLeft(),
+            'tasks-updated-at': taskCols.has('updated_at'),
+            'task-units-parent': unitCols.has('parent_id'),
+            'drop-unit-deps': !tables.has('unit_deps') && !tables.has('unit_batches'),
+            'legacy-rooms': !tables.has('rooms'),
+            'fold-bots': !tables.has('bots'),
+            'legacy-journal': !tables.has('journal_entries'),
+            'drop-legacy-room-model': !['tasks', 'projects', 'rooms_v0', 'room_members'].some((table) =>
+                cols(table).has('model_key'),
+            ),
+        };
 
         // 顺序 = 执行顺序；每一项都挂一个 step id，页面靠它把计划行与步骤状态绑在一起
         add(
