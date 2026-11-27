@@ -353,7 +353,9 @@ _check_full() {
 # 全量检查的本体（不含 ensure-sync：给已经做过前置检查的调用方复用，避免重复付 0.5~0.9s）
 _check_full_body() {
   run npx tsc -b tsconfig.all.json --noEmit
-  run npx oxlint pkgs.ts/ apps/
+  # `apps/diy-app/` 跳过：diy1 时代的 Electron 应用，**只作参考保留、不再启动**（2026-11-27 用户裁）。
+  # 它那 297 条 warning 是历史死代码，不清；格式化也一并跳过（见 .prettierignore）。
+  run npx oxlint pkgs.ts/ apps/ --ignore-pattern 'apps/diy-app/**'
   run npx tsc --noEmit -p pkgs.ts/core/rpc/tsconfig.browser.json
   # 产物护栏：TS 包源码目录旁不得出现编译产物（实现见 scripts/check-no-emit.sh）
   run bash scripts/check-no-emit.sh
@@ -412,8 +414,9 @@ sha.def "fix" \
   --desc "格式化 + lint 自动修（oxfmt / oxlint --fix）"
 
 fix() {
+  # oxfmt 自己会读 .prettierignore（里面排掉了 apps/diy-app/，理由见那个文件）
   run npx oxfmt --write pkgs.ts/ apps/
-  run npx oxlint --fix pkgs.ts/ apps/
+  run npx oxlint --fix pkgs.ts/ apps/ --ignore-pattern 'apps/diy-app/**'
 }
 # 全部测试：各包 test 子命令（diy-app 含意图测试，起隔离 Electron，最慢放最后）
 #
