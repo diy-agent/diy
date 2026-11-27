@@ -38,7 +38,7 @@ import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
 import { type PageDef } from './model';
-import { pageFor, settingsPage, wbViews } from './pages';
+import { materializeView, pageFor, settingsPage, wbViews } from './pages';
 import { SETTINGS_ADDRESS, SETTINGS_PAGE } from './settings';
 import { useChrome, Window, type WindowContribution } from './window';
 
@@ -139,7 +139,7 @@ function PageShell({
     chrome: ReturnType<typeof useChrome>[0];
     onChromeChange: (chrome: ReturnType<typeof useChrome>[0]) => void;
 }) {
-    const api = usePageWorkbench(page, wbViews);
+    const api = usePageWorkbench(page, wbViews, materializeView);
     return (
         <Workbench
             api={api}

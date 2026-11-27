@@ -491,6 +491,23 @@ describe('unit（需求账本树的节点）', () => {
         expect(store.unitOf('t1', 'u1')?.status).toBe('doing');
     });
 
+    it('journalOf：未知 kind 归位成 progress（一条脏数据不该崩掉整轮上下文）', () => {
+        const store = openStore(':memory:');
+        store.saveRoom(room);
+        // 2026-11-27 实测：lab 里 bot 把步骤写成 kind: "step" → context 的枚举校验
+        // 直接 ZodError、启动即挂。脏数据归位，原文保留。
+        // appendJournal 只会写合法 kind，所以这条脏数据直接从底层 events 造
+        store.appendEvent({
+            event: 'task.journal',
+            subject: room.id,
+            data: { kind: 'step', text: '读现有的表渲染路径', unit: 'cells' },
+        });
+        const entries = store.journalOf(room.id, 10);
+        expect(entries.at(-1)?.kind).toBe('progress');
+        expect(entries.at(-1)?.text).toBe('读现有的表渲染路径');
+        expect(entries.at(-1)?.unit).toBe('cells');
+    });
+
     it('itemsByIds：按条目 id 批量取（跨房间也认），未知 id 静默缺席', () => {
         const store = openStore(':memory:');
         const r1: Room = { ...room, id: 'r1' };

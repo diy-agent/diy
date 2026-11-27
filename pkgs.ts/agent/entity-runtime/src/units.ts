@@ -25,7 +25,7 @@
  */
 import { toYaml } from '@diy-agent/context';
 
-import type { UnitRecord, UnitStatus } from './db';
+import type { UnitKind, UnitRecord, UnitStatus } from './db';
 import type { Item } from './types';
 
 /**
@@ -44,8 +44,17 @@ export interface SourceQuote {
 }
 
 /** 一个节点 + 它在树上的位置 */
+/** 一条步骤（`kind = 'step'`）：只给「任务分解与进度」用，不进需求层 */
+export interface UnitStepRow {
+    id: string;
+    title: string;
+    status: UnitStatus;
+    seq: number;
+}
+
 export interface UnitBoardRow {
     id: string;
+    kind: UnitKind;
     title: string;
     body: string;
     /** 「怎么算做完」（空串 = 还没写；界面与上下文都靠它标出来，别拿 body 兜底） */
@@ -66,8 +75,18 @@ export interface UnitBoardRow {
     status: UnitStatus;
     /** 父（功能域）；`null` = 根。父不存在（悬空 / 脏数据）时这里也报 `null`，见 `danglingParents` */
     parent: string | null;
-    /** 子节点（按 `seq` 排 = 书写顺序） */
+    /** 子节点（按 `seq` 排 = 书写顺序）；只算 need 子，step 在 `steps` 里 */
     children: string[];
+    /**
+     * 挂在这条需求下面的**步骤**（`kind = 'step'`，按 seq）。
+     *
+     * 为什么步骤不混进 children：需求层是人对齐的单位，步骤是执行细节。
+     * 混在一起就有两个后果（2026-11-27 体检实测）：需求层被「改哪个文件」挤满、
+     * 界面上一眼看不出「这条需求做到哪了」。
+     */
+    steps: UnitStepRow[];
+    /** 步骤进度（`done / total`）；没有步骤时不带这个键 */
+    progress?: { done: number; total: number };
     /** 有没有子 = 是不是「功能域容器」 */
     group: boolean;
     /** 树深（根 = 0）：视图按它缩进，`rows` 本身已是树的先序 */
@@ -95,14 +114,29 @@ export interface UnitBoard {
 
 /** 只取算 board 要用的字段（测试里可以直接造这几项，不用凑齐 UnitRecord） */
 export type UnitFacts = Pick<UnitRecord, 'id' | 'title' | 'status' | 'seq'> &
-    Partial<Pick<UnitRecord, 'body' | 'accept' | 'source' | 'parent' | 'taskId' | 'createdAt' | 'updatedAt'>>;
+    Partial<
+        Pick<UnitRecord, 'kind' | 'body' | 'accept' | 'source' | 'parent' | 'taskId' | 'createdAt' | 'updatedAt'>
+    >;
 
 /**
  * 算一张 board。输入顺序不敏感；输出顺序稳定（树的先序 → 创建序 → id）。
  *
  * 脏数据一律**降级而不是崩**：父不存在 / 父链成环 → 当根，并在 `danglingParents` 里点名。
  */
-export function unitBoard(units: readonly UnitFacts[]): UnitBoard {
+export function unitBoard(allUnits: readonly UnitFacts[]): UnitBoard {
+    // 步骤先摘出来：它们不参与树、不进 ready、不算容器的子 —— 只在「那条需求的分解」里出现
+    const stepsByNeed = new Map<string, UnitStepRow[]>();
+    const units = allUnits.filter((unit) => (unit.kind ?? 'need') !== 'step');
+    for (const unit of allUnits) {
+        if ((unit.kind ?? 'need') !== 'step') continue;
+        const parent = unit.parent ?? null;
+        if (parent === null) continue; // 没挂父的步骤没有归属，界面上就当它不存在
+        const list = stepsByNeed.get(parent) ?? [];
+        list.push({ id: unit.id, title: unit.title, status: unit.status, seq: unit.seq });
+        stepsByNeed.set(parent, list);
+    }
+    for (const list of stepsByNeed.values()) list.sort((a, b) => a.seq - b.seq || a.id.localeCompare(b.id));
+
     const byId = new Map<string, UnitFacts>();
     for (const unit of units) byId.set(unit.id, unit);
     const seqOf = (id: string): number => byId.get(id)?.seq ?? 0;
@@ -188,8 +222,11 @@ export function unitBoard(units: readonly UnitFacts[]): UnitBoard {
 
     const rows: UnitBoardRow[] = order.map((id) => {
         const unit = byId.get(id)!;
+        const steps = stepsByNeed.get(id) ?? [];
+        const stepsDone = steps.filter((step) => step.status === 'done').length;
         return {
             id,
+            kind: (unit.kind ?? 'need') as UnitKind,
             title: unit.title,
             body: unit.body ?? '',
             accept: unit.accept ?? '',
@@ -197,6 +234,8 @@ export function unitBoard(units: readonly UnitFacts[]): UnitBoard {
             status: statusOf.get(id)!,
             parent: parentOf.get(id) ?? null,
             children: childrenOf.get(id) ?? [],
+            steps,
+            ...(steps.length === 0 ? {} : { progress: { done: stepsDone, total: steps.length } }),
             group: (childrenOf.get(id) ?? []).length > 0,
             depth: depthOf.get(id) ?? 0,
             seq: unit.seq,

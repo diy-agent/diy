@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>只有根需求 — demo v2</title>
+<style>
+  :root{
+    --bg:#0b0b0c; --panel:#121214; --panel-2:#17171a; --panel-3:#1c1c20;
+    --border:#27272a; --border-soft:#1f1f22;
+    --fg:#e4e4e7; --fg-muted:#a1a1aa; --fg-dim:#71717a;
+    --blue:#38bdf8; --green:#4ade80; --amber:#f59e0b; --violet:#a78bfa; --rose:#fb7185;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--fg); display:flex; flex-direction:column;
+    font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;
+  }
+  header{display:flex; align-items:center; gap:12px; padding:10px 14px; border-bottom:1px solid var(--border); background:var(--panel)}
+  .h-title{font-weight:600}
+  .h-sub{color:var(--fg-dim); font-size:12px}
+  .spacer{flex:1}
+  main{flex:1; display:grid; grid-template-columns:minmax(400px,.95fr) minmax(420px,1.05fr); min-height:0}
+  @media (max-width:900px){ main{grid-template-columns:1fr} }
+
+  .col{min-height:0; display:flex; flex-direction:column}
+  .col + .col{border-left:1px solid var(--border)}
+  .col-head{padding:8px 14px; font-size:12px; color:var(--fg-muted); border-bottom:1px solid var(--border-soft); display:flex; gap:8px; align-items:center}
+  .col-body{flex:1; overflow:auto; padding:8px}
+
+  /* ── 根需求行 ── */
+  .root{
+    display:block; width:100%; text-align:left; background:transparent; border:0; color:inherit;
+    padding:9px 10px; border-radius:8px; cursor:pointer; font:inherit;
+  }
+  .root:hover{background:var(--panel-2)}
+  .root[aria-selected="true"]{background:#0f2a38; box-shadow:inset 0 0 0 1px #1d4e63}
+  .root .line1{display:flex; align-items:baseline; gap:7px}
+  .dot{width:8px; height:8px; border-radius:50%; flex:none; margin-top:5px}
+  .dot.open{background:#3f3f46}
+  .dot.doing{background:var(--blue); box-shadow:0 0 0 3px #0ea5e926}
+  .dot.done{background:var(--green)}
+  .root .t{font-size:13px; line-height:1.4}
+  .root.done .t{color:var(--fg-muted)}
+  .root .line2{display:flex; align-items:center; gap:8px; margin:5px 0 0 15px; color:var(--fg-dim); font-size:11px}
+  .bar{height:3px; border-radius:2px; background:var(--border); flex:none; width:88px; overflow:hidden}
+  .bar > i{display:block; height:100%; background:var(--green); border-radius:2px}
+  .bar.doing > i{background:var(--blue)}
+  .tag{font-size:10px; padding:0 5px; line-height:15px; border-radius:999px; border:1px solid var(--border); color:var(--fg-muted)}
+  .tag.warn{border-color:#78350f; background:#78350f1f; color:var(--amber)}
+  .tag.dec{border-color:#4c1d95; background:#4c1d9526; color:var(--violet)}
+  .tag.wait{border-color:#7f1d1d; background:#7f1d1d26; color:var(--rose)}
+  .srcq{color:var(--fg-dim); max-width:24rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+
+  /* ── 面板 ── */
+  .panel{padding:14px; display:flex; flex-direction:column; gap:12px}
+  .panel h2{margin:2px 0 0; font-size:15px; font-weight:600; line-height:1.45}
+  .kind{font-size:11px; color:var(--fg-dim); letter-spacing:.02em}
+  .block{border:1px solid var(--border); border-radius:10px; background:var(--panel); overflow:hidden}
+  .block > .h{padding:7px 10px; font-size:11px; color:var(--fg-muted); background:var(--panel-2); border-bottom:1px solid var(--border-soft); display:flex; align-items:center; gap:8px}
+  .block > .b{padding:10px}
+  .block.dim > .h{color:var(--fg-dim)}
+
+  blockquote.q{margin:0; padding-left:12px; border-left:2px solid #0c4a6e}
+  blockquote.q .who{color:#7dd3fc; font-size:11px}
+  blockquote.q p{margin:3px 0 0}
+
+  ol.dec{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:9px}
+  ol.dec li{padding-left:10px; border-left:2px solid #3b1d78}
+  ol.dec .top{display:flex; gap:8px; align-items:baseline}
+  ol.dec .who{font-size:10px; padding:0 5px; border-radius:999px; border:1px solid; line-height:15px}
+  ol.dec .who.human{border-color:#0c4a6e; color:#7dd3fc}
+  ol.dec .who.bot{border-color:#312e81; color:#c4b5fd}
+  ol.dec .txt{margin:2px 0 0}
+  ol.dec .why{color:var(--fg-muted); font-size:11px; margin-top:2px}
+
+  ul.steps{list-style:none; margin:0; padding:0}
+  ul.steps li{display:flex; gap:8px; align-items:baseline; padding:5px 0; border-bottom:1px dashed var(--border-soft)}
+  ul.steps li:last-child{border-bottom:0}
+  ul.steps .box{width:14px; flex:none; text-align:center; color:var(--fg-dim)}
+  ul.steps li.done .box{color:var(--green)}
+  ul.steps li.doing .box{color:var(--blue)}
+  ul.steps li.done .lbl{color:var(--fg-muted); text-decoration:line-through; text-decoration-color:#3f3f46}
+  ul.steps .lbl{flex:1}
+  ul.steps .meta{color:var(--fg-dim); font-size:11px; flex:none}
+
+  .progress{display:flex; align-items:center; gap:10px}
+  .progress .bar{width:180px; height:5px}
+  .progress .txt{color:var(--fg-muted); font-size:11px}
+  .stuck{margin-top:8px; padding:7px 9px; border-radius:8px; border:1px solid #7f1d1d; background:#7f1d1d1a; color:#fda4af; font-size:12px}
+
+  .outcome{display:flex; flex-direction:column; gap:8px}
+  .verdict{display:flex; gap:8px; align-items:center}
+  .stamp{font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid}
+  .stamp.pass{border-color:#14532d; background:#14532d2e; color:#86efac}
+  .stamp.fail{border-color:#7f1d1d; background:#7f1d1d26; color:#fda4af}
+  .stamp.none{border-color:#78350f; background:#78350f1f; color:var(--amber)}
+  .accept{color:var(--fg)}
+  .accept.empty{color:var(--amber)}
+  .chips{display:flex; flex-wrap:wrap; gap:6px}
+  .chip{border:1px solid var(--border); border-radius:999px; padding:1px 8px; font-size:11px; color:var(--fg-muted); background:var(--panel-2)}
+  .chip.ok{border-color:#14532d; background:#14532d2e; color:#86efac}
+  .hint{color:var(--fg-dim); font-size:11px}
+  .note{margin:0; padding-left:14px; border-left:2px solid #7f1d1d; color:#fda4af}
+  footer{padding:7px 14px; border-top:1px solid var(--border); background:var(--panel); color:var(--fg-dim); font-size:11px}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="h-title">只有根需求 · demo v2</div>
+    <div class="h-sub">根 = 做什么（一次关注点）；下面挂 决策 / 任务分解与进度 / 做得好不好</div>
+  </div>
+</header>
+
+<main>
+  <section class="col">
+    <div class="col-head"><span id="list-head">4 条根需求</span><span class="spacer"></span><span class="hint">没有子需求，只有一根到底</span></div>
+    <div class="col-body" id="list"></div>
+  </section>
+
+  <section class="col">
+    <div class="col-head">详情 · <span id="panel-for" style="color:#e4e4e7">—</span></div>
+    <div class="col-body panel" id="panel"></div>
+  </section>
+</main>
+
+<footer>
+  点左边任一条根需求 → 右边：<b>做什么</b>｜<b>决策</b>（谁定的、为什么）｜<b>任务分解与进度</b>（怎么做、现在到哪）｜<b>做得好不好</b>（验收 + 证据 + 评价）
+</footer>
+
+<script>
+const ROOTS = [
+  {
+    id: 'r1', status: 'doing',
+    title: '目标分解：人给的一句愿望，能变成一份可验收的账本',
+    source: { who: '我', at: '11-26 12:16', text: '需要解决如何提示 bot 自动把需求和任务拆解，现在貌似不能自己做，非要提示「把这件事拆成几步」' },
+    decisions: [
+      { by: 'human', at: '11-26 18:02', text: '账本只记需求，不记执行步骤', why: '「需求是可以验收的，步骤很难验收」——步骤进 journal' },
+      { by: 'human', at: '11-27 13:00', text: '先试「只有根需求」，不引入子需求', why: '子需求可能让结构变复杂；根 = 做什么，子 = 怎么做' },
+      { by: 'bot', at: '11-27 13:50', text: '步骤 = journal 上的 unit 引用，不建新表', why: '需要额外维护的状态都会被放弃（31 条 open 里只有 6 条像已完成）' },
+    ],
+    steps: [
+      { s: 'done', lbl: '三档提醒（A 常驻 / B 信封 hint / C 工具描述）落地并实测', meta: '11-26' },
+      { s: 'done', lbl: 'accept（怎么算做完）成为一等字段，缺了看得见', meta: '11-26' },
+      { s: 'done', lbl: 'source（哪句话来的）宿主自动盖章 + 面板可跳回', meta: '11-26' },
+      { s: 'done', lbl: '账本使用体检：12 任务 125 条，步骤味 43~67% 的三个任务已标出', meta: '11-27' },
+      { s: 'doing', lbl: '根需求 vs 子需求的形态对比（就是本 demo）', meta: '11-27' },
+      { s: 'todo', lbl: '决策条目：谁定的、为什么、之后有没有被推翻' },
+      { s: 'todo', lbl: '「做得好不好」：验收判定 + 证据（实测截图 / 测试 / 用户评价）' },
+    ],
+    progress: { done: 4, total: 7, note: '最近活动 13:50 · bot 在写 demo' },
+    outcome: { verdict: 'none', accept: '', evidence: ['demo v1（需求层 + 步骤层）已出', '体检报告'], comment: '' },
+  },
+  {
+    id: 'r2', status: 'open',
+    title: '迁移过程看得见：一个页面能看每步跑到哪、结果如何',
+    source: { who: '我', at: '11-26 16:10', text: '迁移跑起来是一片黑，我不知道它卡在哪。你先把迁移过程做成 ui 形式，可以启动后看到进度，独立一个页面别进主页面' },
+    decisions: [
+      { by: 'human', at: '11-26 16:20', text: '独立页面，不进主页面', why: '防止其他活动一直加载数据' },
+      { by: 'bot', at: '11-26 16:34', text: '先把 16 段内联迁移拆成独立文件，再做页面', why: '没有独立的步骤单元，页面上就没有可展示的「每一步」' },
+    ],
+    steps: [
+      { s: 'done', lbl: '把 16 段内联迁移搬成 16 个独立文件', meta: '11-26' },
+      { s: 'done', lbl: '引入 schema_migrations 表与「只跑没跑过的」执行器', meta: '11-26' },
+      { s: 'doing', lbl: '独立迁移页：每步状态 + 影响行数', meta: '进行中' },
+      { s: 'todo', lbl: '用旧库副本演练一遍，数据零丢失', meta: '' },
+    ],
+    progress: { done: 2, total: 4, note: '最近活动 11-26 18:40' },
+    outcome: { verdict: 'none', accept: '点开始后每步都有状态与影响行数；中途失败能看出停在哪一步', evidence: ['执行器已有单测'], comment: '' },
+  },
+  {
+    id: 'r3', status: 'doing',
+    title: '模型真源只剩角色级：任务 / 项目 / 房间不再各存一份 model_key',
+    source: { who: '我', at: '11-26 13:20', text: '模型配置到处都有一份，改一个地方以为生效了结果没有' },
+    decisions: [
+      { by: 'human', at: '11-26 13:26', text: '只保留角色级（bot.modelKey），其余删列', why: '「一处配置生效」比「多层覆盖」可预测' },
+      { by: 'bot', at: '11-26 13:52', text: '老库迁移直接 DROP COLUMN，读侧兜底读角色', why: '回填一份假值等于把「哪个是真源」又搞乱' },
+    ],
+    steps: [
+      { s: 'done', lbl: '删掉 tasks / projects / rooms_v0 的 model_key', meta: '11-26' },
+      { s: 'done', lbl: 'effectiveModelOf 只认角色级', meta: '11-26' },
+      { s: 'done', lbl: 'roles.update 改模型时推给所有已建 session', meta: '11-26' },
+      { s: 'todo', lbl: '真 Chrome 里换一次模型，确认下一轮就用新模型', meta: '' },
+    ],
+    progress: { done: 3, total: 4, note: '最近活动 11-26 14:05' },
+    outcome: { verdict: 'pass', accept: '删掉三处 model_key 后界面上的模型仍正确显示（从角色读），老库自动迁移', evidence: ['5 files changed', 'migration 已跑', '7c02de1'], comment: '差最后一步实机验证' },
+  },
+  {
+    id: 'r4', status: 'open',
+    title: '聊天切任务不再卡：切过去 0.3 秒内有反馈',
+    source: { who: '我', at: '11-27 09:12', text: '切任务很慢，点一下要等两三秒才出来' },
+    decisions: [],
+    steps: [
+      { s: 'todo', lbl: '用生产数据起一个隔离 lab，量一下切页到底慢在渲染还是取数', meta: '' },
+    ],
+    progress: { done: 0, total: 1, note: '还没开始 · 没定过任何决策' },
+    outcome: { verdict: 'none', accept: '', evidence: [], comment: '' },
+  },
+];
+
+const byId = new Map(ROOTS.map((r) => [r.id, r]));
+let selected = 'r1';
+
+const mark = (s) => (s === 'done' ? '✓' : s === 'doing' ? '◐' : s === 'todo' ? '○' : '·');
+
+function renderList() {
+  const el = document.getElementById('list');
+  el.innerHTML = '';
+  for (const r of ROOTS) {
+    const btn = document.createElement('button');
+    btn.className = 'root ' + (r.status === 'done' ? 'done' : '');
+    btn.setAttribute('role', 'option');
+    btn.setAttribute('aria-selected', String(r.id === selected));
+    btn.onclick = () => { selected = r.id; renderList(); renderPanel(); };
+
+    const pct = r.progress.total ? Math.round(100 * r.progress.done / r.progress.total) : 0;
+    const pendingDec = r.decisions.filter((d) => d.by === 'human').length;
+    const stuck = r.steps.find((s) => s.doing);
+
+    btn.innerHTML = `
+      <div class="line1">
+        <span class="dot ${r.status}"></span>
+        <span class="t">${esc(r.title)}</span>
+      </div>
+      <div class="line2">
+        <span class="bar ${r.status === 'doing' ? 'doing' : ''}"><i style="width:${pct}%"></i></span>
+        <span>${r.progress.done}/${r.progress.total} 步</span>
+        ${pendingDec ? `<span class="tag dec">${pendingDec} 决策</span>` : ''}
+        ${stuck ? `<span class="tag">在做：${esc(stuck.lbl.slice(0, 14))}…</span>` : ''}
+        ${r.outcome.verdict === 'none' && !r.outcome.accept ? '<span class="tag warn">没写验收</span>' : ''}
+        <span class="srcq">↩ ${esc(r.source.who)}：${esc(r.source.text)}</span>
+      </div>`;
+    el.appendChild(btn);
+  }
+  document.getElementById('list-head').textContent = `${ROOTS.length} 条根需求 · 没有子需求`;
+}
+
+function renderPanel() {
+  const r = byId.get(selected);
+  document.getElementById('panel-for').textContent = r.title.length > 26 ? r.title.slice(0, 26) + '…' : r.title;
+  const pct = r.progress.total ? Math.round(100 * r.progress.done / r.progress.total) : 0;
+
+  const decHtml = r.decisions.length
+    ? `<ol class="dec">${r.decisions.map((d) => `
+        <li>
+          <div class="top"><span class="who ${d.by}">${d.by === 'human' ? '人定的' : 'bot 定的'}</span><span class="hint">${d.at}</span></div>
+          <div class="txt">${esc(d.text)}</div>
+          ${d.why ? `<div class="why">为什么：${esc(d.why)}</div>` : ''}
+        </li>`).join('')}</ol>`
+    : '<div class="hint">还没有决策 —— 这条还停在「要做什么」，没人定过「怎么做」。</div>';
+
+  const stepsHtml = r.steps.map((s) => `
+      <li class="${s.s}"><span class="box">${mark(s.s)}</span><span class="lbl">${esc(s.lbl)}</span><span class="meta">${esc(s.meta || '')}</span></li>`).join('');
+
+  const v = r.outcome.verdict;
+  const stamp = v === 'pass' ? '<span class="stamp pass">验收通过</span>'
+    : v === 'fail' ? '<span class="stamp fail">验收没过</span>'
+    : '<span class="stamp none">未验收</span>';
+
+  document.getElementById('panel').innerHTML = `
+    <div>
+      <div class="kind">根需求 · ${r.status === 'done' ? '已完成' : r.status === 'doing' ? '在做' : '未开始'}</div>
+      <h2>${esc(r.title)}</h2>
+    </div>
+
+    <div class="block">
+      <div class="h">做什么（人的原话）</div>
+      <div class="b">
+        <blockquote class="q">
+          <div class="who">${esc(r.source.who)} · ${r.source.at}</div>
+          <p>${esc(r.source.text)}</p>
+        </blockquote>
+        <div style="margin-top:8px"><a class="hint" href="#" onclick="return false" style="color:#7dd3fc">跳到那条消息 →</a></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="h">决策<span class="spacer"></span><span class="hint">谁定的、为什么、后来有没有被推翻</span></div>
+      <div class="b">${decHtml}</div>
+    </div>
+
+    <div class="block">
+      <div class="h">任务分解与进度<span class="spacer"></span><span class="hint">怎么做 · 不进人看的主视图</span></div>
+      <div class="b">
+        <div class="progress">
+          <span class="bar ${r.status === 'doing' ? 'doing' : ''}"><i style="width:${pct}%"></i></span>
+          <span class="txt">${r.progress.done}/${r.progress.total} 步 · ${esc(r.progress.note)}</span>
+        </div>
+        <ul class="steps" style="margin-top:8px">${stepsHtml}</ul>
+        ${r.status === 'doing' ? '' : ''}
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="h">做得好不好</div>
+      <div class="b">
+        <div class="outcome">
+          <div class="verdict">${stamp}<span class="hint">按下面的判据判定</span></div>
+          <div class="accept ${r.outcome.accept ? '' : 'empty'}">${r.outcome.accept ? esc(r.outcome.accept) : '还没写「怎么算做完」—— 界面上会一直标着它'}</div>
+          <div class="chips">${r.outcome.evidence.length ? r.outcome.evidence.map((e) => `<span class="chip ${/changed|已跑|^[0-9a-f]{7}$|单测|通过/.test(e) ? 'ok' : ''}">${esc(e)}</span>`).join('') : '<span class="hint">还没有证据</span>'}</div>
+          ${r.outcome.comment ? `<p class="note">${esc(r.outcome.comment)}</p>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+renderList();
+renderPanel();
+</script>
+</body>
+</html>

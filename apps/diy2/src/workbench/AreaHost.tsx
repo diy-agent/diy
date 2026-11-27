@@ -72,6 +72,7 @@ import {
     type AreaDef,
     type Chrome,
     type Mode,
+    type OpenedView,
     type PageDef,
     type PageState,
     type Side,
@@ -95,11 +96,33 @@ export interface WbApi {
     setActive: (areaId: string, viewId: string) => void;
     /** 该区域能放几个 view（标题栏据此显示开关；0 = 这个页没有这块） */
     viewCountOf: (areaId: string) => number;
+    /**
+     * 该区域当前的全部 view（**静态 + 运行时**，按声明 / 打开顺序）。
+     *
+     * 为什么要暴露：渲染器只认这一份清单。之前每个渲染点各自 `viewsIn(...)`，
+     * 于是「运行时打开的视图」只活在 api 里、画不出来（点了没反应）。
+     */
+    viewsOf: (areaId: string) => ViewDef[];
     /** 区域当前尺寸（拖过的优先，其次模板默认） */
     sizeOf: (areaId: string) => number | 'fr';
     setSize: (areaId: string, px: number) => void;
     /** 去掉拖过的尺寸 —— 回到**模板**的默认（不是回某个固定值） */
     resetSize: (areaId: string) => void;
+    /**
+     * 打开一个运行时视图。`replaceKind`：把**同 area 同 kind** 的旧视图替换掉（只留一个）。
+     *
+     * 为什么要它（2026-11-27 用户）：「打开一个需求即可，不需要关闭按钮，每次替换掉当前打开的」——
+     * 需求详情是**看的那一条在变**，不是要并排比较；堆一排 tab 之后人还得自己去关。
+     */
+    openView: (spec: {
+        kind: string;
+        title: string;
+        area: string;
+        params?: Record<string, string>;
+        replaceKind?: boolean;
+    }) => void;
+    /** 关掉一个运行时视图（静态视图不可关，传它们的 id 无效） */
+    closeView: (viewId: string) => void;
 }
 
 const Ctx = createContext<WbApi | null>(null);
@@ -113,10 +136,20 @@ export function useWb(): WbApi {
 /**
  * 页状态 + 控制面。
  *
- * 存盘的是「用户偏好」，不是「布局」：尺寸 / 位置 / 分割方式不在里面（它们不可改），
- * view 的开合也不在里面（view 不可关闭，没有这个状态）。
+ * 存盘的是「用户偏好」，不是「布局」：尺寸 / 位置 / 分割方式不在里面（它们不可改）。
+ * view 的开合**要存**：运行时打开的视图（如某条需求的详情）是「我正看着的东西」，
+ * 刷新一下全没了等于每次都要重新找一遍；静态视图没有开合状态（声明在哪就一直在那）。
  */
-export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], storage: Storage = localStorage): WbApi {
+export function usePageWorkbench(
+    page: PageDef,
+    views: readonly ViewDef[],
+    /**
+     * 运行时视图的装配器：`OpenedView` → `ViewDef`（含关闭按钮）。
+     * 由宿主给（它知道有哪些 kind、各自渲染什么），布局层只负责摆。
+     */
+    materialize: (opened: OpenedView, close: () => void) => ViewDef,
+    storage: Storage = localStorage,
+): WbApi {
     const [state, setState] = useState<PageState>(() => loadState(page.type, storage) ?? initialState(page));
 
     useEffect(() => {
@@ -132,8 +165,29 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
         [views, page.type],
     );
 
+    /** 关掉一个运行时视图：从 opened 里摘掉，并把 active 让回该区域剩下的第一个 */
+    const removeView = (viewId: string): void => {
+        setState((prev) => {
+            const opened = (prev.opened ?? []).filter((item) => item.id !== viewId);
+            if (opened.length === (prev.opened ?? []).length) return prev;
+            const active = { ...prev.active };
+            for (const [areaId, current] of Object.entries(active)) {
+                if (current !== viewId) continue;
+                const fallback = opened.find((item) => item.area === areaId);
+                if (fallback === undefined) delete active[areaId];
+                else active[areaId] = fallback.id;
+            }
+            return { ...prev, opened, active };
+        });
+    };
+
     return useMemo<WbApi>(() => {
-        const viewsOf = (areaId: string) => viewsIn(views, page.type, areaId);
+        const viewsOf = (areaId: string) => [
+            ...viewsIn(views, page.type, areaId),
+            ...(state.opened ?? [])
+                .filter((opened) => opened.area === areaId)
+                .map((opened) => materialize(opened, () => removeView(opened.id))),
+        ];
         return {
             page,
             maximized: state.maximized ?? null,
@@ -176,12 +230,37 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
                 setState((prev) => ({ ...prev, active: { ...prev.active, [areaId]: viewId } }));
             },
             viewCountOf: (areaId) => viewsOf(areaId).length,
+            viewsOf,
             sizeOf: (areaId) => {
                 const def = defs.get(areaId);
                 return def === undefined ? 'fr' : sizeOfDef(def, state);
             },
             setSize: (areaId, px) => {
                 setState((prev) => ({ ...prev, sizes: { ...prev.sizes, [areaId]: px } }));
+            },
+            openView: ({ kind, title, area: areaId, params, replaceKind }) => {
+                const view: OpenedView = {
+                    id: `${kind}:${Object.values(params ?? {}).join(':') || title}`,
+                    kind,
+                    title,
+                    area: areaId,
+                    params: params ?? {},
+                };
+                setState((prev) => {
+                    const opened = prev.opened ?? [];
+                    // 替换语义：同一区域里同 kind 的旧视图先清掉（详情只留当前这一条）
+                    const kept = replaceKind === true ? opened.filter((item) => !(item.kind === kind && item.area === areaId)) : opened;
+                    const exists = kept.some((item) => item.id === view.id);
+                    return {
+                        ...prev,
+                        opened: exists ? kept : [...kept, view],
+                        // 打开就切过去：点了没反应是最糟的反馈
+                        active: { ...prev.active, [areaId]: view.id },
+                    };
+                });
+            },
+            closeView: (viewId) => {
+                removeView(viewId);
             },
             resetSize: (areaId) => {
                 setState((prev) => {
@@ -194,7 +273,7 @@ export function usePageWorkbench(page: PageDef, views: readonly ViewDef[], stora
         };
         // placementKey 覆盖了 views 里真正被读到的部分
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [page, defs, state, placementKey]);
+    }, [page, defs, state, placementKey, materialize]);
 }
 
 // ── 区域头部：每个区域都有，操作也都在它身上 ──────────────────────────────
@@ -293,6 +372,29 @@ function AreaTabs({ areaId, list }: { areaId: string; list: ViewDef[] }) {
                     }}
                 >
                     {view.title}
+                    {/* 只有运行时打开的视图可关（静态视图「声明在哪就一直在」是这套模型的公理）；
+                        × 放在 tab 里而不是标题栏：要关的是**这一个**，不是整块区域 */}
+                    {view.close !== undefined && (
+                        <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`关闭 ${view.title}`}
+                            title="关掉这个 tab"
+                            className="wb-tab-close"
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                view.close?.();
+                            }}
+                            onKeyDown={(event) => {
+                                if (event.key !== 'Enter' && event.key !== ' ') return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                                view.close?.();
+                            }}
+                        >
+                            ×
+                        </span>
+                    )}
                 </button>
             ))}
         </div>
@@ -608,7 +710,7 @@ function AreaContent({ areaId, list }: { areaId: string; list: ViewDef[] }) {
  */
 function MaximizedArea({ def, views }: { def: AreaDef; views: readonly ViewDef[] }) {
     const api = useWb();
-    const list = useMemo(() => viewsIn(views, api.page.type, def.id), [views, api.page.type, def.id]);
+    const list = api.viewsOf(def.id);
     // 已最大化：单击无效、双击还原（`foldable` 对这条 bar 无意义，传 false = 不参与收起）
     const gesture = useBarGesture(def, false);
 
@@ -641,10 +743,7 @@ function AreaView({
     chrome: Chrome;
 }) {
     const api = useWb();
-    const list = useMemo(
-        () => (def === undefined ? [] : viewsIn(views, api.page.type, def.id)),
-        [views, api.page.type, def],
-    );
+    const list = api.viewsOf(def?.id ?? '');
 
     if (def === undefined || list.length === 0) return null;
 

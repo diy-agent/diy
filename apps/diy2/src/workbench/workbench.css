@@ -844,3 +844,16 @@ body.wb-resizing-y * {
     transform: scale(var(--wb-extra-scale));
     transform-origin: right center;
 }
+
+/* 运行时视图的关闭按钮（tab 内右端）：只有「点出来的」tab 有，静态视图不显示 */
+.wb-tabs button .wb-tab-close {
+    margin-left: 4px;
+    padding: 0 2px;
+    border-radius: 3px;
+    color: var(--wb-fg-dim, #71717a);
+    line-height: 1;
+}
+.wb-tabs button .wb-tab-close:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--wb-fg, #e4e4e7);
+}

@@ -1,48 +1,50 @@
-// UnitBoardView —— 任务页「目标」视图：需求账本树的**只读**投影，带一个「看源码」开关。
+// UnitBoardView —— 任务页「目标」视图：**只列需求**的左侧清单。
 //
-// 为什么把「分解」和「文本」合成一个 tab（2026-11-25 用户裁）：它们是同一份数据的两种读法 ——
-// 缩进树给人扫一眼，YAML 原文给「模型到底读到了什么」这种核对用。摆成两个并列的 tab，
-// 等于让人以为有两份东西；合成一个、源码作为第二形态，语义才对得上。
+// 2026-11-27 用户裁（demo v2 → 实装）：
+//   · 这里只回答「这件事要做成哪些东西」—— 一条需求一行，带进度与缺口标记。
+//   · 点一条**不在原地展开**，而是由宿主打开一个并列的 view tab（`onOpenUnit`）：
+//     需求详情是「和对话平行的一块内容」，不该挤在左侧窄栏里，也不该让左栏在
+//     「列表 / 详情」两种形态间来回切（看列表和看详情是两件同时想做的事）。
 //
-// 名字用「目标」而不是「分解」：这一页回答的是「这件事要做成哪些东西」，
-// 「分解」描述的是动作（我们做过什么），不是被看的东西。
+// 为什么还留「源码」开关：这一页所有形态都从同一份数据算，但「模型到底读到了什么」只能看原文
+// （`units.text` = 注入 system 的那一节），核对上下文预算时离不开它。
 //
-// 为什么是树而不是图（2026-11-24 裁，2026-11-25 再收窄）：账本不记执行规划，
-// 「先做哪个、一次做几条」由 bot 每轮自己挑 —— 没有排期就没有画图的数据来源。
-//
-// 为什么只读：writer 只有 agent 的 `unit_*` 工具。人在界面上直接勾选会立刻产生
-// 「两边同时改树」的冲突语义（谁赢 / 怎么合并 / 撤销给谁看），目前没有这个需求。
+// 为什么只读：writer 只有 agent 的 `unit_*` / `journal` 工具。界面直接改会引出
+// 「两边同时改、谁赢」的语义，目前没有这个需求。
 import { Code2, ListTree } from 'lucide-react';
 import * as React from 'react';
 
+import type { UnitItem } from '@diy-agent/chat-transport-rpc';
 import { roomTitle, type Room } from '../model';
+import { UnitNeedDetail } from './UnitNeedDetail';
 import { useUnitBoard } from '../useUnitBoard';
 import { useUnitText } from '../useUnitText';
-import type { UnitItem } from '@diy-agent/chat-transport-rpc';
-import { jumpToMessage } from '../askJump';
 
 /** 与服务端同一口径的粗略估算（中文 + 结构下约 0.78 tok / 字符，见 ContextPanel） */
 const TOKENS_PER_CHAR = 0.78;
 
-/** 状态符号：done 打勾、doing 半实心、母项 ▾、open 空心（能挑的是实心） */
-function markOf(unit: UnitItem, ready: Set<string>): string {
-    if (unit.status === 'done') return '✓';
-    if (unit.status === 'doing') return '◐';
-    if (unit.group) return '▾';
-    return ready.has(unit.id) ? '●' : '○';
+/** 需求行的状态点：done 绿、doing 蓝（带光晕）、open 灰（能挑的偏绿） */
+function dotClass(unit: UnitItem, ready: Set<string>): string {
+    if (unit.status === 'done') return 'bg-emerald-500';
+    if (unit.status === 'doing') return 'bg-sky-500 shadow-[0_0_0_3px] shadow-sky-500/20';
+    return ready.has(unit.id) ? 'bg-emerald-500/70' : 'bg-muted-foreground/40';
 }
 
-function rowClass(unit: UnitItem, ready: Set<string>): string {
-    if (unit.status === 'done') return 'text-muted-foreground/60';
-    if (unit.status === 'doing') return 'text-sky-500';
-    if (unit.group) return 'text-foreground';
-    return ready.has(unit.id) ? 'text-emerald-500' : 'text-muted-foreground';
-}
-
-export function UnitBoardView({ room }: { room: Room }) {
+export function UnitBoardView({
+    room,
+    onOpenUnit,
+}: {
+    room: Room;
+    /**
+     * 点一条需求时交给宿主 —— 由它开一个并列的 view tab 放详情。
+     * 不传就退化成「原地展开右栏」（单视图场景 / 测试里方便）。
+     */
+    onOpenUnit?: (unitId: string, title: string) => void;
+}): React.JSX.Element {
     const [source, setSource] = React.useState(false);
+    const [selected, setSelected] = React.useState<string | null>(null);
     const { board, error } = useUnitBoard(room.id);
-    // 源码只在切过去时才拉：树每 5 秒轮询一次已经够，没必要每次多打一个 RPC
+    // 源码只在切过去时才拉：列表每 5 秒轮询一次已经够，没必要每次多打一个 RPC
     const { view: textView, error: textError } = useUnitText(room.id, source);
 
     if (room.type !== 'task') {
@@ -51,27 +53,26 @@ export function UnitBoardView({ room }: { room: Room }) {
 
     const loading = board === null;
     const ready = new Set(board?.ready ?? []);
+    const needs = board?.rows ?? [];
+    const missingAccept = needs.filter((row) => !row.group && row.accept.trim() === '').length;
     const tokens = textView === null ? 0 : Math.round(textView.chars * TOKENS_PER_CHAR);
 
     return (
         <div className="flex h-full min-w-0 flex-col">
-            {/* 标题栏：任务名 + 计数 + 源码开关。这一页的「头」只该有一个，所以不再嵌第二层标题 */}
+            {/* 标题栏：任务名 + 计数 + 源码开关（这一页的「头」只该有一个） */}
             <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
                 <span className="min-w-0 truncate text-[12px] font-medium text-foreground">{roomTitle(room)}</span>
                 {board !== null && (
                     <span className="flex shrink-0 items-baseline gap-x-2 text-[11px] text-muted-foreground">
-                        <span className="text-emerald-500">能挑 {board.ready.length}</span>
+                        <span>需求 {needs.length}</span>
                         <span className="text-sky-500">在做 {board.doing.length}</span>
-                        <span className="text-muted-foreground/70">完成 {board.done.length}</span>
-                        {board.groups.length > 0 && (
-                            <span className="text-muted-foreground/70">母项 {board.groups.length}</span>
-                        )}
+                        {missingAccept > 0 && <span className="text-amber-500">缺验收 {missingAccept}</span>}
                     </span>
                 )}
                 <button
                     type="button"
                     onClick={() => setSource((prev) => !prev)}
-                    title={source ? '回到树（缩进列表）' : '看源码（模型读到的 YAML 原文）'}
+                    title={source ? '回到目标（需求列表）' : '看源码（模型读到的 YAML 原文）'}
                     aria-pressed={source}
                     className={`ml-auto flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
                         source
@@ -80,7 +81,7 @@ export function UnitBoardView({ room }: { room: Room }) {
                     }`}
                 >
                     {source ? <ListTree className="size-3" /> : <Code2 className="size-3" />}
-                    {source ? '树' : '源码'}
+                    {source ? '目标' : '源码'}
                 </button>
             </div>
 
@@ -93,118 +94,126 @@ export function UnitBoardView({ room }: { room: Room }) {
                                 {textView.chars} 字 · ≈{tokens} tok
                             </span>
                         )}
-                        {textView?.mode === 'full' && <span>{textView.treeLines} 行树</span>}
-                        {textView?.mode === 'summary' && (
-                            <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1 text-amber-600">
-                                已退化成摘要（树太大）
-                            </span>
-                        )}
+                        {textError !== null && <span className="text-red-500">{textError}</span>}
                     </div>
                     {textView === null ? (
-                        <div className="text-muted-foreground">{textError ?? '读取中…'}</div>
+                        <div className="text-muted-foreground">读取中…</div>
                     ) : textView.text === '' ? (
                         <div className="text-muted-foreground">还没有拆分：这一节不注入（整段缺席，不是空节）。</div>
                     ) : (
-                        // 源码不折行：YAML 的缩进是结构，折行就看不出层级了；宽了就横向滚
                         <pre className="min-h-0 flex-1 overflow-auto rounded border border-border bg-muted/30 p-2 font-mono text-[11px] leading-relaxed whitespace-pre text-foreground">
                             {textView.text}
                         </pre>
                     )}
                 </div>
+            ) : loading ? (
+                <div className="p-3 text-xs text-muted-foreground">读取中…</div>
+            ) : needs.length === 0 ? (
+                <div className="flex flex-col gap-2 p-3 text-xs text-muted-foreground">
+                    <div className="font-medium text-foreground">还没有需求</div>
+                    <p className="leading-relaxed">
+                        跟 agent 说一句「这件事要解决成什么样」，需求会长在这里：一条一个关注点，
+                        点开能看到它的决策、步骤与验收。
+                    </p>
+                </div>
+            ) : onOpenUnit === undefined ? (
+                // 没有宿主（单视图场景）：左边列表 + 右栏详情，两栏原地并排
+                <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-2">
+                    <NeedsList
+                        needs={needs}
+                        ready={ready}
+                        selected={selected}
+                        onSelect={(unit) => setSelected(unit.id)}
+                    />
+                    <div className="min-h-0 overflow-auto border-t border-border md:border-t-0 md:border-l">
+                        {selected === null ? (
+                            <div className="p-2.5 text-xs text-muted-foreground">点左边任一条需求看详情。</div>
+                        ) : (
+                            <UnitNeedDetail roomId={room.id} unitId={selected} />
+                        )}
+                    </div>
+                </div>
             ) : (
-                <div className="min-h-0 flex-1 overflow-auto p-3 text-xs">
-                    {loading ? (
-                        <div className="text-muted-foreground">{error ?? '读取中…'}</div>
-                    ) : board.rows.length === 0 ? (
-                        <div className="flex flex-col gap-2 text-muted-foreground">
-                            <div className="font-medium text-foreground">还没有目标</div>
-                            <p className="leading-relaxed">
-                                跟 agent 说「把这件事拆成几步」，树会长在这里：缩进是母项 → 可验收的产出。
-                                它每轮自己从「能挑的」里挑几条做，不用你排顺序。
-                            </p>
-                        </div>
-                    ) : (
-                        <div className="flex w-max min-w-full flex-col gap-0.5">
-                            {board.rows.map((unit) => (
-                                // 不显示 id：u9a 这种短名在树上只是噪音，需要时看 tooltip / 源码
-                                <div
-                                    key={unit.id}
-                                    title={[
-                                        unit.id,
-                                        unit.title,
-                                        (unit.body ?? '').trim() === '' ? '' : `背景：${unit.body}`,
-                                        (unit.accept ?? '').trim() === ''
-                                            ? '还没写「怎么算做完」'
-                                            : `验收：${unit.accept}`,
-                                        (unit.source ?? '') === ''
-                                            ? ''
-                                            : `来自：${unit.sourceQuote === undefined ? unit.source : `${unit.sourceQuote.author || '不知是谁'}「${unit.sourceQuote.text}」`}`,
-                                    ]
-                                        .filter((part) => part !== '')
-                                        .join('\n')}
-                                    className={`flex items-baseline gap-1.5 whitespace-nowrap ${rowClass(unit, ready)}`}
-                                    style={{ paddingLeft: `${unit.depth * 14}px` }}
-                                >
-                                    <span className="w-3 shrink-0 text-center">{markOf(unit, ready)}</span>
-                                    <span
-                                        className={[
-                                            unit.status === 'done' ? 'line-through decoration-border' : '',
-                                            unit.group ? 'font-medium' : '',
-                                        ]
-                                            .join(' ')
-                                            .trim()}
-                                    >
-                                        {unit.title}
-                                    </span>
-                                    {/* 缺「怎么算做完」= 这条没法被验收：标出来，别让人以为它是完整的
-                                        （用户 2026-11-26：「需求是可以验收的，步骤很难验收」）。
-                                        母项不标 —— 它的验收由子派生。 */}
-                                    {/* 有来源就点一个小圆点：说明这条需求是**某句人话**提出来的
-                                        （不是 bot 自己编的）。旁边直接写「谁 + 原话开头」——
-                                        光给一个消息 id，人还是要再点一下才知道是不是自己要的那句。 */}
-                                    {(unit.source ?? '') !== '' && (
-                                        <>
-                                            <button
-                                                type="button"
-                                                onClick={() => jumpToMessage(unit.source)}
-                                                className="shrink-0 cursor-pointer rounded-full bg-sky-500/40 px-1 text-[9px] leading-4 text-sky-700 hover:bg-sky-500/60 dark:text-sky-300"
-                                                title={`跳到那条消息（${unit.source}）`}
-                                            >
-                                                ↩
-                                            </button>
-                                            {unit.sourceQuote !== undefined && (
-                                                <span
-                                                    className="shrink-0 max-w-[22rem] truncate text-[10px] text-muted-foreground"
-                                                    title={`${unit.sourceQuote.author === '' ? '不知是谁' : unit.sourceQuote.author}：${unit.sourceQuote.text}`}
-                                                >
-                                                    {unit.sourceQuote.author === ''
-                                                        ? ''
-                                                        : `${unit.sourceQuote.author}：`}
-                                                    {unit.sourceQuote.text}
-                                                </span>
-                                            )}
-                                        </>
-                                    )}
-                                    {!unit.group && (unit.accept ?? '').trim() === '' && (
-                                        <span
-                                            className="shrink-0 rounded border border-amber-500/30 px-1 text-[10px] text-amber-600"
-                                            title="这条还没写「怎么算做完」：一句话能判断完/未完的判据"
-                                        >
-                                            未写验收
-                                        </span>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                    {board !== null && board.danglingParents.length > 0 && (
-                        <div className="mt-2 text-[11px] text-amber-500">
-                            悬空母项（数据异常，这些条目暂按顶层显示）：{board.danglingParents.join(' ')}
-                        </div>
-                    )}
-                    {error !== null && <div className="mt-2 text-[11px] text-red-500">{error}</div>}
+                <div className="min-h-0 flex-1 overflow-auto p-1.5">
+                    <NeedsList
+                        needs={needs}
+                        ready={ready}
+                        selected={null}
+                        onSelect={(unit) => onOpenUnit(unit.id, unit.title)}
+                    />
                 </div>
             )}
+
+            {error !== null && <div className="px-3 py-1 text-[11px] text-red-500">{error}</div>}
         </div>
+    );
+}
+
+/** 需求清单（左栏的主体）：点一条就交给调用方决定「就地展开」还是「开 tab」 */
+function NeedsList({
+    needs,
+    ready,
+    selected,
+    onSelect,
+}: {
+    needs: readonly UnitItem[];
+    ready: Set<string>;
+    selected: string | null;
+    onSelect: (unit: UnitItem) => void;
+}): React.JSX.Element {
+    return (
+        <>
+            {needs.map((unit) => {
+                const progress = unit.progress;
+                const pct = progress === undefined ? 0 : Math.round((100 * progress.done) / progress.total);
+                return (
+                    <button
+                        key={unit.id}
+                        type="button"
+                        onClick={() => onSelect(unit)}
+                        aria-selected={unit.id === selected}
+                        className={`w-full rounded px-1.5 py-1 text-left hover:bg-muted ${
+                            unit.id === selected ? 'bg-sky-500/10 ring-1 ring-sky-500/30' : ''
+                        }`}
+                        style={{ paddingLeft: `${6 + unit.depth * 12}px` }}
+                    >
+                        <span className="flex items-baseline gap-1.5">
+                            <span className={`mt-1.5 size-2 shrink-0 rounded-full ${dotClass(unit, ready)}`} />
+                            <span
+                                className={`min-w-0 flex-1 truncate text-[12px] ${
+                                    unit.status === 'done' ? 'text-muted-foreground' : 'text-foreground'
+                                } ${unit.group ? 'font-medium' : ''}`}
+                                title={unit.title}
+                            >
+                                {unit.title}
+                            </span>
+                        </span>
+                        <span className="mt-0.5 flex items-center gap-1.5 pl-3.5 text-[10px] text-muted-foreground">
+                            {progress !== undefined && (
+                                <>
+                                    <span className="h-[3px] w-14 overflow-hidden rounded bg-border">
+                                        <span
+                                            className={`block h-full ${unit.status === 'done' ? 'bg-emerald-500' : 'bg-sky-500'}`}
+                                            style={{ width: `${pct}%` }}
+                                        />
+                                    </span>
+                                    <span>
+                                        {progress.done}/{progress.total} 步
+                                    </span>
+                                </>
+                            )}
+                            {!unit.group && unit.accept.trim() === '' && (
+                                <span className="rounded border border-amber-500/30 px-1 text-amber-600">未写验收</span>
+                            )}
+                            {unit.sourceQuote !== undefined && (
+                                <span className="min-w-0 truncate">
+                                    ↩ {unit.sourceQuote.author || '有人'}：{unit.sourceQuote.text}
+                                </span>
+                            )}
+                        </span>
+                    </button>
+                );
+            })}
+        </>
     );
 }

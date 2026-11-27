@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>需求层 vs 步骤层 — demo</title>
+<style>
+  :root{
+    --bg:#0b0b0c; --panel:#121214; --panel-2:#17171a; --border:#27272a; --border-soft:#1f1f22;
+    --fg:#e4e4e7; --fg-muted:#a1a1aa; --fg-dim:#71717a;
+    --accent:#38bdf8; --ok:#4ade80; --doing:#38bdf8; --warn:#f59e0b; --violet:#a78bfa;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--fg);
+    font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",sans-serif;
+    display:flex; flex-direction:column;
+  }
+  header{
+    display:flex; align-items:center; gap:12px; padding:10px 14px;
+    border-bottom:1px solid var(--border); background:var(--panel);
+  }
+  header .title{font-weight:600}
+  header .sub{color:var(--fg-dim); font-size:12px}
+  .spacer{flex:1}
+  .seg{display:flex; border:1px solid var(--border); border-radius:8px; overflow:hidden}
+  .seg button{
+    background:transparent; border:0; color:var(--fg-muted); padding:5px 11px; font-size:12px; cursor:pointer;
+  }
+  .seg button[aria-pressed="true"]{background:var(--panel-2); color:var(--fg)}
+  .seg button + button{border-left:1px solid var(--border)}
+
+  main{flex:1; display:grid; grid-template-columns:minmax(420px,1fr) minmax(380px,.9fr); min-height:0}
+  @media (max-width:900px){ main{grid-template-columns:1fr} }
+
+  .col{min-height:0; display:flex; flex-direction:column}
+  .col + .col{border-left:1px solid var(--border)}
+  .col-head{
+    padding:8px 14px; font-size:12px; color:var(--fg-muted); border-bottom:1px solid var(--border-soft);
+    display:flex; align-items:center; gap:8px;
+  }
+  .col-body{flex:1; overflow:auto; padding:10px 8px 24px}
+
+  /* ── 树 ── */
+  .node{
+    display:flex; align-items:baseline; gap:7px; padding:3px 8px; border-radius:6px; cursor:pointer;
+    white-space:nowrap;
+  }
+  .node:hover{background:var(--panel-2)}
+  .node[aria-selected="true"]{background:#0f2a38; box-shadow:inset 0 0 0 1px #1d4e63}
+  .mark{width:12px; flex:none; text-align:center; color:var(--fg-dim)}
+  .mark.done{color:var(--ok)} .mark.doing{color:var(--doing)}
+  .node .label{overflow:hidden; text-overflow:ellipsis}
+  .node.group .label{font-weight:600}
+  .badge{
+    flex:none; font-size:10px; line-height:16px; padding:0 5px; border-radius:999px;
+    border:1px solid transparent;
+  }
+  .badge.accept{border-color:#78350f; color:var(--warn); background:#78350f1f}
+  .badge.src{border-color:#0c4a6e; background:#0c4a6e3d; color:#7dd3fc; cursor:pointer}
+  .badge.steps{border-color:#312e81; background:#312e813d; color:#c4b5fd}
+  .badge.evidence{border-color:#14532d; background:#14532d33; color:#86efac}
+  .quote{color:var(--fg-dim); font-size:11px; max-width:26rem; overflow:hidden; text-overflow:ellipsis}
+
+  /* 分层前：步骤被塞进树里 */
+  .step-in-tree{opacity:.92}
+  .step-in-tree .label{color:var(--fg-muted); font-style:normal}
+  .warnline{
+    margin:8px 14px; padding:7px 10px; border:1px solid #78350f; background:#78350f14;
+    color:#fbbf24; border-radius:8px; font-size:12px;
+  }
+
+  /* ── 面板 ── */
+  .panel{padding:14px; display:flex; flex-direction:column; gap:14px}
+  .panel h2{margin:0; font-size:15px; font-weight:600; line-height:1.4}
+  .crumbs{color:var(--fg-dim); font-size:11px}
+  .block{border:1px solid var(--border); border-radius:10px; background:var(--panel); overflow:hidden}
+  .block > .h{
+    padding:7px 10px; font-size:11px; color:var(--fg-muted); background:var(--panel-2);
+    border-bottom:1px solid var(--border-soft); display:flex; gap:8px; align-items:center;
+  }
+  .block > .b{padding:10px}
+  .accept{color:var(--fg)}
+  .accept.empty{color:var(--warn)}
+  .src{margin:0; padding-left:14px; border-left:2px solid #0c4a6e}
+  .src .who{color:#7dd3fc; font-size:11px}
+  .src .what{margin:3px 0 0; color:var(--fg)}
+  .jump{color:#7dd3fc; text-decoration:none; font-size:11px; border-bottom:1px dotted #0c4a6e}
+
+  .timeline{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:0}
+  .timeline li{position:relative; padding:0 0 12px 20px; border-left:1px solid var(--border); margin-left:5px}
+  .timeline li:last-child{border-left-color:transparent; padding-bottom:0}
+  .timeline li::before{
+    content:""; position:absolute; left:-4px; top:5px; width:7px; height:7px; border-radius:50%;
+    background:var(--fg-dim);
+  }
+  .timeline li.tool::before{background:var(--violet)}
+  .timeline li.commit::before{background:var(--ok)}
+  .timeline li.note::before{background:var(--accent)}
+  .timeline .t{color:var(--fg-dim); font-size:11px; margin-right:6px}
+  .timeline .nm{color:var(--fg)}
+  .timeline .meta{color:var(--fg-muted); font-size:11px; margin-top:2px}
+  .timeline code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; color:#c4b5fd}
+
+  .chips{display:flex; flex-wrap:wrap; gap:6px}
+  .chip{
+    border:1px solid var(--border); border-radius:999px; padding:2px 9px; font-size:11px; color:var(--fg-muted);
+    background:var(--panel-2);
+  }
+  .chip.ok{color:#86efac; border-color:#14532d; background:#14532d2e}
+  .hint{color:var(--fg-dim); font-size:11px}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="title">目标（需求层）· demo</div>
+    <div class="sub">数据取自主实例「model」任务那 40 条里的一段真实标题</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="seg" role="group" aria-label="视图切换">
+    <button id="btn-layered" aria-pressed="true">分层后 · 只有需求</button>
+    <button id="btn-flat" aria-pressed="false">分层前 · 现在这样</button>
+  </div>
+</header>
+
+<main>
+  <section class="col">
+    <div class="col-head">
+      <span id="tree-head">6 条需求 · 1 条缺验收</span>
+      <span class="spacer"></span>
+      <span class="hint">点一条看它下面挂的步骤 / 证据</span>
+    </div>
+    <div class="col-body" id="tree"></div>
+    <div class="warnline" id="flat-warn" style="display:none">
+      这就是现在的样子：**步骤被塞进需求层**，于是「改哪个文件 / 加什么字段 / 提 PR」和真正的需求混在一张树上，
+      人也分不清哪些是「要做成什么」、哪些是「怎么做的」。
+    </div>
+  </section>
+
+  <section class="col">
+    <div class="col-head">详情 · <span id="panel-for">—</span></div>
+    <div class="col-body panel" id="panel"></div>
+  </section>
+</main>
+
+<script>
+// ── 真实数据（标题来自主实例 model 任务，步骤与证据是演示用的合理内容）──
+const NEEDS = [
+  {
+    id: 'reason-efforts', group: true, status: 'open',
+    title: '模型目录能回答「这个模型支持哪些 reasoning 档位」',
+    accept: '',
+    children: ['efforts-parse', 'efforts-ui'],
+  },
+  {
+    id: 'efforts-parse', status: 'done', parent: 'reason-efforts',
+    title: '目录解析把 reasoning 选项归一成「可选档位 + 默认档」',
+    accept: '对一个声明了 efforts 的模型，目录里能读到 4 个档位与默认档；没声明的模型读出空而不是报错',
+    source: { who: '我', text: '模型选择器要能选 reasoning 档位，别只有开/关', at: '11-26 10:58' },
+    steps: [
+      { kind: 'tool', at: '11-26 11:02', name: 'bash', meta: 'grep -rn "reasoning" pkgs.ts/model' },
+      { kind: 'note', at: '11-26 11:10', name: '发现 models.dev 的字段叫 reasoning_options，不是 efforts' },
+      { kind: 'tool', at: '11-26 11:24', name: 'edit', meta: 'catalog.ts：加 normalizeReasoning()（16 行）' },
+      { kind: 'tool', at: '11-26 11:31', name: 'bash', meta: 'vitest run model-catalog → 12 passed' },
+      { kind: 'commit', at: '11-26 11:40', name: 'a91f2c4', meta: 'feat(catalog): reasoning 选项归一' },
+    ],
+    evidence: ['2 files changed', '3 个测试', 'a91f2c4'],
+  },
+  {
+    id: 'efforts-ui', status: 'doing', parent: 'reason-efforts',
+    title: '在想模型的地方能选档位，且默认跟着模型的默认档走',
+    accept: '换模型时档位自动变成新模型的默认档；手动改过之后不再被覆盖',
+    source: { who: '我', text: '换模型的时候档位应该跟着变，别停在旧模型的值上', at: '11-26 12:04' },
+    steps: [
+      { kind: 'tool', at: '12:10', name: 'read', meta: 'ModelPicker.tsx（要改的三处控件）' },
+      { kind: 'tool', at: '12:22', name: 'edit', meta: 'ModelPicker：三处控件读 efforts' },
+      { kind: 'note', at: '12:31', name: '卡点：换模型发生在 options 里，控件拿不到「用户手动改过」的标志' },
+      { kind: 'tool', at: '12:44', name: 'ask', meta: '问：手动改过之后还要不要跟模型默认档？' },
+    ],
+    evidence: ['1 file changed', '待用户回答'],
+  },
+  {
+    id: 'model-source', status: 'done',
+    title: '模型真源只剩角色级：任务 / 项目 / 房间不再各存一份 model_key',
+    accept: '删掉三处 model_key 之后，界面上的模型仍能正确显示（从角色读），老库自动迁移',
+    source: { who: '我', text: '模型配置到处都有一份，改一个地方以为生效了结果没有', at: '11-26 13:20' },
+    steps: [
+      { kind: 'tool', at: '13:30', name: 'bash', meta: 'rg "model_key" — 命中 14 处' },
+      { kind: 'tool', at: '13:52', name: 'edit', meta: 'db.ts：迁移 DROP COLUMN（旧库兜底读角色）' },
+      { kind: 'commit', at: '14:05', name: '7c02de1', meta: 'refactor(model): 模型真源收敛到角色级' },
+    ],
+    evidence: ['5 files changed', 'migration 已跑', '7c02de1'],
+  },
+  {
+    id: 'picker-locate', status: 'open',
+    title: '打开模型选择面板时能定位到「我现在用的那个」',
+    accept: '',
+    source: { who: '我', text: '每次打开都要自己找一遍当前模型在哪一行', at: '11-26 15:40' },
+    steps: [],
+    evidence: [],
+  },
+  {
+    id: 'migrate-vis', status: 'open',
+    title: '迁移过程看得见：一个页面能看每一步跑到哪、结果如何',
+    accept: '点开始后每步都有状态与影响行数；中途失败能看出停在哪一步',
+    source: { who: '我', text: '迁移跑起来是一片黑，我不知道它卡在哪', at: '11-26 16:10' },
+    steps: [
+      { kind: 'tool', at: '16:20', name: 'bash', meta: 'ls migrations/ → 16 个内联段' },
+      { kind: 'note', at: '16:34', name: '决定：先拆成 16 个文件，再谈页面' },
+    ],
+    evidence: ['设计稿 docs/plans/…migrate.md'],
+  },
+];
+
+// 「分层前」：把步骤当作树的节点（现在的问题形态）
+const FLAT = [
+  { id: 'f1', group: true, status: 'open', title: 'reasoning 档位（域）', children: ['f2','f3','f4','f5','f6','f7'] },
+  { id: 'f2', status: 'done', parent: 'f1', title: 'catalog 层解析 models.dev reasoning_options 并归一成 efforts+defaultEffort' },
+  { id: 'f3', status: 'done', parent: 'f1', title: '协议 ModelCatalogModel/ModelConfigModel 加 reasoning 字段' },
+  { id: 'f4', status: 'done', parent: 'f1', title: 'server 两处投影（modelProviders / modelConfigView）透传 reasoning' },
+  { id: 'f5', status: 'done', parent: 'f1', title: '三处 effort 控件改为读模型 efforts + 缺省占位符' },
+  { id: 'f6', status: 'open', parent: 'f1', title: '换模型时自动把 effort 设为新模型 defaultEffort' },
+  { id: 'f7', status: 'open', parent: 'f1', title: '全量验证 + 真 Chrome 看三处 effort 控件' },
+  { id: 'f8', group: true, status: 'open', title: '模型真源收敛（域）', children: ['f9','f10','f11'] },
+  { id: 'f9', status: 'done', parent: 'f8', title: '删掉 tasks/projects/rooms_v0 的 model_key' },
+  { id: 'f10', status: 'open', parent: 'f8', title: 'effectiveModelOf 只认角色级（bot.modelKey）' },
+  { id: 'f11', status: 'open', parent: 'f8', title: '验证：切模型后下一次 LLM 调用生效' },
+];
+
+const byId = new Map(NEEDS.map((n) => [n.id, n]));
+let selected = 'efforts-parse';
+let layered = true;
+
+const markOf = (s) => (s === 'done' ? '✓' : s === 'doing' ? '◐' : '●');
+
+function renderTree() {
+  const root = document.getElementById('tree');
+  root.innerHTML = '';
+  const rows = layered ? rootsOf(NEEDS) : FLAT;
+  if (!layered) document.getElementById('flat-warn').style.display = '';
+  else document.getElementById('flat-warn').style.display = 'none';
+
+  const draw = (node, depth) => {
+    const el = document.createElement('div');
+    el.className = 'node' + (node.group ? ' group' : '') + (layered ? '' : ' step-in-tree');
+    el.style.paddingLeft = `${8 + depth * 16}px`;
+    if (layered) {
+      el.setAttribute('role', 'option');
+      el.setAttribute('aria-selected', String(node.id === selected));
+      el.onclick = () => { selected = node.id; renderTree(); renderPanel(); };
+    }
+    const mark = document.createElement('span');
+    mark.className = 'mark ' + node.status;
+    mark.textContent = node.group ? '▾' : markOf(node.status);
+    el.appendChild(mark);
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = node.title;
+    el.appendChild(label);
+
+    if (layered && !node.group) {
+      if (!node.accept || node.accept.trim() === '') {
+        const b = document.createElement('span');
+        b.className = 'badge accept'; b.textContent = '未写验收'; b.title = '这条还没写「怎么算做完」';
+        el.appendChild(b);
+      }
+      if (node.source) {
+        const b = document.createElement('span');
+        b.className = 'badge src'; b.textContent = '↩ ' + node.source.who;
+        b.title = node.source.text + '（点一下跳回那条消息）';
+        el.appendChild(b);
+        const q = document.createElement('span');
+        q.className = 'quote'; q.textContent = node.source.text;
+        el.appendChild(q);
+      }
+      if (node.steps && node.steps.length > 0) {
+        const b = document.createElement('span');
+        b.className = 'badge steps'; b.textContent = node.steps.length + ' 步';
+        el.appendChild(b);
+      }
+      if (node.evidence && node.evidence.length > 0) {
+        const b = document.createElement('span');
+        b.className = 'badge evidence'; b.textContent = '证据 ' + node.evidence.length;
+        el.appendChild(b);
+      }
+    }
+    root.appendChild(el);
+    for (const childId of node.children || []) {
+      const child = layered ? byId.get(childId) : FLAT.find((n) => n.id === childId);
+      if (child) draw(child, depth + 1);
+    }
+  };
+  for (const r of rows.filter((n) => !n.parent)) draw(r, 0);
+
+  const needs = NEEDS.filter((n) => !n.group);
+  const missing = needs.filter((n) => !n.accept || n.accept.trim() === '').length;
+  document.getElementById('tree-head').textContent = layered
+    ? `${needs.length} 条需求 · ${missing} 条缺验收`
+    : `${FLAT.length} 条混在一起 · 其中 ${FLAT.filter((n) => /改|加|删|透传|验证/.test(n.title)).length} 条其实是实现步骤`;
+}
+
+function rootsOf(list) { return list.filter((n) => !n.parent); }
+
+function renderPanel() {
+  const n = byId.get(selected);
+  const panel = document.getElementById('panel');
+  document.getElementById('panel-for').textContent = n ? n.title.slice(0, 28) + (n.title.length > 28 ? '…' : '') : '—';
+  if (!n || n.group) {
+    panel.innerHTML = `<div class="hint">容器（域）本身不是需求：它不写验收、不算完成度，只用来分组。点它下面的叶子。</div>`;
+    return;
+  }
+  const steps = (n.steps || []).map((s) => {
+    const cls = s.kind === 'tool' ? 'tool' : s.kind === 'commit' ? 'commit' : 'note';
+    const nm = s.kind === 'tool' ? `<code>${s.name}</code>` : s.kind === 'commit' ? `<code>${s.name}</code>` : escapeHtml(s.name);
+    return `<li class="${cls}"><span class="t">${s.at}</span><span class="nm">${nm}</span>${s.meta ? `<div class="meta">${escapeHtml(s.meta)}</div>` : ''}</li>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div>
+      <div class="crumbs">目标 / ${n.parent ? 'reasoning 档位 / ' : ''}${n.status === 'done' ? '已完成' : n.status === 'doing' ? '在做' : '未开始'}</div>
+      <h2>${escapeHtml(n.title)}</h2>
+    </div>
+
+    <div class="block">
+      <div class="h">怎么算做完（accept）</div>
+      <div class="b ${n.accept ? 'accept' : 'accept empty'}">${n.accept ? escapeHtml(n.accept) : '还没写 —— 这条没法被验收，界面上会一直标着「未写验收」'}</div>
+    </div>
+
+    <div class="block">
+      <div class="h">来自哪句话（source）</div>
+      <div class="b">
+        <blockquote class="src">
+          <div class="who">${n.source ? escapeHtml(n.source.who) + ' · ' + n.source.at : '不知道'}</div>
+          <p class="what">${n.source ? escapeHtml(n.source.text) : '老数据没有来源'}</p>
+        </blockquote>
+        ${n.source ? '<div style="margin-top:8px"><a class="jump" href="#" onclick="return false">跳到那条消息 →</a></div>' : ''}
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="h">步骤（journal + 工具调用，按这条需求聚合）<span class="spacer"></span><span class="hint">不进 system 上下文</span></div>
+      <div class="b">${steps ? `<ul class="timeline">${steps}</ul>` : '<div class="hint">还没有步骤：这条还没开始动</div>'}</div>
+    </div>
+
+    <div class="block">
+      <div class="h">证据</div>
+      <div class="b"><div class="chips">${(n.evidence || []).map((e) => `<span class="chip ${/pass|已跑|changed|commit|^[0-9a-f]{7}$/.test(e) ? 'ok' : ''}">${escapeHtml(e)}</span>`).join('') || '<span class="hint">暂无</span>'}</div></div>
+    </div>
+  `;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+}
+
+document.getElementById('btn-layered').onclick = () => {
+  layered = true;
+  document.getElementById('btn-layered').setAttribute('aria-pressed', 'true');
+  document.getElementById('btn-flat').setAttribute('aria-pressed', 'false');
+  renderTree(); renderPanel();
+};
+document.getElementById('btn-flat').onclick = () => {
+  layered = false;
+  document.getElementById('btn-flat').setAttribute('aria-pressed', 'true');
+  document.getElementById('btn-layered').setAttribute('aria-pressed', 'false');
+  renderTree();
+  document.getElementById('panel').innerHTML = '<div class="hint">分层前没有「需求详情」这回事：每个步骤自己就是一条树节点，点开它只能看到一句标题 —— 验收口径、来源原话、证据都没有落点。</div>';
+};
+
+renderTree();
+renderPanel();
+</script>
+</body>
+</html>
