@@ -49,6 +49,11 @@ pkgs.ts/**/*.mjs
 !apps/diy-app/scripts/build-runtime.mjs
 pkgs.ts/**/*.cjs
 pkgs.ts/**/*.d.ts
+# sourcemap 是编译产物（`tsc` 落在源码旁），同样不该进 git；不忽略 `lib/` 目录本身
+# （见上：目录里的正经源码要能被看见）。
+pkgs.ts/**/*.js.map
+# 打包时生成到 lib/ 的发布清单（源码 package.json 在包根，不会误伤）
+pkgs.ts/**/lib/package.json
 # 例外：`src/gen/` 是**有意的派生**（gen-service-types 从 api.ts 生成），
 # 必须进 git —— 不进的话消费方 clone 后没有类型，且 `--check` 会永远误报过期。
 !pkgs.ts/**/src/gen/
