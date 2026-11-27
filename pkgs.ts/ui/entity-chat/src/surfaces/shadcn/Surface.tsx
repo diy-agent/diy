@@ -109,6 +109,76 @@ function Time({ at }: { at: number | undefined }) {
     );
 }
 
+/**
+ * 入参怎么显示：认出高频键就只显示值，认不出来才回退整段 JSON。
+ *
+ * `label` 是为了让读者知道「这一行是什么」——`command` 读作「命令」比读作「入参」直观。
+ */
+function inputOf(args: unknown): { label: string; text: string } | undefined {
+    if (args === undefined || args === null) return undefined;
+    if (typeof args === 'string') return args === '' ? undefined : { label: '入参', text: args };
+    if (typeof args !== 'object') return { label: '入参', text: String(args) };
+    const record = args as Record<string, unknown>;
+    // 值的形状优先：命令 > 路径 > 查询。其余键不丢 —— 附在末尾，免得「还有别的参数」看不见
+    const known: Array<[key: string, label: string]> = [
+        ['command', '命令'],
+        ['cmd', '命令'],
+        ['script', '脚本'],
+        ['file_path', '路径'],
+        ['path', '路径'],
+        ['query', '查询'],
+        ['pattern', '模式'],
+        ['url', '地址'],
+    ];
+    for (const [key, label] of known) {
+        const value = record[key];
+        if (typeof value !== 'string' || value === '') continue;
+        const rest = Object.entries(record).filter(([other, item]) => other !== key && item !== undefined);
+        return {
+            label,
+            text:
+                rest.length === 0
+                    ? value
+                    : `${value}\n\n（附带参数）\n${JSON.stringify(Object.fromEntries(rest), null, 2)}`,
+        };
+    }
+    return { label: '入参', text: stringify(args) };
+}
+
+/**
+ * 输出怎么显示：`stdout` / `stderr` / `error` 三个键拆开读，别整个对象 JSON 一遍。
+ *
+ * 这三样是工具结果的全部语义：跑出什么、报错什么、错在哪。剩下的键（exitCode / durationMs…）
+ * 附在后面 —— 它们是旁注，不是正文。
+ */
+function outputOf(result: unknown): { label: string; text: string; failed: boolean } | undefined {
+    if (result === undefined || result === null) return undefined;
+    if (typeof result === 'string') return result === '' ? undefined : { label: '输出', text: result, failed: false };
+    if (typeof result !== 'object') return { label: '输出', text: String(result), failed: false };
+    const record = result as Record<string, unknown>;
+    const stdout = typeof record.stdout === 'string' ? record.stdout : undefined;
+    const stderr = typeof record.stderr === 'string' ? record.stderr : undefined;
+    const error = typeof record.error === 'string' ? record.error : undefined;
+    const rest = Object.entries(record).filter(
+        ([key]) => !['stdout', 'stderr', 'error'].includes(key) && record[key] !== undefined,
+    );
+    const parts: string[] = [];
+    if (stdout !== undefined && stdout !== '') parts.push(stdout);
+    if (stderr !== undefined && stderr !== '') parts.push(`stderr:\n${stderr}`);
+    if (error !== undefined && error !== '') parts.push(`错误:\n${error}`);
+    if (parts.length === 0) return { label: '输出', text: stringify(result), failed: false };
+    if (rest.length > 0) parts.push(`（其他）\n${JSON.stringify(Object.fromEntries(rest), null, 2)}`);
+    return { label: error !== undefined ? '错误' : '输出', text: parts.join('\n\n'), failed: error !== undefined };
+}
+
+function stringify(value: unknown): string {
+    try {
+        return JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+        return String(value);
+    }
+}
+
 function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool' }>; live?: boolean }) {
     const [open, setOpen] = React.useState(false);
     if (tools.length === 1) {
@@ -146,17 +216,12 @@ function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: 
     const target = toolTargetOf(tool);
     const status = TOOL_STATUS[tool.state];
     const failed = status === 'error';
-    const asText = (value: unknown): string | undefined => {
-        if (value === undefined || value === null) return undefined;
-        if (typeof value === 'string') return value === '' ? undefined : value;
-        try {
-            return JSON.stringify(value, null, 2);
-        } catch {
-            return String(value);
-        }
-    };
-    const input = asText(tool.args);
-    const output = asText(tool.result);
+    // 入参 / 输出按**工具的已知形状**渲染，而不是一律 `JSON.stringify`：
+    // 用户 2026-11-27：「tool 显示的是纯 json，有更好的显示组件吗」。`{"command":"pwd"}`
+    // 这层括号是数据结构的痕迹，不是他关心的东西 —— 他要看的是「跑了什么、输出了什么」。
+    // 所以先认几个高频键（命令 / 路径 / 查询），认得出来就只显示那个值；认不出来才回退 JSON。
+    const input = inputOf(tool.args);
+    const output = outputOf(tool.result);
     // 官方 ai-elements 的 Tool 就是「Trace 里一行 + 有输出时套一层 Collapsible」：
     // 标题说清发生了什么（Running / Ran / Failed），展开体分 Input / Output 两块。
     const title =
@@ -188,20 +253,20 @@ function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: 
                     {input !== undefined && (
                         <CodeBlock size="sm" className="mb-1.5">
                             <CodeBlockHeader>
-                                <CodeBlockTitle>入参</CodeBlockTitle>
+                                <CodeBlockTitle>{input.label}</CodeBlockTitle>
                             </CodeBlockHeader>
                             <CodeBlockContent wrap className="max-h-48">
-                                {input}
+                                {input.text}
                             </CodeBlockContent>
                         </CodeBlock>
                     )}
                     {output !== undefined && (
-                        <CodeBlock size="sm" variant={failed ? 'destructive' : 'default'}>
+                        <CodeBlock size="sm" variant={failed || output.failed ? 'destructive' : 'default'}>
                             <CodeBlockHeader>
-                                <CodeBlockTitle>{failed ? '错误' : '输出'}</CodeBlockTitle>
+                                <CodeBlockTitle>{output.label}</CodeBlockTitle>
                             </CodeBlockHeader>
                             <CodeBlockContent wrap className="max-h-64">
-                                {output}
+                                {output.text}
                             </CodeBlockContent>
                         </CodeBlock>
                     )}

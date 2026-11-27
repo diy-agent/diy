@@ -65,9 +65,13 @@ import { EditableName, StatusGlyph } from './RoomName';
 
 // 行尾的低频动作收进 `MenuButton`（components/Menu.tsx，与房间头 kebab 共用）。
 //
-// 2026-11-26 用户裁：**这些按钮改成 hover 才现身**（`opacity-0 group-hover:opacity-100`）。
-// 之前是常驻的，结果在一列固定宽度的侧栏里，按钮占掉的横向空间比标题自己还多 ——
-// 标题被 truncate 得只剩几个字。hover 才现的代价是「藏起来的能力」，用户明确接受了这个取舍。
+// 2026-11-26 用户裁：**这些按钮改成 hover 才现身**。之前是常驻的，结果在一列固定宽度的
+// 侧栏里，按钮占掉的横向空间比标题自己还多 —— 标题被 truncate 得只剩几个字。
+//
+// 2026-11-27 补一刀：一开始写的是 `opacity-0 group-hover:opacity-100` —— **那只改透明度，
+// 不改布局**，按钮仍然占着那一列宽度，用户说「没有缓解挤占文字空间」。改成 `hidden` /
+// `group-hover:inline-flex`（display 切换），静置时宽度才真正还给标题。
+// 代价是 hover 那一刻标题会收窄几个字（truncate 重新计算），用户接受了这个抖动。
 // 键盘可达性靠 `focus-visible` / `focus-within` 兜住（Tab 到它时一样会显形）。
 
 export interface RoomRowProps {
@@ -317,7 +321,7 @@ export function RoomRowView({
                     }}
                     title={`在「${roomTitle(room)}」下新建任务`}
                     aria-label={`在「${roomTitle(room)}」下新建任务`}
-                    className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    className="hidden shrink-0 text-muted-foreground group-hover:inline-flex focus-visible:inline-flex"
                 >
                     <ListPlus className="size-3.5" />
                 </Button>
@@ -379,7 +383,7 @@ export function RoomRowView({
                     }}
                     title={openTask ? '关闭这个任务（收进历史，不再挂在项目树下）' : '重新打开这个任务'}
                     aria-label={openTask ? '关闭任务' : '打开任务'}
-                    className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    className="hidden shrink-0 text-muted-foreground group-hover:inline-flex focus-visible:inline-flex"
                 >
                     {openTask ? <CheckCircle2 className="size-3.5" /> : <RotateCcw className="size-3.5" />}
                 </Button>
@@ -387,7 +391,7 @@ export function RoomRowView({
 
             <MenuButton
                 // 低频动作：hover / 键盘 focus 才现身，常态把这一列的宽度还给标题
-                className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
+                className="hidden group-hover:block focus-within:block"
                 items={[
                     {
                         key: 'rename',
