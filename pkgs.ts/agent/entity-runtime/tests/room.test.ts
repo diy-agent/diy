@@ -34,7 +34,7 @@ describe('RoomActor', () => {
 
         expect(h.runs).toEqual(['diy']);
         expect(h.room.deliveries().map((d) => d.botId)).toEqual([BOT_A.id]);
-        expect(h.room.deliveries()[0]?.state).toBe('delivered');
+        expect(h.room.deliveries()[0]?.state).toBe('done');
     });
 
     it('@名字：命中者回复，默认应答不动', async () => {
@@ -105,7 +105,7 @@ describe('RoomActor', () => {
 
         expect(h.room.busy()).toBe(false);
         // 消息确实送到了 bot 手里；被取消的是"它的回复"，不是投递
-        expect(h.room.deliveries()[0]?.state).toBe('delivered');
+        expect(h.room.deliveries()[0]?.state).toBe('done');
     });
 
     it('显式 recipients = 开会：不解析 @', async () => {
@@ -148,25 +148,26 @@ describe('RoomActor', () => {
         store.appendItem('room:1', item('u-1', 1));
         store.appendItem('room:1', item('u-2', 2));
         store.appendItem('room:1', item('u-3', 3));
-        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'queued' });
-        // BOT_A 不在跑 —— 这条 delivering 是**重启残留**（待续跑），要算排队
-        store.setDelivery({ roomId: 'room:1', messageId: 'u-2', botId: BOT_A.id, state: 'delivering' });
-        store.setDelivery({ roomId: 'room:1', messageId: 'u-3', botId: BOT_B.id, state: 'queued' });
-        // 已送达的不算排队
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'pending' });
+        // 重启残留的 `working` 在 openStore 时已被重置成 `pending`（db.ts 的 migrateDeliveryStates）
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-2', botId: BOT_A.id, state: 'pending' });
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-3', botId: BOT_B.id, state: 'pending' });
+        // 已处理完的不算排队
         store.appendItem('room:1', item('u-4', 4));
-        store.setDelivery({ roomId: 'room:1', messageId: 'u-4', botId: BOT_B.id, state: 'delivered' });
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-4', botId: BOT_B.id, state: 'done' });
 
         const h = makeRoom({ store });
         expect(Object.fromEntries(h.room.queuedByBot())).toEqual({ [BOT_A.id]: 2, [BOT_B.id]: 1 });
 
         // 跑完一条就少一条（UI 的灰旋转跟着灭）
-        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'delivered' });
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'done' });
         expect(Object.fromEntries(h.room.queuedByBot())).toEqual({ [BOT_A.id]: 1, [BOT_B.id]: 1 });
     });
 
-    it('正在跑的那条 delivering 不算排队（“在跑”不该被写成“排队中”）', async () => {
+    it('正在跑的那条 working 不算排队（“在跑”不该被写成“排队中”）', async () => {
         // 用户 2026-11-26 报的表里一行：状态写「排队中」、结局写「中断（上一轮没跑完）」。
         // 原因：该 bot 正在跑（投递 = delivering），而 `queuedByBot` 把 delivering 也算排队。
+        // 2026-11-27 状态收成 3 个后结构上不可能：`working` 就是不数。
         const h = makeRoom({ hang: true });
         void h.room.say({ text: '跑着', author: HUMAN });
         await waitFor(() => h.room.runningBots().length > 0);
@@ -197,7 +198,7 @@ describe('RoomActor', () => {
             roomId: 'room:1',
             messageId: userItem.id,
             botId: BOT_A.id,
-            state: 'queued',
+            state: 'pending',
             mode: 'next-step',
             turn: 1,
             turnId: 'turn-crash',
@@ -206,7 +207,7 @@ describe('RoomActor', () => {
         const h = makeRoom({ store });
         expect(h.runs).toEqual([]);
         void h.room.recover();
-        await waitFor(() => h.room.deliveries()[0]?.state === 'delivered');
+        await waitFor(() => h.room.deliveries()[0]?.state === 'done');
         expect(h.runs).toEqual(['diy']);
     });
 
@@ -233,7 +234,7 @@ describe('RoomActor', () => {
             roomId: 'room:1',
             messageId: 'u-1',
             botId: BOT_A.id,
-            state: 'queued',
+            state: 'pending',
             turn: 1,
             turnId: 'turn-1',
         });
@@ -241,7 +242,7 @@ describe('RoomActor', () => {
             roomId: 'room:1',
             messageId: 'u-2',
             botId: BOT_B.id,
-            state: 'queued',
+            state: 'pending',
             turn: 2,
             turnId: 'turn-2',
         });
@@ -534,7 +535,7 @@ describe('中断的轮次', () => {
             roomId: h.spec.id,
             messageId: 'msg-resume',
             botId: BOT_A.id,
-            state: 'delivering',
+            state: 'working',
             turn: 3,
             turnId: 'turn-resume',
         });
@@ -564,7 +565,7 @@ describe('中断的轮次', () => {
             roomId: h.spec.id,
             messageId: 'msg-resume',
             botId: BOT_A.id,
-            state: 'delivering',
+            state: 'working',
             turn: 3,
             turnId: 'turn-resume',
         });
@@ -603,14 +604,14 @@ describe('中断的轮次', () => {
             roomId: h.spec.id,
             messageId: 'msg-resume',
             botId: BOT_A.id,
-            state: 'delivering',
+            state: 'working',
             turn: 3,
             turnId: 'turn-resume',
         });
 
         const restarted = h.rebuild();
         void restarted.room.recover();
-        await waitFor(() => restarted.room.deliveries().every((d) => d.state === 'delivered'));
+        await waitFor(() => restarted.room.deliveries().every((d) => d.state === 'done'));
 
         expect(interruptedOf(restarted)).toHaveLength(0);
         expect(restarted.store.openTurns(h.spec.id)).toEqual([]);

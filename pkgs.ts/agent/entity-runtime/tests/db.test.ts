@@ -72,7 +72,7 @@ describe('删除容器', () => {
         });
         store.appendRoomEntry(room.id, { seq: 1, at: Date.now(), kind: 'notice', text: '结论' });
         store.saveSession(room.id, 'b1', { turn: 1, collapsed: 0, entries: [] });
-        store.setDelivery({ roomId: room.id, messageId: 'msg-1', botId: 'b1', state: 'delivered' });
+        store.setDelivery({ roomId: room.id, messageId: 'msg-1', botId: 'b1', state: 'done' });
 
         store.deleteRoom(room.id);
 
@@ -685,7 +685,7 @@ describe('未送达投影（failedByRoom）', () => {
         roomId: string,
         messageId: string,
         botId: string,
-        state: 'failed' | 'delivered' | 'queued',
+        state: 'failed' | 'done' | 'pending',
         turn: number,
     ): void => {
         store.appendItem(roomId, msg(messageId, turn));
@@ -701,7 +701,12 @@ describe('未送达投影（failedByRoom）', () => {
             turn,
             turnId: `t${turn}`,
         });
-        store.setDelivery({ roomId, messageId, botId, state, turn });
+        // 状态收成 3 个之后，失败 = `done + note='failed'`（helper 保留旧调用写法，少改测试）
+        store.setDelivery(
+            state === 'failed'
+                ? { roomId, messageId, botId, state: 'done', note: 'failed', turn }
+                : { roomId, messageId, botId, state, turn },
+        );
     };
 
     it('按成员算最新一条投递：旧 failed 被后来的 delivered 覆盖后不再报', () => {
@@ -709,7 +714,7 @@ describe('未送达投影（failedByRoom）', () => {
         deliver(store, room.id, 'm-old', 'b1', 'failed', 1);
         expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
 
-        deliver(store, room.id, 'm-new', 'b1', 'delivered', 2);
+        deliver(store, room.id, 'm-new', 'b1', 'done', 2);
         expect(store.failedByRoom()).toEqual({});
     });
 
@@ -724,28 +729,28 @@ describe('未送达投影（failedByRoom）', () => {
         const store = openStore(':memory:');
         deliver(store, room.id, 'm1', 'b1', 'failed', 1);
         deliver(store, room.id, 'm2', 'b2', 'failed', 1);
-        deliver(store, room.id, 'm3', 'b2', 'delivered', 2);
+        deliver(store, room.id, 'm3', 'b2', 'done', 2);
         expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
     });
 
     it('最新一条重新排队（恢复待续跑）不算未送达，只算排队', () => {
         const store = openStore(':memory:');
         deliver(store, room.id, 'm1', 'b1', 'failed', 1);
-        deliver(store, room.id, 'm2', 'b1', 'queued', 2);
+        deliver(store, room.id, 'm2', 'b1', 'pending', 2);
         expect(store.failedByRoom()).toEqual({});
     });
 
     it('同一轮多条消息靠时间线 seq 分先后（turn 相同也不能误判）', () => {
         const store = openStore(':memory:');
         deliver(store, room.id, 'm1', 'b1', 'failed', 1);
-        deliver(store, room.id, 'm2', 'b1', 'delivered', 1);
+        deliver(store, room.id, 'm2', 'b1', 'done', 1);
         expect(store.failedByRoom()).toEqual({});
     });
 
     it('不串房间：0 的房间不占键', () => {
         const store = openStore(':memory:');
         deliver(store, room.id, 'm1', 'b1', 'failed', 1);
-        deliver(store, 'task:other', 'm1', 'b1', 'delivered', 1);
+        deliver(store, 'task:other', 'm1', 'b1', 'done', 1);
         expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
     });
 });

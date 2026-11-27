@@ -137,14 +137,14 @@ describe('waitTextOf —— 待答提问等了多久', () => {
 });
 
 describe('deliveryNoteOf —— 「发了没人理」的唯一可见信号', () => {
-    const base = { state: 'delivering' as const, updatedAt: 1_000_000 - 26 * 60_000, live: false, now: 1_000_000 };
+    const base = { state: 'pending' as const, updatedAt: 1_000_000 - 26 * 60_000, live: false, now: 1_000_000 };
 
-    it('投递挂着、没人动：说「未开跑」+ 多久', () => {
-        expect(deliveryNoteOf(base)).toBe('未开跑 26m00s');
+    it('还没轮到：说「等着」+ 多久', () => {
+        expect(deliveryNoteOf(base)).toBe('等着 26m00s');
     });
 
-    it('还在队列里没轮到：说「排队」', () => {
-        expect(deliveryNoteOf({ ...base, state: 'queued' })).toBe('排队 26m00s');
+    it('正在处理（working）不说话 —— 那段时间由运行指示器管', () => {
+        expect(deliveryNoteOf({ ...base, state: 'working' })).toBeUndefined();
     });
 
     it('bot 在动（live）就闭嘴 —— 那时行尾已有运行指示器，重复说会让人以为消息没发出去', () => {
@@ -155,9 +155,7 @@ describe('deliveryNoteOf —— 「发了没人理」的唯一可见信号', () 
         expect(deliveryNoteOf({ ...base, updatedAt: 1_000_000 - 5_000 })).toBeUndefined();
     });
 
-    it('已经落地 / 失败 / 跳过的不归它管（各有各的显示）', () => {
-        expect(deliveryNoteOf({ ...base, state: 'delivered' })).toBeUndefined();
-        expect(deliveryNoteOf({ ...base, state: 'failed' })).toBeUndefined();
-        expect(deliveryNoteOf({ ...base, state: 'skipped' })).toBeUndefined();
+    it('已经处理完的不归它管（失败/成功各有各的显示）', () => {
+        expect(deliveryNoteOf({ ...base, state: 'done' })).toBeUndefined();
     });
 });

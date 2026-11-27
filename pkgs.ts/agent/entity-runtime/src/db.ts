@@ -1301,12 +1301,37 @@ export function openStore(file: string): Store {
         }
     };
 
+    /**
+     * 投递状态从 5 个收敛到 3 个（2026-11-27，见 `DeliveryState` 的注释）。
+     *
+     * 幂等：跑过的库没有旧值了，UPDATE 影响 0 行。
+     * 回滚：state 是文本列，反着改回去（`pending→queued` / `working→delivering` /
+     * `done+note='failed'→failed` / `done→delivered`）即可 —— 唯一不可逆的是
+     * `skipped` 并进了 `failed`，两者后果一样（都是没送进去）。
+     */
+    const migrateDeliveryStates = (): void => {
+        db.exec('BEGIN');
+        try {
+            db.prepare("UPDATE deliveries SET state='pending' WHERE state='queued'").run();
+            db.prepare("UPDATE deliveries SET state='working' WHERE state='delivering'").run();
+            db.prepare("UPDATE deliveries SET state='done' WHERE state='delivered'").run();
+            db.prepare(
+                "UPDATE deliveries SET state='done', note=COALESCE(note,'failed') WHERE state IN ('failed','skipped')",
+            ).run();
+            db.exec('COMMIT');
+        } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
+        }
+    };
+
     const hasLegacyRooms =
         db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='rooms'").get() !== undefined;
     // 顺序有意义：先搬房间（journal 的 subject 要能解析到实体），再补 bot 身份，最后折日志
     if (hasLegacyRooms) migrateLegacyRooms();
     syncBotEntities();
     migrateJournal();
+    migrateDeliveryStates();
 
     return {
         db,
@@ -1677,7 +1702,9 @@ export function openStore(file: string): Store {
         pendingDeliveries(roomId: string): Array<DeliveryInput & { messageId: string }> {
             const rows = db
                 .prepare(
-                    "SELECT * FROM deliveries WHERE entity_id = ? AND state IN ('queued','delivering') ORDER BY updated_at ASC",
+                    // 未完成的两种都算：`pending` 还没轮到，`working` 是「上次跑时正在处理」——
+                    // 进程重启后它是孤儿，`recover()` 要把它重投一遍。
+                    "SELECT * FROM deliveries WHERE entity_id = ? AND state IN ('pending','working') ORDER BY updated_at ASC",
                 )
                 .all(roomId) as Array<Record<string, unknown>>;
             return rows.map((row) => ({
@@ -1711,10 +1738,10 @@ export function openStore(file: string): Store {
                 seqOfMessage.set(`${String(row.entity_id)}\u0000${String(row.message_id)}`, Number(row.seq));
             }
 
-            type Latest = { state: string; turn: number; seq: number; at: number; messageId: string };
+            type Latest = { state: string; note?: string; turn: number; seq: number; at: number; messageId: string };
             const latest = new Map<string, Latest>();
             const rows = db
-                .prepare('SELECT entity_id, bot_id, message_id, state, turn, updated_at FROM deliveries')
+                .prepare('SELECT entity_id, bot_id, message_id, state, note, turn, updated_at FROM deliveries')
                 .all() as Array<Record<string, unknown>>;
             for (const row of rows) {
                 const roomId = String(row['entity_id']);
@@ -1722,6 +1749,7 @@ export function openStore(file: string): Store {
                 const messageId = String(row['message_id']);
                 const candidate: Latest = {
                     state: String(row['state']),
+                    note: row['note'] === null ? undefined : String(row['note']),
                     turn: row['turn'] === null ? -1 : Number(row['turn']),
                     seq: seqOfMessage.get(`${roomId}\u0000${messageId}`) ?? -1,
                     at: Number(row['updated_at']),
@@ -1734,7 +1762,8 @@ export function openStore(file: string): Store {
 
             const failed: Record<string, number> = {};
             for (const [key, row] of latest) {
-                if (row.state !== 'failed') continue;
+                // 失败不再是独立状态：`done + note='failed'`（2026-11-27 收敛到 3 个状态）
+                if (row.state !== 'done' || row.note !== 'failed') continue;
                 const roomId = key.slice(0, key.indexOf('\u0000'));
                 failed[roomId] = (failed[roomId] ?? 0) + 1;
             }

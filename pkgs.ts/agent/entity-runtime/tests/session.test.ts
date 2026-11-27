@@ -175,7 +175,7 @@ describe('BotSession', () => {
         await h.session.post({ messageId: 'm1', text: '你好' });
 
         expect(h.runs).toEqual(['turn-1']);
-        expect(h.deliveries).toEqual(['m1:delivering', 'm1:delivered']);
+        expect(h.deliveries).toEqual(['m1:working', 'm1:done']);
         expect(h.items.some((item) => item.type === 'chat' && item.status === 'done')).toBe(true);
     });
 
@@ -188,7 +188,7 @@ describe('BotSession', () => {
         await Promise.all([first, second]);
 
         expect(h.runs).toEqual(['turn-1']);
-        expect(h.deliveries).toContain('m2:delivering');
+        expect(h.deliveries).toContain('m2:working');
     });
 
     it('运行中投 next-turn：等这一轮结束再开新一轮', async () => {
@@ -212,7 +212,7 @@ describe('BotSession', () => {
 
         await Promise.all([running, queued]);
         expect(h.runs).toEqual(['turn-1']);
-        expect(h.deliveries).toContain('m1:delivered');
+        expect(h.deliveries).toContain('m1:done');
         expect(h.deliveries).not.toContain('m1:failed');
     });
 

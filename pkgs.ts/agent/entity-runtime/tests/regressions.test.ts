@@ -84,7 +84,7 @@ describe('P0 回归', () => {
         // 让投递回到"没送达"的现场，再模拟重启恢复
         const messageId = h.room.deliveries()[0]?.messageId;
         expect(messageId).toBeDefined();
-        h.store.setDelivery({ roomId: h.spec.id, messageId: messageId!, botId: BOT_A.id, state: 'delivering' });
+        h.store.setDelivery({ roomId: h.spec.id, messageId: messageId!, botId: BOT_A.id, state: 'working' });
 
         const restarted = h.rebuild();
         await waitFor(() => !restarted.room.busy());
@@ -180,7 +180,7 @@ describe('P0 回归', () => {
             roomId: h.spec.id,
             messageId: item.id,
             botId: BOT_A.id,
-            state: 'delivering',
+            state: 'working',
             mode: 'next-step',
             turn: 2,
             turnId: 'turn-legacy',

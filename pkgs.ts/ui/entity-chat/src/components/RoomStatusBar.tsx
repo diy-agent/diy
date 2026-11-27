@@ -96,9 +96,10 @@ export function StatusChips({ bots, asks, stuck, now, onJump }: StatusChipsProps
 /**
  * 数据壳：从会话状态取两件事实，交给 `StatusChips` 渲染。
  *
- * 为什么 `stuck` 用「queued/delivering 且该 bot 不在动」而不是「有 delivering 就显示」：
- * 正常一轮里投递和「正在跑」是同一段时间的两面，那时轮次底行已经有运行指示器 —— 再说一遍
- * 「未开跑」会让人以为消息没出去。需要它的是两者脱钩：轮次没起来，或者进程重启把队列丢了。
+ * 为什么 `stuck` 用「pending 且该 bot 不在动」而不是「有 working 就显示」：
+ * 正常一轮里 `working` 和「正在跑」是同一段时间的两面，那时轮次底行已经有运行指示器 ——
+ * 再说一遍「未开跑」会让人以为消息没出去。需要它的是两者脱钩：轮次没起来，或者进程重启把队列丢了。
+ * （2026-11-27 状态收敛成 3 个后，「在跑但有大量 pending」这个判据不再需要减一修正。）
  *
  * `live` 仍然要算（只是不再渲染）：它是「脱钩」的判据，取自 speaking 与 progress 两处事实。
  */
@@ -109,9 +110,7 @@ export function RoomStatusBar({ roomId, surfaceId }: { roomId: string; surfaceId
 
     const live = new Set<string>(state.speaking);
     for (const botId of Object.keys(state.progress)) live.add(botId);
-    const stuck = state.deliveries.filter(
-        (delivery) => (delivery.state === 'queued' || delivery.state === 'delivering') && !live.has(delivery.botId),
-    );
+    const stuck = state.deliveries.filter((delivery) => delivery.state === 'pending' && !live.has(delivery.botId));
 
     // 两件事实都没有 → 不起时钟、不渲染。有候选时先跑起来：15s 那条阈值由 chip 自己判
     const active = state.asks.length > 0 || stuck.length > 0;

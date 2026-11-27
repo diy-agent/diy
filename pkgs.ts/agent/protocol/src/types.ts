@@ -179,13 +179,24 @@ export type Item =
 
 // ── 投递（消息 → bot 的到达状态）────────────────────────────────
 
-export type DeliveryState = 'queued' | 'delivering' | 'delivered' | 'failed' | 'skipped';
+/**
+ * 一条消息对某个 bot 的投递只有三个阶段（2026-11-27 收敛：原来 5 个值）。
+ *
+ *   pending —— 在库里，bot 还没开始处理它（UI 的「N 条等着」只数这个）
+ *   working —— bot 正在处理它（无论是并进当前轮，还是作为本轮的第一条）
+ *   done    —— 处理完了；`note === 'failed'` 表示没送进去
+ *
+ * **为什么砍**：原来的 `delivering` 同时表示「正在插进当前轮」和「已被取出正在跑」，
+ * UI 于是必须拿另一个状态的副本去修正（"在跑减一"），一处不同步就报假数。
+ */
+export type DeliveryState = 'pending' | 'working' | 'done';
 
 export interface Delivery {
     roomId: string;
     messageId: string;
     botId: string;
     state: DeliveryState;
+    /** 结局说明：`'failed'` = 没送进去（`skipped` 等旧值迁移时也归一到这里） */
     note?: string;
     updatedAt: number;
 }
