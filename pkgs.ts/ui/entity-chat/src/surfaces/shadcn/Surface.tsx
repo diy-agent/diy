@@ -131,6 +131,11 @@ function inputOf(args: unknown): { label: string; text: string } | undefined {
         ['query', '查询'],
         ['pattern', '模式'],
         ['url', '地址'],
+        // write / edit 类工具的正文：不认它就会整段落到「附带参数」里被 JSON 包住 ——
+        // 而那正是用户要读的东西（2026-11-27 报「显示的是纯 json」主要是这个）
+        ['content', '内容'],
+        ['new_string', '新内容'],
+        ['old_string', '原内容'],
     ];
     for (const [key, label] of known) {
         const value = record[key];
