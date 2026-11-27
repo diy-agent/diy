@@ -141,6 +141,22 @@ export interface RoomActorDeps {
     acceptsImages?: (modelKey: string) => boolean;
 }
 
+/**
+ * job 使用判据的提示词正文 —— 与知识库 `app/rule#job-when` **同源**（那边是判据，这里是它的落地）。
+ *
+ * 单独导出是为了让测试直接锁住它：原文「后台长活（构建 / 测试 / 装依赖）用 background」把
+ * **测试**列进了该 job 的例子，于是 check / test / tsc 全被后台化 —— job runs 从每日 26
+ * 涨到 138（2026-11-26 查）。**例子会过时，判据不会**：先给判据，例子只当注脚。
+ */
+export const JOB_HINT_BODY =
+    '**要不要 background（进 job 账本）看一条：本轮下一步要不要用它的输出？** ' +
+    '要 → **前台同步等**（`./sha.sh check` / `test` / `tsc` / `build` / `npm ci` / `git push` / `gh pr …` ' +
+    '都是**轮次内的工具步骤**，不是后台任务：后台化只会让 job 结束通知刷屏、状态分散到 job status，' +
+    '而你反正要等它的结果才能继续）；' +
+    '不要、且它会一直活着 → 才 `background: true`（起服务给人开窗口看的 `lab` / `staging` / `dev`、' +
+    '用户会离开的超长跑、跨轮次才收口的活）。' +
+    '起完就别轮询，结束时会插话叫醒你；查状态 / 取输出 / 停用 job。';
+
 export class RoomActor {
     private readonly log: RoomLog;
     private readonly sessions = new Map<string, BotSession>();
@@ -979,11 +995,7 @@ export class RoomActor {
         // 任务房间才有账本树。三处提醒的开关在 `units-remind.ts`（实验用 `DIY2_UNITS_REMIND`
         // 或 `<home>/units-remind.txt` 换档）：这里只放 A 档（常驻提示词）那一段。
         const unitHint = this.deps.spec.type === 'task' ? promptReminder(this.remindMode) : '';
-        const jobHint =
-            this.deps.jobs === undefined
-                ? ''
-                : '\n后台长活（构建 / 测试 / 装依赖）用 bash 的 background，再用 job 查状态 / 取输出 / 停；' +
-                  '起完就别轮询，结束时会插话叫醒你。';
+        const jobHint = this.deps.jobs === undefined ? '' : `\n${JOB_HINT_BODY}`;
         // 图片能力必须**明写**：不给这段，模型的反应是自己用 bash+curl 拼一份 raw API 调用
         // 去看图（2026-11-26 实测：它跑了 6 条 bash、写了两份 payload，链路完全绕开本实例）。
         const imageHint =
