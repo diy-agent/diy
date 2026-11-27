@@ -304,22 +304,6 @@ export function RoomRowView({
                 onCommit={(next) => void actions.renameRoom(room.id, next)}
             />
 
-            {isProject && onCreateTask !== undefined && (
-                <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        onCreateTask();
-                    }}
-                    title={`在「${roomTitle(room)}」下新建任务`}
-                    aria-label={`在「${roomTitle(room)}」下新建任务`}
-                    className="hidden shrink-0 text-muted-foreground group-hover:inline-flex focus-visible:inline-flex"
-                >
-                    <ListPlus className="size-3.5" />
-                </Button>
-            )}
-
             {isProject && collapsed && (openTaskCount ?? 0) > 0 && (
                 <span
                     title={`${openTaskCount} 个未关闭任务`}
@@ -366,6 +350,32 @@ export function RoomRowView({
 
             {/* 任务行尾两个常驻按钮：关闭/打开与 ⋮；项目行的「新建任务」是行内独立按钮，
                 不藏在菜单里。低频的重命名 / 删除留在菜单。 */}
+            {/*
+             * 行尾动作（新建任务 / 关闭打开 / ⋮）走**绝对定位**，2026-11-27 第三次改：
+             *   · 11-26 版：常驻 —— 按钮占掉的宽度比标题还多，标题 truncate 到剩几个字；
+             *   · 11-27 一版：`opacity-0 group-hover:opacity-100` —— 不抖动，但照样占位；
+             *   · 11-27 二版：`hidden group-hover:inline-flex` —— 宽度还给标题了，
+             *     但 hover 那一刻标题被重新 truncate、整棵树跟着抖（用户当日报的抖动）。
+             * 绝对定位同时满足两件：**不参与布局**（标题永远拿到全宽、hover 前后行高行宽都不变），
+             * 也不占常驻空间。代价只在 hover 时浮在标题尾部几个字上 —— 加一层左侧渐隐过渡。
+             */}
+            <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center gap-0.5 rounded-r-lg bg-gradient-to-l from-background via-background pl-4 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+            {isProject && onCreateTask !== undefined && (
+                <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onCreateTask();
+                    }}
+                    title={`在「${roomTitle(room)}」下新建任务`}
+                    aria-label={`在「${roomTitle(room)}」下新建任务`}
+                    className="hidden shrink-0 text-muted-foreground group-hover:inline-flex focus-visible:inline-flex"
+                >
+                    <ListPlus className="size-3.5" />
+                </Button>
+            )}
+
             {!isProject && (
                 <Button
                     variant="ghost"
@@ -383,8 +393,8 @@ export function RoomRowView({
             )}
 
             <MenuButton
-                // 低频动作：hover / 键盘 focus 才现身，常态把这一列的宽度还给标题
-                className="hidden group-hover:block focus-within:block"
+                // 显隐由外层绝对定位容器统一管（见上），这里不再各自切 display
+                className="shrink-0 text-muted-foreground"
                 items={[
                     {
                         key: 'rename',
@@ -401,6 +411,7 @@ export function RoomRowView({
                     },
                 ]}
             />
+            </div>
         </div>
     );
 }
