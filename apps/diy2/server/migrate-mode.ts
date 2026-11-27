@@ -13,10 +13,11 @@
 // 迁移本身仍在**子进程**里跑：同步迁移会卡住事件循环，SSE 就推不出去了
 // （这也是原来那套单独服务器 s 为什么 spawn worker，原因不变）。
 
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { MIGRATION_STEPS, migrationPlan, migrationVersion } from '@diy-agent/migration';
 
@@ -76,7 +77,43 @@ function json(res: ServerResponse, status: number, body: unknown): void {
     res.end(text);
 }
 
-const NEXT_PROCESS = join(import.meta.dirname, 'migrate-worker.ts');
+const WORKER_TS = join(import.meta.dirname, 'migrate-worker.ts');
+const ENTRY_MJS = join(import.meta.dirname, 'index.mjs');
+
+/** 往上找 `node_modules/.bin/tsx`（开发时它在仓根；不要在产物目录里假设相对深度） */
+function resolveTsx(start: string): string {
+    let dir = start;
+    for (let depth = 0; depth < 6; depth += 1) {
+        const candidate = join(dir, 'node_modules/.bin/tsx');
+        if (existsSync(candidate)) return candidate;
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    return join(start, 'node_modules/.bin/tsx');
+}
+
+/**
+ * 起迁移子进程。
+ *
+ * 两种形态（见 ./migrate-worker.ts 文件头）：
+ *  - 源码态：旁边有 `migrate-worker.ts` → `tsx` 跑它（dev / staging 从源码起）；
+ *  - 产物态：只有 `index.mjs` → `node index.mjs --migrate-worker <db>`。
+ *
+ * 以前只写死了第一种，发布版里 tsx 与 .ts 都不存在 → spawn ENOENT，
+ * 而页面那一下正等着进度，人看到的是「点了没反应」（2026-11-27 实测）。
+ */
+function spawnWorker(dbPath: string): ChildProcess {
+    if (existsSync(WORKER_TS)) {
+        return spawn(resolveTsx(import.meta.dirname), [WORKER_TS, dbPath], {
+            cwd: import.meta.dirname,
+            env: process.env,
+        });
+    }
+    // Electron 里 process.execPath 是 Electron 本体，要显式降级成 node 语义
+    const env = process.versions.electron === undefined ? process.env : { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+    return spawn(process.execPath, [ENTRY_MJS, '--migrate-worker', dbPath], { cwd: import.meta.dirname, env });
+}
 
 /**
  * 「迁移态」app：只服务迁移页与它的三个接口。
@@ -116,9 +153,8 @@ export async function createMigrateModeApp(opts: {
         }
         running = true;
         broadcast({ kind: 'started', at: Date.now() });
-        // tsx 起 .ts 子进程：与 `./sha.sh migrate` 用同一条路（生产也是这么跑 worker 的）
-        const tsx = join(import.meta.dirname, '../../../node_modules/.bin/tsx');
-        const child = spawn(tsx, [NEXT_PROCESS, dbPath], { cwd: import.meta.dirname, env: process.env });
+        // 子进程怎么起看形态（源码 / 产物），逻辑见 spawnWorker
+        const child = spawnWorker(dbPath);
 
         let buffered = '';
         child.stdout?.setEncoding('utf8');
