@@ -148,11 +148,29 @@ post(message, { kind: 'system' })  // 永远等下一轮
 - `steering` 创建提到 `runTurn` 第一行（压缩之前）
 - **验收**：压缩期间发消息也能并入当前轮；`await room.say()` 在消息被处理时立刻 resolve
 
-### P4 —— turn 发号与 session 解耦（继续向"容器"收）
+### P1b / P4 —— **评估后不做**（2026-11-27，动工前推翻）
 
-- `newTurn()` 保持同步发号，但**调用方**从 session 改成 room.say（一条用户消息发一个号）
-- 删 `QueueItem.turn`（每条消息不再自带 turn，合并轮的 turn 由发号时定）
-- **验收**：@all 时 3 个 bot 的 `turnId` 完全相同；连发 2 条不再出现「一轮里有两条不同 turn」
+写上面四阶段的时候把这两项轻估了。真要动时发现它们的收益是"少一个 Map"，代价却是**加重耦合**：
+
+- **`contexts` 不该挪进 BotSession** —— `contextSessionOf()`（`room.ts:1076`）要 `spec` / `cwd` /
+  `home` / `journal` / `unitBoard` / `members` / `remindMode`，全是**房间级**的东西。
+  挪进去得往 BotSession 灌 7 个闭包，比留着这个 Map 难懂得多。它本质是「房间给每个 bot 算的
+  系统提示」的缓存，不是 bot 自己的运行态 —— §10 判据里"`Map<botId,…>` 只能是配置或日志"
+  这一条该为它扩一格：**房间为成员算出来的派生数据也算配置**。
+- **`compacting` 不值得挪** —— 它的 key 是 `compactId`（不是 botId），是一张"进行中的操作表"，
+  而 `cancelCompact(compactId)` 对外没有 botId（`app.ts:1107`），挪进 session 就得遍历所有
+  session 找。收益（room 少一个 Map）抵不上这个代价。
+- **P4 大部分已经实现了** —— `turn` 本来就从 `room.say` 传到 `post`（`room.ts:449`），
+  `runTurn` 里的 `?? allocateTurn()` 只是"没人给号就自己发"的兜底，留着无害。
+
+**结论**：文档的价值是定边界，不是把每个 Map 都搬一遍。P1a + P2 已经把三份真相收成一份，
+剩下这两张 Map 属于"放在房间也说得通"的东西。
+
+### P4（原计划）—— 现状已足够
+
+原计划让 `newTurn()` 的调用方从 session 改成 `room.say`、删掉 `QueueItem.turn`。核查后：
+`room.say` 一直在把 `turn` 传给 `post`（`room.ts:449`），session 里的 `?? allocateTurn()`
+只是崩溃恢复 / 测试路径的兜底。**没有歧义可消**，不动。
 
 ---
 
