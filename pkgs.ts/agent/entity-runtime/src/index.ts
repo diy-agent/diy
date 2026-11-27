@@ -119,7 +119,7 @@ export type {
     Room,
     RoomMember,
     RoomEvent,
-    InboxMode,
+    MessageKind,
     Item,
 } from './types';
 export { dayOf, renderTaskDoc, taskDirOf } from './task-dir';

@@ -55,7 +55,7 @@ import type {
     Author,
     Bot,
     Delivery,
-    InboxMode,
+    MessageKind,
     Item,
     Room,
     RoomEvent,
@@ -382,7 +382,8 @@ export class RoomActor {
         text: string;
         author: Author;
         recipients?: string[];
-        mode?: InboxMode;
+        /** 谁发的：缺省 `human`（人的话，能并进当前轮就并）；系统消息传 `system` */
+        kind?: MessageKind;
         quiet?: boolean;
         /**
          * 随消息带的附件（已落 blobs 的 ref）。
@@ -446,7 +447,8 @@ export class RoomActor {
                 messageId: saved.id,
                 botId: bot.id,
                 state: 'pending',
-                mode: input.mode ?? 'next-step',
+                // db 列名还是 `mode`，值已从 next-step/next-turn 改成 human/system
+                mode: input.kind ?? 'human',
                 turn: turn.turn,
                 turnId: turn.turnId,
             });
@@ -463,7 +465,7 @@ export class RoomActor {
                     await this.sessionOf(bot).post({
                         messageId: saved.id,
                         text,
-                        mode: input.mode ?? 'next-step',
+                        kind: input.kind ?? 'human',
                         turn,
                         entry,
                     });
@@ -531,7 +533,8 @@ export class RoomActor {
             await this.sessionOf(bot).post({
                 messageId: delivery.messageId,
                 text,
-                mode: delivery.mode ?? 'next-step',
+                // db 列名还是 `mode`，值已从 next-step/next-turn 改成 human/system
+                kind: delivery.mode ?? 'human',
                 // 不写 alreadyInContext：由 session 按序号自己判断（回放带了就带上它，
                 // 水位跳过了就当普通消息补上）。原先无条件写 true 就是把消息凭空抹掉的那一刀。
                 ...(entry === undefined ? {} : { entry }),
@@ -1318,7 +1321,7 @@ export class RoomActor {
         void this.sessionOf(target).post({
             messageId: notice.id,
             text: `[${name} 的结论] ${result.text}`,
-            mode: 'next-turn',
+            kind: 'system',
             turn: { turn: result.turn, turnId: result.turnId },
         });
     }
@@ -1353,7 +1356,7 @@ export class RoomActor {
         void this.sessionOf(bot).post({
             messageId: notice.id,
             turn,
-            mode: 'next-turn',
+            kind: 'system',
             text: `[后台作业结束] ${event.text}`,
         });
         return true;

@@ -757,18 +757,15 @@ export interface ModelCatalogSnapshot {
     defaultModelKey?: string;
 }
 
-// ── actor 收件箱（后端内部，但类型放这里以便将来跨进程）─────────
+// ── 消息来源（后端内部，类型放这里以便将来跨进程）─────────────
 
-export type InboxMode = 'next-step' | 'next-turn';
-
-export interface InboxItem {
-    id: string;
-    actor: string;
-    seq: number;
-    mode: InboxMode;
-    kind: 'chat' | 'notice';
-    payload: Record<string, unknown>;
-    status: 'pending' | 'claimed';
-    createdAt: number;
-    claimedAt?: number;
-}
+/**
+ * 这条消息谁发的 —— 决定它能不能趁 bot 还在跑的时候并进当前轮。
+ *
+ * 以前这里是 `InboxMode = 'next-step' | 'next-turn'`，把**实现手段**（插进 step 边界 /
+ * 等下一轮）当成了对外概念。其实用户不需要知道"插话"这回事：
+ *   · 人的话：能并就并（他还在说，就别等），并不进去就排下一轮；
+ *   · 系统的话（作业结束 / 别的 bot 的结论）：永远别插到半句话中间。
+ * 两个值按"谁发的"分，比按"怎么送"分少一个概念。
+ */
+export type MessageKind = 'human' | 'system';

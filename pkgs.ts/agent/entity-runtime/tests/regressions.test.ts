@@ -181,7 +181,7 @@ describe('P0 回归', () => {
             messageId: item.id,
             botId: BOT_A.id,
             state: 'working',
-            mode: 'next-step',
+            mode: 'human',
             turn: 2,
             turnId: 'turn-legacy',
         });

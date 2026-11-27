@@ -46,7 +46,9 @@ interface ToolResultLike {
 }
 
 /** 进模型的那一份：纯文本，或「内容块数组」（文本 + 媒体混排） */
-type ModelOut = { readonly type: 'text'; readonly value: string } | { readonly type: 'content'; readonly value: readonly unknown[] };
+type ModelOut =
+    | { readonly type: 'text'; readonly value: string }
+    | { readonly type: 'content'; readonly value: readonly unknown[] };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
     return typeof v === 'object' && v !== null;

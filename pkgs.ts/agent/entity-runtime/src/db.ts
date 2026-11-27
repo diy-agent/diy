@@ -17,7 +17,7 @@ import type { TranscriptEntry, TokenUsage } from './compaction';
 import { isLinkKind } from './id';
 import type { RoomEntry } from './room-log';
 import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc } from './task-dir';
-import type { Bot, AskAnswer, AskRequest, Delivery, InboxMode, Item, Room, RoomMember } from './types';
+import type { Bot, AskAnswer, AskRequest, Delivery, MessageKind, Item, Room, RoomMember } from './types';
 
 /** 一个 bot 在某个房间里的对话快照（持久化单位） */
 export interface SessionSnapshot {
@@ -233,7 +233,8 @@ export interface LinkSets {
 
 /** 投递时的入队信息：崩溃后据此重新投递 */
 export interface DeliveryInput extends Omit<Delivery, 'updatedAt'> {
-    mode?: InboxMode;
+    /** 谁发的（db 列名沿用 `mode`，但值已从 `next-step/next-turn` 改成 `human/system`） */
+    mode?: MessageKind;
     turn?: number;
     turnId?: string;
 }
@@ -1318,6 +1319,11 @@ export function openStore(file: string): Store {
             db.prepare(
                 "UPDATE deliveries SET state='done', note=COALESCE(note,'failed') WHERE state IN ('failed','skipped')",
             ).run();
+            // 同一刀：`mode` 列的含义从「怎么送」(next-step/next-turn) 换成「谁发的」
+            // (human/system)。旧 next-turn 里混着系统消息与带附件降级的，一律归 system ——
+            // 后果都是「排下一轮」，与原来一致；next-step 归 human。
+            db.prepare("UPDATE deliveries SET mode='human' WHERE mode='next-step'").run();
+            db.prepare("UPDATE deliveries SET mode='system' WHERE mode='next-turn'").run();
             db.exec('COMMIT');
         } catch (error) {
             db.exec('ROLLBACK');
@@ -1712,7 +1718,7 @@ export function openStore(file: string): Store {
                 messageId: String(row['message_id']),
                 botId: String(row['bot_id']),
                 state: row['state'] as Delivery['state'],
-                ...(row['mode'] === null ? {} : { mode: row['mode'] as InboxMode }),
+                ...(row['mode'] === null ? {} : { mode: row['mode'] as MessageKind }),
                 ...(row['turn'] === null ? {} : { turn: Number(row['turn']) }),
                 ...(row['turn_id'] === null ? {} : { turnId: String(row['turn_id']) }),
             }));
