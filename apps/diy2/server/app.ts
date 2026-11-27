@@ -35,11 +35,20 @@ import {
     sourceQuotesOf,
     unitBoard,
     unitsContextText,
+    type RunCodeHost,
     withSourceQuotes,
 } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
-import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
+import {
+    ChannelClientBinding,
+    ChannelServerBinding,
+    _flattenRouter,
+    createMemTransportPair,
+    createTypedClient,
+    type HandlersOf,
+} from '@diy-agent/rpc';
 import { createBlobStore, parseAttachmentRef, parseAttachmentRefs } from '@diy-agent/attachment';
+import { apiHelpOf, defaultCodeRuntime } from '@diy-agent/code-runtime';
 import { diy2Api } from '@diy-agent/protocol';
 import type {
     ActivityFrame,
@@ -103,6 +112,14 @@ let rooms = new Map<string, RoomActor>();
  * 收口通知按归属串 `<roomId>#<botId>` 回到对应房间 —— 房间不在（已删 / 别的进程起的）就静默。
  */
 let jobs: ReturnType<typeof createJobRegistry>;
+/**
+ * `run_code` 的执行器 + 进程内 RPC client。
+ *
+ * **模块级**而不是 `createDiy2App` 里的局部量：`actorOf` 是模块级函数（被 `seed()` 提前调），
+ * 房间的工具集是惰性装配的（第一次 turn 才 `toolsFor`），所以这里只要在首个 turn 之前
+ * 赋值就够——赋值点在建完 handlers 之后（那时才拿得到 `bindDiy2Api`）。
+ */
+let codeHost: RunCodeHost | undefined;
 /**
  * 话题上推的帧：房间领域事件 + 传输层的收尾帧。
  *
@@ -248,6 +265,7 @@ function actorOf(spec: Room): RoomActor {
             home: config.home,
             // 设备库住生产根（`~/.diy2/knowledge`），不跟着 lab 的实例根漂
             deviceHome: config.deviceHome,
+            ...(codeHost === undefined ? {} : { code: codeHost }),
             shell: config.tools !== 'files',
             jobs: { registry: jobs },
             ...(config.maxSteps === undefined ? {} : { maxSteps: config.maxSteps }),
@@ -1013,6 +1031,24 @@ export async function createDiy2App(opts: {
                         runningTurns: actor.runningTurns(),
                     };
                 },
+                wait: async ({ input }) => {
+                    const actor = requireRoom(input.id);
+                    const sinceSeq = input.sinceSeq ?? 0;
+                    // 10s：要明显小于 run_code 的 30s 预算（见 protocol 里那条注释）
+                    const deadline = Date.now() + (input.timeoutMs ?? 10_000);
+                    // 轮询间隔：本地 sqlite 读一条 eq 读 200 次/秒不痛；再密就是给自己找 IO
+                    const POLL_MS = 200;
+                    for (;;) {
+                        const fresh = actor.items(sinceSeq);
+                        if (fresh.length > 0) {
+                            // 只回最近 50 条：长轮询是「醒来看看」，不是拉全量（拉全量是 history 的事）
+                            const tail = fresh.slice(-50);
+                            return { timedOut: false, seq: tail[tail.length - 1]?.seq ?? sinceSeq, items: tail };
+                        }
+                        if (Date.now() >= deadline) return { timedOut: true, seq: sinceSeq, items: [] };
+                        await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+                    }
+                },
                 chat: async ({ input }) => {
                     const actor = requireRoom(input.id);
                     const text = input.text.trim();
@@ -1187,6 +1223,22 @@ export async function createDiy2App(opts: {
         };
         server.use({ prefix: 'diy2', api: diy2Api, handlers });
     };
+
+    // ── 进程内的第二份命令面：给 `run_code` 用 ──
+    // 为什么再绑一份而不是让模型自己拼 `createMemTransportPair`：
+    //   · 调用方（模型代码）只该看到 `api.bots.update({…})` 这种强类型调用；
+    //   · 换引擎（进程内 vm → worker / 子进程）时改的是这里传什么 client，模型代码不动。
+    // 为什么走 mem 而不是裸调 handler：零序列化的好处拿到了，zod 校验与契约仍然生效。
+    {
+        const mem = createMemTransportPair();
+        bindDiy2Api(new ChannelServerBinding(mem.serverTx));
+        codeHost = {
+            runtime: defaultCodeRuntime,
+            api: createTypedClient(new ChannelClientBinding(mem.clientTx), diy2Api, { prefix: 'diy2' }),
+            // 前缀 `diy2` 会从 path 里剥掉：模型看到的是 `api.bots.list`，照抄才对得上
+            apiHelp: apiHelpOf(diy2Api, { prefix: 'diy2' }),
+        };
+    }
 
     // RPC 面：事件流（WS）+ 命令面。与 SSE 并存一段时间 —— 客户端切过去、验证稳定后再删 SSE。
     const rpc = createRpcSocket({

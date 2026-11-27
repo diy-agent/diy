@@ -563,7 +563,8 @@ export class BotSession {
         this.turnUsage = undefined;
         // 先广播"这一轮开始了"：房间据此把上一个回合留下的未答提问判过期（ask.ts 的寿命规则）
         this.emit({ type: 'turn.start', turn, startedAt });
-        const projector = new Projector(this.authorOf(), turn.turn);
+        // 错误条目带上本轮实际用的模型：403 / 无订阅这类失败，事后只能从 log 里翻
+        const projector = new Projector(this.authorOf(), turn.turn, { modelKey: this.modelKey });
         const abort = new AbortController();
         this.abort = abort;
 

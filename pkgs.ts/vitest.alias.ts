@@ -62,6 +62,7 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
     "@diy-agent/entity-runtime": { dir: "pkgs.ts/agent/entity-runtime", entry: "src/index.ts" },
     "@diy-agent/agents-chain": { dir: "pkgs.ts/agent/agents-chain", entry: "src/index.ts" },
     "@diy-agent/skills": { dir: "pkgs.ts/agent/skills", entry: "src/index.ts" },
+    "@diy-agent/code-runtime": { dir: "pkgs.ts/agent/code-runtime", entry: "src/index.ts" },
     "@diy-agent/hub": { dir: "pkgs.ts/remote/hub", entry: "src/index.ts" },
     "@diy-agent/test-llm": { dir: "pkgs.ts/test/llm", entry: "src/index.ts" },
     "@diy-agent/chat-core": { dir: "pkgs.ts/ui/chat-core", entry: "src/index.ts" },

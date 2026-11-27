@@ -34,7 +34,7 @@ import { RoomLog, type RoomEntry } from './room-log';
 import type { AttachmentReader } from './session-images';
 import { createRoomContext } from './system-context';
 import { envelopeHint, promptReminder, resolveRemindMode, type RemindMode } from './units-remind';
-import { buildRoomTools } from './tools/index';
+import { buildRoomTools, type RunCodeHost } from './tools/index';
 import { createToolOutputCapper } from './tool-output';
 import { unitBoard, type UnitBoard } from './units';
 import { jobNoticeOf, jobOwnerOf, type JobOwner } from './jobs';
@@ -106,6 +106,13 @@ export interface RoomActorDeps {
      * 不传 = 不投设备库（与 `home` 分开：lab 实例的应用根是 `run/diy2/lab`，设备库仍在生产根）。
      */
     deviceHome?: string;
+    /**
+     * 代码执行（`run_code`）：引擎 + 进程内 RPC client。不传 = 没这个工具。
+     *
+     * 为什么拿 `RunCodeHost` 而不是自己 import 引擎：引擎是可换的策略（进程内 vm /
+     * worker / 子进程），房间只负责「把它包成工具」，不该决定它在哪个进程跑。
+     */
+    code?: RunCodeHost;
     /** 是否开放 shell（缺省开放） */
     shell?: boolean;
     /**
@@ -901,6 +908,7 @@ export class RoomActor {
                                 },
                             }
                           : {}),
+                      ...(this.deps.code === undefined ? {} : { code: this.deps.code }),
                   });
         this.toolsByBot.set(botId, tools);
         return tools;

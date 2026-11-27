@@ -40,4 +40,9 @@ export * from './service.js';
 
 // 挂载点（prefix）与模块（api）分离：同一个 api 能挂到多个前缀，换部署位置不改模块源码
 export { mountService, createScopedClient } from './scope.js';
+// 把 api 树拍平成「方法名 → meta」（CLI 生成器与 apiHelp 清单共用；带下划线 = 内部契约，
+// 只给基础设施层用，业务代码不要拿它绕开 typed client）
+export { _flattenRouter } from './_tree.js';
+// `_AnyProcedureMeta` 是 `_flattenRouter` 的值类型：不导出则使用方只能拿到 unknown
+export type { _AnyProcedureMeta } from './meta.js';
 export type { ScopedClient } from './scope.js';

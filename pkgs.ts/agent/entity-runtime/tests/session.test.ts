@@ -362,7 +362,11 @@ describe('BotSession', () => {
                     origin: 'self' as const,
                     turn: 1,
                 },
-                { message: { role: 'user', content: '人: '.concat('最新一句'.repeat(900)) }, origin: 'public' as const, turn: 2 },
+                {
+                    message: { role: 'user', content: '人: '.concat('最新一句'.repeat(900)) },
+                    origin: 'public' as const,
+                    turn: 2,
+                },
             ],
         });
         const a = makeSession({ seed, windowTokens: 20_000 });
@@ -425,7 +429,8 @@ describe('BotSession', () => {
 
         const errors = h.items.filter((item) => item.type === 'error');
         expect(errors.length).toBe(1);
-        expect(errors[0]?.data).toEqual({ message: '401 Invalid API key（检查 DEEPSEEK_API_KEY）' });
+        // modelKey 一起带：403/401 这类失败，事后靠它判断「当时用的是哪个模型」
+        expect(errors[0]?.data).toEqual({ message: '401 Invalid API key（检查 DEEPSEEK_API_KEY）', modelKey: 'm' });
         expect(h.ends[0]?.endReason.type).toBe('error');
     });
 

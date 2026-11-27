@@ -82,7 +82,7 @@ export {
 } from './bot-status';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';
-export { buildRoomTools, type RoomJobs, type RoomToolsOptions } from './tools/index';
+export { buildRoomTools, type RoomJobs, type RoomToolsOptions, type RunCodeHost } from './tools/index';
 export { createJobRegistry, jobOwnerOf, parseJobOwner, type JobOwner, type RoomJobsHost } from './jobs';
 export { RoomLog, toMessage, type RoomEntry, type RoomEntryInput } from './room-log';
 export {

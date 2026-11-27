@@ -56,6 +56,9 @@
       "path": "pkgs.ts/agent/tools"
     },
     {
+      "path": "pkgs.ts/agent/code-runtime"
+    },
+    {
       "path": "pkgs.ts/room"
     },
     {
