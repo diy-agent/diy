@@ -1679,10 +1679,16 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                     } catch {
                         /* 坏 data 不该让整份日志读不出来 */
                     }
+                    // 未知 kind 归位成 progress：journal 的 kind 由 schema 硬校验（context 里
+                    // `journal.entries[].kind` 是枚举），一条脏数据会让**整轮上下文装配崩掉**。
+                    // 2026-11-27 实测：lab 里 bot 把步骤写成 `kind: "step"` → 启动即 ZodError。
+                    const kind: JournalKind = JOURNAL_KINDS.includes(data.kind as JournalKind)
+                        ? (data.kind as JournalKind)
+                        : 'progress';
                     return {
                         seq: Number(row['seq']),
                         at: Number(row['at']),
-                        kind: (typeof data.kind === 'string' ? data.kind : 'progress') as JournalKind,
+                        kind,
                         text: typeof data.text === 'string' ? data.text : '',
                         ...(typeof data.unit === 'string' && data.unit !== '' ? { unit: data.unit } : {}),
                     };
