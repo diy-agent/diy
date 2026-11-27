@@ -165,6 +165,9 @@ const PAGE = `<!doctype html>
   :root{--bg:#0f1115;--panel:#171a21;--line:#2b303b;--fg:#e6e8ee;--muted:#9aa3b2;
         --ok:#4ec9a8;--run:#e0a458;--skip:#6b7484;--bad:#ff6b6b}
   *{box-sizing:border-box}
+  /* hidden 属性必须能盖住 .btn 的 display:inline-block（否则这个链接永远显示 ——
+     于是出现「开始迁移」和「打开主界面」两个按钮同时在场） */
+  [hidden]{display:none !important}
   body{margin:0;padding:32px 24px 64px;background:var(--bg);color:var(--fg);
        font:14px/1.6 -apple-system,"PingFang SC",ui-sans-serif,sans-serif}
   .wrap{max-width:820px;margin:0 auto}
@@ -187,6 +190,8 @@ const PAGE = `<!doctype html>
   .btn{display:inline-block;padding:9px 20px;border-radius:9px;text-decoration:none;font-weight:700;
        font-size:14px;background:var(--ok);color:#07110d;border:0;cursor:pointer;margin-top:0}
   .btn:hover{filter:brightness(1.08)}
+  .pending{color:var(--run);font-size:12.5px;margin-top:8px;line-height:1.7}
+  .pending:empty{display:none}
   .hint{color:var(--muted);font-size:12.5px;margin-top:12px}
   .hint:empty{display:none}
   .rows .check .ico{color:var(--ok)}
@@ -227,6 +232,7 @@ const PAGE = `<!doctype html>
 <div class="card">
   <div class="verdict" id="verdict">等待开始</div>
   <div class="sub" id="sub">共 __TOTAL__ 个步骤。迁移前：会话 __SESSIONS__ 份 · 消息 __ENTRIES__ 条 · 会话键列 __COL__</div>
+  <div class="pending" id="pending"></div>
   <div class="track"><div class="fill" id="fill"></div></div>
   <div class="countline"><span id="counter">0 / __TOTAL__</span><span class="cur" id="cur"></span></div>
   <div class="actions">
@@ -236,7 +242,7 @@ const PAGE = `<!doctype html>
   <div class="hint" id="openHint"></div>
 </div>
 
-<details><summary>迁移规划（<span id="planCount">0</span> 项 · 共 <span id="planTodo">0</span> 项要动）</summary><div class="plan-head"><span>旧数据</span><span></span><span>迁移后</span><span>说明</span><span>状态</span></div><div class="rows" id="plan"></div></details>
+<details id="planBox"><summary>迁移规划（<span id="planCount">0</span> 项 · 共 <span id="planTodo">0</span> 项要动）</summary><div class="plan-head"><span>旧数据</span><span></span><span>迁移后</span><span>说明</span><span>状态</span></div><div class="rows" id="plan"></div></details>
 <details><summary>执行步骤（<span id="stepCount">0</span> / __TOTAL__）</summary><div class="rows" id="rows"></div></details>
 <details><summary>运行日志</summary><pre id="log"></pre></details>
 <script>
@@ -306,6 +312,11 @@ function planInitialText(item){
   } else {
     elSub.textContent = '共 ' + PLAN.length + ' 项，其中 ' + todo.length + ' 项待迁移。迁移前：会话 ' +
       BEFORE_SESSIONS + ' 份 · 消息 ' + BEFORE_ENTRIES + ' 条 · 会话键列 ' + COL_LABEL;
+    // 待办直接摆在主卡上：不展开折叠卡也能看到「到底有什么要迁」
+    document.getElementById('pending').textContent = '待迁移 ' + todo.length + ' 项：' +
+      todo.map(function(it){ return it.to; }).join(' · ');
+    // 有活要干时把规划卡展开（全干完就不用展开了）
+    document.getElementById('planBox').open = true;
   }
 })();
 
@@ -443,6 +454,7 @@ elGo.onclick = function(){
     cell.textContent = planInitialText(item);
   });
   elOpen.hidden = true; elHint.textContent = '';
+  document.getElementById('pending').textContent = '';
   elLog.textContent = ''; elCur.textContent = ''; doneOk = false;
   elFill.className = 'fill';
   setVerdict('正在迁移…', 'run');
