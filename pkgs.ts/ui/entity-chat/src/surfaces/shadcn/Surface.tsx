@@ -90,6 +90,7 @@ import { ErrorBar } from '../../components/ErrorBar';
 import { CompactCutBar } from '../../components/CompactCutBar';
 import { JobCard } from '../../components/JobCard';
 import { Markdown } from '../../components/Markdown';
+import { RoomStatusBar } from '../../components/RoomStatusBar';
 import { TurnFooter } from '../../components/TurnFooter';
 import { useDraft } from '../../drafts';
 import { useMentionCandidates } from '../../mentions';
@@ -960,6 +961,13 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
                     </span>
                 </div>
             )}
+            {/* 房间状态一条道：谁在等你（待答提问）、谁没动（投递挂着）。
+                **2026-11-27 补回**：这个组件（c5cc6442）从建立起只挂在 astryx 面，
+                11-26 删 astryx 时随它一起消失，全仓零引用 —— 界面上「谁在等你 / 谁没动」
+                就再没地方说了。位置按 d523bf81 定的口径：房间级唯一收容处，在底部一条。 */}
+            <div className="px-6">
+                <RoomStatusBar roomId={targetId} surfaceId="shadcn" />
+            </div>
             <Composer conversation={conversation} roomId={targetId} running={state.running} extras={composerExtras} />
         </div>
     );
