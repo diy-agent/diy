@@ -180,7 +180,7 @@ const PAGE = `<!doctype html>
   <div>会话键列<b id="b-col">__COL__</b></div>
   <div style="margin-left:auto"><button id="go">开始迁移</button></div>
 </div>
-<div id="steps"></div>
+<div id="steps"><div class="row" id="hint"><span class="ico">·</span><div><div class="name">点上面的「开始迁移」，这里会逐步出现每一步的状态</div><div class="note">跳过的步骤会写原因，长步骤会显示进度</div></div></div></div>
 <div id="summary"></div>
 <div id="log"></div>
 <script>
@@ -204,16 +204,22 @@ function rowOf(e){
   el.querySelector('.meta').textContent=meta.join(' · ');
 }
 const logEl=document.getElementById('log');
-function log(t){logEl.textContent+=t+'\n';logEl.scrollTop=logEl.scrollHeight;}
+const NL=String.fromCharCode(10);
+function log(t){logEl.textContent+=t+NL;logEl.scrollTop=logEl.scrollHeight;}
 const es=new EventSource('/api/events');
 es.onmessage=(m)=>{
   const p=JSON.parse(m.data);
   if(p.kind==='step')return rowOf(p.event);
   if(p.kind==='started'){log('── 开始 '+(new Date(p.at)).toLocaleTimeString());return;}
   if(p.kind==='log'||p.kind==='stderr'){if(p.text.trim())log(p.text.trimEnd());return;}
-  if(p.kind==='error'){log('✗ '+p.message);logEl.style.color='var(--bad)';return;}
+  if(p.kind==='error'){
+    log('✗ '+p.message);logEl.style.color='var(--bad)';
+    const btn=document.getElementById('go');btn.disabled=false;btn.textContent='开始迁移';
+    return;
+  }
   if(p.kind==='closed'){
-    document.getElementById('go').disabled=false;
+    const btn=document.getElementById('go');
+    btn.disabled=false;btn.textContent='开始迁移';
     if(p.code!==0)log('✗ 子进程退出码 '+p.code);
     return;
   }
@@ -243,8 +249,10 @@ document.getElementById('go').onclick=async()=>{
   const btn=document.getElementById('go');btn.disabled=true;btn.textContent='迁移中…';
   steps.innerHTML='';rows.clear();document.getElementById('summary').style.display='none';
   logEl.textContent='';logEl.style.color='var(--muted)';
-  await fetch('/api/start',{method:'POST'});
-  btn.textContent='开始迁移';
+  try{
+    const res=await fetch('/api/start',{method:'POST'});
+    if(!res.ok){log('✗ 启动失败：HTTP '+res.status);btn.disabled=false;btn.textContent='开始迁移';}
+  }catch(e){log('✗ 请求失败：'+e.message);btn.disabled=false;btn.textContent='开始迁移';}
 };
 </script></div></body></html>`;
 
