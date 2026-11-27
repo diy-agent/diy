@@ -14,7 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
-import { MIGRATION_STEPS, PLACEHOLDER_MODEL_KEY } from '@diy-agent/entity-runtime';
+import { MIGRATION_STEPS, migrationPlan, type MigrationPlanItem } from '@diy-agent/entity-runtime';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** 仓库根的 node_modules/.bin/tsx（HERE 是 apps/diy2/server，要往上**三层**到仓根） */
@@ -469,219 +469,29 @@ elGo.onclick = function(){
 
 const COL_LABEL: Record<number, string> = { 0: '(未知)', 1: 'bot_id（最老）', 2: 'bot_role_id', 3: 'bot_profile_id（已迁）' };
 
-/**
- * 迁移计划的一条：旧资源 → 新资源。
- *
- * 这份清单不是写死的步骤名，而是**从真实库里读出来的**：
- * 哪张表在、多少行、要不要改。所以同一个页面拿去给不同的库看，
- * 它会自己说「你这个库哪些要迁、哪些会跳过」。
- */
-interface PlanItem {
-    /** 负责这一项的迁移步骤 id（计划行跟着步骤的状态走，两边不会各说各话） */
-    step: string;
-    /** 旧资源（表 / 列 / 值） */
-    from: string;
-    /** 过完这道手续变成什么 */
-    to: string;
-    /** 旧资源的行数；-1 = 没这个表 */
-    rows: number;
-    /** 一句话解释这道手续在干什么 */
-    note: string;
-    /** 这个库里到底有没有东西要迁 */
+/** 迁移计划的一条（旧资源 → 新资源 + 现在做完没有） */
+interface PlanItem extends MigrationPlanItem {
+    /** 还有东西要迁（= 没做完）；页面用它决定「待迁移 / 已完成」 */
     present: boolean;
-    /**
-     * 这一项**现在是否已经完成**（从库里看出来的，不是从按钮状态推的）。
-     *
-     * 判据与迁移步骤里的 skip 判据一致：源表没了 / 列已经在 = 已完成。
-     * 有它，刷新页面才不会把一个已经迁完的库又显示成「等待开始」。
-     */
-    done: boolean;
 }
 
+/**
+ * 只读地把「计划 + 现状」算出来。
+ *
+ * 判据**不在页面这里** —— 真源是 entity-runtime 的 `migrations/`：
+ * 每条迁移自己声明 `plan`（旧→新）与 `done()`（做完没有）。
+ * 以前这里照拄了一份，结果两边各说各话（迁移说跳过、页面说等待）。
+ */
 function planOf(file: string): PlanItem[] {
-    const items: PlanItem[] = [];
-    let db: DatabaseSync | undefined;
+    const db = new DatabaseSync(file, { readOnly: true });
     try {
-        db = new DatabaseSync(file, { readOnly: true });
-        const tables = new Set(
-            (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map(
-                (row) => row.name,
-            ),
-        );
-        const cols = (table: string): Set<string> => {
-            if (!tables.has(table)) return new Set();
-            return new Set(
-                (db!.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
-            );
-        };
-        const count = (table: string): number => {
-            if (!tables.has(table)) return -1;
-            try {
-                return (db!.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
-            } catch {
-                return -1;
-            }
-        };
-        const add = (
-            step: string,
-            from: string,
-            to: string,
-            rows: number,
-            note: string,
-            present: boolean,
-        ): void => {
-            items.push({ step, from, to, rows, note, present, done: doneOf[step] ?? false });
-        };
-        const countOf = (table: string): number => count(table);
-
-        const sessionCols = cols('session_state');
-        const profileTable = tables.has('bot_profiles') ? 'bot_profiles' : 'bot_roles';
-        const profileCols = cols(profileTable);
-        const deliveryCols = cols('deliveries');
-        const taskCols = cols('tasks');
-        const unitCols = cols('task_units');
-
-        // 每一项「现在做完了没有」—— 真源是库本身（与步骤里的 skip 判据一脉相承）。
-        // 没有这张表，页面刷新后就会把一个已迁完的库又显示成「等待开始」。
-        const placeholderLeft = (): boolean => {
-            if (!tables.has(profileTable)) return false;
-            return (
-                (db!.prepare(`SELECT 1 AS x FROM ${profileTable} WHERE model_key = ? LIMIT 1`).all(
-                    PLACEHOLDER_MODEL_KEY,
-                ) as unknown[]).length > 0
-            );
-        };
-        const doneOf: Record<string, boolean> = {
-            'rename-bot-profiles': !tables.has('bot_roles'),
-            'rename-bot-profile-defaults': !tables.has('role_config'),
-            'create-tables': tables.has('bot_profiles') && tables.has('bot_profile_defaults') && tables.has('events'),
-            'entity-bots-to-room-members': !tables.has('entity_bots'),
-            'deliveries-columns': ['mode', 'turn', 'turn_id'].every((column) => deliveryCols.has(column)),
-            'session-log-seq': sessionCols.has('log_seq'),
-            'session-bot-column': sessionCols.has('bot_profile_id'),
-            'bot-profile-columns': ['domain_type', 'domain_id', 'persona_ref'].every((column) =>
-                profileCols.has(column),
-            ),
-            'clear-placeholder-model': !placeholderLeft(),
-            'tasks-updated-at': taskCols.has('updated_at'),
-            'task-units-parent': unitCols.has('parent_id'),
-            'drop-unit-deps': !tables.has('unit_deps') && !tables.has('unit_batches'),
-            'legacy-rooms': !tables.has('rooms'),
-            'fold-bots': !tables.has('bots'),
-            'legacy-journal': !tables.has('journal_entries'),
-            'drop-legacy-room-model': !['tasks', 'projects', 'rooms_v0', 'room_members'].some((table) =>
-                cols(table).has('model_key'),
-            ),
-        };
-
-        // 顺序 = 执行顺序；每一项都挂一个 step id，页面靠它把计划行与步骤状态绑在一起
-        add(
-            'rename-bot-profiles',
-            'bot_roles',
-            'bot_profiles',
-            countOf('bot_roles'),
-            '表改名，行数不变',
-            tables.has('bot_roles'),
-        );
-        add(
-            'rename-bot-profile-defaults',
-            'role_config',
-            'bot_profile_defaults',
-            countOf('role_config'),
-            '表改名，行数不变',
-            tables.has('role_config'),
-        );
-        add('create-tables', '（库结构）', '缺什么补什么的新表 / 索引', -1, '幂等：已存在不动', true);
-        add(
-            'entity-bots-to-room-members',
-            'entity_bots',
-            'room_members',
-            countOf('entity_bots'),
-            '老的成员 id 列表展开成行',
-            tables.has('entity_bots'),
-        );
-        add(
-            'deliveries-columns',
-            'deliveries',
-            '+ mode / turn / turn_id',
-            countOf('deliveries'),
-            '补三列（已有时不动）',
-            ['mode', 'turn', 'turn_id'].some((col) => !deliveryCols.has(col)),
-        );
-        add(
-            'session-log-seq',
-            'session_state',
-            '+ log_seq',
-            countOf('session_state'),
-            '补回放水位列',
-            !sessionCols.has('log_seq'),
-        );
-        add(
-            'session-bot-column',
-            'session_state.bot_id',
-            'session_state.bot_profile_id',
-            countOf('session_state'),
-            '列名改迁（两代旧名都认）',
-            sessionCols.has('bot_id') || sessionCols.has('bot_role_id'),
-        );
-        add(
-            'bot-profile-columns',
-            profileTable,
-            '+ domain_type / domain_id / persona_ref',
-            countOf(profileTable),
-            '补归属与人设三列',
-            ['domain_type', 'domain_id', 'persona_ref'].some((col) => !profileCols.has(col)),
-        );
-        add(
-            'clear-placeholder-model',
-            profileTable + '.model_key',
-            'NULL',
-            countOf(profileTable),
-            '作废占位值 none@none/none',
-            true,
-        );
-        add('tasks-updated-at', 'tasks', '+ updated_at', countOf('tasks'), '用 created_at 回填', !taskCols.has('updated_at'));
-        add(
-            'task-units-parent',
-            'task_units',
-            '+ parent_id',
-            countOf('task_units'),
-            '补需求树挂点',
-            !unitCols.has('parent_id'),
-        );
-        add(
-            'drop-unit-deps',
-            'unit_deps / unit_batches',
-            '（删除）',
-            countOf('unit_deps') + Math.max(0, countOf('unit_batches')),
-            '依赖边与交付批次已退役',
-            tables.has('unit_deps') || tables.has('unit_batches'),
-        );
-        add('legacy-rooms', 'rooms', 'rooms_v0 + 实体 / 域行', countOf('rooms'), '老房间表搬家后留档', tables.has('rooms'));
-        add(
-            'fold-bots',
-            'bots',
-            'bot_profiles',
-            countOf('bots'),
-            '按类型 + 人设折叠；旧表留档 bots_v0',
-            tables.has('bots'),
-        );
-        add(
-            'legacy-journal',
-            'journal_entries',
-            'events',
-            countOf('journal_entries'),
-            '老日志折进实体事件流',
-            tables.has('journal_entries'),
-        );
-        add('drop-legacy-room-model', '房间级 model_key', '（删除）', -1, '模型真源只剩机器人配置', true);
+        return migrationPlan(db).map((item) => ({ ...item, present: !item.done }));
     } catch {
-        // 读不到就交白卷：页面会只显示「计划读取失败」，不会因此打不开
+        // 读不到就交白卷：页面只显示空计划，不会因此打不开
         return [];
     } finally {
-        db?.close();
+        db.close();
     }
-    return items;
 }
 
 const server = createServer((request, response) => {
