@@ -1,3 +1,8 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+
 import { describe, expect, it } from 'vitest';
 import { openStore, type TaskInput } from '../src/db';
 import type { Item, Room } from '../src/types';
@@ -489,6 +494,31 @@ describe('unit（需求账本树的节点）', () => {
         expect(updated.createdAt).toBe(first.createdAt);
         expect(store.listUnits('t1').map((unit) => unit.title)).toEqual(['a2', 'b']);
         expect(store.unitOf('t1', 'u1')?.status).toBe('doing');
+    });
+
+    it('老库没有 task_units.kind：开库时迁移补上，写入不再炸「no column named kind」', () => {
+        // 2026-11-27 生产事故：PR #621 只改了 `CREATE TABLE IF NOT EXISTS`（对已存在的表不生效），
+        // 老库永远缺 kind ⇒ 任何 unit 写入都报 `table task_units has no column named kind`。
+        // 这条钉住「老库开一次就有了」，别再靠手改 CREATE TABLE 兜底。
+        const file = join(mkdtempSync(join(tmpdir(), 'diy-kind-')), 'diy2.db');
+        const legacy = new DatabaseSync(file);
+        legacy.exec(`CREATE TABLE task_units (
+            task_id TEXT NOT NULL, id TEXT NOT NULL, title TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '', accept TEXT NOT NULL DEFAULT '',
+            source_message_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open',
+            parent_id TEXT, seq INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            PRIMARY KEY (task_id, id))`);
+        legacy.close();
+
+        const store = openStore(file);
+        const probe = new DatabaseSync(file);
+        const columns = (probe.prepare('PRAGMA table_info(task_units)').all() as Array<{ name: string }>).map(
+            (row) => row.name,
+        );
+        probe.close();
+        expect(columns).toContain('kind');
+        store.saveUnit({ taskId: 'task-x', id: 'u1', allowNewId: true, title: '老库补列后能写', body: '', accept: '', status: 'open', parent: null });
+        expect(store.unitOf('task-x', 'u1')?.kind).toBe('need');
     });
 
     it('journalOf：未知 kind 归位成 progress（一条脏数据不该崩掉整轮上下文）', () => {
