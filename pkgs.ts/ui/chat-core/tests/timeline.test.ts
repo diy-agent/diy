@@ -103,12 +103,16 @@ describe('buildTimeline', () => {
 
         const entries = buildTimeline(items, [], BOTS);
 
-        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'user', 'notice']);
+        // 2026-11-27 起：同一轮里人连发两条时，回复统一落在**两条之后**
+        // （原先落在中间，看起来像 bot 抢在第二条之前回话）。这里真正要钉的是
+        // 「tool 条目虽然 seq=30 才落库，位置仍由 order=20 决定」—— 它紧跟着这条回复，
+        // 并且排在 notice 之前，与 seq 无关。
+        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'user', 'assistant', 'notice']);
         expect(entries[0]?.parts).toEqual([{ kind: 'text', text: 'ask tool问我问题' }]);
-        expect(entries[1]?.parts).toEqual([
+        expect(entries[1]?.parts).toEqual([{ kind: 'text', text: '说两个字' }]);
+        expect(entries[2]?.parts).toEqual([
             { kind: 'tool', id: 'i30', name: 'ask', args: undefined, result: '用户回答：22', state: 'ok' },
         ]);
-        expect(entries[2]?.parts).toEqual([{ kind: 'text', text: '说两个字' }]);
     });
 
     it('把投递状态挂到用户消息上（失败也要显示）', () => {
@@ -327,5 +331,32 @@ describe('buildTimeline：附件', () => {
             BOTS,
         );
         expect(entries[0]).not.toHaveProperty('attachments');
+    });
+});
+
+describe('buildTimeline：同一轮里人连发两条', () => {
+    it('bot 的整段回复排在两条之前，不插在中间（用户 2026-11-27 实测报的「回复在我的图上方」）', () => {
+        const items: Item[] = [
+            item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '先发一段文字' } }),
+            // bot 的第一个条目在第二条人的消息**之前**就落库了（它在跑，人又补了一条）
+            item(2, { type: 'chat', turnId: 't1', author: owner, data: { text: '我先看看' } }),
+            item(3, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '补一张图' } }),
+            item(4, { type: 'chat', turnId: 't1', author: owner, data: { text: '图我看到了' } }),
+        ];
+        const entries = buildTimeline(items, [], BOTS);
+
+        // 视觉顺序：人的两条 → bot 的整段回复（回复仍然只有一条，不切段）
+        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'user', 'assistant']);
+        const reply = entries.at(-1);
+        expect(reply?.parts.map((part) => (part.kind === 'text' ? part.text : ''))).toEqual(['我先看看', '图我看到了']);
+    });
+
+    it('只有一条人的消息时顺序不变（不因为这条改动而动老行为）', () => {
+        const items: Item[] = [
+            item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '问一句' } }),
+            item(2, { type: 'chat', turnId: 't1', author: owner, data: { text: '答一句' } }),
+        ];
+        const entries = buildTimeline(items, [], BOTS);
+        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant']);
     });
 });

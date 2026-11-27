@@ -209,10 +209,27 @@ export function buildTimeline(
     // (turnId, authorId) → 那条回复。**这就是回复的地址**：一个 bot 在一轮里只有一条，
     // 后来的条目一律追加进去，不再有"要不要另起一段"的判断。
     const replies = new Map<string, TimelineEntry>();
+    /**
+     * 展示锚点：条目**落在界面哪个位置**（与"什么时候创建"分开）。
+     *
+     * 为什么需要第二套位置（2026-11-27 用户实测报的「回复在我的图上方，很诡异」）：
+     * 同一轮里人可能连发两条（先文字、再补一张图），而 bot 的回复位置固定在它**第一条**
+     * 条目出现的时刻 ⇒ 渲染成「人的第一条 → bot 回复 → 人的第二条」，看起来像 bot 抢在
+     * 第二张图之前回了话。锚点改成「本轮最后一条人的消息」之后，顺序就是
+     * 「人的两条 → bot 的整段回复」，与直觉一致；回复本身仍然**不切段**（切段才会碎）。
+     */
+    const anchors = new Map<TimelineEntry, number>();
+    const lastHumanOrder = new Map<string, number>();
+    const arrival = orderedByAppearance(items);
+    for (const item of arrival) {
+        if (item.type === 'chat' && item.author?.role === 'human') {
+            lastHumanOrder.set(item.turnId, Math.max(lastHumanOrder.get(item.turnId) ?? 0, item.order ?? item.seq));
+        }
+    }
 
-    for (const item of orderedByAppearance(items)) {
+    for (const item of arrival) {
         if (item.type === 'notice') {
-            entries.push({
+            const entry: TimelineEntry = {
                 key: item.id,
                 kind: 'notice',
                 turnId: item.turnId,
@@ -221,7 +238,9 @@ export function buildTimeline(
                 deliveries: [],
                 at: item.at,
                 ...(item.data.job === undefined ? {} : { job: item.data.job }),
-            });
+            };
+            anchors.set(entry, item.order ?? item.seq);
+            entries.push(entry);
             continue;
         }
 
@@ -229,7 +248,7 @@ export function buildTimeline(
         // 它本来就是这一轮最后一句，单独成条。
         // 有作者的错误不在这里处理 —— 它属于那个 bot 的回复，见下面的 part 分支。
         if (item.type === 'error' && item.author === undefined) {
-            entries.push({
+            const entry: TimelineEntry = {
                 key: item.id,
                 kind: 'error',
                 turnId: item.turnId,
@@ -237,14 +256,17 @@ export function buildTimeline(
                 streaming: false,
                 deliveries: [],
                 at: item.at,
-            });
+            };
+            anchors.set(entry, item.order ?? item.seq);
+            entries.push(entry);
             continue;
         }
 
         const author = item.author;
 
         if (author?.role === 'human') {
-            entries.push({
+            const at = item.order ?? item.seq;
+            const entry: TimelineEntry = {
                 key: item.id,
                 kind: 'user',
                 turnId: item.turnId,
@@ -256,7 +278,9 @@ export function buildTimeline(
                     ? { attachments: item.data.attachments }
                     : {}),
                 at: item.at,
-            });
+            };
+            anchors.set(entry, at);
+            entries.push(entry);
             continue;
         }
 
@@ -275,6 +299,12 @@ export function buildTimeline(
                 at: item.at,
             };
             replies.set(address, entry);
+            // 人的消息可能还在后面（同一轮里连发）：把整段回复放到最后一条人的消息之后。
+            // +0.5 是必要的：锚点相同时按插入顺序排，而回复的条目往往比后补的人话**先**落库，
+            // 不加这半格就会出现「人的消息 → 回复 → 人的消息」—— 正是用户说诡异的那种。
+            const own = item.order ?? item.seq;
+            const lastHuman = lastHumanOrder.get(item.turnId) ?? 0;
+            anchors.set(entry, lastHuman > own ? lastHuman + 0.5 : own);
             entries.push(entry);
         }
         if (item.type === 'error') {
@@ -358,7 +388,11 @@ export function buildTimeline(
             at: at ?? request.at,
         };
         const position = entries.findIndex((entry) => entry.at > standalone.at);
-        entries.splice(position < 0 ? entries.length : position, 0, standalone);
+        const slot = position < 0 ? entries.length : position;
+        // 独立卡片也参加锚点排序：取「插入位置前驱的锚点 + 0.5」，
+        // 这样它既在原位（夹在前驱与后继之间），又不会被后面才算出锚点的回复挤到前面
+        anchors.set(standalone, (slot > 0 ? anchors.get(entries[slot - 1] as TimelineEntry) ?? 0 : 0) + 0.5);
+        entries.splice(slot, 0, standalone);
     };
 
     for (const ask of options.asks ?? []) {
@@ -421,6 +455,14 @@ export function buildTimeline(
     }
 
     attachTurns(entries, options.turns);
+    // 按锚点稳定排序（同锚点保持插入顺序：JS 的 sort 自 ES2019 起是稳定的）
+    const index = new Map(entries.map((entry, at) => [entry, at]));
+    entries.sort((left, right) => {
+        // 没给锚点的是「遍历之后才补的」条目（如「正在输入…」）：它们本来就该落在末尾
+        const diff =
+            (anchors.get(left) ?? Number.POSITIVE_INFINITY) - (anchors.get(right) ?? Number.POSITIVE_INFINITY);
+        return diff !== 0 ? diff : (index.get(left) ?? 0) - (index.get(right) ?? 0);
+    });
     return entries;
 }
 
