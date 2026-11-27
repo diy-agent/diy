@@ -10,7 +10,7 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import type { RunInfo, RunRegistry } from './run-registry.js';
-import { exitText, formatDuration, runLine, stateLabel, type TailResult } from './run-status.js';
+import { exitText, formatDuration, MAX_TAIL_BYTES, runLine, stateLabel, type TailResult } from './run-status.js';
 
 /**
  * `job wait` 的上限（10 分钟）。`timeoutMs = 0` 曾经表示「一直等」，等于给模型一把
@@ -20,8 +20,8 @@ export const WAIT_MAX_MS = 600_000;
 
 const EMPTY_TAIL: TailResult = { text: '', lines: 0, droppedBytes: 0 };
 
-/** 一条 run 的**详情文案**（job status / wait 共用）：状态 + 结局 + 来源 + 输出尾巴。 */
-export function runDetail(info: RunInfo, tail: TailResult, now: number): string {
+/** 详情文案里那一截**固定头**（状态 / 命令 / 目录 / 结局 / 输出路径 / 来源）。 */
+export function detailHeader(info: RunInfo, now: number): string {
     const rows = [
         `${info.id} · ${stateLabel(info.state)} · ${formatDuration((info.endedAt ?? now) - info.startedAt)}`,
         `命令：${info.command}`,
@@ -30,11 +30,32 @@ export function runDetail(info: RunInfo, tail: TailResult, now: number): string 
         `输出：${info.logPath}`,
         ...(info.origin ? [`来源：${info.origin.taskUri}${info.origin.turnId ? ` / ${info.origin.turnId}` : ''}`] : []),
     ];
-    if (tail.lines === 0) rows.push('（无输出）');
-    else {
-        rows.push(`—— 输出尾部${tail.droppedBytes > 0 ? `（前 ${tail.droppedBytes} 字节已截断）` : ''} ——`, tail.text);
-    }
     return rows.join('\n');
+}
+
+/** 详情文案里那一截**尾巴**（空 → 一句「（无输出）」，不编假内容）。 */
+export function detailBody(tail: TailResult): string {
+    if (tail.lines === 0) return '（无输出）';
+    return [`—— 输出尾部${tail.droppedBytes > 0 ? `（前 ${tail.droppedBytes} 字节已截断）` : ''} ——`, tail.text].join('\n');
+}
+
+/**
+ * 尾巴该分到多少字节：**整份工具预算扣掉头**。
+ *
+ * 为什么要扣（2026-11-27 review）：头里有 `命令：` / `目录：` / `输出：` 三行 —— 一条
+ * 多行命令或一条深路径随便就能占几 KB。头按满预算取尾巴 ⇒ 拼起来的详情必然越界，
+ * 投递层只好再裁一次（丢掉尾巴的中段 + 多落一份 toolout/ 原文），而 read 那边刚刚
+ * 因为同一类问题（渲染后字节没算行号前缀）修过一次。框架字节必须由**生产者**自己先扣。
+ */
+export function detailTailBudget(header: string): number {
+    // 另留 256 字节给调用方可能追加的一句（`wait` 超时时会补一句「仍未结束」）；
+    // 至少留 1KB：头长得离谱（几 KB 的命令）时也不至于把尾巴压没
+    return Math.max(1024, MAX_TAIL_BYTES - Buffer.byteLength(header, 'utf8') - 256);
+}
+
+/** 一条 run 的**详情文案**（job status / wait 共用）：头 + 尾巴。 */
+export function runDetail(info: RunInfo, tail: TailResult, now: number): string {
+    return [detailHeader(info, now), detailBody(tail)].join('\n');
 }
 
 /** `job` 工具的宿主切面（**只有两件事**：表 + 可见性） */
@@ -87,6 +108,13 @@ export function makeJobTool(host: JobToolHost) {
         }),
         execute: async ({ action, id, lines, timeoutMs }) => {
             const now = Date.now();
+            /** 详情文案 = 头 + 尾巴；**尾巴的预算先扣掉头**（见 `detailTailBudget`） */
+            const detailOf = async (target: RunInfo, wantLines: number): Promise<string> => {
+                const header = detailHeader(target, now);
+                const tail =
+                    (await registry.tail(target.id, wantLines, detailTailBudget(header))) ?? EMPTY_TAIL;
+                return [header, detailBody(tail)].join('\n');
+            };
             if (action === 'list') {
                 const all = mine(registry.list());
                 if (all.length === 0) return `（${scope}没有后台进程）`;
@@ -112,12 +140,11 @@ export function makeJobTool(host: JobToolHost) {
                 const limit = asked === 0 ? WAIT_MAX_MS : Math.min(asked, WAIT_MAX_MS);
                 const done = await registry.wait(id, limit);
                 if (done && done.state === 'running') {
-                    return `${runDetail(done, (await registry.tail(id, 5)) ?? EMPTY_TAIL, now)}\n（已等 ${formatDuration(limit)}，仍未结束；别干等长任务 —— 去做别的，结束会通知你）`;
+                    return `${await detailOf(done, 5)}\n（已等 ${formatDuration(limit)}，仍未结束；别干等长任务 —— 去做别的，结束会通知你）`;
                 }
-                return runDetail(done ?? info, (await registry.tail(id, lines ?? 10)) ?? EMPTY_TAIL, now);
+                return detailOf(done ?? info, lines ?? 10);
             }
-            const tail = (await registry.tail(id, lines ?? (action === 'output' ? 40 : 10))) ?? EMPTY_TAIL;
-            return runDetail(info, tail, now);
+            return detailOf(info, lines ?? (action === 'output' ? 40 : 10));
         },
     });
 }
