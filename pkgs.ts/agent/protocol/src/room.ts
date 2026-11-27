@@ -7,13 +7,18 @@ import type { Bot, BotProfile, BotProfileDefaults, Room, RoomMember } from './ty
 // ── 角色 → 成员（派生的唯一实现）─────────────────────────────────
 
 /**
- * 一种类型的成员名单：`type` 相同的角色，primary 排头，其余按建得早的在前。
+ * 一种类型的成员名单：**单聊 —— 只有该类型的主 bot 一个**。
  *
- * 排序不能是随机的：侧栏、@ 补全、`primaryMemberOf` 都按「第一位成员」兜底，
- * 顺序一变，同一个房间的默认应答就跟着变。
+ * 2026-11-27 用户：「不是 3 个模型，是 3 个 bot，为啥这么多？全部去掉只留任务项目主 bot」。
+ * 从前这里返回 `type` 相同的**全部**角色，而角色是迁移时从 45 个老 bot 按 type 折出来的
+ * （project 4 个 / task 3 个），于是每个项目房间都带 4 个 bot —— 老数据里那些是
+ * 「每个房间自己的 bot」，折成类型级角色就串味了。
+ *
+ * 没有标 primary 的类型兜底取建得最早的：不能因为没标就一个 bot 都没有。
+ * 会议（meeting-room）以后要多成员，那时应该走成员名单显式覆盖，不是把这里改回去。
  */
 export function membersOfType(roles: readonly BotProfile[], type: string): RoomMember[] {
-    return roles
+    const ofType = roles
         .filter((role) => role.type === type)
         .sort((left, right) =>
             left.primary === right.primary
@@ -21,8 +26,9 @@ export function membersOfType(roles: readonly BotProfile[], type: string): RoomM
                 : left.primary
                   ? -1
                   : 1,
-        )
-        .map((role) => ({ botId: role.id, ...(role.primary ? { primary: true } : {}) }));
+        );
+    const main = ofType.find((role) => role.primary === true) ?? ofType[0];
+    return main === undefined ? [] : [{ botId: main.id, ...(main.primary ? { primary: true } : {}) }];
 }
 
 /** 角色 → 房间里的化身（`persona` / `modelKey` 的落点，唯一转换处） */

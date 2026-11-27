@@ -15,12 +15,22 @@ import { createServer } from 'node:http';
 
 import { createDiy2App } from './app';
 import { createMigrateModeApp, probeMigration } from './migrate-mode';
+import { MIGRATE_WORKER_FLAG, runMigrationWorker } from './migrate-worker';
 import { describeConfig, modelConfigHint, resolveConfig } from './config';
 import { installAppLog } from './log';
 import { announce, retract } from './registry';
 import { probe } from './probe';
 import { listenWithStickyPort } from './listen';
 import { parseEntryOptions, serverOptions, toOverrides } from '../src/cli/options';
+
+// ── 迁移子进程（2026-11-27）────────────────────────────────────
+// 生产产物只有 index.mjs 一个文件，没有单独的 migrate-worker 可 spawn ——
+// 所以复用本入口：`node index.mjs --migrate-worker <db>`，在这里就去干活并退出。
+// 必须在读参数 / 装配之前分流，否则会顺手起一个正常的 web 进程。
+if (process.argv.includes(MIGRATE_WORKER_FLAG)) {
+    runMigrationWorker(process.argv[process.argv.indexOf(MIGRATE_WORKER_FLAG) + 1]);
+    process.exit(process.exitCode ?? 0);
+}
 
 const USAGE = `用法：node build/prod/server/index.mjs [options]
 

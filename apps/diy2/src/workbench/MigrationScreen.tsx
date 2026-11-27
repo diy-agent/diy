@@ -68,12 +68,42 @@ export function MigrationScreen(): React.JSX.Element {
 
     useEffect(() => () => source.current?.close(), []);
 
+    // 「库已经迁完，但服务端还在装配真 app」的那段空窗：不能靠一次 reload 撞运气。
+    // 迁完换 app 要重新 openStore（大库几秒），这时候 `/` 仍是迁移态 ——
+    // 刷新过头会重新落回这一屏（计划全部「已完成」，按钮又是灰的），人以为卡住了。
+    // 所以：状态里已经没有待迁移项时，轮询到 mode 变了再刷新。
+    useEffect(() => {
+        if (state === null) return;
+        const plan = state.plan ?? [];
+        if (plan.length === 0 || plan.some((item) => !item.done)) return;
+        const timer = window.setInterval(() => {
+            void fetch('/api/migrate/state')
+                .then((response) => response.json() as Promise<{ mode?: string }>)
+                .then((next) => {
+                    if (next.mode !== 'migrate') {
+                        window.clearInterval(timer);
+                        location.reload();
+                    }
+                })
+                .catch(() => {
+                    /* 服务端正在换 app，稍后重试 */
+                });
+        }, 1000);
+        return () => window.clearInterval(timer);
+    }, [state]);
+
     const start = useCallback(() => {
         setPhase('running');
         setEvents([]);
         setLog([]);
         const stream = new EventSource('/api/migrate/events');
         source.current = stream;
+        // 必须等流真的连上再让服务端起跑：子进程起不来时服务端会**立即**广播 error，
+        // 先 POST 后连流就会把那条唯一的红字丢掉 —— 页面于是永远停在「迁移中…」，
+        // 既没有进度也没有日志（2026-11-27 实测）。
+        stream.onopen = () => {
+            void fetch('/api/migrate/start', { method: 'POST' });
+        };
         stream.onmessage = (message: MessageEvent<string>) => {
             const payload = JSON.parse(message.data) as Record<string, unknown>;
             const kind = payload['kind'];
@@ -108,8 +138,12 @@ export function MigrationScreen(): React.JSX.Element {
         };
         stream.onerror = () => {
             stream.close();
+            // 断流同样不能静默：停留在「迁移中…」比报错还难查
+            setPhase((current) => (current === 'running' ? 'failed' : current));
+            setLog((previous) =>
+                previous.length > 0 ? previous : [...previous, '进度流断了：服务端没有响应（迁移进程可能已退出）'],
+            );
         };
-        void fetch('/api/migrate/start', { method: 'POST' });
     }, []);
 
     if (state === null) {
@@ -143,8 +177,7 @@ export function MigrationScreen(): React.JSX.Element {
                 <div>
                     <div className="text-lg font-semibold">{verdict}</div>
                     <div className="mt-1 text-sm text-muted-foreground">
-                        共 {total} 项
-                        {todo.length > 0 ? `，其中 ${String(todo.length)} 项待迁移` : '，全部已就位'}
+                        共 {total} 项{todo.length > 0 ? `，其中 ${String(todo.length)} 项待迁移` : '，全部已就位'}
                         {version === undefined ? '' : ` · 库版本 ${String(version.applied)} / ${String(version.total)}`}
                     </div>
                 </div>
