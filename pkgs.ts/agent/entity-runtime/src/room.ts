@@ -111,8 +111,13 @@ export interface RoomActorDeps {
      *
      * 为什么拿 `RunCodeHost` 而不是自己 import 引擎：引擎是可换的策略（进程内 vm /
      * worker / 子进程），房间只负责「把它包成工具」，不该决定它在哪个进程跑。
+     *
+     * **为什么是函数不是值**：deps 是构造 actor 时的快照，而房间 actor 通常先于
+     * 「进程内 RPC client」就绪（`seed()` 重读存量房间时，`bindDiy2Api` 还没跑）——
+     * 传值的话，重启前就存在的房间永远拿不到 `run_code`（实测：bot 手里根本没这个工具）。
+     * 取值的时机跟着 `toolsFor` 走（第一次跑 turn），那时 client 已经在了。
      */
-    code?: RunCodeHost;
+    code?: () => RunCodeHost | undefined;
     /** 是否开放 shell（缺省开放） */
     shell?: boolean;
     /**
@@ -908,7 +913,10 @@ export class RoomActor {
                                 },
                             }
                           : {}),
-                      ...(this.deps.code === undefined ? {} : { code: this.deps.code }),
+                      ...(() => {
+                          const host = this.deps.code?.();
+                          return host === undefined ? {} : { code: host };
+                      })(),
                   });
         this.toolsByBot.set(botId, tools);
         return tools;
