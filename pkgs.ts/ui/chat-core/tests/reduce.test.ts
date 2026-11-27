@@ -150,6 +150,44 @@ describe('轮次时刻（消息头 + 结算行读它）', () => {
         const state = fromSnapshot({ items: [item()], deliveries: [], speaking: ['b1'] });
         expect(state.turns).toEqual({});
     });
+
+    it('已收的轮：turnFacts 铺成 turns（刷新后结算行靠它，以前这里整行为空）', () => {
+        const state = fromSnapshot({
+            items: [item()],
+            deliveries: [],
+            turnFacts: [
+                {
+                    botId: 'b1',
+                    turnId: 't1',
+                    turn: 1,
+                    startedAt: 1_700_000_000_000,
+                    endedAt: 1_700_000_192_000,
+                    usage: { inputTokens: 10_000, outputTokens: 2_400 },
+                    toolCalls: 7,
+                    reason: { type: 'completed', steps: 3 },
+                },
+            ],
+        });
+        const facts = state.turns['t1\u0000b1'];
+        expect(facts?.endedAt).toBe(1_700_000_192_000);
+        expect(facts?.usage).toEqual({ inputTokens: 10_000, outputTokens: 2_400 });
+        expect(facts?.toolCalls).toBe(7);
+        expect(facts?.reason?.steps).toBe(3);
+    });
+
+    it('同一轮既在 turnFacts 又在 runningTurns：以 runningTurns 为准（在跑的那轮）', () => {
+        const state = fromSnapshot({
+            items: [item()],
+            deliveries: [],
+            runningTurns: [{ botId: 'b1', turnId: 't1', startedAt: 1_700_000_500_000 }],
+            turnFacts: [{ botId: 'b1', turnId: 't1', turn: 1, startedAt: 1_700_000_000_000, endedAt: 1_700_000_100_000 }],
+        });
+        // 开始时刻用新值
+        expect(state.turns['t1\u0000b1']?.startedAt).toBe(1_700_000_500_000);
+        // `endedAt` 必须没有：续跑的是同一 turnId 的新一轮，留着旧账的话
+        // TurnFooter 会一边跑一边画「完成 · …」的结算行（它已经结束了）
+        expect(state.turns['t1\u0000b1']?.endedAt).toBeUndefined();
+    });
 });
 
 describe('compact（手动压缩的进度）', () => {

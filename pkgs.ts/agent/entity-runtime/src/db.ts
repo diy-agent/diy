@@ -65,6 +65,35 @@ export interface OpenTurn {
     at: number;
 }
 
+/**
+ * 一轮跑完后的结算事实（`turn_facts` 表一行）。
+ *
+ * 与 `OpenTurn` 是**两件事**：那个是「开了没收尾」的临时标记（收尾即删），
+ * 这个是「跑完了、结果如何」的永久账（一行一轮，随 room 活到底）。
+ * 存起来只为一件事：刷新后消息底下的结算行还能画出来。
+ */
+export interface TurnFactRow {
+    botId: string;
+    turnId: string;
+    /** 轮号（房间内递增） */
+    turn: number;
+    /** 开始时刻（缺省 = 那一轮没报） */
+    startedAt?: number;
+    /** 结束时刻 —— 这一行存在的理由 */
+    endedAt: number;
+    /** 本轮实测用量（缺省 = 没拿到） */
+    usage?: TokenUsage;
+    /** 本轮工具调用数（缺省 = 没报） */
+    toolCalls?: number;
+    /**
+     * 怎么结束的（`TurnEndReason` 整包）。
+     *
+     * 用 `unknown` 而不是 import 协议类型：db 层只负责搬运（存 JSON、读出来还回去），
+     * 不解析、不依赖 `reason.type` 的联合 —— 让协议改枚举时这里一行都不用动。
+     */
+    reason?: unknown;
+}
+
 /** 一条草稿：某个容器里某个字段尚未提交的输入（value 由消费方解释） */
 export interface Draft {
     field: string;
@@ -402,6 +431,17 @@ export interface Store {
     closeTurn(roomId: string, botId: string): void;
     /** 还挂着没收尾的轮（重启后非空 = 上次没跑完的那几个） */
     openTurns(roomId: string): OpenTurn[];
+    /**
+     * 记下一轮的**结算事实**（收尾时写，一行一轮，永远不删）。
+     *
+     * 为什么要一张表：`turn.end` 只是广播，刷新后历史轮次的 `endedAt` / `usage` / step 数
+     * 就全没了 —— 消息底下的结算行（`完成 · 3m12s · 12.4k tokens`）整行消失。
+     * 原先的假设是「结算行靠持久条目（notice / error）说清了」，但那只对**出错 / 中断**
+     * 的轮成立：正常完成的轮一条 notice 都不落（`endFooterOf(completed)` 返回 undefined）。
+     */
+    saveTurnFact(roomId: string, fact: TurnFactRow): void;
+    /** 这个房间所有轮的结算事实（按轮号升序）：`chat.history` 一并下发，结算行靠它 */
+    turnFacts(roomId: string): TurnFactRow[];
     /**
      * 撤掉某一轮的「中断」事实（那一轮其实还会续跑 / 续跑完了）。
      *
@@ -787,6 +827,21 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             at INTEGER NOT NULL,
             PRIMARY KEY (entity_id, bot_id)
         );
+        -- 每一轮的结算事实（一行一轮，收尾时写、永不删）：刷新后消息底下的
+        -- 结算行（耗时 / tokens / 步数 / 工具次数）靠它，没它历史轮次整行消失
+        CREATE TABLE IF NOT EXISTS turn_facts (
+            entity_id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            bot_id TEXT NOT NULL,
+            turn INTEGER NOT NULL,
+            started_at INTEGER,
+            ended_at INTEGER NOT NULL,
+            usage TEXT,
+            tool_calls INTEGER,
+            reason TEXT,
+            PRIMARY KEY (entity_id, turn_id, bot_id)
+        );
+        CREATE INDEX IF NOT EXISTS turn_facts_entity ON turn_facts(entity_id, turn);
         -- 会话键 =（容器, 角色）。列名 2026-11-24 从 bot_id 改为 bot_profile_id：
         -- 同名的旧列会被 ALTER TABLE ... RENAME COLUMN 改过来（见老库补列）
         CREATE TABLE IF NOT EXISTS session_state (
@@ -2080,6 +2135,43 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 turn: Number(row['turn']),
                 turnId: String(row['turn_id']),
                 at: Number(row['at']),
+            }));
+        },
+        saveTurnFact(roomId: string, fact: TurnFactRow): void {
+            // UPSERT：同一轮被收尾两次（续跑后又收一次）不报错，后一次覆盖前一次
+            db.prepare(
+                'INSERT INTO turn_facts (entity_id, turn_id, bot_id, turn, started_at, ended_at, usage, tool_calls, reason) ' +
+                    'VALUES (?,?,?,?,?,?,?,?,?) ' +
+                    'ON CONFLICT(entity_id, turn_id, bot_id) DO UPDATE SET ' +
+                    'started_at=excluded.started_at, ended_at=excluded.ended_at, usage=excluded.usage, ' +
+                    'tool_calls=excluded.tool_calls, reason=excluded.reason',
+            ).run(
+                roomId,
+                fact.turnId,
+                fact.botId,
+                fact.turn,
+                fact.startedAt ?? null,
+                fact.endedAt,
+                fact.usage === undefined ? null : JSON.stringify(fact.usage),
+                fact.toolCalls ?? null,
+                fact.reason === undefined ? null : JSON.stringify(fact.reason),
+            );
+        },
+        turnFacts(roomId: string): TurnFactRow[] {
+            const rows = db
+                .prepare(
+                    'SELECT bot_id, turn_id, turn, started_at, ended_at, usage, tool_calls, reason FROM turn_facts WHERE entity_id = ? ORDER BY turn ASC',
+                )
+                .all(roomId) as Array<Record<string, unknown>>;
+            return rows.map((row) => ({
+                botId: String(row['bot_id']),
+                turnId: String(row['turn_id']),
+                turn: Number(row['turn']),
+                ...(row['started_at'] === null ? {} : { startedAt: Number(row['started_at']) }),
+                endedAt: Number(row['ended_at']),
+                ...(row['usage'] === null ? {} : { usage: JSON.parse(String(row['usage'])) as TokenUsage }),
+                ...(row['tool_calls'] === null ? {} : { toolCalls: Number(row['tool_calls']) }),
+                ...(row['reason'] === null ? {} : { reason: JSON.parse(String(row['reason'])) as unknown }),
             }));
         },
         deleteInterruptedFacts(roomId: string, turnId: string, botId: string): number {

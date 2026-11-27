@@ -418,6 +418,7 @@ export class RpcChatClient implements ChatClient {
             answered: Snapshot['answeredAsks'];
             speaking?: Snapshot['speaking'];
             runningTurns?: Snapshot['runningTurns'];
+            turnFacts?: Snapshot['turnFacts'];
             total?: number;
             hasMore?: boolean;
         }>('chat.history', { id: entityId, ...(options?.limit === undefined ? {} : { limit: options.limit }) });
@@ -432,6 +433,8 @@ export class RpcChatClient implements ChatClient {
             ...(history.speaking === undefined ? {} : { speaking: history.speaking }),
             // 同上：老服务端没有 runningTurns 时客户端退回用条目时刻
             ...(history.runningTurns === undefined ? {} : { runningTurns: history.runningTurns }),
+            // 每一轮的结算事实（落盘）：没有它的老服务端 = 历史轮次没有结算行（与 11-27 之前同形）
+            ...(history.turnFacts === undefined ? {} : { turnFacts: history.turnFacts }),
         };
     }
 

@@ -610,6 +610,49 @@ export interface Snapshot {
      * 客户端退回用条目时刻（只会差几十毫秒，不会空白）。
      */
     runningTurns?: Array<{ botId: string; turnId: string; startedAt: number }>;
+    /**
+     * **每一轮的结算事实**（落盘）：结算行要的耗时 / tokens / 步数 / 工具次数。
+     *
+     * 为什么必须落盘：`turn.end` 只是广播（`room.ts` 的 `case 'turn.end'`），发完就没了。
+     * 刷新后客户端只剩 `runningTurns`（在跑的那几轮），已收的轮次一律没有 `endedAt`
+     * —— 于是 `turnSettleOf` 返回 undefined，`TurnFooter` 整行不渲染，历史轮次底下
+     * 什么都没了（用户 2026-11-27 报的就是这个）。
+     *
+     * 缺省 `undefined` = 老服务端（只认 `runningTurns`）；空数组有意义（确实一轮都没跑完）。
+     */
+    turnFacts?: TurnFact[];
+}
+
+/**
+ * 一轮跑完后的结算事实（**落盘的那一份**，`turn_facts` 表一行）。
+ *
+ * 字段从 `TurnEndReason` / `TurnResult` 里挑「结算行要用的那几个」：不整包 reason，
+ * 因为其中大半（`finishReason` / `note` / `awaiting` / `idleMs`）只对出错的那一轮有意义，
+ * 而这张表每轮一行、要跟 room 活一样久。`steps` / `toolCalls` 仍留在 `reason` 里归位不到 ——
+ * 所以单独提上来两个数，与 `settleFactsOf` 读的位置一致。
+ */
+export interface TurnFact {
+    botId: string;
+    turnId: string;
+    /** 轮号（房间内递增）：同一 bot 的历史轮次靠它排序 */
+    turn: number;
+    /** 开始时刻（缺省 = 那一轮没报，客户端退回用条目时刻） */
+    startedAt?: number;
+    /** 结束时刻 —— **这一行存在的理由**：没有它就没有结算行 */
+    endedAt: number;
+    /** 本轮实测用量（上游报的；缺省 = 没拿到，不要用 0 充数） */
+    usage?: { inputTokens: number; outputTokens: number };
+    /** 本轮工具调用数（与 reason.toolCalls 同值；缺省 = 没报） */
+    toolCalls?: number;
+    /**
+     * 怎么结束的 —— **整包存**（`TurnEndReason`）。
+     *
+     * 不挑字段出来：客户端那边 `TurnFacts.reason` 就是这个类型、`settleFactsOf` 读
+     * `reason.steps` / `reason.toolCalls`、`endFooterOf` 读 `reason.type` 换档。
+     * 在这里拆成 `steps` + `endType` 两个扁平字段，客户端还得拼回去（拼错就是结算行
+     * 说错话），不如让两端用同一个类型。
+     */
+    reason?: TurnEndReason;
 }
 
 /** capabilities 决定 UI 显示哪些按钮（不要写 surfaceId 分支） */

@@ -231,6 +231,22 @@ export function fromSnapshot(snapshot: {
     answeredAsks?: AnsweredAsk[];
     speaking?: string[];
     runningTurns?: Array<{ botId: string; turnId: string; startedAt: number }>;
+    /**
+     * 跑过的每一轮的结算事实（服务端落盘那份）。
+     *
+     * 不填这个的后果是：刷新后历史轮次没有 `endedAt` → `turnSettleOf` 返 undefined →
+     * `TurnFooter` 整行不渲染（时长 / tokens / 步数全没）。
+     */
+    turnFacts?: Array<{
+        botId: string;
+        turnId: string;
+        turn: number;
+        startedAt?: number;
+        endedAt: number;
+        usage?: TurnFacts['usage'];
+        toolCalls?: number;
+        reason?: TurnFacts['reason'];
+    }>;
     /** 这个房间一共多少条（分页提示用；缺省 = 老服务端 / 已全量） */
     totalItems?: number;
     /** 服务端只给了最近一截（`items` 不是从第一条开始） */
@@ -269,15 +285,33 @@ export function fromSnapshot(snapshot: {
         seq: Math.max(0, ...snapshot.items.map((item) => item.seq)),
         running: speaking.length > 0,
         speaking,
-        // 刷新后 `turn.start` / `turn.end` 都丢了 —— 但**在跑的那几轮**的开始时刻不能丢
-        // （丢了消息头就没时间、走字也起不来）。已收的轮次不补：结算行靠时间线上的
-        // 持久条目（notice / error）说清了，这里的 turns 只是这一次连接里的活事实。
-        turns: Object.fromEntries(
-            (snapshot.runningTurns ?? []).map((turn) => [
-                `${turn.turnId}\u0000${turn.botId}`,
-                { startedAt: turn.startedAt } satisfies TurnFacts,
-            ]),
-        ),
+        // 刷新后 `turn.start` / `turn.end` 都丢了，所以 turns 有**两个**来源：
+        //   ① `turnFacts` —— 服务端落盘的每一轮的账（耗时 / tokens / 步数 / 怎么结束的）：
+        //      结算行靠它。**这就是 11-27 用户报「轮次下的时间 / 汇总 / token 都没了」的根因**：
+        //      之前这里只填 ②，正常完成的轮次一条 notice 都不落（`endFooterOf(completed)`
+        //      返 undefined），于是历史轮次整行空。
+        //   ② `runningTurns` —— 在跑的那几轮只有开始时刻（它们还没有账）。
+        // 先后：② 覆盖 ①（在跑的轮若有旧账，以「现在这轮」为准）。
+        turns: {
+            ...Object.fromEntries(
+                (snapshot.turnFacts ?? []).map((fact) => [
+                    `${fact.turnId}\u0000${fact.botId}`,
+                    {
+                        ...(fact.startedAt === undefined ? {} : { startedAt: fact.startedAt }),
+                        endedAt: fact.endedAt,
+                        ...(fact.usage === undefined ? {} : { usage: fact.usage }),
+                        ...(fact.toolCalls === undefined ? {} : { toolCalls: fact.toolCalls }),
+                        ...(fact.reason === undefined ? {} : { reason: fact.reason }),
+                    } satisfies TurnFacts,
+                ]),
+            ),
+            ...Object.fromEntries(
+                (snapshot.runningTurns ?? []).map((turn) => [
+                    `${turn.turnId}\u0000${turn.botId}`,
+                    { startedAt: turn.startedAt } satisfies TurnFacts,
+                ]),
+            ),
+        },
         // 同理：进展事实也只在连接里活，刷完等第一条 tick（≤5s）再回来
         progress: {},
         // 压缩进度同理：做完的那次已体现在 stats 里（摘要 / 折叠数），中途的那次刷新就没了
