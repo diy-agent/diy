@@ -161,6 +161,13 @@ interface ShellState {
     unread: Record<string, number>;
     /** 容器 id → 上一轮出错的成员数（侧栏任务图标变红用；在跑的不算） */
     broken: Record<string, number>;
+    /**
+     * 容器 id → 最新一条投递失败的成员数（侧栏「未送达」标记）。
+     *
+     * 与 `queued` 同一约定（0 不占键），也和它同一次 `rooms.list` 回来 —— 只有服务端
+     * 一个来源（没有活动流）。不把它混进 `queued`：那是「马上要动」，这是「没送到」。
+     */
+    failed: Record<string, number>;
     /** 在跑的后台作业数（实例级账本；标题栏那颗「作业 N」用它，不进房间表） */
     activeJobs: number;
     error?: string;
@@ -184,6 +191,7 @@ let state: ShellState = {
     queued: {},
     unread: {},
     broken: {},
+    failed: {},
     activeJobs: 0,
 };
 const listeners = new Set<() => void>();
@@ -397,6 +405,15 @@ export function useBrokenOf(roomId: string): number {
     );
 }
 
+/** 只订阅一个房间的「几个成员最新一条消息没送达」（侧栏未送达标记） */
+export function useFailedOf(roomId: string): number {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.failed[roomId] ?? 0,
+        () => state.failed[roomId] ?? 0,
+    );
+}
+
 /**
  * 上报「我在看这个房间」（未读水位）。传 `seq` 就报到那一条，不传 = **当前最后一条**。
  *
@@ -458,13 +475,20 @@ export function useMarkRoomRead(roomId: string | undefined): void {
 }
 
 /**
- * 「一个房间算不算会话在跑」的**唯一判据** —— 标题栏那个数字与它弹出的列表共用一份。
+ * 「一个房间算不算会话在跑」的**唯一判据** —— 标题栏那个数字、它弹出的列表、
+ * 以及「点一下跳过去」三处共用一份。
  *
- * 各写一份必然走散：2026-11-25 出现过数字把 project 行也算进去、列表却排除，于是「会话 1」点开是空的。
- * 三个条件都不能省：project 是导航用的壳（它自己没有会话）、closed 任务里的旧 turn 不算、0 不算。
+ * 各写一份必然走散：2026-11-25 出现过数字把 project 行也算进去、列表却排除，于是「会话 1」点开是空的；
+ * 而 `jumpToFirstRunningRoom` 当时又只看 `running` 不看这个谓词 —— 数字说 0、点跳却能跳到项目上。
+ *
+ * 两个条件都不能省：closed 任务里的旧 turn 不算、0 不算。
+ *
+ * **项目算**（2026-11-26 用户：「项目也是 bot」）：项目房间自己就有成员和轮次（实数据里
+ * `proj:diy` 跑到 131 轮），它的会话真的在跑；侧栏项目行现在也会为此亮呼吸点（`RoomRow`），
+ * 两处必须说同一件事 —— 不然「行上亮着、计数说 0」。
  */
 export function isRunningSession(room: Room, running: number): boolean {
-    return room.type !== 'project' && !isClosed(room) && running > 0;
+    return !isClosed(room) && running > 0;
 }
 
 /** 正在跑的会话房间（顺序同侧栏）。标题栏的数字就是这个数组的长度 */
@@ -502,7 +526,7 @@ export function useRunningSessions(): number {
  * 为了一个点击目标不值。
  */
 export function jumpToFirstRunningRoom(): void {
-    const target = state.rooms.find((room) => (state.running[room.id] ?? 0) > 0)?.id;
+    const target = state.rooms.find((room) => isRunningSession(room, state.running[room.id] ?? 0))?.id;
     if (target !== undefined) actions.select(target);
 }
 
@@ -791,6 +815,11 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     for (const room of rooms) {
         if (typeof room.broken === 'number' && room.broken > 0) broken[room.id] = room.broken;
     }
+    // 未送达：同一次列表请求回来（服务端按成员收敛到最新一条投递）
+    const failed: Record<string, number> = {};
+    for (const room of rooms) {
+        if (typeof room.failed === 'number' && room.failed > 0) failed[room.id] = room.failed;
+    }
     // 当前房间的题干以流为准（服务端那份可能落后几十秒）
     const liveTitles = liveRoomId === '' ? undefined : state.pendingAskTitles[liveRoomId];
     if (liveRoomId !== '' && liveTitles !== undefined) pendingAskTitles[liveRoomId] = [...liveTitles];
@@ -810,6 +839,7 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         queued,
         unread,
         broken,
+        failed,
         bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])),
         loaded: true,
         // 地址没变就沿用旧引用：`useAddress()` 的快照就是它，同值换新对象等于给整张侧栏

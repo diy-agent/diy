@@ -16,7 +16,16 @@
 // 它是 listbox 语义（role=option + aria-selected + 键盘上下选），而 `Button` 自带 role/样式
 // 会与 option 语义打架；这里手写是为了可访问性，不是因为组件层不够用。
 
-import { AlertTriangle, ChevronDown, Loader2, Send, Square, Terminal as TerminalIcon, X as XIcon } from 'lucide-react';
+import {
+    AlertTriangle,
+    ChevronDown,
+    Loader2,
+    Paperclip,
+    Send,
+    Square,
+    Terminal as TerminalIcon,
+    X as XIcon,
+} from 'lucide-react';
 import * as React from 'react';
 
 import {
@@ -67,6 +76,10 @@ import {
 } from '@diy-agent/ui-shadcn';
 
 import { AskCard } from '../../components/AskCard';
+import { AttachmentsRow } from '../../components/AttachmentsRow';
+import { MessageAttachments } from '../../components/MessageAttachments';
+import { useComposerAttachments } from '../../components/useComposerAttachments';
+import { acceptsImages } from '../../models';
 import { CopyButton } from '../../components/CopyButton';
 import { BotAvatar } from '../../components/BotAvatar';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
@@ -79,7 +92,7 @@ import { Markdown } from '../../components/Markdown';
 import { TurnFooter } from '../../components/TurnFooter';
 import { useDraft } from '../../drafts';
 import { useMentionCandidates } from '../../mentions';
-import { actions, conversationOf, useStore } from '../../store';
+import { actions, conversationOf, useProviders, useRooms, useStore } from '../../store';
 import { plainTextOf, runsOf, toolTargetOf, type Run } from '../shared';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
@@ -317,12 +330,22 @@ function EntryView({
         return (
             <Message align="end" className="my-3">
                 <MessageContent>
-                    {/* 投递失败时整条气泡走 destructive —— 与 astryx 面的
-                        deliveryStatusOf(deliveries) 同一个判据（failed 才算，queued/delivering 不算：
-                        那时 bot 正在执行，界面上已经有执行中指示器，再标一次会重复） */}
-                    <Bubble align="end" variant={failed.length > 0 ? 'destructive' : 'muted'}>
-                        <BubbleContent className="whitespace-pre-wrap break-words">{text}</BubbleContent>
-                    </Bubble>
+                    {/* 附件在气泡**上方**（图比文字更该先看到）；
+                        只有附件没有正文时不出空气泡 —— 空 Bubble 会留一道边 */}
+                    <MessageAttachments
+                        {...(entry.attachments === undefined ? {} : { refs: entry.attachments })}
+                        read={(attachment) =>
+                            conversationOf(roomId).readAttachment?.(attachment) ??
+                            Promise.reject(new Error('当前后端不支持附件'))
+                        }
+                    />
+                    {text !== '' && (
+                        // 投递失败时整条气泡走 destructive（failed 才算；queued/delivering 不算：
+                        // 那时 bot 正在执行，界面上已经有执行中指示器，再标一次会重复）
+                        <Bubble align="end" variant={failed.length > 0 ? 'destructive' : 'muted'}>
+                            <BubbleContent className="whitespace-pre-wrap break-words">{text}</BubbleContent>
+                        </Bubble>
+                    )}
                     <div className="flex items-center gap-2 self-end pr-1 text-xs text-muted-foreground">
                         {failed.length > 0 && (
                             <span className="text-destructive">{failed.map((d) => `${d.name} 未送达`).join('、')}</span>
@@ -381,13 +404,28 @@ const MessageList = React.memo(function MessageList({
     roomId: string;
     onStopBot?: (botId: string) => void;
 }) {
+    // **只有最后一条用户消息**是锚点。之前写的是「每条 user 都是」，126 条消息的会话里就有
+    // 37 个锚点 —— 组件的锚点解析（取可见区内最后一个）在这种密度下会把初始位置定到最上面，
+    // 于是进房间 / 发完消息就停在历史顶部（用户报的「自动滚到最上面」）。
+    // 语义上锚点本来也该是「当前这一轮的起点」，历史回合没有资格当参考系。
+    const lastUserKey = React.useMemo(() => {
+        for (let index = entries.length - 1; index >= 0; index -= 1) {
+            if (entries[index]!.kind === 'user') return entries[index]!.key;
+        }
+        return undefined;
+    }, [entries]);
+
     return (
         <>
             {entries.map((entry) => (
-                // scrollAnchor 挂在用户回合：新问题落在顶部、回复在它下面流式长出
-                <MessageScrollerItem key={entry.key} messageId={entry.key} scrollAnchor={entry.kind === 'user'}>
+                // 最后一条用户消息当锚点：新问题落在顶部、回复在它下面流式长出
+                <MessageScrollerItem key={entry.key} messageId={entry.key} scrollAnchor={entry.key === lastUserKey}>
                     {/* content-visibility：离开视口的条目跳过布局/绘制 */}
-                    <div style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
+                    {/* data-message-id：账本条目上的「来自哪句话」靠它滚过来（见 askJump.ts::jumpToMessage） */}
+                    <div
+                        data-message-id={entry.key}
+                        style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
+                    >
                         <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                     </div>
                 </MessageScrollerItem>
@@ -510,6 +548,15 @@ function Composer({
     const [submitting, setSubmitting] = React.useState(false);
     const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
     const candidates = useMentionCandidates(roomId);
+    // 粘贴 / 拖拽 / 选图：上传在**发送之前**（失败的图还能重试，不会变成气泡里的裂图）
+    const attachments = useComposerAttachments(conversation, roomId);
+    const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+    // 贴了图、但当前模型不收图 —— 发之前就说清楚，别等上游 400（服务端也会兜一层）
+    const rooms = useRooms();
+    const providers = useProviders();
+    const noVision =
+        attachments.items.length > 0 &&
+        !acceptsImages(providers, rooms.find((room) => room.id === roomId)?.modelKey ?? '');
 
     /**
      * @ 补全的规则全在 chat-core（`mentionQuery` / `filterMentionCandidates` / `completeMention` /
@@ -546,12 +593,16 @@ function Composer({
 
     const send = () => {
         const text = draft.text.trim();
-        if (text === '' || submitting) return;
+        // 空正文 + 有附件是合法的（贴一张图什么都不打）
+        if ((text === '' && attachments.refs === undefined) || submitting) return;
         setSubmitting(true);
-        // 发送成功才清草稿；失败保留输入框里的字
+        // 发送成功才清草稿与附件；失败两者都留着（用户能重发，不用重新贴一遍）
         void conversation
-            .send(text)
-            .then(() => draft.clearIfMatches(text))
+            .send(text, attachments.refs)
+            .then(() => {
+                draft.clearIfMatches(text);
+                attachments.clear();
+            })
             .catch(() => undefined)
             .finally(() => {
                 setSubmitting(false);
@@ -575,7 +626,29 @@ function Composer({
              * 之前是「手写圆角大框 + 里面再套一个 InputGroup + 外面再接一条 ComposerBar」，
              * 于是有两层边框，而工具条其实落在框外，看起来就还是个单行输入框。
              */}
-            <div className="relative">
+            {/* 待发附件与提示：放在输入框**上方** —— 与「刚贴进来」的动作最近 */}
+            <AttachmentsRow items={attachments.items} onRemove={attachments.remove} busy={attachments.busy} />
+            {noVision && (
+                <div className="pb-1 text-xs text-destructive">
+                    当前模型不收图：这张图不会送进模型（想让它看，到底栏切一个带 🖼 的模型）
+                </div>
+            )}
+            {attachments.error !== undefined && (
+                <div className="pb-1 text-xs text-destructive">{attachments.error}</div>
+            )}
+            <div
+                className="relative"
+                onDragOver={(event) => {
+                    // 只有真的拖了文件才拦：否则「拖选文字」也会变成 drop 目标
+                    if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+                }}
+                onDrop={(event) => {
+                    const files = Array.from(event.dataTransfer.files);
+                    if (files.length === 0) return;
+                    event.preventDefault();
+                    attachments.addFiles(files);
+                }}
+            >
                 {menuOpen && (
                     <MentionMenu candidates={matches} activeIndex={active} onPick={pick} onHover={setActive} />
                 )}
@@ -586,6 +659,34 @@ function Composer({
                         onChange={(event) => {
                             draft.setText(event.target.value);
                             setDismissed(false);
+                        }}
+                        onPaste={(event) => {
+                            // 剪贴板里既有文字又有图时只拦「有文件」那一种：
+                            // 拦掉纯文字粘贴会让人没法在输入框里粘链接。
+                            // files 与 items 都看：不同来源（截图 / Finder 复制）会给其中一个空。
+                            const transfer = event.clipboardData;
+                            const fromItems = Array.from(transfer.items)
+                                .filter((item) => item.kind === 'file')
+                                .map((item) => item.getAsFile())
+                                .filter((file): file is File => file !== null);
+                            const seen = new Set<string>();
+                            const files = [...Array.from(transfer.files), ...fromItems].filter((file) => {
+                                const key = `${file.name}|${file.size}|${file.lastModified}`;
+                                if (seen.has(key)) return false;
+                                seen.add(key);
+                                return true;
+                            });
+                            if (files.length > 0) {
+                                event.preventDefault();
+                                attachments.addFiles(files);
+                                return;
+                            }
+                            // 有「文件」类型却读不到内容（少数浏览器/终端只给文件引用不给字节）：
+                            // 说清楚该怎么绕，别静默什么都不做
+                            if (transfer.types.includes('Files')) {
+                                event.preventDefault();
+                                attachments.warn('这条粘贴没带文件内容，拿不到图片字节 —— 把文件拖进来，或点回形针选');
+                            }
                         }}
                         onKeyDown={(event) => {
                             // 浮层开着时：上下选、Enter/Tab 确认、Esc 关。这几键不能落到「发送」上。
@@ -619,13 +720,36 @@ function Composer({
                             }
                         }}
                         rows={1}
-                        placeholder="和这个实体对话…（@ 选 bot）"
+                        placeholder="和这个实体对话…（@ 选 bot、粘贴/拖入图片）"
                         className="max-h-40 flex-none p-3 text-sm"
                     />
                     {/* 底栏：工具在左、发送在右（官方 prompt-input 的摆法）。
                     工具条原先在框外单独一行，现在回到框内 —— 这也是用户 2026-11-24 的原话。 */}
                     <InputGroupAddon align="block-end" className="gap-1 pr-1.5 pb-1">
                         {extras}
+                        {/* 选图 / 选文件：粘贴与拖拽之外的第三条入口 ——
+                            它也是唯一能被自动化测到的入口（拖拽要构造 DataTransfer） */}
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => {
+                                const files = Array.from(event.target.files ?? []);
+                                if (files.length > 0) attachments.addFiles(files);
+                                // 清空 value：同一个文件连选两次也要能再触发一次 change
+                                event.target.value = '';
+                            }}
+                        />
+                        <InputGroupButton
+                            size="icon-sm"
+                            className={running ? undefined : 'ml-auto'}
+                            disabled={!attachments.supported || submitting}
+                            title={attachments.supported ? '添加附件（也可以直接粘贴 / 拖进来）' : '当前后端不支持附件'}
+                            onClick={() => fileInputRef.current?.click()}
+                        >
+                            <Paperclip className="size-4" />
+                        </InputGroupButton>
                         {running ? (
                             <InputGroupButton
                                 size="icon-sm"
@@ -640,7 +764,7 @@ function Composer({
                                 size="icon-sm"
                                 className="ml-auto"
                                 title="发送"
-                                disabled={draft.text.trim() === '' || submitting}
+                                disabled={(draft.text.trim() === '' && attachments.refs === undefined) || submitting}
                                 onClick={send}
                             >
                                 <Send className="size-4" />
@@ -696,6 +820,22 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
             )}
             {/* 顶部常驻：描述的是「更早」，不跟消息一起滚走 —— 也免得干扰“滑到顶补一窗”的边界 */}
             <div className="px-6 pt-2">
+                {/*
+                 * 历史分页（2026-11-26）：服务端默认只发最近 400 条 —— 6000+ 条的房间里
+                 * 全量回包 5.7 MB，JSON.parse + 渲染就是 2~5 秒的长任务（切任务/点输入框卡）。
+                 *
+                 * 点它**不要再一次全量**（那是给“几百兆的会话”留的最大一个坑）：`loadMore`
+                 * 每次把窗口翻一倍，回包永远可控；真要看到头就多点几下。
+                 */}
+                {state.truncated === true && (
+                    <button
+                        onClick={() => conversation.loadMore()}
+                        title="每次加载当前的再一倍（不是一次全量）"
+                        className="my-1 w-full rounded border border-border/60 px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/60"
+                    >
+                        上面还有 {Math.max(0, (state.totalItems ?? 0) - state.items.length)} 条更早的消息未加载 · 点此再加载一倍
+                    </button>
+                )}
                 <CompactCutBar sessions={sessions} />
             </div>
             {/*

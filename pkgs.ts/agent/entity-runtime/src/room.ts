@@ -16,16 +16,24 @@
 //   4. 压缩只影响自己：没有房间级水位，也没有共享摘要
 //   5. 同一房间运行中再发消息 → 沿用当前 turn（时间线不乱）
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import type { ModelMessage, ToolSet } from 'ai';
 
 import { effectiveModelOf, effectivePersonaOf, mentionsOf, primaryMemberOf } from '@diy-agent/protocol';
+import { createBlobStore } from '@diy-agent/attachment';
+import type { AttachmentRef } from '@diy-agent/attachment/types';
 import type { ContextSession } from '@diy-agent/context';
 
 import { AskGate, askAnswerHeading, describeAnswer, type AnswerOutcome, type AskResult } from './ask';
 import type { Compactor } from './compaction';
 import { ASK_DRAFT_PREFIX, type Store } from './db';
+import { acceptsImagesOf } from './providers';
 import { RoomLog, type RoomEntry } from './room-log';
+import type { AttachmentReader } from './session-images';
 import { createRoomContext } from './system-context';
+import { envelopeHint, promptReminder, resolveRemindMode, type RemindMode } from './units-remind';
 import { buildRoomTools, type RunCodeHost } from './tools/index';
 import { createToolOutputCapper } from './tool-output';
 import { unitBoard, type UnitBoard } from './units';
@@ -60,6 +68,19 @@ export interface SessionInfo {
     name: string;
     stats: SessionStats;
     compactions: ReturnType<BotSession['compactions']>;
+}
+
+/**
+ * 缺省读法：`<home>/blobs` 里取字节；`linked`（工作区文件）直接读原路径。
+ *
+ * 为什么 `linked` 也能读：用户拖进来的工作区图片不该为了一次看图而拷一份 ——
+ * 到发请求时按路径读一次就够了（原件被删就自然落到「未送达」）。
+ */
+function defaultAttachmentReader(home: string | undefined): AttachmentReader | undefined {
+    if (home === undefined) return undefined;
+    const blobs = createBlobStore({ root: join(home, 'blobs') });
+    return async (ref: AttachmentRef) =>
+        ref.type === 'linked' ? new Uint8Array(await readFile(ref.path)) : blobs.read(ref);
 }
 
 export interface RoomActorDeps {
@@ -109,6 +130,10 @@ export interface RoomActorDeps {
     now?: () => number;
     /** 「用户」在时间线上的身份（回答提问时以它投递）；缺省就是「我」 */
     human?: Author;
+    /** 覆盖附件读法（缺省从 `home` 推 blobs；测试注入内存表） */
+    readAttachment?: AttachmentReader;
+    /** 覆盖「这个模型收不收图」的判据（缺省查模型目录的能力位；测试注入常量） */
+    acceptsImages?: (modelKey: string) => boolean;
 }
 
 export class RoomActor {
@@ -161,8 +186,19 @@ export class RoomActor {
      */
     private readonly turnStarts = new Map<string, { turnId: string; startedAt: number }>();
     private lastRunningKey = '';
+    /**
+     * 附件 ref → 字节（传给每个 session）。
+     *
+     * 没有 `home` 也没有注入 ⇒ `undefined`：session 会在正文后补一行「附图未送达」，
+     * 而不是默默把图吃掉（测试 / 无 app 宿主就是这个状态）。
+     */
+    private readonly readAttachment: AttachmentReader | undefined;
+    /** 「这个模型收不收图」—— 缺省查模型目录，注入时按注入的来 */
+    private readonly acceptsImages: (modelKey: string) => boolean;
 
     constructor(private readonly deps: RoomActorDeps) {
+        this.readAttachment = deps.readAttachment ?? defaultAttachmentReader(deps.home);
+        this.acceptsImages = deps.acceptsImages ?? ((modelKey) => acceptsImagesOf(modelKey));
         // 公共日志从库里恢复（append-only，seq 接着走）
         this.log = new RoomLog(this.deps.store.roomEntries(this.id));
         this.gate = new AskGate({
@@ -305,6 +341,16 @@ export class RoomActor {
         return this.deps.store.itemsOf(this.id, afterSeq);
     }
 
+    /** 最后 n 条（时间线顺序）—— 展示层默认只要这一截，见 `Store.lastItemsOf` */
+    lastItems(n: number): Item[] {
+        return this.deps.store.lastItemsOf(this.id, n);
+    }
+
+    /** 条目总数（分页提示用） */
+    countItems(): number {
+        return this.deps.store.countItemsOf(this.id);
+    }
+
     deliveries(): Delivery[] {
         return this.deps.store.listDeliveries(this.id);
     }
@@ -329,9 +375,17 @@ export class RoomActor {
         recipients?: string[];
         mode?: InboxMode;
         quiet?: boolean;
+        /**
+         * 随消息带的附件（已落 blobs 的 ref）。
+         *
+         * 为什么允许 `text` 为空：贴一张图什么都不打是最常见的用法，逼人写一句话反而多余。
+         * 但「两者都空」仍然是错误（@ 路由也靠 text，完全空的消息没有意义）。
+         */
+        attachments?: readonly AttachmentRef[];
     }): Promise<void> {
         const text = input.text.trim();
-        if (text === '') throw new Error('text required');
+        const attachments = input.attachments ?? [];
+        if (text === '' && attachments.length === 0) throw new Error('text or attachments required');
 
         const participants = this.members();
         if (participants.length === 0) throw new Error('room has no bot');
@@ -352,7 +406,7 @@ export class RoomActor {
             status: 'done',
             author: input.author,
             type: 'chat',
-            data: { text },
+            data: attachments.length === 0 ? { text } : { text, attachments },
         };
         const saved = this.deps.store.appendItem(this.id, item);
         this.deps.emit({ kind: 'item', item: saved });
@@ -361,6 +415,8 @@ export class RoomActor {
             kind: 'say',
             author: input.author,
             text,
+            // 附件跟着条目走：别的 bot 读不到发送者的 blobs，只能靠 ref
+            ...(attachments.length === 0 ? {} : { attachments }),
             // 投递 / 公共条目对得上的唯一钥匙：崩溃恢复要靠它问 session「你读过这句没有」
             messageId: saved.id,
             turn: turn.turn,
@@ -391,15 +447,22 @@ export class RoomActor {
         // 变量增量不在这里算：它属于**模型步**（session 的 prepareStep 每步取一次），
         // 这样 say / 恢复重投 / agent 间结论走的是同一条路，不会有「时机不同就漏一把」。
         await Promise.all(
-            recipients.map((bot) =>
-                this.sessionOf(bot).post({
-                    messageId: saved.id,
-                    text,
-                    mode: input.mode ?? 'next-step',
-                    turn,
-                    entry,
-                }),
-            ),
+            recipients.map(async (bot) => {
+                // 盖章：这一轮是这个成员被**这条消息**叫醒的（unit_add 靠它记来源）
+                this.turnSources.set(bot.id, saved.id);
+                try {
+                    await this.sessionOf(bot).post({
+                        messageId: saved.id,
+                        text,
+                        mode: input.mode ?? 'next-step',
+                        turn,
+                        entry,
+                    });
+                } finally {
+                    // 收尾就撤：来源只对「这一轮」有效，留着会让下一轮的条目认错爹
+                    if (this.turnSources.get(bot.id) === saved.id) this.turnSources.delete(bot.id);
+                }
+            }),
         );
     }
 
@@ -435,9 +498,7 @@ export class RoomActor {
                     : { turn: delivery.turn, turnId: delivery.turnId ?? `turn-${delivery.messageId}` };
             // 这条投递对应的公共条目（只有 say 带 messageId）。拿到它才能问 session
             // 「你上下文里到底有没有它」—— 不传的话 session 无处可查，只像个眼瞎的盲标。
-            const entry = this.log
-                .all()
-                .find((item) => item.kind === 'say' && item.messageId === delivery.messageId);
+            const entry = this.log.all().find((item) => item.kind === 'say' && item.messageId === delivery.messageId);
             await this.postOrWarn(bot, delivery, text, entry, turn);
         }
     }
@@ -457,6 +518,7 @@ export class RoomActor {
         turn: Turn | undefined,
     ): Promise<void> {
         try {
+            this.turnSources.set(bot.id, delivery.messageId);
             await this.sessionOf(bot).post({
                 messageId: delivery.messageId,
                 text,
@@ -468,6 +530,8 @@ export class RoomActor {
             });
         } catch (error) {
             console.warn(`[room:${this.id}] 续跑投递失败：${(error as Error).message}`);
+        } finally {
+            if (this.turnSources.get(bot.id) === delivery.messageId) this.turnSources.delete(bot.id);
         }
     }
 
@@ -722,6 +786,8 @@ export class RoomActor {
         this.deps.store.saveRoom(this.deps.spec);
         // 退出的成员把 session 一并丢掉（再进来会按日志重建）
         const keep = new Set(members.map((member) => member.botId));
+        // 快照必须：循环体里 `this.sessions.delete`（边遍历边改会跳过）
+        // oxlint-disable-next-line no-useless-spread
         for (const botId of [...this.sessions.keys()]) {
             if (keep.has(botId)) continue;
             this.sessions.delete(botId);
@@ -832,7 +898,15 @@ export class RoomActor {
                       },
                       // unit 是 task 私有的：非任务房间不给这套工具（它们没有图，也没有 #号可挂）
                       ...(this.deps.spec.type === 'task'
-                          ? { units: { store: this.deps.store, taskId: this.id } }
+                          ? {
+                                units: {
+                                    store: this.deps.store,
+                                    taskId: this.id,
+                                    remind: this.remindMode,
+                                    // 「这条需求来自哪句话」：由宿主按**本轮触发消息**盖章
+                                    sourceOf: () => this.turnSources.get(botId),
+                                },
+                            }
                           : {}),
                       ...(this.deps.code === undefined ? {} : { code: this.deps.code }),
                   });
@@ -845,24 +919,66 @@ export class RoomActor {
         return this.deps.cwd !== undefined;
     }
 
+    /**
+     * 提醒档位（`units-remind.ts`）：开房时读一次（环境变量 → `<home>/units-remind.txt`）。
+     * 实验要在同一个实例上连跑几档，所以按**房间**读而不是进程启动时读死。
+     */
+    private get remindMode(): RemindMode {
+        this.remindModeCache ??= resolveRemindMode({
+            // exactOptionalPropertyTypes：不传就不带这个键
+            // oxlint-disable-next-line no-useless-spread
+            ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
+        });
+        return this.remindModeCache;
+    }
+    private remindModeCache?: RemindMode;
+
+    /**
+     * 每个成员**这一轮**是被哪条消息叫醒的（`entity_items.id`）。
+     *
+     * 用途：`unit_add` 落条目时自动盖「来源」（模型看不到 message id，让它填只会编错）。
+     * 为什么按成员分表而不是一个字段：多个 bot 可以同时被不同消息叫醒，一个字段会互相覆盖。
+     */
+    private readonly turnSources = new Map<string, string>();
+
+    /**
+     * B 档的判据：账本是否空 / 上次账本变更之后有没有人发言。
+     *
+     * 「有人发言」用 items 里最后一条 human 的时间比，而不是维护一个额外的水位 ——
+     * 水位要在写路径上记得更新（多一个会忘的地方），而时间比较是幂等的。
+     */
+    private unitsRemindState(): { empty: boolean; humanSince: boolean } {
+        const board = this.unitBoardOf();
+        if (board.rows.length === 0) return { empty: true, humanSince: true };
+        const items = this.deps.store.itemsOf(this.id);
+        let lastHuman = 0;
+        for (const item of items) {
+            const author = (item as { author?: { role?: string } }).author;
+            if (author?.role !== 'human') continue;
+            const at = (item as { at?: number }).at ?? 0;
+            if (at > lastHuman) lastHuman = at;
+        }
+        const lastUnitAt = this.deps.store
+            .listUnits(this.id)
+            .reduce((max, unit) => (unit.updatedAt > max ? unit.updatedAt : max), 0);
+        return { empty: false, humanSince: lastHuman > lastUnitAt };
+    }
+
     private toolsHint(): string {
-        // 任务房间才有账本树。措辞分两段（2026-11-26 实测后改）：先给触发条件，再给节奏 ——
-        // 只写「拆解用 unit_*」时模型的反应是「先 unit_list 看一眼，然后直接动手写代码」，
-        // 账本始终是空的（用户实测：不明确说「把这件事拆成几步」它就不建）。
-        const unitHint =
-            this.deps.spec.type === 'task'
-                ? '\n**先落账本再动手**：接到需求（或需求变了）时，先判断这件事是不是不止一步 —— ' +
-                  '是就用 unit_add 把它拆成 2~5 条「能被验收的产出」（母项 → 子项，body 写验收口径），' +
-                  '然后再开工；只有一步的小改（改个文案 / 跑个命令 / 看一眼状态）不要建。' +
-                  '\n**每轮从账本里挑活**：上下文 units 节的 ready 就是现在能挑的（不必先 unit_list），' +
-                  '挑 1~3 条做；开做标 doing、做完标 done，需求变了就让树跟着变（unit_update / unit_drop）。' +
-                  '别把步骤只写在正文里，也别等做完再补树 —— 账本是给人看进度的唯一地方。'
-                : '';
+        // 任务房间才有账本树。三处提醒的开关在 `units-remind.ts`（实验用 `DIY2_UNITS_REMIND`
+        // 或 `<home>/units-remind.txt` 换档）：这里只放 A 档（常驻提示词）那一段。
+        const unitHint = this.deps.spec.type === 'task' ? promptReminder(this.remindMode) : '';
         const jobHint =
             this.deps.jobs === undefined
                 ? ''
                 : '\n后台长活（构建 / 测试 / 装依赖）用 bash 的 background，再用 job 查状态 / 取输出 / 停；' +
                   '起完就别轮询，结束时会插话叫醒你。';
+        // 图片能力必须**明写**：不给这段，模型的反应是自己用 bash+curl 拼一份 raw API 调用
+        // 去看图（2026-11-26 实测：它跑了 6 条 bash、写了两份 payload，链路完全绕开本实例）。
+        const imageHint =
+            '\n**看图用 view_image，不要自己调模型 API**：要分析图片（截图 / 照片 / 图表）就把路径交给它 —— ' +
+            '「自己截图自己看」就是 `screencapture -x /tmp/x.png` 之后 `view_image({path:"/tmp/x.png"})`。' +
+            '绝不可以用 bash + curl 去请求模型端点看图：那条路绕开对话上下文，既白花 token，人也不知道你看了什么。';
         return (
             '可以用 read / write / edit 读写文件、用 bash 执行命令；' +
             `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
@@ -872,7 +988,8 @@ export class RoomActor {
             '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。' +
             'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。' +
             unitHint +
-            jobHint
+            jobHint +
+            imageHint
         );
     }
 
@@ -944,7 +1061,13 @@ export class RoomActor {
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
             ...(this.deps.deviceHome === undefined ? {} : { deviceHome: this.deps.deviceHome }),
             journal: () => this.deps.store.journalOf(this.id),
-            ...(this.deps.spec.type === 'task' ? { units: () => this.unitBoardOf() } : {}),
+            ...(this.deps.spec.type === 'task'
+                ? {
+                      units: () => this.unitBoardOf(),
+                      // B 档：账本空 / 上一轮有人发言时，在 units 节挂一行提醒
+                      unitsHint: () => envelopeHint(this.remindMode, this.unitsRemindState()),
+                  }
+                : {}),
             members: () => {
                 const primary = this.primary();
                 return this.members().map((bot) => ({
@@ -981,6 +1104,8 @@ export class RoomActor {
             ...(this.hasTools ? { toolsHint: this.toolsHint() } : {}),
             ...(systemContext === '' ? {} : { systemContext }),
             ...(context === null ? {} : { takeDelta: () => context.step().user, commitDelta: () => context.commit() }),
+            ...(this.readAttachment === undefined ? {} : { readAttachment: this.readAttachment }),
+            acceptsImages: this.acceptsImages,
         });
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));

@@ -40,7 +40,8 @@
         "@diy-agent/tools": "*",
         "@opentelemetry/api-logs": "^0.223.0",
         "ai": "^7.0.173",
-        "zod": "^4.2.0"
+        "zod": "^4.2.0",
+        "@diy-agent/attachment": "*"
     },
     "devDependencies": {
         "@ai-sdk/provider": "^4.0.38",

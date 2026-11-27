@@ -43,20 +43,14 @@
 // 判据不是"会不会卡"，而是同步 IO 会把整个主进程（含渲染、RPC）按在磁盘上，
 // 一旦落在热路径上（面板每 3s 刷、每个输出块）就是 UI 掉帧的唯一原因。
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { jobDoneNotify, MAX_TAIL_BYTES, tailOf, type RunLike, type TailResult } from "./run-status.js";
-import type { NotifyItem } from "@diy-agent/context/envelope";
-import {
-    buildInvocation,
-    detectPreferredShell,
-    detectShells,
-    noShellHint,
-    type ShellSpec,
-} from "@diy-agent/tools";
-import { localISOString } from "@diy-agent/time";
+import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdir, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { jobDoneNotify, MAX_TAIL_BYTES, tailOf, type RunLike, type TailResult } from './run-status.js';
+import type { NotifyItem } from '@diy-agent/context/envelope';
+import { buildInvocation, detectShells, noShellHint, type ShellSpec } from '@diy-agent/tools';
+import { localISOString } from '@diy-agent/time';
 
 /** run 的来源锚点：哪一轮、哪一步、哪个工具调用起的（`toolCallId` 是定位键）。 */
 export interface RunOrigin {
@@ -216,7 +210,7 @@ export const posixJobCaps: JobOsCaps = {
             process.kill(-pid, 0);
             return true;
         } catch (e) {
-            return (e as NodeJS.ErrnoException).code === "EPERM";
+            return (e as NodeJS.ErrnoException).code === 'EPERM';
         }
     },
 };
@@ -236,7 +230,7 @@ export const windowsJobCaps: JobOsCaps = {
             if (!Number.isInteger(t.pid) || t.pid <= 0) continue;
             if (!winPidAlive(t.pid)) continue;
             try {
-                spawn("taskkill", ["/pid", String(t.pid), "/T", "/F"], { detached: true, stdio: "ignore" }).unref();
+                spawn('taskkill', ['/pid', String(t.pid), '/T', '/F'], { detached: true, stdio: 'ignore' }).unref();
             } catch {
                 // 发不出去（taskkill 不在）就是杀不掉，别把业务炸了
             }
@@ -253,7 +247,7 @@ function winPidAlive(pid: number): boolean {
         process.kill(pid, 0);
         return true;
     } catch (e) {
-        return (e as NodeJS.ErrnoException).code === "EPERM";
+        return (e as NodeJS.ErrnoException).code === 'EPERM';
     }
 }
 
@@ -263,7 +257,7 @@ function winPidAlive(pid: number): boolean {
  * 宿主有自己的 `os` 策略层时**应当显式传** `caps`（diy-app 就是这么做的）——
  * 这里只是让「没有策略层的宿主 / 单测」拿到一个语义正确的缺省值。
  */
-export const defaultJobCaps: JobOsCaps = process.platform === "win32" ? windowsJobCaps : posixJobCaps;
+export const defaultJobCaps: JobOsCaps = process.platform === 'win32' ? windowsJobCaps : posixJobCaps;
 
 /** 任务结束时投给宿主的**事件**（整条给出去，免得每加一个字段就改签名）。 */
 export interface JobDoneEvent {
@@ -298,7 +292,7 @@ export interface JobDoneEvent {
 export type JobNotifier = (event: JobDoneEvent) => unknown;
 
 /** 探测不到 shell 时的哨兵（`missing` 让 `spawn` 在起进程前就收口，见 `spawn`）。 */
-const MISSING_SHELL: ShellSpec = { kind: "bash", file: "bash", label: "bash", missing: true, tried: [] };
+const MISSING_SHELL: ShellSpec = { kind: 'bash', file: 'bash', label: 'bash', missing: true, tried: [] };
 
 /** 根进程的退出信息：组空之前先存着，收口时才用。 */
 interface PendingExit {
@@ -327,14 +321,14 @@ export function groupAlive(pgid: number, caps: JobOsCaps = defaultJobCaps): bool
 function awaitOpened(child: ChildProcess): Promise<{ ok: boolean; error?: string }> {
     return new Promise((resolve) => {
         const done = (r: { ok: boolean; error?: string }): void => {
-            child.off("spawn", onSpawn);
-            child.off("error", onError);
+            child.off('spawn', onSpawn);
+            child.off('error', onError);
             resolve(r);
         };
         const onSpawn = (): void => done({ ok: true });
         const onError = (e: Error): void => done({ ok: false, error: e.message });
-        child.once("spawn", onSpawn);
-        child.once("error", onError);
+        child.once('spawn', onSpawn);
+        child.once('error', onError);
     });
 }
 
@@ -361,8 +355,8 @@ export const KEEP_DAYS = 7;
 
 /** 数据根（与宿主同口径：`DIY_HOME`，缺省 `~/.diy`）；宿主也可以显式传 `rootDir`。 */
 export function defaultHome(env: NodeJS.ProcessEnv = process.env): string {
-    const raw = (env["DIY_HOME"] ?? "").trim();
-    return raw !== "" ? raw : join(homedir(), ".diy");
+    const raw = (env['DIY_HOME'] ?? '').trim();
+    return raw !== '' ? raw : join(homedir(), '.diy');
 }
 
 /**
@@ -373,13 +367,13 @@ export function defaultHome(env: NodeJS.ProcessEnv = process.env): string {
  * **运行产物**（日志），不是执行账；账本该在数据目录，而这里可整目录删。
  */
 export function runRoot(home: string = defaultHome()): string {
-    return join(home, "log", "job", "runs");
+    return join(home, 'log', 'job', 'runs');
 }
 
 /** 本地日期目录名 `YYYY-MM-DD`（按启动时刻；理由见文件头）。 */
 export function dateDirOf(ts: number): string {
     const d = new Date(ts);
-    const p2 = (n: number): string => String(n).padStart(2, "0");
+    const p2 = (n: number): string => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 }
 
@@ -446,8 +440,8 @@ export class RunRegistry {
      * 为什么要能问：不传 notifier 时最怕的是「调用方以为通知了」—— 于是把它变成一个
      * 可以断言的事实（包内测试就钉这条），而不是靠读文档记。
      */
-    get notifyMode(): "callback" | "silent" {
-        return this.notifier ? "callback" : "silent";
+    get notifyMode(): 'callback' | 'silent' {
+        return this.notifier ? 'callback' : 'silent';
     }
 
     setNotifier(fn: JobNotifier | undefined): void {
@@ -465,12 +459,12 @@ export class RunRegistry {
         const id = newRunId(now);
         const dir = join(this.rootDir, dateDirOf(now), id);
         await mkdir(dir, { recursive: true });
-        const logPath = join(dir, "out.log");
+        const logPath = join(dir, 'out.log');
         const info: RunInfo = {
             id,
             command: input.command,
             cwd: input.cwd,
-            state: "running",
+            state: 'running',
             startedAt: now,
             dir,
             logPath,
@@ -506,7 +500,7 @@ export class RunRegistry {
                 // Node 传进来的文件句柄后**静默丢弃输出**（实测：`bash --version` 退出码 0、
                 // 日志为空）。改为让 bash 自己重定向（`exec >> log 2>&1`），stdio 全 ignore ——
                 // 既绕开句柄问题，也仍然是「直落文件、不走管道」，`close` 语义不变。
-                const fh = await open(logPath, "a");
+                const fh = await open(logPath, 'a');
                 await fh.close();
                 const inv = buildInvocation(shell, input.command, logPath);
                 child = spawn(inv.file, inv.args, {
@@ -514,19 +508,19 @@ export class RunRegistry {
                     // Windows 的 CREATE_NEW_PROCESS_GROUP 会让 PowerShell 丢管道/重定向；杀树走
                     // taskkill /T，不依赖进程组 ⇒ 按能力位决定（POSIX 仍需 detached 来按组收孤儿）。
                     detached: this.caps.processGroups,
-                    stdio: ["ignore", "ignore", "ignore"],
+                    stdio: ['ignore', 'ignore', 'ignore'],
                     windowsHide: true,
                 });
                 opened = awaitOpened(child);
             } else {
                 // stdio 必须传 fd，所以这里得先 `await open`（异步打开，不阻塞主进程）
-                const fh = await open(logPath, "a");
+                const fh = await open(logPath, 'a');
                 try {
                     const inv = buildInvocation(shell, input.command);
                     child = spawn(inv.file, inv.args, {
                         cwd: input.cwd,
                         detached: true,
-                        stdio: ["ignore", fh.fd, fh.fd],
+                        stdio: ['ignore', fh.fd, fh.fd],
                         windowsHide: true,
                     });
                     opened = awaitOpened(child);
@@ -548,13 +542,13 @@ export class RunRegistry {
         //   所以：**spawn 一返回就同步挂上监听，然后才做任何 await**。
         const res = await opened!;
         if (!res.ok) {
-            this.settle(id, { exitCode: null, signal: null, errorText: res.error ?? "启动失败" });
+            this.settle(id, { exitCode: null, signal: null, errorText: res.error ?? '启动失败' });
             await this.writeMeta(info);
             return this.runs.get(id) ?? info;
         }
         // 不 unref：我们要 `close` 事件来判终态；main 退出后子进程仍在（detached）
-        child.on("error", (e) => this.onRootExit(id, { exitCode: null, signal: null, errorText: e.message }));
-        child.on("close", (code, signal) => this.onRootExit(id, { exitCode: code, signal: signal ?? null }));
+        child.on('error', (e) => this.onRootExit(id, { exitCode: null, signal: null, errorText: e.message }));
+        child.on('close', (code, signal) => this.onRootExit(id, { exitCode: code, signal: signal ?? null }));
         // pid 是这条 run 的**身份**（进程组号也等于它）：spawn 定局后立刻补写 meta，
         // 否则盘上只有 command/cwd，重启后对不上任何东西。
         await this.writeMeta(info);
@@ -573,16 +567,16 @@ export class RunRegistry {
         const timer = setTimeout(() => {
             this.deadlines.delete(id);
             const info = this.runs.get(id);
-            if (!info || info.state !== "running" || info.pid === undefined) return;
+            if (!info || info.state !== 'running' || info.pid === undefined) return;
             this.killedByUs.add(id);
             if (!this.caps.gracefulSignals) {
                 // 无 SIGTERM 语义（Windows）：直接强杀，别排一个必然打空的宽限定时器
-                this.signalGroup(info.pid, "SIGKILL");
+                this.signalGroup(info.pid, 'SIGKILL');
                 return;
             }
-            this.signalGroup(info.pid, "SIGTERM");
+            this.signalGroup(info.pid, 'SIGTERM');
             const grace = setTimeout(() => {
-                if (this.runs.get(id)?.state === "running") this.signalGroup(info.pid as number, "SIGKILL");
+                if (this.runs.get(id)?.state === 'running') this.signalGroup(info.pid as number, 'SIGKILL');
             }, KILL_GRACE_MS);
             grace.unref?.();
         }, ms);
@@ -594,7 +588,7 @@ export class RunRegistry {
     private evictOld(): void {
         if (this.runs.size <= this.maxRuns) return;
         const ended = [...this.runs.values()]
-            .filter((r) => r.state !== "running")
+            .filter((r) => r.state !== 'running')
             .sort((a, b) => a.startedAt - b.startedAt);
         for (const r of ended) {
             if (this.runs.size <= this.maxRuns) break;
@@ -631,8 +625,8 @@ export class RunRegistry {
     /** 全部 run，**活着的在前**、同状态按启动时间倒序（最近起的先看）。 */
     list(): RunInfo[] {
         return [...this.runs.values()].sort((a, b) => {
-            const ar = a.state === "running" ? 0 : 1;
-            const br = b.state === "running" ? 0 : 1;
+            const ar = a.state === 'running' ? 0 : 1;
+            const br = b.state === 'running' ? 0 : 1;
             if (ar !== br) return ar - br;
             return b.startedAt - a.startedAt;
         });
@@ -672,7 +666,7 @@ export class RunRegistry {
         const info = this.runs.get(id);
         if (!info) return undefined;
         try {
-            return await readFile(join(info.dir, "meta.json"), "utf8");
+            return await readFile(join(info.dir, 'meta.json'), 'utf8');
         } catch {
             return undefined;
         }
@@ -690,18 +684,18 @@ export class RunRegistry {
      */
     kill(id: string): boolean {
         const info = this.runs.get(id);
-        if (!info || info.state !== "running") return false;
+        if (!info || info.state !== 'running') return false;
         // 用 info.pid 而不是 children：根进程可能早就退了，活的是它起的后台进程（组还在）
         const pid = info.pid;
         if (!pid) return false;
         this.killedByUs.add(id);
         if (!this.caps.gracefulSignals) {
-            this.signalGroup(pid, "SIGKILL");
+            this.signalGroup(pid, 'SIGKILL');
             return true;
         }
-        this.signalGroup(pid, "SIGTERM");
+        this.signalGroup(pid, 'SIGTERM');
         const timer = setTimeout(() => {
-            if (this.runs.get(id)?.state === "running") this.signalGroup(pid, "SIGKILL");
+            if (this.runs.get(id)?.state === 'running') this.signalGroup(pid, 'SIGKILL');
         }, KILL_GRACE_MS);
         timer.unref?.();
         return true;
@@ -729,14 +723,14 @@ export class RunRegistry {
      * 返回本应收掉的 run 条数（`0` = 本来就没在跑）。
      */
     async shutdown(opts: { graceMs?: number } = {}): Promise<number> {
-        const targets = [...this.runs.values()].filter((r) => r.state === "running");
+        const targets = [...this.runs.values()].filter((r) => r.state === 'running');
         if (targets.length === 0) return 0;
         if (!this.caps.gracefulSignals) {
             // 无 SIGTERM 语义：一次强杀；taskkill 是异步的，给一个短的收口窗口即可
             for (const info of targets) {
                 if (info.pid === undefined) continue;
                 this.killedByUs.add(info.id);
-                this.signalGroup(info.pid, "SIGKILL");
+                this.signalGroup(info.pid, 'SIGKILL');
             }
             await this.awaitSettled(targets, 500);
             return targets.length;
@@ -745,19 +739,19 @@ export class RunRegistry {
         for (const info of targets) {
             if (info.pid === undefined) continue;
             this.killedByUs.add(info.id);
-            this.signalGroup(info.pid, "SIGTERM");
+            this.signalGroup(info.pid, 'SIGTERM');
         }
         await this.awaitSettled(targets, graceMs);
         // 宽限期到点还在跑的：整组 SIGKILL（仍收不掉就放弃 —— 预算比"条条收到"重要）
-        const left = targets.filter((r) => this.runs.get(r.id)?.state === "running");
-        for (const info of left) if (info.pid !== undefined) this.signalGroup(info.pid, "SIGKILL");
+        const left = targets.filter((r) => this.runs.get(r.id)?.state === 'running');
+        for (const info of left) if (info.pid !== undefined) this.signalGroup(info.pid, 'SIGKILL');
         if (left.length > 0) await this.awaitSettled(left, 500);
         return targets.length;
     }
 
     /** 等这些 run 全部离开 `running`，或超时（不改状态：状态只由 `settle` 改）。 */
     private async awaitSettled(list: RunInfo[], ms: number): Promise<void> {
-        const pending = list.filter((r) => this.runs.get(r.id)?.state === "running");
+        const pending = list.filter((r) => this.runs.get(r.id)?.state === 'running');
         if (pending.length === 0) return;
         let timer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
@@ -774,7 +768,7 @@ export class RunRegistry {
     wait(id: string, timeoutMs: number): Promise<RunInfo | undefined> {
         const info = this.runs.get(id);
         if (!info) return Promise.resolve(undefined);
-        if (info.state !== "running") return Promise.resolve(info);
+        if (info.state !== 'running') return Promise.resolve(info);
         return new Promise((resolve) => {
             const list = this.waiters.get(id) ?? [];
             let done = false;
@@ -823,7 +817,7 @@ export class RunRegistry {
         try {
             this.onChange?.();
         } catch (e) {
-            console.warn("[run] onChange 回调失败", e);
+            console.warn('[run] onChange 回调失败', e);
         }
     }
 
@@ -844,10 +838,10 @@ export class RunRegistry {
             ...(info.origin ? { origin: info.origin } : {}),
         };
         try {
-            await writeFile(join(info.dir, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`, "utf8"); // non-atomic-ok: 每个 run 独占自己的新目录，写完即冻结，不存在并发覆盖
+            await writeFile(join(info.dir, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`, 'utf8'); // non-atomic-ok: 每个 run 独占自己的新目录，写完即冻结，不存在并发覆盖
         } catch (e) {
             // 落盘失败不许炸业务：run 照跑，只是"存储数据"tab 会空
-            console.warn("[run] meta.json 写入失败", info.id, e);
+            console.warn('[run] meta.json 写入失败', info.id, e);
         }
     }
 
@@ -869,9 +863,9 @@ export class RunRegistry {
             ...(info.error === undefined ? {} : { error: info.error }),
         };
         try {
-            await writeFile(join(info.dir, "done.json"), `${JSON.stringify(done, null, 2)}\n`, "utf8"); // non-atomic-ok: run 的收尾只写一次，进程独占该目录
+            await writeFile(join(info.dir, 'done.json'), `${JSON.stringify(done, null, 2)}\n`, 'utf8'); // non-atomic-ok: run 的收尾只写一次，进程独占该目录
         } catch (e) {
-            console.warn("[run] done.json 写入失败", info.id, e);
+            console.warn('[run] done.json 写入失败', info.id, e);
         }
     }
 
@@ -885,10 +879,10 @@ export class RunRegistry {
     private async readLogTail(logPath: string): Promise<string> {
         let fh: Awaited<ReturnType<typeof open>> | undefined;
         try {
-            fh = await open(logPath, "r");
+            fh = await open(logPath, 'r');
             const size = (await fh.stat()).size;
             const want = Math.min(size, MAX_TAIL_BYTES * 4);
-            if (want <= 0) return "";
+            if (want <= 0) return '';
             const start = size - want;
             const buf = Buffer.allocUnsafe(want);
             let got = 0;
@@ -897,9 +891,9 @@ export class RunRegistry {
                 if (r.bytesRead <= 0) break;
                 got += r.bytesRead;
             }
-            return buf.subarray(0, got).toString("utf8");
+            return buf.subarray(0, got).toString('utf8');
         } catch {
-            return "";
+            return '';
         } finally {
             await fh?.close().catch(() => undefined);
         }
@@ -917,7 +911,7 @@ export class RunRegistry {
      */
     private onRootExit(id: string, exit: PendingExit): void {
         const info = this.runs.get(id);
-        if (!info || info.state !== "running") return;
+        if (!info || info.state !== 'running') return;
         this.pendingExits.set(id, exit);
         const pgid = info.pid;
         if (pgid !== undefined && this.probeGroup(pgid)) {
@@ -940,7 +934,7 @@ export class RunRegistry {
      * 所以这是"有人还在跑"的有界轮询，不是调度器的 tick —— 全表都没有活口时它不存在。
      */
     private hasAwaitingGroup(): boolean {
-        for (const r of this.runs.values()) if (r.state === "running" && r.awaitingGroup) return true;
+        for (const r of this.runs.values()) if (r.state === 'running' && r.awaitingGroup) return true;
         return false;
     }
 
@@ -949,7 +943,7 @@ export class RunRegistry {
         const timer = setTimeout(() => {
             this.reapTimer = undefined;
             for (const info of this.runs.values()) {
-                if (info.state !== "running" || !info.awaitingGroup) continue;
+                if (info.state !== 'running' || !info.awaitingGroup) continue;
                 if (info.pid !== undefined && this.probeGroup(info.pid)) continue;
                 const exit = this.pendingExits.get(info.id) ?? { exitCode: null, signal: null };
                 this.settle(info.id, exit);
@@ -982,12 +976,12 @@ export class RunRegistry {
         // 目录按**起跑时刻**分，与 spawn 那条路径同一口径（文件头：「日期取启动时刻的本地日期」）。
         // 用 `now`（= 转的那一刻）会让跨午夜转的 run 落进第二天，与它自己的 `startedAt` 不符。
         const dir = join(this.rootDir, dateDirOf(proc.startedAt), id);
-        const logPath = join(dir, "out.log");
+        const logPath = join(dir, 'out.log');
         const info: RunInfo = {
             id,
             command: input.command,
             cwd: input.cwd,
-            state: "running",
+            state: 'running',
             // 用命令**真正起跑**的时刻，不是转的那一刻（否则面板时长把前半段抹掉）
             startedAt: proc.startedAt,
             dir,
@@ -1024,12 +1018,12 @@ export class RunRegistry {
         // ── ② 挂监听（紧跟交接，中间不许夹 await：`close` 可能就在下一 tick）──
         const child = proc.child;
         this.children.set(id, child);
-        child.on("error", (e) => this.onRootExit(id, { exitCode: null, signal: null, errorText: e.message }));
-        child.on("close", (code, signal) => this.onRootExit(id, { exitCode: code, signal: signal ?? null }));
+        child.on('error', (e) => this.onRootExit(id, { exitCode: null, signal: null, errorText: e.message }));
+        child.on('close', (code, signal) => this.onRootExit(id, { exitCode: code, signal: signal ?? null }));
         // ── ③ 落盘（失败只留痕：run 照跑、照收口，只是没有日志可看）──
         try {
             await mkdir(dir, { recursive: true });
-            fh = await open(logPath, "w");
+            fh = await open(logPath, 'w');
             const sink = {
                 get chain() {
                     return chain;
@@ -1046,7 +1040,7 @@ export class RunRegistry {
             queued.length = 0;
             await this.writeMeta(info);
         } catch (e) {
-            console.warn("[run] adopt 落盘失败", id, e);
+            console.warn('[run] adopt 落盘失败', id, e);
             discarding = true;
             queued.length = 0;
             this.logFailed.add(id);
@@ -1070,9 +1064,9 @@ export class RunRegistry {
      */
     private settle(id: string, exit: PendingExit): void {
         const info = this.runs.get(id);
-        if (!info || info.state !== "running") return;
+        if (!info || info.state !== 'running') return;
         const ours = !!exit.killed || this.killedByUs.delete(id);
-        info.state = exit.errorText && exit.exitCode === null && !exit.signal ? "failed" : ours ? "killed" : "exited";
+        info.state = exit.errorText && exit.exitCode === null && !exit.signal ? 'failed' : ours ? 'killed' : 'exited';
         info.exitCode = exit.exitCode;
         info.signal = exit.signal;
         info.endedAt = this.now();
@@ -1120,13 +1114,12 @@ export class RunRegistry {
         try {
             const notify = jobDoneNotify(info, tailOf(await this.readLogTail(info.logPath), 20));
             // 宿主说 false = 没人接（房间已删 / 成员已退）：落成 `delivered:false`，界面据此标出来
-            info.delivered =
-                this.notifier({ taskUri, text: notify.text ?? "", notify, run: { ...info } }) !== false;
-            if (!info.delivered) console.warn("[run] 结束通知无人接收", info.id, taskUri);
+            info.delivered = this.notifier({ taskUri, text: notify.text ?? '', notify, run: { ...info } }) !== false;
+            if (!info.delivered) console.warn('[run] 结束通知无人接收', info.id, taskUri);
         } catch (e) {
             // 观测不许把业务炸掉：通知失败只留痕
             info.delivered = false;
-            console.warn("[run] 结束通知投递失败", info.id, e);
+            console.warn('[run] 结束通知投递失败', info.id, e);
         }
         await this.writeDone(info);
     }

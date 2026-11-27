@@ -17,7 +17,7 @@
  * 相对 URL 由调用方拼成绝对地址（`new WebSocket` 在浏览器里接受相对路径，Node 测试里不行）。
  */
 
-import { WsTransport, type WsLike } from './transport.js';
+import { type WsLike } from './transport.js';
 
 export type { WsLike, WsMessage } from './types.js';
 export { WsTransport } from './transport.js';

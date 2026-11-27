@@ -13,28 +13,30 @@
 // 监听由调用方做：`server/index.ts`（生产）、`server/dev.ts`（单端口 dev）、`bin/diy2`（全局命令）。
 
 import { type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 
 import { createStaticHandler, type StaticHandler } from './static';
 import { createRpcSocket, type RpcStreamInfo } from './rpc';
+import { configureSlowLog, startLoopLag, timed, type LoopLagMonitor } from './loop-lag';
 import { APP_ID, type Diy2Config } from './config';
 import { openLog } from './log';
 
 import {
-    JOURNAL_KINDS,
     RoomActor,
     createJobRegistry,
-    createTurnLookup,
+    createCachedTurnLookup,
     defaultModelKeyOf,
     modelProviders,
     newEntityId,
     openStore,
+    sourceQuotesOf,
     unitBoard,
     unitsContextText,
     type RunCodeHost,
+    withSourceQuotes,
 } from '@diy-agent/entity-runtime';
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import {
@@ -45,12 +47,12 @@ import {
     createTypedClient,
     type HandlersOf,
 } from '@diy-agent/rpc';
+import { createBlobStore, parseAttachmentRef, parseAttachmentRefs } from '@diy-agent/attachment';
 import { apiHelpOf, defaultCodeRuntime } from '@diy-agent/code-runtime';
 import { diy2Api } from '@diy-agent/protocol';
 import type {
     ActivityFrame,
     AskAnswer,
-    AskQuestionAnswer,
     AskRequest,
     Author,
     Bot,
@@ -75,8 +77,6 @@ const FALLBACK_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
 function defaultModelKey(): string {
     return defaultModelKeyOf() ?? FALLBACK_MODEL;
 }
-/** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
-const ASK_DRAFT_TTL = 30 * 60 * 1000;
 /** 对话框草稿：synthetic owner 不随房间级联删，超过这么久没人再来就清掉 */
 const DIALOG_DRAFT_TTL = 7 * 24 * 60 * 60 * 1000;
 const HUMAN: Author = { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
@@ -100,6 +100,8 @@ let store: ReturnType<typeof openStore>;
 let serveStatic: StaticHandler | undefined;
 /** `/api/info` 的回包工厂（由 `createDiy2App` 装配：端口要问调用方，模块层答不出） */
 let info: () => Diy2AppInfo;
+/** 事件循环延迟监控（./loop-lag）：`/api/metrics` 读它，close 时停 */
+let lagMonitor: LoopLagMonitor | undefined;
 
 // ─── 房间装配 ─────────────────────────────────────────────────────
 
@@ -481,31 +483,6 @@ function json(res: ServerResponse, status: number, body: unknown): void {
     res.end(JSON.stringify(body));
 }
 
-async function readBody<T>(req: IncomingMessage): Promise<T> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk as Buffer);
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
-}
-
-/**
- * 读 body 的统一入口：坏 JSON / 读流失败都要有回包。
- * 之前每个 `void readBody(...).then(...)` 都没 catch —— 客户端发一段坏 JSON
- * 就是"请求永不响应 + unhandled rejection"，Node 默认把后者当崩溃。
- */
-function onBody<T>(req: IncomingMessage, res: ServerResponse, handler: (body: T) => void | Promise<void>): void {
-    readBody<T>(req)
-        .then(handler)
-        .catch(() => {
-            if (!res.writableEnded) json(res, 400, { error: 'invalid JSON body' });
-        });
-}
-
-/**
- * synthetic scope 的 owner 白名单（`dlg:<用途>:<roomId>`）：`dlg:` 是保留前缀，
- * 房间 id 是 `<type>-<base36>` / `proj:xxx`，不会撞上。
- */
-const DIALOG_DRAFT_OWNER = /^dlg:[a-z][a-z0-9-]{0,40}:[A-Za-z0-9:._-]{1,120}$/;
-
 /** 单条草稿上限：超了宁可拒（413）也不静默截断用户打的字 */
 function tooLargeDraft(value: unknown): boolean {
     const serialized = JSON.stringify(value);
@@ -523,17 +500,77 @@ function newBot(name: string, homeRoomId: string, persona: string): Bot {
     };
 }
 
+// ─── 回包瘦身 ────────────────────────────────────────────
+
+/**
+ * `chat.history` 回包里 **tool 条目的 result 上限（字符）**。
+ *
+ * 2026-11-26 实测（CDP tracing + WebSocket 字节统计）：一个 6183 条的房间回包是
+ * **28 MB**，其中 tool 条目占 **27.4 MB**（最长一条 9.5 MB）—— 前端 JSON.parse +
+ * 渲染要 **2.9~3.3 秒**，每次切房间都重来；tracing 里就是一个匿名函数连跑 2.9s，
+ * 用户点输入框得给它让路（“点输入框几秒钟”）。
+ *
+ * 工具输出是**过程**：时间线上看的是“跑了什么、成不成、大概什么结果”，
+ * 不需要把 9.5MB 的 stdout 发到浏览器。完整原文仍在库里（`toolout/` + items），
+ * 要全文从服务端取 —— 截断处会写明原文多少字，不假装这就是全部。
+ *
+ * **体积是「条数 × 阈值 × 编码开销」**（同日三改，每改一次都实测）：
+ *   2000 字 × 5404 条 ≈ 10.7MB  → longtask 仍 2.7s
+ *    400 字 × 5404 条 ≈  6.8MB  → longtask 1.9s（中文 UTF-8 是 3 字节/字，400「字符」
+ *                                 在 JSON 里约 1.2KB，乘 5404 条就是 6.5MB）
+ *    120 字 × 5404 条 ≈  2.0MB  → 目标
+ * 一路降到 120：这里要的是「这条命令干了什么、结果开头什么样」，不是输出全文。
+ * 原文一直在库里，点开看全文那件事该由一条**单独取**的接口承担，不该塞进历史回包。
+ *
+ * 只裁 **history 这一条路**（侧栏 / `bots.rows` 不碰它）。
+ */
+const HISTORY_TOOL_RESULT_CHARS = 120;
+
+/**
+ * 把历史里的超大 tool 结果裁到 `HISTORY_TOOL_RESULT_CHARS`（不改变其他条目）。
+ * 导出只为了能被单测钉住（它是回包体积的唯一闸门）。
+ */
+export function trimToolResults(items: Item[]): Item[] {
+    return items.map((item) => {
+        if (item.type !== 'tool') return item;
+        const result = item.data.result;
+        if (typeof result !== 'string' || result.length <= HISTORY_TOOL_RESULT_CHARS) return item;
+        return {
+            ...item,
+            data: {
+                ...item.data,
+                result: `${result.slice(0, HISTORY_TOOL_RESULT_CHARS)}\n\n…（历史里只带前 ${HISTORY_TOOL_RESULT_CHARS} 字，原文 ${result.length} 字）`,
+            },
+        };
+    });
+}
+
 // ─── 路由 ─────────────────────────────────────────────────────────
+
+/**
+ * 聊天历史**默认只发最近的这么多条**（2026-11-26）。
+ *
+ * 数字来源：实测每条约 1 KB（裁过 tool 结果后），6000 条的房间里 5.7 MB 的回包会让
+ * 主线程一次性 parse + 渲染 2~5 秒。400 条 ≈ 400 KB，能盖住“打开就看到最近发生了什么”。
+ */
+const HISTORY_LIMIT = 400;
 
 const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const parts = url.pathname.split('/').filter(Boolean);
 
     try {
         // GET /api/info —— 实例自报身份（探活判据：`app` + `home`）。端口/pid 都是缓存，
         // 「谁在监听这个端口、用哪个数据根」只有监听者自己答得准（仓库 ##328 同一现场）。
         if (req.method === 'GET' && url.pathname === '/api/info') {
             json(res, 200, info());
+            return;
+        }
+
+        // GET /api/metrics —— 事件循环延迟快照（2026-11-26：页面慢时先看这里）。
+        // 为什么单独一个端点而不是塞进 /api/info：探活每几秒打一次 info，
+        // 而 lag 是排障用的低频读，混进去只会让探活回包变大。
+        if (req.method === 'GET' && url.pathname === '/api/metrics') {
+            json(res, 200, { lag: lagMonitor?.snapshot() ?? null });
             return;
         }
 
@@ -609,6 +646,12 @@ export async function createDiy2App(opts: {
     // undefined = 「按配置来」（生产）。写成 `??` 会让 dev 在 build/prod/web 存在时**悄悄**
     // 拿到上一轮的旧壳子 —— 那种 bug 只能靠肉眼分辨「为什么改了 UI 没变」。
     serveStatic = await createStaticHandler(opts.webDir === null ? undefined : (opts.webDir ?? config.webDir));
+    // 事件循环延迟监控（./loop-lag）：从装配开始记，`/api/metrics` 读快照。
+    // 重复装配（测试 / dev 重建）先把上一个停掉，不然会留两个采样器。
+    // 日志出口走 appLog（本进程不直接碰 console，见 ./log）。
+    lagMonitor?.stop();
+    lagMonitor = startLoopLag({ log: (line) => log.warn(line) });
+    configureSlowLog((line) => log.warn(line));
     rooms = new Map();
     subscribers = new Map();
     activitySinks = new Set();
@@ -616,6 +659,17 @@ export async function createDiy2App(opts: {
 
     await mkdir(config.home, { recursive: true });
     store = openStore(config.dbPath);
+    /**
+     * 「某个成员上一轮的结局」查询器 —— **全进程一份、带 5s 缓存**（2026-11-26）。
+     *
+     * `rooms.list` 与 `bots.rows` 每隔 1.5~6 秒都要这一份数据，每次重建要跑两条全表
+     * json 分组（实测 529ms + 39ms）；三个 agent 在跑时它们几乎不停地跑，同连接的
+     * 其他请求（chat.load / 点击后的 RPC）只能排队。缓存的理由与 TTL 取舍见
+     * `createCachedTurnLookup` 的注释。
+     */
+    const lookupTurn = createCachedTurnLookup(store);
+    /** 打点包一层：命中缓存是 Map 查（不报），未命中的那 529ms 会在日志里指名 `turnLookup` */
+    const turnOf = (roomId: string, botId: string) => timed('turnLookup', () => lookupTurn(roomId, botId));
 
     // 作业账本要在 `seed()` / 首个房间之前建好：`actorOf` 装配工具时要用它。
     // 根目录 `<home>/log/job/runs`：与其余运行产物同根，清 home 就清干净。
@@ -651,19 +705,36 @@ export async function createDiy2App(opts: {
      */
     type Diy2Handlers = HandlersOf<typeof diy2Api>;
 
+    /**
+     * 附件库（懒建一次）：`<home>/blobs`。
+     *
+     * 与 entity-runtime 里 `defaultAttachmentReader` 写的是同一个路径 —— 上传落这里、
+     * 模型侧从这里读。分叉过一次就等着「能上传但模型看不着」那种怪事。
+     */
+    let blobStore: ReturnType<typeof createBlobStore> | null = null;
+    const blobs = (): ReturnType<typeof createBlobStore> => {
+        blobStore ??= createBlobStore({ root: join(config.home, 'blobs') });
+        return blobStore;
+    };
+
     const bindDiy2Api = (server: ChannelServerBinding): void => {
         const handlers: Diy2Handlers = {
             info: async () => info(),
             rooms: {
                 list: async () => {
+                    // 打点：这三条是侧栏每次刷新都要跑的同步 SQL（实测冷库里 lastItemPerBot
+                    // 529ms、其余几十 ms），卡住时日志里必须看得见是谁（./loop-lag）
                     const draftOwners = store.draftOwnersByKind();
                     const withInputDraft = new Set(draftOwners.input);
-                    const lastItemAt = store.lastItemAtByRoom();
+                    const lastItemAt = timed('rooms.list.lastItemAtByRoom', () => store.lastItemAtByRoom());
                     // 未读：一次算完全实例（一条 GROUP BY），不逐房间问
-                    const unread = store.unreadByRoom();
+                    const unread = timed('rooms.list.unreadByRoom', () => store.unreadByRoom());
+                    // 未送达：同样一次算完全实例。按 (房间, bot) 收敛到各自最新一条投递，
+                    // 历史 failed 不永久占位（旧消息失败、后来新消息送达就算过去了）。
+                    const failedByRoom = timed('rooms.list.failedByRoom', () => store.failedByRoom());
                     // 「上一轮出错的成员」：侧栏图标要变红（用户 2026-11-26：表格说「出错」而侧栏
                     // 图标没变，两处不一致）。数据与 `bots.rows` 同源（`turnLookupOf`），不各算一份。
-                    const turnOf = createTurnLookup(store);
+                    // 打点包住**取数**那一下：命中缓存时是个 Map 查（<1ms），未命中才是 529ms
                     return [...rooms.values()].map((actor) => {
                         const id = actor.spec.id;
                         const at = lastItemAt[id];
@@ -686,6 +757,7 @@ export async function createDiy2App(opts: {
                         // 排队中的投递（含重启后的待续跑）：以前列表里没有这个数，
                         // 于是房间「看着没事、其实排着队」或「明明在干、只是还没轮到它」都看不见
                         const queued = [...actor.queuedByBot().values()].reduce((sum, n) => sum + n, 0);
+                        const failed = failedByRoom[id] ?? 0;
                         return {
                             ...actor.spec,
                             hasDraft: withInputDraft.has(id),
@@ -703,6 +775,7 @@ export async function createDiy2App(opts: {
                             ...(at === undefined ? {} : { lastActivityAt: at }),
                             ...((unread[id] ?? 0) === 0 ? {} : { unread: unread[id] }),
                             ...(broken === 0 ? {} : { broken }),
+                            ...(failed === 0 ? {} : { failed }),
                         };
                     });
                 },
@@ -799,7 +872,7 @@ export async function createDiy2App(opts: {
                  */
                 rows: async () => {
                     const bots = new Map(store.listBots().map((bot) => [bot.id, bot]));
-                    const turnOf = createTurnLookup(store);
+                    // 与 rooms.list 共用同一份（带缓存）的查询器，不各造一个
                     const rows: BotRow[] = [];
                     for (const actor of rooms.values()) {
                         const spec = actor.spec;
@@ -936,8 +1009,17 @@ export async function createDiy2App(opts: {
             chat: {
                 history: async ({ input }) => {
                     const actor = requireRoom(input.id);
+                    // 分页（2026-11-26）：实测一次回包 **5.7 MB**（6000+ 条 items）——
+                    // 前端 JSON.parse + 渲染就是那 2~5 秒的长任务（用户“切任务很慢”）。
+                    // 默认只发**最近的 HISTORY_LIMIT 条**；`limit<=0` = 全量（用户点“加载更早”）。
+                    // `total`/`hasMore` 让界面能说清“上面还有多少条没加载”。
+                    const limit = input.limit ?? HISTORY_LIMIT;
+                    const items = limit > 0 ? actor.lastItems(limit) : actor.items(0);
+                    const total = limit > 0 ? actor.countItems() : items.length;
                     return {
-                        items: actor.items(0),
+                        items: trimToolResults(items),
+                        total,
+                        hasMore: items.length < total,
                         deliveries: actor.deliveries(),
                         asks: actor.pendingAskRequests(),
                         answered: actor.answeredAskRequests(),
@@ -970,8 +1052,12 @@ export async function createDiy2App(opts: {
                 chat: async ({ input }) => {
                     const actor = requireRoom(input.id);
                     const text = input.text.trim();
-                    if (text === '') throw new Error('text required');
-                    void actor.say({ text, author: HUMAN }).catch((error: unknown) => {
+                    // 附件在 zod 层已验过形状；这里再走一遍真源校验（防“zod 宽了、ref 却不对”）
+                    // —— 网络边界上是最后一道，宁可炸在发消息时，也不要存进 db 后才发现。
+                    const attachments =
+                        input.attachments === undefined ? [] : parseAttachmentRefs(input.attachments, 'chat.attachments');
+                    if (text === '' && attachments.length === 0) throw new Error('text or attachments required');
+                    void actor.say({ text, author: HUMAN, attachments }).catch((error: unknown) => {
                         broadcast(input.id, {
                             kind: 'error',
                             message: error instanceof Error ? error.message : String(error),
@@ -1064,7 +1150,14 @@ export async function createDiy2App(opts: {
              * 界面是旁观者的窗口 —— 想改就在聊天里说。推导在 `unitBoard`（同一份纯函数）。
              */
             units: {
-                list: async ({ input }) => unitBoard(store.listUnits(input.id)),
+                list: async ({ input }) => {
+                    const board = unitBoard(store.listUnits(input.id));
+                    // 「来自哪句话」要能当场核对：光有 message id，人还得自己点进去看是谁说的。
+                    // 所以这里把 source 解开成「发言人 + 原话」贴上（纯函数 `withSourceQuotes`），
+                    // 解不开的（消息已剪 / 老数据 / 非人类触发）就**不贴** —— 不知道比编一个强。
+                    const ids = board.rows.map((row) => row.source).filter((id) => id !== '');
+                    return withSourceQuotes(board, sourceQuotesOf(store.itemsByIds(ids)));
+                },
                 /**
                  * 模型读到的 `units` 节原文。
                  *
@@ -1095,6 +1188,29 @@ export async function createDiy2App(opts: {
              * 全部：一个实例一张表，界面看的就是这张表）。时长按**现在**算 —— 界面上那个
              * 秒表要跳，不能等下一次 `job status` 回来才知道过去了多久。
              */
+            /**
+             * 附件：字节进（粘贴 / 拖拽 → blobs）/ 字节出（界面显示缩略图）。
+             *
+             * blobs 根与 room 的附件读法**同一个约定**（`<home>/blobs`，见 entity-runtime 的
+             * `defaultAttachmentReader`）—— 上传落一份、模型侧读同一份，不复制真相。
+             */
+            attachment: {
+                put: async ({ input }) => {
+                    const bytes = Buffer.from(input.base64, 'base64');
+                    if (bytes.byteLength === 0) throw new Error('附件内容为空');
+                    return blobs().putBytes({
+                        bytes,
+                        source: input.source ?? 'paste',
+                        ...(input.name === undefined ? {} : { name: input.name }),
+                        ...(input.mime === undefined ? {} : { mime: input.mime }),
+                    });
+                },
+                get: async ({ input }) => {
+                    const ref = parseAttachmentRef(input.ref, 'attachment.get');
+                    const bytes = ref.type === 'stored' ? await blobs().read(ref) : await readFile(ref.path);
+                    return { base64: Buffer.from(bytes).toString('base64'), mime: ref.mime };
+                },
+            },
             jobs: {
                 list: async () => ({ rows: jobs.list().map(jobRowOf) }),
                 kill: async ({ input }) => ({ ok: jobs.kill(input.id) }),
@@ -1146,6 +1262,8 @@ export async function createDiy2App(opts: {
     });
 
     const close = (): void => {
+        lagMonitor?.stop();
+        lagMonitor = undefined;
         rpc.close();
         subscribers.clear();
         activitySinks.clear();

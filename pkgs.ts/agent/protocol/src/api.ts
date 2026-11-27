@@ -20,9 +20,55 @@ const Any = z.unknown();
 const Id = z.string().min(1);
 const Data = z.record(z.string(), Any);
 
+/**
+ * 一条附件 ref 的**入参**形状（与 `@diy-agent/attachment` 的 `AttachmentRef` 对齐）。
+ *
+ * 为什么不直接 `z.unknown()`：附件是网络边界上少有的「形状错了会静默丢图」的输入 ——
+ * `relPath` 拼成 `relpath`、`kind` 漏掉，都要在这里就炸，而不是等到模型答非所问。
+ * 真源仍在那份 TS 类型 + `parseAttachmentRef`；这里只挡一眼看得出的非法。
+ */
+const AttachmentRefInput = z.object({
+    type: z.enum(['stored', 'linked']),
+    id: Id,
+    kind: z.enum(['image', 'file', 'archive', 'dir']),
+    mime: z.string().min(1),
+    bytes: z.number().int().nonnegative(),
+    displayName: z.string().min(1),
+    source: z.enum(['paste', 'drop', 'pick', 'path', 'url', 'tool', 'relay']),
+    createdAt: z.number().int().nonnegative(),
+    sha256: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/)
+        .optional(),
+    image: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).optional(),
+    origin: z
+        .object({
+            url: z.string().optional(),
+            toolCallId: z.string().optional(),
+            roomId: z.string().optional(),
+            originalPath: z.string().optional(),
+        })
+        .optional(),
+    listing: z
+        .object({
+            count: z.number().int().nonnegative(),
+            bytes: z.number().int().nonnegative().optional(),
+            sample: z.array(z.string()),
+            truncated: z.boolean().optional(),
+        })
+        .optional(),
+    relPath: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
+});
+
+/** 一条消息最多带几个附件（挡「把整个相册拖进来」那种） */
+export const MAX_ATTACHMENTS_PER_MESSAGE = 8;
+
+const Attachments = z.array(AttachmentRefInput).max(MAX_ATTACHMENTS_PER_MESSAGE).optional();
+
 export const roomsApi = RpcSchema.group({
     children: {
-        /** 列表 + 侧栏投影（hasDraft / pendingAsks / lastActivityAt / unread） */
+        /** 列表 + 侧栏投影（hasDraft / pendingAsks / lastActivityAt / unread / broken / failed） */
         list: RpcSchema.unary({ input: {}, output: Any }),
         create: RpcSchema.unary({
             input: {
@@ -100,8 +146,13 @@ export const botsApi = RpcSchema.group({
 
 export const chatApi = RpcSchema.group({
     children: {
-        /** 打开房间要的三份：items / deliveries / asks（answered 一起回） */
-        history: RpcSchema.unary({ input: { id: Id }, output: Any }),
+        /**
+         * 打开房间要的三份：items / deliveries / asks（answered 一起回）。
+         *
+         * `limit`：只要最近多少条（缺省由服务端定，见 `HISTORY_LIMIT`）；`0` / 负数 = 全量 ——
+         * 老客户端不传就是服务端缺省，所以这是**向后兼容**的加法（2026-11-26）。
+         */
+        history: RpcSchema.unary({ input: { id: Id, limit: z.number().int().optional() }, output: Any }),
         /**
          * 等房间出现新条目（长轮询）。
          *
@@ -124,8 +175,14 @@ export const chatApi = RpcSchema.group({
             },
             output: Any,
         }),
-        /** 发一条消息（受理即返；事件从 /rpc 的 room 流进来） */
-        chat: RpcSchema.unary({ input: { id: Id, text: z.string().min(1) }, output: Any }),
+        /**
+         * 发一条消息（受理即返；事件从 /rpc 的 room 流进来）。
+         *
+         * `text` 允许为空**仅当带了附件**（只贴一张图、一个字不打是最常见的用法）——
+         * 这条判据在服务端（handler）和后端 room.say 两处都验：zod 只能看到「空串」，
+         * 看不出「有没有附件能顶上」。
+         */
+        chat: RpcSchema.unary({ input: { id: Id, text: z.string(), attachments: Attachments }, output: Any }),
         cancel: RpcSchema.unary({
             input: { id: Id, keepQueue: z.boolean().optional(), botId: z.string().optional() },
             output: Any,
@@ -239,6 +296,40 @@ export const jobsApi = RpcSchema.group({
     },
 });
 
+/**
+ * 附件：**字节进 / 字节出**的唯一两个口子。
+ *
+ * 为什么走 RPC 而不是静态路由：附件本体在 `<home>/blobs`（数据根），而服务端本来就监听在本机；
+ * 一个 `GET /blobs/...` 等于把整个附件库开成无鉴权的静态目录。走 RPC 至少与其它数据同一条
+ * 通道、同一套校验（`parseAttachmentRef`），将来加鉴权也只改一处。
+ *
+ * 为什么是 base64 而不是流：现有 RPC 全是 JSON（`binding.invoke(method, { input })`），
+ * 没有二进制通道。剪贴板截图 1~3 MB → base64 后 1.4~4 MB，够用；大文件走 `path`
+ * （`source: 'path'` 的引用型附件根本不经过这里）。
+ */
+export const attachmentApi = RpcSchema.group({
+    children: {
+        /** 粘贴 / 拖拽进来的字节 → 落 blobs → 返回 ref（mime 由服务端嗅探，不听声明） */
+        put: RpcSchema.unary({
+            input: {
+                /** 原名（下载来的文件用得上；剪贴板图没有） */
+                name: z.string().optional(),
+                /** 调用方声明的 mime（服务端以魔数为准，这里只是兜底） */
+                mime: z.string().optional(),
+                /**
+                 * base64 内容。**上限 12 MB 的 base64**（≈ 9 MB 原图）：
+                 * 再大就该走 `adopt`（引用路径）而不是塞进一次 RPC。
+                 */
+                base64: z.string().min(1).max(12 * 1024 * 1024),
+                source: z.enum(['paste', 'drop', 'pick', 'tool']).optional(),
+            },
+            output: Any,
+        }),
+        /** 按 ref 取回内容（界面显示缩略图 / 原图）：返回 base64 + mime */
+        get: RpcSchema.unary({ input: { ref: AttachmentRefInput }, output: Any }),
+    },
+});
+
 export const diy2Api = RpcSchema.group({
     desc: 'diy2 的全部浏览器 API（命令走 unary，房间事件走 /rpc 的 room 流）',
     children: {
@@ -253,5 +344,6 @@ export const diy2Api = RpcSchema.group({
         units: unitsApi,
         links: linksApi,
         jobs: jobsApi,
+        attachment: attachmentApi,
     },
 });

@@ -22,6 +22,7 @@ export default defineConfig({
         'pkgs.ts/core/traffic',
         'pkgs.ts/flow',
         'pkgs.ts/agent/session',
+        'pkgs.ts/agent/attachment',
         'pkgs.ts/agent/tools',
         'pkgs.ts/agent/store-jsonl',
         'pkgs.ts/room',

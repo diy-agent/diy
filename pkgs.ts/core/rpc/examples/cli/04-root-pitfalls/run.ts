@@ -20,12 +20,7 @@
  *   调用名 = 线上叫什么（rpcPrefix + 完整 path，永远不能裁）
  */
 import { z } from 'zod';
-import {
-  ChannelServerBinding,
-  ChannelClientBinding,
-  RpcSchema,
-  defineService,
-} from '../../../src/index';
+import { ChannelServerBinding, ChannelClientBinding, RpcSchema } from '../../../src/index';
 import { createMemTransportPair } from '../../../test/helpers';
 import { CliApp } from '../../../src/cli/index';
 
@@ -56,11 +51,11 @@ async function main(): Promise<void> {
   const [serverTx, clientTx] = createMemTransportPair();
   const server = new ChannelServerBinding(serverTx);
   server.use({
-    prefix: "demo.task",
+    prefix: 'demo.task',
     api: taskRoutes,
-    handlers: { list: () => [{ uri: "projects/1/tasks/1" }] },
+    handlers: { list: () => [{ uri: 'projects/1/tasks/1' }] },
   });
-  console.log("服务端注册名: demo.task.list", "\n");
+  console.log('服务端注册名: demo.task.list', '\n');
 
   const client = new ChannelClientBinding(clientTx);
   /** 每轮换一套 CliApp 配置，跑一次命令，返回输出与退出码 */

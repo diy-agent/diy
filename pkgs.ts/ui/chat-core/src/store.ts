@@ -2,6 +2,8 @@
 //
 // surface 只拿它渲染 + 发意图；不直接碰 client / fetch。
 
+import type { AttachmentRef } from '@diy-agent/protocol';
+
 import type { ChatClient } from './client';
 import { applyEvent, emptyState, fromSnapshot, type ConversationState } from './reduce';
 import { DEFAULT_CAPABILITIES, type Capabilities, type Command } from './types';
@@ -16,11 +18,23 @@ export interface ConversationModel {
     subscribe(listener: () => void): () => void;
     readonly capabilities: Capabilities;
     /** 发送一条消息。resolve = 后端已受理（首条事件/建流成功），UI 据此清草稿；reject = 压根没发出去 */
-    send(text: string): Promise<void>;
+    send(text: string, attachments?: readonly AttachmentRef[]): Promise<void>;
+    /**
+     * 把一份字节传进附件库，拿回 ref（粘贴 / 拖拽 / 选图）。
+     *
+     * 不存在 = 后端不支持附件（老服务端）：界面据此禁用贴图，而不是让人贴完再发现发不出去。
+     */
+    putAttachment?(input: {
+        readonly name?: string;
+        readonly mime?: string;
+        readonly bytes: Uint8Array;
+        readonly source?: 'paste' | 'drop' | 'pick' | 'tool';
+    }): Promise<AttachmentRef>;
     cancel(): void;
     /** 只停某个成员（开会时用） */
     stop(botId?: string): void;
-    reload(): void;
+    /** 重拉快照（`limit` 缺省 = 服务端缺省的分页；`0` = 全量） */
+    reload(limit?: number): void;
 }
 
 export class ConversationStore implements ConversationModel {
@@ -81,10 +95,10 @@ export class ConversationStore implements ConversationModel {
     }
 
     /** 箭头方法：surface 可以把 reload 直接当回调传（不解绑 this） */
-    reload = (): void => {
+    reload = (limit?: number): void => {
         const token = ++this.loadToken;
         void this.client
-            .load(this.entityId)
+            .load(this.entityId, limit === undefined ? undefined : { limit })
             .then((snapshot) => {
                 if (token !== this.loadToken) return;
                 this.loadedOnce = true;
@@ -92,6 +106,24 @@ export class ConversationStore implements ConversationModel {
             })
             .catch((error: unknown) => this.emit({ ...this.state, error: messageOf(error) }));
     };
+
+    /**
+     * 「加载更早的」：**每次把窗口翻一倍**，不是一次全量。
+     *
+     * 2026-11-26：`limit = 0` 是“全都要”—— 几百兆的会话点一下就回几百兆，
+     * JSON.parse + 渲染直接卡死。修了「进房间慢」不该在「看历史」上留一个更大的坑。
+     * 翻倍的好处：第一次只多拉一倍（400→800），大多数时候一次就够；真要看全部也能
+     * 点到头，而每一次回包都是可控的。
+     */
+    loadMore = (): void => this.reload(Math.max(400, this.state.items.length * 2));
+
+    /**
+     * 全量拉一次（`limit = 0`）。
+     *
+     * **界面不再用它**（见 `loadMore`）；留着是因为它仍是协议里合法的极值，
+     * 调试 / 导出这类“确实要全部”的调用方还有用。别在 UI 上直接调它。
+     */
+    loadAll = (): void => this.reload(0);
 
     private post = (command: Command): Promise<void> =>
         new Promise((resolve, reject) => {
@@ -128,10 +160,38 @@ export class ConversationStore implements ConversationModel {
         });
 
     /** 运行中也允许发：后端决定它在哪个边界生效（next-step 默认） */
-    send = (text: string): Promise<void> => {
+    send = (text: string, attachments?: readonly AttachmentRef[]): Promise<void> => {
         const trimmed = text.trim();
-        if (trimmed === '') return Promise.resolve();
-        return this.post({ kind: 'send', text: trimmed });
+        // 空正文 + 有附件是合法的（贴一张图什么都不打）—— 两样都空才是空消息
+        if (trimmed === '' && (attachments === undefined || attachments.length === 0)) return Promise.resolve();
+        return this.post({
+            kind: 'send',
+            text: trimmed,
+            ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
+        });
+    };
+
+    /**
+     * 上传一份附件（粘贴 / 拖拽 / 选图）。
+     *
+     * 为什么在「发送之前」就上传：一次可能带几张图，任何一张失败都该在发送前报出来
+     * （用户还看得见它、还能重试），而不是发出去之后在气泡里出现一个裂图。
+     */
+    putAttachment = async (input: {
+        name?: string;
+        mime?: string;
+        bytes: Uint8Array;
+        source?: 'paste' | 'drop' | 'pick' | 'tool';
+    }): Promise<AttachmentRef> => {
+        const client = this.client;
+        if (client.putAttachment === undefined) throw new Error('当前后端不支持附件');
+        return client.putAttachment(input);
+    };
+
+    readAttachment = async (ref: AttachmentRef): Promise<{ base64: string; mime: string }> => {
+        const client = this.client;
+        if (client.readAttachment === undefined) throw new Error('当前后端不支持附件');
+        return client.readAttachment(ref);
     };
 
     cancel = (): void => {

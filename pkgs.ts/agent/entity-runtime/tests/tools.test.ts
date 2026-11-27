@@ -4,7 +4,7 @@
 // 工具语义（读窗口 / 原子写 / diff / 退出码口径）已归 `@diy-agent/tools` 内核 ——
 // 这里断言的是"房间拿到的就是内核那份"，不重复测内核的细节。
 
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

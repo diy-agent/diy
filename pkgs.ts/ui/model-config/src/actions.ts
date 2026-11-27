@@ -20,7 +20,7 @@ import {
     type SavedAccount,
 } from '@diy-agent/model-catalog';
 import { ModelConfigPageError } from './errors.js';
-import type { AccountStateView, ConfigSnapshot, ModelView, SavedAccountView, WriteResult } from './shared.js';
+import type { AccountStateView, ConfigSnapshot, ModelView, WriteResult } from './shared.js';
 
 /** 读整页快照（**不含任何 key 值**） */
 export function readSnapshot(home: string): ConfigSnapshot {
@@ -57,7 +57,7 @@ function accountView(state: {
     };
 }
 
-export { accountLabel, groupModels, modelKeyOf, savedAccountLabel } from "./format.js";
+export { accountLabel, groupModels, modelKeyOf, savedAccountLabel } from './format.js';
 
 // ── 写方法（参数校验 + 调用 catalog + 回快照） ──────────
 

@@ -91,6 +91,8 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (key
                             {provider.models.map((item) => (
                                 <SelectItem key={item.id} value={item.id}>
                                     {item.name}
+                                    {/* 收图的模型加个标记：贴图前就知道该选谁 */}
+                                    {item.input?.includes('image') === true ? ' 🖼' : ''}
                                 </SelectItem>
                             ))}
                         </SelectContent>
@@ -104,6 +106,11 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (key
                           model.contextWindow === undefined
                               ? '窗口未知'
                               : `${Math.round(model.contextWindow / 1024)}k 上下文`,
+                          model.input === undefined
+                              ? '输入模态未知'
+                              : model.input.includes('image')
+                                ? '收图'
+                                : '只收文字',
                           model.cost === undefined ? null : `$${model.cost.input}/$${model.cost.output} 每百万 token`,
                           `${provider.api}`,
                       ]

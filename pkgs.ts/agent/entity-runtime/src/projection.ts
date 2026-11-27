@@ -61,7 +61,7 @@ export class Projector {
      * 文案**不写死原因**：收尾可能是「人按停」也可能是「工具结果没回来」（tool-mismatch）。
      * 说成"被取消"会让 tool-mismatch 那一路骗人 —— 到底为什么停，由 `endItems()` 说。
      */
-    finalize(now = Date.now()): Item[] {
+    finalize(_now = Date.now()): Item[] {
         const ops: Item[] = [];
         for (const [id, open] of this.items) {
             if (open.status !== 'streaming') continue;
@@ -146,7 +146,9 @@ export class Projector {
                 const current = this.items.get(id);
                 if (current === undefined || current.type !== 'chat') return [];
                 const chat = current as Extract<Item, { type: 'chat' }>;
-                const next: Item = { ...chat, seq, data: { text: chat.data.text + event.delta } };
+                // 必须 spread 旧 data：`attachments` 就在它里面 —— 写死 `{ text }` 会在第一段
+                // 流式增量到达时把刚贴的图丢掉（症状：发出去时看得见，一回复就没了）
+                const next: Item = { ...chat, seq, data: { ...chat.data, text: chat.data.text + event.delta } };
                 this.items.set(id, next);
                 return [next];
             }

@@ -191,6 +191,10 @@ function Host() {
                 // "Bot" 的活动图标），而 main 的 PR #552 已把「在跑 / 等回答 / 上一轮出错 / 空闲」
                 // 统一收进 `bots` 那颗（BotsOverlay，二级浮层 + 三级全量表格）。两套入口会同时
                 // 显示两个 Bot，所以去掉了旧那颗，只留作业这颗。
+                //
+                // 2026-11-26 用户裁：**jobs 与 bots 同组放左端**，与右边的 view 开关 / 配置之间
+                // 用竖线隔开 —— 这两颗读的是「现在是什么情况」，右边那两颗是「怎么摆 / 怎么配」。
+                // 原先 bots 挂在 tools 里（和设置一排），信息件与操作件混在一起，看不出层级。
                 id: 'activity',
                 activity: [
                     {
@@ -203,11 +207,6 @@ function Host() {
                             setJobsOpen(true);
                         },
                     },
-                ],
-            },
-            {
-                id: 'app',
-                tools: [
                     {
                         id: 'bots',
                         label: 'Bot 状态',
@@ -235,6 +234,11 @@ function Host() {
                             </span>
                         ),
                     },
+                ],
+            },
+            {
+                id: 'app',
+                tools: [
                     {
                         id: 'settings',
                         label: '设置',

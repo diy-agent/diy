@@ -37,30 +37,34 @@
  */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import {
-  RpcSchema,
-  RpcError,
-  createTypedClient,
-  type CallOptions,
-} from '../../src/index';
+import { RpcSchema, RpcError, createTypedClient, type CallOptions } from '../../src/index';
 import { channelHarness, httpHarness, wsHarness, type TransportHarness } from '../harness';
 
 // ═══════════════════════════════════════════════════
 //  需求域 API（应用作者视角）
 // ═══════════════════════════════════════════════════
 
-const api = RpcSchema.group({ children: {
-  echo: RpcSchema.unary({ input: { v: z.number() }, output: z.number() }),
-  slowEcho: RpcSchema.unary({ input: { delay: z.number(), v: z.number() }, output: z.number() }),
-  boom: RpcSchema.unary({ input: { v: z.number() }, output: z.number() }),
-  tick: RpcSchema.serverStream({ input: { interval: z.number(), max: z.number() }, output: z.number() }),
-  collect: RpcSchema.clientStream({
-    input: { tag: z.string() },
-    chunkIn: z.number(),
-    output: z.object({ tag: z.string(), sum: z.number() }),
-  }),
-  chat: RpcSchema.bidiStream({ input: { room: z.string() }, chunkIn: z.string(), chunkOut: z.string() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    echo: RpcSchema.unary({ input: { v: z.number() }, output: z.number() }),
+    slowEcho: RpcSchema.unary({ input: { delay: z.number(), v: z.number() }, output: z.number() }),
+    boom: RpcSchema.unary({ input: { v: z.number() }, output: z.number() }),
+    tick: RpcSchema.serverStream({
+      input: { interval: z.number(), max: z.number() },
+      output: z.number(),
+    }),
+    collect: RpcSchema.clientStream({
+      input: { tag: z.string() },
+      chunkIn: z.number(),
+      output: z.object({ tag: z.string(), sum: z.number() }),
+    }),
+    chat: RpcSchema.bidiStream({
+      input: { room: z.string() },
+      chunkIn: z.string(),
+      chunkOut: z.string(),
+    }),
+  },
+});
 
 const transports = [
   ['channel(in-memory)', channelHarness],
@@ -87,7 +91,10 @@ async function waitFor(cond: () => boolean, timeout = 1000, step = 10): Promise<
 function hangingIterable<T>(): AsyncIterable<T> {
   return {
     [Symbol.asyncIterator]: () => ({
-      next: () => new Promise<IteratorResult<T>>(() => { /* 永挂 */ }),
+      next: () =>
+        new Promise<IteratorResult<T>>(() => {
+          /* 永挂 */
+        }),
     }),
   };
 }
@@ -96,7 +103,10 @@ function hangingIterable<T>(): AsyncIterable<T> {
 function hangWithReturn<T>(state: { returned: boolean }): AsyncIterable<T> {
   return {
     [Symbol.asyncIterator]: () => ({
-      next: () => new Promise<IteratorResult<T>>(() => { /* 永挂 */ }),
+      next: () =>
+        new Promise<IteratorResult<T>>(() => {
+          /* 永挂 */
+        }),
       return: () => {
         state.returned = true;
         return Promise.resolve({ done: true, value: undefined });
@@ -111,7 +121,9 @@ function trackedIterable<T>(s: { next: number; ret: number }): AsyncIterable<T> 
     [Symbol.asyncIterator]: () => ({
       next: () => {
         s.next++;
-        return new Promise<IteratorResult<T>>(() => { /* 永挂 */ });
+        return new Promise<IteratorResult<T>>(() => {
+          /* 永挂 */
+        });
       },
       return: () => {
         s.ret++;
@@ -122,7 +134,11 @@ function trackedIterable<T>(s: { next: number; ret: number }): AsyncIterable<T> 
 }
 
 /** 延迟产出固定序列的可观测上游迭代器（C13b：上传已启动后远端终态场景） */
-function delayIterable<T>(s: { next: number; ret: number }, ms: number, vals: T[]): AsyncIterable<T> {
+function delayIterable<T>(
+  s: { next: number; ret: number },
+  ms: number,
+  vals: T[],
+): AsyncIterable<T> {
   return {
     [Symbol.asyncIterator]: () => ({
       next: async () => {
@@ -147,7 +163,14 @@ describe('C1 abort 是确定终态：调用以 CANCELLED 失败，永不成功',
   it.each(transports)('%s: unary——等待响应期间 abort → CANCELLED', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("slowEcho", api.slowEcho, () => new Promise<number>(() => { /* 永挂 */ }));
+    binding._on(
+      'slowEcho',
+      api.slowEcho,
+      () =>
+        new Promise<number>(() => {
+          /* 永挂 */
+        }),
+    );
     try {
       const ac = new AbortController();
       const p = cli.slowEcho({ delay: 0, v: 1 }, { signal: ac.signal });
@@ -162,8 +185,11 @@ describe('C1 abort 是确定终态：调用以 CANCELLED 失败，永不成功',
   it.each(transports)('%s: serverStream——消费中途 abort → 迭代以 CANCELLED 结束', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("tick", api.tick, async function* ({ input }) {
-      for (;;) { yield 0; await sleep(input.interval); }
+    binding._on('tick', api.tick, async function* ({ input }) {
+      for (;;) {
+        yield 0;
+        await sleep(input.interval);
+      }
     });
     try {
       const ac = new AbortController();
@@ -180,7 +206,14 @@ describe('C1 abort 是确定终态：调用以 CANCELLED 失败，永不成功',
   it.each(transports)('%s: clientStream——上传期间 abort → CANCELLED', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("collect", api.collect, () => new Promise<{ tag: string; sum: number }>(() => { /* 永挂 */ }));
+    binding._on(
+      'collect',
+      api.collect,
+      () =>
+        new Promise<{ tag: string; sum: number }>(() => {
+          /* 永挂 */
+        }),
+    );
     try {
       const ac = new AbortController();
       const p = cli.collect({ tag: 'x' }, hangingIterable<number>(), { signal: ac.signal });
@@ -192,22 +225,27 @@ describe('C1 abort 是确定终态：调用以 CANCELLED 失败，永不成功',
     }
   });
 
-  it.each(transports)('%s: bidiStream——双向进行中 abort → 输出迭代以 CANCELLED 结束', async (_n, h) => {
-    const { binding, client, dispose } = await h.start();
-    const cli = createTypedClient(client, api);
-    binding._on("chat", api.chat, async function* ({ stream }) {
-      for await (const m of stream) yield m;
-    });
-    try {
-      const ac = new AbortController();
-      const stream = await cli.chat({ room: 'r' }, hangingIterable<string>(), { signal: ac.signal });
-      const iter = stream[Symbol.asyncIterator]();
-      ac.abort();
-      await expect(iter.next()).rejects.toMatchObject({ code: 'CANCELLED' });
-    } finally {
-      await dispose();
-    }
-  });
+  it.each(transports)(
+    '%s: bidiStream——双向进行中 abort → 输出迭代以 CANCELLED 结束',
+    async (_n, h) => {
+      const { binding, client, dispose } = await h.start();
+      const cli = createTypedClient(client, api);
+      binding._on('chat', api.chat, async function* ({ stream }) {
+        for await (const m of stream) yield m;
+      });
+      try {
+        const ac = new AbortController();
+        const stream = await cli.chat({ room: 'r' }, hangingIterable<string>(), {
+          signal: ac.signal,
+        });
+        const iter = stream[Symbol.asyncIterator]();
+        ac.abort();
+        await expect(iter.next()).rejects.toMatchObject({ code: 'CANCELLED' });
+      } finally {
+        await dispose();
+      }
+    },
+  );
 });
 
 // ═══════════════════════════════════════════════════
@@ -219,20 +257,27 @@ describe('C2 取消对服务端可见：handler 收到 signal，abort 后 signal
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
     const seen: Record<string, AbortSignal> = {};
-    binding._on("slowEcho", api.slowEcho, ({ signal }) => {
+    binding._on('slowEcho', api.slowEcho, ({ signal }) => {
       seen.unary = signal;
-      return new Promise<number>(() => { /* 永挂 */ });
+      return new Promise<number>(() => {
+        /* 永挂 */
+      });
     });
-    binding._on("tick", api.tick, async function* ({ input, signal }) {
+    binding._on('tick', api.tick, async function* ({ input, signal }) {
       seen.serverStream = signal;
-      for (;;) { yield 0; await sleep(input.interval); }
+      for (;;) {
+        yield 0;
+        await sleep(input.interval);
+      }
     });
-    binding._on("collect", api.collect, async ({ signal, stream }) => {
+    binding._on('collect', api.collect, async ({ signal, stream }) => {
       seen.clientStream = signal;
-      for await (const _ of stream) { /* 消费到取消 */ }
+      for await (const _ of stream) {
+        /* 消费到取消 */
+      }
       return { tag: '', sum: 0 };
     });
-    binding._on("chat", api.chat, async function* ({ signal, stream }) {
+    binding._on('chat', api.chat, async function* ({ signal, stream }) {
       seen.bidiStream = signal;
       for await (const m of stream) yield m;
     });
@@ -246,8 +291,12 @@ describe('C2 取消对服务端可见：handler 收到 signal，abort 后 signal
       const pu = cli.slowEcho({ delay: 0, v: 1 }, { signal: ac.unary.signal });
       const ss = await cli.tick({ interval: 10, max: 0 }, { signal: ac.serverStream.signal });
       const si = ss[Symbol.asyncIterator]();
-      const pc = cli.collect({ tag: 't' }, hangingIterable<number>(), { signal: ac.clientStream.signal });
-      const bs = await cli.chat({ room: 'r' }, hangingIterable<string>(), { signal: ac.bidiStream.signal });
+      const pc = cli.collect({ tag: 't' }, hangingIterable<number>(), {
+        signal: ac.clientStream.signal,
+      });
+      const bs = await cli.chat({ room: 'r' }, hangingIterable<string>(), {
+        signal: ac.bidiStream.signal,
+      });
       const bi = bs[Symbol.asyncIterator]();
       // 四个 handler 全部启动（流的首帧/挂起点已就位）
       await si.next();
@@ -259,7 +308,10 @@ describe('C2 取消对服务端可见：handler 收到 signal，abort 后 signal
       const settledBidi = expect(bi.next()).rejects.toMatchObject({ code: 'CANCELLED' });
       for (const c of Object.values(ac)) c.abort();
       // 服务端观察点：abort 必须到达 handler 的 signal
-      expect(await waitFor(() => Object.values(seen).every((s) => s.aborted)), 'handler 未观察到取消').toBe(true);
+      expect(
+        await waitFor(() => Object.values(seen).every((s) => s.aborted)),
+        'handler 未观察到取消',
+      ).toBe(true);
       // 客户端观察点：四个调用都以 CANCELLED 落定
       await Promise.all([settledUnary, settledClientStream, settledServerStream, settledBidi]);
     } finally {
@@ -276,9 +328,12 @@ describe('C3 取消即停止交付：abort 后客户端不再收到数据', () =
   it.each(transports)('%s: serverStream 在 abort 后零产出', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("tick", api.tick, async function* ({ input }) {
+    binding._on('tick', api.tick, async function* ({ input }) {
       let i = 0;
-      for (;;) { yield i++; await sleep(input.interval); }
+      for (;;) {
+        yield i++;
+        await sleep(input.interval);
+      }
     });
     try {
       const ac = new AbortController();
@@ -306,7 +361,14 @@ describe('C4 dispose 是「本地关闭」：以 DISPOSED 落定（与 CANCELLED
   it.each(transports)('%s: unary——挂起调用 + dispose → DISPOSED', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("slowEcho", api.slowEcho, () => new Promise<number>(() => { /* 永挂 */ }));
+    binding._on(
+      'slowEcho',
+      api.slowEcho,
+      () =>
+        new Promise<number>(() => {
+          /* 永挂 */
+        }),
+    );
     try {
       const p = cli.slowEcho({ delay: 0, v: 1 });
       await sleep(20);
@@ -320,8 +382,11 @@ describe('C4 dispose 是「本地关闭」：以 DISPOSED 落定（与 CANCELLED
   it.each(transports)('%s: serverStream——消费中 dispose → DISPOSED', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("tick", api.tick, async function* ({ input }) {
-      for (;;) { yield 0; await sleep(input.interval); }
+    binding._on('tick', api.tick, async function* ({ input }) {
+      for (;;) {
+        yield 0;
+        await sleep(input.interval);
+      }
     });
     try {
       const stream = await cli.tick({ interval: 20, max: 0 });
@@ -337,7 +402,14 @@ describe('C4 dispose 是「本地关闭」：以 DISPOSED 落定（与 CANCELLED
   it.each(transports)('%s: clientStream——上传挂起时 dispose → DISPOSED', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("collect", api.collect, () => new Promise<{ tag: string; sum: number }>(() => { /* 永挂 */ }));
+    binding._on(
+      'collect',
+      api.collect,
+      () =>
+        new Promise<{ tag: string; sum: number }>(() => {
+          /* 永挂 */
+        }),
+    );
     try {
       const p = cli.collect({ tag: 'x' }, hangingIterable<number>());
       await sleep(20);
@@ -348,26 +420,29 @@ describe('C4 dispose 是「本地关闭」：以 DISPOSED 落定（与 CANCELLED
     }
   });
 
-  it.each(transports)('%s: bidiStream——双向进行中 dispose → 输出迭代以 DISPOSED 结束', async (_n, h) => {
-    const { binding, client, dispose } = await h.start();
-    const cli = createTypedClient(client, api);
-    binding._on("chat", api.chat, async function* ({ stream }) {
-      for await (const m of stream) yield m;
-    });
-    try {
-      const stream = await cli.chat({ room: 'r' }, hangingIterable<string>());
-      const iter = stream[Symbol.asyncIterator]();
-      await sleep(20);
-      client.dispose();
-      await expect(iter.next()).rejects.toMatchObject({ code: 'DISPOSED' });
-    } finally {
-      await dispose();
-    }
-  });
+  it.each(transports)(
+    '%s: bidiStream——双向进行中 dispose → 输出迭代以 DISPOSED 结束',
+    async (_n, h) => {
+      const { binding, client, dispose } = await h.start();
+      const cli = createTypedClient(client, api);
+      binding._on('chat', api.chat, async function* ({ stream }) {
+        for await (const m of stream) yield m;
+      });
+      try {
+        const stream = await cli.chat({ room: 'r' }, hangingIterable<string>());
+        const iter = stream[Symbol.asyncIterator]();
+        await sleep(20);
+        client.dispose();
+        await expect(iter.next()).rejects.toMatchObject({ code: 'DISPOSED' });
+      } finally {
+        await dispose();
+      }
+    },
+  );
   it.each(transports)('%s: dispose 后发起新调用 → DISPOSED（新请求不得走线）', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("echo", api.echo, ({ input }) => input.v);
+    binding._on('echo', api.echo, ({ input }) => input.v);
     try {
       client.dispose();
       await expect(cli.echo({ v: 1 })).rejects.toMatchObject({ code: 'DISPOSED' });
@@ -385,16 +460,16 @@ describe('C5 正常路径基线：无取消时四流模式完整正确', () => {
   it.each(transports)('%s: unary / serverStream / clientStream / bidiStream', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("echo", api.echo, ({ input }) => input.v * 2);
-    binding._on("tick", api.tick, async function* ({ input }) {
+    binding._on('echo', api.echo, ({ input }) => input.v * 2);
+    binding._on('tick', api.tick, async function* ({ input }) {
       for (let i = 0; i < input.max; i++) yield i;
     });
-    binding._on("collect", api.collect, async ({ input, stream }) => {
+    binding._on('collect', api.collect, async ({ input, stream }) => {
       let sum = 0;
       for await (const v of stream) sum += v;
       return { tag: input.tag, sum };
     });
-    binding._on("chat", api.chat, async function* ({ input, stream }) {
+    binding._on('chat', api.chat, async function* ({ input, stream }) {
       for await (const m of stream) yield `[${input.room}] ${m}`;
     });
     try {
@@ -404,10 +479,17 @@ describe('C5 正常路径基线：无取消时四流模式完整正确', () => {
       for await (const v of await cli.tick({ interval: 0, max: 3 })) nums.push(v);
       expect(nums).toEqual([0, 1, 2]);
 
-      async function* chunks() { yield 1; yield 2; yield 3; }
+      async function* chunks() {
+        yield 1;
+        yield 2;
+        yield 3;
+      }
       expect(await cli.collect({ tag: 's' }, chunks())).toEqual({ tag: 's', sum: 6 });
 
-      async function* msgs() { yield 'a'; yield 'b'; }
+      async function* msgs() {
+        yield 'a';
+        yield 'b';
+      }
       const out: string[] = [];
       for await (const v of await cli.chat({ room: 'r' }, msgs())) out.push(v);
       expect(out).toEqual(['[r] a', '[r] b']);
@@ -425,9 +507,14 @@ describe('C6 服务端错误保真：错误码/消息原样跨线', () => {
   it.each(transports)('%s: unary handler 抛错 → 客户端收到同码同消息', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("boom", api.boom, () => { throw new RpcError('BOOM', '服务端炸了'); });
+    binding._on('boom', api.boom, () => {
+      throw new RpcError('BOOM', '服务端炸了');
+    });
     try {
-      await expect(cli.boom({ v: 1 })).rejects.toMatchObject({ code: 'BOOM', message: '服务端炸了' });
+      await expect(cli.boom({ v: 1 })).rejects.toMatchObject({
+        code: 'BOOM',
+        message: '服务端炸了',
+      });
     } finally {
       await dispose();
     }
@@ -436,7 +523,7 @@ describe('C6 服务端错误保真：错误码/消息原样跨线', () => {
   it.each(transports)('%s: serverStream 中途抛错 → 迭代以同码同消息结束', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("tick", api.tick, async function* () {
+    binding._on('tick', api.tick, async function* () {
       yield 0;
       throw new RpcError('BOOM', '流中途炸了');
     });
@@ -459,7 +546,7 @@ describe('C7 服务端 best-effort 收尾：客户端取消后 handler 的 final
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
     const state = { finallyRan: false };
-    binding._on("chat", api.chat, async function* ({ stream }) {
+    binding._on('chat', api.chat, async function* ({ stream }) {
       try {
         for await (const m of stream) yield m;
       } finally {
@@ -468,7 +555,9 @@ describe('C7 服务端 best-effort 收尾：客户端取消后 handler 的 final
     });
     try {
       const ac = new AbortController();
-      const stream = await cli.chat({ room: 'r' }, hangingIterable<string>(), { signal: ac.signal });
+      const stream = await cli.chat({ room: 'r' }, hangingIterable<string>(), {
+        signal: ac.signal,
+      });
       const iter = stream[Symbol.asyncIterator]();
       ac.abort();
       await expect(iter.next()).rejects.toMatchObject({ code: 'CANCELLED' });
@@ -487,7 +576,14 @@ describe('C8 上传迭代器 best-effort 清理：abort/dispose 都通知上游 
   it.each(transports)('%s: abort 与 dispose 均触发上游 return() 通知', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("collect", api.collect, () => new Promise<{ tag: string; sum: number }>(() => { /* 永挂 */ }));
+    binding._on(
+      'collect',
+      api.collect,
+      () =>
+        new Promise<{ tag: string; sum: number }>(() => {
+          /* 永挂 */
+        }),
+    );
     try {
       // 段 1：abort
       const s1 = { returned: false };
@@ -519,10 +615,14 @@ describe('C9 超时语义：timeout 只约束 init/ack 窗口，是独立的 TIM
   it.each(transports)('%s: unary 等待超时 → TIMEOUT', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("slowEcho", api.slowEcho, async ({ input }) => { await sleep(input.delay); return input.v; });
+    binding._on('slowEcho', api.slowEcho, async ({ input }) => {
+      await sleep(input.delay);
+      return input.v;
+    });
     try {
-      await expect(cli.slowEcho({ delay: 200, v: 1 }, { timeout: 40 }))
-        .rejects.toMatchObject({ code: 'TIMEOUT' });
+      await expect(cli.slowEcho({ delay: 200, v: 1 }, { timeout: 40 })).rejects.toMatchObject({
+        code: 'TIMEOUT',
+      });
     } finally {
       await dispose();
     }
@@ -531,8 +631,11 @@ describe('C9 超时语义：timeout 只约束 init/ack 窗口，是独立的 TIM
   it.each(transports)('%s: serverStream——ack 后无调用级超时（慢产出正常完成）', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("tick", api.tick, async function* ({ input }) {
-      for (let i = 0; i < input.max; i++) { yield i; await sleep(input.interval); }
+    binding._on('tick', api.tick, async function* ({ input }) {
+      for (let i = 0; i < input.max; i++) {
+        yield i;
+        await sleep(input.interval);
+      }
     });
     try {
       const opts: CallOptions = { timeout: 40 };
@@ -554,7 +657,10 @@ describe('C10 取消不污染后续：同一 client 继续正常', () => {
   it.each(transports)('%s: 取消一个调用后，下一个调用正常返回', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("slowEcho", api.slowEcho, async ({ input }) => { await sleep(input.delay); return input.v; });
+    binding._on('slowEcho', api.slowEcho, async ({ input }) => {
+      await sleep(input.delay);
+      return input.v;
+    });
     try {
       const ac = new AbortController();
       const p = cli.slowEcho({ delay: 300, v: 9 }, { signal: ac.signal });
@@ -572,14 +678,19 @@ describe('C11 取消幂等：重复 abort / 落定后 abort 均无副作用', ()
   it.each(transports)('%s: 同一 signal 多次 abort 不抛、不改变已落定结果', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("slowEcho", api.slowEcho, async ({ input }) => { await sleep(input.delay); return input.v; });
+    binding._on('slowEcho', api.slowEcho, async ({ input }) => {
+      await sleep(input.delay);
+      return input.v;
+    });
     try {
       const ac = new AbortController();
       const p = cli.slowEcho({ delay: 100, v: 1 }, { signal: ac.signal });
       ac.abort();
       ac.abort();
       await expect(p).rejects.toMatchObject({ code: 'CANCELLED' });
-      expect(() => { ac.abort(); }).not.toThrow(); // 已落定后再次 abort
+      expect(() => {
+        ac.abort();
+      }).not.toThrow(); // 已落定后再次 abort
     } finally {
       await dispose();
     }
@@ -594,10 +705,13 @@ describe('C13 远端立即终态：调用落定、不再拉取上游；已启动
   it.each(transports)('%s: clientStream——服务端不消费输入就直接返回', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("collect", api.collect, async () => ({ tag: 'early', sum: 0 }));
+    binding._on('collect', api.collect, async () => ({ tag: 'early', sum: 0 }));
     const s = { next: 0, ret: 0 };
     try {
-      expect(await cli.collect({ tag: 'early' }, trackedIterable<number>(s))).toEqual({ tag: 'early', sum: 0 });
+      expect(await cli.collect({ tag: 'early' }, trackedIterable<number>(s))).toEqual({
+        tag: 'early',
+        sum: 0,
+      });
       const snap = { ...s };
       await sleep(80);
       expect(s, '终态后仍在拉取上游').toEqual(snap);
@@ -610,10 +724,14 @@ describe('C13 远端立即终态：调用落定、不再拉取上游；已启动
   it.each(transports)('%s: clientStream——服务端立即抛错', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("collect", api.collect, async () => { throw new RpcError('EARLY', '早退错误'); });
+    binding._on('collect', api.collect, async () => {
+      throw new RpcError('EARLY', '早退错误');
+    });
     const s = { next: 0, ret: 0 };
     try {
-      await expect(cli.collect({ tag: 'early' }, trackedIterable<number>(s))).rejects.toMatchObject({ code: 'EARLY' });
+      await expect(cli.collect({ tag: 'early' }, trackedIterable<number>(s))).rejects.toMatchObject(
+        { code: 'EARLY' },
+      );
       const snap = { ...s };
       await sleep(80);
       expect(s, '终态后仍在拉取上游').toEqual(snap);
@@ -626,7 +744,7 @@ describe('C13 远端立即终态：调用落定、不再拉取上游；已启动
   it.each(transports)('%s: bidiStream——服务端立即结束', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("chat", api.chat, async function* () {
+    binding._on('chat', api.chat, async function* () {
       /* 立即结束 */
     });
     const s = { next: 0, ret: 0 };
@@ -646,7 +764,9 @@ describe('C13 远端立即终态：调用落定、不再拉取上游；已启动
   it.each(transports)('%s: bidiStream——服务端立即抛错', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("chat", api.chat, async function* () {
+    // 故意的空 generator：要测的就是「**流还没开始就抛错**」
+    // oxlint-disable-next-line require-yield
+    binding._on('chat', api.chat, async function* () {
       throw new RpcError('EARLY', '流未开始即失败');
     });
     const s = { next: 0, ret: 0 };
@@ -663,62 +783,87 @@ describe('C13 远端立即终态：调用落定、不再拉取上游；已启动
     }
   });
 
-  it.each(transports)('%s: clientStream——服务端消费一个 chunk 后终态，后续 chunk 不得发送', async (_n, h) => {
-    const { binding, client, dispose } = await h.start();
-    const cli = createTypedClient(client, api);
-    const extra: number[] = [];
-    binding._on("collect", api.collect, async ({ stream }) => {
-      const it = stream[Symbol.asyncIterator]();
-      await it.next(); // 消费第一个 chunk 后返回（调用终态）
-      // 后台继续监听输入：终态后若有后续 chunk 被发送，能在此观测到
-      void (async () => {
-        try { for (;;) { const r = await it.next(); if (r.done) break; extra.push(r.value as number); } } catch { /* 队列关闭 */ }
-      })();
-      return { tag: 'one', sum: 1 };
-    });
-    const s = { next: 0, ret: 0 };
-    try {
-      expect(await cli.collect({ tag: 'one' }, delayIterable<number>(s, 60, [1, 7]))).toEqual({ tag: 'one', sum: 1 });
-      const snap = { ...s };
-      await sleep(200); // 跨过第二个 next（60ms）返回点
-      expect(s, '终态后仍在向已结束的调用拉取上游').toEqual(snap);
-      expect(extra, '远端终态后不得发送后续 chunk').toEqual([]);
-      // 上传已启动（handler 收到第一个 chunk）：必须通知 return()
-      expect(s.next, '上传应已启动').toBeGreaterThan(0);
-      expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
-    } finally {
-      await dispose();
-    }
-  });
+  it.each(transports)(
+    '%s: clientStream——服务端消费一个 chunk 后终态，后续 chunk 不得发送',
+    async (_n, h) => {
+      const { binding, client, dispose } = await h.start();
+      const cli = createTypedClient(client, api);
+      const extra: number[] = [];
+      binding._on('collect', api.collect, async ({ stream }) => {
+        const it = stream[Symbol.asyncIterator]();
+        await it.next(); // 消费第一个 chunk 后返回（调用终态）
+        // 后台继续监听输入：终态后若有后续 chunk 被发送，能在此观测到
+        void (async () => {
+          try {
+            for (;;) {
+              const r = await it.next();
+              if (r.done) break;
+              extra.push(r.value as number);
+            }
+          } catch {
+            /* 队列关闭 */
+          }
+        })();
+        return { tag: 'one', sum: 1 };
+      });
+      const s = { next: 0, ret: 0 };
+      try {
+        expect(await cli.collect({ tag: 'one' }, delayIterable<number>(s, 60, [1, 7]))).toEqual({
+          tag: 'one',
+          sum: 1,
+        });
+        const snap = { ...s };
+        await sleep(200); // 跨过第二个 next（60ms）返回点
+        expect(s, '终态后仍在向已结束的调用拉取上游').toEqual(snap);
+        expect(extra, '远端终态后不得发送后续 chunk').toEqual([]);
+        // 上传已启动（handler 收到第一个 chunk）：必须通知 return()
+        expect(s.next, '上传应已启动').toBeGreaterThan(0);
+        expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
+      } finally {
+        await dispose();
+      }
+    },
+  );
 
-  it.each(transports)('%s: bidiStream——服务端消费一个 chunk 后终态，后续 chunk 不得发送', async (_n, h) => {
-    const { binding, client, dispose } = await h.start();
-    const cli = createTypedClient(client, api);
-    const extra: string[] = [];
-    binding._on("chat", api.chat, async function* ({ stream }) {
-      const it = stream[Symbol.asyncIterator]();
-      const first = await it.next(); // 消费第一个 chunk 后结束
-      void (async () => {
-        try { for (;;) { const r = await it.next(); if (r.done) break; extra.push(r.value as string); } } catch { /* 队列关闭 */ }
-      })();
-      if (!first.done) yield first.value as string;
-    });
-    const s = { next: 0, ret: 0 };
-    try {
-      const stream = await cli.chat({ room: 'r' }, delayIterable<string>(s, 60, ['a', 'b']));
-      const got: string[] = [];
-      for await (const v of stream) got.push(v);
-      expect(got, '终态前已交付的 chunk').toEqual(['a']);
-      const snap = { ...s };
-      await sleep(200); // 跨过第二个 next（60ms）返回点
-      expect(s, '终态后仍在拉取上游').toEqual(snap);
-      expect(extra, '远端终态后不得发送后续 chunk').toEqual([]);
-      expect(s.next, '上传应已启动').toBeGreaterThan(0);
-      expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
-    } finally {
-      await dispose();
-    }
-  });
+  it.each(transports)(
+    '%s: bidiStream——服务端消费一个 chunk 后终态，后续 chunk 不得发送',
+    async (_n, h) => {
+      const { binding, client, dispose } = await h.start();
+      const cli = createTypedClient(client, api);
+      const extra: string[] = [];
+      binding._on('chat', api.chat, async function* ({ stream }) {
+        const it = stream[Symbol.asyncIterator]();
+        const first = await it.next(); // 消费第一个 chunk 后结束
+        void (async () => {
+          try {
+            for (;;) {
+              const r = await it.next();
+              if (r.done) break;
+              extra.push(r.value as string);
+            }
+          } catch {
+            /* 队列关闭 */
+          }
+        })();
+        if (!first.done) yield first.value as string;
+      });
+      const s = { next: 0, ret: 0 };
+      try {
+        const stream = await cli.chat({ room: 'r' }, delayIterable<string>(s, 60, ['a', 'b']));
+        const got: string[] = [];
+        for await (const v of stream) got.push(v);
+        expect(got, '终态前已交付的 chunk').toEqual(['a']);
+        const snap = { ...s };
+        await sleep(200); // 跨过第二个 next（60ms）返回点
+        expect(s, '终态后仍在拉取上游').toEqual(snap);
+        expect(extra, '远端终态后不得发送后续 chunk').toEqual([]);
+        expect(s.next, '上传应已启动').toBeGreaterThan(0);
+        expect(s.ret, '上传已启动但未通知 return()').toBeGreaterThan(0);
+      } finally {
+        await dispose();
+      }
+    },
+  );
 }, 3000); // 立即终态若实现挂死：显式 deadline，不依赖全局默认
 
 describe('C14 正常完成不触发取消：handler 的 signal 保持未 abort', () => {
@@ -727,9 +872,11 @@ describe('C14 正常完成不触发取消：handler 的 signal 保持未 abort',
     const cli = createTypedClient(client, api);
     let captured: AbortSignal | undefined;
     let aborts = 0;
-    binding._on("echo", api.echo, async ({ input, signal }) => {
+    binding._on('echo', api.echo, async ({ input, signal }) => {
       captured = signal;
-      signal?.addEventListener('abort', () => { aborts++; });
+      signal?.addEventListener('abort', () => {
+        aborts++;
+      });
       return input.v;
     });
     try {
@@ -748,13 +895,20 @@ describe('C14 正常完成不触发取消：handler 的 signal 保持未 abort',
     const cli = createTypedClient(client, api);
     let captured: AbortSignal | undefined;
     let aborts = 0;
-    binding._on("collect", api.collect, async ({ signal }) => {
+    binding._on('collect', api.collect, async ({ signal }) => {
       captured = signal;
-      signal?.addEventListener('abort', () => { aborts++; });
+      signal?.addEventListener('abort', () => {
+        aborts++;
+      });
       return { tag: 'ok', sum: 0 };
     });
     try {
-      await cli.collect({ tag: 'ok' }, (async function* () { /* 空输入 */ })());
+      await cli.collect(
+        { tag: 'ok' },
+        (async function* () {
+          /* 空输入 */
+        })(),
+      );
       await sleep(100);
       expect(captured, 'handler 应收到 signal').toBeDefined();
       expect(captured!.aborted, '正常完成不得 abort handler signal').toBe(false);
@@ -769,9 +923,11 @@ describe('C14 正常完成不触发取消：handler 的 signal 保持未 abort',
     const cli = createTypedClient(client, api);
     let captured: AbortSignal | undefined;
     let aborts = 0;
-    binding._on("tick", api.tick, async function* ({ input, signal }) {
+    binding._on('tick', api.tick, async function* ({ input, signal }) {
       captured = signal;
-      signal?.addEventListener('abort', () => { aborts++; });
+      signal?.addEventListener('abort', () => {
+        aborts++;
+      });
       for (let i = 0; i < input.max; i++) yield i;
     });
     try {
@@ -791,13 +947,20 @@ describe('C14 正常完成不触发取消：handler 的 signal 保持未 abort',
     const cli = createTypedClient(client, api);
     let captured: AbortSignal | undefined;
     let aborts = 0;
-    binding._on("chat", api.chat, async function* ({ signal }) {
+    binding._on('chat', api.chat, async function* ({ signal }) {
       captured = signal;
-      signal?.addEventListener('abort', () => { aborts++; });
+      signal?.addEventListener('abort', () => {
+        aborts++;
+      });
       yield 'bye';
     });
     try {
-      const stream = await cli.chat({ room: 'r' }, (async function* () { /* 空输入 */ })());
+      const stream = await cli.chat(
+        { room: 'r' },
+        (async function* () {
+          /* 空输入 */
+        })(),
+      );
       const got: string[] = [];
       for await (const v of stream) got.push(v);
       expect(got).toEqual(['bye']);
@@ -815,48 +978,60 @@ describe('C14 正常完成不触发取消：handler 的 signal 保持未 abort',
 // ═══════════════════════════════════════════════════
 
 describe('C15 上传源错误必须传播：chunks 迭代抛错 → 调用/流不得伪成功', () => {
-  it.each(transports)('%s: clientStream——上传源第二次拉取抛错 → 以 STREAM_ERROR 落定', async (_n, h) => {
-    const { binding, client, dispose } = await h.start();
-    const cli = createTypedClient(client, api);
-    binding._on("collect", api.collect, async ({ stream }) => {
-      let count = 0;
-      for await (const _ of stream) count++;
-      return { tag: 'src', sum: count };
-    });
-    try {
-      async function* broken(): AsyncGenerator<number> {
-        yield 1;
-        throw new Error('upload-source-failed');
+  it.each(transports)(
+    '%s: clientStream——上传源第二次拉取抛错 → 以 STREAM_ERROR 落定',
+    async (_n, h) => {
+      const { binding, client, dispose } = await h.start();
+      const cli = createTypedClient(client, api);
+      binding._on('collect', api.collect, async ({ stream }) => {
+        let count = 0;
+        for await (const _ of stream) count++;
+        return { tag: 'src', sum: count };
+      });
+      try {
+        async function* broken(): AsyncGenerator<number> {
+          yield 1;
+          throw new Error('upload-source-failed');
+        }
+        // 服务端会正常处理已收到的 1 个 chunk——调用必须仍以错误落定
+        // （HTTP 缺陷：曾返回服务端成功的 sum=1，伪成功）
+        await expect(cli.collect({ tag: 'src' }, broken())).rejects.toMatchObject({
+          code: 'STREAM_ERROR',
+        });
+      } finally {
+        await dispose();
       }
-      // 服务端会正常处理已收到的 1 个 chunk——调用必须仍以错误落定
-      // （HTTP 缺陷：曾返回服务端成功的 sum=1，伪成功）
-      await expect(cli.collect({ tag: 'src' }, broken()))
-        .rejects.toMatchObject({ code: 'STREAM_ERROR' });
-    } finally {
-      await dispose();
-    }
-  });
+    },
+  );
 
-  it.each(transports)('%s: bidi——上传源第二次拉取抛错 → 输出迭代以 STREAM_ERROR 结束', async (_n, h) => {
-    const { binding, client, dispose } = await h.start();
-    const cli = createTypedClient(client, api);
-    binding._on("chat", api.chat, async function* ({ stream }) {
-      for await (const v of stream) yield v as string;
-    });
-    try {
-      async function* broken(): AsyncGenerator<string> {
-        yield 'a';
-        throw new Error('upload-source-failed');
+  it.each(transports)(
+    '%s: bidi——上传源第二次拉取抛错 → 输出迭代以 STREAM_ERROR 结束',
+    async (_n, h) => {
+      const { binding, client, dispose } = await h.start();
+      const cli = createTypedClient(client, api);
+      binding._on('chat', api.chat, async function* ({ stream }) {
+        for await (const v of stream) yield v as string;
+      });
+      try {
+        async function* broken(): AsyncGenerator<string> {
+          yield 'a';
+          throw new Error('upload-source-failed');
+        }
+        const handle = await cli.chat({ room: 'r' }, broken());
+        // HTTP 缺陷（R20 P1-B）：上传 catch 吞错 → 静默 completed；
+        // channel/ws 经 end{error} 往返传播。契约：错误结束，永不静默完成
+        await expect(
+          (async () => {
+            for await (const _v of handle) {
+              /* 消费到终态 */
+            }
+          })(),
+        ).rejects.toMatchObject({ code: 'STREAM_ERROR' });
+      } finally {
+        await dispose();
       }
-      const handle = await cli.chat({ room: 'r' }, broken());
-      // HTTP 缺陷（R20 P1-B）：上传 catch 吞错 → 静默 completed；
-      // channel/ws 经 end{error} 往返传播。契约：错误结束，永不静默完成
-      await expect((async () => { for await (const _v of handle) { /* 消费到终态 */ } })())
-        .rejects.toMatchObject({ code: 'STREAM_ERROR' });
-    } finally {
-      await dispose();
-    }
-  });
+    },
+  );
 });
 
 // ═══════════════════════════════════════════════════
@@ -868,7 +1043,7 @@ describe('N1 async generator 语义边界：return 请求不打断 await（至�
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
     const events: string[] = [];
-    binding._on("chat", api.chat, async function* () {
+    binding._on('chat', api.chat, async function* () {
       try {
         events.push('enter');
         await sleep(40);
@@ -882,7 +1057,9 @@ describe('N1 async generator 语义边界：return 请求不打断 await（至�
     });
     try {
       const ac = new AbortController();
-      const stream = await cli.chat({ room: 'r' }, hangingIterable<string>(), { signal: ac.signal });
+      const stream = await cli.chat({ room: 'r' }, hangingIterable<string>(), {
+        signal: ac.signal,
+      });
       expect(await waitFor(() => events.includes('enter')), 'handler 未启动').toBe(true);
       ac.abort();
       const iter = stream[Symbol.asyncIterator]();
@@ -900,7 +1077,14 @@ describe('N2 dispose 不 abort 调用方的 signal', () => {
   it.each(transports)('%s: dispose 完成后 signal.aborted 仍为 false', async (_n, h) => {
     const { binding, client, dispose } = await h.start();
     const cli = createTypedClient(client, api);
-    binding._on("slowEcho", api.slowEcho, () => new Promise<number>(() => { /* 永挂 */ }));
+    binding._on(
+      'slowEcho',
+      api.slowEcho,
+      () =>
+        new Promise<number>(() => {
+          /* 永挂 */
+        }),
+    );
     try {
       const ac = new AbortController();
       const p = cli.slowEcho({ delay: 0, v: 1 }, { signal: ac.signal });

@@ -3,6 +3,14 @@
 // 依赖规则（硬）：禁止 import React / node / 任何 UI kit / 任何 runtime 包。
 // 后端（entity-runtime / server）与前端（chat-core / surface）共用这里的定义，
 // 保证「后端产出的事件」与「前端消费的事件」是同一个类型，不靠约定同步。
+//
+// 唯一允许的跨包引用：`@diy-agent/attachment` 的**纯类型**（AttachmentRef）。
+// 附件形状只有一份定义 —— 协议层再抄一遍就必然漂移（`relPath` 抄成 `relpath` 那种）。
+
+import type { AttachmentRef } from '@diy-agent/attachment/types';
+
+/** 附件 ref 的**形状**由 @diy-agent/attachment 独占定义；这里只做再导出，方便 UI 侧只装一个包 */
+export type { AttachmentRef };
 
 // ── 容器 / 参与者 ──────────────────────────────────────────────
 
@@ -140,7 +148,17 @@ export interface JobRunRow {
 }
 
 export type Item =
-    | (ItemBase & { type: 'chat'; data: { text: string } })
+    | (ItemBase & {
+          type: 'chat';
+          /**
+           * `attachments` = 这条消息带的附件（图 / 文件 / 目录引用），由人发进来时附上。
+           *
+           * 为什么放在 `data` 里而不是新开一个 item 类型：附件**永远属于某条消息**
+           * （没有「悬空的附件」），单独成 item 会让「这条图是哪句的」变成要拼的推断。
+           * 形状归 `@diy-agent/attachment`（stored / linked 两支），协议层只管装得下。
+           */
+          data: { text: string; attachments?: readonly AttachmentRef[] };
+      })
     | (ItemBase & {
           type: 'notice';
           /**
@@ -175,7 +193,8 @@ export interface Delivery {
 // ── 命令 / 事件（前后端唯一契约）────────────────────────────────
 
 export type Command =
-    | { kind: 'send'; text: string }
+    /** `attachments`：随这条消息一起发出去的附件（已落 blobs / 已 adopt 的 ref，不是原始字节） */
+    | { kind: 'send'; text: string; attachments?: readonly AttachmentRef[] }
     /** 不传 botId = 停整个房间；传了只停那个成员 */
     | { kind: 'cancel'; botId?: string; keepQueue?: boolean };
 
@@ -457,6 +476,21 @@ export interface ActivityFrame {
 
 export interface Snapshot {
     items: Item[];
+    /**
+     * 这个房间**一共**有多少条 item（分页提示用：上面还有多少条没加载）。
+     *
+     * 缺省 `undefined` = 老服务端 / 已加载全量 —— 界面上就不说“还有更多”。
+     */
+    totalItems?: number;
+    /**
+     * 服务端只给了**最近一截**（`items` 不是从第一条开始的）。
+     *
+     * 为什么要有（2026-11-26 实测）：一个 6000+ 条的房间里 `chat.history` 一次回包
+     * **5.7 MB**，浏览器 JSON.parse + 渲染就是 2~5 秒的长任务 —— 用户感受到的
+     * “切任务很慢、点输入框要几秒”。现在默认只发最近的 400 条，这个标记告诉界面
+     * “上面还有更早的”，由用户主动要（`load(id, { limit: 0 })`）。
+     */
+    truncated?: boolean;
     deliveries: Delivery[];
     /** 还在等用户回答的提问（刷新页面后卡片要能恢复） */
     asks?: AskRequest[];
@@ -689,6 +723,12 @@ export interface ModelCatalogModel {
     id: string;
     /** 人可读名（目录里没有就回落到 id，不编造） */
     name: string;
+    /**
+     * 输入模态（`models.dev` 的 `modalities.input` 投影；缺省 = **不知道**，不是「不收」）。
+     *
+     * 界面靠它画「收图」标记、并在贴图前拦一道 —— 往不收图的上游塞 image part 换回来的是 400。
+     */
+    input?: readonly string[];
     contextWindow?: number;
     maxOutputTokens?: number;
     cost?: ModelCostView;

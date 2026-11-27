@@ -296,3 +296,28 @@ describe('提问卡片', () => {
         expect(entries.at(-1)?.author?.id).toBe(OWNER.id);
     });
 });
+
+describe('buildTimeline：附件', () => {
+    it('人发的消息带附件 ⇒ user 条目原样带出来（界面靠它画图）', () => {
+        const shot = {
+            type: 'stored' as const,
+            id: '2026-11-26/093012-abcd1234/01-shot.png',
+            relPath: '2026-11-26/093012-abcd1234/01-shot.png',
+            kind: 'image' as const,
+            mime: 'image/png',
+            bytes: 2048,
+            displayName: 'shot.png',
+            source: 'paste' as const,
+            createdAt: 1_700_000_000_000,
+            sha256: 'a'.repeat(64),
+        };
+        const entries = buildTimeline([item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '看这张', attachments: [shot] } })], [], BOTS);
+        expect(entries[0]?.kind).toBe('user');
+        expect(entries[0]?.attachments).toEqual([shot]);
+    });
+
+    it('没有附件的消息不带这个字段（老数据形状不变）', () => {
+        const entries = buildTimeline([item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '一句' } })], [], BOTS);
+        expect(entries[0]).not.toHaveProperty('attachments');
+    });
+});

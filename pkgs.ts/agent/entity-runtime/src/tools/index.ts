@@ -23,6 +23,7 @@ import { askTool } from './ask';
 import { journalTool } from './journal';
 import { runCodeTool, type RunCodeHost } from './run-code';
 import { unitTools, type UnitHost } from './units';
+import { viewImageTool } from './view-image';
 
 export type { UnitHost } from './units';
 export type { RunCodeHost } from './run-code';
@@ -132,6 +133,8 @@ export function buildRoomTools(options: RoomToolsOptions): ToolSet {
     if (options.onJournal !== undefined) extra['journal'] = journalTool(options.onJournal);
     if (options.units !== undefined) Object.assign(extra, unitTools(options.units));
     if (options.code !== undefined) extra['run_code'] = runCodeTool(options.code);
+    // 「自己截图自己看」：不给它这个入口，它会去 bash+curl 拼 raw API（实测过）
+    extra['view_image'] = viewImageTool();
 
     return buildTools({ cwd, extraTools: extra });
 }

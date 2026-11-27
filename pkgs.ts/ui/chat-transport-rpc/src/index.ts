@@ -24,6 +24,7 @@ import type {
 
 import type {
     ActivityFrame,
+    AttachmentRef,
     BotRow,
     JobRunRow,
     ModelCatalogModel,
@@ -61,6 +62,25 @@ export interface UnitItem {
     id: string;
     title: string;
     body: string;
+    /**
+     * 「怎么算做完」：一句话能判断完/未完的判据。空串 = 还没写（界面上标「未写验收」）。
+     *
+     * 为什么与 body 分开（2026-11-26 用户裁）：body 里既装背景又装口径时，模型经常忘、
+     * 人也没法一眼核对；拆成字段之后「没写」是**看得见**的。
+     */
+    accept: string;
+    /**
+     * 这条需求来自哪句人话（消息 id，如 `u-mwwtvgiy-1`）；空串 = 不知道（老数据）。
+     * 界面用它回答「这是我要的吗」—— 点一下能回到那条消息。
+     */
+    source: string;
+    /**
+     * `source` 解开后的「谁 + 原话」：树节点上直接显示，不用点进别处才知道是谁提的。
+     *
+     * **没有这个键 = 不知道**（老数据 / 消息已被剪 / 非人类触发）—— 界面别编一个假来源，
+     * 只把 ↩ 跳转留着。原话是服务端截断过的（`…` 结尾还有下文）。
+     */
+    sourceQuote?: SourceQuoteView;
     /** **有效**状态：叶子 = 落库值；母项（有子）= 由子派生（全 done → done） */
     status: 'open' | 'doing' | 'done';
     /** 树上的父（母项）；null = 根 */
@@ -73,6 +93,20 @@ export interface UnitItem {
     depth: number;
     /** 书写顺序（同一父下的稳定次序） */
     seq: number;
+}
+
+/**
+ * 一条需求的来源原话（`source` 解开之后）。
+ *
+ * `role` 用来区分「人提的」与「agent 自己落的」：两者都该看得见，但分量不一样 ——
+ * 只把 human 当「需求」，其余的最多算「待确认的自作主张」。
+ */
+export interface SourceQuoteView {
+    /** 发言人名字（消息 `author.name`）；空串 = 那条消息没署名 */
+    author: string;
+    role: 'human' | 'bot' | 'system' | '';
+    /** 原话（已截断，一行） */
+    text: string;
 }
 
 /** 需求账本树的视图快照：树 + ready/doing（现在能挑的） */
@@ -149,6 +183,14 @@ export type RoomRow = Room & {
      * （用户 2026-11-26 报的）。与 `bots.rows` 的 `needs-attention` 同源（`turnLookupOf`）。
      */
     broken?: number;
+    /**
+     * 「最新一条投递失败」的成员数（侧栏「未送达」标记）。0 不写。
+     *
+     * 与 `queued` 是两件事：queued 是还没轮到 / 待续跑，failed 是消息确实没送到；
+     * 与 `broken` 也不是一件事：broken 是 bot 上一轮跑坏了，failed 是你的话没递进去。
+     * 只按每个成员最新一条消息收敛 —— 旧的 failed 被后来的 delivered 覆盖后不再报。
+     */
+    failed?: number;
 };
 
 export class RpcChatClient implements ChatClient {
@@ -156,6 +198,8 @@ export class RpcChatClient implements ChatClient {
 
     constructor(options: RpcChatClientOptions = {}) {
         this.hub = new StreamHub({
+            // exactOptionalPropertyTypes：不传就不带这个键
+            // oxlint-disable-next-line no-useless-spread
             ...(options.rpcUrl === undefined ? {} : { rpcUrl: options.rpcUrl }),
         });
     }
@@ -203,7 +247,9 @@ export class RpcChatClient implements ChatClient {
          */
         rows: (): Promise<{ rows: BotRow[] }> => this.call('bots.rows', {}),
         /** 批量「继续」：已在跑的会被服务端跳过（回包里报原因） */
-        retry: (targets: Array<{ roomId: string; botId: string }>): Promise<{
+        retry: (
+            targets: Array<{ roomId: string; botId: string }>,
+        ): Promise<{
             started: Array<{ roomId: string; botIds: string[] }>;
             skipped: Array<{ roomId: string; botId: string; reason: string }>;
         }> => this.call('bots.retry', { targets }),
@@ -273,7 +319,13 @@ export class RpcChatClient implements ChatClient {
 
     // ── ChatClient ──────────────────────────────────────────────
 
-    async load(entityId: string): Promise<Snapshot> {
+    /**
+     * 拉一个房间的快照。
+     *
+     * `limit` 缺省 = 服务端缺省（只发最近 400 条）；传 `0` = **全量**（用户点“加载更早的”）。
+     * 见 `Snapshot.truncated` 的注释：6000 条的房间里全量回包 5.7 MB，parse + 渲染 2~5 秒。
+     */
+    async load(entityId: string, options?: { limit?: number }): Promise<Snapshot> {
         const history = await this.call<{
             items: Item[];
             deliveries: Delivery[];
@@ -281,9 +333,13 @@ export class RpcChatClient implements ChatClient {
             answered: Snapshot['answeredAsks'];
             speaking?: Snapshot['speaking'];
             runningTurns?: Snapshot['runningTurns'];
-        }>('chat.history', { id: entityId });
+            total?: number;
+            hasMore?: boolean;
+        }>('chat.history', { id: entityId, ...(options?.limit === undefined ? {} : { limit: options.limit }) });
         return {
             items: history.items,
+            ...(history.total === undefined ? {} : { totalItems: history.total }),
+            ...(history.hasMore === true ? { truncated: true } : {}),
             deliveries: history.deliveries,
             asks: history.asks ?? [],
             answeredAsks: history.answered ?? [],
@@ -309,11 +365,7 @@ export class RpcChatClient implements ChatClient {
         return data.sessions;
     }
 
-    async compact(
-        entityId: string,
-        botId: string,
-        options: { keepTurns?: number } = {},
-    ): Promise<CompactOutcome> {
+    async compact(entityId: string, botId: string, options: { keepTurns?: number } = {}): Promise<CompactOutcome> {
         return this.call<CompactOutcome>('chat.compact', { id: entityId, botId, ...options });
     }
 
@@ -345,8 +397,52 @@ export class RpcChatClient implements ChatClient {
         // 先确保这个房间的流已经开着再发：否则「受理即返」之后的第一条事件可能没人接。
         // 失败也无所谓 —— 消息必须送到，事件由重连后的 ready + 补拉快照兜。
         await this.hub.ensure(topicOf(entityId));
-        await this.call('chat.chat', { id: entityId, text: command.text });
+        await this.call('chat.chat', {
+            id: entityId,
+            text: command.text,
+            ...(command.attachments === undefined ? {} : { attachments: command.attachments }),
+        });
     }
+
+    /**
+     * 上传一份字节（粘贴 / 拖拽 / 选图）→ 落 blobs → 拿回 ref。
+     *
+     * 为什么从界面直传而不是先落进消息：一次发送可能带几张图，任何一张失败都该在
+     * 「发送之前」就报错（用户还看得见它），而不是发出去之后在气泡里出现一个裂图。
+     */
+    async putAttachment(input: {
+        name?: string;
+        mime?: string;
+        bytes: Uint8Array;
+        source?: 'paste' | 'drop' | 'pick' | 'tool';
+    }): Promise<AttachmentRef> {
+        return this.call<AttachmentRef>('attachment.put', {
+            base64: toBase64(input.bytes),
+            ...(input.name === undefined ? {} : { name: input.name }),
+            ...(input.mime === undefined ? {} : { mime: input.mime }),
+            ...(input.source === undefined ? {} : { source: input.source }),
+        });
+    }
+
+    /** 取回附件内容（显示缩略图 / 原图） */
+    readAttachment(ref: AttachmentRef): Promise<{ base64: string; mime: string }> {
+        return this.call<{ base64: string; mime: string }>('attachment.get', { ref });
+    }
+}
+
+/**
+ * 字节 → base64（走 JSON 通道的唯一办法）。
+ *
+ * 分块 `String.fromCharCode(...)`：一次性展开几十万个参数会撞引擎的实参上限
+ * （`RangeError: Maximum call stack size exceeded`），1~3 MB 的截图足够触发。
+ */
+function toBase64(bytes: Uint8Array): string {
+    const CHUNK = 0x8000;
+    let binary = '';
+    for (let offset = 0; offset < bytes.byteLength; offset += CHUNK) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + CHUNK));
+    }
+    return btoa(binary);
 }
 
 export { StreamHub, topicOfRoom, type StreamHubOptions } from './hub';

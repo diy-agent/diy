@@ -58,6 +58,33 @@ export function modelOfKey(providers: readonly Provider[], value: string): Model
     return findProvider(providers, key.provider)?.models.find((model) => model.id === key.model);
 }
 
+/**
+ * 这个模型**收不收图**（能不能把 image part 送到它眼前）。
+ *
+ * 判据与服务端完全一致（entity-runtime 的 `acceptsImagesOf`）：目录里没标能力位 ⇒ **不收**。
+ * 界面上宁可保守 —— 让人在贴图前就知道「这张图这个模型看不到」，而不是发完等一个 400。
+ */
+export function acceptsImages(providers: readonly Provider[], modelKey: string): boolean {
+    return modelOfKey(providers, modelKey)?.input?.includes('image') === true;
+}
+
+/**
+ * 目录里第一个**收图**的模型 key（`account@provider/model`）。
+ *
+ * 用途只有一个：贴了图但当前模型不收时，提示「换到它」并让用户一键切 —— 不自动切
+ * （换模型动的是这一轮的成本与配额，得由人点）。
+ */
+export function firstVisionModelKey(providers: readonly Provider[]): string | undefined {
+    for (const provider of providers) {
+        const account = provider.accounts.find((item) => item.configured) ?? provider.accounts[0];
+        if (account === undefined) continue;
+        const model = provider.models.find((item) => item.input?.includes('image') === true);
+        if (model === undefined) continue;
+        return formatModelKey({ provider: provider.id, account: account.name, model: model.id });
+    }
+    return undefined;
+}
+
 /** 「模型名 · 账号@provider」；目录里没有这个模型 ⇒ 原样显示 key（不编造名字） */
 export function modelLabel(providers: readonly Provider[], value: string): string {
     const key = parseModelKey(value);

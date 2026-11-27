@@ -32,11 +32,11 @@
 //
 // 约定：本文件只放纯函数/常量，禁止 import node:*（renderer 会打进包）。
 
-import { z } from "zod";
-import { AssembleGlobalsSchema } from "./schema/prompt-schema.js";
-import { describeSchema, pruneSchemaDoc, type SchemaDoc } from "./schema/schema-doc.js";
-import { emitYamlTraced, renderPaths, subsetOf, subsetOfDelta, toYaml } from "./wire-render.js";
-import type { ContextPath, ContextTreeState } from "./types.js";
+import { z } from 'zod';
+import { AssembleGlobalsSchema } from './schema/prompt-schema.js';
+import { describeSchema, pruneSchemaDoc, type SchemaDoc } from './schema/schema-doc.js';
+import { emitYamlTraced, renderPaths, subsetOf, subsetOfDelta, toYaml } from './wire-render.js';
+import type { ContextPath, ContextTreeState } from './types.js';
 
 /**
  * 信封的**总逻辑**（zod 描述不了的那部分）—— 固定话术，逐条讲清「help 描述不了的事」。
@@ -50,18 +50,18 @@ import type { ContextPath, ContextTreeState } from "./types.js";
  * 真正该动版本的只有 `WIRE_ENCODING` 里那些**语义**（信封形态、hash 口径、渲染格式）。
  */
 export const ENVELOPE_ABOUT = [
-    "YAML 信封：role:system 放 help / vars（全量）；role:user 放 vars（增量）/ notify / chat。",
-    "· vars = 上下文变量树（UI 不显示）：全量在 system 消息里；user 里只列变化 path 的新值，",
-    "  后出现者覆盖，`path: null` = 该单元已消失。数组 / map 按整单元替换，不按下标 / key 打补丁。",
-    "· notify = 机器事件（UI 显示）：每项必有 kind；text / source / summary 等按 kind 带（compact 只有 source + summary）。",
-    "· chat = 人 / agent 发言（UI 显示）：每项 {from, text}，from = human:<名> / agent:<名>。",
-    "· 键序固定：vars → notify → chat。`[]` / `{}` = 存在但为空（与「没有这个变量」不是一回事）。",
-].join("\n");
+    'YAML 信封：role:system 放 help / vars（全量）；role:user 放 vars（增量）/ notify / chat。',
+    '· vars = 上下文变量树（UI 不显示）：全量在 system 消息里；user 里只列变化 path 的新值，',
+    '  后出现者覆盖，`path: null` = 该单元已消失。数组 / map 按整单元替换，不按下标 / key 打补丁。',
+    '· notify = 机器事件（UI 显示）：每项必有 kind；text / source / summary 等按 kind 带（compact 只有 source + summary）。',
+    '· chat = 人 / agent 发言（UI 显示）：每项 {from, text}，from = human:<名> / agent:<名>。',
+    '· 键序固定：vars → notify → chat。`[]` / `{}` = 存在但为空（与「没有这个变量」不是一回事）。',
+].join('\n');
 
 /** 上下文变量树（`system` 消息里是全量；`user` 消息里是增量） */
 export const VarsSchema = z
     .record(z.string(), z.unknown())
-    .describe("上下文变量树（全量在 system 消息；user 里只列变化 path 的新值；键 = 原子单元路径）");
+    .describe('上下文变量树（全量在 system 消息；user 里只列变化 path 的新值；键 = 原子单元路径）');
 
 /**
  * 历史摘要（作为信封的 `summary` 键；被压缩掉那段的结论）。
@@ -73,33 +73,33 @@ export const VarsSchema = z
 export const SummarySchema = z
     .string()
     .describe(
-        "被压缩掉的那段对话的**摘要**（上一段会话的结论，由摘要模型生成；仅在摘要功能启用时出现）。" +
-            "它只做**背景**：变量树的**当前值**一律看 system 消息的 `vars` 段（每次全量），**不要**为取某个变量的值去翻历史。",
+        '被压缩掉的那段对话的**摘要**（上一段会话的结论，由摘要模型生成；仅在摘要功能启用时出现）。' +
+            '它只做**背景**：变量树的**当前值**一律看 system 消息的 `vars` 段（每次全量），**不要**为取某个变量的值去翻历史。',
     );
 
 /** 发言者（`from:` 段；只出现在**历史** user 消息上，见 ##422） */
 export const FromSchema = z
     .object({
-        id: z.string().describe("发言者成员 id（`agent:<名>` / `human:<名>`）—— 谁说的这句话"),
-        name: z.string().optional().describe("当时的显示名（房间成员表里的名字）；**取不到就省**（不猜，不编）"),
+        id: z.string().describe('发言者成员 id（`agent:<名>` / `human:<名>`）—— 谁说的这句话'),
+        name: z.string().optional().describe('当时的显示名（房间成员表里的名字）；**取不到就省**（不猜，不编）'),
     })
     .describe(
-        "这条历史发言的**发言者**（`from` 段）：只出现在历史 user 消息上，与 `user.message` 并列（不嵌套）。" +
-            "**老消息可能没有本段**（那时没记发言者）—— 没有 = 未知，不要当成「同一个人」。",
+        '这条历史发言的**发言者**（`from` 段）：只出现在历史 user 消息上，与 `user.message` 并列（不嵌套）。' +
+            '**老消息可能没有本段**（那时没记发言者）—— 没有 = 未知，不要当成「同一个人」。',
     );
 
 /** 用户消息（旧信封的 `user` 键；保留只为读老数据，新写入不再产生） */
 export const UserEnvelopeSchema = z
-    .object({ message: z.string().describe("用户本轮真实发言（原样，未加工）") })
-    .describe("旧格式：用户消息（新格式请用 chat）");
+    .object({ message: z.string().describe('用户本轮真实发言（原样，未加工）') })
+    .describe('旧格式：用户消息（新格式请用 chat）');
 
 /** 一条**可见发言**（`chat` 数组的元素；人 / agent 都走它）。 */
 export const ChatItemSchema = z
     .object({
-        from: z.string().describe("发言者：human:<名> / agent:<名>（沿用成员 id 词表）"),
-        text: z.string().describe("原话（原样，未加工；多行也照原样）"),
+        from: z.string().describe('发言者：human:<名> / agent:<名>（沿用成员 id 词表）'),
+        text: z.string().describe('原话（原样，未加工；多行也照原样）'),
     })
-    .describe("一条可见发言");
+    .describe('一条可见发言');
 
 /**
  * 一条**机器事件**（`notify` 数组的元素；UI 可见）。
@@ -113,29 +113,29 @@ export const ChatItemSchema = z
  */
 export const NotifyItemSchema = z
     .object({
-        kind: z.string().describe("事件类型：compact（会话压缩）/ job-done（后台进程结束）"),
-        text: z.string().optional().describe("一行摘要（可省：compact 用 summary / source，job-done 用排障字段）"),
+        kind: z.string().describe('事件类型：compact（会话压缩）/ job-done（后台进程结束）'),
+        text: z.string().optional().describe('一行摘要（可省：compact 用 summary / source，job-done 用排障字段）'),
         // ── kind=compact（##442 最大精简：只有 source + summary） ──
-        source: z.string().optional().describe("compact：llm.jsonl 绝对路径（逐行 = 一条消息）"),
-        summary: z.string().optional().describe("compact：压缩时已生成的结论；空 = 按 source 自己查"),
+        source: z.string().optional().describe('compact：llm.jsonl 绝对路径（逐行 = 一条消息）'),
+        summary: z.string().optional().describe('compact：压缩时已生成的结论；空 = 按 source 自己查'),
         // ── kind=job-done ──
-        run: z.string().optional().describe("job-done：run id（全文用 job output <id>）"),
-        state: z.string().optional().describe("job-done：终态 exited / failed / killed"),
-        exitCode: z.number().nullable().optional().describe("job-done：退出码；null = 无"),
-        signal: z.string().nullable().optional().describe("job-done：终止信号；null = 无"),
-        durationMs: z.number().optional().describe("job-done：运行时长（毫秒）"),
-        command: z.string().optional().describe("job-done：启动命令首行"),
-        tail: z.string().optional().describe("job-done：输出尾部（最多 20 行）"),
-        truncatedBytes: z.number().optional().describe("job-done：tail 之前被截掉的字节数"),
+        run: z.string().optional().describe('job-done：run id（全文用 job output <id>）'),
+        state: z.string().optional().describe('job-done：终态 exited / failed / killed'),
+        exitCode: z.number().nullable().optional().describe('job-done：退出码；null = 无'),
+        signal: z.string().nullable().optional().describe('job-done：终止信号；null = 无'),
+        durationMs: z.number().optional().describe('job-done：运行时长（毫秒）'),
+        command: z.string().optional().describe('job-done：启动命令首行'),
+        tail: z.string().optional().describe('job-done：输出尾部（最多 20 行）'),
+        truncatedBytes: z.number().optional().describe('job-done：tail 之前被截掉的字节数'),
     })
-    .describe("一条机器事件（UI 可见）");
+    .describe('一条机器事件（UI 可见）');
 
 /** 信封顶层键的 zod（唯一真源；`help` 由它 + 各值段 schema 派生，见 `buildHelpDoc`） */
 export const EnvelopeSchema = z
     .object({
         vars: VarsSchema,
-        notify: z.array(NotifyItemSchema).describe("机器事件列表（UI 可见）"),
-        chat: z.array(ChatItemSchema).describe("人 / agent 发言列表（UI 可见，按时间顺序）"),
+        notify: z.array(NotifyItemSchema).describe('机器事件列表（UI 可见）'),
+        chat: z.array(ChatItemSchema).describe('人 / agent 发言列表（UI 可见，按时间顺序）'),
     })
     .describe(ENVELOPE_ABOUT);
 
@@ -174,22 +174,20 @@ export function buildHelpDoc(opts: {
 }): HelpDoc {
     // `SchemaDoc` 是 `Record<string, unknown>` —— helps 拼起来与产物形状一致，`pruneSchemaDoc` 可直接用
     const globalsDoc: SchemaDoc = opts.helps ?? describeSchema(AssembleGlobalsSchema);
-    const key = (k: keyof typeof EnvelopeSchema.shape): string =>
-        (EnvelopeSchema.shape[k].description as string | undefined) ?? "";
     return {
         about: ENVELOPE_ABOUT,
         // 这里是 **role:system 消息** 里的变量树（全量）；role:user 里的同名键才是增量，
         // 那层语义写在 `about` 里（`VarsSchema` 的 desc 是给增量用的）。
         vars: {
-            desc: "上下文变量树（**全量**；在 role:system 消息里）。role:user 里的同名键只带增量",
+            desc: '上下文变量树（**全量**；在 role:system 消息里）。role:user 里的同名键只带增量',
             ...pruneSchemaDoc(globalsDoc, opts.places),
         },
         notify: describeSchema(
             z
                 .array(NotifyItemSchema)
-                .describe("机器事件列表（UI 可见）。kind=compact 压缩；kind=job-done 后台进程结束。"),
+                .describe('机器事件列表（UI 可见）。kind=compact 压缩；kind=job-done 后台进程结束。'),
         ),
-        chat: describeSchema(z.array(ChatItemSchema).describe("人 / agent 发言列表（UI 可见，按时间顺序）。")),
+        chat: describeSchema(z.array(ChatItemSchema).describe('人 / agent 发言列表（UI 可见，按时间顺序）。')),
     };
 }
 
@@ -200,16 +198,16 @@ export function buildHelpDoc(opts: {
  * 判据必须认出它们，否则会被 `normalizeUserRuns` 合并成「YAML + 裸文本」。
  */
 export const ENVELOPE_TOP_KEYS = new Set([
-    "help",
-    "vars",
-    "system",
-    "runtime",
-    "runtimeDiff",
-    "summary",
-    "from",
-    "user",
-    "notify",
-    "chat",
+    'help',
+    'vars',
+    'system',
+    'runtime',
+    'runtimeDiff',
+    'summary',
+    'from',
+    'user',
+    'notify',
+    'chat',
 ]);
 
 /**
@@ -224,7 +222,7 @@ export const ENVELOPE_TOP_KEYS = new Set([
  * （= 老行为，不新造危害）。
  */
 export function isEnvelopeText(text: string): boolean {
-    for (const line of text.split("\n")) {
+    for (const line of text.split('\n')) {
         if (!line.trim()) continue;
         if (line !== line.trimStart()) return false; // 首行缩进 ⇒ 是普通正文，不是信封
         const m = /^([A-Za-z][A-Za-z0-9_]*):(\s|$)/.exec(line);
@@ -246,7 +244,7 @@ export function isEnvelopeText(text: string): boolean {
 export function tailEnvelope(parts: readonly string[], userText?: string): string {
     const blocks = parts.filter((p) => p.trim());
     if (userText !== undefined) blocks.push(toYaml({ user: { message: userText } }));
-    return blocks.join("\n");
+    return blocks.join('\n');
 }
 
 /**
@@ -254,7 +252,7 @@ export function tailEnvelope(parts: readonly string[], userText?: string): strin
  * 见 `SummarySchema` 头注：摘要是**自动生成的段**，必须有自己的顶层键，不进 `user.message`。
  */
 export function renderSummaryPart(text: string): string {
-    if (!text.trim()) return "";
+    if (!text.trim()) return '';
     return toYaml({ summary: text });
 }
 
@@ -286,7 +284,7 @@ export function renderFromPart(speaker: Speaker): string {
  *
  * legacy 键仍然剥：存量块里还存着老格式的信封（升级前的 `system:` / `runtime:`）。
  */
-export const CONTROL_TOP_KEYS: ReadonlySet<string> = new Set(["vars", "system", "runtime", "runtimeDiff"]);
+export const CONTROL_TOP_KEYS: ReadonlySet<string> = new Set(['vars', 'system', 'runtime', 'runtimeDiff']);
 
 /** 顶格 `key:` 行（信封顶层键的形态；与 `isEnvelopeText` 同一把尺） */
 const TOP_KEY_RE = /^([A-Za-z][A-Za-z0-9_]*):(\s|$)/;
@@ -298,7 +296,7 @@ const TOP_KEY_RE = /^([A-Za-z][A-Za-z0-9_]*):(\s|$)/;
  * 不重复加（同一份 YAML 里两个 `from:` 是非法重复键），没带就补到顶层。
  */
 export function hasTopLevelKey(text: string, key: string): boolean {
-    return text.split("\n").some((l) => TOP_KEY_RE.exec(l)?.[1] === key);
+    return text.split('\n').some((l) => TOP_KEY_RE.exec(l)?.[1] === key);
 }
 
 /**
@@ -317,11 +315,11 @@ export function hasTopLevelKey(text: string, key: string): boolean {
 export function stripRuntimeSections(text: string): string {
     // 不是信封（首行就是普通正文 / 首行缩进）⇒ 一字不动
     if (!isEnvelopeText(text)) return text;
-    const lines = text.split("\n");
+    const lines = text.split('\n');
     const keys = lines.map((l) => TOP_KEY_RE.exec(l)?.[1]).filter((k): k is string => k !== undefined);
     // 不是「我们的消息形态」（新形态看 chat / notify；legacy 看 user）⇒ 一字不动：
     // 宁少剥，不剥用户自己粘贴的 YAML（它可能刚好以 `runtime:` 开头）。
-    if (!keys.includes("chat") && !keys.includes("notify") && !keys.includes("user")) return text;
+    if (!keys.includes('chat') && !keys.includes('notify') && !keys.includes('user')) return text;
     if (!keys.some((k) => CONTROL_TOP_KEYS.has(k))) return text; // 没有控制段 ⇒ 一字不动（快路）
     const out: string[] = [];
     let skipping = false;
@@ -330,7 +328,7 @@ export function stripRuntimeSections(text: string): string {
         if (key !== undefined) skipping = CONTROL_TOP_KEYS.has(key); // 新的顶层键 ⇒ 换段
         if (!skipping) out.push(line);
     }
-    return out.join("\n");
+    return out.join('\n');
 }
 
 /** 只拼 `runtime:` + `user:` 的常见形（见 `tailEnvelope`） */
@@ -354,8 +352,8 @@ export interface EnvelopeRendering {
 }
 
 /** 剥掉顶层键前缀（`vars.diy` → `diy`），与变量树 path 口径对齐 */
-function strip(lines: Record<ContextPath, { from: number; to: number }>, top: string): EnvelopeRendering["lines"] {
-    const out: EnvelopeRendering["lines"] = {};
+function strip(lines: Record<ContextPath, { from: number; to: number }>, top: string): EnvelopeRendering['lines'] {
+    const out: EnvelopeRendering['lines'] = {};
     for (const [p, sp] of Object.entries(lines)) {
         if (p.startsWith(`${top}.`)) out[p.slice(top.length + 1)] = sp;
     }
@@ -382,7 +380,7 @@ export function varsEnvelope(
         ...(helps === undefined ? {} : { helps }),
     });
     const r = emitYamlTraced({ help, vars: subsetOf(tree, places) });
-    return { text: r.text, lines: strip(r.lines as never, "vars") };
+    return { text: r.text, lines: strip(r.lines as never, 'vars') };
 }
 
 /** `chat` 数组的元素（人 / agent 发言） */
@@ -398,14 +396,11 @@ export type NotifyItem = z.infer<typeof NotifyItemSchema>;
  *
  * 空 paths → 空串（调用方不注入）。
  */
-export function controlDeltaEnvelope(
-    tree: ContextTreeState,
-    paths: readonly ContextPath[],
-): EnvelopeRendering {
+export function controlDeltaEnvelope(tree: ContextTreeState, paths: readonly ContextPath[]): EnvelopeRendering {
     const sorted = [...paths].sort();
-    if (sorted.length === 0) return { text: "", lines: {} };
+    if (sorted.length === 0) return { text: '', lines: {} };
     const r = emitYamlTraced({ vars: subsetOfDelta(tree, sorted) });
-    return { text: r.text, lines: strip(r.lines as never, "vars") };
+    return { text: r.text, lines: strip(r.lines as never, 'vars') };
 }
 
 /**
@@ -423,7 +418,7 @@ export function userEnvelope(parts: {
     if (parts.vars && Object.keys(parts.vars).length > 0) blocks.push(toYaml({ vars: parts.vars }));
     if (parts.notify && parts.notify.length > 0) blocks.push(toYaml({ notify: parts.notify }));
     if (parts.chat && parts.chat.length > 0) blocks.push(toYaml({ chat: parts.chat }));
-    return blocks.join("\n");
+    return blocks.join('\n');
 }
 
 /** 只含 `chat:` 的常见形（历史投影 / 本轮输入） */
@@ -440,8 +435,8 @@ export function chatEnvelope(items: readonly ChatItem[]): string {
 export function withNotify(text: string, item: NotifyItem): string {
     if (!text.trim()) return userEnvelope({ notify: [item] });
     const block = userEnvelope({ notify: [item] });
-    if (text.startsWith("chat:")) return `${block}\n${text}`;
-    const at = text.indexOf("\nchat:");
+    if (text.startsWith('chat:')) return `${block}\n${text}`;
+    const at = text.indexOf('\nchat:');
     if (at >= 0) return `${text.slice(0, at + 1)}${block}\n${text.slice(at + 1)}`;
     return `${text.trimEnd()}\n${block}`;
 }

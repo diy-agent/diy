@@ -85,7 +85,11 @@ export interface HubServer {
     readonly info: HubInfo;
     readonly port: number;
     readonly url: string;
-    invite(opts?: { ttlMs?: number; autoApprove?: boolean; protocol?: 'code' | 'pinned-key' }): Promise<{ inviteId: string; code: string; expiresAt: string }>;
+    invite(opts?: {
+        ttlMs?: number;
+        autoApprove?: boolean;
+        protocol?: 'code' | 'pinned-key';
+    }): Promise<{ inviteId: string; code: string; expiresAt: string }>;
     pair(body: PairRequestBody): Promise<PairSuccess>;
     pending(): Promise<PairingRequest[]>;
     approve(requestId: string): Promise<ApprovalResult>;
@@ -129,8 +133,6 @@ export async function createHubServer(opts: HubServerOptions): Promise<HubServer
      * 刻意不含 domainId / hubNodeId / publicKey —— 那些是「我是谁」，属于配对域。
      * 未建立关系的对端只需要知道「能不能通」，不需要知道对面是谁。
      */
-    const publicInfo = { ok: true, protocol: NODE_PROTOCOL } as const;
-
     const waiters = new Map<string, (result: PairSuccess) => void>();
     const sockets = new Map<string, Set<WebSocket>>();
 

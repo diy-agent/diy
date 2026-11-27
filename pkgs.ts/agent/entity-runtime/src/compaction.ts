@@ -13,6 +13,7 @@
 // 数据结构上只有一个要求：每条消息能回答"我属于哪一轮" —— TranscriptEntry 的 turn。
 
 import { generateText, type ModelMessage } from 'ai';
+import type { AttachmentRef } from '@diy-agent/attachment/types';
 import {
     estimateTokensOf,
     parseSummary,
@@ -41,6 +42,14 @@ export interface TranscriptEntry {
      * note   = 压缩留下的占位说明
      */
     origin: 'public' | 'self' | 'note';
+    /**
+     * 这条消息带的附件（只存 ref，**不存字节**）。
+     *
+     * 为什么不把图片 part 直接写进 `message`：transcript 会进快照落库（`saveSession`），
+     * 一张 2 MB 截图的 base64 会让 db 永久膨胀，而且每条历史都带一份。
+     * 字节在组装 messages 时才读（见 `session-images.ts`）。
+     */
+    attachments?: readonly AttachmentRef[];
 }
 
 export interface TokenUsage {

@@ -14,9 +14,7 @@
  *   · 命令段 = group children 路径，参数名 = zod 字段名
  */
 import { z } from 'zod';
-import { ChannelServerBinding, ChannelClientBinding } from '../../../src/index';
 import { RpcSchema } from '../../../src/index';
-import { createMemTransportPair } from '../../../test/helpers';
 import { CliApp } from '../../../src/cli/index';
 
 // ── 1. api：一棵 group 树，每个叶子是一条命令 ──
@@ -54,12 +52,6 @@ const FACTS = [
   { claim: 'rule#gpg', value: 'git 操作一律签名' },
 ];
 
-class CliExit extends Error {
-  constructor(public code: number) {
-    super(`exit ${code}`);
-  }
-}
-
 async function main(): Promise<void> {
   // ── 2. 一句话装配：mem 通道 + 服务端 + 客户端（模块层 fact 由 api 自带）──
   const cli = CliApp.inProcess({
@@ -78,7 +70,8 @@ async function main(): Promise<void> {
       },
     ],
     // 按名取实体查不到 ⇒ 退出码 1（`demo fact get X && ...` 不许对不存在的东西说通过）
-    exitCodeOf: ({ rpcName, result }) => (rpcName.endsWith('.get') && result === null ? 1 : undefined),
+    exitCodeOf: ({ rpcName, result }) =>
+      rpcName.endsWith('.get') && result === null ? 1 : undefined,
   });
   const run = async (argv: string[]) => {
     const r = await cli.run(argv);

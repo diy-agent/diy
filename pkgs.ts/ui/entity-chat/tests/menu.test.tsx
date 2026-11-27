@@ -69,10 +69,11 @@ describe('⋮ 菜单的浮层', () => {
         expect(menu).not.toBeNull();
         // 这一条就是本次修复的判据：`container.contains(menu)` 为 true 就说明还会被裁
         expect(container.contains(menu)).toBe(false);
-        expect(menu?.parentElement).toBe(document.body);
-        // fixed 定位 + 明确的坐标（不是靠 absolute 跟随父级）
-        expect((menu as HTMLElement).style.position === '' || (menu as HTMLElement).style.top !== '').toBe(true);
-        expect((menu as HTMLElement).style.top).not.toBe('');
+        // 剩余两条（「直接挂 body」、「inline 坐标不为空」）已删：换成官方 DropdownMenu
+        // （Base UI）后，popup 套在定位 wrapper 里、`position: fixed` 与坐标都来自
+        // **样式表**，而 happy-dom 不算 CSS、只认 inline style —— 那两条在当前实现下
+        // 永远是假红，留着等于把「测不到」写成「测过了」。
+        // 定位行为（不被裁、贴边翻转）改由真机/截图验；这里只钉「跳出了 overflow 容器」。
     });
 
     it('再点一次 ⋮ 收回去', async () => {
@@ -85,9 +86,7 @@ describe('⋮ 菜单的浮层', () => {
     it('点菜单项：先关，再执行（不会因为浮层被卸载而丢事件）', async () => {
         const onClick = vi.fn();
         await act(async () => {
-            root.render(
-                <MenuButton items={[{ key: 'remove', label: '删除', icon: null, onClick }]} />,
-            );
+            root.render(<MenuButton items={[{ key: 'remove', label: '删除', icon: null, onClick }]} />);
         });
         await click(trigger());
         const item = document.querySelector('[role="menuitem"]');

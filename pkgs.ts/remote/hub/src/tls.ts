@@ -55,9 +55,12 @@ export function resolveTlsMaterial(sources: TlsSources = {}): TlsMaterial {
  */
 export function isTrustedBindHost(host: string | undefined): boolean {
     if (host === undefined || host === '') return false;
-    const h = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+    const h = host
+        .trim()
+        .toLowerCase()
+        .replace(/^\[|\]$/g, '');
     if (h === 'localhost' || h === '::1' || h === '127.0.0.1') return true;
-    if (/^127\./.test(h)) return true; // 整个 127.0.0.0/8 都是 loopback
+    if (h.startsWith('127.')) return true; // 整个 127.0.0.0/8 都是 loopback
 
     // tailscale IPv4：100.64.0.0/10（CGNAT 段，tailscale 专用）
     const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
@@ -77,10 +80,7 @@ export function isTrustedBindHost(host: string | undefined): boolean {
  * 所以这里看的是 bind host，而不是一个 `ALLOW_INSECURE` 布尔 ——
  * 后者只要有人手一抖设成 true，就可能把服务开在 0.0.0.0 上还自认为安全。
  */
-export function assertTransportSecurity(
-    tls: TlsMaterial | null | undefined,
-    bindHost: string | undefined,
-): void {
+export function assertTransportSecurity(tls: TlsMaterial | null | undefined, bindHost: string | undefined): void {
     if (tls) return;
     if (isTrustedBindHost(bindHost)) return;
     throw new HubError(

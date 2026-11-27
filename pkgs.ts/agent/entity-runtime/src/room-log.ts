@@ -10,6 +10,8 @@
 
 import type { ModelMessage } from 'ai';
 
+import type { AttachmentRef } from '@diy-agent/attachment/types';
+
 import type { Author } from './types';
 
 interface EntryBase {
@@ -25,12 +27,32 @@ export type RoomEntry =
      * `messageId` = 对应的那条 item（`u-*`）。崩溃恢复要按它把「这条投递」和「这条公共条目」
      * 对上：没对上的话，重投时无从判断这句话到底进没进过这个 bot 的上下文（见 room.recover）。
      */
-    | (EntryBase & { kind: 'say'; author: Author; text: string; messageId?: string })
+    | (EntryBase & {
+          kind: 'say';
+          author: Author;
+          text: string;
+          messageId?: string;
+          /**
+           * 随这句进来的附件（图 / 文件 / 目录引用）。
+           *
+           * 为什么要带进公共日志：别的 bot 要靠它把图送进自己的模型（`toMessage` 出 image part），
+           * 而它读不到发送者的 blobs —— 所以 ref 必须跟着条目走，不能只活在发送者的 session 里。
+           */
+          attachments?: readonly AttachmentRef[];
+      })
     | (EntryBase & { kind: 'conclusion'; botId: string; name: string; color?: string; text: string })
     | (EntryBase & { kind: 'notice'; text: string });
 
 export type RoomEntryInput =
-    | { kind: 'say'; author: Author; text: string; messageId?: string; turn?: number; turnId?: string }
+    | {
+          kind: 'say';
+          author: Author;
+          text: string;
+          messageId?: string;
+          attachments?: readonly AttachmentRef[];
+          turn?: number;
+          turnId?: string;
+      }
     | { kind: 'conclusion'; botId: string; name: string; color?: string; text: string; turn?: number; turnId?: string }
     | { kind: 'notice'; text: string; turn?: number; turnId?: string };
 
