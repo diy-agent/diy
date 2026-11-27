@@ -40,6 +40,8 @@ interface MigrateState {
     version?: { applied: number; total: number };
     plan?: PlanItem[];
     steps?: Array<{ id: string; title: string }>;
+    /** 跑过之后文件又被改了的迁移（Flyway 式 checksum）：已迁的库不会重放它 */
+    drift?: Array<{ id: string; recorded: string; current: string }>;
     error?: string;
 }
 
@@ -165,6 +167,7 @@ export function MigrationScreen(): React.JSX.Element {
     const finished = phase === 'done' ? total : settled.filter((event) => event.state !== 'failed').length;
     const percent = total === 0 ? 0 : Math.round((finished / total) * 100);
     const version = phase === 'done' ? { applied: total, total } : state.version;
+    const drift = state.drift ?? [];
 
     const verdict =
         phase === 'running'
@@ -185,6 +188,16 @@ export function MigrationScreen(): React.JSX.Element {
                         {version === undefined ? '' : ` · 库版本 ${String(version.applied)} / ${String(version.total)}`}
                     </div>
                 </div>
+
+                {drift.length > 0 ? (
+                    <Card className="border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+                        <div className="font-medium">有 {drift.length} 条迁移在跑过之后被改过</div>
+                        <div className="mt-1 text-muted-foreground">
+                            {drift.map((item) => item.id).join(' · ')}
+                            —— 已记账的迁移不会重放，本次改动不生效；要生效请新开一条迁移。
+                        </div>
+                    </Card>
+                ) : null}
 
                 {phase === 'idle' && todo.length > 0 ? (
                     <div className="text-sm text-muted-foreground">

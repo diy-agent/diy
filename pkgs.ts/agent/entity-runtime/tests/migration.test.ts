@@ -12,7 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { migrationPlan, migrationVersion, missingMigrations } from '@diy-agent/migration';
+import { checksumDrift, checksumOf, migrationPlan, migrationVersion, missingMigrations } from '@diy-agent/migration';
 
 import { openStore, type Store } from '../src/db';
 
@@ -392,5 +392,28 @@ describe('启动闸门只认版本表（2026-11-27 病根回归）', () => {
         expect(version.applied).toBe(version.total);
         expect(missingMigrations(raw)).toEqual([]);
         raw.close();
+    });
+});
+
+describe('迁移指纹（Flyway 式 checksum）', () => {
+    it('记账时写入当前文件指纹；库里的指纹被改过 → drift 报出来', () => {
+        const store = openStore(file);
+        try {
+            const row = store.db.prepare("SELECT checksum FROM schema_migrations WHERE id = 'create-tables'").get() as {
+                checksum: string | null;
+            };
+            expect(row.checksum).toMatch(/^[0-9a-f]{16}$/);
+            expect(checksumDrift(store.db)).toEqual([]);
+
+            // 模拟「文件跑过之后被改了」：库里的指纹与当前代码对不上
+            store.db
+                .prepare("UPDATE schema_migrations SET checksum = 'deadbeefdeadbeef' WHERE id = 'create-tables'")
+                .run();
+            expect(checksumDrift(store.db)).toEqual([
+                { id: 'create-tables', recorded: 'deadbeefdeadbeef', current: checksumOf('create-tables') },
+            ]);
+        } finally {
+            store.db.close();
+        }
     });
 });

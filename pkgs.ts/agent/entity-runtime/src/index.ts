@@ -102,6 +102,7 @@ export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } fr
 export { buildRoomTools, type RoomJobs, type RoomToolsOptions, type RunCodeHost } from './tools/index';
 export { createJobRegistry, jobOwnerOf, parseJobOwner, type JobOwner, type RoomJobsHost } from './jobs';
 export { RoomLog, toMessage, type RoomEntry, type RoomEntryInput } from './room-log';
+export { describeFindings, verifyDatabase, type VerifyFinding, type VerifyLevel } from './verify-migrations';
 export {
     BotSession,
     DEFAULT_COMPACT,

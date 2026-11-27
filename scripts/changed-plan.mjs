@@ -381,6 +381,36 @@ guards.push({
   why: syncIo.length ? `${syncIo.length} 个 src/{main,shared,preload} 文件改动` : '没碰 src/{main,shared,preload}',
 });
 
+// 迁移指纹表：扫描根 = pkgs.ts/core/migration/src（改了迁移文件就必须重新生成 → 否则运行时比对是错的）
+const migrationSrc = fileList.filter((f) => f.startsWith('pkgs.ts/core/migration/src/'));
+guards.push({
+  id: 'mig-checksums',
+  script: 'node scripts/check-migration-checksums.mjs',
+  run: migrationSrc.length > 0 || deletedList.some((f) => f.startsWith('pkgs.ts/core/migration/src/')),
+  why: migrationSrc.length
+    ? `${migrationSrc.length} 个迁移文件改动（指纹表必须重新生成）`
+    : '没碰迁移文件（指纹表不会过期）',
+});
+
+// 迁移闸门 e2e：扫描根 = 闸门 / 迁移器 / 迁移包（只有这几处会改变「启动进不进迁移页」）
+const gateTouched = fileList.filter(
+  (f) =>
+    f.startsWith('apps/diy2/server/') ||
+    f.startsWith('apps/diy2/src/workbench/MigrationScreen') ||
+    f.startsWith('pkgs.ts/core/migration/') ||
+    f.startsWith('pkgs.ts/agent/entity-runtime/src/db') ||
+    f.startsWith('pkgs.ts/agent/entity-runtime/src/verify-migrations') ||
+    f.startsWith('scripts/check-migration-gate'),
+);
+guards.push({
+  id: 'mig-gate-e2e',
+  script: 'node scripts/check-migration-gate.mjs',
+  run: gateTouched.length > 0,
+  why: gateTouched.length
+    ? `${gateTouched.length} 个闸门 / 迁移相关文件改动（产物态 e2e 要跑；未构建时脚本自己跳过）`
+    : '没碰闸门 / 迁移相关文件',
+});
+
 const specs = fileList.filter((f) => /(^|\/)AGENTS\.md$/.test(f) || f === 'scripts/specs-unindexed.txt');
 guards.push({
   id: 'specs',

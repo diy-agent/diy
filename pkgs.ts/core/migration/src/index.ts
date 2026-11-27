@@ -9,6 +9,7 @@
 
 export { PLACEHOLDER_MODEL_KEY } from './model-key.js';
 export { migrations, MIGRATION_STEPS } from './index-list.js';
+export { checksumDrift, checksumOf, type ChecksumDrift } from './checksums.js';
 export {
     migrationPlan,
     migrationVersion,

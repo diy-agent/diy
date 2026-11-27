@@ -383,6 +383,12 @@ _check_full_body() {
   # 缺失 = 运行时才炸（WORKSPACE_TS_DEPS 那类事故）。runtime/ 未生成时自动跳过。
   # 实现见 scripts/check-runtime-closure.mjs
   run node scripts/check-runtime-closure.mjs
+  # 迁移指纹表（Flyway 式 checksum）：改了迁移文件却没重新生成 → 运行时「文件被改过」就查不出来。
+  # 生成：node scripts/gen-migration-checksums.mjs
+  run node scripts/check-migration-checksums.mjs
+  # 产物态迁移闸门 e2e（2026-11-27 事故：源码态全绿、产物态 spawn 不了 migrate-worker）：
+  # 用 build/prod 起真服务，验「老库拦 / 迁完直进 / 真缺才拦」。产物没构建时自己跳过。
+  run node scripts/check-migration-gate.mjs
   # 同步 IO 护栏（##408 刀 16）：主进程 / shared / preload 里新增 `*Sync` 的磁盘或子进程调用一律 ✗
   #（实现见 scripts/check-sync-io.sh；用户口径「app 不允许有 sync 的 io 操作」；存量按
   # LEGACY_SYNC_IO_BASELINE 棘轮递减，逃生口 `// sync-io-ok: <理由>`）
