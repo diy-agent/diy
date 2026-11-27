@@ -126,6 +126,12 @@ export interface TimelineEntry {
      * 转圈和它会在上下两个位置来回闪。
      */
     waiting?: boolean;
+    /**
+     * 段号：人插话把同一轮的 bot 输出切成多段时，第 2 段起是「续段」（segment > 0）。
+     * 界面据此不重复头像 / 名字 / 时间，用一条续接引线标出「同一条回复，被插话打断后接着写」——
+     * 否则看起来像 bot 说了两遍。缺省 / 0 = 首段。
+     */
+    segment?: number;
     /** 仅 user 条目：这条消息投给了谁、到没到 */
     deliveries: TimelineDelivery[];
     /**
@@ -206,8 +212,14 @@ export function buildTimeline(
     } = {},
 ): TimelineEntry[] {
     const entries: TimelineEntry[] = [];
-    // (turnId, authorId) → 那条回复。**这就是回复的地址**：一个 bot 在一轮里只有一条，
-    // 后来的条目一律追加进去，不再有"要不要另起一段"的判断。
+    // 人插话会把 bot 的多步切成段：`(turnId, authorId, 插话代)` → 那一「段」。段 0 是老形状
+    // （一轮一条）；人插话之后，同轮的 bot parts 落到新段 —— 界面上就是插话夹在两段回复中间，
+    // 而不是落在整块 bot 输出之后。bot 的 @ 走 notice/conclusion，不经这个循环，所以不切段
+    // （那是同轮延续）。
+    const segmentOf = new Map<string, number>();
+    const botSeen = new Set<string>();
+    // (turnId, authorId, 段) → 那一「段」回复。**这就是回复的地址**：一个 bot 在一轮的同一段里
+    // 只有一条，后来的条目一律追加进去；人插话后另起一段。
     const replies = new Map<string, TimelineEntry>();
     /**
      * 展示锚点：条目**落在界面哪个位置**（与"什么时候创建"分开）。
@@ -219,13 +231,11 @@ export function buildTimeline(
      * 「人的两条 → bot 的整段回复」，与直觉一致；回复本身仍然**不切段**（切段才会碎）。
      */
     const anchors = new Map<TimelineEntry, number>();
-    const lastHumanOrder = new Map<string, number>();
+    // 每轮「目前遍历到的最新一条人的消息」的 order。**运行时维护，不是预扫描最后一条**：
+    // 切段之后，每一段的锚点应该是「这一段的起始人话」（seg k 由第 k 条插话触发），而不是
+    // 本轮最后一条人话 —— 否则人插话把 bot 切成两段后，前一段也会被顶到插话之后，就白切了。
+    const currentHumanOrder = new Map<string, number>();
     const arrival = orderedByAppearance(items);
-    for (const item of arrival) {
-        if (item.type === 'chat' && item.author?.role === 'human') {
-            lastHumanOrder.set(item.turnId, Math.max(lastHumanOrder.get(item.turnId) ?? 0, item.order ?? item.seq));
-        }
-    }
 
     for (const item of arrival) {
         if (item.type === 'notice') {
@@ -265,7 +275,11 @@ export function buildTimeline(
         const author = item.author;
 
         if (author?.role === 'human') {
+            // 人插话 = 切段点：这一轮已经有过 bot 输出时，后续同轮的 bot parts 另起一段。
+            // 轮起点的第一句人话不切（它之前没有 bot 可打断）。
+            if (botSeen.has(item.turnId)) segmentOf.set(item.turnId, (segmentOf.get(item.turnId) ?? 0) + 1);
             const at = item.order ?? item.seq;
+            currentHumanOrder.set(item.turnId, Math.max(currentHumanOrder.get(item.turnId) ?? 0, at));
             const entry: TimelineEntry = {
                 key: item.id,
                 kind: 'user',
@@ -284,29 +298,36 @@ export function buildTimeline(
             continue;
         }
 
-        const address = `${item.turnId}\u0000${author?.id ?? ''}`;
+        const seg = segmentOf.get(item.turnId) ?? 0;
+        const address = `${item.turnId}\u0000${author?.id ?? ''}\u0000${seg}`;
         let entry = replies.get(address);
         if (entry === undefined) {
             entry = {
-                key: `${item.turnId}:${author?.id ?? 'unknown'}`,
+                // 段 0 沿用老 key（老数据 / 单测形状不变），段 > 0 带段号
+                key:
+                    seg === 0
+                        ? `${item.turnId}:${author?.id ?? 'unknown'}`
+                        : `${item.turnId}:${author?.id ?? 'unknown'}:${seg}`,
                 kind: 'assistant',
                 turnId: item.turnId,
                 author,
                 parts: [],
                 streaming: false,
                 deliveries: [],
+                ...(seg === 0 ? {} : { segment: seg }),
                 // 位置 = 首次出现的时刻。之后追加的条目**不改**它：这就是"位置定了就定了"。
                 at: item.at,
             };
             replies.set(address, entry);
-            // 人的消息可能还在后面（同一轮里连发）：把整段回复放到最后一条人的消息之后。
-            // +0.5 是必要的：锚点相同时按插入顺序排，而回复的条目往往比后补的人话**先**落库，
-            // 不加这半格就会出现「人的消息 → 回复 → 人的消息」—— 正是用户说诡异的那种。
+            // 锚点 = 这一「段」开始前最近的一条人的消息之后（+0.5 保证排在它后面、且与它不并列）。
+            // 切段时：seg 0 落在轮起点人话之后；seg k 落在触发它的那条插话之后 —— 于是
+            // 「人话 → 前半段 → 插话 → 后半段」自然成立，不需要额外的位置魔法。
             const own = item.order ?? item.seq;
-            const lastHuman = lastHumanOrder.get(item.turnId) ?? 0;
+            const lastHuman = currentHumanOrder.get(item.turnId) ?? 0;
             anchors.set(entry, lastHuman > own ? lastHuman + 0.5 : own);
             entries.push(entry);
         }
+        botSeen.add(item.turnId);
         if (item.type === 'error') {
             // 这个 bot 自己的运行失败（`run.failed`）：属于这条回复，按时间顺序插进去。
             // 不这么做的话它只能排在整条回复**之后** —— 而失败之后同一轮里还可能再跑一次，
@@ -358,7 +379,9 @@ export function buildTimeline(
         const holder =
             request.turnId === undefined || request.owner === undefined
                 ? undefined
-                : replies.get(`${request.turnId}\u0000${request.owner}`);
+                : replies.get(
+                      `${request.turnId}\u0000${request.owner}\u0000${segmentOf.get(request.turnId) ?? 0}`,
+                  );
         if (holder !== undefined) {
             holder.parts.push(part);
             return;
@@ -432,7 +455,8 @@ export function buildTimeline(
         // 执行中一行 → 工具行转圈"上下交错（每条 item 到达都会重排一次）。
         // 按 (turnId, botId) 直取那条回复 —— 不需要排除独立卡片：它有自己的 turnId，
         // 而 turnId 为 '' 的（无轮次的老卡片）压根进不了这个 if（`turnId === ''` 已经挡掉）。
-        const own = turnId === '' ? undefined : replies.get(`${turnId}\u0000${botId}`);
+        const own =
+            turnId === '' ? undefined : replies.get(`${turnId}\u0000${botId}\u0000${segmentOf.get(turnId) ?? 0}`);
         if (own !== undefined) {
             own.waiting = true;
             continue;

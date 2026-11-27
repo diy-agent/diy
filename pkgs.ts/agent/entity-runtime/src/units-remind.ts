@@ -89,16 +89,21 @@ export function resolveRemindMode(opts: { env?: NodeJS.ProcessEnv; home?: string
  */
 export const DECOMPOSE =
     '**落条目先定形状**：数这句话里有几件「做完能被人验收的产出」—— ' +
-    '≥2 件就一次 unit_add 出「母项（这件事要做成什么）＋ 2~5 条叶子（每件产出一叶）」；' +
+    '≥2 件就一次 unit_add 出「目标（这件事要做成什么）＋ 2~5 条需求（每件产出一条）」；' +
     '只有 1 件、验收一句话说得完，才落单条。把整句话概括成一条就完事 = 人还得再说一遍「拆成几步」。' +
     '拆完在正文里用一行说清「拆成了哪几条」，人好核对。';
 
-/** 需求 vs 步骤的判据（A / C 共用同一份措辞；别在两处各写一句） */
-export const NEEDS_VS_STEPS =
-    '**需求与步骤分两层**：需求（`kind: need`，缺省）= 人要能验收的「要做成什么」' +
-    '（「导出能用：点一下真落文件并说清落在哪」），每条都要写 `accept`；' +
-    '「怎么做」（改哪个文件 / 跑什么命令 / 先做哪步）用 `kind: step` 挂在那条需求下面 —— ' +
-    '步骤只给自己看进度，不进需求层、不用写验收。' +
+/**
+ * 账本的形状：几层、每层是什么、什么不进账本（A / C 共用同一份措辞；别在两处各写一句）。
+ *
+ * 2026-11-27 裁定后重写：原先这里教模型用 `kind: step` 把执行步骤挂到需求下，而生产库
+ * 153 条 unit 里 step **一条都没被用过** —— 那一层事实上不存在，改成直接告诉它「步骤不进账本」。
+ */
+export const LEDGER_SHAPE =
+    '**账本只有两层：目标（顶层）→ 需求（挂在目标下）**，不再往下嵌。' +
+    '目标 = 一段独立、能单独验收的成果（可以没有需求，直接干）；' +
+    '需求 = 那个目标必须满足的一条条件，每条都要写 `accept`（「导出能用：点一下真落文件并说清落在哪」）。' +
+    '**执行步骤不进账本**：改哪个文件 / 跑什么命令 / 先做哪步是你自己的事，只进 journal 与工具记录。' +
     '**决策**（选了哪条路、为什么）用 journal 的 `decision` 记，带 `unit` 指向那条需求。';
 
 /** A：常驻提示词（接在 toolsHint 末尾；`mode.prompt` 关着返回空串） */
@@ -113,7 +118,7 @@ export function promptReminder(mode: RemindMode): string {
         '\n' +
         DECOMPOSE +
         '\n' +
-        NEEDS_VS_STEPS +
+        LEDGER_SHAPE +
         '\n**每轮从账本里挑活**：上下文 units 节的 ready 就是现在能挑的（不必先 unit_list），挑 1~3 条做；' +
         '开做标 doing、做完标 done，需求变了就让树跟着变（unit_update / unit_drop）。'
     );
@@ -125,7 +130,7 @@ export function toolReminder(mode: RemindMode): string {
     return (
         '用户这句话里**如果有新需求**，先调用它把需求记下来再动手 —— 不要等被要求「拆一下」。' +
         DECOMPOSE +
-        NEEDS_VS_STEPS
+        LEDGER_SHAPE
     );
 }
 
@@ -147,12 +152,12 @@ export function envelopeHint(mode: RemindMode, state: RemindState): string | und
     if (!mode.envelope) return undefined;
     if (state.empty)
         return (
-            '账本还是空的：这句话里要做的事，先拆成「母项 + 2~5 条可验收的叶子」再动手' +
+            '账本还是空的：这句话里要做的事，先拆成「目标 + 2~5 条可验收的需求」再动手' +
             '（只有一步的小改就落一条；别记实现步骤）'
         );
     if (state.humanSince)
         return (
-            '上一轮之后有人发言：先数这句话里有几件可验收的产出 —— ≥2 件就 unit_add 出「母项 + 叶子」' +
+            '上一轮之后有人发言：先数这句话里有几件可验收的产出 —— ≥2 件就 unit_add 出「目标 + 需求」' +
             '（已有条目要改的用 unit_update），再回答；别把需求留在正文里'
         );
     return undefined;

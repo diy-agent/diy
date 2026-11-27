@@ -103,16 +103,16 @@ describe('buildTimeline', () => {
 
         const entries = buildTimeline(items, [], BOTS);
 
-        // 2026-11-27 起：同一轮里人连发两条时，回复统一落在**两条之后**
-        // （原先落在中间，看起来像 bot 抢在第二条之前回话）。这里真正要钉的是
-        // 「tool 条目虽然 seq=30 才落库，位置仍由 order=20 决定」—— 它紧跟着这条回复，
-        // 并且排在 notice 之前，与 seq 无关。
-        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'user', 'assistant', 'notice']);
+        // 这里真正要钉的是「tool 条目虽然 seq=30 才落库，位置仍由 order=20 决定」——
+        // 它排在 order 19 的人话之后、order 21 的人话之前，与 seq 无关。
+        // 2026-11-27 晚起人的插话会把 bot 的多步**切成段**（用户要的观感），所以形状是
+        // 「人话 → bot 前半段 → 人话 → …」而不是「两条人话 → bot 整段」。
+        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'user', 'notice']);
         expect(entries[0]?.parts).toEqual([{ kind: 'text', text: 'ask tool问我问题' }]);
-        expect(entries[1]?.parts).toEqual([{ kind: 'text', text: '说两个字' }]);
-        expect(entries[2]?.parts).toEqual([
+        expect(entries[1]?.parts).toEqual([
             { kind: 'tool', id: 'i30', name: 'ask', args: undefined, result: '用户回答：22', state: 'ok' },
         ]);
+        expect(entries[2]?.parts).toEqual([{ kind: 'text', text: '说两个字' }]);
     });
 
     it('把投递状态挂到用户消息上（失败也要显示）', () => {
@@ -190,6 +190,50 @@ describe('buildTimeline', () => {
         const entries = buildTimeline(items, [], BOTS);
 
         expect(entries.map((entry) => entry.streaming)).toEqual([true, false]);
+    });
+
+    it('人的插话把 bot 的多步切成两段：插话夹在两段回复之间，结局挂最后一段', () => {
+        // 人的插话是 next-step（并入当前轮）：bot 前半段 → 插话 → bot 后半段。
+        // 以前同一 (turnId, author) 合并成一条，插话只能落在整块 bot 之后；
+        // 现在按「插话代」切段，插话自己一条 entry 夹在两段之间 —— 就是用户要的「打断多步显示」。
+        const items: Item[] = [
+            item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '问题' } }),
+            item(2, { type: 'chat', turnId: 't1', author: owner, data: { text: '前半段' } }),
+            item(3, { type: 'tool', turnId: 't1', author: owner, data: { name: 'bash', state: 'ok' } }),
+            item(4, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '插话' } }),
+            item(5, { type: 'chat', turnId: 't1', author: owner, data: { text: '后半段' } }),
+        ];
+        const entries = buildTimeline(items, [], BOTS, { turns: { 't1\u0000bot:owner': { endedAt: 9 } } });
+
+        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'user', 'assistant']);
+        expect(entries[1]?.key).toBe('t1:bot:owner');
+        expect(entries[1]?.parts.map((part) => (part.kind === 'text' ? part.text : part.kind))).toEqual([
+            '前半段',
+            'tool',
+        ]);
+        expect(entries[3]?.key).toBe('t1:bot:owner:1');
+        expect(entries[3]?.segment).toBe(1);
+        expect(entries[1]?.segment).toBeUndefined();
+        expect(entries[3]?.parts).toEqual([{ kind: 'text', text: '后半段' }]);
+        // 结局（页脚）只说一次，挂在最后一段上 —— 插话之后的 bot 输出
+        expect(entries[1]?.turn).toBeUndefined();
+        expect(entries[3]?.turn?.endedAt).toBe(9);
+    });
+
+    it('bot 的 @（notice）不切段：同轮延续仍然一条回复', () => {
+        const items: Item[] = [
+            item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '问题' } }),
+            item(2, { type: 'chat', turnId: 't1', author: owner, data: { text: '前半' } }),
+            item(3, { type: 'notice', turnId: 't1', data: { text: '@小满 被激活', kind: 'mention' } }),
+            item(4, { type: 'chat', turnId: 't1', author: owner, data: { text: '后半' } }),
+        ];
+        const entries = buildTimeline(items, [], BOTS);
+
+        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'notice']);
+        expect(entries[1]?.parts).toEqual([
+            { kind: 'text', text: '前半' },
+            { kind: 'text', text: '后半' },
+        ]);
     });
 });
 
@@ -335,20 +379,22 @@ describe('buildTimeline：附件', () => {
 });
 
 describe('buildTimeline：同一轮里人连发两条', () => {
-    it('bot 的整段回复排在两条之前，不插在中间（用户 2026-11-27 实测报的「回复在我的图上方」）', () => {
+    it('人的插话把 bot 切成两段：前半段在插话前、后半段在插话后（用户 2026-11-27 晚要的观感）', () => {
         const items: Item[] = [
             item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '先发一段文字' } }),
-            // bot 的第一个条目在第二条人的消息**之前**就落库了（它在跑，人又补了一条）
+            // bot 在跑（已输出前半段），人又补了一条 —— 这条就是「插话」
             item(2, { type: 'chat', turnId: 't1', author: owner, data: { text: '我先看看' } }),
             item(3, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '补一张图' } }),
             item(4, { type: 'chat', turnId: 't1', author: owner, data: { text: '图我看到了' } }),
         ];
         const entries = buildTimeline(items, [], BOTS);
 
-        // 视觉顺序：人的两条 → bot 的整段回复（回复仍然只有一条，不切段）
-        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'user', 'assistant']);
-        const reply = entries.at(-1);
-        expect(reply?.parts.map((part) => (part.kind === 'text' ? part.text : ''))).toEqual(['我先看看', '图我看到了']);
+        // 视觉顺序：人话 → bot 前半段 → 插话 → bot 后半段
+        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'user', 'assistant']);
+        expect(entries[1]?.parts.map((part) => (part.kind === 'text' ? part.text : ''))).toEqual(['我先看看']);
+        expect(entries[1]?.segment).toBeUndefined();
+        expect(entries[3]?.parts.map((part) => (part.kind === 'text' ? part.text : ''))).toEqual(['图我看到了']);
+        expect(entries[3]?.segment).toBe(1);
     });
 
     it('只有一条人的消息时顺序不变（不因为这条改动而动老行为）', () => {

@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    NEEDS_VS_STEPS,
+    LEDGER_SHAPE,
     envelopeHint,
     parseRemindMode,
     promptReminder,
@@ -46,9 +46,9 @@ describe('档位解析', () => {
 });
 
 describe('三档措辞', () => {
-    it('A / C 都带上同一条判据（需求 vs 步骤）', () => {
-        expect(promptReminder(ALL)).toContain(NEEDS_VS_STEPS);
-        expect(toolReminder(ALL)).toContain(NEEDS_VS_STEPS);
+    it('A / C 都带上同一条判据（账本只有两层）', () => {
+        expect(promptReminder(ALL)).toContain(LEDGER_SHAPE);
+        expect(toolReminder(ALL)).toContain(LEDGER_SHAPE);
     });
 
     it('关掉的档位产出空串（不是缺省文案 —— 否则「关」等于没关）', () => {
