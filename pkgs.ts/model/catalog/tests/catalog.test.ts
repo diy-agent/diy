@@ -194,6 +194,83 @@ describe('loadCatalog', () => {
             expect(canSeeImages(of('unknown-1'))).toBe(false);
         });
 
+        it('网关 provider 在快照里没有条目 ⇒ 借同名模型的能力位（2026-11-27 实测的坑）', () => {
+            // 真实情形：`opencode-go` 是网关，models.dev 里没有它；它的模型由 model.yaml 手写。
+            // 而网关代理的是**同名同源**的上游模型 —— 快照里另一个 provider 下那份能回答
+            // 「它收不收图」。不借的话，`canSeeImages` 一律 false，图会被全量拦掉。
+            const home = makeHome({
+                model: `stdProviders:
+  gateway:
+    accounts:
+      - type: apiKey
+        data:
+          value: x
+`,
+                // 网关 provider 在快照里**有**、模型也在，但它没声明模态（快照里网关那侧常是空的）
+                snapshot: {
+                    gateway: {
+                        id: 'gateway',
+                        name: 'Gateway',
+                        npm: '@ai-sdk/openai-compatible',
+                        api: 'https://gateway.example/v1',
+                        models: { 'deepseek-v4.1-flash': { name: 'DeepSeek V4.1 Flash (gateway)' } },
+                    },
+                    deepseek: {
+                        id: 'deepseek',
+                        name: 'DeepSeek',
+                        npm: '@ai-sdk/openai-compatible',
+                        api: 'https://api.deepseek.example/v1',
+                        models: {
+                            'deepseek-v4.1-flash': { name: 'DeepSeek V4.1 Flash', modalities: { input: ['text', 'image'] } },
+                        },
+                    },
+                },
+            });
+            const entries = loadCatalog(home);
+            const viaGateway = entries.find((entry) => entry.providerId === 'gateway');
+            expect(viaGateway?.input).toEqual(['text', 'image']);
+            expect(canSeeImages(viaGateway)).toBe(true);
+        });
+
+        it('自己声明了就以自己为准（借来的不覆盖人的说法）', () => {
+            const home = makeHome({
+                model: `stdProviders:
+  gateway:
+    accounts:
+      - type: apiKey
+        data:
+          value: x
+    models:
+      deepseek-v4.1-flash:
+        name: 网关版（只收文字）
+        modalities:
+          input: [text]
+`,
+                snapshot: {
+                    gateway: {
+                        id: 'gateway',
+                        name: 'Gateway',
+                        npm: '@ai-sdk/openai-compatible',
+                        api: 'https://gateway.example/v1',
+                        models: { 'deepseek-v4.1-flash': { name: 'DeepSeek V4.1 Flash (gateway)' } },
+                    },
+                    deepseek: {
+                        id: 'deepseek',
+                        name: 'DeepSeek',
+                        npm: '@ai-sdk/openai-compatible',
+                        api: 'https://api.deepseek.example/v1',
+                        models: {
+                            'deepseek-v4.1-flash': { name: 'DeepSeek V4.1 Flash', modalities: { input: ['text', 'image'] } },
+                        },
+                    },
+                },
+            });
+            const entries = loadCatalog(home);
+            const viaGateway = entries.find((entry) => entry.providerId === 'gateway');
+            expect(viaGateway?.input).toEqual(['text']);
+            expect(canSeeImages(viaGateway)).toBe(false);
+        });
+
         it('modalities.input 原样用（只写 image 时补上 text，不认识的模态丢掉）', () => {
             const home = makeHome({
                 model: `customProviders:

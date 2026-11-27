@@ -119,14 +119,17 @@ interface ProviderInput {
  * → 模型目录。**不含 key 值**，账号只有名字。
  */
 export function loadCatalog(home: string, options?: CatalogOptions): ModelCatalogEntry[] {
-    const inputs = providerInputs(home, options);
+    // 快照只解析一次（5 MB JSON）：providerInputs 与同名索引共用
+    const snapshot = loadSnapshot(home, options);
+    const inputs = providerInputs(home, options, snapshot);
+    const sameName = sameNameSpecs(snapshot);
     const entries: ModelCatalogEntry[] = [];
     for (const input of inputs) {
         const baseURL = input.spec?.api;
         // 没有 baseURL 就发不出请求 —— 该 provider 的模型不进目录（配置层覆盖单独列模型也救不了）
         if (typeof baseURL !== 'string' || baseURL.trim() === '') continue;
         const npm = typeof input.spec?.npm === 'string' ? input.spec.npm : undefined;
-        for (const entry of modelsOf(input, baseURL, npm)) entries.push(entry);
+        for (const entry of modelsOf(input, baseURL, npm, sameName)) entries.push(entry);
     }
     entries.sort(
         (a, b) =>
@@ -382,10 +385,14 @@ export function readAccountValue(
 
 // ── 内部 ─────────────────────────────────────────
 
-function providerInputs(home: string, options?: CatalogOptions): ProviderInput[] {
+function providerInputs(
+    home: string,
+    options?: CatalogOptions,
+    prefetched?: Record<string, RawSpecProvider> | null,
+): ProviderInput[] {
     const config = loadModelYaml(home);
     const customSpecs = loadCustomSpecs(home);
-    const snapshot = loadSnapshot(home, options);
+    const snapshot = prefetched === undefined ? loadSnapshot(home, options) : prefetched;
     const out: ProviderInput[] = [];
     for (const [providerId, providerConfig] of Object.entries(config.stdProviders ?? {})) {
         out.push({ providerId, kind: 'std', spec: snapshot?.[providerId] ?? null, config: providerConfig });
@@ -401,6 +408,32 @@ interface ModelPair {
     readonly modelId: string;
     readonly spec: RawSpecModel | undefined;
     readonly override: RawModelOverride | undefined;
+}
+
+/**
+ * 同名模型索引：`modelId` → 快照里**某个 provider** 下同名、且真的说了模态的那一条。
+ *
+ * 为什么需要：网关 provider（`opencode-go` / `goat` 这类）代理的是**同名同源**的上游模型，
+ * 但它们在 models.dev 里没有自己的条目（模型列表来自 stdProviders / providers.custom.yaml）。
+ * 只按自己的条目判「输入模态」就会一律未知，而 `canSeeImages` 的判据是「没标 = 不收图」
+ * —— 于是网关模型永远收不到图（2026-11-27 实测：`opencode-go/deepseek-v4.1-flash`
+ * 与 `deepseek/deepseek-v4.1-flash` 是同一个模型，后者标了 text,image）。
+ *
+ * 约束：只借 **modelId 完全相同** 的；人写的配置依旧优先（借错了手写一句就盖回来）。
+ */
+function sameNameSpecs(snapshot: Record<string, RawSpecProvider> | null): ReadonlyMap<string, RawSpecModel> {
+    const out = new Map<string, RawSpecModel>();
+    // 扫**整份快照**，而不是只看配了账号的 provider：借能力位的场景恰恰是「网关 provider
+    // 自己没条目」（`opencode-go` / `goat`），要借的那份在别的 provider 下面。
+    for (const provider of Object.values(snapshot ?? {})) {
+        for (const [modelId, spec] of Object.entries(provider.models ?? {})) {
+            if (out.has(modelId)) continue;
+            // 只收「说了模态」的条目：没说的借来也没信息，反而会挡住后面真正说了的那个
+            if (spec?.modalities?.input === undefined && spec?.attachment === undefined) continue;
+            out.set(modelId, spec);
+        }
+    }
+    return out;
 }
 
 /** spec ⊕ 配置里出现过的**全部**模型 id（含被 filter 关掉的） */
@@ -513,12 +546,24 @@ function modelViewOf(pair: ModelPair): Omit<AvailableModel, "enabled"> {
     };
 }
 
-function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined): ModelCatalogEntry[] {
+function modelsOf(
+    input: ProviderInput,
+    baseURL: string,
+    npm: string | undefined,
+    sameName: ReadonlyMap<string, RawSpecModel> = new Map(),
+): ModelCatalogEntry[] {
     const filter = filterOf(input.config);
     const out: ModelCatalogEntry[] = [];
     for (const pair of modelPairs(input.spec, input.config)) {
         if (!isEnabled(pair.modelId, filter)) continue;
         const view = modelViewOf(pair);
+        // 输入模态：自身声明优先，缺了借同名模型。
+        //
+        // ⚠️ 这一行修的是一个**静默 bug**（2026-11-27 用户实测报的）：`inputOf` 早就写好了
+        // 完整的优先顺序，但**没有任何地方调用它** ⇒ `entry.input` 永远是 undefined ⇒
+        // `canSeeImages()` 一律 false ⇒ 视觉守卫把所有图都当成「模型不收图」拦掉
+        // （连 `deepseek-v4-flash-vision-exp` 也拦）。类型检查发现不了这种「函数没人用」。
+        const modalities = inputOf(pair.override, pair.spec, sameName.get(pair.modelId));
         out.push({
             providerId: input.providerId,
             modelId: pair.modelId,
@@ -530,6 +575,7 @@ function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined
             ...(view.cost === undefined ? {} : { cost: view.cost }),
             ...(view.reasoning === undefined ? {} : { reasoning: view.reasoning }),
             ...(view.capabilities === undefined ? {} : { capabilities: view.capabilities }),
+            ...(modalities === undefined ? {} : { input: modalities }),
         });
     }
     return out;
@@ -548,10 +594,12 @@ const INPUT_MODALITIES: readonly ModelInputModality[] = ['text', 'image', 'audio
 function inputOf(
     override: RawModelOverride | undefined,
     spec: RawSpecModel | undefined,
+    fallback?: RawSpecModel,
 ): readonly ModelInputModality[] | undefined {
-    const declared = override?.modalities?.input ?? spec?.modalities?.input;
+    // 顺序：人写的（override）→ 该 provider 的 spec → **同名模型**（fallback）
+    const declared = override?.modalities?.input ?? spec?.modalities?.input ?? fallback?.modalities?.input;
     if (declared !== undefined) return normalizeModalities(declared);
-    const attachment = override?.attachment ?? spec?.attachment;
+    const attachment = override?.attachment ?? spec?.attachment ?? fallback?.attachment;
     if (attachment === undefined) return undefined;
     return attachment ? ['text', 'image'] : ['text'];
 }

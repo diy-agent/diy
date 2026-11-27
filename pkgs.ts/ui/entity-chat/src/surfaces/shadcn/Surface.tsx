@@ -665,8 +665,16 @@ function Composer({
 
     const send = () => {
         const text = draft.text.trim();
+        if (submitting) return;
+        // 图还在上传（refs 仍是 undefined）：这时候发出去 = **静默丢图**。
+        // 用户实测报过「第一次发出去 bot 没收到图，重发才收到」—— 就是这一瞬间按了发送。
+        // 不直接拦住不吭声，也不假装发成功：说清楚，让他等缩略图出来。
+        if (attachments.busy) {
+            attachments.warn('图还在上传，等缩略图出来再发（就一下）');
+            return;
+        }
         // 空正文 + 有附件是合法的（贴一张图什么都不打）
-        if ((text === '' && attachments.refs === undefined) || submitting) return;
+        if (text === '' && attachments.refs === undefined) return;
         setSubmitting(true);
         // 发送成功才清草稿与附件；失败两者都留着（用户能重发，不用重新贴一遍）
         void conversation
@@ -735,19 +743,17 @@ function Composer({
                         onPaste={(event) => {
                             // 剪贴板里既有文字又有图时只拦「有文件」那一种：
                             // 拦掉纯文字粘贴会让人没法在输入框里粘链接。
-                            // files 与 items 都看：不同来源（截图 / Finder 复制）会给其中一个空。
+                            //
+                            // **二选一，不合并**：`items` 更准（带 kind），有文件就只用它；
+                            // 它为空才回退 `files`。曾经把两者合并再按 `name|size|lastModified`
+                            // 去重，结果从网页复制的一张图变成了两张 —— `items` 那条是派生出来的
+                            // File，时间戳与 `files` 那份不一样，去重键对不上（用户实测报的）。
                             const transfer = event.clipboardData;
                             const fromItems = Array.from(transfer.items)
                                 .filter((item) => item.kind === 'file')
                                 .map((item) => item.getAsFile())
                                 .filter((file): file is File => file !== null);
-                            const seen = new Set<string>();
-                            const files = [...Array.from(transfer.files), ...fromItems].filter((file) => {
-                                const key = `${file.name}|${file.size}|${file.lastModified}`;
-                                if (seen.has(key)) return false;
-                                seen.add(key);
-                                return true;
-                            });
+                            const files = fromItems.length > 0 ? fromItems : Array.from(transfer.files);
                             if (files.length > 0) {
                                 event.preventDefault();
                                 attachments.addFiles(files);
