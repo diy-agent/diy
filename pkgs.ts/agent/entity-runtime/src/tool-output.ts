@@ -1,6 +1,6 @@
 // tool-output.ts —— 单条工具输出的**投递层截断**（diy2 宿主侧，##127 的同一条规矩）
 //
-// 预算与 marker 全部来自 `@diy-agent/tools` 的 `capToolOutput`（2000 行 / 50KB、头尾各半、
+// 预算与 marker 全部来自 `@diy-agent/tools` 的 `capToolOutput`（2000 行 / 64KB、头尾各半、
 // marker 同构）—— 这里**只补「原文写哪」这个目录约定**：`<home>/toolout/<toolCallId>.txt`，
 // 路径写进 marker 的 `resume`，模型不够自己 `read` 回取。
 //

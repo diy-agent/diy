@@ -22,16 +22,18 @@
 
 import { createReadStream } from 'node:fs';
 
-/** 单次读取的默认行数上限（对齐三家的 2000） */
-export const READ_MAX_LINES = 2000;
+import { TOOL_OUTPUT_MAX_BYTES, TOOL_OUTPUT_MAX_LINES } from './limits.js';
+
+/** 单次读取的默认行数上限（= 投递层的同一份预算，见 `limits.ts`） */
+export const READ_MAX_LINES = TOOL_OUTPUT_MAX_LINES;
 /**
- * 输出字节上限（100KB）。
+ * 输出字节上限（= 投递层的同一份预算，见 `limits.ts`）。
  *
- * 曾对齐三家的 50KB；实测模型的分片读是**往返**的主要来源之一（##402：60 次 sed/rg 切片读），
- * 而往返 = 一次完整请求（294KB 上下文）。放大到 100KB 让「一次性读完一个中等文件」成为常态，
- * 用带宽换往返 —— 这比省上下文更值。行窗口（offset/limit）仍在，超出的仍可续读。
+ * 曾是 100KB（##402：分片读的往返比带宽贵）。2026-11-27 用户裁「所有工具都 64k」：
+ * read 的窗口若大于投递层预算，读一次大文件会**先被 read 裁一遍、再被投递层裁一遍**，
+ * 两次 marker 语义不同、尾部续读提示还会指错位置。窗口 = 预算 ⇒ read 的输出永不二次裁剪。
  */
-export const READ_MAX_BYTES = 100 * 1024;
+export const READ_MAX_BYTES = TOOL_OUTPUT_MAX_BYTES;
 /** 二进制探测的采样字节数（对齐 opencode 的 4KB 采样） */
 const BINARY_PROBE_BYTES = 4096;
 
