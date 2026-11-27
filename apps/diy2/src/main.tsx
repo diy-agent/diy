@@ -7,10 +7,11 @@
 
 import { MockChatClient } from '@diy-agent/chat-core';
 import { bootstrapStore, setDiy2Client } from '@diy-agent/entity-chat';
-import { StrictMode } from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { WorkbenchApp } from './workbench/App';
+import { MigrationScreen } from './workbench/MigrationScreen';
 
 // 地址同步**开着**（缺省值）：主入口是唯一的路由宿主，URL 就是「在看哪个房间」。
 //   首屏 `/`               → replaceState 到 /room/<第一个房间>
@@ -29,8 +30,33 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has('mock')) {
     });
 }
 
+/**
+ * 入口闸门：库还没迁完时，服务端装配的是「迁移态」app —— 这时候渲染迁移屏，不渲染工作台。
+ *
+ * 必须先问一次再渲染：工作台一挂载就会拉 rooms/bots/models，库没迁完那些请求全是错的
+ * （历史上就是「一开主界面就糊屏」）。
+ */
+function Root(): React.JSX.Element | null {
+    const [mode, setMode] = useState<'loading' | 'migrate' | 'ready'>('loading');
+
+    useEffect(() => {
+        if (import.meta.env.DEV && new URLSearchParams(location.search).has('mock')) {
+            setMode('ready');
+            return;
+        }
+        void fetch('/api/migrate/state')
+            .then((response) => (response.ok ? (response.json() as Promise<{ mode?: string }>) : { mode: 'ready' }))
+            .then((state) => setMode(state.mode === 'migrate' ? 'migrate' : 'ready'))
+            .catch(() => setMode('ready'));
+    }, []);
+
+    if (mode === 'loading') return null;
+    if (mode === 'migrate') return <MigrationScreen />;
+    return <WorkbenchApp />;
+}
+
 createRoot(document.getElementById('root')!).render(
     <StrictMode>
-        <WorkbenchApp />
+        <Root />
     </StrictMode>,
 );

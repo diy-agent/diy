@@ -1,0 +1,225 @@
+// MigrationScreen.tsx —— 库还没迁完时主 app 的那一屏。
+//
+// 为什么要它（2026-11-27 用户裁定：迁移页并进主 app 当路由，不再单开端口）：
+// 库的迁移是同步跑的，`createDiy2App()` 一装配就会把迁移做完 —— 页面永远看不到过程。
+// 所以服务端先只读探一次，有待迁移就把 app 装成「迁移态」；UI 一问就知道自己在哪种态，
+// 渲染这一屏而不是工作台。迁完服务端换成真 app，这一屏收到 `ready` 就叫浏览器刷新。
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { Badge } from '@diy-agent/ui-shadcn';
+import { Button } from '@diy-agent/ui-shadcn';
+import { Card } from '@diy-agent/ui-shadcn';
+
+/** 一条计划项（服务端 `migrationPlan()` 的输出 + present） */
+interface PlanItem {
+    step: string;
+    from: string;
+    to: string;
+    note: string;
+    rows: number;
+    done: boolean;
+    present: boolean;
+}
+
+/** 一步的进度事件 */
+interface StepEvent {
+    id: string;
+    title: string;
+    state: 'running' | 'done' | 'skipped' | 'failed';
+    changes?: number;
+    note?: string;
+    durationMs?: number;
+    progress?: { done: number; total: number };
+}
+
+interface MigrateState {
+    mode: 'migrate';
+    version?: { applied: number; total: number };
+    plan?: PlanItem[];
+    steps?: Array<{ id: string; title: string }>;
+    error?: string;
+}
+
+type Phase = 'idle' | 'running' | 'failed' | 'done';
+
+const STATE_LABEL: Record<StepEvent['state'], string> = {
+    running: '进行中',
+    done: '完成',
+    skipped: '跳过',
+    failed: '失败',
+};
+
+export function MigrationScreen(): React.JSX.Element {
+    const [state, setState] = useState<MigrateState | null>(null);
+    const [phase, setPhase] = useState<Phase>('idle');
+    const [events, setEvents] = useState<StepEvent[]>([]);
+    const [log, setLog] = useState<string[]>([]);
+    const [openPlan, setOpenPlan] = useState(false);
+    const source = useRef<EventSource | null>(null);
+
+    // 打开页面先问「我在哪种态」：迁移态要显示计划与版本，不能先渲染工作台
+    useEffect(() => {
+        void fetch('/api/migrate/state')
+            .then((response) => response.json() as Promise<MigrateState>)
+            .then(setState)
+            .catch((error: unknown) => setState({ mode: 'migrate', error: String(error) }));
+    }, []);
+
+    useEffect(() => () => source.current?.close(), []);
+
+    const start = useCallback(() => {
+        setPhase('running');
+        setEvents([]);
+        setLog([]);
+        const stream = new EventSource('/api/migrate/events');
+        source.current = stream;
+        stream.onmessage = (message: MessageEvent<string>) => {
+            const payload = JSON.parse(message.data) as Record<string, unknown>;
+            const kind = payload['kind'];
+            if (kind === 'step') {
+                const event = payload['event'] as StepEvent;
+                setEvents((previous) => {
+                    const next = previous.filter((item) => item.id !== event.id);
+                    return [...next, event];
+                });
+            } else if (kind === 'log' || kind === 'stderr') {
+                setLog((previous) => [...previous.slice(-200), String(payload['text'] ?? '')]);
+            } else if (kind === 'error') {
+                setLog((previous) => [...previous, String(payload['message'] ?? '')]);
+                setPhase('failed');
+            } else if (kind === 'closed') {
+                stream.close();
+                setPhase((current) => (current === 'failed' ? 'failed' : 'done'));
+            } else if (kind === 'ready') {
+                // 服务端已经换成真 app：刷新进工作台
+                location.reload();
+            }
+        };
+        stream.onerror = () => {
+            stream.close();
+        };
+        void fetch('/api/migrate/start', { method: 'POST' });
+    }, []);
+
+    if (state === null) {
+        return <Shell>读取库状态…</Shell>;
+    }
+    if (state.error !== undefined) {
+        return <Shell>读不到库：{state.error}</Shell>;
+    }
+
+    const plan = state.plan ?? [];
+    const todo = plan.filter((item) => !item.done);
+    const settled = events.filter((event) => event.state !== 'running');
+    const total = state.steps?.length ?? plan.length;
+    const finished = phase === 'done' ? total : settled.filter((event) => event.state !== 'failed').length;
+    const percent = total === 0 ? 0 : Math.round((finished / total) * 100);
+    const version = state.version;
+
+    const verdict =
+        phase === 'running'
+            ? '正在迁移…'
+            : phase === 'failed'
+              ? '迁移出错了'
+              : phase === 'done' || todo.length === 0
+                ? '✓ 这个库已经是迁移后的状态'
+                : '等待开始';
+
+    return (
+        <Shell>
+            <div className="w-full max-w-2xl space-y-4">
+                <div>
+                    <div className="text-lg font-semibold">{verdict}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                        共 {total} 项
+                        {todo.length > 0 ? `，其中 ${String(todo.length)} 项待迁移` : '，全部已就位'}
+                        {version === undefined ? '' : ` · 库版本 ${String(version.applied)} / ${String(version.total)}`}
+                    </div>
+                </div>
+
+                {phase === 'idle' && todo.length > 0 ? (
+                    <div className="text-sm text-muted-foreground">
+                        待迁移 {todo.length} 项：{todo.map((item) => item.to).join(' · ')}
+                    </div>
+                ) : null}
+
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-300"
+                        style={{ width: `${String(percent)}%` }}
+                    />
+                </div>
+                <div className="flex items-center justify-between text-sm text-muted-foreground">
+                    <span>
+                        {finished} / {total}
+                    </span>
+                    <span>{phase === 'running' ? (settled.at(-1)?.title ?? '') : ''}</span>
+                </div>
+
+                <div>
+                    {phase === 'idle' || phase === 'failed' ? (
+                        <Button onClick={start} disabled={todo.length === 0 && phase !== 'failed'}>
+                            {phase === 'failed' ? '重新迁移' : '开始迁移'}
+                        </Button>
+                    ) : (
+                        <Button disabled>迁移中…</Button>
+                    )}
+                </div>
+
+                {events.length > 0 ? (
+                    <Card className="divide-y divide-border p-0">
+                        {settled.map((event) => (
+                            <div key={event.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                                <Badge variant={event.state === 'failed' ? 'destructive' : 'secondary'}>
+                                    {STATE_LABEL[event.state]}
+                                </Badge>
+                                <span className="flex-1 truncate">{event.title}</span>
+                                {event.note === undefined ? null : (
+                                    <span className="max-w-60 truncate text-muted-foreground">{event.note}</span>
+                                )}
+                            </div>
+                        ))}
+                    </Card>
+                ) : null}
+
+                <Card className="p-0">
+                    <button
+                        type="button"
+                        className="flex w-full items-center justify-between px-3 py-2 text-sm"
+                        onClick={() => {
+                            setOpenPlan((open) => !open);
+                        }}
+                    >
+                        <span>迁移规划（{plan.length} 项）</span>
+                        <span className="text-muted-foreground">{openPlan ? '收起' : '展开'}</span>
+                    </button>
+                    {openPlan ? (
+                        <div className="divide-y divide-border border-t border-border">
+                            {plan.map((item) => (
+                                <div key={item.step} className="flex items-center gap-2 px-3 py-2 text-sm">
+                                    <span className="w-40 shrink-0 truncate text-muted-foreground">{item.from}</span>
+                                    <span className="text-muted-foreground">→</span>
+                                    <span className="flex-1 truncate">{item.to}</span>
+                                    <Badge variant={item.done ? 'secondary' : 'default'}>
+                                        {item.done ? '已完成' : '待迁移'}
+                                    </Badge>
+                                </div>
+                            ))}
+                        </div>
+                    ) : null}
+                </Card>
+
+                {log.length > 0 ? (
+                    <pre className="max-h-60 overflow-auto rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground">
+                        {log.join('\n')}
+                    </pre>
+                ) : null}
+            </div>
+        </Shell>
+    );
+}
+
+function Shell({ children }: { children: React.ReactNode }): React.JSX.Element {
+    return <div className="flex min-h-screen items-center justify-center bg-background p-6">{children}</div>;
+}

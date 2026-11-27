@@ -254,16 +254,17 @@ dev() {
 lab() { dev "$@"; }
 
 ####################################################################################
-# 迁移页（独立进程，不挂主界面）
+# 迁移页（就是主 app，库没迁完时它会自己停在那一屏）
 ####################################################################################
 
-# 为什么单独一条命令：迁移是**一次性、不可逆**的动作，不该藏在启动流程里。
-# 这个页面只服务一个库、只看迁移进度 —— 主界面一开就会拉 rooms/bots/models，
-# 那些请求在迁移没跑完时只会糊屏（用户 2026-11-27 要求）。
-#   cp ~/.diy2/diy2.db /tmp/rehearsal.db
-#   ./sha.sh migrate --db /tmp/rehearsal.db
+# 2026-11-27 起不再是单独一套页面（用户裁定：并进主 app 当路由）。
+# 现在的做法：把某个库所在的目录当数据根起主 app —— 启动时只读探一次库的版本，
+# 有待迁移就停在迁移屏（工作台不会挂载，也就不会拉 rooms/bots/models 糊屏），
+# 迁完自动换成真 app、同一个端口。
+#   mkdir -p /tmp/rehearsal && cp ~/.diy2/diy2.db /tmp/rehearsal/
+#   ./sha.sh migrate --db /tmp/rehearsal/diy2.db
 migrate() {
-  local db port
+  local db port home
   sha.parse "$@" || return $?
   if [[ -z ${db:-} ]]; then
     echo "${error}✗ 缺 --db（要迁移的数据库文件）${reset}" >&2
@@ -273,8 +274,11 @@ migrate() {
     echo "${error}✗ 数据库不存在：$db${reset}" >&2
     return 2
   fi
+  # 数据根 = 库所在目录（任务导出物 / 日志 / 端口记录都落这一份，不碰生产）
+  home=$(cd "$(dirname "$db")" && pwd)
   run "$REPO_ROOT/sha.sh" dist-fresh --build
-  run "$REPO_ROOT/node_modules/.bin/tsx" server/migrate.ts --db "$db" --port "${port:-5179}"
+  run "$REPO_ROOT/node_modules/.bin/tsx" server/index.ts \
+    --mode development --launch lab --home "$home" --port "${port:-5179}" --name migrate
 }
 
 ####################################################################################
