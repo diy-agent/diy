@@ -18,36 +18,51 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 
-import { MIGRATION_STEPS, migrationPlan, migrationVersion } from '@diy-agent/migration';
+import { MIGRATION_STEPS, migrationPlan, migrationVersion, missingMigrations } from '@diy-agent/migration';
 
 import type { Diy2Config } from './config';
 import { createStaticHandler } from './static';
 
 /** 这个库里还有没有要做的事（**只读**，不会改库） */
 export interface MigrationProbe {
-    /** 已记账多少条迁移 */
+    /** 已记账多少条迁移（只数代码里认得的） */
     applied: number;
     /** 一共多少条 */
     total: number;
-    /** 还有待迁移的项吗 */
+    /** 还有待迁移的项吗（**按版本表**：代码里有、库里没记账的 id） */
     pending: boolean;
+    /** 还差哪几条（id）；pending 为 false 时是空数组 */
+    missing: string[];
+    /** 库里记了、代码里没有的 id（跑过别的分支留下的，不是待迁移） */
+    unknown: string[];
 }
 
 /**
  * 只读探一下：库是什么版本、还差什么。
  *
  * 绝不能用 `openStore()` —— 那会当场把库改了，「先给用户看一眼再决定」就无从谈起。
+ *
+ * **判据是版本表，不是 `done()`**（2026-11-27 改）：
+ * 以前写的是 `migrationPlan(db).some(item => !item.done)`。后果是「数据长得不像迁过了」也算待迁移，
+ * 于是老库每次启动都落回迁移页，而点「开始迁移」又被 run() 跳过（已记账的不重跑）—— 人真卡死。
+ * 两者分工：**版本表决定「要不要拦启动」，`done()` 只用于 run() 的基线判断。**
  */
 export function probeMigration(dbPath: string): MigrationProbe {
     let db: DatabaseSync | undefined;
     try {
         db = new DatabaseSync(dbPath, { readOnly: true });
         const version = migrationVersion(db);
-        const pending = migrationPlan(db).some((item) => !item.done);
-        return { applied: version.applied, total: version.total, pending };
+        const missing = missingMigrations(db);
+        return {
+            applied: version.applied,
+            total: version.total,
+            pending: missing.length > 0,
+            missing,
+            unknown: version.unknown,
+        };
     } catch {
         // 打不开（还没建库 / 权限不对）→ 交给真 app 去报错，这里不抢戏
-        return { applied: 0, total: MIGRATION_STEPS.length, pending: false };
+        return { applied: 0, total: MIGRATION_STEPS.length, pending: false, missing: [], unknown: [] };
     } finally {
         db?.close();
     }
@@ -60,7 +75,9 @@ function stateOf(dbPath: string): Record<string, unknown> {
         db = new DatabaseSync(dbPath, { readOnly: true });
         return {
             version: migrationVersion(db),
-            plan: migrationPlan(db).map((item) => ({ ...item, present: !item.done })),
+            // 计划项原样给出（含 `recorded` 与 `done` 两个字段）——
+            // 页面用 `recorded` 判「待迁移」，用 `done` 显示「旧资源还在不在」
+            plan: migrationPlan(db),
             steps: MIGRATION_STEPS,
         };
     } catch (error) {

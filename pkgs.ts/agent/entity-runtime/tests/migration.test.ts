@@ -12,6 +12,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { migrationPlan, migrationVersion, missingMigrations } from '@diy-agent/migration';
+
 import { openStore, type Store } from '../src/db';
 
 let dir = '';
@@ -65,9 +67,7 @@ describe('rooms → entities + tasks / projects', () => {
         legacyDb();
         const store = openStore(file);
         try {
-            expect(store.listProjects()).toEqual([
-                { id: 'proj:x', name: 'x', workspace: '~/git/x', createdAt: 1_000 },
-            ]);
+            expect(store.listProjects()).toEqual([{ id: 'proj:x', name: 'x', workspace: '~/git/x', createdAt: 1_000 }]);
 
             const [a, b] = store.listTasks();
             expect(a).toMatchObject({
@@ -254,7 +254,12 @@ describe('rooms → entities + tasks / projects', () => {
         for (const botId of ['bot-task:t1', 'bot-task:t2']) {
             db.prepare('INSERT INTO entity_items (entity_id, item, at) VALUES (?,?,?)').run(
                 'task:t2',
-                JSON.stringify({ id: `m-${botId}`, type: 'chat', author: { id: botId, role: 'bot' }, data: { text: 'x' } }),
+                JSON.stringify({
+                    id: `m-${botId}`,
+                    type: 'chat',
+                    author: { id: botId, role: 'bot' },
+                    data: { text: 'x' },
+                }),
                 1_000,
             );
         }
@@ -346,3 +351,46 @@ function tableNames(store: Store): string[] {
         }>
     ).map((row) => row.name);
 }
+
+describe('启动闸门只认版本表（2026-11-27 病根回归）', () => {
+    // 病根：闸门曾用 migrationPlan().some(!done) 判「有待迁移」——
+    // done() 是**数据体检**（「这张表还在吗」「还有占位值吗」），数据一变就可能变回 false，
+    // 于是已迁完的库每次启动都落回迁移页，而点「开始迁移」又被 run() 跳过（已记账不重跑）→ 真卡死。
+    // 现在的契约：版本表说「跑过没有」，done() 只说「数据长得像不像」。
+    it('已记账的迁移即使 done() 为 false，也不算待迁移', () => {
+        const first = openStore(file);
+        first.db.close();
+
+        // 造一条「已记账、但数据体检不过」的状态：把 bot_profiles 改名，
+        // 003-create-tables 的 done() 就会认为「表不在」→ 旧闸门判 pending。
+        const raw = new DatabaseSync(file);
+        raw.exec('ALTER TABLE bot_profiles RENAME TO bot_profiles_moved');
+        const recorded = new Set(
+            (raw.prepare('SELECT id FROM schema_migrations').all() as Array<{ id: string }>).map((row) => row.id),
+        );
+        const plan = migrationPlan(raw);
+        const notDone = plan.filter((item) => !item.done).map((item) => item.step);
+        expect(notDone.length).toBeGreaterThan(0);
+        // 版本表全在 → 不该拦启动
+        expect(missingMigrations(raw)).toEqual([]);
+        expect(plan.every((item) => item.recorded === recorded.has(item.step))).toBe(true);
+        raw.close();
+    });
+
+    it('库里多出来的记账（跑过别的分支）算 unknown，不算 applied、也不拦启动', () => {
+        const first = openStore(file);
+        first.db.close();
+
+        const raw = new DatabaseSync(file);
+        raw.prepare('INSERT INTO schema_migrations (id, title, applied_at, baseline) VALUES (?,?,?,0)').run(
+            'from-another-branch',
+            '别的分支的迁移',
+            Date.now(),
+        );
+        const version = migrationVersion(raw);
+        expect(version.unknown).toEqual(['from-another-branch']);
+        expect(version.applied).toBe(version.total);
+        expect(missingMigrations(raw)).toEqual([]);
+        raw.close();
+    });
+});
