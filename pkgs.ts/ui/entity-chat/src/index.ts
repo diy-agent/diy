@@ -51,7 +51,6 @@ export { TaskPanel } from './components/TaskPanel';
 export { JobCard } from './components/JobCard';
 export { UnitBoardView } from './components/UnitBoardView';
 export { UnitNeedDetail } from './components/UnitNeedDetail';
-export { UnitDetailView } from './components/UnitDetailView';
 // 标题栏右端的两颗活动图标（会话 N / 作业 M）：壳只负责把它们摆进 tools，
 // 数字由组件自己订阅（全实例活动流）—— 宿主不会为「有人开跑」重渲一遍。
 export { ActiveJobsGlyph, ActiveSessionsGlyph } from './components/ActiveGlyphs';
