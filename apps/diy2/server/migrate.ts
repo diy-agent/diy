@@ -192,15 +192,19 @@ const PAGE = `<!doctype html>
   .hint{color:var(--muted);font-size:12.5px;margin-top:12px}
   .hint:empty{display:none}
   .rows .check .ico{color:var(--ok)}
-  .plan-head{display:grid;grid-template-columns:minmax(150px,1fr) 20px minmax(150px,1fr) auto;gap:10px;
+  .plan-head{display:grid;grid-template-columns:minmax(130px,1fr) 18px minmax(130px,1fr) 1fr 62px;gap:10px;
              padding:10px 20px 6px;font-size:11.5px;color:var(--muted);letter-spacing:.04em}
-  .plan-row{display:grid;grid-template-columns:minmax(150px,1fr) 20px minmax(150px,1fr) auto;gap:10px;
+  .plan-row{display:grid;grid-template-columns:minmax(130px,1fr) 18px minmax(130px,1fr) 1fr 62px;gap:10px;
             padding:9px 20px;border-bottom:1px solid var(--line);font-size:13px;align-items:center}
   .plan-row:last-child{border-bottom:0}
   .plan-row .src{color:var(--muted)}
   .plan-row .arrow{color:var(--skip);text-align:center}
   .plan-row .dst{color:var(--fg);font-weight:600}
-  .plan-row .note{color:var(--muted);font-size:12px;text-align:right}
+  .plan-row .note{color:var(--muted);font-size:12px}
+  .plan-row .state{font-size:12px;text-align:right;color:var(--muted)}
+  .plan-row .state.s-running{color:var(--run)}
+  .plan-row .state.s-done{color:var(--ok)}
+  .plan-row .state.s-failed{color:var(--bad)}
   .plan-row.absent{opacity:.45}
   details{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:12px}
   summary{cursor:pointer;padding:14px 20px;font-size:13.5px;color:var(--muted);user-select:none}
@@ -234,14 +238,14 @@ const PAGE = `<!doctype html>
   <div class="hint" id="openHint"></div>
 </div>
 
-<details><summary>迁移规划（<span id="planCount">0</span> 项 · 共 <span id="planTodo">0</span> 项要动）</summary><div class="plan-head"><span>旧数据</span><span></span><span>迁移后</span><span>说明</span></div><div class="rows" id="plan"></div></details>
+<details><summary>迁移规划（<span id="planCount">0</span> 项 · 共 <span id="planTodo">0</span> 项要动）</summary><div class="plan-head"><span>旧数据</span><span></span><span>迁移后</span><span>说明</span><span>状态</span></div><div class="rows" id="plan"></div></details>
 <details><summary>执行步骤（<span id="stepCount">0</span> / __TOTAL__）</summary><div class="rows" id="rows"></div></details>
 <details><summary>运行日志</summary><pre id="log"></pre></details>
 <script>
 var TOTAL=__TOTAL__, BEFORE_SESSIONS=__SESSIONS__, BEFORE_ENTRIES=__ENTRIES__;
 var APP_URL='__APP_URL__';
 var PLAN=__PLAN__;
-var finished={}, total=TOTAL, doneOk=false;
+var finished={}, total=TOTAL, doneOk=false, planRows={};
 var NL=String.fromCharCode(10);
 var elGo=document.getElementById('go'), elFill=document.getElementById('fill'),
     elCounter=document.getElementById('counter'), elCur=document.getElementById('cur'),
@@ -260,10 +264,14 @@ var elGo=document.getElementById('go'), elFill=document.getElementById('fill'),
   PLAN.forEach(function(item){
     var row = document.createElement('div');
     row.className = 'plan-row' + (item.present ? '' : ' absent');
-    row.innerHTML = '<span class="src"></span><span class="arrow">→</span><span class="dst"></span><span class="note"></span>';
+    row.innerHTML = '<span class="src"></span><span class="arrow">→</span><span class="dst"></span>' +
+      '<span class="note"></span><span class="state"></span>';
     row.querySelector('.src').textContent = item.present ? item.from + (item.rows > 0 ? '（' + item.rows + ' 行）' : '') : item.from;
     row.querySelector('.dst').textContent = item.present ? item.to : '（本库没有，跳过）';
     row.querySelector('.note').textContent = item.note || '';
+    var cell = row.querySelector('.state');
+    cell.textContent = item.present ? '等待' : '跳过';
+    planRows[item.step] = row;
     box.appendChild(row);
   });
 })();
@@ -354,6 +362,13 @@ es.onmessage = function(m){
   if(p.kind === 'step'){
     var e = p.event;
     rowOf(e);
+    // 计划行跟着步骤走：同一件事，两个视角不能各说各话
+    var pr = planRows[e.id];
+    if(pr){
+      var cell = pr.querySelector('.state');
+      cell.textContent = {running:'进行中', done:'完成', skipped:'跳过', failed:'失败'}[e.state] || e.state;
+      cell.className = 'state s-' + e.state;
+    }
     if(e.state === 'running'){
       elCur.textContent = '正在：' + e.title + (e.progress ? '（' + e.progress.done + '/' + e.progress.total + '）' : '');
     } else {
@@ -380,6 +395,11 @@ elGo.onclick = function(){
   elGo.disabled = true; elGo.className = 'btn primary'; elGo.textContent = '迁移中…';
   finished = {}; total = TOTAL; refresh();
   elRows.innerHTML = '';
+  Object.keys(planRows).forEach(function(k){
+    var cell = planRows[k].querySelector('.state');
+    cell.className = 'state';
+    cell.textContent = PLAN.filter(function(it){ return it.step === k; })[0].present ? '等待' : '跳过';
+  });
   elOpen.hidden = true; elHint.textContent = '';
   elLog.textContent = ''; elCur.textContent = ''; doneOk = false;
   elFill.className = 'fill';
@@ -403,6 +423,8 @@ const COL_LABEL: Record<number, string> = { 0: '(未知)', 1: 'bot_id（最老�
  * 它会自己说「你这个库哪些要迁、哪些会跳过」。
  */
 interface PlanItem {
+    /** 负责这一项的迁移步骤 id（计划行跟着步骤的状态走，两边不会各说各话） */
+    step: string;
     /** 旧资源（表 / 列 / 值） */
     from: string;
     /** 过完这道手续变成什么 */
@@ -439,9 +461,17 @@ function planOf(file: string): PlanItem[] {
                 return -1;
             }
         };
-        const add = (from: string, to: string, rows: number, note: string, present: boolean): void => {
-            items.push({ from, to, rows, note, present });
+        const add = (
+            step: string,
+            from: string,
+            to: string,
+            rows: number,
+            note: string,
+            present: boolean,
+        ): void => {
+            items.push({ step, from, to, rows, note, present });
         };
+        const countOf = (table: string): number => count(table);
 
         const sessionCols = cols('session_state');
         const profileTable = tables.has('bot_profiles') ? 'bot_profiles' : 'bot_roles';
@@ -450,68 +480,107 @@ function planOf(file: string): PlanItem[] {
         const taskCols = cols('tasks');
         const unitCols = cols('task_units');
 
-        add('bots', 'bot_profiles', count('bots'), '按类型 + 人设折叠；旧表留档 bots_v0', tables.has('bots'));
-        add('bot_roles', 'bot_profiles', count('bot_roles'), '表改名，行数不变', tables.has('bot_roles'));
+        // 顺序 = 执行顺序；每一项都挂一个 step id，页面靠它把计划行与步骤状态绑在一起
         add(
+            'rename-bot-profiles',
+            'bot_roles',
+            'bot_profiles',
+            countOf('bot_roles'),
+            '表改名，行数不变',
+            tables.has('bot_roles'),
+        );
+        add(
+            'rename-bot-profile-defaults',
             'role_config',
             'bot_profile_defaults',
-            count('role_config'),
+            countOf('role_config'),
             '表改名，行数不变',
             tables.has('role_config'),
         );
-        add('rooms', 'rooms_v0 + 实体行', count('rooms'), '老房间表搬家后留档', tables.has('rooms'));
+        add('create-tables', '（库结构）', '缺什么补什么的新表 / 索引', -1, '幂等：已存在不动', true);
         add(
+            'entity-bots-to-room-members',
             'entity_bots',
             'room_members',
-            count('entity_bots'),
+            countOf('entity_bots'),
             '老的成员 id 列表展开成行',
             tables.has('entity_bots'),
         );
         add(
-            'session_state.bot_id',
-            'session_state.bot_profile_id',
-            count('session_state'),
-            '列名改迁（两代旧名都认）',
-            sessionCols.has('bot_id') || sessionCols.has('bot_role_id'),
-        );
-        add(
+            'deliveries-columns',
             'deliveries',
-            'deliveries.mode / turn / turn_id',
-            count('deliveries'),
+            '+ mode / turn / turn_id',
+            countOf('deliveries'),
             '补三列（已有时不动）',
             ['mode', 'turn', 'turn_id'].some((col) => !deliveryCols.has(col)),
         );
         add(
+            'session-log-seq',
             'session_state',
-            'session_state.log_seq',
-            count('session_state'),
+            '+ log_seq',
+            countOf('session_state'),
             '补回放水位列',
             !sessionCols.has('log_seq'),
         );
         add(
+            'session-bot-column',
+            'session_state.bot_id',
+            'session_state.bot_profile_id',
+            countOf('session_state'),
+            '列名改迁（两代旧名都认）',
+            sessionCols.has('bot_id') || sessionCols.has('bot_role_id'),
+        );
+        add(
+            'bot-profile-columns',
             profileTable,
-            profileTable + '.domain_type / domain_id / persona_ref',
-            count(profileTable),
+            '+ domain_type / domain_id / persona_ref',
+            countOf(profileTable),
             '补归属与人设三列',
             ['domain_type', 'domain_id', 'persona_ref'].some((col) => !profileCols.has(col)),
         );
         add(
+            'clear-placeholder-model',
             profileTable + '.model_key',
             'NULL',
-            count(profileTable),
+            countOf(profileTable),
             '作废占位值 none@none/none',
             true,
         );
-        add('tasks', 'tasks.updated_at', count('tasks'), '不存在的行由生成器接管', !taskCols.has('updated_at'));
-        add('task_units', 'task_units.parent_id', count('task_units'), '补需求树挂点', !unitCols.has('parent_id'));
+        add('tasks-updated-at', 'tasks', '+ updated_at', countOf('tasks'), '用 created_at 回填', !taskCols.has('updated_at'));
         add(
+            'task-units-parent',
+            'task_units',
+            '+ parent_id',
+            countOf('task_units'),
+            '补需求树挂点',
+            !unitCols.has('parent_id'),
+        );
+        add(
+            'drop-unit-deps',
             'unit_deps / unit_batches',
             '（删除）',
-            count('unit_deps') + Math.max(0, count('unit_batches')),
+            countOf('unit_deps') + Math.max(0, countOf('unit_batches')),
             '依赖边与交付批次已退役',
             tables.has('unit_deps') || tables.has('unit_batches'),
         );
-        add('房间级 model_key', '（删除）', -1, '模型真源只剩机器人配置', true);
+        add('legacy-rooms', 'rooms', 'rooms_v0 + 实体 / 域行', countOf('rooms'), '老房间表搬家后留档', tables.has('rooms'));
+        add(
+            'fold-bots',
+            'bots',
+            'bot_profiles',
+            countOf('bots'),
+            '按类型 + 人设折叠；旧表留档 bots_v0',
+            tables.has('bots'),
+        );
+        add(
+            'legacy-journal',
+            'journal_entries',
+            'events',
+            countOf('journal_entries'),
+            '老日志折进实体事件流',
+            tables.has('journal_entries'),
+        );
+        add('drop-legacy-room-model', '房间级 model_key', '（删除）', -1, '模型真源只剩机器人配置', true);
     } catch {
         // 读不到就交白卷：页面会只显示「计划读取失败」，不会因此打不开
         return [];

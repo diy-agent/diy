@@ -950,8 +950,12 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                     added.push(column);
                 }
             }
-            return { note: added.length === 0 ? '列已齐' : `新增 ${added.join(' / ')}` };
+            return { note: `新增 ${added.join(' / ')}` };
         },
+        () =>
+            ['mode', 'turn', 'turn_id'].every((column) => columns.has(column))
+                ? '三列都已存在'
+                : undefined,
     );
 
     // 老库补列：session_state.log_seq（回放水位）
@@ -960,11 +964,15 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             String(row['name']),
         ),
     );
-    step('session-log-seq', '补列：session_state.log_seq（回放水位）', () => {
-        if (!sessionColumns.has('log_seq'))
+    step(
+        'session-log-seq',
+        '补列：session_state.log_seq（回放水位）',
+        () => {
             db.exec('ALTER TABLE session_state ADD COLUMN log_seq INTEGER NOT NULL DEFAULT 0');
-        return { note: sessionColumns.has('log_seq') ? '列已存在' : '已新增' };
-    });
+            return { note: '已新增' };
+        },
+        () => (sessionColumns.has('log_seq') ? '列已存在' : undefined),
+    );
     // 会话键的列名改过两次：`bot_id`（旧）→ `bot_role_id`（2026-11-24）→ `bot_profile_id`（2026-11-27）。
     // 两个旧名都要能改过来 —— 只认一手老库会让中间那一代库启动就“no such column”。
     step(
@@ -987,23 +995,42 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             String(row['name']),
         ),
     );
-    step('bot-profile-columns', '补列：bot_profiles.domain_type / domain_id / persona_ref', () => {
-        const added: string[] = [];
-        for (const column of ['domain_type', 'domain_id', 'persona_ref']) {
-            if (!botColumns.has(column)) {
-                db.exec(`ALTER TABLE bot_profiles ADD COLUMN ${column}`);
-                added.push(column);
+    step(
+        'bot-profile-columns',
+        '补列：bot_profiles.domain_type / domain_id / persona_ref',
+        () => {
+            const added: string[] = [];
+            for (const column of ['domain_type', 'domain_id', 'persona_ref']) {
+                if (!botColumns.has(column)) {
+                    db.exec(`ALTER TABLE bot_profiles ADD COLUMN ${column}`);
+                    added.push(column);
+                }
             }
-        }
-        return { note: added.length === 0 ? '列已齐' : `新增 ${added.join(' / ')}` };
-    });
+            return { note: `新增 ${added.join(' / ')}` };
+        },
+        () =>
+            ['domain_type', 'domain_id', 'persona_ref'].every((column) => botColumns.has(column))
+                ? '三列都已存在'
+                : undefined,
+    );
 
     // 占位模型键不是「选了模型」：老库里还留着 `none@none/none`。
     // 房间级 model_key 已退役（2026-11-27，见 dropLegacyRoomModel），这里只清角色级的存量。
-    step('clear-placeholder-model', '清掉占位模型键 none@none/none', () => {
-        const result = db.prepare('UPDATE bot_profiles SET model_key = NULL WHERE model_key = ?').run(PLACEHOLDER_MODEL_KEY);
-        return { changes: Number(result.changes) };
-    });
+    step(
+        'clear-placeholder-model',
+        '清掉占位模型键 none@none/none',
+        () => {
+            const result = db
+                .prepare('UPDATE bot_profiles SET model_key = NULL WHERE model_key = ?')
+                .run(PLACEHOLDER_MODEL_KEY);
+            return { changes: Number(result.changes) };
+        },
+        () =>
+            db.prepare('SELECT 1 AS x FROM bot_profiles WHERE model_key = ? LIMIT 1').get(PLACEHOLDER_MODEL_KEY) ===
+            undefined
+                ? '没有占位值要清'
+                : undefined,
+    );
 
     // 老库补列：tasks.updated_at（P2 加的）。历史行没有「最后改动」概念，用 created_at 兜
     const taskColumns = new Set(
@@ -1011,12 +1038,16 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             String(row['name']),
         ),
     );
-    step('tasks-updated-at', '补列：tasks.updated_at', () => {
-        if (taskColumns.has('updated_at')) return { note: '列已存在' };
-        db.exec('ALTER TABLE tasks ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
-        const result = db.prepare('UPDATE tasks SET updated_at = created_at WHERE updated_at = 0').run();
-        return { note: `已新增并用 created_at 回填 ${String(result.changes)} 行` };
-    });
+    step(
+        'tasks-updated-at',
+        '补列：tasks.updated_at',
+        () => {
+            db.exec('ALTER TABLE tasks ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
+            const result = db.prepare('UPDATE tasks SET updated_at = created_at WHERE updated_at = 0').run();
+            return { note: `已新增并用 created_at 回填 ${String(result.changes)} 行` };
+        },
+        () => (taskColumns.has('updated_at') ? '列已存在' : undefined),
+    );
 
     // 老库补列：task_units.parent_id（分解树）。历史行没有分解树概念，一律当根
     const unitColumns = new Set(
@@ -1024,22 +1055,32 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             String(row['name']),
         ),
     );
-    step('task-units-parent', '补列：task_units.parent_id（需求账本树）', () => {
-        if (unitColumns.has('parent_id')) return { note: '列已存在' };
-        db.exec('ALTER TABLE task_units ADD COLUMN parent_id TEXT');
-        return { note: '已新增（历史行一律当根）' };
-    });
+    step(
+        'task-units-parent',
+        '补列：task_units.parent_id（需求账本树）',
+        () => {
+            db.exec('ALTER TABLE task_units ADD COLUMN parent_id TEXT');
+            return { note: '已新增（历史行一律当根）' };
+        },
+        () => (unitColumns.has('parent_id') ? '列已存在' : undefined),
+    );
     // 2026-11-25：依赖边与交付批次整体退役（只留需求账本树）。旧库里的两张表直接删 ——
     // 它们是纯派生侧的记录，删掉不丢「要做什么」。task_units.batch_id 是老库的死列：
     // SQLite 不能删列，代码也再不读写它，留着不影响任何判据。
-    step('drop-unit-deps', '删掉退役表 unit_deps / unit_batches', () => {
-        const present = (name: string): boolean =>
-            db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name = ?").get(name) !== undefined;
-        const dropped = ['unit_deps', 'unit_batches'].filter(present);
-        db.exec('DROP TABLE IF EXISTS unit_deps');
-        db.exec('DROP TABLE IF EXISTS unit_batches');
-        return { note: dropped.length === 0 ? '库里本来就没有' : `删掉 ${dropped.join(' / ')}` };
-    });
+    const hasTable = (name: string): boolean =>
+        db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name = ?").get(name) !== undefined;
+    step(
+        'drop-unit-deps',
+        '删掉退役表 unit_deps / unit_batches',
+        () => {
+            const dropped = ['unit_deps', 'unit_batches'].filter(hasTable);
+            db.exec('DROP TABLE IF EXISTS unit_deps');
+            db.exec('DROP TABLE IF EXISTS unit_batches');
+            return { note: `删掉 ${dropped.join(' / ')}` };
+        },
+        () =>
+            hasTable('unit_deps') || hasTable('unit_batches') ? undefined : '这两张表在库里本来就没有',
+    );
 
     /** room_members → roomId: members[]（members() 与 listRooms() 共用） */
     const readMembers = (): Record<string, RoomMember[]> => {
@@ -1652,7 +1693,12 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 ? '库里没有老的 bots 表'
                 : undefined,
     );
-    step('legacy-journal', '把老日志折进 entities', () => migrateJournal());
+    step(
+        'legacy-journal',
+        '把老日志折进 entities',
+        () => migrateJournal(),
+        () => (hasTable('journal_entries') ? undefined : '库里没有老的 journal_entries 表'),
+    );
     step('drop-legacy-room-model', '退役房间级 model_key', () => dropLegacyRoomModel());
 
     return {
