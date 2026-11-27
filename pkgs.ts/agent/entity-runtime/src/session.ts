@@ -34,7 +34,7 @@ import {
 } from './compaction';
 import { contextWindowOf, maxOutputTokensOf } from './providers';
 import { ProgressBroadcast, ProgressWatch, type ProgressPolicy } from './progress';
-import { Projector } from './projection';
+import { nextId, Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
 import { AttachmentBytesCache, messageWithAttachments, type AttachmentReader } from './session-images';
 import type { AgentEvent, Author, Bot, DeliveryState, Item, ProgressStage, TurnEndReason } from './types';
@@ -663,14 +663,6 @@ export class BotSession {
         // 本模型收不收图：不收就只留一句说明（塞 image part 会被上游 400）。
         // 每轮算一次（模型可能刚被换过），代价与 maxOutputTokensOf 同一量级。
         const acceptsImages = this.deps.acceptsImages?.(this.modelKey) ?? true;
-        const messages: ModelMessage[] = await Promise.all(
-            [...this.transcript, ...userEntries].map((entry) =>
-                messageWithAttachments(entry, this.deps.readAttachment, this.imageCache, { acceptsImages }),
-            ),
-        );
-
-        const steering = experimental_createSteering();
-        this.steering = steering;
         for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'delivering' });
 
         const produced: TranscriptEntry[] = [];
@@ -694,8 +686,41 @@ export class BotSession {
         let reportedStepCap: number | undefined;
         const maxOutputTokens = maxOutputTokensOf(this.modelKey, this.deps.maxOutputTokens);
         const maxSteps = this.deps.maxSteps ?? DEFAULT_MAX_STEPS;
+        const windowTokens = this.windowTokensOf();
+        /**
+         * 超窗自愈：**只重试一次**。
+         *
+         * 判据来自上游（`run.failed.overflow`，`agent.ts` 认的是 `context_length_exceeded` 一类
+         * 明确信号）：只有它才走这条路 —— 其它 400（reasoning_content 缺失、模型不在套餐里）
+         * 压一次是白花钱，还会把真错误盖掉。
+         *
+         * 为什么需要：压缩判据只看**轮首**（上面那次 `this.compact()`），而轮内 200 步每步全量
+         * 重发、单条工具输出 50KB，几十步就能把请求从 20 万堆到 100 万（2026-11-27 task-mwlxxv3u
+         * 实证）。这一轮已经跑了大半，直接整轮作废是最坏的结果 —— 压掉一段历史从头再发就好。
+         */
+        let overflowRetried = false;
         try {
             const run = this.deps.run ?? runAgent;
+            while (true) {
+            // 本次尝试的上下文：**从当前 transcript 重建**（上一轮可能刚压过，变小了）
+            const messages: ModelMessage[] = await Promise.all(
+                [...this.transcript, ...userEntries].map((entry) =>
+                    messageWithAttachments(entry, this.deps.readAttachment, this.imageCache, { acceptsImages }),
+                ),
+            );
+            const steering = experimental_createSteering();
+            this.steering = steering;
+            // 重试要整个重来：上一份产出不进 transcript，这些计数也得归零
+            produced.length = 0;
+            text = '';
+            failed = false;
+            failureMessage = undefined;
+            errorReported = false;
+            finished = false;
+            finishReason = undefined;
+            steps = 0;
+            toolCalls = 0;
+            let retry = false;
             for await (const event of run({
                 bot: this.deps.bot,
                 modelKey: this.modelKey,
@@ -712,6 +737,7 @@ export class BotSession {
                 ...(this.deps.toolsHint === undefined ? {} : { toolsHint: this.deps.toolsHint }),
                 ...(this.deps.systemContext === undefined ? {} : { systemContext: this.deps.systemContext }),
                 ...(this.deps.takeDelta === undefined ? {} : { takeDelta: this.deps.takeDelta }),
+                ...(windowTokens === undefined ? {} : { windowTokens }),
                 ...(this.deps.commitDelta === undefined ? {} : { commitDelta: this.deps.commitDelta }),
                 onStepTranscript: (added) => {
                     // transcript 会进快照落 db：媒体字节在模型那侧已经用过了，这里只留说明
@@ -723,6 +749,12 @@ export class BotSession {
                     this.turnUsage = usage;
                 },
             })) {
+                // 超窗**不进 Projector**：这一轮马上要重跑，错误条目得扣住 ——
+                // 落了条目用户就会看到一条「超窗失败」，而它其实马上自愈了
+                if (event.type === 'run.failed' && event.overflow === true && !overflowRetried) {
+                    retry = true;
+                    break;
+                }
                 watch.apply(event);
                 if (event.type === 'run.failed') {
                     failed = true;
@@ -754,6 +786,33 @@ export class BotSession {
                     if (item.type === 'error') errorReported = true;
                     this.emit({ type: 'item', item });
                 }
+            }
+            if (!retry) break;
+            // 超窗：压掉一段历史再从头发一次（**只此一次**，压完还超就老实报错）
+            overflowRetried = true;
+            watch.enter('compact');
+            try {
+                await this.compact({ turn: turn.turn, turnId: turn.turnId, force: true });
+            } finally {
+                watch.settle('compact');
+            }
+            this.emit({
+                type: 'item',
+                item: {
+                    id: nextId('notice'),
+                    seq: 0,
+                    type: 'notice',
+                    turn: turn.turn,
+                    turnId: turn.turnId,
+                    at: Date.now(),
+                    status: 'done',
+                    data: {
+                        text: '上一份请求超过了模型窗口：已压掉一段历史，这一轮从头再跑一次。',
+                        kind: 'context-overflow',
+                        botId: this.deps.bot.id,
+                    },
+                },
+            });
             }
         } catch (error) {
             failed = true;
