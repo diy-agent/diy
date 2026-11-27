@@ -15,8 +15,9 @@ shopt -s globstar
 shopt -s extglob
 
 # Get the real path of the script directory
-ROOT_PATH="$(realpath "$(command -v "${BASH_SOURCE[0]}")")"
-ROOT_DIR="$(dirname "$C_MAC_PATH")"
+# 用 dirname 直接取脚本所在目录：`command -v "${BASH_SOURCE[0]}"` 在 `bash sha.sh` 形态下
+# （BASH_SOURCE[0] 不带斜杠、脚本又不在 PATH）返回空 → realpath "" 报错 → set -e 立刻退 1。
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cd "$ROOT_DIR"
 source sha.common.sh
