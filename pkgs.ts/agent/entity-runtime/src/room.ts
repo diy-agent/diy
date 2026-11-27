@@ -194,16 +194,6 @@ export class RoomActor {
     private readonly contexts = new Map<string, ContextSession>();
     /** 系统自己的身份：「你的提问被挤掉了」这类通知的作者（不能冒充用户） */
     private static readonly SYSTEM: Author = { id: 'system:ask', name: '系统', color: '#9ca3af', role: 'system' };
-    /** 正在跑一轮的成员（UI 的"谁在说话"用它，不由前端猜） */
-    private readonly speaking = new Set<string>();
-    /**
-     * 在跑的那一轮从何时开始（botId → { turnId, startedAt }）。
-     *
-     * 存在理由：消息头要写「开始于 22:28」、滚动行要写「已用 2m44s」，这两个数字必须和
-     * 收轮时的 `turn.end.startedAt` 是**同一个值**。让客户端拿条目时刻去推，收轮时会跳一下。
-     * 进快照（`runningTurns`）：刷新后事件没了，但时间不变。
-     */
-    private readonly turnStarts = new Map<string, { turnId: string; startedAt: number }>();
     private lastRunningKey = '';
     /**
      * 附件 ref → 字节（传给每个 session）。
@@ -578,11 +568,17 @@ export class RoomActor {
         this.gate.cancelAll('容器已关闭');
     }
 
-    /** 当前在说话的成员（按成员顺序） */
+    /**
+     * 谁在跑（按成员顺序）：直接问 BotSession 的 `busy`，**不再自己存一份**。
+     *
+     * 以前这里有个 `speaking: Set<string>`，由 `busy` 事件维护 —— 那是 session.running 的
+     * 副本。两份真源一旦错拍（事件发了但回调没跑完、或刷新时机不同），界面就会
+     * 「在跑却写排队中」（2026-11-26 报过）。现在只有 session 自己说那句话。
+     */
     runningBots(): string[] {
         return this.members()
-            .map((bot) => bot.id)
-            .filter((botId) => this.speaking.has(botId));
+            .filter((bot) => this.sessions.get(bot.id)?.busy === true)
+            .map((bot) => bot.id);
     }
 
     /**
@@ -615,13 +611,15 @@ export class RoomActor {
     /**
      * 在跑的那几轮的开始时刻（快照用）。
      *
-     * 只给 `runningBots()` 里真在跑的成员：`turnStarts` 里的旧记录可能是上一轮的残留。
+     * 直接读 session 的 `currentTurn` —— 不再拿 `turnStarts` 那份副本去筛。
      */
     runningTurns(): Array<{ botId: string; turnId: string; startedAt: number }> {
-        return this.runningBots().flatMap((botId) => {
-            const turn = this.turnStarts.get(botId);
-            return turn === undefined ? [] : [{ botId, ...turn }];
-        });
+        const out: Array<{ botId: string; turnId: string; startedAt: number }> = [];
+        for (const bot of this.members()) {
+            const turn = this.sessions.get(bot.id)?.currentTurn;
+            if (turn !== undefined) out.push({ botId: bot.id, ...turn });
+        }
+        return out;
     }
 
     /** 用户的回答（整批一次提交）；返回结局（命中 / 已失效 / 答不全） */
@@ -1170,8 +1168,7 @@ export class RoomActor {
                 return;
             }
             case 'busy': {
-                if (event.busy) this.speaking.add(bot.id);
-                else this.speaking.delete(bot.id);
+                // 只通知「在跑名单可能变了」；名单本身问 session 要（不再维护副本）
                 this.syncRunning();
                 return;
             }
@@ -1186,8 +1183,6 @@ export class RoomActor {
                 return;
             }
             case 'turn.start':
-                // 开始时刻先记下来再广播：消息头与「已用 Ns」要靠它，而快照（刷新）也读它。
-                this.turnStarts.set(bot.id, { turnId: event.turn.turnId, startedAt: event.startedAt });
                 this.deps.emit({
                     kind: 'turn.start',
                     botId: bot.id,
@@ -1238,8 +1233,6 @@ export class RoomActor {
                     ...(result.usage === undefined ? {} : { usage: result.usage }),
                     ...(turnCalls === undefined ? {} : { toolCalls: turnCalls }),
                 });
-                // 这一轮已经收了：开始时刻的使用者没了（留着只会在下一轮开始前被读到旧的）
-                if (this.turnStarts.get(bot.id)?.turnId === result.turnId) this.turnStarts.delete(bot.id);
                 this.persistSession(bot.id);
                 // 快照落了才算收尾：销掉「开了没收尾」的标记再发结论
                 this.deps.store.closeTurn(this.id, bot.id);

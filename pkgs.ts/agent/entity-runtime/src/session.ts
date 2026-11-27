@@ -220,6 +220,13 @@ export class BotSession {
     /** 已 ingest、还没并进 transcript 的公共条目（运行中到达的要排在本轮产出之后） */
     private pending: TranscriptEntry[] = [];
     private running = false;
+    /**
+     * 本轮的身份（turnId + 开始时刻）。`null` = 没在跑。
+     *
+     * 房间原先自己存一份 `turnStarts: Map<botId, …>` —— 那是这份事实的副本，
+     * 于是「谁在跑、跑了多久」有两个真源，谁都可能晚一拍。现在只留这一份，房间问它要。
+     */
+    private activeTurn: { turnId: string; startedAt: number } | null = null;
     private steering: Experimental_Steering | null = null;
     private abort: AbortController | null = null;
     /** cancel({keepQueue:true}) 期间被 abort 的 next-step 要降级为下一轮，不能丢 */
@@ -264,6 +271,11 @@ export class BotSession {
 
     get busy(): boolean {
         return this.running;
+    }
+
+    /** 本轮的 turnId 与开始时刻（没在跑就是 undefined）—— 房间的快照直接读这个 */
+    get currentTurn(): { turnId: string; startedAt: number } | undefined {
+        return this.activeTurn ?? undefined;
     }
 
     /** 房间换模型：下一轮生效（已建好的 session 不会重建） */
@@ -572,6 +584,7 @@ export class BotSession {
         // 这一轮的起止时刻：**一个来源**（广播、turn.end、界面消息头 / 结算行全从这里来）。
         // 不让客户端各自 `Date.now()`：跨刷新、跨 surface 的两个数字必须说的是同一件事。
         const startedAt = Date.now();
+        this.activeTurn = { turnId: turn.turnId, startedAt };
         this.turnUsage = undefined;
         // 先广播"这一轮开始了"：房间据此把上一个回合留下的未答提问判过期（ask.ts 的寿命规则）
         this.emit({ type: 'turn.start', turn, startedAt });
@@ -820,6 +833,7 @@ export class BotSession {
             this.steering = null;
             this.abort = null;
             this.keepOnCancel = false;
+            this.activeTurn = null;
         }
     }
 
