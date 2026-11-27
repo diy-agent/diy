@@ -315,9 +315,17 @@ export class DraftStore {
         void this.flush(owner);
     }
 
-    /** 提交成功后只清"还是我发出去那版"的草稿，别把运行期新输入的字清掉 */
+    /**
+     * 提交成功后只清「还是我发出去那版」的草稿，别把运行期新输入的字清掉。
+     *
+     * **比较要 trim**：调用方传进来的是 `draft.text.trim()`（发送用的就是 trim 后的正文），
+     * 而这里存的是用户原样打的字 —— 结尾多一个空格或换行时两边就不相等，草稿于是**没被清掉**
+     * （用户 2026-11-27 报的「发送完内容还留在输入框，有时候又正常」：就是这一条）。
+     * 反向不会误清：用户真又打了字的话，trim 之后仍然不等于发出去那版。
+     */
     clearIfMatches(owner: string, field: string, expected: string): void {
-        if (this.textOf(owner, field) === expected) this.clear(owner, field);
+        const current = this.textOf(owner, field);
+        if (current === expected || current.trim() === expected) this.clear(owner, field);
     }
 
     /** 按值清空（提问卡用）：草稿是对象，提交那版 = 当前这版才清 */
