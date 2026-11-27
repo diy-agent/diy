@@ -35,22 +35,27 @@ describe('membersOfType（角色 → 成员名单）', () => {
         expect(membersOfType(roles, 'stock')).toEqual([]);
     });
 
-    it('primary 排第一（哪怕它建得最晚），其余按建得早排', () => {
+    it('单聊：只返回该类型的主 bot 一个（哪怕它建得最晚）', () => {
         const roles = [
             role({ id: 'late', createdAt: 300 }),
             role({ id: 'primary', createdAt: 200, primary: true }),
             role({ id: 'early', createdAt: 100 }),
         ];
-        expect(membersOfType(roles, 'project').map((member) => member.botId)).toEqual(['primary', 'early', 'late']);
-        // primary 只有第一位带旗（房间侧靠它判断「默认应答」）
-        expect(membersOfType(roles, 'project').map((member) => member.primary)).toEqual([true, undefined, undefined]);
+        expect(membersOfType(roles, 'project')).toEqual([{ botId: 'primary', primary: true }]);
+        // 同类型的其它角色**不再**跟着进房间（2026-11-27 用户：房间只留主 bot）
+        expect(membersOfType(roles, 'project').map((member) => member.botId)).not.toContain('early');
+        expect(membersOfType(roles, 'project').map((member) => member.botId)).not.toContain('late');
     });
 
-    it('同一时刻建的也不错位：id 兜底，且不改入参顺序', () => {
+    it('没有 primary 的类型兜底取建得最早的（id 兜底），且不改入参顺序', () => {
         const roles = [role({ id: 'b' }), role({ id: 'a' })];
-        expect(membersOfType(roles, 'project').map((member) => member.botId)).toEqual(['a', 'b']);
+        expect(membersOfType(roles, 'project').map((member) => member.botId)).toEqual(['a']);
         // 派生不能就地 sort 掉调用方的数组（那会让 listRoles 的顺序随房间而变化）
         expect(roles.map((item) => item.id)).toEqual(['b', 'a']);
+    });
+
+    it('一个类型下一个角色都没有 ⇒ 空名单，不拿别的类型凑数', () => {
+        expect(membersOfType([role({ id: 't', type: 'task' })], 'project')).toEqual([]);
     });
 });
 
