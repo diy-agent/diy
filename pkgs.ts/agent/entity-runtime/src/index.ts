@@ -1,6 +1,12 @@
 // index.ts —— entity-runtime 的公开出口（切片阶段，先小后大）
 
 export { runAgent, type RunOptions } from './agent';
+
+// 迁移体系（实现全在 ./migrations/，一个迁移一个文件）
+export { migrations } from './migrations/index';
+export { migrationPlan, type MigrationPlanItem } from './migrations/plan';
+export { appliedCount } from './migrations/run';
+export type { Migration, MigrationRuntime } from './migrations/types';
 export {
     DEFAULT_BUDGET,
     estimateChars,
