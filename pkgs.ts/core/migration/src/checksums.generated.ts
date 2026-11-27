@@ -24,4 +24,5 @@ export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
     'task-units-kind': 'e697d0ea1d3cfc9d', /* 018-task-units-kind.ts */
     'task-units-parent': '81bbcde0e6a6c803', /* 011-task-units-parent.ts */
     'tasks-updated-at': 'e6175f278d22dfe8', /* 010-tasks-updated-at.ts */
+    'turn-facts': '5698b3a26142b33c', /* 020-turn-facts.ts */
 };
