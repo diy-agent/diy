@@ -148,7 +148,7 @@ describe('侧栏按注册表渲染', () => {
         const projectRow = rowOf(render(), '/room/proj/diy');
         expect(projectRow).toContain('text-rose-400'); // 上一轮出错
         expect(projectRow).toContain('aria-label="正在运行"');
-        expect(projectRow).toContain('aria-label="有投递在排队"');
+        expect(projectRow).toContain('aria-label="有消息在排队"');
         // 形状仍是文件夹（项目没有 open / closed）—— 变的是颜色与装饰，不是形状
         expect(projectRow).toContain('lucide-folder');
     });
@@ -175,12 +175,12 @@ describe('侧栏按注册表渲染', () => {
 
         const html = render();
         const queuedRow = rowOf(html, '/room/task/t-open');
-        expect(queuedRow).toContain('aria-label="有投递在排队"');
-        expect(queuedRow).toContain('排队中 2 条');
+        expect(queuedRow).toContain('aria-label="有消息在排队"');
+        expect(queuedRow).toContain('2 条消息在排队等 bot 接收');
         expect(queuedRow).not.toContain('aria-label="正在运行"'); // 排队 ≠ 在跑，两颗是两种语义
         // 全侧栏**只有那一颗**（没排队的行不跟风画）。用整份 html 数而不是 rowOf：
         // 历史块里的行没有 `group relative flex w-full` 这个切分点，rowOf 会切到别的行去。
-        expect(html.match(/aria-label="有投递在排队"/g) ?? []).toHaveLength(1);
+        expect(html.match(/aria-label="有消息在排队"/g) ?? []).toHaveLength(1);
     });
 
     it('未读在行上看得见（蓝点）—— 与「等你回答」的 ? 分得开', async () => {
@@ -262,7 +262,7 @@ describe('侧栏按注册表渲染', () => {
         const projectRow = rowOf(html, '/room/proj/diy');
         expect(taskRow).toContain('aria-label="有消息未送达"');
         expect(taskRow).toContain('2 个成员的最新消息未送达');
-        expect(taskRow).toContain('aria-label="有投递在排队"');
+        expect(taskRow).toContain('aria-label="有消息在排队"');
         expect(projectRow).toContain('aria-label="有消息未送达"');
         // 没喂 broken 就别自己把图标染红：未送达 ≠ 上一轮跑坏
         expect(taskRow).not.toContain('上一轮出错');

@@ -133,8 +133,9 @@ export function deliveryNoteOf(input: {
 }): string | undefined {
     const { state, updatedAt, live } = input;
     if (live) return undefined;
-    if (state !== 'queued' && state !== 'delivering') return undefined;
+    // 只有 `pending` 是「还没轮到」；`working` 是在跑（live 会盖它）
+    if (state !== 'pending') return undefined;
     const waited = Math.max(0, (input.now ?? Date.now()) - updatedAt);
     if (waited < (input.quietMs ?? DELIVERY_QUIET_MS)) return undefined;
-    return state === 'queued' ? `排队 ${elapsedText(waited)}` : `未开跑 ${elapsedText(waited)}`;
+    return `等着 ${elapsedText(waited)}`;
 }

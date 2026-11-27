@@ -68,16 +68,16 @@ describe('StatusChips', () => {
 
     it('投递挂着、没人动：说出来（这是「发了没人理」唯一的信号）', () => {
         const stuck: Delivery[] = [
-            { roomId: 'r1', messageId: 'u-1', botId: 'b1', state: 'delivering', updatedAt: 1_000_000 - 26 * 60_000 },
+            { roomId: 'r1', messageId: 'u-1', botId: 'b1', state: 'pending', updatedAt: 1_000_000 - 26 * 60_000 },
         ];
         const out = html({ stuck });
         expect(out).toContain('job');
-        expect(out).toContain('未开跑 26m');
+        expect(out).toContain('等着 26m');
     });
 
     it('投递还没到 15s：不说（正常开跑期间行尾已有运行指示器，重复只会让人以为没发出去）', () => {
         const stuck: Delivery[] = [
-            { roomId: 'r1', messageId: 'u-1', botId: 'b1', state: 'delivering', updatedAt: 1_000_000 - 5_000 },
+            { roomId: 'r1', messageId: 'u-1', botId: 'b1', state: 'pending', updatedAt: 1_000_000 - 5_000 },
         ];
         expect(html({ stuck })).toBe('');
     });

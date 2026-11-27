@@ -83,7 +83,7 @@ export type SessionEvent =
     /** 投影出的展示条目（order 由房间分配） */
     | { type: 'item'; item: Item }
     /** 投递状态变化 */
-    | { type: 'delivery'; messageId: string; state: DeliveryState }
+    | { type: 'delivery'; messageId: string; state: DeliveryState; note?: string }
     /**
      * 一轮**开始**（房间据此让这个成员的旧提问过期）。
      *
@@ -463,7 +463,7 @@ export class BotSession {
         // （既没进 transcript、也没进 SDK 的上下文，要等重启回放才回来）。
         // 降成入队 —— 下一轮带着图一起跑，代价是晚一点回答，换来的是图不丢。
         if (this.running && mode === 'next-step' && this.steering !== null && attachments === undefined) {
-            this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivering' });
+            this.emit({ type: 'delivery', messageId: input.messageId, state: 'working' });
             // 插话没成功（含 steer 自己抛错）的兜底：能降级就降成下一轮，否则至少把公共条目
             // 留在上下文里，并 resolve。不 resolve 会把 room.say 的 Promise.all 一起挂死
             // （/chat 的 SSE 永远不收尾），unhandled rejection 还可能带走进程。
@@ -486,7 +486,7 @@ export class BotSession {
                 }
                 // 没送进这一轮：至少让公共条目留在自己的上下文里，别静默丢失
                 if (input.entry !== undefined) this.ingest(input.entry);
-                this.emit({ type: 'delivery', messageId: input.messageId, state: 'failed' });
+                this.emit({ type: 'delivery', messageId: input.messageId, state: 'done', note: 'failed' });
                 resolve();
             };
             void this.steering
@@ -496,7 +496,7 @@ export class BotSession {
                         // 注意**不推水位**：它插进的是 SDK 在跑的那轮上下文，没进 transcript、
                         // 也不在任何快照里 —— 此刻推水位，重启后回放就不会补它，模型下一次
                         // 只看到自己的回复而看不到这条插话。宁可重启后重复一回，也不能少。
-                        this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivered' });
+                        this.emit({ type: 'delivery', messageId: input.messageId, state: 'done' });
                         return;
                     }
                     fallback();
@@ -567,6 +567,10 @@ export class BotSession {
         try {
             while (this.queue.length > 0) {
                 const items = this.queue.splice(0, this.queue.length);
+                // **取走即算 working**：不等 `runTurn` 里压缩/读附件那一串跑完。
+                // 否则中间那段（`busy` 已 true、投递还是 `pending`）UI 会写
+                // 「在跑却在排队」（2026-11-26 报的就是这个形状）。
+                for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'working' });
                 await this.runTurn(items);
             }
         } finally {
@@ -671,7 +675,6 @@ export class BotSession {
 
         const steering = experimental_createSteering();
         this.steering = steering;
-        for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'delivering' });
 
         const produced: TranscriptEntry[] = [];
         let text = '';
@@ -828,7 +831,7 @@ export class BotSession {
 
             // 这一轮已经消费了这些消息 ⇒ 投递成功；跑失败是 bot 的问题（会有 error 条目），
             // 不该在用户消息上标"未送达"（那是传输层的事）。
-            for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'delivered' });
+            for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'done' });
             for (const item of items) item.resolve();
             this.steering = null;
             this.abort = null;

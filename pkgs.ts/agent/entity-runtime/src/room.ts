@@ -445,7 +445,7 @@ export class RoomActor {
                 roomId: this.id,
                 messageId: saved.id,
                 botId: bot.id,
-                state: 'queued',
+                state: 'pending',
                 mode: input.mode ?? 'next-step',
                 turn: turn.turn,
                 turnId: turn.turnId,
@@ -496,8 +496,8 @@ export class RoomActor {
                     roomId: this.id,
                     messageId: delivery.messageId,
                     botId: delivery.botId,
-                    state: 'failed',
-                    note: '恢复时找不到原文',
+                    state: 'done',
+                    note: 'failed',
                 });
                 continue;
             }
@@ -582,28 +582,18 @@ export class RoomActor {
     }
 
     /**
-     * 还没开始跑的投递（`queued` / `delivering`），按成员计数。
+     * 「还没被开始处理」的投递，按成员计数（UI 的「N 条消息等着」）。
      *
-     * 「排队中」是**系统状态**而不是「要你动手」：重启后的待续跑（`recover()` 那条路）、
-     * 连发几条还没轮到它，都落在这里。以前 UI 完全看不见这一段 —— 房间看起来
-     * 「什么都没发生」，其实它排着队；反过来「红 N」里也混不进它们。
+     * 以前这里要数 `queued + delivering` 再**减一**（「在跑那位手上那条不算」）——
+     * 那个减法依赖「一次只取一条」的假设，而 `pump()` 其实一次取空队列，于是连发
+     * 3 条时界面报「2 条排队」（那 2 条正在跑）。状态收到三个之后这条启发式不需要了：
+     * `pending` 就是「还没轮到」，`working` 就是「正在处理」，一一对应。
      */
     queuedByBot(): Map<string, number> {
-        // 「排队」= 还没轮到它。**正在跑的那个成员手上握着一条投递**（`queued` 或 `delivering`
-        // 都实测见过），那条是它此刻这一轮，不是排队 —— 不排除它，界面就会出现
-        // 「在跑却写排队中」（用户 2026-11-26 报的就是这个）。
-        // 判据只看「在不在跑」，不看投递状态：状态机里 `delivering` 只在部分路径打，
-        // 靠它区分会把在跑的那条当成排队。
         const counts = new Map<string, number>();
         for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
+            if (delivery.state !== 'pending') continue;
             counts.set(delivery.botId, (counts.get(delivery.botId) ?? 0) + 1);
-        }
-        // 在跑的成员减一（它手上那条）：剩多少条才是真排着的
-        for (const botId of this.runningBots()) {
-            const n = counts.get(botId);
-            if (n === undefined) continue;
-            if (n <= 1) counts.delete(botId);
-            else counts.set(botId, n - 1);
         }
         return counts;
     }
@@ -1178,6 +1168,7 @@ export class RoomActor {
                     messageId: event.messageId,
                     botId: bot.id,
                     state: event.state,
+                    ...(event.note === undefined ? {} : { note: event.note }),
                 });
                 this.deps.emit({ kind: 'delivery', delivery });
                 return;
