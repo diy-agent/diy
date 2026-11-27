@@ -207,3 +207,18 @@ describe('回归 #156 — 中段内容不再丢失', () => {
         expect(all.map((l) => l.number)).toEqual(Array.from({ length: 174 }, (_, i) => i + 1));
     });
 });
+
+describe('渲染后不超预算（2026-11-27：消掉「read 裁一遍、投递层再裁一遍」）', () => {
+    it('读满一窗：formatReadOutput 的**渲染后**字节 ≤ READ_MAX_BYTES，且续读提示还在', async () => {
+        const p = join(dir, 'fill.txt');
+        // 每行 60 字符 + 5 位行号前缀：只数正文会正好顶穿预算（前缀 7 字节/行）
+        writeFileSync(p, Array.from({ length: 5000 }, (_, i) => `${i + 1}:${'x'.repeat(60)}`).join('\n'), 'utf-8');
+        const w = await readFileWindow(p, p);
+        expect(w.truncatedByBytes).toBe(true);
+
+        const out = formatReadOutput(w, { style: 'tool' });
+        expect(Buffer.byteLength(out, 'utf-8')).toBeLessThanOrEqual(READ_MAX_BYTES);
+        // 尾巴（下一步取哪段）必须在 —— 它最容易被「刚好超一个字节」裁掉
+        expect(out).toMatch(/续读：offset=\d+/);
+    });
+});

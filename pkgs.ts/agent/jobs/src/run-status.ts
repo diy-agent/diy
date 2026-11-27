@@ -11,6 +11,10 @@
 
 import type { NotifyItem } from '@diy-agent/context/envelope';
 
+// 走子路径：`@diy-agent/tools` 的 barrel 会把 node:fs / child_process 那半边带进 renderer 依赖图
+// （错误判据见 apps/diy-app/tests 的 renderer 边界护栏）；`limits` 是纯常量，没有 Node 依赖。
+import { TOOL_OUTPUT_MAX_BYTES } from '@diy-agent/tools/limits';
+
 /** 进程四态。**不设 `lost`**：没有恢复就没有"不知道"——重启后表是空的，不是 lost。 */
 export type RunState = 'running' | 'exited' | 'killed' | 'failed';
 
@@ -61,8 +65,19 @@ export function formatDuration(ms: number | undefined): string {
  * ⚠️ 只报"截了行"不够：进程输出常常是**超长单行**（进度条、`\r` 刷屏），按行切根本切不动，
  *    所以这里同时有字节上限（`MAX_TAIL_BYTES`），两道上限都要如实回报，否则模型会把
  *    「被截断的一段」当成完整输出。
+ *
+ * 字节上限 = 工具输出的**唯一预算**（64KB，见 `@diy-agent/tools` 的 `limits.ts`）：
+ * `job output` 也是工具，凭什么比 read / bash 更小。曾是 16KB —— 那是「比谁都小」的第四套口径。
  */
-export const MAX_TAIL_BYTES = 16 * 1024;
+export const MAX_TAIL_BYTES = TOOL_OUTPUT_MAX_BYTES;
+
+/**
+ * 结束通知里那段尾巴的字节上限（**不是** `MAX_TAIL_BYTES`）。
+ *
+ * 通知是「插话」，进的是 LLM 上下文：一次任务结束就贴 64KB 等于拿上下文换个通知。
+ * 这里只管尾巴几行，要全文它自己 `job output`。
+ */
+export const NOTIFY_TAIL_BYTES = 4 * 1024;
 
 /** ANSI 色码（`\u001b[38;5;66;1m` 这类）—— 要匹配的就是 ESC 字符本身 */
 // oxlint-disable-next-line no-control-regex

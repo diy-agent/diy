@@ -63,8 +63,16 @@ export interface RunLimits {
     readonly valueChars: number;
 }
 
+/**
+ * 生产者侧的提前止损（防止一段代码把几百 MB 字符串攒在内存里）。
+ *
+ * 数值与 `@diy-agent/tools` 的 `TOOL_OUTPUT_MAX_BYTES`（64KB，工具输出的**唯一预算**）同值 ——
+ * 真正的最后一道闸在投递层（`toModelOutput`），这里只是「别攒那么多」。
+ * 之所以不直接 import：本包是被 code-runtime 与宿主共用的引擎契约，不想把 `ai` / `zod` 拖进
+ * 它的依赖图；两者是否同值由 `entity-runtime/tests/tool-output.test.ts` 钉住。
+ */
 export const DEFAULT_LIMITS: RunLimits = {
     logBytes: 64 * 1024,
     logChars: 4_000,
-    valueChars: 32 * 1024,
+    valueChars: 64 * 1024,
 };
