@@ -161,6 +161,9 @@ export function CreateTaskDialog({
                         onChange={(event) => setName(event.target.value)}
                         onFocus={(event) => event.currentTarget.select()}
                         onKeyDown={(event) => {
+                            // 中文输入法组合态的回车是「选词上屏」，不是「提交」——
+                            // 不判这一条，拼音打完按回车就会直接把任务建出来（用户实测报的就是这个）。
+                            if (event.nativeEvent.isComposing) return;
                             if (event.key === 'Enter') submit();
                         }}
                         placeholder="要做到什么程度算完成…"
@@ -300,6 +303,8 @@ export function AddMemberDialog({
                             onChange={(event) => setName(event.target.value)}
                             placeholder="例如 小满"
                             onKeyDown={(event) => {
+                                // 同上（新建任务弹窗）：组合态回车只上屏
+                                if (event.nativeEvent.isComposing) return;
                                 if (event.key === 'Enter' && name.trim() !== '') {
                                     onCreateNew(name);
                                     onClose();
