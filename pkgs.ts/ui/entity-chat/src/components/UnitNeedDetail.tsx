@@ -1,4 +1,4 @@
-// UnitNeedDetail —— 一条需求的**全貌**：做什么 / 决策 / 做得好不好 / 源码。
+// UnitNeedDetail —— 一条需求（或一个目标）的**全貌**：做什么 / 决策 / 需求清单 / 做得好不好 / 源码。
 //
 // 用户 2026-11-27：「把需求的右边列做成单独的一个 view，放到对话平行的 view tab 里」——
 // 所以它既要能当「目标」页的右栏，也要能独立成一个 tab。两种用法共用这一个组件：
@@ -85,11 +85,17 @@ export function UnitNeedDetail({
     roomId,
     unitId,
     initialSource = false,
+    onOpenUnit,
 }: {
     roomId: string;
     unitId: string;
     /** 打开时直接看源码（tab 形态默认看内容；这一条留给「我想核对库里的值」的场景） */
     initialSource?: boolean;
+    /**
+     * 点一条「需求」时换一个 tab 看它 —— 拍平之后，需求只能从目标里点进去，
+     * 没有这一条就只能是死文本（用户 2026-11-27：外面是目标，里面是小目标）。
+     */
+    onOpenUnit?: (unitId: string, title: string) => void;
 }): React.JSX.Element {
     const [source, setSource] = React.useState(initialSource);
     const { detail, error } = useUnitDetail(roomId, unitId);
@@ -118,7 +124,7 @@ export function UnitNeedDetail({
                 <button
                     type="button"
                     onClick={() => setSource((prev) => !prev)}
-                    title={source ? '回到内容（做了什么 / 决策）' : '看源码（库里存的原样 JSON）'}
+                    title={source ? '回到内容（做了什么 / 决策 / 步骤）' : '看源码（库里存的原样 JSON）'}
                     aria-pressed={source}
                     className={`ml-auto flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
                         source
@@ -173,6 +179,48 @@ export function UnitNeedDetail({
                                 </ul>
                             )}
                         </Block>
+
+                        {detail.children.length > 0 && (
+                            <Block title="需求" right={`${detail.children.length} 条 · 点开看`}>
+                                <ul className="flex flex-col">
+                                    {detail.children.map((child) => (
+                                        <li key={child.id}>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    onOpenUnit === undefined
+                                                        ? undefined
+                                                        : onOpenUnit(child.id, child.title)
+                                                }
+                                                className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-muted"
+                                            >
+                                                <span
+                                                    className={`size-1.5 shrink-0 rounded-full ${
+                                                        child.status === 'done'
+                                                            ? 'bg-emerald-500'
+                                                            : child.status === 'doing'
+                                                              ? 'bg-sky-500'
+                                                              : 'bg-muted-foreground/40'
+                                                    }`}
+                                                />
+                                                <span
+                                                    className={`min-w-0 flex-1 truncate text-[11px] ${
+                                                        child.status === 'done'
+                                                            ? 'text-muted-foreground'
+                                                            : 'text-foreground'
+                                                    }`}
+                                                >
+                                                    {child.title}
+                                                </span>
+                                                {child.accept.trim() === '' && (
+                                                    <span className="shrink-0 text-[10px] text-amber-600">缺验收</span>
+                                                )}
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </Block>
+                        )}
 
                         <Block title="做得好不好">
                             <div className="flex flex-col gap-1.5">

@@ -1270,8 +1270,15 @@ export async function createDiy2App(opts: {
                     const [withQuote] = withSourceQuotes({ ...board, rows: [row] }, quotes).rows;
                     // 决策 / 其它日志：journal 上是 append-only 的，按 unit 过滤就是这条需求的决策清单
                     const journal = store.journalOf(input.id, 400).filter((entry) => entry.unit === input.unit);
+                    // 小目标（子需求）：左栏拍平后只在**点开这条**时出现 —— 用户 2026-11-27
+                    //「外面是目标，里面是小目标」。子需求都是 need（step 在 steps 里），
+                    // 所以这里直接按 parent 过滤，不用再分 kind。
+                    const children = board.rows
+                        .filter((item) => item.parent === input.unit)
+                        .map((item) => ({ id: item.id, title: item.title, status: item.status, accept: item.accept }));
                     return {
                         need: withQuote ?? row,
+                        children,
                         decisions: journal.filter((entry) => entry.kind === 'decision'),
                         notes: journal.filter((entry) => entry.kind !== 'decision'),
                     };

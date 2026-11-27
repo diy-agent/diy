@@ -49,6 +49,7 @@ export { TaskPanel } from './components/TaskPanel';
 // 作业卡片：两个 surface 共用（判据在 chat-core 的 `jobOf`）。导出是为了让
 // 选择型实验台能直接拿真组件摆样子 —— 别在 demo 里另画一份。
 export { JobCard } from './components/JobCard';
+export { ListRow, LIST_ROW_BASE, LIST_ROW_META, LIST_ROW_TITLE } from './components/ListRow';
 export { UnitBoardView } from './components/UnitBoardView';
 export { UnitNeedDetail } from './components/UnitNeedDetail';
 // 标题栏右端的两颗活动图标（会话 N / 作业 M）：壳只负责把它们摆进 tools，
