@@ -247,9 +247,9 @@ export class RoomActor {
      * 上次没收尾的轮（进程崩溃 / 被杀）→ 补一条轮级事实，然后销标记。
      *
      * 为什么必须补：`turn.end` 在 session 的 finally 里发，进程死在那一步之前就什么都没落，
-     * 磁盘上那一轮与「正常说完」完全同形（见 bot-status.ts 的局限说明）。
+     * 磁盘上那一轮与「正常说完」完全同形。
      * 补成 `notice(kind: 'interrupted')` 是最省的那条路：走的是已有的轮级事实通道，
-     * 结局判据与 UI 都不用特殊化（只在 `NOTICE_OUTCOMES` 里加了一行）。
+     * 直接以一条 notice 落盘，不需要新造事件类型。
      *
      * 没有开着的轮时**一次查询就走**（不读 items）—— 正常重启不该为此付 ensureInit 的钱。
      *
@@ -298,7 +298,7 @@ export class RoomActor {
                 at: Date.now(),
                 status: 'done',
                 type: 'notice',
-                // 不带 author：轮级事实（见 bot-status.ts 的论证），UI 据此让它独立成条；
+                // 不带 author：轮级事实，UI 据此让它独立成条；
                 // 归属记在 data.botId（turnId 是房间级的，@all 时认不出是谁）
                 data: {
                     text: `${bot.name} 的上一轮没跑完（进程中断），结论可能不完整`,
@@ -814,44 +814,36 @@ export class RoomActor {
     }
 
     /**
+     * 角色改了（名字 / 人格 / 模型），**成员名单没变**：已经建好的 session 把旧快照换代。
+     *
+     * 与 `setMembers` 分工：那个管「谁在房间里」，这个管「这些人还是不是原来那个他」。
+     * 不推的话，角色页改完人格，房间要重启才生效 —— 而用户刚看到「已保存」。
+     */
+    refreshIdentities(): void {
+        for (const bot of this.members()) this.sessions.get(bot.id)?.setIdentity(bot);
+    }
+
+    /**
      * 改容器元数据：默认模型 / data（名字、任务状态、描述…）。
      * data 是**浅合并**（`null` = 删掉这个键）：任务状态这类字段后端不懂语义，
      * 只按调用方给的值落库 —— 在这里写枚举就是让新类型（股票/日历）每次都要改 runtime。
      *
-     * 容器的名字也在 data 里（task 的 `title` / project 的 `name`），所以改名不再有
-     * 独立入参；改名后顺手把主 bot 的显示名同步过去（助手名缺省跟随容器名）。
+     * 容器的名字也在 data 里（task 的 `title` / `project` 的 `name`），所以改名不再有
+     * 独立入参。
+     *
+     * ⚠ 改名**不再**同步角色名（2026-11-24 角色改成类型级之后）：一个角色服务该类型的
+     * 所有房间，跟着某一间房改名字就等于把别的房里的助手一起改了。反过来说，任务标题
+     * 和助手名字现在是两个独立概念 —— 这也是角色页存在的意义。
      */
-    update(patch: { modelKey?: string; data?: Record<string, unknown> }): void {
-        if (patch.modelKey !== undefined) {
-            this.deps.spec.modelKey = patch.modelKey;
-            // 已经建好的 session 记着自己的 modelKey：不推下去，UI 上换模型就是死开关
-            for (const bot of this.members()) {
-                this.sessions.get(bot.id)?.setModelKey(effectiveModelOf(this.deps.spec, bot));
-            }
-        }
+    update(patch: { data?: Record<string, unknown> }): void {
         if (patch.data !== undefined) {
             for (const [key, value] of Object.entries(patch.data)) {
                 if (value === null) delete this.deps.spec.data[key];
                 else this.deps.spec.data[key] = value;
             }
-            const renamed = patch.data['title'] ?? patch.data['name'];
-            if (typeof renamed === 'string' && renamed.trim() !== '') this.syncPrimaryName(renamed.trim());
         }
-        // 改名 / 换模型 / 改 data 都要落库，否则重启后回到旧值
+        // 改名 / 改 data 都要落库，否则重启后回到旧值
         this.deps.store.saveRoom(this.deps.spec);
-    }
-
-    /**
-     * 容器改名 → 主 bot 跟着叫。bot 的名字是它自己的身份，这里同步的是显示名：
-     * 不同步的话，改完任务标题，助手在消息里还自称旧名。
-     */
-    private syncPrimaryName(next: string): void {
-        const primary = this.primary();
-        const identity = primary === undefined ? undefined : this.deps.bots().find((bot) => bot.id === primary.id);
-        // 标题没真变时也会走到这里（保存正文同一笔 data）：名同就不写 bots 表
-        if (identity !== undefined && identity.name !== next) this.deps.store.upsertBot({ ...identity, name: next });
-        // 已建好的 session 自己持有一份 bot 快照：不推下去，改名后它继续说旧名
-        for (const session of this.sessions.values()) session.setBotName(next);
     }
 
     // ── 内部 ───────────────────────────────────────────────────
@@ -1020,11 +1012,7 @@ export class RoomActor {
     }
 
     private inRoom(bot: Bot): Bot {
-        return {
-            ...bot,
-            persona: effectivePersonaOf(this.deps.spec, bot),
-            modelKey: effectiveModelOf(this.deps.spec, bot),
-        };
+        return { ...bot, persona: effectivePersonaOf(this.deps.spec, bot) };
     }
 
     /**
@@ -1277,7 +1265,7 @@ export class RoomActor {
         if (result.failed || result.text === '' || !publishable(result.endReason)) return;
 
         // 名字取**当前**的（deps.bots 实时读）：传进来的 bot 是 session 建好时的快照，
-        // 改名后它会一直以旧名署名（容器改名 = 专属 bot 改名）。
+        // 角色改名后它会一直以旧名署名。
         const name = this.member(bot.id)?.name ?? bot.name;
         const entry = this.appendEntry({
             kind: 'conclusion',

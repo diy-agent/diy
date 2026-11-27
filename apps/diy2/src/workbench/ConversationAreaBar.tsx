@@ -17,7 +17,7 @@ export function ConversationAreaBar() {
     return (
         <>
             <SurfaceTabs />
-            <RoomMenu room={room} onAddMember={dialogs.openMember} onOpenSettings={dialogs.openSettings} />
+            <RoomMenu room={room} onOpenSettings={dialogs.openSettings} />
         </>
     );
 }

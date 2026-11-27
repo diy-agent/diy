@@ -16,6 +16,7 @@
     "dependencies": {
         "@diy-agent/chat-core": "*",
         "@diy-agent/chat-transport-rpc": "*",
+        "@diy-agent/protocol": "*",
         "@diy-agent/ui-shadcn": "*",
         "@stylexjs/stylex": "^0.19.0",
         "highlight.js": "^11.12.0",

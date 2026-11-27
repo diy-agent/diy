@@ -115,10 +115,10 @@ describe('任务目录', () => {
         store.db.prepare('INSERT INTO entities (id, type, created_at) VALUES (?,?,?)').run('ghost', 'task', createdAt);
         store.db
             .prepare(
-                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, model_key, created_at) ' +
-                    'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, created_at) ' +
+                    'VALUES (?,?,?,?,?,?,?,?,?,?)',
             )
-            .run('ghost', 99, 'ghost', '', '', null, null, 'open', null, 'm', createdAt);
+            .run('ghost', 99, 'ghost', '', '', null, null, 'open', null, createdAt);
         expect(() => store.deleteRoom('ghost')).not.toThrow();
     });
 

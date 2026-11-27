@@ -1,9 +1,9 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { canSeeImages, CatalogError, listAccounts, loadCatalog, readAccountValue } from '../src/index.js';
-import type { ModelCatalogEntry } from '../src/index.js';
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { availableProviders, canSeeImages, CatalogError, listAccounts, loadCatalog, readAccountValue } from "../src/index.js";
+import type { ModelCatalogEntry } from "../src/index.js";
 
 /** 造一个临时 home：model.yaml / providers.custom.yaml / data/models.dev.json 按需写 */
 function makeHome(files: { model?: string; custom?: string; snapshot?: unknown }): string {
@@ -60,7 +60,42 @@ describe('loadCatalog', () => {
         expect(entries[0]).not.toHaveProperty('accounts');
     });
 
-    it('custom provider：spec 来自 providers.custom.yaml（无需快照）', () => {
+    it("reasoning_options 归一：只有 effort 型带档位，toggle/budget/空/无 → 缺省", () => {
+        const snapshot = {
+            acme: {
+                id: "acme",
+                api: "https://acme.example/v1",
+                models: {
+                    effort3: { name: "E3", reasoning_options: [{ type: "effort", values: ["low", "medium", "high"] }] },
+                    effortPlusToggle: {
+                        name: "E+T",
+                        reasoning_options: [
+                            { type: "toggle" },
+                            { type: "effort", values: ["none", "max"] },
+                        ],
+                    },
+                    toggleOnly: { name: "T", reasoning_options: [{ type: "toggle" }] },
+                    budget: { name: "B", reasoning_options: [{ type: "budget_tokens", min: 1024 }] },
+                    emptyList: { name: "Empty", reasoning_options: [] },
+                    none: { name: "None" },
+                },
+            },
+        };
+        // 用 availableProviders 验归一：它列快照里所有 provider 的模型，不需要 model.yaml 配账号
+        // （loadCatalog 只收「配了账号且有 api」的 provider，那会引入无关的配置前置条件）
+        const home = makeHome({ snapshot });
+        const models = availableProviders(home, { snapshotPath: join(home, "data", "models.dev.json") })[0]?.models ?? [];
+        const byId = new Map(models.map((model) => [model.id, model]));
+        expect(byId.get("effort3")?.reasoning).toEqual({ efforts: ["low", "medium", "high"], defaultEffort: "low" });
+        // toggle + effort 共存 → 取 effort 那项的 values
+        expect(byId.get("effortPlusToggle")?.reasoning).toEqual({ efforts: ["none", "max"], defaultEffort: "none" });
+        expect(byId.get("toggleOnly")?.reasoning).toBeUndefined();
+        expect(byId.get("budget")?.reasoning).toBeUndefined();
+        expect(byId.get("emptyList")?.reasoning).toBeUndefined();
+        expect(byId.get("none")?.reasoning).toBeUndefined();
+    });
+
+    it("custom provider：spec 来自 providers.custom.yaml（无需快照）", () => {
         const home = makeHome({
             model: `customProviders:
   goat:

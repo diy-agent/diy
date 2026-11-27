@@ -13,6 +13,7 @@
 // 监听由调用方做：`server/index.ts`（生产）、`server/dev.ts`（单端口 dev）、`bin/diy2`（全局命令）。
 
 import { type IncomingMessage, type ServerResponse } from 'node:http';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -32,6 +33,7 @@ import {
     modelProviders,
     newEntityId,
     openStore,
+    snapshotPath,
     sourceQuotesOf,
     unitBoard,
     unitsContextText,
@@ -50,33 +52,106 @@ import {
 import { createBlobStore, parseAttachmentRef, parseAttachmentRefs } from '@diy-agent/attachment';
 import { apiHelpOf, defaultCodeRuntime } from '@diy-agent/code-runtime';
 import { METHOD_DESC, diy2Api } from '@diy-agent/protocol';
+import { botOfProfile, membersOfType } from '@diy-agent/protocol';
 import type {
     ActivityFrame,
     AskAnswer,
+    AskQuestionAnswer,
     AskRequest,
     Author,
     Bot,
-    BotRow,
-    BotState,
+    BotProfile,
     Item,
+    BotProfileDefaults,
     JobRunRow,
+    ModelConfigSnapshot,
     Room,
+    RoomMember,
 } from '@diy-agent/protocol';
+import {
+    availableProviders,
+    removeAccount as dropAccount,
+    removeProvider as dropProvider,
+    renameAccount as relabelAccount,
+    saveAccount as writeAccount,
+    saveDefaultModel as writeDefaultModel,
+    saveProvider as writeProvider,
+} from '@diy-agent/model-catalog';
 
 /** 装配层（index / dev）已经装好 provider；这里取句柄。未装时是 noop，不报错。 */
 const log = openLog('app');
 
 /**
- * 新房间的缺省模型：`model.yaml` 的 `defaultModel` 优先，没有才用这个写死的兜底。
+ * 新房间 / 新 bot 落库时的模型值：`model.yaml` 的 `defaultModel`，**没配置就存空串**。
  *
- * 为什么还留一个常量：新房间必须有模型，而「随便挑目录里的第一个」会让换台机器后缺省值
- * 悄悄换人（第一个恰好是别家）。宁可固定一个已知能用的，让人改 `model.yaml` 来表达偏好。
+ * 曾经这里存的是一个占位 key（`none@none/none`）—— 想靠它把「没配置」变成一次响亮失败。
+ * 真跑起来才发现它是**会被写进 sqlite 的**：房间和 bot 的行比配置活得久，于是后补了
+ * model.yaml 之后那些行仍然指着占位 key，发不出去、界面上还显示成真的模型名（实测：
+ * 「none · none@none」，看着像配好了）。
+ *
+ * 现在的口径：**行里只存人选的**，空串 = 用目录的 defaultModel（解析在 `modelOf` 里）。
+ * 这样配置后补也能「自愈」 —— 行不用动，缺省在发送时现算。
  */
-const FALLBACK_MODEL = 'chen56@opencode-go/deepseek-v4.1-flash';
-/** 缺省模型：`model.yaml` 的 `defaultModel` → 兜底常量（见 `FALLBACK_MODEL`） */
-function defaultModelKey(): string {
-    return defaultModelKeyOf() ?? FALLBACK_MODEL;
+function persistedDefaultModelKey(): string {
+    return defaultModelKeyOf() ?? '';
 }
+/**
+ * 配置页的整页快照（`diy2.models.config`，也是每个写方法的回包）。
+ *
+ * 与 `models.list` 分开的理由写在协议里（一个要「现在能选什么」、一个要「目录里还有什么」）。
+ * 这里**永不含 key 值** —— 账号只有名字 / 填没填 / 字符数，那是 catalog 读侧的硬边界。
+ */
+function modelConfigView(): ModelConfigSnapshot {
+    const defaultModelKey = defaultModelKeyOf();
+    return {
+        home: config.home,
+        modelConfigPath: config.modelConfigPath,
+        snapshotMissing: !existsSync(snapshotPath(config.home)), // sync-io-ok: 同步自报「快照在不在」，只判文件存在与否
+        ...(defaultModelKey === undefined ? {} : { defaultModelKey }),
+        providers: availableProviders(config.home).map((provider) => ({
+            id: provider.providerId,
+            name: provider.name,
+            kind: provider.kind,
+            configured: provider.configured,
+            ...(provider.api === undefined ? {} : { api: provider.api }),
+            ...(provider.npm === undefined ? {} : { npm: provider.npm }),
+            envKeys: [...provider.envKeys],
+            ...(provider.doc === undefined ? {} : { doc: provider.doc }),
+            accounts: provider.accounts.map((account) => ({
+                name: account.name,
+                configured: account.configured,
+                env: account.env,
+                ...(account.chars === undefined ? {} : { chars: account.chars }),
+            })),
+            models: provider.models.map((model) => ({
+                id: model.id,
+                name: model.name,
+                ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+                ...(model.maxOutputTokens === undefined ? {} : { maxOutputTokens: model.maxOutputTokens }),
+                ...(model.cost === undefined ? {} : { cost: model.cost }),
+                ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
+                ...(model.capabilities === undefined ? {} : { capabilities: model.capabilities }),
+                enabled: model.enabled,
+            })),
+        })),
+    };
+}
+
+/** 写方法的入参口径：宽容取字段，类型不对就让下游（catalog）报错 —— 它才是 YAML 的主人 */
+function argsOf(input: unknown): Record<string, unknown> {
+    return typeof input === 'object' && input !== null && !Array.isArray(input)
+        ? (input as Record<string, unknown>)
+        : {};
+}
+
+function textArg(args: Record<string, unknown>, field: string): string {
+    const value = args[field];
+    if (typeof value !== 'string') throw new Error(`${field} 必须是字符串`);
+    return value;
+}
+
+/** 提问卡草稿：提问早就有了结局（或从时间线上消失）这么久，就不再算"未提交输入" */
+const ASK_DRAFT_TTL = 30 * 60 * 1000;
 /** 对话框草稿：synthetic owner 不随房间级联删，超过这么久没人再来就清掉 */
 const DIALOG_DRAFT_TTL = 7 * 24 * 60 * 60 * 1000;
 const HUMAN: Author = { id: 'human:我', name: '我', color: '#9ca3af', role: 'human' };
@@ -253,7 +328,8 @@ function actorOf(spec: Room): RoomActor {
         actor = new RoomActor({
             spec,
             store,
-            bots: () => store.listBots(),
+            // 房间向所有角色要身份：成员名单里只有该类型的角色，多给无害（members 按 spec 过滤）
+            bots: () => store.listBotProfiles().map((role) => botOfProfile(role, store.getBotProfileDefaults(role.type))),
             emit: (event) => {
                 broadcast(spec.id, event);
                 // turn 起停 = 全实例「谁在跑」的开销点：标题栏那颗图标与侧栏每一行都靠这个
@@ -354,61 +430,58 @@ function roomTitleOf(room: Room): string {
 
 // ─── 种子：bot 落 sqlite；项目/任务先在内存 ────────────────────────
 
+/**
+ * 种子：角色进 `bot_roles`；示例容器（两个项目 + 一个任务）只在**全新数据根**里建。
+ *
+ * 角色是类型级的，所以这里只建「每类默认席位」，不建「每容器一个 bot」——
+ * 老库的 35 个 bot 已由 db.ts 的 migrateBots 折成角色，不会走到这里。
+ */
 function seed(): void {
-    let bots = store.listBots();
-    if (bots.length === 0) {
-        const create = (name: string, homeRoomId: string, persona: string): Bot => {
-            const bot: Bot = {
-                id: newEntityId(),
-                name,
-                color: COLORS[bots.length % COLORS.length]!,
-                persona,
-                homeRoomId,
-                modelKey: defaultModelKey(),
-            };
-            store.upsertBot(bot);
-            return bot;
-        };
-        const diy = create('diy', 'proj:diy', '项目 bot：工程视角，先结论后理由。');
-        const cops = create('cops', 'proj:cops', '项目 bot：产品视角，拆需求、写验收。');
-        const task = create('任务树与多会话', 'task:t-001', '任务 bot：运维视角，可观测性与回滚。');
-        const xiaoman = create('小满', 'proj:diy', '产品视角：拆需求、找边界、写验收。');
-        bots = [diy, cops, task, xiaoman];
+    if (store.listBotProfiles().length === 0) {
+        newRole({
+            type: 'project',
+            name: '主程',
+            instructions: '工程视角：先结论后理由，改动要给影响面与回滚。',
+        });
+        newRole({ type: 'project', name: '产品', instructions: '产品视角：拆需求、找边界、写验收。' });
+        newRole({
+            type: 'task',
+            name: '任务助手',
+            instructions: '任务视角：可观测性与回滚，做完要能自己验。',
+        });
     }
 
-    const byName = (name: string): Bot | undefined => bots.find((bot) => bot.name === name);
     const specs: Room[] = [
         {
             id: 'proj:diy',
             type: 'project',
             data: { name: 'diy', dir: '~/git/diy/diy' },
-            members: [
-                { botId: byName('diy')?.id ?? bots[0]!.id, primary: true },
-                { botId: byName('小满')?.id ?? bots[0]!.id },
-            ],
-            modelKey: defaultModelKey(),
+            members: membersOf('project'),
         },
         {
             id: 'proj:cops',
             type: 'project',
             data: { name: 'cops', dir: '~/git/cops' },
-            members: [{ botId: byName('cops')?.id ?? bots[1]!.id, primary: true }],
-            modelKey: defaultModelKey(),
+            members: membersOf('project'),
         },
         {
             id: 'task:t-001',
             type: 'task',
             data: { title: '任务树与多会话', dir: '~/git/diy/diy', projectId: 'proj:diy', status: 'open' },
-            members: [{ botId: byName('任务树与多会话')?.id ?? bots[2]!.id, primary: true }],
-            modelKey: defaultModelKey(),
+            members: membersOf('task'),
         },
     ];
 
-    // 恢复成员关系（重启后 @ 仍生效）
-    const saved = store.members();
+    // 先修一遍孤儿类型：某个类型的角色被删光（手改库 / 老库迁进来的自定义类型）时，
+    // 那类房间会零成员 —— 派生不出人，发消息没人应答。补一个默认角色把它救回来。
+    for (const room of store.listRooms()) {
+        if (membersOf(room.type).length === 0) newRole({ type: room.type, name: `${room.type} 助手` });
+    }
 
     // 1) 落库的容器优先：运行时新建的项目/任务，重启后原样回来
     for (const room of store.listRooms()) {
+        // 成员是派生的，库里的 room_members 只是历史（实体级覆盖留到以后）
+        const derived = membersOf(room.type);
         const index = specs.findIndex((spec) => spec.id === room.id);
         if (index >= 0) {
             const seedSpec = specs[index]!;
@@ -416,36 +489,19 @@ function seed(): void {
                 ...seedSpec,
                 ...room,
                 data: { ...seedSpec.data, ...room.data },
-                members: room.members.length > 0 ? room.members : seedSpec.members,
+                members: derived,
             };
         } else {
-            specs.push(room);
+            specs.push({ ...room, members: derived });
         }
     }
 
-    // 2) 老库兼容：rooms 表是后加的，之前只落了成员。成员表里有、房间表里没有的，
-    //    按主 bot 还原一个容器 —— 消息本来就还在磁盘上，别让它们没有入口。
-    const known = new Set(specs.map((spec) => spec.id));
-    for (const [roomId, members] of Object.entries(saved)) {
-        if (known.has(roomId)) continue;
-        const primary = members.find((member) => member.primary === true) ?? members[0];
-        const bot = primary === undefined ? undefined : bots.find((entry) => entry.id === primary.botId);
-        specs.push({
-            id: roomId,
-            type: roomId.startsWith('task') ? 'task' : 'project',
-            data: roomId.startsWith('task') ? { title: bot?.name ?? roomId } : { name: bot?.name ?? roomId },
-            members,
-            modelKey: bot?.modelKey ?? defaultModelKey(),
-        });
-    }
-
     for (const spec of specs) {
-        const members = saved[spec.id];
-        if (members !== undefined && members.length > 0) spec.members = members;
-        store.setMembers(spec.id, spec.members);
         store.saveRoom(spec);
-        // 只建容器，**不在这里续跑**：续跑会立刻发 LLM 请求，见 `resume()` 的注释
-        actorOf(spec);
+        // room_members 不是成员真源（成员是派生的），但它会被读：老库里留着「每个容器一个
+        // bot」的陈旧行，指向已被合并掉的 id。启动时用派生结果盖写一遍，让这张表与派生一致。
+        store.setMembers(spec.id, spec.members);
+        actorOf(spec).recover();
     }
 }
 
@@ -490,15 +546,67 @@ function tooLargeDraft(value: unknown): boolean {
     return serialized !== undefined && Buffer.byteLength(serialized, 'utf8') > 256 * 1024;
 }
 
-function newBot(name: string, homeRoomId: string, persona: string): Bot {
-    return {
+/**
+ * 新建一个角色。`primary` 缺省 = 「该类型还没有 primary」—— 第一个角色自动当默认应答，
+ * 之后新建的都是候补（用户可以在角色页改）。
+ */
+function newRole(input: {
+    type: string;
+    name: string;
+    instructions?: string;
+    color?: string;
+    modelKey?: string | null;
+    reasoningEffort?: string | null;
+    primary?: boolean;
+}): BotProfile {
+    const roles = store.listBotProfiles();
+    const existing = roles.filter((role) => role.type === input.type);
+    const now = Date.now();
+    const role: BotProfile = {
         id: newEntityId(),
-        name,
-        color: COLORS[store.listBots().length % COLORS.length]!,
-        persona,
-        homeRoomId,
-        modelKey: defaultModelKey(),
+        type: input.type,
+        name: input.name,
+        color: input.color ?? COLORS[roles.length % COLORS.length]!,
+        instructions: input.instructions ?? '',
+        primary: input.primary ?? existing.every((entry) => !entry.primary),
+        // 空串 / null 都存 null：列里只存人选过的，缺省在发送时现算（见 persistedDefaultModelKey）
+        modelKey: input.modelKey === undefined || input.modelKey === '' ? null : input.modelKey,
+        reasoningEffort:
+            input.reasoningEffort === undefined || input.reasoningEffort === '' ? null : input.reasoningEffort,
+        createdAt: now,
+        updatedAt: now,
     };
+    store.upsertBotProfile(role);
+    return role;
+}
+
+/** 一类房间的成员名单：**派生的**，不看 room_members（见 protocol 的 membersOfType） */
+function membersOf(type: string): RoomMember[] {
+    return membersOfType(store.listBotProfiles(), type);
+}
+
+/**
+ * 角色变了 ⇒ 该类型所有房间的成员跟着换。
+ *
+ * 不这么做的话，新建的角色要等进程重启才出现在房间里（成员是启动时派生的），
+ * 而用户刚在角色页上点了「保存」。
+ */
+function refreshRoomsOf(type: string): void {
+    const members = membersOf(type);
+    for (const actor of rooms.values()) {
+        if (actor.spec.type !== type) continue;
+        if (!sameMembers(actor.spec.members, members)) actor.setMembers(members);
+        // 名单没变也要推：改名 / 改人格 / 换模型都发生在成员**身上**，不是名单里
+        actor.refreshIdentities();
+    }
+}
+
+function sameMembers(left: readonly RoomMember[], right: readonly RoomMember[]): boolean {
+    if (left.length !== right.length) return false;
+    return left.every((member, index) => {
+        const other = right[index];
+        return other !== undefined && member.botId === other.botId && member.primary === other.primary;
+    });
 }
 
 // ─── 回包瘦身 ────────────────────────────────────────────
@@ -564,6 +672,14 @@ const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> 
         // 「谁在监听这个端口、用哪个数据根」只有监听者自己答得准（仓库 ##328 同一现场）。
         if (req.method === 'GET' && url.pathname === '/api/info') {
             json(res, 200, info());
+            return;
+        }
+
+        // 迁移闸门的探针：真 app 直接答「不用迁了」。
+        // 回 404 会让浏览器控制台多两条红字 —— UI 里「console 零错误」是硬规矩，
+        // 而且探针本来是正常流程的一环，不是「找不到」。
+        if (req.method === 'GET' && url.pathname === '/api/migrate/state') {
+            json(res, 200, { mode: 'ready' });
             return;
         }
 
@@ -786,11 +902,11 @@ export async function createDiy2App(opts: {
                     if (type === 'task' && (typeof projectId !== 'string' || roomOf(projectId) === undefined)) {
                         throw new Error('task 需要有效的 data.projectId');
                     }
-                    // `??` 挡不住空串（界面上的"没选"可能就是 ''）：空串按没填处理
-                    const modelKey = input.modelKey || defaultModelKey();
                     const id = newEntityId();
-                    const bot = { ...newBot(input.name, id, `${type} bot`), modelKey };
-                    store.upsertBot(bot);
+                    // 成员是从角色表**派生**的：新任务建出来就自动有「任务助手」这类角色。
+                    // 类型是开放字符串，第一次见到某个类型时补一个默认角色 —— 否则新房间
+                    // 零成员，发消息没人应答，用户还得先去角色页建人。
+                    if (membersOf(type).length === 0) newRole({ type, name: `${type} 助手` });
                     const spec: Room = {
                         id,
                         type,
@@ -799,8 +915,7 @@ export async function createDiy2App(opts: {
                             type === 'task'
                                 ? { status: 'open', title: input.name, ...input.data }
                                 : { name: input.name, ...input.data },
-                        members: [{ botId: bot.id, primary: true }],
-                        modelKey,
+                        members: membersOf(type),
                     };
                     store.setMembers(id, spec.members);
                     actorOf(spec);
@@ -812,7 +927,6 @@ export async function createDiy2App(opts: {
                     const namePatch =
                         input.name === undefined ? {} : { [actor.spec.type === 'task' ? 'title' : 'name']: input.name };
                     actor.update({
-                        ...(input.modelKey === undefined ? {} : { modelKey: input.modelKey }),
                         ...(input.name === undefined && input.data === undefined
                             ? {}
                             : { data: { ...namePatch, ...input.data } }),
@@ -836,13 +950,6 @@ export async function createDiy2App(opts: {
                         store.deleteRoom(roomId);
                         broadcast(roomId, { kind: 'done' });
                     }
-                    const removed = new Set(victims);
-                    const referenced = new Set(
-                        [...rooms.values()].flatMap((entry) => entry.spec.members.map((m) => m.botId)),
-                    );
-                    for (const bot of store.listBots()) {
-                        if (removed.has(bot.homeRoomId) && !referenced.has(bot.id)) store.deleteBot(bot.id);
-                    }
                     return { id: input.id, deleted: victims };
                 },
                 /**
@@ -853,158 +960,74 @@ export async function createDiy2App(opts: {
                     store.markRead(input.id, input.seq);
                     return { ok: true, seq: store.readSeqOf(input.id) ?? input.seq };
                 },
-                addMember: async ({ input }) => {
-                    const actor = requireRoom(input.id);
-                    actor.addMember(input.botId);
-                    return actor.spec;
-                },
             },
-            bots: {
-                list: async () => store.listBots(),
-                /**
-                 * 每个 bot 一行状态（二级弹层 / 三级表格共用同一份）。
-                 *
-                 * 三处事实拼起来，每处都只说自己知道的：
-                 *   · 在跑 —— `actor.runningBots()`（内存，与广播同源）
-                 *   · 等回答 —— `pendingAskRequests()` 的 `owner`（提问人就那个 bot）
-                 *   · 上一轮结局 —— `store.lastItemPerBot()`（磁盘，判据在 bot-status.ts）
-                 *
-                 * 优先级在 `BotState` 的注释里：running > asking > needs-attention > idle。
-                 */
-                rows: async () => {
-                    const bots = new Map(store.listBots().map((bot) => [bot.id, bot]));
-                    // 与 rooms.list 共用同一份（带缓存）的查询器，不各造一个
-                    const rows: BotRow[] = [];
-                    for (const actor of rooms.values()) {
-                        const spec = actor.spec;
-                        const running = new Set(actor.runningBots());
-                        const queuedByBot = actor.queuedByBot();
-                        const asking = new Map<string, AskRequest>();
-                        for (const request of actor.pendingAskRequests()) {
-                            // owner 缺省时（老数据 / 非成员发起）归不到具体 bot，就不进弹层
-                            if (request.owner !== undefined) asking.set(request.owner, request);
-                        }
-                        for (const member of spec.members) {
-                            const bot = bots.get(member.botId);
-                            const turn = turnOf(spec.id, member.botId);
-                            const ask = asking.get(member.botId);
-                            const state: BotState = running.has(member.botId)
-                                ? 'running'
-                                : ask !== undefined
-                                  ? 'asking'
-                                  : turn !== undefined && turn.outcome !== 'done'
-                                    ? 'needs-attention'
-                                    : 'idle';
-                            rows.push({
-                                roomId: spec.id,
-                                roomTitle: roomTitleOf(spec),
-                                roomType: spec.type === 'project' ? 'project' : 'task',
-                                botId: member.botId,
-                                botName: bot?.name ?? member.botId,
-                                botColor: bot?.color ?? '#8b8b8b',
-                                state,
-                                ...(turn === undefined
-                                    ? {}
-                                    : {
-                                          outcome: turn.outcome,
-                                          ...(turn.message === undefined ? {} : { outcomeMessage: turn.message }),
-                                          lastTurnAt: turn.at,
-                                      }),
-                                ...(ask === undefined
-                                    ? {}
-                                    : { askId: ask.askId, askTitle: ask.questions[0]?.question ?? '' }),
-                                // 排队数**不进 `state`**：`state` 是互斥单值（此刻最要紧的一件事），
-                                // 排队是可并存的系统状态，由 UI 多挂一颗灰 chip
-                                ...((queuedByBot.get(member.botId) ?? 0) === 0
-                                    ? {}
-                                    : { queued: queuedByBot.get(member.botId) }),
-                            });
-                        }
-                    }
-                    return { rows };
-                },
-                /**
-                 * 批量重试：给选中的 (房间, bot) 各发一条「继续」。
-                 *
-                 * 这是**派活**不是重启进程 —— bot 没有 start/stop 状态机，它只是房间成员；
-                 * 「接着干」就是再给它一句话。所以走 `say` 的 recipients 定向，不新造一条
-                 * 控制面（否则「重试」和「发消息」会成为两套语义，迟早跑偏）。
-                 *
-                 * 同一房间选中的多个 bot 合成**一条**消息（recipients 多个）：这样「继续」
-                 * 在时间线上只出现一次，而各自的上下文各自接着跑。
-                 * 已在跑的跳过 —— 再发一条只会变成排队，不是用户按「重试」时想要的。
-                 *
-                 * 返回值里 `started` 的意思是**已派发**（`say` 已发起），不是「这一轮已经起来」：
-                 * 回包不等 turn 真正开跑（等它就是等整轮结束），所以 UI 文案说的是「已发」。
-                 * `say` 同步抛错时不改回包，只广播 error —— 那种错误（房间刚被删之类）
-                 * 用户马上在页面上就能看见，比在一句闪稿里报更准。
-                 */
-                retry: async ({ input }) => {
-                    const byRoom = new Map<string, string[]>();
-                    for (const target of input.targets) {
-                        const list = byRoom.get(target.roomId) ?? [];
-                        if (!list.includes(target.botId)) list.push(target.botId);
-                        byRoom.set(target.roomId, list);
-                    }
-                    const started: Array<{ roomId: string; botIds: string[] }> = [];
-                    const skipped: Array<{ roomId: string; botId: string; reason: string }> = [];
-                    for (const [roomId, botIds] of byRoom) {
-                        const actor = roomOf(roomId);
-                        if (actor === undefined) {
-                            for (const botId of botIds) skipped.push({ roomId, botId, reason: '房间不存在' });
-                            continue;
-                        }
-                        const members = new Set(actor.spec.members.map((member) => member.botId));
-                        const running = new Set(actor.runningBots());
-                        const targets = botIds.filter((botId) => {
-                            if (!members.has(botId)) {
-                                skipped.push({ roomId, botId, reason: '不是这个房间的成员' });
-                                return false;
-                            }
-                            if (running.has(botId)) {
-                                skipped.push({ roomId, botId, reason: '正在跑' });
-                                return false;
-                            }
-                            return true;
-                        });
-                        if (targets.length === 0) continue;
-                        started.push({ roomId, botIds: targets });
-                        void actor
-                            .say({ text: RETRY_TEXT, author: HUMAN, recipients: targets })
-                            .catch((error: unknown) => {
-                                broadcast(roomId, {
-                                    kind: 'error',
-                                    message: error instanceof Error ? error.message : String(error),
-                                });
-                            });
-                    }
-                    return { started, skipped };
-                },
+            botProfiles: {
+                list: async () => store.listBotProfiles(),
                 create: async ({ input }) => {
+                    const type = input.type.trim();
                     const name = input.name.trim();
+                    if (type === '') throw new Error('type required');
                     if (name === '') throw new Error('name required');
-                    const bot = newBot(name, input.homeRoomId ?? 'proj:diy', 'room 成员 bot');
-                    store.upsertBot({ ...bot, ...(input.modelKey === undefined ? {} : { modelKey: input.modelKey }) });
-                    roomOf(bot.homeRoomId)?.addMember(bot.id);
-                    return bot;
+                    // 同类型重名 = 界面上的两行分不清（@ 补全按名字选人）
+                    if (store.listBotProfiles().some((role) => role.type === type && role.name === name)) {
+                        throw new Error(`「${type}」已经有叫「${name}」的角色`);
+                    }
+                    const role = newRole({ ...input, type, name });
+                    refreshRoomsOf(role.type);
+                    return role;
                 },
                 update: async ({ input }) => {
-                    const bot = store.listBots().find((entry) => entry.id === input.id);
-                    if (bot === undefined) throw new Error(`bot 不存在：${input.id}`);
-                    const next = {
-                        ...bot,
-                        ...(input.name === undefined ? {} : { name: input.name }),
+                    const role = store.listBotProfiles().find((entry) => entry.id === input.id);
+                    if (role === undefined) throw new Error(`角色不存在：${input.id}`);
+                    const name = input.name === undefined ? role.name : input.name.trim();
+                    if (name === '') throw new Error('name required');
+                    const next: BotProfile = {
+                        ...role,
+                        name,
                         ...(input.color === undefined ? {} : { color: input.color }),
-                        ...(input.persona === undefined ? {} : { persona: input.persona }),
-                        ...(input.modelKey === undefined ? {} : { modelKey: input.modelKey }),
-                        ...(input.homeRoomId === undefined ? {} : { homeRoomId: input.homeRoomId }),
+                        ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+                        // null 与空串同义：列里只存人选过的，缺省在发送时现算
+                        ...(input.modelKey === undefined
+                            ? {}
+                            : { modelKey: input.modelKey === '' ? null : input.modelKey }),
+                        ...(input.reasoningEffort === undefined
+                            ? {}
+                            : { reasoningEffort: input.reasoningEffort === '' ? null : input.reasoningEffort }),
+                        ...(input.primary === undefined ? {} : { primary: input.primary }),
+                        updatedAt: Date.now(),
                     };
-                    store.upsertBot(next);
+                    store.upsertBotProfile(next);
+                    refreshRoomsOf(next.type);
                     return next;
                 },
                 remove: async ({ input }) => {
-                    store.deleteBot(input.id);
+                    const role = store.listBotProfiles().find((entry) => entry.id === input.id);
+                    if (role === undefined) return { ok: true };
+                    // 每类至少留一个：成员是派生的，没有「再加入房间」这回事，
+                    // 删光了那类房间就永远没人应答（只能去角色页重建 + 重启才能回到房间）
+                    if (store.listBotProfiles().filter((entry) => entry.type === role.type).length <= 1) {
+                        throw new Error(`「${role.type}」只剩这一个角色，删了那类房间就没人应答`);
+                    }
+                    store.deleteBotProfile(role.id);
+                    refreshRoomsOf(role.type);
                     return { ok: true };
+                },
+                config: {
+                    list: async () => store.listBotProfileDefaults(),
+                    set: async ({ input }) => {
+                        const config: BotProfileDefaults = {
+                            type: input.type.trim(),
+                            modelKey: input.modelKey === undefined || input.modelKey === '' ? null : input.modelKey,
+                            reasoningEffort:
+                                input.reasoningEffort === undefined || input.reasoningEffort === ''
+                                    ? null
+                                    : input.reasoningEffort,
+                            updatedAt: Date.now(),
+                        };
+                        store.setBotProfileDefaults(config);
+                        refreshRoomsOf(config.type);
+                        return config;
+                    },
                 },
             },
             chat: {
@@ -1146,7 +1169,86 @@ export async function createDiy2App(opts: {
              * 服务端发不出去」就是这么来的。回包永不含 key 值（账号只有名字与填没填）。
              */
             models: {
-                list: async () => ({ providers: modelProviders(), defaultModelKey: defaultModelKey() }),
+                // `configured` / `snapshotMissing` 不是兼容字段，是**状态**：没有 model.yaml 的
+                // 实例是一个明确形态（模型面不可用），界面顶部据此挂横幅 —— 不靠「目录恰好是空的」去猜。
+                list: async () => ({
+                    providers: modelProviders(),
+                    defaultModelKey: defaultModelKeyOf(),
+                    configured: existsSync(config.modelConfigPath), // sync-io-ok: 模型配置状态自报，只判文件存在与否；与启动期 modelConfigHint 同源
+                    modelConfigPath: config.modelConfigPath,
+                    snapshotMissing: !existsSync(snapshotPath(config.home)), // sync-io-ok: 同上，判断目录快照在不在
+                }),
+                // ── 配置页（写侧）──────────────────────────────────────────
+                //
+                // 每个写方法都回一整页新快照：界面不必自己拼第二份状态，也就不会出现
+                // 「服务端已经改了、界面上还是老的」这种最难解释的情形。
+                config: async () => modelConfigView(),
+                saveProvider: async ({ input }) => {
+                    const args = argsOf(input);
+                    const kind = args['kind'];
+                    if (kind !== undefined && kind !== 'std' && kind !== 'custom') {
+                        throw new Error('kind 只能是 std / custom');
+                    }
+                    writeProvider(config.home, {
+                        providerId: textArg(args, 'providerId'),
+                        ...(kind === undefined ? {} : { kind }),
+                        ...(args['spec'] === undefined
+                            ? {}
+                            : { spec: args['spec'] as { id?: string; npm?: string; api?: string } }),
+                        ...(args['models'] === undefined
+                            ? {}
+                            : { models: args['models'] as Record<string, never> }),
+                        ...(args['filter'] === undefined
+                            ? {}
+                            : {
+                                  filter: args['filter'] as {
+                                      include?: readonly string[] | null;
+                                      exclude?: readonly string[] | null;
+                                  },
+                              }),
+                    });
+                    return modelConfigView();
+                },
+                removeProvider: async ({ input }) => {
+                    dropProvider(config.home, textArg(argsOf(input), 'providerId'));
+                    return modelConfigView();
+                },
+                saveAccount: async ({ input }) => {
+                    const args = argsOf(input);
+                    const kind = args['kind'];
+                    if (kind !== undefined && kind !== 'std' && kind !== 'custom') {
+                        throw new Error('kind 只能是 std / custom');
+                    }
+                    const saved = writeAccount(config.home, {
+                        providerId: textArg(args, 'providerId'),
+                        name: textArg(args, 'name'),
+                        value: textArg(args, 'value'),
+                        ...(kind === undefined ? {} : { kind }),
+                    });
+                    // 只有长度：key 值到此为止（catalog 的硬边界，这里不越）
+                    return {
+                        config: modelConfigView(),
+                        saved: { providerId: saved.providerId, name: saved.name, chars: saved.chars },
+                    };
+                },
+                renameAccount: async ({ input }) => {
+                    const args = argsOf(input);
+                    relabelAccount(config.home, textArg(args, 'providerId'), textArg(args, 'from'), textArg(args, 'to'));
+                    return modelConfigView();
+                },
+                removeAccount: async ({ input }) => {
+                    const args = argsOf(input);
+                    dropAccount(config.home, textArg(args, 'providerId'), textArg(args, 'name'));
+                    return modelConfigView();
+                },
+                saveDefaultModel: async ({ input }) => {
+                    const modelKey = argsOf(input)['modelKey'];
+                    if (modelKey !== null && typeof modelKey !== 'string') {
+                        throw new Error('modelKey 必须是字符串或 null');
+                    }
+                    writeDefaultModel(config.home, modelKey);
+                    return modelConfigView();
+                },
             },
             /**
              * 任务的**需求账本树**（只读）。writer 只有 agent 的 `unit_*` 工具，

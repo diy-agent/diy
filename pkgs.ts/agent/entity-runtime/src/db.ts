@@ -17,7 +17,25 @@ import type { TranscriptEntry, TokenUsage } from './compaction';
 import { isLinkKind } from './id';
 import type { RoomEntry } from './room-log';
 import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc } from './task-dir';
-import type { Bot, AskAnswer, AskRequest, Delivery, MessageKind, Item, Room, RoomMember } from './types';
+import { PLACEHOLDER_MODEL_KEY, applyMigrations } from '@diy-agent/migration';
+import type { MigrationReporter, MigrationRuntime } from '@diy-agent/migration';
+
+// 迁移体系对外的出口（实现全在 @diy-agent/migration，这里只转手）
+export { appliedCount, MIGRATION_STEPS } from '@diy-agent/migration';
+export type { MigrationReporter, MigrationStepEvent } from '@diy-agent/migration';
+import type {
+    AskAnswer,
+    AskRequest,
+    Bot,
+    BotProfile,
+    Delivery,
+    InboxMode,
+    Item,
+    BotProfileDefaults,
+    MessageKind,
+    Room,
+    RoomMember,
+} from './types';
 
 /** 一个 bot 在某个房间里的对话快照（持久化单位） */
 export interface SessionSnapshot {
@@ -37,7 +55,7 @@ export interface SessionSnapshot {
  * 「一轮开了头、还没收尾」的标记（`turn_open`，一行一 bot）。
  *
  * 存在的理由：`completed` / `interrupted` 都不产条目，进程崩在那一段时磁盘上没留下
- * 任何「这轮开始过」的痕迹 —— 结局判据只能读成「正常结束」（见 bot-status.ts 的局限说明）。
+ * 任何「这轮开始过」的痕迹 —— 否则结局判据只能读成「正常结束」。
  * 轮开始写一行、收尾删一行；进程重启后还留着 = 上一轮没走到收尾。
  */
 export interface OpenTurn {
@@ -113,7 +131,6 @@ export interface TaskRecord {
     workspace: string | null;
     status: string;
     closedAt: number | null;
-    modelKey: string;
     createdAt: number;
     /** 最后一次**内容变化**的时刻（启动时的重复保存不算） */
     updatedAt: number;
@@ -212,7 +229,6 @@ export interface ProjectRecord {
     name: string;
     /** 项目的默认工作目录；任务新建时可继承，但不是外键关系 */
     workspace: string | null;
-    modelKey: string;
     createdAt: number;
 }
 
@@ -241,8 +257,17 @@ export interface DeliveryInput extends Omit<Delivery, 'updatedAt'> {
 
 export interface Store {
     readonly db: DatabaseSync;
-    listBots(): Bot[];
-    upsertBot(bot: Bot): void;
+    /** 全部角色（按 type、建得早排序；房间成员由它们派生，见 protocol 的 membersOfType） */
+    listBotProfiles(): BotProfile[];
+    upsertBotProfile(role: BotProfile): void;
+
+    // ── 类型默认配置（bot_profile_defaults，2026-11-26）────────────────────
+    /** 全部类型默认配置 */
+    listBotProfileDefaults(): BotProfileDefaults[];
+    /** 某类型的默认配置；没配过返回 undefined */
+    getBotProfileDefaults(type: string): BotProfileDefaults | undefined;
+    /** 写某类型的默认配置（upsert） */
+    setBotProfileDefaults(config: BotProfileDefaults): void;
 
     // ── 提问（ask 不阻塞，待答状态必须落库）──────────────────
     /** 写一条提问：新建 pending / 收尾时改成 answered | cancelled（幂等） */
@@ -304,8 +329,8 @@ export interface Store {
      * 只删一个 id：项目下任务的级联由调用方（server）决定，库里不懂项目/任务。
      */
     deleteRoom(roomId: string): void;
-    /** 删除 bot 身份（容器被删时清理它自动建的专属 bot） */
-    deleteBot(botId: string): void;
+    /** 删角色 + 它的会话/投递（成员是派生的，房间表不用清；每类最后一个角色的护栏在 server） */
+    deleteBotProfile(roleId: string): void;
     appendItem(roomId: string, item: Item): Item;
     /** 追加一条任务日志（append-only；回放用 `journalOf`） */
     appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number }): JournalEntry;
@@ -445,7 +470,7 @@ export interface Store {
      * 每个 bot 在给定房间里的**最后一条 item**（「上一轮怎么结束的」的唯一来源）。
      *
      * 一轮收尾时 `endItems()` 产出的 notice / error 就是该轮最后落盘的条目，
-     * 所以这一条既是「谁最后说话」也是「怎么停的」—— 判据在 `bot-status.ts`，
+     * 所以这一条既是「谁最后说话」也是「怎么停的」；
      * 这里只负责把「每个 (房间, bot) 的最后一条」查出来（别在调用方循环 N 次读全量）。
      *
      * 不给 `roomIds` = 全实例一张表（三级面板用）；给了就只查这几个房间。
@@ -456,7 +481,7 @@ export interface Store {
     /**
      * 每条**轮级事实**（不带 author 的 notice / error）的最后一条，按归属分组。
      *
-     * `lastItemPerBot` 按 `author.id` 分组，恰好把结局事实排除了（见 bot-status.ts 的论证）。
+     * `lastItemPerBot` 按 `author.id` 分组，恰好把结局事实排除了（结局事实不带 author）。
      * 它们只能单独认领，所以单独一条查询：调用方先拿到 bot 最后一轮，再从这里取那一轮的结局。
      *
      * `owner` = 事实自带的 `data.botId`，没有就退回 `turnId`：
@@ -533,7 +558,6 @@ function roomToTask(room: Room): TaskInput {
         workspace: dataText(room, 'dir') || null,
         status: dataText(room, 'status') || 'open',
         closedAt: typeof closedAt === 'number' ? closedAt : null,
-        modelKey: room.modelKey,
     };
 }
 
@@ -542,7 +566,6 @@ function roomToProject(room: Room): ProjectInput {
         id: room.id,
         name: dataText(room, 'name'),
         workspace: dataText(room, 'dir') || null,
-        modelKey: room.modelKey,
     };
 }
 
@@ -557,16 +580,30 @@ function taskToRoom(task: TaskRecord, members: RoomMember[], taskDir?: string): 
     data['title'] = task.title;
     // 只读：产物目录由创建日派生（不落库、不参与保存）
     if (taskDir !== undefined) data['taskDir'] = taskDir;
-    return { id: task.id, type: 'task', data, members, modelKey: task.modelKey };
+    return { id: task.id, type: 'task', data, members };
 }
 
 function projectToRoom(project: ProjectRecord, members: RoomMember[]): Room {
     const data: Record<string, unknown> = { name: project.name };
     if (project.workspace !== null) data['dir'] = project.workspace;
-    return { id: project.id, type: 'project', data, members, modelKey: project.modelKey };
+    return { id: project.id, type: 'project', data, members };
 }
 
-export function openStore(file: string): Store {
+export { PLACEHOLDER_MODEL_KEY };
+
+/** 读模型键：占位值 / null 都当「没选」（空串 = 继承） */
+function cleanModelKey(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    const text = String(value);
+    return text === PLACEHOLDER_MODEL_KEY ? '' : text;
+}
+
+export interface OpenStoreOptions {
+    /** 迁移逐个上报（迁移页用）；不传 = 静默，启动路径不受影响 */
+    onMigrationStep?: MigrationReporter;
+}
+
+export function openStore(file: string, options: OpenStoreOptions = {}): Store {
     const db = new DatabaseSync(file === ':memory:' ? ':memory:' : file);
     // 数据根 = 数据库所在目录（`<home>/diy2.db` → `<home>/tasks/...`）；内存库没有磁盘产物
     const dataRoot = file === ':memory:' ? undefined : dirname(resolve(file));
@@ -583,16 +620,73 @@ export function openStore(file: string): Store {
     };
     // 域表用 ON DELETE CASCADE 挂在 entities 上；不打开这个 pragma 就只是注释
     db.exec('PRAGMA foreign_keys = ON');
+
+    /**
+     * 事务，**可重入**。
+     *
+     * 迁移器会给每个迁移包一层（保证「执行 + 记账」同进同退），而里面的写入路径
+     * （writeTask / writeProject）平时自己也开事务 —— 已在事务里就直接跑，不撞 BEGIN。
+     */
+    let txDepth = 0;
+    const transaction = <T>(fn: () => T): T => {
+        if (txDepth > 0) return fn();
+        txDepth += 1;
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            const result = fn();
+            db.exec('COMMIT');
+            return result;
+        } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
+        } finally {
+            txDepth -= 1;
+        }
+    };
+
+    const report: MigrationReporter = options.onMigrationStep ?? ((): void => undefined);
+
+    /**
+     * 当前 schema 的落地（`CREATE TABLE IF NOT EXISTS` 一整套）。
+     *
+     * 它作为第 3 号迁移（`003-create-tables`）执行 —— 为什么必须排在那之后：
+     * 两条表改名（bot_roles / role_config）得赶在建表前面，否则新表先被建出来，
+     * 老表就再也改不了名，旧数据全成孤儿（2026-11-27 的教训）。
+     */
+    const createSchema = (): void => {
     db.exec(`
-        CREATE TABLE IF NOT EXISTS bots (
+        -- 角色：一种工作对象类型上的固定席位（见 docs/plans/2026-11-24-bot-role.md）。
+        -- 旧的 bots 表按「每个容器一个同名 bot」建，35 行里 27 行 persona 一模一样；
+        -- 角色改成类型级：新建任务自动出现在任务房间里，一个房间一份会话。
+        CREATE TABLE IF NOT EXISTS bot_profiles (
             id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
             name TEXT NOT NULL,
             color TEXT NOT NULL,
-            persona TEXT NOT NULL,
-            home_entity_id TEXT NOT NULL,
-            home_dir TEXT,
-            model_key TEXT NOT NULL
+            instructions TEXT NOT NULL DEFAULT '',
+            primary_flag INTEGER NOT NULL DEFAULT 0,
+            model_key TEXT,
+            reasoning_effort TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            -- per-task bot（2026-11-26）：domain 归属。type 级角色（模板）为 null，向后兼容
+            domain_type TEXT,
+            domain_id TEXT,
+            -- 人设代码贡献点（persona_ref）：null = 用 instructions 文本（向后兼容）
+            persona_ref TEXT
         );
+        -- 「每类型至多一个 primary」不靠应用层自觉：应用层漏一次就是一段时间的双应答
+        CREATE UNIQUE INDEX IF NOT EXISTS bot_profiles_primary ON bot_profiles(type) WHERE primary_flag = 1;
+        CREATE INDEX IF NOT EXISTS bot_profiles_type ON bot_profiles(type, created_at);
+        -- 类型默认配置（2026-11-26）：几百个任务 bot 共享一套 model / effort，
+        -- 只有个别 bot 需要 override 时才在 bot_profiles 上填（model_key / reasoning_effort 为 null = 走类型默认）。
+        CREATE TABLE IF NOT EXISTS bot_profile_defaults (
+            type TEXT PRIMARY KEY,
+            model_key TEXT,
+            reasoning_effort TEXT,
+            updated_at INTEGER NOT NULL
+        );
+        -- 旧 bots 表不在这里建：新库不该有它。只在老库里存在，且迁移后改名为 bots_v0。
         CREATE TABLE IF NOT EXISTS entity_items (
             seq INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_id TEXT NOT NULL,
@@ -664,16 +758,18 @@ export function openStore(file: string): Store {
             at INTEGER NOT NULL,
             PRIMARY KEY (entity_id, bot_id)
         );
+        -- 会话键 =（容器, 角色）。列名 2026-11-24 从 bot_id 改为 bot_profile_id：
+        -- 同名的旧列会被 ALTER TABLE ... RENAME COLUMN 改过来（见老库补列）
         CREATE TABLE IF NOT EXISTS session_state (
             entity_id TEXT NOT NULL,
-            bot_id TEXT NOT NULL,
+            bot_profile_id TEXT NOT NULL,
             turn INTEGER NOT NULL,
             collapsed INTEGER NOT NULL,
             entries TEXT NOT NULL,
             usage TEXT,
             log_seq INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL,
-            PRIMARY KEY (entity_id, bot_id)
+            PRIMARY KEY (entity_id, bot_profile_id)
         );
         -- 身份：一切可被引用的东西一行。不做存储，只有「是谁」。
         CREATE TABLE IF NOT EXISTS entities (
@@ -687,7 +783,6 @@ export function openStore(file: string): Store {
             id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             workspace TEXT,
-            model_key TEXT NOT NULL,
             created_at INTEGER NOT NULL
         );
         -- 任务域（1:1 挂在 entities 上）。项目是**字段**不是父目录，所以不做外键
@@ -701,7 +796,6 @@ export function openStore(file: string): Store {
             workspace TEXT,
             status TEXT NOT NULL DEFAULT 'open',
             closed_at INTEGER,
-            model_key TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL DEFAULT 0
         );
@@ -738,7 +832,6 @@ export function openStore(file: string): Store {
             bot_id TEXT NOT NULL,
             position INTEGER NOT NULL,
             primary_flag INTEGER NOT NULL DEFAULT 0,
-            model_key TEXT,
             persona TEXT,
             PRIMARY KEY (entity_id, bot_id)
         );
@@ -790,80 +883,7 @@ export function openStore(file: string): Store {
         CREATE INDEX IF NOT EXISTS events_subject ON events(subject, seq);
         CREATE INDEX IF NOT EXISTS events_event ON events(event, seq);
     `);
-
-    // 迁移：老的 entity_bots（只有 id 列表）→ room_members（第一位为 primary）
-    const legacy = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entity_bots'").get() as
-        | { name: string }
-        | undefined;
-    if (legacy !== undefined) {
-        const count = (db.prepare('SELECT COUNT(*) AS n FROM room_members').get() as { n: number }).n;
-        if (count === 0) {
-            const rows = db
-                .prepare('SELECT entity_id, bot_id, position FROM entity_bots ORDER BY entity_id, position')
-                .all() as Array<Record<string, unknown>>;
-            const insert = db.prepare(
-                'INSERT OR IGNORE INTO room_members (entity_id, bot_id, position, primary_flag) VALUES (?,?,?,?)',
-            );
-            for (const row of rows) {
-                insert.run(
-                    String(row['entity_id']),
-                    String(row['bot_id']),
-                    Number(row['position']),
-                    Number(row['position']) === 0 ? 1 : 0,
-                );
-            }
-        }
-        db.exec('DROP TABLE entity_bots');
-    }
-
-    // 老库补列：mode / turn / turn_id
-    const columns = new Set(
-        (db.prepare('PRAGMA table_info(deliveries)').all() as Array<Record<string, unknown>>).map((row) =>
-            String(row['name']),
-        ),
-    );
-    for (const column of ['mode', 'turn', 'turn_id']) {
-        if (!columns.has(column)) db.exec(`ALTER TABLE deliveries ADD COLUMN ${column}`);
-    }
-
-    // 老库补列：session_state.log_seq（回放水位）
-    const sessionColumns = new Set(
-        (db.prepare('PRAGMA table_info(session_state)').all() as Array<Record<string, unknown>>).map((row) =>
-            String(row['name']),
-        ),
-    );
-    if (!sessionColumns.has('log_seq'))
-        db.exec('ALTER TABLE session_state ADD COLUMN log_seq INTEGER NOT NULL DEFAULT 0');
-
-    // 老库补列：tasks.updated_at（P2 加的）。历史行没有「最后改动」概念，用 created_at 兜
-    const taskColumns = new Set(
-        (db.prepare('PRAGMA table_info(tasks)').all() as Array<Record<string, unknown>>).map((row) =>
-            String(row['name']),
-        ),
-    );
-    if (!taskColumns.has('updated_at')) {
-        db.exec('ALTER TABLE tasks ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
-        db.exec('UPDATE tasks SET updated_at = created_at WHERE updated_at = 0');
-    }
-
-    // 老库补列：task_units.parent_id（分解树）。历史行没有分解树概念，一律当根
-    const unitColumns = new Set(
-        (db.prepare('PRAGMA table_info(task_units)').all() as Array<Record<string, unknown>>).map((row) =>
-            String(row['name']),
-        ),
-    );
-    if (!unitColumns.has('parent_id')) db.exec('ALTER TABLE task_units ADD COLUMN parent_id TEXT');
-    // 老库补列：accept（「怎么算做完」）。历史行一律空串 = 还没写 —— 界面会标「未写验收」，
-    // 不假装有（拿 body 去兜底等于把「没写」藏起来，人就没法靠它挑活）。
-    if (!unitColumns.has('accept')) db.exec("ALTER TABLE task_units ADD COLUMN accept TEXT NOT NULL DEFAULT ''");
-    // 老库补列：source（这条需求来自哪句话）。历史行一律空串 = 不知道 —— 界面不编造来源。
-    if (!unitColumns.has('source_message_id'))
-        db.exec("ALTER TABLE task_units ADD COLUMN source_message_id TEXT NOT NULL DEFAULT ''");
-    // 2026-11-25：依赖边与交付批次整体退役（只留需求账本树）。旧库里的两张表直接删 ——
-    // 它们是纯派生侧的记录，删掉不丢「要做什么」。task_units.batch_id 是老库的死列：
-    // SQLite 不能删列，代码也再不读写它，留着不影响任何判据。
-    db.exec('DROP TABLE IF EXISTS unit_deps');
-    db.exec('DROP TABLE IF EXISTS unit_batches');
+    };
 
     /** room_members → roomId: members[]（members() 与 listRooms() 共用） */
     const readMembers = (): Record<string, RoomMember[]> => {
@@ -876,7 +896,6 @@ export function openStore(file: string): Store {
             const member: RoomMember = {
                 botId: String(row['bot_id']),
                 ...(row['primary_flag'] === 1 ? { primary: true } : {}),
-                ...(row['model_key'] === null ? {} : { modelKey: String(row['model_key']) }),
                 ...(row['persona'] === null ? {} : { persona: String(row['persona']) }),
             };
             (out[id] ??= []).push(member);
@@ -884,14 +903,27 @@ export function openStore(file: string): Store {
         return out;
     };
 
-    const toBot = (row: Record<string, unknown>): Bot => ({
+    const toRole = (row: Record<string, unknown>): BotProfile => ({
         id: String(row['id']),
+        type: String(row['type']),
         name: String(row['name']),
         color: String(row['color']),
-        persona: String(row['persona']),
-        homeRoomId: String(row['home_entity_id']),
-        homeDir: row['home_dir'] === null ? undefined : String(row['home_dir']),
-        modelKey: String(row['model_key']),
+        instructions: String(row['instructions']),
+        primary: Number(row['primary_flag']) === 1,
+        modelKey: row['model_key'] === null ? null : String(row['model_key']),
+        reasoningEffort: row['reasoning_effort'] === null ? null : String(row['reasoning_effort']),
+        createdAt: Number(row['created_at']),
+        updatedAt: Number(row['updated_at']),
+        domainType: row['domain_type'] === null ? null : String(row['domain_type']),
+        domainId: row['domain_id'] === null ? null : String(row['domain_id']),
+        personaRef: row['persona_ref'] === null ? null : String(row['persona_ref']),
+    });
+
+    const toBotProfileDefaults = (row: Record<string, unknown>): BotProfileDefaults => ({
+        type: String(row['type']),
+        modelKey: row['model_key'] === null ? null : String(row['model_key']),
+        reasoningEffort: row['reasoning_effort'] === null ? null : String(row['reasoning_effort']),
+        updatedAt: Number(row['updated_at']),
     });
 
     // ── 域表读写（saveTask / saveProject 与老库迁移共用）─────────────────
@@ -972,7 +1004,6 @@ export function openStore(file: string): Store {
         workspace: row['workspace'] === null ? null : String(row['workspace']),
         status: String(row['status']),
         closedAt: row['closed_at'] === null ? null : Number(row['closed_at']),
-        modelKey: String(row['model_key']),
         createdAt: Number(row['created_at']),
         updatedAt: Number(row['updated_at'] ?? 0),
     });
@@ -981,7 +1012,6 @@ export function openStore(file: string): Store {
         id: String(row['id']),
         name: String(row['name']),
         workspace: row['workspace'] === null ? null : String(row['workspace']),
-        modelKey: String(row['model_key']),
         createdAt: Number(row['created_at']),
     });
 
@@ -1120,8 +1150,7 @@ export function openStore(file: string): Store {
         a.projectId === b.projectId &&
         a.workspace === b.workspace &&
         a.status === b.status &&
-        a.closedAt === b.closedAt &&
-        a.modelKey === b.modelKey;
+        a.closedAt === b.closedAt;
 
     const writeTask = (task: TaskInput): TaskRecord => {
         const previous = readTask(task.id);
@@ -1139,15 +1168,14 @@ export function openStore(file: string): Store {
         const updatedAt = changed ? draft.updatedAt : previous.updatedAt;
         const record: TaskRecord = { ...draft, updatedAt };
 
-        db.exec('BEGIN IMMEDIATE');
-        try {
+        transaction(() => {
             writeEntity(task.id, 'task', createdAt);
             db.prepare(
-                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, model_key, created_at, updated_at) ' +
-                    'VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
+                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, created_at, updated_at) ' +
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
                     'title=excluded.title, summary=excluded.summary, body=excluded.body, project_id=excluded.project_id, ' +
                     'workspace=excluded.workspace, status=excluded.status, closed_at=excluded.closed_at, ' +
-                    'model_key=excluded.model_key, updated_at=excluded.updated_at',
+                    'updated_at=excluded.updated_at',
             ).run(
                 task.id,
                 number,
@@ -1158,15 +1186,10 @@ export function openStore(file: string): Store {
                 task.workspace ?? null,
                 task.status,
                 task.closedAt ?? null,
-                task.modelKey,
                 createdAt,
                 updatedAt,
             );
-            db.exec('COMMIT');
-        } catch (error) {
-            db.exec('ROLLBACK');
-            throw error;
-        }
+        });
         // 导出物：task.md（DB 仍是真源；文件失败只记日志）
         if (changed && dataRoot !== undefined) mirror(() => writeTaskDoc(dataRoot, record));
         return record;
@@ -1178,18 +1201,13 @@ export function openStore(file: string): Store {
             | undefined;
         const createdAt = existing?.created_at ?? project.createdAt ?? Date.now();
 
-        db.exec('BEGIN IMMEDIATE');
-        try {
+        transaction(() => {
             writeEntity(project.id, 'project', createdAt);
             db.prepare(
-                'INSERT INTO projects (id, name, workspace, model_key, created_at) VALUES (?,?,?,?,?) ' +
-                    'ON CONFLICT(id) DO UPDATE SET name=excluded.name, workspace=excluded.workspace, model_key=excluded.model_key',
-            ).run(project.id, project.name, project.workspace ?? null, project.modelKey, createdAt);
-            db.exec('COMMIT');
-        } catch (error) {
-            db.exec('ROLLBACK');
-            throw error;
-        }
+                'INSERT INTO projects (id, name, workspace, created_at) VALUES (?,?,?,?) ' +
+                    'ON CONFLICT(id) DO UPDATE SET name=excluded.name, workspace=excluded.workspace',
+            ).run(project.id, project.name, project.workspace ?? null, createdAt);
+        });
         return { ...project, createdAt };
     };
 
@@ -1228,7 +1246,6 @@ export function openStore(file: string): Store {
                     workspace: text('dir') || null,
                     status: legacyStatus[rawStatus] ?? (rawStatus === '' ? 'open' : rawStatus),
                     closedAt: typeof data['closedAt'] === 'number' ? data['closedAt'] : null,
-                    modelKey: String(row['model_key']),
                     createdAt,
                     // 历史任务没有「最后改动」概念：用创建时刻兜，别让迁移当天变成全员更新
                     updatedAt: createdAt,
@@ -1238,7 +1255,6 @@ export function openStore(file: string): Store {
                     id,
                     name: String(row['name']),
                     workspace: text('dir') || null,
-                    modelKey: String(row['model_key']),
                     createdAt,
                 });
             } else {
@@ -1251,16 +1267,6 @@ export function openStore(file: string): Store {
         db.prepare("UPDATE counters SET next = ? WHERE scope = 'task'").run(Number(max.n) + 1);
 
         renameToBackup('rooms', 'rooms_v0');
-    };
-
-    /**
-     * bots → entities。幂等：新 bot 由 `upsertBot` 自己写身份行，这里只补历史。
-     * 老 `bots` 表没有创建时间，统一盖当前时刻（bot 的 created_at 目前没有消费者）。
-     */
-    const syncBotEntities = (): void => {
-        db.prepare("INSERT OR IGNORE INTO entities (id, type, created_at) SELECT id, 'bot', ? FROM bots").run(
-            Date.now(),
-        );
     };
 
     /**
@@ -1281,8 +1287,7 @@ export function openStore(file: string): Store {
             )
             .all() as Array<Record<string, unknown>>;
 
-        db.exec('BEGIN IMMEDIATE');
-        try {
+        transaction(() => {
             const insert = db.prepare('INSERT INTO events (at, event, subject, data) VALUES (?,?,?,?)');
             for (const row of rows) {
                 const type = row['type'];
@@ -1295,74 +1300,253 @@ export function openStore(file: string): Store {
                 );
             }
             renameToBackup('journal_entries', 'journal_entries_v0');
-            db.exec('COMMIT');
-        } catch (error) {
-            db.exec('ROLLBACK');
-            throw error;
-        }
+        });
     };
 
     /**
-     * 投递状态从 5 个收敛到 3 个（2026-11-27，见 `DeliveryState` 的注释）。
+     * 老库迁移：`bots`（每个容器一个同名 bot）→ `bot_profiles`（类型级角色）。
      *
-     * 幂等：跑过的库没有旧值了，UPDATE 影响 0 行。
-     * 回滚：state 是文本列，反着改回去（`pending→queued` / `working→delivering` /
-     * `done+note='failed'→failed` / `done→delivered`）即可 —— 唯一不可逆的是
-     * `skipped` 并进了 `failed`，两者后果一样（都是没送进去）。
+     * 合并规则 = `(type, persona)` 相同即同一个角色：
+     *   · type 取 bot 归属容器的实体类型（project / task / …）；归属容器已不在时按 task 处理
+     *   · 角色 id 复用组内**最早那行**的 bot id —— 单行组（几个项目 bot）的会话键因此一字不动，
+     *     只有被合并掉的 26 个 task bot 需要改键
+     *   · 角色名：单行组用 bot 名；合并组用类型名（「任务助手」）—— 否则 27 个任务会有一个
+     *     叫「UI Workbench 架构对齐」的角色
+     *   · primary：该类型里「组内在 room_members 当过 primary」次数最多的那组，平手取最早
+     *
+     * 会话 / 投递按新旧 id 映射重写；同一容器里两行撞到同一个角色时留 turn 大的那条并打日志。
+     * 迁移完把旧表改名 `bots_v0` 留档（跟 `rooms_v0` 一个路数，不删人数据）。
      */
-    const migrateDeliveryStates = (): void => {
-        db.exec('BEGIN');
-        try {
-            db.prepare("UPDATE deliveries SET state='pending' WHERE state='queued'").run();
-            db.prepare("UPDATE deliveries SET state='working' WHERE state='delivering'").run();
-            db.prepare("UPDATE deliveries SET state='done' WHERE state='delivered'").run();
-            db.prepare(
-                "UPDATE deliveries SET state='done', note=COALESCE(note,'failed') WHERE state IN ('failed','skipped')",
-            ).run();
-            // 同一刀：`mode` 列的含义从「怎么送」(next-step/next-turn) 换成「谁发的」
-            // (human/system)。旧 next-turn 里混着系统消息与带附件降级的，一律归 system ——
-            // 后果都是「排下一轮」，与原来一致；next-step 归 human。
-            db.prepare("UPDATE deliveries SET mode='human' WHERE mode='next-step'").run();
-            db.prepare("UPDATE deliveries SET mode='system' WHERE mode='next-turn'").run();
-            db.exec('COMMIT');
-        } catch (error) {
-            db.exec('ROLLBACK');
-            throw error;
+    const migrateBots = (): void => {
+        const exists = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='bots'").get();
+        if (exists === undefined) return;
+        const rows = db
+            .prepare(
+                `SELECT b.id AS id, b.name AS name, b.color AS color, b.persona AS persona, b.model_key AS model_key,
+                        COALESCE(e.type, 'task') AS type,
+                        (SELECT COUNT(*) FROM room_members m WHERE m.bot_id = b.id AND m.primary_flag = 1) AS primaries
+                   FROM bots b LEFT JOIN entities e ON e.id = b.home_entity_id
+                  ORDER BY b.rowid ASC`,
+            )
+            .all() as Array<Record<string, unknown>>;
+        if (rows.length === 0) {
+            renameToBackup('bots', 'bots_v0');
+            return;
         }
+
+        const defaultName = (type: string): string =>
+            ({ project: '项目助手', task: '任务助手' })[type] ?? `${type} 助手`;
+        const now = Date.now();
+        interface Group {
+            type: string;
+            persona: string;
+            ids: string[];
+            first: Record<string, unknown>;
+            primaries: number;
+        }
+        const groups = new Map<string, Group>();
+        for (const row of rows) {
+            const type = String(row['type']);
+            const persona = String(row['persona']);
+            const key = `${type}\u0000${persona}`;
+            const group = groups.get(key);
+            if (group === undefined) {
+                groups.set(key, {
+                    type,
+                    persona,
+                    ids: [String(row['id'])],
+                    first: row,
+                    primaries: Number(row['primaries']),
+                });
+            } else {
+                group.ids.push(String(row['id']));
+                group.primaries += Number(row['primaries']);
+            }
+        }
+
+        const remap = new Map<string, string>();
+        const insert = db.prepare(
+            'INSERT OR REPLACE INTO bot_profiles (id, type, name, color, instructions, primary_flag, model_key, reasoning_effort, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        );
+        // primary 每类型一个：先按组算胜出者
+        const primaryOf = new Map<string, Group>();
+        for (const group of groups.values()) {
+            const best = primaryOf.get(group.type);
+            if (best === undefined || group.primaries > best.primaries) primaryOf.set(group.type, group);
+        }
+        let seq = 0;
+        for (const group of groups.values()) {
+            const id = group.ids[0]!;
+            const modelKey = group.first['model_key'];
+            insert.run(
+                id,
+                group.type,
+                group.ids.length === 1 ? String(group.first['name']) : defaultName(group.type),
+                String(group.first['color']),
+                group.persona,
+                primaryOf.get(group.type) === group ? 1 : 0,
+                // 老库里有 `none@none/none` 这种占位值（当年拿它表示「没配」）：迁移时落成 null，
+                // 空串 / 占位都不该进角色列 —— 角色没选模型 = 继续继承（房间 → 全局默认）
+                modelKey === null || String(modelKey) === '' || String(modelKey) === PLACEHOLDER_MODEL_KEY
+                    ? null
+                    : String(modelKey),
+                null,
+                // 组内相对次序要稳定：主选按「建得早」排，这里就得给出单调的 createdAt
+                now - (rows.length - seq) * 60_000,
+                now,
+            );
+            seq += 1;
+            for (const oldId of group.ids) remap.set(oldId, id);
+        }
+
+        const moved = [...remap.entries()].filter(([from, to]) => from !== to);
+        transaction(() => {
+            // 映射先落临时表：下面两张 JSON 大表的 author.id / owner 要**一次扫完**。
+            // 以前是「每个映射都全表扫一遍」—— 真库 37 个映射 × 2274 条大 JSON ≈ 两分半，
+            // 全都卡在这一段，迁移页上一行 running 一动不动（2026-11-27 实测）。
+            db.exec('CREATE TEMP TABLE IF NOT EXISTS _bot_remap (from_id TEXT PRIMARY KEY, to_id TEXT NOT NULL)');
+            db.exec('DELETE FROM _bot_remap');
+            const addRemap = db.prepare('INSERT OR REPLACE INTO _bot_remap (from_id, to_id) VALUES (?,?)');
+
+            let done = 0;
+            for (const [from, to] of moved) {
+                addRemap.run(from, to);
+                // 撞键：同一容器里两个 bot 合并成一个角色 ⇒ 留 turn 大的那份会话
+                const dropped = db
+                    .prepare(
+                        'DELETE FROM session_state WHERE bot_profile_id = ? AND entity_id IN (SELECT entity_id FROM session_state WHERE bot_profile_id = ?)',
+                    )
+                    .run(from, to).changes;
+                if (Number(dropped) > 0) {
+                    console.error(`[bot-role] 合并会话：${from} → ${to}，丢掉 ${String(dropped)} 份旧快照（同容器重复）`);
+                }
+                db.prepare('UPDATE session_state SET bot_profile_id = ? WHERE bot_profile_id = ?').run(to, from);
+                db.prepare(
+                    'DELETE FROM deliveries WHERE bot_id = ? AND entity_id IN (SELECT entity_id FROM deliveries WHERE bot_id = ?)',
+                ).run(from, to);
+                db.prepare('UPDATE deliveries SET bot_id = ? WHERE bot_id = ?').run(to, from);
+                done += 1;
+                if (done % 10 === 0 || done === moved.length) runtime.progress?.(done, moved.length);
+            }
+
+            if (moved.length > 0) {
+                // 历史消息里的作者 id 也要跟着换：界面按「消息 author.id ∈ 当前成员」决定
+                // 归属与是否显示 —— 不改的话，被合并掉的那批旧 bot 的消息会因对不上新角色 id
+                // 而在界面上整段消失（数据在库里、只是看不见）。2026-11-26 实测发现。
+                db.prepare(
+                    "UPDATE entity_items SET item = json_set(item, '$.author.id', (SELECT to_id FROM _bot_remap WHERE from_id = json_extract(item, '$.author.id'))) " +
+                        "WHERE json_extract(item, '$.author.id') IN (SELECT from_id FROM _bot_remap)",
+                ).run();
+                runtime.progress?.(moved.length, moved.length);
+                // 提问的 owner 同理：ask 卡片的归属 /「谁问的」也按角色 id 认。
+                db.prepare(
+                    "UPDATE asks SET request = json_set(request, '$.owner', (SELECT to_id FROM _bot_remap WHERE from_id = json_extract(request, '$.owner'))) " +
+                        "WHERE json_extract(request, '$.owner') IN (SELECT from_id FROM _bot_remap)",
+                ).run();
+            }
+            renameToBackup('bots', 'bots_v0');
+        });
     };
 
-    const hasLegacyRooms =
-        db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='rooms'").get() !== undefined;
-    // 顺序有意义：先搬房间（journal 的 subject 要能解析到实体），再补 bot 身份，最后折日志
-    if (hasLegacyRooms) migrateLegacyRooms();
-    syncBotEntities();
-    migrateJournal();
-    migrateDeliveryStates();
+    /**
+     * 退役：房间级 `model_key`（2026-11-27 用户裁「模型真源 = 人设」）。
+     *
+     * `tasks` / `projects` 的 model_key 曾是「建容器时把默认模型写死一份」，于是角色级改动
+     * 永远被它盖住（UI 显示角色级、执行读房间级）。这里把列直接删掉（SQLite ≥ 3.35）；
+     * 删不动（老版本 / 被索引引用）就清空 —— 代码已经不再读写它，留着只是噪音。
+     */
+    // ── 跑迁移（2026-11-27 重构）───────────────────────────────────────
+    // 编排全在 `./migrations/`：一个迁移一个文件、顺序 = 数组顺序、记账表 = schema_migrations。
+    // 这里只提供「迁移允许用到的能力面」—— 纯库操作 + 三个必须走 store 语义的搬家
+    // （老房间搬迁要分配任务编号、折 bots 要重写会话 / 消息、老日志要落事件流）。
+    const runtime: MigrationRuntime = {
+        db,
+        transaction,
+        hasTable: (name: string): boolean =>
+            db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name = ?").get(name) !== undefined,
+        columns: (table: string): Set<string> => {
+            const exists = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name = ?").get(table);
+            if (exists === undefined) return new Set();
+            return new Set(
+                (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+            );
+        },
+        renameToBackup: (table: string): void => renameToBackup(table, 'v0'),
+        createSchema,
+        legacyRooms: (): void => migrateLegacyRooms(),
+        foldBots: (): void => migrateBots(),
+        journalToEvents: (): void => migrateJournal(),
+        log: (message: string): void => console.error(`[migrate] ${message}`),
+    };
+    const migrationRun = applyMigrations(runtime, report);
+    // 启动日志报一句「库版本」：出问题时第一眼看的就是它（没跑东西就不啰嗦）
+    if (migrationRun.ran.length > 0) {
+        console.error(
+            `[migrate] 库版本 ${String(migrationRun.total)} 条已就位；本次跑了 ${String(migrationRun.ran.length)} 条：${migrationRun.ran.join(', ')}`,
+        );
+    }
 
     return {
         db,
-        listBots(): Bot[] {
-            const rows = db.prepare('SELECT * FROM bots ORDER BY rowid ASC').all() as Record<string, unknown>[];
-            return rows.map(toBot);
+        listBotProfiles(): BotProfile[] {
+            const rows = db
+                .prepare('SELECT * FROM bot_profiles ORDER BY type ASC, primary_flag DESC, created_at ASC, rowid ASC')
+                .all() as Record<string, unknown>[];
+            return rows.map(toRole);
         },
-        upsertBot(bot: Bot): void {
-            // bot 也是实体（可被 entity_links 引用）：身份行与 bots 行同步
-            writeEntity(bot.id, 'bot', Date.now());
+        upsertBotProfile(role: BotProfile): void {
+            // 「每类型至多一个 primary」由唯一索引兜底：先撤掉同类型别人身上的旗，再写自己
+            db.exec('BEGIN IMMEDIATE');
+            try {
+                if (role.primary) {
+                    db.prepare('UPDATE bot_profiles SET primary_flag = 0 WHERE type = ? AND id <> ?').run(
+                        role.type,
+                        role.id,
+                    );
+                }
+                db.prepare(
+                    'INSERT INTO bot_profiles (id, type, name, color, instructions, primary_flag, model_key, reasoning_effort, created_at, updated_at, domain_type, domain_id, persona_ref) ' +
+                        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
+                        'name=excluded.name, color=excluded.color, instructions=excluded.instructions, ' +
+                        'primary_flag=excluded.primary_flag, model_key=excluded.model_key, ' +
+                        'reasoning_effort=excluded.reasoning_effort, updated_at=excluded.updated_at, ' +
+                        'domain_type=excluded.domain_type, domain_id=excluded.domain_id, persona_ref=excluded.persona_ref',
+                ).run(
+                    role.id,
+                    role.type,
+                    role.name,
+                    role.color,
+                    role.instructions,
+                    role.primary ? 1 : 0,
+                    role.modelKey === null || role.modelKey === '' ? null : role.modelKey,
+                    role.reasoningEffort,
+                    role.createdAt,
+                    role.updatedAt,
+                    role.domainType ?? null,
+                    role.domainId ?? null,
+                    role.personaRef ?? null,
+                );
+                db.exec('COMMIT');
+            } catch (error) {
+                db.exec('ROLLBACK');
+                throw error;
+            }
+        },
+        listBotProfileDefaults(): BotProfileDefaults[] {
+            const rows = db.prepare('SELECT * FROM bot_profile_defaults ORDER BY type ASC').all() as Record<string, unknown>[];
+            return rows.map(toBotProfileDefaults);
+        },
+        getBotProfileDefaults(type: string): BotProfileDefaults | undefined {
+            const row = db.prepare('SELECT * FROM bot_profile_defaults WHERE type = ?').get(type) as
+                | Record<string, unknown>
+                | undefined;
+            return row === undefined ? undefined : toBotProfileDefaults(row);
+        },
+        setBotProfileDefaults(config: BotProfileDefaults): void {
             db.prepare(
-                'INSERT INTO bots (id, name, color, persona, home_entity_id, home_dir, model_key) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=?, persona=?, home_dir=?, model_key=?',
-            ).run(
-                bot.id,
-                bot.name,
-                bot.color,
-                bot.persona,
-                bot.homeRoomId,
-                bot.homeDir ?? null,
-                bot.modelKey,
-                bot.name,
-                bot.persona,
-                bot.homeDir ?? null,
-                bot.modelKey,
-            );
+                'INSERT INTO bot_profile_defaults (type, model_key, reasoning_effort, updated_at) VALUES (?,?,?,?) ' +
+                    'ON CONFLICT(type) DO UPDATE SET model_key=excluded.model_key, reasoning_effort=excluded.reasoning_effort, updated_at=excluded.updated_at',
+            ).run(config.type, config.modelKey, config.reasoningEffort, config.updatedAt);
         },
         appendItem(roomId: string, item: Item): Item {
             const result = db
@@ -1495,17 +1679,10 @@ export function openStore(file: string): Store {
         setMembers(roomId: string, members: readonly RoomMember[]): void {
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
             const insert = db.prepare(
-                'INSERT INTO room_members (entity_id, bot_id, position, primary_flag, model_key, persona) VALUES (?,?,?,?,?,?)',
+                'INSERT INTO room_members (entity_id, bot_id, position, primary_flag, persona) VALUES (?,?,?,?,?)',
             );
             members.forEach((member, index) => {
-                insert.run(
-                    roomId,
-                    member.botId,
-                    index,
-                    member.primary === true ? 1 : 0,
-                    member.modelKey ?? null,
-                    member.persona ?? null,
-                );
+                insert.run(roomId, member.botId, index, member.primary === true ? 1 : 0, member.persona ?? null);
             });
         },
         deleteRoom(roomId: string): void {
@@ -1533,10 +1710,14 @@ export function openStore(file: string): Store {
             // 产物目录不删，挪进 _trash（截图 / 日志是排查材料，删任务通常只是不想再看到它）
             if (dataRoot !== undefined && task !== undefined) mirror(() => trashTaskDir(dataRoot, task));
         },
-        deleteBot(botId: string): void {
-            db.prepare('DELETE FROM bots WHERE id = ?').run(botId);
-            // 身份行只在确实属于 bot 时删（防 id 撞到房间）
-            db.prepare("DELETE FROM entities WHERE id = ? AND type = 'bot'").run(botId);
+        deleteBotProfile(roleId: string): void {
+            // 成员是从角色表派生的：删了角色，各房间的成员名单下一次派生时就少一个，
+            // 但那间房的会话/投递还挂着这个 id，不清就是永久孤儿行
+            db.prepare('DELETE FROM session_state WHERE bot_profile_id = ?').run(roleId);
+            db.prepare('DELETE FROM deliveries WHERE bot_id = ?').run(roleId);
+            db.prepare('DELETE FROM bot_profiles WHERE id = ?').run(roleId);
+            // 老库里 bot 都是实体：身份行只在确实属于 bot 时删（防 id 撞到房间）
+            db.prepare("DELETE FROM entities WHERE id = ? AND type = 'bot'").run(roleId);
         },
         members(): Record<string, RoomMember[]> {
             return readMembers();
@@ -1787,8 +1968,8 @@ export function openStore(file: string): Store {
         },
         saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void {
             db.prepare(
-                'INSERT INTO session_state (entity_id, bot_id, turn, collapsed, entries, usage, log_seq, updated_at) VALUES (?,?,?,?,?,?,?,?) ' +
-                    'ON CONFLICT(entity_id, bot_id) DO UPDATE SET turn=?, collapsed=?, entries=?, usage=?, log_seq=?, updated_at=?',
+                'INSERT INTO session_state (entity_id, bot_profile_id, turn, collapsed, entries, usage, log_seq, updated_at) VALUES (?,?,?,?,?,?,?,?) ' +
+                    'ON CONFLICT(entity_id, bot_profile_id) DO UPDATE SET turn=?, collapsed=?, entries=?, usage=?, log_seq=?, updated_at=?',
             ).run(
                 roomId,
                 botId,
@@ -1808,7 +1989,7 @@ export function openStore(file: string): Store {
         },
         loadSession(roomId: string, botId: string): SessionSnapshot | undefined {
             const row = db
-                .prepare('SELECT * FROM session_state WHERE entity_id = ? AND bot_id = ?')
+                .prepare('SELECT * FROM session_state WHERE entity_id = ? AND bot_profile_id = ?')
                 .get(roomId, botId) as Record<string, unknown> | undefined;
             if (row === undefined) return undefined;
             return {

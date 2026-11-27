@@ -1,6 +1,18 @@
 // index.ts —— entity-runtime 的公开出口（切片阶段，先小后大）
 
 export { runAgent, type RunOptions } from './agent';
+
+// 迁移体系（实现全在 @diy-agent/migration；这里转手是为了老调用方不用改 import）
+export {
+    migrations,
+    migrationPlan,
+    migrationVersion,
+    appliedCount,
+    type MigrationPlanItem,
+    type MigrationVersion,
+    type Migration,
+    type MigrationRuntime,
+} from '@diy-agent/migration';
 export {
     DEFAULT_BUDGET,
     estimateChars,
@@ -18,7 +30,12 @@ export {
 export {
     ASK_DRAFT_PREFIX,
     JOURNAL_KINDS,
+    MIGRATION_STEPS,
+    PLACEHOLDER_MODEL_KEY,
     openStore,
+    type MigrationReporter,
+    type MigrationStepEvent,
+    type OpenStoreOptions,
     type Draft,
     type EntityLink,
     type EntityRecord,
@@ -104,6 +121,7 @@ export {
     modelOf,
     modelProviders,
     parseModelKey,
+    snapshotPath,
     type ModelView,
     type ProviderView,
 } from './providers';
@@ -113,6 +131,7 @@ export type {
     Author,
     Bot,
     BotOutcome,
+    BotProfile,
     BotRow,
     BotState,
     Delivery,

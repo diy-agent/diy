@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bot profile / bot 实例 / 工具 bot / 会议</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#1c1917; --muted:#78716c; --line:#e7e5e4; --card:#fff;
+    --p:#0d9488; --i:#c2410c; --t:#7c3aed; --warn:#b91c1c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:36px 22px 72px;background:var(--bg);color:var(--fg);
+       font:15px/1.68 -apple-system,BlinkMacSystemFont,"PingFang SC",Arial,sans-serif}
+  .wrap{max-width:880px;margin:0 auto}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13.5px;margin:0 0 28px}
+  h2{font-size:16px;margin:36px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--line)}
+  code{font-family:ui-monospace,Menlo,monospace;font-size:.9em;background:#f5f5f4;padding:1px 5px;border-radius:4px}
+  .lead{background:#fff;border:1px solid var(--line);border-left:4px solid var(--p);
+        border-radius:8px;padding:13px 16px;margin:0 0 6px;font-size:14.5px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .box.p{border-top:3px solid var(--p)} .box.i{border-top:3px solid var(--i)}
+  .box h3{margin:0 0 6px;font-size:14.5px}
+  .box p{margin:3px 0;font-size:13.5px;color:var(--muted)}
+  .box .w{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#0f766e;margin-top:8px}
+  .link{text-align:center;color:var(--muted);font-size:13px;margin:10px 0}
+  .kind{display:grid;gap:8px;margin-top:4px}
+  .kind .row{display:grid;grid-template-columns:88px 1fr;gap:12px;align-items:start;
+             background:#fff;border:1px solid var(--line);border-radius:9px;padding:11px 14px}
+  .kind .row.tool{border-left:3px solid var(--t)}
+  .pill{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:99px;
+        background:#f0fdfa;color:var(--p);border:1px solid #99f6e4;font-weight:600}
+  .pill.tool{background:#faf5ff;color:var(--t);border-color:#e9d5ff}
+  .kind p{margin:2px 0;font-size:13.5px;color:var(--muted)}
+  pre{background:#1c1917;color:#e7e5e4;padding:13px 15px;border-radius:9px;overflow:auto;
+      font-size:12.5px;line-height:1.6;margin:8px 0 0}
+  pre .c{color:#78716c} pre .k{color:#5eead4}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff;
+        border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#fafaf9;font-size:12.5px;color:var(--muted);font-weight:600}
+  tr:last-child td{border-bottom:none}
+  .no{color:var(--warn);font-weight:600}
+  .todo{background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:12px 16px;font-size:13.5px}
+  .todo ol{margin:6px 0 0;padding-left:20px} .todo li{margin:3px 0}
+  @media(max-width:720px){.two{grid-template-columns:1fr}.kind .row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>bot profile → bot 实例</h1>
+<p class="sub">2026-11-27 v2 · 按你的澄清重写：不拆 persona 层、没有 primary_flag</p>
+
+<div class="lead">
+  <b>只有两层。</b>profile 是配置（哪种 bot），实例是运行体（这个 room 里的那个 bot + 它的 session log）。
+  人设就是 profile 自己的指令，不单列一层。
+</div>
+
+<h2>一、两层</h2>
+<div class="two">
+  <div class="box p">
+    <h3>bot profile —— 配置</h3>
+    <p>指令 · 名字 · 颜色 · 模型 · runtime</p>
+    <p>按 domain 归属：全局 / 项目 / 任务</p>
+    <p>跨 room 复用，本身不跑</p>
+    <div class="w">bot_roles（未来改名 bot_profiles）</div>
+  </div>
+  <div class="box i">
+    <h3>bot 实例 —— 运行体</h3>
+    <p>= profile × room</p>
+    <p>拥有自己的 <b>session log</b></p>
+    <p>「任务 bot」= 某实例 + 它的 session log</p>
+    <div class="w">session_state(entity_id, bot_role_id)</div>
+  </div>
+</div>
+<div class="link">profile ──在某个 room 里出现──▶ 实例（+ session log）</div>
+
+<h2>二、两种 bot</h2>
+<div class="kind">
+  <div class="row">
+    <span class="pill">沟通型</span>
+    <div>
+      <p>参与对话：进成员列表、可 @、有 session log</p>
+      <p style="color:#a8a29e">例：项目助手 / 任务 bot / 小满</p>
+    </div>
+  </div>
+  <div class="row tool">
+    <span class="pill tool">工具型</span>
+    <div>
+      <p><b>不参与沟通、不可 @</b>，只被调用跑一下</p>
+      <p style="color:#a8a29e">例：job 之类</p>
+    </div>
+  </div>
+</div>
+
+<h2>三、为什么现在看着很乱</h2>
+<p style="font-size:14px">room 的成员是「该 type 下所有 profile」派生出来的，不是配的：</p>
+<pre><span class="c">// apps/diy2/server/app.ts</span>
+<span class="k">function</span> membersOf(type) { <span class="k">return</span> membersOfType(listRoles(), type); }
+
+<span class="c">// 等价于 roles.filter(r =&gt; r.type === type)</span></pre>
+<p style="font-size:14px;margin-top:8px">
+  于是每个 project room 都有 4 个 bot（项目助手 / diy / cops / 小满），每个 task room 都有 3 个。
+  <b>目标：room 常态只有自己的 bot。</b>
+</p>
+
+<h2>四、会议：两种形态（等你拍板）</h2>
+<p style="font-size:14px">前提一样：<b>开的会拉的都是已有的 bot 实例</b>，不 new 新 bot；room 常态只有自己。</p>
+<table>
+  <thead><tr><th style="width:64px">形态</th><th>怎么做</th><th>好处</th><th>代价</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>甲</b></td>
+      <td>任务 room 本身是私聊；点「开会」切到本任务的<b>会议室</b>（另一实体），拉人，开完关闭回私聊</td>
+      <td>私聊与会议在实体层分开；会议有独立起止与归档</td>
+      <td>多一层实体 + UI 切换；跨 room 引用</td>
+    </tr>
+    <tr>
+      <td><b>乙</b></td>
+      <td>不区分私聊/会议：同一 room 临时拉人，开完删掉参会人，room 回到只有自己</td>
+      <td>少一层实体，不切 UI，实现简单</td>
+      <td>成员动态；「当时谁在场」要靠快照</td>
+    </tr>
+  </tbody>
+</table>
+<p style="font-size:13.5px;color:var(--muted);margin-top:10px">
+  注意：session 是按 bot 走的（一个 bot 一条连续 session、消息标 room），所以两种形态的<b>开销一样</b> ——
+  差别只在「会议是不是一个独立 room 实体」。
+</p>
+
+<h2>五、待落地</h2>
+<div class="todo">
+  <ol>
+    <li>去掉 <code>primary_flag</code>（表 / 协议 / UI / 派生逻辑）</li>
+    <li><code>bot_roles</code> → bot profile，按 domain 归属，指令内联（不拆 persona_ref）</li>
+    <li>加 bot <code>kind</code>：沟通型 / 工具型；工具型不进成员列表、不可 @</li>
+    <li>room 成员：从「type 派生全部」改成「默认只有自己的 bot」</li>
+    <li>会议形态（甲 / 乙）拍板后实现</li>
+  </ol>
+</div>
+
+</div>
+</body>
+</html>

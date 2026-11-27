@@ -93,7 +93,7 @@ import { Markdown } from '../../components/Markdown';
 import { TurnFooter } from '../../components/TurnFooter';
 import { useDraft } from '../../drafts';
 import { useMentionCandidates } from '../../mentions';
-import { actions, conversationOf, useProviders, useQueuedOf, useRooms, useStore } from '../../store';
+import { actions, conversationOf, useBotProfiles, useProviders, useQueuedOf, useRooms, useStore } from '../../store';
 import { plainTextOf, runsOf, toolTargetOf, type Run } from '../shared';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
@@ -620,9 +620,13 @@ function Composer({
     // 贴了图、但当前模型不收图 —— 发之前就说清楚，别等上游 400（服务端也会兜一层）
     const rooms = useRooms();
     const providers = useProviders();
-    const noVision =
-        attachments.items.length > 0 &&
-        !acceptsImages(providers, rooms.find((room) => room.id === roomId)?.modelKey ?? '');
+    // 模型键在**角色**上（房间级 modelKey 已于 2026-11-27 退役）：
+    // 取这个房间主成员对应的机器人配置，没有就空串（= 跟随默认模型）
+    const botProfiles = useBotProfiles();
+    const room = rooms.find((item) => item.id === roomId);
+    const modelKeyOfRoom =
+        botProfiles.find((profile) => profile.id === room?.members[0]?.botId)?.modelKey ?? '';
+    const noVision = attachments.items.length > 0 && !acceptsImages(providers, modelKeyOfRoom);
 
     /**
      * @ 补全的规则全在 chat-core（`mentionQuery` / `filterMentionCandidates` / `completeMention` /

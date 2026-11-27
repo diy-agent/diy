@@ -15,10 +15,13 @@ export type { AttachmentRef };
 // ── 容器 / 参与者 ──────────────────────────────────────────────
 
 /**
- * 房间里的一名成员：bot 身份在房间里的绑定。
+ * 房间里的一名成员：角色在房间里的绑定。
  *
- * Bot 是全局身份（名字 / 颜色 / 归属），RoomMember 是它在这个房间里的那副面孔：
- * 可以覆盖模型与人格 —— 同一个 bot 在造价房间和实验房间里不是同一个人格。
+ * **成员由类型派生**（2026-11-24 裁，见 docs/plans/2026-11-24-bot-role.md）：房间
+ * 类型为 T 的房间，成员恒等于 `type = T` 的角色表，声明顺序 = (primary 优先, 建得早优先)。
+ * 所以 `botId` 里装的是**角色 id**，不是某个房间专属的 bot。
+ *
+ * `modelKey` / `persona` 两个覆盖字段留给「实体级覆盖」（本期不做，表里也没写）。
  */
 export interface RoomMember {
     botId: string;
@@ -51,21 +54,90 @@ export interface Room {
     data: Record<string, unknown>;
     /** 成员：身份 + 本房间的覆盖 */
     members: RoomMember[];
-    /** 房间默认模型（成员没覆盖时用它） */
-    modelKey: string;
 }
 
+/**
+ * 角色：一种工作对象类型（project / task / 任意插件类型）上的**固定席位**。
+ *
+ * 为什么不是「每个房间一个 bot」：真库 35 个 bot 与 35 个容器 1:1 同名、task 侧 27 个
+ * personas 全同 —— 那个「全局身份」既没被复用、又要每建一个容器复制一份。角色是类型级
+ * 的，新建任务自动出现在新任务房间里，一个房间一份会话（键 `(entity_id, 角色 id)`）。
+ */
+export interface BotProfile {
+    id: string;
+    /** 归属的工作对象类型：project / task / 任意自定义（与 Room.type 同一个词表） */
+    type: string;
+    name: string;
+    color: string;
+    /** 人格段（原 persona）：拼进系统提示词；空 = 只有类型通用部分 */
+    instructions: string;
+    /** 该类型的默认应答（每类型至多一个，库里用唯一索引钉住） */
+    primary: boolean;
+    /** 模型限定名 `providerId/modelId`；null = 继承房间 → 全局默认 */
+    modelKey: string | null;
+    /** 推理强度（provider 支持的枚举值）；null = 用模型/服务商缺省 */
+    reasoningEffort: string | null;
+    createdAt: number;
+    updatedAt: number;
+    /** per-task bot 的 domain 归属：project / task / 任意自定义；null = type 级角色（模板） */
+    domainType?: string | null;
+    /** domain 归属的 id（任务 id / 项目 id）；null = type 级角色 */
+    domainId?: string | null;
+    /** 人设代码贡献点；null = 用 instructions 文本 */
+    personaRef?: string | null;
+}
+
+/**
+ * 类型默认配置（2026-11-26）：一类工作对象共享的 model / effort。
+ *
+ * 为什么要有它：几百个任务 bot 不该各配一份模型 —— 只按类型配一套，
+ * bot_roles 上的 model_key / reasoning_effort 只在个别 bot 需要 override 时才填。
+ * 实际值 = bot 的 override ?? 类型默认 ?? 房间 ?? 全局默认。
+ */
+export interface BotProfileDefaults {
+    /** 工作对象类型：project / task / 任意自定义（与 BotProfile.type 同一个词表） */
+    type: string;
+    /** 模型限定名 `providerId/modelId`；null = 没配，继续继承房间 → 全局默认 */
+    modelKey: string | null;
+    /** 推理强度；null = 用模型/服务商缺省 */
+    reasoningEffort: string | null;
+    updatedAt: number;
+}
+
+/**
+ * 角色在某个房间里的化身：运行时与前端补全实际消费的形状。
+ *
+ * 保留 `persona` 这个名字（而不是 `instructions`），因为房间侧的一切——成员解析、
+ * 三级模型继承、@ 补全——都按「这个房间里的人格」讲；`botOfRole` 是唯一的转换点。
+ */
 export interface Bot {
     id: string;
     name: string;
     color: string;
     persona: string;
-    /** 归属容器（创建它的地方；bot 可以被多个 room 借用） */
-    homeRoomId: string;
+    /** 归属容器（只在种子/清理逻辑里有用；派生的成员没有它） */
+    homeRoomId?: string;
     /** bot 自己的目录（可选） */
     homeDir?: string;
     modelKey: string;
 }
+
+/**
+ * 上一轮怎么结束的（磁盘侧判据见 entity-runtime/bot-status.ts）。
+ *
+ * `interrupted` 是唯一一个**不是** `endItems()` 产出的结局：进程崩在收尾前什么都来不及落，
+ * 靠 `turn_open` 表在下次启动时补一条 `notice(kind: 'interrupted')` 才认得出。
+ *
+ * 侧栏图标变红（`rooms.list` 的 `broken`）靠它，所以它不属于 bot-overview 专属，保留。
+ */
+export type BotOutcome =
+    | 'done'
+    | 'truncated'
+    | 'max-steps'
+    | 'filtered'
+    | 'tool-mismatch'
+    | 'failed'
+    | 'interrupted';
 
 export type Author = {
     id: string;
@@ -609,14 +681,6 @@ export interface TurnEndReason {
 // ── bot 状态投影（`diy2.bots.rows`）────────────────────────────────
 
 /**
- * 上一轮怎么结束的（磁盘侧判据见 entity-runtime/bot-status.ts）。
- *
- * `interrupted` 是唯一一个**不是** `endItems()` 产出的结局：进程崩在收尾前什么都来不及落，
- * 靠 `turn_open` 表在下次启动时补一条 `notice(kind: 'interrupted')` 才认得出。
- */
-export type BotOutcome = 'done' | 'truncated' | 'max-steps' | 'filtered' | 'tool-mismatch' | 'failed' | 'interrupted';
-
-/**
  * 这个 bot 此刻要你干什么 —— **一个值，不是一组标志**。
  *
  * 优先级 running > asking > needs-attention > idle：在跑时哪怕上一轮是错的也不催你
@@ -722,6 +786,32 @@ export interface ModelCostView {
     cacheWrite?: number;
 }
 
+/**
+ * 推理强度候选（归一自 models.dev 的 reasoning_options，与 `@diy-agent/model-catalog` 同口径）。
+ * 只有 type=effort 的模型才有；缺省（不推理 / 不能选 effort）= 无此字段。
+ */
+export interface ModelReasoningView {
+    efforts: readonly string[];
+    /** 该模型第一档，换模型时的默认 effort */
+    defaultEffort: string;
+}
+
+/** 模型能力标记（表格「能力」列）；缺省 = 上游没声明，不是「不支持」 */
+export interface ModelCapabilitiesView {
+    vision: boolean;
+    toolCall: boolean;
+    reasoning: boolean;
+    attachment: boolean;
+    structuredOutput: boolean;
+    temperature: boolean;
+    openWeights: boolean;
+    /** 支持的输入 / 输出模态（text / image / audio / video / pdf …） */
+    inputs: readonly string[];
+    outputs: readonly string[];
+    releaseDate?: string;
+    lastUpdated?: string;
+}
+
 /** 目录里的一个模型 */
 export interface ModelCatalogModel {
     id: string;
@@ -736,6 +826,10 @@ export interface ModelCatalogModel {
     contextWindow?: number;
     maxOutputTokens?: number;
     cost?: ModelCostView;
+    reasoning?: ModelReasoningView;
+    capabilities?: ModelCapabilitiesView;
+    /** 在目录里启用了吗（`model.yaml` 的 filter 结果）；缺省 = 是 */
+    enabled?: boolean;
 }
 
 /** 一个 provider 的视图（**永不含 key 值**：账号只有名字与「填没填」） */
@@ -753,8 +847,74 @@ export interface ModelCatalogProvider {
 /** `diy2.models.list` 的回包 */
 export interface ModelCatalogSnapshot {
     providers: ModelCatalogProvider[];
-    /** `model.yaml` 的 `defaultModel`；缺省 = 服务端用兜底常量 */
+    /** `model.yaml` 的 `defaultModel`；缺省 = 这个实例还没配（界面不猜一个） */
     defaultModelKey?: string;
+    /**
+     * 数据根里有没有 `model.yaml`。
+     *
+     * 不是「目录空不空」的另一种说法：目录空也可能是「配了但没有一家账号填了 key」，
+     * 两者的出路不同（一个去写配置、一个去补 key）。`false` 是**明确状态**：界面挂横幅、
+     * 不发请求（发了也只会得到「模型目录里没有 …」）。
+     */
+    configured: boolean;
+    /** `model.yaml` 的绝对路径（横幅里给人看 / 复制） */
+    modelConfigPath: string;
+    /** 目录快照（`<home>/data/models.dev.json`）缺没缺；缺了 = 标准 provider 全没有规格 */
+    snapshotMissing: boolean;
+}
+
+// ── 配置页的视图（`diy2.models.config` / 写方法的回包）──────────────────
+//
+// 与 `ModelCatalogSnapshot` 的区别就一条：**这里列出目录里全部可用的 provider**，
+// 包括还没接进 `model.yaml` 的（`configured: false`）。选模型器只需要「能选的」，
+// 配置页要先有候选清单 —— 合成一份回包会逼着选模型器去过滤它不需要的数据。
+
+export interface ModelConfigAccount {
+    name: string;
+    configured: boolean;
+    /** 值是 `$VAR` 引用（键名不是 key 本身） */
+    env: boolean;
+    /** 字面量 key 的字符数（`env` 时缺省） */
+    chars?: number;
+}
+
+export interface ModelConfigModel {
+    id: string;
+    name: string;
+    contextWindow?: number;
+    maxOutputTokens?: number;
+    cost?: ModelCostView;
+    reasoning?: ModelReasoningView;
+    /** 过了 filter 就会进目录；false = 在目录里但被关掉了 */
+    enabled: boolean;
+}
+
+export interface ModelConfigProvider {
+    id: string;
+    name: string;
+    kind: 'std' | 'custom';
+    /** 在 `model.yaml` 里（false = 目录里可用、还没接） */
+    configured: boolean;
+    /** 上游基址；缺 = 发不出请求（这家整家进不了目录） */
+    api?: string;
+    npm?: string;
+    /** 规格里声明的环境变量名（填 key 时给人看） */
+    envKeys: string[];
+    doc?: string;
+    accounts: ModelConfigAccount[];
+    /** **含被关掉的**（`enabled: false`）：配置页要能把它们再打开 */
+    models: ModelConfigModel[];
+}
+
+/** `diy2.models.config` 的回包；写方法的回包也是它（写完重算一份，界面不必自己拼） */
+export interface ModelConfigSnapshot {
+    /** 数据根（页头说清「这份配置写在哪」） */
+    home: string;
+    modelConfigPath: string;
+    snapshotMissing: boolean;
+    /** `model.yaml` 顶层 `defaultModel`；没设 = 缺省（界面不猜） */
+    defaultModelKey?: string;
+    providers: ModelConfigProvider[];
 }
 
 // ── 消息来源（后端内部，类型放这里以便将来跨进程）─────────────

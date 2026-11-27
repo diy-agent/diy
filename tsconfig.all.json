@@ -99,6 +99,9 @@
     },
     {
       "path": "apps/diy2"
+    },
+    {
+      "path": "pkgs.ts/core/migration"
     }
   ]
 }

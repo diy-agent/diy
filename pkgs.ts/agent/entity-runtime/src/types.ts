@@ -12,8 +12,8 @@ export type {
     Author,
     Bot,
     BotOutcome,
-    BotRow,
-    BotState,
+    BotProfile,
+    BotProfileDefaults,
     Delivery,
     DeliveryState,
     Room,
@@ -22,7 +22,12 @@ export type {
     Item,
     ItemStatus,
     MessageKind,
+    BotRow,
+    BotState,
     ProgressStage,
     StallPhase,
     TurnEndReason,
 } from '@diy-agent/protocol';
+
+/** 插话时机：下一步边界 / 下一轮开头（原来在 protocol，main 把它并进了别处） */
+export type InboxMode = 'next-step' | 'next-turn';

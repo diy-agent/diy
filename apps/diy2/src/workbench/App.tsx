@@ -17,29 +17,29 @@
 
 import {
     ActiveJobsGlyph,
-    AttentionCapsules,
-    BotsOverlay,
-    countByAttention,
     JobsPanel,
     RoomDialogsProvider,
     Sidebar,
-    useBotRows,
+    navigate,
+    roomAddressOf,
+    useAddress,
     useLoaded,
+    useModelSetup,
     useRoomDialogs,
     useRoomDialogsContext,
+    useRooms,
     useSelectedRoom,
-    type Filter,
 } from '@diy-agent/entity-chat';
 import { Menu, Settings } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import '../index.css';
 import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
-import { BotGlyph } from './glyphs';
 import { type PageDef } from './model';
-import { pageFor, wbViews } from './pages';
+import { pageFor, settingsPage, wbViews } from './pages';
+import { SETTINGS_ADDRESS, SETTINGS_PAGE } from './settings';
 import { useChrome, Window, type WindowContribution } from './window';
 
 // ── 全局层：导航 ───────────────────────────────────────────────────────────────
@@ -67,6 +67,38 @@ function loadNavOpen(): boolean {
  * `widthMode` 用缺省的 `own`：宽度与右缘手柄归 Sidebar 自己（键 `entity-chat:sidebar-width`），
  * 收起态是 56px 图标列。它**不参与**页层的骨架 —— 见文件头。
  */
+// ── 模型配置的横幅 ─────────────────────────────────────────────────
+
+/** 顶部横幅：这个实例的模型配置**不全**（没 model.yaml / 缺目录快照）。 */
+function ModelConfigBanner({ onConfigure }: { onConfigure?: () => void }) {
+    const setup = useModelSetup();
+    // 首屏之前 store 里是「正常」（见 store 的初始值）：没问过服务端就不指控
+    if (setup.configured && !setup.snapshotMissing) return null;
+    return (
+        <div className="wb-banner" role="status">
+            <span className="wb-banner-title">模型配置不全</span>
+            {setup.configured ? null : (
+                <span>
+                    没有 model.yaml（<code>{setup.modelConfigPath}</code>）—— 不会去别处找
+                </span>
+            )}
+            {setup.snapshotMissing ? (
+                <span>
+                    缺目录快照 <code>data/models.dev.json</code>（标准 provider 全没有规格）
+                </span>
+            ) : null}
+            <span className="wb-banner-hint">
+                填充：仓根跑 <code>./scripts/seed-run-home.sh &lt;数据根&gt;</code>
+            </span>
+            {onConfigure === undefined ? null : (
+                <button className="wb-banner-action" onClick={onConfigure}>
+                    去配置 →
+                </button>
+            )}
+        </div>
+    );
+}
+
 function NavRail({ nav }: { nav: NavState }) {
     const dialogs = useRoomDialogsContext();
 
@@ -121,31 +153,30 @@ function PageShell({
 }
 
 function Host() {
+    const address = useAddress();
     const room = useSelectedRoom();
+    const rooms = useRooms();
     const loaded = useLoaded();
     const dialogs = useRoomDialogs();
 
+    /**
+     * 看的是设置页还是某个房间 —— **从地址推**，不另存一份状态。
+     *
+     * 模型配置是「这个实例能不能开工」的前置，它必须在**没有房间**时也能进
+     * （全新数据根、model.yaml 还没写），所以它是页、不是房间的附属物。
+     */
+    const isSettings = address.page === SETTINGS_PAGE;
+
+    /** 在设置页时 `useSelectedRoom()` 是空的 —— 齿轮要「返回对话」就得知道回到哪一间 */
+    const lastRoomId = useRef<string>('');
+    const roomId = room?.id;
+    useEffect(() => {
+        if (roomId !== undefined) lastRoomId.current = roomId;
+    }, [roomId]);
+    const backTo = rooms.find((item) => item.id === lastRoomId.current) ?? rooms[0];
+
     // 导航的开关提到了壳这一层：标题栏左端要放它的按钮，而标题栏是整宽的一条
     const [open, setOpen] = useState(loadNavOpen);
-
-    // Bot 状态：标题栏那排徽标要计数，所以拉数据提到壳这一层，
-    // 浮层与徽标共用一份（不各拉一次，否则两边的数字会差一轮）。
-    //
-    // `counts` 是**分类计数**（出错 / 等你 / 排队 / 在跑），不再是一个总数 ——
-    // 以前那个数混了三种语义（红 7 = 4 错 + 2 等 + 1 跑）。
-    const [botsOpen, setBotsOpen] = useState(false);
-    /** 点分类徽标进来的预选（关掉就清，否则下次点开还是上一类） */
-    const [botsFilter, setBotsFilter] = useState<Filter | undefined>(undefined);
-    const bots = useBotRows(botsOpen);
-    const counts = countByAttention(bots.rows);
-    const openBots = useCallback((filter?: Filter): void => {
-        setBotsFilter(filter);
-        setBotsOpen(true);
-    }, []);
-    const closeBots = useCallback((): void => {
-        setBotsOpen(false);
-        setBotsFilter(undefined);
-    }, []);
 
     useEffect(() => {
         try {
@@ -188,13 +219,7 @@ function Host() {
                 // 宿主不跟着重渲，否则每有人开跑就要把整页的根走一遍。
                 //
                 // 2026-11-25 合 main 时的取舍：旧的分支在这里还挂了一颗 `sessions`（"会话 N" / 改成
-                // "Bot" 的活动图标），而 main 的 PR #552 已把「在跑 / 等回答 / 上一轮出错 / 空闲」
-                // 统一收进 `bots` 那颗（BotsOverlay，二级浮层 + 三级全量表格）。两套入口会同时
-                // 显示两个 Bot，所以去掉了旧那颗，只留作业这颗。
-                //
-                // 2026-11-26 用户裁：**jobs 与 bots 同组放左端**，与右边的 view 开关 / 配置之间
-                // 用竖线隔开 —— 这两颗读的是「现在是什么情况」，右边那两颗是「怎么摆 / 怎么配」。
-                // 原先 bots 挂在 tools 里（和设置一排），信息件与操作件混在一起，看不出层级。
+                // "Bot" 的活动图标），已去掉，只留作业这颗（Bot 状态浮层随 bot-overview 一起移除）。
                 id: 'activity',
                 activity: [
                     {
@@ -208,60 +233,58 @@ function Host() {
                         },
                     },
                     {
-                        id: 'bots',
-                        label: 'Bot 状态',
-                        // 分类徽标本身就是入口：点某一颗 → 浮层预选那一类（点「出错 4」直接看到那 4 个）；
-                        // 点图标 / 间隙 → 打开默认浮层。只有「出错」用红，其余各一色。
-                        //
-                        // `standalone`：徽标里是 `<button>`，再被 window 包一层 button 就是**嵌 button**（非法 DOM，
-                        // 也是“挤在一起”那屏的一部分）—— 所以交互由 glyph 自己拿。
-                        standalone: true,
-                        glyph: (
-                            // 与同排按钮**同一种外观**（22px 高、同样的 hover / 圆角）：
-                            // `wb-tb-btn` 给尺寸与 hover，`wb-tb-activity` 把宽度改成跟内容走。
-                            // 只管 Tailwind 的 padding / 高度，这一排就会看起来“挤”且不齐。
-                            <span
-                                onClick={() => openBots()}
-                                title="Bot 状态（点间隙看全部）"
-                                className="wb-tb-btn wb-tb-activity gap-1.5"
-                            >
-                                <BotGlyph count={0} />
-                                <AttentionCapsules
-                                    counts={counts}
-                                    onPick={(kind) => openBots(kind)}
-                                    onOpen={() => openBots()}
-                                />
-                            </span>
-                        ),
-                    },
-                ],
-            },
-            {
-                id: 'app',
-                tools: [
-                    {
                         id: 'settings',
-                        label: '设置',
+                        // 同一颗按钮来回切：设置页里它显示为按下态，再点一下回对话。
+                        label: isSettings ? '返回对话' : '设置',
                         glyph: <Settings className="wb-glyph" />,
+                        on: isSettings,
                         onClick: () => {
-                            dialogs.openSettings();
+                            if (isSettings) {
+                                if (backTo !== undefined) navigate(roomAddressOf(backTo));
+                                return;
+                            }
+                            navigate(SETTINGS_ADDRESS);
                         },
                     },
                 ],
             },
         ],
         // `jumpToFirstRunning*` 是模块级命令（不依赖 props），所以不必进依赖表；
-        // `setJobsOpen` / `setBotsOpen` 是 setState（引用恒定），同理。
-        // 计数列**具体数字**而不是 `counts` 对象：那个对象每 1.5s 轮询都新建一次，
-        // 放对象会让这个数组每 1.5s 重建（内容没变也重建）。数字不变 ⇒ 显示内容不变。
-        [open, toggle, dialogs, counts.broken, counts.blocked, counts.queued, counts.live, openBots],
+        // `setJobsOpen` 是 setState（引用恒定），同理。
+        [open, toggle, dialogs, isSettings, backTo],
     );
+
+    /** 去设置（横幅上的「去配置」）—— 同一件导航，不是另一条路 */
+    const openSettings = useCallback(() => {
+        navigate(SETTINGS_ADDRESS);
+    }, []);
+
+    // 设置页：**没有房间也能进**（这正是「没配置 → 去配置」那条路）
+    if (isSettings) {
+        return (
+            <RoomDialogsProvider value={dialogs}>
+                <div className="wb-shell">
+                    <ModelConfigBanner />
+                    <PageShell
+                        key={settingsPage.type}
+                        page={settingsPage}
+                        nav={nav}
+                        global={global}
+                        chrome={chrome}
+                        onChromeChange={setChrome}
+                    />
+                </div>
+                {dialogs.element}
+            </RoomDialogsProvider>
+        );
+    }
 
     // 没有房间时**也要**有导航：新建第一个房间的入口就在左栏，把它藏起来等于没法开工
     if (!room) {
         return (
             <RoomDialogsProvider value={dialogs}>
                 <div className="wb-shell">
+                    <ModelConfigBanner onConfigure={openSettings} />
                     <Window contributions={global} chrome={chrome} onChromeChange={setChrome} />
                     <div className="wb-body">
                         <NavRail nav={nav} />
@@ -272,13 +295,6 @@ function Host() {
                 </div>
                 {dialogs.element}
                 {jobsOpen && <JobsPanel onClose={() => setJobsOpen(false)} />}
-                {botsOpen ? (
-                    <BotsOverlay
-                        {...bots}
-                        {...(botsFilter === undefined ? {} : { initialFilter: botsFilter })}
-                        onClose={closeBots}
-                    />
-                ) : null}
             </RoomDialogsProvider>
         );
     }
@@ -288,6 +304,7 @@ function Host() {
     return (
         <RoomDialogsProvider value={dialogs}>
             <div className="wb-shell">
+                <ModelConfigBanner onConfigure={openSettings} />
                 <PageShell
                     key={page.type}
                     page={page}
@@ -299,13 +316,6 @@ function Host() {
             </div>
             {dialogs.element}
             {jobsOpen && <JobsPanel onClose={() => setJobsOpen(false)} />}
-            {botsOpen ? (
-                <BotsOverlay
-                    {...bots}
-                    {...(botsFilter === undefined ? {} : { initialFilter: botsFilter })}
-                    onClose={closeBots}
-                />
-            ) : null}
         </RoomDialogsProvider>
     );
 }

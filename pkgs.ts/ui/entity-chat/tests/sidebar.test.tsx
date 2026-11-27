@@ -69,15 +69,16 @@ beforeEach(async () => {
     // 命令面走 RPC：注入假客户端，喂一份固定的房间列表（目录为空 = 用服务端缺省模型）
     setDiy2Client({
         rooms: { list: async () => rooms },
-        bots: { list: async () => [] },
-        models: { list: async () => ({ providers: [] }) },
+        botProfiles: { list: async () => [] },
+        // 模型目录回包里的 `configured` / `snapshotMissing` 是真状态字段（横幅据此画），不是兼容字段
+        models: { list: async () => ({ providers: [], configured: true, modelConfigPath: '', snapshotMissing: false }) },
         load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
         watch: () => () => undefined,
         drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
     } as never);
     actions.bootstrap();
     // bootstrap 是 fire-and-forget，等它把 emit 做完（两轮微任务足够）
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 });
 
 afterEach(() => {
@@ -98,7 +99,7 @@ describe('侧栏按注册表渲染', () => {
     it('运行态画在状态图标上：项目行不聚合子任务，行底色只表选中', async () => {
         setDiy2Client({
             rooms: { list: async () => rooms.map((room) => ({ ...room, running: room.id === 'task:t-open' ? 1 : 0 })) },
-            bots: { list: async () => [] },
+            botProfiles: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
@@ -109,7 +110,7 @@ describe('侧栏按注册表渲染', () => {
             },
         } as never);
         actions.bootstrap();
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
         const html = render();
         // 在跑的那一行：状态图标上有呼吸点
@@ -132,7 +133,7 @@ describe('侧栏按注册表渲染', () => {
                         room.id === 'proj:diy' ? { ...room, broken: 1, running: 1, queued: 2 } : room,
                     ),
             },
-            bots: { list: async () => [] },
+            botProfiles: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
@@ -160,7 +161,7 @@ describe('侧栏按注册表渲染', () => {
             rooms: {
                 list: async () => rooms.map((room) => ({ ...room, queued: room.id === 'task:t-open' ? 2 : 0 })),
             },
-            bots: { list: async () => [] },
+            botProfiles: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
@@ -171,7 +172,7 @@ describe('侧栏按注册表渲染', () => {
             },
         } as never);
         actions.bootstrap();
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
         const html = render();
         const queuedRow = rowOf(html, '/room/task/t-open');
@@ -188,7 +189,7 @@ describe('侧栏按注册表渲染', () => {
             rooms: {
                 list: async () => rooms.map((room) => ({ ...room, unread: room.id === 'task:t-open' ? 3 : 0 })),
             },
-            bots: { list: async () => [] },
+            botProfiles: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
@@ -199,7 +200,7 @@ describe('侧栏按注册表渲染', () => {
             },
         } as never);
         actions.bootstrap();
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
         const html = render();
         const unreadRow = rowOf(html, '/room/task/t-open');
@@ -215,7 +216,7 @@ describe('侧栏按注册表渲染', () => {
             rooms: {
                 list: async () => rooms.map((room) => ({ ...room, broken: room.id === 'task:t-open' ? 1 : 0 })),
             },
-            bots: { list: async () => [] },
+            botProfiles: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
@@ -226,7 +227,7 @@ describe('侧栏按注册表渲染', () => {
             },
         } as never);
         actions.bootstrap();
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
         const html = render();
         expect(rowOf(html, '/room/task/t-open')).toContain('text-rose-400');
@@ -244,7 +245,7 @@ describe('侧栏按注册表渲染', () => {
                         return room;
                     }),
             },
-            bots: { list: async () => [] },
+            botProfiles: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
@@ -274,7 +275,7 @@ describe('侧栏按注册表渲染', () => {
             rooms: {
                 list: async () => rooms.map((room) => ({ ...room, failed: room.id === 'proj:diy' ? 1 : 0 })),
             },
-            bots: { list: async () => [] },
+            botProfiles: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
@@ -302,7 +303,7 @@ describe('侧栏按注册表渲染', () => {
                         room.id === 'task:t-open' ? { ...room, lastActivityAt: fiveMinutesAgo } : room,
                     ),
             },
-            bots: { list: async () => [] },
+            botProfiles: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
@@ -313,7 +314,7 @@ describe('侧栏按注册表渲染', () => {
             },
         } as never);
         actions.bootstrap();
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
         const row = rowOf(render(), '/room/task/t-open');
         expect(row).toContain('>5m<'); // 用户 2026-11-26：改回 1m / 1d 这种紧凑式

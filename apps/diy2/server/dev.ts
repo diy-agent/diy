@@ -25,6 +25,7 @@ import { describeConfig, isProdHome, modelConfigHint, resolveConfig } from './co
 import { installAppLog } from './log';
 import { announce, retract } from './registry';
 import { createDiy2App } from './app';
+import { createMigrateModeApp, probeMigration } from './migrate-mode';
 import { listenWithStickyPort } from './listen';
 import { devOptions, parseEntryOptions, toOverrides } from '../src/cli/options';
 
@@ -42,8 +43,6 @@ options:
       --tools <shell|files>
                          工具面（缺省 shell）
       --web-dir <dir>    UI 产物目录（dev 不用：页面与 HMR 由挂进同一 server 的 vite 提供）
-      --model-config <file>
-                         model.yaml（缺省：<home>/model.yaml；只有生产数据根才回落 ~/.diy/model.yaml）
       --allow-prod-home  显式放行生产数据根
   -h, --help             本帮助`;
 
@@ -70,20 +69,55 @@ if (isProdHome(config.home) && options.input.allowProdHome !== true) {
     process.exit(1);
 }
 process.env['DIY_HOME'] ??= config.home;
-if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
+// 同生产入口：环境变量不许劫持数据根的模型配置（见 server/index.ts）
+process.env['DIY_MODEL_CONFIG'] = config.modelConfigPath;
 const hint = modelConfigHint(config);
 if (hint !== null) boot.warn(hint);
 
 const httpServer = createServer();
-const app = await createDiy2App({
-    config,
-    // dev 的页面来自 vite，不来自 build/prod/web（null = 明确不要，不是「按配置来」）
-    webDir: null,
-    port: () => {
-        const address = httpServer.address();
-        return typeof address === 'object' && address !== null ? address.port : null;
-    },
-});
+const portOf = (): number | null => {
+    const address = httpServer.address();
+    return typeof address === 'object' && address !== null ? address.port : null;
+};
+const buildApp = () =>
+    createDiy2App({
+        config,
+        // dev 的页面来自 vite，不来自 build/prod/web（null = 明确不要，不是「按配置来」）
+        webDir: null,
+        port: portOf,
+    });
+
+// ── 启动闸门（与生产入口 server/index.ts 同一套，2026-11-27）───────────────
+// `createDiy2App()` 一上手就 openStore，而迁移是同步的 —— 不过这道闸门的话，
+// lab 里根本看不到迁移屏，刷新一问「库已经是新的了」（实测踩到）。
+// 先只读探一次：有待迁移就装「迁移态」，非 /api 的请求仍然交给 vite（页面照常渲染）。
+const migration = probeMigration(config.dbPath);
+if (migration.pending) {
+    boot.info('库还有未完成的迁移，先停在迁移页', { applied: migration.applied, total: migration.total });
+}
+
+let app = migration.pending ? null : await buildApp();
+const migrator = migration.pending
+    ? await createMigrateModeApp({
+          config,
+          port: portOf,
+          info: () => ({
+              app: 'diy2',
+              pid: process.pid,
+              port: portOf() ?? (config.port === 0 ? null : config.port),
+              home: config.home,
+              env: config.env,
+              variant: config.launch,
+              launch: config.launch,
+              name: config.name,
+              tools: config.tools,
+          }),
+          onDone: async () => {
+              app = await buildApp();
+              void app.resume();
+          },
+      })
+    : null;
 
 const vite = await createViteServer({
     root: config.appRoot,
@@ -99,7 +133,8 @@ const vite = await createViteServer({
 httpServer.on('request', (req, res) => {
     const pathname = (req.url ?? '/').split('?')[0] ?? '/';
     if (pathname === '/api' || pathname.startsWith('/api/')) {
-        app.handle(req, res);
+        // 迁移态只有迁移那几个接口能用，其余 /api 由它自己回 503
+        void (app ?? migrator)!.handle(req, res);
         return;
     }
     vite.middlewares(req, res, () => {
@@ -110,7 +145,8 @@ httpServer.on('request', (req, res) => {
 
 // `/rpc` 的 WS：与 vite 的 HMR 共用 upgrade 通道（不是 `/rpc` 的一律不碰，留给 vite）
 httpServer.on('upgrade', (req, socket, head) => {
-    app.handleUpgrade(req, socket, head);
+    // 迁移态没有 RPC 面（库没迁完，业务请求一律拒）；但 HMR 的 socket 不能碰，留给 vite
+    if (app !== null) app.handleUpgrade(req, socket, head);
 });
 
 // 端口粘性（`<home>/app.port`）：改服务端代码 → exit 75 → 看护循环重起；那边**不删**这个文件，
@@ -133,7 +169,8 @@ boot.info('UI 走 vite（HMR 同端口）；改 server/ 或 entity-runtime 会�
 await announce(config, port);
 
 // 续跑同样排在监听之后（生产入口 `index.ts` 同一规矩）：先能连，再干活。
-void app.resume();
+// 迁移态没有 app：迁完在 onDone 里 resume。
+void app?.resume();
 
 // ── 服务端代码变更 → 请看护循环重启 ──────────────────────────────
 // vite 的 HMR 只管浏览器侧模块图；`server/**` 与 `pkgs.ts/**`（工作区包源码）在服务端的
@@ -147,7 +184,8 @@ const scheduleRestart = (file: string | null): void => {
     if (timer !== undefined) return; // 一次保存会连发多个事件：只认第一次，等它统一重启
     boot.info(`服务端代码变了${file === null ? '' : `（${file}）`} → 重启`);
     timer = setTimeout(() => {
-        app.close();
+        app?.close();
+        migrator?.close();
         void retract();
         void vite.close().finally(() => httpServer.close(() => process.exit(RESTART_CODE)));
         // 长连接（SSE）可能挂住 close 回调：兜底硬退
@@ -167,7 +205,8 @@ for (const root of watchRoots) {
 
 const shutdown = (): void => {
     // 刻意**不删** app.port：重启（看护循环 / Ctrl-C 再起）都还回同一个 URL。
-    app.close();
+    app?.close();
+    migrator?.close();
     void retract();
     void vite.close().finally(() => httpServer.close(() => process.exit(0)));
     setTimeout(() => process.exit(0), 1500).unref();

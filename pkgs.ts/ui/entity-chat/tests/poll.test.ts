@@ -11,6 +11,9 @@ type Handler = () => void;
 const handlers = new Map<string, Handler>();
 let calls: string[] = [];
 
+/** 空目录的回包：`configured` / `snapshotMissing` 是回包的契约字段（横幅据此画），不是可选项 */
+const EMPTY_CATALOG = { providers: [], configured: true, modelConfigPath: '', snapshotMissing: false };
+
 /** 环境替身：store 只在函数里做 `typeof window !== 'undefined'` 检查，所以这时挂得上 */
 function installFakeEnv(visibility: 'visible' | 'hidden'): void {
     const documentStub = {
@@ -50,29 +53,29 @@ async function bootstrap(): Promise<typeof import('../src/store')> {
             },
             update: async () => ({}),
         },
-        bots: {
+        botProfiles: {
             list: async () => {
-                calls.push('/bots');
+                calls.push('/botProfiles');
                 return [];
             },
         },
-        // 模型目录与 rooms / bots 同一趟回来（真源 model.yaml；界面不自带 provider 表）
+        // 模型目录与 rooms / roles 同一趟回来（真源 model.yaml；界面不自带 provider 表）
         models: {
             list: async () => {
                 calls.push('/models');
-                return { providers: [] };
+                return EMPTY_CATALOG;
             },
         },
         drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
     } as never);
     store.actions.bootstrap();
-    // 把首屏那次 refresh 的微任务跑完（rooms / bots / models 各一次）
+    // 把首屏那次 refresh 的微任务跑完（rooms / roles / models 各一次）
     await vi.advanceTimersByTimeAsync(0);
     return store;
 }
 
 describe('房间列表轮询', () => {
-    it('可见时每 30s 拉一次（rooms / bots / models 各一次）', async () => {
+    it('可见时每 30s 拉一次（rooms / roles / models 各一次）', async () => {
         installFakeEnv('visible');
         await bootstrap();
         expect(calls).toHaveLength(3);
@@ -123,8 +126,8 @@ describe('房间列表轮询', () => {
                     throw new Error('boom');
                 },
             },
-            bots: { list: async () => [], update: async () => ({}) },
-            models: { list: async () => ({ providers: [] }) },
+            botProfiles: { list: async () => [], update: async () => ({}) },
+            models: { list: async () => EMPTY_CATALOG },
             drafts: {
                 list: async () => ({ drafts: [] }),
                 put: async () => ({ updatedAt: 0 }),
@@ -152,13 +155,9 @@ describe('房间列表轮询', () => {
                 },
                 update: async () => ({}),
             },
-            bots: { list: async () => [] },
-            models: { list: async () => ({ providers: [] }) },
-            drafts: {
-                list: async () => ({ drafts: [] }),
-                put: async () => ({ updatedAt: 0 }),
-                remove: async () => ({}),
-            },
+            roles: { list: async () => [] },
+            models: { list: async () => EMPTY_CATALOG },
+            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
         } as never);
 
         await vi.advanceTimersByTimeAsync(60_000);
@@ -173,16 +172,16 @@ describe('房间列表轮询', () => {
                 },
                 update: async () => ({}),
             },
-            bots: {
+            botProfiles: {
                 list: async () => {
-                    calls.push('/bots');
+                    calls.push('/botProfiles');
                     return [];
                 },
             },
             models: {
                 list: async () => {
                     calls.push('/models');
-                    return { providers: [] };
+                    return EMPTY_CATALOG;
                 },
             },
             drafts: {

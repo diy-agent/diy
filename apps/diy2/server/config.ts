@@ -19,12 +19,14 @@
 //   · **产物目录固定** `<appRoot>/build/prod/{web,server,cli}`：一个包目录一份产物。
 //     多份并存靠 worktree（每个 worktree 有自己的 build/），不靠 `<variant>/` 子目录。
 //
-// 环境变量仍然**出**（`DIY_MODEL_CONFIG` 是给 entity-runtime 的信号，下游库读它），但不**进**。
+// 环境变量仍然**出**（`DIY_MODEL_CONFIG` 是给 entity-runtime 的信号，下游库读它），但不**进** ——
+// 而且出的时候是**赋值**（`=`，不是 `??=`）：数据根说了算，外层的同名变量不许劫持它。
 //
 // 纯函数尽量多：端口裁决 / 数据根裁决 / 生产根判据都有单测（tests/config.test.ts），
 // 因为这三条都是「错了不会报错，只会静默用错数据」的类型。
 
 import { DEFAULT_BUDGET } from '@diy-agent/entity-runtime';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -65,8 +67,6 @@ export interface ConfigOverrides {
     allowProdHome?: boolean | undefined;
     /** 显式 UI 产物目录（调试用；缺省 `<buildRoot>/web`，不存在 = 不提供静态） */
     webDir?: string | undefined;
-    /** 显式 model.yaml（缺省：本数据根 > 本 launch 的仓库级数据根） */
-    modelConfig?: string | undefined;
 }
 
 export interface Diy2Config {
@@ -99,8 +99,16 @@ export interface Diy2Config {
     repoRoot: string | null;
     /** UI 产物目录；undefined = 不提供静态服务（开发期交给 vite） */
     webDir: string | undefined;
-    /** model.yaml 路径（entity-runtime 通过 `DIY_MODEL_CONFIG` 读它） */
-    modelConfigPath: string | undefined;
+    /**
+     * model.yaml 的路径 —— **恒等于** `<home>/model.yaml`（本实例自己的数据根）。
+     *
+     * 为什么是「恒给」而不是「找到才算」：entity-runtime 的解析链是
+     * `DIY_MODEL_CONFIG` → `DIY_HOME/model.yaml`，而它历史上还有一档末档回指
+     * `~/.diy/model.yaml`。「这里找不到就不给」等于把决定权交给下游库 —— 于是实例用自己的
+     * 库、读别人的账号发请求（`diy2 web` 实测就落在 `~/.diy/model.yaml`）。恒给一个路径，
+     * 下游没有别的档可落。
+     */
+    modelConfigPath: string;
     /** 实例名（`--name`），多实例时人认得出的身份；缺省 null */
     name: string | null;
     /**
@@ -378,23 +386,14 @@ export async function resolveConfig(opts?: {
               ? defaultWebDir
               : undefined;
 
-    // model.yaml：显式 `--model-config` > 本数据根 > **生产数据根才有的一档**（`~/.diy/model.yaml`）。
-    // 最后那档按 home 位置判定（父目录就是生产根），不是按 mode 标签 —— 测试实例换到 run/
-    // 之后天然拿不到它，不可能「隔离了 sqlite 却仍用生产 key」。
-    const explicitModelConfig = overrides.modelConfig?.trim();
-    let modelConfigPath: string | undefined;
-    if (explicitModelConfig !== undefined && explicitModelConfig !== '') {
-        modelConfigPath = resolve(explicitModelConfig);
-    } else if (await isFile(join(home, 'model.yaml'))) {
-        modelConfigPath = join(home, 'model.yaml');
-    } else {
-        // 生产根**下面**的数据根（`~/.diy2/<实例>`）回落生产根的配置；`run/diy2/lab` 这类沙箱
-        // 不回落 —— 「隔离了 sqlite 却仍用生产 key」是假隔离（见 modelConfigHint）。
-        const prodConfig = join(prodHomeDir(), 'model.yaml');
-        if (samePath(dirname(home), prodHomeDir()) && (await isFile(prodConfig))) {
-            modelConfigPath = prodConfig;
-        }
-    }
+    // model.yaml = **本数据根里的那一份**，没有第二档（2026-11-24 裁）。
+    //
+    // 删掉的两档：`--model-config`（让测试/调试能指到任意文件 —— 但「一份数据根一份配置」
+    // 才是判据，测试换 `--home` 就够）与「生产根回落 `~/.diy/model.yaml`」。后者最要命：
+    // 它按 home 位置判定（父目录是 `~/.diy` 就算生产），于是 `~/.diy/diy2` 这个数据根
+    // 天然会去读 **diy1 的** `~/.diy/model.yaml` —— 数据根隔离了、配置没隔离，
+    // 症状是「没配任何东西也能发请求，账目限流缓存全记在别人账号上」。
+    const modelConfigPath = join(home, 'model.yaml');
 
     return {
         app: APP_ID,
@@ -424,18 +423,17 @@ export async function resolveConfig(opts?: {
 }
 
 /**
- * 数据根里没有 model.yaml 时的提示。测试实例**不会**回落 `~/.diy/model.yaml`（那是假隔离），
- * 所以这里给出**可复制**的填充命令（只给脚本名没用：无参调用只扫已存在的数据根，
- * 空目录会被它跳过）；生产数据根自带一档（见 resolveConfig）。
+ * 数据根里没有 model.yaml 时的提示。
+ *
+ * 「没有」是一个**明确状态**，不是「再去找一份能用的」：模型面整体失效（目录空、发不出去），
+ * UI 顶部挂横幅，唯一出路是在那份路径上写配置。
  */
 export function modelConfigHint(config: Diy2Config): string | null {
-    if (config.modelConfigPath !== undefined) return null;
-    const file = join(config.home, 'model.yaml');
-    // 不带 `[diy2]` 前缀（同 describeConfig：前缀由日志装配统一给）
+    // sync-io-ok: 启动期同步自报「配置在不在」（只判存在、不读内容）；调用方在 async 上下文之外，改异步会把启动链全变 async
+    if (existsSync(config.modelConfigPath)) return null;
     return (
-        `数据根里没有 model.yaml（${file}）` +
-        ` → 模型会报缺 key；填充：./scripts/seed-run-home.sh ${config.home}（在仓库根跑），` +
-        '或 --model-config 显式指定'
+        `[diy2] 没有模型配置：${config.modelConfigPath}（不会去别处找）→ 模型面不可用，UI 顶部有横幅；` +
+        `填充：./scripts/seed-run-home.sh ${config.home}（在仓库根跑），或直接写那份文件`
     );
 }
 

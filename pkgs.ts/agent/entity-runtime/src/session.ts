@@ -307,6 +307,17 @@ export class BotSession {
         this.deps.bot = { ...this.deps.bot, name };
     }
 
+    /**
+     * 角色改了（名字 / 人格 / 模型）：session 持有的是**构造时的快照**，不推下去就一直是旧的。
+     *
+     * 与 `setBotName` 的区别：那个只换显示名（容器改名的旧语义），这个换整个人格。
+     * 已在跑的这一轮不改（instructions 已经发出去了），从下一轮 / 下一条 item 生效。
+     */
+    setIdentity(next: Bot): void {
+        this.deps.bot = { ...next };
+        this.modelKey = next.modelKey;
+    }
+
     /** 房间订阅 session 的全部输出 */
     subscribe(listener: (event: SessionEvent) => void): () => void {
         this.listeners.add(listener);
@@ -709,6 +720,8 @@ export class BotSession {
             for await (const event of run({
                 bot: this.deps.bot,
                 modelKey: this.modelKey,
+                // 每步读一次：切模型后当前轮的下一次 LLM 请求就生效（不等下一轮）
+                getModelKey: () => this.modelKey,
                 messages,
                 turnId: turn.turnId,
                 // provider 的会话亲和键 = **bot**（不是轮次）：同一实体跨轮复用同一会话，

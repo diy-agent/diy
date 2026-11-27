@@ -2,7 +2,7 @@
 //
 // A. 重启后上下文不重复（公共日志回放要看水位）
 // B. @ 点名时结论只进被点名者一次
-// C. 房间换模型对已经建好的 session 生效
+// C. 角色换模型对已经建好的 session 生效
 
 import { describe, expect, it } from 'vitest';
 
@@ -59,12 +59,16 @@ describe('P0 回归', () => {
         expect(countIn(context, '我说完了 @cops 你接着')).toBe(1);
     });
 
-    it('C. 房间换模型后，已经建好的 session 用新模型跑下一轮', async () => {
+    it('C. 角色换模型后，已经建好的 session 用新模型跑下一轮', async () => {
         const h = makeRoom({ reply: () => 'ok' });
         await h.room.say({ text: '第一轮', author: HUMAN });
-        expect(h.models.at(-1)).toBe('m-room');
+        expect(h.models.at(-1)).toBe('m-default');
 
-        h.room.update({ modelKey: 'm-new' });
+        // 角色级换模型（模型真源 = 人设）：宿主改角色表后调 refreshIdentities 推给已建 session
+        const role = h.store.listBotProfiles().find((item) => item.id === BOT_A.id);
+        expect(role).toBeDefined();
+        h.store.upsertBotProfile({ ...role!, modelKey: 'm-new' });
+        h.room.refreshIdentities();
         await h.room.say({ text: '第二轮', author: HUMAN });
         expect(h.models.at(-1)).toBe('m-new');
 
@@ -355,8 +359,8 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         await waitFor(() => h.room.pendingAsks() === 1);
         await waitFor(() => !h.room.busy());
 
-        // A 的身份没了（bot 被删），但 spec 里还留着成员位：路由会把 A 过滤掉
-        h.store.deleteBot(BOT_A.id);
+        // A 的身份没了（角色被删），但 spec 里还留着成员位：路由会把 A 过滤掉
+        h.store.deleteBotProfile(BOT_A.id);
         const askId = h.room.pendingAskRequests()[0]!.askId;
         expect(h.room.answerAsk(askId, { answers: [{ id: 'q1', values: ['a'] }] })).toEqual({ ok: true });
 
@@ -588,24 +592,28 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         expect(h.room.answerAsk('ask-nope', { answers: [{ id: 'q1', values: ['a'] }] }).ok).toBe(false);
     });
 
-    it('E. 改名后 bot 跟着改：新结论署名新名，session 里的自称也换掉', async () => {
+    it('E. 容器改名**不再**改助手名（角色是类型级的）；角色改名才换署名', async () => {
         const h = makeRoom({ reply: () => '收到' });
-        // 容器改名 = 改 data 里的名字键（project → name；bot 显示名跟着走）
+        // 2026-11-24 之前：容器改名 = 专属 bot 改名（1:1）。现在一个角色服务该类型所有房间，
+        // 跟着某一间房改名等于把别的房一起改了 —— 所以这两件事分开了。
         h.room.update({ data: { name: '改过的名字' } });
-        expect(h.store.listBots().find((bot) => bot.id === BOT_A.id)?.name).toBe('改过的名字');
+        expect(h.store.listBotProfiles().find((role) => role.id === BOT_A.id)?.name).toBe('diy');
 
+        // 改角色名（角色页做的事）→ 推给已建好的 session：新结论署名新名
+        h.store.upsertBotProfile({ ...h.store.listBotProfiles()[0]!, name: '架构', updatedAt: Date.now() });
+        h.room.refreshIdentities();
         await h.room.say({ text: '说一句', author: HUMAN });
-        // 1) 结论条目的署名
+
         const conclusion = h.store
             .roomEntries(h.spec.id)
             .filter((entry) => entry.kind === 'conclusion')
             .at(-1);
-        expect(conclusion?.name).toBe('改过的名字');
-        // 2) session 自己的 bot 快照（下一轮 system prompt / item 作者名用它）
+        expect(conclusion?.name).toBe('架构');
+        // session 自己的 bot 快照（下一轮 system prompt / item 作者名用它）
         const said = h
             .items()
             .filter((item) => item.type === 'chat' && item.author?.id === BOT_A.id)
             .at(-1);
-        expect(said?.author?.name).toBe('改过的名字');
+        expect(said?.author?.name).toBe('架构');
     });
 });

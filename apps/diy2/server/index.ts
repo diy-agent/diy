@@ -14,6 +14,7 @@
 import { createServer } from 'node:http';
 
 import { createDiy2App } from './app';
+import { createMigrateModeApp, probeMigration } from './migrate-mode';
 import { describeConfig, modelConfigHint, resolveConfig } from './config';
 import { installAppLog } from './log';
 import { announce, retract } from './registry';
@@ -31,7 +32,6 @@ options:
       --name <名字>                       实例名
       --tools <shell|files>              工具面
       --web-dir <dir>                    UI 产物目录（缺省 <buildRoot>/web）
-      --model-config <file>              model.yaml（缺省：<home>/model.yaml；只有生产数据根才回落 ~/.diy/model.yaml）
       --allow-prod-home                  显式放行生产数据根
   -h, --help                             本帮助`;
 
@@ -53,24 +53,64 @@ for (const note of config.notes) boot.warn(note);
 // 这是**出**：给它一个信号，不是我们自己读环境。
 // `DIY_HOME` 也一并交给它 —— 否则它拿不到数据根，只能回落 `~/.diy`（= 测试实例用了生产配置）。
 process.env['DIY_HOME'] ??= config.home;
-if (config.modelConfigPath !== undefined) process.env['DIY_MODEL_CONFIG'] ??= config.modelConfigPath;
+// `=` 不是 `??=`：外层 shell / agent 里漏出来的 `DIY_MODEL_CONFIG`（常指向 diy1 的
+// `~/.diy/model.yaml`）一旦被继承，实例就“用自己的库、别人的 key”。数据根说话。
+process.env['DIY_MODEL_CONFIG'] = config.modelConfigPath;
 const hint = modelConfigHint(config);
 if (hint !== null) boot.warn(hint);
 
-const app = await createDiy2App({
-    config,
-    port: () => {
-        const address = server.address();
-        return typeof address === 'object' && address !== null ? address.port : null;
-    },
+/** 实际监听端口（服务器稍后才建，回调懒得读，所以用 let） */
+let server: ReturnType<typeof createServer> | undefined;
+const portOf = (): number | null => {
+    const address = server?.address();
+    return typeof address === 'object' && address !== null ? address.port : null;
+};
+
+/** `/api/info` 的回包：迁移态与真 app 共用（外层靠它判「这个端口是不是我的实例」） */
+const infoOf = (): Record<string, unknown> => ({
+    app: 'diy2',
+    pid: process.pid,
+    port: portOf() ?? (config.port === 0 ? null : config.port),
+    home: config.home,
+    env: config.env,
+    variant: config.launch,
+    launch: config.launch,
+    name: config.name,
+    tools: config.tools,
 });
+
+// ── 启动闸门（2026-11-27）─────────────────────────────────────
+// `createDiy2App()` 一上手就 openStore，而迁移是**同步**跑的 —— 照常装配的话，
+// 迁移页刚渲染、迁移已经跑完了，这个页面就成了事后回顾。
+// 所以先只读探一下（不打开 store、不改库）：有待迁移就先把 app 装配成「迁移态」，
+// 只服务迁移页；迁完再换成真 app —— **同一个端口、同一个 server**，不换壳子。
+const migration = probeMigration(config.dbPath);
+if (migration.pending) {
+    boot.info('库还有未完成的迁移，先停在迁移页', { applied: migration.applied, total: migration.total });
+}
+
+let app = migration.pending ? null : await createDiy2App({ config, port: portOf });
+const migrator = migration.pending
+    ? await createMigrateModeApp({
+          config,
+          port: portOf,
+          info: infoOf,
+          onDone: async () => {
+              app = await createDiy2App({ config, port: portOf });
+              void app.resume();
+          },
+      })
+    : null;
 
 // 只绑本机：这个进程带着 read/write/edit/bash 工具，监听 0.0.0.0 等于把任意命令执行面
 // 暴露给整个局域网（而且没有鉴权）。要远程用请走 SSH 隧道。
-const server = createServer(app.handle);
+server = createServer((req, res) => {
+    void (app ?? migrator)!.handle(req, res);
+});
 // `/rpc` 的 WS 与 HTTP 共用同一个 server；不是它的 path 返回 false，留给别人
+// （迁移态没有 RPC 面：库没迁完，任何业务请求都该被拒）
 server.on('upgrade', (req, socket, head) => {
-    app.handleUpgrade(req, socket, head);
+    app?.handleUpgrade(req, socket, head);
 });
 
 /** 同一数据根已有实例在跑 → 不再起第二个（同一份 sqlite 双写） */
@@ -133,14 +173,16 @@ await announce(config, port);
 // 续跑排在**监听之后**（##554）：它一调就会发 LLM 请求。放在这里的意思是「门先打开，
 // 重活再慢慢做」—— 用户在 UI 里看到的是实例已经可用，而不是一屏启动期错误日志。
 // 后台跑、不 await：它是串行背景活（可能跑很久），启动不等它
-void app.resume();
+// （迁移态没有 app：等迁完在 onDone 里 resume）
+void app?.resume();
 
 const shutdown = (signal: string): void => {
     boot.info(`${signal} → 关闭`);
     // flush 日志：BatchLogRecordProcessor 有缓冲，不 flush 会丢掉最后几条（正好是关闭前那几条）
     void appLog.shutdown();
     // 刻意**不删** app.port：它记的是「下次用哪个端口」，删了下次就换成内核随机端口。
-    app.close();
+    app?.close();
+    migrator?.close();
     void retract();
     server.close(() => process.exit(0));
     // 长连接（SSE）可能挂住 close 回调：兜底硬退

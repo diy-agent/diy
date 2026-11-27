@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 把生产数据根（~/.diy）的真配置**填充**进测试实例的数据根（`run/<app>/<label>`）。
 #
-# 清单只 3 份，且**只有 model.yaml 是必需的**（见下方「内容」）。
+# 清单 4 份，且**只有 model.yaml 是必需的**（见下方「内容」）。
 #
 # 为什么是拷贝而不是运行时直读（2026-11-23 定）：测试实例必须**完整依赖自己的数据根**。
 # 运行时若回落 `~/.diy/model.yaml`，lab 里改模型 / 存凭据就会写生产文件 —— 隔离是假的
@@ -10,6 +10,8 @@
 #
 # 内容（**只有 model.yaml 是必需的**，2026-11-23 实测：空数据根只放它就能起服务）：
 #   model.yaml（provider + key，缺了模型全部不可用）
+#   data/models.dev.json（目录快照：**标准 provider 的模型规格全在这里**。2026-11-24 删掉
+#   「catalog 上跳读本仓 diy-app 快照」那一档之后，缺了它 = 配了账号也发不出去）
 #   personas.yaml / providers.custom.yaml（可选：缺 personas 走内置人物；customProviders 为空时
 #   providers.custom.yaml 根本没人读）
 #   input-limit / auto-compact / cache-hint / context / tools-surface —— 都有默认值且是
@@ -39,7 +41,9 @@ cd "$ROOT_DIR"
 
 SRC="${DIY_SYNC_HOME_SRC:-$HOME/.diy}"
 # model.yaml 必需；另两份有默认/条件生效，跟生产一致时才拷（清单收窄见头注）
-FILES=(model.yaml personas.yaml providers.custom.yaml)
+# `data/models.dev.json` 也在清单里：它决定「标准 provider 有没有模型规格」（见头注）——
+# 带子目录，所以下面 cp 前统一 mkdir -p。
+FILES=(model.yaml personas.yaml providers.custom.yaml data/models.dev.json)
 FORCE=0
 DEFAULTS=0
 HOMES=()
@@ -121,6 +125,7 @@ for home in "${HOMES[@]}"; do
     if ((FORCE == 0)) && [[ -f "$dst" ]] && [[ ! "${SRC}/${f}" -nt "$dst" ]]; then
       continue
     fi
+    mkdir -p "$(dirname "$dst")"
     cp -p "${SRC}/${f}" "$dst"
     echo "+ $dst"
     copied=$((copied + 1))
