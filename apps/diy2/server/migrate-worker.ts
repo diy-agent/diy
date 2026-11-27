@@ -6,7 +6,7 @@
 //
 // 协议：每一行 `@@<json>`。前缀是给父进程分流用的（父进程还要转发子进程自己的报错）。
 
-import { openStore, type MigrationStepEvent } from '@diy-agent/entity-runtime';
+import { MIGRATION_STEPS, openStore, type MigrationStepEvent } from '@diy-agent/entity-runtime';
 
 const MARK = '@@';
 
@@ -27,6 +27,9 @@ if (dbPath === undefined) {
     emit({ kind: 'fatal', message: '缺参数：数据库路径' });
     process.exit(2);
 }
+
+// 先把「一共几步」报给页面：进度条要有分母（不然只能画一个不知道到哪的转圈）
+emit({ kind: 'plan', steps: MIGRATION_STEPS });
 
 const started = Date.now();
 let failed: string | undefined;

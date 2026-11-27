@@ -548,6 +548,32 @@ export interface MigrationStepEvent {
     progress?: { done: number; total: number };
 }
 
+/**
+ * 迁移步骤清单：**顺序 = 执行顺序**。
+ *
+ * 为什么要单独列出来：迁移页要一个带分母的进度条（「已完成 9/16」），
+ * 而分母只有全部跑完才知道。这里先给出清单，页面一开工就有总数。
+ * `step()` 会核对 id 与标题对得上 —— 两边漂了会当场报错，不会默默画错。
+ */
+export const MIGRATION_STEPS: ReadonlyArray<{ id: string; title: string }> = [
+    { id: 'rename-bot-profiles', title: '表名：bot_roles → bot_profiles' },
+    { id: 'rename-bot-profile-defaults', title: '表名：role_config → bot_profile_defaults' },
+    { id: 'create-tables', title: '建表（缺什么补什么）' },
+    { id: 'entity-bots-to-room-members', title: '老表 entity_bots → room_members' },
+    { id: 'deliveries-columns', title: '补列：deliveries.mode / turn / turn_id' },
+    { id: 'session-log-seq', title: '补列：session_state.log_seq（回放水位）' },
+    { id: 'session-bot-column', title: '列名：session_state.bot_id / bot_role_id → bot_profile_id' },
+    { id: 'bot-profile-columns', title: '补列：bot_profiles.domain_type / domain_id / persona_ref' },
+    { id: 'clear-placeholder-model', title: '清掉占位模型键 none@none/none' },
+    { id: 'tasks-updated-at', title: '补列：tasks.updated_at' },
+    { id: 'task-units-parent', title: '补列：task_units.parent_id（需求账本树）' },
+    { id: 'drop-unit-deps', title: '删掉退役表 unit_deps / unit_batches' },
+    { id: 'legacy-rooms', title: '老表 rooms → rooms_v0 + 实体/域行' },
+    { id: 'fold-bots', title: '把 bots 折成 bot_profiles（按 type + 人设合并）' },
+    { id: 'legacy-journal', title: '把老日志折进 entities' },
+    { id: 'drop-legacy-room-model', title: '退役房间级 model_key' },
+];
+
 export type MigrationReporter = (event: MigrationStepEvent) => void;
 
 export interface OpenStoreOptions {
@@ -574,6 +600,8 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
     db.exec('PRAGMA foreign_keys = ON');
 
     const report: MigrationReporter = options.onMigrationStep ?? ((): void => undefined);
+    /** 步骤 id → 标题（真源 = MIGRATION_STEPS；`step()` 会核对调用方传的标题，漂了当场报错） */
+    const stepTitles = new Map(MIGRATION_STEPS.map((entry) => [entry.id, entry.title]));
     /** 在同一步内部上报子进度（步骤名不变，只换 done/total） */
     const progress = (id: string, title: string, done: number, total: number): void => {
         report({ id, title, state: 'running', progress: { done, total } });
@@ -590,6 +618,10 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         fn: () => void | { changes?: number; note?: string },
         skip?: () => string | undefined,
     ): void => {
+        const expected = stepTitles.get(id);
+        if (expected !== undefined && expected !== title) {
+            throw new Error(`迁移步骤标题漂了：「${id}」清单写的是「${expected}」，调用处写的是「${title}」`);
+        }
         const reason = skip?.();
         if (reason !== undefined) {
             report({ id, title, state: 'skipped', note: reason });

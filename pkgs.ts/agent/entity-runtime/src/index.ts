@@ -18,6 +18,7 @@ export {
 export {
     ASK_DRAFT_PREFIX,
     JOURNAL_KINDS,
+    MIGRATION_STEPS,
     openStore,
     type MigrationReporter,
     type MigrationStepEvent,
