@@ -14,7 +14,11 @@ import { conversationOf } from '../store';
 
 function sameProgress(a: BotProgress, b: BotProgress): boolean {
     return (
-        a.awaiting === b.awaiting && a.idleMs === b.idleMs && a.at === b.at && a.alive === b.alive && a.stage === b.stage
+        a.awaiting === b.awaiting &&
+        a.idleMs === b.idleMs &&
+        a.at === b.at &&
+        a.alive === b.alive &&
+        a.stage === b.stage
     );
 }
 

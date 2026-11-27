@@ -2,15 +2,21 @@
 import { z } from 'zod';
 import { RpcSchema } from '@diy-agent/rpc';
 
-export const demoApi = RpcSchema.group({ children: {
-    math: RpcSchema.group({ children: {
+export const demoApi = RpcSchema.group({
+  children: {
+    math: RpcSchema.group({
+      children: {
         add: RpcSchema.unary({
-            input: { a: z.number(), b: z.number() },
-            output: z.number(),
-            desc: "a + b",
+          input: { a: z.number(), b: z.number() },
+          output: z.number(),
+          desc: 'a + b',
         }),
-    } }),
-    sys: RpcSchema.group({ children: {
+      },
+    }),
+    sys: RpcSchema.group({
+      children: {
         ping: RpcSchema.unary({ input: {}, output: z.string() }),
-    } }),
-} });
+      },
+    }),
+  },
+});

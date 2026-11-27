@@ -7,32 +7,32 @@
 
 ```ts
 // ① 模块里（<pkg>/src/api.ts）
-import { z } from "zod";
-import { RpcSchema, defineService } from "@diy-agent/rpc";
+import { z } from 'zod';
+import { RpcSchema, defineService } from '@diy-agent/rpc';
 
 export const workbenchRoutes = RpcSchema.router({
-    page: RpcSchema.router({
-        list: RpcSchema.unary({ input: {}, output: z.array(pageInfoSchema) }),
-        invoke: RpcSchema.unary({
-            input: { pageId: z.string(), method: z.string(), args: z.unknown().optional() },
-            output: z.unknown(),
-        }),
+  page: RpcSchema.router({
+    list: RpcSchema.unary({ input: {}, output: z.array(pageInfoSchema) }),
+    invoke: RpcSchema.unary({
+      input: { pageId: z.string(), method: z.string(), args: z.unknown().optional() },
+      output: z.unknown(),
     }),
+  }),
 });
 
 export const workbenchService = defineService({
-    name: "diy.ui.workbench",     // ← 跨进程契约，改名 = 老客户端全挂
-    api: workbenchRoutes,
+  name: 'diy.ui.workbench', // ← 跨进程契约，改名 = 老客户端全挂
+  api: workbenchRoutes,
 });
 ```
 
 ```ts
 // ② 服务端
 workbenchService.bind(server, {
-    page: {
-        list: async () => listPages(),
-        invoke: async ({ input }) => invoke(input.pageId, input.method, input.args),
-    },
+  page: {
+    list: async () => listPages(),
+    invoke: async ({ input }) => invoke(input.pageId, input.method, input.args),
+  },
 });
 
 // ③ 客户端（只拿这个模块）
@@ -48,16 +48,16 @@ await wb.page.list({});
 
 ```ts
 export const myRoutes = RpcSchema.router({
-    task: RpcSchema.router({
-        get: RpcSchema.unary({
-            input: { uri: z.string() },
-            output: TaskSchema,
-            desc: "按 uri 取一个任务",
-        }),
+  task: RpcSchema.router({
+    get: RpcSchema.unary({
+      input: { uri: z.string() },
+      output: TaskSchema,
+      desc: '按 uri 取一个任务',
     }),
+  }),
 });
 
-export const myService = defineService({ name: "diy.task", api: myRoutes });
+export const myService = defineService({ name: 'diy.task', api: myRoutes });
 ```
 
 **文件名必须是 `api.ts`** —— `gen-service-types` 按这个约定扫（`<pkg>/src/api.ts`）。
@@ -73,10 +73,10 @@ node_modules/.bin/tsx pkgs.ts/core/rpc/scripts/gen-service-types.ts
 ```ts
 /** Task 的客户端形状 */
 export interface TaskClient {
-    task: {
-        /** 按 uri 取一个任务 */
-        get(input: { uri: string }, options?: RpcCallOptions): Promise<Task>;
-    };
+  task: {
+    /** 按 uri 取一个任务 */
+    get(input: { uri: string }, options?: RpcCallOptions): Promise<Task>;
+  };
 }
 ```
 
@@ -87,9 +87,9 @@ export interface TaskClient {
 
 ```ts
 myService.bind(server, {
-    task: {
-        get: async ({ input }) => loadTask(input.uri),
-    },
+  task: {
+    get: async ({ input }) => loadTask(input.uri),
+  },
 });
 ```
 
@@ -100,7 +100,7 @@ handler 签名是 `({ input, signal }) => T | Promise<T>`。
 
 ```ts
 const task = myService.use(client);
-await task.task.get({ uri: "projects/4/tasks/87" });
+await task.task.get({ uri: 'projects/4/tasks/87' });
 ```
 
 ### 5. 提交时带上生成物
@@ -110,6 +110,7 @@ git add <pkg>/src/api.ts <pkg>/src/gen/api.generated.d.ts
 ```
 
 **生成物必须进 git**（`.gitignore` 已对 `src/gen/` 开例外）：
+
 - 消费方 clone 后没有类型
 - `--check` 永远报过期（磁盘上根本没有文件可比）
 
@@ -129,14 +130,14 @@ node_modules/.bin/tsx pkgs.ts/core/rpc/scripts/gen-service-types.ts
 ## 命名策略
 
 ```ts
-renderServiceTypes("Task", api, { naming: "none" })   // 默认：全内联
+renderServiceTypes('Task', api, { naming: 'none' }); // 默认：全内联
 ```
 
-| 档 | 效果 |
-|---|---|
-| `none`（默认）| 全内联 —— 一屏看全，不用跳转 |
-| `all` | IO + 子接口全具名 —— 报错只显示 `TaskGetInput` |
-| `auto` | 标量内联、对象具名（主流做法：协议层具名、查询结果内联）|
+| 档             | 效果                                                     |
+| -------------- | -------------------------------------------------------- |
+| `none`（默认） | 全内联 —— 一屏看全，不用跳转                             |
+| `all`          | IO + 子接口全具名 —— 报错只显示 `TaskGetInput`           |
+| `auto`         | 标量内联、对象具名（主流做法：协议层具名、查询结果内联） |
 
 **选哪个是口味不是能力**。默认取最简的一档，需要时一行配置切回来。
 
@@ -159,8 +160,8 @@ defineService({ name: "diy.ui.workbench", ... })
 **③ `input` 永远是对象，不摊平**
 
 ```ts
-invoke({ pageId: "x", method: "y" })    // ✓
-invoke("x", "y")                        // ✗ 永远不这么设计
+invoke({ pageId: 'x', method: 'y' }); // ✓
+invoke('x', 'y'); // ✗ 永远不这么设计
 ```
 
 调研过 tRPC / gRPC / GraphQL / JSON-RPC / AWS SDK / Stripe / Prisma —— **全都是对象**。
@@ -215,10 +216,10 @@ const client = new ChannelClientBinding(transport);
 cd pkgs.ts/core/rpc && npx vitest run       # 全量
 ```
 
-| 文件 | 覆盖 |
-|---|---|
-| `test/service.test.ts` | `bind` / `use` / 前缀 / 越界 / 缺 handler |
-| `test/service-gen.test.ts` | `zodToTs` 各构造 / 三种命名策略 |
-| `test/binding.test.ts` | 四种 stream mode × 各传输 |
+| 文件                          | 覆盖                                                    |
+| ----------------------------- | ------------------------------------------------------- |
+| `test/service.test.ts`        | `bind` / `use` / 前缀 / 越界 / 缺 handler               |
+| `test/service-gen.test.ts`    | `zodToTs` 各构造 / 三种命名策略                         |
+| `test/binding.test.ts`        | 四种 stream mode × 各传输                               |
 | `test/raw/browser-ws.test.ts` | 浏览器适配 + 真 WebSocket 往返（unary + server-stream） |
-| `test/intent.cancel.test.ts` | 取消传播 |
+| `test/intent.cancel.test.ts`  | 取消传播                                                |

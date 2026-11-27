@@ -75,10 +75,34 @@ const devDef = defineWorkflow({
     nodes: [
         { id: 'clarify', name: '需求', actor: 'human', guard: ['prompt:clear_enough'], hint: '澄清到无歧义即可放行' },
         { id: 'design', name: '设计', actor: 'agent', guard: ['prompt:design_ready'], hint: '产出方案与边界' },
-        { id: 'implement', name: '开发', actor: 'agent', guard: ['prompt:dev_done'], hint: '开发完成 xx 任务，完成后提交给 Review 步骤' },
-        { id: 'review', name: 'Review', actor: 'agent', guard: ['prompt:review_done'], hint: '独立复审；P0/P1 打回，全部有落点则放行' },
-        { id: 'ci', name: 'CI', actor: 'system', guard: ['pred:check_green', 'pred:intent_green'], hint: '数组 = 与：两套检查都绿才推' },
-        { id: 'merge', name: '合并', actor: 'system', guard: ['pred:ci_green', 'pred:no_conflict', 'pred:review_approved'], hint: '三条 guard 全满足' },
+        {
+            id: 'implement',
+            name: '开发',
+            actor: 'agent',
+            guard: ['prompt:dev_done'],
+            hint: '开发完成 xx 任务，完成后提交给 Review 步骤',
+        },
+        {
+            id: 'review',
+            name: 'Review',
+            actor: 'agent',
+            guard: ['prompt:review_done'],
+            hint: '独立复审；P0/P1 打回，全部有落点则放行',
+        },
+        {
+            id: 'ci',
+            name: 'CI',
+            actor: 'system',
+            guard: ['pred:check_green', 'pred:intent_green'],
+            hint: '数组 = 与：两套检查都绿才推',
+        },
+        {
+            id: 'merge',
+            name: '合并',
+            actor: 'system',
+            guard: ['pred:ci_green', 'pred:no_conflict', 'pred:review_approved'],
+            hint: '三条 guard 全满足',
+        },
     ],
     edges: [
         { from: 'clarify', to: 'design', kind: 'next' },
@@ -101,7 +125,13 @@ const videoDef = defineWorkflow({
         { id: 'cut', name: '剪辑', actor: 'agent', guard: ['prompt:cut_ok'], hint: '节奏满意' },
         { id: 'render', name: '转码', actor: 'system', guard: ['pred:render_done'], hint: 'ffprobe(out) 通过' },
         { id: 'approve', name: '审片', actor: 'agent', guard: ['prompt:approve_ok'], hint: '审美与合规的主观放行' },
-        { id: 'checks', name: '合规', actor: 'system', guard: ['pred:duration_ok', 'pred:copyright_ok'], hint: '时长与版权都过' },
+        {
+            id: 'checks',
+            name: '合规',
+            actor: 'system',
+            guard: ['pred:duration_ok', 'pred:copyright_ok'],
+            hint: '时长与版权都过',
+        },
         { id: 'publish', name: '发布', actor: 'system', guard: ['action:publish'], hint: '投递到各平台' },
     ],
     edges: [
@@ -124,9 +154,27 @@ const quantDef = defineWorkflow({
         { id: 'fetch', name: '数据', actor: 'system', guard: ['pred:data_complete'], hint: '行情与财务数据齐备' },
         { id: 'factor', name: '因子', actor: 'system', guard: ['pred:factor_ready'], hint: '因子矩阵无缺失值' },
         { id: 'select', name: '筛选', actor: 'agent', guard: ['prompt:select_ok'], hint: '解读因子、说明为什么这么筛' },
-        { id: 'backtest', name: '回测', actor: 'system', guard: ['pred:backtest_ok'], hint: 'sharpe > 1.5 且 maxDD < 0.2' },
-        { id: 'risk', name: '风控', actor: 'system', guard: ['pred:weight_ok', 'pred:not_blacklisted'], hint: '单票 ≤ 10% 且不命中黑名单' },
-        { id: 'signoff', name: '人工确认', actor: 'human', guard: ['prompt:human_ok'], hint: '真金白银的最后一关，人工签字' },
+        {
+            id: 'backtest',
+            name: '回测',
+            actor: 'system',
+            guard: ['pred:backtest_ok'],
+            hint: 'sharpe > 1.5 且 maxDD < 0.2',
+        },
+        {
+            id: 'risk',
+            name: '风控',
+            actor: 'system',
+            guard: ['pred:weight_ok', 'pred:not_blacklisted'],
+            hint: '单票 ≤ 10% 且不命中黑名单',
+        },
+        {
+            id: 'signoff',
+            name: '人工确认',
+            actor: 'human',
+            guard: ['prompt:human_ok'],
+            hint: '真金白银的最后一关，人工签字',
+        },
         { id: 'order', name: '下单', actor: 'system', guard: ['action:place_order'], hint: '把篮子提交给券商' },
     ],
     edges: [
@@ -141,8 +189,32 @@ const quantDef = defineWorkflow({
 });
 
 const DEV_RUN = ['clarify', 'design', 'implement', 'review', 'implement', 'review', 'ci', 'merge'] as const;
-const VIDEO_RUN = ['topic', 'script', 'storyboard', 'shoot', 'cut', 'render', 'approve', 'cut', 'render', 'approve', 'checks', 'publish'] as const;
-const QUANT_RUN = ['fetch', 'factor', 'select', 'backtest', 'risk', 'select', 'backtest', 'risk', 'signoff', 'order'] as const;
+const VIDEO_RUN = [
+    'topic',
+    'script',
+    'storyboard',
+    'shoot',
+    'cut',
+    'render',
+    'approve',
+    'cut',
+    'render',
+    'approve',
+    'checks',
+    'publish',
+] as const;
+const QUANT_RUN = [
+    'fetch',
+    'factor',
+    'select',
+    'backtest',
+    'risk',
+    'select',
+    'backtest',
+    'risk',
+    'signoff',
+    'order',
+] as const;
 
 // ═══════════════════════════════════════════════════════════════
 
@@ -160,7 +232,9 @@ describe('R1 类型护栏（##311 §一：唯一保留的护栏）', () => {
     const defOne = (edges: readonly EdgeDef<'review'>[]) => defineWorkflow({ nodes: oneNode, edges });
 
     it('合法定义：edges 取节点 id 的字面量联合，返回类型带 Id 联合', () => {
-        const valid: WorkflowDef<'review' | 'implement'> = defTwo([{ from: 'review', to: 'implement', kind: 'bounce' }]);
+        const valid: WorkflowDef<'review' | 'implement'> = defTwo([
+            { from: 'review', to: 'implement', kind: 'bounce' },
+        ]);
         expect(valid.entry).toBe('review');
         expect(valid.nodes.length).toBe(2);
     });
@@ -197,7 +271,10 @@ describe('R2 定义校验（不静默）', () => {
     });
 
     it('悬空边 → dangling-edge（运行期兜底编译期护栏）', () => {
-        const def = { nodes: [{ id: 'a', name: 'A', actor: 'agent', guard: [], hint: '' }], edges: [{ from: 'a', to: 'x', kind: 'next' }] };
+        const def = {
+            nodes: [{ id: 'a', name: 'A', actor: 'agent', guard: [], hint: '' }],
+            edges: [{ from: 'a', to: 'x', kind: 'next' }],
+        };
         expect(caught(() => parseWorkflow(def)).code).toBe('dangling-edge');
     });
 
@@ -379,8 +456,20 @@ describe('R6 非法转移一律报错（带点路径）', () => {
     });
 
     it('事件 id 重复 → duplicate-event-id', () => {
-        const a = createEvent({ id: 'same', author: 'agent', anchor: { type: 'node', data: { nodeId: 'clarify' } }, content: '', at: AT });
-        const b = createEvent({ id: 'same', author: 'agent', anchor: { type: 'node', data: { nodeId: 'design' } }, content: '', at: AT });
+        const a = createEvent({
+            id: 'same',
+            author: 'agent',
+            anchor: { type: 'node', data: { nodeId: 'clarify' } },
+            content: '',
+            at: AT,
+        });
+        const b = createEvent({
+            id: 'same',
+            author: 'agent',
+            anchor: { type: 'node', data: { nodeId: 'design' } },
+            content: '',
+            at: AT,
+        });
         expect(caught(() => project([a, b], devDef)).code).toBe('duplicate-event-id');
     });
 });

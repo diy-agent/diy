@@ -17,18 +17,18 @@
 //
 // ⚠️ 错误是**抛**不是 return（##353 同口径）：catch-and-return 的字符串会被画成 ✓。
 
-import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
-import path from "node:path";
-import { writeFileAtomic } from "./atomic-write.js";
-import { diffLines, displayDiffLine, renderUnifiedHunks, splitDiffLines } from "./unified-diff.js";
+import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { writeFileAtomic } from './atomic-write.js';
+import { diffLines, displayDiffLine, renderUnifiedHunks, splitDiffLines } from './unified-diff.js';
 
 /** 单次写入的内容上限（字节，UTF-8）。1 MB 足够一整份源码/文档，又不至于把主进程内存撑爆。 */
 export const WRITE_MAX_BYTES = 1024 * 1024;
 
 /** UTF-8 BOM（写入时按原文件保留，不新增） */
-const BOM = "\uFEFF";
+const BOM = '\uFEFF';
 
-export type FileWriteErrorCode = "fs/path-escape" | "fs/content-too-large" | "fs/is-directory";
+export type FileWriteErrorCode = 'fs/path-escape' | 'fs/content-too-large' | 'fs/is-directory';
 
 /**
  * 写入类错误：`code` 用 `fs/` 域（`error-triage.ts::CODE_RE` 已含 fs，不新开域）。
@@ -41,7 +41,7 @@ export class FileWriteError<C extends string = FileWriteErrorCode> extends Error
     /** 对象参数形态：`{ code, message }` —— 与 `throw new Error(msg, { code })` 同一种「码在实参里」的写法 */
     constructor(init: { code: C; message: string }) {
         super(init.message);
-        this.name = "FileWriteError";
+        this.name = 'FileWriteError';
         this.code = init.code;
     }
 }
@@ -64,9 +64,9 @@ function realpathOfNearest(abs: string): string {
             // ENOENT / ENOTDIR：这段还不存在（或中间某段是文件）→ 上溯一层继续解析。
             // 其它错误（EACCES / ELOOP）**fail-closed**：解析不了就不放行 ——
             // ELOOP 的自引用 symlink 尤其不能靠"反正写不进去"来兜（解析不了就不写）。
-            if (code !== "ENOENT" && code !== "ENOTDIR") {
+            if (code !== 'ENOENT' && code !== 'ENOTDIR') {
                 throw new FileWriteError({
-                    code: "fs/path-escape",
+                    code: 'fs/path-escape',
                     message: `无法解析路径 ${probe}（${code}）：路径不可解析，拒绝写入`,
                 });
             }
@@ -88,11 +88,11 @@ function realpathOfNearest(abs: string): string {
  */
 export function resolveWritePath(cwd: string, relPath: string): string {
     const raw = relPath.trim();
-    if (!raw) throw new FileWriteError({ code: "fs/path-escape", message: "path 不能为空" });
+    if (!raw) throw new FileWriteError({ code: 'fs/path-escape', message: 'path 不能为空' });
     const root = realpathSync(path.resolve(cwd));
     const real = realpathOfNearest(path.resolve(root, raw));
-    if (path.relative(root, real) === "") {
-        throw new FileWriteError({ code: "fs/is-directory", message: `${relPath} 是工作目录本身（write 只写文件）` });
+    if (path.relative(root, real) === '') {
+        throw new FileWriteError({ code: 'fs/is-directory', message: `${relPath} 是工作目录本身（write 只写文件）` });
     }
     return real;
 }
@@ -138,22 +138,21 @@ export function unifiedDiff(before: string | null, after: string, opts: DiffOpti
 
     // 新文件：全部 + 行，只列前 N 行（新增行数仍是真值）
     if (before === null) {
-        const head = pathLabel === null ? [] : ["--- /dev/null", `+++ b/${pathLabel}`];
+        const head = pathLabel === null ? [] : ['--- /dev/null', `+++ b/${pathLabel}`];
         const shown = afterLines.slice(0, maxNewFileLines);
         const body = shown.map((l) => `+${displayDiffLine(l)}`);
         const omitted = afterLines.length - shown.length;
-        const tail =
-            omitted > 0 ? [`[省略 ${omitted} 行（新文件共 ${afterLines.length} 行）]`] : [];
+        const tail = omitted > 0 ? [`[省略 ${omitted} 行（新文件共 ${afterLines.length} 行）]`] : [];
         const lines = [...head, `@@ -0,0 +1,${afterLines.length} @@`, ...body, ...tail];
-        return { added: afterLines.length, removed: 0, text: lines.join("\n"), truncated: omitted > 0 };
+        return { added: afterLines.length, removed: 0, text: lines.join('\n'), truncated: omitted > 0 };
     }
 
     // diff 本体（LCS + hunk 渲染）**只有一份**，在 core/unified-diff.ts（##266 review2）：
     // edit 的 patch 回执与这里的摘要同源，改一处两边都变。本函数只做展示层（截断 / 新文件）。
     const ops = diffLines(splitDiffLines(before), afterLines);
-    const added = ops.filter((o) => o.kind === "add").length;
-    const removed = ops.filter((o) => o.kind === "del").length;
-    if (added === 0 && removed === 0) return { added: 0, removed: 0, text: "", truncated: false };
+    const added = ops.filter((o) => o.kind === 'add').length;
+    const removed = ops.filter((o) => o.kind === 'del').length;
+    if (added === 0 && removed === 0) return { added: 0, removed: 0, text: '', truncated: false };
 
     let lines = renderUnifiedHunks(ops, ctx, pathLabel);
     let truncated = false;
@@ -164,7 +163,7 @@ export function unifiedDiff(before: string | null, after: string, opts: DiffOpti
         lines = [...lines.slice(0, headCount), `... 省略 ${omitted} 行 ...`, ...lines.slice(lines.length - tailCount)];
         truncated = true;
     }
-    return { added, removed, text: lines.join("\n"), truncated };
+    return { added, removed, text: lines.join('\n'), truncated };
 }
 
 // ═══════════════════════════════════════════════
@@ -217,7 +216,7 @@ export interface FileWriteResult {
 
 /** 文件开头是否 UTF-8 BOM（只读 3 字节：大文件也不必全文读入） */
 function hasBom(abs: string): boolean {
-    const fd = openSync(abs, "r");
+    const fd = openSync(abs, 'r');
     try {
         const buf = Buffer.alloc(3);
         const n = readSync(fd, buf, 0, 3, 0);
@@ -232,7 +231,12 @@ function hasBom(abs: string): boolean {
  *
  * @throws FileWriteError（空路径·不可解析 / 超限 / 目标是目录）；底层 IO 错误原样上抛
  */
-export function writeFileWhole(cwd: string, relPath: string, content: string, opts: WriteFileOptions = {}): FileWriteResult {
+export function writeFileWhole(
+    cwd: string,
+    relPath: string,
+    content: string,
+    opts: WriteFileOptions = {},
+): FileWriteResult {
     const target = resolveWritePath(cwd, relPath);
 
     let exists = false;
@@ -244,7 +248,7 @@ export function writeFileWhole(cwd: string, relPath: string, content: string, op
         const st = statSync(target);
         if (st.isDirectory()) {
             throw new FileWriteError({
-                code: "fs/is-directory",
+                code: 'fs/is-directory',
                 message: `${relPath} 是目录（write 只写文件；要列目录用 bash ls）`,
             });
         }
@@ -252,11 +256,11 @@ export function writeFileWhole(cwd: string, relPath: string, content: string, op
         beforeBytes = st.size;
         oldBom = hasBom(target);
         // 大文件只探测 BOM，不读全文（见 WriteFileOptions.diffMaxBeforeBytes）
-        if (beforeBytes <= (opts.diffMaxBeforeBytes ?? DIFF_MAX_BEFORE_BYTES)) before = readFileSync(target, "utf-8");
+        if (beforeBytes <= (opts.diffMaxBeforeBytes ?? DIFF_MAX_BEFORE_BYTES)) before = readFileSync(target, 'utf-8');
         else diffSkipped = true;
     } catch (e) {
         if (e instanceof FileWriteError) throw e;
-        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
 
     // BOM：已有文件的 BOM 状态**保持不变**（模型看不见它，不该被一次覆盖改掉）；
@@ -273,13 +277,13 @@ export function writeFileWhole(cwd: string, relPath: string, content: string, op
     }
 
     const maxBytes = opts.maxBytes ?? WRITE_MAX_BYTES;
-    const bytes = Buffer.byteLength(finalContent, "utf-8");
+    const bytes = Buffer.byteLength(finalContent, 'utf-8');
     if (bytes > maxBytes) {
         throw new FileWriteError({
-            code: "fs/content-too-large",
+            code: 'fs/content-too-large',
             message:
                 `content 共 ${bytes} 字节，超过单次上限 ${maxBytes} 字节（${Math.round(maxBytes / 1024)}KB）；` +
-                "请拆成多次写，或先用 write 写骨架再用 bash 追加",
+                '请拆成多次写，或先用 write 写骨架再用 bash 追加',
         });
     }
 
@@ -297,22 +301,20 @@ export function writeFileWhole(cwd: string, relPath: string, content: string, op
         bomStripped,
         diffSkipped,
         beforeBytes,
-        diff: diff?.text ?? "",
+        diff: diff?.text ?? '',
     };
 }
 
 /** `+N/-M`（无法统计时为 `+?/-?`）—— 回执与审计共用同一写法 */
-export function countsLabel(r: Pick<FileWriteResult, "added" | "removed">): string {
-    return r.added === null || r.removed === null ? "+?/-?" : `+${r.added}/-${r.removed}`;
+export function countsLabel(r: Pick<FileWriteResult, 'added' | 'removed'>): string {
+    return r.added === null || r.removed === null ? '+?/-?' : `+${r.added}/-${r.removed}`;
 }
 
 /** 给模型看的回执：一行结论 + diff 摘要 */
 export function formatWriteResult(r: FileWriteResult): string {
     const kb = r.bytes < 1024 ? `${r.bytes} B` : `${(r.bytes / 1024).toFixed(1)} KB`;
-    const flags = `${r.isNew ? "，新建" : ""}${r.bomKept ? "，保留 BOM" : ""}${r.bomStripped ? "，剥掉 BOM" : ""}`;
-    const skipped = r.diffSkipped
-        ? `；原文件 ${(r.beforeBytes / 1024 / 1024).toFixed(1)} MB，diff 略`
-        : "";
+    const flags = `${r.isNew ? '，新建' : ''}${r.bomKept ? '，保留 BOM' : ''}${r.bomStripped ? '，剥掉 BOM' : ''}`;
+    const skipped = r.diffSkipped ? `；原文件 ${(r.beforeBytes / 1024 / 1024).toFixed(1)} MB，diff 略` : '';
     // 相对路径回显看不出写到哪个仓（## E2 踩过两次）：与 read 对齐，两个不一样就都写出来
     const where = r.path === r.absPath ? r.path : `${r.path} → ${r.absPath}`;
     const head = `写入 ${where}（${countsLabel(r)} 行，${kb}${flags}${skipped}）`;

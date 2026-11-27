@@ -120,20 +120,20 @@ for p in \
 done
 ```
 
-| Probe | 现状 | 说明 |
-|---|---|---|
-| `channel-init-timeout-leak.ts` | PASS | R19 P0/P1-1：init timeout 已向服务端发 cancel，server finally 执行 |
-| `http-upload-source-error.ts` | PASS | R19 P1-2（clientStream）：上传源错误传播 `STREAM_ERROR` |
-| `http-malformed-input.ts` | PASS | R19 P1-3：非法 NDJSON → HTTP 400 `INVALID_ARGUMENT` |
-| `http-dispose-new-request.ts` | PASS | R19 P1-4：dispose 后新请求 → `RpcError DISPOSED` |
-| `http-drain-close-before-response.ts` | PASS | R19 P1-5/R18：close 先于 response 不再多拉 upstream |
-| `http-drain-terminal-race.ts` | PASS | R16：终态 drain 唤醒后不再多拉 upstream |
-| `http-remote-terminal-resources.ts` | PASS | R12/R13：request-side 流收敛 |
-| `ws-malformed-frame.ts` | **FAIL（P1-A）** | 对端坏帧 → `uncaughtException`（旧版为假 PASS，已修正） |
-| `ws-malformed-full-chain.ts` | **FAIL（P1-A）** | 坏帧 + pending 调用永久悬挂 |
-| `bidi-upload-source-error.ts` | **FAIL（P1-B）** | HTTP bidi 吞掉上传错误（channel 已传播，跨传输分叉） |
-| `http-body-reader-listeners.ts` | PASS（NOTE） | P3-2：listener 无 per-chunk 增长；终态依赖 GC |
-| `notify-matrix.ts` | FAIL（P3-1） | 文档声称 notify 但类型联合无成员（记录项，非阻断） |
+| Probe                                 | 现状             | 说明                                                               |
+| ------------------------------------- | ---------------- | ------------------------------------------------------------------ |
+| `channel-init-timeout-leak.ts`        | PASS             | R19 P0/P1-1：init timeout 已向服务端发 cancel，server finally 执行 |
+| `http-upload-source-error.ts`         | PASS             | R19 P1-2（clientStream）：上传源错误传播 `STREAM_ERROR`            |
+| `http-malformed-input.ts`             | PASS             | R19 P1-3：非法 NDJSON → HTTP 400 `INVALID_ARGUMENT`                |
+| `http-dispose-new-request.ts`         | PASS             | R19 P1-4：dispose 后新请求 → `RpcError DISPOSED`                   |
+| `http-drain-close-before-response.ts` | PASS             | R19 P1-5/R18：close 先于 response 不再多拉 upstream                |
+| `http-drain-terminal-race.ts`         | PASS             | R16：终态 drain 唤醒后不再多拉 upstream                            |
+| `http-remote-terminal-resources.ts`   | PASS             | R12/R13：request-side 流收敛                                       |
+| `ws-malformed-frame.ts`               | **FAIL（P1-A）** | 对端坏帧 → `uncaughtException`（旧版为假 PASS，已修正）            |
+| `ws-malformed-full-chain.ts`          | **FAIL（P1-A）** | 坏帧 + pending 调用永久悬挂                                        |
+| `bidi-upload-source-error.ts`         | **FAIL（P1-B）** | HTTP bidi 吞掉上传错误（channel 已传播，跨传输分叉）               |
+| `http-body-reader-listeners.ts`       | PASS（NOTE）     | P3-2：listener 无 per-chunk 增长；终态依赖 GC                      |
+| `notify-matrix.ts`                    | FAIL（P3-1）     | 文档声称 notify 但类型联合无成员（记录项，非阻断）                 |
 
 `electron-transport-close.ts`（P3-3，需 esbuild + node，因 electron 命名导出在 tsx 下不可解析）：
 

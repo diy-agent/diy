@@ -4,22 +4,22 @@ diy 事实库的**内核**：事实身份、作用域解析、claim 图、结构
 
 ## 三条粒度（别混）
 
-| 粒度 | 形态 | 谁可派生 | 用途 |
-|---|---|---|---|
-| subject | `app.port` | 否（受控词表） | 描述的对象 |
-| claim | `app.port#default` | **是**（查询键，重算无副作用） | 边的目标 |
-| fact.id | `port.production` | **否**（审计锚点） | `supersedes.to` 指向它、证据挂在它上 |
+| 粒度    | 形态               | 谁可派生                       | 用途                                 |
+| ------- | ------------------ | ------------------------------ | ------------------------------------ |
+| subject | `app.port`         | 否（受控词表）                 | 描述的对象                           |
+| claim   | `app.port#default` | **是**（查询键，重算无副作用） | 边的目标                             |
+| fact.id | `port.production`  | **否**（审计锚点）             | `supersedes.to` 指向它、证据挂在它上 |
 
 ## 用法
 
 ```ts
 import { validateFacts, buildIndex, resolveClaim, affected } from '@diy-agent/facts';
 
-const { facts, issues } = validateFacts(parsed);        // 一次报全部问题
-const index = buildIndex(facts);                        // claim 表 / 反查 / 冲突 / 结构问题
-resolveClaim(facts, 'app.port#default', { env: 'test' });   // => 0（development/test）
+const { facts, issues } = validateFacts(parsed); // 一次报全部问题
+const index = buildIndex(facts); // claim 表 / 反查 / 冲突 / 结构问题
+resolveClaim(facts, 'app.port#default', { env: 'test' }); // => 0（development/test）
 resolveClaim(facts, 'app.port#default', { env: 'production' }); // => 18888
-affected(index, ['apps/diy-app/tests/x.test.ts']);   // => ['rule.test-bail']（复核清单）
+affected(index, ['apps/diy-app/tests/x.test.ts']); // => ['rule.test-bail']（复核清单）
 ```
 
 ## 「变体」是语义不是存储形状
@@ -30,12 +30,12 @@ affected(index, ['apps/diy-app/tests/x.test.ts']);   // => ['rule.test-bail']（
 - id: port.production
   subject: app.port
   aspect: default
-  value: "18888"
+  value: '18888'
   scope: { env: production }
 - id: port.dev-test
   subject: app.port
   aspect: default
-  value: "0"
+  value: '0'
   scope: { env: [development, test] }
 ```
 

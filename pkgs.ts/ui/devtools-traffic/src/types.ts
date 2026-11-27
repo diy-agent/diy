@@ -46,7 +46,12 @@ export interface LogFiles {
     readonly files: readonly string[];
     readonly dates: readonly string[];
     readonly bytes: number;
-    readonly detail: readonly { readonly file: string; readonly date: string; readonly bytes: number; readonly today: boolean }[];
+    readonly detail: readonly {
+        readonly file: string;
+        readonly date: string;
+        readonly bytes: number;
+        readonly today: boolean;
+    }[];
 }
 
 /** 宿主能力：**唯一**的依赖面（rpc 客户端据此实现，见 client.ts） */

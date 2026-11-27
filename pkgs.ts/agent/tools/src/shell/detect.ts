@@ -9,13 +9,13 @@
 // `DIY_SHELL`），不跑进程、不拼命令 —— 命令拼装在 spec.ts，执行在 run.ts。
 // `diy-app` 侧仍遵守它的 R 规则：那边只调 `os.*`，不直接看平台（见 os/README.md）。
 
-import { existsSync } from "node:fs";
-import { win32 as winPath } from "node:path";
-import type { ShellSpec } from "./spec.js";
+import { existsSync } from 'node:fs';
+import { win32 as winPath } from 'node:path';
+import type { ShellSpec } from './spec.js';
 
 /** 按可执行文件名判定能力种类（bash/sh vs pwsh/powershell）。 */
-function shellKindOf(file: string): "bash" | "pwsh" {
-    return /(?:^|[\\/])(?:bash|sh)(?:\.exe)?$/i.test(file) ? "bash" : "pwsh";
+function shellKindOf(file: string): 'bash' | 'pwsh' {
+    return /(?:^|[\\/])(?:bash|sh)(?:\.exe)?$/i.test(file) ? 'bash' : 'pwsh';
 }
 
 /**
@@ -28,25 +28,25 @@ export function winShellCandidates(env: NodeJS.ProcessEnv): string[] {
     const add = (p: string | undefined): void => {
         if (p && p.trim()) out.push(p);
     };
-    add(env["DIY_SHELL"]);
+    add(env['DIY_SHELL']);
     const gitBin = (...root: Array<string | undefined>): string | undefined => {
-        const base = root.filter((x): x is string => Boolean(x)).join("\\");
-        return base ? winPath.join(base, "Git", "bin", "bash.exe") : undefined;
+        const base = root.filter((x): x is string => Boolean(x)).join('\\');
+        return base ? winPath.join(base, 'Git', 'bin', 'bash.exe') : undefined;
     };
-    add(gitBin(env["ProgramFiles"]));
-    add(gitBin(env["ProgramW6432"]));
-    add(gitBin(env["ProgramFiles(x86)"]));
-    add(env["LOCALAPPDATA"] ? winPath.join(env["LOCALAPPDATA"], "Programs", "Git", "bin", "bash.exe") : undefined);
+    add(gitBin(env['ProgramFiles']));
+    add(gitBin(env['ProgramW6432']));
+    add(gitBin(env['ProgramFiles(x86)']));
+    add(env['LOCALAPPDATA'] ? winPath.join(env['LOCALAPPDATA'], 'Programs', 'Git', 'bin', 'bash.exe') : undefined);
     add(
-        env["USERPROFILE"]
-            ? winPath.join(env["USERPROFILE"], "scoop", "apps", "git", "current", "bin", "bash.exe")
+        env['USERPROFILE']
+            ? winPath.join(env['USERPROFILE'], 'scoop', 'apps', 'git', 'current', 'bin', 'bash.exe')
             : undefined,
     );
-    for (const dir of (env["PATH"] ?? env["Path"] ?? "").split(";")) {
-        const d = dir.trim().replace(/^"|"$/g, "");
+    for (const dir of (env['PATH'] ?? env['Path'] ?? '').split(';')) {
+        const d = dir.trim().replace(/^"|"$/g, '');
         // System32 里的 bash.exe 是 WSL 启动桩，语义不同，不自动用
         if (!d || /[\\/]system32[\\/]?$/i.test(d) || /[\\/]syswow64[\\/]?$/i.test(d)) continue;
-        add(winPath.join(d, "bash.exe"));
+        add(winPath.join(d, 'bash.exe'));
     }
     return [...new Set(out)];
 }
@@ -57,21 +57,21 @@ export function pwshCandidates(env: NodeJS.ProcessEnv): string[] {
     const add = (p: string | undefined): void => {
         if (p && p.trim()) out.push(p);
     };
-    for (const dir of (env["PATH"] ?? env["Path"] ?? "").split(";")) {
-        const d = dir.trim().replace(/^"|"$/g, "");
+    for (const dir of (env['PATH'] ?? env['Path'] ?? '').split(';')) {
+        const d = dir.trim().replace(/^"|"$/g, '');
         if (!d) continue;
-        add(winPath.join(d, "pwsh.exe"));
+        add(winPath.join(d, 'pwsh.exe'));
     }
-    add(env["ProgramFiles"] ? winPath.join(env["ProgramFiles"], "PowerShell", "7", "pwsh.exe") : undefined);
+    add(env['ProgramFiles'] ? winPath.join(env['ProgramFiles'], 'PowerShell', '7', 'pwsh.exe') : undefined);
     add(
-        env["SystemRoot"]
-            ? winPath.join(env["SystemRoot"], "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+        env['SystemRoot']
+            ? winPath.join(env['SystemRoot'], 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
             : undefined,
     );
-    for (const dir of (env["PATH"] ?? env["Path"] ?? "").split(";")) {
-        const d = dir.trim().replace(/^"|"$/g, "");
+    for (const dir of (env['PATH'] ?? env['Path'] ?? '').split(';')) {
+        const d = dir.trim().replace(/^"|"$/g, '');
         if (!d) continue;
-        add(winPath.join(d, "powershell.exe"));
+        add(winPath.join(d, 'powershell.exe'));
     }
     return [...new Set(out)];
 }
@@ -81,7 +81,7 @@ export function pwshCandidates(env: NodeJS.ProcessEnv): string[] {
  * **bash 缺席不是错误** —— 有 pwsh 就够用；两者都有时都返回（工具面并存）。
  */
 export function discoverShellSpecs(env: NodeJS.ProcessEnv, exists: (p: string) => boolean): ShellSpec[] {
-    const diy = (env["DIY_SHELL"] ?? "").trim();
+    const diy = (env['DIY_SHELL'] ?? '').trim();
     // 显式 DIY_SHELL 是**权威覆盖**：设了（哪怕指错）就不再猜 Git Bash ——
     // 这样「把 bash 关掉看 pwsh 降级」是可复现的，而不是"指错也照样找到 Git Bash"。
     const bashList = diy ? [diy] : winShellCandidates(env);
@@ -104,8 +104,8 @@ export function discoverShellSpecs(env: NodeJS.ProcessEnv, exists: (p: string) =
  * 所以不做存在性检查 —— 真缺了会在 spawn 时报「命令未能启动」（③ 档），比这里猜更诚实。
  */
 export function posixShellSpecs(env: NodeJS.ProcessEnv = process.env): ShellSpec[] {
-    const diy = (env["DIY_SHELL"] ?? "").trim();
-    const file = diy || "/bin/bash";
+    const diy = (env['DIY_SHELL'] ?? '').trim();
+    const file = diy || '/bin/bash';
     return [{ kind: shellKindOf(file), file, label: file, missing: false, tried: [file] }];
 }
 
@@ -123,7 +123,7 @@ export interface DetectDeps {
 export function detectShells(deps: DetectDeps = {}): ShellSpec[] {
     const platform = deps.platform ?? process.platform;
     const env = deps.env ?? process.env;
-    if (platform !== "win32") return posixShellSpecs(env);
+    if (platform !== 'win32') return posixShellSpecs(env);
     return discoverShellSpecs(env, deps.exists ?? existsSync);
 }
 
@@ -131,9 +131,9 @@ export function detectShells(deps: DetectDeps = {}): ShellSpec[] {
 export function detectPreferredShell(deps: DetectDeps = {}): ShellSpec {
     return (
         detectShells(deps)[0] ?? {
-            kind: "bash",
-            file: "bash",
-            label: "bash",
+            kind: 'bash',
+            file: 'bash',
+            label: 'bash',
             missing: true,
             tried: [],
         }

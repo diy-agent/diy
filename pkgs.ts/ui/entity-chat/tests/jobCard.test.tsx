@@ -43,7 +43,9 @@ function tool(overrides: Partial<TimelinePart & { kind: 'tool' }>): TimelinePart
 function html(part: TimelinePart & { kind: 'tool' }, options: { open?: boolean; live?: boolean } = {}): string {
     const view = jobOf(part);
     expect(view).toBeDefined();
-    return renderToStaticMarkup(<JobCard view={view!} live={options.live === true} defaultOpen={options.open === true} />);
+    return renderToStaticMarkup(
+        <JobCard view={view!} live={options.live === true} defaultOpen={options.open === true} />,
+    );
 }
 
 describe('后台作业卡片', () => {
@@ -88,7 +90,16 @@ describe('后台作业卡片', () => {
         // 这一轮真挂着它 ⇒ 说「在跑」；动作（转到后台）只在展开后出现
         expect(out).toContain('在跑');
         expect(out).toContain('./sha.sh check');
-        expect(html(tool({ name: 'bash', args: { command: './sha.sh check', background: true }, result: '已转到后台：r-mwtfmywg-vkh1（状态 running）' }), { open: true })).toContain('这次：job 转到后台');
+        expect(
+            html(
+                tool({
+                    name: 'bash',
+                    args: { command: './sha.sh check', background: true },
+                    result: '已转到后台：r-mwtfmywg-vkh1（状态 running）',
+                }),
+                { open: true },
+            ),
+        ).toContain('这次：job 转到后台');
     });
 
     it('历史消息里的 running 不写「运行中」（事后看会误以为还在跑）', () => {
@@ -109,7 +120,15 @@ describe('后台作业卡片', () => {
         expect(out).toContain('在跑');
         expect(out).toContain('12.0s');
         // 「再等下去也别干等」这句只在展开后（明细里），别把一行撑成两行
-        expect(html(tool({ args: { action: 'wait', id: 'r-mwtfmywg-vkh1' }, result: 'r-mwtfmywg-vkh1 · 运行中 · 12.0s\n（已等 10m00s，仍未结束；别干等长任务）' }), { live: true, open: true })).toContain('仍未结束');
+        expect(
+            html(
+                tool({
+                    args: { action: 'wait', id: 'r-mwtfmywg-vkh1' },
+                    result: 'r-mwtfmywg-vkh1 · 运行中 · 12.0s\n（已等 10m00s，仍未结束；别干等长任务）',
+                }),
+                { live: true, open: true },
+            ),
+        ).toContain('仍未结束');
     });
 
     it('收口通知：结构化事实画成卡，ANSI 色码不进界面', () => {

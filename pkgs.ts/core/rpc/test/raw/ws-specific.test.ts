@@ -8,16 +8,26 @@
 import { describe, it, expect } from 'vitest';
 import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
-import { RpcSchema, createTypedClient, ChannelClientBinding, ChannelServerBinding } from '../../src/index';
+import {
+  RpcSchema,
+  createTypedClient,
+  ChannelClientBinding,
+  ChannelServerBinding,
+} from '../../src/index';
 import { WsTransport } from '../../src/transport/ws';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const api = RpcSchema.group({ children: {
-  ping: RpcSchema.unary({ input: { msg: z.string() }, output: z.string() }),
-  slow: RpcSchema.unary({ input: { delay: z.number(), id: z.number() }, output: z.object({ id: z.number() }) }),
-  count: RpcSchema.serverStream({ input: { n: z.number() }, output: z.number() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    ping: RpcSchema.unary({ input: { msg: z.string() }, output: z.string() }),
+    slow: RpcSchema.unary({
+      input: { delay: z.number(), id: z.number() },
+      output: z.object({ id: z.number() }),
+    }),
+    count: RpcSchema.serverStream({ input: { n: z.number() }, output: z.number() }),
+  },
+});
 
 function connect(url: string): Promise<WebSocket> {
   const ws = new WebSocket(url);
@@ -33,10 +43,16 @@ describe('ws-transport 协议特有', () => {
 
     wss.on('connection', (ws) => {
       const server = new ChannelServerBinding(new WsTransport(ws));
-      server._on("ping", api.ping, async ({ input }) => `pong: ${input.msg}`);
-      server._on("slow", api.slow, async ({ input }) => { await sleep(input.delay); return { id: input.id }; });
-      server._on("count", api.count, async function* ({ input }) {
-        for (let i = 0; i < input.n; i++) { await sleep(5); yield i; }
+      server._on('ping', api.ping, async ({ input }) => `pong: ${input.msg}`);
+      server._on('slow', api.slow, async ({ input }) => {
+        await sleep(input.delay);
+        return { id: input.id };
+      });
+      server._on('count', api.count, async function* ({ input }) {
+        for (let i = 0; i < input.n; i++) {
+          await sleep(5);
+          yield i;
+        }
       });
     });
 
@@ -92,9 +108,10 @@ describe('ws-transport 协议特有', () => {
       // 无服务端绑定：调用只能靠传输终态落定——坏帧前永挂，坏帧后必须 DISPOSED。
       // 回归面（R20 P1-A）：JSON.parse 在 handler try/catch 外 → uncaughtException
       // 崩进程且 onClose 不触发 → pending 永挂（或拖到 timeout 才 TIMEOUT）。
-      const pending: Promise<string> = client
-        .invoke('diy.x.y', {}, { timeout: 3000 })
-        .then(() => 'resolved', (e: { code?: string }) => `rejected:${e?.code}`);
+      const pending: Promise<string> = client.invoke('diy.x.y', {}, { timeout: 3000 }).then(
+        () => 'resolved',
+        (e: { code?: string }) => `rejected:${e?.code}`,
+      );
       await sleep(30);
       wss.clients.forEach((peer) => peer.send('not-json'));
       await expect(pending).resolves.toBe('rejected:DISPOSED');

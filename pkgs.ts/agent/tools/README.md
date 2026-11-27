@@ -9,20 +9,20 @@ diy **工具层内核**：`read` / `write` / `edit` 三个工具的装配，外�
 —— 那些由宿主注入（`ShellToolHost` / `ShellRuntime`）或自己装配。
 
 ```ts
-import { makeShellTool, runBash } from "@diy-agent/tools";
+import { makeShellTool, runBash } from '@diy-agent/tools';
 
 // 只要执行器（bot / CLI）
-const run = await runBash("ls -la", cwd, { bashTimeoutMs: 0 });
+const run = await runBash('ls -la', cwd, { bashTimeoutMs: 0 });
 
 // 要一个给模型的工具（宿主切片全可选）
 const bash = makeShellTool(shellSpec, { cwd, limits: { bashTimeoutMs: 0 } });
 ```
 
 ```ts
-import { buildTools } from "@diy-agent/tools";
+import { buildTools } from '@diy-agent/tools';
 
 const tools = buildTools({
-    cwd: "/path/to/project",
+    cwd: '/path/to/project',
     limits: { readMaxBytes: 100 * 1024 },
     onAudit: (e) => console.log(e.phase, e.cwd, e.result), // 可选
     extraTools: {}, // 宿主自己的 bash / job 等（不得与 read/write/edit 重名）

@@ -10,7 +10,7 @@
 /** 一次 shell 能力探测的结果（bash / pwsh 是**两种能力**，语法与退出码语义都不同）。 */
 export interface ShellSpec {
     /** 能力种类：决定工具名（`bash` / `pwsh`）与命令拼装方式 */
-    kind: "bash" | "pwsh";
+    kind: 'bash' | 'pwsh';
     /** 可执行文件路径 */
     file: string;
     /** 给人看的名字（错误文案里用） */
@@ -33,21 +33,20 @@ export interface Invocation {
  * 找不到就是 spawn 失败（③ 档），不在这里猜绝对路径。
  */
 export const FALLBACK_SHELL: ShellSpec = {
-    kind: "bash",
-    file: "bash",
-    label: "bash",
+    kind: 'bash',
+    file: 'bash',
+    label: 'bash',
     missing: false,
     tried: [],
 };
 
 /** 工具名（L1 不写 "bash"/"pwsh" 字面量，避免把机制词散回业务层）。 */
-export function shellToolName(spec: ShellSpec): "bash" | "pwsh" {
-    return spec.kind === "bash" ? "bash" : "pwsh";
+export function shellToolName(spec: ShellSpec): 'bash' | 'pwsh' {
+    return spec.kind === 'bash' ? 'bash' : 'pwsh';
 }
 
 /** PowerShell 输出前置：强制 UTF-8（中文路径/输出不按 OEM 码页乱码）。 */
-const PS_UTF8 =
-    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$OutputEncoding=[System.Text.Encoding]::UTF8;";
+const PS_UTF8 = '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$OutputEncoding=[System.Text.Encoding]::UTF8;';
 
 /** POSIX shell 单引号转义。 */
 function shQuote(s: string): string {
@@ -68,25 +67,25 @@ function psQuote(s: string): string {
  *   `pwsh` 没有 MSYS 的句柄问题，日志用 PowerShell 的 `*>>` 重定向。
  */
 export function buildInvocation(spec: ShellSpec, command: string, logPath?: string): Invocation {
-    if (spec.kind === "bash") {
-        const redirect = logPath ? `exec >> ${shQuote(logPath.replace(/\\/g, "/"))} 2>&1; ` : "";
-        return { file: spec.file, args: ["-c", `${redirect}${command}`] };
+    if (spec.kind === 'bash') {
+        const redirect = logPath ? `exec >> ${shQuote(logPath.replace(/\\/g, '/'))} 2>&1; ` : '';
+        return { file: spec.file, args: ['-c', `${redirect}${command}`] };
     }
     // PowerShell 5.1 的 `*>>` 写 UTF-16；统一走 Out-File -Encoding utf8（日志读侧是 utf8）。
-    const redirect = logPath ? ` *>&1 | Out-File -FilePath ${psQuote(logPath)} -Append -Encoding utf8` : "";
+    const redirect = logPath ? ` *>&1 | Out-File -FilePath ${psQuote(logPath)} -Append -Encoding utf8` : '';
     const script = `${PS_UTF8}& { ${command} }${redirect}; exit $LASTEXITCODE`;
-    if (script.includes("\n")) {
+    if (script.includes('\n')) {
         return {
             file: spec.file,
             args: [
-                "-NoProfile",
-                "-NonInteractive",
-                "-EncodedCommand",
-                Buffer.from(script, "utf16le").toString("base64"),
+                '-NoProfile',
+                '-NonInteractive',
+                '-EncodedCommand',
+                Buffer.from(script, 'utf16le').toString('base64'),
             ],
         };
     }
-    return { file: spec.file, args: ["-NoProfile", "-NonInteractive", "-Command", script] };
+    return { file: spec.file, args: ['-NoProfile', '-NonInteractive', '-Command', script] };
 }
 
 /**
@@ -98,7 +97,7 @@ export function buildInvocation(spec: ShellSpec, command: string, logPath?: stri
 export function noShellHint(specs: readonly ShellSpec[]): string {
     const tried = specs.flatMap((s) => s.tried);
     return (
-        "本机没有可用的命令 shell（bash 与 PowerShell 都探测不到）。" +
-        (tried.length > 0 ? `已尝试：${[...new Set(tried)].join("；")}` : "")
+        '本机没有可用的命令 shell（bash 与 PowerShell 都探测不到）。' +
+        (tried.length > 0 ? `已尝试：${[...new Set(tried)].join('；')}` : '')
     );
 }

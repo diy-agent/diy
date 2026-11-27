@@ -93,7 +93,11 @@ export class ChannelClientBinding implements ClientBinding {
     this.unsub();
     for (const [id, entry] of this.pending) {
       clearTimeout(entry.timer);
-      entry.onMessage({ type: 'call', id, error: { code: 'DISPOSED', message: 'Client disposed' } });
+      entry.onMessage({
+        type: 'call',
+        id,
+        error: { code: 'DISPOSED', message: 'Client disposed' },
+      });
       // 未 ack 的 init / 在飞 unary：按 call.id 告知服务端放弃（否则服务端白跑）
       this._sendCancel({ id });
     }
@@ -150,7 +154,11 @@ export class ChannelClientBinding implements ClientBinding {
         entry.timer = setTimeout(() => {
           const had = this.pending.delete(id);
           cleanup();
-          if (had) this._sendCancel({ id }, new RpcError('TIMEOUT', `Invoke timed out after ${timeout}ms`));
+          if (had)
+            this._sendCancel(
+              { id },
+              new RpcError('TIMEOUT', `Invoke timed out after ${timeout}ms`),
+            );
           reject(new RpcError('TIMEOUT', `Invoke timed out after ${timeout}ms`));
         }, timeout);
       }
@@ -164,7 +172,9 @@ export class ChannelClientBinding implements ClientBinding {
           reject(err);
         }
       };
-      const cleanup = signal ? this._track(() => signal.removeEventListener('abort', onAbort)) : () => {};
+      const cleanup = signal
+        ? this._track(() => signal.removeEventListener('abort', onAbort))
+        : () => {};
       entry.cleanup = cleanup;
 
       this.pending.set(id, entry);
@@ -201,7 +211,9 @@ export class ChannelClientBinding implements ClientBinding {
       }
       cleanup();
     };
-    const cleanup = signal ? this._track(() => signal.removeEventListener('abort', onAbort)) : () => {};
+    const cleanup = signal
+      ? this._track(() => signal.removeEventListener('abort', onAbort))
+      : () => {};
 
     let rejectInit: (e: unknown) => void = () => {};
     let entry: PendingEntry = { onMessage: () => false };
@@ -240,7 +252,11 @@ export class ChannelClientBinding implements ClientBinding {
         entry.timer = setTimeout(() => {
           const had = this.pending.delete(id);
           cleanup();
-          if (had) this._sendCancel({ id }, new RpcError('TIMEOUT', `Server stream init timed out after ${timeout}ms`));
+          if (had)
+            this._sendCancel(
+              { id },
+              new RpcError('TIMEOUT', `Server stream init timed out after ${timeout}ms`),
+            );
           reject(new RpcError('TIMEOUT', `Server stream init timed out after ${timeout}ms`));
         }, timeout);
       }
@@ -359,7 +375,11 @@ export class ChannelClientBinding implements ClientBinding {
         entry.timer = setTimeout(() => {
           const had = this.pending.delete(id);
           cleanup();
-          if (had) this._sendCancel({ id }, new RpcError('TIMEOUT', `Client stream init timed out after ${timeout}ms`));
+          if (had)
+            this._sendCancel(
+              { id },
+              new RpcError('TIMEOUT', `Client stream init timed out after ${timeout}ms`),
+            );
           reject(new RpcError('TIMEOUT', `Client stream init timed out after ${timeout}ms`));
         }, timeout);
       }
@@ -392,7 +412,9 @@ export class ChannelClientBinding implements ClientBinding {
     notifyUpstream = () => {
       try {
         void upstream.return?.(undefined)?.catch(() => {});
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     };
     void (async () => {
       try {
@@ -405,7 +427,11 @@ export class ChannelClientBinding implements ClientBinding {
         }
       } catch {
         if (remoteSettled) return; // 调用已落定：不再补发错误帧
-        this._send({ type: 'end', stream: streamId, error: { code: 'STREAM_ERROR', message: 'upstream error' } });
+        this._send({
+          type: 'end',
+          stream: streamId,
+          error: { code: 'STREAM_ERROR', message: 'upstream error' },
+        });
         return;
       }
       if (!signal?.aborted && !remoteSettled) this._send({ type: 'end', stream: streamId }); // 正常输入半关
@@ -490,7 +516,11 @@ export class ChannelClientBinding implements ClientBinding {
         entry.timer = setTimeout(() => {
           const had = this.pending.delete(id);
           cleanup();
-          if (had) this._sendCancel({ id }, new RpcError('TIMEOUT', `Bidi stream init timed out after ${timeout}ms`));
+          if (had)
+            this._sendCancel(
+              { id },
+              new RpcError('TIMEOUT', `Bidi stream init timed out after ${timeout}ms`),
+            );
           reject(new RpcError('TIMEOUT', `Bidi stream init timed out after ${timeout}ms`));
         }, timeout);
       }
@@ -516,7 +546,9 @@ export class ChannelClientBinding implements ClientBinding {
     notifyUpstream = () => {
       try {
         void upstream.return?.(undefined)?.catch(() => {});
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     };
     void (async () => {
       try {
@@ -529,7 +561,11 @@ export class ChannelClientBinding implements ClientBinding {
         }
       } catch {
         if (remoteEnded) return; // 调用已落定：不再补发错误帧
-        this._send({ type: 'end', stream: streamId, error: { code: 'STREAM_ERROR', message: 'upstream error' } });
+        this._send({
+          type: 'end',
+          stream: streamId,
+          error: { code: 'STREAM_ERROR', message: 'upstream error' },
+        });
         return;
       }
       if (!signal?.aborted && !remoteEnded) this._send({ type: 'end', stream: streamId }); // 正常输入半关

@@ -248,9 +248,11 @@ export function fromSnapshot(snapshot: {
     // 为什么不再只靠倒推：一轮卡在等上游首个字时没有任何流式条目 —— 刷新后倒推出
     // 空列表，于是没有「正在说话…」、也没有停止按钮，用户看不出它在跑、更停不掉
     // （2026-11-23 实测）。倒推只留给老服务端（快照不带 speaking）当兜底。
-    const speaking = snapshot.speaking ?? [
-        ...new Set(items.filter((item) => item.status === 'streaming').map((item) => item.author?.id ?? '')),
-    ].filter((id) => id !== '');
+    const speaking =
+        snapshot.speaking ??
+        [...new Set(items.filter((item) => item.status === 'streaming').map((item) => item.author?.id ?? ''))].filter(
+            (id) => id !== '',
+        );
     return {
         items,
         // 分页元信息：界面靠它说“上面还有更早的”，用户点一下才全量拉（`reload(0)`）

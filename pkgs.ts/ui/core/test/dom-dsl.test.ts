@@ -80,7 +80,13 @@ const mk = (it: Item): FakeEl => {
 describe("Reconciler（keyed 行级增量）", () => {
   it("首轮：全部新建，顺序正确", () => {
     const c = new FakeEl();
-    const prev = run(c, undefined, [{ id: "a" }, { id: "b" }, { id: "c" }], mk, []);
+    const prev = run(
+      c,
+      undefined,
+      [{ id: "a" }, { id: "b" }, { id: "c" }],
+      mk,
+      [],
+    );
     expect(FakeEl.ids(c)).toEqual(["a", "b", "c"]);
     expect(prev.size).toBe(3);
   });
@@ -103,7 +109,13 @@ describe("Reconciler（keyed 行级增量）", () => {
     const disposed: string[] = [];
     const p1 = run(c, undefined, [{ id: "a" }, { id: "b" }], mk, disposed);
     const a = c.children[0];
-    const p2 = run(c, p1, [{ id: "a" }, { id: "b" }, { id: "c" }], mk, disposed);
+    const p2 = run(
+      c,
+      p1,
+      [{ id: "a" }, { id: "b" }, { id: "c" }],
+      mk,
+      disposed,
+    );
     expect(FakeEl.ids(c)).toEqual(["a", "b", "c"]);
     expect(c.children[0]).toBe(a); // a 未动
     expect(disposed).toEqual([]);
@@ -113,7 +125,13 @@ describe("Reconciler（keyed 行级增量）", () => {
   it("删除：只拆被删行（释放作用域 + 移除 DOM）", () => {
     const c = new FakeEl();
     const disposed: string[] = [];
-    const p1 = run(c, undefined, [{ id: "a" }, { id: "b" }, { id: "c" }], mk, disposed);
+    const p1 = run(
+      c,
+      undefined,
+      [{ id: "a" }, { id: "b" }, { id: "c" }],
+      mk,
+      disposed,
+    );
     const a = c.children[0];
     const cc = c.children[2];
     const p2 = run(c, p1, [{ id: "a" }, { id: "c" }], mk, disposed);
@@ -126,7 +144,13 @@ describe("Reconciler（keyed 行级增量）", () => {
 
   it("换序：复用节点，仅移动错位者", () => {
     const c = new FakeEl();
-    const p1 = run(c, undefined, [{ id: "a" }, { id: "b" }, { id: "c" }], mk, []);
+    const p1 = run(
+      c,
+      undefined,
+      [{ id: "a" }, { id: "b" }, { id: "c" }],
+      mk,
+      [],
+    );
     const a = c.children[0];
     const b = c.children[1];
     const cc = c.children[2];
@@ -140,9 +164,27 @@ describe("Reconciler（keyed 行级增量）", () => {
   it("同 key 但 rev 变：只重建这一行（旧节点释放）", () => {
     const c = new FakeEl();
     const disposed: string[] = [];
-    const p1 = run(c, undefined, [{ id: "a", rev: "v1" }, { id: "b", rev: "v1" }], mk, disposed);
+    const p1 = run(
+      c,
+      undefined,
+      [
+        { id: "a", rev: "v1" },
+        { id: "b", rev: "v1" },
+      ],
+      mk,
+      disposed,
+    );
     const aOld = c.children[0];
-    run(c, p1, [{ id: "a", rev: "v2" }, { id: "b", rev: "v1" }], mk, disposed);
+    run(
+      c,
+      p1,
+      [
+        { id: "a", rev: "v2" },
+        { id: "b", rev: "v1" },
+      ],
+      mk,
+      disposed,
+    );
     expect(FakeEl.ids(c)).toEqual(["a", "b"]);
     expect(c.children[0]).not.toBe(aOld); // a 重建
     expect(c.children[1]).toBe(p1.get("b")!.el); // b 复用

@@ -5,9 +5,11 @@ import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const api = RpcSchema.group({ children: {
-  bidi: RpcSchema.bidiStream({ input: {}, chunkIn: z.number(), chunkOut: z.number() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    bidi: RpcSchema.bidiStream({ input: {}, chunkIn: z.number(), chunkOut: z.number() }),
+  },
+});
 
 function snapshot(client: HttpClientBinding, stream?: http2.ClientHttp2Stream) {
   const activeStreams = (client as unknown as { activeStreams: Set<unknown> }).activeStreams;
@@ -22,7 +24,7 @@ function snapshot(client: HttpClientBinding, stream?: http2.ClientHttp2Stream) {
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding._on("bidi", api.bidi, async function* () {}); // 远端立即结束下行
+  binding._on('bidi', api.bidi, async function* () {}); // 远端立即结束下行
 
   const server = http2.createServer();
   server._on('stream', (stream, headers) => {
@@ -48,9 +50,12 @@ async function main() {
   try {
     // 流引用在调用同步段后、await 前捕获（终态收束会同步移出集合，否则取到 undefined）
     const pending = client.bidiStream('bidi', { input: {}, meta: {} }, delayedChunks);
-    const stream = [...(client as unknown as { activeStreams: Set<http2.ClientHttp2Stream> }).activeStreams][0];
+    const stream = [
+      ...(client as unknown as { activeStreams: Set<http2.ClientHttp2Stream> }).activeStreams,
+    ][0];
     const output = await pending;
-    for await (const _ of output) {}
+    for await (const _ of output) {
+    }
     console.log('[bidi] immediately:', snapshot(client, stream));
     await sleep(500);
     console.log('[bidi] after 500ms:', snapshot(client, stream));

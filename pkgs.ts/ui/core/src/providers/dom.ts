@@ -17,11 +17,7 @@
  */
 
 import { effect, stop } from "@vue/reactivity";
-import {
-  ScopeNode,
-  ScopeConfig,
-  type ContextManager,
-} from "../scope.js";
+import { ScopeNode, ScopeConfig, type ContextManager } from "../scope.js";
 import { Signal } from "../signal.js";
 import type { HostAdapter } from "../host.js";
 
@@ -111,7 +107,10 @@ export class DomContainer extends DomComponent {
   input(opts: InputOpts, config?: ScopeConfig): DomInput {
     return new DomInput(opts, config, this.mountTarget);
   }
-  column(fn?: ((ctx: DomColumn) => void) | ScopeConfig, config?: ScopeConfig): DomColumn {
+  column(
+    fn?: ((ctx: DomColumn) => void) | ScopeConfig,
+    config?: ScopeConfig,
+  ): DomColumn {
     const target = this.mountTarget;
     if (typeof fn === "function") {
       const col = new DomColumn(config, target);
@@ -120,7 +119,10 @@ export class DomContainer extends DomComponent {
     }
     return new DomColumn(fn as ScopeConfig | undefined, target);
   }
-  row(fn?: ((ctx: DomRow) => void) | ScopeConfig, config?: ScopeConfig): DomRow {
+  row(
+    fn?: ((ctx: DomRow) => void) | ScopeConfig,
+    config?: ScopeConfig,
+  ): DomRow {
     const target = this.mountTarget;
     if (typeof fn === "function") {
       const row = new DomRow(config, target);
@@ -206,7 +208,8 @@ export class DomInput extends DomComponent {
     const input = this.el as HTMLInputElement;
     if (opts.value != null) input.value = opts.value;
     if (opts.placeholder) input.placeholder = opts.placeholder;
-    if (opts.onInput) input.addEventListener("input", () => opts.onInput!(input.value));
+    if (opts.onInput)
+      input.addEventListener("input", () => opts.onInput!(input.value));
     if (opts.onEnter) {
       input.addEventListener("keydown", (e) => {
         if ((e as KeyboardEvent).key === "Enter") opts.onEnter!(input.value);
@@ -289,7 +292,10 @@ class CellBinding {
           );
           break;
         case "async-generator":
-          void this.driveAsync(epoch, this.fn(stage) as AsyncGenerator<unknown>);
+          void this.driveAsync(
+            epoch,
+            this.fn(stage) as AsyncGenerator<unknown>,
+          );
           break;
       }
     } catch (e) {
@@ -306,7 +312,10 @@ class CellBinding {
     this.stage = stage;
   }
 
-  private async driveAsync(epoch: number, gen: AsyncGenerator<unknown>): Promise<void> {
+  private async driveAsync(
+    epoch: number,
+    gen: AsyncGenerator<unknown>,
+  ): Promise<void> {
     try {
       for await (const _ of gen) {
         if (epoch !== this.epoch) return; // 被新一次 run 取代，停止驱动
@@ -340,11 +349,7 @@ export class DomApp extends DomContainer implements ContextManager {
         ? document.querySelector<HTMLElement>(opts.mount)
         : opts.mount;
     if (!root) throw new Error(`DomApp: 挂载点未找到: ${String(opts.mount)}`);
-    super(
-      root,
-      new ScopeConfig({ mode: opts.mode ?? "dev" }),
-      undefined,
-    );
+    super(root, new ScopeConfig({ mode: opts.mode ?? "dev" }), undefined);
     this.root = root;
     this.contextStack = [this];
   }
@@ -409,7 +414,11 @@ function findApp(node: ScopeNode): DomApp | undefined {
 }
 
 /** 在 app 的上下文栈上包裹一次同步建树（用于 column/row 的回调）。 */
-function runWithContext(owner: DomContainer, child: ScopeNode, body: () => void): void {
+function runWithContext(
+  owner: DomContainer,
+  child: ScopeNode,
+  body: () => void,
+): void {
   const app = findApp(owner);
   if (!app) {
     body();

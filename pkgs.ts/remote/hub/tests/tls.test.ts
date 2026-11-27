@@ -22,7 +22,15 @@ describe('传输安全', () => {
      * 这组用例就是那条判据的可执行版本。
      */
     it('可信网卡上允许明文（loopback / tailscale）', () => {
-        for (const host of ['127.0.0.1', '::1', 'localhost', '127.0.0.5', '100.81.37.7', '100.64.0.1', 'fd7a:115c:a1e0::e438:2507']) {
+        for (const host of [
+            '127.0.0.1',
+            '::1',
+            'localhost',
+            '127.0.0.5',
+            '100.81.37.7',
+            '100.64.0.1',
+            'fd7a:115c:a1e0::e438:2507',
+        ]) {
             expect(() => assertTransportSecurity(null, host), host).not.toThrow();
         }
     });

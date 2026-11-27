@@ -65,6 +65,9 @@ describe('format', () => {
         const text = readFileSync(path.join(dir, 'facts', 'app.yaml'), 'utf8');
         expect(text.match(/format:/g)?.length).toBe(1); // 只有 json 那条写了
         const repo = loadRepo(dir);
-        expect(repo.facts.map((x) => [x.id, x.format]).sort()).toEqual([['json', 'json'], ['md', undefined]]);
+        expect(repo.facts.map((x) => [x.id, x.format]).sort()).toEqual([
+            ['json', 'json'],
+            ['md', undefined],
+        ]);
     });
 });

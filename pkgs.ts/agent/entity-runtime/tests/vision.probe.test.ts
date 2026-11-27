@@ -85,7 +85,10 @@ describe.skipIf(process.env['VISION_PROBE'] !== '1')('图真的到模型眼前�
         // 失败时这几行是唯一线索：
         //   · text 为空 + finishReason='length' ⇒ 多半是**上限被 reasoning 吃光**（不是图没到）
         //   · inputTokens 只有几十 ⇒ 大概率图没送到（prompt 里只有问题文本）
-        console.log('[probe]', JSON.stringify({ finishReason: result.finishReason, usage: result.usage, text: result.text }));
+        console.log(
+            '[probe]',
+            JSON.stringify({ finishReason: result.finishReason, usage: result.usage, text: result.text }),
+        );
 
         // 不比对整句话（模型爱加引号 / 前缀），只要求关键字都在 —— 这就是「看见了」
         expect(result.text).toContain('蓝鲸');

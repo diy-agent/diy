@@ -338,7 +338,11 @@ describe('工具调用转发（##514 第 2 步）', () => {
         const history: ChatMessage[] = [
             { role: 'user', text: '读一下 a.txt' },
             // Session 存 tool-call 的形状：分支私有载荷进 data.tool
-            { role: 'assistant', type: 'tool-call', data: { tool: { id: 'call_1', name: 'read', args: { path: 'a.txt' } } } },
+            {
+                role: 'assistant',
+                type: 'tool-call',
+                data: { tool: { id: 'call_1', name: 'read', args: { path: 'a.txt' } } },
+            },
             { role: 'tool', type: 'tool-result', text: 'hello-514', data: { tool: { id: 'call_1', name: 'read' } } },
             { role: 'user', text: '继续' },
         ];
@@ -365,7 +369,11 @@ describe('工具调用转发（##514 第 2 步）', () => {
         const history: ChatMessage[] = [
             { role: 'user', text: '查一下' },
             { role: 'assistant', type: 'agent-trace', text: '我先看看文件' },
-            { role: 'assistant', type: 'tool-call', data: { tool: { id: 'call_9', name: 'read', args: { path: 'x' } } } },
+            {
+                role: 'assistant',
+                type: 'tool-call',
+                data: { tool: { id: 'call_9', name: 'read', args: { path: 'x' } } },
+            },
             { role: 'tool', type: 'tool-result', text: '内容', data: { tool: { id: 'call_9', name: 'read' } } },
         ];
         for await (const _delta of provider(fake.fetch).chat(history)) {

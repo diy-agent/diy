@@ -34,11 +34,19 @@ export interface GuardRef {
 export function parseGuardRef(raw: string, path = 'guard'): GuardRef {
     const at = raw.indexOf(':');
     if (at <= 0) {
-        throw new FlowError('invalid-guard', `guard 引用 ${JSON.stringify(raw)} 缺少前缀（形状：${GUARD_PREFIXES.map((p) => `${p}:`).join(' / ')}名字）`, path);
+        throw new FlowError(
+            'invalid-guard',
+            `guard 引用 ${JSON.stringify(raw)} 缺少前缀（形状：${GUARD_PREFIXES.map((p) => `${p}:`).join(' / ')}名字）`,
+            path,
+        );
     }
     const prefix = raw.slice(0, at);
     if (!(GUARD_PREFIXES as readonly string[]).includes(prefix)) {
-        throw new FlowError('invalid-guard', `guard 引用 ${JSON.stringify(raw)} 的前缀未知（合法：${GUARD_PREFIXES.join(' | ')}）`, path);
+        throw new FlowError(
+            'invalid-guard',
+            `guard 引用 ${JSON.stringify(raw)} 的前缀未知（合法：${GUARD_PREFIXES.join(' | ')}）`,
+            path,
+        );
     }
     const name = raw.slice(at + 1);
     if (name === '') throw new FlowError('invalid-guard', `guard 引用 ${JSON.stringify(raw)} 缺少名字`, path);
@@ -76,7 +84,10 @@ export interface GuardEvaluation {
 }
 
 /** 静态分类：**不调用任何插件**（免副作用），只按前缀分出「谁可观测」（给 `status` 这类只读查询用） */
-export function classifyGuards(refs: readonly string[], base = 'guard'): { mode: GuardMode; refs: readonly GuardRef[]; pending: readonly GuardRef[] } {
+export function classifyGuards(
+    refs: readonly string[],
+    base = 'guard',
+): { mode: GuardMode; refs: readonly GuardRef[]; pending: readonly GuardRef[] } {
     const parsed = refs.map((raw, i) => parseGuardRef(raw, `${base}[${i}]`));
     const pending = parsed.filter((ref) => !isObservable(ref));
     return { mode: pending.length > 0 ? 'actor' : 'system', refs: parsed, pending };
@@ -95,12 +106,19 @@ export function unevaluatedGuards(refs: readonly string[], base = 'guard'): Guar
 
 function runGuard(ref: GuardRef, ctx: PluginContext, registry: PluginRegistry, path: string): GuardCheck {
     if (ref.prefix === 'pred') {
-        const result = parseGuardResult(callPlugin(`guard 插件 ${ref.name}`, path, () => registry.resolve('guard', ref.name)(ctx)), path);
+        const result = parseGuardResult(
+            callPlugin(`guard 插件 ${ref.name}`, path, () => registry.resolve('guard', ref.name)(ctx)),
+            path,
+        );
         return { ref, pass: result.pass, reason: result.pass ? '' : (result.reason ?? `guard 「${ref.name}」未过`) };
     }
     // `action:` —— 求值即「对外部世界动手」，`ok` 就是过没过（##166 §14.4：`impl` 把 pred/action 注册成真函数）
-    const result = parseActionResult(callPlugin(`action 插件 ${ref.name}`, path, () => registry.resolve('action', ref.name)(ctx)), path);
-    const why = result.ref === undefined ? `action 「${ref.name}」未成功` : `action 「${ref.name}」未成功（${result.ref}）`;
+    const result = parseActionResult(
+        callPlugin(`action 插件 ${ref.name}`, path, () => registry.resolve('action', ref.name)(ctx)),
+        path,
+    );
+    const why =
+        result.ref === undefined ? `action 「${ref.name}」未成功` : `action 「${ref.name}」未成功（${result.ref}）`;
     return { ref, pass: result.ok, reason: result.ok ? '' : why };
 }
 
@@ -144,7 +162,12 @@ export function evaluateGuards(refs: readonly string[], ctx: PluginContext, regi
  * - `when` 缺省 = 恒真；`when` 不可观测（`prompt:`）= 系统选不了 → 不算命中（只能由 actor 宣布）；
  * - 命中数 > 1 → `ambiguous-edge`（宁可报错，也不替作者掷骰子）；命中数 = 0 → `null`。
  */
-export function selectEdge<Id extends string>(edges: readonly EdgeDef<Id>[], kind: EdgeKind, ctx: PluginContext, registry: PluginRegistry): EdgeDef<Id> | null {
+export function selectEdge<Id extends string>(
+    edges: readonly EdgeDef<Id>[],
+    kind: EdgeKind,
+    ctx: PluginContext,
+    registry: PluginRegistry,
+): EdgeDef<Id> | null {
     const candidates = edges.filter((edge) => edge.kind === kind);
     const matched = candidates.filter((edge) => {
         if (edge.when === undefined) return true;
@@ -154,7 +177,11 @@ export function selectEdge<Id extends string>(edges: readonly EdgeDef<Id>[], kin
         return evaluateGuards([edge.when], ctx, registry).pass;
     });
     if (matched.length > 1) {
-        throw new FlowError('ambiguous-edge', `当前节点有 ${candidates.length} 条 kind=${kind} 的边，when 命中 ${matched.length} 条（须恰 1 条）`, 'edges');
+        throw new FlowError(
+            'ambiguous-edge',
+            `当前节点有 ${candidates.length} 条 kind=${kind} 的边，when 命中 ${matched.length} 条（须恰 1 条）`,
+            'edges',
+        );
     }
     return matched.length === 1 ? matched[0] : null;
 }

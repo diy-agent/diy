@@ -52,7 +52,16 @@ import { createEvent, nodeAnchor, type Event } from '@diy-agent/talk';
 import { advance, parseRef, type AdvanceRequest, type FlowState } from './container.js';
 import { findNode, type EdgeDef, type NodeDef, type WorkflowDef } from './define.js';
 import { FlowError, type FlowErrorCode } from './errors.js';
-import { classifyGuards, evaluateGuards, isObservable, parseGuardRef, selectEdge, unevaluatedGuards, type GuardEvaluation, type GuardRef } from './eval.js';
+import {
+    classifyGuards,
+    evaluateGuards,
+    isObservable,
+    parseGuardRef,
+    selectEdge,
+    unevaluatedGuards,
+    type GuardEvaluation,
+    type GuardRef,
+} from './eval.js';
 import { paramsOf, resolveParams } from './params.js';
 import { parseReceipt, type PluginContext, type Receipt, type Slot } from './plugins.js';
 import type { PluginRegistry } from './registry.js';
@@ -189,13 +198,22 @@ export interface Runtime<Id extends string = string> {
  * 分水岭与 `guard` 一致：`pred:` / `action:` 可观测 → 系统当场核（不过即 `edge-unavailable`，
  * 与系统侧的 `stuck` 对齐）；`prompt:` 不可观测 → 由**宣布者担责**（他宣布走这条边 = 他断言条件成立）。
  */
-function requireEdgeAvailable<Id extends string>(def: WorkflowDef<Id>, edge: EdgeDef<Id>, ctx: PluginContext, registry: PluginRegistry): void {
+function requireEdgeAvailable<Id extends string>(
+    def: WorkflowDef<Id>,
+    edge: EdgeDef<Id>,
+    ctx: PluginContext,
+    registry: PluginRegistry,
+): void {
     if (edge.when === undefined || edge.when === '') return;
     const path = `edges[${def.edges.indexOf(edge)}].when`;
     const ref = parseGuardRef(edge.when, path);
     if (!isObservable(ref)) return; // 不可观测 → 宣布者担责，系统判不了
     if (evaluateGuards([edge.when], ctx, registry).pass) return;
-    throw new FlowError('edge-unavailable', `这条边的 \`when\`（${edge.when}）此刻不成立：${JSON.stringify(edge.from)} → ${JSON.stringify(edge.to)} 此刻不可用`, path);
+    throw new FlowError(
+        'edge-unavailable',
+        `这条边的 \`when\`（${edge.when}）此刻不成立：${JSON.stringify(edge.from)} → ${JSON.stringify(edge.to)} 此刻不可用`,
+        path,
+    );
 }
 
 const SEED_KEYS = ['id', 'at', 'ref', 'content'] as const;
@@ -232,11 +250,19 @@ function parseSeed(seed: unknown, keys: readonly string[], path: string, code: F
     if (!isObject(seed)) throw new FlowError(code, '入参应为对象', path);
     rejectUnknown(seed, keys, path, code);
     if (!isIsoString(seed.at)) {
-        throw new FlowError(code, `at 应为 ISO-8601 时刻（如 2026-10-13T00:00:00.000Z），实得 ${JSON.stringify(seed.at)}`, `${path}.at`);
+        throw new FlowError(
+            code,
+            `at 应为 ISO-8601 时刻（如 2026-10-13T00:00:00.000Z），实得 ${JSON.stringify(seed.at)}`,
+            `${path}.at`,
+        );
     }
     const ref = parseRef(seed.ref, `${path}.ref`, code);
     if (seed.id !== undefined && (typeof seed.id !== 'string' || seed.id === '')) {
-        throw new FlowError(code, `id 应为非空字符串（审计事件 id；不给 = 不落事件），实得 ${JSON.stringify(seed.id)}`, `${path}.id`);
+        throw new FlowError(
+            code,
+            `id 应为非空字符串（审计事件 id；不给 = 不落事件），实得 ${JSON.stringify(seed.id)}`,
+            `${path}.id`,
+        );
     }
     if (seed.content !== undefined && typeof seed.content !== 'string') {
         throw new FlowError(code, 'content 应为字符串（审计事件正文）', `${path}.content`);
@@ -252,17 +278,29 @@ function parseSeed(seed: unknown, keys: readonly string[], path: string, code: F
 
 export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, options: RuntimeOptions): Runtime<Id> {
     if (!isObject(options)) {
-        throw new FlowError('invalid-option', 'options 应为对象（{ registry, params?, maxBounces?, notify? }）', 'options');
+        throw new FlowError(
+            'invalid-option',
+            'options 应为对象（{ registry, params?, maxBounces?, notify? }）',
+            'options',
+        );
     }
     rejectUnknown(options as unknown as Record<string, unknown>, OPTION_KEYS, 'options', 'invalid-option');
 
     const { registry } = options;
     if (!isObject(registry) || typeof registry.resolve !== 'function' || typeof registry.has !== 'function') {
-        throw new FlowError('invalid-option', 'options.registry 必填（插件注册表：createRegistry()）', 'options.registry');
+        throw new FlowError(
+            'invalid-option',
+            'options.registry 必填（插件注册表：createRegistry()）',
+            'options.registry',
+        );
     }
     const maxBounces = options.maxBounces ?? Number.POSITIVE_INFINITY;
     if (typeof maxBounces !== 'number' || Number.isNaN(maxBounces) || maxBounces < 0) {
-        throw new FlowError('invalid-option', `maxBounces 应为非负数字（实得 ${JSON.stringify(options.maxBounces)}）`, 'options.maxBounces');
+        throw new FlowError(
+            'invalid-option',
+            `maxBounces 应为非负数字（实得 ${JSON.stringify(options.maxBounces)}）`,
+            'options.maxBounces',
+        );
     }
     const notifiers = options.notify ?? [];
     if (!Array.isArray(notifiers) || notifiers.some((name) => typeof name !== 'string')) {
@@ -336,9 +374,14 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
     const requirePlugin = (slot: Slot, name: string, path: string): void => {
         if (registry.has(slot, name)) return;
         const known = registry.names(slot).join(', ');
-        throw new FlowError('unknown-plugin', `工作流引用了未注册的插件 ${slot}:${name}（该槽已注册：${known === '' ? '（无）' : known}）`, path);
+        throw new FlowError(
+            'unknown-plugin',
+            `工作流引用了未注册的插件 ${slot}:${name}（该槽已注册：${known === '' ? '（无）' : known}）`,
+            path,
+        );
     };
-    const slotOf = (prefix: string): Slot | null => (prefix === 'pred' ? 'guard' : prefix === 'action' ? 'action' : null);
+    const slotOf = (prefix: string): Slot | null =>
+        prefix === 'pred' ? 'guard' : prefix === 'action' ? 'action' : null;
 
     def.nodes.forEach((node, ni) => {
         node.guard.forEach((raw, gi) => {
@@ -371,10 +414,15 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
         const notifyErrors: NotifyFailure[] = [];
         for (const name of notifiers) {
             try {
-                const raw = callPlugin(`notify 插件 ${name}`, `notify:${name}`, () => registry.resolve('notify', name)(event));
+                const raw = callPlugin(`notify 插件 ${name}`, `notify:${name}`, () =>
+                    registry.resolve('notify', name)(event),
+                );
                 receipts.push(parseReceipt(raw, `notify:${name}`));
             } catch (e) {
-                notifyErrors.push({ plugin: name, error: e instanceof FlowError ? e : new FlowError('plugin-threw', String(e), `notify:${name}`, e) });
+                notifyErrors.push({
+                    plugin: name,
+                    error: e instanceof FlowError ? e : new FlowError('plugin-threw', String(e), `notify:${name}`, e),
+                });
             }
         }
         return { receipts, notifyErrors };
@@ -395,7 +443,11 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
         if (last.kind === 'bounce') {
             const used = next.path.filter((visit) => visit.kind === 'bounce').length;
             if (used > maxBounces) {
-                throw new FlowError('bounce-limit', `打回已达 ${used} 次，超过上限 ${maxBounces}（死循环护栏）`, 'state.path');
+                throw new FlowError(
+                    'bounce-limit',
+                    `打回已达 ${used} 次，超过上限 ${maxBounces}（死循环护栏）`,
+                    'state.path',
+                );
             }
         }
         return next;
@@ -405,10 +457,25 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
     const audit = (seed: ParsedSeed, to: Id, author: string, causes?: readonly string[]): Event | undefined =>
         seed.id === undefined
             ? undefined
-            : createEvent({ id: seed.id, author, anchor: nodeAnchor(to), content: seed.content, causes: causes ?? [], at: seed.at });
+            : createEvent({
+                  id: seed.id,
+                  author,
+                  anchor: nodeAnchor(to),
+                  content: seed.content,
+                  causes: causes ?? [],
+                  at: seed.at,
+              });
 
-    const landed = (state: FlowState<Id>, move: Move<Id>, guard: GuardEvaluation, event: Event | undefined): Transition<Id> => {
-        const { receipts, notifyErrors } = event === undefined ? { receipts: [] as Receipt[], notifyErrors: [] as NotifyFailure[] } : fireNotify(event);
+    const landed = (
+        state: FlowState<Id>,
+        move: Move<Id>,
+        guard: GuardEvaluation,
+        event: Event | undefined,
+    ): Transition<Id> => {
+        const { receipts, notifyErrors } =
+            event === undefined
+                ? { receipts: [] as Receipt[], notifyErrors: [] as NotifyFailure[] }
+                : fireNotify(event);
         return event === undefined
             ? { state, move, reason: guard.reason, guard, receipts, notifyErrors }
             : { state, move, reason: guard.reason, event, guard, receipts, notifyErrors };
@@ -485,7 +552,11 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
             throw new FlowError('invalid-declare', 'author 必填（宣布者：agent id / human）', 'request.author');
         }
         if (request.author === SYSTEM_AUTHOR) {
-            throw new FlowError('invalid-declare', `author = ${JSON.stringify(SYSTEM_AUTHOR)} 是内核保留字（「系统自动求值，无人发言」的标记）—— actor 不得冒名`, 'request.author');
+            throw new FlowError(
+                'invalid-declare',
+                `author = ${JSON.stringify(SYSTEM_AUTHOR)} 是内核保留字（「系统自动求值，无人发言」的标记）—— actor 不得冒名`,
+                'request.author',
+            );
         }
         if (typeof request.content !== 'string') {
             throw new FlowError('invalid-declare', 'content 应为字符串（这条 Event 的正文）', 'request.content');
@@ -494,16 +565,28 @@ export function createRuntime<Id extends string = string>(def: WorkflowDef<Id>, 
         const node = nodeAt(state.position);
         const edge = outEdges(state.position).find((candidate) => candidate.to === request.to);
         if (!edge) {
-            throw new FlowError('no-edge', `不存在从 ${JSON.stringify(state.position)} 到 ${JSON.stringify(request.to)} 的边（不许跳步）`, 'request.to');
+            throw new FlowError(
+                'no-edge',
+                `不存在从 ${JSON.stringify(state.position)} 到 ${JSON.stringify(request.to)} 的边（不许跳步）`,
+                'request.to',
+            );
         }
 
         // ② 闸门**先判、后求值**：非法宣布必须在「对外部世界动手」之前被拒
         if (node.actor === 'system') {
-            throw new FlowError('not-declarable', `节点 ${JSON.stringify(state.position)} 的 actor = system（系统节点只能由系统推）—— actor 不得宣布`, 'request.to');
+            throw new FlowError(
+                'not-declarable',
+                `节点 ${JSON.stringify(state.position)} 的 actor = system（系统节点只能由系统推）—— actor 不得宣布`,
+                'request.to',
+            );
         }
         const classification = classifyGuards(node.guard);
         if (classification.mode === 'system') {
-            throw new FlowError('not-declarable', `节点 ${JSON.stringify(state.position)} 的 guard 全可观测（${node.guard.join(', ')}），只能由系统推 —— actor 不得宣布`, 'request.to');
+            throw new FlowError(
+                'not-declarable',
+                `节点 ${JSON.stringify(state.position)} 的 guard 全可观测（${node.guard.join(', ')}），只能由系统推 —— actor 不得宣布`,
+                'request.to',
+            );
         }
 
         // 审计事件**先构造**（纯函数）：`id` / `content` / `causes` 形状错也必须在求值前暴露

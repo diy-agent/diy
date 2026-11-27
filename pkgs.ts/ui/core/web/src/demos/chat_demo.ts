@@ -31,7 +31,9 @@ export function chatDemo(el: HTMLElement): void {
     app.row(() => {
       inputEl = app.input({
         placeholder: "message...",
-        onInput: (v) => { inputValue.value = v; },
+        onInput: (v) => {
+          inputValue.value = v;
+        },
         onEnter: () => send(),
       });
       app.button({ name: "Send", onClick: () => send() });

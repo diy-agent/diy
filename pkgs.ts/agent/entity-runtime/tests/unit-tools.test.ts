@@ -124,7 +124,14 @@ describe('unit 工具', () => {
         // 想记进展只能写 journal（那不是账本）。加字段的人会被这条测试拦住。
         const { tools } = setup();
         const update = toolOf(tools, 'unit_update') as unknown as { inputSchema: { shape: Record<string, unknown> } };
-        expect(Object.keys(update.inputSchema.shape).sort()).toEqual(['accept', 'body', 'id', 'parent', 'status', 'title']);
+        expect(Object.keys(update.inputSchema.shape).sort()).toEqual([
+            'accept',
+            'body',
+            'id',
+            'parent',
+            'status',
+            'title',
+        ]);
         for (const forbidden of ['note', 'comment', 'progress', 'log', 'update', 'latest', 'changes']) {
             expect(Object.keys(update.inputSchema.shape)).not.toContain(forbidden);
         }
@@ -152,9 +159,9 @@ describe('unit 工具', () => {
 
     it('key 不合格 / 重名 / 撞已有 id：整批拒绝，不半截写入', async () => {
         const { store, tools } = setup();
-        await expect(
-            toolOf(tools, 'unit_add').execute({ items: [{ key: 'Bad Key', title: 'x' }] }),
-        ).rejects.toThrow(/key 只能用/);
+        await expect(toolOf(tools, 'unit_add').execute({ items: [{ key: 'Bad Key', title: 'x' }] })).rejects.toThrow(
+            /key 只能用/,
+        );
         await expect(
             toolOf(tools, 'unit_add').execute({
                 items: [
@@ -178,7 +185,12 @@ describe('unit 工具', () => {
 
     it('update 推状态：doing / done 只影响自己那一格（不再牵动别的条目）', async () => {
         const { tools } = setup();
-        await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b' }] });
+        await toolOf(tools, 'unit_add').execute({
+            items: [
+                { key: 'a', title: 'a' },
+                { key: 'b', title: 'b' },
+            ],
+        });
 
         await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'doing' });
         const listing = (await toolOf(tools, 'unit_list').execute({})) as {

@@ -7,24 +7,29 @@
 //   · 配置面只剩 `history.limit.summary.mode`（model / self）与工具结果呈现 `policy`；
 //   · 旧字段（triggers / limitTokens / summary.enabled / mode）读时忽略并出声。
 
-import { z } from "zod";
-import { triggerTokensOf } from "./select-kept-boundary.js";
-import { HistoryLimitSchema, isCompleteHistoryLimit, normalizeHistoryLimit, type HistoryLimit } from "./history-limit.js";
+import { z } from 'zod';
+import { triggerTokensOf } from './select-kept-boundary.js';
+import {
+    HistoryLimitSchema,
+    isCompleteHistoryLimit,
+    normalizeHistoryLimit,
+    type HistoryLimit,
+} from './history-limit.js';
 import {
     CompactPolicySchema,
     DEFAULT_TOOL_RESULT_POLICY,
     normalizePolicy,
     type CompactPolicy,
     type CompactTrigger,
-} from "./compaction.js";
+} from './compaction.js';
 
 /** 压缩配置：工具结果呈现 + 摘要模式（就这两项） */
 export const AutoCompactConfigSchema = z.object({
-    policy: CompactPolicySchema.describe("工具结果呈现（asis / headtail / callpath）"),
+    policy: CompactPolicySchema.describe('工具结果呈现（asis / headtail / callpath）'),
     history: z
         .object({ limit: HistoryLimitSchema.optional() })
         .optional()
-        .describe("历史压缩：只剩摘要模式（model / self）"),
+        .describe('历史压缩：只剩摘要模式（model / self）'),
 });
 
 export interface AutoCompactConfig {
@@ -41,11 +46,11 @@ export type AutoCompactIssue = {
 
 export const DEFAULT_AUTO_COMPACT: AutoCompactConfig = {
     policy: {
-        mode: "budget",
+        mode: 'budget',
         modeData: { toolResult: DEFAULT_TOOL_RESULT_POLICY },
         summary: false,
     },
-    history: { limit: { summary: { mode: "model" } } },
+    history: { limit: { summary: { mode: 'model' } } },
 };
 
 /** zod issue → 人读原因（只留必要字段，跨 zod 版本不炸） */
@@ -58,26 +63,26 @@ interface ZodIssueLike {
 }
 
 function describeZodIssue(i: ZodIssueLike): string {
-    if (i.code === "invalid_type") {
-        return i.message.includes("received undefined") ? "缺失（必填）" : `类型不符（期望 ${String(i.expected)}）`;
+    if (i.code === 'invalid_type') {
+        return i.message.includes('received undefined') ? '缺失（必填）' : `类型不符（期望 ${String(i.expected)}）`;
     }
-    if (i.code === "invalid_value") return `取值非法（合法值：${(i.values ?? []).map(String).join(" / ")}）`;
+    if (i.code === 'invalid_value') return `取值非法（合法值：${(i.values ?? []).map(String).join(' / ')}）`;
     return i.message;
 }
 
 export function autoCompactIssuesFromZod(error: z.ZodError, resolved: AutoCompactConfig): AutoCompactIssue[] {
     return (error.issues as unknown as ZodIssueLike[]).map((i) => {
-        const path = i.path.map((k) => String(k)).join(".");
-        const where = path === "" ? "（整份配置）" : path;
+        const path = i.path.map((k) => String(k)).join('.');
+        const where = path === '' ? '（整份配置）' : path;
         let cur: unknown = resolved;
         for (const k of i.path) {
-            if (cur === null || typeof cur !== "object") {
+            if (cur === null || typeof cur !== 'object') {
                 cur = undefined;
                 break;
             }
             cur = (cur as Record<PropertyKey, unknown>)[k];
         }
-        const fallback = cur === undefined ? "缺省值" : typeof cur === "object" ? "缺省值" : String(cur);
+        const fallback = cur === undefined ? '缺省值' : typeof cur === 'object' ? '缺省值' : String(cur);
         return { path, message: `${where}：${describeZodIssue(i)}；已回落 ${fallback}` };
     });
 }
@@ -94,26 +99,26 @@ function warnDead(issues: AutoCompactIssue[] | undefined, path: string, why: str
  */
 export function normalizeAutoCompact(raw: unknown, issues?: AutoCompactIssue[]): AutoCompactConfig {
     const src = (raw ?? {}) as Record<string, unknown>;
-    if (src["mode"] !== undefined) warnDead(issues, "mode", "已删除（##442：到点就压）");
-    if (src["triggers"] !== undefined) warnDead(issues, "triggers", "已删除（##442：触发线是派生量，零旋钮）");
-    const hist = (src["history"] ?? {}) as Record<string, unknown>;
-    if (hist["keep"] !== undefined) warnDead(issues, "history.keep", "已删除（##432）");
-    if (hist["allowAgentWrite"] !== undefined) warnDead(issues, "history.allowAgentWrite", "已删除（##432）");
-    const limit = (hist["limit"] ?? {}) as Record<string, unknown>;
-    if (limit["limitTokens"] !== undefined)
-        warnDead(issues, "history.limit.limitTokens", "已删除（##442：保留量固定 W×0.16）");
-    const summary = (limit["summary"] ?? {}) as Record<string, unknown>;
-    if (summary["enabled"] !== undefined)
-        warnDead(issues, "history.limit.summary.enabled", "已删除（改成 summary.mode）");
-    if (Array.isArray(hist["limit"]) || typeof hist["limit"] === "string") {
-        warnDead(issues, "history.limit", "形状不对（应为对象）");
+    if (src['mode'] !== undefined) warnDead(issues, 'mode', '已删除（##442：到点就压）');
+    if (src['triggers'] !== undefined) warnDead(issues, 'triggers', '已删除（##442：触发线是派生量，零旋钮）');
+    const hist = (src['history'] ?? {}) as Record<string, unknown>;
+    if (hist['keep'] !== undefined) warnDead(issues, 'history.keep', '已删除（##432）');
+    if (hist['allowAgentWrite'] !== undefined) warnDead(issues, 'history.allowAgentWrite', '已删除（##432）');
+    const limit = (hist['limit'] ?? {}) as Record<string, unknown>;
+    if (limit['limitTokens'] !== undefined)
+        warnDead(issues, 'history.limit.limitTokens', '已删除（##442：保留量固定 W×0.16）');
+    const summary = (limit['summary'] ?? {}) as Record<string, unknown>;
+    if (summary['enabled'] !== undefined)
+        warnDead(issues, 'history.limit.summary.enabled', '已删除（改成 summary.mode）');
+    if (Array.isArray(hist['limit']) || typeof hist['limit'] === 'string') {
+        warnDead(issues, 'history.limit', '形状不对（应为对象）');
     }
     if (!isCompleteHistoryLimit(limit)) {
-        const message = "history.limit.summary.mode 缺失或非法；已回落 model";
-        issues?.push({ path: "history.limit.summary.mode", message });
+        const message = 'history.limit.summary.mode 缺失或非法；已回落 model';
+        issues?.push({ path: 'history.limit.summary.mode', message });
     }
     return {
-        policy: src["policy"] !== undefined ? normalizePolicy(src["policy"]) : DEFAULT_AUTO_COMPACT.policy,
+        policy: src['policy'] !== undefined ? normalizePolicy(src['policy']) : DEFAULT_AUTO_COMPACT.policy,
         history: { limit: normalizeHistoryLimit(limit) },
     };
 }
@@ -144,15 +149,15 @@ export function detectAutoCompactTriggers(facts: AutoCompactTriggerFacts): Compa
     const w = facts.windowLimitTokens;
     const used = facts.windowTokens;
     if (w === null || used === null || !(w > 0)) return [];
-    return used >= triggerTokensOf(w) ? ["contextWindowOver"] : [];
+    return used >= triggerTokensOf(w) ? ['contextWindowOver'] : [];
 }
 
 /** 触发理由 → 中文说明（UI / 账本共用） */
 export const TRIGGER_TEXT: Record<CompactTrigger, string> = {
-    manual: "手动触发",
-    systemContextChanged: "系统上下文已变化（旧触发，##442 已删）",
-    cacheExpired: "缓存已过期（旧触发，##442 已删）",
-    contextWindowOver: "上下文窗口占用到触发线（窗口 − max(10%, 16k)）",
+    manual: '手动触发',
+    systemContextChanged: '系统上下文已变化（旧触发，##442 已删）',
+    cacheExpired: '缓存已过期（旧触发，##442 已删）',
+    contextWindowOver: '上下文窗口占用到触发线（窗口 − max(10%, 16k)）',
 };
 
 export function autoCompactPolicyInput(cfg: AutoCompactConfig): CompactPolicy {

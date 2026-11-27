@@ -15,7 +15,7 @@ import type { PendingAttachment } from './useComposerAttachments';
 
 /** 非图片附件显示「扩展名 + 大小」 —— 没有缩略图也要能看出这是什么 */
 function fallbackLabel(ref: AttachmentRef): string {
-    const ext = ref.displayName.includes('.') ? ref.displayName.split('.').at(-1) ?? '' : ref.kind;
+    const ext = ref.displayName.includes('.') ? (ref.displayName.split('.').at(-1) ?? '') : ref.kind;
     const kb = ref.bytes / 1024;
     const size = kb < 1024 ? `${Math.max(1, Math.round(kb))}K` : `${(kb / 1024).toFixed(1)}M`;
     return `${ext.toUpperCase()}\n${size}`;

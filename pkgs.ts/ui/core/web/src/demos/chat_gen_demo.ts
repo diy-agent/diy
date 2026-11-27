@@ -1,7 +1,12 @@
 import { GenApp, html, type Spec } from "../../../src/providers/dom-gen.js";
 import { Signal } from "../../../src/signal.js";
 import { installDevtools } from "../lib/devtools.js";
-import { BlockStore, toForest, type Op, type BlockNode } from "../lib/op-fold.js";
+import {
+  BlockStore,
+  toForest,
+  type Op,
+  type BlockNode,
+} from "../lib/op-fold.js";
 
 /**
  * chat_gen_demo —— 用 **dom-gen（generator/pull 声明式层，B 风格）** 复刻同一聊天界面。
@@ -76,34 +81,45 @@ export function chatGenDemo(mount: HTMLElement): void {
   // ── 声明式组装（一片 spec 森林） ────────────────────
   app.render(
     html.div({ class: "chat-top" }, function* () {
-      yield html.div({ class: "chat-title", text: "💬 会话复刻（真实数据 · projects_4_tasks_262）" });
+      yield html.div({
+        class: "chat-title",
+        text: "💬 会话复刻（真实数据 · projects_4_tasks_262）",
+      });
       yield html.div({ class: "chat-status", text: status });
     }),
 
-    html.div({ class: "chat-scroll", ref: (el) => (scrollEl = el) }, function* () {
-      // 外层只读「有序 id」：结构变才重跑；每轮的内容订阅各自 signal
-      yield html.div({ class: "chat-list" }, function* () {
-        for (const id of turns.value) yield Turn(turnRef(id));
-      });
-      // 流式直播轮：读 live → 每 token 只重建这一小块
-      yield html.div({ class: "chat-list" }, function* () {
-        const l = live.value;
-        if (l) yield Live(l);
-      });
-    }),
+    html.div(
+      { class: "chat-scroll", ref: (el) => (scrollEl = el) },
+      function* () {
+        // 外层只读「有序 id」：结构变才重跑；每轮的内容订阅各自 signal
+        yield html.div({ class: "chat-list" }, function* () {
+          for (const id of turns.value) yield Turn(turnRef(id));
+        });
+        // 流式直播轮：读 live → 每 token 只重建这一小块
+        yield html.div({ class: "chat-list" }, function* () {
+          const l = live.value;
+          if (l) yield Live(l);
+        });
+      },
+    ),
 
     html.div({ class: "composer" }, function* () {
       yield html.input({
         class: "diy-input",
         placeholder: "发消息…（Enter 发送，模拟流式回复）",
         value: inputText,
-        onInput: (e) => (inputText.value = (e.target as HTMLInputElement).value),
+        onInput: (e) =>
+          (inputText.value = (e.target as HTMLInputElement).value),
         onEnter: () => send(),
       });
       yield html.div({ class: "composer-right" }, function* () {
         yield html.span({ class: "persona-badge", text: "跟随缺省" });
         yield html.span({ class: "persona-name", text: `大副 · ${MODEL}` });
-        yield html.button({ class: "diy-button", text: "发送", onClick: () => send() });
+        yield html.button({
+          class: "diy-button",
+          text: "发送",
+          onClick: () => send(),
+        });
       });
     }),
   );
@@ -112,7 +128,11 @@ export function chatGenDemo(mount: HTMLElement): void {
   (window as unknown as { __chat: unknown }).__chat = {
     send: (t: string) => sendMessage(t),
     edit: (i: number) => editTurn(i),
-    state: () => ({ turns: turns.value.length, live: !!live.value, status: status.value }),
+    state: () => ({
+      turns: turns.value.length,
+      live: !!live.value,
+      status: status.value,
+    }),
     stats: () => app.rerunStats(),
   };
 
@@ -159,7 +179,10 @@ export function chatGenDemo(mount: HTMLElement): void {
     if (!id) return;
     const sig = turnOf.get(id)!;
     const t = sig.value;
-    sig.value = { ...t, rows: [...t.rows, { kind: "text", text: "✏️ 追加一行（只重跑这一轮）" }] };
+    sig.value = {
+      ...t,
+      rows: [...t.rows, { kind: "text", text: "✏️ 追加一行（只重跑这一轮）" }],
+    };
     toBottom();
   }
 
@@ -192,7 +215,11 @@ export function chatGenDemo(mount: HTMLElement): void {
     toBottom();
   }
 
-  function stream(field: "think" | "text", full: string, step: number): Promise<void> {
+  function stream(
+    field: "think" | "text",
+    full: string,
+    step: number,
+  ): Promise<void> {
     return new Promise((resolve) => {
       let i = 0;
       const tick = (): void => {
@@ -235,7 +262,8 @@ function Live(l: LiveTurn): Spec {
     yield html.div({ class: "turn-body" }, function* () {
       yield Row({ kind: "user", text: l.userText });
       if (l.think) yield Row({ kind: "think", text: l.think });
-      if (l.text) yield Row({ kind: "text", text: l.text + (l.done ? "" : " ▌") });
+      if (l.text)
+        yield Row({ kind: "text", text: l.text + (l.done ? "" : " ▌") });
     });
   });
 }
@@ -245,7 +273,8 @@ function Head(p: { model: string; errors: number }): Spec {
     yield html.span({ class: "avatar", text: "🤖" });
     yield html.span({ class: "sep", text: "·" });
     yield html.span({ class: "model", text: p.model });
-    if (p.errors > 0) yield html.span({ class: "err-badge", text: `✗ ${p.errors}` });
+    if (p.errors > 0)
+      yield html.span({ class: "err-badge", text: `✗ ${p.errors}` });
   });
 }
 
@@ -270,7 +299,8 @@ function Row(r: RowVM): Spec {
         yield html.span({ class: "tool-name", text: r.text });
         if (r.status) yield html.span({ class: "tool-status", text: r.status });
       });
-      if (r.output) yield html.div({ class: "tool-output", text: r.output.slice(0, 400) });
+      if (r.output)
+        yield html.div({ class: "tool-output", text: r.output.slice(0, 400) });
     });
   }
   if (r.kind === "error") {
@@ -291,11 +321,16 @@ function buildTurn(turn: BlockNode): TurnVM {
   let model = String(turn.attrs.model ?? "");
   let errorCount = 0;
   const walk = (n: BlockNode): void => {
-    if (n.tag === "step" && !model && n.attrs.model) model = String(n.attrs.model);
+    if (n.tag === "step" && !model && n.attrs.model)
+      model = String(n.attrs.model);
     const a = n.attrs as Record<string, unknown>;
     if (n.tag === "text")
-      rows.push({ kind: String(a.role) === "user" ? "user" : "text", text: String(a.content ?? "") });
-    else if (n.tag === "think") rows.push({ kind: "think", text: String(a.content ?? "") });
+      rows.push({
+        kind: String(a.role) === "user" ? "user" : "text",
+        text: String(a.content ?? ""),
+      });
+    else if (n.tag === "think")
+      rows.push({ kind: "think", text: String(a.content ?? "") });
     else if (n.tag === "tool")
       rows.push({
         kind: "tool",

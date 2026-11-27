@@ -87,9 +87,7 @@ async function waitForInstance(
 }
 
 /** 在多个候选端口里找本数据根的实例（restart 要能找到漂移后的端口） */
-async function findMine(
-    config: Diy2Config,
-): Promise<{ pid: number; port: number; home: string } | null> {
+async function findMine(config: Diy2Config): Promise<{ pid: number; port: number; home: string } | null> {
     const candidates = [...new Set([config.recordedPort, config.port])].filter(
         (p): p is number => p !== null && p !== 0,
     );
@@ -196,9 +194,7 @@ export function webHandler(moduleDir: string) {
             child.unref();
             const info = await waitForInstance(config);
             if (info === null) {
-                throw new Error(
-                    `后台实例没起来（看 ${detachLogPath(config.home)}，或去掉 --detach 前台跑一次看输出）`,
-                );
+                throw new Error(`后台实例没起来（看 ${detachLogPath(config.home)}，或去掉 --detach 前台跑一次看输出）`);
             }
             console.log(
                 `diy2 后台已起：${urlOf(info.port)}（pid=${info.pid} home=${info.home} 日志 ${detachLogPath(info.home)}）`,

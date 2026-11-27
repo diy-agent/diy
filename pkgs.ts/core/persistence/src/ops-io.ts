@@ -4,7 +4,7 @@
 // 为什么读也要在包里（##432 刀 1）：`ops` 是「turns 的 ref 指向的东西」—— 读同一份文件、
 // 认同一套行首/半行约束，才谈得上「core 只依赖接口」。core 拿到的是**已解好的 op 数组**。
 
-import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 
 /** 文件字节大小（不存在 = 0） */
 export function fileSize(fp: string): number {
@@ -21,7 +21,7 @@ export function countFileLines(fp: string): number {
     const CHUNK = 256 * 1024;
     let n = 0;
     try {
-        const fd = openSync(fp, "r"); // sync-io-ok: 断代路径一次（冷加载）
+        const fd = openSync(fp, 'r'); // sync-io-ok: 断代路径一次（冷加载）
         try {
             const buf = Buffer.allocUnsafe(CHUNK);
             let got: number;
@@ -48,7 +48,7 @@ export function countFileLines(fp: string): number {
 export function readOpsRange<T = unknown>(fp: string, from: number, to: number): { ops: T[]; consumed: number } {
     const len = to - from;
     if (len <= 0) return { ops: [], consumed: from };
-    const fd = openSync(fp, "r");
+    const fd = openSync(fp, 'r');
     try {
         const buf = Buffer.allocUnsafe(len);
         let got = 0;
@@ -59,9 +59,9 @@ export function readOpsRange<T = unknown>(fp: string, from: number, to: number):
         }
         const lastNl = got > 0 ? buf.lastIndexOf(0x0a, got - 1) : -1;
         if (lastNl < 0) return { ops: [], consumed: from }; // 连一行都还完整不了
-        const text = buf.subarray(0, lastNl + 1).toString("utf-8");
+        const text = buf.subarray(0, lastNl + 1).toString('utf-8');
         const ops: T[] = [];
-        for (const line of text.split("\n")) {
+        for (const line of text.split('\n')) {
             const t = line.trim();
             if (!t) continue;
             try {
@@ -79,7 +79,7 @@ export function readOpsRange<T = unknown>(fp: string, from: number, to: number):
 /** `at-1` 处的字节是不是换行（读不到就当是 —— 宁可按行首处理，不无端跳行） */
 function prevByteIsNewline(fp: string, at: number): boolean {
     try {
-        const fd = openSync(fp, "r"); // sync-io-ok: 单字节校验（冷加载）
+        const fd = openSync(fp, 'r'); // sync-io-ok: 单字节校验（冷加载）
         try {
             const b = Buffer.allocUnsafe(1);
             if (readSync(fd, b, 0, 1, at - 1) !== 1) return true;
@@ -96,7 +96,7 @@ function prevByteIsNewline(fp: string, at: number): boolean {
 function skipToNextLineStart(fp: string, at: number, size: number): number {
     const CHUNK = 64 * 1024;
     try {
-        const fd = openSync(fp, "r"); // sync-io-ok: 冷加载路径
+        const fd = openSync(fp, 'r'); // sync-io-ok: 冷加载路径
         try {
             const buf = Buffer.allocUnsafe(CHUNK);
             let pos = at;
@@ -145,8 +145,8 @@ export function findTurnOffset(fp: string, turnId: string): number {
     const size = fileSize(fp);
     if (size <= 0) return -1;
     const CHUNK = 256 * 1024;
-    const needle = Buffer.from(`{"op":"start","id":${JSON.stringify(turnId)},"kind":"turn"`, "utf-8");
-    const fd = openSync(fp, "r");
+    const needle = Buffer.from(`{"op":"start","id":${JSON.stringify(turnId)},"kind":"turn"`, 'utf-8');
+    const fd = openSync(fp, 'r');
     try {
         const buf = Buffer.allocUnsafe(CHUNK + needle.length);
         let from = 0;
@@ -179,7 +179,7 @@ export function findTurnOffset(fp: string, turnId: string): number {
 export function isTurnStartAt(fp: string, at: number): boolean {
     let fd: number;
     try {
-        fd = openSync(fp, "r");
+        fd = openSync(fp, 'r');
     } catch {
         return false;
     }
@@ -192,10 +192,10 @@ export function isTurnStartAt(fp: string, at: number): boolean {
         const got = readSync(fd, buf, 0, buf.length, at);
         if (got <= 0) return false;
         const nl = buf.subarray(0, got).indexOf(0x0a);
-        const line = buf.subarray(0, nl < 0 ? got : nl).toString("utf-8");
+        const line = buf.subarray(0, nl < 0 ? got : nl).toString('utf-8');
         try {
             const op = JSON.parse(line) as { op?: unknown; kind?: unknown };
-            return op.op === "start" && op.kind === "turn";
+            return op.op === 'start' && op.kind === 'turn';
         } catch {
             return false;
         }

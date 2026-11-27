@@ -165,7 +165,8 @@ export function withLibraryLock<T>(knowledgeDir: string, fn: () => T, opts: Lock
                 'facts/write-busy',
                 `另一个进程正在写这个库（pid ${holder?.pid ?? '?'}），等了 ${Math.round((now() - start) / 1000)}s 仍未被释放：${knowledgeDir}\n` +
                     '并发写是允许的（本锁会串行化），但持有者超过 20s 没结束通常意味着它卡住了。' +
-                    '确认那个进程后重试；真要放弃就删掉这把锁：' + lockDir,
+                    '确认那个进程后重试；真要放弃就删掉这把锁：' +
+                    lockDir,
             );
         }
         sleep(retryMs);

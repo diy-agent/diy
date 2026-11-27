@@ -1,5 +1,11 @@
 import { DomApp } from "../../../src/providers/dom.js";
-import { BlockStore, compactOps, toForest, type Op, type BlockNode } from "../lib/op-fold.js";
+import {
+  BlockStore,
+  compactOps,
+  toForest,
+  type Op,
+  type BlockNode,
+} from "../lib/op-fold.js";
 
 /**
  * session_replay_demo —— 用**真实大会话**压 diy-ui。
@@ -109,9 +115,21 @@ export function sessionReplayDemo(el: HTMLElement): void {
     const totalMs = performance.now() - t0;
     store = s;
     const compact = compactOps(s);
-    bench.fold = { ops, blocks: s.blocks.size, bytes, compactOps: compact.length, totalMs, applyMs, issues: s.issues.length };
-    setHud(`折叠完成：${ops.toLocaleString()} ops → ${s.blocks.size.toLocaleString()} 块（${(totalMs / 1000).toFixed(1)}s，apply ${(applyMs / 1000).toFixed(1)}s）`);
-    pushResult(`① fold: ${ops} ops → ${s.blocks.size} blocks / compact ${compact.length} ops / ${totalMs.toFixed(0)}ms (apply ${applyMs.toFixed(0)}ms)`);
+    bench.fold = {
+      ops,
+      blocks: s.blocks.size,
+      bytes,
+      compactOps: compact.length,
+      totalMs,
+      applyMs,
+      issues: s.issues.length,
+    };
+    setHud(
+      `折叠完成：${ops.toLocaleString()} ops → ${s.blocks.size.toLocaleString()} 块（${(totalMs / 1000).toFixed(1)}s，apply ${(applyMs / 1000).toFixed(1)}s）`,
+    );
+    pushResult(
+      `① fold: ${ops} ops → ${s.blocks.size} blocks / compact ${compact.length} ops / ${totalMs.toFixed(0)}ms (apply ${applyMs.toFixed(0)}ms)`,
+    );
   }
 
   // ── ② 渲染全部 ───────────────────────────────────────
@@ -129,10 +147,23 @@ export function sessionReplayDemo(el: HTMLElement): void {
     rows.value = flat; // 触发 list cell rerun（清空 + 重建）
     const assignMs = performance.now() - assign0;
     const nodes = list.el.querySelectorAll("*").length;
-    const heap = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0;
-    bench.render = { rows: flat.length, treeMs, rerunMs: lastRerunMs, assignMs, nodes, heapMB: heap / 1048576 };
-    setHud(`渲染 ${flat.length.toLocaleString()} 行：tree ${treeMs.toFixed(0)}ms / rerun ${lastRerunMs.toFixed(0)}ms / DOM ${nodes.toLocaleString()} 节点 / 堆 ${(heap / 1048576).toFixed(0)}MB`);
-    pushResult(`② render: ${flat.length} rows / tree ${treeMs.toFixed(0)}ms / rerun ${lastRerunMs.toFixed(0)}ms / DOM ${nodes} nodes / heap ${(heap / 1048576).toFixed(0)}MB`);
+    const heap =
+      (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
+        ?.usedJSHeapSize ?? 0;
+    bench.render = {
+      rows: flat.length,
+      treeMs,
+      rerunMs: lastRerunMs,
+      assignMs,
+      nodes,
+      heapMB: heap / 1048576,
+    };
+    setHud(
+      `渲染 ${flat.length.toLocaleString()} 行：tree ${treeMs.toFixed(0)}ms / rerun ${lastRerunMs.toFixed(0)}ms / DOM ${nodes.toLocaleString()} 节点 / 堆 ${(heap / 1048576).toFixed(0)}MB`,
+    );
+    pushResult(
+      `② render: ${flat.length} rows / tree ${treeMs.toFixed(0)}ms / rerun ${lastRerunMs.toFixed(0)}ms / DOM ${nodes} nodes / heap ${(heap / 1048576).toFixed(0)}MB`,
+    );
   }
 
   // ── ③ rerun 成本曲线（流式重放的 O(N²) 源）────────────
@@ -141,7 +172,9 @@ export function sessionReplayDemo(el: HTMLElement): void {
       setHud("先跑 ①②");
       return;
     }
-    const sizes = [100, 500, 1000, 2000, 4000, 8000, 16000, 32000].filter((n) => n <= flat.length);
+    const sizes = [100, 500, 1000, 2000, 4000, 8000, 16000, 32000].filter(
+      (n) => n <= flat.length,
+    );
     const curve: Array<{ n: number; ms: number }> = [];
     for (const n of sizes) {
       const slice = flat.slice(0, n);

@@ -4,7 +4,7 @@
 // 为什么单独一层：places 校验、patch 边界、父节点 hash 聚合三处都要判「谁是谁的祖先」，
 // 三处各写一次 startsWith 必然口径漂移（`a` vs `ab` 的前缀误判是经典坑）。
 
-import type { ContextPath } from "./types.js";
+import type { ContextPath } from './types.js';
 
 /**
  * 路径段的两种写法（JSONPath 风格，与 YAML 的键写法一致）：
@@ -27,7 +27,7 @@ export function needsQuoteSeg(seg: string): boolean {
 /** 把一段编码成路径文本（需要时用 `['...']` 包裹 + 转义） */
 export function quoteSeg(seg: string): string {
     if (!needsQuoteSeg(seg)) return seg;
-    const body = seg.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const body = seg.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     return `['${body}']`;
 }
 
@@ -36,21 +36,21 @@ export function quoteSeg(seg: string): string {
  * 空串、空段（`a..b`）、未闭合引号、键索引后跟杂字符 → null（调用方决定报错还是丢弃）。
  */
 export function parsePath(p: ContextPath): string[] | null {
-    if (typeof p !== "string" || p.length === 0) return null;
+    if (typeof p !== 'string' || p.length === 0) return null;
     const segs: string[] = [];
     let i = 0;
     while (i < p.length) {
         let seg: string;
-        if (p[i] === "[") {
+        if (p[i] === '[') {
             const q = p[i + 1];
             if (q !== "'" && q !== '"') return null; // 只支持带引号的键索引（不支持数组下标）
             let j = i + 2;
-            let out = "";
+            let out = '';
             let closed = false;
             while (j < p.length) {
                 const c = p[j]!;
-                if (c === "\\") {
-                    out += p[j + 1] ?? "";
+                if (c === '\\') {
+                    out += p[j + 1] ?? '';
                     j += 2;
                     continue;
                 }
@@ -62,21 +62,21 @@ export function parsePath(p: ContextPath): string[] | null {
                 out += c;
                 j++;
             }
-            if (!closed || p[j] !== "]") return null;
+            if (!closed || p[j] !== ']') return null;
             seg = out;
             i = j + 1;
         } else {
             let j = i;
-            while (j < p.length && p[j] !== "." && p[j] !== "[") j++;
+            while (j < p.length && p[j] !== '.' && p[j] !== '[') j++;
             seg = p.slice(i, j);
             if (!BARE_SEG_RE.test(seg)) return null; // 裸段必须落在字符集内（`a b` 非法）
             i = j;
         }
         if (seg.length === 0) return null; // 空段（`a..b` / `['']`）
         // 段后必须是 `.`（下一段）或 `[`（键索引，无需分隔符）或结束
-        if (p[i] !== undefined && p[i] !== "." && p[i] !== "[") return null;
+        if (p[i] !== undefined && p[i] !== '.' && p[i] !== '[') return null;
         segs.push(seg);
-        if (p[i] === ".") {
+        if (p[i] === '.') {
             if (i + 1 >= p.length) return null; // 尾部空段（`a.`）
             i++; // 跳过分隔符
         }
@@ -91,9 +91,9 @@ export function isValidPath(p: ContextPath): boolean {
 /** 段数组 → 路径文本（需要引号的段用 `['...']`；与 parsePath 严格互逆）。
  *  注意键索引段**不加前导 `.`**（`chain['a.md']` 而不是 `chain.['a.md']`）。 */
 export function joinPath(segs: readonly string[]): ContextPath {
-    let out = "";
+    let out = '';
     for (const seg of segs) {
-        out += needsQuoteSeg(seg) ? quoteSeg(seg) : `${out ? "." : ""}${seg}`;
+        out += needsQuoteSeg(seg) ? quoteSeg(seg) : `${out ? '.' : ''}${seg}`;
     }
     return out;
 }
@@ -116,7 +116,7 @@ export function inSubtree(a: ContextPath, b: ContextPath): boolean {
 
 /** 取父路径；顶层返回 null */
 export function parentOf(p: ContextPath): ContextPath | null {
-    const i = p.lastIndexOf(".");
+    const i = p.lastIndexOf('.');
     return i < 0 ? null : p.slice(0, i);
 }
 

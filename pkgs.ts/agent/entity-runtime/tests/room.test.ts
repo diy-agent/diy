@@ -229,8 +229,22 @@ describe('RoomActor', () => {
         });
         store.appendItem('room:1', item('u-1', 1, '第一句'));
         store.appendItem('room:1', item('u-2', 2, '第二句'));
-        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'queued', turn: 1, turnId: 'turn-1' });
-        store.setDelivery({ roomId: 'room:1', messageId: 'u-2', botId: BOT_B.id, state: 'queued', turn: 2, turnId: 'turn-2' });
+        store.setDelivery({
+            roomId: 'room:1',
+            messageId: 'u-1',
+            botId: BOT_A.id,
+            state: 'queued',
+            turn: 1,
+            turnId: 'turn-1',
+        });
+        store.setDelivery({
+            roomId: 'room:1',
+            messageId: 'u-2',
+            botId: BOT_B.id,
+            state: 'queued',
+            turn: 2,
+            turnId: 'turn-2',
+        });
 
         const started: string[] = [];
         let release: (() => void) | undefined;
@@ -425,9 +439,7 @@ describe('RoomActor', () => {
             expect(h.room.cancelCompact('c1')).toBe(false);
             expect(h.room.cancelCompact('nope')).toBe(false);
 
-            const states = h.events
-                .filter((entry) => entry.kind === 'compact')
-                .map((entry) => entry.compact.state);
+            const states = h.events.filter((entry) => entry.kind === 'compact').map((entry) => entry.compact.state);
             expect(states).toEqual(['running', 'cancelled']);
             // 表里不能残留：否则这个成员从此永远「正在压缩」
             expect(h.room.compactingIds()).toEqual([]);
@@ -498,7 +510,9 @@ describe('中断的轮次', () => {
         h.store.openTurn(h.spec.id, { botId: 'bot:gone', turn: 1, turnId: 'turn-x', at: 1 });
         const restarted = h.rebuild();
 
-        expect(restarted.items().filter((it) => it.type === 'notice' && it.data.kind === 'interrupted')).toHaveLength(0);
+        expect(restarted.items().filter((it) => it.type === 'notice' && it.data.kind === 'interrupted')).toHaveLength(
+            0,
+        );
         expect(restarted.store.openTurns(h.spec.id)).toEqual([]);
     });
 

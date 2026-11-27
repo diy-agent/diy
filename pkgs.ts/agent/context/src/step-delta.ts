@@ -13,9 +13,9 @@
 //
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
-import { controlDeltaDelivery, type DeliveryPart } from "./delivery.js";
-import type { ContextPath } from "./types.js";
-import { atomicUnitPaths, changesOf, type CtxSnapshot } from "./changelog.js";
+import { controlDeltaDelivery, type DeliveryPart } from './delivery.js';
+import type { ContextPath } from './types.js';
+import { atomicUnitPaths, changesOf, type CtxSnapshot } from './changelog.js';
 
 /** 本步增量的全部产出（文本给 wire；paths 给观测/断言；part 给需要行号的调用点） */
 export interface StepDelta {
@@ -28,7 +28,7 @@ export interface StepDelta {
 }
 
 /** 只需要两份快照的值树 + hash 表（`Delivery` 与 `CtxSnapshot` 都满足） */
-export type DeltaSnapshot = Pick<CtxSnapshot, "tree" | "valueHashes">;
+export type DeltaSnapshot = Pick<CtxSnapshot, 'tree' | 'valueHashes'>;
 
 /**
  * 两份快照 → 本步增量。

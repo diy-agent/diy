@@ -20,5 +20,5 @@
 //   Node 侧：import { RunRegistry, makeJobTool } from "@diy-agent/jobs/node";
 //   任何侧：import { stateLabel, formatDuration } from "@diy-agent/jobs";
 
-export * from "./run-status.js";
-export * from "./output-ring.js";
+export * from './run-status.js';
+export * from './output-ring.js';

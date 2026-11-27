@@ -52,7 +52,15 @@ function sources(): Source[] {
     const line = [
         createReaction({ id: 'r1', author: 'b', turnId: 't1', target: msg, content: '边界不成立', at: AT }),
         createReaction({ id: 'r2', author: SELF, turnId: 't1', target: msg, replyTo: 'r1', content: '为何？', at: AT }),
-        createReaction({ id: 'r3', author: 'c', turnId: 't1', target: msg, replyTo: 'r2', content: '我同意 b', at: AT }),
+        createReaction({
+            id: 'r3',
+            author: 'c',
+            turnId: 't1',
+            target: msg,
+            replyTo: 'r2',
+            content: '我同意 b',
+            at: AT,
+        }),
     ];
     const comments = [
         createReaction({ id: 'c1', author: 'b', turnId: 't2', target: doc, content: '这行漏了锁', at: AT }),
@@ -69,7 +77,12 @@ function sources(): Source[] {
                 ],
             },
         },
-        { type: 'material', data: { events: [createEvent({ id: 'e1', author: 'b', anchor: doc, content: 'rev-7：补锁顺序说明', at: AT })] } },
+        {
+            type: 'material',
+            data: {
+                events: [createEvent({ id: 'e1', author: 'b', anchor: doc, content: 'rev-7：补锁顺序说明', at: AT })],
+            },
+        },
         { type: 'reactions', data: { reactions: comments } },
     ];
 }
@@ -257,7 +270,9 @@ describe('A6 非法输入一律报错（rule.loud）', () => {
 
     it('自定义策略对象形状非法（name 缺失 / selectItem 非函数）→ invalid-assembly', () => {
         expect(caught(() => resolveStrategy({} as never)).code).toBe('invalid-assembly');
-        const e = caught(() => assemble({ sources: [], strategy: { name: 'x', selectItem: 1 } as never, selfId: SELF }));
+        const e = caught(() =>
+            assemble({ sources: [], strategy: { name: 'x', selectItem: 1 } as never, selfId: SELF }),
+        );
         expect(e.code).toBe('invalid-assembly');
         expect(e.path).toBe('strategy.selectItem');
     });
@@ -276,7 +291,24 @@ describe('A6 非法输入一律报错（rule.loud）', () => {
 
     it('renderItem 对四类锚点都能给出定位（资料 / 过程前缀）', () => {
         const ctx = { selfId: SELF };
-        expect(renderItem({ kind: 'material', author: 'b', content: 'x', anchor: docRangeAnchor('rev-7', 1, 'q'), replyTo: null, at: AT }, ctx)).toContain('rev-7@1');
-        expect(renderItem({ kind: 'speech', author: 'b', content: 'x', anchor: messageAnchor('m-1'), replyTo: 'r1', at: AT }, ctx)).toBe('b: [回复 r1] x');
+        expect(
+            renderItem(
+                {
+                    kind: 'material',
+                    author: 'b',
+                    content: 'x',
+                    anchor: docRangeAnchor('rev-7', 1, 'q'),
+                    replyTo: null,
+                    at: AT,
+                },
+                ctx,
+            ),
+        ).toContain('rev-7@1');
+        expect(
+            renderItem(
+                { kind: 'speech', author: 'b', content: 'x', anchor: messageAnchor('m-1'), replyTo: 'r1', at: AT },
+                ctx,
+            ),
+        ).toBe('b: [回复 r1] x');
     });
 });

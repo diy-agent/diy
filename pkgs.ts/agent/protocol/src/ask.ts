@@ -53,7 +53,9 @@ export function normalizeAskRequest(value: unknown): AskRequest | undefined {
                   kind:
                       question.kind === 'form' || question.kind === 'text' || question.kind === 'choice'
                           ? question.kind
-                          : (question.fields === undefined ? 'choice' : 'form'),
+                          : question.fields === undefined
+                            ? 'choice'
+                            : 'form',
               }))
             : (() => {
                   const legacy = legacyQuestion(raw);
@@ -121,7 +123,10 @@ export function describeAnswer(request: AskRequest, answer: AskAnswer | undefine
         return describeQuestionAnswer(question, answerFor(answer, question.id));
     }
     return request.questions
-        .map((question) => `- ${question.question} → ${describeQuestionAnswer(question, answerFor(answer, question.id))}`)
+        .map(
+            (question) =>
+                `- ${question.question} → ${describeQuestionAnswer(question, answerFor(answer, question.id))}`,
+        )
         .join('\n');
 }
 

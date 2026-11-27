@@ -9,10 +9,10 @@
 
 和 `@diy-agent/remote` 的分工：
 
-| 包 | 管什么 |
-|---|---|
+| 包                  | 管什么                                                          |
+| ------------------- | --------------------------------------------------------------- |
 | `@diy-agent/remote` | 我怎么被找到（Node 身份、地址、mDNS / tailscale 发现、`/ping`） |
-| `@diy-agent/hub` | 我信谁、怎么连（邀请、密钥、审批、Token、连接循环） |
+| `@diy-agent/hub`    | 我信谁、怎么连（邀请、密钥、审批、Token、连接循环）             |
 
 ## 三条设计决策（改动前先读）
 
@@ -24,17 +24,17 @@
 
 ## 分层
 
-| 文件 | 职责 |
-|---|---|
-| `types.ts` | 契约（三个状态机 / `domainId` 到处预留） |
-| `code.ts` / `key.ts` | 6 位 Base32；Ed25519（只用 `node:crypto`）、Token 哈希 |
-| `secret.ts` / `keychain.ts` | 钥匙串接口 + macOS `security` 实现（不可用就明确报错，绝不落普通文件） |
-| `store.ts` / `store-fs.ts` | `update` 原子读改写（判据 4 靠它）；`peers.json` / `hub.json` / `link.json` |
-| `invitation.ts` / `pairing.ts` | 建邀请 / 验码（HMAC + 全局计数）/ 审批 / 撤销 |
-| `server.ts` | `/hub/info`、`/hub/pair`（长轮询拿 Token）、WSS Bearer 接入 |
-| `client.ts` | 卫星两步配对（`preparePairing` 只显示地址 → `completePairing` 才交码）+ 重连 |
-| `links.ts` | 邀请 URL / 地址归一 / 地址策略（tailscale / mDNS 拒配） |
-| `tls.ts` | 没有可信证书就拒绝启动（不静默降级成 http） |
+| 文件                           | 职责                                                                         |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| `types.ts`                     | 契约（三个状态机 / `domainId` 到处预留）                                     |
+| `code.ts` / `key.ts`           | 6 位 Base32；Ed25519（只用 `node:crypto`）、Token 哈希                       |
+| `secret.ts` / `keychain.ts`    | 钥匙串接口 + macOS `security` 实现（不可用就明确报错，绝不落普通文件）       |
+| `store.ts` / `store-fs.ts`     | `update` 原子读改写（判据 4 靠它）；`peers.json` / `hub.json` / `link.json`  |
+| `invitation.ts` / `pairing.ts` | 建邀请 / 验码（HMAC + 全局计数）/ 审批 / 撤销                                |
+| `server.ts`                    | `/hub/info`、`/hub/pair`（长轮询拿 Token）、WSS Bearer 接入                  |
+| `client.ts`                    | 卫星两步配对（`preparePairing` 只显示地址 → `completePairing` 才交码）+ 重连 |
+| `links.ts`                     | 邀请 URL / 地址归一 / 地址策略（tailscale / mDNS 拒配）                      |
+| `tls.ts`                       | 没有可信证书就拒绝启动（不静默降级成 http）                                  |
 
 ## 四条硬约束
 

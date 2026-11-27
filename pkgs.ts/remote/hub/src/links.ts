@@ -28,7 +28,11 @@ export function normalizeHubEndpoint(input: string): string {
 }
 
 /** 邀请 URL（二维码内容就是它，**不含 code**） */
-export function buildInviteUrl(input: { endpoint: string; inviteId: string; protocol?: 'code' | 'pinned-key' }): string {
+export function buildInviteUrl(input: {
+    endpoint: string;
+    inviteId: string;
+    protocol?: 'code' | 'pinned-key';
+}): string {
     const base = normalizeHubEndpoint(input.endpoint);
     // 协议 A（code）的链接一个字节都不变 —— 老二维码 / 老剪贴板还能用。
     // 只有 pinned-key 才追加 `p`，让卫星知道该走哪条流程。

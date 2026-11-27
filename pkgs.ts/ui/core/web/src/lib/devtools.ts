@@ -1,4 +1,9 @@
-import { allNodes, nodeOf, setCaptureLoc, type TrackedNode } from "../../../src/providers/dom-dsl.js";
+import {
+  allNodes,
+  nodeOf,
+  setCaptureLoc,
+  type TrackedNode,
+} from "../../../src/providers/dom-dsl.js";
 
 /**
  * rerun 诊断 devtools（A/B 两风格共用）。
@@ -18,7 +23,8 @@ export function installDevtools(root: HTMLElement): void {
   // 数字浮层（pointer-events:none，不挡交互）
   const layer = document.createElement("div");
   layer.id = "__devtools-layer";
-  layer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2147483645;";
+  layer.style.cssText =
+    "position:fixed;inset:0;pointer-events:none;z-index:2147483645;";
 
   // hover 高亮框 + 详情面板
   const box = document.createElement("div");
@@ -42,9 +48,13 @@ export function installDevtools(root: HTMLElement): void {
 
   document.body.append(layer, box, detail, toggle);
 
-  const color = (n: number): string => (n <= 1 ? "#16a34a" : n <= 3 ? "#d97706" : "#dc2626");
+  const color = (n: number): string =>
+    n <= 1 ? "#16a34a" : n <= 3 ? "#d97706" : "#dc2626";
   const nameOf = (el: HTMLElement): string =>
-    el.tagName.toLowerCase() + (el.className ? `.${String(el.className).trim().split(/\s+/).join(".")}` : "");
+    el.tagName.toLowerCase() +
+    (el.className
+      ? `.${String(el.className).trim().split(/\s+/).join(".")}`
+      : "");
 
   let enabled = false;
   const badges = new Map<HTMLElement, HTMLElement>();
@@ -67,7 +77,8 @@ export function installDevtools(root: HTMLElement): void {
     for (const n of allNodes()) {
       if (!n.rerunCell || !root.contains(n.el)) continue;
       const r = n.el.getBoundingClientRect();
-      if (r.bottom < -20 || r.top > vh + 20 || r.right < 0 || r.left > vw) continue;
+      if (r.bottom < -20 || r.top > vh + 20 || r.right < 0 || r.left > vw)
+        continue;
       wanted.add(n.el);
       let b = badges.get(n.el);
       if (!b) {

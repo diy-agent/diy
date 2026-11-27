@@ -43,11 +43,7 @@ describe('PendingRows', () => {
 
     it('失联那一行标红（档位来自服务端，UI 不自己比秒数）', () => {
         const html = renderToStaticMarkup(
-            <PendingRows
-                rows={[['bot:a', progress({ idleMs: 125_000, stage: 'stalled' })]]}
-                bots={BOTS}
-                now={0}
-            />,
+            <PendingRows rows={[['bot:a', progress({ idleMs: 125_000, stage: 'stalled' })]]} bots={BOTS} now={0} />,
         );
         expect(html).toContain('text-destructive');
         expect(html).toContain('失联');

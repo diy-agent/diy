@@ -12,14 +12,19 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
  * 为什么走中间件而不是复制进 public/：真实大会话是 44~78MB 的二进制事实，
  * 不该进仓库、也不该为跑一次压测复制一份。默认读 mac 拷来的 DIY_HOME。
  */
-const SESSIONS_DIR = resolve(process.env.DIY_SESSIONS_DIR ?? "D:/share/diy-home/local");
+const SESSIONS_DIR = resolve(
+  process.env.DIY_SESSIONS_DIR ?? "D:/share/diy-home/local",
+);
 
 function sessionsPlugin(): Plugin {
   return {
     name: "diy-sessions",
     configureServer(server) {
       server.middlewares.use("/sessions", async (req, res, next) => {
-        const rel = decodeURIComponent((req.url ?? "/").split("?")[0]).replace(/^\/+/, "");
+        const rel = decodeURIComponent((req.url ?? "/").split("?")[0]).replace(
+          /^\/+/,
+          "",
+        );
         const file = join(SESSIONS_DIR, normalize(rel));
         if (!file.startsWith(SESSIONS_DIR)) {
           res.statusCode = 403;

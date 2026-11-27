@@ -78,7 +78,11 @@ export function openMemorySessionStore(options: MemorySessionStoreOptions = {}):
                     );
                 }
                 if (!Number.isInteger(message.seq) || message.seq <= 0) {
-                    throw new SessionError('store/invalid-options', `seq 必须是正整数，拿到 ${String(message.seq)}`, 'seq');
+                    throw new SessionError(
+                        'store/invalid-options',
+                        `seq 必须是正整数，拿到 ${String(message.seq)}`,
+                        'seq',
+                    );
                 }
                 if (message.seq !== expected + 1) {
                     throw new SessionError(

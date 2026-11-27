@@ -36,13 +36,20 @@ describe('标题栏活动指示器', () => {
                 listener = onFrame;
                 return () => undefined;
             },
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
         bootstrapStore();
         await new Promise((resolve) => setTimeout(resolve, 0));
         // closed 任务里的旧 turn 不进这个数（那是一个已经收工的房间里残留的一轮）
         listener?.({
-            rooms: [{ id: 'task:one', botIds: ['a', 'b'] }, { id: 'task:closed', botIds: ['c'] }],
+            rooms: [
+                { id: 'task:one', botIds: ['a', 'b'] },
+                { id: 'task:closed', botIds: ['c'] },
+            ],
             jobs: 0,
         } as never);
 

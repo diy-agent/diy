@@ -2,20 +2,23 @@
   "name": "@diy-agent/ui",
   "version": "0.2.0",
   "description": "diyui —— 纯 TS / 零框架的声明式 UI 层：Signal / Scope / Component / Cell / Scheduler + provider（pi-tui / DOM）",
+  "keywords": [
+    "declarative",
+    "diy",
+    "dom",
+    "signals",
+    "tui",
+    "ui"
+  ],
+  "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/ui/core",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/diy-agent/diy.git",
     "directory": "pkgs.ts/ui/core"
   },
-  "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/ui/core",
-  "keywords": [
-    "ui",
-    "diy",
-    "declarative",
-    "tui",
-    "dom",
-    "signals"
+  "files": [
+    "src/"
   ],
   "type": "module",
   "main": "./dist/index.js",
@@ -50,9 +53,6 @@
       "default": "./dist/providers/dom-gen.js"
     }
   },
-  "files": [
-    "src/"
-  ],
   "scripts": {
     "check": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",

@@ -7,9 +7,9 @@
 //   2. **渲染声明与值分离**（renderers 挂在 path 上，值在 values 里）。模板节点可以没有
 //      自己的值，只是「渲染这个 path 时用模板」；于是「值变了但渲染没变」可判（144 用例 14）。
 
-import { hashValue } from "./hash.js";
-import { isAncestor, isValidPath, parsePath } from "./path.js";
-import type { ContextPath, ContextRendererSpec, ContextTreeState } from "./types.js";
+import { hashValue } from './hash.js';
+import { isAncestor, isValidPath, parsePath } from './path.js';
+import type { ContextPath, ContextRendererSpec, ContextTreeState } from './types.js';
 
 /** 初始空树（wireVersion 由 wire.ts 提供，避免此处 import 循环） */
 export function emptyState(wireVersion: string): ContextTreeState {
@@ -28,7 +28,7 @@ export function getValue(state: ContextTreeState, path: ContextPath): unknown {
     if (!segs) return undefined;
     let cur: unknown = state.values;
     for (const s of segs) {
-        if (cur === null || typeof cur !== "object") return undefined;
+        if (cur === null || typeof cur !== 'object') return undefined;
         if (Array.isArray(cur)) {
             const i = Number(s);
             if (!Number.isInteger(i) || i < 0 || i >= cur.length) return undefined;
@@ -41,11 +41,7 @@ export function getValue(state: ContextTreeState, path: ContextPath): unknown {
 }
 
 /** 按 path 写值（不可变：只拷贝路径上的节点） */
-export function setValue(
-    state: ContextTreeState,
-    path: ContextPath,
-    value: unknown,
-): ContextTreeState {
+export function setValue(state: ContextTreeState, path: ContextPath, value: unknown): ContextTreeState {
     const segs = parsePath(path);
     if (!segs) return state;
     const next = writeNode(state.values, segs, value);
@@ -111,17 +107,13 @@ function omit(o: Record<string, unknown>, key: string): Record<string, unknown> 
 }
 
 /** 设置渲染声明（path 处） */
-export function setRenderer(
-    state: ContextTreeState,
-    path: ContextPath,
-    spec: ContextRendererSpec,
-): ContextTreeState {
+export function setRenderer(state: ContextTreeState, path: ContextPath, spec: ContextRendererSpec): ContextTreeState {
     return { ...state, renderers: { ...state.renderers, [path]: spec } };
 }
 
 /** 取渲染声明（缺省 yaml —— 未声明即结构化值 dump） */
 export function rendererOf(state: ContextTreeState, path: ContextPath): ContextRendererSpec {
-    return state.renderers[path] ?? { renderer: "yaml" };
+    return state.renderers[path] ?? { renderer: 'yaml' };
 }
 
 /** 值树里 path 处是否有值（`undefined` 视为无 —— 与「有值且为 null」区分开） */
@@ -132,7 +124,7 @@ export function hasValue(state: ContextTreeState, path: ContextPath): boolean {
 /** 单节点的值 hash（valueHash 的来源；模板节点按其 source 参与） */
 export function valueHashOf(state: ContextTreeState, path: ContextPath): string {
     const spec = state.renderers[path];
-    if (spec?.renderer === "template") return hashValue(spec.source);
+    if (spec?.renderer === 'template') return hashValue(spec.source);
     return hashValue(getValue(state, path));
 }
 
@@ -140,7 +132,7 @@ export function valueHashOf(state: ContextTreeState, path: ContextPath): string 
 
 export type PlacesValidation =
     | { ok: true; places: ContextPath[] }
-    | { ok: false; reason: "invalid-path" | "duplicate" | "overlap"; detail: string };
+    | { ok: false; reason: 'invalid-path' | 'duplicate' | 'overlap'; detail: string };
 
 /**
  * places 校验（144 用例 6）：每条都是合法路径、不重复、**两两不可互为祖先/后代**。
@@ -149,15 +141,15 @@ export type PlacesValidation =
 export function validatePlaces(places: readonly ContextPath[]): PlacesValidation {
     const seen = new Set<ContextPath>();
     for (const p of places) {
-        if (!isValidPath(p)) return { ok: false, reason: "invalid-path", detail: p };
-        if (seen.has(p)) return { ok: false, reason: "duplicate", detail: p };
+        if (!isValidPath(p)) return { ok: false, reason: 'invalid-path', detail: p };
+        if (seen.has(p)) return { ok: false, reason: 'duplicate', detail: p };
         seen.add(p);
     }
     const sorted = [...places].sort();
     for (let i = 0; i < sorted.length; i++) {
         for (let j = i + 1; j < sorted.length; j++) {
             if (isAncestor(sorted[i], sorted[j])) {
-                return { ok: false, reason: "overlap", detail: `${sorted[i]} ⊃ ${sorted[j]}` };
+                return { ok: false, reason: 'overlap', detail: `${sorted[i]} ⊃ ${sorted[j]}` };
             }
         }
     }
@@ -180,5 +172,5 @@ export function placeOf(state: ContextTreeState, path: ContextPath): ContextPath
 
 /** 值树里 path 处是否是普通对象（值树合并/渲染的分支判据） */
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
-    return typeof v === "object" && v !== null && !Array.isArray(v);
+    return typeof v === 'object' && v !== null && !Array.isArray(v);
 }

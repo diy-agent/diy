@@ -603,14 +603,7 @@ export interface TurnEndReason {
  * `interrupted` 是唯一一个**不是** `endItems()` 产出的结局：进程崩在收尾前什么都来不及落，
  * 靠 `turn_open` 表在下次启动时补一条 `notice(kind: 'interrupted')` 才认得出。
  */
-export type BotOutcome =
-    | 'done'
-    | 'truncated'
-    | 'max-steps'
-    | 'filtered'
-    | 'tool-mismatch'
-    | 'failed'
-    | 'interrupted';
+export type BotOutcome = 'done' | 'truncated' | 'max-steps' | 'filtered' | 'tool-mismatch' | 'failed' | 'interrupted';
 
 /**
  * 这个 bot 此刻要你干什么 —— **一个值，不是一组标志**。

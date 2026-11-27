@@ -69,7 +69,6 @@ export function flashAskCardWhenRendered(askId: string, tries = 20): void {
     attempt(tries);
 }
 
-
 /**
  * 跳到**一条聊天气泡**（账本条目上的「来自哪句话」点它）。
  *

@@ -833,7 +833,8 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
                         title="每次加载当前的再一倍（不是一次全量）"
                         className="my-1 w-full rounded border border-border/60 px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/60"
                     >
-                        上面还有 {Math.max(0, (state.totalItems ?? 0) - state.items.length)} 条更早的消息未加载 · 点此再加载一倍
+                        上面还有 {Math.max(0, (state.totalItems ?? 0) - state.items.length)} 条更早的消息未加载 ·
+                        点此再加载一倍
                     </button>
                 )}
                 <CompactCutBar sessions={sessions} />

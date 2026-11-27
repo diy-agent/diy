@@ -7,7 +7,7 @@
 // 被浮层挡住的按钮也「成功」，于是测试永远绿。这里走 Input.dispatchMouseEvent，
 // 与真人点击同一条路径（完整命中测试 → 捕获/冒泡 → 默认行为链）。
 
-import WebSocket from "ws";
+import WebSocket from 'ws';
 
 interface Target {
     type: string;
@@ -40,8 +40,8 @@ export class Driver {
             if (m.id && this.pending.has(m.id)) {
                 this.pending.get(m.id)!(m.result);
                 this.pending.delete(m.id);
-            } else if (m.method === "Runtime.exceptionThrown") {
-                this.events.push(m.params?.exceptionDetails?.exception?.description ?? "unknown");
+            } else if (m.method === 'Runtime.exceptionThrown') {
+                this.events.push(m.params?.exceptionDetails?.exception?.description ?? 'unknown');
             }
         };
     }
@@ -52,7 +52,7 @@ export class Driver {
         while (Date.now() < deadline) {
             try {
                 const list = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as Target[];
-                target = list.find((t) => t.type === "page");
+                target = list.find((t) => t.type === 'page');
                 if (target) break;
             } catch {
                 /* 端口还没起来，继续等 */
@@ -64,10 +64,10 @@ export class Driver {
         const ws = new WebSocket(target.webSocketDebuggerUrl);
         await new Promise<void>((res, rej) => {
             ws.onopen = () => res();
-            ws.onerror = () => rej(new Error("CDP WebSocket 连接失败"));
+            ws.onerror = () => rej(new Error('CDP WebSocket 连接失败'));
         });
         const d = new Driver(ws);
-        await d.send("Runtime.enable");
+        await d.send('Runtime.enable');
         return d;
     }
 
@@ -81,7 +81,7 @@ export class Driver {
 
     /** 在页面里求值（支持 async） */
     async eval<T = unknown>(expression: string): Promise<T> {
-        const r = (await this.send("Runtime.evaluate", {
+        const r = (await this.send('Runtime.evaluate', {
             expression,
             returnByValue: true,
             awaitPromise: true,
@@ -118,12 +118,12 @@ export class Driver {
         })()`);
         if (!hit) throw new Error(`点击失败：${selector} 被其它元素遮挡`);
 
-        for (const type of ["mousePressed", "mouseReleased"]) {
-            await this.send("Input.dispatchMouseEvent", {
+        for (const type of ['mousePressed', 'mouseReleased']) {
+            await this.send('Input.dispatchMouseEvent', {
                 type,
                 x: rect.x,
                 y: rect.y,
-                button: "left",
+                button: 'left',
                 clickCount: 1,
             });
         }
@@ -139,7 +139,7 @@ export class Driver {
             return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
         })()`);
         if (!rect) throw new Error(`hover 失败：${selector} 不存在或尺寸为 0`);
-        await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x, y: rect.y });
+        await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y });
         await new Promise((r) => setTimeout(r, 250));
     }
 

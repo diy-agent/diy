@@ -173,7 +173,9 @@ export class Reconciler<H extends { el: HTMLElement }> {
   reorder(container: HTMLElement): void {
     let cursor: ChildNode | null = null;
     for (const e of this.next.values()) {
-      const want: ChildNode | null = cursor ? cursor.nextSibling : container.firstChild;
+      const want: ChildNode | null = cursor
+        ? cursor.nextSibling
+        : container.firstChild;
       if (e.el !== want) container.insertBefore(e.el, want);
       cursor = e.el;
     }
@@ -258,7 +260,8 @@ export function captureLoc(): string {
   if (!captureLocOn) return "—";
   const stack = (new Error().stack ?? "").split("\n").slice(2);
   for (const line of stack) {
-    if (/dom-dsl|dom-gen|devtools|@vue|node_modules|vite|dist\//.test(line)) continue;
+    if (/dom-dsl|dom-gen|devtools|@vue|node_modules|vite|dist\//.test(line))
+      continue;
     const m = line.match(/([^/\\()\s]+):(\d+):(\d+)\)?\s*$/);
     if (m) return `${m[1]}:${m[2]}`;
   }
@@ -268,7 +271,8 @@ export function captureLoc(): string {
 /** 跑过不止一次的节点（dev 排查异常 rerun）。 */
 export function dumpReruns(): Array<{ el: HTMLElement; reruns: number }> {
   const out: Array<{ el: HTMLElement; reruns: number }> = [];
-  for (const n of allNodes()) if (n.reruns > 1) out.push({ el: n.el, reruns: n.reruns });
+  for (const n of allNodes())
+    if (n.reruns > 1) out.push({ el: n.el, reruns: n.reruns });
   return out;
 }
 
@@ -326,33 +330,87 @@ export class El {
   }
 
   // ── tag 工厂（纯 TS，无 JSX） ──
-  div(props?: Props, build?: Build): El { return this.mk("div", props, build); }
-  span(props?: Props, build?: Build): El { return this.mk("span", props, build); }
-  p(props?: Props, build?: Build): El { return this.mk("p", props, build); }
-  a(props?: Props, build?: Build): El { return this.mk("a", props, build); }
-  button(props?: Props, build?: Build): El { return this.mk("button", props, build); }
-  input(props?: Props, build?: Build): El { return this.mk("input", props, build); }
-  textarea(props?: Props, build?: Build): El { return this.mk("textarea", props, build); }
-  label(props?: Props, build?: Build): El { return this.mk("label", props, build); }
-  img(props?: Props, build?: Build): El { return this.mk("img", props, build); }
-  ul(props?: Props, build?: Build): El { return this.mk("ul", props, build); }
-  ol(props?: Props, build?: Build): El { return this.mk("ol", props, build); }
-  li(props?: Props, build?: Build): El { return this.mk("li", props, build); }
-  h1(props?: Props, build?: Build): El { return this.mk("h1", props, build); }
-  h2(props?: Props, build?: Build): El { return this.mk("h2", props, build); }
-  h3(props?: Props, build?: Build): El { return this.mk("h3", props, build); }
-  h4(props?: Props, build?: Build): El { return this.mk("h4", props, build); }
-  section(props?: Props, build?: Build): El { return this.mk("section", props, build); }
-  header(props?: Props, build?: Build): El { return this.mk("header", props, build); }
-  footer(props?: Props, build?: Build): El { return this.mk("footer", props, build); }
-  main(props?: Props, build?: Build): El { return this.mk("main", props, build); }
-  pre(props?: Props, build?: Build): El { return this.mk("pre", props, build); }
-  code(props?: Props, build?: Build): El { return this.mk("code", props, build); }
-  strong(props?: Props, build?: Build): El { return this.mk("strong", props, build); }
-  em(props?: Props, build?: Build): El { return this.mk("em", props, build); }
-  small(props?: Props, build?: Build): El { return this.mk("small", props, build); }
-  br(props?: Props, build?: Build): El { return this.mk("br", props, build); }
-  hr(props?: Props, build?: Build): El { return this.mk("hr", props, build); }
+  div(props?: Props, build?: Build): El {
+    return this.mk("div", props, build);
+  }
+  span(props?: Props, build?: Build): El {
+    return this.mk("span", props, build);
+  }
+  p(props?: Props, build?: Build): El {
+    return this.mk("p", props, build);
+  }
+  a(props?: Props, build?: Build): El {
+    return this.mk("a", props, build);
+  }
+  button(props?: Props, build?: Build): El {
+    return this.mk("button", props, build);
+  }
+  input(props?: Props, build?: Build): El {
+    return this.mk("input", props, build);
+  }
+  textarea(props?: Props, build?: Build): El {
+    return this.mk("textarea", props, build);
+  }
+  label(props?: Props, build?: Build): El {
+    return this.mk("label", props, build);
+  }
+  img(props?: Props, build?: Build): El {
+    return this.mk("img", props, build);
+  }
+  ul(props?: Props, build?: Build): El {
+    return this.mk("ul", props, build);
+  }
+  ol(props?: Props, build?: Build): El {
+    return this.mk("ol", props, build);
+  }
+  li(props?: Props, build?: Build): El {
+    return this.mk("li", props, build);
+  }
+  h1(props?: Props, build?: Build): El {
+    return this.mk("h1", props, build);
+  }
+  h2(props?: Props, build?: Build): El {
+    return this.mk("h2", props, build);
+  }
+  h3(props?: Props, build?: Build): El {
+    return this.mk("h3", props, build);
+  }
+  h4(props?: Props, build?: Build): El {
+    return this.mk("h4", props, build);
+  }
+  section(props?: Props, build?: Build): El {
+    return this.mk("section", props, build);
+  }
+  header(props?: Props, build?: Build): El {
+    return this.mk("header", props, build);
+  }
+  footer(props?: Props, build?: Build): El {
+    return this.mk("footer", props, build);
+  }
+  main(props?: Props, build?: Build): El {
+    return this.mk("main", props, build);
+  }
+  pre(props?: Props, build?: Build): El {
+    return this.mk("pre", props, build);
+  }
+  code(props?: Props, build?: Build): El {
+    return this.mk("code", props, build);
+  }
+  strong(props?: Props, build?: Build): El {
+    return this.mk("strong", props, build);
+  }
+  em(props?: Props, build?: Build): El {
+    return this.mk("em", props, build);
+  }
+  small(props?: Props, build?: Build): El {
+    return this.mk("small", props, build);
+  }
+  br(props?: Props, build?: Build): El {
+    return this.mk("br", props, build);
+  }
+  hr(props?: Props, build?: Build): El {
+    return this.mk("hr", props, build);
+  }
 
   /** 兜底：任意 tag。 */
   tag(name: string, props?: Props, build?: Build): El {
@@ -400,7 +458,8 @@ export class El {
   removeSelf(): void {
     const p = this.parent();
     if (p?.keyedChildren) {
-      for (const [k, e] of p.keyedChildren) if (e.el === this.el) p.keyedChildren.delete(k);
+      for (const [k, e] of p.keyedChildren)
+        if (e.el === this.el) p.keyedChildren.delete(k);
     }
     if (this.ownScope) disposeAll(this.ownScope);
     this.el.remove();
@@ -422,7 +481,10 @@ export class El {
    * 往本节点插一个子节点。`build` 收本节点为 slot、建出**一个**子元素并返回它。
    * 带 `key` 时进本节点的 key 表（同 key 同 rev → 复用，不重建）。
    */
-  insert(build: (slot: El) => El, opts: { key?: unknown; rev?: unknown; at?: number } = {}): El {
+  insert(
+    build: (slot: El) => El,
+    opts: { key?: unknown; rev?: unknown; at?: number } = {},
+  ): El {
     const key = opts.key;
     const table = (this.keyedChildren ??= new Map<unknown, KeyedChild<El>>());
     const rev = opts.rev ?? key ?? {};
@@ -431,7 +493,12 @@ export class El {
       if (old && old.rev === rev) return old.handle;
     }
     const child = build(this);
-    const entry: KeyedChild<El> = { el: child.el, handle: child, rev, scope: child.ownScope ?? [] };
+    const entry: KeyedChild<El> = {
+      el: child.el,
+      handle: child,
+      rev,
+      scope: child.ownScope ?? [],
+    };
     const slotKey = key !== undefined ? key : child.el;
     const old = table.get(slotKey);
     if (old) {
@@ -521,7 +588,12 @@ export class DslApp extends El {
   }
 
   /** rerun 计数分布（dev 排查异常 rerun）。 */
-  rerunStats(): { nodes: number; rerun: number; max: number; histogram: Record<string, number> } {
+  rerunStats(): {
+    nodes: number;
+    rerun: number;
+    max: number;
+    histogram: Record<string, number>;
+  } {
     return computeRerunStats();
   }
 }
@@ -530,7 +602,9 @@ export class DslApp extends El {
 
 function createEl(parent: El, tag: string, props?: Props, build?: Build): El {
   if (build && props && "text" in props) {
-    throw new Error(`dom-dsl: <${tag}> 不能同时给 text 与尾部函数（文本是叶子）`);
+    throw new Error(
+      `dom-dsl: <${tag}> 不能同时给 text 与尾部函数（文本是叶子）`,
+    );
   }
 
   const ctx = reconcileStack[reconcileStack.length - 1];
@@ -651,7 +725,8 @@ export function applyProps(el: HTMLElement, props: Props): void {
 
 function bindText(el: HTMLElement, v: unknown): void {
   const set = (x: unknown): void => {
-    el.textContent = x === null || x === undefined || x === false ? "" : String(x);
+    el.textContent =
+      x === null || x === undefined || x === false ? "" : String(x);
   };
   if (isReactive(v)) {
     autoEffect(() => set(unwrap(v)));
@@ -685,7 +760,9 @@ function bindClass(el: HTMLElement, v: unknown): void {
 function bindStyle(el: HTMLElement, v: unknown): void {
   const apply = (x: StyleValue): void => {
     if (typeof x === "string") el.style.cssText = x;
-    else for (const [k, s] of Object.entries(x)) (el.style as unknown as Record<string, string>)[k] = String(s);
+    else
+      for (const [k, s] of Object.entries(x))
+        (el.style as unknown as Record<string, string>)[k] = String(s);
   };
   if (isReactive(v)) {
     autoEffect(() => apply(unwrap(v) as StyleValue));
@@ -747,7 +824,9 @@ function unwrap<T>(v: Reactive<T>): T {
 // ── 组件命名空间（`C.Turn(t)` 环境式调用；与 `parent.mount(Turn, t)` 等价） ──
 
 export type CompBag<R> = {
-  [K in keyof R]: R[K] extends (self: El, payload: infer P) => void ? (payload: P) => void : never;
+  [K in keyof R]: R[K] extends (self: El, payload: infer P) => void
+    ? (payload: P) => void
+    : never;
 };
 
 /**
@@ -756,15 +835,17 @@ export type CompBag<R> = {
  *   C.Turn(t);        // 挂到「当前组装节点」
  * 显式指定父节点时用 `parent.mount(Turn, t)`。
  */
-export function defineComps<R extends Record<string, (self: El, payload: never) => void>>(
-  app: DslApp,
-  defs: R,
-): CompBag<R> {
+export function defineComps<
+  R extends Record<string, (self: El, payload: never) => void>,
+>(app: DslApp, defs: R): CompBag<R> {
   const out = {} as Record<string, (payload: unknown) => void>;
   for (const key of Object.keys(defs) as Array<keyof R & string>) {
     out[key] = (payload: unknown): void => {
       const parent: El = ambientNode() ?? app;
-      (defs[key] as unknown as (self: El, payload: unknown) => void)(parent, payload);
+      (defs[key] as unknown as (self: El, payload: unknown) => void)(
+        parent,
+        payload,
+      );
     };
   }
   return out as CompBag<R>;

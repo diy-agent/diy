@@ -19,7 +19,18 @@ const SOURCES = ['user', 'probe', 'code', 'inference'] as const;
 const ENVS = ['production', 'development', 'test'] as const;
 const FORMATS = ['md', 'json'] as const;
 
-const FACT_KEYS = new Set(['id', 'subject', 'aspect', 'value', 'format', 'scope', 'review', 'lifecycle', 'evidence', 'refs']);
+const FACT_KEYS = new Set([
+    'id',
+    'subject',
+    'aspect',
+    'value',
+    'format',
+    'scope',
+    'review',
+    'lifecycle',
+    'evidence',
+    'refs',
+]);
 
 function isObj(v: unknown): v is Record<string, unknown> {
     return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -131,7 +142,13 @@ export function validateFacts(input: unknown): Validation {
         if (issues.length > 0) return;
 
         facts.push({
-            id: nonEmpty(id) ? (id as string) : derivedFactId({ subject: subject as string, aspect: aspect as string, ...(scope === undefined ? {} : { scope }) }),
+            id: nonEmpty(id)
+                ? (id as string)
+                : derivedFactId({
+                      subject: subject as string,
+                      aspect: aspect as string,
+                      ...(scope === undefined ? {} : { scope }),
+                  }),
             subject: subject as string,
             aspect: aspect as string,
             value: value as string,

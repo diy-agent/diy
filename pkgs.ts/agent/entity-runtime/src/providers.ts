@@ -114,18 +114,16 @@ export const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
  * 陈旧的真相比没有真相更糟。现在上限跟着模型走（models.dev 的 `limit.output`），
  * 想临时收窄用 env。
  */
-export function maxOutputTokensOf(
-    modelKey: string,
-    explicit?: number,
-    env: NodeJS.ProcessEnv = process.env,
-): number {
+export function maxOutputTokensOf(modelKey: string, explicit?: number, env: NodeJS.ProcessEnv = process.env): number {
     const fromEnv = Number.parseInt(env['DIY_LOCAL_MAX_OUTPUT_TOKENS'] ?? '', 10);
     if (Number.isFinite(fromEnv) && fromEnv >= 1) return Math.floor(fromEnv);
     if (explicit !== undefined && Number.isFinite(explicit) && explicit >= 1) return Math.floor(explicit);
     // 算上限**不许抛**：这是「算一个缺省值」的函数，测试 / 无目录房间里的 modelKey 可以是任意
     // 占位串（`'m'`）。真正拿它去建模型的是 `modelOf`，那里才该响亮失败。
     const key = maybeParseModelKey(modelKey);
-    return key === undefined ? DEFAULT_MAX_OUTPUT_TOKENS : effectiveMaxOutputTokens(catalogEntry(key, env), DEFAULT_MAX_OUTPUT_TOKENS);
+    return key === undefined
+        ? DEFAULT_MAX_OUTPUT_TOKENS
+        : effectiveMaxOutputTokens(catalogEntry(key, env), DEFAULT_MAX_OUTPUT_TOKENS);
 }
 
 /**
@@ -159,9 +157,7 @@ function maybeParseModelKey(value: string): ParsedModelKey | undefined {
 function catalogEntry(key: ParsedModelKey, env: NodeJS.ProcessEnv): ModelCatalogEntry | undefined {
     const home = modelHome(env);
     if (home === undefined) return undefined;
-    return loadCatalog(home, { env }).find(
-        (entry) => entry.providerId === key.provider && entry.modelId === key.model,
-    );
+    return loadCatalog(home, { env }).find((entry) => entry.providerId === key.provider && entry.modelId === key.model);
 }
 
 /**

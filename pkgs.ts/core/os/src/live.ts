@@ -5,11 +5,11 @@
 // pid 一旦复用，lineage 会把新进程误认成「我们起的」。
 // 也不能只留「根进程还在」的组 —— 根退了但 `nohup` 子孙还在时，锚点必须活到子孙消失为止。
 
-import type { OwnedProc } from "./proc-scan.js";
-import type { OwnQuery, ProcessRow } from "./types.js";
+import type { OwnedProc } from './proc-scan.js';
+import type { OwnQuery, ProcessRow } from './types.js';
 
 export function registeredLive(
-    query: Pick<OwnQuery, "groups" | "runPids">,
+    query: Pick<OwnQuery, 'groups' | 'runPids'>,
     rows: readonly ProcessRow[],
     procs: readonly OwnedProc[],
 ): Set<number> {

@@ -212,9 +212,9 @@ describe('compileLayout', () => {
             const layout = compileLayout({ page, views, scope, viewport });
             expect(leafGroups(layout.grid.root)).toEqual([['left', 'center', 'right']]);
             // 单区域页：根本没有组
-            expect(leafGroups(compileLayout({ page: even, views: [view('pa', 'a')], scope, viewport }).grid.root)).toEqual(
-                [],
-            );
+            expect(
+                leafGroups(compileLayout({ page: even, views: [view('pa', 'a')], scope, viewport }).grid.root),
+            ).toEqual([]);
         });
     });
 

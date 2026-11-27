@@ -156,10 +156,34 @@ const devDef = defineWorkflow({
     nodes: [
         { id: 'clarify', name: '需求', actor: 'human', guard: ['prompt:clear_enough'], hint: '澄清到无歧义即可放行' },
         { id: 'design', name: '设计', actor: 'agent', guard: ['prompt:design_ready'], hint: '产出方案与边界' },
-        { id: 'implement', name: '开发', actor: 'agent', guard: ['prompt:dev_done'], hint: '开发完成 xx 任务，完成后提交给 Review 步骤' },
-        { id: 'review', name: 'Review', actor: 'agent', guard: ['prompt:review_done'], hint: '独立复审；P0/P1 打回，全部有落点则放行' },
-        { id: 'ci', name: 'CI', actor: 'system', guard: ['pred:check_green', 'pred:intent_green'], hint: '数组 = 与：两套检查都绿才推' },
-        { id: 'merge', name: '合并', actor: 'system', guard: ['pred:ci_green', 'pred:no_conflict', 'pred:review_approved'], hint: '三条 guard 全满足' },
+        {
+            id: 'implement',
+            name: '开发',
+            actor: 'agent',
+            guard: ['prompt:dev_done'],
+            hint: '开发完成 xx 任务，完成后提交给 Review 步骤',
+        },
+        {
+            id: 'review',
+            name: 'Review',
+            actor: 'agent',
+            guard: ['prompt:review_done'],
+            hint: '独立复审；P0/P1 打回，全部有落点则放行',
+        },
+        {
+            id: 'ci',
+            name: 'CI',
+            actor: 'system',
+            guard: ['pred:check_green', 'pred:intent_green'],
+            hint: '数组 = 与：两套检查都绿才推',
+        },
+        {
+            id: 'merge',
+            name: '合并',
+            actor: 'system',
+            guard: ['pred:ci_green', 'pred:no_conflict', 'pred:review_approved'],
+            hint: '三条 guard 全满足',
+        },
     ],
     edges: [
         { from: 'clarify', to: 'design', kind: 'next' },
@@ -178,9 +202,27 @@ const quantDef = defineWorkflow({
         { id: 'fetch', name: '数据', actor: 'system', guard: ['pred:data_complete'], hint: '行情与财务数据齐备' },
         { id: 'factor', name: '因子', actor: 'system', guard: ['pred:factor_ready'], hint: '因子矩阵无缺失值' },
         { id: 'select', name: '筛选', actor: 'agent', guard: ['prompt:select_ok'], hint: '解读因子、说明为什么这么筛' },
-        { id: 'backtest', name: '回测', actor: 'system', guard: ['pred:backtest_ok'], hint: 'sharpe > 1.5 且 maxDD < 0.2' },
-        { id: 'risk', name: '风控', actor: 'system', guard: ['pred:weight_ok', 'pred:not_blacklisted'], hint: '单票 ≤ 10% 且不命中黑名单' },
-        { id: 'signoff', name: '人工确认', actor: 'human', guard: ['prompt:human_ok'], hint: '真金白银的最后一关，人工签字' },
+        {
+            id: 'backtest',
+            name: '回测',
+            actor: 'system',
+            guard: ['pred:backtest_ok'],
+            hint: 'sharpe > 1.5 且 maxDD < 0.2',
+        },
+        {
+            id: 'risk',
+            name: '风控',
+            actor: 'system',
+            guard: ['pred:weight_ok', 'pred:not_blacklisted'],
+            hint: '单票 ≤ 10% 且不命中黑名单',
+        },
+        {
+            id: 'signoff',
+            name: '人工确认',
+            actor: 'human',
+            guard: ['prompt:human_ok'],
+            hint: '真金白银的最后一关，人工签字',
+        },
         { id: 'order', name: '下单', actor: 'system', guard: ['action:place_order'], hint: '把篮子提交给券商' },
     ],
     edges: [
@@ -208,7 +250,13 @@ const pairDef = defineWorkflow({
 const sideFxDef = defineWorkflow({
     id: 'side-fx',
     nodes: [
-        { id: 'go', name: '放行并下单', actor: 'system', guard: ['pred:check_green', 'action:place_order'], hint: '先判再动手' },
+        {
+            id: 'go',
+            name: '放行并下单',
+            actor: 'system',
+            guard: ['pred:check_green', 'action:place_order'],
+            hint: '先判再动手',
+        },
         { id: 'end', name: '终态', actor: 'system', guard: [], hint: '' },
     ],
     edges: [{ from: 'go', to: 'end', kind: 'next' }],
@@ -312,7 +360,9 @@ describe('R2 注册表：未注册即报错（不许静默降级）', () => {
     });
 
     it('空名 / 非函数 → invalid-plugin', () => {
-        expect(caught(() => createRegistry().register('guard', '', () => ({ pass: true }))).code).toBe('invalid-plugin');
+        expect(caught(() => createRegistry().register('guard', '', () => ({ pass: true }))).code).toBe(
+            'invalid-plugin',
+        );
         // @ts-expect-error 非函数不是插件
         expect(caught(() => createRegistry().register('guard', 'x', 42)).code).toBe('invalid-plugin');
     });
@@ -570,7 +620,9 @@ describe('R5 不可观测 guard → 只能由 actor 宣布，转移本身就是�
         const rt = createRuntime(sideFxDef, { registry }); // go: ['pred:check_green', 'action:place_order']
         const r = runner(rt);
         r.step(); // 进入 go
-        const e = caught(() => rt.declare(r.state(), { ...nextSeed(), author: 'agent', to: 'end', content: '我说了算' }));
+        const e = caught(() =>
+            rt.declare(r.state(), { ...nextSeed(), author: 'agent', to: 'end', content: '我说了算' }),
+        );
         expect(e.code).toBe('not-declarable');
         expect(calls).toEqual([]); // 先拒单，后求值 —— 不能先下了单再报「不允许」
     });
@@ -802,13 +854,18 @@ describe('R9 上下文与旁路：params 透传 / notify 唤醒 / status 分类'
             seen.push({ params: ctx.params, node: ctx.node.id, actor: ctx.actor });
             return { pass: true };
         });
-        const def = defineWorkflow({ nodes: [{ id: 'solo', name: '单节点', actor: 'system', guard: ['pred:echo'], hint: '' }], edges: [] });
+        const def = defineWorkflow({
+            nodes: [{ id: 'solo', name: '单节点', actor: 'system', guard: ['pred:echo'], hint: '' }],
+            edges: [],
+        });
         const rt = createRuntime(def, { registry, params: { ci: { command: 'npm test' }, review: { maxBounces: 3 } } });
         const r = runner(rt);
         r.step(); // 进入入口 solo（进入本身不判 guard）
         expect(rt.step(r.state(), nextSeed()).status).toBe('done'); // 判 guard（echo 被调用）→ 无出边
 
-        expect(seen).toEqual([{ params: { ci: { command: 'npm test' }, review: { maxBounces: 3 } }, node: 'solo', actor: 'system' }]);
+        expect(seen).toEqual([
+            { params: { ci: { command: 'npm test' }, review: { maxBounces: 3 } }, node: 'solo', actor: 'system' },
+        ]);
     });
 
     it('每次转移后唤醒 notify 插件，回执随结果返回', () => {
@@ -856,7 +913,9 @@ describe('R9 上下文与旁路：params 透传 / notify 唤醒 / status 分类'
     it('没进入工作流就宣布转移 → invalid-entry（位置为空的唯一合法入口是 step）', () => {
         const { registry } = fakes();
         const rt = createRuntime(pairDef, { registry });
-        const e = caught(() => rt.declare(initialState<IdOf<typeof pairDef>>(), { ...nextSeed(), author: 'agent', to: 'b', content: '' }));
+        const e = caught(() =>
+            rt.declare(initialState<IdOf<typeof pairDef>>(), { ...nextSeed(), author: 'agent', to: 'b', content: '' }),
+        );
         expect(e.code).toBe('invalid-entry');
     });
 
@@ -868,12 +927,16 @@ describe('R9 上下文与旁路：params 透传 / notify 唤醒 / status 分类'
         expect(e.path).toBe('options.maxBounce');
         // step 的 seed 也只认 { id, at }
         const rt = createRuntime(pairDef, { registry });
-        // @ts-expect-error 故意多带一个字段
-        expect(caught(() => rt.step(initialState<IdOf<typeof pairDef>>(), { id: 'e', at: AT, 多余: 1 })).code).toBe('invalid-option');
+        // 故意多带一个字段（step 的 seed 只认 `{ id, at }`）：要测的是**运行时**会拒，
+        // 所以类型层面用 `as never` 绕过 —— 原来用 `@ts-expect-error`，格式化把长表达式
+        // 换行后那个「下一行」不再是出错行，指令就成了未使用（TS2578）。
+        const badSeed = { id: 'e', at: AT, 多余: 1 } as never;
+        expect(caught(() => rt.step(initialState<IdOf<typeof pairDef>>(), badSeed)).code).toBe('invalid-option');
         const r = runner(rt);
         r.step();
-        // @ts-expect-error 宣布请求只认 { id, at, author, to, content, causes? } —— 形状错与 author 非法同一个码
-        expect(caught(() => rt.declare(r.state(), { ...nextSeed(), author: 'agent', to: 'b', content: 'x', 多余: 1 })).code).toBe('invalid-declare');
+        // 宣布请求只认 `{ id, at, author, to, content, causes? }` —— 形状错与 author 非法同一个码
+        const badBody = { ...nextSeed(), author: 'agent', to: 'b', content: 'x', 多余: 1 } as never;
+        expect(caught(() => rt.declare(r.state(), badBody)).code).toBe('invalid-declare');
     });
 
     it('notify 失败不作废转移：事实（state + event）照样落定，失败只记账', () => {
@@ -898,7 +961,10 @@ describe('R9 上下文与旁路：params 透传 / notify 唤醒 / status 分类'
         const registry = createRegistry().register('guard', 'explode', () => {
             throw new Error('CI 服务 500');
         });
-        const def = defineWorkflow({ nodes: [{ id: 'solo', name: '单', actor: 'system', guard: ['pred:explode'], hint: '' }], edges: [] });
+        const def = defineWorkflow({
+            nodes: [{ id: 'solo', name: '单', actor: 'system', guard: ['pred:explode'], hint: '' }],
+            edges: [],
+        });
         const rt = createRuntime(def, { registry });
         const r = runner(rt);
         r.step(); // 进入 solo
@@ -910,7 +976,10 @@ describe('R9 上下文与旁路：params 透传 / notify 唤醒 / status 分类'
 
     it('ctx.params 是冻结的副本：插件改不动宿主对象', () => {
         const registry = createRegistry().register('guard', 'probe', () => ({ pass: true }));
-        const def = defineWorkflow({ nodes: [{ id: 'solo', name: '单', actor: 'system', guard: ['pred:probe'], hint: '' }], edges: [] });
+        const def = defineWorkflow({
+            nodes: [{ id: 'solo', name: '单', actor: 'system', guard: ['pred:probe'], hint: '' }],
+            edges: [],
+        });
         const host = { ci: { command: 'npm test' } };
         const rt = createRuntime(def, { registry, params: host });
         expect(rt.params).toEqual(host);

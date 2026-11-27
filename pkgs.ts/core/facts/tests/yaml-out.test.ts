@@ -13,7 +13,10 @@ import type { Fact } from '../src/types';
 
 describe('dumpSource（真源风格）', () => {
     it('value / description 一律 `|-` 块标量，单行值也是', () => {
-        const text = dumpSource({ facts: { 'a#b': { value: '18888', id: 'x' } }, subjects: { s: { description: '一句话' } } });
+        const text = dumpSource({
+            facts: { 'a#b': { value: '18888', id: 'x' } },
+            subjects: { s: { description: '一句话' } },
+        });
         expect(text).toContain('value: |-\n      18888');
         expect(text).toContain('description: |-\n      一句话');
     });
@@ -31,7 +34,13 @@ describe('dumpSource（真源风格）', () => {
 
     it('短 token 不拉成块标量（id / at / probe 仍是单行）', () => {
         const text = dumpSource({
-            facts: { 'a#b': { value: 'v', id: 'app.port#default', evidence: { source: 'probe', probe: 'curl -s localhost' } } },
+            facts: {
+                'a#b': {
+                    value: 'v',
+                    id: 'app.port#default',
+                    evidence: { source: 'probe', probe: 'curl -s localhost' },
+                },
+            },
         });
         expect(text).toContain('id: app.port#default');
         expect(text).toContain('probe: curl -s localhost');

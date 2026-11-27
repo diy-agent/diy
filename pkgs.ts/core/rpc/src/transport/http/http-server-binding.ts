@@ -43,7 +43,10 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
     if (this._getBidi(method)) return this._handleBidiStream(stream, method, headers);
 
     // 未注册 → UNIMPLEMENTED
-    respondError(stream, _toErrorPayload(new RpcError('UNIMPLEMENTED', `No handler for "${method}"`)));
+    respondError(
+      stream,
+      _toErrorPayload(new RpcError('UNIMPLEMENTED', `No handler for "${method}"`)),
+    );
   }
 
   // ── Unary ────────────────────────────────────────
@@ -124,7 +127,9 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
     const ctrl = new AbortController();
     // 协议取消帧 → 同时 abort 调用级 signal（review P1）：与 channel _handleCancel
     //「error 输入队列 + abort controller」对齐；只监听 signal 不消费输入的 handler 也能收到
-    const incoming = createBodyReader(stream, () => ctrl.abort(new RpcError('CANCELLED', 'Client cancelled')));
+    const incoming = createBodyReader(stream, () =>
+      ctrl.abort(new RpcError('CANCELLED', 'Client cancelled')),
+    );
     // RST/断开 → 调用级 signal；输入队列的 CANCELLED 由 createBodyReader 独立投递
     const onClose = () => ctrl.abort(new RpcError('CANCELLED', 'Client disconnected'));
     stream.once('close', onClose);
@@ -150,7 +155,9 @@ export class HttpServerBinding extends ServerBindingCore implements ServerBindin
     const fn = this._getBidi(method)!;
     const params = paramsFromHeader(headers);
     const ctrl = new AbortController();
-    const incoming = createBodyReader(stream, () => ctrl.abort(new RpcError('CANCELLED', 'Client cancelled')));
+    const incoming = createBodyReader(stream, () =>
+      ctrl.abort(new RpcError('CANCELLED', 'Client cancelled')),
+    );
 
     try {
       stream.respond({ ':status': 200, 'content-type': 'application/x-ndjson' });
@@ -205,11 +212,32 @@ function readBody(stream: ServerHttp2Stream): Promise<Buffer> {
       stream.removeListener('close', onClose);
       stream.removeListener('error', onErr);
     };
-    const onData = (c: Buffer) => { if (!ended) chunks.push(c); };
-    const onEnd = () => { ended = true; cleanup(); resolve(Buffer.concat(chunks)); };
-    const onAbort = () => { if (!ended) { cleanup(); reject(new RpcError('CANCELLED', 'Client disconnected')); } };
-    const onClose = () => { if (!ended) { cleanup(); reject(new RpcError('CANCELLED', 'Client disconnected')); } };
-    const onErr = () => { if (!ended) { cleanup(); reject(new RpcError('CANCELLED', 'Client disconnected')); } };
+    const onData = (c: Buffer) => {
+      if (!ended) chunks.push(c);
+    };
+    const onEnd = () => {
+      ended = true;
+      cleanup();
+      resolve(Buffer.concat(chunks));
+    };
+    const onAbort = () => {
+      if (!ended) {
+        cleanup();
+        reject(new RpcError('CANCELLED', 'Client disconnected'));
+      }
+    };
+    const onClose = () => {
+      if (!ended) {
+        cleanup();
+        reject(new RpcError('CANCELLED', 'Client disconnected'));
+      }
+    };
+    const onErr = () => {
+      if (!ended) {
+        cleanup();
+        reject(new RpcError('CANCELLED', 'Client disconnected'));
+      }
+    };
     stream.on('data', onData);
     stream.on('end', onEnd);
     stream.on('aborted', onAbort);
@@ -244,7 +272,11 @@ function createBodyReader(stream: ServerHttp2Stream, onCancel?: () => void): _As
         const v = JSON.parse(line);
         // 保留帧：客户端取消 → incoming 以 CANCELLED 收尾 + 调用级 signal abort
         //（http 的 RST 服务端不可靠；只 error 队列会漏掉不消费输入的 handler，review P1）
-        if (v !== null && typeof v === 'object' && (v as { __cancel?: boolean }).__cancel === true) {
+        if (
+          v !== null &&
+          typeof v === 'object' &&
+          (v as { __cancel?: boolean }).__cancel === true
+        ) {
           q.error(new RpcError('CANCELLED', 'Client cancelled'));
           onCancel?.();
           return;
@@ -256,11 +288,18 @@ function createBodyReader(stream: ServerHttp2Stream, onCancel?: () => void): _As
       }
     }
   });
-  const onEnd = () => { finished = true; q.end(); };
-  const onAbort = () => { if (!finished) q.error(new RpcError('CANCELLED', 'Request aborted')); };
+  const onEnd = () => {
+    finished = true;
+    q.end();
+  };
+  const onAbort = () => {
+    if (!finished) q.error(new RpcError('CANCELLED', 'Request aborted'));
+  };
   stream.on('end', onEnd);
   stream.on('aborted', onAbort);
-  stream.on('close', () => { if (!finished) q.error(new RpcError('CANCELLED', 'Request closed')); });
+  stream.on('close', () => {
+    if (!finished) q.error(new RpcError('CANCELLED', 'Request closed'));
+  });
   return q;
 }
 
@@ -277,18 +316,28 @@ function paramsFromHeader(headers: IncomingHttpHeaders): unknown {
 
 /** 写入流（客户端已断开时静默忽略，避免未处理 rejection） */
 function safeWrite(stream: ServerHttp2Stream, data: string): void {
-  try { stream.write(data); } catch { /* ignore */ }
+  try {
+    stream.write(data);
+  } catch {
+    /* ignore */
+  }
 }
 
 function safeEnd(stream: ServerHttp2Stream): void {
-  try { stream.end(); } catch { /* ignore */ }
+  try {
+    stream.end();
+  } catch {
+    /* ignore */
+  }
 }
 
 function respondResult(stream: ServerHttp2Stream, result: unknown): void {
   try {
     stream.respond({ ':status': 200, 'content-type': 'application/json' });
     stream.end(JSON.stringify({ result }));
-  } catch { /* 客户端已断开则忽略 */ }
+  } catch {
+    /* 客户端已断开则忽略 */
+  }
 }
 
 function respondError(stream: ServerHttp2Stream, err: unknown): void {
@@ -298,5 +347,7 @@ function respondError(stream: ServerHttp2Stream, err: unknown): void {
     const body: _ErrorPayload = { ...p, ext: { ...p.ext, http: { status } } };
     stream.respond({ ':status': status, 'content-type': 'application/json' });
     stream.end(JSON.stringify(body));
-  } catch { /* 客户端已断开则忽略 */ }
+  } catch {
+    /* 客户端已断开则忽略 */
+  }
 }

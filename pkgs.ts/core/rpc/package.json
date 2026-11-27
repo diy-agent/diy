@@ -2,19 +2,22 @@
   "name": "@diy-agent/rpc",
   "version": "0.2.0",
   "description": "diy RPC 协议内核：三层（Envelope 传输抽象 / Raw Client·Server / 声明式 RPC）+ http / ws / electron / CLI 四种传输绑定",
+  "keywords": [
+    "diy",
+    "electron",
+    "rpc",
+    "streaming",
+    "typescript"
+  ],
+  "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/core/rpc",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/diy-agent/diy.git",
     "directory": "pkgs.ts/core/rpc"
   },
-  "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/core/rpc",
-  "keywords": [
-    "rpc",
-    "diy",
-    "typescript",
-    "streaming",
-    "electron"
+  "files": [
+    "src/"
   ],
   "type": "module",
   "main": "./dist/index.js",
@@ -49,19 +52,11 @@
       "default": "./dist/transport/electron/renderer.js"
     }
   },
-  "files": [
-    "src/"
-  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
   "dependencies": {
     "zod": "^4.4.3"
-  },
-  "peerDependencies": {
-    "electron": ">=33"
-  },
-  "peerDependenciesMeta": {
-    "electron": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
@@ -70,6 +65,14 @@
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
     "ws": "^8.21.0"
+  },
+  "peerDependencies": {
+    "electron": ">=33"
+  },
+  "peerDependenciesMeta": {
+    "electron": {
+      "optional": true
+    }
   },
   "oxlint": {
     "rules": {
@@ -85,8 +88,5 @@
     "ignorePatterns": [
       "node_modules/"
     ]
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json"
   }
 }

@@ -76,9 +76,7 @@ export interface ForNode {
  *   · 整值恰好是一个插值 → 表达式，取值**保留原类型**（数组仍是数组、布尔仍是布尔）
  *   · 其余 → 文本 + 插值点，渲染后字符串化
  */
-export type ArgValue =
-    | { kind: 'expr'; path: string }
-    | { kind: 'text'; nodes: Node[] };
+export type ArgValue = { kind: 'expr'; path: string } | { kind: 'text'; nodes: Node[] };
 
 /** include 参数：name 是被调模版里的动态名（模版里写 {{.name}}），value 在调用方求值 */
 export interface IncludeArg {

@@ -82,7 +82,11 @@ export function parseAnchor(value: unknown, path = 'anchor', options: ParseOptio
     if (!options.allowUnknown) rejectUnknown(obj, ANCHOR_KEYS, path, CODE);
     const type = obj.type;
     if (typeof type !== 'string' || !(ANCHOR_TYPES as readonly string[]).includes(type)) {
-        throw new TalkError(CODE, `未知锚点类型 ${JSON.stringify(type)}（合法：${ANCHOR_TYPES.join(' | ')}）`, `${path}.type`);
+        throw new TalkError(
+            CODE,
+            `未知锚点类型 ${JSON.stringify(type)}（合法：${ANCHOR_TYPES.join(' | ')}）`,
+            `${path}.type`,
+        );
     }
     const data = takeObject(obj.data, `${path}.data`, CODE);
     if (!options.allowUnknown) rejectUnknown(data, DATA_KEYS[type as AnchorType], `${path}.data`, CODE);

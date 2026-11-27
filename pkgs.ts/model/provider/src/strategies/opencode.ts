@@ -68,10 +68,7 @@ export function withPromptCacheRetention(
  * 没有 `sessionId` 就整体跳过：发个空串只会让网关按 "空会话" 记账（归属全错），不发反而响亮。
  * 调用方明确给了别的值也照我们的写 —— 会话 id 的真源只有应用层那一处 `sessionIdOf(taskUri)`。
  */
-export function withSessionHeader(
-    headers: Record<string, string>,
-    ctx: StrategyContext = {},
-): Record<string, string> {
+export function withSessionHeader(headers: Record<string, string>, ctx: StrategyContext = {}): Record<string, string> {
     const sessionId = ctx.sessionId;
     if (sessionId === undefined || sessionId === '') return headers;
     return { ...headers, [SESSION_HEADER]: sessionId };

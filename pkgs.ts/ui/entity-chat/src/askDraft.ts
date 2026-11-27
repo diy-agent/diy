@@ -93,8 +93,7 @@ export function askDraftOf(value: unknown): AskDraft {
     }
     // 旧草稿：单题时代 selected / fields / text 在顶层 → 归到 q1（旧卡归一化后题 id 也是 q1）
     const legacy = questionDraftOf(record);
-    const filled =
-        legacy.selected.length > 0 || legacy.text !== '' || Object.keys(legacy.fields).length > 0;
+    const filled = legacy.selected.length > 0 || legacy.text !== '' || Object.keys(legacy.fields).length > 0;
     return filled ? { answers: { q1: legacy } } : EMPTY_ASK_DRAFT;
 }
 

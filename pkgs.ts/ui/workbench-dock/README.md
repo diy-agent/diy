@@ -59,11 +59,11 @@ const chatView = defineView<TaskScope>({
 
 ## 三个概念
 
-| 概念 | 是什么 | 代码里 |
-|---|---|---|
-| **page** | 一个领域主概念的一次呈现（一个任务 / 一个项目 / 一次工作流执行） | `definePage({ type, title, areas })` |
-| **area** | 布局上的一个格子（左 / 中 / 右 / 底）；只管位置，不懂业务 | `area('center', { size, min, initial })` |
-| **view** | 真正的内容单元（对话 / 详情 / 成员 / 作业） | `defineView({ id, placement, component })` |
+| 概念     | 是什么                                                           | 代码里                                     |
+| -------- | ---------------------------------------------------------------- | ------------------------------------------ |
+| **page** | 一个领域主概念的一次呈现（一个任务 / 一个项目 / 一次工作流执行） | `definePage({ type, title, areas })`       |
+| **area** | 布局上的一个格子（左 / 中 / 右 / 底）；只管位置，不懂业务        | `area('center', { size, min, initial })`   |
+| **view** | 真正的内容单元（对话 / 详情 / 成员 / 作业）                      | `defineView({ id, placement, component })` |
 
 **依赖方向是 view → page**：view 声明「我能进哪些 pageType 的哪个区域」，page 一个 view id 都不认识。
 加一个 view = 加一个文件；改页的模板不需要知道有哪些 view 存在。
@@ -72,10 +72,10 @@ const chatView = defineView<TaskScope>({
 
 `Scope` 是**一个页实例的身份**：不是这个页要显示的数据，更不是页面 UI 状态。
 
-| 字段 | 谁在用 | 用途 |
-|---|---|---|
-| `kind` + `id` | `pageId()` / 缺省存储键 / `layoutSignature()` / `SavedLayout.scopeKey` | 页实例身份 —— **换它 = 换一份布局** |
-| `title` | 包**一个字段都不读** | 只是约定给 `PageDef.title` / `ViewDef.title` 的函数用 |
+| 字段          | 谁在用                                                                 | 用途                                                  |
+| ------------- | ---------------------------------------------------------------------- | ----------------------------------------------------- |
+| `kind` + `id` | `pageId()` / 缺省存储键 / `layoutSignature()` / `SavedLayout.scopeKey` | 页实例身份 —— **换它 = 换一份布局**                   |
+| `title`       | 包**一个字段都不读**                                                   | 只是约定给 `PageDef.title` / `ViewDef.title` 的函数用 |
 
 所以这三件事它都不干：
 
@@ -92,11 +92,11 @@ const chatView = defineView<TaskScope>({
 
 一个页实例对应**一组**对象（任务管理器 / 文件浏览器 / 项目概览），天然两层，分开就不会把 `Scope` 用歪：
 
-| 层 | 归谁 | 样子 |
-|---|---|---|
-| 导航 / 外壳（页切换、筛选条） | **宿主** | 左侧 rail（例子里的十来行 JSX） |
-| 管理器内部的格子（列表 / 详情 / 属性三栏） | **一个 page** | `{ kind:'board', id:'all' }`，见 [`examples/05-board`](./examples/05-board/main.tsx) |
-| 「当前选中了哪条」 | **`useShared()`**（页内共享状态） | `useShared('selectedTask', TASKS[0].id)` |
+| 层                                         | 归谁                              | 样子                                                                                 |
+| ------------------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------ |
+| 导航 / 外壳（页切换、筛选条）              | **宿主**                          | 左侧 rail（例子里的十来行 JSX）                                                      |
+| 管理器内部的格子（列表 / 详情 / 属性三栏） | **一个 page**                     | `{ kind:'board', id:'all' }`，见 [`examples/05-board`](./examples/05-board/main.tsx) |
+| 「当前选中了哪条」                         | **`useShared()`**（页内共享状态） | `useShared('selectedTask', TASKS[0].id)`                                             |
 
 关键是中间那行：`scope.id` 是**集合标识**（`all` / `mine` / `project:p-1`，一个集合一份布局），
 不是「当前选中的那条」。选中项一变就换 `scope.id`，等于每点一行就重编译一次布局、把用户拖的尺寸清掉。
@@ -185,18 +185,18 @@ rescaleViews(size) { const factor = size / contentSize; ... }  // dockview gridv
 
 ### `<PageWorkbench>`
 
-| prop | 类型 | 说明 |
-|---|---|---|
-| `page` | `PageDef<S>` | 页模板 |
-| `views` | `ViewDef<S>[]` | 本页用的 view（缺省全部） |
-| `scope` | `S extends Scope` | 页的核心对象 |
-| `storage` | `{ getItem, setItem, removeItem }` | 传了才持久化布局（localStorage / 后端 KV 都行） |
-| `storageKey` | `string` | 缺省 `workbench-dock:<pageType>@<kind>:<id>`（`shareLayout` 时 `workbench-dock:<pageType>`） |
-| `shareLayout` | `boolean` | `true` = 同一 pageType 的所有页实例共用一份布局（不再校验 `scopeKey`）；缺省按实例各存一份 |
-| `editable` | `boolean` | `true` = L1（允许拖 view 换区）；缺省 L0（结构锁死） |
-| `onLayoutChange` | `(saved: SavedLayout) => void` | 布局变化（节流到一帧） |
-| `onStorageError` | `(error: unknown) => void` | 布局存不下（配额满 / 隐私模式 / 后端拒写）；页照常用，但下次进来回模板 |
-| `theme` / `className` | | 透传给 dockview / 外层容器 |
+| prop                  | 类型                               | 说明                                                                                         |
+| --------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------- |
+| `page`                | `PageDef<S>`                       | 页模板                                                                                       |
+| `views`               | `ViewDef<S>[]`                     | 本页用的 view（缺省全部）                                                                    |
+| `scope`               | `S extends Scope`                  | 页的核心对象                                                                                 |
+| `storage`             | `{ getItem, setItem, removeItem }` | 传了才持久化布局（localStorage / 后端 KV 都行）                                              |
+| `storageKey`          | `string`                           | 缺省 `workbench-dock:<pageType>@<kind>:<id>`（`shareLayout` 时 `workbench-dock:<pageType>`） |
+| `shareLayout`         | `boolean`                          | `true` = 同一 pageType 的所有页实例共用一份布局（不再校验 `scopeKey`）；缺省按实例各存一份   |
+| `editable`            | `boolean`                          | `true` = L1（允许拖 view 换区）；缺省 L0（结构锁死）                                         |
+| `onLayoutChange`      | `(saved: SavedLayout) => void`     | 布局变化（节流到一帧）                                                                       |
+| `onStorageError`      | `(error: unknown) => void`         | 布局存不下（配额满 / 隐私模式 / 后端拒写）；页照常用，但下次进来回模板                       |
+| `theme` / `className` |                                    | 透传给 dockview / 外层容器                                                                   |
 
 **一个 page 实例 = 一个组件实例。** 切页就是换 `key`：
 
@@ -284,24 +284,24 @@ summarize(layout.grid.root): string // '(left[detail] ; center[chat])'
 
 **只在一条真源上工作：dockview 的布局快照。** 模板不是第二份布局，它只是编译器的输入。
 
-| 场景 | 行为 |
-|---|---|
-| 首次进页（storage 空） | `compileLayout`：模板 → 布局 |
-| 用户拖分屏线 / 收起展开 / 关 tab / 切 activeView | dockview 自己记；变化节流后写进 `storage` |
-| 用户拖分屏线 | 按这次拖动的**位移**记账：数字区记 px（`pinnedSizes`），`1fr` 区记组内比例（`shares`） |
-| 窗口变大变小 | 不重建布局：dockview 自己跟着容器重排；`1fr` 下次编译时按新宽度重新分配 |
-| 写 `useShared()` 的共享状态 | 只重渲染订阅了那个 key 的 view；不进布局、不落盘 |
-| 再次进页 | 读 `storage` → `resolveLayout` |
-| 模板改了（加/删 view、改区域） | `resolveLayout(旧快照 × 新模板)`：保尺寸/展开/tab 顺序（R1），新 view 按 `order` 插进来（R2/R4），模板删掉的区域丢弃（R3） |
-| 用户关掉的 view | 记在 `dismissed[]`，模板重编译时**不会自动加回来**（否则「我关的」和「新加的」分不清） |
-| 全都关掉 | 回落到模板（不留空壳） |
+| 场景                                             | 行为                                                                                                                       |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| 首次进页（storage 空）                           | `compileLayout`：模板 → 布局                                                                                               |
+| 用户拖分屏线 / 收起展开 / 关 tab / 切 activeView | dockview 自己记；变化节流后写进 `storage`                                                                                  |
+| 用户拖分屏线                                     | 按这次拖动的**位移**记账：数字区记 px（`pinnedSizes`），`1fr` 区记组内比例（`shares`）                                     |
+| 窗口变大变小                                     | 不重建布局：dockview 自己跟着容器重排；`1fr` 下次编译时按新宽度重新分配                                                    |
+| 写 `useShared()` 的共享状态                      | 只重渲染订阅了那个 key 的 view；不进布局、不落盘                                                                           |
+| 再次进页                                         | 读 `storage` → `resolveLayout`                                                                                             |
+| 模板改了（加/删 view、改区域）                   | `resolveLayout(旧快照 × 新模板)`：保尺寸/展开/tab 顺序（R1），新 view 按 `order` 插进来（R2/R4），模板删掉的区域丢弃（R3） |
+| 用户关掉的 view                                  | 记在 `dismissed[]`，模板重编译时**不会自动加回来**（否则「我关的」和「新加的」分不清）                                     |
+| 全都关掉                                         | 回落到模板（不留空壳）                                                                                                     |
 
 **自由度两档**（产品缺省 L0）：
 
-| 档 | 能力 | 实现 |
-|---|---|---|
-| **L0** | 拖分屏线、收起/展开区域、关/开 tab | `disableDnd` + `disableFloatingGroups` |
-| **L1** | 再把 view 拖进它 `allow` 的区域 | `editable` → `disableDnd: false` + `onWillShowOverlay` 拦落点 |
+| 档     | 能力                               | 实现                                                          |
+| ------ | ---------------------------------- | ------------------------------------------------------------- |
+| **L0** | 拖分屏线、收起/展开区域、关/开 tab | `disableDnd` + `disableFloatingGroups`                        |
+| **L1** | 再把 view 拖进它 `allow` 的区域    | `editable` → `disableDnd: false` + `onWillShowOverlay` 拦落点 |
 
 L1 的落点是**有名单**的：`placement.area` 永远允许，额外的写进 `placement.allow`。
 `editable` 打开的是「能拖」，不是「能拖到任何地方」——拖进没声明过的区域，这个 view
@@ -371,11 +371,11 @@ L2（自由 docking）/ L3（页面存成可分享透视图）**不做**。
 它防的是宿主自定义 `storageKey` 的那种写法：把键写成模板级的，t-1 的尺寸 / 关掉的 view / 拖过的落点
 会静默套到 t-2 上。要的就是这个行为的话，显式打开 `shareLayout`。
 
-| 场景 | 行为 |
-|---|---|
-| 同一页实例再次进来 | 读快照，按 `pinnedSizes` / `shares` / `movedViews` / `dismissed` 重建 |
-| 另一个实例的快照（`scopeKey` 不同） | 当没存过 → 回模板 |
-| `shareLayout` | 不校 `scopeKey`：同一 pageType 的所有实例共用一份布局 |
+| 场景                                | 行为                                                                  |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| 同一页实例再次进来                  | 读快照，按 `pinnedSizes` / `shares` / `movedViews` / `dismissed` 重建 |
+| 另一个实例的快照（`scopeKey` 不同） | 当没存过 → 回模板                                                     |
+| `shareLayout`                       | 不校 `scopeKey`：同一 pageType 的所有实例共用一份布局                 |
 
 ## 跑范例
 
@@ -387,13 +387,13 @@ cd pkgs.ts/ui/workbench-dock
 
 五个例子，按顺序看（索引页 `/index.html`，细节见 [`examples/README.md`](./examples/README.md)）：
 
-| #   | 目录                                                    | 讲什么                                                                                  |
-| --- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| 01  | [`examples/01-basic/`](./examples/01-basic/)            | 一个页实例：区域树 + 三个 view + 布局持久化 + L0/L1                                     |
-| 02  | [`examples/02-pages/`](./examples/02-pages/)            | 多页实例：**导航条不属于本包**，页实例身份 = `pageId()`，`key` 决定是不是同一份布局     |
-| 03  | [`examples/03-plugin/`](./examples/03-plugin/)          | page 插件化：插件 = 包（`package.json` 的 `contributes`）+ 宿主骨架（`skeletons.ts`） |
-| 04  | [`examples/04-vanilla/`](./examples/04-vanilla/)        | 非 React view：`render.kind: 'vanilla'` 的 `create` / `update` / `dispose`              |
-| 05  | [`examples/05-board/`](./examples/05-board/)            | 集合页（任务管理器）：`scope.id` = 集合标识；选中项走 `useShared()`，不换页实例不重编译 |
+| #   | 目录                                             | 讲什么                                                                                  |
+| --- | ------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| 01  | [`examples/01-basic/`](./examples/01-basic/)     | 一个页实例：区域树 + 三个 view + 布局持久化 + L0/L1                                     |
+| 02  | [`examples/02-pages/`](./examples/02-pages/)     | 多页实例：**导航条不属于本包**，页实例身份 = `pageId()`，`key` 决定是不是同一份布局     |
+| 03  | [`examples/03-plugin/`](./examples/03-plugin/)   | page 插件化：插件 = 包（`package.json` 的 `contributes`）+ 宿主骨架（`skeletons.ts`）   |
+| 04  | [`examples/04-vanilla/`](./examples/04-vanilla/) | 非 React view：`render.kind: 'vanilla'` 的 `create` / `update` / `dispose`              |
+| 05  | [`examples/05-board/`](./examples/05-board/)     | 集合页（任务管理器）：`scope.id` = 集合标识；选中项走 `useShared()`，不换页实例不重编译 |
 
 五个例子互不 import（一个目录里就 `index.html` + `main.tsx` + `style.css`），任何一段都能
 单独抄走；重复的那几十行定义是故意的。

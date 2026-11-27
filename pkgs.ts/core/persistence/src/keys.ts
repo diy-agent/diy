@@ -4,7 +4,7 @@
 // 为什么必须只有一份：`keyOf` 决定「哪些文件属于同一个会话」，`sessionIdOf` 决定上游的会话
 // 亲和头 / 注册表条目 id。两处漂移 = 两个任务互相串历史 / 串上游会话，而症状与键算法毫无关系。
 
-import { createHash } from "node:crypto";
+import { createHash } from 'node:crypto';
 
 /**
  * 会话文件/亲和头共用键。
@@ -19,14 +19,14 @@ import { createHash } from "node:crypto";
  * `sessionFileRel` / `legacySessionFile` 全部从它派生，故在这里拦一次就够，不要在各调用点各判一遍。
  */
 export function keyOf(taskUri: string): string {
-    if (typeof taskUri !== "string" || taskUri.trim().length === 0) {
+    if (typeof taskUri !== 'string' || taskUri.trim().length === 0) {
         throw new Error(
             `agent/empty-task-uri: 会话路径需要非空 taskUri（收到 ${JSON.stringify(taskUri)}）；` +
-                "空 uri 会拼出假目录 -<空串 sha256 前 12 位>",
+                '空 uri 会拼出假目录 -<空串 sha256 前 12 位>',
         );
     }
-    const readable = taskUri.replace(/[^\w.-]+/g, "_").slice(0, 64);
-    const sum = createHash("sha256").update(taskUri).digest("hex").slice(0, 12);
+    const readable = taskUri.replace(/[^\w.-]+/g, '_').slice(0, 64);
+    const sum = createHash('sha256').update(taskUri).digest('hex').slice(0, 12);
     return `${readable}-${sum}`;
 }
 

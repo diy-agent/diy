@@ -239,7 +239,8 @@ export function sourceQuoteOf(item: Item): SourceQuote | undefined {
     const flat = text.replace(/\s+/g, ' ').trim();
     if (flat === '') return undefined;
     const chars = [...flat];
-    const clipped = chars.length > SOURCE_QUOTE_MAX_CHARS ? `${chars.slice(0, SOURCE_QUOTE_MAX_CHARS).join('')}…` : flat;
+    const clipped =
+        chars.length > SOURCE_QUOTE_MAX_CHARS ? `${chars.slice(0, SOURCE_QUOTE_MAX_CHARS).join('')}…` : flat;
     const role = item.author?.role;
     return {
         author: item.author?.name ?? '',
@@ -264,10 +265,7 @@ export function sourceQuotesOf(items: readonly Item[]): Map<string, SourceQuote>
  * 没有 quote 的行原样返回 —— 不编造来源；`source` 为空的行走不到这里（本来就没来源）。
  * 输入 board 不改（返回新对象），方便在 handler 里 `unitBoard(...)` 之后接着拼。
  */
-export function withSourceQuotes(
-    board: UnitBoard,
-    quotes: ReadonlyMap<string, SourceQuote>,
-): UnitBoard {
+export function withSourceQuotes(board: UnitBoard, quotes: ReadonlyMap<string, SourceQuote>): UnitBoard {
     if (quotes.size === 0) return board;
     const rows = board.rows.map((row) => {
         const quote = row.source === '' ? undefined : quotes.get(row.source);
@@ -284,10 +282,7 @@ export function withSourceQuotes(
  *
  * 每行：`<缩进>- [状态] title （id）`，后面按需接 `body:`（`withBody`）。
  */
-export function unitTreeLines(
-    board: UnitBoard,
-    options?: { withBody?: boolean },
-): string[] {
+export function unitTreeLines(board: UnitBoard, options?: { withBody?: boolean }): string[] {
     const ready = new Set(board.ready);
     const doing = new Set(board.doing);
     return board.rows.map((row) => {

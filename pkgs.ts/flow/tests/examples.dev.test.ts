@@ -115,7 +115,10 @@ function runTrack(options: RunOptions = {}): Run {
 
     let seq = 0;
     /** 一次调用的入参：`at` / `ref` 是领域事实；`id` / `content` 是审计材料 */
-    const seed = (n: number, content = ''): { id?: string; at: string; ref: Record<string, string>; content: string } => {
+    const seed = (
+        n: number,
+        content = '',
+    ): { id?: string; at: string; ref: Record<string, string>; content: string } => {
         seq += 1;
         return withEvents
             ? { id: `e${seq}`, at: at(n), ref: { [DEV_REF_KEY]: TASK_URI }, content }
@@ -133,7 +136,11 @@ function runTrack(options: RunOptions = {}): Run {
                 ? rt.step(state, seed(i + 1))
                 : {
                       status: 'moved' as const,
-                      transition: rt.declare(state, { ...seed(i + 1, step.by.content), author: step.by.author, to: step.to }),
+                      transition: rt.declare(state, {
+                          ...seed(i + 1, step.by.content),
+                          author: step.by.author,
+                          to: step.to,
+                      }),
                   };
         if (result.status !== 'moved') throw new Error(`轨迹第 ${i + 1} 步应当走成 moved，实得 ${result.status}`);
         transitions.push(result.transition);
@@ -169,7 +176,10 @@ const facts = (v: Visit<DevNodeId>): { node: string; seq: number; kind: string; 
 
 /** 用领域正路（`advance`）把位置走到某几个节点（只为造一条已驻留的折线，不涉轨迹语义） */
 function walkTo(params: ParamValues, nodes: readonly DevNodeId[]): FlowState<DevNodeId> {
-    return nodes.reduce((state, to, i) => advance(devWorkflow, state, { to, at: at(i + 1), params }).state, initialState<DevNodeId>());
+    return nodes.reduce(
+        (state, to, i) => advance(devWorkflow, state, { to, at: at(i + 1), params }).state,
+        initialState<DevNodeId>(),
+    );
 }
 
 /** 取节点（范例定义里写死的 id，必存在） */
@@ -185,7 +195,9 @@ describe('D1 定义：6 泳道 ≡ 6 节点 · 一条 bounce 边 · art / params
     });
 
     it('恰一条 bounce 边（review → implement）：打回不新建节点', () => {
-        expect(devWorkflow.edges.filter((e) => e.kind === 'bounce')).toEqual([{ from: 'review', to: 'implement', kind: 'bounce' }]);
+        expect(devWorkflow.edges.filter((e) => e.kind === 'bounce')).toEqual([
+            { from: 'review', to: 'implement', kind: 'bounce' },
+        ]);
         expect(devWorkflow.nodes.length).toBe(6); // 结构不因打回增长
     });
 
@@ -318,7 +330,10 @@ describe('D4 领域态一等：落盘读回 · 回喂 runtime · 重建不出的
         expect(restored.position).toBe('merge');
         expect(restored.params).toEqual(defaults());
 
-        const rt = createRuntime(devWorkflow, { registry: registerDevPlugins(createRegistry()), params: restored.params });
+        const rt = createRuntime(devWorkflow, {
+            registry: registerDevPlugins(createRegistry()),
+            params: restored.params,
+        });
         const again = rt.step(restored, { at: at(99) });
         expect(again.status).toBe('done');
         if (again.status === 'done') expect(again.state).toEqual(restored);
@@ -339,12 +354,19 @@ describe('D4 领域态一等：落盘读回 · 回喂 runtime · 重建不出的
 
     it('领域正路（`advance`）同样产出完整真源；换一份参数值推进同一棵树 ⇒ 拒（另起一次运行）', () => {
         const params = defaults();
-        const s1 = advance(devWorkflow, initialState<DevNodeId>(), { to: 'clarify', at: at(1), ref: { [DEV_REF_KEY]: TASK_URI }, params }).state;
+        const s1 = advance(devWorkflow, initialState<DevNodeId>(), {
+            to: 'clarify',
+            at: at(1),
+            ref: { [DEV_REF_KEY]: TASK_URI },
+            params,
+        }).state;
         expect(s1.params).toEqual(params);
         expect(flowStateFromJson<DevNodeId>(flowStateToJson(s1))).toEqual(s1);
 
         const other = resolveParams(paramsOf(devWorkflow), { ci: { command: 'pnpm run ci' } });
-        expect(caught(() => advance(devWorkflow, s1, { to: 'design', at: at(2), params: other })).code).toBe('invalid-param');
+        expect(caught(() => advance(devWorkflow, s1, { to: 'design', at: at(2), params: other })).code).toBe(
+            'invalid-param',
+        );
     });
 });
 
@@ -354,13 +376,18 @@ describe('D5 参数层：声明在节点上 · 值按节点分组 · 宿主用�
             review: { reviewers: ['alice', 'bob'] },
             ci: { command: 'pnpm run ci' },
         });
-        expect(renderHint(nodeOf('review'), params)).toBe('独立复审（评审人：alice, bob）；P0/P1 打回，最多打回 2 次，全部有落点则放行');
+        expect(renderHint(nodeOf('review'), params)).toBe(
+            '独立复审（评审人：alice, bob）；P0/P1 打回，最多打回 2 次，全部有落点则放行',
+        );
         expect(renderHint(nodeOf('ci'), params)).toBe('跑 pnpm run ci，全绿才推');
     });
 
     it('插件按 `ctx.params[本节点 id]` 读到值（`ci_green` 读 `ci.command`）', () => {
         const params = resolveParams(paramsOf(devWorkflow), { ci: { command: 'pnpm run ci' } });
-        const rt = createRuntime(devWorkflow, { registry: registerDevPlugins(createRegistry(), { ciGreen: false }), params });
+        const rt = createRuntime(devWorkflow, {
+            registry: registerDevPlugins(createRegistry(), { ciGreen: false }),
+            params,
+        });
         const stuck = rt.step(walkTo(params, ['clarify', 'design', 'implement', 'review', 'ci']), { at: at(9) });
         expect(stuck.status).toBe('stuck');
         if (stuck.status === 'stuck') expect(stuck.reason).toContain('pnpm run ci');
@@ -375,8 +402,13 @@ describe('D5 参数层：声明在节点上 · 值按节点分组 · 宿主用�
 
     it('`action:pr_mergeable` 不过 ⇒ 停在 merge（没有 bounce 边），不误报推进', () => {
         const params = defaults();
-        const rt = createRuntime(devWorkflow, { registry: registerDevPlugins(createRegistry(), { prMergeable: false }), params });
-        const stuck = rt.step(walkTo(params, ['clarify', 'design', 'implement', 'review', 'ci', 'merge']), { at: at(9) });
+        const rt = createRuntime(devWorkflow, {
+            registry: registerDevPlugins(createRegistry(), { prMergeable: false }),
+            params,
+        });
+        const stuck = rt.step(walkTo(params, ['clarify', 'design', 'implement', 'review', 'ci', 'merge']), {
+            at: at(9),
+        });
         expect(stuck.status).toBe('stuck');
     });
 });

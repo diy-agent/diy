@@ -38,7 +38,7 @@ export function sidecarWindowOptions(
     height: number,
 ): Record<string, number> {
     const target =
-        displays.find((d) => d.id !== primaryId && (d.label ?? "").toLowerCase().includes("sidecar")) ??
+        displays.find((d) => d.id !== primaryId && (d.label ?? '').toLowerCase().includes('sidecar')) ??
         displays.find((d) => d.id !== primaryId) ??
         null;
     if (!target) return {};

@@ -6,10 +6,12 @@ import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const api = RpcSchema.group({ children: {
-  collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.boolean() }),
-  bidi: RpcSchema.bidiStream({ input: {}, chunkIn: z.number(), chunkOut: z.number() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.boolean() }),
+    bidi: RpcSchema.bidiStream({ input: {}, chunkIn: z.number(), chunkOut: z.number() }),
+  },
+});
 
 type StreamSnapshot = {
   activeStreams: number;
@@ -45,8 +47,8 @@ function delayedChunks() {
 
 async function startServer() {
   const binding = new HttpServerBinding();
-  binding._on("collect", api.collect, async () => true);
-  binding._on("bidi", api.bidi, async function* () {});
+  binding._on('collect', api.collect, async () => true);
+  binding._on('bidi', api.bidi, async function* () {});
 
   const server = http2.createServer();
   server._on('stream', (stream, headers) => {
@@ -66,7 +68,9 @@ async function probeClientStream(): Promise<boolean> {
     // 流在调用同步段注册、终态收束时同步移出集合——引用必须在 await 前捕获，
     // 否则集合已空 → stream=undefined → closed 恒 undefined，判据永不可满足（测量 bug 修正）
     const pending = client.clientStream('collect', { input: {}, meta: {} }, delayedChunks());
-    const stream = [...(client as unknown as { activeStreams: Set<http2.ClientHttp2Stream> }).activeStreams][0];
+    const stream = [
+      ...(client as unknown as { activeStreams: Set<http2.ClientHttp2Stream> }).activeStreams,
+    ][0];
     await pending;
     const immediately = snapshot(client, stream);
     await sleep(500);
@@ -74,7 +78,11 @@ async function probeClientStream(): Promise<boolean> {
     console.log('[client-stream] immediately:', immediately);
     console.log('[client-stream] after 500ms:', afterWait);
     // 关键判据：远端终态处理返回时，不能还依赖后续随机 close 才收束。
-    return immediately.activeStreams === 0 && immediately.closed === true && immediately.writableEnded === true;
+    return (
+      immediately.activeStreams === 0 &&
+      immediately.closed === true &&
+      immediately.writableEnded === true
+    );
   } finally {
     client.dispose();
     binding.destroy();
@@ -87,15 +95,22 @@ async function probeBidi(): Promise<boolean> {
   try {
     // 同上：流引用在 await 前捕获（终态后集合已空）
     const pending = client.bidiStream('bidi', { input: {}, meta: {} }, delayedChunks());
-    const stream = [...(client as unknown as { activeStreams: Set<http2.ClientHttp2Stream> }).activeStreams][0];
+    const stream = [
+      ...(client as unknown as { activeStreams: Set<http2.ClientHttp2Stream> }).activeStreams,
+    ][0];
     const output = await pending;
-    for await (const _ of output) {}
+    for await (const _ of output) {
+    }
     const immediately = snapshot(client, stream);
     await sleep(500);
     const afterWait = snapshot(client, stream);
     console.log('[bidi] immediately:', immediately);
     console.log('[bidi] after 500ms:', afterWait);
-    return immediately.activeStreams === 0 && immediately.closed === true && immediately.writableEnded === true;
+    return (
+      immediately.activeStreams === 0 &&
+      immediately.closed === true &&
+      immediately.writableEnded === true
+    );
   } finally {
     client.dispose();
     binding.destroy();

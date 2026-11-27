@@ -64,13 +64,7 @@ export default createPage;
 export { BotConfigPageError } from './errors.js';
 export { createBotActions, resolveModelKey, wireOf } from './actions.js';
 export type { BotActions, BotActionsOptions } from './actions.js';
-export type {
-    BotSnapshot,
-    BotView,
-    ModelOptionView,
-    TestChatView,
-    TestMessageView,
-} from './shared.js';
+export type { BotSnapshot, BotView, ModelOptionView, TestChatView, TestMessageView } from './shared.js';
 
 /** 从配置取注入的 BotStore（形状不对 = 没传；不静默退回文件实现，那是这个 bug 的成因） */
 function storeOf(config: unknown): BotStore | null {

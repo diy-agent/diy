@@ -10,9 +10,9 @@
 //   · 只跑命令：`runBash(command, cwd, limits, signal, hooks, timeoutMs, spec, runtime)`
 //   · 要一个给模型的工具：`makeShellTool(spec, host)`（host 全可选，见 ShellToolHost）
 
-export * from "./spec.js";
-export * from "./detect.js";
-export * from "./result.js";
-export * from "./run.js";
-export * from "./tool.js";
-export * from "./guard.js";
+export * from './spec.js';
+export * from './detect.js';
+export * from './result.js';
+export * from './run.js';
+export * from './tool.js';
+export * from './guard.js';

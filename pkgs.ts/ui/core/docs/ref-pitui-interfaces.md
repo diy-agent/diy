@@ -1,8 +1,10 @@
 # pi-tui 接口参考
+
 > 自动生成于 2026-05-12T15:34:51.754Z
 > 来源: @mariozechner/pi-tui
 
 ## Component 接口
+
 ```typescript
 interface Component {
   render(width: number): string[];
@@ -12,15 +14,16 @@ interface Component {
 }
 ```
 
-
 ## Container
 
 ### 构造函数签名
+
 ```typescript
-constructor()
+constructor();
 ```
 
 ### 公开方法签名
+
 ```typescript
 addChild(component): void
 clear(): void
@@ -30,23 +33,25 @@ render(width): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ❌ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ❌   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## TUI
 
 ### 构造函数签名
+
 ```typescript
-constructor(terminal, showHardwareCursor)
+constructor(terminal, showHardwareCursor);
 ```
 
 ### 公开方法签名
+
 ```typescript
 addInputListener(listener): void
 applyLineResets(lines): void
@@ -80,23 +85,25 @@ stop(): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ✅ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ✅   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## Text
 
 ### 构造函数签名
+
 ```typescript
-constructor(text = "", paddingX = 1, paddingY = 1, customBgFn)
+constructor((text = ""), (paddingX = 1), (paddingY = 1), customBgFn);
 ```
 
 ### 公开方法签名
+
 ```typescript
 invalidate(): void
 render(width): void
@@ -105,46 +112,50 @@ setText(text): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ❌ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ❌   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## TruncatedText
 
 ### 构造函数签名
+
 ```typescript
-constructor(text, paddingX = 0, paddingY = 0)
+constructor(text, (paddingX = 0), (paddingY = 0));
 ```
 
 ### 公开方法签名
+
 ```typescript
 invalidate(): void
 render(width): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ❌ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ❌   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## Box
 
 ### 构造函数签名
+
 ```typescript
-constructor(paddingX = 1, paddingY = 1, bgFn)
+constructor((paddingX = 1), (paddingY = 1), bgFn);
 ```
 
 ### 公开方法签名
+
 ```typescript
 addChild(component): void
 clear(): void
@@ -155,23 +166,25 @@ setBgFn(bgFn): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ❌ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ❌   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## Input
 
 ### 构造函数签名
+
 ```typescript
-constructor()
+constructor();
 ```
 
 ### 公开方法签名
+
 ```typescript
 deleteToLineEnd(): void
 deleteToLineStart(): void
@@ -195,23 +208,25 @@ yankPop(): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ✅ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ✅   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## Editor
 
 ### 构造函数签名
+
 ```typescript
-constructor(tui, theme, options = {})
+constructor(tui, theme, (options = {}));
 ```
 
 ### 公开方法签名
+
 ```typescript
 addNewLine(): void
 addToHistory(text): void
@@ -280,23 +295,25 @@ yankPop(): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ✅ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ✅   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## SelectList
 
 ### 构造函数签名
+
 ```typescript
-constructor(items, maxVisible, theme)
+constructor(items, maxVisible, theme);
 ```
 
 ### 公开方法签名
+
 ```typescript
 getSelectedItem(): void
 handleInput(keyData): void
@@ -308,23 +325,25 @@ setSelectedIndex(index): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ✅ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ✅   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## SettingsList
 
 ### 构造函数签名
+
 ```typescript
-constructor(items, maxVisible, theme, onChange, onCancel, options = {})
+constructor(items, maxVisible, theme, onChange, onCancel, (options = {}));
 ```
 
 ### 公开方法签名
+
 ```typescript
 activateItem(): void
 addHintLine(lines, width): void
@@ -338,23 +357,25 @@ updateValue(id, newValue): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ✅ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ✅   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## Spacer
 
 ### 构造函数签名
+
 ```typescript
-constructor(lines = 1)
+constructor((lines = 1));
 ```
 
 ### 公开方法签名
+
 ```typescript
 invalidate(): void
 render(_width): void
@@ -362,23 +383,25 @@ setLines(lines): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ❌ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ❌   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## Markdown
 
 ### 构造函数签名
+
 ```typescript
-constructor(text, paddingX, paddingY, theme, defaultTextStyle)
+constructor(text, paddingX, paddingY, theme, defaultTextStyle);
 ```
 
 ### 公开方法签名
+
 ```typescript
 applyDefaultStyle(text): void
 getDefaultInlineStyleContext(): void
@@ -397,23 +420,25 @@ wrapCellText(text, maxWidth): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ❌ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ❌   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## Image
 
 ### 构造函数签名
+
 ```typescript
-constructor(base64Data, mimeType, theme, options = {}, dimensions)
+constructor(base64Data, mimeType, theme, (options = {}), dimensions);
 ```
 
 ### 公开方法签名
+
 ```typescript
 getImageId(): void
 invalidate(): void
@@ -421,23 +446,25 @@ render(width): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ❌ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ❌   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## Loader
 
 ### 构造函数签名
+
 ```typescript
-constructor(ui, spinnerColorFn, messageColorFn, message = "Loading...")
+constructor(ui, spinnerColorFn, messageColorFn, (message = "Loading..."));
 ```
 
 ### 公开方法签名
+
 ```typescript
 render(width): void
 setMessage(message): void
@@ -447,23 +474,25 @@ updateDisplay(): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ❌ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ❌   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |
 
 ## CancellableLoader
 
 ### 构造函数签名
+
 ```typescript
-constructor()
+constructor();
 ```
 
 ### 公开方法签名
+
 ```typescript
 get aborted()(...): unknown
 get signal()(...): unknown
@@ -471,11 +500,11 @@ handleInput(data): void
 ```
 
 ### Component 接口
-| 方法 | 实现 |
-|------|------|
-| `render` | ✅ |
-| `handleInput` | ✅ |
-| `wantsKeyRelease` | ❌ |
-| `invalidate` | ✅ |
-| `focused` (Focusable) | - |
 
+| 方法                  | 实现 |
+| --------------------- | ---- |
+| `render`              | ✅   |
+| `handleInput`         | ✅   |
+| `wantsKeyRelease`     | ❌   |
+| `invalidate`          | ✅   |
+| `focused` (Focusable) | -    |

@@ -23,24 +23,44 @@ diy **工作流内核**：工作流定义 DSL + 泳道容器（单指针 / 打�
 
 **同一条泳道图里，流水线行为与聊天室行为共存**（##166 §10.3）—— 分水岭是 **guard 可不可观测**：
 
-| guard 引用 | 可观测？ | 谁推 | 那条审计 Event（`seed.id` 给了才落） |
-|---|---|---|---|
-| `pred:名` | ✅ 引擎自己能判 | **系统**（自动转移） | `author = 'system'` |
-| `action:名` | ✅（且是**写**外部世界） | **系统**（自动转移） | `author = 'system'` |
-| `prompt:名` | ❌ 只是一段提示词 | **actor 自己宣布** | `author = 宣布者`（宣布本身就是一条发言） |
+| guard 引用  | 可观测？                 | 谁推                 | 那条审计 Event（`seed.id` 给了才落）      |
+| ----------- | ------------------------ | -------------------- | ----------------------------------------- |
+| `pred:名`   | ✅ 引擎自己能判          | **系统**（自动转移） | `author = 'system'`                       |
+| `action:名` | ✅（且是**写**外部世界） | **系统**（自动转移） | `author = 'system'`                       |
+| `prompt:名` | ❌ 只是一段提示词        | **actor 自己宣布**   | `author = 宣布者`（宣布本身就是一条发言） |
 
 ## 快速开始
 
 ```ts
-import { advance, createRegistry, createRuntime, defineWorkflow, flowStateToJson, initialState, parseFlowState } from '@diy-agent/flow';
+import {
+    advance,
+    createRegistry,
+    createRuntime,
+    defineWorkflow,
+    flowStateToJson,
+    initialState,
+    parseFlowState,
+} from '@diy-agent/flow';
 
 // 两个节点 + 一条打回边：泳道 ≡ 节点，打回不新建节点
 const wf = defineWorkflow({
     id: 'dev',
-    entry: 'implement',   // 双向环 → 两节点都有入边，入口须显式指明
+    entry: 'implement', // 双向环 → 两节点都有入边，入口须显式指明
     nodes: [
-        { id: 'implement', name: '开发', actor: 'agent', guard: ['prompt:dev_done'], hint: '开发完成 xx 任务，完成后提交给 Review 步骤' },
-        { id: 'review', name: 'Review', actor: 'agent', guard: ['prompt:review_done'], hint: 'P0/P1 打回，全部有落点则放行' },
+        {
+            id: 'implement',
+            name: '开发',
+            actor: 'agent',
+            guard: ['prompt:dev_done'],
+            hint: '开发完成 xx 任务，完成后提交给 Review 步骤',
+        },
+        {
+            id: 'review',
+            name: 'Review',
+            actor: 'agent',
+            guard: ['prompt:review_done'],
+            hint: 'P0/P1 打回，全部有落点则放行',
+        },
     ],
     edges: [
         { from: 'implement', to: 'review', kind: 'next' },
@@ -51,26 +71,38 @@ const wf = defineWorkflow({
 // ① 领域正路：只吃领域输入（内核不取时间、不生成 id、不碰日志）
 const at = '2026-10-13T00:00:00.000Z';
 let state = advance(wf, initialState<'implement' | 'review'>(), { to: 'implement', at }).state;
-state.path.map((v) => `${v.node}#${v.seq}:${v.kind}`);   // → ['implement#1:next']
+state.path.map((v) => `${v.node}#${v.seq}:${v.kind}`); // → ['implement#1:next']
 
 // ② 领域态可独立落盘 / 读回（清掉日志也不影响运行）
 const json = flowStateToJson(state);
-parseFlowState(json).position;                           // → 'implement'
+parseFlowState(json).position; // → 'implement'
 
 // ③ 执行器：`at` 必填（领域事实）；`id` 不给 = 不落审计事件
 const rt = createRuntime(wf, { registry: createRegistry(), maxBounces: 3 });
 const entered = rt.step(initialState<'implement' | 'review'>(), { at, id: 'e1' });
 if (entered.status !== 'moved') throw new Error(entered.status);
-entered.transition.move;                                 // → { kind: 'entry', from: null, to: 'implement' }
-entered.transition.state;                                // → 领域态（事件只是旁路的审计材料）
+entered.transition.move; // → { kind: 'entry', from: null, to: 'implement' }
+entered.transition.state; // → 领域态（事件只是旁路的审计材料）
 
 const probe = rt.step(entered.transition.state, { at, id: 'e2' });
-probe.status;                                            // → 'awaiting-actor'（implement 是 `prompt:` 节点，引擎判不了）
+probe.status; // → 'awaiting-actor'（implement 是 `prompt:` 节点，引擎判不了）
 
 // 转移由 actor 宣布 —— 宣布本身就是一条发言（审计事件）
-const toReview = rt.declare(entered.transition.state, { id: 'e3', at, author: '开发 agent', to: 'review', content: '开发完成，提交 Review' });
-const bounced = rt.declare(toReview.state, { id: 'e4', at, author: 'Review agent', to: 'implement', content: 'P0 未落点 → 打回' });
-bounced.move;                                            // → { kind: 'bounce', from: 'review', to: 'implement' }
+const toReview = rt.declare(entered.transition.state, {
+    id: 'e3',
+    at,
+    author: '开发 agent',
+    to: 'review',
+    content: '开发完成，提交 Review',
+});
+const bounced = rt.declare(toReview.state, {
+    id: 'e4',
+    at,
+    author: 'Review agent',
+    to: 'implement',
+    content: 'P0 未落点 → 打回',
+});
+bounced.move; // → { kind: 'bounce', from: 'review', to: 'implement' }
 bounced.state.path.map((v) => `${v.node}#${v.seq}:${v.kind}`);
 // → ['implement#1:next', 'review#1:next', 'implement#2:bounce']
 ```
@@ -81,7 +113,13 @@ bounced.state.path.map((v) => `${v.node}#${v.seq}:${v.kind}`);
 const ciWf = defineWorkflow({
     id: 'ci',
     nodes: [
-        { id: 'ci', name: 'CI', actor: 'system', guard: ['pred:check_green', 'pred:intent_green'], hint: '两套检查都绿才推' },
+        {
+            id: 'ci',
+            name: 'CI',
+            actor: 'system',
+            guard: ['pred:check_green', 'pred:intent_green'],
+            hint: '两套检查都绿才推',
+        },
         { id: 'merge', name: '合并', actor: 'system', guard: [], hint: '' },
     ],
     edges: [{ from: 'ci', to: 'merge', kind: 'next' }],
@@ -92,13 +130,13 @@ const registry = createRegistry()
     .register('guard', 'intent_green', () => ({ pass: true }));
 const rt2 = createRuntime(ciWf, { registry });
 
-const a = rt2.step(initialState<'ci' | 'merge'>(), { at, id: 'e1' });   // 进入入口 ci
+const a = rt2.step(initialState<'ci' | 'merge'>(), { at, id: 'e1' }); // 进入入口 ci
 if (a.status === 'moved') {
     const b = rt2.step(a.transition.state, { at, id: 'e2' });
     if (b.status === 'moved') {
-        b.transition.event?.author;    // 'system'
-        b.transition.event?.content;   // ''（内核不编人类文本 —— 要正文就自己给 seed.content）
-        b.transition.move;             // { kind: 'next', from: 'ci', to: 'merge' }
+        b.transition.event?.author; // 'system'
+        b.transition.event?.content; // ''（内核不编人类文本 —— 要正文就自己给 seed.content）
+        b.transition.move; // { kind: 'next', from: 'ci', to: 'merge' }
     }
     // 若某条 pred 不过：没有 bounce 边 → b.status === 'stuck'（「卡住」在**边上**，##101 结论四）
 }
@@ -154,20 +192,20 @@ Visit     { node: Id; seq: number; kind: 'next' | 'bounce'; at: string; ref?: Re
 
 ## 导出
 
-| 导出 | 是什么 |
-|---|---|
-| `defineWorkflow(def)` | 定义工作流：`nodes[]`（泳道） + `edges[]`（转移）；`edges[].from/to` 只能取节点 id（编译期护栏） |
-| `advance(def, state, { to, at, ref?, params? })` | **领域操作**：位置变更 → `{ state, kind }`（纯函数、不吃事件、不落日志；`params` 给了就用、没给继承，**带的值与状态里那份不一致即拒**；`ref` 随状态继承） |
-| `createContainer(def)` | 单指针容器：`.advance(req)`（正路）/ `.apply(event)`（审计适配），均返回新容器（不可变）；`.position` / `.path` / `.params` / `.done` 是领域态的只读视图 |
-| `apply(def, state, event)` | **薄适配**（审计 / 消息入口）：Event → 一次 `advance`；`project` 的重放路径靠它 |
-| `flowStateToJson` / `parseFlowState` / `flowStateFromJson` / `isFlowState` | 领域态落盘 / 读回（结构 + 语义自洽校验，读回可信） |
-| `createRuntime(def, opts)` | 转移执行器：`step`（系统自动推）/ `declare`（actor 宣布）/ `status`（现在轮到谁） |
-| `createRegistry()` | 插件注册表：`register(slot, name, fn)` / `resolve(slot, name)`（未注册即报错） |
-| `evaluateGuards` / `classifyGuards` / `unevaluatedGuards` / `parseGuardRef` / `selectEdge` | guard 求值（与 + 短路）与出口消歧（`when` 单出口也判），可单独复用 |
-| `project(events, def)` | 折线投影（纯函数）：`{ currentNode, path: Visit[], visits }` |
-| `paramsOf(def)` / `resolveParams(schema, values)` | 参数层：收集 `{ schema, defaults }` / 实例值校验 + 默认合并 |
-| `parseParamsSchema(snapshot)` | 参数快照的反向校验（形状封闭 + `defaults` 与 `schema` 对齐） |
-| `interpolate(template, params)` / `renderHint(node, params)` | `hint` 插值（`${局部名}` / `${节点 id.局部名}`，`$$` 转义）；`renderHint` 出错定位到 `nodes.<id>.hint` |
+| 导出                                                                                       | 是什么                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `defineWorkflow(def)`                                                                      | 定义工作流：`nodes[]`（泳道） + `edges[]`（转移）；`edges[].from/to` 只能取节点 id（编译期护栏）                                                          |
+| `advance(def, state, { to, at, ref?, params? })`                                           | **领域操作**：位置变更 → `{ state, kind }`（纯函数、不吃事件、不落日志；`params` 给了就用、没给继承，**带的值与状态里那份不一致即拒**；`ref` 随状态继承） |
+| `createContainer(def)`                                                                     | 单指针容器：`.advance(req)`（正路）/ `.apply(event)`（审计适配），均返回新容器（不可变）；`.position` / `.path` / `.params` / `.done` 是领域态的只读视图  |
+| `apply(def, state, event)`                                                                 | **薄适配**（审计 / 消息入口）：Event → 一次 `advance`；`project` 的重放路径靠它                                                                           |
+| `flowStateToJson` / `parseFlowState` / `flowStateFromJson` / `isFlowState`                 | 领域态落盘 / 读回（结构 + 语义自洽校验，读回可信）                                                                                                        |
+| `createRuntime(def, opts)`                                                                 | 转移执行器：`step`（系统自动推）/ `declare`（actor 宣布）/ `status`（现在轮到谁）                                                                         |
+| `createRegistry()`                                                                         | 插件注册表：`register(slot, name, fn)` / `resolve(slot, name)`（未注册即报错）                                                                            |
+| `evaluateGuards` / `classifyGuards` / `unevaluatedGuards` / `parseGuardRef` / `selectEdge` | guard 求值（与 + 短路）与出口消歧（`when` 单出口也判），可单独复用                                                                                        |
+| `project(events, def)`                                                                     | 折线投影（纯函数）：`{ currentNode, path: Visit[], visits }`                                                                                              |
+| `paramsOf(def)` / `resolveParams(schema, values)`                                          | 参数层：收集 `{ schema, defaults }` / 实例值校验 + 默认合并                                                                                               |
+| `parseParamsSchema(snapshot)`                                                              | 参数快照的反向校验（形状封闭 + `defaults` 与 `schema` 对齐）                                                                                              |
+| `interpolate(template, params)` / `renderHint(node, params)`                               | `hint` 插值（`${局部名}` / `${节点 id.局部名}`，`$$` 转义）；`renderHint` 出错定位到 `nodes.<id>.hint`                                                    |
 
 `Event` 复用 `@diy-agent/talk` 原语：`{ id, author, anchor, content, causes, at }`，其中 `anchor = { type: 'node', data: { nodeId } }`。
 **它是消息、不是状态载体**（##333）：`step` / `declare` 的 `seed.id` 给了才落，`Transition.event` 因此是可选字段。
@@ -176,12 +214,12 @@ Visit     { node: Id; seq: number; kind: 'next' | 'bounce'; at: string; ref?: Re
 
 「引擎能枚举的 → 配置；引擎查不到的 → 插件」（##166 §13.1）。**槽位固定、不能自创接口**（§13.2）：
 
-| 槽位 | 接口 | 为什么非写不可 |
-|---|---|---|
-| `guard` | `(ctx) => { pass, reason? }` | **读**：外部世界的「过没过」（CI 状态、回测指标） |
-| `source` | `(ctx) => data` | **读**：外部数据（行情 / CI 日志 / 素材库） |
-| `action` | `(ctx) => { ok, ref? }` | **写**：对外部世界动手（合并 / 发布 / 下单） |
-| `render` | `(data, anchor) => View` | **译**：非文本形状 → 引擎通用渲染器（**不写页面**） |
+| 槽位     | 接口                              | 为什么非写不可                                             |
+| -------- | --------------------------------- | ---------------------------------------------------------- |
+| `guard`  | `(ctx) => { pass, reason? }`      | **读**：外部世界的「过没过」（CI 状态、回测指标）          |
+| `source` | `(ctx) => data`                   | **读**：外部数据（行情 / CI 日志 / 素材库）                |
+| `action` | `(ctx) => { ok, ref? }`           | **写**：对外部世界动手（合并 / 发布 / 下单）               |
+| `render` | `(data, anchor) => View`          | **译**：非文本形状 → 引擎通用渲染器（**不写页面**）        |
 | `notify` | `(event) => { delivered, note? }` | **唤**：唤醒谁（`createRuntime` 的 `notify` 选项逐次唤醒） |
 
 `notify` 是五槽里**唯一不收 `ctx`** 的（贴 ##166 §13.2 原文的**有意偏离**）：代价是通知方拿不到
@@ -220,38 +258,38 @@ const params = resolveParams(schema, { ci: { command: 'pnpm test' } });
 createRuntime(wf, { registry, params });                      // ctx.params = 上面那个（全量、冻结）
 ```
 
-| 项 | 规则 |
-|---|---|
-| 类型全集 | `string` / `number` / `boolean` / `enum` / `list` —— **不支持嵌套对象**（没有表单渲染方案就别开）；`list` 只装标量 |
-| 全限定名 | `节点 id.局部名`（`ci.command`）；实例值是同构嵌套 `ctx.params['ci']['command']` |
-| `default` | **必填**（一个值都不填也要能跑）⇒ 合并后 `ctx.params` 恒为全量 |
-| 约束 | `enum?`（仅 enum，必填非空）/ `min?` `max?` `unit?`（仅 number）；**写错类型即报**（不静默忽略） |
-| 值 | 必须**纯 JSON**（标量 / 标量列表、有限数）：类型错 / 越界 / NaN → `invalid-param`；未知节点 / 未知参数名 → `unknown-param` |
-| `hint` 插值 | `${局部名}`（本节点）/ `${节点 id.局部名}`（全限定）；**定义期**即校验占位符（拼错 → `invalid-def`，仅在工作流声明了参数时），运行期找不到参数 → `unknown-param`（**不插空串**）；`$$` = 字面量 `$`；空 `list` 插成空串（合法值） |
-| 单向导出 | `{ schema, defaults }` 快照供 UI / 文档渲染（`JSON.stringify(paramsOf(def))`）；`defaults` 只是派生视图（真源 = 每项 `default`）；`parseParamsSchema` 读回时守与定义期**同一组**不变量（`name` / `node` 不含 `.`、同 `path` 唯一） |
-| 只改值 | 参数**不得增删节点 / 边**；「本次跳过某步」= 参数让 `guard` / 边上的 `when` 短路 |
+| 项          | 规则                                                                                                                                                                                                                               |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 类型全集    | `string` / `number` / `boolean` / `enum` / `list` —— **不支持嵌套对象**（没有表单渲染方案就别开）；`list` 只装标量                                                                                                                 |
+| 全限定名    | `节点 id.局部名`（`ci.command`）；实例值是同构嵌套 `ctx.params['ci']['command']`                                                                                                                                                   |
+| `default`   | **必填**（一个值都不填也要能跑）⇒ 合并后 `ctx.params` 恒为全量                                                                                                                                                                     |
+| 约束        | `enum?`（仅 enum，必填非空）/ `min?` `max?` `unit?`（仅 number）；**写错类型即报**（不静默忽略）                                                                                                                                   |
+| 值          | 必须**纯 JSON**（标量 / 标量列表、有限数）：类型错 / 越界 / NaN → `invalid-param`；未知节点 / 未知参数名 → `unknown-param`                                                                                                         |
+| `hint` 插值 | `${局部名}`（本节点）/ `${节点 id.局部名}`（全限定）；**定义期**即校验占位符（拼错 → `invalid-def`，仅在工作流声明了参数时），运行期找不到参数 → `unknown-param`（**不插空串**）；`$$` = 字面量 `$`；空 `list` 插成空串（合法值）  |
+| 单向导出    | `{ schema, defaults }` 快照供 UI / 文档渲染（`JSON.stringify(paramsOf(def))`）；`defaults` 只是派生视图（真源 = 每项 `default`）；`parseParamsSchema` 读回时守与定义期**同一组**不变量（`name` / `node` 不含 `.`、同 `path` 唯一） |
+| 只改值      | 参数**不得增删节点 / 边**；「本次跳过某步」= 参数让 `guard` / 边上的 `when` 短路                                                                                                                                                   |
 
 > 工作流**没声明任何参数**时 `params` 不被校验、原样透传（参数层未启用）：形状封闭的前提是「形状已声明」。
 
 ## 转移规则（`createRuntime`）
 
-| 情形 | 结果 |
-|---|---|
-| 位置为空 | `step` 进入入口节点（`move.kind = 'entry'`） |
-| guard 全 `pred:`/`action:` 且**全过** | 走唯一 `next` 出边（`move.kind = 'next'`）；**没有** `next` 出边 → `done`（终态，`state.done = true`） |
-| 已 `done` 的状态再 `step` | 直接返回 `done`：**不求值、不重跑 `action:`**（终态记在领域态里） |
-| guard 全 `pred:`/`action:` 且**有不过** | 有 `bounce` 出边 → **打回**（也是 `author = 'system'`）；没有 → `stuck`（**停在原位**） |
-| guard 含 `prompt:` | `step` → `awaiting-actor`（引擎不替 actor 决定）；只能 `declare` |
-| `declare` 走 `next` 边 | 边的条件（`when`）先判（不可用 → `edge-unavailable`）；节点 guard 可观测那部分须全过（否则 `guard-failed`）；`prompt:` 部分由宣布者担责 |
-| `declare` 走 `bounce` 边 | 打回不主张推进 → 不设闸门，**连 guard / `when` 求值都不做**（`guard.evaluated === false`） |
-| 边上的 `when` | 是**边的条件**（§14.4）——**单出口也照判**，且**系统选边与 actor 宣布两侧共用**；不满足 = 这条边此刻不可用（不是「只有一条就硬走」） |
-| 同种出边多条 | 用边上的 `when` 消歧；命中数 > 1 → `ambiguous-edge`；命中 0 → 停/无可用出边 |
-| `actor: 'system'` 却带 `prompt:` guard | **组合期**就 `invalid-def`（系统判不了、actor 又不得宣布 = 死锁），不留到运行期静默卡住 |
-| `declare` 的 `author` | 必填字符串，且**不得等于内核保留字 `system`**（→ `invalid-declare`） |
-| `notify` 抛错 / 回执形状错 | 转移**照样落定**（事实已成立），失败记进 `transition.notifyErrors` |
-| 这次转移**没落事件**（`seed.id` 缺省） | 纯领域推进：`transition.event === undefined`、`receipts` 为空（`notify` 依赖事件，无事件 = 无通知） |
-| 插件函数自己抛异常 | 统一包成 `FlowError`（`code = plugin-threw`，`cause` 保留原异常） |
-| 打回次数超过 `maxBounces` | `bounce-limit`（死循环护栏） |
+| 情形                                    | 结果                                                                                                                                    |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 位置为空                                | `step` 进入入口节点（`move.kind = 'entry'`）                                                                                            |
+| guard 全 `pred:`/`action:` 且**全过**   | 走唯一 `next` 出边（`move.kind = 'next'`）；**没有** `next` 出边 → `done`（终态，`state.done = true`）                                  |
+| 已 `done` 的状态再 `step`               | 直接返回 `done`：**不求值、不重跑 `action:`**（终态记在领域态里）                                                                       |
+| guard 全 `pred:`/`action:` 且**有不过** | 有 `bounce` 出边 → **打回**（也是 `author = 'system'`）；没有 → `stuck`（**停在原位**）                                                 |
+| guard 含 `prompt:`                      | `step` → `awaiting-actor`（引擎不替 actor 决定）；只能 `declare`                                                                        |
+| `declare` 走 `next` 边                  | 边的条件（`when`）先判（不可用 → `edge-unavailable`）；节点 guard 可观测那部分须全过（否则 `guard-failed`）；`prompt:` 部分由宣布者担责 |
+| `declare` 走 `bounce` 边                | 打回不主张推进 → 不设闸门，**连 guard / `when` 求值都不做**（`guard.evaluated === false`）                                              |
+| 边上的 `when`                           | 是**边的条件**（§14.4）——**单出口也照判**，且**系统选边与 actor 宣布两侧共用**；不满足 = 这条边此刻不可用（不是「只有一条就硬走」）     |
+| 同种出边多条                            | 用边上的 `when` 消歧；命中数 > 1 → `ambiguous-edge`；命中 0 → 停/无可用出边                                                             |
+| `actor: 'system'` 却带 `prompt:` guard  | **组合期**就 `invalid-def`（系统判不了、actor 又不得宣布 = 死锁），不留到运行期静默卡住                                                 |
+| `declare` 的 `author`                   | 必填字符串，且**不得等于内核保留字 `system`**（→ `invalid-declare`）                                                                    |
+| `notify` 抛错 / 回执形状错              | 转移**照样落定**（事实已成立），失败记进 `transition.notifyErrors`                                                                      |
+| 这次转移**没落事件**（`seed.id` 缺省）  | 纯领域推进：`transition.event === undefined`、`receipts` 为空（`notify` 依赖事件，无事件 = 无通知）                                     |
+| 插件函数自己抛异常                      | 统一包成 `FlowError`（`code = plugin-threw`，`cause` 保留原异常）                                                                       |
+| 打回次数超过 `maxBounces`               | `bounce-limit`（死循环护栏）                                                                                                            |
 
 `guard` **数组 = 与**（用户 2026-10-13 修订）：全部满足才可转移；空数组 = 恒真；
 求值**短路** —— 遇到第一个失败即停（`action:` 有副作用，不能在已知前项失败后仍执行它）。
@@ -283,18 +321,18 @@ createRuntime(wf, { registry, params });                      // ctx.params = �
 内核只认「泳道图 + 插件」；**一个工作流开发包自己要管的就三样**：① 泳道图声明、② 插件实现、③ 装配。
 `examples/` 是这个三件套的最小样板（**只用公开 API**，模拟外部包怎么写），同时也是集成测试的素材：
 
-| 文件 | 是什么 |
-|---|---|
-| `examples/dev.ts` | 6 节点开发工作流：`clarify → design → implement → review → ci → merge`（guard 4 个 `prompt:` + `pred:ci_green` + `action:pr_mergeable`；`art` = doc/diff/table/badge；`params` = `ci.command` / `review.reviewers` / `review.maxBounces`；`review → implement` 是 `bounce` 边） |
-| `examples/dev.plugins.ts` | 两个插件（假数据）：`pred:ci_green` 读 CI 状态、`action:pr_mergeable` 写合并动作 —— 真接入归 ##319 |
-| `tests/examples.dev.test.ts` | 端到端复现 ##166 §14.3 的开发轨迹：**8 步 / 6 泳道 / 1 次打回**，逐步断言领域态与 `project` 重放相等 |
+| 文件                         | 是什么                                                                                                                                                                                                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `examples/dev.ts`            | 6 节点开发工作流：`clarify → design → implement → review → ci → merge`（guard 4 个 `prompt:` + `pred:ci_green` + `action:pr_mergeable`；`art` = doc/diff/table/badge；`params` = `ci.command` / `review.reviewers` / `review.maxBounces`；`review → implement` 是 `bounce` 边） |
+| `examples/dev.plugins.ts`    | 两个插件（假数据）：`pred:ci_green` 读 CI 状态、`action:pr_mergeable` 写合并动作 —— 真接入归 ##319                                                                                                                                                                              |
+| `tests/examples.dev.test.ts` | 端到端复现 ##166 §14.3 的开发轨迹：**8 步 / 6 泳道 / 1 次打回**，逐步断言领域态与 `project` 重放相等                                                                                                                                                                            |
 
 ```ts
 import { createRegistry, createRuntime, initialState } from '@diy-agent/flow';
 import { devWorkflow, type DevNodeId } from './examples/dev';
 import { registerDevPlugins } from './examples/dev.plugins';
 
-const registry = registerDevPlugins(createRegistry());          // 先注册齐，再 createRuntime
+const registry = registerDevPlugins(createRegistry()); // 先注册齐，再 createRuntime
 const rt = createRuntime(devWorkflow, { registry, maxBounces: 2 });
 
 const entered = rt.step(initialState<DevNodeId>(), { at: '2026-10-13T00:00:01.000Z' }); // entry → clarify
@@ -303,7 +341,10 @@ if (entered.status !== 'moved') throw new Error(entered.status);
 // clarify / design / implement / review 的 guard 是 `prompt:` ⇒ 引擎判不了：再 `step` 是 `awaiting-actor`，
 // 只能由 actor 宣布（宣布本身就是一条发言，那条审计 Event 的 author 就是宣布者）
 const toDesign = rt.declare(entered.transition.state, {
-    at: '2026-10-13T00:00:02.000Z', author: '需求 agent', to: 'design', content: '需求澄清完，提交设计',
+    at: '2026-10-13T00:00:02.000Z',
+    author: '需求 agent',
+    to: 'design',
+    content: '需求澄清完，提交设计',
 });
 // ci（`pred:`）/ merge（`action:`）全可观测 ⇒ 系统自己求值并自动转移，无需 declare
 ```

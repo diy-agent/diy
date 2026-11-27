@@ -22,15 +22,15 @@
 
 ## 1. 需求（R1–R7）
 
-| # | 需求（人类语言） | 用例位置 |
-|---|---|---|
-| R1 | **role 铁律**：自己的内容 → `assistant`；他人的发言 → `user`（**绝不能是 `assistant`**）；文档资料对谁都算 `user`；他人的 tool/thinking 不得进入装配；**非法来源类别报错**（不静默降级） | `describe('R1 …')` |
-| R2 | **doc-range 钉 revision**：`{ revisionId, offset, quote }` 三字段缺一不可；`pinsRevision` **三态**判是否本修订；**锚点构造器一律自检** | `describe('R2 …')` |
-| R3 | **JSON round-trip 恒等**；键序固定（落盘 diff 友好）；`compact` 单行输出（jsonl 用） | `describe('R3 …')` |
-| R4 | **引用完整性**：悬空 `replyTo` / 指向自己 / `id` 重号 / **异锚点混串** / **事件 `causes` 自指·重复** 一律报错 | `describe('R4 …')` |
-| R5 | **非法 anchor 一律拒绝**（未知 type、缺 `data`、字段类型错、**未知字段**），带点路径定位 | `describe('R5 …')` |
-| R6 | **反序列化边界**：非 JSON、缺字段（含 `replyTo` 键缺失）、**未知字段（写侧拒绝 / 读侧可选放行）**、**`at` 非 ISO** 一律报错 | `describe('R6 …')` |
-| R7 | **零依赖纯内核**：不 import `node:fs` / `electron` / `@diy-agent/app`，不取时间 | `describe('R7 …')` |
+| #   | 需求（人类语言）                                                                                                                                                                         | 用例位置           |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| R1  | **role 铁律**：自己的内容 → `assistant`；他人的发言 → `user`（**绝不能是 `assistant`**）；文档资料对谁都算 `user`；他人的 tool/thinking 不得进入装配；**非法来源类别报错**（不静默降级） | `describe('R1 …')` |
+| R2  | **doc-range 钉 revision**：`{ revisionId, offset, quote }` 三字段缺一不可；`pinsRevision` **三态**判是否本修订；**锚点构造器一律自检**                                                   | `describe('R2 …')` |
+| R3  | **JSON round-trip 恒等**；键序固定（落盘 diff 友好）；`compact` 单行输出（jsonl 用）                                                                                                     | `describe('R3 …')` |
+| R4  | **引用完整性**：悬空 `replyTo` / 指向自己 / `id` 重号 / **异锚点混串** / **事件 `causes` 自指·重复** 一律报错                                                                            | `describe('R4 …')` |
+| R5  | **非法 anchor 一律拒绝**（未知 type、缺 `data`、字段类型错、**未知字段**），带点路径定位                                                                                                 | `describe('R5 …')` |
+| R6  | **反序列化边界**：非 JSON、缺字段（含 `replyTo` 键缺失）、**未知字段（写侧拒绝 / 读侧可选放行）**、**`at` 非 ISO** 一律报错                                                              | `describe('R6 …')` |
+| R7  | **零依赖纯内核**：不 import `node:fs` / `electron` / `@diy-agent/app`，不取时间                                                                                                          | `describe('R7 …')` |
 
 ## 2. 形状
 
@@ -111,11 +111,11 @@ role     = 自己 → 'assistant'；他人发言 / 资料 → 'user'
 
 ## 5. 边界（谁接在后面）
 
-| 后续 | 接什么 |
-|---|---|
-| ##313 `@diy-agent/flow` | 用 `anchor.type = 'node'` 表达泳道节点；容器不变量（单指针 / 可回退）在那边 |
-| ##314 装配器 | **已完成**（本包含 `src/assemble.ts`）；消费 `Reaction[]` / `Event[]` + `assemblyRole`，产出 `Message[]`；三种装配策略 + 注入式窗口钩子 |
-| ##319 宿主接入 | 事件流落地（jsonl）+ `diy flow` CLI 域 + 提示词装配；本包 `*ToJson` 负责**校验 / 规范化**（`compact` 供 jsonl），行分隔与文件布局由 ##319 定 |
+| 后续                    | 接什么                                                                                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| ##313 `@diy-agent/flow` | 用 `anchor.type = 'node'` 表达泳道节点；容器不变量（单指针 / 可回退）在那边                                                                  |
+| ##314 装配器            | **已完成**（本包含 `src/assemble.ts`）；消费 `Reaction[]` / `Event[]` + `assemblyRole`，产出 `Message[]`；三种装配策略 + 注入式窗口钩子      |
+| ##319 宿主接入          | 事件流落地（jsonl）+ `diy flow` CLI 域 + 提示词装配；本包 `*ToJson` 负责**校验 / 规范化**（`compact` 供 jsonl），行分隔与文件布局由 ##319 定 |
 
 ## 6. 评审收口
 
@@ -149,35 +149,35 @@ Source =
 
 **三条内置策略**（`STRATEGIES`；也可传自定义 `AssemblyStrategy` 对象）：
 
-| 策略 | 选源 + 投影 | 对应模式 |
-|---|---|---|
-| `full` | 全收（含**自己的**过程，**他方过程除外**） | 模式 1 全量档案 |
-| `text-only` | 去 `trace`（tool / thinking），保留发言（含 `replyTo` 寻址）与资料 | 模式 2 邮件组型 |
-| `changes-only` | 只留 `material`（文档修订）+ 钉在 `doc-range` 上的发言（批注线） | 模式 3 文档型 |
+| 策略           | 选源 + 投影                                                        | 对应模式        |
+| -------------- | ------------------------------------------------------------------ | --------------- |
+| `full`         | 全收（含**自己的**过程，**他方过程除外**）                         | 模式 1 全量档案 |
+| `text-only`    | 去 `trace`（tool / thinking），保留发言（含 `replyTo` 寻址）与资料 | 模式 2 邮件组型 |
+| `changes-only` | 只留 `material`（文档修订）+ 钉在 `doc-range` 上的发言（批注线）   | 模式 3 文档型   |
 
 **决策记录**：
 
 1. **内核不变量先于策略**：**他人的过程产物（tool / thinking）永不进入装配** —— 连 `full` 也不。
    故 `full` 与 `text-only` 的差别是「是否带上**自己的**过程」，不是「是否暴露别人的过程」。
-   - **依据**（review1 意见 1 补）：##166 结论 6「过程私有——各 agent 自己的 tool/thinking 不强制共享」+
-     §3.5 表「自己的 tool / thinking → assistant ｜ **仅自己可见**」+ §七「实践中 tool/thinking 从未流转」。
-     该不变量**已由 ##312 `role.ts` 的 `assemblyRole` 编码**（`kind='trace' && author !== self` 直接抛
-     `role-violation`，探针 `probe5-foreign-trace-guard.mts`）—— 装配器只是复用它，不是自创。
-   - **与 §3.1 表格的显式偏离**：§3.1 把模式 1 写作「全量 message 流（含 tool/thinking）……过程全暴露，像开会各自表演」。
-     该表述描述的是**共享态（存储）**，而非**投递态（装配）** —— 「按需检索他人推理」（结论 14）是档案检索
-     能力，不是默认塞入本次 `messages[]`。
-   - **留白**：若 §四 待决 3「隐私边界」（谁能看谁的 tool/thinking）将来放开，须**协调改 `role.ts`**
-     （按决策 5「应是显式的新 `kind`」新增，由意图测试先定义），**不能**在装配策略层私自放行。
+    - **依据**（review1 意见 1 补）：##166 结论 6「过程私有——各 agent 自己的 tool/thinking 不强制共享」+
+      §3.5 表「自己的 tool / thinking → assistant ｜ **仅自己可见**」+ §七「实践中 tool/thinking 从未流转」。
+      该不变量**已由 ##312 `role.ts` 的 `assemblyRole` 编码**（`kind='trace' && author !== self` 直接抛
+      `role-violation`，探针 `probe5-foreign-trace-guard.mts`）—— 装配器只是复用它，不是自创。
+    - **与 §3.1 表格的显式偏离**：§3.1 把模式 1 写作「全量 message 流（含 tool/thinking）……过程全暴露，像开会各自表演」。
+      该表述描述的是**共享态（存储）**，而非**投递态（装配）** —— 「按需检索他人推理」（结论 14）是档案检索
+      能力，不是默认塞入本次 `messages[]`。
+    - **留白**：若 §四 待决 3「隐私边界」（谁能看谁的 tool/thinking）将来放开，须**协调改 `role.ts`**
+      （按决策 5「应是显式的新 `kind`」新增，由意图测试先定义），**不能**在装配策略层私自放行。
 2. **role 翻译复用 `role.ts`**（不在装配器重写）：每条内容经 `assemblyRole` 得 role，再以 `assertRoleAssignments`
    复核铁律 —— 他人发言绝不可能被装配成 `assistant`（结论 5）。
 3. **存结构、装配时渲染**（结论 13）：输入是 `Reaction` / `Event` 结构，渲染（作者前缀 + `[回复 <id>]` 寻址）
    只发生在装配时；缺省渲染 `renderItem`，策略可换 `render`。
 4. **窗口 / 摘要是注入式钩子**（§五「真正的取舍点」）：`window: (Message[]) => Message[]` 由**宿主**给，
    内核不自作主张 —— 渲染之后再交给它，可裁剪、可前插摘要。**排序同理归宿主**（内核保序，不替宿主排）。
-   - **次序偏离标注**（review1 意见 6）：§3.4 草图写「策略(选源) → 窗口/摘要 → **role 翻译**」；
-     实现为「选源/投影 → **role 翻译** → 渲染 → **窗口**」，即窗口在 role 翻译**之后**。
-     这是**有意选择**：对已渲染文本做摘要更自然（无需把 role 翻译权重算进摘要上下文）。
-   - **铁律保证边界**（review1 意见 2）：`window` 是宿主**可信代码**，其返回值**不再经
-     `assertRoleAssignments` 复核**（`Message` 已丢 author/kind 溯源，无从复核）。故「他人发言绝不为
-     `assistant`」的保证**仅覆盖装配器自身产出（window 之前）**。
+    - **次序偏离标注**（review1 意见 6）：§3.4 草图写「策略(选源) → 窗口/摘要 → **role 翻译**」；
+      实现为「选源/投影 → **role 翻译** → 渲染 → **窗口**」，即窗口在 role 翻译**之后**。
+      这是**有意选择**：对已渲染文本做摘要更自然（无需把 role 翻译权重算进摘要上下文）。
+    - **铁律保证边界**（review1 意见 2）：`window` 是宿主**可信代码**，其返回值**不再经
+      `assertRoleAssignments` 复核**（`Message` 已丢 author/kind 溯源，无从复核）。故「他人发言绝不为
+      `assistant`」的保证**仅覆盖装配器自身产出（window 之前）**。
 5. **不碰 LLM SDK**：输出是纯 `Message[]` 数据；具体 SDK 的 message 形状由宿主映射（##319）。

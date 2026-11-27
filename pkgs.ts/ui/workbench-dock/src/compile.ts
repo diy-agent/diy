@@ -170,14 +170,10 @@ export function compileLayout<S extends Scope>(input: LayoutInput<S>): CompiledL
     const slots = collectSlots(page, views, scope, input.moved);
 
     const skippedAreas: string[] = [];
-    const root = compileNode(
-        page.areas,
-        slots,
-        depthAxis(page.areas),
-        viewport,
-        skippedAreas,
-        { pinned: input.pinned, shares: input.shares },
-    );
+    const root = compileNode(page.areas, slots, depthAxis(page.areas), viewport, skippedAreas, {
+        pinned: input.pinned,
+        shares: input.shares,
+    });
     if (!root) throw new ModelError(`page "${page.type}" 没有任何区域有 view 落位`);
 
     const panels: Record<string, GroupviewPanelState> = {};
@@ -339,9 +335,7 @@ function compileNode<S extends Scope>(
         child,
         node: compileNode(child, slots, node.data.axis, viewport, skipped, sizing),
     }));
-    const survivors = compiled.filter(
-        (entry): entry is { child: AreaNode; node: DockNode } => entry.node !== null,
-    );
+    const survivors = compiled.filter((entry): entry is { child: AreaNode; node: DockNode } => entry.node !== null);
     if (survivors.length === 0) return null;
     const sizes = distribute(
         survivors.map((entry) => pinnedSize(entry.child, sizing.pinned)),
@@ -382,7 +376,9 @@ function distribute(sizes: Size[], available: number, shares?: (number | undefin
         totalWeight += weights[index] ?? 0;
     }
     const rest = Math.max(0, available - fixed);
-    const raw = sizes.map((size, index) => asPx(size) ?? (totalWeight > 0 ? (rest * (weights[index] ?? 0)) / totalWeight : 0));
+    const raw = sizes.map(
+        (size, index) => asPx(size) ?? (totalWeight > 0 ? (rest * (weights[index] ?? 0)) / totalWeight : 0),
+    );
     if (raw.length === 0) return raw;
 
     const sum = raw.reduce((acc, value) => acc + value, 0);
@@ -612,9 +608,10 @@ export function leavesOf(node: DockNode): AreaLeafNode[] {
  */
 export function leafGroups(node: DockNode): string[][] {
     if (node.type === 'leaf') return [];
-    const mine = node.data.every((child) => child.type === 'leaf') && node.data.length > 1
-        ? [node.data.map((child) => child.data.id)]
-        : [];
+    const mine =
+        node.data.every((child) => child.type === 'leaf') && node.data.length > 1
+            ? [node.data.map((child) => child.data.id)]
+            : [];
     return [...mine, ...node.data.flatMap(leafGroups)];
 }
 

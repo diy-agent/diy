@@ -9,7 +9,9 @@ export function reactiveDemo(el: HTMLElement): void {
   const messages = app.signal<string[]>([]);
 
   // 模拟定时器：计数自增
-  setInterval(() => { count.value++; }, 1000);
+  setInterval(() => {
+    count.value++;
+  }, 1000);
 
   app.column(() => {
     app.label("# 🧪 diy-ui web · Reactive");
@@ -29,7 +31,9 @@ export function reactiveDemo(el: HTMLElement): void {
 
     app.input({
       placeholder: "输入后回车加入列表",
-      onInput: (v) => { inputValue.value = v; },
+      onInput: (v) => {
+        inputValue.value = v;
+      },
       onEnter: (v) => {
         if (v.trim()) {
           messages.value = [...messages.value, v.trim()];

@@ -96,7 +96,11 @@ function parseParams(value: unknown, path: string): Readonly<Record<string, unkn
     if (value === undefined || value === null) return undefined;
     if (!isObject(value)) throw new FlowError(CODE, 'params 应为对象（{ 节点 id: { 局部名: 值 } }）', path);
     if (!isJsonValue(value)) {
-        throw new FlowError(CODE, 'params 必须是纯 JSON（标量 / 标量列表 / 有限深对象：不接受 undefined / 函数 / NaN / Infinity / 环形结构）', path);
+        throw new FlowError(
+            CODE,
+            'params 必须是纯 JSON（标量 / 标量列表 / 有限深对象：不接受 undefined / 函数 / NaN / Infinity / 环形结构）',
+            path,
+        );
     }
     return freezeJson(value) as Readonly<Record<string, unknown>>;
 }
@@ -118,14 +122,26 @@ function parseVisit<Id extends string>(value: unknown, path: string, options: Pa
     const node = takeString(obj.node, `${path}.node`) as Id;
     const seq = obj.seq;
     if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) {
-        throw new FlowError(CODE, `seq 应为 >= 1 的整数（该节点第几次驻留），实得 ${JSON.stringify(seq)}`, `${path}.seq`);
+        throw new FlowError(
+            CODE,
+            `seq 应为 >= 1 的整数（该节点第几次驻留），实得 ${JSON.stringify(seq)}`,
+            `${path}.seq`,
+        );
     }
     const kind = obj.kind;
     if (typeof kind !== 'string' || !(EDGE_KINDS as readonly string[]).includes(kind)) {
-        throw new FlowError(CODE, `未知边种类 ${JSON.stringify(kind)}（合法：${EDGE_KINDS.join(' | ')}）`, `${path}.kind`);
+        throw new FlowError(
+            CODE,
+            `未知边种类 ${JSON.stringify(kind)}（合法：${EDGE_KINDS.join(' | ')}）`,
+            `${path}.kind`,
+        );
     }
     if (!isIsoString(obj.at)) {
-        throw new FlowError(CODE, `at 应为 ISO-8601 时刻（如 2026-10-13T00:00:00.000Z），实得 ${JSON.stringify(obj.at)}`, `${path}.at`);
+        throw new FlowError(
+            CODE,
+            `at 应为 ISO-8601 时刻（如 2026-10-13T00:00:00.000Z），实得 ${JSON.stringify(obj.at)}`,
+            `${path}.at`,
+        );
     }
     const ref = parseRef(obj.ref, `${path}.ref`, CODE);
     return ref === undefined
@@ -147,7 +163,11 @@ function parseVisit<Id extends string>(value: unknown, path: string, options: Pa
  * 的活；本函数只保证它是可落盘的纯 JSON。故**盘上的 `params` 可能脏**，但脏值进不了运行态（`createRuntime`
  * 是唯一闸门）。要连值一起核：`resolveParams(paramsOf(def), state.params)`。
  */
-export function parseFlowState<Id extends string = string>(value: unknown, path = 'flowState', options: ParseOptions = {}): FlowState<Id> {
+export function parseFlowState<Id extends string = string>(
+    value: unknown,
+    path = 'flowState',
+    options: ParseOptions = {},
+): FlowState<Id> {
     const obj = takeObject(value, path);
     if (!options.allowUnknown) rejectUnknown(obj, STATE_KEYS, path, CODE);
 
@@ -158,20 +178,36 @@ export function parseFlowState<Id extends string = string>(value: unknown, path 
     const rawPosition = obj.position;
     const position = rawPosition === null ? null : (takeString(rawPosition, `${path}.position`) as Id);
     if (position === null && visits.length > 0) {
-        throw new FlowError(CODE, `position 为 null（未进入）却有 ${visits.length} 条折线 —— 单指针容器的位置就是折线末端`, `${path}.position`);
+        throw new FlowError(
+            CODE,
+            `position 为 null（未进入）却有 ${visits.length} 条折线 —— 单指针容器的位置就是折线末端`,
+            `${path}.position`,
+        );
     }
     if (position !== null && visits.length === 0) {
-        throw new FlowError(CODE, `position = ${JSON.stringify(position)} 却没有折线 —— 位置只能由驻留产生`, `${path}.position`);
+        throw new FlowError(
+            CODE,
+            `position = ${JSON.stringify(position)} 却没有折线 —— 位置只能由驻留产生`,
+            `${path}.position`,
+        );
     }
     if (position !== null && visits[visits.length - 1].node !== position) {
-        throw new FlowError(CODE, `position = ${JSON.stringify(position)} 与折线末端 ${JSON.stringify(visits[visits.length - 1].node)} 不一致`, `${path}.position`);
+        throw new FlowError(
+            CODE,
+            `position = ${JSON.stringify(position)} 与折线末端 ${JSON.stringify(visits[visits.length - 1].node)} 不一致`,
+            `${path}.position`,
+        );
     }
 
     const counts = new Map<string, number>();
     visits.forEach((visit, i) => {
         const next = (counts.get(visit.node) ?? 0) + 1;
         if (visit.seq !== next) {
-            throw new FlowError(CODE, `节点 ${JSON.stringify(visit.node)} 的 seq 应为 ${next}（第几次驻留），实得 ${visit.seq}`, `${path}.path[${i}].seq`);
+            throw new FlowError(
+                CODE,
+                `节点 ${JSON.stringify(visit.node)} 的 seq 应为 ${next}（第几次驻留），实得 ${visit.seq}`,
+                `${path}.path[${i}].seq`,
+            );
         }
         counts.set(visit.node, next);
     });
@@ -184,9 +220,18 @@ export function parseFlowState<Id extends string = string>(value: unknown, path 
     }
     // 自洽：「跑完」的前提是**先进入过**（`done` 由 `step` 在某个节点上求值发现，位置为空时压根没得跑）
     if (done === true && position === null) {
-        throw new FlowError(CODE, 'done = true 却从未进入工作流（position 为 null / 折线为空）—— 「跑完」的前提是先进入', `${path}.done`);
+        throw new FlowError(
+            CODE,
+            'done = true 却从未进入工作流（position 为 null / 折线为空）—— 「跑完」的前提是先进入',
+            `${path}.done`,
+        );
     }
-    const state: { position: Id | null; path: readonly Visit<Id>[]; params?: Readonly<Record<string, unknown>>; done?: boolean } = { position, path: visits };
+    const state: {
+        position: Id | null;
+        path: readonly Visit<Id>[];
+        params?: Readonly<Record<string, unknown>>;
+        done?: boolean;
+    } = { position, path: visits };
     if (params !== undefined) state.params = params;
     if (done !== undefined) state.done = done;
     return state;

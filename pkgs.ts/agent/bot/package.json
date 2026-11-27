@@ -31,18 +31,18 @@
         "build": "tsc -p tsconfig.build.json"
     },
     "dependencies": {
+        "@diy-agent/agents-chain": "*",
         "@diy-agent/compaction": "*",
-        "@diy-agent/facts": "*",
-        "@diy-agent/time": "*",
-        "zod": "^4.4.3",
-        "@diy-agent/session": "*",
         "@diy-agent/context": "*",
-        "@diy-agent/session-store-jsonl": "*",
+        "@diy-agent/facts": "*",
+        "@diy-agent/kb": "*",
         "@diy-agent/llm-provider": "*",
         "@diy-agent/model-catalog": "*",
+        "@diy-agent/session": "*",
+        "@diy-agent/session-store-jsonl": "*",
         "@diy-agent/skills": "*",
-        "@diy-agent/agents-chain": "*",
-        "@diy-agent/kb": "*"
+        "@diy-agent/time": "*",
+        "zod": "^4.4.3"
     },
     "devDependencies": {
         "@diy-agent/store-contract": "*",

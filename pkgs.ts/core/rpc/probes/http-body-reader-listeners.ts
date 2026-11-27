@@ -11,36 +11,53 @@ import { HttpServerBinding } from '../src/transport/http/http-server-binding';
  *   B. 终态显式清理：stream 收到 end 后，createBodyReader 注册的 listener 是否被移除
  *      （不移除 => 依赖 GC/stream 销毁，属 P3 记录项）。
  */
-const api = RpcSchema.group({ children: {
-  collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.number() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.number() }),
+  },
+});
 
 class FakeStream extends EventEmitter {
   closed = false;
-  constructor() { super(); this.setMaxListeners(0); }
-  write(): boolean { return true; }
-  end(): void { this.closed = true; }
+  constructor() {
+    super();
+    this.setMaxListeners(0);
+  }
+  write(): boolean {
+    return true;
+  }
+  end(): void {
+    this.closed = true;
+  }
   respond(): void {}
-  close(): void { this.closed = true; this.emit('close'); }
+  close(): void {
+    this.closed = true;
+    this.emit('close');
+  }
   private listenersTotal(): number {
     return ['data', 'end', 'aborted', 'close'].reduce((n, e) => n + this.listenerCount(e), 0);
   }
-  total(): number { return this.listenersTotal(); }
+  total(): number {
+    return this.listenersTotal();
+  }
 }
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding._on("collect", api.collect, async ({ stream }) => {
+  binding._on('collect', api.collect, async ({ stream }) => {
     let seen = 0;
     for await (const _ of stream) seen++;
     return seen;
   });
 
   const stream = new FakeStream();
-  void binding.handleStream(stream as any, {
-    ':path': '/collect',
-    'x-diy-params': JSON.stringify({ input: {}, meta: {} }),
-  } as any);
+  void binding.handleStream(
+    stream as any,
+    {
+      ':path': '/collect',
+      'x-diy-params': JSON.stringify({ input: {}, meta: {} }),
+    } as any,
+  );
 
   const before = stream.listenerCount('data');
   for (let i = 0; i < 200; i++) stream.emit('data', Buffer.from(`${i}\n`));
@@ -58,11 +75,16 @@ async function main() {
   } else {
     console.log('PASS: no per-chunk listener growth');
     if (totalAfterEnd > 0) {
-      console.log(`NOTE: ${totalAfterEnd} listener(s) remain after end — terminal cleanup not explicit (P3, relies on stream GC)`);
+      console.log(
+        `NOTE: ${totalAfterEnd} listener(s) remain after end — terminal cleanup not explicit (P3, relies on stream GC)`,
+      );
     }
   }
 
   binding.destroy();
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

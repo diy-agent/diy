@@ -35,17 +35,17 @@ docs/             「为什么这么设计」—— 改代码不一定 要改它
 ```ts
 import { scanKb, writeEntry, writeIndex, moveEntry } from '@diy-agent/kb';
 
-scanKb('/repo/.diy/knowledge');                    // 条目 + 问题
-writeEntry(root, 'rules/通用硬约束.md', content);   // 根目录散文件会被拒
-writeIndex(root, '项目 diy');                       // 重新生成 INDEX.md
+scanKb('/repo/.diy/knowledge'); // 条目 + 问题
+writeEntry(root, 'rules/通用硬约束.md', content); // 根目录散文件会被拒
+writeIndex(root, '项目 diy'); // 重新生成 INDEX.md
 moveEntry(root, 'app/旧名.md', 'app/新名.md');
 ```
 
-| 函数 | 说明 |
-|---|---|
-| `scanKb(root)` | 扫全部 `*.md`，返回 `entries` + `problems`（`kb/root-file` / `kb/no-desc` / `kb/no-frontmatter` / `kb/empty-body`） |
-| `renderIndex(entries, label)` | 纯函数，生成 INDEX 文本 |
-| `writeIndex(root, label)` | 扫 + 生成并落盘 |
-| `writeEntry(root, path, content)` | **路径校验的唯一强制点**（根目录散文件 / 越界 / `INDEX.md` / 非 `.md` 一律拒） |
-| `moveEntry(root, from, to)` | 改走 `writeEntry` 的同一道闸 |
-| `readFrontmatter` / `bodyOf` / `sectionsOf` | yaml 头（`>-` 与 `\|` 都收成单行）/ 正文 / 二级标题数 |
+| 函数                                        | 说明                                                                                                                |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `scanKb(root)`                              | 扫全部 `*.md`，返回 `entries` + `problems`（`kb/root-file` / `kb/no-desc` / `kb/no-frontmatter` / `kb/empty-body`） |
+| `renderIndex(entries, label)`               | 纯函数，生成 INDEX 文本                                                                                             |
+| `writeIndex(root, label)`                   | 扫 + 生成并落盘                                                                                                     |
+| `writeEntry(root, path, content)`           | **路径校验的唯一强制点**（根目录散文件 / 越界 / `INDEX.md` / 非 `.md` 一律拒）                                      |
+| `moveEntry(root, from, to)`                 | 改走 `writeEntry` 的同一道闸                                                                                        |
+| `readFrontmatter` / `bodyOf` / `sectionsOf` | yaml 头（`>-` 与 `\|` 都收成单行）/ 正文 / 二级标题数                                                               |
