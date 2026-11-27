@@ -154,6 +154,18 @@ export interface UnitDetailView {
     notes: JournalLineView[];
 }
 
+/** 一条需求的原始存储（「源码」面板显示的就是它，直接 JSON.stringify） */
+export interface UnitRawView {
+    /** 库表名（说明这份 JSON 对应哪张表） */
+    table: string;
+    /** `task_units` 的那一行（列名 → 值，NULL 也在） */
+    row: Record<string, unknown>;
+    /** 它名下的步骤行（同一张表，kind = 'step'） */
+    steps: Array<Record<string, unknown>>;
+    /** 挂它的 journal 事件（`events` 表里 `event = 'task.journal'` 的那些） */
+    events: JournalLineView[];
+}
+
 /** journal 的一条（`unit` 是它所属的需求） */
 export interface JournalLineView {
     seq: number;
@@ -388,6 +400,8 @@ export class RpcChatClient implements ChatClient {
         list: (id: string): Promise<UnitBoardView> => this.call('units.list', { id }),
         /** 一条需求的全貌：需求 + 步骤 + 决策 + 过程记录 */
         get: (id: string, unit: string): Promise<UnitDetailView> => this.call('units.get', { id, unit }),
+        /** 库里存的那几行（真源，不加工）：界面上「数据」面板用它当场核对投影 */
+        raw: (id: string, unit: string): Promise<UnitRawView> => this.call('units.raw', { id, unit }),
         /** 模型实际读到的 `units` 节原文（YAML）：树视图与图视图共用这一段，不是两份 */
         text: (id: string): Promise<UnitTextView> => this.call('units.text', { id }),
     };

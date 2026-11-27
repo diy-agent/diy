@@ -143,10 +143,33 @@ export function definePage(def: { type: string; title: string; center: AreaDef; 
  * 没有 closeable、没有「关闭后怎么办」：不可关闭是这个模型的公理，不是一个选项。
  */
 export interface ViewDef {
+    /** 区域里唯一（tab 选中、状态持久化都按它）；运行时打开的视图带参数（`unit-detail:catalog-effort`） */
     id: string;
     title: string;
+    /** 静态视图靠它声明归属；**运行时打开**的视图不进这里（归属由打开时的 `area` 决定） */
     placement: Record<string, { area: string }>;
     render: () => ReactNode;
+    /**
+     * 有关闭按钮 = 这行是可关的（只有运行时打开的视图有）。
+     * 静态视图**不可关闭**是这个模型的公理：它声明自己在哪就一直在那。
+     */
+    close?: () => void;
+}
+
+/**
+ * 运行时打开的视图（用户 2026-11-27：点左边一条需求，在对话旁开一个 tab 放详情）。
+ *
+ * 它和静态视图的区别只有一条：**谁决定它在不在**。静态的由贡献者声明（不可关），
+ * 这种由用户点出来（可关、参数化、按 id 去重 —— 同一条需求不会开出第二个 tab）。
+ */
+export interface OpenedView {
+    /** `kind:主键`（如 `unit-detail:catalog-effort`）：同一个东西只开一次 */
+    id: string;
+    kind: string;
+    title: string;
+    /** 开在哪个概念区域（`conversation` = 与对话并列） */
+    area: string;
+    params: Record<string, string>;
 }
 
 export function defineView(view: ViewDef): ViewDef {
@@ -225,6 +248,11 @@ export interface PageState {
     active: Record<string, string>;
     /** 用户拖过的区域尺寸（px，沿相邻边界）。缺省用模板的 `size` */
     sizes: Record<string, number>;
+    /**
+     * 用户点开过的视图（按打开顺序）。**要存**：tab 是「我正看着的东西」，
+     * 刷新一下全没了等于每次都要重新找一遍。
+     */
+    opened?: OpenedView[];
 }
 
 /** 偏好键按**页类型**分（不含房间 id）：切房间时骨架不动、偏好也该跟着走 */
@@ -252,6 +280,7 @@ export function loadState(pageType: string, storage: Storage): PageState | null 
             modes: recordOf<Mode>(parsed.modes),
             active: recordOf<string>(parsed.active),
             sizes: recordOf<number>(parsed.sizes),
+            opened: Array.isArray(parsed.opened) ? (parsed.opened as OpenedView[]) : [],
         };
     } catch {
         // 坏数据就当没有：布局偏好不值得为它挡住整页
@@ -276,7 +305,7 @@ export function initialState(page: PageDef): PageState {
     for (const def of page.sides) {
         if (def.initial === 'collapsed') collapsed[def.id] = true;
     }
-    return { collapsed, modes: {}, active: {}, sizes: {} };
+    return { collapsed, modes: {}, active: {}, sizes: {}, opened: [] };
 }
 
 /** 区域当前尺寸：用户拖过的优先，其次模板默认。坏值（非正数 / NaN）当没拖过 */

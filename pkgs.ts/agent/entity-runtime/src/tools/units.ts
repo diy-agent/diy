@@ -331,8 +331,9 @@ export function unitTools(host: UnitHost): ToolSet {
 
         unit_get: tool({
             description:
-                '看一条 unit 的全文（title / body / accept / source / 母项 / 子 / 状态）。' +
-                '`accept` = 怎么算做完（空串 = 还没写，该补）；`source` = 这条需求来自哪句人话。',
+                '看一条 unit 的全文（title / body / accept / source / 状态 / 步骤与进度）。' +
+                '`accept` = 怎么算做完（空串 = 还没写，该补）；`source` = 这条需求来自哪句人话；' +
+                '`steps` = 挂在它下面的步骤（`kind: "step"`）与进度。',
             inputSchema: z.object({ id: z.string() }),
             execute: async ({ id }) => {
                 const unit = need(host, id);
@@ -347,6 +348,9 @@ export function unitTools(host: UnitHost): ToolSet {
                     status: row?.status ?? unit.status,
                     parent: row?.parent ?? null,
                     children: row?.children ?? [],
+                    // 挂在它下面的步骤与进度（步骤不进需求层，但要能查：做到这条需求时看自己走到哪）
+                    steps: (row?.steps ?? []).map((step) => ({ id: step.id, title: step.title, status: step.status })),
+                    progress: row?.progress ?? { done: 0, total: 0 },
                 };
             },
         }),

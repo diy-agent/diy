@@ -329,6 +329,14 @@ export interface Store {
     // ── 任务的需求账本树（task 私有；只有 parent 一条关系）──────
     /** 某任务的全部 unit（创建序）。**不是实体**：没有 number / 不进侧栏 */
     listUnits(taskId: string): UnitRecord[];
+    /**
+     * 一条 unit 的**原始行**（`task_units` 的全部列，按列名给）。
+     *
+     * 为什么另开一个口而不是把 `UnitRecord` 序列化：详情页的「源码」要回答的是
+     * 「数据库里到底存了什么」—— 投影（`UnitRecord`）会补缺省值、换算字段名，
+     * 拿它当「原文」给用户看，等于让人以为库里就长这样。
+     */
+    rawUnit(taskId: string, unitId: string): Record<string, unknown> | undefined;
     unitOf(taskId: string, unitId: string): UnitRecord | undefined;
     /** upsert；新 unit 分配 `u<n>`（不回收），显式给的 id 必须已存在 */
     saveUnit(unit: UnitInput): UnitRecord;
@@ -1824,6 +1832,12 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 .prepare('DELETE FROM entity_links WHERE from_id = ? AND to_id = ? AND kind = ?')
                 .run(from, to, kind);
             return Number(result.changes) > 0;
+        },
+        rawUnit(taskId: string, unitId: string): Record<string, unknown> | undefined {
+            const row = db
+                .prepare('SELECT * FROM task_units WHERE task_id = ? AND id = ?')
+                .get(taskId, unitId) as Record<string, unknown> | undefined;
+            return row === undefined ? undefined : { ...row };
         },
         listUnits(taskId: string): UnitRecord[] {
             const rows = db.prepare('SELECT * FROM task_units WHERE task_id = ? ORDER BY seq ASC').all(taskId) as Array<

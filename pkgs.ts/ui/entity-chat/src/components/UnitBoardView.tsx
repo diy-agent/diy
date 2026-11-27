@@ -1,11 +1,10 @@
-// UnitBoardView —— 任务页「目标」视图：**左需求列表 + 右需求全貌**的只读投影。
+// UnitBoardView —— 任务页「目标」视图：**只列需求**的左侧清单。
 //
-// 2026-11-27 用户裁（demo v2）：目标与任务分解要分层。
-//   · 左边只列**需求**（要做什么）：一条一个关注点，带进度与缺口标记。
-//   · 右边是点开的那条：做什么（人的原话）｜决策（谁定的、为什么）｜任务分解与进度（怎么做）
-//     ｜做得好不好（验收口径 + 过程记录）。
-// 依据是体检数据（12 任务 125 条）：0 条被当 log 刷，但工程类任务 43~67% 的条目是
-// 「改哪个文件 / 加字段 / 透传 / 提 PR」——它们本来该是**步骤**，却挤进了需求层。
+// 2026-11-27 用户裁（demo v2 → 实装）：
+//   · 这里只回答「这件事要做成哪些东西」—— 一条需求一行，带进度与缺口标记。
+//   · 点一条**不在原地展开**，而是由宿主打开一个并列的 view tab（`onOpenUnit`）：
+//     需求详情是「和对话平行的一块内容」，不该挤在左侧窄栏里，也不该让左栏在
+//     「列表 / 详情」两种形态间来回切（看列表和看详情是两件同时想做的事）。
 //
 // 为什么还留「源码」开关：这一页所有形态都从同一份数据算，但「模型到底读到了什么」只能看原文
 // （`units.text` = 注入 system 的那一节），核对上下文预算时离不开它。
@@ -15,60 +14,38 @@
 import { Code2, ListTree } from 'lucide-react';
 import * as React from 'react';
 
-import type { JournalLineView, UnitItem } from '@diy-agent/chat-transport-rpc';
-import { jumpToMessage } from '../askJump';
+import type { UnitItem } from '@diy-agent/chat-transport-rpc';
 import { roomTitle, type Room } from '../model';
+import { UnitNeedDetail } from './UnitNeedDetail';
 import { useUnitBoard } from '../useUnitBoard';
-import { useUnitDetail } from '../useUnitDetail';
 import { useUnitText } from '../useUnitText';
 
 /** 与服务端同一口径的粗略估算（中文 + 结构下约 0.78 tok / 字符，见 ContextPanel） */
 const TOKENS_PER_CHAR = 0.78;
 
-/** 需求行的状态点：done 绿、doing 蓝、open 灰（能挑的加一圈亮边） */
+/** 需求行的状态点：done 绿、doing 蓝（带光晕）、open 灰（能挑的偏绿） */
 function dotClass(unit: UnitItem, ready: Set<string>): string {
     if (unit.status === 'done') return 'bg-emerald-500';
     if (unit.status === 'doing') return 'bg-sky-500 shadow-[0_0_0_3px] shadow-sky-500/20';
     return ready.has(unit.id) ? 'bg-emerald-500/70' : 'bg-muted-foreground/40';
 }
 
-function stepMark(status: UnitItem['status']): string {
-    if (status === 'done') return '✓';
-    if (status === 'doing') return '◐';
-    return '○';
-}
-
-function fmtTime(at: number): string {
-    const date = new Date(at);
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const dd = String(date.getDate()).padStart(2, '0');
-    const hh = String(date.getHours()).padStart(2, '0');
-    const mi = String(date.getMinutes()).padStart(2, '0');
-    return `${mm}-${dd} ${hh}:${mi}`;
-}
-
-/** 一条 journal 记录：决策在后面单独一栏，这里只当「过程记录」用 */
-function Line({ line }: { line: JournalLineView }): React.JSX.Element {
-    return (
-        <li className="flex gap-2 border-l border-border pl-2">
-            <span className="shrink-0 text-[10px] text-muted-foreground/70">{fmtTime(line.at)}</span>
-            <span className="min-w-0">
-                <span className="mr-1 rounded border border-border px-1 text-[10px] text-muted-foreground">
-                    {line.kind}
-                </span>
-                <span className="text-[11px] text-foreground">{line.text}</span>
-            </span>
-        </li>
-    );
-}
-
-export function UnitBoardView({ room }: { room: Room }): React.JSX.Element {
+export function UnitBoardView({
+    room,
+    onOpenUnit,
+}: {
+    room: Room;
+    /**
+     * 点一条需求时交给宿主 —— 由它开一个并列的 view tab 放详情。
+     * 不传就退化成「原地展开右栏」（单视图场景 / 测试里方便）。
+     */
+    onOpenUnit?: (unitId: string, title: string) => void;
+}): React.JSX.Element {
     const [source, setSource] = React.useState(false);
     const [selected, setSelected] = React.useState<string | null>(null);
     const { board, error } = useUnitBoard(room.id);
     // 源码只在切过去时才拉：列表每 5 秒轮询一次已经够，没必要每次多打一个 RPC
     const { view: textView, error: textError } = useUnitText(room.id, source);
-    const { detail, error: detailError } = useUnitDetail(room.id, source ? null : selected);
 
     if (room.type !== 'task') {
         return <div className="p-3 text-xs text-muted-foreground">只有任务有内部拆分。</div>;
@@ -79,7 +56,6 @@ export function UnitBoardView({ room }: { room: Room }): React.JSX.Element {
     const needs = board?.rows ?? [];
     const missingAccept = needs.filter((row) => !row.group && row.accept.trim() === '').length;
     const tokens = textView === null ? 0 : Math.round(textView.chars * TOKENS_PER_CHAR);
-    const current = needs.find((row) => row.id === selected) ?? null;
 
     return (
         <div className="flex h-full min-w-0 flex-col">
@@ -140,208 +116,104 @@ export function UnitBoardView({ room }: { room: Room }): React.JSX.Element {
                         点开能看到它的决策、步骤与验收。
                     </p>
                 </div>
-            ) : (
-                <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(240px,0.85fr)_minmax(280px,1.15fr)]">
-                    {/* ── 左：需求列表（只列 need；步骤在右边）── */}
-                    <div className="min-h-0 overflow-auto border-b border-border p-1.5 md:border-r md:border-b-0">
-                        {needs.map((unit) => {
-                            const progress = unit.progress;
-                            const pct = progress === undefined ? 0 : Math.round((100 * progress.done) / progress.total);
-                            return (
-                                <button
-                                    key={unit.id}
-                                    type="button"
-                                    onClick={() => setSelected(unit.id)}
-                                    aria-selected={unit.id === selected}
-                                    className={`w-full rounded px-1.5 py-1 text-left hover:bg-muted ${
-                                        unit.id === selected ? 'bg-sky-500/10 ring-1 ring-sky-500/30' : ''
-                                    }`}
-                                    style={{ paddingLeft: `${6 + unit.depth * 12}px` }}
-                                >
-                                    <span className="flex items-baseline gap-1.5">
-                                        <span className={`mt-1.5 size-2 shrink-0 rounded-full ${dotClass(unit, ready)}`} />
-                                        <span
-                                            className={`min-w-0 flex-1 truncate text-[12px] ${
-                                                unit.status === 'done' ? 'text-muted-foreground' : 'text-foreground'
-                                            } ${unit.group ? 'font-medium' : ''}`}
-                                            title={unit.title}
-                                        >
-                                            {unit.title}
-                                        </span>
-                                    </span>
-                                    <span className="mt-0.5 flex items-center gap-1.5 pl-3.5 text-[10px] text-muted-foreground">
-                                        {progress !== undefined && (
-                                            <>
-                                                <span className="h-[3px] w-14 overflow-hidden rounded bg-border">
-                                                    <span
-                                                        className={`block h-full ${unit.status === 'done' ? 'bg-emerald-500' : 'bg-sky-500'}`}
-                                                        style={{ width: `${pct}%` }}
-                                                    />
-                                                </span>
-                                                <span>
-                                                    {progress.done}/{progress.total} 步
-                                                </span>
-                                            </>
-                                        )}
-                                        {!unit.group && unit.accept.trim() === '' && (
-                                            <span className="rounded border border-amber-500/30 px-1 text-amber-600">
-                                                未写验收
-                                            </span>
-                                        )}
-                                        {unit.sourceQuote !== undefined && (
-                                            <span className="min-w-0 truncate">
-                                                ↩ {unit.sourceQuote.author || '有人'}：{unit.sourceQuote.text}
-                                            </span>
-                                        )}
-                                    </span>
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    {/* ── 右：这条需求的全貌 ── */}
-                    <div className="min-h-0 overflow-auto p-2.5">
-                        {current === null ? (
-                            <div className="text-xs text-muted-foreground">点左边任一条需求，看它下面挂的决策与步骤。</div>
+            ) : onOpenUnit === undefined ? (
+                // 没有宿主（单视图场景）：左边列表 + 右栏详情，两栏原地并排
+                <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-2">
+                    <NeedsList
+                        needs={needs}
+                        ready={ready}
+                        selected={selected}
+                        onSelect={(unit) => setSelected(unit.id)}
+                    />
+                    <div className="min-h-0 overflow-auto border-t border-border md:border-t-0 md:border-l">
+                        {selected === null ? (
+                            <div className="p-2.5 text-xs text-muted-foreground">点左边任一条需求看详情。</div>
                         ) : (
-                            <div className="flex flex-col gap-2.5">
-                                <div>
-                                    <div className="text-[10px] text-muted-foreground">
-                                        需求 · {current.status === 'done' ? '已完成' : current.status === 'doing' ? '在做' : '未开始'}
-                                    </div>
-                                    <div className="text-[13px] leading-snug font-medium text-foreground">{current.title}</div>
-                                </div>
-
-                                {/* 做什么：人的原话 */}
-                                <div className="rounded border border-border">
-                                    <div className="border-b border-border bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
-                                        做什么（人的原话）
-                                    </div>
-                                    <div className="px-2 py-1.5">
-                                        {current.sourceQuote === undefined ? (
-                                            <div className="text-[11px] text-muted-foreground">
-                                                不知道是哪句话提的（老数据 / 消息已被剪 / 非人类触发）
-                                            </div>
-                                        ) : (
-                                            <>
-                                                <div className="text-[10px] text-sky-500">
-                                                    {current.sourceQuote.author || '有人'}
-                                                </div>
-                                                <div className="text-[11px] text-foreground">
-                                                    {current.sourceQuote.text}
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => jumpToMessage(current.source)}
-                                                    className="mt-1 text-[10px] text-sky-500 hover:underline"
-                                                >
-                                                    跳到那条消息 →
-                                                </button>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* 决策 */}
-                                <div className="rounded border border-border">
-                                    <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
-                                        决策
-                                        <span className="ml-auto">谁定的 · 为什么</span>
-                                    </div>
-                                    <div className="px-2 py-1.5">
-                                        {detail === null ? (
-                                            <div className="text-[11px] text-muted-foreground">
-                                                {detailError ?? '读取中…'}
-                                            </div>
-                                        ) : detail.decisions.length === 0 ? (
-                                            <div className="text-[11px] text-muted-foreground">
-                                                还没有决策 —— 这条还停在「要做什么」。
-                                            </div>
-                                        ) : (
-                                            <ul className="flex flex-col gap-1.5">
-                                                {detail.decisions.map((line) => (
-                                                    <Line key={line.seq} line={line} />
-                                                ))}
-                                            </ul>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* 任务分解与进度 */}
-                                <div className="rounded border border-border">
-                                    <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
-                                        任务分解与进度
-                                        <span className="ml-auto">怎么做 · 不进需求层</span>
-                                    </div>
-                                    <div className="px-2 py-1.5">
-                                        {current.steps.length === 0 ? (
-                                            <div className="text-[11px] text-muted-foreground">
-                                                还没有步骤 —— 这条还没开始动。
-                                            </div>
-                                        ) : (
-                                            <ul className="flex flex-col">
-                                                {current.steps.map((step) => (
-                                                    <li
-                                                        key={step.id}
-                                                        className="flex items-baseline gap-1.5 border-b border-border/60 py-1 last:border-b-0"
-                                                    >
-                                                        <span
-                                                            className={`w-3 shrink-0 text-center text-[11px] ${
-                                                                step.status === 'done'
-                                                                    ? 'text-emerald-500'
-                                                                    : step.status === 'doing'
-                                                                      ? 'text-sky-500'
-                                                                      : 'text-muted-foreground/60'
-                                                            }`}
-                                                        >
-                                                            {stepMark(step.status)}
-                                                        </span>
-                                                        <span
-                                                            className={`min-w-0 flex-1 text-[11px] ${
-                                                                step.status === 'done'
-                                                                    ? 'text-muted-foreground line-through decoration-border'
-                                                                    : 'text-foreground'
-                                                            }`}
-                                                        >
-                                                            {step.title}
-                                                        </span>
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* 做得好不好 */}
-                                <div className="rounded border border-border">
-                                    <div className="border-b border-border bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
-                                        做得好不好
-                                    </div>
-                                    <div className="flex flex-col gap-1.5 px-2 py-1.5">
-                                        <div
-                                            className={`text-[11px] ${current.accept.trim() === '' ? 'text-amber-600' : 'text-foreground'}`}
-                                        >
-                                            {current.accept.trim() === '' ? '还没写「怎么算做完」' : current.accept}
-                                        </div>
-                                        {detail !== null && detail.notes.length > 0 && (
-                                            <ul className="flex flex-col gap-1">
-                                                {detail.notes.slice(-6).map((line) => (
-                                                    <Line key={line.seq} line={line} />
-                                                ))}
-                                            </ul>
-                                        )}
-                                        {current.body.trim() !== '' && (
-                                            <div className="text-[10px] text-muted-foreground">背景：{current.body}</div>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
+                            <UnitNeedDetail roomId={room.id} unitId={selected} />
                         )}
                     </div>
+                </div>
+            ) : (
+                <div className="min-h-0 flex-1 overflow-auto p-1.5">
+                    <NeedsList
+                        needs={needs}
+                        ready={ready}
+                        selected={null}
+                        onSelect={(unit) => onOpenUnit(unit.id, unit.title)}
+                    />
                 </div>
             )}
 
             {error !== null && <div className="px-3 py-1 text-[11px] text-red-500">{error}</div>}
         </div>
+    );
+}
+
+/** 需求清单（左栏的主体）：点一条就交给调用方决定「就地展开」还是「开 tab」 */
+function NeedsList({
+    needs,
+    ready,
+    selected,
+    onSelect,
+}: {
+    needs: readonly UnitItem[];
+    ready: Set<string>;
+    selected: string | null;
+    onSelect: (unit: UnitItem) => void;
+}): React.JSX.Element {
+    return (
+        <>
+            {needs.map((unit) => {
+                const progress = unit.progress;
+                const pct = progress === undefined ? 0 : Math.round((100 * progress.done) / progress.total);
+                return (
+                    <button
+                        key={unit.id}
+                        type="button"
+                        onClick={() => onSelect(unit)}
+                        aria-selected={unit.id === selected}
+                        className={`w-full rounded px-1.5 py-1 text-left hover:bg-muted ${
+                            unit.id === selected ? 'bg-sky-500/10 ring-1 ring-sky-500/30' : ''
+                        }`}
+                        style={{ paddingLeft: `${6 + unit.depth * 12}px` }}
+                    >
+                        <span className="flex items-baseline gap-1.5">
+                            <span className={`mt-1.5 size-2 shrink-0 rounded-full ${dotClass(unit, ready)}`} />
+                            <span
+                                className={`min-w-0 flex-1 truncate text-[12px] ${
+                                    unit.status === 'done' ? 'text-muted-foreground' : 'text-foreground'
+                                } ${unit.group ? 'font-medium' : ''}`}
+                                title={unit.title}
+                            >
+                                {unit.title}
+                            </span>
+                        </span>
+                        <span className="mt-0.5 flex items-center gap-1.5 pl-3.5 text-[10px] text-muted-foreground">
+                            {progress !== undefined && (
+                                <>
+                                    <span className="h-[3px] w-14 overflow-hidden rounded bg-border">
+                                        <span
+                                            className={`block h-full ${unit.status === 'done' ? 'bg-emerald-500' : 'bg-sky-500'}`}
+                                            style={{ width: `${pct}%` }}
+                                        />
+                                    </span>
+                                    <span>
+                                        {progress.done}/{progress.total} 步
+                                    </span>
+                                </>
+                            )}
+                            {!unit.group && unit.accept.trim() === '' && (
+                                <span className="rounded border border-amber-500/30 px-1 text-amber-600">未写验收</span>
+                            )}
+                            {unit.sourceQuote !== undefined && (
+                                <span className="min-w-0 truncate">
+                                    ↩ {unit.sourceQuote.author || '有人'}：{unit.sourceQuote.text}
+                                </span>
+                            )}
+                        </span>
+                    </button>
+                );
+            })}
+        </>
     );
 }

@@ -154,6 +154,8 @@ describe('偏好载入：坏数据不许把布局带歪', () => {
             modes: { assets: 'grid' },
             active: { detail: 'detail' },
             sizes: { detail: 400 },
+            // 2026-11-27 加：点开过的需求详情 tab 要跨刷新留在原地
+            opened: [],
         });
     });
 
@@ -166,7 +168,7 @@ describe('偏好载入：坏数据不许把布局带歪', () => {
                 'workbench:task': JSON.stringify({ collapsed: 'oops', modes: [1, 2], active: null, sizes: 7 }),
             }),
         );
-        expect(weird).toEqual({ collapsed: {}, modes: {}, active: {}, sizes: {} });
+        expect(weird).toEqual({ collapsed: {}, modes: {}, active: {}, sizes: {}, opened: [] });
     });
 
     it('存储不可用（隐私模式 / 配额满）不抛', () => {

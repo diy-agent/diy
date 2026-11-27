@@ -21,6 +21,7 @@ import {
     navigate,
     TaskPanel,
     UnitBoardView,
+    UnitNeedDetail,
     useAddress,
     useSelectedRoom,
     type Room,
@@ -29,7 +30,7 @@ import {
 import { useWb } from './AreaHost';
 import { ConversationAreaBar } from './ConversationAreaBar';
 import { ModelConfigView } from './ModelConfigView';
-import { area, definePage, defineView, type PageDef } from './model';
+import { area, definePage, defineView, type OpenedView, type PageDef, type ViewDef } from './model';
 import { BotProfilesView } from './BotProfilesView';
 import { botTypeOf, botsAddressOf, SETTINGS_PAGE, SETTINGS_SECTIONS, sectionOf } from './settings';
 
@@ -215,11 +216,26 @@ function TaskDetail({ room }: { room: Room }) {
  * 两种读法 —— 一个是扫一眼，一个是核对模型输入。两个 tab 会让人以为有两份东西。
  */
 function UnitsBody() {
+    const api = useWb();
     const room = useSelectedRoom();
     if (!room) return <Empty>没有选中房间</Empty>;
     return (
         <div className="wb-fill">
-            <UnitBoardView room={room} />
+            {/* 点一条需求 = 在**对话旁**开一个 tab（`conversation` 区域）：需求详情是与对话
+                平行的内容，不该挤在左侧窄栏里，也不该让左栏在列表 / 详情之间来回切 */}
+            <UnitBoardView
+                room={room}
+                onOpenUnit={(unitId, title) =>
+                    api.openView({
+                        kind: 'unit-detail',
+                        title: title.length > 14 ? `${title.slice(0, 14)}…` : title,
+                        area: 'conversation',
+                        params: { roomId: room.id, unitId },
+                        // 每次替换掉当前那条：详情是「看的那一条在变」，不是并排比较
+                        replaceKind: true,
+                    })
+                }
+            />
         </div>
     );
 }
@@ -358,6 +374,43 @@ function GuideArea() {
 
 function Empty({ children }: { children: string }) {
     return <div className="wb-empty">{children}</div>;
+}
+
+/**
+ * 运行时打开的视图（用户 2026-11-27：点左边需求 → 在对话旁开一个 tab 放它的详情）。
+ *
+ * 为什么必须「运行时」而不是静态 view：详情是**按需求参数化**的，静态 view 只能声明
+ * 「我在哪个区域」，没法表达「我在看哪一条」。这里不引入第二种布局机制 —— 只是让
+ * 布局层多认一类「可关、带参数」的视图（见 model.ts 的 `OpenedView`）。
+ */
+export function materializeView(opened: OpenedView, close: () => void): ViewDef {
+    if (opened.kind === 'unit-detail') {
+        return {
+            id: opened.id,
+            title: opened.title,
+            placement: {},
+            // **不给关闭按钮**（2026-11-27 用户）：详情会被下一条需求替换掉，
+            // 关掉它只会留下一个空 tab，人还得再点一次列表。收起归布局（区域折叠）管。
+            render: () => <UnitDetailTab roomId={opened.params['roomId'] ?? ''} unitId={opened.params['unitId'] ?? ''} />,
+        };
+    }
+    // 未知 kind：别把 tab 变成空白 —— 说清「这个视图没实现」，比静默空白好排
+    return {
+        id: opened.id,
+        title: opened.title,
+        placement: {},
+        close,
+        render: () => <Empty>{`这个视图（${opened.kind}）没有实现`}</Empty>,
+    };
+}
+
+/** 一条需求的详情（独立 tab）：与「目标」页右栏是**同一个组件**，不派生第二份 */
+function UnitDetailTab({ roomId, unitId }: { roomId: string; unitId: string }) {
+    return (
+        <div className="wb-fill">
+            <UnitNeedDetail roomId={roomId} unitId={unitId} />
+        </div>
+    );
 }
 
 export const wbViews = [

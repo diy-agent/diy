@@ -1276,6 +1276,21 @@ export async function createDiy2App(opts: {
                         notes: journal.filter((entry) => entry.kind !== 'decision'),
                     };
                 },
+                /**
+                 * 一条需求的**原始存储**：库里的那一行 + 它的步骤行 + 挂它的 journal 事件。
+                 * 详情页的「源码」就是它 —— 不是视图投影（投影会补缺省值，看着像原文）。
+                 */
+                raw: async ({ input }) => {
+                    const row = store.rawUnit(input.id, input.unit);
+                    if (row === undefined) throw new Error(`没有这条需求：${input.unit}`);
+                    const steps = store
+                        .listUnits(input.id)
+                        .filter((unit) => unit.kind === 'step' && unit.parent === input.unit)
+                        .map((unit) => store.rawUnit(input.id, unit.id) ?? {});
+                    const journal = store.journalOf(input.id, 400).filter((entry) => entry.unit === input.unit);
+                    // 键名用 `events`：`journal` 在传输层已经是别的东西（任务日志列表），同名会打架
+                    return { table: 'task_units', row, steps, events: journal };
+                },
                 list: async ({ input }) => {
                     const board = unitBoard(store.listUnits(input.id));
                     // 「来自哪句话」要能当场核对：光有 message id，人还得自己点进去看是谁说的。

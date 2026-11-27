@@ -265,6 +265,14 @@ export const unitsApi = RpcSchema.group({
          */
         get: RpcSchema.unary({ input: { id: Id, unit: Id }, output: Any }),
         /**
+         * 这条需求**在库里长什么样**（真源，不加工）：`task_units` 的行 + 它的步骤行 + 挂它的日志。
+         *
+         * 为什么要这个口子（2026-11-27 用户）：「详情里也该看到保存的内容源码吧，是数据库记录还是
+         * json？」—— 详情面板是给人看的投影，投影和真源之间必须有一条能当场核对的通道，
+         * 否则「界面上少了什么」永远只能靠猜。
+         */
+        raw: RpcSchema.unary({ input: { id: Id, unit: Id }, output: Any }),
+        /**
          * 模型实际读到的那段文本（`units` 节的 YAML）。
          *
          * 为什么要开这个口子：界面能画树、能画图，但「模型到底读到了什么」此前只能靠 demo 推断。
