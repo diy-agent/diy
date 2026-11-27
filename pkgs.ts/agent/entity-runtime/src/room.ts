@@ -1000,6 +1000,17 @@ export class RoomActor {
             '\n**看图用 view_image，不要自己调模型 API**：要分析图片（截图 / 照片 / 图表）就把路径交给它 —— ' +
             '「自己截图自己看」就是 `screencapture -x /tmp/x.png` 之后 `view_image({path:"/tmp/x.png"})`。' +
             '绝不可以用 bash + curl 去请求模型端点看图：那条路绕开对话上下文，既白花 token，人也不知道你看了什么。';
+        // 代码能力同样必须**明写**：不给这段，模型会一直用 bash 拼 CLI / 读源码猜形状
+        // （2026-11-27 实测 task-mwjddcy0：400 条历史里 251 次 bash、`run_code` 只 1 次，
+        //  而那 1 次成功了它也没再用）。`view_image` 有专门一段，`run_code` 当时一个字没有。
+        const codeHint =
+            this.deps.code?.() === undefined
+                ? ''
+                : '\n**要拿结构化数据、批量查改时用 `run_code`，不要用 bash 拼 CLI**：' +
+                  '代码里直接调后台接口，如 `const rs = await api.rooms.list({}); return rs.length;` —— ' +
+                  '返回值是对象不是文本，不用解析、不用猜格式。不确定有哪些方法就 `return apiHelp()`。' +
+                  '典型场景：批量读/筛选/聚合、一次改多条、等某个事件（`await api.chat.wait({id, sinceSeq, timeoutMs})`）。' +
+                  '**跑构建 / 测试 / 装依赖仍然用 bash** —— 那些是 shell 的活，别绕道代码里跑子进程。';
         return (
             '可以用 read / write / edit 读写文件、用 bash 执行命令；' +
             `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
@@ -1010,7 +1021,8 @@ export class RoomActor {
             'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。' +
             unitHint +
             jobHint +
-            imageHint
+            imageHint +
+            codeHint
         );
     }
 
