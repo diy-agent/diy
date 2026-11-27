@@ -428,27 +428,40 @@ function EntryView({
     // assistant：头像 + 名字一行，内容按「连续同类块」渲染（与 astryx 面同一份 runsOf）
     const runs = runsOf(entry.parts);
     const copyable = plainTextOf(entry.parts);
+    // 续段（segment > 0）：同一条回复被人插话打断后接着写的后半段。不重复头像 / 名字 / 时间
+    // （否则看起来像 bot 说了两遍），只留小一号头像 + 一条淡的「继续」标记 —— 观感上就是
+    // 「说话被打断、接着往下说」。
+    const continuation = entry.segment !== undefined && entry.segment > 0;
     return (
         <Message className="group my-4">
             <MessageAvatar className="size-[26px]">
-                <BotAvatar author={entry.author} roomId={roomId} size={26} />
+                <BotAvatar author={entry.author} roomId={roomId} size={continuation ? 20 : 26} />
             </MessageAvatar>
             <MessageContent>
-                <MessageHeader className="mb-0.5">
-                    <span className="font-medium" style={{ color: entry.author?.color }}>
-                        {entry.author?.name ?? 'bot'}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                        <Time at={entry.turn?.startedAt ?? entry.at} />
-                    </span>
-                    {copyable !== '' && (
-                        // 悬停才浮现：常驻的复制按钮会让每条回复都多一行视觉噪音
-                        <CopyButton
-                            text={copyable}
-                            className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100"
-                        />
-                    )}
-                </MessageHeader>
+                {continuation ? (
+                    <div className="mb-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <span className="font-medium" style={{ color: entry.author?.color }}>
+                            {entry.author?.name ?? 'bot'}
+                        </span>
+                        <span className="opacity-70">↳ 接着上一条继续</span>
+                    </div>
+                ) : (
+                    <MessageHeader className="mb-0.5">
+                        <span className="font-medium" style={{ color: entry.author?.color }}>
+                            {entry.author?.name ?? 'bot'}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                            <Time at={entry.turn?.startedAt ?? entry.at} />
+                        </span>
+                        {copyable !== '' && (
+                            // 悬停才浮现：常驻的复制按钮会让每条回复都多一行视觉噪音
+                            <CopyButton
+                                text={copyable}
+                                className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100"
+                            />
+                        )}
+                    </MessageHeader>
+                )}
                 <RunsView runs={runs} roomId={roomId} live={entry.waiting === true} />
                 {/* 轮次最下面一行：运行中「正在调用 bash… 44s / 已用 2m44s」，结束换成结算
                     （`EndFooterLine` 的「这一轮是怎么停的」已并进 TurnFooter 的 settle 标签，
