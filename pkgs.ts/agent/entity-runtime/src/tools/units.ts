@@ -1,4 +1,4 @@
-// tools/units.ts —— 任务「需求账本树」的读写工具：让 agent 把任务**长成**一棵树（母项 → 可验收的产出）。
+// tools/units.ts —— 任务「需求账本」的读写工具：让 agent 把任务**长成**两层（目标 → 可验收的需求）。
 //
 // 2026-11-25 用户裁：账本只记「要做什么」，**不记执行规划**。所以这里只剩两类操作 ——
 // 往树上加/改/删条目。曾经有 `unit_link` / `unit_unlink`（依赖边）、`batch_*`（交付批次）、
@@ -96,7 +96,7 @@ export function unitTools(host: UnitHost): ToolSet {
         unit_list: tool({
             description:
                 '看这张需求账本树的当前状态：`tree` 是缩进树（`x`=做完 / `>`=现在能挑 / `~`=在做），' +
-                '`ready` 是现在可以挑的叶子。**每轮的 system 上下文里已经有全树**（units 节），' +
+                '`ready` 是现在可以挑的需求。**每轮的 system 上下文里已经有全树**（units 节），' +
                 '所以只在「要拿准某个 id / 想知道某条 body」时才调它，不必先查再动手。',
             inputSchema: z.object({}),
             execute: async () => briefBoard(host),
@@ -110,15 +110,18 @@ export function unitTools(host: UnitHost): ToolSet {
                 '往账本树上加条目：**一次调用 = 一批**（整棵树一次给全最好）。',
                 '**接到需求、或需求变了的时候，这是第一步** —— 先把「要做成哪些东西」写下来，再动手。',
                 '',
-                '· `parent` 是**母项**：这块需求由哪些子块组成。不填 = 顶层。',
+                '**账本只有两层：目标（顶层）→ 需求（挂在目标下）**，不再往下嵌。',
+                '· `parent` 不填 = **目标**：一段独立、可以单独开始/完成/放弃的成果，可以没有子项。',
+                '· `parent` 给一个**顶层条目** = **需求**：那个目标必须满足的一条可验收条件。',
+                '· `parent` 指向非顶层条目会被拒 —— 需求下不再挂需求。',
                 '',
-                '**一条 unit = 一件能被验收的产出**（叶子）或**一个母项**（有子、本身不执行）：',
-                '· 叶子判据：做完之后能拿什么东西给人看（新行为 / 新接口 / 改好的数据 / 一份能引用的结论）。',
-                '· 反例（**别进需求层**）：读某文件、改某文件、跑测试、全量质检、扫尾翻新 —— ' +
-                    '那些是**步骤**，用 `kind: "step"` + `parent` 挂在对应需求下面（只有三档状态，不写 accept）。',
+                '**一条 unit = 一件能被验收的产出**：',
+                '· 判据：做完之后能拿什么东西给人看（新行为 / 新接口 / 改好的数据 / 一份能引用的结论）。',
+                '· 反例（**别进账本**）：读某文件、改某文件、跑测试、扫尾翻新、提 PR —— ' +
+                    '那些是**执行步骤**，不进账本（决策写 journal，进度与输出留在工具记录里）。',
                 '· 正例：「deleteRoom 事务化（中途失败不留半个删）」「unit 取消后下游不再引用它，且给得出原因」。',
                 '',
-                '粒度参考：一个母项下 2~5 条叶子；超过 7 条说明该再分一层。',
+                '粒度参考：一个目标下 2~7 条需求；再多就看看它们是不是其实是几个独立目标。',
                 '`key` 必填：**它就是这条 unit 的 id**，也是以后 parent 引用它的名字 —— ' +
                     '起短名（`state`、`cancel-tool`，小写英文 / 数字 / - _，≤24）。同批任意项的 key 都能引用（在它后面也行）。',
                 'body 写验收口径。',
@@ -134,13 +137,6 @@ export function unitTools(host: UnitHost): ToolSet {
                                 .regex(KEY_PATTERN, 'key 只能是小写字母开头的小写英文 / 数字 / - _，≤24 字符')
                                 .describe(
                                     '这条 unit 的 id（自起的短名，如 state / cancel-tool）；后面的项与以后的操作都用它引用',
-                                ),
-                            kind: z
-                                .enum(['need', 'step'])
-                                .optional()
-                                .describe(
-                                    'need（缺省）= 要做什么，人要能验收、进需求树；' +
-                                        'step = 怎么做，挂在某条需求下面的一步（不写 accept、不进需求层，只在点开那条需求时出现）',
                                 ),
                             title: z
                                 .string()
@@ -162,7 +158,9 @@ export function unitTools(host: UnitHost): ToolSet {
                             parent: z
                                 .string()
                                 .optional()
-                                .describe('可选：母项的 key（同批任意项或树上已有的 unit id）；不填 = 顶层'),
+                                .describe(
+                                    '可选：所属**目标**的 key（同批任意项或树上已有的顶层 unit id）；不填 = 顶层目标',
+                                ),
                         }),
                     )
                     .min(1),
@@ -180,10 +178,32 @@ export function unitTools(host: UnitHost): ToolSet {
                     if (taken !== undefined) {
                         throw new Error(`key 已被占用：${item.key}（已在树上，用 unit_update 改它，或换个 key）`);
                     }
-                    if (item.parent === item.key) throw new Error(`unit 不能是自己的母项：${item.key}`);
-                    // 步骤必须挂在某条需求下：没父的 step 在界面上没有归属（会被当垃圾数据丢掉）
-                    if (item.kind === 'step' && item.parent === undefined) {
-                        throw new Error(`步骤要挂在一条需求下面：${item.key} 缺 parent`);
+                    if (item.parent === item.key) throw new Error(`unit 不能挂到自己下面：${item.key}`);
+                }
+                // 两层的硬约束（2026-11-27 裁）：父只能是**顶层**。父可能在同一批里（先建后连），
+                // 所以先把「本批每个 key 的父」整张表算出来再统一判深度 —— 不然 A 挂 B、B 挂 A
+                // 这种同批循环也能过。
+                const parentInBatch = new Map<string, string | null>();
+                for (const item of items) parentInBatch.set(item.key, item.parent ?? null);
+                for (const item of items) {
+                    const parent = item.parent;
+                    if (parent === undefined) continue;
+                    const inBatch = batchKeys.has(parent);
+                    const parentRecord = inBatch ? undefined : host.store.unitOf(host.taskId, parent);
+                    if (!inBatch && parentRecord === undefined) {
+                        throw new Error(
+                            `parent 指向的 unit 不存在：${parent}（找不准 key 就先 unit_list 看现在的树，不要编）`,
+                        );
+                    }
+                    const grandParent = inBatch
+                        ? (parentInBatch.get(parent) ?? null)
+                        : (host.store.unitOf(host.taskId, parent)?.parent ?? null);
+                    if (grandParent !== null) {
+                        throw new Error(
+                            `账本只有两层（目标 → 需求）：${parent} 自己就挂在别的条目下，不能再当目标。` +
+                                `如果 ${item.key} 确实是独立成果，就别给 parent（当顶层目标）；` +
+                                `如果它只是 ${parent} 的一条条件，就把 parent 改成 ${parent} 所在的那个目标。`,
+                        );
                     }
                 }
                 // 先全部建节点（带 parent）：这样 parent 可以引用同批任意项（含后面那些）
@@ -192,7 +212,6 @@ export function unitTools(host: UnitHost): ToolSet {
                         taskId: host.taskId,
                         id: item.key,
                         allowNewId: true,
-                        kind: item.kind ?? 'need',
                         title: item.title,
                         body: item.body ?? '',
                         accept: item.accept ?? '',
@@ -212,8 +231,13 @@ export function unitTools(host: UnitHost): ToolSet {
                     added.push({ id: item.key, title: item.title, parent: item.parent ?? null });
                 }
                 const board = boardOf(host);
-                // 全是平铺的顶层 = 没有拆过结构。可能是真有多个母项，也可能只是没分 —— 提醒一句，不改它的树
+                // 全是平铺的顶层 = 没有拆过结构。可能真是几个独立目标，也可能只是没分 —— 提醒一句，不改它的树
                 const flat = board.rows.length > 3 && board.groups.length === 0;
+                // 软上限：一个目标下超过 7 条需求，就该看看它们是不是其实是几个独立目标
+                // （不做成硬拦：硬拦会逼模型把不相干的需求硬塞进已有的几条里）
+                const crowded = board.rows
+                    .filter((row) => row.children.length > 7)
+                    .map((row) => ({ id: row.id, title: row.title, count: row.children.length }));
                 return {
                     ok: true,
                     added,
@@ -222,10 +246,17 @@ export function unitTools(host: UnitHost): ToolSet {
                     ...(flat
                         ? {
                               warning:
-                                  `现在这 ${board.rows.length} 条都是平铺的顶层（没有母项）。` +
-                                  '如果它们其实分属几块需求，用 unit_update 的 parent 挂上去（或下次 unit_add 时给 parent）。',
+                                  `现在这 ${String(board.rows.length)} 条都是平铺的顶层（没有目标把需求归到一起）—— ` +
+                                  '如果它们其实分属几个目标，用 unit_update 的 parent 挂上去（或下次 unit_add 时给 parent）。',
                           }
                         : {}),
+                    ...(crowded.length === 0
+                        ? {}
+                        : {
+                              hint:
+                                  `${crowded.map((row) => `${row.id}（${String(row.count)} 条）`).join('、')} 下面挂得太满 —— ` +
+                                  '一个目标下超过 7 条需求，通常说明这其实是几个独立目标：把其中成块的提到顶层，而不是继续往里塞。',
+                          }),
                 };
             },
         }),
@@ -233,46 +264,52 @@ export function unitTools(host: UnitHost): ToolSet {
         unit_update: tool({
             description:
                 '改一条 unit：title / body / parent，或推状态（doing=开始做、done=做完、open=退回去重做）。' +
-                '**只有叶子能推状态**：母项（有子）的状态由子派生，改它会被拒。' +
+                '**只有叶子能推状态**：目标（有子）的状态由子派生，改它会被拒。' +
+                '**换挂点只能挂到顶层**（账本只有两层）；有子的条目不能再往上挂。' +
                 '未知字段不要瞎猜，先 unit_get 看它现在是什么。',
             inputSchema: z.object({
                 id: z.string(),
-                kind: z.enum(['need', 'step']).optional().describe('改成步骤 / 改回需求（一般不用动）'),
                 title: z.string().min(1).optional(),
                 body: z
                     .string()
                     .optional()
                     .describe('这条需求要解决什么（背景 / 范围）—— 进展不要写这里（进展用 journal）'),
                 accept: z.string().optional().describe('怎么算做完：一句话能判断完/未完的判据'),
-                parent: z.string().nullable().optional().describe('换挂点：给母项的 key；传 null = 提到顶层'),
+                parent: z.string().nullable().optional().describe('换挂点：给**目标**（顶层条目）的 key；传 null = 提到顶层'),
                 status: z.enum(UNIT_STATUSES).optional().describe('open / doing / done（只有叶子能改）'),
             }),
-            execute: async ({ id, kind, title, body, accept, parent, status }) => {
+            execute: async ({ id, title, body, accept, parent, status }) => {
                 const current = need(host, id);
+                const board = boardOf(host);
+                const row = board.rows.find((item) => item.id === id);
                 if (status !== undefined) {
-                    const row = boardOf(host).rows.find((item) => item.id === id);
                     if (row?.group === true) {
                         throw new Error(
-                            `${id} 是母项（有 ${row.children.length} 个子）：它的状态由子派生，不能直接改。` +
-                                '要推进就改它下面的叶子。',
+                            `${id} 是目标（有 ${String(row.children.length)} 个需求）：它的状态由需求派生，不能直接改。` +
+                                '要推进就改它下面的需求。',
                         );
                     }
                 }
                 if (parent !== undefined && parent !== null) {
                     if (parent === id) throw new Error(`unit 不能挂到自己下面：${id}`);
-                    // 父链成环：往上走一遍，碰见自己就拒
-                    let cursor: string | null = parent;
-                    const guard = new Set<string>([id]);
-                    while (cursor !== null) {
-                        if (guard.has(cursor)) throw new Error(`父链会成环：${id} → ${parent} → …`);
-                        guard.add(cursor);
-                        cursor = host.store.unitOf(host.taskId, cursor)?.parent ?? null;
+                    if ((row?.children.length ?? 0) > 0) {
+                        throw new Error(
+                            `${id} 下面已经挂着需求，不能再挂到别人下面（账本只有两层）。` +
+                                '要合并目标就把需求用 unit_update 的 parent 搬过去。',
+                        );
+                    }
+                    const target = host.store.unitOf(host.taskId, parent);
+                    if (target === undefined) throw new Error(`parent 指向的 unit 不存在：${parent}`);
+                    if ((target.parent ?? null) !== null) {
+                        throw new Error(
+                            `账本只有两层：${parent} 自己就挂在 ${String(target.parent)} 下，不能当目标。` +
+                                '要挂在同一个目标下，就把 parent 改成那个顶层条目。',
+                        );
                     }
                 }
                 const next = host.store.saveUnit({
                     taskId: host.taskId,
                     id,
-                    kind: kind ?? current.kind,
                     title: title ?? current.title,
                     body: body ?? current.body,
                     accept: accept ?? current.accept,
@@ -294,7 +331,7 @@ export function unitTools(host: UnitHost): ToolSet {
         unit_drop: tool({
             description:
                 '取消一条 unit：**从树上真删掉**。' +
-                '删母项时，它下面的子会**提升到它原来的位置**（不连带删除 —— 子是真活着的工作）。' +
+                '删目标时，它下面的需求会**提升到它原来的位置**（不连带删除 —— 它们是真活着的工作）。' +
                 '必须给 reason —— 事件里会留下 title + reason，所以「这条为什么没了」以后还查得到。',
             inputSchema: z.object({
                 id: z.string(),
@@ -331,9 +368,9 @@ export function unitTools(host: UnitHost): ToolSet {
 
         unit_get: tool({
             description:
-                '看一条 unit 的全文（title / body / accept / source / 状态 / 步骤与进度）。' +
+                '看一条 unit 的全文（title / body / accept / source / 状态 / 子项）。' +
                 '`accept` = 怎么算做完（空串 = 还没写，该补）；`source` = 这条需求来自哪句人话；' +
-                '`steps` = 挂在它下面的步骤（`kind: "step"`）与进度。',
+                '`children` = 挂在它下面的需求（只有目标会有）。',
             inputSchema: z.object({ id: z.string() }),
             execute: async ({ id }) => {
                 const unit = need(host, id);
@@ -348,9 +385,6 @@ export function unitTools(host: UnitHost): ToolSet {
                     status: row?.status ?? unit.status,
                     parent: row?.parent ?? null,
                     children: row?.children ?? [],
-                    // 挂在它下面的步骤与进度（步骤不进需求层，但要能查：做到这条需求时看自己走到哪）
-                    steps: (row?.steps ?? []).map((step) => ({ id: step.id, title: step.title, status: step.status })),
-                    progress: row?.progress ?? { done: 0, total: 0 },
                 };
             },
         }),

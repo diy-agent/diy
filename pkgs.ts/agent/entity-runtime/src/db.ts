@@ -156,21 +156,17 @@ export const UNIT_STATUSES = ['open', 'doing', 'done'] as const;
 export type UnitStatus = (typeof UNIT_STATUSES)[number];
 
 /**
- * 账本里两种条目（2026-11-27 用户裁）：
+ * 账本里的层级上限（2026-11-27 用户裁）：**只有两层** —— 目标（根）→ 需求（一层子）。
  *
- * - `need`：**要做什么**。人要能验收的单位（`accept`），也是人唯一要对齐的层。
- * - `step`：**怎么做**。挂在某条 need 下面的执行步骤，只有三档状态、不要求 `accept`，
- *   不进 `units` 上下文、不进 UI 主列表 —— 只在「点开那条需求」时出现。
+ * 为什么砍掉第三层「步骤」（`kind = 'step'`，同一天上线、同一天退役）：
+ * 生产库 153 条 unit 里 `kind = 'step'` **一条都没被用过**（2026-11-27 体检）。工具支持、
+ * 提示词写了判据，模型仍从不主动标 step —— 「靠模型自愿分层」这条路不成立，那一层事实上不存在。
+ * 执行过程本来就另有出处：`journal`（决策 / 进展）+ `job` + 工具调用记录，不必进账本。
  *
- * 为什么合成一张表而不是新开 `task_unit_steps`：它们的关系、状态、排序、级联删除全都一样，
- * 差别只有「谁进需求层」；分成两张表要写两遍读写与迁移，而收益只是省一个字段。
+ * 于是现在的形状是：根 = **目标**（可以没有子、可以独立开始/完成/放弃），子 = **需求**
+ * （要能验收，`accept`）。写完不再嵌套 —— 真需要更细的粒度就新建一个根目标。
  */
-export const UNIT_KINDS = ['need', 'step'] as const;
-export type UnitKind = (typeof UNIT_KINDS)[number];
-
-function isUnitKind(value: string): value is UnitKind {
-    return (UNIT_KINDS as readonly string[]).includes(value);
-}
+export const UNIT_MAX_DEPTH = 1;
 
 function isUnitStatus(value: string): value is UnitStatus {
     return (UNIT_STATUSES as readonly string[]).includes(value);
@@ -189,8 +185,6 @@ function isUnitStatus(value: string): value is UnitStatus {
 export interface UnitRecord {
     taskId: string;
     id: string;
-    /** `need` = 要做什么（人对齐、要验收）；`step` = 怎么做（挂在 need 下，只给执行用） */
-    kind: UnitKind;
     title: string;
     /** 这条需求要解决什么（背景 / 范围）。**验收口径不写这里** —— 它有自己的字段 `accept` */
     body: string;
@@ -227,10 +221,8 @@ export interface UnitRecord {
 }
 
 /** 写 unit：`id` / `seq` / 时间戳缺省由 store 补（新 unit 的 id 走 counters，永不回收） */
-export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt' | 'accept' | 'source' | 'kind'> & {
+export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt' | 'accept' | 'source'> & {
     id?: string;
-    /** 缺省 = 沿用库里已有的（更新时）；新建缺省 `need`（绝大多数条目是需求） */
-    kind?: UnitKind;
     /**
      * 「怎么算做完」。缺省 = 沿用库里已有的（更新时）；新建缺省就是空串 = 还没写。
      * **不做成必填**：老代码 / 老数据里没有这一栏，逼着所有调用点补一遍只会让人随手写个占位串。
@@ -846,10 +838,11 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         -- 任务的需求账本树（**不是实体**：不占 #号、不进侧栏、不进 entity_links）。
         -- 主键 (task_id, id)：id 只在同一 task 内唯一，人读短、agent 引用短。
         -- 2026-11-25 裁：只记「要做什么」的父子结构，执行规划不落库（见 UnitRecord 注释）
+        -- 2026-11-27 裁：只有两层（目标 → 需求）；kind 列已退役（代码不再读写，
+        -- 只保留 DEFAULT 'need' 以免老库写入报错，见 migration 019）
         CREATE TABLE IF NOT EXISTS task_units (
             task_id    TEXT NOT NULL,
             id         TEXT NOT NULL,
-            -- need = 要做什么（要验收）；step = 怎么做（挂在 need 下）
             kind       TEXT NOT NULL DEFAULT 'need',
             title      TEXT NOT NULL,
             body       TEXT NOT NULL DEFAULT '',
@@ -1068,8 +1061,6 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
     const readUnitRow = (row: Record<string, unknown>): UnitRecord => ({
         taskId: String(row['task_id']),
         id: String(row['id']),
-        // 老行没有 kind 列的值时按需求处理（历史条目都是需求）
-        kind: isUnitKind(String(row['kind'] ?? 'need')) ? (String(row['kind']) as UnitKind) : 'need',
         title: String(row['title']),
         body: String(row['body']),
         accept: row['accept'] === null || row['accept'] === undefined ? '' : String(row['accept']),
@@ -1121,16 +1112,22 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             if (unit.id.trim() === '') throw new Error('unit 的 id 不能为空');
         }
         const now = Date.now();
+        // 缺省沿用（改 title 不该顺手把挂点抹掉）；新节点缺省 = 根
+        const nextParent = unit.parent === undefined ? (previous?.parent ?? null) : unit.parent;
+        // seq 的作用域 = **同一个父下面**（2026-11-27 裁）：目标之间排一次、每个目标下的需求
+        // 各自再排一次。原来全局一把号，新需求会把「目标列表」和「某目标下的需求列表」串成
+        // 一条看不到边界的计数。
         const nextSeq = (
-            db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM task_units WHERE task_id = ?').get(unit.taskId) as {
+            db.prepare(
+                'SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM task_units ' +
+                    'WHERE task_id = ? AND ((? IS NULL AND parent_id IS NULL) OR parent_id = ?)',
+            ).get(unit.taskId, nextParent, nextParent) as {
                 n: number;
             }
         ).n;
         const record: UnitRecord = {
             taskId: unit.taskId,
             id: previous?.id ?? unit.id ?? allocateUnitId(unit.taskId),
-            // 缺省沿用（把 need 改成 step 是显式动作，不该因为没传就翻面）
-            kind: unit.kind ?? previous?.kind ?? 'need',
             title,
             body: unit.body,
             // 缺省沿用（改标题不该把已写好的验收口径抹掉）
@@ -1138,21 +1135,20 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             // 来源同理：只在显式给的时候覆盖（重跑一遍 unit_add 不会把来源抹成空）
             source: unit.source ?? previous?.source ?? '',
             status: unit.status,
-            // 缺省沿用（改 title 不该顺手把挂点抹掉）；新节点缺省 = 根
-            parent: unit.parent === undefined ? (previous?.parent ?? null) : unit.parent,
-            seq: previous?.seq ?? Number(nextSeq),
+            parent: nextParent,
+            // 换挂点时重新拿号：旧号在原来的兄弟里才有意义，搬到新父下会插到中间去
+            seq: previous === undefined || previous.parent !== nextParent ? Number(nextSeq) : previous.seq,
             createdAt: previous?.createdAt ?? unit.createdAt ?? now,
             updatedAt: unit.updatedAt ?? now,
         };
         if (record.parent === record.id) throw new Error(`unit 不能是自己的父：${record.id}`);
         db.prepare(
-            'INSERT INTO task_units (task_id, id, kind, title, body, accept, source_message_id, status, parent_id, seq, created_at, updated_at) ' +
-                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ' +
-                'ON CONFLICT(task_id, id) DO UPDATE SET kind=?, title=?, body=?, accept=?, source_message_id=?, status=?, parent_id=?, updated_at=?',
+            'INSERT INTO task_units (task_id, id, title, body, accept, source_message_id, status, parent_id, seq, created_at, updated_at) ' +
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?) ' +
+                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, accept=?, source_message_id=?, status=?, parent_id=?, updated_at=?',
         ).run(
             record.taskId,
             record.id,
-            record.kind,
             record.title,
             record.body,
             record.accept,
@@ -1162,7 +1158,6 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             record.seq,
             record.createdAt,
             record.updatedAt,
-            record.kind,
             record.title,
             record.body,
             record.accept,

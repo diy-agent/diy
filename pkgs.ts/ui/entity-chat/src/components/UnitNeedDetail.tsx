@@ -1,4 +1,4 @@
-// UnitNeedDetail —— 一条需求的**全貌**：做什么 / 决策 / 任务分解与进度 / 做得好不好 / 源码。
+// UnitNeedDetail —— 一条需求的**全貌**：做什么 / 决策 / 做得好不好 / 源码。
 //
 // 用户 2026-11-27：「把需求的右边列做成单独的一个 view，放到对话平行的 view tab 里」——
 // 所以它既要能当「目标」页的右栏，也要能独立成一个 tab。两种用法共用这一个组件：
@@ -13,12 +13,6 @@ import type { JournalLineView, UnitDetailView, UnitRawView } from '@diy-agent/ch
 import { jumpToMessage } from '../askJump';
 import { useUnitDetail } from '../useUnitDetail';
 import { useUnitRaw } from '../useUnitRaw';
-
-function stepMark(status: 'open' | 'doing' | 'done'): string {
-    if (status === 'done') return '✓';
-    if (status === 'doing') return '◐';
-    return '○';
-}
 
 function fmtTime(at: number): string {
     const date = new Date(at);
@@ -72,16 +66,6 @@ function RawPanel({ raw, error }: { raw: UnitRawView | null; error: string | nul
             <pre className="max-h-64 overflow-auto rounded border border-border bg-muted/30 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-foreground">
                 {JSON.stringify(raw.row, null, 2)}
             </pre>
-            {raw.steps.length > 0 && (
-                <>
-                    <div className="text-[10px] text-muted-foreground">
-                        步骤行（同表，<code className="text-foreground">kind = 'step'</code>）
-                    </div>
-                    <pre className="max-h-64 overflow-auto rounded border border-border bg-muted/30 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-foreground">
-                        {JSON.stringify(raw.steps, null, 2)}
-                    </pre>
-                </>
-            )}
             // 服务端这个键叫 `events`（`journal` 在传输层已经是任务日志列表，同名会打架）
             {raw.events.length > 0 && (
                 <>
@@ -134,7 +118,7 @@ export function UnitNeedDetail({
                 <button
                     type="button"
                     onClick={() => setSource((prev) => !prev)}
-                    title={source ? '回到内容（做了什么 / 决策 / 步骤）' : '看源码（库里存的原样 JSON）'}
+                    title={source ? '回到内容（做了什么 / 决策）' : '看源码（库里存的原样 JSON）'}
                     aria-pressed={source}
                     className={`ml-auto flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
                         source
@@ -185,42 +169,6 @@ export function UnitNeedDetail({
                                 <ul className="flex flex-col gap-1.5">
                                     {decisions.map((line) => (
                                         <Line key={line.seq} line={line} />
-                                    ))}
-                                </ul>
-                            )}
-                        </Block>
-
-                        <Block title="任务分解与进度" right="怎么做 · 不进需求层">
-                            {need.steps.length === 0 ? (
-                                <div className="text-[11px] text-muted-foreground">还没有步骤 —— 这条还没开始动。</div>
-                            ) : (
-                                <ul className="flex flex-col">
-                                    {need.steps.map((step) => (
-                                        <li
-                                            key={step.id}
-                                            className="flex items-baseline gap-1.5 border-b border-border/60 py-1 last:border-b-0"
-                                        >
-                                            <span
-                                                className={`w-3 shrink-0 text-center text-[11px] ${
-                                                    step.status === 'done'
-                                                        ? 'text-emerald-500'
-                                                        : step.status === 'doing'
-                                                          ? 'text-sky-500'
-                                                          : 'text-muted-foreground/60'
-                                                }`}
-                                            >
-                                                {stepMark(step.status)}
-                                            </span>
-                                            <span
-                                                className={`min-w-0 flex-1 text-[11px] ${
-                                                    step.status === 'done'
-                                                        ? 'text-muted-foreground line-through decoration-border'
-                                                        : 'text-foreground'
-                                                }`}
-                                            >
-                                                {step.title}
-                                            </span>
-                                        </li>
                                     ))}
                                 </ul>
                             )}

@@ -518,7 +518,21 @@ describe('unit（需求账本树的节点）', () => {
         probe.close();
         expect(columns).toContain('kind');
         store.saveUnit({ taskId: 'task-x', id: 'u1', allowNewId: true, title: '老库补列后能写', body: '', accept: '', status: 'open', parent: null });
-        expect(store.unitOf('task-x', 'u1')?.kind).toBe('need');
+        expect(store.unitOf('task-x', 'u1')?.title).toBe('老库补列后能写');
+    });
+
+    it('seq 的作用域是「同一个父下面」：目标之间排一次、每个目标下的需求各自再排', () => {
+        // 2026-11-27 裁：原来全局一把号，新需求会把「目标列表」与「某目标下的需求列表」串成
+        // 一条看不到边界的计数（人看到的序号跟旁边那一列对不上）。
+        const store = openStore(':memory:');
+        store.saveRoom(room);
+        store.saveUnit({ taskId: room.id, id: 'g1', allowNewId: true, title: '目标一', body: '', status: 'open' });
+        store.saveUnit({ taskId: room.id, id: 'g2', allowNewId: true, title: '目标二', body: '', status: 'open' });
+        store.saveUnit({ taskId: room.id, id: 'r1', allowNewId: true, title: '需求一', body: '', status: 'open', parent: 'g1' });
+        store.saveUnit({ taskId: room.id, id: 'r2', allowNewId: true, title: '需求二', body: '', status: 'open', parent: 'g2' });
+        const seqOf = (id: string): number | undefined => store.unitOf(room.id, id)?.seq;
+        expect([seqOf('g1'), seqOf('g2')]).toEqual([1, 2]);
+        expect([seqOf('r1'), seqOf('r2')]).toEqual([1, 1]);
     });
 
     it('journalOf：未知 kind 归位成 progress（一条脏数据不该崩掉整轮上下文）', () => {
@@ -616,9 +630,11 @@ describe('unit（需求账本树的节点）', () => {
         );
     });
 
-    it('parent 挂点：改 parent 不动 seq / createdAt；不能挂成自己', () => {
+    it('parent 挂点：改 parent 时在新父下重新拿号（seq 作用域 = 同父）；不能挂成自己', () => {
+        // 2026-11-27：seq 改成「同一个父下面」排序之后，旧的全局号搬到新父下会插到别人中间，
+        // 所以换挂点 = 在目标组里重新排到末尾；createdAt 仍不动（搬动不是新建）。
         const store = openStore(':memory:');
-        const dom = add(store, 't1', '母项');
+        const dom = add(store, 't1', '目标');
         const leaf = add(store, 't1', '叶');
         const moved = store.saveUnit({
             taskId: 't1',
@@ -629,9 +645,10 @@ describe('unit（需求账本树的节点）', () => {
             parent: dom.id,
         });
         expect(moved.parent).toBe(dom.id);
-        expect(moved.seq).toBe(leaf.seq);
+        expect(moved.seq).toBe(1);
+        expect(moved.createdAt).toBe(leaf.createdAt);
         expect(() =>
-            store.saveUnit({ taskId: 't1', id: dom.id, title: '母项', body: '', status: 'open', parent: dom.id }),
+            store.saveUnit({ taskId: 't1', id: dom.id, title: '目标', body: '', status: 'open', parent: dom.id }),
         ).toThrow(/自己的父/);
         // 删得幂等
         expect(store.removeUnit('t1', leaf.id)).toBe(true);

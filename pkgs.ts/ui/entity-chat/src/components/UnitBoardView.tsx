@@ -113,7 +113,7 @@ export function UnitBoardView({
                     <div className="font-medium text-foreground">还没有需求</div>
                     <p className="leading-relaxed">
                         跟 agent 说一句「这件事要解决成什么样」，需求会长在这里：一条一个关注点，
-                        点开能看到它的决策、步骤与验收。
+                        点开能看到它的决策与验收。
                     </p>
                 </div>
             ) : onOpenUnit === undefined ? (
@@ -163,57 +163,41 @@ function NeedsList({
 }): React.JSX.Element {
     return (
         <>
-            {needs.map((unit) => {
-                const progress = unit.progress;
-                const pct = progress === undefined ? 0 : Math.round((100 * progress.done) / progress.total);
-                return (
-                    <button
-                        key={unit.id}
-                        type="button"
-                        onClick={() => onSelect(unit)}
-                        aria-selected={unit.id === selected}
-                        className={`w-full rounded px-1.5 py-1 text-left hover:bg-muted ${
-                            unit.id === selected ? 'bg-sky-500/10 ring-1 ring-sky-500/30' : ''
-                        }`}
-                        style={{ paddingLeft: `${6 + unit.depth * 12}px` }}
-                    >
-                        <span className="flex items-baseline gap-1.5">
-                            <span className={`mt-1.5 size-2 shrink-0 rounded-full ${dotClass(unit, ready)}`} />
-                            <span
-                                className={`min-w-0 flex-1 truncate text-[12px] ${
-                                    unit.status === 'done' ? 'text-muted-foreground' : 'text-foreground'
-                                } ${unit.group ? 'font-medium' : ''}`}
-                                title={unit.title}
-                            >
-                                {unit.title}
+            {needs.map((unit) => (
+                <button
+                    key={unit.id}
+                    type="button"
+                    onClick={() => onSelect(unit)}
+                    aria-selected={unit.id === selected}
+                    className={`w-full rounded px-1.5 py-1 text-left hover:bg-muted ${
+                        unit.id === selected ? 'bg-sky-500/10 ring-1 ring-sky-500/30' : ''
+                    }`}
+                    style={{ paddingLeft: `${6 + unit.depth * 12}px` }}
+                >
+                    <span className="flex items-baseline gap-1.5">
+                        <span className={`mt-1.5 size-2 shrink-0 rounded-full ${dotClass(unit, ready)}`} />
+                        <span
+                            className={`min-w-0 flex-1 truncate text-[12px] ${
+                                unit.status === 'done' ? 'text-muted-foreground' : 'text-foreground'
+                            } ${unit.group ? 'font-medium' : ''}`}
+                            title={unit.title}
+                        >
+                            {unit.title}
+                        </span>
+                    </span>
+                    <span className="mt-0.5 flex items-center gap-1.5 pl-3.5 text-[10px] text-muted-foreground">
+                        {unit.group && <span>{unit.children.length} 条需求</span>}
+                        {!unit.group && unit.accept.trim() === '' && (
+                            <span className="rounded border border-amber-500/30 px-1 text-amber-600">未写验收</span>
+                        )}
+                        {unit.sourceQuote !== undefined && (
+                            <span className="min-w-0 truncate">
+                                ↩ {unit.sourceQuote.author || '有人'}：{unit.sourceQuote.text}
                             </span>
-                        </span>
-                        <span className="mt-0.5 flex items-center gap-1.5 pl-3.5 text-[10px] text-muted-foreground">
-                            {progress !== undefined && (
-                                <>
-                                    <span className="h-[3px] w-14 overflow-hidden rounded bg-border">
-                                        <span
-                                            className={`block h-full ${unit.status === 'done' ? 'bg-emerald-500' : 'bg-sky-500'}`}
-                                            style={{ width: `${pct}%` }}
-                                        />
-                                    </span>
-                                    <span>
-                                        {progress.done}/{progress.total} 步
-                                    </span>
-                                </>
-                            )}
-                            {!unit.group && unit.accept.trim() === '' && (
-                                <span className="rounded border border-amber-500/30 px-1 text-amber-600">未写验收</span>
-                            )}
-                            {unit.sourceQuote !== undefined && (
-                                <span className="min-w-0 truncate">
-                                    ↩ {unit.sourceQuote.author || '有人'}：{unit.sourceQuote.text}
-                                </span>
-                            )}
-                        </span>
-                    </button>
-                );
-            })}
+                        )}
+                    </span>
+                </button>
+            ))}
         </>
     );
 }

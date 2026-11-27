@@ -1256,10 +1256,10 @@ export async function createDiy2App(opts: {
              */
             units: {
                 /**
-                 * 一条需求的**全貌**：需求本身 + 步骤 + 挂在它上面的决策/其它日志。
+                 * 一条需求的**全貌**：需求本身 + 挂在它上面的决策/其它日志。
                  *
                  * 为什么按需取而不是 list 一次给全（2026-11-27）：目标页首屏只要需求层，
-                 * 步骤与决策只在点开某条时才看 —— 一次全给等于每 5 秒轮询几百条详情。
+                 * 决策只在点开某条时才看 —— 一次全给等于每 5 秒轮询几百条详情。
                  */
                 get: async ({ input }) => {
                     const units = store.listUnits(input.id);
@@ -1277,19 +1277,17 @@ export async function createDiy2App(opts: {
                     };
                 },
                 /**
-                 * 一条需求的**原始存储**：库里的那一行 + 它的步骤行 + 挂它的 journal 事件。
+                 * 一条需求的**原始存储**：库里的那一行 + 挂它的 journal 事件。
                  * 详情页的「源码」就是它 —— 不是视图投影（投影会补缺省值，看着像原文）。
+                 *
+                 * 2026-11-27：`steps`（挂在需求下的步骤行）随 `kind = 'step'` 一起退役。
                  */
                 raw: async ({ input }) => {
                     const row = store.rawUnit(input.id, input.unit);
                     if (row === undefined) throw new Error(`没有这条需求：${input.unit}`);
-                    const steps = store
-                        .listUnits(input.id)
-                        .filter((unit) => unit.kind === 'step' && unit.parent === input.unit)
-                        .map((unit) => store.rawUnit(input.id, unit.id) ?? {});
                     const journal = store.journalOf(input.id, 400).filter((entry) => entry.unit === input.unit);
                     // 键名用 `events`：`journal` 在传输层已经是别的东西（任务日志列表），同名会打架
-                    return { table: 'task_units', row, steps, events: journal };
+                    return { table: 'task_units', row, events: journal };
                 },
                 list: async ({ input }) => {
                     const board = unitBoard(store.listUnits(input.id));
