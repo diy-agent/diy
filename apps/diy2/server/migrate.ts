@@ -182,14 +182,26 @@ const PAGE = `<!doctype html>
   button{font:inherit;font-size:14px;padding:9px 20px;border-radius:9px;cursor:pointer;
          background:var(--ok);color:#07110d;border:0;font-weight:700;margin-top:18px}
   button:disabled{background:var(--line);color:var(--muted);cursor:not-allowed}
-  .btnlink{display:inline-block;margin-top:16px;padding:9px 20px;border-radius:9px;text-decoration:none;
-           background:var(--ok);color:#07110d;font-weight:700;font-size:14px}
-  .btnlink:hover{filter:brightness(1.08)}
-  ul.checks{list-style:none;margin:14px 0 0;padding:0}
-  ul.checks li{padding:8px 0;border-top:1px solid var(--line);font-size:13.5px;display:flex;gap:10px}
-  ul.checks li:first-child{border-top:0}
-  ul.checks .good{color:var(--ok);font-weight:700}
-  ul.checks .warn{color:var(--run);font-weight:700}
+  .actions{display:flex;align-items:center;gap:14px;margin-top:20px;flex-wrap:wrap}
+  .actions .primary{padding:13px 32px;font-size:16px;border-radius:10px}
+  .btn{display:inline-block;padding:9px 20px;border-radius:9px;text-decoration:none;font-weight:700;
+       font-size:14px;background:var(--ok);color:#07110d;border:0;cursor:pointer;margin-top:0}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.secondary{background:transparent;color:var(--muted);border:1px solid var(--line);font-weight:600}
+  .btn.secondary:hover{color:var(--fg);border-color:var(--skip);filter:none}
+  .hint{color:var(--muted);font-size:12.5px;margin-top:12px}
+  .hint:empty{display:none}
+  .rows .check .ico{color:var(--ok)}
+  .plan-head{display:grid;grid-template-columns:minmax(150px,1fr) 20px minmax(150px,1fr) auto;gap:10px;
+             padding:10px 20px 6px;font-size:11.5px;color:var(--muted);letter-spacing:.04em}
+  .plan-row{display:grid;grid-template-columns:minmax(150px,1fr) 20px minmax(150px,1fr) auto;gap:10px;
+            padding:9px 20px;border-bottom:1px solid var(--line);font-size:13px;align-items:center}
+  .plan-row:last-child{border-bottom:0}
+  .plan-row .src{color:var(--muted)}
+  .plan-row .arrow{color:var(--skip);text-align:center}
+  .plan-row .dst{color:var(--fg);font-weight:600}
+  .plan-row .note{color:var(--muted);font-size:12px;text-align:right}
+  .plan-row.absent{opacity:.45}
   details{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:12px}
   summary{cursor:pointer;padding:14px 20px;font-size:13.5px;color:var(--muted);user-select:none}
   summary:hover{color:var(--fg)}
@@ -215,36 +227,50 @@ const PAGE = `<!doctype html>
   <div class="sub" id="sub">共 __TOTAL__ 个步骤。迁移前：会话 __SESSIONS__ 份 · 消息 __ENTRIES__ 条 · 会话键列 __COL__</div>
   <div class="track"><div class="fill" id="fill"></div></div>
   <div class="countline"><span id="counter">0 / __TOTAL__</span><span class="cur" id="cur"></span></div>
-  <button id="go">开始迁移</button>
+  <div class="actions">
+    <button id="go" class="primary">开始迁移</button>
+    <a id="openLink" class="btn primary" href="#" target="_blank" rel="noreferrer" hidden>打开主界面 →</a>
+  </div>
+  <div class="hint" id="openHint"></div>
 </div>
 
-<div class="card" id="result" hidden>
-  <div class="verdict" id="resultVerdict"></div>
-  <ul class="checks" id="checks"></ul>
-</div>
-
-<div class="card" id="openApp" hidden>
-  <div class="verdict ok">下一步：打开主界面</div>
-  <div class="sub" id="openHint"></div>
-  <a id="openLink" class="btnlink" href="#" target="_blank" rel="noreferrer">打开主界面 →</a>
-</div>
-
-<details><summary>详细步骤（<span id="stepCount">0</span> / __TOTAL__）</summary><div class="rows" id="rows"></div></details>
+<details><summary>迁移规划（<span id="planCount">0</span> 项 · 共 <span id="planTodo">0</span> 项要动）</summary><div class="plan-head"><span>旧数据</span><span></span><span>迁移后</span><span>说明</span></div><div class="rows" id="plan"></div></details>
+<details><summary>执行步骤（<span id="stepCount">0</span> / __TOTAL__）</summary><div class="rows" id="rows"></div></details>
 <details><summary>运行日志</summary><pre id="log"></pre></details>
 <script>
 var TOTAL=__TOTAL__, BEFORE_SESSIONS=__SESSIONS__, BEFORE_ENTRIES=__ENTRIES__;
 var APP_URL='__APP_URL__';
+var PLAN=__PLAN__;
 var finished={}, total=TOTAL, doneOk=false;
 var NL=String.fromCharCode(10);
 var elGo=document.getElementById('go'), elFill=document.getElementById('fill'),
     elCounter=document.getElementById('counter'), elCur=document.getElementById('cur'),
     elVerdict=document.getElementById('verdict'), elSub=document.getElementById('sub'),
     elRows=document.getElementById('rows'), elLog=document.getElementById('log'),
-    elCount=document.getElementById('stepCount');
+    elCount=document.getElementById('stepCount'), elOpen=document.getElementById('openLink'),
+    elHint=document.getElementById('openHint');
+
+// 迁移计划 = 「旧资源 → 新资源」清单（行列数从真实库里读，不存在的东西标成会跳过）
+(function(){
+  var box = document.getElementById('plan');
+  if(!box) return;
+  var todo = PLAN.filter(function(it){ return it.present; }).length;
+  document.getElementById('planCount').textContent = String(PLAN.length);
+  document.getElementById('planTodo').textContent = String(todo);
+  PLAN.forEach(function(item){
+    var row = document.createElement('div');
+    row.className = 'plan-row' + (item.present ? '' : ' absent');
+    row.innerHTML = '<span class="src"></span><span class="arrow">→</span><span class="dst"></span><span class="note"></span>';
+    row.querySelector('.src').textContent = item.present ? item.from + (item.rows > 0 ? '（' + item.rows + ' 行）' : '') : item.from;
+    row.querySelector('.dst').textContent = item.present ? item.to : '（本库没有，跳过）';
+    row.querySelector('.note').textContent = item.note || '';
+    box.appendChild(row);
+  });
+})();
 
 function log(t){ elLog.textContent += t + NL; elLog.scrollTop = elLog.scrollHeight; }
 function setVerdict(text, cls){ elVerdict.textContent = text; elVerdict.className = 'verdict ' + (cls||''); }
-function resetButton(){ elGo.disabled = false; elGo.textContent = '开始迁移'; }
+function resetButton(){ elGo.disabled = false; elGo.textContent = '开始迁移'; elGo.className = 'btn primary'; }
 function refresh(){
   var n = Object.keys(finished).length;
   elFill.style.width = (total ? Math.round(n * 100 / total) : 0) + '%';
@@ -284,38 +310,31 @@ function showResult(p){
     text: '机器人配置 ' + s.botProfiles + ' 个（' + s.botProfilesV0 + ' 个旧 bot 已留档）'});
 
   doneOk = checks.every(function(c){ return c.ok; });
-  document.getElementById('result').hidden = false;
-  var rv = document.getElementById('resultVerdict');
-  rv.textContent = doneOk ? '✓ 迁移成功' : '⚠ 迁移完成，但有项对不上';
-  rv.className = 'verdict ' + (doneOk ? 'ok' : 'bad');
   setVerdict(doneOk ? '✓ 迁移成功' : '⚠ 迁移完成，但有项对不上', doneOk ? 'ok' : 'bad');
   elFill.className = 'fill ' + (doneOk ? 'ok' : 'bad');
   elCur.textContent = '';
   elSub.textContent = '用时 ' + (p.durationMs / 1000).toFixed(1) + ' 秒';
 
-  var ul = document.getElementById('checks');
-  ul.innerHTML = '';
+  // 校验：接在步骤列表的末尾 —— 它就是「迁移做对了吗」的最后几行
   checks.forEach(function(c){
-    var li = document.createElement('li');
-    var mark = document.createElement('span');
-    mark.className = c.ok ? 'good' : 'warn';
-    mark.textContent = c.ok ? '✓' : '!';
-    var span = document.createElement('span');
-    span.textContent = c.text;
-    li.appendChild(mark); li.appendChild(span);
-    ul.appendChild(li);
+    var row = document.createElement('div');
+    row.className = 'row check';
+    row.innerHTML = '<span class="ico"></span><div><div class="name"></div></div><span class="meta"></span>';
+    row.querySelector('.ico').textContent = c.ok ? '✓' : '!';
+    if(!c.ok) row.querySelector('.ico').style.color = 'var(--run)';
+    row.querySelector('.name').textContent = '校验：' + c.text;
+    row.querySelector('.meta').textContent = c.ok ? '通过' : '要看';
+    elRows.appendChild(row);
   });
 
-  var box = document.getElementById('openApp');
-  box.hidden = false;
+  // 主按钮换成「打开主界面」，开始按钮降为次要的「重新迁移」（迁移可重复跑）
+  elGo.className = 'btn secondary'; elGo.textContent = '重新迁移'; elGo.disabled = false;
   if(APP_URL){
-    document.getElementById('openLink').href = APP_URL;
-    document.getElementById('openHint').textContent =
-      '主界面在 ' + APP_URL + '。注意：那个实例必须是新代码起的 —— 旧代码打开这个库会报 no such table。';
+    elOpen.hidden = false; elOpen.href = APP_URL;
+    elHint.textContent = '主界面在 ' + APP_URL + ' —— 那个实例必须是新代码起的，旧代码打开这个库会报 no such table。';
   } else {
-    document.getElementById('openLink').style.display = 'none';
-    document.getElementById('openHint').textContent =
-      '没找到主实例的端口（数据库旁边没有 app.port）。用 ./sha.sh start 或 ./sha.sh lab 起来后自己打开即可。';
+    elOpen.hidden = true;
+    elHint.textContent = '没找到主实例端口（数据库旁边没有 app.port）。用 ./sha.sh start 或 ./sha.sh lab 起来后自己打开即可。';
   }
 }
 
@@ -338,19 +357,21 @@ es.onmessage = function(m){
   if(p.kind === 'log' || p.kind === 'stderr'){ if(p.text.trim()) log(p.text.trimEnd()); return; }
   if(p.kind === 'error'){ setVerdict('✗ 迁移失败', 'bad'); elFill.className = 'fill bad'; log('✗ ' + p.message); resetButton(); return; }
   if(p.kind === 'closed'){
+    // 成功过就别复位：那时按钮已经是「重新迁移」（次要），主按钮是「打开主界面」
+    if(doneOk) return;
     resetButton();
-    if(p.code !== 0){ if(!doneOk){ setVerdict('✗ 迁移失败', 'bad'); elFill.className = 'fill bad'; } log('✗ 子进程退出码 ' + p.code); }
-    else if(!doneOk){ setVerdict('⚠ 没拿到结果，看下面日志', 'run'); }
+    if(p.code !== 0){ setVerdict('✗ 迁移失败', 'bad'); elFill.className = 'fill bad'; log('✗ 子进程退出码 ' + p.code); }
+    else { setVerdict('⚠ 没拿到结果，看下面日志', 'run'); }
     return;
   }
   if(p.kind === 'summary'){ showResult(p); return; }
 };
 
 elGo.onclick = function(){
-  elGo.disabled = true; elGo.textContent = '迁移中…';
+  elGo.disabled = true; elGo.className = 'btn primary'; elGo.textContent = '迁移中…';
   finished = {}; total = TOTAL; refresh();
-  elRows.innerHTML = ''; document.getElementById('result').hidden = true;
-  document.getElementById('openApp').hidden = true;
+  elRows.innerHTML = '';
+  elOpen.hidden = true; elHint.textContent = '';
   elLog.textContent = ''; elCur.textContent = ''; doneOk = false;
   elFill.className = 'fill';
   setVerdict('正在迁移…', 'run');
@@ -365,6 +386,132 @@ elGo.onclick = function(){
 
 const COL_LABEL: Record<number, string> = { 0: '(未知)', 1: 'bot_id（最老）', 2: 'bot_role_id', 3: 'bot_profile_id（已迁）' };
 
+/**
+ * 迁移计划的一条：旧资源 → 新资源。
+ *
+ * 这份清单不是写死的步骤名，而是**从真实库里读出来的**：
+ * 哪张表在、多少行、要不要改。所以同一个页面拿去给不同的库看，
+ * 它会自己说「你这个库哪些要迁、哪些会跳过」。
+ */
+interface PlanItem {
+    /** 旧资源（表 / 列 / 值） */
+    from: string;
+    /** 过完这道手续变成什么 */
+    to: string;
+    /** 旧资源的行数；-1 = 没这个表 */
+    rows: number;
+    /** 一句话解释这道手续在干什么 */
+    note: string;
+    /** 这个库里到底有没有东西要迁 */
+    present: boolean;
+}
+
+function planOf(file: string): PlanItem[] {
+    const items: PlanItem[] = [];
+    let db: DatabaseSync | undefined;
+    try {
+        db = new DatabaseSync(file, { readOnly: true });
+        const tables = new Set(
+            (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map(
+                (row) => row.name,
+            ),
+        );
+        const cols = (table: string): Set<string> => {
+            if (!tables.has(table)) return new Set();
+            return new Set(
+                (db!.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name),
+            );
+        };
+        const count = (table: string): number => {
+            if (!tables.has(table)) return -1;
+            try {
+                return (db!.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+            } catch {
+                return -1;
+            }
+        };
+        const add = (from: string, to: string, rows: number, note: string, present: boolean): void => {
+            items.push({ from, to, rows, note, present });
+        };
+
+        const sessionCols = cols('session_state');
+        const profileTable = tables.has('bot_profiles') ? 'bot_profiles' : 'bot_roles';
+        const profileCols = cols(profileTable);
+        const deliveryCols = cols('deliveries');
+        const taskCols = cols('tasks');
+        const unitCols = cols('task_units');
+
+        add('bots', 'bot_profiles', count('bots'), '按类型 + 人设折叠；旧表留档 bots_v0', tables.has('bots'));
+        add('bot_roles', 'bot_profiles', count('bot_roles'), '表改名，行数不变', tables.has('bot_roles'));
+        add(
+            'role_config',
+            'bot_profile_defaults',
+            count('role_config'),
+            '表改名，行数不变',
+            tables.has('role_config'),
+        );
+        add('rooms', 'rooms_v0 + 实体行', count('rooms'), '老房间表搬家后留档', tables.has('rooms'));
+        add(
+            'entity_bots',
+            'room_members',
+            count('entity_bots'),
+            '老的成员 id 列表展开成行',
+            tables.has('entity_bots'),
+        );
+        add(
+            'session_state.bot_id',
+            'session_state.bot_profile_id',
+            count('session_state'),
+            '列名改迁（两代旧名都认）',
+            sessionCols.has('bot_id') || sessionCols.has('bot_role_id'),
+        );
+        add(
+            'deliveries',
+            'deliveries.mode / turn / turn_id',
+            count('deliveries'),
+            '补三列（已有时不动）',
+            ['mode', 'turn', 'turn_id'].some((col) => !deliveryCols.has(col)),
+        );
+        add(
+            'session_state',
+            'session_state.log_seq',
+            count('session_state'),
+            '补回放水位列',
+            !sessionCols.has('log_seq'),
+        );
+        add(
+            profileTable,
+            profileTable + '.domain_type / domain_id / persona_ref',
+            count(profileTable),
+            '补归属与人设三列',
+            ['domain_type', 'domain_id', 'persona_ref'].some((col) => !profileCols.has(col)),
+        );
+        add(
+            profileTable + '.model_key',
+            'NULL',
+            count(profileTable),
+            '作废占位值 none@none/none',
+            true,
+        );
+        add('tasks', 'tasks.updated_at', count('tasks'), '不存在的行由生成器接管', !taskCols.has('updated_at'));
+        add('task_units', 'task_units.parent_id', count('task_units'), '补需求树挂点', !unitCols.has('parent_id'));
+        add(
+            'unit_deps / unit_batches',
+            '（删除）',
+            count('unit_deps') + Math.max(0, count('unit_batches')),
+            '依赖边与交付批次已退役',
+            tables.has('unit_deps') || tables.has('unit_batches'),
+        );
+        add('房间级 model_key', '（删除）', -1, '模型真源只剩机器人配置', true);
+    } catch {
+        // 读不到就交白卷：页面会只显示「计划读取失败」，不会因此打不开
+        return [];
+    } finally {
+        db?.close();
+    }
+    return items;
+}
+
 const server = createServer((request, response) => {
     const url = request.url ?? '/';
 
@@ -376,6 +523,7 @@ const server = createServer((request, response) => {
         const html = PAGE.replaceAll('__DB__', dbPath)
             .replaceAll('__TOTAL__', String(MIGRATION_STEPS.length))
             .replaceAll('__APP_URL__', appUrl)
+            .replaceAll('__PLAN__', JSON.stringify(planOf(dbPath)))
             .replaceAll('__SESSIONS__', String(before.sessions))
             .replaceAll('__ENTRIES__', String(before.roomEntries))
             .replaceAll('__COL__', COL_LABEL[before.sessionKeyColumn] ?? '(未知)');
