@@ -9,7 +9,7 @@
 //
 // 插件实体只在 entities 里有一行身份，payload 在插件自己的存储里 —— 我们不碰。
 
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
 import { dirname, resolve } from 'node:path';
 
@@ -562,6 +562,17 @@ export interface Store {
      */
     lastFactPerTurn(roomIds?: readonly string[]): Array<{ roomId: string; owner: string; item: Item }>;
     /**
+     * 某个 (房间, bot) 的最后一条带 author 的条目 —— `lastItemPerBot` 的**点查版**。
+     *
+     * 为什么要它（2026-11-28）：投影版的分组键是两个 json 表达式，SQLite 只能**全索引扫**
+     * （`SCAN ... USING INDEX`，真库 4.3 万条时一次 272ms），而 `rooms.list` 每隔几秒就要问一遍
+     * 「每个成员上一轮的结局」。这里 `ORDER BY seq DESC LIMIT 1` 走 `items_author_seq` 的 seek，
+     * 单次约 26µs（同样的 109 个查询：272ms → 2.8ms）。两者语义相同，**热路径用这个**。
+     */
+    lastItemOfBot(roomId: string, botId: string): Item | undefined;
+    /** 某个房间里某个归属（`data.botId`，老数据退回 `turnId`）的最后一条轮级事实 —— 点查版 */
+    lastFactOfOwner(roomId: string, owner: string): Item | undefined;
+    /**
      * 清掉「已经没有结局可言」的 ask 草稿：`ask:<id>` 不在 keepAskIds 里（时间线上不再等回答）
      * 且早于 olderThan。返回清掉的条数。
      *
@@ -676,6 +687,21 @@ export interface OpenStoreOptions {
 
 export function openStore(file: string, options: OpenStoreOptions = {}): Store {
     const db = new DatabaseSync(file === ':memory:' ? ':memory:' : file);
+    /**
+     * 懒预编译的点查语句（见 `lastItemOfBot` / `lastFactOfOwner`）。
+     * `db.prepare` 每次都会重新编译 SQL，而这两条在 `rooms.list` 里每次上百次 —— 留个句柄复用。
+     */
+    const stmts: { lastItemOfBot?: StatementSync; lastFactOfOwner?: StatementSync } = {};
+    /** 一行 `{ seq, item }` → `Item`（坏行当没有：与 `itemsOf` / `lastItemPerBot` 同策） */
+    const itemOfRow = (row: unknown): Item | undefined => {
+        if (row === undefined) return undefined;
+        const record = row as Record<string, unknown>;
+        try {
+            return { ...(JSON.parse(String(record['item'])) as Item), seq: Number(record['seq']) };
+        } catch {
+            return undefined;
+        }
+    };
     // 数据根 = 数据库所在目录（`<home>/diy2.db` → `<home>/tasks/...`）；内存库没有磁盘产物
     const dataRoot = file === ':memory:' ? undefined : dirname(resolve(file));
     /**
@@ -2426,6 +2452,26 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 }
             }
             return out;
+        },
+        lastItemOfBot(roomId: string, botId: string): Item | undefined {
+            // 预编译一次、用一辈子：这条每几秒被问上百次，每次 `db.prepare` 都要重新编译 SQL。
+            stmts.lastItemOfBot ??= db.prepare(
+                "SELECT seq, item FROM entity_items " +
+                    "WHERE entity_id = ? AND json_extract(item, '$.author.id') = ? " +
+                    'ORDER BY seq DESC LIMIT 1',
+            );
+            return itemOfRow(stmts.lastItemOfBot.get(roomId, botId));
+        },
+        lastFactOfOwner(roomId: string, owner: string): Item | undefined {
+            stmts.lastFactOfOwner ??= db.prepare(
+                "SELECT seq, item FROM entity_items " +
+                    'WHERE entity_id = ? ' +
+                    "AND COALESCE(json_extract(item, '$.data.botId'), json_extract(item, '$.turnId')) = ? " +
+                    "AND json_extract(item, '$.author.id') IS NULL " +
+                    "AND json_extract(item, '$.type') IN ('notice','error') " +
+                    'ORDER BY seq DESC LIMIT 1',
+            );
+            return itemOfRow(stmts.lastFactOfOwner.get(roomId, owner));
         },
         draftOwnersByKind(): { input: string[]; ask: string[] } {
             const rows = db.prepare('SELECT owner_id, field, value FROM drafts').all() as Array<

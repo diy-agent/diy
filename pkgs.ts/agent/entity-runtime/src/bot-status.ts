@@ -113,10 +113,12 @@ export function withTurnFact(turn: BotLastTurn, fact: Item | undefined): BotLast
     };
 }
 
-/** `createTurnLookup` 要的两个投影（结构类型：bot-status 不依赖 db） */
+/** `createTurnLookup` 要的两个**点查**（结构类型：bot-status 不依赖 db） */
 export interface TurnFactSource {
-    lastItemPerBot(): Array<{ roomId: string; item: Item }>;
-    lastFactPerTurn(): Array<{ roomId: string; owner: string; item: Item }>;
+    /** 某个 (房间, bot) 的最后一条带 author 的条目 —— 走 `items_author_seq` 的 seek，只读一行 */
+    lastItemOfBot(roomId: string, botId: string): Item | undefined;
+    /** 某个房间里某个归属（botId / turnId）的最后一条轮级事实 —— 走 `items_fact_owner_seq` 的 seek */
+    lastFactOfOwner(roomId: string, owner: string): Item | undefined;
 }
 
 /**
@@ -126,30 +128,23 @@ export interface TurnFactSource {
  * 用户 2026-11-26 看到的就是“表格说「出错」，侧栏图标却什么事都没有”。
  *
  * 两个来源必须合成：bot 自己最后一条 item 定住「它最后一轮的 turnId」，**结局**在轮级事实里。
- * 成本：两条全表 json 分组查询（靠 `items_author_seq` / `items_fact_owner_seq` 表达式索引，
- * 实测 25ms + 54ms）；`rooms.list` 30s 一次、`bots.rows` 开浮层一次，可以接受。
+ *
+ * **点查，不是全表投影**（2026-11-28 改）：早先这里先把两条全表投影（`lastItemPerBot` /
+ * `lastFactPerTurn`）算成 Map 再查。那两条 SQL 的分组键是两个 json 表达式，SQLite 只能
+ * `SCAN ... USING INDEX` 从头扫到尾 —— 真库 4.3 万条 / 148MB 时**一次 272ms**，而
+ * `rooms.list` 每次刷新都要它（TTL 5s 还比轮询间隔长不了多少，等于一直在重算）。
+ * 改成逐 (房间, bot) 的 seek 后同样的 109 个查询合计 **2.8ms**（实测，96 倍）：
+ * 索引 `(entity_id, json_extract(item,'$.author.id'), seq)` 是现成的，
+ * `ORDER BY seq DESC LIMIT 1` 只读命中那一行。
  */
 export function createTurnLookup(source: TurnFactSource): (roomId: string, botId: string) => BotLastTurn | undefined {
-    return buildTurnLookup(source);
-}
-
-/** `createTurnLookup` 的本体（缓存版要能直接拿它造一份新的） */
-function buildTurnLookup(source: TurnFactSource): (roomId: string, botId: string) => BotLastTurn | undefined {
-    const last = new Map<string, BotLastTurn>();
-    for (const { roomId, item } of source.lastItemPerBot()) {
-        const turn = botLastTurnOf(roomId, item);
-        if (turn !== undefined) last.set(`${roomId}\u0000${turn.botId}`, turn);
-    }
-    // 轮级事实（不带 author 的 notice / error）只能单独认领。
-    // key 用 `owner`（= 事实自带的 botId，老数据退回 turnId）—— 一轮里 @all 的
-    // 各 bot 共享 turnId，只按它查会把 A 的截断盖到 B 头上。
-    const facts = new Map<string, Item>();
-    for (const { roomId, owner, item } of source.lastFactPerTurn()) {
-        facts.set(`${roomId}\u0000${owner}`, item);
-    }
     return (roomId, botId) => {
-        const own = last.get(`${roomId}\u0000${botId}`);
-        const fact = factOf({ roomId, botId, own, facts });
+        const item = source.lastItemOfBot(roomId, botId);
+        const own = item === undefined ? undefined : botLastTurnOf(roomId, item);
+        // 轮级事实（不带 author 的 notice / error）只能单独认领。
+        // `owner` = 事实自带的 botId，老数据退回 turnId —— 一轮里 @all 的各 bot 共享 turnId，
+        // 只按它查会把 A 的截断盖到 B 头上；两条键的先后见 `factOf`。
+        const fact = factOf({ botId, own, find: (owner) => source.lastFactOfOwner(roomId, owner) });
         // 两种情形「最后一轮」只能由事实自己描述（bot 那一轮没留下任何条目）：
         //   · 从来没说过话（`own` 都没有）；
         //   · 事实属于**另一轮**（机器死在中途，那轮 bot 一个条目都没产出）。
@@ -182,15 +177,14 @@ function buildTurnLookup(source: TurnFactSource): (roomId: string, botId: string
  *      （seq 28915 的 turn-mww2bir6 盖住了后来的 turn 95），所以这里必须比**轮次**，不能比 seq。
  */
 function factOf(input: {
-    roomId: string;
     botId: string;
     own: BotLastTurn | undefined;
-    facts: Map<string, Item>;
+    find: (owner: string) => Item | undefined;
 }): Item | undefined {
-    const { roomId, botId, own, facts } = input;
+    const { botId, own, find } = input;
     const keys = own === undefined ? [botId] : [own.turnId, own.botId];
     for (const owner of keys) {
-        const fact = facts.get(`${roomId}\u0000${owner}`);
+        const fact = find(owner);
         if (fact === undefined) continue;
         // ① 不是结局（job-done 这类）→ 不许占位，看下一条键
         if (outcomeOfFact(fact) === undefined) continue;
@@ -225,31 +219,36 @@ function turnOfFact(roomId: string, botId: string, fact: Item): BotLastTurn {
 }
 
 /**
- * 带 **TTL 缓存**的 turn lookup（2026-11-26，页面卡顿整治）。
+ * 带 **TTL 缓存**的 turn lookup（2026-11-26 页面卡顿整治；2026-11-28 改成点查缓存）。
  *
- * 为什么要缓存：`bots.rows` 与 `rooms.list` 每隔 1.5~6 秒拉一次，每次都要跑两条全表
- * json 分组（实测 **529ms + 39ms**）—— 三个 agent 在跑时，这两条查询几乎不停地在跑，
- * 而同一条连接上的其它请求（chat.load / 点击后的任何 RPC）只能排队。
+ * 为什么要缓存：`bots.rows` 与 `rooms.list` 每隔 1.5~6 秒拉一次，三个 agent 在跑时几乎不停。
+ * 旧实现缓存的是**整张投影**，一次失效就要重算全表 272ms；现在底层已改成点查（一条 seek），
+ * 缓存的是**单个 (房间, bot) 的结果** —— 命中几乎不要钱，未命中也就几十微秒。
  *
- * 为什么用 TTL 而不用「seq 变了就失效」：agent 在跑时**每秒都在写 item**，seq 永远在变，
- * 那样缓存会 100% 命中不了。而这个数据的粒度本来就是「上一轮的结局」—— 它不依赖秒级
- * 新鲜度（在跑 / 等回答是内存态，另有来源）。
+ * 为什么不干脆删掉缓存：`rooms.list` 一次要问 100 多个 (房间, bot)，命中能省掉大半的语句开销；
+ * 而数据粒度本来就是「上一轮的结局」，**5s 的滞后没人看得出来**（在跑 / 等回答是内存态，另有来源）。
+ * 为什么不用「seq 变了就失效」：agent 在跑时每秒都在写 item，那样会 100% 命中不了。
  *
- * 默认 5s：比 `POLL_IDLE_MS`(6s) 短一点、比 `POLL_ACTIVE_MS`(2.5s) 长一倍，
- * 即"人看着表"时每 2 次拉取共用一次计算，"没人看"时几乎每次都要重算（反正 6s 才一次）。
+ * 默认 5s：比 `POLL_IDLE_MS`(6s) 短一点、比 `POLL_ACTIVE_MS`(2.5s) 长一倍。
  */
 export function createCachedTurnLookup(
     source: TurnFactSource,
     ttlMs = 5000,
     now: () => number = Date.now,
 ): (roomId: string, botId: string) => BotLastTurn | undefined {
-    let cached: { at: number; lookup: (roomId: string, botId: string) => BotLastTurn | undefined } | undefined;
+    const lookup = createTurnLookup(source);
+    const cache = new Map<string, { at: number; value: BotLastTurn | undefined }>();
+    /** 条目上限：房间×成员 的量级是百级，上千只可能是房间被删 / id 轮换 —— 到顶就整表丢 */
+    const MAX_ENTRIES = 1024;
     return (roomId, botId) => {
+        const key = `${roomId}\u0000${botId}`;
         const at = now();
-        if (cached === undefined || at - cached.at >= ttlMs) {
-            cached = { at, lookup: buildTurnLookup(source) };
-        }
-        return cached.lookup(roomId, botId);
+        const hit = cache.get(key);
+        if (hit !== undefined && at - hit.at < ttlMs) return hit.value;
+        const value = lookup(roomId, botId);
+        if (cache.size >= MAX_ENTRIES) cache.clear();
+        cache.set(key, { at, value });
+        return value;
     };
 }
 
