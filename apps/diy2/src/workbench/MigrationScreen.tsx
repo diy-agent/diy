@@ -89,10 +89,20 @@ export function MigrationScreen(): React.JSX.Element {
                 setLog((previous) => [...previous, String(payload['message'] ?? '')]);
                 setPhase('failed');
             } else if (kind === 'closed') {
-                stream.close();
-                setPhase((current) => (current === 'failed' ? 'failed' : 'done'));
+                // 注意：成功后**不能**在这里关流 —— 服务端紧接着还要广播 `ready`
+                //（起真 app 是异步的），关了流就永远等不到那一帧，页面就不刷新。
+                const code = Number(payload['code'] ?? -1);
+                if (code === 0) {
+                    setPhase('done');
+                    // 兵分两路：`ready` 到了立刻刷；万一错过（流断了），这里兵底
+                    window.setTimeout(() => location.reload(), 1500);
+                } else {
+                    stream.close();
+                    setPhase('failed');
+                }
             } else if (kind === 'ready') {
                 // 服务端已经换成真 app：刷新进工作台
+                stream.close();
                 location.reload();
             }
         };
@@ -110,12 +120,13 @@ export function MigrationScreen(): React.JSX.Element {
     }
 
     const plan = state.plan ?? [];
-    const todo = plan.filter((item) => !item.done);
+    // 跑完了就不再信初始计划：迁完之后「待迁移」应该归零（计划是打开页面那一刻快照的）
+    const todo = phase === 'done' ? [] : plan.filter((item) => !item.done);
     const settled = events.filter((event) => event.state !== 'running');
     const total = state.steps?.length ?? plan.length;
     const finished = phase === 'done' ? total : settled.filter((event) => event.state !== 'failed').length;
     const percent = total === 0 ? 0 : Math.round((finished / total) * 100);
-    const version = state.version;
+    const version = phase === 'done' ? { applied: total, total } : state.version;
 
     const verdict =
         phase === 'running'
@@ -161,6 +172,14 @@ export function MigrationScreen(): React.JSX.Element {
                     {phase === 'idle' || phase === 'failed' ? (
                         <Button onClick={start} disabled={todo.length === 0 && phase !== 'failed'}>
                             {phase === 'failed' ? '重新迁移' : '开始迁移'}
+                        </Button>
+                    ) : phase === 'done' ? (
+                        <Button
+                            onClick={() => {
+                                location.reload();
+                            }}
+                        >
+                            打开主界面 →
                         </Button>
                     ) : (
                         <Button disabled>迁移中…</Button>
