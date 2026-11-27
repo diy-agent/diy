@@ -11,15 +11,17 @@ import { Badge } from '@diy-agent/ui-shadcn';
 import { Button } from '@diy-agent/ui-shadcn';
 import { Card } from '@diy-agent/ui-shadcn';
 
-/** 一条计划项（服务端 `migrationPlan()` 的输出 + present） */
+/** 一条计划项（服务端 `migrationPlan()` 的输出） */
 interface PlanItem {
     step: string;
     from: string;
     to: string;
     note: string;
     rows: number;
+    /** 数据体检：旧资源还在不在（只用于展示，**不是**「待迁移」判据） */
     done: boolean;
-    present: boolean;
+    /** 版本表里有没有它 —— 这才是「迁没迁」的真源 */
+    recorded: boolean;
 }
 
 /** 一步的进度事件 */
@@ -154,8 +156,10 @@ export function MigrationScreen(): React.JSX.Element {
     }
 
     const plan = state.plan ?? [];
-    // 跑完了就不再信初始计划：迁完之后「待迁移」应该归零（计划是打开页面那一刻快照的）
-    const todo = phase === 'done' ? [] : plan.filter((item) => !item.done);
+    // 「待迁移」只认版本表（`recorded`），不认数据体检（`done`）：
+    // 数据长得不像迁过了不该把人拦在迁移页 —— 那正是「迁完之后还老回迁移页」的病根。
+    // 跑完了就不再信初始计划：迁完之后「待迁移」应该归零（计划是打开页面那一刻快照的）。
+    const todo = phase === 'done' ? [] : plan.filter((item) => !item.recorded);
     const settled = events.filter((event) => event.state !== 'running');
     const total = state.steps?.length ?? plan.length;
     const finished = phase === 'done' ? total : settled.filter((event) => event.state !== 'failed').length;
@@ -253,8 +257,8 @@ export function MigrationScreen(): React.JSX.Element {
                                     <span className="w-40 shrink-0 truncate text-muted-foreground">{item.from}</span>
                                     <span className="text-muted-foreground">→</span>
                                     <span className="flex-1 truncate">{item.to}</span>
-                                    <Badge variant={item.done ? 'secondary' : 'default'}>
-                                        {item.done ? '已完成' : '待迁移'}
+                                    <Badge variant={item.recorded ? 'secondary' : 'default'}>
+                                        {item.recorded ? '已迁移' : '待迁移'}
                                     </Badge>
                                 </div>
                             ))}

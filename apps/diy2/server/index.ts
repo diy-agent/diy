@@ -96,7 +96,16 @@ const infoOf = (): Record<string, unknown> => ({
 // 只服务迁移页；迁完再换成真 app —— **同一个端口、同一个 server**，不换壳子。
 const migration = probeMigration(config.dbPath);
 if (migration.pending) {
-    boot.info('库还有未完成的迁移，先停在迁移页', { applied: migration.applied, total: migration.total });
+    boot.info('库还有未完成的迁移，先停在迁移页', {
+        applied: migration.applied,
+        total: migration.total,
+        missing: migration.missing,
+    });
+}
+// 库里记了账、代码里已经没有的 id（跑过别的分支）—— 不是待迁移，但要让人知道，
+// 否则「版本 17/16」这种数以后没人对得上
+if (migration.unknown.length > 0) {
+    boot.warn('库里有当前代码不认识的迁移记账（跑过别的分支？）', { unknown: migration.unknown });
 }
 
 let app = migration.pending ? null : await createDiy2App({ config, port: portOf });

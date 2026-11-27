@@ -86,7 +86,12 @@ export function applyMigrations(runtime: MigrationRuntime, report: MigrationRepo
         if (migration.done(runtime)) {
             runtime.transaction(() => record(migration.id, migration.title, true));
             baselined.push(migration.id);
-            report({ id: migration.id, title: migration.title, state: 'skipped', note: '库里已经是这个状态（记为基线）' });
+            report({
+                id: migration.id,
+                title: migration.title,
+                state: 'skipped',
+                note: '库里已经是这个状态（记为基线）',
+            });
             continue;
         }
 
@@ -122,10 +127,18 @@ export function applyMigrations(runtime: MigrationRuntime, report: MigrationRepo
     return { total: migrations.length, ran, baselined };
 }
 
-/** 库里已经记了多少条迁移（「库版本」给人看的那个数） */
+/**
+ * 库里已经记了多少条**当前代码认得**的迁移（「库版本」给人看的那个数）。
+ *
+ * 为什么不是 `COUNT(*)`：库可能跑过别的分支的迁移（切分支回来就留在账上），
+ * 直接数行会得到「17/16」这种对不上的版本号。多出来的 id 由
+ * `migrationVersion().unknown` 单独报，不混进 applied。
+ */
 export function appliedCount(runtime: MigrationRuntime): number {
     try {
-        return (runtime.db.prepare(`SELECT COUNT(*) AS n FROM ${TABLE}`).get() as { n: number }).n;
+        const rows = runtime.db.prepare(`SELECT id FROM ${TABLE}`).all() as Array<{ id: string }>;
+        const recorded = new Set(rows.map((row) => row.id));
+        return migrations.filter((migration) => recorded.has(migration.id)).length;
     } catch {
         return 0;
     }

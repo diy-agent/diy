@@ -9,6 +9,12 @@
 
 export { PLACEHOLDER_MODEL_KEY } from './model-key.js';
 export { migrations, MIGRATION_STEPS } from './index-list.js';
-export { migrationPlan, migrationVersion, type MigrationPlanItem, type MigrationVersion } from './plan.js';
+export {
+    migrationPlan,
+    migrationVersion,
+    missingMigrations,
+    type MigrationPlanItem,
+    type MigrationVersion,
+} from './plan.js';
 export { applyMigrations, appliedCount, type MigrationRunResult } from './run.js';
 export type { Migration, MigrationRuntime, MigrationStepEvent, MigrationReporter } from './types.js';
