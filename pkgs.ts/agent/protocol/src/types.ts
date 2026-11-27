@@ -767,6 +767,15 @@ export type AgentEvent =
            * 中止的事实只有杀它的那一层知道，不带上来就只能报成 `error`。
            */
           stall?: { phase: StallPhase; waitedMs: number };
+          /**
+           * 上游以「上下文超窗」为由拒了这次请求（`context_length_exceeded` 一类的 400）。
+           *
+           * 有这个字段 = **可以自愈**：压缩一次把历史降下来再发，通常就过了。
+           * 与 `stall` 同理，判定要在能看见原始错误的那一层做（`agent.ts`），
+           * 只说一句人话的话术会把这条事实彻底丢掉（2026-11-27：一轮内堆过 100 万 token，
+           * UI 上只剩网关那句英文，整轮作废且下一轮起步即爆）。
+           */
+          overflow?: true;
       };
 
 /** 停摆看门狗的时段（`first` / `stream` / `tool`；三段的判据与时长各不同） */

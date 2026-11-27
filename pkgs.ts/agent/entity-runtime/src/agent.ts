@@ -15,7 +15,8 @@ import {
 import { logs, SeverityNumber } from '@opentelemetry/api-logs';
 import { z } from 'zod';
 
-import { friendlyError } from './errors';
+import { friendlyError, isContextOverflow } from './errors';
+import { estimateMessagesTokens, guardMessages } from './context-guard';
 import { scrubMedia } from './media-scrub';
 import { maxOutputTokensOf, modelOf } from './providers';
 import { StallWatchdog, stallMessage, stallTimeoutsFromEnv, type StallInfo } from './stall-watchdog';
@@ -99,6 +100,12 @@ export interface RunOptions {
      * `local-agent.ts` 的分层缺省），这里对齐。
      */
     maxSteps?: number;
+    /**
+     * 模型窗口（token）。给了就在**每一步**把超量的工具输出折叠掉（见 `context-guard.ts`）——
+     * 压缩只在轮首看一次水位，而 200 步的轮次能把请求从 20 万堆到 100 万（2026-11-27 实证）。
+     * 未知 ⇒ 不轧（不猜窗口，与压缩判据同一条规矩）。
+     */
+    windowTokens?: number;
 }
 
 /** 缺省步数上限（与 diy1 缺省同值：200）；到顶不算失败，按 `max-steps` 收尾 */
@@ -182,6 +189,24 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     });
     watchdog.start();
 
+    const instructions = instructionsOf({
+        botName: options.bot.name,
+        persona: options.bot.persona,
+        ...(options.systemContext === undefined ? {} : { systemContext: options.systemContext }),
+        ...(options.toolsHint === undefined ? {} : { toolsHint: options.toolsHint }),
+    });
+    /**
+     * 除 messages 之外已占掉的量（目前只算 system）。
+     *
+     * 为什么要算：真发出去的是「system + tools + messages」三段之和（diy1 的预检 `estimateRequest`
+     * 就是这么量的），只量历史会让「system 本身就很大」的房间永远报告"没超"。
+     *
+     * **tools 没算**：`ToolSet` 里挂着 `execute` 函数，`JSON.stringify` 既丢不到描述也容易高估
+     * （zod schema 的内部结构会炸出一大坨），而工具定义通常只有 3~10k token，1M 窗口下不足 1%。
+     * 要算得先把 ToolSet 投影成纯描述，另立一条 —— 不在这里糊一个数。
+     */
+    const systemTokens = estimateMessagesTokens([{ role: 'system', content: instructions }]);
+
     // 当前生效的模型键：prepareStep 每步读一次 `getModelKey`，变了就换模型实例
     let currentModelKey = options.modelKey;
     const resolveModel =
@@ -191,12 +216,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         model: options.model ?? resolveModel(currentModelKey),
         abortSignal: stall.signal,
         maxOutputTokens,
-        instructions: instructionsOf({
-            botName: options.bot.name,
-            persona: options.bot.persona,
-            ...(options.systemContext === undefined ? {} : { systemContext: options.systemContext }),
-            ...(options.toolsHint === undefined ? {} : { toolsHint: options.toolsHint }),
-        }),
+        instructions,
         messages: options.messages,
         tools: options.tools ?? defaultTools,
         // 步数上限：到顶就停（`stopWhen` 缺省是 1 步，必须显式覆盖；**不能**写成 `() => false`
@@ -209,7 +229,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
          * 重试会再次进 prepareStep（同一步号）：因为还没 commit，取到的是**同一份**增量
          * （幂等），不会把变化吞掉。
          */
-        prepareStep: ({ messages }) => {
+        prepareStep: ({ messages, stepNumber }) => {
             const patch: { model?: LanguageModel; messages?: ModelMessage[] } = {};
             // 换模型：每步读一次当前键（用户刚在界面上切了模型）——
             // 变了就在**本步**换模型实例，而不是等下一轮。
@@ -219,8 +239,19 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                 // 测试注入的 `model` 是固定实例，不跟 modelKey 走
                 if (options.model === undefined) patch.model = resolveModel(nextKey);
             }
+            /**
+             * ① 轮内水位（每一步都看）：把最早的工具输出折掉，免得 200 步的轮次把请求堆过窗口。
+             *    第 0 步不折 —— 那时一条工具结果都还没产生，折的只可能是历史（那是压缩的活）。
+             */
+            const guarded =
+                options.windowTokens === undefined || stepNumber === 0
+                    ? null
+                    : guardMessages(messages, { windowTokens: options.windowTokens, fixedTokens: systemTokens });
+            const base = guarded === null ? messages : guarded.messages;
+            // ② 变量增量（不折它：它是本步的新信息，而且很小）
             const delta = options.takeDelta?.() ?? '';
-            if (delta !== '') patch.messages = [...messages, { role: 'user', content: delta }];
+            if (delta !== '') patch.messages = [...base, { role: 'user', content: delta }];
+            else if (guarded !== null) patch.messages = base;
             return patch;
         },
         /**
@@ -323,14 +354,18 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                         error: String((part as { error?: unknown }).error ?? 'tool error'),
                     };
                     break;
-                case 'error':
+                case 'error': {
+                    const failure = (part as { error?: unknown }).error;
                     yield {
                         seq: ++seq,
                         type: 'run.failed',
                         turnId,
-                        message: friendlyError((part as { error?: unknown }).error),
+                        message: friendlyError(failure),
+                        // 超窗是**可自愈**的事实，交给 session 去压缩重试（话术骗不了它）
+                        ...(isContextOverflow(failure) ? { overflow: true as const } : {}),
                     };
                     return;
+                }
                 default:
                     break;
             }
@@ -346,7 +381,13 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
             yield { seq: ++seq, type: 'run.failed', turnId, message: stallMessage(stallInfo), stall: stallInfo };
             return;
         }
-        yield { seq: ++seq, type: 'run.failed', turnId, message: friendlyError(error) };
+        yield {
+            seq: ++seq,
+            type: 'run.failed',
+            turnId,
+            message: friendlyError(error),
+            ...(isContextOverflow(error) ? { overflow: true as const } : {}),
+        };
         return;
     } finally {
         watchdog.stop();
