@@ -1,4 +1,4 @@
-// UnitNeedDetail —— 一条需求的**全貌**：做什么 / 决策 / 任务分解与进度 / 做得好不好 / 源码。
+// UnitNeedDetail —— 一条需求（或一个目标）的**全貌**：做什么 / 决策 / 需求清单 / 做得好不好 / 源码。
 //
 // 用户 2026-11-27：「把需求的右边列做成单独的一个 view，放到对话平行的 view tab 里」——
 // 所以它既要能当「目标」页的右栏，也要能独立成一个 tab。两种用法共用这一个组件：
@@ -13,12 +13,7 @@ import type { JournalLineView, UnitDetailView, UnitRawView } from '@diy-agent/ch
 import { jumpToMessage } from '../askJump';
 import { useUnitDetail } from '../useUnitDetail';
 import { useUnitRaw } from '../useUnitRaw';
-
-function stepMark(status: 'open' | 'doing' | 'done'): string {
-    if (status === 'done') return '✓';
-    if (status === 'doing') return '◐';
-    return '○';
-}
+import { unitStatusMeta } from './unitStatus';
 
 function fmtTime(at: number): string {
     const date = new Date(at);
@@ -72,16 +67,6 @@ function RawPanel({ raw, error }: { raw: UnitRawView | null; error: string | nul
             <pre className="max-h-64 overflow-auto rounded border border-border bg-muted/30 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-foreground">
                 {JSON.stringify(raw.row, null, 2)}
             </pre>
-            {raw.steps.length > 0 && (
-                <>
-                    <div className="text-[10px] text-muted-foreground">
-                        步骤行（同表，<code className="text-foreground">kind = 'step'</code>）
-                    </div>
-                    <pre className="max-h-64 overflow-auto rounded border border-border bg-muted/30 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-foreground">
-                        {JSON.stringify(raw.steps, null, 2)}
-                    </pre>
-                </>
-            )}
             // 服务端这个键叫 `events`（`journal` 在传输层已经是任务日志列表，同名会打架）
             {raw.events.length > 0 && (
                 <>
@@ -101,11 +86,17 @@ export function UnitNeedDetail({
     roomId,
     unitId,
     initialSource = false,
+    onOpenUnit,
 }: {
     roomId: string;
     unitId: string;
     /** 打开时直接看源码（tab 形态默认看内容；这一条留给「我想核对库里的值」的场景） */
     initialSource?: boolean;
+    /**
+     * 点一条「需求」时换一个 tab 看它 —— 拍平之后，需求只能从目标里点进去，
+     * 没有这一条就只能是死文本（用户 2026-11-27：外面是目标，里面是小目标）。
+     */
+    onOpenUnit?: (unitId: string, title: string) => void;
 }): React.JSX.Element {
     const [source, setSource] = React.useState(initialSource);
     const { detail, error } = useUnitDetail(roomId, unitId);
@@ -118,14 +109,10 @@ export function UnitNeedDetail({
             <div className="flex items-start gap-2">
                 <div className="min-w-0">
                     <div className="text-[10px] text-muted-foreground">
-                        需求 ·{' '}
-                        {need === null
-                            ? '读取中…'
-                            : need.status === 'done'
-                              ? '已完成'
-                              : need.status === 'doing'
-                                ? '在做'
-                                : '未开始'}
+                        {/* 顶层条目是「目标」，挂在它下面的才是「需求」—— 账本只有这两层 */}
+                        {need === null || need.parent === null ? '目标' : '需求'} ·{' '}
+                        {/* 词表只有一份（unitStatus.ts）：这里不再自己写「在做 / 已完成」 */}
+                        {need === null ? '读取中…' : unitStatusMeta(need.status).label}
                     </div>
                     <div className="text-[13px] leading-snug font-medium text-foreground">
                         {need?.title ?? unitId}
@@ -190,41 +177,52 @@ export function UnitNeedDetail({
                             )}
                         </Block>
 
-                        <Block title="任务分解与进度" right="怎么做 · 不进需求层">
-                            {need.steps.length === 0 ? (
-                                <div className="text-[11px] text-muted-foreground">还没有步骤 —— 这条还没开始动。</div>
-                            ) : (
+                        {detail.children.length > 0 && (
+                            <Block title="需求" right={`${detail.children.length} 条 · 点开看`}>
                                 <ul className="flex flex-col">
-                                    {need.steps.map((step) => (
-                                        <li
-                                            key={step.id}
-                                            className="flex items-baseline gap-1.5 border-b border-border/60 py-1 last:border-b-0"
-                                        >
-                                            <span
-                                                className={`w-3 shrink-0 text-center text-[11px] ${
-                                                    step.status === 'done'
-                                                        ? 'text-emerald-500'
-                                                        : step.status === 'doing'
-                                                          ? 'text-sky-500'
-                                                          : 'text-muted-foreground/60'
-                                                }`}
+                                    {detail.children.map((child) => (
+                                        <li key={child.id}>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    onOpenUnit === undefined
+                                                        ? undefined
+                                                        : onOpenUnit(child.id, child.title)
+                                                }
+                                                className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-muted"
                                             >
-                                                {stepMark(step.status)}
-                                            </span>
-                                            <span
-                                                className={`min-w-0 flex-1 text-[11px] ${
-                                                    step.status === 'done'
-                                                        ? 'text-muted-foreground line-through decoration-border'
-                                                        : 'text-foreground'
-                                                }`}
-                                            >
-                                                {step.title}
-                                            </span>
+                                                <span
+                                                    className={`size-1.5 shrink-0 rounded-full ${unitStatusMeta(child.status).dot}`}
+                                                />
+                                                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                                    <span
+                                                        className={`min-w-0 truncate text-[11px] ${
+                                                            child.status === 'done'
+                                                                ? 'text-muted-foreground'
+                                                                : 'text-foreground'
+                                                        }`}
+                                                    >
+                                                        {child.title}
+                                                    </span>
+                                                    {/* 验收口径就摆在行内：这是「怎么算做完」的唯一出处，
+                                                        藏进详情等于让人逐条点开才敢判（体检：48% 的条目根本没写）。 */}
+                                                    <span
+                                                        className={`min-w-0 truncate text-[10px] ${
+                                                            child.accept.trim() === ''
+                                                                ? 'text-amber-600'
+                                                                : 'text-muted-foreground'
+                                                        }`}
+                                                        title={child.accept.trim() === '' ? undefined : child.accept}
+                                                    >
+                                                        {child.accept.trim() === '' ? '缺验收' : child.accept}
+                                                    </span>
+                                                </span>
+                                            </button>
                                         </li>
                                     ))}
                                 </ul>
-                            )}
-                        </Block>
+                            </Block>
+                        )}
 
                         <Block title="做得好不好">
                             <div className="flex flex-col gap-1.5">

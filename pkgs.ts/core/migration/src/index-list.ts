@@ -21,6 +21,7 @@ import { migration as m15 } from './015-legacy-journal.js';
 import { migration as m16 } from './016-drop-legacy-room-model.js';
 import { migration as m17 } from './017-prune-room-members.js';
 import { migration as m18 } from './018-task-units-kind.js';
+import { migration as m19 } from './019-drop-unit-step.js';
 import type { Migration } from './types.js';
 
 /**
@@ -49,6 +50,7 @@ export const migrations: readonly Migration[] = [
     m16,
     m17,
     m18,
+    m19,
 ];
 
 /** 迁移步骤清单（给迁移页画总进度条用：分母得先知道） */

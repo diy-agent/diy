@@ -16,6 +16,8 @@ import * as React from 'react';
 
 import type { UnitItem } from '@diy-agent/chat-transport-rpc';
 import { roomTitle, type Room } from '../model';
+import { ListRow } from './ListRow';
+import { unitStatusMeta } from './unitStatus';
 import { UnitNeedDetail } from './UnitNeedDetail';
 import { useUnitBoard } from '../useUnitBoard';
 import { useUnitText } from '../useUnitText';
@@ -23,11 +25,123 @@ import { useUnitText } from '../useUnitText';
 /** 与服务端同一口径的粗略估算（中文 + 结构下约 0.78 tok / 字符，见 ContextPanel） */
 const TOKENS_PER_CHAR = 0.78;
 
-/** 需求行的状态点：done 绿、doing 蓝（带光晕）、open 灰（能挑的偏绿） */
-function dotClass(unit: UnitItem, ready: Set<string>): string {
-    if (unit.status === 'done') return 'bg-emerald-500';
-    if (unit.status === 'doing') return 'bg-sky-500 shadow-[0_0_0_3px] shadow-sky-500/20';
-    return ready.has(unit.id) ? 'bg-emerald-500/70' : 'bg-muted-foreground/40';
+/**
+ * 清单（左栏的主体）：**目标 → 需求** 两级，目标那行可折叠。
+ *
+ * 2026-11-27 晚 用户改口（这条覆盖前一版的「左栏只列根 + 子项只在详情里」）：
+ * 「需求应该显示在左侧目标下面，形成层级、可折叠结构，不然点起来很麻烦；需求和目标都是
+ * 人关注的核心，因为已完成目标已经折叠，条目理论上不会过多。」
+ *
+ * 两版要解决的问题不一样，所以两条都留着：
+ *   · **拍平**那一刀解决的是「缩进树 + 步骤挤进来 → 一屏 125 条扫不出重点」；
+ *   · **层级**这一刀解决的是「看一个目标得挨个点开才知道它下面有什么」。
+ * 于是：只画两层（账本也只有两层）、默认展开、done 的目标仍收进「历史 N」——
+ * 折叠的是**历史**，不是层级。
+ *
+ * 来源引用（↩ 某人：原话）**不在这一栏出现**（用户：「把引用从左边目标树里去掉，放到内部」）：
+ * 左栏要能一眼扫完标题 + 状态，引用属于详情。
+ */
+function NeedsList({
+    needs,
+    ready,
+    selected,
+    onSelect,
+}: {
+    needs: readonly UnitItem[];
+    ready: Set<string>;
+    selected: string | null;
+    onSelect: (unit: UnitItem) => void;
+}): React.JSX.Element {
+    const byId = new Map(needs.map((unit) => [unit.id, unit]));
+    const roots = needs.filter((unit) => unit.parent === null);
+    const current = roots.filter((unit) => unit.status !== 'done');
+    const history = roots.filter((unit) => unit.status === 'done');
+    const [historyOpen, setHistoryOpen] = React.useState(false);
+    // 记**收起的**而不是展开的：默认全展开（新目标一出现就能看见它的需求），
+    // 这样后加的目标不会因为「不在展开集合里」而默认藏起来。
+    const [collapsed, setCollapsed] = React.useState<ReadonlySet<string>>(new Set());
+    const toggle = (id: string): void =>
+        setCollapsed((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+
+    const row = (unit: UnitItem, indent: number): React.JSX.Element => {
+        const children = unit.children.map((id) => byId.get(id)).filter((child) => child !== undefined);
+        const total = children.length;
+        const done = children.filter((child) => child.status === 'done').length;
+        const pct = total === 0 ? 0 : Math.round((100 * done) / total);
+        const expanded = total > 0 && !collapsed.has(unit.id);
+        return (
+            <ListRow
+                key={unit.id}
+                indent={indent}
+                leading={<span className={`size-2 rounded-full ${unitStatusMeta(unit.status).dot}`} />}
+                title={unit.title}
+                active={unit.id === selected}
+                onSelect={() => onSelect(unit)}
+                {...(total === 0 ? {} : { expanded, onToggle: () => toggle(unit.id) })}
+                trailing={
+                    total === 0 ? undefined : (
+                        <span className="flex items-center gap-1">
+                            <span className="h-[3px] w-10 overflow-hidden rounded bg-border">
+                                <span
+                                    className={`block h-full ${unit.status === 'done' ? 'bg-emerald-500' : 'bg-sky-500'}`}
+                                    style={{ width: `${pct}%` }}
+                                />
+                            </span>
+                            <span className="text-[10px] tabular-nums text-muted-foreground">
+                                {done}/{total}
+                            </span>
+                        </span>
+                    )
+                }
+                meta={
+                    <>
+                        {/* 目标行收起时点一句「下面有几条」，展开时那些行就在眼前，不再重复 */}
+                        {total > 0 && !expanded && <span>{total} 条需求</span>}
+                        {total === 0 && unit.accept.trim() === '' && (
+                            <span className="rounded border border-amber-500/30 px-1 text-amber-600">未写验收</span>
+                        )}
+                    </>
+                }
+            />
+        );
+    };
+
+    /** 一个目标 + 它展开时的需求行（需求不再往下嵌套：账本只有两层） */
+    const block = (unit: UnitItem): React.JSX.Element => (
+        <React.Fragment key={unit.id}>
+            {row(unit, 0)}
+            {!collapsed.has(unit.id) &&
+                unit.children
+                    .map((id) => byId.get(id))
+                    .filter((child) => child !== undefined)
+                    .map((child) => row(child, 1))}
+        </React.Fragment>
+    );
+
+    return (
+        <>
+            {current.map(block)}
+            {history.length > 0 && (
+                <>
+                    <button
+                        type="button"
+                        onClick={() => setHistoryOpen((prev) => !prev)}
+                        aria-expanded={historyOpen}
+                        className="mt-1 flex w-full items-center gap-1 rounded-lg px-2 py-1 text-left text-[10px] text-muted-foreground hover:bg-muted"
+                    >
+                        <span className={`transition-transform ${historyOpen ? 'rotate-90' : ''}`}>▶</span>
+                        历史 {history.length}
+                    </button>
+                    {historyOpen && history.map(block)}
+                </>
+            )}
+        </>
+    );
 }
 
 export function UnitBoardView({
@@ -64,6 +178,9 @@ export function UnitBoardView({
                 <span className="min-w-0 truncate text-[12px] font-medium text-foreground">{roomTitle(room)}</span>
                 {board !== null && (
                     <span className="flex shrink-0 items-baseline gap-x-2 text-[11px] text-muted-foreground">
+                        {/* 口径写清：左边是**目标**（这一栏列的是它），需求数是它下面的条目。
+                            原先只写「需求 N」= 把父子两级混成一个数，人问「那到底几件事」答不上来。 */}
+                        <span>目标 {needs.filter((unit) => unit.parent === null).length}</span>
                         <span>需求 {needs.length}</span>
                         <span className="text-sky-500">在做 {board.doing.length}</span>
                         {missingAccept > 0 && <span className="text-amber-500">缺验收 {missingAccept}</span>}
@@ -110,10 +227,10 @@ export function UnitBoardView({
                 <div className="p-3 text-xs text-muted-foreground">读取中…</div>
             ) : needs.length === 0 ? (
                 <div className="flex flex-col gap-2 p-3 text-xs text-muted-foreground">
-                    <div className="font-medium text-foreground">还没有需求</div>
+                    <div className="font-medium text-foreground">还没有目标</div>
                     <p className="leading-relaxed">
-                        跟 agent 说一句「这件事要解决成什么样」，需求会长在这里：一条一个关注点，
-                        点开能看到它的决策、步骤与验收。
+                        跟 agent 说一句「这件事要解决成什么样」，目标会长在这里：一个目标一行，
+                        点开能看到它的需求、决策与验收口径。
                     </p>
                 </div>
             ) : onOpenUnit === undefined ? (
@@ -146,74 +263,5 @@ export function UnitBoardView({
 
             {error !== null && <div className="px-3 py-1 text-[11px] text-red-500">{error}</div>}
         </div>
-    );
-}
-
-/** 需求清单（左栏的主体）：点一条就交给调用方决定「就地展开」还是「开 tab」 */
-function NeedsList({
-    needs,
-    ready,
-    selected,
-    onSelect,
-}: {
-    needs: readonly UnitItem[];
-    ready: Set<string>;
-    selected: string | null;
-    onSelect: (unit: UnitItem) => void;
-}): React.JSX.Element {
-    return (
-        <>
-            {needs.map((unit) => {
-                const progress = unit.progress;
-                const pct = progress === undefined ? 0 : Math.round((100 * progress.done) / progress.total);
-                return (
-                    <button
-                        key={unit.id}
-                        type="button"
-                        onClick={() => onSelect(unit)}
-                        aria-selected={unit.id === selected}
-                        className={`w-full rounded px-1.5 py-1 text-left hover:bg-muted ${
-                            unit.id === selected ? 'bg-sky-500/10 ring-1 ring-sky-500/30' : ''
-                        }`}
-                        style={{ paddingLeft: `${6 + unit.depth * 12}px` }}
-                    >
-                        <span className="flex items-baseline gap-1.5">
-                            <span className={`mt-1.5 size-2 shrink-0 rounded-full ${dotClass(unit, ready)}`} />
-                            <span
-                                className={`min-w-0 flex-1 truncate text-[12px] ${
-                                    unit.status === 'done' ? 'text-muted-foreground' : 'text-foreground'
-                                } ${unit.group ? 'font-medium' : ''}`}
-                                title={unit.title}
-                            >
-                                {unit.title}
-                            </span>
-                        </span>
-                        <span className="mt-0.5 flex items-center gap-1.5 pl-3.5 text-[10px] text-muted-foreground">
-                            {progress !== undefined && (
-                                <>
-                                    <span className="h-[3px] w-14 overflow-hidden rounded bg-border">
-                                        <span
-                                            className={`block h-full ${unit.status === 'done' ? 'bg-emerald-500' : 'bg-sky-500'}`}
-                                            style={{ width: `${pct}%` }}
-                                        />
-                                    </span>
-                                    <span>
-                                        {progress.done}/{progress.total} 步
-                                    </span>
-                                </>
-                            )}
-                            {!unit.group && unit.accept.trim() === '' && (
-                                <span className="rounded border border-amber-500/30 px-1 text-amber-600">未写验收</span>
-                            )}
-                            {unit.sourceQuote !== undefined && (
-                                <span className="min-w-0 truncate">
-                                    ↩ {unit.sourceQuote.author || '有人'}：{unit.sourceQuote.text}
-                                </span>
-                            )}
-                        </span>
-                    </button>
-                );
-            })}
-        </>
     );
 }

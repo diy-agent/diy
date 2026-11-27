@@ -128,15 +128,74 @@ describe('unit 工具', () => {
             'accept',
             'body',
             'id',
-            // kind：need ↔ step 的显式转换（2026-11-27 分层后加的）—— 它不是「进展」字段，
-            // 改的是这条条目的**种类**，所以不违反上面那条约束
-            'kind',
             'parent',
             'status',
             'title',
         ]);
         for (const forbidden of ['note', 'comment', 'progress', 'log', 'update', 'latest', 'changes']) {
             expect(Object.keys(update.inputSchema.shape)).not.toContain(forbidden);
+        }
+    });
+
+    // ── 只有两层（2026-11-27 用户裁）──────────────────────────────────
+    //
+    // 生产库 153 条 unit 里 `kind = 'step'` 一条都没被用过 ⇒ 步骤层退役，账本固定
+    // 「目标（顶层）→ 需求（一层子）」。下面四条钉住这条形状：往深了挂会被拒，
+    // 而不是靠提示词劝。
+
+    it('unit_add：parent 指向非顶层条目被拒（三层不成立）', async () => {
+        const { tools } = setup();
+        await toolOf(tools, 'unit_add').execute({
+            items: [
+                { key: 'goal', title: '导出能用' },
+                { key: 'req', title: '点一下真落文件', parent: 'goal' },
+            ],
+        });
+        await expect(
+            toolOf(tools, 'unit_add').execute({ items: [{ key: 'deep', title: '再深一层', parent: 'req' }] }),
+        ).rejects.toThrow(/只有两层/);
+    });
+
+    it('unit_add：同一批里互相挂（A 挂 B、B 挂 A）也被拒', async () => {
+        const { tools } = setup();
+        await expect(
+            toolOf(tools, 'unit_add').execute({
+                items: [
+                    { key: 'a', title: 'A', parent: 'b' },
+                    { key: 'b', title: 'B', parent: 'a' },
+                ],
+            }),
+        ).rejects.toThrow(/只有两层/);
+    });
+
+    it('unit_add：parent 指向一个不存在的 key 直接报错（不静默当顶层）', async () => {
+        const { tools } = setup();
+        await expect(
+            toolOf(tools, 'unit_add').execute({ items: [{ key: 'x', title: 'X', parent: 'nope' }] }),
+        ).rejects.toThrow(/不存在/);
+    });
+
+    it('unit_update：已经有子项的目标不能再挂到别人下面', async () => {
+        const { tools } = setup();
+        await toolOf(tools, 'unit_add').execute({
+            items: [
+                { key: 'g1', title: '目标一' },
+                { key: 'g2', title: '目标二' },
+                { key: 'r1', title: '需求一', parent: 'g1' },
+            ],
+        });
+        await expect(toolOf(tools, 'unit_update').execute({ id: 'g1', parent: 'g2' })).rejects.toThrow(/只有两层/);
+    });
+
+    it('一个目标下超过 7 条需求时给软提示（不硬拦）', async () => {
+        const { tools } = setup();
+        await toolOf(tools, 'unit_add').execute({ items: [{ key: 'g', title: '太满的目标' }] });
+        for (let i = 1; i <= 8; i += 1) {
+            const res = (await toolOf(tools, 'unit_add').execute({
+                items: [{ key: `r${String(i)}`, title: `需求 ${String(i)}`, parent: 'g', accept: '有单测' }],
+            })) as { hint?: string };
+            if (i < 8) expect(res.hint).toBeUndefined();
+            else expect(res.hint).toMatch(/超过 7 条/);
         }
     });
 
@@ -149,15 +208,15 @@ describe('unit 工具', () => {
         expect(got.source).toBe('u-mwwtvgiy-7');
     });
 
-    it('母项不能直接推状态（由子派生）', async () => {
+    it('目标不能直接推状态（由需求派生）', async () => {
         const { tools } = setup();
         await toolOf(tools, 'unit_add').execute({
             items: [
-                { key: 'dom', title: '母项' },
+                { key: 'dom', title: '目标' },
                 { key: 'a', title: 'A', parent: 'dom' },
             ],
         });
-        await expect(toolOf(tools, 'unit_update').execute({ id: 'dom', status: 'done' })).rejects.toThrow(/母项/);
+        await expect(toolOf(tools, 'unit_update').execute({ id: 'dom', status: 'done' })).rejects.toThrow(/是目标/);
     });
 
     it('key 不合格 / 重名 / 撞已有 id：整批拒绝，不半截写入', async () => {

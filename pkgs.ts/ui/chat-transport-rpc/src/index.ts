@@ -75,18 +75,8 @@ export interface RoleInput {
  * 2026-11-25 裁：账本只记「要做什么」，所以这里没有 deps / layer —— 谁先做、一次做几条
  * 是执行时的判断，不进账本（模型每轮自己从 `ready` 里挑）。
  */
-/** 一条步骤（`kind = 'step'`）：只出现在「任务分解与进度」里，不占需求层 */
-export interface UnitStepItem {
-    id: string;
-    title: string;
-    status: 'open' | 'doing' | 'done';
-    seq: number;
-}
-
 export interface UnitItem {
     id: string;
-    /** `need` = 要做什么（人对齐、要验收）；`step` = 怎么做（挂在需求下） */
-    kind: 'need' | 'step';
     title: string;
     body: string;
     /**
@@ -108,17 +98,13 @@ export interface UnitItem {
      * 只把 ↩ 跳转留着。原话是服务端截断过的（`…` 结尾还有下文）。
      */
     sourceQuote?: SourceQuoteView;
-    /** **有效**状态：叶子 = 落库值；母项（有子）= 由子派生（全 done → done） */
+    /** **有效**状态：叶子 = 落库值；目标（有子）= 由子派生（全 done → done） */
     status: 'open' | 'doing' | 'done';
-    /** 树上的父（母项）；null = 根 */
+    /** 树上的父（目标）；null = 根 */
     parent: string | null;
-    /** 子节点（按书写顺序排）：只算需求，步骤在 `steps` 里 */
+    /** 子节点（按书写顺序排） */
     children: string[];
-    /** 挂在这条需求下面的步骤（按书写顺序） */
-    steps: UnitStepItem[];
-    /** 步骤进度；没有步骤时不带 */
-    progress?: { done: number; total: number };
-    /** 有子 = 母项（本身不执行） */
+    /** 有子 = 目标（两层里的上层，本身不执行） */
     group: boolean;
     /** 树深（根 = 0）：视图按它缩进 */
     depth: number;
@@ -148,6 +134,11 @@ export interface SourceQuoteView {
  */
 export interface UnitDetailView {
     need: UnitItem;
+    /**
+     * 小目标（子需求）：左栏拍平后只在点开这条时出现（2026-11-27「外面是目标，里面是小目标」）。
+     * 步骤在 `need.steps` 里；这里只放仍是 need 的子条目。
+     */
+    children: Array<{ id: string; title: string; status: 'open' | 'doing' | 'done'; accept: string }>;
     /** 决策（journal 里 kind=decision 且挂在这条需求上的）：谁定的、为什么 */
     decisions: JournalLineView[];
     /** 其它日志（progress / pitfall / review / learn）—— 当成「过程记录」 */
@@ -160,8 +151,6 @@ export interface UnitRawView {
     table: string;
     /** `task_units` 的那一行（列名 → 值，NULL 也在） */
     row: Record<string, unknown>;
-    /** 它名下的步骤行（同一张表，kind = 'step'） */
-    steps: Array<Record<string, unknown>>;
     /** 挂它的 journal 事件（`events` 表里 `event = 'task.journal'` 的那些） */
     events: JournalLineView[];
 }
@@ -398,7 +387,7 @@ export class RpcChatClient implements ChatClient {
      */
     readonly units = {
         list: (id: string): Promise<UnitBoardView> => this.call('units.list', { id }),
-        /** 一条需求的全貌：需求 + 步骤 + 决策 + 过程记录 */
+        /** 一条需求的全貌：需求 + 决策 + 过程记录 */
         get: (id: string, unit: string): Promise<UnitDetailView> => this.call('units.get', { id, unit }),
         /** 库里存的那几行（真源，不加工）：界面上「数据」面板用它当场核对投影 */
         raw: (id: string, unit: string): Promise<UnitRawView> => this.call('units.raw', { id, unit }),

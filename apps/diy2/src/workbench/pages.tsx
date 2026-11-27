@@ -406,9 +406,23 @@ export function materializeView(opened: OpenedView, close: () => void): ViewDef 
 
 /** 一条需求的详情（独立 tab）：与「目标」页右栏是**同一个组件**，不派生第二份 */
 function UnitDetailTab({ roomId, unitId }: { roomId: string; unitId: string }) {
+    const api = useWb();
     return (
         <div className="wb-fill">
-            <UnitNeedDetail roomId={roomId} unitId={unitId} />
+            {/* 小目标点开 = 同一条路径（`replaceKind`：详情是「看的那一条在变」，不并排比较） */}
+            <UnitNeedDetail
+                roomId={roomId}
+                unitId={unitId}
+                onOpenUnit={(next, title) =>
+                    api.openView({
+                        kind: 'unit-detail',
+                        title: title.length > 14 ? `${title.slice(0, 14)}…` : title,
+                        area: 'conversation',
+                        params: { roomId, unitId: next },
+                        replaceKind: true,
+                    })
+                }
+            />
         </div>
     );
 }
