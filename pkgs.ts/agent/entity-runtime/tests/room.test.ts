@@ -199,7 +199,7 @@ describe('RoomActor', () => {
             messageId: userItem.id,
             botId: BOT_A.id,
             state: 'pending',
-            mode: 'next-step',
+            mode: 'human',
             turn: 1,
             turnId: 'turn-crash',
         });

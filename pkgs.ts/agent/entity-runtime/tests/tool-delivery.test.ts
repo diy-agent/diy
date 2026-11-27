@@ -98,7 +98,12 @@ describe('capEveryTool：遍历注入', () => {
 });
 
 describe('capEveryTool：非文本内容不许被 JSON 化', () => {
-    const png = { type: 'file' as const, data: { type: 'data' as const, data: new Uint8Array([137, 80, 78, 71]) }, mediaType: 'image/png', filename: 'x.png' };
+    const png = {
+        type: 'file' as const,
+        data: { type: 'data' as const, data: new Uint8Array([137, 80, 78, 71]) },
+        mediaType: 'image/png',
+        filename: 'x.png',
+    };
     const content = {
         type: 'content' as const,
         value: [{ type: 'text' as const, text: `看一眼这张图：x.png` }, png],
@@ -119,7 +124,13 @@ describe('capEveryTool：非文本内容不许被 JSON 化', () => {
 
     it('多个文本块各自落盘，resume 不互相覆盖', async () => {
         const home = await homeOf();
-        const two = { type: 'content' as const, value: [{ type: 'text' as const, text: lines(3000) }, { type: 'text' as const, text: lines(3000) }] };
+        const two = {
+            type: 'content' as const,
+            value: [
+                { type: 'text' as const, text: lines(3000) },
+                { type: 'text' as const, text: lines(3000) },
+            ],
+        };
         const capped = capEveryTool({ t: fakeTool(() => two) }, createToolOutputCapper({ home }));
         const out = (await modelOutput(capped, 't', two, 'call_two')) as { value: { text: string }[] };
 
@@ -157,9 +168,11 @@ describe('一份预算常量（跨包同值）', () => {
 describe('read 的输出不会被投递层裁第二遍', () => {
     const readOf = async (cwd: string, file: string): Promise<string> => {
         const tools = buildRoomTools({ cwd, toModelOutput: createToolOutputCapper({ home: cwd }) });
-        return (await (tools['read'] as unknown as {
-            execute: (input: { path: string }, opts: object) => Promise<string>;
-        }).execute({ path: file }, {})) as string;
+        return (await (
+            tools['read'] as unknown as {
+                execute: (input: { path: string }, opts: object) => Promise<string>;
+            }
+        ).execute({ path: file }, {})) as string;
     };
 
     it('读满一窗：投递层逐字符原样（没有 marker、也不会多落一份 toolout 原文）', async () => {

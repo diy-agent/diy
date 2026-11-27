@@ -21,7 +21,7 @@ export type {
     RoomEvent,
     Item,
     ItemStatus,
-    InboxMode,
+    MessageKind,
     ProgressStage,
     StallPhase,
     TurnEndReason,
