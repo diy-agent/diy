@@ -8,7 +8,7 @@
 // 这个进程只做三件事：读「迁移前」的底座数字、spawn 子进程、把它的 JSON 行转成 SSE。
 
 import { spawn } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type ServerResponse } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -27,6 +27,28 @@ function argOf(name: string): string | undefined {
 
 const dbPath = resolve(argOf('db') ?? '');
 const port = Number(argOf('port') ?? '5179');
+
+/**
+ * 主界面的地址（迁移成功后给人点「去主界面」用的）。
+ *
+ * 为什么不自动跳：迁移完的库**必须由新代码的实例打开**。自动跳到还在跑旧产物的实例，
+ * 只会得到一句 no such table —— 那是把人带进坑里，不如把定位给人、由人确认。
+ *
+ * 定位规则：`--app-url` 优先；否则读数据库**旁边**的 `app.port`
+ * （同一个数据根的实例把端口写在那里，与 `./sha.sh port` 读的是同一个文件）。
+ */
+const appUrl = ((): string => {
+    const override = argOf('app-url');
+    if (override !== undefined) return override;
+    try {
+        const file = join(dirname(dbPath), 'app.port');
+        if (!existsSync(file)) return '';
+        const value = readFileSync(file, 'utf8').trim();
+        return value === '' ? '' : `http://127.0.0.1:${value}/`;
+    } catch {
+        return '';
+    }
+})();
 
 if (!existsSync(dbPath)) {
     console.error(`✗ 数据库不存在：${dbPath}\n  用法：./sha.sh migrate --db <path> [--port 5179]`);
@@ -160,6 +182,9 @@ const PAGE = `<!doctype html>
   button{font:inherit;font-size:14px;padding:9px 20px;border-radius:9px;cursor:pointer;
          background:var(--ok);color:#07110d;border:0;font-weight:700;margin-top:18px}
   button:disabled{background:var(--line);color:var(--muted);cursor:not-allowed}
+  .btnlink{display:inline-block;margin-top:16px;padding:9px 20px;border-radius:9px;text-decoration:none;
+           background:var(--ok);color:#07110d;font-weight:700;font-size:14px}
+  .btnlink:hover{filter:brightness(1.08)}
   ul.checks{list-style:none;margin:14px 0 0;padding:0}
   ul.checks li{padding:8px 0;border-top:1px solid var(--line);font-size:13.5px;display:flex;gap:10px}
   ul.checks li:first-child{border-top:0}
@@ -198,10 +223,17 @@ const PAGE = `<!doctype html>
   <ul class="checks" id="checks"></ul>
 </div>
 
+<div class="card" id="openApp" hidden>
+  <div class="verdict ok">下一步：打开主界面</div>
+  <div class="sub" id="openHint"></div>
+  <a id="openLink" class="btnlink" href="#" target="_blank" rel="noreferrer">打开主界面 →</a>
+</div>
+
 <details><summary>详细步骤（<span id="stepCount">0</span> / __TOTAL__）</summary><div class="rows" id="rows"></div></details>
 <details><summary>运行日志</summary><pre id="log"></pre></details>
 <script>
 var TOTAL=__TOTAL__, BEFORE_SESSIONS=__SESSIONS__, BEFORE_ENTRIES=__ENTRIES__;
+var APP_URL='__APP_URL__';
 var finished={}, total=TOTAL, doneOk=false;
 var NL=String.fromCharCode(10);
 var elGo=document.getElementById('go'), elFill=document.getElementById('fill'),
@@ -273,6 +305,18 @@ function showResult(p){
     li.appendChild(mark); li.appendChild(span);
     ul.appendChild(li);
   });
+
+  var box = document.getElementById('openApp');
+  box.hidden = false;
+  if(APP_URL){
+    document.getElementById('openLink').href = APP_URL;
+    document.getElementById('openHint').textContent =
+      '主界面在 ' + APP_URL + '。注意：那个实例必须是新代码起的 —— 旧代码打开这个库会报 no such table。';
+  } else {
+    document.getElementById('openLink').style.display = 'none';
+    document.getElementById('openHint').textContent =
+      '没找到主实例的端口（数据库旁边没有 app.port）。用 ./sha.sh start 或 ./sha.sh lab 起来后自己打开即可。';
+  }
 }
 
 var es = new EventSource('/api/events');
@@ -306,6 +350,7 @@ elGo.onclick = function(){
   elGo.disabled = true; elGo.textContent = '迁移中…';
   finished = {}; total = TOTAL; refresh();
   elRows.innerHTML = ''; document.getElementById('result').hidden = true;
+  document.getElementById('openApp').hidden = true;
   elLog.textContent = ''; elCur.textContent = ''; doneOk = false;
   elFill.className = 'fill';
   setVerdict('正在迁移…', 'run');
@@ -330,6 +375,7 @@ const server = createServer((request, response) => {
         // 脚本里那句会原样留着 `var TOTAL=__TOTAL__`，浏览器直接 SyntaxError。
         const html = PAGE.replaceAll('__DB__', dbPath)
             .replaceAll('__TOTAL__', String(MIGRATION_STEPS.length))
+            .replaceAll('__APP_URL__', appUrl)
             .replaceAll('__SESSIONS__', String(before.sessions))
             .replaceAll('__ENTRIES__', String(before.roomEntries))
             .replaceAll('__COL__', COL_LABEL[before.sessionKeyColumn] ?? '(未知)');
