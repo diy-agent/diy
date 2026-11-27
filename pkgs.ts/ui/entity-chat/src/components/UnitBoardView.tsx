@@ -159,6 +159,9 @@ export function UnitBoardView({
                 <span className="min-w-0 truncate text-[12px] font-medium text-foreground">{roomTitle(room)}</span>
                 {board !== null && (
                     <span className="flex shrink-0 items-baseline gap-x-2 text-[11px] text-muted-foreground">
+                        {/* 口径写清：左边是**目标**（这一栏列的是它），需求数是它下面的条目。
+                            原先只写「需求 N」= 把父子两级混成一个数，人问「那到底几件事」答不上来。 */}
+                        <span>目标 {needs.filter((unit) => unit.parent === null).length}</span>
                         <span>需求 {needs.length}</span>
                         <span className="text-sky-500">在做 {board.doing.length}</span>
                         {missingAccept > 0 && <span className="text-amber-500">缺验收 {missingAccept}</span>}
@@ -205,10 +208,10 @@ export function UnitBoardView({
                 <div className="p-3 text-xs text-muted-foreground">读取中…</div>
             ) : needs.length === 0 ? (
                 <div className="flex flex-col gap-2 p-3 text-xs text-muted-foreground">
-                    <div className="font-medium text-foreground">还没有需求</div>
+                    <div className="font-medium text-foreground">还没有目标</div>
                     <p className="leading-relaxed">
-                        跟 agent 说一句「这件事要解决成什么样」，需求会长在这里：一条一个关注点，
-                        点开能看到它的决策、步骤与验收。
+                        跟 agent 说一句「这件事要解决成什么样」，目标会长在这里：一个目标一行，
+                        点开能看到它的需求、决策与验收口径。
                     </p>
                 </div>
             ) : onOpenUnit === undefined ? (

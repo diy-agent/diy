@@ -108,7 +108,8 @@ export function UnitNeedDetail({
             <div className="flex items-start gap-2">
                 <div className="min-w-0">
                     <div className="text-[10px] text-muted-foreground">
-                        需求 ·{' '}
+                        {/* 顶层条目是「目标」，挂在它下面的才是「需求」—— 账本只有这两层 */}
+                        {need === null || need.parent === null ? '目标' : '需求'} ·{' '}
                         {need === null
                             ? '读取中…'
                             : need.status === 'done'
