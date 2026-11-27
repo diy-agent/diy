@@ -245,7 +245,20 @@ export type Item =
       })
     | (ItemBase & {
           type: 'tool';
-          data: { name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' };
+          data: {
+              name: string;
+              args?: unknown;
+              result?: unknown;
+              state: 'running' | 'ok' | 'error';
+              /**
+               * 失败原因（`tool.completed` 的 `error`，已截断）。
+               *
+               * 为什么单独一个字段（2026-11-27）：`state: 'error'` 只说明「失败了」，
+               * 不说明为什么 —— 模型入参是坏 JSON 时（`AI_JSONParseError`）它根本没有 result，
+               * 于是界面上只剩一行「失败 unit_update」，排查得去翻 session_state 里的原始事件。
+               */
+              error?: { message: string };
+          };
       })
     | (ItemBase & { type: 'error'; data: { message: string; botId?: string } });
 

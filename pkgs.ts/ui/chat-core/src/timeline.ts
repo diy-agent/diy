@@ -60,7 +60,22 @@ export interface TurnFacts {
 
 export type TimelinePart =
     | { kind: 'text'; text: string }
-    | { kind: 'tool'; id: string; name: string; args?: unknown; result?: unknown; state: 'running' | 'ok' | 'error' }
+    | {
+          kind: 'tool';
+          id: string;
+          name: string;
+          args?: unknown;
+          result?: unknown;
+          state: 'running' | 'ok' | 'error';
+          /**
+           * 失败原因（`tool.completed` 的 error，投影时已压成一行、截断过）。
+           *
+           * 为什么必须带着走（2026-11-27）：失败的工具常常**没有 result**
+           * （模型入参是坏 JSON 时连结果是空的），只靠 `state: 'error'` 界面上只能显示一个
+           * 「失败 unit_update」—— 到底为什么失败，人得去翻 session_state。
+           */
+          error?: { message: string };
+      }
     /**
      * 这个 bot 自己这一轮的运行失败了（`run.failed`）。它是**回复的一部分**，不是一条独立消息：
      * 失败之后同一个 bot 在同一轮里还可能再跑一次（排队中的投递带着同一个 turnId），
@@ -142,6 +157,7 @@ function partOf(item: Item): TimelinePart | undefined {
             args: item.data.args,
             result: item.data.result,
             state: item.data.state,
+            ...(item.data.error === undefined ? {} : { error: item.data.error }),
         };
     }
     return undefined;
