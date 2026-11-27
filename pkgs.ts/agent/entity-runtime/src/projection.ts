@@ -12,6 +12,16 @@ import type { AgentEvent, Author, Item } from './types';
 let counter = 0;
 export const nextId = (prefix: string): string => `${prefix}-${++counter}`;
 
+/** 失败原因进库的上限：错误里常带整段 stack / 坏 JSON 原文，全存会把条目撑爆 */
+export const TOOL_ERROR_MAX_CHARS = 600;
+
+/** 压成一行再按码点截断（不切断 emoji / 生僻字；超了标 `…`） */
+function clipError(message: string): string {
+    const oneLine = message.replace(/\s+/g, ' ').trim();
+    const chars = [...oneLine];
+    return chars.length <= TOOL_ERROR_MAX_CHARS ? oneLine : `${chars.slice(0, TOOL_ERROR_MAX_CHARS).join('')}…`;
+}
+
 export class Projector {
     private readonly items = new Map<string, Item>();
     /** `${messageId}#${segment}` → item.id */
@@ -198,8 +208,11 @@ export class Projector {
                     data: {
                         name: event.name,
                         args: current.data.args,
-                        result: event.result,
+                        // 失败时**不留** result：坏入参解析失败时它本来就是空的，
+                        // 留个空壳只会让人以为「跑过了、没输出」
+                        ...(failed ? {} : { result: event.result }),
                         state: failed ? 'error' : 'ok',
+                        ...(failed ? { error: { message: clipError(event.error ?? '') } } : {}),
                     },
                 };
                 this.items.set(id, next);

@@ -222,7 +222,9 @@ function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: 
     // 这层括号是数据结构的痕迹，不是他关心的东西 —— 他要看的是「跑了什么、输出了什么」。
     // 所以先认几个高频键（命令 / 路径 / 查询），认得出来就只显示那个值；认不出来才回退 JSON。
     const input = inputOf(tool.args);
-    const output = outputOf(tool.result);
+    // 失败原因排在输出前面：坏入参的工具**根本没有 result**，这时「为什么失败」就是全部正文
+    const failure = tool.error === undefined ? undefined : { label: '错误', text: tool.error.message, failed: true };
+    const output = failure ?? outputOf(tool.result);
     // 官方 ai-elements 的 Tool 就是「Trace 里一行 + 有输出时套一层 Collapsible」：
     // 标题说清发生了什么（Running / Ran / Failed），展开体分 Input / Output 两块。
     const title =

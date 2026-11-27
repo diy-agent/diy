@@ -58,6 +58,27 @@ describe('Projector', () => {
         expect(timeline[0]?.parts.map((part) => part.kind)).toEqual(['text', 'tool', 'text']);
     });
 
+    it('工具失败：原因落进 data.error（截断成一行），且不留空 result', () => {
+        // 2026-11-27：模型吐坏 JSON 时工具是 AI_JSONParseError、根本没有 result，
+        // 只存 `state: 'error'` 的话界面上只剩一行「失败 unit_update」，原因得去翻 session_state。
+        const long = 'AI_JSONParseError: JSON parsing failed:\n' + 'x'.repeat(2000);
+        const items = run([
+            { seq: 1, type: 'run.started', turnId: 't1', messageId: 'm1' },
+            { seq: 2, type: 'tool.started', turnId: 't1', toolCallId: 'c1', name: 'unit_update', args: { id: 'u1' } },
+            { seq: 3, type: 'tool.completed', turnId: 't1', toolCallId: 'c1', name: 'unit_update', error: long },
+        ]);
+        const tool = items.find((item) => item.type === 'tool');
+        expect(tool?.status).toBe('failed');
+        expect(tool?.data).toMatchObject({ state: 'error' });
+        expect(tool?.data).not.toHaveProperty('result');
+        const message = (tool?.data as { error?: { message: string } }).error?.message ?? '';
+        expect(message.startsWith('AI_JSONParseError: JSON parsing failed: x')).toBe(true);
+        // 压成一行 + 截断（上限 600 码点，末尾 `…`）
+        expect(message).not.toContain('\n');
+        expect([...message].length).toBe(601);
+        expect(message.endsWith('…')).toBe(true);
+    });
+
     it('run.failed：所有还在 streaming 的条目（含工具）都收尾', () => {
         const items = run([
             { seq: 1, type: 'run.started', turnId: 't1', messageId: 'm1' },
