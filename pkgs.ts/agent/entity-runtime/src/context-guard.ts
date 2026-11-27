@@ -81,7 +81,9 @@ export function guardMessages(
     const fixed = Math.max(0, options.fixedTokens ?? 0);
     // 与压缩同一把尺子（见函数头：这两个数不许自己拍）
     const trigger = triggerTokensOf(window);
-    const target = Math.max(0, retainTokensOf(window) - fixed);
+    // ⚠️ 与下面的 `total` **同口径**：total 含 fixed（真发出去的量），所以 target 也得是总量。
+    // 若写成 `retain − fixed` 再跟含 fixed 的 total 比，system 会被扣两次 —— 折得过狠。
+    const target = retainTokensOf(window);
     if (!(trigger > 0)) return null;
 
     // 量的是**真发出去的量**：system + tools + messages，不是只有 transcript

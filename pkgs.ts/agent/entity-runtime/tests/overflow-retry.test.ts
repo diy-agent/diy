@@ -61,7 +61,7 @@ interface Harness {
 }
 
 /** 前 `overflowTimes` 次开跑吐带 `overflow` 的 run.failed，之后正常收尾 */
-function makeSession(overflowTimes: number, opts: { overflowFlag?: boolean } = {}): Harness {
+function makeSession(overflowTimes: number, opts: { overflowFlag?: boolean; partialOutput?: boolean } = {}): Harness {
     const runs: RunOptions['messages'][] = [];
     const items: Item[] = [];
     const events: SessionEvent[] = [];
@@ -72,6 +72,22 @@ function makeSession(overflowTimes: number, opts: { overflowFlag?: boolean } = {
         runs.push(input.messages);
         yield { seq: 1, type: 'run.started', turnId, messageId: `msg-${runs.length}` };
         if (runs.length <= overflowTimes) {
+            // 超窗发生在**跑到一半**（这是真实形态：轮内第 N 步才超）：
+            // 先把这一步的产出播出去（工具结果进了时间线 / 落了库），再被网关拒。
+            if (opts.partialOutput === true) {
+                yield {
+                    seq: 1,
+                    type: 'tool.started',
+                    turnId,
+                    toolCallId: 'c1',
+                    name: 'echo',
+                    args: {},
+                };
+                input.onStepTranscript?.([
+                    { role: 'assistant', content: [{ type: 'text', text: '跑到一半' }] },
+                    { role: 'user', content: '工具结果' },
+                ]);
+            }
             yield {
                 seq: 2,
                 type: 'run.failed',
@@ -149,5 +165,21 @@ describe('超窗自愈', () => {
 
         expect(h.runs).toHaveLength(1);
         expect(h.items.some((item) => item.type === 'error')).toBe(true);
+    });
+
+    it('跑到一半才超窗：不回退已发生的产出（不重复播、不白烧推理）', async () => {
+        const h = makeSession(1, { partialOutput: true });
+        await h.session.post({ messageId: 'm1', text: '继续干活' });
+
+        expect(h.runs).toHaveLength(2);
+        // 第一次已经播出去的产出**跟着进**重试的 prompt（而不是被清空重跑）
+        expect(JSON.stringify(h.runs[1])).toContain('跑到一半');
+        expect(JSON.stringify(h.runs[1])).toContain('工具结果');
+        // 时间线上那一步的工具条目只有一条（没有因为重试再播一遍）
+        // 注意：同一条目的 running → done 是两次 emit，所以按 id 去重再数
+        const toolItems = h.items.filter((item) => item.type === 'tool');
+        expect(new Set(toolItems.map((item) => item.id)).size).toBe(1);
+        // 整轮收尾是成功
+        expect(h.items.some((item) => item.type === 'error')).toBe(false);
     });
 });

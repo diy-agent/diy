@@ -189,10 +189,14 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         ...(options.toolsHint === undefined ? {} : { toolsHint: options.toolsHint }),
     });
     /**
-     * system 占掉的量：水位不能只量 messages。
+     * 除 messages 之外已占掉的量（目前只算 system）。
      *
-     * 真发出去的是「system + tools + messages」三段之和（diy1 的预检 `estimateRequest` 就是这么量的）；
-     * 只量历史会让「system 本身就很大」的房间永远在报告"没超"。
+     * 为什么要算：真发出去的是「system + tools + messages」三段之和（diy1 的预检 `estimateRequest`
+     * 就是这么量的），只量历史会让「system 本身就很大」的房间永远报告"没超"。
+     *
+     * **tools 没算**：`ToolSet` 里挂着 `execute` 函数，`JSON.stringify` 既丢不到描述也容易高估
+     * （zod schema 的内部结构会炸出一大坨），而工具定义通常只有 3~10k token，1M 窗口下不足 1%。
+     * 要算得先把 ToolSet 投影成纯描述，另立一条 —— 不在这里糊一个数。
      */
     const systemTokens = estimateMessagesTokens([{ role: 'system', content: instructions }]);
 

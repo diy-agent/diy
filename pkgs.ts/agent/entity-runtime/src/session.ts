@@ -702,24 +702,25 @@ export class BotSession {
         try {
             const run = this.deps.run ?? runAgent;
             while (true) {
-            // 本次尝试的上下文：**从当前 transcript 重建**（上一轮可能刚压过，变小了）
+            // 本次尝试的上下文：**从当前 transcript + 本轮已发生的产出重建**。
+            //
+            // 第一次尝试的文本 / 工具结果已经广播过、也落库了：重试不把它们撤回去，
+            // 而是让模型**接着看**（下一轮的 prompt 里它们就是已发生的事实）。
+            // 若清空重跑，时间线上会出现同一段话两遍、且白烧一遍推理。
             const messages: ModelMessage[] = await Promise.all(
-                [...this.transcript, ...userEntries].map((entry) =>
+                [...this.transcript, ...userEntries, ...produced].map((entry) =>
                     messageWithAttachments(entry, this.deps.readAttachment, this.imageCache, { acceptsImages }),
                 ),
             );
             const steering = experimental_createSteering();
             this.steering = steering;
-            // 重试要整个重来：上一份产出不进 transcript，这些计数也得归零
-            produced.length = 0;
-            text = '';
+            // 只回退**结局**（失败事实 / 收尾原因）；产出、文本、步数、工具次数是**本轮已经发生的**，
+            // 累加才是真的（重试后 steps 会把两次加在一起，撞步数上限也会更早到顶 —— 那是对的）。
             failed = false;
             failureMessage = undefined;
             errorReported = false;
             finished = false;
             finishReason = undefined;
-            steps = 0;
-            toolCalls = 0;
             let retry = false;
             for await (const event of run({
                 bot: this.deps.bot,
