@@ -3,6 +3,27 @@ import type { DatabaseSync } from 'node:sqlite';
 import { migrations } from './index.js';
 import type { MigrationRuntime } from './types.js';
 
+/** 库现在是什么版本：已记账多少条 / 一共多少条迁移 */
+export interface MigrationVersion {
+    applied: number;
+    total: number;
+}
+
+/**
+ * 「这个库是什么版本」—— 读 `schema_migrations`。
+ *
+ * 没有这张表（从没跑过迁移的老库）当 0 算，不报错。
+ */
+export function migrationVersion(db: DatabaseSync): MigrationVersion {
+    const total = migrations.length;
+    try {
+        const row = db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number };
+        return { applied: row.n, total };
+    } catch {
+        return { applied: 0, total };
+    }
+}
+
 /** 一条计划项：旧资源 → 新资源 + 现在做完没有 */
 export interface MigrationPlanItem {
     /** 负责它的迁移 id（计划行与执行步骤靠它对齐） */

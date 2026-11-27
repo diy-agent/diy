@@ -1376,7 +1376,13 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         journalToEvents: (): void => migrateJournal(),
         log: (message: string): void => console.error(`[migrate] ${message}`),
     };
-    applyMigrations(runtime, report);
+    const migrationRun = applyMigrations(runtime, report);
+    // 启动日志报一句「库版本」：出问题时第一眼看的就是它（没跑东西就不啰嗦）
+    if (migrationRun.ran.length > 0) {
+        console.error(
+            `[migrate] 库版本 ${String(migrationRun.total)} 条已就位；本次跑了 ${String(migrationRun.ran.length)} 条：${migrationRun.ran.join(', ')}`,
+        );
+    }
 
     return {
         db,

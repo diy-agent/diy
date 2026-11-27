@@ -4,7 +4,7 @@ export { runAgent, type RunOptions } from './agent';
 
 // 迁移体系（实现全在 ./migrations/，一个迁移一个文件）
 export { migrations } from './migrations/index';
-export { migrationPlan, type MigrationPlanItem } from './migrations/plan';
+export { migrationPlan, migrationVersion, type MigrationPlanItem, type MigrationVersion } from './migrations/plan';
 export { appliedCount } from './migrations/run';
 export type { Migration, MigrationRuntime } from './migrations/types';
 export {

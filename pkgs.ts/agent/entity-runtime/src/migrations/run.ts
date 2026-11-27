@@ -21,8 +21,20 @@ const TABLE = 'schema_migrations';
  * 它们在这套版本表出现之前就已经被内联迁移改造过了。给它们重放一遍既慢又危险，
  * 所以只要 `done()` 说「这个状态已经是了」，就直接记为已完成。
  */
-export function applyMigrations(runtime: MigrationRuntime, report: MigrationReporter): void {
+/** 本次跑了什么（启动日志用它报一句「库版本」） */
+export interface MigrationRunResult {
+    /** 一共多少条迁移 */
+    total: number;
+    /** 这次真正跑了的（不含基线、不含跳过） */
+    ran: string[];
+    /** 首次引入版本表时按体检判据认定为已完成的 */
+    baselined: string[];
+}
+
+export function applyMigrations(runtime: MigrationRuntime, report: MigrationReporter): MigrationRunResult {
     const { db } = runtime;
+    const ran: string[] = [];
+    const baselined: string[] = [];
     db.exec(
         `CREATE TABLE IF NOT EXISTS ${TABLE} (
             id TEXT PRIMARY KEY,
@@ -73,6 +85,7 @@ export function applyMigrations(runtime: MigrationRuntime, report: MigrationRepo
         // 老库基线：这一项在库里已经是完成状态，只补一行记账，不重放
         if (migration.done(runtime)) {
             runtime.transaction(() => record(migration.id, migration.title, true));
+            baselined.push(migration.id);
             report({ id: migration.id, title: migration.title, state: 'skipped', note: '库里已经是这个状态（记为基线）' });
             continue;
         }
@@ -88,6 +101,7 @@ export function applyMigrations(runtime: MigrationRuntime, report: MigrationRepo
                 migration.up(runtime);
                 record(migration.id, migration.title, false);
             });
+            ran.push(migration.id);
             report({
                 id: migration.id,
                 title: migration.title,
@@ -105,6 +119,7 @@ export function applyMigrations(runtime: MigrationRuntime, report: MigrationRepo
             throw error;
         }
     }
+    return { total: migrations.length, ran, baselined };
 }
 
 /** 库里已经记了多少条迁移（「库版本」给人看的那个数） */

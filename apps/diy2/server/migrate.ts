@@ -14,7 +14,13 @@ import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
-import { MIGRATION_STEPS, migrationPlan, type MigrationPlanItem } from '@diy-agent/entity-runtime';
+import {
+    MIGRATION_STEPS,
+    migrationPlan,
+    migrationVersion,
+    type MigrationPlanItem,
+    type MigrationVersion,
+} from '@diy-agent/entity-runtime';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** 仓库根的 node_modules/.bin/tsx（HERE 是 apps/diy2/server，要往上**三层**到仓根） */
@@ -249,6 +255,7 @@ const PAGE = `<!doctype html>
 var TOTAL=__TOTAL__, BEFORE_SESSIONS=__SESSIONS__, BEFORE_ENTRIES=__ENTRIES__, COL_LABEL='__COL__';
 var APP_URL='__APP_URL__';
 var PLAN=__PLAN__;
+var VERSION='__VERSION__';
 var finished={}, total=TOTAL, doneOk=false, planRows={};
 var NL=String.fromCharCode(10);
 var elGo=document.getElementById('go'), elFill=document.getElementById('fill'),
@@ -300,7 +307,7 @@ function planInitialText(item){
   if(todo.length === 0 && PLAN.length > 0){
     setVerdict('✓ 这个库已经是迁移后的状态', 'ok');
     elFill.className = 'fill ok';
-    elSub.textContent = '共 ' + PLAN.length + ' 项，全部已就位 —— 没有要迁的。';
+    elSub.textContent = '共 ' + PLAN.length + ' 项，全部已就位 —— 没有要迁的。库版本 ' + VERSION + '。';
     if(APP_URL){
       elGo.hidden = true;
       elOpen.hidden = false; elOpen.href = APP_URL;
@@ -310,8 +317,8 @@ function planInitialText(item){
       elHint.textContent = '没找到主实例端口（数据库旁边没有 app.port）。用 ./sha.sh start 或 ./sha.sh lab 起来后自己打开即可。';
     }
   } else {
-    elSub.textContent = '共 ' + PLAN.length + ' 项，其中 ' + todo.length + ' 项待迁移。迁移前：会话 ' +
-      BEFORE_SESSIONS + ' 份 · 消息 ' + BEFORE_ENTRIES + ' 条 · 会话键列 ' + COL_LABEL;
+    elSub.textContent = '共 ' + PLAN.length + ' 项，其中 ' + todo.length + ' 项待迁移。库版本 ' + VERSION +
+      '。迁移前：会话 ' + BEFORE_SESSIONS + ' 份 · 消息 ' + BEFORE_ENTRIES + ' 条 · 会话键列 ' + COL_LABEL;
     // 待办直接摆在主卡上：不展开折叠卡也能看到「到底有什么要迁」
     document.getElementById('pending').textContent = '待迁移 ' + todo.length + ' 项：' +
       todo.map(function(it){ return it.to; }).join(' · ');
@@ -482,13 +489,16 @@ interface PlanItem extends MigrationPlanItem {
  * 每条迁移自己声明 `plan`（旧→新）与 `done()`（做完没有）。
  * 以前这里照拄了一份，结果两边各说各话（迁移说跳过、页面说等待）。
  */
-function planOf(file: string): PlanItem[] {
+function planOf(file: string): { items: PlanItem[]; version: MigrationVersion } {
     const db = new DatabaseSync(file, { readOnly: true });
     try {
-        return migrationPlan(db).map((item) => ({ ...item, present: !item.done }));
+        return {
+            items: migrationPlan(db).map((item) => ({ ...item, present: !item.done })),
+            version: migrationVersion(db),
+        };
     } catch {
         // 读不到就交白卷：页面只显示空计划，不会因此打不开
-        return [];
+        return { items: [], version: { applied: 0, total: MIGRATION_STEPS.length } };
     } finally {
         db.close();
     }
@@ -502,10 +512,15 @@ const server = createServer((request, response) => {
         // ⚠ 必须用 replaceAll：`__SESSIONS__` 这类占位在页面上出现**不止一处**
         // （顶部说明一次、脚本里的基线值一次），replace 只换第一个 ——
         // 脚本里那句会原样留着 `var TOTAL=__TOTAL__`，浏览器直接 SyntaxError。
+        const plan = planOf(dbPath);
         const html = PAGE.replaceAll('__DB__', dbPath)
             .replaceAll('__TOTAL__', String(MIGRATION_STEPS.length))
             .replaceAll('__APP_URL__', appUrl)
-            .replaceAll('__PLAN__', JSON.stringify(planOf(dbPath)))
+            .replaceAll('__PLAN__', JSON.stringify(plan.items))
+            .replaceAll(
+                '__VERSION__',
+                `${String(plan.version.applied)} / ${String(plan.version.total)}`,
+            )
             .replaceAll('__SESSIONS__', String(before.sessions))
             .replaceAll('__ENTRIES__', String(before.roomEntries))
             .replaceAll('__COL__', COL_LABEL[before.sessionKeyColumn] ?? '(未知)');
