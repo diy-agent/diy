@@ -19,7 +19,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { dirname, join } from 'node:path';
 
-import { MIGRATION_STEPS, migrationPlan, migrationVersion, missingMigrations } from '@diy-agent/migration';
+import {
+    MIGRATION_STEPS,
+    checksumDrift,
+    migrationPlan,
+    migrationVersion,
+    missingMigrations,
+} from '@diy-agent/migration';
 
 import type { Diy2Config } from './config';
 import { createStaticHandler } from './static';
@@ -36,6 +42,8 @@ export interface MigrationProbe {
     missing: string[];
     /** 库里记了、代码里没有的 id（跑过别的分支留下的，不是待迁移） */
     unknown: string[];
+    /** 跑过之后文件又被改了的迁移 id（Flyway 式 checksum；不是待迁移，只是改了不生效） */
+    drift: string[];
 }
 
 /**
@@ -60,10 +68,11 @@ export function probeMigration(dbPath: string): MigrationProbe {
             pending: missing.length > 0,
             missing,
             unknown: version.unknown,
+            drift: checksumDrift(db).map((item) => item.id),
         };
     } catch {
         // 打不开（还没建库 / 权限不对）→ 交给真 app 去报错，这里不抢戏
-        return { applied: 0, total: MIGRATION_STEPS.length, pending: false, missing: [], unknown: [] };
+        return { applied: 0, total: MIGRATION_STEPS.length, pending: false, missing: [], unknown: [], drift: [] };
     } finally {
         db?.close();
     }
@@ -80,6 +89,8 @@ function stateOf(dbPath: string): Record<string, unknown> {
             // 页面用 `recorded` 判「待迁移」，用 `done` 显示「旧资源还在不在」
             plan: migrationPlan(db),
             steps: MIGRATION_STEPS,
+            // 指纹对不上 = 迁移跑过之后文件被改过（已迁的库不会重放它，改了等于没改）
+            drift: checksumDrift(db),
         };
     } catch (error) {
         return { error: error instanceof Error ? error.message : String(error) };
@@ -102,6 +113,7 @@ function resolveTsx(start: string): string {
     let dir = start;
     for (let depth = 0; depth < 6; depth += 1) {
         const candidate = join(dir, 'node_modules/.bin/tsx');
+        // sync-io-ok: 只在「点开始迁移」那一下 spawn 前探一次路径，不在请求/事件流热路径上
         if (existsSync(candidate)) return candidate;
         const parent = dirname(dir);
         if (parent === dir) break;
@@ -121,6 +133,7 @@ function resolveTsx(start: string): string {
  * 而页面那一下正等着进度，人看到的是「点了没反应」（2026-11-27 实测）。
  */
 function spawnWorker(dbPath: string): ChildProcess {
+    // sync-io-ok: 同上 —— 一次性决定「源码态用 tsx 还是产物态用 node」，紧随其后就 spawn
     if (existsSync(WORKER_TS)) {
         return spawn(resolveTsx(import.meta.dirname), [WORKER_TS, dbPath], {
             cwd: import.meta.dirname,
@@ -151,6 +164,14 @@ export async function createMigrateModeApp(opts: {
     const serveStatic = await createStaticHandler(opts.config.webDir ?? undefined);
     const clients = new Set<ServerResponse>();
     let running = false;
+    /**
+     * 迁移开始前拍一张状态快照。
+     *
+     * 迁移**在跑**时不再开库回答状态：每次 `readOnly` 开会与子进程的写事务抢锁，
+     * 把几百毫秒的迁移拖成「看不出进展」（2026-11-27 e2e 实测：300ms 轮询 → 卡在 8/18）。
+     * 跑的时候计划本来就在变（进度走 SSE），页面要的数据是「开始前的计划 + 进度事件」。
+     */
+    const snapshot: Record<string, unknown> = { mode: 'migrate', ...stateOf(dbPath) };
 
     const broadcast = (payload: unknown): void => {
         const frame = `data: ${JSON.stringify(payload)}\n\n`;
@@ -220,7 +241,7 @@ export async function createMigrateModeApp(opts: {
             }
 
             if (url.pathname === '/api/migrate/state') {
-                json(res, 200, { mode: 'migrate', ...stateOf(dbPath) });
+                json(res, 200, running ? { ...snapshot, running: true } : snapshot);
                 return;
             }
             if (url.pathname === '/api/migrate/events') {

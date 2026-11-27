@@ -107,6 +107,10 @@ if (migration.pending) {
 if (migration.unknown.length > 0) {
     boot.warn('库里有当前代码不认识的迁移记账（跑过别的分支？）', { unknown: migration.unknown });
 }
+// 迁移跑过之后文件又被改了：已记账的迁移不会重放 —— 明确说出来，否则人以为改动生效了
+if (migration.drift.length > 0) {
+    boot.warn('迁移文件在跑过之后被改过（已迁的库不会重放，改动不生效）', { drift: migration.drift });
+}
 
 let app = migration.pending ? null : await createDiy2App({ config, port: portOf });
 const migrator = migration.pending

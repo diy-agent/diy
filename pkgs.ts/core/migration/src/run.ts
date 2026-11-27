@@ -1,3 +1,4 @@
+import { checksumOf } from './checksums.js';
 import { migrations } from './index-list.js';
 import type { MigrationReporter, MigrationRuntime } from './types.js';
 
@@ -41,21 +42,32 @@ export function applyMigrations(runtime: MigrationRuntime, report: MigrationRepo
             title TEXT NOT NULL,
             applied_at INTEGER NOT NULL,
             -- 1 = 首次引入版本表时按体检判据认定的基线（没有真正跑过 up）
-            baseline INTEGER NOT NULL DEFAULT 0
+            baseline INTEGER NOT NULL DEFAULT 0,
+            -- 跑过的那一版的文件指纹（Flyway 的 checksum）：改文件不改库 → 启动时比对就发现
+            checksum TEXT
         )`,
     );
+    // 老库的版本表没有 checksum 列（2026-11-27 之前建的）：补一列，别让整条迁移路径带病跑
+    const versionColumns = new Set(
+        (db.prepare(`PRAGMA table_info(${TABLE})`).all() as Array<{ name: string }>).map((column) => column.name),
+    );
+    if (!versionColumns.has('checksum')) db.exec(`ALTER TABLE ${TABLE} ADD COLUMN checksum TEXT`);
     const applied = new Set(
         (db.prepare(`SELECT id FROM ${TABLE}`).all() as Array<{ id: string }>).map((row) => row.id),
     );
 
     const record = (id: string, title: string, baseline: boolean): void => {
-        db.prepare(`INSERT OR REPLACE INTO ${TABLE} (id, title, applied_at, baseline) VALUES (?,?,?,?)`).run(
-            id,
-            title,
-            Date.now(),
-            baseline ? 1 : 0,
-        );
+        db.prepare(
+            `INSERT OR REPLACE INTO ${TABLE} (id, title, applied_at, baseline, checksum) VALUES (?,?,?,?,?)`,
+        ).run(id, title, Date.now(), baseline ? 1 : 0, checksumOf(id) ?? null);
     };
+    // 老库的记账没有指纹（加列之前跑的）：静默补成当前文件指纹 —— 那之前本来就无从比对
+    for (const migration of migrations) {
+        db.prepare(`UPDATE ${TABLE} SET checksum = ? WHERE id = ? AND checksum IS NULL`).run(
+            checksumOf(migration.id) ?? null,
+            migration.id,
+        );
+    }
 
     for (const migration of migrations) {
         // 已记账 → 默认跳过；但 `converge` 类（不变量，如清占位值）要每次复查

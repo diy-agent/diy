@@ -18,6 +18,8 @@ import { isLinkKind } from './id';
 import type { RoomEntry } from './room-log';
 import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc } from './task-dir';
 import { PLACEHOLDER_MODEL_KEY, applyMigrations } from '@diy-agent/migration';
+
+import { describeFindings, verifyDatabase } from './verify-migrations';
 import type { MigrationReporter, MigrationRuntime } from '@diy-agent/migration';
 
 // 迁移体系对外的出口（实现全在 @diy-agent/migration，这里只转手）
@@ -723,7 +725,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
      * 老表就再也改不了名，旧数据全成孤儿（2026-11-27 的教训）。
      */
     const createSchema = (): void => {
-    db.exec(`
+        db.exec(`
         -- 角色：一种工作对象类型上的固定席位（见 docs/plans/2026-11-24-bot-role.md）。
         -- 旧的 bots 表按「每个容器一个同名 bot」建，35 行里 27 行 persona 一模一样；
         -- 角色改成类型级：新建任务自动出现在任务房间里，一个房间一份会话。
@@ -1513,7 +1515,9 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                     )
                     .run(from, to).changes;
                 if (Number(dropped) > 0) {
-                    console.error(`[bot-role] 合并会话：${from} → ${to}，丢掉 ${String(dropped)} 份旧快照（同容器重复）`);
+                    console.error(
+                        `[bot-role] 合并会话：${from} → ${to}，丢掉 ${String(dropped)} 份旧快照（同容器重复）`,
+                    );
                 }
                 db.prepare('UPDATE session_state SET bot_profile_id = ? WHERE bot_profile_id = ?').run(to, from);
                 db.prepare(
@@ -1580,6 +1584,18 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             `[migrate] 库版本 ${String(migrationRun.total)} 条已就位；本次跑了 ${String(migrationRun.ran.length)} 条：${migrationRun.ran.join(', ')}`,
         );
     }
+    // 迁移跑完**自检**（2026-11-27）：步骤 done ≠ 库是对的。孤儿引用 / 行数对不上在这里爆，
+    // 而不是等某个读路径撞上变成 500。判据见 ./verify-migrations.ts（error 拦启动，warn 只报）。
+    const findings = verifyDatabase(runtime);
+    if (findings.length > 0) {
+        const hard = findings.filter((item) => item.level === 'error');
+        const detail = describeFindings(findings);
+        console.error(`[migrate] 迁移后自检：${detail}`);
+        report({ id: 'verify', title: '迁移后自检', state: hard.length > 0 ? 'failed' : 'done', note: detail });
+        if (hard.length > 0) {
+            throw Object.assign(new Error(`迁移后自检未通过：${detail}`), { code: 'migration/verify-failed' });
+        }
+    }
 
     return {
         db,
@@ -1628,7 +1644,10 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             }
         },
         listBotProfileDefaults(): BotProfileDefaults[] {
-            const rows = db.prepare('SELECT * FROM bot_profile_defaults ORDER BY type ASC').all() as Record<string, unknown>[];
+            const rows = db.prepare('SELECT * FROM bot_profile_defaults ORDER BY type ASC').all() as Record<
+                string,
+                unknown
+            >[];
             return rows.map(toBotProfileDefaults);
         },
         getBotProfileDefaults(type: string): BotProfileDefaults | undefined {
@@ -1649,7 +1668,10 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 .run(roomId, JSON.stringify(item), item.at);
             return { ...item, seq: Number(result.lastInsertRowid) };
         },
-        appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number; unit?: string }): JournalEntry {
+        appendJournal(
+            roomId: string,
+            input: { kind: JournalKind; text: string; at?: number; unit?: string },
+        ): JournalEntry {
             const at = input.at ?? Date.now();
             const unit = input.unit === undefined || input.unit === '' ? undefined : input.unit;
             const result = db
@@ -1890,9 +1912,9 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             return Number(result.changes) > 0;
         },
         rawUnit(taskId: string, unitId: string): Record<string, unknown> | undefined {
-            const row = db
-                .prepare('SELECT * FROM task_units WHERE task_id = ? AND id = ?')
-                .get(taskId, unitId) as Record<string, unknown> | undefined;
+            const row = db.prepare('SELECT * FROM task_units WHERE task_id = ? AND id = ?').get(taskId, unitId) as
+                | Record<string, unknown>
+                | undefined;
             return row === undefined ? undefined : { ...row };
         },
         listUnits(taskId: string): UnitRecord[] {
