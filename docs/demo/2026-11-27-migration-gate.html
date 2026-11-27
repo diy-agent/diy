@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>启动闸门：数据版本决定进不进迁移页</title>
+<style>
+  :root{
+    --bg:#0b0b0c; --panel:#121214; --panel-2:#17171a; --border:#27272a; --border-soft:#1f1f22;
+    --fg:#e4e4e7; --fg-muted:#a1a1aa; --fg-dim:#71717a;
+    --accent:#38bdf8; --ok:#4ade80; --warn:#f59e0b; --bad:#f87171; --violet:#a78bfa;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--fg);
+    font:13px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",sans-serif;
+    display:flex; flex-direction:column;
+  }
+  header{
+    display:flex; align-items:center; gap:10px; padding:10px 14px;
+    border-bottom:1px solid var(--border); background:var(--panel); flex-wrap:wrap;
+  }
+  header .title{font-weight:600}
+  header .sub{color:var(--fg-dim); font-size:12px}
+  .spacer{flex:1}
+  .seg{display:flex; border:1px solid var(--border); border-radius:8px; overflow:hidden}
+  .seg button{background:transparent;border:0;color:var(--fg-muted);padding:5px 12px;font-size:12px;cursor:pointer}
+  .seg button[aria-pressed="true"]{background:var(--panel-2);color:var(--fg)}
+  .seg button + button{border-left:1px solid var(--border)}
+  main{flex:1; overflow:auto; padding:16px 18px 40px}
+  .wrap{max-width:1080px; margin:0 auto}
+  h2{font-size:14px; margin:26px 0 10px; color:var(--fg)}
+  h2:first-child{margin-top:0}
+  p{margin:0 0 8px; color:var(--fg-muted)}
+  code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--panel-2); border:1px solid var(--border-soft); border-radius:4px; padding:1px 5px}
+  .muted{color:var(--fg-dim)}
+
+  .cards{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+  @media (max-width:820px){ .cards{grid-template-columns:1fr} }
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 14px}
+  .card h3{margin:0 0 6px; font-size:13px}
+  .card .tag{font-size:11px; color:var(--fg-dim)}
+  .card.old{border-color:#3f2b2b}
+  .card.new{border-color:#2b3f31}
+
+  table{width:100%; border-collapse:collapse; font-size:12px}
+  th,td{text-align:left; padding:7px 10px; border-bottom:1px solid var(--border-soft); vertical-align:top}
+  th{color:var(--fg-dim); font-weight:500}
+  tr:last-child td{border-bottom:0}
+
+  .flow{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:10px 0 4px}
+  .node{
+    border:1px solid var(--border); background:var(--panel-2); border-radius:8px;
+    padding:7px 11px; font-size:12px; white-space:nowrap
+  }
+  .node.hot{border-color:var(--bad); color:#fecaca}
+  .node.good{border-color:#2b5a3a; color:#bbf7d0}
+  .arrow{color:var(--fg-dim)}
+
+  .switcher{display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 14px}
+  .switcher button{
+    background:var(--panel); border:1px solid var(--border); color:var(--fg-muted);
+    border-radius:999px; padding:6px 13px; font-size:12px; cursor:pointer
+  }
+  .switcher button[aria-pressed="true"]{background:#1d2833; border-color:#2c4a63; color:#bae6fd}
+
+  .stage{display:grid; grid-template-columns:1.05fr 1fr; gap:12px}
+  @media (max-width:900px){ .stage{grid-template-columns:1fr} }
+
+  .dbview{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px}
+  .dbview .row{display:flex; align-items:center; gap:8px; padding:4px 0; border-bottom:1px dashed var(--border-soft); font-size:12px}
+  .dbview .row:last-child{border-bottom:0}
+  .dot{width:8px;height:8px;border-radius:50%; background:var(--fg-dim); flex:none}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
+  .dbview .mono{font:11px ui-monospace,Menlo,monospace; color:var(--fg-muted)}
+
+  .verdict{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:flex; flex-direction:column; gap:10px}
+  .verdict .line{display:flex; align-items:center; gap:8px; font-size:12px}
+  .pill{border-radius:999px; padding:2px 9px; font-size:11px; border:1px solid var(--border)}
+  .pill.ok{background:#0f2a18; border-color:#2b5a3a; color:#bbf7d0}
+  .pill.bad{background:#2f1616; border-color:#5a2b2b; color:#fecaca}
+  .pill.warn{background:#2f2613; border-color:#5a4a2b; color:#fde68a}
+  .verdict .out{border-top:1px solid var(--border-soft); padding-top:10px; font-size:12px}
+  .verdict .out b{color:var(--fg)}
+
+  .note{font-size:12px; color:var(--fg-dim); margin-top:8px}
+  ul{margin:6px 0 0 18px; padding:0; color:var(--fg-muted)}
+  li{margin:4px 0}
+  .kbd{font:11px ui-monospace,Menlo,monospace; border:1px solid var(--border); border-bottom-width:2px; border-radius:4px; padding:1px 5px; color:var(--fg-muted)}
+</style>
+</head>
+<body>
+<header>
+  <span class="title">启动闸门：由「数据版本」决定进不进迁移页</span>
+  <span class="sub">diy2 · ##41 · 2026-11-27</span>
+  <span class="spacer"></span>
+  <div class="seg" role="group" aria-label="对照旧实现 / 新实现">
+    <button id="btnOld" aria-pressed="false">旧闸门（done 体检）</button>
+    <button id="btnNew" aria-pressed="true">新闸门（版本表）</button>
+  </div>
+</header>
+
+<main>
+<div class="wrap">
+
+  <h2>一、入口是怎么决定的</h2>
+  <div class="flow">
+    <span class="node">进程启动</span><span class="arrow">→</span>
+    <span class="node">只读探库<br><span class="muted">probeMigration（不 openStore）</span></span><span class="arrow">→</span>
+    <span class="node hot" id="flowGate">有待迁移？</span><span class="arrow">→</span>
+    <span class="node" id="flowMigrate">装配「迁移态」app<br><span class="muted">只服务迁移页，其余 503</span></span>
+    <span class="arrow">/</span>
+    <span class="node good" id="flowReal">直接装配真 app<br><span class="muted">工作台</span></span>
+  </div>
+  <p class="note">迁移本身在子进程跑（同步迁移会卡事件循环），迁完同端口换成真 app。闸门只决定「要不要先站在门口」。</p>
+
+  <h2>二、病根：闸门用错了判据</h2>
+  <div class="cards">
+    <div class="card old">
+      <h3>旧闸门：<code>migrationPlan().some(item =&gt; !item.done)</code></h3>
+      <div class="tag">done() = 数据体检（这张表还在吗 / 还有占位值吗 / 每房是不是只剩一个成员）</div>
+      <ul>
+        <li>数据一变回「不像迁过了」，<code>done()</code> 就翻回 <code>false</code></li>
+        <li>于是<b>已迁完的库每次启动都回迁移页</b></li>
+        <li>点「开始迁移」又被 <code>run()</code> 跳过（已记账的非 converge 迁移不重跑）</li>
+        <li>结果：页面永远转圈、无进展 —— <b>人真卡死，无解</b></li>
+      </ul>
+    </div>
+    <div class="card new">
+      <h3>新闸门：<code>missingMigrations()</code>（读 <code>schema_migrations</code>）</h3>
+      <div class="tag">版本表 = 「这条迁移跑过没有」，这才是「迁没迁」的真源</div>
+      <ul>
+        <li><b>版本表管「要不要拦」</b>，<code>done()</code> 只用于 <code>run()</code> 的基线判断</li>
+        <li><code>unknown</code>（库里记账、代码里没有的 id，切分支遗留）只警告，不拦</li>
+        <li><code>applied</code> 只数代码认得的 id → 不再出现「17 / 16」</li>
+        <li>收敛类（converge，清占位值）照常每次启动复查 —— 它永远不该卡启动</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>三、三种库状态，旧/新闸门各怎么判（点上面切换）</h2>
+  <div class="switcher" id="scenarios">
+    <button data-i="0" aria-pressed="true">A 现网库（17 条记账）</button>
+    <button data-i="1" aria-pressed="false">B 数据回退（占位键写回）</button>
+    <button data-i="2" aria-pressed="false">C 真缺一条记账</button>
+  </div>
+
+  <div class="stage">
+    <div class="dbview" id="dbview"></div>
+    <div class="verdict" id="verdict"></div>
+  </div>
+
+  <h2>四、改了什么</h2>
+  <table>
+    <tr><th style="width:200px">位置</th><th>变化</th></tr>
+    <tr><td><code>core/migration/plan.ts</code></td><td><code>migrationVersion</code> 加 <code>unknown</code>；<code>applied</code> 只数认得的 id；新增 <code>missingMigrations()</code>；计划项加 <code>recorded</code>，<code>done</code> 降级为纯展示</td></tr>
+    <tr><td><code>server/migrate-mode.ts</code></td><td><code>probeMigration().pending</code> 改由版本表决定；<code>state</code> 原样给出 plan（页面按 <code>recorded</code> 判待迁移）</td></tr>
+    <tr><td><code>server/index.ts</code></td><td>启动日志同时打 <code>missing</code> / <code>unknown</code>（后者是警告，不拦）</td></tr>
+    <tr><td><code>MigrationScreen.tsx</code></td><td>「待迁移」计数与徽章改按 <code>recorded</code>；<code>done</code> 只用于展示旧资源</td></tr>
+    <tr><td><code>core/migration/run.ts</code></td><td><code>appliedCount</code> 同样只数认得的 id</td></tr>
+    <tr><td><code>tests/migration.test.ts</code></td><td>回归两条：<code>done()===false</code> 但已记账 → 不拦；<code>unknown</code> 记账 → 不算 applied、不拦</td></tr>
+  </table>
+
+  <h2>五、验证</h2>
+  <table>
+    <tr><th style="width:200px">场景</th><th>结果</th></tr>
+    <tr><td>A 现网库副本（17 条记账含 2 条别分支的）</td><td><code>/api/migrate/state</code> → <code>{"mode":"ready"}</code>，页面直接进工作台；启动日志只给一条 unknown 警告</td></tr>
+    <tr><td>B 数据回退（占位键写回，旧闸门会拦）</td><td>同样 ready；并且 converge 仍把占位键清成了 NULL</td></tr>
+    <tr><td>C 真删一条记账（legacy-journal）</td><td>仍进迁移页，版本 15/16，计划里那条显示「待迁移」</td></tr>
+    <tr><td>静态与单测</td><td>tsc 全图 0 · entity-runtime 518 · diy2 113 · 新回归 2 条</td></tr>
+  </table>
+  <p class="note">浏览器实测（Chrome，构建产物 + 真实库副本）：页面不含「开始迁移」，console 零错误 —— 即不再落迁移页。</p>
+
+  <h2>六、还没做的</h2>
+  <ul>
+    <li>迁移错误落盘（现在只有 SSE 通道，丢了就没日志）</li>
+    <li>产物态 e2e 进 <code>./sha.sh check</code>（这次卡死就是「源码态能跑、产物态炸」）</li>
+    <li>迁移后自动校验（孤儿/行数）做成执行器的一步</li>
+    <li>Flyway 式 checksum（迁移文件事后被改能发现）</li>
+  </ul>
+
+</div>
+</main>
+
+<script>
+const SCENARIOS = [
+  {
+    name: 'A 现网库（17 条记账）',
+    db: [
+      { t: 'schema_migrations 17 行', s: 'ok' },
+      { t: '代码里的迁移 16 条（+2 条来自别的分支：prune-room-members / task-units-kind）', s: 'warn' },
+      { t: '数据体检 done()：全部 true', s: 'ok' },
+      { t: '会话 / 消息 / 任务：完好', s: 'ok' },
+    ],
+    oldGate: false, oldWhy: 'plan 全部 done → 不拦（本例旧闸门也不拦，但版本号会显示 17/16）',
+    newGate: false, newWhy: 'missing=[] → ready；unknown 只警告',
+    ui: '直接进工作台'
+  },
+  {
+    name: 'B 数据回退（占位键写回）',
+    db: [
+      { t: 'schema_migrations 17 行', s: 'ok' },
+      { t: 'bot_profiles.model_key 又被写成 none@none/none', s: 'bad' },
+      { t: '数据体检 done()：clear-placeholder-model = false', s: 'bad' },
+      { t: '版本表：该迁移已记账', s: 'ok' },
+    ],
+    oldGate: true, oldWhy: 'some(!done) = true → 拦启动',
+    newGate: false, newWhy: 'missing=[] → ready；启动时 converge 又把占位键清掉',
+    ui: '旧：永远停在迁移页，点开始也没反应 ｜ 新：直接进工作台'
+  },
+  {
+    name: 'C 真缺一条记账',
+    db: [
+      { t: 'schema_migrations 16 行（删掉了 legacy-journal）', s: 'warn' },
+      { t: '代码里的迁移 16 条', s: 'ok' },
+      { t: 'missing = [legacy-journal]', s: 'bad' },
+      { t: '数据体检 done()：该条 false', s: 'bad' },
+    ],
+    oldGate: true, oldWhy: 'some(!done) = true → 拦（这次是对的）',
+    newGate: true, newWhy: 'missing 非空 → 拦（这次也是对的）',
+    ui: '两边都进迁移页：15/16，那条显示「待迁移」'
+  }
+];
+
+let mode = 'new';
+let idx = 0;
+
+function render() {
+  const s = SCENARIOS[idx];
+  // 标题栏按钮
+  document.getElementById('btnOld').setAttribute('aria-pressed', String(mode === 'old'));
+  document.getElementById('btnNew').setAttribute('aria-pressed', String(mode === 'new'));
+  // 场景按钮
+  [...document.querySelectorAll('#scenarios button')].forEach((b) => {
+    b.setAttribute('aria-pressed', String(Number(b.dataset.i) === idx));
+  });
+
+  document.getElementById('dbview').innerHTML =
+    '<div style="font-size:12px;color:var(--fg-dim);margin-bottom:6px">' + s.name + ' · 库里的样子</div>' +
+    s.db.map((r) => '<div class="row"><span class="dot ' + r.s + '"></span><span class="mono">' + r.t + '</span></div>').join('');
+
+  const gate = mode === 'old' ? s.oldGate : s.newGate;
+  const why = mode === 'old' ? s.oldWhy : s.newWhy;
+  const label = mode === 'old' ? '旧闸门（done 体检）' : '新闸门（版本表）';
+  const pill = gate
+    ? '<span class="pill bad">有待迁移 → 进迁移页</span>'
+    : '<span class="pill ok">无待迁移 → 直接进主界面</span>';
+  document.getElementById('verdict').innerHTML =
+    '<div class="line"><b style="font-size:12px">' + label + '</b>' + pill + '</div>' +
+    '<div class="line muted">' + why + '</div>' +
+    '<div class="out">用户看到：<b>' + s.ui + '</b></div>' +
+    (s.name.startsWith('A') ? '<div class="out muted">版本号：旧 17 / 16 → 新 16 / 16（unknown 单独列出）</div>' : '');
+
+  document.getElementById('flowGate').textContent = gate ? '有待迁移 → 拦' : '无待迁移 → 直进';
+  document.getElementById('flowGate').className = 'node ' + (gate ? 'hot' : 'good');
+  document.getElementById('flowMigrate').style.opacity = gate ? '1' : '.35';
+  document.getElementById('flowReal').style.opacity = gate ? '.35' : '1';
+}
+
+document.getElementById('btnOld').addEventListener('click', () => { mode = 'old'; render(); });
+document.getElementById('btnNew').addEventListener('click', () => { mode = 'new'; render(); });
+document.querySelectorAll('#scenarios button').forEach((b) => {
+  b.addEventListener('click', () => { idx = Number(b.dataset.i); render(); });
+});
+render();
+</script>
+</body>
+</html>
