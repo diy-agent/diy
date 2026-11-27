@@ -643,11 +643,16 @@ export class RunRegistry {
         return this.runs.get(id);
     }
 
-    /** 读输出尾部；未登记 ⇒ `undefined`（调用方自己决定怎么说）。 */
-    async tail(id: string, lines = 40): Promise<TailResult | undefined> {
+    /**
+     * 读输出尾部；未登记 ⇒ `undefined`（调用方自己决定怎么说）。
+     *
+     * `maxBytes` 让调用方按「整份预算扣掉自己的框架字节」来缩减 —— 名单里的默认值是
+     * 「一条工具输出」的整份预算，但 `job output` 的文案还带一段头（命令 / 目录 / 路径）。
+     */
+    async tail(id: string, lines = 40, maxBytes?: number): Promise<TailResult | undefined> {
         const info = this.runs.get(id);
         if (!info) return undefined;
-        return tailOf(await this.readLogTail(info.logPath), lines);
+        return tailOf(await this.readLogTail(info.logPath), lines, maxBytes);
     }
 
     /** 输出文件当前字节数（表格里"输出"列；在跑时它一直在长）。读不到给 `undefined`。 */

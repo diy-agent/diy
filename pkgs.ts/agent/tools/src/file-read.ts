@@ -112,8 +112,14 @@ export async function readFileWindow(
     const offset = opts.offset ?? 1;
     const limit = opts.limit ?? READ_MAX_LINES;
     const maxBytes = opts.maxBytes ?? READ_MAX_BYTES;
-    /** 累积预算（= 整份预算扣掉渲染尾巴；行号前缀按行另计，见 `flush`） */
-    const budget = Math.max(1, maxBytes - TRAILER_RESERVE_BYTES);
+    /**
+     * 累积预算 = 整份预算 − 渲染尾巴 − 首行路径。
+     *
+     * 路径也要扣（2026-11-27 review）：`formatReadOutput` 第一行就是路径，深目录里一条
+     * 绝对路径 300+ 字节很常见，只扣尾巴预留的话读满一窗仍会越界（同样的「裁两遍」）。
+     * 行号前缀按行另计，见 `flush`。
+     */
+    const budget = Math.max(1, maxBytes - TRAILER_RESERVE_BYTES - Buffer.byteLength(displayPath, 'utf-8') - 1);
 
     const lines: ReadLine[] = [];
     let totalLines = 0;

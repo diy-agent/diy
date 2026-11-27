@@ -221,4 +221,16 @@ describe('渲染后不超预算（2026-11-27：消掉「read 裁一遍、投递�
         // 尾巴（下一步取哪段）必须在 —— 它最容易被「刚好超一个字节」裁掉
         expect(out).toMatch(/续读：offset=\d+/);
     });
+
+    it('首行路径很长时也不越界（路径要算进预算，不只有尾巴）', async () => {
+        const p = join(dir, 'longpath.txt');
+        writeFileSync(p, Array.from({ length: 5000 }, (_, i) => `${i + 1}:${'x'.repeat(60)}`).join('\n'), 'utf-8');
+        // 深目录里的绝对路径：只扣尾巴预留的话，读满一窗会被这 400 字节顶穿
+        const display = `/${'deep-dir/'.repeat(40)}longpath.txt`;
+        expect(Buffer.byteLength(display, 'utf-8')).toBeGreaterThan(256);
+
+        const out = formatReadOutput(await readFileWindow(p, display, {}), { style: 'tool' });
+        expect(Buffer.byteLength(out, 'utf-8')).toBeLessThanOrEqual(READ_MAX_BYTES);
+        expect(out).toMatch(/续读：offset=\d+/);
+    });
 });
