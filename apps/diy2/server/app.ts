@@ -622,6 +622,14 @@ const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> 
             return;
         }
 
+        // 迁移闸门的探针：真 app 直接答「不用迁了」。
+        // 回 404 会让浏览器控制台多两条红字 —— UI 里「console 零错误」是硬规矩，
+        // 而且探针本来是正常流程的一环，不是「找不到」。
+        if (req.method === 'GET' && url.pathname === '/api/migrate/state') {
+            json(res, 200, { mode: 'ready' });
+            return;
+        }
+
         // 静态资源 / SPA 路由：/api 之外的 GET 交给 UI 产物
         if (req.method === 'GET' && !url.pathname.startsWith('/api') && serveStatic !== undefined) {
             if (await serveStatic(url.pathname, res)) return;
