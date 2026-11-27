@@ -11,6 +11,7 @@ export type {
     AskQuestion,
     AskQuestionAnswer,
     AskRequest,
+    AttachmentRef,
     Author,
     Bot,
     Capabilities,

@@ -25,33 +25,50 @@ async function main() {
   const a = createMainTransport(() => wcA as any, 'rpc-a');
   let aClosed = 0;
   let aSends = 0;
-  a.onClose(() => { aClosed++; });
+  a.onClose(() => {
+    aClosed++;
+  });
   a.send({ type: 'call', id: 1 });
   aSends++;
   wcA.disposed = true;
   a.send({ type: 'call', id: 2 }); // 第一次失败 → fireClose
   let threwAfterDead = '';
-  try { a.send({ type: 'call', id: 3 }); } catch (e: any) { threwAfterDead = String(e?.message ?? e); }
+  try {
+    a.send({ type: 'call', id: 3 });
+  } catch (e: any) {
+    threwAfterDead = String(e?.message ?? e);
+  }
 
   // B. destroyed 事件
   const wcB = new FakeWebContents();
   const b = createMainTransport(() => wcB as any, 'rpc-b');
   let bClosed = 0;
-  b.onClose(() => { bClosed++; });
+  b.onClose(() => {
+    bClosed++;
+  });
   wcB.emit('destroyed');
 
   console.log('[electron-transport-close]', {
-    aClosed, aSends, threwAfterDead,
+    aClosed,
+    aSends,
+    threwAfterDead,
     bClosed,
   });
 
   const ok = aClosed === 1 && threwAfterDead === '' && bClosed === 1;
   if (!ok) {
-    console.error('FAIL: electron transport did not converge to a closed state on send-failure/destroy');
+    console.error(
+      'FAIL: electron transport did not converge to a closed state on send-failure/destroy',
+    );
     process.exitCode = 1;
   } else {
-    console.log('PASS: electron main transport fires onClose on send-failure and webContents destroy');
+    console.log(
+      'PASS: electron main transport fires onClose on send-failure and webContents destroy',
+    );
   }
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

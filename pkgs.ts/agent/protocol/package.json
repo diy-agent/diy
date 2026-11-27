@@ -6,14 +6,15 @@
     "type": "module",
     "main": "./src/index.ts",
     "types": "./src/index.ts",
-    "dependencies": {
-        "@diy-agent/rpc": "*",
-        "zod": "^4.4.3"
-    },
     "exports": {
         ".": {
             "types": "./src/index.ts",
             "default": "./src/index.ts"
         }
+    },
+    "dependencies": {
+        "@diy-agent/attachment": "*",
+        "@diy-agent/rpc": "*",
+        "zod": "^4.4.3"
     }
 }

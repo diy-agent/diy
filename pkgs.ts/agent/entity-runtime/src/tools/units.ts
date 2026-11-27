@@ -14,12 +14,23 @@ import { z } from 'zod';
 
 import { UNIT_STATUSES, type Store, type UnitRecord } from '../db';
 import { unitBoard, unitTreeLines, type UnitBoard } from '../units';
+import { toolReminder, type RemindMode } from '../units-remind';
 
 /** 工具写入落点：只认 store + 一个 taskId（unit 是 task 私有的，id 只在该 task 内唯一） */
 export interface UnitHost {
     store: Store;
     /** 这个房间对应的任务 id；unit 都挂它 */
     taskId: string;
+    /**
+     * C 档提醒（`units-remind.ts`）：把「这句话里如果有新需求就先落一条」写进 `unit_add`
+     * 的描述。不传 = 不提醒（实验里的 `off` / `a` / `b` 档）。
+     */
+    remind?: RemindMode;
+    /**
+     * 这条需求来自哪句人话（**宿主盖章**）。模型根本看不到 message id，让它填只会编错 ——
+     * 所以由房间在「本轮触发消息」上取，`unit_add` 落库时自动带上。
+     */
+    sourceOf?: () => string | undefined;
 }
 
 /** 事件名（`<type>.<verb>`，与 `task.journal` 同一套命名） */
@@ -93,6 +104,9 @@ export function unitTools(host: UnitHost): ToolSet {
 
         unit_add: tool({
             description: [
+                ...(toolReminder(host.remind ?? { prompt: false, envelope: false, tool: false }) === ''
+                    ? []
+                    : [toolReminder(host.remind as RemindMode)]),
                 '往账本树上加条目：**一次调用 = 一批**（整棵树一次给全最好）。',
                 '**接到需求、或需求变了的时候，这是第一步** —— 先把「要做成哪些东西」写下来，再动手。',
                 '',
@@ -105,7 +119,7 @@ export function unitTools(host: UnitHost): ToolSet {
                 '',
                 '粒度参考：一个母项下 2~5 条叶子；超过 7 条说明该再分一层。',
                 '`key` 必填：**它就是这条 unit 的 id**，也是以后 parent 引用它的名字 —— ' +
-                '起短名（`state`、`cancel-tool`，小写英文 / 数字 / - _，≤24）。同批任意项的 key 都能引用（在它后面也行）。',
+                    '起短名（`state`、`cancel-tool`，小写英文 / 数字 / - _，≤24）。同批任意项的 key 都能引用（在它后面也行）。',
                 'body 写验收口径。',
                 '',
                 '**不要**在这里排先后、写批次：账本只回答「要做成哪些东西」，先做哪个由你每轮自己挑。',
@@ -117,9 +131,26 @@ export function unitTools(host: UnitHost): ToolSet {
                             key: z
                                 .string()
                                 .regex(KEY_PATTERN, 'key 只能是小写字母开头的小写英文 / 数字 / - _，≤24 字符')
-                                .describe('这条 unit 的 id（自起的短名，如 state / cancel-tool）；后面的项与以后的操作都用它引用'),
-                            title: z.string().min(1).describe('一件能被验收的产出（不是动作：写「什么改好了」，不是「改哪个文件」）'),
-                            body: z.string().optional().describe('可选：验收口径 / 注意点'),
+                                .describe(
+                                    '这条 unit 的 id（自起的短名，如 state / cancel-tool）；后面的项与以后的操作都用它引用',
+                                ),
+                            title: z
+                                .string()
+                                .min(1)
+                                .describe('一件能被验收的产出（不是动作：写「什么改好了」，不是「改哪个文件」）'),
+                            body: z
+                                .string()
+                                .optional()
+                                .describe(
+                                    '可选：这条需求要解决什么（背景 / 范围 / 注意点）——**验收口径不写这里**，写 accept',
+                                ),
+                            accept: z
+                                .string()
+                                .optional()
+                                .describe(
+                                    '怎么算做完：一句话能判断完/未完的判据（如「点导出真的落文件，且首末轮都在」）。' +
+                                        '**尽量写**：没写的人一眼看得见，会回来问你',
+                                ),
                             parent: z
                                 .string()
                                 .optional()
@@ -133,9 +164,7 @@ export function unitTools(host: UnitHost): ToolSet {
                 const batchKeys = new Set<string>();
                 for (const item of items) {
                     if (!KEY_PATTERN.test(item.key)) {
-                        throw new Error(
-                            `key 只能用 小写字母开头的小写英文 / 数字 / - _（≤24 字符）：${item.key}`,
-                        );
+                        throw new Error(`key 只能用 小写字母开头的小写英文 / 数字 / - _（≤24 字符）：${item.key}`);
                     }
                     if (batchKeys.has(item.key)) throw new Error(`同批 key 重复：${item.key}`);
                     batchKeys.add(item.key);
@@ -153,6 +182,9 @@ export function unitTools(host: UnitHost): ToolSet {
                         allowNewId: true,
                         title: item.title,
                         body: item.body ?? '',
+                        accept: item.accept ?? '',
+                        // 来源自动盖章：只认宿主给的「本轮触发消息」，模型填不了也没必要填
+                        ...(host.sourceOf?.() === undefined ? {} : { source: host.sourceOf() }),
                         status: 'open',
                         parent: item.parent ?? null,
                     });
@@ -193,11 +225,15 @@ export function unitTools(host: UnitHost): ToolSet {
             inputSchema: z.object({
                 id: z.string(),
                 title: z.string().min(1).optional(),
-                body: z.string().optional(),
+                body: z
+                    .string()
+                    .optional()
+                    .describe('这条需求要解决什么（背景 / 范围）—— 进展不要写这里（进展用 journal）'),
+                accept: z.string().optional().describe('怎么算做完：一句话能判断完/未完的判据'),
                 parent: z.string().nullable().optional().describe('换挂点：给母项的 key；传 null = 提到顶层'),
                 status: z.enum(UNIT_STATUSES).optional().describe('open / doing / done（只有叶子能改）'),
             }),
-            execute: async ({ id, title, body, parent, status }) => {
+            execute: async ({ id, title, body, accept, parent, status }) => {
                 const current = need(host, id);
                 if (status !== undefined) {
                     const row = boardOf(host).rows.find((item) => item.id === id);
@@ -224,12 +260,14 @@ export function unitTools(host: UnitHost): ToolSet {
                     id,
                     title: title ?? current.title,
                     body: body ?? current.body,
+                    accept: accept ?? current.accept,
                     status: status ?? current.status,
                     ...(parent === undefined ? {} : { parent }),
                 });
                 const fields = {
                     ...(title === undefined ? {} : { title }),
                     ...(body === undefined ? {} : { body }),
+                    ...(accept === undefined ? {} : { accept }),
                     ...(parent === undefined ? {} : { parent }),
                     ...(status === undefined ? {} : { status }),
                 };
@@ -260,6 +298,7 @@ export function unitTools(host: UnitHost): ToolSet {
                         id: child,
                         title: record.title,
                         body: record.body,
+                        accept: record.accept,
                         status: record.status,
                         parent: current.parent,
                     });
@@ -276,7 +315,9 @@ export function unitTools(host: UnitHost): ToolSet {
         }),
 
         unit_get: tool({
-            description: '看一条 unit 的全文（title / body / 母项 / 子 / 状态）。',
+            description:
+                '看一条 unit 的全文（title / body / accept / source / 母项 / 子 / 状态）。' +
+                '`accept` = 怎么算做完（空串 = 还没写，该补）；`source` = 这条需求来自哪句人话。',
             inputSchema: z.object({ id: z.string() }),
             execute: async ({ id }) => {
                 const unit = need(host, id);
@@ -285,6 +326,9 @@ export function unitTools(host: UnitHost): ToolSet {
                     id: unit.id,
                     title: unit.title,
                     body: unit.body,
+                    accept: unit.accept,
+                    // 来源由宿主盖章（模型看不到 message id，不该由它填）
+                    source: unit.source,
                     status: row?.status ?? unit.status,
                     parent: row?.parent ?? null,
                     children: row?.children ?? [],

@@ -16,17 +16,25 @@
 //   4. 压缩只影响自己：没有房间级水位，也没有共享摘要
 //   5. 同一房间运行中再发消息 → 沿用当前 turn（时间线不乱）
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import type { ModelMessage, ToolSet } from 'ai';
 
-import { effectivePersonaOf, mentionsOf, primaryMemberOf } from '@diy-agent/protocol';
+import { effectiveModelOf, effectivePersonaOf, mentionsOf, primaryMemberOf } from '@diy-agent/protocol';
+import { createBlobStore } from '@diy-agent/attachment';
+import type { AttachmentRef } from '@diy-agent/attachment/types';
 import type { ContextSession } from '@diy-agent/context';
 
 import { AskGate, askAnswerHeading, describeAnswer, type AnswerOutcome, type AskResult } from './ask';
 import type { Compactor } from './compaction';
 import { ASK_DRAFT_PREFIX, type Store } from './db';
+import { acceptsImagesOf } from './providers';
 import { RoomLog, type RoomEntry } from './room-log';
+import type { AttachmentReader } from './session-images';
 import { createRoomContext } from './system-context';
-import { buildRoomTools } from './tools/index';
+import { envelopeHint, promptReminder, resolveRemindMode, type RemindMode } from './units-remind';
+import { buildRoomTools, type RunCodeHost } from './tools/index';
 import { createToolOutputCapper } from './tool-output';
 import { unitBoard, type UnitBoard } from './units';
 import { jobNoticeOf, jobOwnerOf, type JobOwner } from './jobs';
@@ -47,7 +55,7 @@ import type {
     Author,
     Bot,
     Delivery,
-    InboxMode,
+    MessageKind,
     Item,
     Room,
     RoomEvent,
@@ -60,6 +68,19 @@ export interface SessionInfo {
     name: string;
     stats: SessionStats;
     compactions: ReturnType<BotSession['compactions']>;
+}
+
+/**
+ * 缺省读法：`<home>/blobs` 里取字节；`linked`（工作区文件）直接读原路径。
+ *
+ * 为什么 `linked` 也能读：用户拖进来的工作区图片不该为了一次看图而拷一份 ——
+ * 到发请求时按路径读一次就够了（原件被删就自然落到「未送达」）。
+ */
+function defaultAttachmentReader(home: string | undefined): AttachmentReader | undefined {
+    if (home === undefined) return undefined;
+    const blobs = createBlobStore({ root: join(home, 'blobs') });
+    return async (ref: AttachmentRef) =>
+        ref.type === 'linked' ? new Uint8Array(await readFile(ref.path)) : blobs.read(ref);
 }
 
 export interface RoomActorDeps {
@@ -85,6 +106,18 @@ export interface RoomActorDeps {
      * 不传 = 不投设备库（与 `home` 分开：lab 实例的应用根是 `run/diy2/lab`，设备库仍在生产根）。
      */
     deviceHome?: string;
+    /**
+     * 代码执行（`run_code`）：引擎 + 进程内 RPC client。不传 = 没这个工具。
+     *
+     * 为什么拿 `RunCodeHost` 而不是自己 import 引擎：引擎是可换的策略（进程内 vm /
+     * worker / 子进程），房间只负责「把它包成工具」，不该决定它在哪个进程跑。
+     *
+     * **为什么是函数不是值**：deps 是构造 actor 时的快照，而房间 actor 通常先于
+     * 「进程内 RPC client」就绪（`seed()` 重读存量房间时，`bindDiy2Api` 还没跑）——
+     * 传值的话，重启前就存在的房间永远拿不到 `run_code`（实测：bot 手里根本没这个工具）。
+     * 取值的时机跟着 `toolsFor` 走（第一次跑 turn），那时 client 已经在了。
+     */
+    code?: () => RunCodeHost | undefined;
     /** 是否开放 shell（缺省开放） */
     shell?: boolean;
     /**
@@ -102,7 +135,27 @@ export interface RoomActorDeps {
     now?: () => number;
     /** 「用户」在时间线上的身份（回答提问时以它投递）；缺省就是「我」 */
     human?: Author;
+    /** 覆盖附件读法（缺省从 `home` 推 blobs；测试注入内存表） */
+    readAttachment?: AttachmentReader;
+    /** 覆盖「这个模型收不收图」的判据（缺省查模型目录的能力位；测试注入常量） */
+    acceptsImages?: (modelKey: string) => boolean;
 }
+
+/**
+ * job 使用判据的提示词正文 —— 与知识库 `app/rule#job-when` **同源**（那边是判据，这里是它的落地）。
+ *
+ * 单独导出是为了让测试直接锁住它：原文「后台长活（构建 / 测试 / 装依赖）用 background」把
+ * **测试**列进了该 job 的例子，于是 check / test / tsc 全被后台化 —— job runs 从每日 26
+ * 涨到 138（2026-11-26 查）。**例子会过时，判据不会**：先给判据，例子只当注脚。
+ */
+export const JOB_HINT_BODY =
+    '**要不要 background（进 job 账本）看一条：本轮下一步要不要用它的输出？** ' +
+    '要 → **前台同步等**（`./sha.sh check` / `test` / `tsc` / `build` / `npm ci` / `git push` / `gh pr …` ' +
+    '都是**轮次内的工具步骤**，不是后台任务：后台化只会让 job 结束通知刷屏、状态分散到 job status，' +
+    '而你反正要等它的结果才能继续）；' +
+    '不要、且它会一直活着 → 才 `background: true`（起服务给人开窗口看的 `lab` / `staging` / `dev`、' +
+    '用户会离开的超长跑、跨轮次才收口的活）。' +
+    '起完就别轮询，结束时会插话叫醒你；查状态 / 取输出 / 停用 job。';
 
 export class RoomActor {
     private readonly log: RoomLog;
@@ -141,21 +194,20 @@ export class RoomActor {
     private readonly contexts = new Map<string, ContextSession>();
     /** 系统自己的身份：「你的提问被挤掉了」这类通知的作者（不能冒充用户） */
     private static readonly SYSTEM: Author = { id: 'system:ask', name: '系统', color: '#9ca3af', role: 'system' };
-    /** 每个成员一份工具集：只有 ask 的归属不同（按成员停止时要能分辨） */
-    private readonly toolsByBot = new Map<string, ToolSet | undefined>();
-    /** 正在跑一轮的成员（UI 的"谁在说话"用它，不由前端猜） */
-    private readonly speaking = new Set<string>();
-    /**
-     * 在跑的那一轮从何时开始（botId → { turnId, startedAt }）。
-     *
-     * 存在理由：消息头要写「开始于 22:28」、滚动行要写「已用 2m44s」，这两个数字必须和
-     * 收轮时的 `turn.end.startedAt` 是**同一个值**。让客户端拿条目时刻去推，收轮时会跳一下。
-     * 进快照（`runningTurns`）：刷新后事件没了，但时间不变。
-     */
-    private readonly turnStarts = new Map<string, { turnId: string; startedAt: number }>();
     private lastRunningKey = '';
+    /**
+     * 附件 ref → 字节（传给每个 session）。
+     *
+     * 没有 `home` 也没有注入 ⇒ `undefined`：session 会在正文后补一行「附图未送达」，
+     * 而不是默默把图吃掉（测试 / 无 app 宿主就是这个状态）。
+     */
+    private readonly readAttachment: AttachmentReader | undefined;
+    /** 「这个模型收不收图」—— 缺省查模型目录，注入时按注入的来 */
+    private readonly acceptsImages: (modelKey: string) => boolean;
 
     constructor(private readonly deps: RoomActorDeps) {
+        this.readAttachment = deps.readAttachment ?? defaultAttachmentReader(deps.home);
+        this.acceptsImages = deps.acceptsImages ?? ((modelKey) => acceptsImagesOf(modelKey));
         // 公共日志从库里恢复（append-only，seq 接着走）
         this.log = new RoomLog(this.deps.store.roomEntries(this.id));
         this.gate = new AskGate({
@@ -298,6 +350,16 @@ export class RoomActor {
         return this.deps.store.itemsOf(this.id, afterSeq);
     }
 
+    /** 最后 n 条（时间线顺序）—— 展示层默认只要这一截，见 `Store.lastItemsOf` */
+    lastItems(n: number): Item[] {
+        return this.deps.store.lastItemsOf(this.id, n);
+    }
+
+    /** 条目总数（分页提示用） */
+    countItems(): number {
+        return this.deps.store.countItemsOf(this.id);
+    }
+
     deliveries(): Delivery[] {
         return this.deps.store.listDeliveries(this.id);
     }
@@ -320,11 +382,20 @@ export class RoomActor {
         text: string;
         author: Author;
         recipients?: string[];
-        mode?: InboxMode;
+        /** 谁发的：缺省 `human`（人的话，能并进当前轮就并）；系统消息传 `system` */
+        kind?: MessageKind;
         quiet?: boolean;
+        /**
+         * 随消息带的附件（已落 blobs 的 ref）。
+         *
+         * 为什么允许 `text` 为空：贴一张图什么都不打是最常见的用法，逼人写一句话反而多余。
+         * 但「两者都空」仍然是错误（@ 路由也靠 text，完全空的消息没有意义）。
+         */
+        attachments?: readonly AttachmentRef[];
     }): Promise<void> {
         const text = input.text.trim();
-        if (text === '') throw new Error('text required');
+        const attachments = input.attachments ?? [];
+        if (text === '' && attachments.length === 0) throw new Error('text or attachments required');
 
         const participants = this.members();
         if (participants.length === 0) throw new Error('room has no bot');
@@ -345,7 +416,7 @@ export class RoomActor {
             status: 'done',
             author: input.author,
             type: 'chat',
-            data: { text },
+            data: attachments.length === 0 ? { text } : { text, attachments },
         };
         const saved = this.deps.store.appendItem(this.id, item);
         this.deps.emit({ kind: 'item', item: saved });
@@ -354,6 +425,8 @@ export class RoomActor {
             kind: 'say',
             author: input.author,
             text,
+            // 附件跟着条目走：别的 bot 读不到发送者的 blobs，只能靠 ref
+            ...(attachments.length === 0 ? {} : { attachments }),
             // 投递 / 公共条目对得上的唯一钥匙：崩溃恢复要靠它问 session「你读过这句没有」
             messageId: saved.id,
             turn: turn.turn,
@@ -373,8 +446,9 @@ export class RoomActor {
                 roomId: this.id,
                 messageId: saved.id,
                 botId: bot.id,
-                state: 'queued',
-                mode: input.mode ?? 'next-step',
+                state: 'pending',
+                // db 列名还是 `mode`，值已从 next-step/next-turn 改成 human/system
+                mode: input.kind ?? 'human',
                 turn: turn.turn,
                 turnId: turn.turnId,
             });
@@ -384,15 +458,22 @@ export class RoomActor {
         // 变量增量不在这里算：它属于**模型步**（session 的 prepareStep 每步取一次），
         // 这样 say / 恢复重投 / agent 间结论走的是同一条路，不会有「时机不同就漏一把」。
         await Promise.all(
-            recipients.map((bot) =>
-                this.sessionOf(bot).post({
-                    messageId: saved.id,
-                    text,
-                    mode: input.mode ?? 'next-step',
-                    turn,
-                    entry,
-                }),
-            ),
+            recipients.map(async (bot) => {
+                // 盖章：这一轮是这个成员被**这条消息**叫醒的（unit_add 靠它记来源）
+                this.turnSources.set(bot.id, saved.id);
+                try {
+                    await this.sessionOf(bot).post({
+                        messageId: saved.id,
+                        text,
+                        kind: input.kind ?? 'human',
+                        turn,
+                        entry,
+                    });
+                } finally {
+                    // 收尾就撤：来源只对「这一轮」有效，留着会让下一轮的条目认错爹
+                    if (this.turnSources.get(bot.id) === saved.id) this.turnSources.delete(bot.id);
+                }
+            }),
         );
     }
 
@@ -417,8 +498,8 @@ export class RoomActor {
                     roomId: this.id,
                     messageId: delivery.messageId,
                     botId: delivery.botId,
-                    state: 'failed',
-                    note: '恢复时找不到原文',
+                    state: 'done',
+                    note: 'failed',
                 });
                 continue;
             }
@@ -428,9 +509,7 @@ export class RoomActor {
                     : { turn: delivery.turn, turnId: delivery.turnId ?? `turn-${delivery.messageId}` };
             // 这条投递对应的公共条目（只有 say 带 messageId）。拿到它才能问 session
             // 「你上下文里到底有没有它」—— 不传的话 session 无处可查，只像个眼瞎的盲标。
-            const entry = this.log
-                .all()
-                .find((item) => item.kind === 'say' && item.messageId === delivery.messageId);
+            const entry = this.log.all().find((item) => item.kind === 'say' && item.messageId === delivery.messageId);
             await this.postOrWarn(bot, delivery, text, entry, turn);
         }
     }
@@ -450,10 +529,12 @@ export class RoomActor {
         turn: Turn | undefined,
     ): Promise<void> {
         try {
+            this.turnSources.set(bot.id, delivery.messageId);
             await this.sessionOf(bot).post({
                 messageId: delivery.messageId,
                 text,
-                mode: delivery.mode ?? 'next-step',
+                // db 列名还是 `mode`，值已从 next-step/next-turn 改成 human/system
+                kind: delivery.mode ?? 'human',
                 // 不写 alreadyInContext：由 session 按序号自己判断（回放带了就带上它，
                 // 水位跳过了就当普通消息补上）。原先无条件写 true 就是把消息凭空抹掉的那一刀。
                 ...(entry === undefined ? {} : { entry }),
@@ -461,6 +542,8 @@ export class RoomActor {
             });
         } catch (error) {
             console.warn(`[room:${this.id}] 续跑投递失败：${(error as Error).message}`);
+        } finally {
+            if (this.turnSources.get(bot.id) === delivery.messageId) this.turnSources.delete(bot.id);
         }
     }
 
@@ -488,36 +571,32 @@ export class RoomActor {
         this.gate.cancelAll('容器已关闭');
     }
 
-    /** 当前在说话的成员（按成员顺序） */
+    /**
+     * 谁在跑（按成员顺序）：直接问 BotSession 的 `busy`，**不再自己存一份**。
+     *
+     * 以前这里有个 `speaking: Set<string>`，由 `busy` 事件维护 —— 那是 session.running 的
+     * 副本。两份真源一旦错拍（事件发了但回调没跑完、或刷新时机不同），界面就会
+     * 「在跑却写排队中」（2026-11-26 报过）。现在只有 session 自己说那句话。
+     */
     runningBots(): string[] {
         return this.members()
-            .map((bot) => bot.id)
-            .filter((botId) => this.speaking.has(botId));
+            .filter((bot) => this.sessions.get(bot.id)?.busy === true)
+            .map((bot) => bot.id);
     }
 
     /**
-     * 还没开始跑的投递（`queued` / `delivering`），按成员计数。
+     * 「还没被开始处理」的投递，按成员计数（UI 的「N 条消息等着」）。
      *
-     * 「排队中」是**系统状态**而不是「要你动手」：重启后的待续跑（`recover()` 那条路）、
-     * 连发几条还没轮到它，都落在这里。以前 UI 完全看不见这一段 —— 房间看起来
-     * 「什么都没发生」，其实它排着队；反过来「红 N」里也混不进它们。
+     * 以前这里要数 `queued + delivering` 再**减一**（「在跑那位手上那条不算」）——
+     * 那个减法依赖「一次只取一条」的假设，而 `pump()` 其实一次取空队列，于是连发
+     * 3 条时界面报「2 条排队」（那 2 条正在跑）。状态收到三个之后这条启发式不需要了：
+     * `pending` 就是「还没轮到」，`working` 就是「正在处理」，一一对应。
      */
     queuedByBot(): Map<string, number> {
-        // 「排队」= 还没轮到它。**正在跑的那个成员手上握着一条投递**（`queued` 或 `delivering`
-        // 都实测见过），那条是它此刻这一轮，不是排队 —— 不排除它，界面就会出现
-        // 「在跑却写排队中」（用户 2026-11-26 报的就是这个）。
-        // 判据只看「在不在跑」，不看投递状态：状态机里 `delivering` 只在部分路径打，
-        // 靠它区分会把在跑的那条当成排队。
         const counts = new Map<string, number>();
         for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
+            if (delivery.state !== 'pending') continue;
             counts.set(delivery.botId, (counts.get(delivery.botId) ?? 0) + 1);
-        }
-        // 在跑的成员减一（它手上那条）：剩多少条才是真排着的
-        for (const botId of this.runningBots()) {
-            const n = counts.get(botId);
-            if (n === undefined) continue;
-            if (n <= 1) counts.delete(botId);
-            else counts.set(botId, n - 1);
         }
         return counts;
     }
@@ -525,13 +604,15 @@ export class RoomActor {
     /**
      * 在跑的那几轮的开始时刻（快照用）。
      *
-     * 只给 `runningBots()` 里真在跑的成员：`turnStarts` 里的旧记录可能是上一轮的残留。
+     * 直接读 session 的 `currentTurn` —— 不再拿 `turnStarts` 那份副本去筛。
      */
     runningTurns(): Array<{ botId: string; turnId: string; startedAt: number }> {
-        return this.runningBots().flatMap((botId) => {
-            const turn = this.turnStarts.get(botId);
-            return turn === undefined ? [] : [{ botId, ...turn }];
-        });
+        const out: Array<{ botId: string; turnId: string; startedAt: number }> = [];
+        for (const bot of this.members()) {
+            const turn = this.sessions.get(bot.id)?.currentTurn;
+            if (turn !== undefined) out.push({ botId: bot.id, ...turn });
+        }
+        return out;
     }
 
     /** 用户的回答（整批一次提交）；返回结局（命中 / 已失效 / 答不全） */
@@ -715,6 +796,8 @@ export class RoomActor {
         this.deps.store.saveRoom(this.deps.spec);
         // 退出的成员把 session 一并丢掉（再进来会按日志重建）
         const keep = new Set(members.map((member) => member.botId));
+        // 快照必须：循环体里 `this.sessions.delete`（边遍历边改会跳过）
+        // oxlint-disable-next-line no-useless-spread
         for (const botId of [...this.sessions.keys()]) {
             if (keep.has(botId)) continue;
             this.sessions.delete(botId);
@@ -790,9 +873,15 @@ export class RoomActor {
         this.turnSeq = Math.max(this.turnSeq, snapshot.turn);
     }
 
-    /** 工具集：房间目录 + 审批闸门（每个成员一份，ask 带 owner） */
+    /**
+     * 工具集：房间目录 + 审批闸门（每个成员一份，ask 带 owner）。
+     *
+     * **不缓存**（2026-11-27）：工具的有无不只由「房间」决定 —— `code` 那种宿主能力
+     * 晚于 actor 就绪（进程内 RPC client 建完才有）。一旦缓存，先算出的那份会永久生效：
+     * 实测重启后所有存量房间都拿不到 `run_code`，只有重启后新建的房间有。
+     * 每轮重建一次 ToolSet 只是几个对象字面量，比“静默拿到降级能力”便宜得多。
+     */
     private toolsFor(botId: string): ToolSet | undefined {
-        if (this.toolsByBot.has(botId)) return this.toolsByBot.get(botId);
         const cwd = this.deps.cwd;
         const tools =
             cwd === undefined
@@ -806,7 +895,7 @@ export class RoomActor {
                           : { jobs: { registry: this.deps.jobs.registry, owner: jobOwnerOf(this.id, botId) } }),
                       ask: this.gate,
                       askOwner: botId,
-                      // 投递层截断：单条工具输出超 2000 行 / 50KB ⇒ 头尾 + marker，原文落
+                      // 投递层截断：单条工具输出超 2000 行 / 64KB ⇒ 头尾 + marker，原文落
                       // `<home>/toolout/`（模型不够自己 read 回取）。不接这一层 = 大输出的
                       // 原文直接进这一轮请求，压缩（只管轮首）拦不住。
                       toModelOutput: createToolOutputCapper(
@@ -817,10 +906,21 @@ export class RoomActor {
                       },
                       // unit 是 task 私有的：非任务房间不给这套工具（它们没有图，也没有 #号可挂）
                       ...(this.deps.spec.type === 'task'
-                          ? { units: { store: this.deps.store, taskId: this.id } }
+                          ? {
+                                units: {
+                                    store: this.deps.store,
+                                    taskId: this.id,
+                                    remind: this.remindMode,
+                                    // 「这条需求来自哪句话」：由宿主按**本轮触发消息**盖章
+                                    sourceOf: () => this.turnSources.get(botId),
+                                },
+                            }
                           : {}),
+                      ...(() => {
+                          const host = this.deps.code?.();
+                          return host === undefined ? {} : { code: host };
+                      })(),
                   });
-        this.toolsByBot.set(botId, tools);
         return tools;
     }
 
@@ -829,24 +929,73 @@ export class RoomActor {
         return this.deps.cwd !== undefined;
     }
 
+    /**
+     * 提醒档位（`units-remind.ts`）：开房时读一次（环境变量 → `<home>/units-remind.txt`）。
+     * 实验要在同一个实例上连跑几档，所以按**房间**读而不是进程启动时读死。
+     */
+    private get remindMode(): RemindMode {
+        this.remindModeCache ??= resolveRemindMode({
+            // exactOptionalPropertyTypes：不传就不带这个键
+            // oxlint-disable-next-line no-useless-spread
+            ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
+        });
+        return this.remindModeCache;
+    }
+    private remindModeCache?: RemindMode;
+
+    /**
+     * 每个成员**这一轮**是被哪条消息叫醒的（`entity_items.id`）。
+     *
+     * 用途：`unit_add` 落条目时自动盖「来源」（模型看不到 message id，让它填只会编错）。
+     * 为什么按成员分表而不是一个字段：多个 bot 可以同时被不同消息叫醒，一个字段会互相覆盖。
+     */
+    private readonly turnSources = new Map<string, string>();
+
+    /**
+     * B 档的判据：账本是否空 / 上次账本变更之后有没有人发言。
+     *
+     * 「有人发言」用 items 里最后一条 human 的时间比，而不是维护一个额外的水位 ——
+     * 水位要在写路径上记得更新（多一个会忘的地方），而时间比较是幂等的。
+     */
+    private unitsRemindState(): { empty: boolean; humanSince: boolean } {
+        const board = this.unitBoardOf();
+        if (board.rows.length === 0) return { empty: true, humanSince: true };
+        const items = this.deps.store.itemsOf(this.id);
+        let lastHuman = 0;
+        for (const item of items) {
+            const author = (item as { author?: { role?: string } }).author;
+            if (author?.role !== 'human') continue;
+            const at = (item as { at?: number }).at ?? 0;
+            if (at > lastHuman) lastHuman = at;
+        }
+        const lastUnitAt = this.deps.store
+            .listUnits(this.id)
+            .reduce((max, unit) => (unit.updatedAt > max ? unit.updatedAt : max), 0);
+        return { empty: false, humanSince: lastHuman > lastUnitAt };
+    }
+
     private toolsHint(): string {
-        // 任务房间才有账本树。措辞分两段（2026-11-26 实测后改）：先给触发条件，再给节奏 ——
-        // 只写「拆解用 unit_*」时模型的反应是「先 unit_list 看一眼，然后直接动手写代码」，
-        // 账本始终是空的（用户实测：不明确说「把这件事拆成几步」它就不建）。
-        const unitHint =
-            this.deps.spec.type === 'task'
-                ? '\n**先落账本再动手**：接到需求（或需求变了）时，先判断这件事是不是不止一步 —— ' +
-                  '是就用 unit_add 把它拆成 2~5 条「能被验收的产出」（母项 → 子项，body 写验收口径），' +
-                  '然后再开工；只有一步的小改（改个文案 / 跑个命令 / 看一眼状态）不要建。' +
-                  '\n**每轮从账本里挑活**：上下文 units 节的 ready 就是现在能挑的（不必先 unit_list），' +
-                  '挑 1~3 条做；开做标 doing、做完标 done，需求变了就让树跟着变（unit_update / unit_drop）。' +
-                  '别把步骤只写在正文里，也别等做完再补树 —— 账本是给人看进度的唯一地方。'
-                : '';
-        const jobHint =
-            this.deps.jobs === undefined
+        // 任务房间才有账本树。三处提醒的开关在 `units-remind.ts`（实验用 `DIY2_UNITS_REMIND`
+        // 或 `<home>/units-remind.txt` 换档）：这里只放 A 档（常驻提示词）那一段。
+        const unitHint = this.deps.spec.type === 'task' ? promptReminder(this.remindMode) : '';
+        const jobHint = this.deps.jobs === undefined ? '' : `\n${JOB_HINT_BODY}`;
+        // 图片能力必须**明写**：不给这段，模型的反应是自己用 bash+curl 拼一份 raw API 调用
+        // 去看图（2026-11-26 实测：它跑了 6 条 bash、写了两份 payload，链路完全绕开本实例）。
+        const imageHint =
+            '\n**看图用 view_image，不要自己调模型 API**：要分析图片（截图 / 照片 / 图表）就把路径交给它 —— ' +
+            '「自己截图自己看」就是 `screencapture -x /tmp/x.png` 之后 `view_image({path:"/tmp/x.png"})`。' +
+            '绝不可以用 bash + curl 去请求模型端点看图：那条路绕开对话上下文，既白花 token，人也不知道你看了什么。';
+        // 代码能力同样必须**明写**：不给这段，模型会一直用 bash 拼 CLI / 读源码猜形状
+        // （2026-11-27 实测 task-mwjddcy0：400 条历史里 251 次 bash、`run_code` 只 1 次，
+        //  而那 1 次成功了它也没再用）。`view_image` 有专门一段，`run_code` 当时一个字没有。
+        const codeHint =
+            this.deps.code?.() === undefined
                 ? ''
-                : '\n后台长活（构建 / 测试 / 装依赖）用 bash 的 background，再用 job 查状态 / 取输出 / 停；' +
-                  '起完就别轮询，结束时会插话叫醒你。';
+                : '\n**要拿结构化数据、批量查改时用 `run_code`，不要用 bash 拼 CLI**：' +
+                  '代码里直接调后台接口，如 `const rs = await api.rooms.list({}); return rs.length;` —— ' +
+                  '返回值是对象不是文本，不用解析、不用猜格式。不确定有哪些方法就 `return apiHelp()`。' +
+                  '典型场景：批量读/筛选/聚合、一次改多条、等某个事件（`await api.chat.wait({id, sinceSeq, timeoutMs})`）。' +
+                  '**跑构建 / 测试 / 装依赖仍然用 bash** —— 那些是 shell 的活，别绕道代码里跑子进程。';
         return (
             '可以用 read / write / edit 读写文件、用 bash 执行命令；' +
             `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
@@ -856,7 +1005,9 @@ export class RoomActor {
             '也不要在正文里列选项让用户挑——那些都会被大段输出淹没。' +
             'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。' +
             unitHint +
-            jobHint
+            jobHint +
+            imageHint +
+            codeHint
         );
     }
 
@@ -924,7 +1075,13 @@ export class RoomActor {
             ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
             ...(this.deps.deviceHome === undefined ? {} : { deviceHome: this.deps.deviceHome }),
             journal: () => this.deps.store.journalOf(this.id),
-            ...(this.deps.spec.type === 'task' ? { units: () => this.unitBoardOf() } : {}),
+            ...(this.deps.spec.type === 'task'
+                ? {
+                      units: () => this.unitBoardOf(),
+                      // B 档：账本空 / 上一轮有人发言时，在 units 节挂一行提醒
+                      unitsHint: () => envelopeHint(this.remindMode, this.unitsRemindState()),
+                  }
+                : {}),
             members: () => {
                 const primary = this.primary();
                 return this.members().map((bot) => ({
@@ -943,7 +1100,12 @@ export class RoomActor {
     /** 取/建某个成员的 session；新建时回放公共日志（后加入的成员也能读到此前结论） */
     private sessionOf(bot: Bot): BotSession {
         let session = this.sessions.get(bot.id);
-        if (session !== undefined) return session;
+        if (session !== undefined) {
+            // 工具不是「构造那一刻的事实」（`run_code` 的 client 晚于 actor 就绪）：
+            // 每次取 session 都对齐一次，别让先算出的那份定格
+            session.setTools(this.toolsFor(bot.id));
+            return session;
+        }
 
         const saved = this.deps.store.loadSession(this.id, bot.id);
         const context = this.deps.cwd === undefined ? null : this.contextSessionOf(bot);
@@ -961,6 +1123,8 @@ export class RoomActor {
             ...(this.hasTools ? { toolsHint: this.toolsHint() } : {}),
             ...(systemContext === '' ? {} : { systemContext }),
             ...(context === null ? {} : { takeDelta: () => context.step().user, commitDelta: () => context.commit() }),
+            ...(this.readAttachment === undefined ? {} : { readAttachment: this.readAttachment }),
+            acceptsImages: this.acceptsImages,
         });
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
         session.subscribe((event) => this.onSessionEvent(bot, event));
@@ -997,8 +1161,7 @@ export class RoomActor {
                 return;
             }
             case 'busy': {
-                if (event.busy) this.speaking.add(bot.id);
-                else this.speaking.delete(bot.id);
+                // 只通知「在跑名单可能变了」；名单本身问 session 要（不再维护副本）
                 this.syncRunning();
                 return;
             }
@@ -1008,13 +1171,12 @@ export class RoomActor {
                     messageId: event.messageId,
                     botId: bot.id,
                     state: event.state,
+                    ...(event.note === undefined ? {} : { note: event.note }),
                 });
                 this.deps.emit({ kind: 'delivery', delivery });
                 return;
             }
             case 'turn.start':
-                // 开始时刻先记下来再广播：消息头与「已用 Ns」要靠它，而快照（刷新）也读它。
-                this.turnStarts.set(bot.id, { turnId: event.turn.turnId, startedAt: event.startedAt });
                 this.deps.emit({
                     kind: 'turn.start',
                     botId: bot.id,
@@ -1065,8 +1227,6 @@ export class RoomActor {
                     ...(result.usage === undefined ? {} : { usage: result.usage }),
                     ...(turnCalls === undefined ? {} : { toolCalls: turnCalls }),
                 });
-                // 这一轮已经收了：开始时刻的使用者没了（留着只会在下一轮开始前被读到旧的）
-                if (this.turnStarts.get(bot.id)?.turnId === result.turnId) this.turnStarts.delete(bot.id);
                 this.persistSession(bot.id);
                 // 快照落了才算收尾：销掉「开了没收尾」的标记再发结论
                 this.deps.store.closeTurn(this.id, bot.id);
@@ -1149,7 +1309,7 @@ export class RoomActor {
         void this.sessionOf(target).post({
             messageId: notice.id,
             text: `[${name} 的结论] ${result.text}`,
-            mode: 'next-turn',
+            kind: 'system',
             turn: { turn: result.turn, turnId: result.turnId },
         });
     }
@@ -1184,7 +1344,7 @@ export class RoomActor {
         void this.sessionOf(bot).post({
             messageId: notice.id,
             turn,
-            mode: 'next-turn',
+            kind: 'system',
             text: `[后台作业结束] ${event.text}`,
         });
         return true;

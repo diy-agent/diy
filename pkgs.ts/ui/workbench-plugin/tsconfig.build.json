@@ -4,9 +4,9 @@
     // ⚠️ 产物只落 lib/，绝不落源码旁（见根 AGENTS.md rule.check 与 scripts/check-no-emit.sh）。
     "extends": "../../../tsconfig.base.json",
     "compilerOptions": {
-    // tsc -b 需要 composite；增量信息落 node_modules/.cache（不污染包目录、不进 git）
-    "composite": true,
-    "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo/tsconfig.build.tsbuildinfo",
+        // tsc -b 需要 composite；增量信息落 node_modules/.cache（不污染包目录、不进 git）
+        "composite": true,
+        "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo/tsconfig.build.tsbuildinfo",
         "module": "NodeNext",
         "moduleResolution": "NodeNext",
         "target": "ES2022",
@@ -15,7 +15,6 @@
         "rootDir": "src",
         "outDir": "dist",
         "noEmit": false,
-
 
         "declaration": true,
         "sourceMap": true

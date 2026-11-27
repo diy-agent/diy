@@ -18,7 +18,7 @@ interface Call {
 function mount(handlers: Record<string, (args?: unknown) => unknown>) {
     const calls: Call[] = [];
     const ctx = {
-        invoke: (async <T = unknown>(method: string, args?: unknown): Promise<T> => {
+        invoke: (async <T = unknown,>(method: string, args?: unknown): Promise<T> => {
             calls.push({ method, args });
             const handler = handlers[method];
             if (handler === undefined) throw new Error(`测试没给 handler：${method}`);
@@ -81,7 +81,9 @@ describe('raw request log：用户能看见的行为', () => {
         const page = mount({ query: () => ({ ...emptyQuery(), records: [row({ requestId: 'r-1' })], hits: 1 }) });
         await new Promise((r) => setTimeout(r, 80));
 
-        const rows = getAllByRole(page.root, 'row').filter((r) => r.tagName === 'TR' && r.getAttribute('tabindex') === '0');
+        const rows = getAllByRole(page.root, 'row').filter(
+            (r) => r.tagName === 'TR' && r.getAttribute('tabindex') === '0',
+        );
         await user.click(rows[0]!);
         await new Promise((r) => setTimeout(r, 80));
 

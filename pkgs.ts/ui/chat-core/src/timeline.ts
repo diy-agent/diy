@@ -29,6 +29,7 @@
 import type {
     AnsweredAsk,
     AskRequest,
+    AttachmentRef,
     Author,
     Bot,
     Delivery,
@@ -87,6 +88,8 @@ export interface TimelineDelivery {
     name: string;
     color: string;
     state: DeliveryState;
+    /** `'failed'` = 没送进去（状态收敛成 3 个后的失败标记） */
+    note?: string;
 }
 
 export interface TimelineEntry {
@@ -110,6 +113,11 @@ export interface TimelineEntry {
     waiting?: boolean;
     /** 仅 user 条目：这条消息投给了谁、到没到 */
     deliveries: TimelineDelivery[];
+    /**
+     * 仅 user 条目：这条消息带的附件（图 / 文件 / 目录引用）。
+     * 形状归 protocol（`Item.chat.data.attachments`），这里只是把它带出来给界面画。
+     */
+    attachments?: readonly AttachmentRef[];
     /**
      * 仅 `job-done` 通知：后台作业的结构化事实（界面画作业卡片，而不是一条分隔线）。
      * 老数据没有这一项（当年只存了 `text`）⇒ 退回纯文本，见 surface 里的分支。
@@ -149,6 +157,7 @@ function chipsOf(deliveries: readonly Delivery[], bots: Record<string, Bot>, mes
                 name: bot?.name ?? delivery.botId,
                 color: bot?.color ?? '#9ca3af',
                 state: delivery.state,
+                ...(delivery.note === undefined ? {} : { note: delivery.note }),
             };
         });
 }
@@ -227,6 +236,9 @@ export function buildTimeline(
                 parts: [{ kind: 'text', text: item.type === 'chat' ? item.data.text : '' }],
                 streaming: false,
                 deliveries: chipsOf(deliveries, bots, item.id),
+                ...(item.type === 'chat' && item.data.attachments !== undefined
+                    ? { attachments: item.data.attachments }
+                    : {}),
                 at: item.at,
             });
             continue;

@@ -86,7 +86,10 @@ export function readFrontmatter(text: string): Record<string, string> {
         if (key === null) return;
         // 折叠标量（`>-`）= 行间空格连接；字面标量（`|`）= 换行保留 —— 这里两种都收成单行，
         // 因为下游（help / system 段）要的就是一句话，多行反而占预算。
-        out[key] = block.map((l) => l.trim()).filter((l) => l !== '').join(' ');
+        out[key] = block
+            .map((l) => l.trim())
+            .filter((l) => l !== '')
+            .join(' ');
         key = null;
         block = [];
     };

@@ -103,7 +103,9 @@ describe('TurnFooter', () => {
         vi.setSystemTime(new Date(2026, 10, 25, 9, 0, 0));
         const html = renderToStaticMarkup(
             <TurnFooter
-                entry={entry({ turn: { startedAt: endedAt - 192_000, endedAt, reason: { type: 'completed', steps: 1 } } })}
+                entry={entry({
+                    turn: { startedAt: endedAt - 192_000, endedAt, reason: { type: 'completed', steps: 1 } },
+                })}
                 roomId="r1"
             />,
         );

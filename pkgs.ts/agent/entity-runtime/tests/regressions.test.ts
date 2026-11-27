@@ -88,7 +88,7 @@ describe('P0 回归', () => {
         // 让投递回到"没送达"的现场，再模拟重启恢复
         const messageId = h.room.deliveries()[0]?.messageId;
         expect(messageId).toBeDefined();
-        h.store.setDelivery({ roomId: h.spec.id, messageId: messageId!, botId: BOT_A.id, state: 'delivering' });
+        h.store.setDelivery({ roomId: h.spec.id, messageId: messageId!, botId: BOT_A.id, state: 'working' });
 
         const restarted = h.rebuild();
         await waitFor(() => !restarted.room.busy());
@@ -184,8 +184,8 @@ describe('P0 回归', () => {
             roomId: h.spec.id,
             messageId: item.id,
             botId: BOT_A.id,
-            state: 'delivering',
-            mode: 'next-step',
+            state: 'working',
+            mode: 'human',
             turn: 2,
             turnId: 'turn-legacy',
         });
@@ -342,9 +342,12 @@ describe('D/E. ask 不阻塞 / 回答另起一轮 / 改名同步', () => {
         expect(String(settled[0]?.reason)).toContain('已开启新一轮');
         // 它本人也得知道（ask 不阻塞、没有 tool call 能回填，不通知就永远停在「我问了、等回答」）
         expect(
-            h.items().some(
-                (item) => item.type === 'chat' && item.author?.role === 'system' && item.data.text.includes('已经过期'),
-            ),
+            h
+                .items()
+                .some(
+                    (item) =>
+                        item.type === 'chat' && item.author?.role === 'system' && item.data.text.includes('已经过期'),
+                ),
         ).toBe(true);
         // 过期的卡不能再答（否则会凭空冒出一条「回答提问」，而那一轮已经过去了）
         expect(h.room.answerAsk(askId, { answers: [{ id: 'q1', values: ['a'] }] }).ok).toBe(false);

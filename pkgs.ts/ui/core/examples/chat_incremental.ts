@@ -22,7 +22,14 @@
  *   → http://localhost:5199/chat_incremental.html
  */
 
-import { GenApp, html, mountStream, Signal, type GenNode, type Spec } from "../src/browser.js";
+import {
+  GenApp,
+  html,
+  mountStream,
+  Signal,
+  type GenNode,
+  type Spec,
+} from "../src/browser.js";
 import { nodeOf } from "../src/providers/dom-dsl.js";
 
 // ── 状态 ────────────────────────────────────────────────────
@@ -35,7 +42,10 @@ interface Msg {
 
 const messages = new Signal<Msg[]>([]);
 /** 正在流式吐字的那条（id + 当前缓冲）；同一条消息内更新不新增节点 */
-const stream = new Signal<{ id: number | null; buf: string }>({ id: null, buf: "" });
+const stream = new Signal<{ id: number | null; buf: string }>({
+  id: null,
+  buf: "",
+});
 /** keyed 对账开关（①/② 对比用） */
 const useKeys = new Signal<boolean>(true);
 /** 测出来的报告（累积多段，方便对比） */
@@ -151,7 +161,13 @@ function reconcileDelta(before: Map<unknown, unknown>): Reconcile {
   }
   let removed = 0;
   for (const k of before.keys()) if (!t?.has(k)) removed++;
-  return { yielded: messages.value.length, reused, created, removed, table: t?.size ?? 0 };
+  return {
+    yielded: messages.value.length,
+    reused,
+    created,
+    removed,
+    table: t?.size ?? 0,
+  };
 }
 
 /** 跑一次「写 → 提交」，同时记录 DOM 增删 + 生成器重跑 + keyed 对账明细 */
@@ -181,7 +197,10 @@ function bubble(m: Msg, keyed: boolean): Spec {
       class: ["msg", m.role === "user" ? "msg-user" : "msg-bot"],
     },
     function* () {
-      yield html.span({ class: "role", text: m.role === "user" ? "你" : "助手" });
+      yield html.span({
+        class: "role",
+        text: m.role === "user" ? "你" : "助手",
+      });
       // 流式：文本是 getter → 吐字只改 textContent，不动节点
       yield html.div({
         class: "bubble",
@@ -206,12 +225,18 @@ function* messageList(): Generator<Spec> {
 const appSpec: Spec = html.div({ class: "layout" }, function* () {
   yield html.div({ class: "panel chat-panel" }, function* () {
     yield html.div({ class: "panel-title", text: "聊天（keyed 对账）" });
-    yield html.div({ class: "list", ref: (el: HTMLElement) => void (listEl = el) }, function* () {
-      yield* messageList();
-    });
+    yield html.div(
+      { class: "list", ref: (el: HTMLElement) => void (listEl = el) },
+      function* () {
+        yield* messageList();
+      },
+    );
 
     yield html.div({ class: "stream-log" }, function* () {
-      yield html.div({ class: "panel-title", text: "流式日志（node.insert，不重跑 generator）" });
+      yield html.div({
+        class: "panel-title",
+        text: "流式日志（node.insert，不重跑 generator）",
+      });
       // .unsafe：不清子节点、不参与对账 → 真正的「增量投递」入口
       yield html
         .div({ class: "log-rows", ref: (el: HTMLElement) => void (logEl = el) })
@@ -227,7 +252,10 @@ const appSpec: Spec = html.div({ class: "layout" }, function* () {
         text: "⑨ 生成器驱动列表：inbox → async generator → node.insert",
       });
       yield html
-        .div({ class: "log-rows feed", ref: (el: HTMLElement) => void (feedEl = el) })
+        .div({
+          class: "log-rows feed",
+          ref: (el: HTMLElement) => void (feedEl = el),
+        })
         .unsafe((n: GenNode) => {
           feedNode = n;
         });
@@ -235,30 +263,73 @@ const appSpec: Spec = html.div({ class: "layout" }, function* () {
   });
 
   yield html.div({ class: "panel side" }, function* () {
-    yield html.div({ class: "panel-title", text: "增量指标（每次操作动几个 DOM 节点）" });
-    yield html.pre({ class: "report", text: () => report.value.join("\n") || "（运行中…）" });
+    yield html.div({
+      class: "panel-title",
+      text: "增量指标（每次操作动几个 DOM 节点）",
+    });
+    yield html.pre({
+      class: "report",
+      text: () => report.value.join("\n") || "（运行中…）",
+    });
 
     yield html.div({ class: "row" }, function* () {
-      yield html.button({ class: "btn", text: "① 追加一条（keyed）", onClick: () => void runAppend(true) });
-      yield html.button({ class: "btn", text: "② 追加一条（无 key）", onClick: () => void runAppend(false) });
+      yield html.button({
+        class: "btn",
+        text: "① 追加一条（keyed）",
+        onClick: () => void runAppend(true),
+      });
+      yield html.button({
+        class: "btn",
+        text: "② 追加一条（无 key）",
+        onClick: () => void runAppend(false),
+      });
     });
     yield html.div({ class: "row" }, function* () {
-      yield html.button({ class: "btn", text: "③ 流式吐 20 字", onClick: () => void runStream() });
-      yield html.button({ class: "btn", text: "④ insert 追加一条", onClick: () => void runInsert() });
+      yield html.button({
+        class: "btn",
+        text: "③ 流式吐 20 字",
+        onClick: () => void runStream(),
+      });
+      yield html.button({
+        class: "btn",
+        text: "④ insert 追加一条",
+        onClick: () => void runInsert(),
+      });
     });
     yield html.div({ class: "row" }, function* () {
-      yield html.button({ class: "btn", text: "⑤ 一次写 2 条", onClick: () => void runBulk(true) });
-      yield html.button({ class: "btn", text: "⑥ 分 2 次写", onClick: () => void runBulk(false) });
+      yield html.button({
+        class: "btn",
+        text: "⑤ 一次写 2 条",
+        onClick: () => void runBulk(true),
+      });
+      yield html.button({
+        class: "btn",
+        text: "⑥ 分 2 次写",
+        onClick: () => void runBulk(false),
+      });
     });
     yield html.div({ class: "row" }, function* () {
-      yield html.button({ class: "btn", text: "⑦ 一次写 10 次", onClick: () => void runBurst() });
-      yield html.button({ class: "btn", text: "⑨ 发送一条（走生成器）", onClick: () => void runFeed() });
+      yield html.button({
+        class: "btn",
+        text: "⑦ 一次写 10 次",
+        onClick: () => void runBurst(),
+      });
+      yield html.button({
+        class: "btn",
+        text: "⑨ 发送一条（走生成器）",
+        onClick: () => void runFeed(),
+      });
     });
     yield html.div({ class: "row" }, function* () {
-      yield html.button({ class: "btn", text: "重置", onClick: () => resetAll() });
+      yield html.button({
+        class: "btn",
+        text: "重置",
+        onClick: () => resetAll(),
+      });
       yield html.span({
         class: "hint",
-        text: () => `keyed=${useKeys.value ? "on" : "off"} · 消息 ${messages.value.length} 条`,
+        text: () =>
+          `keyed=${useKeys.value ? "on" : "off"} · 消息 ${messages.value.length} 条`,
       });
     });
   });
@@ -306,8 +377,20 @@ async function runAppend(keyed: boolean): Promise<void> {
 async function runBulk(batched: boolean): Promise<void> {
   useKeys.value = true;
   await tick();
-  const mk = (i: number): Msg => ({ id: nextId(), role: "user", text: `批量消息 ${i}` });
-  const sum = { added: 0, removed: 0, reused: 0, created: 0, pruned: 0, yielded: 0, rewrites: 0 };
+  const mk = (i: number): Msg => ({
+    id: nextId(),
+    role: "user",
+    text: `批量消息 ${i}`,
+  });
+  const sum = {
+    added: 0,
+    removed: 0,
+    reused: 0,
+    created: 0,
+    pruned: 0,
+    yielded: 0,
+    rewrites: 0,
+  };
   const apply = async (batch: Msg[]): Promise<void> => {
     const { m, rc, rewrites } = await commit(
       () => void (messages.value = [...messages.value, ...batch]),
@@ -333,7 +416,9 @@ async function runBulk(batched: boolean): Promise<void> {
       `  累计 yield: ${sum.yielded} 个 spec（每次重跑都把当前整列表 yield 一遍）`,
       `  累计查表: 复用 ${sum.reused} / 新建 ${sum.created} / 移除 ${sum.pruned}`,
       `  真实 DOM: 新建 ${sum.added} / 移除 ${sum.removed}`,
-      batched ? "  → 一次写 = 一次对账：3 旧 + 2 新 → 5 个 spec，2 次 miss" : "  → 两次写 = 两次对账：(3+1) 然后 (4+1)",
+      batched
+        ? "  → 一次写 = 一次对账：3 旧 + 2 新 → 5 个 spec，2 次 miss"
+        : "  → 两次写 = 两次对账：(3+1) 然后 (4+1)",
     ].join("\n"),
   );
 }
@@ -372,7 +457,9 @@ async function runInsert(): Promise<void> {
   startMeasure(logEl);
   const before = reruns();
   const id = nextId();
-  logNode.insert(html.div({ class: "log-row", text: `stream item #${id}` }), { key: `log:${id}` });
+  logNode.insert(html.div({ class: "log-row", text: `stream item #${id}` }), {
+    key: `log:${id}`,
+  });
   const delta = reruns() - before;
   await tick();
   const m = stopMeasure();
@@ -396,7 +483,10 @@ async function runBurst(): Promise<void> {
   const r0 = reruns();
   // 完全同步的 10 次写（模拟一个 click 处理器里反复赋值）
   for (let i = 0; i < 10; i++) {
-    messages.value = [...messages.value, { id: nextId(), role: "user", text: `突发 ${i + 1}` }];
+    messages.value = [
+      ...messages.value,
+      { id: nextId(), role: "user", text: `突发 ${i + 1}` },
+    ];
   }
   const rewrites = reruns() - r0;
   await tick();
@@ -405,7 +495,7 @@ async function runBurst(): Promise<void> {
     [
       "⑦ 一个事件里同步写 10 次（10 个不同值）",
       `  生成器重跑: ${rewrites} 次　← 同步 effect：写几次就重跑几次，没有攒批`,
-      `  累计 yield: ${(3 + 12) * 10 / 2} 个 spec（3+4+…+12，越写越贵）`,
+      `  累计 yield: ${((3 + 12) * 10) / 2} 个 spec（3+4+…+12，越写越贵）`,
       `  真实 DOM: 新建 ${m.added} / 移除 ${m.removed}`,
       "  → 一个事件里改多处状态，要么一次性写完，要么先攒在局部变量里最后赋一次",
     ].join("\n"),

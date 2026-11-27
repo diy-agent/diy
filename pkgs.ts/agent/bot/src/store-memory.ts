@@ -5,7 +5,7 @@
 //
 // 本文件不碰文件系统（不 import node:*）：零落盘是编译期就能看出来的事实。
 
-import type { BotConfig, BotId, BotSessionRef, BotStore } from "./types.js";
+import type { BotConfig, BotId, BotSessionRef, BotStore } from './types.js';
 
 /** 建一个纯内存 BotStore（进程退出即消失；多个 bot / 会话归属各存一张表） */
 export function createMemoryBotStore(): BotStore {

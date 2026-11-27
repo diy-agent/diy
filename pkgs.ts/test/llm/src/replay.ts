@@ -7,9 +7,9 @@
 //
 // 这就是「黄金测试是一种能力，不是一层」的落点 —— 和 clock mock 同一个位置。
 
-import { MockLanguageModelV3 } from "ai/test";
-import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
-import type { LanguageModel } from "ai";
+import { MockLanguageModelV3 } from 'ai/test';
+import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
+import type { LanguageModel } from 'ai';
 
 /** 回放器：可重复调用，每次得到一份新的流（fixture 本身不消费） */
 export interface Replay {
@@ -32,7 +32,9 @@ export function replay(parts: LanguageModelV3StreamPart[]): Replay {
                     }),
                 }),
                 doGenerate: async () => {
-                    throw new Error("replay 只实现了 doStream；要 doGenerate 请用 generateText({ model }) 里的 streamText 路径");
+                    throw new Error(
+                        'replay 只实现了 doStream；要 doGenerate 请用 generateText({ model }) 里的 streamText 路径',
+                    );
                 },
             }) as unknown as LanguageModel;
         },

@@ -5,15 +5,17 @@
 //
 //   const tools = buildTools({ cwd, limits, onAudit });
 //   tools.read / tools.write / tools.edit
-export * from "./build.js";
+export * from './build.js';
 // shell（bash / pwsh）：能力事实 + 执行器 + 工具定义（##515）
-export * from "./shell/index.js";
-export type { ToolAuditEvent, ToolLimits } from "./types.js";
+export * from './shell/index.js';
+export type { ToolAuditEvent, ToolLimits } from './types.js';
 // 文件读写原语（宿主别的层也用：CLI、投递层截断、草稿/任务写入……）
-export * from "./atomic-write.js";
-export * from "./file-read.js";
-export * from "./file-write.js";
-export * from "./file-edit.js";
-export * from "./unified-diff.js";
+export * from './atomic-write.js';
+export * from './file-read.js';
+export * from './file-write.js';
+export * from './file-edit.js';
+export * from './unified-diff.js';
 
 export * from './shell/cap-output.js';
+// 工具输出的唯一预算（64KB / 2000 行 / 单行 2000 字符）：read、投递层、job tail、run_code 都从这里取
+export * from './limits.js';

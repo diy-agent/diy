@@ -10,16 +10,16 @@
 //   effectiveArgs（与聊天里显示的「工具实际收到」共用同一份）
 // 工具语义（前台执行 / 抛错判据 / 结果头）全在这里，宿主改不了。
 
-import { tool } from "ai";
-import { z } from "zod";
-import { renderFieldDocs } from "@diy-agent/context/schema/schema-doc";
-import { BASH_RESULT_HEAD_SCHEMA, renderBashHead } from "./result.js";
-import { runBash, type BashControl, type ShellLimits, type ShellRuntime } from "./run.js";
-import type { ShellSpec } from "./spec.js";
+import { tool } from 'ai';
+import { z } from 'zod';
+import { renderFieldDocs } from '@diy-agent/context/schema/schema-doc';
+import { BASH_RESULT_HEAD_SCHEMA, renderBashHead } from './result.js';
+import { runBash, type BashControl, type ShellLimits, type ShellRuntime } from './run.js';
+import type { ShellSpec } from './spec.js';
 
 /** 一次 shell 工具的审计事件（宿主决定写去哪、补什么身份：taskUri / 会话目录） */
 export interface ShellAuditEvent {
-    readonly phase: "bash-start" | "bash-end";
+    readonly phase: 'bash-start' | 'bash-end';
     readonly cwd: string;
     readonly command: string;
     /** 结果摘要（bash-end 用；已截断） */
@@ -71,11 +71,7 @@ export interface ShellToolHost {
      * 「生效参数」补缺省。diy-app 传 `shared/tool-args::effectiveBashArgs`——
      * 聊天里显示「工具实际收到」用的是**同一份**，两处各补一次必然漂成"界面说前台、实际跑后台"。
      */
-    readonly effectiveArgs?: (raw: {
-        command: string;
-        timeout?: number;
-        background?: boolean;
-    }) => ShellEffectiveArgs;
+    readonly effectiveArgs?: (raw: { command: string; timeout?: number; background?: boolean }) => ShellEffectiveArgs;
     /** 子进程起来了（宿主登记进程组归属 / 面板 pid） */
     readonly onSpawn?: (pid: number, call: ShellCallInfo) => void;
     /** 前台调用的「转后台」句柄（宿主登记到自己的表；不登记 = UI 没有按钮） */
@@ -105,12 +101,9 @@ function clip(s: string, n = 500): string {
  * `timeout` 省略 / 0 = 不设超时；负数 / 小数夹到 0 / 向下取整；非数字当没给；`background` 只认严格 true。
  * ⚠️ 宿主要有自己的「同一份」实现（聊天显示要用）就传 `effectiveArgs` —— 别让两处各补一次。
  */
-function defaultEffectiveArgs(raw: {
-    command: string;
-    timeout?: number;
-    background?: boolean;
-}): ShellEffectiveArgs {
-    const t = typeof raw.timeout === "number" && Number.isFinite(raw.timeout) ? Math.max(0, Math.floor(raw.timeout)) : 0;
+function defaultEffectiveArgs(raw: { command: string; timeout?: number; background?: boolean }): ShellEffectiveArgs {
+    const t =
+        typeof raw.timeout === 'number' && Number.isFinite(raw.timeout) ? Math.max(0, Math.floor(raw.timeout)) : 0;
     return { command: raw.command, timeout: t, background: raw.background === true };
 }
 
@@ -120,67 +113,65 @@ function defaultEffectiveArgs(raw: {
  * 一个 spec = 一个工具：Windows 上 bash（Git Bash）与 pwsh 可能并存，两个都装、各自一套文案。
  */
 export function makeShellTool(spec: ShellSpec, host: ShellToolHost) {
-    const isBash = spec.kind === "bash";
+    const isBash = spec.kind === 'bash';
     const cwd = host.cwd;
     const supportsBackground = host.background !== undefined;
     return tool({
         description: (isBash
             ? [
-                  "在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。",
-                  "**缺省不设超时**（命令跑多久工具就等多久）；要限时就显式给 `timeout`（毫秒，到点整组 SIGKILL，并照样返回已收到的输出）。超时 / 取消 / 输出溢出都会杀掉整个进程组，且**照样返回结果**（不抛错）—— 看头里 timed_out / killed 判断怎么结束的。",
-                  "命令退出后若有子孙进程还握着输出管道，最多再等 200ms 就返回（拿到已收到的输出），不会因为 `nohup … &` 这类后台孙进程挂死。",
+                  '在项目目录执行 bash 命令并返回输出（查文件、跑命令、看系统信息）。',
+                  '**缺省不设超时**（命令跑多久工具就等多久）；要限时就显式给 `timeout`（毫秒，到点整组 SIGKILL，并照样返回已收到的输出）。超时 / 取消 / 输出溢出都会杀掉整个进程组，且**照样返回结果**（不抛错）—— 看头里 timed_out / killed 判断怎么结束的。',
+                  '命令退出后若有子孙进程还握着输出管道，最多再等 200ms 就返回（拿到已收到的输出），不会因为 `nohup … &` 这类后台孙进程挂死。',
                   ...(supportsBackground
                       ? [
-                            "`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**（sleep 再查属于轮询），期间可以放心结束本轮去做别的事。查状态 / 取输出 / 停止用 `job` 工具。",
+                            '`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**（sleep 再查属于轮询），期间可以放心结束本轮去做别的事。查状态 / 取输出 / 停止用 `job` 工具。',
                         ]
                       : []),
-                  "长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完。",
-                  "stdin 已接 /dev/null：`cat`、无参 `grep` / `rg` 立刻拿到 EOF，不会挂住等输入。相对路径一律按 cwd（项目目录）解析。",
-                  "结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：",
+                  '长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完。',
+                  'stdin 已接 /dev/null：`cat`、无参 `grep` / `rg` 立刻拿到 EOF，不会挂住等输入。相对路径一律按 cwd（项目目录）解析。',
+                  '结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：',
                   ...renderFieldDocs(BASH_RESULT_HEAD_SCHEMA),
               ]
             : [
-                  "在项目目录执行 **PowerShell** 命令并返回输出（查文件、跑命令、看系统信息）。", // os-boundary-ok: 用户可见文案
+                  '在项目目录执行 **PowerShell** 命令并返回输出（查文件、跑命令、看系统信息）。', // os-boundary-ok: 用户可见文案
                   // os-boundary-ok: 用户可见文案（语法边界）
-                  "语法是 PowerShell，不是 bash：没有 `ls -la` / `grep` / `&&` 这套；文件用 `Get-ChildItem` / `Select-String` / `Get-Content`。Windows PowerShell 5.1 不支持 `&&` / `??`，需要串行就写两条命令或用 `;`。",
-                  "**缺省不设超时**；要限时就显式给 `timeout`（毫秒，到点杀整棵进程树，并照样返回已收到的输出）。超时 / 取消 / 输出溢出都会杀掉整棵树，且**照样返回结果**（不抛错）。",
+                  '语法是 PowerShell，不是 bash：没有 `ls -la` / `grep` / `&&` 这套；文件用 `Get-ChildItem` / `Select-String` / `Get-Content`。Windows PowerShell 5.1 不支持 `&&` / `??`，需要串行就写两条命令或用 `;`。',
+                  '**缺省不设超时**；要限时就显式给 `timeout`（毫秒，到点杀整棵进程树，并照样返回已收到的输出）。超时 / 取消 / 输出溢出都会杀掉整棵树，且**照样返回结果**（不抛错）。',
                   ...(supportsBackground
                       ? [
-                            "`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**；查状态 / 取输出 / 停止用 `job` 工具。长任务用 `Start-Process` 或 `background: true`，不要在同一条命令里 `Start-Sleep` 等它。",
+                            '`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**；查状态 / 取输出 / 停止用 `job` 工具。长任务用 `Start-Process` 或 `background: true`，不要在同一条命令里 `Start-Sleep` 等它。',
                         ]
-                      : [
-                            "长任务用 `Start-Process` 起，不要在同一条命令里 `Start-Sleep` 等它。",
-                        ]),
-                  "相对路径按 cwd（项目目录）解析；结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：",
+                      : ['长任务用 `Start-Process` 起，不要在同一条命令里 `Start-Sleep` 等它。']),
+                  '相对路径按 cwd（项目目录）解析；结果 = YAML 头 + 正文原文（正文逐字不动）。头的字段：',
                   ...renderFieldDocs(BASH_RESULT_HEAD_SCHEMA),
               ]
-        ).join("\n"),
+        ).join('\n'),
         inputSchema: z.object({
-            command: z.string().describe(isBash ? "要执行的 bash 命令" : "要执行的 PowerShell 命令"), // os-boundary-ok: 用户可见文案
+            command: z.string().describe(isBash ? '要执行的 bash 命令' : '要执行的 PowerShell 命令'), // os-boundary-ok: 用户可见文案
             timeout: z
                 .number()
                 .optional()
-                .describe("本次执行的超时（毫秒）；0 = 不设超时；省略 = 不设超时（##454：默认不超时，显式设置就尊重）"),
+                .describe('本次执行的超时（毫秒）；0 = 不设超时；省略 = 不设超时（##454：默认不超时，显式设置就尊重）'),
             ...(supportsBackground
                 ? {
                       background: z
                           .boolean()
                           .optional()
                           .describe(
-                              "后台执行：立即返回作业 id，输出落日志文件；结束时会插话通知你。不需要在命令末尾加 &。" +
-                                  "查状态/输出/停止用 job 工具。**后台同样缺省不设超时**；" +
-                                  "要限时就显式给 timeout，到点整组停止。",
+                              '后台执行：立即返回作业 id，输出落日志文件；结束时会插话通知你。不需要在命令末尾加 &。' +
+                                  '查状态/输出/停止用 job 工具。**后台同样缺省不设超时**；' +
+                                  '要限时就显式给 timeout，到点整组停止。',
                           ),
                   }
                 : {}),
         }),
         // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
-        // （超 2000 行 / 50KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
+        // （超 2000 行 / 64KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
         // 仍是全文（落进 ops 的原文永不动）。截断实现归宿主（见 services/tool-output.ts）。
         toModelOutput: async ({ toolCallId, output }) => {
             const text = String(output);
             const value = host.toModelOutput === undefined ? text : await host.toModelOutput(text, toolCallId);
-            return { type: "text" as const, value };
+            return { type: 'text' as const, value };
         },
         execute: async ({ command, timeout, background }, opts) => {
             const execOpts = opts as { abortSignal?: AbortSignal; toolCallId?: string } | undefined;
@@ -195,25 +186,27 @@ export function makeShellTool(spec: ShellSpec, host: ShellToolHost) {
             // 本包是公共能力，不该认识 `DIY_HOME` 这种东西。
             const verdict = host.beforeRun?.(command);
             if (verdict?.block === true) {
-                return renderBashHead({
-                    ok: false,
-                    duration_ms: 0,
-                    timeout_ms: 0,
-                    timed_out: false,
-                    killed: false,
-                    truncated: false,
-                    stdout_bytes: 0,
-                    stderr_bytes: 0,
-                    cwd,
-                }) + `[已拦截] ${verdict.reason}`;
+                return (
+                    renderBashHead({
+                        ok: false,
+                        duration_ms: 0,
+                        timeout_ms: 0,
+                        timed_out: false,
+                        killed: false,
+                        truncated: false,
+                        stdout_bytes: 0,
+                        stderr_bytes: 0,
+                        cwd,
+                    }) + `[已拦截] ${verdict.reason}`
+                );
             }
             // write-ahead 审计：先落盘再执行，保证最后一幕不丢
-            host.audit?.({ phase: "bash-start", cwd, command });
+            host.audit?.({ phase: 'bash-start', cwd, command });
             // **生效参数**：缺省值只在这里补一次（宿主传 effectiveArgs 时与聊天显示同源）。
             const eff = (host.effectiveArgs ?? defaultEffectiveArgs)({
                 command,
-                ...(typeof timeout === "number" ? { timeout } : {}),
-                ...(typeof background === "boolean" ? { background } : {}),
+                ...(typeof timeout === 'number' ? { timeout } : {}),
+                ...(typeof background === 'boolean' ? { background } : {}),
             });
             // ── 后台模式（##408 刀 8）──
             // 与前台共用**同一个** bash 工具和同一套入参，只由 `background` 一位分叉：
@@ -224,7 +217,7 @@ export function makeShellTool(spec: ShellSpec, host: ShellToolHost) {
             // ⚠️ 后台那一路**整段归宿主**（run 账本 / 审计 / 通知都在宿主），本层只转交一次。
             if (eff.background) {
                 if (!host.background) {
-                    throw new Error("[后台不可用] 本宿主没有作业账本（background 仅 diy-app 开放）");
+                    throw new Error('[后台不可用] 本宿主没有作业账本（background 仅 diy-app 开放）');
                 }
                 return host.background({
                     command,
@@ -251,9 +244,7 @@ export function makeShellTool(spec: ShellSpec, host: ShellToolHost) {
                             fgPid = pid;
                             host.onSpawn?.(pid, call);
                         },
-                        ...(host.onControl
-                            ? { onControl: (ctl: BashControl) => host.onControl?.(ctl, call) }
-                            : {}),
+                        ...(host.onControl ? { onControl: (ctl: BashControl) => host.onControl?.(ctl, call) } : {}),
                     },
                     eff.timeout,
                     spec,
@@ -266,7 +257,7 @@ export function makeShellTool(spec: ShellSpec, host: ShellToolHost) {
                 host.onEnd?.({ ...(fgPid !== undefined ? { pid: fgPid } : {}), ...call });
             }
             host.audit?.({
-                phase: "bash-end",
+                phase: 'bash-end',
                 cwd,
                 command,
                 ms: Date.now() - t0,

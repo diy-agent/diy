@@ -304,7 +304,6 @@ export function createSession(options: CreateSessionOptions): AgentSession {
         }
     }
 
-
     if (options.system !== undefined) {
         session.append({ role: 'system', text: options.system });
     }

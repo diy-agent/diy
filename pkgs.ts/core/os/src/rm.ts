@@ -24,8 +24,8 @@
 //
 // 不吞错：删不掉就抛（带具体路径）——「删不掉」是必须让人知道的事实（曾静默忽略一次，
 // 结果是测试临时目录攒到 2.9GB 没人发现）。
-import { readdir, rmdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, rmdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const RETRY = { maxRetries: 10, retryDelay: 50 } as const;
 
@@ -36,7 +36,7 @@ async function rmDeep(dir: string): Promise<void> {
         entries = await readdir(dir, { withFileTypes: true });
     } catch (e) {
         // 目录已经不存在 ⇒ 目标达成；其它错误（权限）如实抛
-        if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
         throw e;
     }
     for (const entry of entries) {

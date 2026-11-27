@@ -17,7 +17,7 @@
 // 那条记录是请求**发出之后**才落盘的，组装上下文时它还不存在（UI 侧由流量日志反查，
 // 见 traffic-step.ts）。所以这里只说"怎么找"，不编行号。
 
-import { z } from "zod";
+import { z } from 'zod';
 
 /** 流量日志节点的**契约**（唯一真源；`help.reqlog` 由它派生） */
 export const ReqlogSchema = z
@@ -25,14 +25,14 @@ export const ReqlogSchema = z
         file: z
             .string()
             .describe(
-                "今天的流量日志（绝对路径，按天切分）。本应用每次真发 HTTP 请求追加一行 JSON（含请求体与响应），" +
-                    "自己刚发出的那条就在里面。定位本步：`grep -n '\"taskUri\":\"<task.uri>\"' <file> | tail -20`；" +
-                    "一步一行，按 `stepSeq` 找步、`attemptInStep` 看重试（老记录只有 `attempt`）。" +
-                    "reqBody 默认截断（`truncated: true`）；要全文先 `traffic setFullCapture true`（位置参数）再复现。" +
-                    "`log/` 等同 cache 可清；`local/` 下 ops/llm/steps 是会话数据，**不可清**。",
+                '今天的流量日志（绝对路径，按天切分）。本应用每次真发 HTTP 请求追加一行 JSON（含请求体与响应），' +
+                    '自己刚发出的那条就在里面。定位本步：`grep -n \'"taskUri":"<task.uri>"\' <file> | tail -20`；' +
+                    '一步一行，按 `stepSeq` 找步、`attemptInStep` 看重试（老记录只有 `attempt`）。' +
+                    'reqBody 默认截断（`truncated: true`）；要全文先 `traffic setFullCapture true`（位置参数）再复现。' +
+                    '`log/` 等同 cache 可清；`local/` 下 ops/llm/steps 是会话数据，**不可清**。',
             ),
     })
-    .describe("本应用真发请求的**流量日志**：一行 = 一次真发 HTTP 请求（含请求体与响应）");
+    .describe('本应用真发请求的**流量日志**：一行 = 一次真发 HTTP 请求（含请求体与响应）');
 
 /** `reqlog` 节点的值（**纯数据**，解释见 `ReqlogSchema` 的 desc） */
 export interface ReqlogValue {

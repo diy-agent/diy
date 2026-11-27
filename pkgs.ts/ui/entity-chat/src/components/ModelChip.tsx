@@ -8,19 +8,21 @@
 
 import { Cpu } from 'lucide-react';
 
-import { modelLabel } from '../models';
+import { acceptsImages, modelLabel } from '../models';
 import { useProviders } from '../store';
 import { Button } from '@diy-agent/ui-shadcn';
 
 export function ModelChip({ value, onClick }: { value: string; onClick: () => void }) {
     const providers = useProviders();
     const label = modelLabel(providers, value);
+    // 收不收图写进 title：贴图前想确认「这个模型看不看得见」，不必去翻模型弹窗
+    const vision = acceptsImages(providers, value) ? '收图' : '只收文字';
     return (
         <Button
             variant="outline"
             size="xs"
             onClick={onClick}
-            title={`${label} · 点击切换`}
+            title={`${label} · ${vision} · 点击切换`}
             className="gap-1 font-mono text-muted-foreground"
         >
             <Cpu className="size-3" />

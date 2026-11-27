@@ -4,17 +4,21 @@ import { RpcSchema } from '../src/index';
 import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
-const api = RpcSchema.group({ children: {
-  collect: RpcSchema.clientStream({ input: {}, chunkIn: z.string(), output: z.boolean() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    collect: RpcSchema.clientStream({ input: {}, chunkIn: z.string(), output: z.boolean() }),
+  },
+});
 
 async function main() {
   const binding = new HttpServerBinding();
   // handler 不返回，模拟请求流先 close/error、RPC response 尚未正常终态。
-  binding._on("collect", api.collect, async () => new Promise<boolean>(() => {}));
+  binding._on('collect', api.collect, async () => new Promise<boolean>(() => {}));
 
   const server = http2.createServer();
-  server._on('stream', (stream, headers) => { void binding.handleStream(stream, headers); });
+  server._on('stream', (stream, headers) => {
+    void binding.handleStream(stream, headers);
+  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 
   const port = (server.address() as { port: number }).port;
@@ -37,7 +41,9 @@ async function main() {
         state.forcedWriteFalse++;
         // close/error 发生在 onceDrain 已开始监听之后，但响应尚未正常落定。
         queueMicrotask(() => {
-          try { stream.close(http2.constants.NGHTTP2_CANCEL); } catch {}
+          try {
+            stream.close(http2.constants.NGHTTP2_CANCEL);
+          } catch {}
         });
         return false;
       }
@@ -64,8 +70,9 @@ async function main() {
   };
 
   try {
-    await client.clientStream('collect', { input: {}, meta: {} }, chunks)
-      .catch((error: any) => { state.clientError = String(error?.code ?? error); });
+    await client.clientStream('collect', { input: {}, meta: {} }, chunks).catch((error: any) => {
+      state.clientError = String(error?.code ?? error);
+    });
     await new Promise((resolve) => setTimeout(resolve, 100));
     console.log('[drain-close-before-response]', state);
     // 无论 client error 是 CANCELLED 还是其它连接错误，不能再次拉取上游。

@@ -103,9 +103,12 @@ function include(relpath: string, attrs = ''): string {
 
 describe('R1 逐字节原样（不转义 / 不 trim / 不删行）', () => {
     it('提示词里的 & < > 引号原样保留，不做 HTML 转义', () => {
-        const out = render(block(`
+        const out = render(
+            block(`
             用 bash 处理 a\\<b && c>d；说 "中文" 与 '单引号'
-        `), {});
+        `),
+            {},
+        );
         expect(out).toBe('用 bash 处理 a<b && c>d；说 "中文" 与 \'单引号\'');
         expect(out).not.toContain('&lt;');
         expect(out).not.toContain('&amp;');
@@ -194,11 +197,15 @@ describe('R4 条件：:if / :if-not 与固定真假值表', () => {
             </template>
         `);
         expect(render(tpl, { globals: { diy: { skills: [] } } })).toBe('');
-        expect(render(tpl, { globals: { diy: { skills: ['a'] } } })).toBe('' + block(`
+        expect(render(tpl, { globals: { diy: { skills: ['a'] } } })).toBe(
+            '' +
+                block(`
             <skills>
             技能
             </skills>
-        `) + '\n');
+        `) +
+                '\n',
+        );
     });
 
     it(':unless 取反 → 「cwd 回退」提示只在回退时出现（今天由代码拼 "\n注意：…" 决定）', () => {
@@ -228,17 +235,21 @@ describe('R4 条件：:if / :if-not 与固定真假值表', () => {
             <item :if={{diy.strict}}>严格</item>
             </rules>
         `);
-        expect(render(tpl, { globals: { diy: { strict: true } } })).toBe(block(`
+        expect(render(tpl, { globals: { diy: { strict: true } } })).toBe(
+            block(`
             <rules>
             <item>严格</item>
             </rules>
-        `));
+        `),
+        );
         // 条件为假：连标签一起不输出（只留布局自身的换行）
-        expect(render(tpl, { globals: { diy: { strict: false } } })).toBe(block(`
+        expect(render(tpl, { globals: { diy: { strict: false } } })).toBe(
+            block(`
             <rules>
 
             </rules>
-        `));
+        `),
+        );
         // 等价写法：<template> 包裹（控制标记不产出字符）；两者字节一致
         const wrapped = block(`
             <rules>
@@ -249,9 +260,11 @@ describe('R4 条件：:if / :if-not 与固定真假值表', () => {
             render(tpl, { globals: { diy: { strict: true } } }),
         );
         // 循环也一样：<skill :for={{list}} :as="s">
-        expect(render('<skill :for={{diy.skills}} :as="s">{{.s.value}}</skill>', { globals: { diy: { skills: ['a', 'b'] } } })).toBe(
-            '<skill>a</skill><skill>b</skill>',
-        );
+        expect(
+            render('<skill :for={{diy.skills}} :as="s">{{.s.value}}</skill>', {
+                globals: { diy: { skills: ['a', 'b'] } },
+            }),
+        ).toBe('<skill>a</skill><skill>b</skill>');
     });
 });
 
@@ -291,9 +304,12 @@ describe('R5 循环：:for={{集合}} :as + 项/序号/首末（嵌套各自可�
         `);
         expect(render(tpl, { globals: { diy: { list: ['a', 'b', 'c'] } } })).toBe('[a]\n\n[b]\n\n[c]');
         expect(
-            render('<template :for={{diy.list}} :as="f">{{.f.index}}:{{.f.value}} first={{.f.isFirst}} last={{.f.isLast}}|</template>', {
-                globals: { diy: { list: ['a', 'b'] } },
-            }),
+            render(
+                '<template :for={{diy.list}} :as="f">{{.f.index}}:{{.f.value}} first={{.f.isFirst}} last={{.f.isLast}}|</template>',
+                {
+                    globals: { diy: { list: ['a', 'b'] } },
+                },
+            ),
         ).toBe('0:a first=true last=false|1:b first=false last=true|');
     });
 
@@ -301,7 +317,16 @@ describe('R5 循环：:for={{集合}} :as + 项/序号/首末（嵌套各自可�
         const tpl = block(`
             <template :for={{diy.groups}} :as="g"><template :for={{.g.value.items}} :as="it">{{.g.value.name}}#{{.g.index}}.{{.it.index}}={{.it.value}}|</template></template>
         `);
-        const out = render(tpl, { globals: { diy: { groups: [{ name: 'A', items: ['x', 'y'] }, { name: 'B', items: ['z'] }] } } });
+        const out = render(tpl, {
+            globals: {
+                diy: {
+                    groups: [
+                        { name: 'A', items: ['x', 'y'] },
+                        { name: 'B', items: ['z'] },
+                    ],
+                },
+            },
+        });
         expect(out).toBe('A#0.0=x|A#0.1=y|B#1.0=z|');
     });
 });
@@ -363,9 +388,13 @@ describe('R7/R8 include 解析：注册表白名单 + 循环 + 深度 + 锁定',
 
     it('循环引用 → 报错并给出完整链', () => {
         const err = caught(() =>
-            render(include('./a.md'), {}, {
-                resolver: resolverOf({ './a.md': include('./b.md'), './b.md': include('./a.md') }),
-            }),
+            render(
+                include('./a.md'),
+                {},
+                {
+                    resolver: resolverOf({ './a.md': include('./b.md'), './b.md': include('./a.md') }),
+                },
+            ),
         );
         expect(err.code).toBe('include-cycle');
         expect(err.detail).toContain('./a.md → ./b.md → ./a.md');
@@ -382,7 +411,9 @@ describe('R7/R8 include 解析：注册表白名单 + 循环 + 深度 + 锁定',
     it('锁定模版不可被可覆盖模版 include，但锁定入口可以 include 它', () => {
         const files = { './_guard.md': { source: '禁止杀宿主进程', locked: true } };
         expect(caught(() => render(include('./_guard.md'), {}, { resolver: resolverOf(files) })).code).toBe('locked');
-        expect(render(include('./_guard.md'), {}, { resolver: resolverOf(files), locked: true })).toBe('禁止杀宿主进程');
+        expect(render(include('./_guard.md'), {}, { resolver: resolverOf(files), locked: true })).toBe(
+            '禁止杀宿主进程',
+        );
     });
 });
 
@@ -421,9 +452,13 @@ describe('R9 错误不静默：全部带行列与原因', () => {
         expect(linted.lint).toHaveLength(1);
         expect(linted.lint[0]!.message).toContain(':iff');
         const err2 = caught(() =>
-            render('<template :include="./x.md" iff="diy.on" note="diy.note" />', { globals: { diy: { on: 1, note: 'n' } } }, {
-                resolver: resolverOf({ './x.md': '{{.note}}' }),
-            }),
+            render(
+                '<template :include="./x.md" iff="diy.on" note="diy.note" />',
+                { globals: { diy: { on: 1, note: 'n' } } },
+                {
+                    resolver: resolverOf({ './x.md': '{{.note}}' }),
+                },
+            ),
         );
         expect(err2.code).toBe('unknown-arg');
         expect(err2.detail).toContain('note');
@@ -444,7 +479,9 @@ describe('R9 错误不静默：全部带行列与原因', () => {
 
     it(':for 的数据源不是数组 → not-iterable', () => {
         const err = caught(() =>
-            render('<template :for={{diy.obj}} :as="x">{{.x.value}}</template>', { globals: { diy: { obj: { a: 1 } } } }),
+            render('<template :for={{diy.obj}} :as="x">{{.x.value}}</template>', {
+                globals: { diy: { obj: { a: 1 } } },
+            }),
         );
         expect(err.code).toBe('not-iterable');
     });
@@ -494,8 +531,7 @@ describe('R10 静态分析：引用清单（UI「变量 view」的数据源）',
 
 describe('R11b 区间：每个 trace 节点都能回指源码与产出（双向可高亮）', () => {
     /** 深度优先收集 trace 全部节点 */
-    const flatten = (ns: TraceNode[]): TraceNode[] =>
-        ns.flatMap((n) => [n, ...flatten(n.children ?? [])]);
+    const flatten = (ns: TraceNode[]): TraceNode[] => ns.flatMap((n) => [n, ...flatten(n.children ?? [])]);
 
     it('产出区间自洽：子区间被父区间包住、根覆盖全文、src 落在源码内', () => {
         const tmpl = [
@@ -564,9 +600,13 @@ describe('R11b 区间：每个 trace 节点都能回指源码与产出（双向�
 
     it('include：被调模版的节点区间相对**被调模版 body**（父 include 的 out 覆盖整段）', () => {
         const inner = '内层 {{diy.cli}}\n';
-        const { text, trace } = renderWithTrace('前<template :include="./i.md"/>后', { globals: { diy: { cli: '/c' } } }, {
-            resolver: resolverOf({ './i.md': inner }),
-        });
+        const { text, trace } = renderWithTrace(
+            '前<template :include="./i.md"/>后',
+            { globals: { diy: { cli: '/c' } } },
+            {
+                resolver: resolverOf({ './i.md': inner }),
+            },
+        );
         const inc = flatten(trace).find((n) => n.kind === 'include')!;
         expect(text.slice(inc.out!.from, inc.out!.to)).toBe('内层 /c\n'); // 产出是渲染后的文本
         const innerInterp = flatten(inc.children!).find((n) => n.kind === 'interp')!;
@@ -723,9 +763,13 @@ describe('R12 装配形态：节的标签/顺序/分隔都在模版里（代码�
         expect(render('正文\n', {}, { resolver, file: 'system.md' })).toBe('正文\n');
         // include 才出现
         expect(
-            render(include('./_chain.md', ' path={{diy.p}} content={{diy.c}}'), { globals: { diy: { p: 'p', c: 'c' } } }, {
-                resolver,
-            }),
+            render(
+                include('./_chain.md', ' path={{diy.p}} content={{diy.c}}'),
+                { globals: { diy: { p: 'p', c: 'c' } } },
+                {
+                    resolver,
+                },
+            ),
         ).toBe('<pi path="p">c</pi>');
     });
 });
@@ -741,12 +785,7 @@ describe('R13 控制标记不占空间（standalone 默认开，无开关）', (
     });
 
     it('行级：独占一行的控制标记，连同它那一行的缩进与换行都不产出', () => {
-        const src = [
-            'A',
-            '    <template :if={{diy.off}}>',
-            '</template>',
-            'B',
-        ].join('\n');
+        const src = ['A', '    <template :if={{diy.off}}>', '</template>', 'B'].join('\n');
         expect(render(src, { globals: { diy: { off: false } } })).toBe('A\nB');
         // 条件成立时也一样（标记本身不产出内容）
         expect(render(src, { globals: { diy: { off: true } } })).toBe('A\nB');
@@ -854,9 +893,15 @@ describe('R15 变量契约（宿主声明类型/说明 → 静态校验）', () 
     });
 
     it(':for 的源必须是数组；标量当源 → lint', () => {
-        expect(analyze('<template :for={{diy.cli}} :as="x">{{.x.value}}</template>', { vars: VARS }).lint.some((l) => l.message.includes('必须是数组'))).toBe(true);
+        expect(
+            analyze('<template :for={{diy.cli}} :as="x">{{.x.value}}</template>', { vars: VARS }).lint.some((l) =>
+                l.message.includes('必须是数组'),
+            ),
+        ).toBe(true);
         // 合法用法不报
-        expect(analyze('<template :for={{skills}} :as="s">{{.s.value}}</template>', { vars: VARS }).lint).toHaveLength(0);
+        expect(analyze('<template :for={{skills}} :as="s">{{.s.value}}</template>', { vars: VARS }).lint).toHaveLength(
+            0,
+        );
     });
 
     it('插值只能是标量：集合/对象 → lint；但作为条件/循环源/include 参数是合法的', () => {
@@ -864,9 +909,7 @@ describe('R15 变量契约（宿主声明类型/说明 → 静态校验）', () 
         expect(analyze('{{diy.obj}}', { vars: VARS }).lint.some((l) => l.message.includes('是对象'))).toBe(true);
         // 同一路径用在 :if / :for / include 参数上 → 不报
         expect(analyze('<template :if={{skills}}>x</template>', { vars: VARS }).lint).toHaveLength(0);
-        expect(
-            analyze('<template :include="./a.md" list={{skills}}/>', { vars: VARS }).lint,
-        ).toHaveLength(0);
+        expect(analyze('<template :include="./a.md" list={{skills}}/>', { vars: VARS }).lint).toHaveLength(0);
     });
 
     it('不给契约就不做类型校验（向后兼容）', () => {

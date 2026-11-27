@@ -1,2 +1,9 @@
-{ "name": "@diy-agent/rpc-test-fixture", "private": true, "type": "module",
-  "dependencies": { "@diy-agent/rpc": "file:..", "zod": "^4.4.3" } }
+{
+  "name": "@diy-agent/rpc-test-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@diy-agent/rpc": "file:..",
+    "zod": "^4.4.3"
+  }
+}

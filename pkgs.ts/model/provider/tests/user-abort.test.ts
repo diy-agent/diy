@@ -70,7 +70,13 @@ describe('真实用户中断（AbortSignal）', () => {
     it('中途 abort ⇒ **不抛**，流优雅结束（真实现状，不是理想态）', async () => {
         const controller = new AbortController();
         setTimeout(() => controller.abort(), 40);
-        const stream = chatStream(slowModel(100, 10), [msg('写点长的')], { signal: controller.signal }, undefined, wire);
+        const stream = chatStream(
+            slowModel(100, 10),
+            [msg('写点长的')],
+            { signal: controller.signal },
+            undefined,
+            wire,
+        );
         const ds = await collect(stream); // 期望：能正常迭代完
         expect(ds.length, 'abort 之前的增量照常交付').toBeGreaterThan(0);
         expect(ds.at(-1)?.type, '结尾仍是 done —— 与正常说完无法从 delta 区分').toBe('done');
@@ -80,7 +86,13 @@ describe('真实用户中断（AbortSignal）', () => {
         const controller = new AbortController();
         const got: string[] = [];
         setTimeout(() => controller.abort(), 150); // 让第一块（sleep 100）已经出来
-        const stream = chatStream(slowModel(100, 10), [msg('写点长的')], { signal: controller.signal }, undefined, wire);
+        const stream = chatStream(
+            slowModel(100, 10),
+            [msg('写点长的')],
+            { signal: controller.signal },
+            undefined,
+            wire,
+        );
         try {
             for await (const d of stream) {
                 if (d.type === 'text') got.push(d.text);
@@ -100,7 +112,10 @@ describe('真实用户中断（AbortSignal）', () => {
         const started = Date.now();
         const ds = await collect(stream);
         expect(Date.now() - started, '不该等完 10 块 × 100ms').toBeLessThan(500);
-        expect(ds.filter((d) => d.type === 'text'), '一个字都不该出').toHaveLength(0);
+        expect(
+            ds.filter((d) => d.type === 'text'),
+            '一个字都不该出',
+        ).toHaveLength(0);
         expect(ds.at(-1)?.type).toBe('done');
     });
 

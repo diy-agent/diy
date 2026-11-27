@@ -48,7 +48,7 @@ curl -s "http://127.0.0.1:$PORT/api/rooms"  # 数据面
 | -------------------------------- | ------- | --------------------- | ----------- | ----------------------------------- |
 | `./sha.sh dev` / `lab`           | lab     | `run/diy2/lab`        | development | 0（内核分配，落 `<home>/app.port`） |
 | `./sha.sh staging [--build]`     | staging | `run/diy2/staging`    | development | 0                                   |
-| `./sha.sh start`（= `diy2 web`） | prod    | `~/.diy2`              | production  | 5192                                |
+| `./sha.sh start`（= `diy2 web`） | prod    | `~/.diy2`             | production  | 5192                                |
 
 产物目录**固定** `apps/diy2/build/prod/{web,server,cli}`（一个包目录一份产物）：多份并存靠
 worktree（每个 worktree 有自己的 `build/`），不靠 `<variant>/` 子目录。
@@ -93,7 +93,7 @@ diy2 web --open         # 就绪后打开浏览器（缺省不开）
 diy2 web -p 6000        # 换端口（0 = 内核分配）
 diy2 web --restart      # 先停同数据根实例再起
 diy2 web --home /tmp/x  # 换数据根（缺省 ~/.diy2）
-diy2 web --detach       # 起在后台（脚本 / 启动器用）
+diy2 web --detach       # 起在后台（脚本 / 启动器用）；输出落 <home>/log/stdout.log
 diy2 list               # 本机所有 diy2 实例（`-j` / `--json` = 单行 JSON）
 diy2 stop [--all]       # 停本数据根（或本机全部；--worktree <dir> 只停那个 worktree）
 diy2 port | diy2 home   # 脚本用：打印端口 / 数据根（裸值）
@@ -118,6 +118,30 @@ diy2 facts status                  # 条目 / 小节 / 字节数 + 问题清单�
 
 `-j` 对所有命令都是「单行 JSON + `{ok,data}` 包装」；`brief/get/find` 的人类输出是缩进 JSON。
 
+### 日志：都落在 `<home>/log/`
+
+不管前台还是 `--detach`，输出与日志都收在**数据根的 `log/`**（lab 实例 = 自己的
+`run/diy2/lab/log/`）—— 不要再 `nohup … >> /tmp/xxx.log 2>&1`：/tmp 会被清、多实例互相
+覆盖（实测现场：prod 的输出曾散落在 /tmp/diy2-prod-stdout.log）。
+
+| 落点                                                                            | 谁写                                                              | 是什么                                                                 |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `log/app/YYYY-MM-DD.log`                                                        | 服务端 OTel 装配（`server/log.ts`）                               | **结构化主账**（jsonl；按天切 + 10MB×5 份 + 留 14 天）                 |
+| `log/stdout.log`                                                                | `web --detach` 把子进程 fd1/fd2 接到这（`src/cli/detach-log.ts`） | 人读终端行 ⊕ 裸 stderr（未捕获异常 / 第三方 console）；超 10MB 滚 `.1` |
+| `log/job/runs/<日期>/<id>/out.log`                                              | 后台作业                                                          | 每条 run 自己的输出（`jobs.tail` RPC 能读尾巴）                        |
+| `log/network/` · `log/error/` · `log/main.log` · `log/cli.log` · `log/crashes/` | **diy-app**（Electron 侧，共用数据根时）                          | 不是 diy2 server 写的；排查 Electron 侧才看                            |
+
+前台 `diy2 web` 的输出直接进终端（Ctrl-C 一起退），**不落** `stdout.log` —— 要留档用
+`--detach`，或前台自己 `| tee`。日志写盘失败不带崩进程（旁路，只往 stderr 报一行）。
+
+标准重启 / 观察姿势：
+
+```bash
+diy2 web --restart --detach          # 先停同数据根实例再后台起；输出自动落 <home>/log/stdout.log
+tail -f ~/.diy2/log/stdout.log       # 看人读输出（启动期端口 / UI 路径 / ERROR 都在这）
+grep '"level":"error"' ~/.diy2/log/app/$(date +%F).log   # 结构化错误（机器 grep）
+```
+
 构建产物是三件：`build/prod/web/`（vite build 的 UI）、`build/prod/server/index.mjs`
 （vite lib/ssr 打的服务端单文件）与 `build/prod/cli/index.mjs`（CLI 单文件），工作区包都打进去了。
 全局命令只依赖这三件，不需要在运行时装 vite / tsx。发布时 `files` 只带 `bin/` + `build/prod/`。
@@ -140,15 +164,9 @@ cd apps/diy2 && npm link
 工作区包和第三方依赖都内联了，所以装上就能跑，不需要额外装依赖。发布前记得去掉
 `"private": true`（现在是防手滑）。
 
-UI 有两个可切换的表面（同一份时间线 + 同一个 store，只换渲染器，能力已对齐）：
-
-| 表面           | 用的东西                                                       |
-| -------------- | -------------------------------------------------------------- |
-| Astryx（默认） | `@astryxdesign/core` 的 Chat 组件族 + lab 的 `ChatVirtualizer` |
-| shadcn         | 裸 Tailwind + 自己的 `Markdown` / `BotAvatar`                  |
-
-（第三面 assistant-ui 已于 2026-11-23 删除，理由见
-`docs/plans/2026-11-24-surface-parity.md`。）
+UI 表面只剩 **shadcn** 一份（裸 Tailwind + 自己的 `Markdown` / `BotAvatar`）。历史上的三面
+（assistant-ui 2026-11-23 删、Astryx 2026-11-26 删）与删除理由见
+`docs/plans/2026-11-24-surface-parity.md` §7；注册表 `ChatSurface[]` 的形状刻意保留多面能力。
 
 数据：`<数据根>/diy2.db`（node:sqlite；生产数据根 `~/.diy2`，lab 见上表）。落盘的东西：
 

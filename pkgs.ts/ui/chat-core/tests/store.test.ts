@@ -8,9 +8,12 @@ const emptySnapshot: Snapshot = { items: [], deliveries: [], asks: [] };
 function fakeClient(loads: Array<Snapshot | Error>) {
     const watchers: Array<(event: StreamEvent) => void> = [];
     const unsubscribed: string[] = [];
+    /** 每次 load 传的 limit（`undefined` = 服务端默认；`0` = 全量）—— 用来钉「不要一次全量」 */
+    const limits: Array<number | undefined> = [];
     let calls = 0;
     const client: ChatClient = {
-        load: async () => {
+        load: async (_entityId, options) => {
+            limits.push(options?.limit);
             const next = loads[Math.min(calls, loads.length - 1)]!;
             calls += 1;
             if (next instanceof Error) throw next;
@@ -22,7 +25,7 @@ function fakeClient(loads: Array<Snapshot | Error>) {
             return () => unsubscribed.push(entityId);
         },
     };
-    return { client, watchers, loads: () => calls, unsubscribed };
+    return { client, watchers, loads: () => calls, limits, unsubscribed };
 }
 
 describe('ConversationStore', () => {
@@ -113,5 +116,48 @@ describe('ConversationStore.send', () => {
         const store = new ConversationStore(client, 'proj:x');
         await store.send('   ');
         expect(calls).toBe(0);
+    });
+});
+
+describe('loadMore —— 不一次拉全量（几百兆的会话也不该炸）', () => {
+    const withItems = (n: number): Snapshot => ({
+        items: Array.from({ length: n }, (_, i) => ({ id: `i${i}`, kind: 'chat' as const })) as never,
+        deliveries: [],
+        asks: [],
+    });
+
+    it('已加载 400 条 → 再点一次只请求 800，不是全量', async () => {
+        const { client, limits } = fakeClient([withItems(400), withItems(800)]);
+        const store = new ConversationStore(client, 'proj:x');
+        store.reload();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(limits).toEqual([undefined]);
+
+        store.loadMore();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(limits).toEqual([undefined, 800]);
+        // 关键：**没有** 0（全量）
+        expect(limits).not.toContain(0);
+    });
+
+    it('还没拉到任何东西时点它，至少请求 400（不是 0 = 全量）', async () => {
+        const { client, limits } = fakeClient([withItems(0), withItems(400)]);
+        const store = new ConversationStore(client, 'proj:x');
+        store.loadMore();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(limits).toEqual([400]);
+    });
+
+    it('翻倍能一路点到全部（400 → 800 → 1600 → 3200 → 6400）', async () => {
+        const snapshots = [400, 800, 1600, 3200, 6400].map((n) => withItems(n));
+        const { client, limits } = fakeClient([snapshots[0]!, ...snapshots.slice(1)]);
+        const store = new ConversationStore(client, 'proj:x');
+        store.reload();
+        await new Promise((r) => setTimeout(r, 0));
+        for (let i = 0; i < 4; i += 1) {
+            store.loadMore();
+            await new Promise((r) => setTimeout(r, 0));
+        }
+        expect(limits.slice(1)).toEqual([800, 1600, 3200, 6400]);
     });
 });

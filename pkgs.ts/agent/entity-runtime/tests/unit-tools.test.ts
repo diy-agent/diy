@@ -32,7 +32,7 @@ afterAll(async () => {
 });
 
 /** 一个挂在上面的任务房间工具集（taskId = 任务房间 id） */
-function setup(taskId = 't1') {
+function setup(taskId = 't1', extra: { sourceOf?: () => string | undefined } = {}) {
     const store = openStore(':memory:');
     // events.subject 有外键到 entities：任务必须先是实体（生产里房间本来就有身份行）
     store.saveTask({
@@ -46,7 +46,7 @@ function setup(taskId = 't1') {
         closedAt: null,
         modelKey: 'm',
     });
-    const tools = buildRoomTools({ cwd: dir, shell: false, units: { store, taskId } });
+    const tools = buildRoomTools({ cwd: dir, shell: false, units: { store, taskId, ...extra } });
     return { store, tools };
 }
 
@@ -107,8 +107,8 @@ describe('unit 工具', () => {
         const added = (await toolOf(tools, 'unit_add').execute({
             items: [
                 { key: 'dom', title: '取消语义' },
-                { key: 'a', title: 'A', parent: 'dom' },
-                { key: 'b', title: 'B', parent: 'dom' },
+                { key: 'a', title: 'A', parent: 'dom', accept: '有单测' },
+                { key: 'b', title: 'B', parent: 'dom', accept: '有单测' },
             ],
         })) as { ready: string[] };
         // 两条叶子都能挑：账本不定先后
@@ -116,6 +116,34 @@ describe('unit 工具', () => {
 
         const listing = (await toolOf(tools, 'unit_list').execute({})) as { tree: string[] };
         expect(listing.tree).toEqual(['- [ ] 取消语义 (dom)', '  - [>] A (a)', '  - [>] B (b)']);
+    });
+
+    it('工具面没有「追加进展」的入口：update 只认需求字段（进展归 journal）', async () => {
+        // 用户 2026-11-26：账本被当成 log 的嫌疑，一半来自「什么都能往里写」。
+        // 这里钉住入口本身：unit_update 的入参里**没有** note / comment / progress / log 这类字段，
+        // 想记进展只能写 journal（那不是账本）。加字段的人会被这条测试拦住。
+        const { tools } = setup();
+        const update = toolOf(tools, 'unit_update') as unknown as { inputSchema: { shape: Record<string, unknown> } };
+        expect(Object.keys(update.inputSchema.shape).sort()).toEqual([
+            'accept',
+            'body',
+            'id',
+            'parent',
+            'status',
+            'title',
+        ]);
+        for (const forbidden of ['note', 'comment', 'progress', 'log', 'update', 'latest', 'changes']) {
+            expect(Object.keys(update.inputSchema.shape)).not.toContain(forbidden);
+        }
+    });
+
+    it('unit_add 自动盖「来自哪句话」（宿主给的触发消息），模型不用也不能填', async () => {
+        const { tools } = setup('t1', { sourceOf: () => 'u-mwwtvgiy-7' });
+        const added = (await toolOf(tools, 'unit_add').execute({
+            items: [{ key: 'a', title: '导出可用', accept: '点一下真落文件' }],
+        })) as { added: Array<{ id: string }> };
+        const got = (await toolOf(tools, 'unit_get').execute({ id: added.added[0]!.id })) as { source: string };
+        expect(got.source).toBe('u-mwwtvgiy-7');
     });
 
     it('母项不能直接推状态（由子派生）', async () => {
@@ -131,9 +159,9 @@ describe('unit 工具', () => {
 
     it('key 不合格 / 重名 / 撞已有 id：整批拒绝，不半截写入', async () => {
         const { store, tools } = setup();
-        await expect(
-            toolOf(tools, 'unit_add').execute({ items: [{ key: 'Bad Key', title: 'x' }] }),
-        ).rejects.toThrow(/key 只能用/);
+        await expect(toolOf(tools, 'unit_add').execute({ items: [{ key: 'Bad Key', title: 'x' }] })).rejects.toThrow(
+            /key 只能用/,
+        );
         await expect(
             toolOf(tools, 'unit_add').execute({
                 items: [
@@ -157,7 +185,12 @@ describe('unit 工具', () => {
 
     it('update 推状态：doing / done 只影响自己那一格（不再牵动别的条目）', async () => {
         const { tools } = setup();
-        await toolOf(tools, 'unit_add').execute({ items: [{ key: 'a', title: 'a' }, { key: 'b', title: 'b' }] });
+        await toolOf(tools, 'unit_add').execute({
+            items: [
+                { key: 'a', title: 'a' },
+                { key: 'b', title: 'b' },
+            ],
+        });
 
         await toolOf(tools, 'unit_update').execute({ id: 'a', status: 'doing' });
         const listing = (await toolOf(tools, 'unit_list').execute({})) as {

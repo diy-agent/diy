@@ -8,15 +8,15 @@
 //   · `job`           —— 后台作业系统的唯一问询口
 // 壳的**拼装**（buildInvocation）与 OS 探测仍归宿主：那是平台事实，不是工具语义。
 
-import path from "node:path";
-import { tool } from "ai";
-import type { ToolSet } from "ai";
-import { z } from "zod";
-import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from "./file-read.js";
-import { countsLabel, formatWriteResult, writeFileWhole, WRITE_MAX_BYTES } from "./file-write.js";
-import { describeEditResult, displayPath, editFile, resolveEditablePath, withFileEditQueue } from "./file-edit.js";
-import { writeFileAtomic } from "./atomic-write.js";
-import type { ToolAuditEvent, ToolLimits } from "./types.js";
+import path from 'node:path';
+import { tool } from 'ai';
+import type { ToolSet } from 'ai';
+import { z } from 'zod';
+import { readFileWindow, formatReadOutput, READ_MAX_BYTES, READ_MAX_LINES } from './file-read.js';
+import { countsLabel, formatWriteResult, writeFileWhole, WRITE_MAX_BYTES } from './file-write.js';
+import { describeEditResult, displayPath, editFile, resolveEditablePath, withFileEditQueue } from './file-edit.js';
+import { writeFileAtomic } from './atomic-write.js';
+import type { ToolAuditEvent, ToolLimits } from './types.js';
 
 /** 装配上下文：**没有 taskUri / anchor** —— 任务身份由宿主的 onAudit / 上层日志补 */
 export interface ToolsContext {
@@ -49,13 +49,13 @@ export function buildTools(ctx: ToolsContext): ToolSet {
     const built: ToolSet = {
         read: tool({
             description:
-                "读取文件的文本内容（带行号；相对路径按项目目录解析）。" +
+                '读取文件的文本内容（带行号；相对路径按项目目录解析）。' +
                 `单次最多 ${READ_MAX_LINES} 行 / ${Math.round(READ_MAX_BYTES / 1024)}KB，` +
-                "超限时输出尾部会给出下一段 offset —— 用 offset 继续读，不要重复读同一段。",
+                '超限时输出尾部会给出下一段 offset —— 用 offset 继续读，不要重复读同一段。',
             inputSchema: z.object({
-                path: z.string().describe("文件路径"),
-                offset: z.number().optional().describe("起始行，1-based（缺省 1；续读时传上次提示的 offset）"),
-                limit: z.number().optional().describe("最大行数（缺省 2000）"),
+                path: z.string().describe('文件路径'),
+                offset: z.number().optional().describe('起始行，1-based（缺省 1；续读时传上次提示的 offset）'),
+                limit: z.number().optional().describe('最大行数（缺省 2000）'),
             }),
             execute: async ({ path: filePath, offset, limit }) => {
                 const abs = path.resolve(cwd, filePath);
@@ -63,7 +63,7 @@ export function buildTools(ctx: ToolsContext): ToolSet {
                     // 与 `diy tool read` 共用同一实现：窗口语义只有一份（见 core/file-read.ts）
                     const window = await readFileWindow(abs, abs, { offset, limit, maxBytes: readMaxBytes });
                     // style: "tool" —— 续读提示写成工具参数 offset=N（不是 shell 的 --offset）
-                    return formatReadOutput(window, { maxBytes: readMaxBytes, style: "tool" });
+                    return formatReadOutput(window, { maxBytes: readMaxBytes, style: 'tool' });
                 } catch (e) {
                     // **抛，不返回字符串**（##329）：catch-and-return 的返回值是**正常工具结果**，
                     // SDK 走 tool-result 分支 → patch status:"done" → UI 画 ✓、且失败块不自动展开
@@ -91,20 +91,20 @@ export function buildTools(ctx: ToolsContext): ToolSet {
          */
         write: tool({
             description:
-                "整文件写入（新建或覆盖；相对路径按项目目录解析）。" +
+                '整文件写入（新建或覆盖；相对路径按项目目录解析）。' +
                 `**父目录不存在会自动创建**（mkdir -p），这不是错误。` +
                 `content 上限 ${Math.round(WRITE_MAX_BYTES / 1024)}KB（报 fs/content-too-large）；` +
-                "目标是目录报 fs/is-directory。UTF-8 原样写：行尾不转换，原文件有 BOM 会保留。" +
-                "返回 `+N/-M 行` 与 unified diff 摘要。改几行不要用本工具重写整个文件。",
+                '目标是目录报 fs/is-directory。UTF-8 原样写：行尾不转换，原文件有 BOM 会保留。' +
+                '返回 `+N/-M 行` 与 unified diff 摘要。改几行不要用本工具重写整个文件。',
             inputSchema: z.object({
-                path: z.string().describe("文件路径（相对项目目录解析）"),
-                content: z.string().describe("完整文件内容（UTF-8 文本；原样写入，不做转义处理）"),
+                path: z.string().describe('文件路径（相对项目目录解析）'),
+                content: z.string().describe('完整文件内容（UTF-8 文本；原样写入，不做转义处理）'),
             }),
             execute: async ({ path: filePath, content }) => {
                 // **抛，不 return**（##414 / 与 read 的 ##329 同口径）：失败是工具错误（UI ✗ 且自动展开），
                 // 不是「正常结果里写一句失败」—— 后者会被画成 ✓。
                 const r = writeFileWhole(cwd, filePath, content);
-                audit({ phase: "file-write", cwd, command: filePath, result: countsLabel(r) });
+                audit({ phase: 'file-write', cwd, command: filePath, result: countsLabel(r) });
                 return formatWriteResult(r);
             },
         }),
@@ -121,24 +121,24 @@ export function buildTools(ctx: ToolsContext): ToolSet {
             // ⚠️ 文案进 wire 的 tools 段（排在 system 之前）—— 改一个字节 = 整段前缀缓存作废（##519）。
             // 改这里 ⇒ 同步更新 tools-surface-golden 快照（那个 diff 就是「本次冷启一次」的签字）。
             description:
-                "对**单个已存在的文件**做局部替换（不要为了改几行就重写整个文件，那是 write 的事）。" +
-                "edits 是**有序**的：后一条基于前一条的结果匹配。每条 oldText 必须逐字来自文件且**唯一命中**" +
-                "（命中多处会报错并给出次数；确实要全改就传 replaceAll: true）。" +
-                "精确匹配失败时会做字符归一（全角/半角、弯直引号、行尾空白）再试，命中后在返回里**明确说明**用了归一；" +
-                "未命中的行逐字保留。返回 unified patch。",
+                '对**单个已存在的文件**做局部替换（不要为了改几行就重写整个文件，那是 write 的事）。' +
+                'edits 是**有序**的：后一条基于前一条的结果匹配。每条 oldText 必须逐字来自文件且**唯一命中**' +
+                '（命中多处会报错并给出次数；确实要全改就传 replaceAll: true）。' +
+                '精确匹配失败时会做字符归一（全角/半角、弯直引号、行尾空白）再试，命中后在返回里**明确说明**用了归一；' +
+                '未命中的行逐字保留。返回 unified patch。',
             inputSchema: z.object({
-                path: z.string().describe("目标文件路径（相对项目目录或绝对路径，必须在项目目录内）"),
+                path: z.string().describe('目标文件路径（相对项目目录或绝对路径，必须在项目目录内）'),
                 edits: z
                     .array(
                         z.object({
                             oldText: z
                                 .string()
-                                .describe("要替换的原文（逐字来自文件；必须唯一命中，除非 replaceAll: true）"),
-                            newText: z.string().describe("替换成什么（空串 = 删除这段原文）"),
-                            replaceAll: z.boolean().optional().describe("允许替换全部命中（缺省 false = 必须唯一）"),
+                                .describe('要替换的原文（逐字来自文件；必须唯一命中，除非 replaceAll: true）'),
+                            newText: z.string().describe('替换成什么（空串 = 删除这段原文）'),
+                            replaceAll: z.boolean().optional().describe('允许替换全部命中（缺省 false = 必须唯一）'),
                         }),
                     )
-                    .describe("有序的替换列表：后一条基于前一条的结果匹配"),
+                    .describe('有序的替换列表：后一条基于前一条的结果匹配'),
             }),
             execute: async ({ path: filePath, edits }) => {
                 const abs = resolveEditablePath(cwd, filePath);
@@ -146,7 +146,7 @@ export function buildTools(ctx: ToolsContext): ToolSet {
                 const t0 = Date.now();
                 // 写前审计：与 bash 同一口径（先落盘再执行，保证最后一幕不丢）
                 audit({
-                    phase: "file-edit-start",
+                    phase: 'file-edit-start',
                     cwd,
                     path: label,
                     result: `${edits.length} 条 edits`,
@@ -160,20 +160,20 @@ export function buildTools(ctx: ToolsContext): ToolSet {
                         const shown = label === abs ? label : `${label} → ${abs}`;
                         const text = describeEditResult(shown, r);
                         audit({
-                            phase: "file-edit-end",
+                            phase: 'file-edit-end',
                             cwd,
                             path: label,
                             ms: Date.now() - t0,
                             result: clip(text, 500),
                         });
                         // 返回「摘要 + unified patch」：摘要给模型确认命中/归一，patch 给人看改了什么
-                        return r.patch === "" ? text : `${text}\n\n${r.patch}`;
+                        return r.patch === '' ? text : `${text}\n\n${r.patch}`;
                     });
                 } catch (e) {
                     // **抛，不 return**（与 read / bash 同口径）：失败必须是 tool-error，
                     // 否则 UI 画 ✓ 且不展开。这里只补一条审计，错误原样上抛（带 fs/ code）。
                     audit({
-                        phase: "file-edit-end",
+                        phase: 'file-edit-end',
                         cwd,
                         path: label,
                         ms: Date.now() - t0,

@@ -113,13 +113,13 @@ describe('buildTimeline', () => {
 
     it('把投递状态挂到用户消息上（失败也要显示）', () => {
         const deliveries: Delivery[] = [
-            { entityId: 'proj:x', messageId: 'i1', botId: OWNER.id, state: 'delivered', updatedAt: 1 },
+            { entityId: 'proj:x', messageId: 'i1', botId: OWNER.id, state: 'done', updatedAt: 1 },
             {
                 entityId: 'proj:x',
                 messageId: 'i1',
                 botId: HELPER.id,
-                state: 'failed',
-                note: 'AI_APICallError',
+                state: 'done',
+                note: 'failed',
                 updatedAt: 1,
             },
         ];
@@ -128,8 +128,8 @@ describe('buildTimeline', () => {
         const [entry] = buildTimeline(items, deliveries, BOTS);
 
         expect(entry?.deliveries).toEqual([
-            { botId: OWNER.id, name: 'diy', color: '#111', state: 'delivered' },
-            { botId: HELPER.id, name: '小满', color: '#222', state: 'failed' },
+            { botId: OWNER.id, name: 'diy', color: '#111', state: 'done' },
+            { botId: HELPER.id, name: '小满', color: '#222', state: 'done', note: 'failed' },
         ]);
     });
 
@@ -294,5 +294,38 @@ describe('提问卡片', () => {
         // 该有的「正在输入…」却不能少：没人认领的 speaking 要自己补一条
         expect(entries.at(-1)?.kind).toBe('typing');
         expect(entries.at(-1)?.author?.id).toBe(OWNER.id);
+    });
+});
+
+describe('buildTimeline：附件', () => {
+    it('人发的消息带附件 ⇒ user 条目原样带出来（界面靠它画图）', () => {
+        const shot = {
+            type: 'stored' as const,
+            id: '2026-11-26/093012-abcd1234/01-shot.png',
+            relPath: '2026-11-26/093012-abcd1234/01-shot.png',
+            kind: 'image' as const,
+            mime: 'image/png',
+            bytes: 2048,
+            displayName: 'shot.png',
+            source: 'paste' as const,
+            createdAt: 1_700_000_000_000,
+            sha256: 'a'.repeat(64),
+        };
+        const entries = buildTimeline(
+            [item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '看这张', attachments: [shot] } })],
+            [],
+            BOTS,
+        );
+        expect(entries[0]?.kind).toBe('user');
+        expect(entries[0]?.attachments).toEqual([shot]);
+    });
+
+    it('没有附件的消息不带这个字段（老数据形状不变）', () => {
+        const entries = buildTimeline(
+            [item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '一句' } })],
+            [],
+            BOTS,
+        );
+        expect(entries[0]).not.toHaveProperty('attachments');
     });
 });

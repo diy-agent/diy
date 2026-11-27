@@ -94,6 +94,8 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (key
                             {provider.models.map((item) => (
                                 <SelectItem key={item.id} value={item.id}>
                                     {item.name}
+                                    {/* 收图的模型加个标记：贴图前就知道该选谁 */}
+                                    {item.input?.includes('image') === true ? ' 🖼' : ''}
                                 </SelectItem>
                             ))}
                         </SelectContent>

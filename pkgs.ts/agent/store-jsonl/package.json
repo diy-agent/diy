@@ -1,31 +1,31 @@
 {
-  "name": "@diy-agent/session-store-jsonl",
-  "version": "0.1.1",
-  "private": true,
-  "description": "diy 会话存储适配器：按大小切桶的 jsonl（index.json + <序号>-<日期>-<时间><偏移>.jsonl…），seq 跨桶连续、readFrom 不扫全量",
-  "files": [
-    "src/"
-  ],
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./src/index.ts",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./dist/index.js"
+    "name": "@diy-agent/session-store-jsonl",
+    "version": "0.1.1",
+    "private": true,
+    "description": "diy 会话存储适配器：按大小切桶的 jsonl（index.json + <序号>-<日期>-<时间><偏移>.jsonl…），seq 跨桶连续、readFrom 不扫全量",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {
+        "@diy-agent/session": "*"
+    },
+    "devDependencies": {
+        "@diy-agent/store-contract": "*",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
     }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  },
-  "dependencies": {
-    "@diy-agent/session": "*"
-  },
-  "devDependencies": {
-    "@diy-agent/store-contract": "*",
-    "oxfmt": "^0.57.0",
-    "oxlint": "^1.72.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  }
 }

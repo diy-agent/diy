@@ -3,22 +3,15 @@
 // 这个文件是**唯一**允许出现 `ps` / `top` / `lsof` / `osascript` / `system_profiler`
 // 这些系统假设的地方（见 os/types.ts 头注）。外部只拿归一化后的数据。
 
-import { execFile, execFileSync } from "node:child_process";
-import type { ConnectionInfo } from "./process-health.js";
-import { selectOwnedProcs } from "./proc-scan.js";
-import { parseEtime } from "./duration.js";
-import { aggregateTree } from "./tree.js";
-import { registeredLive } from "./live.js";
-import type {
-    GpuInfo,
-    OsStrategy,
-    ProcessHop,
-    ProcessRow,
-    ProcessTree,
-    ShellSpec,
-} from "./types.js";
+import { execFile, execFileSync } from 'node:child_process';
+import type { ConnectionInfo } from './process-health.js';
+import { selectOwnedProcs } from './proc-scan.js';
+import { parseEtime } from './duration.js';
+import { aggregateTree } from './tree.js';
+import { registeredLive } from './live.js';
+import type { GpuInfo, OsStrategy, ProcessHop, ProcessRow, ProcessTree, ShellSpec } from './types.js';
 
-export { parseEtime } from "./duration.js";
+export { parseEtime } from './duration.js';
 
 /** 注入点：单测喂固定文本夹具，不真跑系统命令。 */
 export interface PosixDeps {
@@ -38,13 +31,13 @@ function defaultPosixDeps(platform: NodeJS.Platform = process.platform): PosixDe
         runSync(cmd, args, timeoutMs = 3000) {
             try {
                 return execFileSync(cmd, args as string[], {
-                    encoding: "utf-8",
+                    encoding: 'utf-8',
                     timeout: timeoutMs,
-                    stdio: ["ignore", "pipe", "ignore"],
+                    stdio: ['ignore', 'pipe', 'ignore'],
                     maxBuffer: 16 * 1024 * 1024,
                 });
             } catch {
-                return "";
+                return '';
             }
         },
         run(cmd, args, timeoutMs = 3000) {
@@ -52,8 +45,8 @@ function defaultPosixDeps(platform: NodeJS.Platform = process.platform): PosixDe
                 execFile(
                     cmd,
                     args as string[],
-                    { encoding: "utf8", timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
-                    (err, stdout) => resolve(err ? "" : (stdout ?? "")),
+                    { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
+                    (err, stdout) => resolve(err ? '' : (stdout ?? '')),
                 );
             });
         },
@@ -61,7 +54,7 @@ function defaultPosixDeps(platform: NodeJS.Platform = process.platform): PosixDe
             try {
                 execFileSync(cmd, args as string[], {
                     timeout: timeoutMs,
-                    stdio: ["ignore", "pipe", "ignore"],
+                    stdio: ['ignore', 'pipe', 'ignore'],
                 });
                 return true;
             } catch {
@@ -80,7 +73,7 @@ function defaultPosixDeps(platform: NodeJS.Platform = process.platform): PosixDe
 /** `ps -axo pid=,ppid=,pgid=,etime=,pcpu=,rss=,command=` 的一行。 */
 export function parseProcRows(stdout: string): ProcessRow[] {
     const out: ProcessRow[] = [];
-    for (const line of stdout.split("\n")) {
+    for (const line of stdout.split('\n')) {
         const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+(.*)$/.exec(line);
         if (!m) continue;
         const pid = Number(m[1]);
@@ -89,10 +82,10 @@ export function parseProcRows(stdout: string): ProcessRow[] {
             pid,
             ppid: Number(m[2]),
             pgid: Number(m[3]),
-            etimeText: m[4] ?? "",
+            etimeText: m[4] ?? '',
             pcpu: Number.isFinite(cpu) ? cpu : null,
             rssKb: Number(m[6]) || null,
-            command: (m[7] ?? "").trim(),
+            command: (m[7] ?? '').trim(),
         });
     }
     return out;
@@ -101,11 +94,11 @@ export function parseProcRows(stdout: string): ProcessRow[] {
 /** `ps -Ao pid=,ppid=,command=` 的一行（实例发现用；表头/空行/畸形行一律跳过）。 */
 export function parseBasicRows(stdout: string): ProcessHop[] {
     const out: ProcessHop[] = [];
-    for (const line of stdout.split("\n")) {
+    for (const line of stdout.split('\n')) {
         const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
         if (!m) continue;
         const pid = Number(m[1]);
-        const command = (m[3] ?? "").trim();
+        const command = (m[3] ?? '').trim();
         if (!Number.isFinite(pid) || !command) continue;
         out.push({ pid, ppid: Number(m[2]), command });
     }
@@ -116,7 +109,7 @@ export function parseBasicRows(stdout: string): ProcessHop[] {
 export function parseHop(stdout: string): ProcessHop | null {
     const m = /^(\d+)\s+(\d+)\s+(.*)$/.exec(stdout.trim());
     if (!m) return null;
-    return { pid: Number(m[1]), ppid: Number(m[2]), command: (m[3] ?? "").trim() };
+    return { pid: Number(m[1]), ppid: Number(m[2]), command: (m[3] ?? '').trim() };
 }
 
 /**
@@ -125,12 +118,12 @@ export function parseHop(stdout: string): ProcessHop | null {
  */
 export function parseEnvironments(stdout: string): Map<number, Record<string, string>> {
     const out = new Map<number, Record<string, string>>();
-    for (const line of stdout.split("\n")) {
+    for (const line of stdout.split('\n')) {
         const m = /^\s*(\d+)\s+\S+\s+\S+\s+\S+\s+(.*)$/.exec(line);
         if (!m) continue;
         const env: Record<string, string> = {};
-        for (const tok of (m[2] ?? "").split(/\s+/)) {
-            const eq = tok.indexOf("=");
+        for (const tok of (m[2] ?? '').split(/\s+/)) {
+            const eq = tok.indexOf('=');
             if (eq > 0) env[tok.slice(0, eq)] = tok.slice(eq + 1);
         }
         out.set(Number(m[1]), env);
@@ -140,7 +133,7 @@ export function parseEnvironments(stdout: string): Map<number, Record<string, st
 
 /** `top -l 2 ...` 的输出 → 该 pid 的**瞬时** CPU 百分比（取最后一块表头之后）。 */
 export function parseTopCpu(stdout: string, pid: number): number | null {
-    const lines = stdout.split("\n");
+    const lines = stdout.split('\n');
     let headerAt = -1;
     for (let i = 0; i < lines.length; i++) {
         if (/^\s*PID\s+CPU\s/.test(lines[i])) headerAt = i;
@@ -160,7 +153,7 @@ export function parseTopCpu(stdout: string, pid: number): number | null {
 /** `ps -axo pid=,ppid=,pcpu=,comm=` → 从 `rootPid` 起算的树聚合。 */
 export function parseProcessTree(stdout: string, rootPid: number): ProcessTree {
     const nodes: { pid: number; ppid: number; pcpu: number; command: string }[] = [];
-    for (const line of stdout.split("\n")) {
+    for (const line of stdout.split('\n')) {
         const m = /^\s*(\d+)\s+(\d+)\s+([\d.]+)\s+(.*)$/.exec(line);
         if (!m) continue;
         nodes.push({ pid: Number(m[1]), ppid: Number(m[2]), pcpu: Number(m[3]) || 0, command: m[4].trim() });
@@ -171,13 +164,13 @@ export function parseProcessTree(stdout: string, rootPid: number): ProcessTree {
 /** `lsof -nP -a -p <pid> -iTCP` → 连接（含状态；没有 REMOTE 的 LISTEN 行也保留）。 */
 export function parseLsofTcp(stdout: string): ConnectionInfo[] {
     const out: ConnectionInfo[] = [];
-    for (const line of stdout.split("\n").slice(1)) {
+    for (const line of stdout.split('\n').slice(1)) {
         const cols = line.trim().split(/\s+/);
         if (cols.length < 8) continue;
         const state = cols[cols.length - 1];
         const remote = cols[cols.length - 2];
-        if (!state.startsWith("(")) continue;
-        out.push({ remote, state: state.replace(/[()]/g, "") });
+        if (!state.startsWith('(')) continue;
+        out.push({ remote, state: state.replace(/[()]/g, '') });
     }
     return out;
 }
@@ -187,7 +180,7 @@ export function parseGpuInfo(stdout: string): GpuInfo {
     const metalMatch = stdout.match(/Metal Family:.*?Metal GPUFamily macOS (\d+)/);
     const family = metalMatch ? parseInt(metalMatch[1]!, 10) : 99;
     const gpuMatch = stdout.match(/Chipset Model:\s*(.+)/);
-    const gpuName = gpuMatch?.[1]?.trim() ?? "unknown";
+    const gpuName = gpuMatch?.[1]?.trim() ?? 'unknown';
     return { metalFamily: family, gpuName, shouldUseAngle: family < 3 };
 }
 
@@ -195,15 +188,15 @@ export function parseGpuInfo(stdout: string): GpuInfo {
 // 策略
 // ═══════════════════════════════════════
 
-const PS_ARGS = ["-axo", "pid=,ppid=,pgid=,etime=,pcpu=,rss=,command="] as const;
+const PS_ARGS = ['-axo', 'pid=,ppid=,pgid=,etime=,pcpu=,rss=,command='] as const;
 
 /** 「这是观测工具自己」：POSIX 是 ps 全表那条命令。 */
 function isObserverCommand(command: string): boolean {
-    return command.startsWith("ps -axo pid=,ppid=,pgid=");
+    return command.startsWith('ps -axo pid=,ppid=,pgid=');
 }
 
 export function createPosixOs(deps: PosixDeps = defaultPosixDeps()): OsStrategy {
-    const mac = deps.platform === "darwin";
+    const mac = deps.platform === 'darwin';
     let gpuCache: GpuInfo | undefined;
 
     const withCreatedAt = (rows: ProcessRow[]): ProcessRow[] => {
@@ -215,12 +208,12 @@ export function createPosixOs(deps: PosixDeps = defaultPosixDeps()): OsStrategy 
     };
 
     const snapshotSync = (): ProcessRow[] | null => {
-        const text = deps.runSync("ps", PS_ARGS, 5000);
+        const text = deps.runSync('ps', PS_ARGS, 5000);
         return text.trim() ? withCreatedAt(parseProcRows(text)) : null;
     };
 
     return {
-        kind: "posix",
+        kind: 'posix',
         caps: {
             processGroups: true,
             processEnvironments: true,
@@ -229,13 +222,13 @@ export function createPosixOs(deps: PosixDeps = defaultPosixDeps()): OsStrategy 
             focusProcess: mac,
             keepRunningOnWindowClose: mac,
             shellRedirectsLog: false,
-            runLifetime: "groups",
+            runLifetime: 'groups',
             gracefulSignals: true,
-            orphanRecovery: "groups",
+            orphanRecovery: 'groups',
         },
 
         resolveShells(): ShellSpec[] {
-            return [{ kind: "bash", file: "/bin/bash", label: "/bin/bash", missing: false, tried: ["/bin/bash"] }];
+            return [{ kind: 'bash', file: '/bin/bash', label: '/bin/bash', missing: false, tried: ['/bin/bash'] }];
         },
 
         async ownProcesses(query) {
@@ -245,7 +238,7 @@ export function createPosixOs(deps: PosixDeps = defaultPosixDeps()): OsStrategy 
             return { ok: true, procs, live: registeredLive(query, rows, procs) };
         },
 
-        killOwned(targets, signal = "SIGTERM") {
+        killOwned(targets, signal = 'SIGTERM') {
             for (const t of targets) {
                 const pid = t.pid;
                 if (!Number.isInteger(pid) || pid <= 0) continue;
@@ -269,68 +262,64 @@ export function createPosixOs(deps: PosixDeps = defaultPosixDeps()): OsStrategy 
                 process.kill(-pid, 0);
                 return true;
             } catch (e) {
-                return (e as NodeJS.ErrnoException).code === "EPERM";
+                return (e as NodeJS.ErrnoException).code === 'EPERM';
             }
         },
 
         facts() {
-            return ["POSIX：后台作业按进程组判活（根进程退出后，组里还有活口就仍算运行中）"];
+            return ['POSIX：后台作业按进程组判活（根进程退出后，组里还有活口就仍算运行中）'];
         },
 
         snapshotSync,
 
         async snapshot() {
-            const text = await deps.run("ps", PS_ARGS, 5000);
+            const text = await deps.run('ps', PS_ARGS, 5000);
             return text.trim() ? withCreatedAt(parseProcRows(text)) : null;
         },
 
         hopSync(pid) {
             if (!Number.isInteger(pid) || pid <= 1) return null;
-            return parseHop(deps.runSync("ps", ["-p", String(pid), "-o", "pid=,ppid=,command="], 2000));
+            return parseHop(deps.runSync('ps', ['-p', String(pid), '-o', 'pid=,ppid=,command='], 2000));
         },
 
         environmentsOf(pids) {
             if (pids.length === 0) return new Map();
             // `ps eww` 的行会很长（整串环境变量），5000ms 够；pid 列表按逗号拼。
-            const text = deps.runSync("ps", ["eww", "-p", pids.join(",")], 5000);
+            const text = deps.runSync('ps', ['eww', '-p', pids.join(',')], 5000);
             return parseEnvironments(text);
         },
 
         probe(pid) {
-            const runMs = parseEtime(deps.runSync("ps", ["-o", "etime=", "-p", String(pid)], 3000));
+            const runMs = parseEtime(deps.runSync('ps', ['-o', 'etime=', '-p', String(pid)], 3000));
             const cpuPercent = mac
                 ? (parseTopCpu(
-                      deps.runSync(
-                          "top",
-                          ["-l", "2", "-pid", String(pid), "-stats", "pid,cpu,time,command"],
-                          5000,
-                      ),
+                      deps.runSync('top', ['-l', '2', '-pid', String(pid), '-stats', 'pid,cpu,time,command'], 5000),
                       pid,
                   ) ?? 0)
-                : Number(deps.runSync("ps", ["-o", "%cpu=", "-p", String(pid)], 3000).trim()) || 0;
-            const tree = parseProcessTree(deps.runSync("ps", ["-axo", "pid=,ppid=,pcpu=,comm="], 5000), pid);
-            const connections = parseLsofTcp(deps.runSync("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP"], 3000));
-            const rss = Number(deps.runSync("ps", ["-o", "rss=", "-p", String(pid)], 3000).trim());
+                : Number(deps.runSync('ps', ['-o', '%cpu=', '-p', String(pid)], 3000).trim()) || 0;
+            const tree = parseProcessTree(deps.runSync('ps', ['-axo', 'pid=,ppid=,pcpu=,comm='], 5000), pid);
+            const connections = parseLsofTcp(deps.runSync('lsof', ['-nP', '-a', '-p', String(pid), '-iTCP'], 3000));
+            const rss = Number(deps.runSync('ps', ['-o', 'rss=', '-p', String(pid)], 3000).trim());
             return { runMs, cpuPercent, tree, connections, rssKb: Number.isFinite(rss) && rss > 0 ? rss : null };
         },
 
         gpu() {
             if (gpuCache) return gpuCache;
-            const neutral: GpuInfo = { metalFamily: 99, gpuName: "unknown", shouldUseAngle: false };
+            const neutral: GpuInfo = { metalFamily: 99, gpuName: 'unknown', shouldUseAngle: false };
             if (!mac) {
                 gpuCache = neutral;
                 return gpuCache;
             }
-            const text = deps.runSync("system_profiler", ["SPDisplaysDataType"], 3000);
+            const text = deps.runSync('system_profiler', ['SPDisplaysDataType'], 3000);
             if (!text.trim()) {
-                console.log("[gpu] GPU 检测失败（system_profiler 不可用），跳过");
+                console.log('[gpu] GPU 检测失败（system_profiler 不可用），跳过');
                 gpuCache = neutral;
                 return gpuCache;
             }
             gpuCache = parseGpuInfo(text);
             console.log(`[gpu] GPU: ${gpuCache.gpuName} (Metal GPUFamily macOS ${gpuCache.metalFamily})`);
             if (gpuCache.shouldUseAngle) {
-                console.log("[gpu] Metal GPUFamily < 3，添加 --use-gl=angle（防御性，非 rust_png 崩溃的修复）");
+                console.log('[gpu] Metal GPUFamily < 3，添加 --use-gl=angle（防御性，非 rust_png 崩溃的修复）');
             }
             return gpuCache;
         },
@@ -338,9 +327,9 @@ export function createPosixOs(deps: PosixDeps = defaultPosixDeps()): OsStrategy 
         focusProcess(pid) {
             if (!mac) return false;
             return deps.tryRunSync(
-                "osascript",
+                'osascript',
                 [
-                    "-e",
+                    '-e',
                     `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
                 ],
                 3000,

@@ -24,9 +24,14 @@
             "default": "./src/room-scenarios.ts"
         }
     },
+    "scripts": {
+        "test": "vitest run"
+    },
     "dependencies": {
         "@ai-sdk/openai-compatible": "^3.0.92",
         "@diy-agent/agents-chain": "*",
+        "@diy-agent/attachment": "*",
+        "@diy-agent/code-runtime": "*",
         "@diy-agent/compaction": "*",
         "@diy-agent/context": "*",
         "@diy-agent/jobs": "*",
@@ -47,8 +52,5 @@
         "@types/node": "^26.1.0",
         "typescript": "^7.0.2",
         "vitest": "^4.1.10"
-    },
-    "scripts": {
-        "test": "vitest run"
     }
 }

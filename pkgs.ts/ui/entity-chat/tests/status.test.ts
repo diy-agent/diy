@@ -40,7 +40,9 @@ describe('StatusGlyph —— 任务状态图标与运行提示分开表达', () 
         expect(open).toContain('aria-label="正在运行"');
         expect(closed).toContain('lucide-circle-check');
         expect(closed).toContain('animate-ping');
-        const idle = renderToStaticMarkup(createElement(StatusGlyph, { room: room('idle', 'task', { status: 'open' }) }));
+        const idle = renderToStaticMarkup(
+            createElement(StatusGlyph, { room: room('idle', 'task', { status: 'open' }) }),
+        );
         expect(idle).not.toContain('animate-ping');
         expect(idle).not.toContain('aria-label="正在运行"');
     });

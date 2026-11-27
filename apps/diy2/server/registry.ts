@@ -214,7 +214,10 @@ export async function removeRecord(dir: string, pid: number = process.pid): Prom
 }
 
 /** 读全表 + 按存活过滤，**顺手删死条目**；目录不存在 → 空表（第一次跑的正常态） */
-export async function readRecords(dir: string, alive: (pid: number) => boolean = isPidAlive): Promise<InstanceRecord[]> {
+export async function readRecords(
+    dir: string,
+    alive: (pid: number) => boolean = isPidAlive,
+): Promise<InstanceRecord[]> {
     let names: string[];
     try {
         names = await readdir(dir);

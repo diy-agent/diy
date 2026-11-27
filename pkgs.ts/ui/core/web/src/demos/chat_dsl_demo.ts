@@ -1,7 +1,16 @@
-import { DslApp, defineComps, type El } from "../../../src/providers/dom-dsl.js";
+import {
+  DslApp,
+  defineComps,
+  type El,
+} from "../../../src/providers/dom-dsl.js";
 import { Signal } from "../../../src/signal.js";
 import { installDevtools } from "../lib/devtools.js";
-import { BlockStore, toForest, type Op, type BlockNode } from "../lib/op-fold.js";
+import {
+  BlockStore,
+  toForest,
+  type Op,
+  type BlockNode,
+} from "../lib/op-fold.js";
 
 /**
  * chat_dsl_demo —— 用 **dom-dsl（纯 TS 声明式层）** 复刻真实 diy 聊天界面，
@@ -79,7 +88,10 @@ export function chatDslDemo(mount: HTMLElement): void {
 
   // ── 声明式组装 ──────────────────────────────────────
   app.div({ class: "chat-top" }, (d) => {
-    d.div({ class: "chat-title", text: "💬 会话复刻（真实数据 · projects_4_tasks_262）" });
+    d.div({
+      class: "chat-title",
+      text: "💬 会话复刻（真实数据 · projects_4_tasks_262）",
+    });
     d.div({ class: "chat-status", text: status });
   });
 
@@ -115,7 +127,11 @@ export function chatDslDemo(mount: HTMLElement): void {
   (window as unknown as { __chat: unknown }).__chat = {
     send: (t: string) => sendMessage(t),
     edit: (i: number) => editTurn(i),
-    state: () => ({ turns: turns.value.length, live: !!live.value, status: status.value }),
+    state: () => ({
+      turns: turns.value.length,
+      live: !!live.value,
+      status: status.value,
+    }),
     stats: () => app.rerunStats(), // dev：rerun 计数分布（异常 rerun 排查）
   };
 
@@ -162,7 +178,10 @@ export function chatDslDemo(mount: HTMLElement): void {
     if (!id) return;
     const sig = turnOf.get(id)!;
     const t = sig.value;
-    sig.value = { ...t, rows: [...t.rows, { kind: "text", text: "✏️ 追加一行（只重跑这一轮）" }] };
+    sig.value = {
+      ...t,
+      rows: [...t.rows, { kind: "text", text: "✏️ 追加一行（只重跑这一轮）" }],
+    };
     toBottom();
   }
 
@@ -195,7 +214,11 @@ export function chatDslDemo(mount: HTMLElement): void {
     toBottom();
   }
 
-  function stream(field: "think" | "text", full: string, step: number): Promise<void> {
+  function stream(
+    field: "think" | "text",
+    full: string,
+    step: number,
+  ): Promise<void> {
     return new Promise((resolve) => {
       let i = 0;
       const tick = (): void => {
@@ -238,7 +261,8 @@ function Live(d: El, l: LiveTurn): void {
     turn.div({ class: "turn-body" }, (body) => {
       body.mount(Row, { kind: "user", text: l.userText });
       if (l.think) body.mount(Row, { kind: "think", text: l.think });
-      if (l.text) body.mount(Row, { kind: "text", text: l.text + (l.done ? "" : " ▌") });
+      if (l.text)
+        body.mount(Row, { kind: "text", text: l.text + (l.done ? "" : " ▌") });
     });
   });
 }
@@ -271,7 +295,8 @@ function Row(d: El, r: RowVM): void {
         h.span({ class: "tool-name", text: r.text });
         if (r.status) h.span({ class: "tool-status", text: r.status });
       });
-      if (r.output) row.div({ class: "tool-output", text: r.output.slice(0, 400) });
+      if (r.output)
+        row.div({ class: "tool-output", text: r.output.slice(0, 400) });
     });
   } else if (r.kind === "error") {
     d.div({ class: "err-card" }, (card) => {
@@ -292,11 +317,16 @@ function buildTurn(turn: BlockNode): TurnVM {
   let model = String(turn.attrs.model ?? "");
   let errorCount = 0;
   const walk = (n: BlockNode): void => {
-    if (n.tag === "step" && !model && n.attrs.model) model = String(n.attrs.model);
+    if (n.tag === "step" && !model && n.attrs.model)
+      model = String(n.attrs.model);
     const a = n.attrs as Record<string, unknown>;
     if (n.tag === "text")
-      rows.push({ kind: String(a.role) === "user" ? "user" : "text", text: String(a.content ?? "") });
-    else if (n.tag === "think") rows.push({ kind: "think", text: String(a.content ?? "") });
+      rows.push({
+        kind: String(a.role) === "user" ? "user" : "text",
+        text: String(a.content ?? ""),
+      });
+    else if (n.tag === "think")
+      rows.push({ kind: "think", text: String(a.content ?? "") });
     else if (n.tag === "tool")
       rows.push({
         kind: "tool",

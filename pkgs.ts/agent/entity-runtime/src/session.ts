@@ -13,10 +13,12 @@
 // 不做：路由、持久化、SSE —— 那些属于 RoomActor。
 
 import type { CompactionProgress } from '@diy-agent/protocol';
+import type { AttachmentRef } from '@diy-agent/attachment/types';
 import { experimental_createSteering, type Experimental_Steering, type ModelMessage, type ToolSet } from 'ai';
 
 import { runAgent, DEFAULT_MAX_STEPS, type RunOptions } from './agent';
 import { endItems, endReasonOf } from './end-reason';
+import { scrubMedia } from './media-scrub';
 import { friendlyError } from './errors';
 import {
     DEFAULT_BUDGET,
@@ -34,7 +36,8 @@ import { contextWindowOf, maxOutputTokensOf } from './providers';
 import { ProgressBroadcast, ProgressWatch, type ProgressPolicy } from './progress';
 import { Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
-import type { AgentEvent, Author, Bot, DeliveryState, Item, ProgressStage, TurnEndReason } from './types';
+import { AttachmentBytesCache, messageWithAttachments, type AttachmentReader } from './session-images';
+import type { AgentEvent, Author, Bot, DeliveryState, Item, MessageKind, ProgressStage, TurnEndReason } from './types';
 
 export interface CompactOptions {
     /** 手工压缩：保留最近几轮（0 = 压到头，与 diy1 的 keepRounds 同语义） */
@@ -80,7 +83,7 @@ export type SessionEvent =
     /** 投影出的展示条目（order 由房间分配） */
     | { type: 'item'; item: Item }
     /** 投递状态变化 */
-    | { type: 'delivery'; messageId: string; state: DeliveryState }
+    | { type: 'delivery'; messageId: string; state: DeliveryState; note?: string }
     /**
      * 一轮**开始**（房间据此让这个成员的旧提问过期）。
      *
@@ -175,12 +178,27 @@ export interface SessionDeps {
     progressPolicy?: Partial<ProgressPolicy>;
     /** 看门狗判定间隔（缺省 5000ms）；测试可调小 */
     progressTickMs?: number;
+    /**
+     * 把附件 ref 读成字节（宿主注入：diy2 读 `<home>/blobs`，测试用内存表）。
+     *
+     * 不传 = 附件不送进模型，只在正文后补一行「附图未送达」—— 没注入就静默丢图比不送更糟。
+     */
+    readAttachment?: AttachmentReader;
+    /**
+     * 这个模型收不收图（由房间按模型目录回答）。不传 = 当收（老行为 / 测试）。
+     *
+     * 判据在 entity-runtime 的 `providers.acceptsImagesOf`：目录里没标能力位 ⇒ 当**不收**。
+     */
+    acceptsImages?: (modelKey: string) => boolean;
 }
 
 interface QueueItem {
     messageId: string;
     text: string;
-    mode: 'next-step' | 'next-turn';
+    /** 本条消息带的附件（已落 blobs 的 ref）；本轮组装 prompt 时展开成 image part */
+    attachments?: readonly AttachmentRef[];
+    /** 谁发的：`human` 能并进当前轮就并，`system` 永远等下一轮 */
+    kind: MessageKind;
     /** 容器分配的轮次（同一条用户消息的所有 bot 共享） */
     turn?: Turn;
     /** 这条消息在房间日志里的条目：steering 没送到时兜底 ingest，避免丢掉 */
@@ -193,11 +211,23 @@ interface QueueItem {
 export class BotSession {
     private readonly queue: QueueItem[] = [];
     private readonly listeners = new Set<(event: SessionEvent) => void>();
+    /**
+     * 已读过的附件字节（按 sha256 缓存）：同一张图在会话生命周期里只读一次盘。
+     * 会话级而非轮级 —— 历史里的图每天都要重发，每轮重读盘是纯浪费。
+     */
+    private readonly imageCache = new AttachmentBytesCache();
     /** 自己的原生对话（本轮之前的全部内容） */
     private transcript: TranscriptEntry[];
     /** 已 ingest、还没并进 transcript 的公共条目（运行中到达的要排在本轮产出之后） */
     private pending: TranscriptEntry[] = [];
     private running = false;
+    /**
+     * 本轮的身份（turnId + 开始时刻）。`null` = 没在跑。
+     *
+     * 房间原先自己存一份 `turnStarts: Map<botId, …>` —— 那是这份事实的副本，
+     * 于是「谁在跑、跑了多久」有两个真源，谁都可能晚一拍。现在只留这一份，房间问它要。
+     */
+    private activeTurn: { turnId: string; startedAt: number } | null = null;
     private steering: Experimental_Steering | null = null;
     private abort: AbortController | null = null;
     /** cancel({keepQueue:true}) 期间被 abort 的 next-step 要降级为下一轮，不能丢 */
@@ -244,7 +274,24 @@ export class BotSession {
         return this.running;
     }
 
+    /** 本轮的 turnId 与开始时刻（没在跑就是 undefined）—— 房间的快照直接读这个 */
+    get currentTurn(): { turnId: string; startedAt: number } | undefined {
+        return this.activeTurn ?? undefined;
+    }
+
     /** 房间换模型：下一轮生效（已建好的 session 不会重建） */
+    /**
+     * 换掉工具集。
+     *
+     * 为什么需要：工具里有一部分是**宿主能力**，它可能比 session 晚就绪 ——
+     * `run_code` 依赖的进程内 RPC client 在建完 handlers 之后才有。session 通常在
+     * `RoomActor` 构造时就建好（上下文 / 统计不等第一条消息），那一刻拿到的工具集
+     * 可能是「降级版」。留着这个入口让房间在每轮取 session 时对齐一次。
+     */
+    setTools(tools: ToolSet | undefined): void {
+        this.deps.tools = tools;
+    }
+
     setModelKey(modelKey: string): void {
         this.modelKey = modelKey;
     }
@@ -372,6 +419,10 @@ export class BotSession {
             origin: 'public',
             seq: entry.seq,
             ...(entry.turn === undefined ? {} : { turn: entry.turn }),
+            // 附件跟着走：ref 小（几百字节），落快照不心疼；字节等发请求时再读
+            ...(entry.kind === 'say' && entry.attachments !== undefined && entry.attachments.length > 0
+                ? { attachments: entry.attachments }
+                : {}),
         });
     }
 
@@ -397,7 +448,7 @@ export class BotSession {
     post(input: {
         messageId: string;
         text: string;
-        mode?: 'next-step' | 'next-turn';
+        kind?: MessageKind;
         turn?: Turn;
         entry?: RoomEntry;
         /**
@@ -409,13 +460,22 @@ export class BotSession {
          */
         alreadyInContext?: boolean;
     }): Promise<void> {
-        const mode = input.mode ?? 'next-step';
+        const kind = input.kind ?? 'human';
         const alreadyInContext = input.alreadyInContext ?? this.hasInContext(input.entry?.seq);
         const { promise, resolve } = withResolve();
+        // 附件从条目自己取：`say` 与「崩溃恢复重投」两条路都不用改调用点
+        const attachments =
+            input.entry?.kind === 'say' && input.entry.attachments !== undefined && input.entry.attachments.length > 0
+                ? input.entry.attachments
+                : undefined;
 
-        // 正在跑且是 next-step：直接交给 SDK，在下一个 step 边界插入
-        if (this.running && mode === 'next-step' && this.steering !== null) {
-            this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivering' });
+        // 正在跑且是人的话：直接交给 SDK，在下一个 step 边界插入。
+        //
+        // **但带附件的不能走 steer**：`steer()` 只能插文本，图会在这一轮里凭空消失
+        // （既没进 transcript、也没进 SDK 的上下文，要等重启回放才回来）。
+        // 降成入队 —— 下一轮带着图一起跑，代价是晚一点回答，换来的是图不丢。
+        if (this.running && kind === 'human' && this.steering !== null && attachments === undefined) {
+            this.emit({ type: 'delivery', messageId: input.messageId, state: 'working' });
             // 插话没成功（含 steer 自己抛错）的兜底：能降级就降成下一轮，否则至少把公共条目
             // 留在上下文里，并 resolve。不 resolve 会把 room.say 的 Promise.all 一起挂死
             // （/chat 的 SSE 永远不收尾），unhandled rejection 还可能带走进程。
@@ -425,7 +485,7 @@ export class BotSession {
                     this.queue.push({
                         messageId: input.messageId,
                         text: input.text,
-                        mode: 'next-turn',
+                        kind,
                         turn: input.turn,
                         entry: input.entry,
                         alreadyInContext,
@@ -438,7 +498,7 @@ export class BotSession {
                 }
                 // 没送进这一轮：至少让公共条目留在自己的上下文里，别静默丢失
                 if (input.entry !== undefined) this.ingest(input.entry);
-                this.emit({ type: 'delivery', messageId: input.messageId, state: 'failed' });
+                this.emit({ type: 'delivery', messageId: input.messageId, state: 'done', note: 'failed' });
                 resolve();
             };
             void this.steering
@@ -448,7 +508,7 @@ export class BotSession {
                         // 注意**不推水位**：它插进的是 SDK 在跑的那轮上下文，没进 transcript、
                         // 也不在任何快照里 —— 此刻推水位，重启后回放就不会补它，模型下一次
                         // 只看到自己的回复而看不到这条插话。宁可重启后重复一回，也不能少。
-                        this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivered' });
+                        this.emit({ type: 'delivery', messageId: input.messageId, state: 'done' });
                         return;
                     }
                     fallback();
@@ -461,7 +521,8 @@ export class BotSession {
         this.queue.push({
             messageId: input.messageId,
             text: input.text,
-            mode,
+            ...(attachments === undefined ? {} : { attachments }),
+            kind,
             turn: input.turn,
             entry: input.entry,
             alreadyInContext,
@@ -477,7 +538,7 @@ export class BotSession {
         const rest = this.queue.splice(0, this.queue.length);
         for (const item of rest) {
             if (options.keepQueue === true) {
-                item.mode = 'next-turn';
+                // 来源不变（还是一条人的话）—— 只是这一轮被停了，下一轮再跑
                 this.queue.push(item);
             } else {
                 item.resolve();
@@ -486,6 +547,14 @@ export class BotSession {
         this.abort?.abort();
     }
 
+    /**
+     * 走 steer 那一路的 post() 的 resolve，等**它所属的这一轮**收尾时统一叫醒。
+     *
+     * 以前这份清单在 `pump()` 的 finally 里清 —— 那是「整个队列跑完」而不是「这一轮跑完」：
+     * 插话成功之后队列里又来了新消息时，这条 promise 要挂到所有后续轮次都跑完才 resolve。
+     * 生产看不出来（server 是 `void actor.say()` 受理即返），但 `await room.say()` 的调用方
+     * （测试、将来的 CLI）会挂住。改到 `runTurn` 的 finally，语义就是注释里写的那个。
+     */
     private pendingResolvers: Array<() => void> = [];
 
     private get compactor(): Compactor {
@@ -518,14 +587,16 @@ export class BotSession {
         try {
             while (this.queue.length > 0) {
                 const items = this.queue.splice(0, this.queue.length);
+                // **取走即算 working**：不等 `runTurn` 里压缩/读附件那一串跑完。
+                // 否则中间那段（`busy` 已 true、投递还是 `pending`）UI 会写
+                // 「在跑却在排队」（2026-11-26 报的就是这个形状）。
+                for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'working' });
                 await this.runTurn(items);
             }
         } finally {
             this.running = false;
             this.steering = null;
             this.emit({ type: 'busy', busy: false });
-            const resolvers = this.pendingResolvers.splice(0, this.pendingResolvers.length);
-            for (const resolve of resolvers) resolve();
         }
     }
 
@@ -535,10 +606,12 @@ export class BotSession {
         // 这一轮的起止时刻：**一个来源**（广播、turn.end、界面消息头 / 结算行全从这里来）。
         // 不让客户端各自 `Date.now()`：跨刷新、跨 surface 的两个数字必须说的是同一件事。
         const startedAt = Date.now();
+        this.activeTurn = { turnId: turn.turnId, startedAt };
         this.turnUsage = undefined;
         // 先广播"这一轮开始了"：房间据此把上一个回合留下的未答提问判过期（ask.ts 的寿命规则）
         this.emit({ type: 'turn.start', turn, startedAt });
-        const projector = new Projector(this.authorOf(), turn.turn);
+        // 错误条目带上本轮实际用的模型：403 / 无订阅这类失败，事后只能从 log 里翻
+        const projector = new Projector(this.authorOf(), turn.turn, { modelKey: this.modelKey });
         const abort = new AbortController();
         this.abort = abort;
 
@@ -551,6 +624,8 @@ export class BotSession {
         //（它是「读流的人」，事实质量高一档）；这里负责「让人早点看见」 ——
         // 按它的斩杀线派生提示档，另管它看不见的三样（工具 / compact / 整轮墙钟）。
         const watch = new ProgressWatch({
+            // exactOptionalPropertyTypes：不传就不带这个键
+            // oxlint-disable-next-line no-useless-spread
             ...(this.deps.progressPolicy === undefined ? {} : { policy: this.deps.progressPolicy }),
         });
         watch.start(turn.turnId);
@@ -603,12 +678,21 @@ export class BotSession {
                 origin: 'public',
                 ...(item.turn === undefined ? {} : { turn: item.turn.turn }),
                 ...(item.entry === undefined ? {} : { seq: item.entry.seq }),
+                ...(item.attachments === undefined ? {} : { attachments: item.attachments }),
             }));
-        const messages: ModelMessage[] = [...this.transcript, ...userEntries].map((entry) => entry.message);
+        // 展开附件：transcript 里只有 ref，**这里**才读字节换成 ai-sdk 的 file part。
+        // 无附件的条目原样返回（不建数组），常规路径不多付一分钱。
+        // 本模型收不收图：不收就只留一句说明（塞 image part 会被上游 400）。
+        // 每轮算一次（模型可能刚被换过），代价与 maxOutputTokensOf 同一量级。
+        const acceptsImages = this.deps.acceptsImages?.(this.modelKey) ?? true;
+        const messages: ModelMessage[] = await Promise.all(
+            [...this.transcript, ...userEntries].map((entry) =>
+                messageWithAttachments(entry, this.deps.readAttachment, this.imageCache, { acceptsImages }),
+            ),
+        );
 
         const steering = experimental_createSteering();
         this.steering = steering;
-        for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'delivering' });
 
         const produced: TranscriptEntry[] = [];
         let text = '';
@@ -653,7 +737,9 @@ export class BotSession {
                 ...(this.deps.takeDelta === undefined ? {} : { takeDelta: this.deps.takeDelta }),
                 ...(this.deps.commitDelta === undefined ? {} : { commitDelta: this.deps.commitDelta }),
                 onStepTranscript: (added) => {
-                    for (const message of added) produced.push({ message, origin: 'self', turn: turn.turn });
+                    // transcript 会进快照落 db：媒体字节在模型那侧已经用过了，这里只留说明
+                    for (const message of added)
+                        produced.push({ message: scrubMedia(message), origin: 'self', turn: turn.turn });
                 },
                 onUsage: (usage) => {
                     this.lastUsage = usage;
@@ -765,11 +851,15 @@ export class BotSession {
 
             // 这一轮已经消费了这些消息 ⇒ 投递成功；跑失败是 bot 的问题（会有 error 条目），
             // 不该在用户消息上标"未送达"（那是传输层的事）。
-            for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'delivered' });
+            for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'done' });
             for (const item of items) item.resolve();
             this.steering = null;
             this.abort = null;
             this.keepOnCancel = false;
+            this.activeTurn = null;
+            // 插话的 post() 到这一轮收尾才算处理完（不是“整个队列清空”）
+            const steerResolvers = this.pendingResolvers.splice(0, this.pendingResolvers.length);
+            for (const resolve of steerResolvers) resolve();
         }
     }
 
@@ -789,7 +879,11 @@ export class BotSession {
         signal?: AbortSignal;
     }): Promise<CompactEvent | null> {
         const budget = options.budget ?? this.budgetWith({});
-        const before = { entries: this.transcript.length, chars: estimateChars(this.transcript), tokens: estimateTokens(this.transcript) };
+        const before = {
+            entries: this.transcript.length,
+            chars: estimateChars(this.transcript),
+            tokens: estimateTokens(this.transcript),
+        };
         const startedAt = Date.now();
         const compactId = options.compactId ?? `c-${startedAt.toString(36)}`;
         const visible = options.manual === true;
@@ -885,10 +979,7 @@ export class BotSession {
             const text = typeof content === 'string' ? content : '';
             previousSummary = text.replace(COLLAPSED_PREFIX, '').trim();
         }
-        const content = [
-            ...(this.collapsed > 0 ? [collapsedLabel(this.collapsed)] : []),
-            summary ?? previousSummary,
-        ]
+        const content = [...(this.collapsed > 0 ? [collapsedLabel(this.collapsed)] : []), summary ?? previousSummary]
             .filter((part): part is string => typeof part === 'string' && part.trim() !== '')
             .join('\n\n');
         this.transcript.unshift({ message: { role: 'user', content }, origin: 'note' });

@@ -9,26 +9,26 @@
 // 写入顺序（不能反）：改内存 → 分配 seq → 发事件 → **异步**落盘。
 // 反过来会让磁盘 I/O 卡住状态机，且磁盘失败时状态已经生效，两边不一致更难解释。
 
-import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync, renameSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync, renameSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 export interface PersistState {
-  /** 已分配的最大 seq */
-  seq: number
-  /** 历史条目（内存投影的持久化形态，字段随实现演进而变） */
-  entries: unknown[]
-  /** 已完成的轮数 */
-  turns: number
-  /** 每个 job 的状态 */
-  jobs: Record<string, unknown>
+    /** 已分配的最大 seq */
+    seq: number;
+    /** 历史条目（内存投影的持久化形态，字段随实现演进而变） */
+    entries: unknown[];
+    /** 已完成的轮数 */
+    turns: number;
+    /** 每个 job 的状态 */
+    jobs: Record<string, unknown>;
 }
 
 export interface PersistPorts {
-  load(): PersistState | null
-  /** 原子写（先写临时文件再 rename）：崩溃时不会留下半个 JSON */
-  save(state: PersistState): void
-  /** 审计日志：append 一行，失败不抛（审计不该拖垮业务） */
-  audit(line: Record<string, unknown>): void
+    load(): PersistState | null;
+    /** 原子写（先写临时文件再 rename）：崩溃时不会留下半个 JSON */
+    save(state: PersistState): void;
+    /** 审计日志：append 一行，失败不抛（审计不该拖垮业务） */
+    audit(line: Record<string, unknown>): void;
 }
 
 /**
@@ -36,48 +36,50 @@ export interface PersistPorts {
  * 两个文件：`state.json`（快照）+ `audit.jsonl`（只追加）。
  */
 export function filePersist(dir: string): PersistPorts {
-  const statePath = join(dir, "state.json");
-  const auditPath = join(dir, "audit.jsonl");
-  return {
-    load() {
-      try {
-        if (!existsSync(statePath)) return null;
-        return JSON.parse(readFileSync(statePath, "utf-8")) as PersistState;
-      } catch {
-        // 快照坏了就当没有（审计日志仍在，可人工查）—— 不阻断启动
-        return null;
-      }
-    },
-    save(state) {
-      try {
-        mkdirSync(dir, { recursive: true });
-        const tmp = `${statePath}.tmp`;
-        writeFileSync(tmp, JSON.stringify(state), "utf-8");
-        renameSync(tmp, statePath);
-      } catch (e) {
-        console.error("[agent] 快照写入失败：", e);
-      }
-    },
-    audit(line) {
-      try {
-        mkdirSync(dirname(auditPath), { recursive: true });
-        appendFileSync(auditPath, `${JSON.stringify(line)}\n`, "utf-8");
-      } catch (e) {
-        console.error("[agent] 审计写入失败：", e);
-      }
-    },
-  };
+    const statePath = join(dir, 'state.json');
+    const auditPath = join(dir, 'audit.jsonl');
+    return {
+        load() {
+            try {
+                if (!existsSync(statePath)) return null;
+                return JSON.parse(readFileSync(statePath, 'utf-8')) as PersistState;
+            } catch {
+                // 快照坏了就当没有（审计日志仍在，可人工查）—— 不阻断启动
+                return null;
+            }
+        },
+        save(state) {
+            try {
+                mkdirSync(dir, { recursive: true });
+                const tmp = `${statePath}.tmp`;
+                writeFileSync(tmp, JSON.stringify(state), 'utf-8');
+                renameSync(tmp, statePath);
+            } catch (e) {
+                console.error('[agent] 快照写入失败：', e);
+            }
+        },
+        audit(line) {
+            try {
+                mkdirSync(dirname(auditPath), { recursive: true });
+                appendFileSync(auditPath, `${JSON.stringify(line)}\n`, 'utf-8');
+            } catch (e) {
+                console.error('[agent] 审计写入失败：', e);
+            }
+        },
+    };
 }
 
 /** 内存版（测试用）：什么都没有，什么都不写 */
-export function memoryPersist(initial: PersistState | null = null): PersistPorts & { lines: Record<string, unknown>[] } {
-  const lines: Record<string, unknown>[] = [];
-  return {
-    lines,
-    load: () => initial,
-    save: () => undefined,
-    audit: (line) => {
-      lines.push(line);
-    },
-  };
+export function memoryPersist(
+    initial: PersistState | null = null,
+): PersistPorts & { lines: Record<string, unknown>[] } {
+    const lines: Record<string, unknown>[] = [];
+    return {
+        lines,
+        load: () => initial,
+        save: () => undefined,
+        audit: (line) => {
+            lines.push(line);
+        },
+    };
 }

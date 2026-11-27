@@ -22,6 +22,7 @@ export default defineConfig({
         'pkgs.ts/core/traffic',
         'pkgs.ts/flow',
         'pkgs.ts/agent/session',
+        'pkgs.ts/agent/attachment',
         'pkgs.ts/agent/tools',
         'pkgs.ts/agent/store-jsonl',
         'pkgs.ts/room',
@@ -29,6 +30,7 @@ export default defineConfig({
         'pkgs.ts/ui/chat-transport-rpc',
         'pkgs.ts/ui/entity-chat',
         'pkgs.ts/agent/entity-runtime',
+        'pkgs.ts/agent/code-runtime',
     ],
     // diy-app 的 cli.intent 是真实 Electron + http2 集成测试，diy-rpc 的
     // transport-raw/http-raw 也做真实 IO；两个 project 并发跑时 setTimeout/

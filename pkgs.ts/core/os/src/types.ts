@@ -9,8 +9,8 @@
 // 所以这个文件只放「两边都能满足的形状」；某一边满足不了的用 `caps` 明说
 // （调用方据此降级，而不是猜平台）。
 
-import type { OwnedProc, GroupOwner } from "./proc-scan.js";
-import type { ConnectionInfo } from "./process-health.js";
+import type { OwnedProc, GroupOwner } from './proc-scan.js';
+import type { ConnectionInfo } from './process-health.js';
 
 /**
  * 一次 shell 能力探测的结果（bash / pwsh 是**两种能力**，语法与退出码语义都不同）。
@@ -18,7 +18,7 @@ import type { ConnectionInfo } from "./process-health.js";
  * 形状的真源在 `@diy-agent/tools`（##515 搬包：工具层要按它选工具名与拼命令）——
  * 这里只重导出，别在本文件再写一份（两份结构一漂，探测与执行就对不上）。
  */
-import type { ShellSpec } from "@diy-agent/tools";
+import type { ShellSpec } from '@diy-agent/tools';
 export type { ShellSpec };
 
 /** 进程表的一行（策略层归一化后的形状；列名不带任何 ps 痕迹）。 */
@@ -88,7 +88,7 @@ export interface OsCapabilities {
      *   · `groups` = 进程组里还有活口就算活着（POSIX）
      *   · `root`   = 只跟根进程（Windows；根退子活会被判成已结束，UI 要如实说）
      */
-    readonly runLifetime: "groups" | "root";
+    readonly runLifetime: 'groups' | 'root';
     /**
      * 有没有可捕获的终止信号（SIGTERM → 宽限期 → SIGKILL）。
      * Windows 的 TerminateProcess 没有收尾窗口，两段杀只会白等一个 KILL_GRACE_MS。
@@ -100,7 +100,7 @@ export interface OsCapabilities {
      *   · `lineage`  = PPID 链命中已登记的根 pid（Windows 不 reparent，父链仍指向死掉的根）
      *   · `none`     = 认不出来（能力缺失时如实说）
      */
-    readonly orphanRecovery: "groups" | "lineage" | "none";
+    readonly orphanRecovery: 'groups' | 'lineage' | 'none';
 }
 
 /** 一次进程现场采集（**观测类**，不是机制；R2 修订后允许在 L2 出现）。 */
@@ -117,7 +117,7 @@ export interface ProcessProbe {
     rssKb: number | null;
 }
 
-/** `ownProcesses()` 的输入：调用方只给事实（自己的 pid、两组登记表），不给机制。 */export interface OwnQuery {
+/** `ownProcesses()` 的输入：调用方只给事实（自己的 pid、两组登记表），不给机制。 */ export interface OwnQuery {
     /** app 主进程 pid（它的子孙也算我们起的） */
     selfPid: number;
     /** 我们记过的进程组（POSIX pgid / Windows 根 pid） */
@@ -138,7 +138,7 @@ export interface OwnedSnapshot {
 /** OS 级能力的唯一入口。实现见 `posix.ts` / `win32.ts`；选型见 `index.ts`。 */
 export interface OsStrategy {
     /** 只是给人看的诊断标签（**判据请用 caps，别用这个**） */
-    readonly kind: "posix" | "windows";
+    readonly kind: 'posix' | 'windows';
     readonly caps: OsCapabilities;
 
     // ── shell 能力（可能并存：Windows = pwsh + 可选 Git Bash）──

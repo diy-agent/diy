@@ -62,16 +62,16 @@ export interface ConnectionInfo {
     readonly state: string;
 }
 
-export type HealthVerdict = "stuck" | "progressing" | "passive-wait" | "unknown";
+export type HealthVerdict = 'stuck' | 'progressing' | 'passive-wait' | 'unknown';
 
 /** 命中的判据编号 —— 单测与日志按它归因，改判据必须改编号。 */
 export type HealthRule =
-    | "R1:output-growing"
-    | "R2:cpu-active"
-    | "R3:unbounded-network-wait"
-    | "R4:stalled-vs-p50"
-    | "R5:bounded-passive-wait"
-    | "R6:insufficient-evidence";
+    | 'R1:output-growing'
+    | 'R2:cpu-active'
+    | 'R3:unbounded-network-wait'
+    | 'R4:stalled-vs-p50'
+    | 'R5:bounded-passive-wait'
+    | 'R6:insufficient-evidence';
 
 export interface HealthDiagnosis {
     readonly verdict: HealthVerdict;
@@ -117,23 +117,23 @@ export interface NetworkWait {
 
 /** 带「总超时」参数的网络客户端：命中即 `bounded: true`。 */
 const BOUNDED_FLAGS: readonly (readonly [RegExp, string])[] = [
-    [/(?:^|\s)--max-time(?:=|\s+)\S+/, "curl --max-time"],
-    [/(?:^|\s)-m\s*\d+/, "curl -m"],
-    [/(?:^|\s)--connect-timeout(?:=|\s+)\S+/, "curl --connect-timeout"],
-    [/(?:^|\s)--timeout(?:=|\s+)\S+/, "wget --timeout"],
-    [/(?:^|\s)-o\s*ConnectTimeout=\S+/, "ssh ConnectTimeout"],
-    [/(?:^|\s)--fetch-timeout(?:=|\s+)\S+/, "npm --fetch-timeout"],
-    [/(?:^|\s)--timeout-ms(?:=|\s+)\S+/, "generic --timeout-ms"],
+    [/(?:^|\s)--max-time(?:=|\s+)\S+/, 'curl --max-time'],
+    [/(?:^|\s)-m\s*\d+/, 'curl -m'],
+    [/(?:^|\s)--connect-timeout(?:=|\s+)\S+/, 'curl --connect-timeout'],
+    [/(?:^|\s)--timeout(?:=|\s+)\S+/, 'wget --timeout'],
+    [/(?:^|\s)-o\s*ConnectTimeout=\S+/, 'ssh ConnectTimeout'],
+    [/(?:^|\s)--fetch-timeout(?:=|\s+)\S+/, 'npm --fetch-timeout'],
+    [/(?:^|\s)--timeout-ms(?:=|\s+)\S+/, 'generic --timeout-ms'],
 ];
 
 /** 默认**有**总超时的客户端（不进 `stuck` 判据）：它们的「默认超时」是真的会自己失败。 */
-const SELF_BOUNDED_CLIENTS: readonly string[] = ["wget", "npm", "pnpm"];
+const SELF_BOUNDED_CLIENTS: readonly string[] = ['wget', 'npm', 'pnpm'];
 
 /** 默认**没有**总超时的客户端：等下去就是永久（除非命令里显式给了超时）。 */
-const UNBOUNDED_CLIENTS: readonly string[] = ["curl", "nc", "netcat", "telnet", "docker", "kubectl", "gh"];
+const UNBOUNDED_CLIENTS: readonly string[] = ['curl', 'nc', 'netcat', 'telnet', 'docker', 'kubectl', 'gh'];
 
 const NETWORK_SUBCOMMANDS: Record<string, readonly string[]> = {
-    git: ["fetch", "clone", "pull", "push", "ls-remote", "submodule", "remote"],
+    git: ['fetch', 'clone', 'pull', 'push', 'ls-remote', 'submodule', 'remote'],
     ssh: [],
     scp: [],
     rsync: [],
@@ -152,10 +152,10 @@ const DURATION_RE = /^\d+(?:\.\d+)?[smhd]?$/;
  */
 function parseTimeoutWrapper(toks: readonly string[], start: number): { limit: string | null; next: number } {
     let i = start + 1;
-    while (i < toks.length && toks[i].startsWith("-")) {
+    while (i < toks.length && toks[i].startsWith('-')) {
         const opt = toks[i];
         i++;
-        if (opt === "-s" || opt === "--signal" || opt === "-k" || opt === "--kill-after") i++;
+        if (opt === '-s' || opt === '--signal' || opt === '-k' || opt === '--kill-after') i++;
     }
     if (i < toks.length && DURATION_RE.test(toks[i])) return { limit: toks[i], next: i + 1 };
     return { limit: null, next: i };
@@ -167,23 +167,23 @@ function headWord(toks: readonly string[]): { head: string; rest: readonly strin
     let timeoutLimit: string | null = null;
     while (i < toks.length) {
         const t = toks[i];
-        if (t.includes("=") && !t.startsWith("-") && !t.startsWith("/")) {
+        if (t.includes('=') && !t.startsWith('-') && !t.startsWith('/')) {
             i++; // env 赋值
             continue;
         }
-        if (t === "timeout" || t === "gtimeout") {
+        if (t === 'timeout' || t === 'gtimeout') {
             const w = parseTimeoutWrapper(toks, i);
             timeoutLimit = w.limit;
             i = w.next;
             continue;
         }
-        if (["sudo", "nohup", "env", "time", "command", "exec", "nice", "setsid", "caffeinate"].includes(t)) {
+        if (['sudo', 'nohup', 'env', 'time', 'command', 'exec', 'nice', 'setsid', 'caffeinate'].includes(t)) {
             i++;
             continue;
         }
         break;
     }
-    return { head: (toks[i] ?? "").replace(/^.*\//, ""), rest: toks.slice(i + 1), timeoutLimit };
+    return { head: (toks[i] ?? '').replace(/^.*\//, ''), rest: toks.slice(i + 1), timeoutLimit };
 }
 
 /**
@@ -211,7 +211,11 @@ export function probeNetworkWait(command: string): NetworkWait {
     if (subs) {
         // `git status` 不算；`git fetch` 算。ssh/scp/rsync 本身即网络。
         const hit = subs.length === 0 || subs.some((s) => rest.includes(s));
-        return { network: hit, bounded: false, client: hit ? (subs.length === 0 ? head : `git ${rest[0] ?? ""}`) : null };
+        return {
+            network: hit,
+            bounded: false,
+            client: hit ? (subs.length === 0 ? head : `git ${rest[0] ?? ''}`) : null,
+        };
     }
     return { network: false, bounded: true, client: null };
 }
@@ -219,15 +223,15 @@ export function probeNetworkWait(command: string): NetworkWait {
 function isNetworkClient(head: string, rest: readonly string[]): boolean {
     const subs = NETWORK_SUBCOMMANDS[head];
     if (subs) return subs.length === 0 || subs.some((s) => rest.includes(s));
-    return UNBOUNDED_CLIENTS.includes(head) || SELF_BOUNDED_CLIENTS.includes(head) || head === "ssh" || head === "scp";
+    return UNBOUNDED_CLIENTS.includes(head) || SELF_BOUNDED_CLIENTS.includes(head) || head === 'ssh' || head === 'scp';
 }
 
 /** 有明确到点的等待（自身带时长，不需要人 / 网络推进）。 */
 export function isTimedWait(command: string): boolean {
     const toks = tokens(command);
     const { head } = headWord(toks);
-    if (head === "sleep" || head === "pg_sleep") return true;
-    if (/^\d+(?:\.\d+)?[smh]?$/.test(toks[toks.length - 1] ?? "") && /\bsleep\s/.test(command)) return true;
+    if (head === 'sleep' || head === 'pg_sleep') return true;
+    if (/^\d+(?:\.\d+)?[smh]?$/.test(toks[toks.length - 1] ?? '') && /\bsleep\s/.test(command)) return true;
     return false;
 }
 
@@ -249,8 +253,8 @@ export function judgeHealth(sample: ProcessSample, policy: HealthPolicy = DEFAUL
 
     if (sample.silentMs <= policy.progressWindowMs) {
         return {
-            verdict: "progressing",
-            rule: "R1:output-growing",
+            verdict: 'progressing',
+            rule: 'R1:output-growing',
             reason: `${Math.round(sample.silentMs / 1000)}s 前还有输出`,
             stallFactor,
             confidence: 0.98,
@@ -262,8 +266,8 @@ export function judgeHealth(sample: ProcessSample, policy: HealthPolicy = DEFAUL
     // 等于把最需要放过的一类判死。代价是「CPU 高 + 零输出的 busy loop」也会落在这里（已知边界，交 L2 判语义）。
     if (!idleCpu) {
         return {
-            verdict: "progressing",
-            rule: "R2:cpu-active",
+            verdict: 'progressing',
+            rule: 'R2:cpu-active',
             reason: `CPU ${activeCpu.toFixed(1)}%（进程树聚合）仍在算`,
             stallFactor,
             confidence: 0.9,
@@ -271,11 +275,11 @@ export function judgeHealth(sample: ProcessSample, policy: HealthPolicy = DEFAUL
     }
 
     if (net.network && !net.bounded && (stalledEnough || sample.connections.length > 0)) {
-        const remote = sample.connections[0]?.remote ?? "无活动连接";
+        const remote = sample.connections[0]?.remote ?? '无活动连接';
         return {
-            verdict: "stuck",
-            rule: "R3:unbounded-network-wait",
-            reason: `${net.client ?? "网络客户端"} 无总超时上限（${remote}），不会自己失败返回`,
+            verdict: 'stuck',
+            rule: 'R3:unbounded-network-wait',
+            reason: `${net.client ?? '网络客户端'} 无总超时上限（${remote}），不会自己失败返回`,
             stallFactor,
             confidence: p50 === null ? 0.6 : 0.8,
         };
@@ -283,9 +287,9 @@ export function judgeHealth(sample: ProcessSample, policy: HealthPolicy = DEFAUL
 
     if (sample.connections.length > 0 && net.bounded && stalledEnough && overP50) {
         return {
-            verdict: "passive-wait",
-            rule: "R5:bounded-passive-wait",
-            reason: `等网络但自带超时（${net.client ?? "有界"}），会自己失败返回`,
+            verdict: 'passive-wait',
+            rule: 'R5:bounded-passive-wait',
+            reason: `等网络但自带超时（${net.client ?? '有界'}），会自己失败返回`,
             stallFactor,
             confidence: 0.6,
         };
@@ -293,9 +297,9 @@ export function judgeHealth(sample: ProcessSample, policy: HealthPolicy = DEFAUL
 
     if (isTimedWait(sample.command)) {
         return {
-            verdict: "passive-wait",
-            rule: "R5:bounded-passive-wait",
-            reason: "sleep 到点自己会醒",
+            verdict: 'passive-wait',
+            rule: 'R5:bounded-passive-wait',
+            reason: 'sleep 到点自己会醒',
             stallFactor,
             confidence: 0.9,
         };
@@ -303,8 +307,8 @@ export function judgeHealth(sample: ProcessSample, policy: HealthPolicy = DEFAUL
 
     if (stalledEnough && overP50 && idleCpu) {
         return {
-            verdict: "stuck",
-            rule: "R4:stalled-vs-p50",
+            verdict: 'stuck',
+            rule: 'R4:stalled-vs-p50',
             reason: `静默 ${Math.round(sample.silentMs / 1000)}s = 历史中位的 ${stallFactor?.toFixed(0)}×，CPU ${activeCpu.toFixed(1)}%（${sample.childCount} 个子进程）`,
             stallFactor,
             confidence: p50 === null ? 0.55 : 0.75,
@@ -312,9 +316,9 @@ export function judgeHealth(sample: ProcessSample, policy: HealthPolicy = DEFAUL
     }
 
     return {
-        verdict: "unknown",
-        rule: "R6:insufficient-evidence",
-        reason: p50 === null ? "无历史耗时，且未超绝对静默下限" : `静默 ${stallFactor?.toFixed(1)}× 中位，未达阈值`,
+        verdict: 'unknown',
+        rule: 'R6:insufficient-evidence',
+        reason: p50 === null ? '无历史耗时，且未超绝对静默下限' : `静默 ${stallFactor?.toFixed(1)}× 中位，未达阈值`,
         stallFactor,
         confidence: 0.3,
     };

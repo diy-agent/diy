@@ -22,7 +22,14 @@ import { dumpSource } from './yaml-out.js';
 import { writeFilesAtomic } from './atomic-write.js';
 import { withLibraryLock } from './lock.js';
 import { claimOf, derivedFactId } from '../claim.js';
-import { DEFAULT_FULL_BUDGET, checkExpose, checkExposeLeveled, defaultExposeOf, exposeOf, type ExposeLevel, type ExposeMap } from '../expose.js';
+import {
+    DEFAULT_FULL_BUDGET,
+    checkExposeLeveled,
+    defaultExposeOf,
+    exposeOf,
+    type ExposeLevel,
+    type ExposeMap,
+} from '../expose.js';
 import { buildIndex, validateFacts } from '../index.js';
 import type { Evidence, Fact, Ref, Scope } from '../types.js';
 
@@ -250,7 +257,10 @@ export function readExpose(knowledgeDir: string): ExposeMap {
 export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo {
     const dir = path.resolve(knowledgeDir);
     const factsDir = path.join(dir, 'facts');
-    const { all: subjects, local: localSubjects } = readSubjects(path.join(dir, 'subjects.yaml'), opts.subjectsFallback);
+    const { all: subjects, local: localSubjects } = readSubjects(
+        path.join(dir, 'subjects.yaml'),
+        opts.subjectsFallback,
+    );
 
     const files = (existsSync(factsDir) ? readdirSync(factsDir) : [])
         .filter(isFactFile)
@@ -266,7 +276,10 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
         const doc = readYaml(file) as { domain?: string; note?: string; facts?: unknown[] } | unknown[] | null;
         const rawFacts: unknown = Array.isArray(doc) ? doc : (doc?.facts ?? {});
         if (typeof rawFacts !== 'object' || rawFacts === null) {
-            throw new FactsRepoError('facts/yaml-shape', `${file}: 期望 { domain, facts: {<subject>#<aspect>: ...} }（旧数组形态仍认）`);
+            throw new FactsRepoError(
+                'facts/yaml-shape',
+                `${file}: 期望 { domain, facts: {<subject>#<aspect>: ...} }（旧数组形态仍认）`,
+            );
         }
         const list = expandClaims(rawFacts);
         if (!Array.isArray(doc)) {
@@ -278,9 +291,12 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
         for (const item of list) {
             if (typeof item === 'object' && item !== null) {
                 const it = item as { id?: unknown; subject?: unknown; aspect?: unknown };
-                const id = typeof it.id === 'string'
-                    ? it.id
-                    : typeof it.subject === 'string' && typeof it.aspect === 'string' ? `${it.subject}#${it.aspect}` : undefined;
+                const id =
+                    typeof it.id === 'string'
+                        ? it.id
+                        : typeof it.subject === 'string' && typeof it.aspect === 'string'
+                          ? `${it.subject}#${it.aspect}`
+                          : undefined;
                 if (id !== undefined) origin.set(id, file);
                 // claim 级**兜底**：派生 id 会带 scope 后缀（`app.port#default@env=production`），
                 // 与这里能算出的 id 不同 → 只按 id 记会让**每个变体都丢失来源文件**（`get` 报空路径，
@@ -298,7 +314,9 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
         const claimKey = (item: unknown): string | undefined => {
             if (typeof item !== 'object' || item === null) return undefined;
             const it = item as { subject?: unknown; aspect?: unknown };
-            return typeof it.subject === 'string' && typeof it.aspect === 'string' ? `${it.subject}#${it.aspect}` : undefined;
+            return typeof it.subject === 'string' && typeof it.aspect === 'string'
+                ? `${it.subject}#${it.aspect}`
+                : undefined;
         };
         // 只算**可用**的 claim（active + accepted）：主库同 claim 全被 superseded / 待审时，
         // 视为"主库没有"，让额外库那份顶上 —— 否则标一条 superseded 就等于知识凭空消失。
@@ -330,9 +348,10 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
                     if (k !== undefined && seen.has(k)) continue;
                     if (k !== undefined) seen.add(k);
                     // 记来源：`get` 要报"这条在哪个文件"，额外库不记会让路径变成空串
-                    const id = typeof item === 'object' && item !== null && typeof (item as { id?: unknown }).id === 'string'
-                        ? (item as { id: string }).id
-                        : k;
+                    const id =
+                        typeof item === 'object' && item !== null && typeof (item as { id?: unknown }).id === 'string'
+                            ? (item as { id: string }).id
+                            : k;
                     if (id !== undefined) origin.set(id, file);
                     raw.push(item);
                 }
@@ -360,7 +379,12 @@ export function loadRepo(knowledgeDir: string, opts: LoadRepoOptions = {}): Repo
         domains,
         subjects,
         localSubjects,
-        schemaIssues: issues.map((i) => ({ level: 'error' as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) })),
+        schemaIssues: issues.map((i) => ({
+            level: 'error' as const,
+            code: i.code,
+            detail: i.detail,
+            ...(i.facts ? { facts: i.facts } : {}),
+        })),
     };
 }
 
@@ -443,7 +467,8 @@ export function checkFacts(
 
     // G2：id 唯一 / claim 冲突 / 边悬空 / supersedes 成环
     const index = buildIndex(facts);
-    for (const i of index.issues) problems.push({ level: 'error', code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) });
+    for (const i of index.issues)
+        problems.push({ level: 'error', code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) });
     for (const c of index.conflicts) {
         problems.push({
             level: 'error',
@@ -468,14 +493,24 @@ export function checkFacts(
     }
     const unusedScope = opts.subjectsUnusedScope ?? [...vocab];
     for (const s of unusedScope) {
-        if (!used.has(s) && vocab.has(s)) problems.push({ level: 'warning', code: 'facts/subject-unused', detail: `词表里的 subject 无任何 fact 使用：${s}` });
+        if (!used.has(s) && vocab.has(s))
+            problems.push({
+                level: 'warning',
+                code: 'facts/subject-unused',
+                detail: `词表里的 subject 无任何 fact 使用：${s}`,
+            });
     }
 
     // G4 / G5 / W1：证据可解析、probe 档齐备、证据陈旧
     for (const f of facts) {
         const ev = f.evidence;
         if (ev.source === 'probe' && (ev.probe === undefined || ev.probe === '')) {
-            problems.push({ level: 'error', code: 'facts/probe-missing', detail: `${f.id}: source=probe 但没给 evidence.probe`, facts: [f.id] });
+            problems.push({
+                level: 'error',
+                code: 'facts/probe-missing',
+                detail: `${f.id}: source=probe 但没给 evidence.probe`,
+                facts: [f.id],
+            });
         }
         if (ev.at !== undefined) {
             const target = parseEvidenceAt(ev.at);
@@ -510,11 +545,21 @@ export function checkFacts(
             } else {
                 const abs = resolveEvidencePath(opts.root, target.file);
                 if (!existsSync(abs)) {
-                    problems.push({ level: 'error', code: 'facts/evidence-missing', detail: `${f.id}: evidence.at 指向的文件不存在：${target.file}`, facts: [f.id] });
+                    problems.push({
+                        level: 'error',
+                        code: 'facts/evidence-missing',
+                        detail: `${f.id}: evidence.at 指向的文件不存在：${target.file}`,
+                        facts: [f.id],
+                    });
                 } else {
                     const lines = readFileSync(abs, 'utf8').split('\n').length;
                     if (target.line < 1 || target.line > lines) {
-                        problems.push({ level: 'error', code: 'facts/evidence-line', detail: `${f.id}: ${target.file}:${target.line} 越界（该文件共 ${lines} 行）`, facts: [f.id] });
+                        problems.push({
+                            level: 'error',
+                            code: 'facts/evidence-line',
+                            detail: `${f.id}: ${target.file}:${target.line} 越界（该文件共 ${lines} 行）`,
+                            facts: [f.id],
+                        });
                     }
                 }
             }
@@ -522,7 +567,12 @@ export function checkFacts(
         if (ev.verifiedAt !== undefined) {
             const t = Date.parse(ev.verifiedAt);
             if (Number.isNaN(t)) {
-                problems.push({ level: 'error', code: 'facts/verified-at-format', detail: `${f.id}: evidence.verifiedAt 不是合法日期：${ev.verifiedAt}`, facts: [f.id] });
+                problems.push({
+                    level: 'error',
+                    code: 'facts/verified-at-format',
+                    detail: `${f.id}: evidence.verifiedAt 不是合法日期：${ev.verifiedAt}`,
+                    facts: [f.id],
+                });
             } else if ((asOf.getTime() - t) / 86_400_000 > maxAgeDays) {
                 problems.push({
                     level: 'warning',
@@ -849,7 +899,11 @@ function submitUnlocked(
         } else if (JSON.stringify(canonicalFact(prev)) === JSON.stringify(canonicalFact(f))) {
             unchanged.push(f.id);
         } else {
-            updated.push({ id: f.id, before: `${prev.value}${prev.scope ? ` @${JSON.stringify(canonicalScope(prev.scope))}` : ''}`, after: `${f.value}${f.scope ? ` @${JSON.stringify(canonicalScope(f.scope))}` : ''}` });
+            updated.push({
+                id: f.id,
+                before: `${prev.value}${prev.scope ? ` @${JSON.stringify(canonicalScope(prev.scope))}` : ''}`,
+                after: `${f.value}${f.scope ? ` @${JSON.stringify(canonicalScope(f.scope))}` : ''}`,
+            });
             byId.set(f.id, f);
         }
     }
@@ -884,7 +938,12 @@ function submitUnlocked(
     const candidate = [...byId.values()];
     const schema = validateFacts(candidate);
     const problems: RepoProblem[] = [
-        ...schema.issues.map((i) => ({ level: 'error' as const, code: i.code, detail: i.detail, ...(i.facts ? { facts: i.facts } : {}) })),
+        ...schema.issues.map((i) => ({
+            level: 'error' as const,
+            code: i.code,
+            detail: i.detail,
+            ...(i.facts ? { facts: i.facts } : {}),
+        })),
         // unused 的判定范围跟着**本地**词表走：本批新声明的 subject 也算本地
         ...checkFacts(schema.facts, { subjects, root: repo.root, subjectsUnusedScope: [...localMap.keys()] }),
     ];
@@ -898,7 +957,11 @@ function submitUnlocked(
     // 同批既声明又删除 = 语义自相矛盾（顺序不同结果不同，属载荷写错）
     for (const s of input.subjects ?? []) {
         if ((input.dropSubjects ?? []).includes(s.key)) {
-            problems.push({ level: 'error', code: 'facts/subject-drop-declared', detail: `subject 同一批里既声明又删除：${s.key}` });
+            problems.push({
+                level: 'error',
+                code: 'facts/subject-drop-declared',
+                detail: `subject 同一批里既声明又删除：${s.key}`,
+            });
         }
     }
     for (const key of droppedSubjects) {
@@ -915,7 +978,11 @@ function submitUnlocked(
     // 词表条目必须有 description（人读的唯一入口，空词表等于没词表）
     for (const s of input.subjects ?? []) {
         if ((s.description ?? subjectMap.get(s.key)?.description ?? '') === '') {
-            problems.push({ level: 'error', code: 'facts/subject-no-desc', detail: `subject 缺 description：${s.key}` });
+            problems.push({
+                level: 'error',
+                code: 'facts/subject-no-desc',
+                detail: `subject 缺 description：${s.key}`,
+            });
         }
     }
     // 3.5) 暴露档与预算：`full` 档字节和 > 预算 ⇒ **错误**（写不进去）。
@@ -924,7 +991,7 @@ function submitUnlocked(
     const exposeFile = path.join(repo.dir, 'expose.yaml');
     const hasExposeFile = existsSync(exposeFile);
     const storedExpose = readExpose(repo.dir);
-    const exposeMap: Record<string, ExposeLevel> = { ...storedExpose, ...(input.expose ?? {}) };
+    const exposeMap: Record<string, ExposeLevel> = { ...storedExpose, ...input.expose };
     // 删空一个主题 ⇒ 把它在本库 expose.yaml 里那一行一起摘掉。
     // 不摘的后果：键留着指向一个零事实的 subject，`status` 会把它当档位报出来、
     // 预算校验却永远看不到它 —— 配置与库面脱节，而人看不出哪边是对的。
@@ -943,7 +1010,10 @@ function submitUnlocked(
     }
     const errors = problems.filter((p) => p.level === 'error');
     if (errors.length > 0) {
-        return { report: emptyReport(added, updated, unchanged, newSubjects, droppedSubjects, input.dryRun ?? false), problems };
+        return {
+            report: emptyReport(added, updated, unchanged, newSubjects, droppedSubjects, input.dryRun ?? false),
+            problems,
+        };
     }
 
     // 4) 分组成篇：已有条目留在原篇，新条目按 subject 首段归档
@@ -968,7 +1038,11 @@ function submitUnlocked(
         const file = repo.origin.get(id);
         if (file === undefined || fileOf.has(file) || removals.includes(file)) continue;
         removals.push(file);
-        files.push({ file: path.relative(repo.root, file), before: existsSync(file) ? readFileSync(file, 'utf8').length : 0, after: 0 });
+        files.push({
+            file: path.relative(repo.root, file),
+            before: existsSync(file) ? readFileSync(file, 'utf8').length : 0,
+            after: 0,
+        });
     }
     for (const [file, list] of fileOf) {
         const before = existsSync(file) ? readFileSync(file, 'utf8').length : 0;
@@ -986,9 +1060,15 @@ function submitUnlocked(
         const vocabFile = path.join(repo.dir, 'subjects.yaml');
         const vocab: Record<string, unknown> = {};
         for (const s of [...localMap.values()].sort((a, b) => a.key.localeCompare(b.key))) {
-            vocab[s.key] = { ...(s.description ? { description: s.description } : {}), ...(s.aliases ? { aliases: s.aliases } : {}) };
+            vocab[s.key] = {
+                ...(s.description ? { description: s.description } : {}),
+                ...(s.aliases ? { aliases: s.aliases } : {}),
+            };
         }
-        writes.push({ file: vocabFile, text: `${VOCAB_HEAD}\n${dumpSource({ subjects: vocab }, { noRefs: true, lineWidth: -1, quoteStyle: 'single' })}` });
+        writes.push({
+            file: vocabFile,
+            text: `${VOCAB_HEAD}\n${dumpSource({ subjects: vocab }, { noRefs: true, lineWidth: -1, quoteStyle: 'single' })}`,
+        });
     }
 
     // 6) 暴露档：**给了 expose** 或 **drop 删空了主题**（要摘键）时重写；否则不动文件
@@ -1008,7 +1088,16 @@ function submitUnlocked(
     // 并发安全：tmp 名带 pid + rand（固定名会让同进程两批 submit 互相踩）。
     if (!(input.dryRun ?? false)) writeFilesAtomic(writes, { removals });
     return {
-        report: { dryRun: input.dryRun ?? false, added, updated, unchanged, newSubjects, droppedSubjects, files, dropped },
+        report: {
+            dryRun: input.dryRun ?? false,
+            added,
+            updated,
+            unchanged,
+            newSubjects,
+            droppedSubjects,
+            files,
+            dropped,
+        },
         problems,
     };
 }
@@ -1053,9 +1142,13 @@ export function formatReport(r: SubmitReport): string {
     if (r.added.length > 0) lines.push(`+ 新增 ${r.added.length}：${r.added.join(', ')}`);
     for (const u of r.updated) lines.push(`! 更新 ${u.id}：${u.before} → ${u.after}`);
     if (r.newSubjects.length > 0) lines.push(`+ 词表新增 ${r.newSubjects.length}：${r.newSubjects.join(', ')}`);
-    if (r.droppedSubjects.length > 0) lines.push(`- 词表删除 ${r.droppedSubjects.length}：${r.droppedSubjects.join(', ')}`);
+    if (r.droppedSubjects.length > 0)
+        lines.push(`- 词表删除 ${r.droppedSubjects.length}：${r.droppedSubjects.join(', ')}`);
     if (lines.length === 0) lines.push(`= 无变化（${r.unchanged.length} 条与真源一致）`);
-    for (const f of r.files) lines.push(f.after === 0 ? `  删除空篇 ${f.file}（原 ${f.before} B）` : `  ${f.file}: ${f.before} → ${f.after} B`);
+    for (const f of r.files)
+        lines.push(
+            f.after === 0 ? `  删除空篇 ${f.file}（原 ${f.before} B）` : `  ${f.file}: ${f.before} → ${f.after} B`,
+        );
     if (r.dryRun) lines.push('（--dry-run：以上均未落盘）');
     return lines.join('\n');
 }

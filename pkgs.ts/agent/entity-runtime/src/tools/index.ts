@@ -20,10 +20,15 @@ import { makeJobTool, type RunRegistry } from '@diy-agent/jobs/node';
 
 import type { AskGate } from '../ask';
 import { askTool } from './ask';
+import { capEveryTool } from './delivery';
 import { journalTool } from './journal';
+import { runCodeTool, type RunCodeHost } from './run-code';
 import { unitTools, type UnitHost } from './units';
+import { viewImageTool } from './view-image';
 
 export type { UnitHost } from './units';
+export type { RunCodeHost } from './run-code';
+export { DEFAULT_RUN_CODE_TIMEOUT_MS } from './run-code';
 
 /**
  * 一条 bash 命令的缺省预算（毫秒）。
@@ -61,7 +66,18 @@ export interface RoomToolsOptions {
     units?: UnitHost;
     /** 后台作业；不传 = bash 没有 `background`、也没有 `job` 工具 */
     jobs?: RoomJobs;
-    /** 投递层截断（只改"发给模型的那一份"，execute 的返回值仍是全文）；可返回 Promise */
+    /**
+     * 代码执行（`run_code`）；不传 = 没这个工具。
+     * 引擎实现由调用方给（进程内 vm / worker / 子进程），本文件只负责把它包成工具。
+     */
+    code?: RunCodeHost;
+    /**
+     * 投递层截断（只改"发给模型的那一份"，execute 的返回值仍是全文）；可返回 Promise。
+     *
+     * **不只是 bash 的**（2026-11-27 改）：装配完 ToolSet 后统一遍历注入，见 `./delivery.ts`。
+     * 以前只传给了 makeShellTool，read / run_code / job 各自另立预算 —— 那正是「大输出顶爆
+     * 这一轮」与「被裁两遍」的同一个根因。
+     */
     toModelOutput?: (text: string, toolCallId: string) => string | Promise<string>;
 }
 
@@ -84,7 +100,8 @@ export function buildRoomTools(options: RoomToolsOptions): ToolSet {
             cwd,
             // 不传 ≠ 不限：缺省就带预算（见 DEFAULT_BASH_TIMEOUT_MS）
             limits: { bashTimeoutMs: options.bashTimeoutMs ?? DEFAULT_BASH_TIMEOUT_MS },
-            ...(options.toModelOutput === undefined ? {} : { toModelOutput: options.toModelOutput }),
+            // 投递层截断统一在下面遍历注入（见 ./delivery.ts）—— 这里不再单传，
+            // 否则「bash 接了、别人没接」的分叉会再次长出来。
             // 后台模式：**不传就没有 background 参数**（免得告诉模型一个必然失败的选择）
             ...(jobs === undefined
                 ? {}
@@ -123,6 +140,11 @@ export function buildRoomTools(options: RoomToolsOptions): ToolSet {
     if (ask !== undefined) extra['ask'] = ask;
     if (options.onJournal !== undefined) extra['journal'] = journalTool(options.onJournal);
     if (options.units !== undefined) Object.assign(extra, unitTools(options.units));
+    if (options.code !== undefined) extra['run_code'] = runCodeTool(options.code);
+    // 「自己截图自己看」：不给它这个入口，它会去 bash+curl 拼 raw API（实测过）
+    extra['view_image'] = viewImageTool();
 
-    return buildTools({ cwd, extraTools: extra });
+    const tools = buildTools({ cwd, extraTools: extra });
+    // 投递层的唯一接线点：每个工具都挂同一个截断器（未超限时逐字符原样，不碰缓存）
+    return options.toModelOutput === undefined ? tools : capEveryTool(tools, options.toModelOutput);
 }

@@ -10,7 +10,6 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import type { DiscoveredInstance, Discoverer, PingInfo } from '../types.js';
 import { fetchPing } from './ping-client.js';
 import { registryDir as registryDirOf } from '@diy-agent/dev-paths';

@@ -69,10 +69,11 @@ describe('⋮ 菜单的浮层', () => {
         expect(menu).not.toBeNull();
         // 这一条就是本次修复的判据：`container.contains(menu)` 为 true 就说明还会被裁
         expect(container.contains(menu)).toBe(false);
-        // Base UI 的 DropdownMenu 会 portal 到一个 wrapper div（在 body 下），不是直接挂 body ——
-        // 判据是「在 body 下、不在被裁的 container 里」，不要求 parentElement 恰好是 body。
-        expect(menu?.closest('body')).toBe(document.body);
-        // 定位交给 Base UI 的 popover（CSS 定位，不设 inline style.top）—— 只要不被 container 裁即可。
+        // 剩余两条（「直接挂 body」、「inline 坐标不为空」）已删：换成官方 DropdownMenu
+        // （Base UI）后，popup 套在定位 wrapper 里、`position: fixed` 与坐标都来自
+        // **样式表**，而 happy-dom 不算 CSS、只认 inline style —— 那两条在当前实现下
+        // 永远是假红，留着等于把「测不到」写成「测过了」。
+        // 定位行为（不被裁、贴边翻转）改由真机/截图验；这里只钉「跳出了 overflow 容器」。
     });
 
     it('再点一次 ⋮ 收回去', async () => {
@@ -85,9 +86,7 @@ describe('⋮ 菜单的浮层', () => {
     it('点菜单项：先关，再执行（不会因为浮层被卸载而丢事件）', async () => {
         const onClick = vi.fn();
         await act(async () => {
-            root.render(
-                <MenuButton items={[{ key: 'remove', label: '删除', icon: null, onClick }]} />,
-            );
+            root.render(<MenuButton items={[{ key: 'remove', label: '删除', icon: null, onClick }]} />);
         });
         await click(trigger());
         const item = document.querySelector('[role="menuitem"]');

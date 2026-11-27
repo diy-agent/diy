@@ -3,10 +3,11 @@
  *
  * 跑：`npx tsx pkgs.ts/core/rpc/examples/service/03-cancel/run.ts`
  */
-import { z } from "zod";
-import { RpcSchema } from "../../../../src/index";
+import { z } from 'zod';
+import { RpcSchema } from '../../../../src/index';
 
-export const slowRoutes = RpcSchema.group({ children: {
+export const slowRoutes = RpcSchema.group({
+  children: {
     slow: RpcSchema.unary({ input: { ms: z.number() }, output: z.string() }),
-} });
-
+  },
+});

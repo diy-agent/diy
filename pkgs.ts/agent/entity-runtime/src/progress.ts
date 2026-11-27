@@ -283,7 +283,12 @@ export class ProgressWatch {
             pending.what === 'model-stream'
                 ? Math.max(pending.enteredAt, state.lastProgressAt)
                 : (pending.heartbeat?.at ?? pending.enteredAt);
-        return { awaiting: pending.what, idleMs: at - from, alive: pending.heartbeat !== null, sawContent: state.sawContent };
+        return {
+            awaiting: pending.what,
+            idleMs: at - from,
+            alive: pending.heartbeat !== null,
+            sawContent: state.sawContent,
+        };
     }
 
     /**

@@ -21,19 +21,19 @@
 //   `EditError` **继承** write 的 `FileWriteError`（##266 review2）：路径护栏是共用的，
 //   同一种「越界」不许在上层表现为两个不相干的类 —— 上层 catch `FileWriteError` 两个都接得住。
 
-import { readFileSync, realpathSync, statSync } from "node:fs";
-import path from "node:path";
-import { FileWriteError, resolveWritePath, type FileWriteErrorCode } from "./file-write.js";
-import { generateUnifiedPatch } from "./unified-diff.js";
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { FileWriteError, resolveWritePath, type FileWriteErrorCode } from './file-write.js';
+import { generateUnifiedPatch } from './unified-diff.js';
 
 export type EditErrorCode =
-    | "fs/empty-edits"
-    | "fs/empty-old-text"
-    | "fs/no-match"
-    | "fs/ambiguous-match"
-    | "fs/not-a-file"
-    | "fs/read-failed"
-    | "fs/write-failed"
+    | 'fs/empty-edits'
+    | 'fs/empty-old-text'
+    | 'fs/no-match'
+    | 'fs/ambiguous-match'
+    | 'fs/not-a-file'
+    | 'fs/read-failed'
+    | 'fs/write-failed'
     /** 路径护栏（与 write 共用实现，故这几个码来自 `FileWriteError`） */
     | FileWriteErrorCode;
 
@@ -46,7 +46,7 @@ export type EditErrorCode =
 export class EditError extends FileWriteError<EditErrorCode> {
     constructor(code: EditErrorCode, message: string) {
         super({ code, message });
-        this.name = "EditError";
+        this.name = 'EditError';
     }
 }
 
@@ -75,33 +75,33 @@ function fail(code: EditErrorCode, message: string): never {
  */
 export function normalizeForFuzzyMatch(text: string): string {
     return text
-        .normalize("NFKC")
-        .split("\n")
-        .map((line) => line.replace(/[ \t]+$/, ""))
-        .join("\n")
+        .normalize('NFKC')
+        .split('\n')
+        .map((line) => line.replace(/[ \t]+$/, ''))
+        .join('\n')
         .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
         .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
-        .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
-        .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ");
+        .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
+        .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, ' ');
 }
 
 /** 行尾 / BOM 归一：匹配一律在 LF + 无 BOM 的视图里做，写回时再恢复。 */
-export function detectLineEnding(text: string): "\r\n" | "\n" {
-    const crlf = text.indexOf("\r\n");
-    const lf = text.indexOf("\n");
-    return crlf !== -1 && (lf === -1 || crlf < lf) ? "\r\n" : "\n";
+export function detectLineEnding(text: string): '\r\n' | '\n' {
+    const crlf = text.indexOf('\r\n');
+    const lf = text.indexOf('\n');
+    return crlf !== -1 && (lf === -1 || crlf < lf) ? '\r\n' : '\n';
 }
 
 export function normalizeToLF(text: string): string {
-    return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-export function restoreLineEndings(text: string, ending: "\r\n" | "\n"): string {
-    return ending === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
+export function restoreLineEndings(text: string, ending: '\r\n' | '\n'): string {
+    return ending === '\r\n' ? text.replace(/\n/g, '\r\n') : text;
 }
 
 export function stripBom(text: string): { bom: string; text: string } {
-    return text.startsWith("\uFEFF") ? { bom: "\uFEFF", text: text.slice(1) } : { bom: "", text };
+    return text.startsWith('\uFEFF') ? { bom: '\uFEFF', text: text.slice(1) } : { bom: '', text };
 }
 
 // ═══════════════════════════════════════════════
@@ -144,7 +144,7 @@ interface Match {
 /** 找出 target 在 content 里的全部（非重叠）命中，最多 limit 个。 */
 function findMatches(content: string, target: string, limit = Number.POSITIVE_INFINITY): Match[] {
     const out: Match[] = [];
-    if (target === "") return out;
+    if (target === '') return out;
     let from = 0;
     while (out.length < limit) {
         const i = content.indexOf(target, from);
@@ -175,13 +175,13 @@ function lineSpans(text: string): LineSpan[] {
     const spans: LineSpan[] = [];
     let offset = 0;
     while (offset < text.length) {
-        const nl = text.indexOf("\n", offset);
+        const nl = text.indexOf('\n', offset);
         const end = nl === -1 ? text.length : nl + 1;
         spans.push({ start: offset, end });
         offset = end;
     }
     // 以 "\n" 结尾的文本：末尾空行也是"一行"（与 split 语义对齐，行数才守恒）
-    if (text.length === 0 || text.endsWith("\n")) spans.push({ start: text.length, end: text.length });
+    if (text.length === 0 || text.endsWith('\n')) spans.push({ start: text.length, end: text.length });
     return spans;
 }
 
@@ -195,7 +195,7 @@ function lineSpans(text: string): LineSpan[] {
 function preserveUnchangedLines(original: string, base: string, matches: Match[], newText: string): string {
     const originalLines = original.match(/[^\n]*\n|[^\n]+/g) ?? [];
     const baseSpans = lineSpans(base);
-    const originalCount = originalLines.length + (original.endsWith("\n") || original === "" ? 1 : 0);
+    const originalCount = originalLines.length + (original.endsWith('\n') || original === '' ? 1 : 0);
     if (baseSpans.length !== originalCount) {
         // 归一不该改变行数；真变了说明实现坏了 —— 退回整份归一结果（宁可少保留，也不写坏）
         return applyReplacements(base, matches, newText);
@@ -205,7 +205,8 @@ function preserveUnchangedLines(original: string, base: string, matches: Match[]
     const ranges = matches
         .map((m) => {
             const startLine = spanIndexAt(baseSpans, m.index);
-            const endLine = m.length > 0 ? spanIndexAt(baseSpans, Math.max(m.index, m.index + m.length - 1)) : startLine;
+            const endLine =
+                m.length > 0 ? spanIndexAt(baseSpans, Math.max(m.index, m.index + m.length - 1)) : startLine;
             return { startLine, endLine, match: m };
         })
         .sort((a, b) => a.startLine - b.startLine);
@@ -229,14 +230,14 @@ function preserveUnchangedLines(original: string, base: string, matches: Match[]
         return { from, to, startLine: g.startLine, endLine: g.endLine, local };
     });
 
-    let out = "";
+    let out = '';
     let line = 0;
     for (const g of groupText) {
-        out += originalLines.slice(line, g.startLine).join("");
+        out += originalLines.slice(line, g.startLine).join('');
         out += applyReplacements(base.slice(g.from, g.to), g.local, newText);
         line = g.endLine + 1;
     }
-    out += originalLines.slice(line).join("");
+    out += originalLines.slice(line).join('');
     return out;
 }
 
@@ -260,14 +261,14 @@ function spanIndexAt(spans: LineSpan[], offset: number): number {
 /** 应用一条 edit（精确优先，失败再归一）。返回新内容 + 是否用了归一 + 替换处数。 */
 function applyOne(content: string, edit: EditOp, index: number): { content: string; note: EditNote } {
     const oldText = edit.oldText;
-    if (oldText === "") fail("fs/empty-old-text", `edits[${index}].oldText 为空：不知道要替换什么`);
+    if (oldText === '') fail('fs/empty-old-text', `edits[${index}].oldText 为空：不知道要替换什么`);
     const newText = edit.newText;
 
     const exact = findMatches(content, oldText, edit.replaceAll ? Number.POSITIVE_INFINITY : 2);
     if (exact.length > 0) {
         if (exact.length > 1 && !edit.replaceAll) {
             fail(
-                "fs/ambiguous-match",
+                'fs/ambiguous-match',
                 `edits[${index}].oldText 在文件中出现 ${countMatches(content, oldText)} 次，无法确定替换哪一处；` +
                     `请给出更长的上下文，或显式传 replaceAll: true`,
             );
@@ -285,14 +286,14 @@ function applyOne(content: string, edit: EditOp, index: number): { content: stri
     const fuzzy = findMatches(base, target, edit.replaceAll ? Number.POSITIVE_INFINITY : 2);
     if (fuzzy.length === 0) {
         fail(
-            "fs/no-match",
+            'fs/no-match',
             `edits[${index}].oldText 在文件中找不到（精确匹配与字符归一匹配都失败）；` +
                 `oldText 必须逐字来自文件（含缩进与换行，但行尾空白 / 全角半角可以不同）`,
         );
     }
     if (fuzzy.length > 1 && !edit.replaceAll) {
         fail(
-            "fs/ambiguous-match",
+            'fs/ambiguous-match',
             `edits[${index}].oldText 归一后出现 ${findMatches(base, target).length} 次，无法确定替换哪一处；` +
                 `请给出更长的上下文，或显式传 replaceAll: true`,
         );
@@ -315,7 +316,7 @@ function countMatches(content: string, target: string): number {
  * 想基于原文的多处独立修改也没问题 —— 顺序执行的第一条不影响后续不重叠的区域。
  */
 export function applyEdits(content: string, edits: EditOp[]): ApplyResult {
-    if (edits.length === 0) fail("fs/empty-edits", "edits 为空：至少给一条替换");
+    if (edits.length === 0) fail('fs/empty-edits', 'edits 为空：至少给一条替换');
     let working = content;
     const notes: EditNote[] = [];
     for (let i = 0; i < edits.length; i++) {
@@ -347,7 +348,7 @@ export function resolveEditablePath(cwd: string, input: string): string {
     } catch (e) {
         if (e instanceof FileWriteError) {
             // 措辞归 edit：write 的「只写文件」文案不该原样漏到 edit 的错误里
-            if (e.code === "fs/is-directory") fail("fs/not-a-file", `${input} 是目录（edit 只改文件）`);
+            if (e.code === 'fs/is-directory') fail('fs/not-a-file', `${input} 是目录（edit 只改文件）`);
             // error-code-ok: 转手 write 侧已带 code 的错误（code 原样透传，不新造）
             throw new EditError(e.code, e.message);
         }
@@ -357,9 +358,9 @@ export function resolveEditablePath(cwd: string, input: string): string {
     try {
         isFile = statSync(abs).isFile();
     } catch {
-        fail("fs/not-a-file", `文件不存在：${input}（edit 只能改已存在的文件；新建/整份覆盖请用 write）`);
+        fail('fs/not-a-file', `文件不存在：${input}（edit 只能改已存在的文件；新建/整份覆盖请用 write）`);
     }
-    if (!isFile) fail("fs/not-a-file", `${input} 不是普通文件（edit 只改文件；看目录用 bash ls）`);
+    if (!isFile) fail('fs/not-a-file', `${input} 不是普通文件（edit 只改文件；看目录用 bash ls）`);
     return abs;
 }
 
@@ -377,7 +378,7 @@ export function displayPath(cwd: string, abs: string): string {
     }
     for (const root of roots) {
         const rel = path.relative(root, abs);
-        if (rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) return rel;
+        if (rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) return rel;
     }
     return path.basename(abs);
 }
@@ -415,7 +416,7 @@ export interface EditFileResult {
     /** 应用说明 */
     result: ApplyResult;
     /** 原文件行尾 */
-    ending: "\r\n" | "\n";
+    ending: '\r\n' | '\n';
     /** unified patch（相对标签由调用方给） */
     patch: string;
 }
@@ -436,11 +437,11 @@ export function editFile(
 ): EditFileResult {
     let raw: string;
     try {
-        if (!statSync(abs).isFile()) fail("fs/not-a-file", `${label} 不是一个普通文件`);
-        raw = readFileSync(abs, "utf-8");
+        if (!statSync(abs).isFile()) fail('fs/not-a-file', `${label} 不是一个普通文件`);
+        raw = readFileSync(abs, 'utf-8');
     } catch (e) {
         if (e instanceof EditError) throw e;
-        fail("fs/read-failed", `读取失败 ${label}：${e instanceof Error ? e.message : String(e)}`);
+        fail('fs/read-failed', `读取失败 ${label}：${e instanceof Error ? e.message : String(e)}`);
     }
     const { bom, text } = stripBom(raw);
     const ending = detectLineEnding(text);
@@ -457,10 +458,17 @@ export function editFile(
         try {
             write(abs, written);
         } catch (e) {
-            fail("fs/write-failed", `写入失败 ${label}：${e instanceof Error ? e.message : String(e)}`);
+            fail('fs/write-failed', `写入失败 ${label}：${e instanceof Error ? e.message : String(e)}`);
         }
     }
-    return { before, after: result.content, written, result, ending, patch: generateUnifiedPatch(label, before, result.content) };
+    return {
+        before,
+        after: result.content,
+        written,
+        result,
+        ending,
+        patch: generateUnifiedPatch(label, before, result.content),
+    };
 }
 
 /** 人读的一行摘要（工具返回、审计结果都用它）。 */
@@ -469,10 +477,10 @@ export function describeEditResult(fileLabel: string, r: EditFileResult): string
     const normalized = notes.filter((n) => n.usedNormalized);
     const replaced = notes.reduce((s, n) => s + n.replaced, 0);
     const head =
-        r.patch === ""
+        r.patch === ''
             ? `已在 ${fileLabel} 上应用 ${r.result.applied} 条替换，但内容没有变化`
             : `已替换 ${fileLabel} 的 ${replaced} 处（${r.result.applied} 条 edits）`;
     if (normalized.length === 0) return head;
-    const which = normalized.map((n) => `edits[${n.index}]`).join(" / ");
+    const which = normalized.map((n) => `edits[${n.index}]`).join(' / ');
     return `${head}；其中 ${which} 使用的是**字符归一匹配**（全角/半角、弯直引号、行尾空白已按归一理解），未命中的行逐字保留原文`;
 }

@@ -14,7 +14,6 @@
  *   npx tsx tools/check-pitui.ts --all > docs/ref-pitui-interfaces.md  # 生成完整参考
  */
 import * as pi from "@mariozechner/pi-tui";
-import { isFocusable, type Component } from "@mariozechner/pi-tui";
 
 // ── 默认组件清单（按设计文档 §13.14） ──────────────────────
 const DEFAULT_COMPONENTS: Record<string, string> = {
@@ -86,7 +85,7 @@ function shouldExcludeMethod(name: string): boolean {
 // ── 辅助函数 ──────────────────────────────────────────────
 
 /** 获取构造函数参数签名的文本表示 */
-function getConstructorSignature(cls: any, className: string): string {
+function getConstructorSignature(cls: any, _className: string): string {
   const src = cls.toString();
   // 匹配 constructor(... 或类名(... (类表达式)
   const ctorMatch = src.match(/(?:constructor|class\s+\w+)\s*\(([^)]*)\)/);

@@ -56,7 +56,7 @@
       "path": "pkgs.ts/agent/tools"
     },
     {
-      "path": "pkgs.ts/room"
+      "path": "pkgs.ts/agent/code-runtime"
     },
     {
       "path": "pkgs.ts/ui/workbench"
@@ -81,6 +81,9 @@
     },
     {
       "path": "pkgs.ts/agent/protocol"
+    },
+    {
+      "path": "pkgs.ts/agent/attachment"
     },
     {
       "path": "pkgs.ts/agent/entity-runtime"

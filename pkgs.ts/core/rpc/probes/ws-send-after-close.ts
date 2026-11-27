@@ -18,8 +18,11 @@ async function main() {
   await new Promise((r) => setTimeout(r, 120));
 
   let outcome = 'noop';
-  try { transport.send({ type: 'call', id: 1, method: 'x' }); }
-  catch (e: any) { outcome = `threw:${e?.name}:${e?.message}`; }
+  try {
+    transport.send({ type: 'call', id: 1, method: 'x' });
+  } catch (e: any) {
+    outcome = `threw:${e?.name}:${e?.message}`;
+  }
 
   console.log('[ws-send-after-shutdown]', { outcome });
   if (outcome.startsWith('threw')) {
@@ -33,4 +36,7 @@ async function main() {
   await new Promise<void>((r) => server.close(() => r()));
 }
 
-main().catch((e) => { console.error(e); process.exitCode = 1; });
+main().catch((e) => {
+  console.error(e);
+  process.exitCode = 1;
+});

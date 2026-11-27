@@ -62,9 +62,7 @@ export function buildDiscoverers(opts: DiscoverAllOptions = {}): Discoverer[] {
      * 代码保留（discover/mdns.ts 未删）：等「局域网互信」有了结论再决定怎么接回来。
      * 想临时验证可以显式传 sources: ['mdns']。
      */
-    const selected = new Set(
-        opts.sources ?? ['local', 'tailscale', ...(manual.length > 0 ? ['manual'] : [])],
-    );
+    const selected = new Set(opts.sources ?? ['local', 'tailscale', ...(manual.length > 0 ? ['manual'] : [])]);
     const out: Discoverer[] = [];
     if (selected.has('local')) out.push(localDiscoverer(opts.local ?? { dir: opts.registryDir }));
     if (selected.has('mdns')) {
@@ -101,7 +99,7 @@ export async function discoverAll(opts: DiscoverAllOptions = {}): Promise<Discov
             if (row.id !== null) return row;
             const r = await fetchPing(row.endpoint, timeoutMs);
             if (!r.ok || r.info === null) {
-                return { ...row, meta: { ...(row.meta ?? {}), reachable: 'false' } };
+                return { ...row, meta: { ...row.meta, reachable: 'false' } };
             }
             return {
                 ...row,

@@ -6,12 +6,12 @@
 // 会话归属记在**会话自己的目录**里：删 bot 只删 `bots/<id>/`，会话数据原样保留。
 // `sessionsDir` 由宿主指定（apps/chat 是 `<home>/sessions/chat`；缺省 `<home>/sessions`）。
 
-import type { Dirent } from "node:fs";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { BotError } from "./errors.js";
-import type { BotConfig, BotId, BotSessionRef, BotStore } from "./types.js";
-import { compareInstant } from "@diy-agent/time";
+import type { Dirent } from 'node:fs';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { BotError } from './errors.js';
+import type { BotConfig, BotId, BotSessionRef, BotStore } from './types.js';
+import { compareInstant } from '@diy-agent/time';
 
 export interface FileBotStoreOptions {
     /** 数据根（`$DIY_HOME`） */
@@ -29,31 +29,31 @@ interface OwnerRecord {
 
 const ID_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
 
-function checkId(kind: "bot" | "session", id: string): void {
-    if (!ID_PATTERN.test(id) || id === "." || id === "..") {
-        throw new BotError("bot/invalid-id", `${kind} id 非法：${JSON.stringify(id)}`);
+function checkId(kind: 'bot' | 'session', id: string): void {
+    if (!ID_PATTERN.test(id) || id === '.' || id === '..') {
+        throw new BotError('bot/invalid-id', `${kind} id 非法：${JSON.stringify(id)}`);
     }
 }
 
 function compareUpdated(a: BotSessionRef, b: BotSessionRef): number {
     // 倒序按**时刻**（偏移可能不同：老数据 `Z`、新数据 `+0800`，字典序会错，##483）
-    return compareInstant(b.updatedAt ?? "", a.updatedAt ?? "");
+    return compareInstant(b.updatedAt ?? '', a.updatedAt ?? '');
 }
 
 /** 建一个文件型 BotStore（懒 IO：构造不碰磁盘） */
 export function createFileBotStore(options: FileBotStoreOptions): BotStore {
     const home = options.home;
-    const botsDir = options.botsDir ?? join(home, "bots");
-    const sessionsDir = options.sessionsDir ?? join(home, "sessions");
+    const botsDir = options.botsDir ?? join(home, 'bots');
+    const sessionsDir = options.sessionsDir ?? join(home, 'sessions');
 
-    const botPath = (id: BotId): string => join(botsDir, id, "bot.json");
-    const ownerPath = (sessionId: string): string => join(sessionsDir, sessionId, "bot.json");
+    const botPath = (id: BotId): string => join(botsDir, id, 'bot.json');
+    const ownerPath = (sessionId: string): string => join(sessionsDir, sessionId, 'bot.json');
 
     const readBot = async (id: BotId): Promise<BotConfig | null> => {
-        checkId("bot", id);
+        checkId('bot', id);
         let raw: string;
         try {
-            raw = await readFile(botPath(id), "utf-8");
+            raw = await readFile(botPath(id), 'utf-8');
         } catch {
             return null;
         }
@@ -67,16 +67,16 @@ export function createFileBotStore(options: FileBotStoreOptions): BotStore {
     };
 
     const readOwner = async (sessionId: string): Promise<BotId | null> => {
-        checkId("session", sessionId);
+        checkId('session', sessionId);
         let raw: string;
         try {
-            raw = await readFile(ownerPath(sessionId), "utf-8");
+            raw = await readFile(ownerPath(sessionId), 'utf-8');
         } catch {
             return null;
         }
         try {
             const parsed = JSON.parse(raw) as Partial<OwnerRecord> | null;
-            return typeof parsed?.botId === "string" ? parsed.botId : null;
+            return typeof parsed?.botId === 'string' ? parsed.botId : null;
         } catch {
             return null;
         }
@@ -84,9 +84,9 @@ export function createFileBotStore(options: FileBotStoreOptions): BotStore {
 
     const sessionUpdatedAt = async (sessionId: string): Promise<string | undefined> => {
         try {
-            const raw = await readFile(join(sessionsDir, sessionId, "meta.json"), "utf-8");
+            const raw = await readFile(join(sessionsDir, sessionId, 'meta.json'), 'utf-8');
             const parsed = JSON.parse(raw) as { readonly updatedAt?: unknown };
-            return typeof parsed.updatedAt === "string" ? parsed.updatedAt : undefined;
+            return typeof parsed.updatedAt === 'string' ? parsed.updatedAt : undefined;
         } catch {
             return undefined;
         }
@@ -96,11 +96,11 @@ export function createFileBotStore(options: FileBotStoreOptions): BotStore {
         load: readBot,
 
         async save(config): Promise<void> {
-            checkId("bot", config.id);
+            checkId('bot', config.id);
             validateConfig(config);
             await mkdir(join(botsDir, config.id), { recursive: true });
             // `needsModel` 是**读兼容标记**，不是身份的一部分：绝不落盘（##497）
-            await writeFile(botPath(config.id), `${JSON.stringify(persistable(config), null, 4)}\n`, "utf-8");
+            await writeFile(botPath(config.id), `${JSON.stringify(persistable(config), null, 4)}\n`, 'utf-8');
         },
 
         async list(): Promise<readonly BotConfig[]> {
@@ -121,7 +121,7 @@ export function createFileBotStore(options: FileBotStoreOptions): BotStore {
         },
 
         async remove(id): Promise<void> {
-            checkId("bot", id);
+            checkId('bot', id);
             // 只删 bot 自己；会话目录不碰（删 bot 不该丢数据）
             await rm(join(botsDir, id), { recursive: true, force: true });
         },
@@ -129,15 +129,15 @@ export function createFileBotStore(options: FileBotStoreOptions): BotStore {
         ownerOf: readOwner,
 
         async assign(sessionId, botId): Promise<void> {
-            checkId("session", sessionId);
-            checkId("bot", botId);
+            checkId('session', sessionId);
+            checkId('bot', botId);
             await mkdir(join(sessionsDir, sessionId), { recursive: true });
             const record: OwnerRecord = { botId };
-            await writeFile(ownerPath(sessionId), `${JSON.stringify(record, null, 4)}\n`, "utf-8");
+            await writeFile(ownerPath(sessionId), `${JSON.stringify(record, null, 4)}\n`, 'utf-8');
         },
 
         async sessionsOf(botId): Promise<readonly BotSessionRef[]> {
-            checkId("bot", botId);
+            checkId('bot', botId);
             let items: Dirent[];
             try {
                 items = await readdir(sessionsDir, { withFileTypes: true });
@@ -159,15 +159,15 @@ export function createFileBotStore(options: FileBotStoreOptions): BotStore {
 }
 
 function validateConfig(config: BotConfig): void {
-    if (typeof config.name !== "string" || typeof config.instructions !== "string") {
-        throw new BotError("bot/invalid-config", "bot 配置缺 name / instructions");
+    if (typeof config.name !== 'string' || typeof config.instructions !== 'string') {
+        throw new BotError('bot/invalid-config', 'bot 配置缺 name / instructions');
     }
     // ##497：model 必填 —— 不许再落一个「没有默认模型」的 bot（那种 bot 跨机器不成立）
-    if (typeof config.model !== "string" || config.model.trim() === "") {
-        throw new BotError("bot/invalid-config", "bot 配置缺 model（##497：必填）");
+    if (typeof config.model !== 'string' || config.model.trim() === '') {
+        throw new BotError('bot/invalid-config', 'bot 配置缺 model（##497：必填）');
     }
-    if (typeof config.createdAt !== "string" || typeof config.updatedAt !== "string") {
-        throw new BotError("bot/invalid-config", "bot 配置缺 createdAt / updatedAt");
+    if (typeof config.createdAt !== 'string' || typeof config.updatedAt !== 'string') {
+        throw new BotError('bot/invalid-config', 'bot 配置缺 createdAt / updatedAt');
     }
 }
 
@@ -196,21 +196,21 @@ function persistable(config: BotConfig): Record<string, unknown> {
  * 时自然落成新字段名。两个都没有 = 配置不完整（同旧行为：返回 null）。
  */
 function readInstructions(record: { readonly instructions?: unknown; readonly persona?: unknown }): string | null {
-    if (typeof record.instructions === "string") return record.instructions;
-    if (typeof record.persona === "string") return record.persona;
+    if (typeof record.instructions === 'string') return record.instructions;
+    if (typeof record.persona === 'string') return record.persona;
     return null;
 }
 
 function parseConfig(value: unknown): BotConfig | null {
-    if (value === null || typeof value !== "object") return null;
+    if (value === null || typeof value !== 'object') return null;
     const config = value as Partial<Record<keyof BotConfig, unknown>> & { readonly persona?: unknown };
     const instructions = readInstructions(config);
     if (
-        typeof config.id !== "string" ||
-        typeof config.name !== "string" ||
+        typeof config.id !== 'string' ||
+        typeof config.name !== 'string' ||
         instructions === null ||
-        typeof config.createdAt !== "string" ||
-        typeof config.updatedAt !== "string"
+        typeof config.createdAt !== 'string' ||
+        typeof config.updatedAt !== 'string'
     ) {
         return null;
     }
@@ -219,13 +219,13 @@ function parseConfig(value: unknown): BotConfig | null {
         name: config.name,
         instructions,
         // ##497：model 必填；存量文件没有 / 为空 ⇒ 空串 + needsModel，让 UI 拦住要求补选
-        model: typeof config.model === "string" ? config.model : "",
-        ...(typeof config.model === "string" && config.model.trim() !== "" ? {} : { needsModel: true }),
-        ...(typeof config.primarySessionId === "string" && config.primarySessionId !== ""
+        model: typeof config.model === 'string' ? config.model : '',
+        ...(typeof config.model === 'string' && config.model.trim() !== '' ? {} : { needsModel: true }),
+        ...(typeof config.primarySessionId === 'string' && config.primarySessionId !== ''
             ? { primarySessionId: config.primarySessionId }
             : {}),
-        ...(typeof config.reasoningEffort === "string" ? { reasoningEffort: config.reasoningEffort } : {}),
-        ...(typeof config.maxOutputTokens === "number" ? { maxOutputTokens: config.maxOutputTokens } : {}),
+        ...(typeof config.reasoningEffort === 'string' ? { reasoningEffort: config.reasoningEffort } : {}),
+        ...(typeof config.maxOutputTokens === 'number' ? { maxOutputTokens: config.maxOutputTokens } : {}),
         createdAt: config.createdAt,
         updatedAt: config.updatedAt,
     };

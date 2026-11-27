@@ -85,7 +85,11 @@ describe('job status / wait —— runDetail 那套', () => {
 
     it('wait 没等到：说明单独摘出来，不当成输出的一部分', () => {
         const view = jobOf(
-            tool('job', { action: 'wait', id: 'r-1' }, `${detail}\n（已等 5m00s，仍未结束；别干等长任务 —— 去做别的，结束会通知你）`),
+            tool(
+                'job',
+                { action: 'wait', id: 'r-1' },
+                `${detail}\n（已等 5m00s，仍未结束；别干等长任务 —— 去做别的，结束会通知你）`,
+            ),
         );
         expect(view?.note).toContain('已等 5m00s');
         expect(view?.tail).not.toContain('已等');
@@ -105,7 +109,9 @@ describe('job status / wait —— runDetail 那套', () => {
     });
 
     it('没有输出', () => {
-        const view = jobOf(tool('job', { action: 'status', id: 'r-1' }, 'r-1 · 已结束 · 0ms\n命令：true\n结局：退出码 0\n（无输出）'));
+        const view = jobOf(
+            tool('job', { action: 'status', id: 'r-1' }, 'r-1 · 已结束 · 0ms\n命令：true\n结局：退出码 0\n（无输出）'),
+        );
         expect(view?.tail).toBe('');
     });
 
@@ -116,7 +122,13 @@ describe('job status / wait —— runDetail 那套', () => {
     });
 
     it('工具自己报的错（没有这个进程）不是状态', () => {
-        const view = jobOf(tool('job', { action: 'status', id: 'gone' }, '[没有这个后台进程] gone（只认本 bot 起的；job list 看现有；宿主重启后表会清空）'));
+        const view = jobOf(
+            tool(
+                'job',
+                { action: 'status', id: 'gone' },
+                '[没有这个后台进程] gone（只认本 bot 起的；job list 看现有；宿主重启后表会清空）',
+            ),
+        );
         expect(view?.error).toContain('没有这个后台进程');
         expect(view?.state).toBeUndefined();
     });
@@ -144,7 +156,13 @@ describe('job list', () => {
 
 describe('job kill', () => {
     it('停止信号：id 与说明都留痕', () => {
-        const view = jobOf(tool('job', { action: 'kill', id: 'r-1' }, '已发送停止信号（进程组 4242）：r-1。稍后用 job status 确认终态。'));
+        const view = jobOf(
+            tool(
+                'job',
+                { action: 'kill', id: 'r-1' },
+                '已发送停止信号（进程组 4242）：r-1。稍后用 job status 确认终态。',
+            ),
+        );
         expect(view?.id).toBe('r-1');
         expect(view?.note).toContain('进程组 4242');
     });

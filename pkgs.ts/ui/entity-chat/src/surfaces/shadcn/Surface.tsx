@@ -16,7 +16,17 @@
 // 它是 listbox 语义（role=option + aria-selected + 键盘上下选），而 `Button` 自带 role/样式
 // 会与 option 语义打架；这里手写是为了可访问性，不是因为组件层不够用。
 
-import { AlertTriangle, ChevronDown, Loader2, Send, Square, Terminal as TerminalIcon, X as XIcon } from 'lucide-react';
+import {
+    AlertTriangle,
+    ChevronDown,
+    Hourglass,
+    Loader2,
+    Paperclip,
+    Send,
+    Square,
+    Terminal as TerminalIcon,
+    X as XIcon,
+} from 'lucide-react';
 import * as React from 'react';
 
 import {
@@ -67,6 +77,10 @@ import {
 } from '@diy-agent/ui-shadcn';
 
 import { AskCard } from '../../components/AskCard';
+import { AttachmentsRow } from '../../components/AttachmentsRow';
+import { MessageAttachments } from '../../components/MessageAttachments';
+import { useComposerAttachments } from '../../components/useComposerAttachments';
+import { acceptsImages } from '../../models';
 import { CopyButton } from '../../components/CopyButton';
 import { BotAvatar } from '../../components/BotAvatar';
 import { flashAskCardWhenRendered, registerAskJumper } from '../../askJump';
@@ -79,7 +93,7 @@ import { Markdown } from '../../components/Markdown';
 import { TurnFooter } from '../../components/TurnFooter';
 import { useDraft } from '../../drafts';
 import { useMentionCandidates } from '../../mentions';
-import { actions, conversationOf, useStore } from '../../store';
+import { actions, conversationOf, useBotProfiles, useProviders, useQueuedOf, useRooms, useStore } from '../../store';
 import { plainTextOf, runsOf, toolTargetOf, type Run } from '../shared';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
@@ -94,6 +108,76 @@ function Time({ at }: { at: number | undefined }) {
             {formatClock(at)}
         </span>
     );
+}
+
+/**
+ * 入参怎么显示：认出高频键就只显示值，认不出来才回退整段 JSON。
+ *
+ * `label` 是为了让读者知道「这一行是什么」——`command` 读作「命令」比读作「入参」直观。
+ */
+function inputOf(args: unknown): { label: string; text: string } | undefined {
+    if (args === undefined || args === null) return undefined;
+    if (typeof args === 'string') return args === '' ? undefined : { label: '入参', text: args };
+    if (typeof args !== 'object') return { label: '入参', text: String(args) };
+    const record = args as Record<string, unknown>;
+    // 值的形状优先：命令 > 路径 > 查询。其余键不丢 —— 附在末尾，免得「还有别的参数」看不见
+    const known: Array<[key: string, label: string]> = [
+        ['command', '命令'],
+        ['cmd', '命令'],
+        ['script', '脚本'],
+        ['file_path', '路径'],
+        ['path', '路径'],
+        ['query', '查询'],
+        ['pattern', '模式'],
+        ['url', '地址'],
+    ];
+    for (const [key, label] of known) {
+        const value = record[key];
+        if (typeof value !== 'string' || value === '') continue;
+        const rest = Object.entries(record).filter(([other, item]) => other !== key && item !== undefined);
+        return {
+            label,
+            text:
+                rest.length === 0
+                    ? value
+                    : `${value}\n\n（附带参数）\n${JSON.stringify(Object.fromEntries(rest), null, 2)}`,
+        };
+    }
+    return { label: '入参', text: stringify(args) };
+}
+
+/**
+ * 输出怎么显示：`stdout` / `stderr` / `error` 三个键拆开读，别整个对象 JSON 一遍。
+ *
+ * 这三样是工具结果的全部语义：跑出什么、报错什么、错在哪。剩下的键（exitCode / durationMs…）
+ * 附在后面 —— 它们是旁注，不是正文。
+ */
+function outputOf(result: unknown): { label: string; text: string; failed: boolean } | undefined {
+    if (result === undefined || result === null) return undefined;
+    if (typeof result === 'string') return result === '' ? undefined : { label: '输出', text: result, failed: false };
+    if (typeof result !== 'object') return { label: '输出', text: String(result), failed: false };
+    const record = result as Record<string, unknown>;
+    const stdout = typeof record.stdout === 'string' ? record.stdout : undefined;
+    const stderr = typeof record.stderr === 'string' ? record.stderr : undefined;
+    const error = typeof record.error === 'string' ? record.error : undefined;
+    const rest = Object.entries(record).filter(
+        ([key]) => !['stdout', 'stderr', 'error'].includes(key) && record[key] !== undefined,
+    );
+    const parts: string[] = [];
+    if (stdout !== undefined && stdout !== '') parts.push(stdout);
+    if (stderr !== undefined && stderr !== '') parts.push(`stderr:\n${stderr}`);
+    if (error !== undefined && error !== '') parts.push(`错误:\n${error}`);
+    if (parts.length === 0) return { label: '输出', text: stringify(result), failed: false };
+    if (rest.length > 0) parts.push(`（其他）\n${JSON.stringify(Object.fromEntries(rest), null, 2)}`);
+    return { label: error !== undefined ? '错误' : '输出', text: parts.join('\n\n'), failed: error !== undefined };
+}
+
+function stringify(value: unknown): string {
+    try {
+        return JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+        return String(value);
+    }
 }
 
 function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool' }>; live?: boolean }) {
@@ -133,17 +217,12 @@ function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: 
     const target = toolTargetOf(tool);
     const status = TOOL_STATUS[tool.state];
     const failed = status === 'error';
-    const asText = (value: unknown): string | undefined => {
-        if (value === undefined || value === null) return undefined;
-        if (typeof value === 'string') return value === '' ? undefined : value;
-        try {
-            return JSON.stringify(value, null, 2);
-        } catch {
-            return String(value);
-        }
-    };
-    const input = asText(tool.args);
-    const output = asText(tool.result);
+    // 入参 / 输出按**工具的已知形状**渲染，而不是一律 `JSON.stringify`：
+    // 用户 2026-11-27：「tool 显示的是纯 json，有更好的显示组件吗」。`{"command":"pwd"}`
+    // 这层括号是数据结构的痕迹，不是他关心的东西 —— 他要看的是「跑了什么、输出了什么」。
+    // 所以先认几个高频键（命令 / 路径 / 查询），认得出来就只显示那个值；认不出来才回退 JSON。
+    const input = inputOf(tool.args);
+    const output = outputOf(tool.result);
     // 官方 ai-elements 的 Tool 就是「Trace 里一行 + 有输出时套一层 Collapsible」：
     // 标题说清发生了什么（Running / Ran / Failed），展开体分 Input / Output 两块。
     const title =
@@ -175,20 +254,20 @@ function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: 
                     {input !== undefined && (
                         <CodeBlock size="sm" className="mb-1.5">
                             <CodeBlockHeader>
-                                <CodeBlockTitle>入参</CodeBlockTitle>
+                                <CodeBlockTitle>{input.label}</CodeBlockTitle>
                             </CodeBlockHeader>
                             <CodeBlockContent wrap className="max-h-48">
-                                {input}
+                                {input.text}
                             </CodeBlockContent>
                         </CodeBlock>
                     )}
                     {output !== undefined && (
-                        <CodeBlock size="sm" variant={failed ? 'destructive' : 'default'}>
+                        <CodeBlock size="sm" variant={failed || output.failed ? 'destructive' : 'default'}>
                             <CodeBlockHeader>
-                                <CodeBlockTitle>{failed ? '错误' : '输出'}</CodeBlockTitle>
+                                <CodeBlockTitle>{output.label}</CodeBlockTitle>
                             </CodeBlockHeader>
                             <CodeBlockContent wrap className="max-h-64">
-                                {output}
+                                {output.text}
                             </CodeBlockContent>
                         </CodeBlock>
                     )}
@@ -313,16 +392,26 @@ function EntryView({
 
     if (entry.kind === 'user') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
-        const failed = entry.deliveries.filter((delivery) => delivery.state === 'failed');
+        const failed = entry.deliveries.filter((delivery) => delivery.state === 'done' && delivery.note === 'failed');
         return (
             <Message align="end" className="my-3">
                 <MessageContent>
-                    {/* 投递失败时整条气泡走 destructive —— 与 astryx 面的
-                        deliveryStatusOf(deliveries) 同一个判据（failed 才算，queued/delivering 不算：
-                        那时 bot 正在执行，界面上已经有执行中指示器，再标一次会重复） */}
-                    <Bubble align="end" variant={failed.length > 0 ? 'destructive' : 'muted'}>
-                        <BubbleContent className="whitespace-pre-wrap break-words">{text}</BubbleContent>
-                    </Bubble>
+                    {/* 附件在气泡**上方**（图比文字更该先看到）；
+                        只有附件没有正文时不出空气泡 —— 空 Bubble 会留一道边 */}
+                    <MessageAttachments
+                        {...(entry.attachments === undefined ? {} : { refs: entry.attachments })}
+                        read={(attachment) =>
+                            conversationOf(roomId).readAttachment?.(attachment) ??
+                            Promise.reject(new Error('当前后端不支持附件'))
+                        }
+                    />
+                    {text !== '' && (
+                        // 投递失败时整条气泡走 destructive（failed 才算；queued/delivering 不算：
+                        // 那时 bot 正在执行，界面上已经有执行中指示器，再标一次会重复）
+                        <Bubble align="end" variant={failed.length > 0 ? 'destructive' : 'muted'}>
+                            <BubbleContent className="whitespace-pre-wrap break-words">{text}</BubbleContent>
+                        </Bubble>
+                    )}
                     <div className="flex items-center gap-2 self-end pr-1 text-xs text-muted-foreground">
                         {failed.length > 0 && (
                             <span className="text-destructive">{failed.map((d) => `${d.name} 未送达`).join('、')}</span>
@@ -381,13 +470,28 @@ const MessageList = React.memo(function MessageList({
     roomId: string;
     onStopBot?: (botId: string) => void;
 }) {
+    // **只有最后一条用户消息**是锚点。之前写的是「每条 user 都是」，126 条消息的会话里就有
+    // 37 个锚点 —— 组件的锚点解析（取可见区内最后一个）在这种密度下会把初始位置定到最上面，
+    // 于是进房间 / 发完消息就停在历史顶部（用户报的「自动滚到最上面」）。
+    // 语义上锚点本来也该是「当前这一轮的起点」，历史回合没有资格当参考系。
+    const lastUserKey = React.useMemo(() => {
+        for (let index = entries.length - 1; index >= 0; index -= 1) {
+            if (entries[index]!.kind === 'user') return entries[index]!.key;
+        }
+        return undefined;
+    }, [entries]);
+
     return (
         <>
             {entries.map((entry) => (
-                // scrollAnchor 挂在用户回合：新问题落在顶部、回复在它下面流式长出
-                <MessageScrollerItem key={entry.key} messageId={entry.key} scrollAnchor={entry.kind === 'user'}>
+                // 最后一条用户消息当锚点：新问题落在顶部、回复在它下面流式长出
+                <MessageScrollerItem key={entry.key} messageId={entry.key} scrollAnchor={entry.key === lastUserKey}>
                     {/* content-visibility：离开视口的条目跳过布局/绘制 */}
-                    <div style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}>
+                    {/* data-message-id：账本条目上的「来自哪句话」靠它滚过来（见 askJump.ts::jumpToMessage） */}
+                    <div
+                        data-message-id={entry.key}
+                        style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
+                    >
                         <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                     </div>
                 </MessageScrollerItem>
@@ -510,6 +614,19 @@ function Composer({
     const [submitting, setSubmitting] = React.useState(false);
     const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
     const candidates = useMentionCandidates(roomId);
+    // 粘贴 / 拖拽 / 选图：上传在**发送之前**（失败的图还能重试，不会变成气泡里的裂图）
+    const attachments = useComposerAttachments(conversation, roomId);
+    const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+    // 贴了图、但当前模型不收图 —— 发之前就说清楚，别等上游 400（服务端也会兜一层）
+    const rooms = useRooms();
+    const providers = useProviders();
+    // 模型键在**角色**上（房间级 modelKey 已于 2026-11-27 退役）：
+    // 取这个房间主成员对应的机器人配置，没有就空串（= 跟随默认模型）
+    const botProfiles = useBotProfiles();
+    const room = rooms.find((item) => item.id === roomId);
+    const modelKeyOfRoom =
+        botProfiles.find((profile) => profile.id === room?.members[0]?.botId)?.modelKey ?? '';
+    const noVision = attachments.items.length > 0 && !acceptsImages(providers, modelKeyOfRoom);
 
     /**
      * @ 补全的规则全在 chat-core（`mentionQuery` / `filterMentionCandidates` / `completeMention` /
@@ -546,12 +663,16 @@ function Composer({
 
     const send = () => {
         const text = draft.text.trim();
-        if (text === '' || submitting) return;
+        // 空正文 + 有附件是合法的（贴一张图什么都不打）
+        if ((text === '' && attachments.refs === undefined) || submitting) return;
         setSubmitting(true);
-        // 发送成功才清草稿；失败保留输入框里的字
+        // 发送成功才清草稿与附件；失败两者都留着（用户能重发，不用重新贴一遍）
         void conversation
-            .send(text)
-            .then(() => draft.clearIfMatches(text))
+            .send(text, attachments.refs)
+            .then(() => {
+                draft.clearIfMatches(text);
+                attachments.clear();
+            })
             .catch(() => undefined)
             .finally(() => {
                 setSubmitting(false);
@@ -575,7 +696,29 @@ function Composer({
              * 之前是「手写圆角大框 + 里面再套一个 InputGroup + 外面再接一条 ComposerBar」，
              * 于是有两层边框，而工具条其实落在框外，看起来就还是个单行输入框。
              */}
-            <div className="relative">
+            {/* 待发附件与提示：放在输入框**上方** —— 与「刚贴进来」的动作最近 */}
+            <AttachmentsRow items={attachments.items} onRemove={attachments.remove} busy={attachments.busy} />
+            {noVision && (
+                <div className="pb-1 text-xs text-destructive">
+                    当前模型不收图：这张图不会送进模型（想让它看，到底栏切一个带 🖼 的模型）
+                </div>
+            )}
+            {attachments.error !== undefined && (
+                <div className="pb-1 text-xs text-destructive">{attachments.error}</div>
+            )}
+            <div
+                className="relative"
+                onDragOver={(event) => {
+                    // 只有真的拖了文件才拦：否则「拖选文字」也会变成 drop 目标
+                    if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+                }}
+                onDrop={(event) => {
+                    const files = Array.from(event.dataTransfer.files);
+                    if (files.length === 0) return;
+                    event.preventDefault();
+                    attachments.addFiles(files);
+                }}
+            >
                 {menuOpen && (
                     <MentionMenu candidates={matches} activeIndex={active} onPick={pick} onHover={setActive} />
                 )}
@@ -586,6 +729,34 @@ function Composer({
                         onChange={(event) => {
                             draft.setText(event.target.value);
                             setDismissed(false);
+                        }}
+                        onPaste={(event) => {
+                            // 剪贴板里既有文字又有图时只拦「有文件」那一种：
+                            // 拦掉纯文字粘贴会让人没法在输入框里粘链接。
+                            // files 与 items 都看：不同来源（截图 / Finder 复制）会给其中一个空。
+                            const transfer = event.clipboardData;
+                            const fromItems = Array.from(transfer.items)
+                                .filter((item) => item.kind === 'file')
+                                .map((item) => item.getAsFile())
+                                .filter((file): file is File => file !== null);
+                            const seen = new Set<string>();
+                            const files = [...Array.from(transfer.files), ...fromItems].filter((file) => {
+                                const key = `${file.name}|${file.size}|${file.lastModified}`;
+                                if (seen.has(key)) return false;
+                                seen.add(key);
+                                return true;
+                            });
+                            if (files.length > 0) {
+                                event.preventDefault();
+                                attachments.addFiles(files);
+                                return;
+                            }
+                            // 有「文件」类型却读不到内容（少数浏览器/终端只给文件引用不给字节）：
+                            // 说清楚该怎么绕，别静默什么都不做
+                            if (transfer.types.includes('Files')) {
+                                event.preventDefault();
+                                attachments.warn('这条粘贴没带文件内容，拿不到图片字节 —— 把文件拖进来，或点回形针选');
+                            }
                         }}
                         onKeyDown={(event) => {
                             // 浮层开着时：上下选、Enter/Tab 确认、Esc 关。这几键不能落到「发送」上。
@@ -619,13 +790,36 @@ function Composer({
                             }
                         }}
                         rows={1}
-                        placeholder="和这个实体对话…（@ 选 bot）"
+                        placeholder="和这个实体对话…（@ 选 bot、粘贴/拖入图片）"
                         className="max-h-40 flex-none p-3 text-sm"
                     />
                     {/* 底栏：工具在左、发送在右（官方 prompt-input 的摆法）。
                     工具条原先在框外单独一行，现在回到框内 —— 这也是用户 2026-11-24 的原话。 */}
                     <InputGroupAddon align="block-end" className="gap-1 pr-1.5 pb-1">
                         {extras}
+                        {/* 选图 / 选文件：粘贴与拖拽之外的第三条入口 ——
+                            它也是唯一能被自动化测到的入口（拖拽要构造 DataTransfer） */}
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => {
+                                const files = Array.from(event.target.files ?? []);
+                                if (files.length > 0) attachments.addFiles(files);
+                                // 清空 value：同一个文件连选两次也要能再触发一次 change
+                                event.target.value = '';
+                            }}
+                        />
+                        <InputGroupButton
+                            size="icon-sm"
+                            className={running ? undefined : 'ml-auto'}
+                            disabled={!attachments.supported || submitting}
+                            title={attachments.supported ? '添加附件（也可以直接粘贴 / 拖进来）' : '当前后端不支持附件'}
+                            onClick={() => fileInputRef.current?.click()}
+                        >
+                            <Paperclip className="size-4" />
+                        </InputGroupButton>
                         {running ? (
                             <InputGroupButton
                                 size="icon-sm"
@@ -640,7 +834,7 @@ function Composer({
                                 size="icon-sm"
                                 className="ml-auto"
                                 title="发送"
-                                disabled={draft.text.trim() === '' || submitting}
+                                disabled={(draft.text.trim() === '' && attachments.refs === undefined) || submitting}
                                 onClick={send}
                             >
                                 <Send className="size-4" />
@@ -655,6 +849,10 @@ function Composer({
 
 export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; composerExtras?: React.ReactNode }) {
     const shell = useStore();
+    // 这个房间自己的排队数（`queued` / `delivering`）。聊天窗口是**事实的来源**：
+    // 侧栏那颗沙漏、标题栏那颗 queued 胶囊都是它的投影 —— 所以这里也得有，
+    // 否则用户看得见「别处在排队」却在自己正在看的窗口里找不到原因（用户 2026-11-27）。
+    const queued = useQueuedOf(targetId);
     const conversation = conversationOf(targetId);
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
 
@@ -696,6 +894,23 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
             )}
             {/* 顶部常驻：描述的是「更早」，不跟消息一起滚走 —— 也免得干扰“滑到顶补一窗”的边界 */}
             <div className="px-6 pt-2">
+                {/*
+                 * 历史分页（2026-11-26）：服务端默认只发最近 400 条 —— 6000+ 条的房间里
+                 * 全量回包 5.7 MB，JSON.parse + 渲染就是 2~5 秒的长任务（切任务/点输入框卡）。
+                 *
+                 * 点它**不要再一次全量**（那是给“几百兆的会话”留的最大一个坑）：`loadMore`
+                 * 每次把窗口翻一倍，回包永远可控；真要看到头就多点几下。
+                 */}
+                {state.truncated === true && (
+                    <button
+                        onClick={() => conversation.loadMore()}
+                        title="每次加载当前的再一倍（不是一次全量）"
+                        className="my-1 w-full rounded border border-border/60 px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/60"
+                    >
+                        上面还有 {Math.max(0, (state.totalItems ?? 0) - state.items.length)} 条更早的消息未加载 ·
+                        点此再加载一倍
+                    </button>
+                )}
                 <CompactCutBar sessions={sessions} />
             </div>
             {/*
@@ -712,6 +927,16 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
                     <MessageScrollerButton className="rounded-full" />
                 </MessageScroller>
             </MessageScrollerProvider>
+            {/* 排队提示：只在真有投递排队时出现，一条细行，不折叠也不弹窗 ——
+                它不是「要你动手」，是个「稍等」的说明（判据与侧栏那颗沙漏同源）。 */}
+            {queued > 0 && (
+                <div className="flex items-center gap-1.5 px-6 pb-1 text-xs text-muted-foreground">
+                    <Hourglass className="size-3 shrink-0" />
+                    <span>
+                        <span className="tabular-nums">{queued}</span> 条消息排队中，等 bot 接收
+                    </span>
+                </div>
+            )}
             <Composer conversation={conversation} roomId={targetId} running={state.running} extras={composerExtras} />
         </div>
     );

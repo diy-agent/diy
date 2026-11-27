@@ -4,6 +4,8 @@
 //   现在：@diy-agent/chat-transport-rpc
 //   将来：@diy-agent/chat-transport-rpc（diy-rpc 落地后直接换实现，core 不动）
 
+import type { AttachmentRef } from '@diy-agent/protocol';
+
 import type { ActivityFrame, AskAnswer, Command, Snapshot, StreamEvent } from './types';
 
 export interface TokenUsage {
@@ -69,7 +71,12 @@ export interface CompactOutcome {
 
 export interface ChatClient {
     /** 拉历史快照（首屏 / 重载 / 重放） */
-    load(entityId: string): Promise<Snapshot>;
+    /**
+     * 拉快照。`limit` 缺省 = 服务端缺省的分页（只发最近一截）；`0` = 全量。
+     *
+     * 见 `Snapshot.truncated`：6000+ 条的房间里全量回包 5.7 MB，parse + 渲染 2~5 秒。
+     */
+    load(entityId: string, options?: { limit?: number }): Promise<Snapshot>;
 
     /**
      * 提交命令；事件通过 onEvent 回推。signal 取消只影响本地这次请求（不影响服务端的运行）。
@@ -84,15 +91,27 @@ export interface ChatClient {
         signal?: AbortSignal,
     ): Promise<void>;
 
+    /**
+     * 可选：把一份字节传进附件库（粘贴 / 拖拽 / 选图），拿回 ref。
+     *
+     * 缺这个方法 = 后端不支持附件（老服务端 / 纯 mock）—— 界面据此禁用贴图，
+     * 而不是让用户贴完图再发现发不出去。
+     */
+    putAttachment?(input: {
+        readonly name?: string;
+        readonly mime?: string;
+        readonly bytes: Uint8Array;
+        readonly source?: 'paste' | 'drop' | 'pick' | 'tool';
+    }): Promise<AttachmentRef>;
+
+    /** 可选：取回附件内容（显示缩略图 / 原图） */
+    readAttachment?(ref: AttachmentRef): Promise<{ base64: string; mime: string }>;
+
     /** 可选：上下文观测（后端支持才有） */
     sessions?(entityId: string): Promise<SessionInfo[]>;
 
     /** 可选：手动压缩某个 bot 的上下文（只影响它自己，不触发运行） */
-    compact?(
-        entityId: string,
-        botId: string,
-        options?: { keepTurns?: number },
-    ): Promise<CompactOutcome>;
+    compact?(entityId: string, botId: string, options?: { keepTurns?: number }): Promise<CompactOutcome>;
 
     /**
      * 可选：撤掉一次正在跑的压缩。

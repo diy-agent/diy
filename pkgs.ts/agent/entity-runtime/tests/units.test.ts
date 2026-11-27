@@ -16,7 +16,9 @@ function unit(
     seq = Number(id.replace(/\D/g, '') || 0),
     parent: string | null = null,
 ): UnitFacts {
-    return { id, title: `标题 ${id}`, status, seq, parent };
+    // 验收口径缺省给一个：`unitTreeLines` 会给「缺验收」的叶子加行尾标记，
+    // 不带的用例请显式传 ''（见「缺验收」那条）
+    return { id, title: `标题 ${id}`, status, seq, parent, accept: '验收：能指出一个具体行为' };
 }
 
 describe('unitBoard：一棵需求账本树', () => {
@@ -102,8 +104,26 @@ describe('unitTreeLines：模型读到的缩进树', () => {
         ]);
     });
 
-    it('withBody 时把验收口径接在行尾（不进上下文，只给需要看的人）', () => {
-        const board = unitBoard([{ id: 'a', title: 'A', status: 'open', seq: 1, body: '测试全绿' }]);
-        expect(unitTreeLines(board, { withBody: true })).toEqual(['- [>] A (a)  body: 测试全绿']);
+    it('withBody 时把 body 接在行尾（不进上下文，只给需要看的人）', () => {
+        const board = unitBoard([
+            {
+                id: 'a',
+                title: 'A',
+                status: 'open',
+                seq: 1,
+                body: '背景：用户报的导出缺失',
+                accept: '导出点一下真落文件',
+            },
+        ]);
+        expect(unitTreeLines(board, { withBody: true })).toEqual(['- [>] A (a)  body: 背景：用户报的导出缺失']);
+    });
+
+    it('叶子缺验收口径 ⇒ 行尾标「缺验收」（母项不标）', () => {
+        const board = unitBoard([
+            { id: 'g', title: '母项', status: 'open', seq: 1, parent: null, accept: '' },
+            { id: 'a', title: 'A', status: 'open', seq: 2, parent: 'g', accept: '' },
+            { id: 'b', title: 'B', status: 'open', seq: 3, parent: 'g', accept: '有单测' },
+        ]);
+        expect(unitTreeLines(board)).toEqual(['- [ ] 母项 (g)', '  - [>] A (a)  缺验收', '  - [>] B (b)']);
     });
 });

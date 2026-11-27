@@ -1,4 +1,10 @@
-import { GenApp, html, mountStream, Signal, type GenNode } from "../../../src/browser.js";
+import {
+  GenApp,
+  html,
+  mountStream,
+  Signal,
+  type GenNode,
+} from "../../../src/browser.js";
 
 /**
  * generator cell —— **B 风格**对照 `generator_cell_demo.ts`（A 风格，用 `n.label()` 逐步挂）。
@@ -9,7 +15,8 @@ import { GenApp, html, mountStream, Signal, type GenNode } from "../../../src/br
  *   ③ 想在 B 里做到「逐条出现」，必须换成 `mountStream`（异步源 → 每条 insert）。
  */
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, ms));
 
 /** 一个带节奏的异步源：每 400ms 吐一条 */
 async function* steps(): AsyncGenerator<string> {
@@ -32,7 +39,10 @@ export function generatorCellGenDemo(el: HTMLElement): void {
 
       // ① 同步生成器：三个 yield 在同一轮 drain 完 → 同时出现
       yield html.div({ class: "panel-block" }, function* () {
-        yield html.div({ class: "panel-muted", text: "① children 生成器（同步 drain → 同时出现）" });
+        yield html.div({
+          class: "panel-muted",
+          text: "① children 生成器（同步 drain → 同时出现）",
+        });
         yield html.div({ class: "panel-line", text: "🔄 步骤 1/3" });
         yield html.div({ class: "panel-line", text: "🔄 步骤 2/3" });
         yield html.div({ class: "panel-line", text: "✅ 步骤 3/3" });
@@ -40,9 +50,16 @@ export function generatorCellGenDemo(el: HTMLElement): void {
 
       // ② 响应式：count 控制子节点数量（keyed，追加/移除只动差量）
       yield html.div({ class: "panel-block" }, function* () {
-        yield html.div({ class: "panel-muted", text: "② 响应式列表（keyed 对账）" });
+        yield html.div({
+          class: "panel-muted",
+          text: "② 响应式列表（keyed 对账）",
+        });
         for (let i = 0; i < count.value; i++) {
-          yield html.div({ key: `item-${i}`, class: "panel-line", text: `  📄 item ${i + 1}` });
+          yield html.div({
+            key: `item-${i}`,
+            class: "panel-line",
+            text: `  📄 item ${i + 1}`,
+          });
         }
       });
 
@@ -65,7 +82,10 @@ export function generatorCellGenDemo(el: HTMLElement): void {
 
       // ③ 逐条出现：必须换 mountStream（异步源 → 每条 insert，不重跑）
       yield html.div({ class: "panel-block" }, function* () {
-        yield html.div({ class: "panel-muted", text: "③ mountStream（异步源 → 逐条 insert）" });
+        yield html.div({
+          class: "panel-muted",
+          text: "③ mountStream（异步源 → 逐条 insert）",
+        });
         yield html.div({ class: "panel-row" }, function* () {
           yield html.button({
             class: "panel-btn",
@@ -73,18 +93,19 @@ export function generatorCellGenDemo(el: HTMLElement): void {
             onClick: () => {
               stop?.();
               if (!streamNode) return;
-              for (const k of [...(streamNode.keyedChildren?.keys() ?? [])]) streamNode.remove(k);
+              // 快照必须：循环体里 `remove(k)` 会改 keyedChildren
+              // oxlint-disable-next-line no-useless-spread
+              for (const k of [...(streamNode.keyedChildren?.keys() ?? [])])
+                streamNode.remove(k);
               stop = mountStream(streamNode, steps(), (line) =>
                 html.div({ class: "panel-line", text: line }),
               );
             },
           });
         });
-        yield html
-          .div({ class: "panel-lines" })
-          .unsafe((n: GenNode) => {
-            streamNode = n;
-          });
+        yield html.div({ class: "panel-lines" }).unsafe((n: GenNode) => {
+          streamNode = n;
+        });
       });
     }),
   );

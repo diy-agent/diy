@@ -35,7 +35,8 @@ export function reactiveGenDemo(el: HTMLElement): void {
       // 状态：text getter → 只 patch 文本
       yield html.div({
         class: "panel-out",
-        text: () => `Counter: ${count.value}\nInput:   ${inputValue.value || "(empty)"}`,
+        text: () =>
+          `Counter: ${count.value}\nInput:   ${inputValue.value || "(empty)"}`,
       });
 
       yield html.input({
@@ -54,7 +55,10 @@ export function reactiveGenDemo(el: HTMLElement): void {
         },
       });
 
-      yield html.div({ class: "panel-muted", text: "Type text, Enter to add." });
+      yield html.div({
+        class: "panel-muted",
+        text: "Type text, Enter to add.",
+      });
     }),
   );
 }

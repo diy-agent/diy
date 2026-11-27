@@ -19,12 +19,12 @@
 //   · 不 import `@diy-agent/llm-provider`（数据与行为分离）
 //   · 不读环境变量做选择，只在展开 `$VAR` 时用（可用 `options.env` 注入）
 
-export { CatalogError } from "./errors.js";
-export type { CatalogErrorCode } from "./errors.js";
+export { CatalogError } from './errors.js';
+export type { CatalogErrorCode } from './errors.js';
 
 // 价目 × 用量 = 金额（纯函数；价目表在本包，算价跟它住一起）
-export { costOf } from "./cost.js";
-export type { CostUsage } from "./cost.js";
+export { costOf } from './cost.js';
+export type { CostUsage } from './cost.js';
 
 export {
     availableProviders,
@@ -53,6 +53,7 @@ export type {
 } from "./catalog.js";
 export type { ProviderModelPatch, SaveAccountInput, SaveProviderInput, SavedAccount } from "./write.js";
 export { effectiveMaxOutputTokens } from "./catalog.js";
+export { canSeeImages } from "./catalog.js";
 export type {
     CatalogOptions,
     ModelCatalogCapabilities,

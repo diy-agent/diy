@@ -189,12 +189,12 @@ await remote.say({ who: '你' }); // Promise<number>，类型从声明推出来
 await remote.slow({ ms: 3000 }, { signal }); // 不用 $call
 ```
 
-|              | 手写桥（06）                             | `cmd`（08）                           |
-| ------------ | ---------------------------------------- | ------------------------------------- |
-| 契约         | `api.ts` 36 行，手写类型                 | `cmd()` 声明，类型自动推              |
-| 服务端转手   | `server.ts` 40 行                        | `serveActor` 一行                     |
-| 取消         | `room.$call('slow', [3000], { signal })` | `room.slow({ ms: 3000 }, { signal })` |
-| 契约+实现+转手 | 127 行                                 | 62 行 + 一行 `serveActor`             |
+|                | 手写桥（06）                             | `cmd`（08）                           |
+| -------------- | ---------------------------------------- | ------------------------------------- |
+| 契约           | `api.ts` 36 行，手写类型                 | `cmd()` 声明，类型自动推              |
+| 服务端转手     | `server.ts` 40 行                        | `serveActor` 一行                     |
+| 取消           | `room.$call('slow', [3000], { signal })` | `room.slow({ ms: 3000 }, { signal })` |
+| 契约+实现+转手 | 127 行                                   | 62 行 + 一行 `serveActor`             |
 
 **没有换协议**：底下仍然是 `mountService` / `createTypedClient` / transport / cancel 帧，或者说它就是用掉 rpc 已有的东西把上面那两块样板自动生成出来。
 

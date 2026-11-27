@@ -53,71 +53,75 @@ export function createOpenAiCompatible(config: ProviderConfig): LlmProvider {
     // 静态 header 在建 provider 时固定；带 `$SESSION` 的要等每次调用的 sessionId 才知道值，单独拿出来
     const { fixed, templated } = splitHeaders(config.headers);
     /**
- * 给 fetch 包一层：每次真发之后记一条流量。
- *
- * 三条边界：
- *   · **不改请求**：`Request.clone()` 读 body，原 stream 原样放行；
- *   · **不读响应体**：只记拿到响应头的时刻（TTFB）—— 在流式响应上读 clone 会拖慢首字节；
- *   · **永不抛**：`traffic.push` 在 HTTP 热路径上，记日志失败不该让请求失败。
- *
- * 为什么在 fetch 这一层而不是更上层：ai-sdk 的 `streamText` 把请求体（含 system /
- * tools / messages）全在 `Request.body` 里，这是**唯一**能看到「真发了什么」的位置。
- */
-function wrapFetchWithTraffic(fetchImpl: typeof globalThis.fetch, port: TrafficPort, baseURL: string): typeof globalThis.fetch {
-    return async (input, init) => {
-        const started = Date.now();
-        const req = input instanceof Request ? input : new Request(input, init);
-        let reqBody: unknown = null;
-        let reqBytes = 0;
-        try {
-            const text = await req.clone().text();
-            reqBytes = Buffer.byteLength(text, 'utf8');
-            reqBody = text === '' ? null : (JSON.parse(text) as unknown);
-        } catch {
-            /* 读不出来不阻断：body 可能是 stream / 非 JSON */
-        }
+     * 给 fetch 包一层：每次真发之后记一条流量。
+     *
+     * 三条边界：
+     *   · **不改请求**：`Request.clone()` 读 body，原 stream 原样放行；
+     *   · **不读响应体**：只记拿到响应头的时刻（TTFB）—— 在流式响应上读 clone 会拖慢首字节；
+     *   · **永不抛**：`traffic.push` 在 HTTP 热路径上，记日志失败不该让请求失败。
+     *
+     * 为什么在 fetch 这一层而不是更上层：ai-sdk 的 `streamText` 把请求体（含 system /
+     * tools / messages）全在 `Request.body` 里，这是**唯一**能看到「真发了什么」的位置。
+     */
+    function wrapFetchWithTraffic(
+        fetchImpl: typeof globalThis.fetch,
+        port: TrafficPort,
+        baseURL: string,
+    ): typeof globalThis.fetch {
+        return async (input, init) => {
+            const started = Date.now();
+            const req = input instanceof Request ? input : new Request(input, init);
+            let reqBody: unknown = null;
+            let reqBytes = 0;
+            try {
+                const text = await req.clone().text();
+                reqBytes = Buffer.byteLength(text, 'utf8');
+                reqBody = text === '' ? null : (JSON.parse(text) as unknown);
+            } catch {
+                /* 读不出来不阻断：body 可能是 stream / 非 JSON */
+            }
 
-        const res = await fetchImpl(input, init);
-        // ⚠ **绝不能 `await res.clone().text()`**（2026-11-10 实测踩到）：
-        // 流式响应上这句会把整条流读完才返回，ai-sdk 拿到 res 时首字节已经被推迟了
-        // 一整个响应周期 —— 实测 diy2 单轮 9.7s，而 curl 直连同一端点 ttfb 只有 1.17s。
-        // 所以这里只记**拿到响应头**那一刻（TTFB），响应体不读（要看它请开 traffic 的全文抓取，
-        // 那是另一个口子，不该压在这条热路径上）。
-        const ttfbMs = Date.now() - started;
+            const res = await fetchImpl(input, init);
+            // ⚠ **绝不能 `await res.clone().text()`**（2026-11-10 实测踩到）：
+            // 流式响应上这句会把整条流读完才返回，ai-sdk 拿到 res 时首字节已经被推迟了
+            // 一整个响应周期 —— 实测 diy2 单轮 9.7s，而 curl 直连同一端点 ttfb 只有 1.17s。
+            // 所以这里只记**拿到响应头**那一刻（TTFB），响应体不读（要看它请开 traffic 的全文抓取，
+            // 那是另一个口子，不该压在这条热路径上）。
+            const ttfbMs = Date.now() - started;
 
-        try {
-            port.push({
-                kind: 'http',
-                at: started,
-                url: req.url,
-                method: req.method,
-                host: safeHostOf(req.url, baseURL),
-                reqBytes,
-                reqBody,
-                status: res.status,
-                ttfbMs,
-                ms: ttfbMs,
-            });
-        } catch {
-            /* 见函数头：永不抛 */
-        }
-        return res;
-    };
-}
-
-/** 从 URL 里取 host（`URL` 解析失败就退回配置的 baseURL，再失败给空串） */
-function safeHostOf(url: string, baseURL: string): string {
-    for (const candidate of [url, baseURL]) {
-        try {
-            return new URL(candidate).host;
-        } catch {
-            /* 换下一个 */
-        }
+            try {
+                port.push({
+                    kind: 'http',
+                    at: started,
+                    url: req.url,
+                    method: req.method,
+                    host: safeHostOf(req.url, baseURL),
+                    reqBytes,
+                    reqBody,
+                    status: res.status,
+                    ttfbMs,
+                    ms: ttfbMs,
+                });
+            } catch {
+                /* 见函数头：永不抛 */
+            }
+            return res;
+        };
     }
-    return '';
-}
 
-const provider = createOpenAICompatible({
+    /** 从 URL 里取 host（`URL` 解析失败就退回配置的 baseURL，再失败给空串） */
+    function safeHostOf(url: string, baseURL: string): string {
+        for (const candidate of [url, baseURL]) {
+            try {
+                return new URL(candidate).host;
+            } catch {
+                /* 换下一个 */
+            }
+        }
+        return '';
+    }
+
+    const provider = createOpenAICompatible({
         name: config.name ?? 'diy-llm-provider',
         baseURL: config.baseURL,
         apiKey: config.apiKey,

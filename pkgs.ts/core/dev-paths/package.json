@@ -2,6 +2,20 @@
     "name": "@diy-agent/dev-paths",
     "version": "0.1.1",
     "description": "dev 运行目录的唯一真源：实例注册表 / 日志根（跨 app 共享，各 app 不再自己拼路径）",
+    "keywords": [
+        "diy",
+        "instances",
+        "paths",
+        "registry"
+    ],
+    "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/core/dev-paths",
+    "license": "MIT",
+    "author": "ccc <ccc@users.noreply.github.com>",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/diy-agent/diy.git",
+        "directory": "pkgs.ts/core/dev-paths"
+    },
     "files": [
         "src/",
         "lib/"
@@ -18,19 +32,5 @@
     "scripts": {
         "build": "tsc -p tsconfig.build.json",
         "publish": "node ../../../scripts/npm-publish.mjs . --out=dist"
-    },
-    "license": "MIT",
-    "author": "ccc <ccc@users.noreply.github.com>",
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/diy-agent/diy.git",
-        "directory": "pkgs.ts/core/dev-paths"
-    },
-    "homepage": "https://github.com/diy-agent/diy/tree/main/pkgs.ts/core/dev-paths",
-    "keywords": [
-        "diy",
-        "paths",
-        "registry",
-        "instances"
-    ]
+    }
 }

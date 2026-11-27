@@ -68,3 +68,29 @@ export function flashAskCardWhenRendered(askId: string, tries = 20): void {
     };
     attempt(tries);
 }
+
+/**
+ * 跳到**一条聊天气泡**（账本条目上的「来自哪句话」点它）。
+ *
+ * 与 `flashAskCard` 同一套做法：按 data 属性找人、滚进视口、闪一下边框。
+ * 不引 jumper 注册表：消息条目不跨表面注册（每个表面都渲染同一条消息），
+ * `querySelector` 找**可见**那一份即可，找不到就静默失败（老数据没有来源，点了不该报错）。
+ */
+export function jumpToMessage(messageId: string): boolean {
+    const element = [...document.querySelectorAll<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`)].find(
+        (candidate) => candidate.getClientRects().length > 0,
+    );
+    if (element === undefined) return false;
+    element.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    element.classList.add('ring-2', 'ring-sky-400', 'rounded-md');
+    const previous = flashTimers.get(element);
+    if (previous !== undefined) window.clearTimeout(previous);
+    flashTimers.set(
+        element,
+        window.setTimeout(() => {
+            element.classList.remove('ring-2', 'ring-sky-400', 'rounded-md');
+            flashTimers.delete(element);
+        }, 1600),
+    );
+    return true;
+}

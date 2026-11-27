@@ -5,16 +5,20 @@ import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 import { HttpClientBinding } from '../src/transport/http/http-client-binding';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const api = RpcSchema.group({ children: {
-  collect: RpcSchema.clientStream({ input: {}, chunkIn: z.string(), output: z.boolean() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    collect: RpcSchema.clientStream({ input: {}, chunkIn: z.string(), output: z.boolean() }),
+  },
+});
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding._on("collect", api.collect, async () => true); // 远端立即返回，触发 request-side 终态
+  binding._on('collect', api.collect, async () => true); // 远端立即返回，触发 request-side 终态
 
   const server = http2.createServer();
-  server._on('stream', (stream, headers) => { void binding.handleStream(stream, headers); });
+  server._on('stream', (stream, headers) => {
+    void binding.handleStream(stream, headers);
+  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 
   const port = (server.address() as { port: number }).port;

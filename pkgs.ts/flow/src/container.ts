@@ -130,12 +130,21 @@ const ADVANCE_KEYS = ['to', 'at', 'ref', 'params'] as const;
  *
  * 开放的是键、不是形状 —— 值类型错了照样大声报（否则「关联」会静默变成 `[object Object]`）。
  */
-export function parseRef(value: unknown, path: string, code: FlowErrorCode = 'invalid-option'): Readonly<Record<string, string>> | undefined {
+export function parseRef(
+    value: unknown,
+    path: string,
+    code: FlowErrorCode = 'invalid-option',
+): Readonly<Record<string, string>> | undefined {
     if (value === undefined || value === null) return undefined;
     if (!isObject(value)) throw new FlowError(code, 'ref 应为「字符串 → 字符串」的对象', path);
     const out: Record<string, string> = {};
     for (const [key, item] of Object.entries(value)) {
-        if (typeof item !== 'string') throw new FlowError(code, `ref 的值应为字符串（${JSON.stringify(key)} 实得 ${typeof item}）`, `${path}.${key}`);
+        if (typeof item !== 'string')
+            throw new FlowError(
+                code,
+                `ref 的值应为字符串（${JSON.stringify(key)} 实得 ${typeof item}）`,
+                `${path}.${key}`,
+            );
         out[key] = item;
     }
     return Object.freeze(out);
@@ -177,14 +186,23 @@ function seqOf<Id extends string>(path: readonly Visit<Id>[], node: Id): number 
  * `apply` 传 `event.anchor.data.nodeId`，好让「从日志重建」那条路上的报错仍指向事件侧的字段
  * （其余诊断以它的父路径为前缀）。
  */
-export function advance<Id extends string>(def: WorkflowDef<Id>, state: FlowState<Id>, request: AdvanceRequest<Id>, toPath = 'request.to'): Advance<Id> {
+export function advance<Id extends string>(
+    def: WorkflowDef<Id>,
+    state: FlowState<Id>,
+    request: AdvanceRequest<Id>,
+    toPath = 'request.to',
+): Advance<Id> {
     const base = toPath.includes('.') ? toPath.slice(0, toPath.lastIndexOf('.')) : toPath;
     if (!isObject(request)) throw new FlowError('invalid-option', 'advance 的请求应为对象（{ to, at, ref? }）', base);
     rejectUnknown(request as unknown as Record<string, unknown>, ADVANCE_KEYS, base, 'invalid-option');
     const to = request.to;
     if (typeof to !== 'string' || to === '') throw new FlowError('invalid-option', 'to 必填（目标节点 id）', toPath);
     if (!isIsoString(request.at)) {
-        throw new FlowError('invalid-option', `at 应为 ISO-8601 时刻（如 2026-10-13T00:00:00.000Z），实得 ${JSON.stringify(request.at)}`, `${base}.at`);
+        throw new FlowError(
+            'invalid-option',
+            `at 应为 ISO-8601 时刻（如 2026-10-13T00:00:00.000Z），实得 ${JSON.stringify(request.at)}`,
+            `${base}.at`,
+        );
     }
     const ref = parseRef(request.ref, `${base}.ref`);
     const carriedParams = parseAdvanceParams(request.params, `${base}.params`);
@@ -196,13 +214,21 @@ export function advance<Id extends string>(def: WorkflowDef<Id>, state: FlowStat
     let kind: EdgeKind;
     if (state.position === null) {
         if (to !== def.entry) {
-            throw new FlowError('invalid-entry', `首个事件必须进入入口节点 ${JSON.stringify(def.entry)}，实得 ${JSON.stringify(to)}`, toPath);
+            throw new FlowError(
+                'invalid-entry',
+                `首个事件必须进入入口节点 ${JSON.stringify(def.entry)}，实得 ${JSON.stringify(to)}`,
+                toPath,
+            );
         }
         kind = 'next';
     } else {
         const edge = def.edges.find((e) => e.from === state.position && e.to === to);
         if (!edge) {
-            throw new FlowError('no-edge', `不存在从 ${JSON.stringify(state.position)} 到 ${JSON.stringify(to)} 的边`, toPath);
+            throw new FlowError(
+                'no-edge',
+                `不存在从 ${JSON.stringify(state.position)} 到 ${JSON.stringify(to)} 的边`,
+                toPath,
+            );
         }
         kind = edge.kind;
     }
@@ -219,9 +245,10 @@ export function advance<Id extends string>(def: WorkflowDef<Id>, state: FlowStat
         );
     }
 
-    const visit: Visit<Id> = ref === undefined
-        ? { node: to as Id, seq: seqOf(state.path, to as Id) + 1, kind, at: request.at }
-        : { node: to as Id, seq: seqOf(state.path, to as Id) + 1, kind, at: request.at, ref };
+    const visit: Visit<Id> =
+        ref === undefined
+            ? { node: to as Id, seq: seqOf(state.path, to as Id) + 1, kind, at: request.at }
+            : { node: to as Id, seq: seqOf(state.path, to as Id) + 1, kind, at: request.at, ref };
     // 推进即离开终态：`done` 不继承（能走，就说明没走完）；`params` 是这次运行的配置 ⇒
     // **本次请求给了就用本次的（与入参那份不一致已在上面被拒）、没给就继承**
     const nextParams = carriedParams !== undefined ? carriedParams : state.params;
@@ -303,7 +330,11 @@ export function createContainer<Id extends string>(def: WorkflowDef<Id>): Contai
  */
 export function apply<Id extends string>(def: WorkflowDef<Id>, state: FlowState<Id>, event: Event): FlowState<Id> {
     if (event.anchor.type !== 'node') {
-        throw new FlowError('invalid-event', '工作流事件的锚点必须是 node（位置变更靠 anchor.data.nodeId 指目标节点）', 'event.anchor.type');
+        throw new FlowError(
+            'invalid-event',
+            '工作流事件的锚点必须是 node（位置变更靠 anchor.data.nodeId 指目标节点）',
+            'event.anchor.type',
+        );
     }
     return advance(def, state, { to: event.anchor.data.nodeId as Id, at: event.at }, 'event.anchor.data.nodeId').state;
 }

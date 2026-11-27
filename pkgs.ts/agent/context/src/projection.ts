@@ -9,10 +9,10 @@
 // 值变了但模板没引用到 → renderedHash 不变 → 不投递（144 用例 14）。
 // 所有 place 消失 → 必须发**显式清空**，不能只是「什么都不发」（用例 5）。
 
-import { hashText } from "./hash.js";
-import { placeText } from "./wire-render.js";
-import { dataText, varsEnvelope } from "./envelope.js";
-import { WIRE_VERSION } from "./wire.js";
+import { hashText } from './hash.js';
+import { placeText } from './wire-render.js';
+import { dataText, varsEnvelope } from './envelope.js';
+import { WIRE_VERSION } from './wire.js';
 import type {
     ContextPath,
     ContextProjection,
@@ -21,7 +21,7 @@ import type {
     DeltaDelivery,
     DeltaOp,
     ProjectionResult,
-} from "./types.js";
+} from './types.js';
 
 /** 空水位（还没有任何一次投递） */
 export function emptyCursor(): DeliveryCursor {
@@ -66,10 +66,10 @@ export function project(state: ContextTreeState, prev: DeliveryCursor | null = n
     let needRebaseline = false;
 
     if (prev === null) {
-        delta = { kind: "snapshot", text: text, supersedes: "all" };
+        delta = { kind: 'snapshot', text: text, supersedes: 'all' };
         needRebaseline = true;
     } else if (versionChanged) {
-        delta = { kind: "snapshot", text: text, supersedes: "all" };
+        delta = { kind: 'snapshot', text: text, supersedes: 'all' };
         needRebaseline = true;
     } else {
         delta = diffUnits(state, prev.delivered, next);
@@ -90,13 +90,13 @@ function diffUnits(
 ): DeltaDelivery {
     const ops: DeltaOp[] = [];
     for (const [p, h] of Object.entries(next)) {
-        if (prev[p] !== h) ops.push({ op: "set", path: p, content: placeText(state, p) });
+        if (prev[p] !== h) ops.push({ op: 'set', path: p, content: placeText(state, p) });
     }
     for (const p of Object.keys(prev)) {
-        if (!(p in next)) ops.push({ op: "remove", path: p });
+        if (!(p in next)) ops.push({ op: 'remove', path: p });
     }
     const allGone = Object.keys(next).length === 0 && Object.keys(prev).length > 0;
-    if (allGone) return { kind: "clear" };
-    if (ops.length === 0) return { kind: "none" };
-    return { kind: "patch", ops };
+    if (allGone) return { kind: 'clear' };
+    if (ops.length === 0) return { kind: 'none' };
+    return { kind: 'patch', ops };
 }

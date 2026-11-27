@@ -146,9 +146,7 @@ describe('R1 role 铁律（##166 结论 5）', () => {
     });
 
     it('role 与来源不符也要报错：自己的发言标成 user 同样拦下', () => {
-        const e = caught(() =>
-            assertRoleAssignments([{ kind: 'speech', author: 'a', self: 'a', role: 'user' }]),
-        );
+        const e = caught(() => assertRoleAssignments([{ kind: 'speech', author: 'a', self: 'a', role: 'user' }]));
         expect(e.code).toBe('role-violation');
         expect(e.path).toBe('[0].role');
     });
@@ -190,9 +188,7 @@ describe('R2 doc-range 钉 revision（##166 结论 11）', () => {
     });
 
     it('缺 revisionId（只存 offset 的写法）→ invalid-anchor，路径指到字段', () => {
-        const e = caught(() =>
-            parseAnchor({ type: 'doc-range', data: { offset: 12, quote: 'x' } }),
-        );
+        const e = caught(() => parseAnchor({ type: 'doc-range', data: { offset: 12, quote: 'x' } }));
         expect(e.code).toBe('invalid-anchor');
         expect(e.path).toBe('anchor.data.revisionId');
     });
@@ -215,9 +211,7 @@ describe('R2 doc-range 钉 revision（##166 结论 11）', () => {
             ).code,
         ).toBe('invalid-anchor');
         expect(
-            caught(() =>
-                parseAnchor({ type: 'doc-range', data: { revisionId: 'r', offset: 0, quote: '' } }),
-            ).path,
+            caught(() => parseAnchor({ type: 'doc-range', data: { revisionId: 'r', offset: 0, quote: '' } })).path,
         ).toBe('anchor.data.quote');
     });
 
@@ -317,8 +311,22 @@ describe('R4 引用完整性：悬空 / 自指 / 重号 / 异锚点 / causes（#
     });
 
     it('thread 内锚点不一致 → mixed-anchor（多条时间线不得混串，##166 §7.4 痛点 4 / review2 意见 2）', () => {
-        const a = createReaction({ id: 'a', author: 'b', turnId: 't1', target: docRangeAnchor('rev-7', 0, 'x'), content: 'x', at: AT });
-        const b = createReaction({ id: 'b', author: 'c', turnId: 't1', target: nodeAnchor('n1'), content: 'y', at: AT });
+        const a = createReaction({
+            id: 'a',
+            author: 'b',
+            turnId: 't1',
+            target: docRangeAnchor('rev-7', 0, 'x'),
+            content: 'x',
+            at: AT,
+        });
+        const b = createReaction({
+            id: 'b',
+            author: 'c',
+            turnId: 't1',
+            target: nodeAnchor('n1'),
+            content: 'y',
+            at: AT,
+        });
         const e = caught(() => assertThreadRefs([a, b]));
         expect(e.code).toBe('mixed-anchor');
         expect(e.path).toBe('[1].target');
@@ -373,15 +381,11 @@ describe('R5 非法 anchor 一律拒绝（不静默丢弃）', () => {
         expect(caught(() => parseAnchor({ type: 'message', data: { messageId: 3 } })).path).toBe(
             'anchor.data.messageId',
         );
-        expect(caught(() => parseAnchor({ type: 'task-field', data: { field: '' } })).path).toBe(
-            'anchor.data.field',
-        );
+        expect(caught(() => parseAnchor({ type: 'task-field', data: { field: '' } })).path).toBe('anchor.data.field');
     });
 
     it('未知字段 → invalid-anchor（形状封闭，写侧也绝不静默剥离，review2 意见 4）', () => {
-        expect(caught(() => parseAnchor({ type: 'node', data: { nodeId: 'n1' }, extra: 1 })).path).toBe(
-            'anchor.extra',
-        );
+        expect(caught(() => parseAnchor({ type: 'node', data: { nodeId: 'n1' }, extra: 1 })).path).toBe('anchor.extra');
         expect(caught(() => parseAnchor({ type: 'node', data: { nodeId: 'n1', extra: 1 } })).path).toBe(
             'anchor.data.extra',
         );
@@ -416,9 +420,7 @@ describe('R6 反序列化边界', () => {
 
     it('缺字段 → 对应错误码 + 点路径', () => {
         const e = caught(() =>
-            eventFromJson(
-                JSON.stringify({ id: 'e1', author: 'a', anchor: messageAnchor('m'), content: 'x' }),
-            ),
+            eventFromJson(JSON.stringify({ id: 'e1', author: 'a', anchor: messageAnchor('m'), content: 'x' })),
         );
         expect(e.code).toBe('invalid-event');
         expect(e.path).toBe('event.at');
@@ -441,11 +443,22 @@ describe('R6 反序列化边界', () => {
     });
 
     it('at 非 ISO-8601 → 报错（时间是事实，格式也是事实，review1 意见 2）', () => {
-        const e = caught(() => createEvent({ id: 'e1', author: 'a', anchor: nodeAnchor('n1'), content: 'x', at: '昨天下午' }));
+        const e = caught(() =>
+            createEvent({ id: 'e1', author: 'a', anchor: nodeAnchor('n1'), content: 'x', at: '昨天下午' }),
+        );
         expect(e.code).toBe('invalid-event');
         expect(e.path).toBe('event.at');
         expect(
-            caught(() => createReaction({ id: 'r1', author: 'a', turnId: 't1', target: nodeAnchor('n1'), content: 'x', at: '2026/10/13' })).code,
+            caught(() =>
+                createReaction({
+                    id: 'r1',
+                    author: 'a',
+                    turnId: 't1',
+                    target: nodeAnchor('n1'),
+                    content: 'x',
+                    at: '2026/10/13',
+                }),
+            ).code,
         ).toBe('invalid-reaction');
     });
 
@@ -491,16 +504,12 @@ describe('R7 零依赖纯内核（##311 §四：现在就能拆离成单独项�
             expect(text, `${file} 不应 import 宿主模块`).not.toMatch(
                 /import[^\n]*from\s+['"](node:|electron|@diy-agent\/app)/,
             );
-            expect(text, `${file} 不应自己取时间（at 由调用方传入）`).not.toMatch(
-                /\bDate\.now\b|new Date\(/,
-            );
+            expect(text, `${file} 不应自己取时间（at 由调用方传入）`).not.toMatch(/\bDate\.now\b|new Date\(/);
         }
     });
 
     it('package.json 零 dependencies', () => {
-        const pkg = JSON.parse(
-            readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
-        ) as {
+        const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as {
             dependencies: Record<string, string>;
         };
         expect(Object.keys(pkg.dependencies)).toEqual([]);

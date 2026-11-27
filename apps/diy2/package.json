@@ -3,12 +3,22 @@
     "version": "0.0.1",
     "private": true,
     "description": "diy2：实体即对话的新客户端（实验）—— Vite + React + @diy-agent/entity-chat",
+    "bin": {
+        "diy2": "bin/diy2"
+    },
+    "files": [
+        "bin/",
+        "build/prod/"
+    ],
     "type": "module",
+    "main": "build/prod/server/index.mjs",
     "scripts": {
         "prepublishOnly": "./sha.sh build"
     },
     "dependencies": {
+        "@diy-agent/attachment": "*",
         "@diy-agent/chat-transport-rpc": "*",
+        "@diy-agent/code-runtime": "*",
         "@diy-agent/entity-chat": "*",
         "@diy-agent/entity-runtime": "*",
         "@diy-agent/log": "*",
@@ -39,14 +49,6 @@
         "vite": "^8.0.0",
         "vitest": "^4.1.10"
     },
-    "bin": {
-        "diy2": "bin/diy2"
-    },
-    "main": "build/prod/server/index.mjs",
-    "files": [
-        "bin/",
-        "build/prod/"
-    ],
     "engines": {
         "node": ">=22"
     }

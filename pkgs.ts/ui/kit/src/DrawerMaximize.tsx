@@ -9,8 +9,8 @@
  *   <div class="relative flex min-h-0 flex-col ..." style={dm.style()}>
  *     ... <DrawerMaxButton max={dm.max()} onToggle={dm.toggle} />
  */
-import { createSignal, type Accessor } from "solid-js";
-import { IconExpand, IconCollapse } from "./icons.js";
+import { createSignal, type Accessor } from 'solid-js';
+import { IconExpand, IconCollapse } from './icons.js';
 
 export interface DrawerMax {
     /** 当前是否最大化 */
@@ -26,7 +26,7 @@ export function useDrawerMax(defaultVh = 66.666): DrawerMax {
     return {
         max,
         toggle: () => setMax((v) => !v),
-        style: () => ({ height: max() ? "100vh" : `${defaultVh}vh` }),
+        style: () => ({ height: max() ? '100vh' : `${defaultVh}vh` }),
     };
 }
 
@@ -35,9 +35,9 @@ export function DrawerMaxButton(props: { max: boolean; onToggle: () => void }) {
     return (
         <button
             class="btn btn-ghost btn-xs"
-            aria-label={props.max ? "还原尺寸" : "最大化"}
-            data-drawer-max={props.max ? "1" : "0"}
-            data-tip={props.max ? "还原尺寸" : "最大化"}
+            aria-label={props.max ? '还原尺寸' : '最大化'}
+            data-drawer-max={props.max ? '1' : '0'}
+            data-tip={props.max ? '还原尺寸' : '最大化'}
             onClick={props.onToggle}
         >
             {props.max ? <IconCollapse class="h-4 w-4" /> : <IconExpand class="h-4 w-4" />}

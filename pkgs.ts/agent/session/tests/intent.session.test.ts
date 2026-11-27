@@ -283,9 +283,7 @@ describe('S4 响亮失败', () => {
             /非负/,
         );
         // 拼错的桶名仍然是显式失败（放行 ≠ 什么都收）
-        expect(() => assertDelta({ type: 'usage', inputTokens: 9, outputTokens: 2, cacheRead: 3 })).toThrow(
-            /未知字段/,
-        );
+        expect(() => assertDelta({ type: 'usage', inputTokens: 9, outputTokens: 2, cacheRead: 3 })).toThrow(/未知字段/);
     });
 });
 

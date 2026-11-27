@@ -54,7 +54,9 @@ describe('待答条的 chip：一题报题干、多题报首句 +N', () => {
     });
 
     it('多题：首句 + 剩余题数', () => {
-        expect(askChipOf([{ question: '口径？' }, { question: '拓扑？' }, { question: '落地到哪？' }])).toBe('口径？ +2');
+        expect(askChipOf([{ question: '口径？' }, { question: '拓扑？' }, { question: '落地到哪？' }])).toBe(
+            '口径？ +2',
+        );
     });
 
     it('题干过长截断，但 +N 不能丢', () => {

@@ -2,10 +2,10 @@
 //
 // 本文件不碰文件系统：会话归属 / 身份读写全走注入的 BotStore。
 
-import { localISOString } from "@diy-agent/time";
-import { BotError } from "./errors.js";
-import { createMemoryBotStore } from "./store-memory.js";
-import type { Bot, BotConfig, BotDraft, BotSessionRef, BotStore, CreateBotOptions } from "./types.js";
+import { localISOString } from '@diy-agent/time';
+import { BotError } from './errors.js';
+import { createMemoryBotStore } from './store-memory.js';
+import type { Bot, BotConfig, BotDraft, BotSessionRef, BotStore, CreateBotOptions } from './types.js';
 
 /** 建一个 bot 句柄（config 已在手；要按 id 打开用 `openBot`）
  *
@@ -19,8 +19,8 @@ export function createBot(options: CreateBotOptions): Bot {
 
     const openSession = async (): Promise<string> => {
         const id = options.createSession === undefined ? newSessionId() : await options.createSession(config);
-        if (typeof id !== "string" || id === "") {
-            throw new BotError("bot/invalid-id", "createSession 返回了空 id");
+        if (typeof id !== 'string' || id === '') {
+            throw new BotError('bot/invalid-id', 'createSession 返回了空 id');
         }
         await store.assign(id, config.id);
         return id;
@@ -47,14 +47,13 @@ export function createBot(options: CreateBotOptions): Bot {
         async primary(): Promise<BotSessionRef> {
             const id = config.primarySessionId;
             // 幂等：写回过的那个还在（归属仍是本 bot）就直接用
-            if (id !== undefined && id !== "" && (await store.ownerOf(id)) === config.id) {
+            if (id !== undefined && id !== '' && (await store.ownerOf(id)) === config.id) {
                 return refOf(id);
             }
             const created = await openSession();
             await rememberPrimary(created);
             return refOf(created);
         },
-
     };
 }
 
@@ -62,10 +61,10 @@ export function createBot(options: CreateBotOptions): Bot {
 export async function openBot(
     store: BotStore,
     id: string,
-    createSession?: CreateBotOptions["createSession"],
+    createSession?: CreateBotOptions['createSession'],
 ): Promise<Bot> {
     const config = await store.load(id);
-    if (config === null) throw new BotError("bot/not-found", `没有 bot ${id}`);
+    if (config === null) throw new BotError('bot/not-found', `没有 bot ${id}`);
     return createBot({ store, config, ...(createSession === undefined ? {} : { createSession }) });
 }
 
@@ -102,7 +101,7 @@ export async function createFirstBot(
     clock: () => Date = () => new Date(),
 ): Promise<BotConfig> {
     if (await hasAnyBot(store)) {
-        throw new BotError("bot/exists", "已经有 bot —— 首启引导不该再走一次");
+        throw new BotError('bot/exists', '已经有 bot —— 首启引导不该再走一次');
     }
     const config = fromDraft(draft, localISOString(clock()));
     await store.save(config);
@@ -122,9 +121,9 @@ export async function setBotModel(
     clock: () => Date = () => new Date(),
 ): Promise<BotConfig> {
     const current = await store.load(id);
-    if (current === null) throw new BotError("bot/not-found", `没有 bot ${id}`);
-    if (typeof model !== "string" || model.trim() === "") {
-        throw new BotError("bot/invalid-config", "model 不能为空（##497：bot 必须有默认模型）");
+    if (current === null) throw new BotError('bot/not-found', `没有 bot ${id}`);
+    if (typeof model !== 'string' || model.trim() === '') {
+        throw new BotError('bot/invalid-config', 'model 不能为空（##497：bot 必须有默认模型）');
     }
     const next: BotConfig = {
         id: current.id,
@@ -144,8 +143,8 @@ export async function setBotModel(
 
 /** 草案 → 完整配置（id / 时间由调用方补） */
 function fromDraft(draft: BotDraft, now: string): BotConfig {
-    if (typeof draft.model !== "string" || draft.model.trim() === "") {
-        throw new BotError("bot/invalid-config", "model 不能为空（##497：bot 必须有默认模型）");
+    if (typeof draft.model !== 'string' || draft.model.trim() === '') {
+        throw new BotError('bot/invalid-config', 'model 不能为空（##497：bot 必须有默认模型）');
     }
     return {
         id: draft.id,

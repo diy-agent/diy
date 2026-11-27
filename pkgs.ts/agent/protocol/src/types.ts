@@ -3,6 +3,14 @@
 // 依赖规则（硬）：禁止 import React / node / 任何 UI kit / 任何 runtime 包。
 // 后端（entity-runtime / server）与前端（chat-core / surface）共用这里的定义，
 // 保证「后端产出的事件」与「前端消费的事件」是同一个类型，不靠约定同步。
+//
+// 唯一允许的跨包引用：`@diy-agent/attachment` 的**纯类型**（AttachmentRef）。
+// 附件形状只有一份定义 —— 协议层再抄一遍就必然漂移（`relPath` 抄成 `relpath` 那种）。
+
+import type { AttachmentRef } from '@diy-agent/attachment/types';
+
+/** 附件 ref 的**形状**由 @diy-agent/attachment 独占定义；这里只做再导出，方便 UI 侧只装一个包 */
+export type { AttachmentRef };
 
 // ── 容器 / 参与者 ──────────────────────────────────────────────
 
@@ -212,7 +220,17 @@ export interface JobRunRow {
 }
 
 export type Item =
-    | (ItemBase & { type: 'chat'; data: { text: string } })
+    | (ItemBase & {
+          type: 'chat';
+          /**
+           * `attachments` = 这条消息带的附件（图 / 文件 / 目录引用），由人发进来时附上。
+           *
+           * 为什么放在 `data` 里而不是新开一个 item 类型：附件**永远属于某条消息**
+           * （没有「悬空的附件」），单独成 item 会让「这条图是哪句的」变成要拼的推断。
+           * 形状归 `@diy-agent/attachment`（stored / linked 两支），协议层只管装得下。
+           */
+          data: { text: string; attachments?: readonly AttachmentRef[] };
+      })
     | (ItemBase & {
           type: 'notice';
           /**
@@ -233,13 +251,24 @@ export type Item =
 
 // ── 投递（消息 → bot 的到达状态）────────────────────────────────
 
-export type DeliveryState = 'queued' | 'delivering' | 'delivered' | 'failed' | 'skipped';
+/**
+ * 一条消息对某个 bot 的投递只有三个阶段（2026-11-27 收敛：原来 5 个值）。
+ *
+ *   pending —— 在库里，bot 还没开始处理它（UI 的「N 条等着」只数这个）
+ *   working —— bot 正在处理它（无论是并进当前轮，还是作为本轮的第一条）
+ *   done    —— 处理完了；`note === 'failed'` 表示没送进去
+ *
+ * **为什么砍**：原来的 `delivering` 同时表示「正在插进当前轮」和「已被取出正在跑」，
+ * UI 于是必须拿另一个状态的副本去修正（"在跑减一"），一处不同步就报假数。
+ */
+export type DeliveryState = 'pending' | 'working' | 'done';
 
 export interface Delivery {
     roomId: string;
     messageId: string;
     botId: string;
     state: DeliveryState;
+    /** 结局说明：`'failed'` = 没送进去（`skipped` 等旧值迁移时也归一到这里） */
     note?: string;
     updatedAt: number;
 }
@@ -247,7 +276,8 @@ export interface Delivery {
 // ── 命令 / 事件（前后端唯一契约）────────────────────────────────
 
 export type Command =
-    | { kind: 'send'; text: string }
+    /** `attachments`：随这条消息一起发出去的附件（已落 blobs / 已 adopt 的 ref，不是原始字节） */
+    | { kind: 'send'; text: string; attachments?: readonly AttachmentRef[] }
     /** 不传 botId = 停整个房间；传了只停那个成员 */
     | { kind: 'cancel'; botId?: string; keepQueue?: boolean };
 
@@ -529,6 +559,21 @@ export interface ActivityFrame {
 
 export interface Snapshot {
     items: Item[];
+    /**
+     * 这个房间**一共**有多少条 item（分页提示用：上面还有多少条没加载）。
+     *
+     * 缺省 `undefined` = 老服务端 / 已加载全量 —— 界面上就不说“还有更多”。
+     */
+    totalItems?: number;
+    /**
+     * 服务端只给了**最近一截**（`items` 不是从第一条开始的）。
+     *
+     * 为什么要有（2026-11-26 实测）：一个 6000+ 条的房间里 `chat.history` 一次回包
+     * **5.7 MB**，浏览器 JSON.parse + 渲染就是 2~5 秒的长任务 —— 用户感受到的
+     * “切任务很慢、点输入框要几秒”。现在默认只发最近的 400 条，这个标记告诉界面
+     * “上面还有更早的”，由用户主动要（`load(id, { limit: 0 })`）。
+     */
+    truncated?: boolean;
     deliveries: Delivery[];
     /** 还在等用户回答的提问（刷新页面后卡片要能恢复） */
     asks?: AskRequest[];
@@ -633,6 +678,54 @@ export interface TurnEndReason {
     idleMs?: number;
 }
 
+// ── bot 状态投影（`diy2.bots.rows`）────────────────────────────────
+
+/**
+ * 这个 bot 此刻要你干什么 —— **一个值，不是一组标志**。
+ *
+ * 优先级 running > asking > needs-attention > idle：在跑时哪怕上一轮是错的也不催你
+ * （它自己会接着干），跑完若还是错，下一轮才冒出来。
+ */
+export type BotState = 'running' | 'asking' | 'needs-attention' | 'idle';
+
+/**
+ * 一个 bot 在某个房间里的**一行状态**（`diy2.bots.rows` 的回包项）。
+ *
+ * 二级弹层（只要人动手的）与三级表格（全量可筛选）共用这一份 —— 两处不再各算一遍，
+ * 否则「弹层说有 3 个出错、表格说有 4 个」这种对不上就必然出现。
+ *
+ * **故意不带 `closed`**：任务开/关的判据是 UI 的 `isClosed()` 唯一真源（它还要归一
+ * 老数据的 `done`/`todo`，并且只对 `task` 成立）。服务端再算一份就会出现两个口径 ——
+ * 消费者需要关没关，就按 `roomId` 去查它本来就有的 room 列表。
+ */
+export interface BotRow {
+    roomId: string;
+    /** 房间标题（任务标题 / 项目名） */
+    roomTitle: string;
+    roomType: 'task' | 'project';
+    botId: string;
+    botName: string;
+    botColor: string;
+    state: BotState;
+    /** 上一轮结局；从没在这个房间跑过就没有 */
+    outcome?: BotOutcome;
+    /** `outcome === 'failed'` 时的原文 */
+    outcomeMessage?: string;
+    /** 上一轮最后动静的时刻 */
+    lastTurnAt?: number;
+    /** `state === 'asking'`：在等回答的那道题 */
+    askId?: string;
+    askTitle?: string;
+    /**
+     * 还在排队里的投递数（`queued` / `delivering`）。
+     *
+     * 它**不是** `BotState` 的一档（那个是互斥单值，表达「此刻最要紧的一件事」）：
+     * 一个正在跑的成员可以同时排着下一条，重启后的待续跑也落在这里。
+     * UI 用它在行上多挂一颗灰色「排队中」，不进「要你看」的计数（2026-11-25）。
+     */
+    queued?: number;
+}
+
 /** 模型运行的原始事件（seq 单调；投影成 Item 后 UI 才消费） */
 export type AgentEvent =
     | { seq: number; type: 'run.started'; turnId: string; messageId: string }
@@ -724,6 +817,12 @@ export interface ModelCatalogModel {
     id: string;
     /** 人可读名（目录里没有就回落到 id，不编造） */
     name: string;
+    /**
+     * 输入模态（`models.dev` 的 `modalities.input` 投影；缺省 = **不知道**，不是「不收」）。
+     *
+     * 界面靠它画「收图」标记、并在贴图前拦一道 —— 往不收图的上游塞 image part 换回来的是 400。
+     */
+    input?: readonly string[];
     contextWindow?: number;
     maxOutputTokens?: number;
     cost?: ModelCostView;
@@ -818,18 +917,15 @@ export interface ModelConfigSnapshot {
     providers: ModelConfigProvider[];
 }
 
-// ── actor 收件箱（后端内部，但类型放这里以便将来跨进程）─────────
+// ── 消息来源（后端内部，类型放这里以便将来跨进程）─────────────
 
-export type InboxMode = 'next-step' | 'next-turn';
-
-export interface InboxItem {
-    id: string;
-    actor: string;
-    seq: number;
-    mode: InboxMode;
-    kind: 'chat' | 'notice';
-    payload: Record<string, unknown>;
-    status: 'pending' | 'claimed';
-    createdAt: number;
-    claimedAt?: number;
-}
+/**
+ * 这条消息谁发的 —— 决定它能不能趁 bot 还在跑的时候并进当前轮。
+ *
+ * 以前这里是 `InboxMode = 'next-step' | 'next-turn'`，把**实现手段**（插进 step 边界 /
+ * 等下一轮）当成了对外概念。其实用户不需要知道"插话"这回事：
+ *   · 人的话：能并就并（他还在说，就别等），并不进去就排下一轮；
+ *   · 系统的话（作业结束 / 别的 bot 的结论）：永远别插到半句话中间。
+ * 两个值按"谁发的"分，比按"怎么送"分少一个概念。
+ */
+export type MessageKind = 'human' | 'system';

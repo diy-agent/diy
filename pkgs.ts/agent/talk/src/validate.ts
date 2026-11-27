@@ -33,7 +33,11 @@ export function rejectUnknown(
 ): void {
     for (const key of Object.keys(obj)) {
         if (!known.includes(key)) {
-            throw new TalkError(code, `未知字段 ${JSON.stringify(key)}（形状封闭；新增字段须升级本包）`, `${path}.${key}`);
+            throw new TalkError(
+                code,
+                `未知字段 ${JSON.stringify(key)}（形状封闭；新增字段须升级本包）`,
+                `${path}.${key}`,
+            );
         }
     }
 }
@@ -61,7 +65,11 @@ const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?
 export function takeIsoString(value: unknown, path: string, code: TalkErrorCode): string {
     const text = takeString(value, path, code);
     if (!ISO_8601.test(text)) {
-        throw new TalkError(code, `应为 ISO-8601 时刻（如 2026-10-13T00:00:00.000Z），实得 ${JSON.stringify(text)}`, path);
+        throw new TalkError(
+            code,
+            `应为 ISO-8601 时刻（如 2026-10-13T00:00:00.000Z），实得 ${JSON.stringify(text)}`,
+            path,
+        );
     }
     return text;
 }
@@ -88,7 +96,8 @@ export function takeStringArray(value: unknown, path: string, code: TalkErrorCod
     const out = value.map((item, i) => takeString(item, `${path}[${i}]`, code));
     const seen = new Set<string>();
     out.forEach((item, i) => {
-        if (seen.has(item)) throw new TalkError(code, `重复引用 ${JSON.stringify(item)}（同一目标只应出现一次）`, `${path}[${i}]`);
+        if (seen.has(item))
+            throw new TalkError(code, `重复引用 ${JSON.stringify(item)}（同一目标只应出现一次）`, `${path}[${i}]`);
         seen.add(item);
     });
     return out;

@@ -9,17 +9,17 @@
 //
 // 本模块只做路径计算与目录创建，不含任何会话逻辑。
 
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import path from "node:path";
-import { keyOf } from "./keys.js";
+import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { keyOf } from './keys.js';
 
 /** 会话子文件种类（**唯一清单**：双认 / 迁移 / clear 都按它走） */
-export const SESSION_KINDS = ["ops", "llm", "usage", "steps", "compact", "changelog", "raw", "turns"] as const;
+export const SESSION_KINDS = ['ops', 'llm', 'usage', 'steps', 'compact', 'changelog', 'raw', 'turns'] as const;
 export type SessionKind = (typeof SESSION_KINDS)[number];
 
 /** 会话数据根 `<home>/local/`（不存在则创建） */
 export function localDir(home: string): string {
-    const d = path.join(home, "local");
+    const d = path.join(home, 'local');
     mkdirSync(d, { recursive: true });
     return d;
 }
@@ -29,7 +29,7 @@ export function localDir(home: string): string {
  * 过滤空段与 `.`/`..`：路径段只用来分层展示，**唯一性仍由 keyOf 保证**。
  */
 function uriSegments(taskUri: string): string[] {
-    return taskUri.split("/").filter((s) => s.length > 0 && s !== "." && s !== "..");
+    return taskUri.split('/').filter((s) => s.length > 0 && s !== '.' && s !== '..');
 }
 
 /** 新落位（##379）：`local/<uri 路径…>/<keyOf(uri)>/` */
@@ -74,7 +74,7 @@ export function sessionFileForWrite(home: string, taskUri: string, kind: Session
 
 /** 本地根 `local/` 的路径（**不带建目录**；给纯读判据用，别用 `localDir`） */
 function localDirPath(home: string): string {
-    return path.join(home, "local");
+    return path.join(home, 'local');
 }
 
 /**
@@ -115,7 +115,7 @@ export function sessionFileCandidates(home: string, taskUri: string): { file: st
  * `changelog` **不在清单里**（跨会话审计时间线）。
  * `turns` 必须一起删（##424）：否则降级链会把「已经清掉的对话」从 turns 里重新翻出来。
  */
-export const CLEARED_SESSION_KINDS = ["ops", "llm", "raw", "steps", "usage", "compact", "turns"] as const;
+export const CLEARED_SESSION_KINDS = ['ops', 'llm', 'raw', 'steps', 'usage', 'compact', 'turns'] as const;
 
 export function sessionFilesToClear(home: string, taskUri: string): string[] {
     const out: string[] = [];
@@ -123,40 +123,40 @@ export function sessionFilesToClear(home: string, taskUri: string): string[] {
         out.push(sessionFile(home, taskUri, kind), legacySessionFile(home, taskUri, kind));
     }
     // 旁路状态快照（##431）：留着它 = 「清空对话」后仍记着旧边界。
-    out.push(sessionStateFile(home, taskUri, "compact-state"));
+    out.push(sessionStateFile(home, taskUri, 'compact-state'));
     return out;
 }
 
 /** 会话 Op 流文件路径（**带建父目录**） */
 export function opsFile(home: string, taskUri: string): string {
-    return sessionFileForWrite(home, taskUri, "ops");
+    return sessionFileForWrite(home, taskUri, 'ops');
 }
 
 /** 每轮结论账（`turns.jsonl`，##424）：降级重建材料 + 压缩边界（##432） */
 export function turnsFile(home: string, taskUri: string): string {
-    return sessionFileForWrite(home, taskUri, "turns");
+    return sessionFileForWrite(home, taskUri, 'turns');
 }
 
 /** 压缩账本路径（append-only：compact / measure / undo 事件） */
 export function compactFile(home: string, taskUri: string): string {
-    return sessionFileForWrite(home, taskUri, "compact");
+    return sessionFileForWrite(home, taskUri, 'compact');
 }
 
 /** 全量消息日志路径（append-only；行号即消息序号） */
 export function llmFile(home: string, taskUri: string): string {
-    return sessionFileForWrite(home, taskUri, "llm");
+    return sessionFileForWrite(home, taskUri, 'llm');
 }
 
 /** 会话日志的相对路径（相对 home）——写进投递文本给模型/人照此回取 */
 export function llmLogRelPath(home: string, taskUri: string): string {
-    return path.relative(home, llmFile(home, taskUri)).split(path.sep).join("/");
+    return path.relative(home, llmFile(home, taskUri)).split(path.sep).join('/');
 }
 
 /** 该任务**是否对话过**（##355「干净任务」的判据：ops 存在且非空） */
 export function hasConversation(home: string, taskUri: string): boolean {
     try {
         // 纯读：**不建目录**（列表页逐条调）
-        return statSync(resolveSessionFile(home, taskUri, "ops")).size > 0;
+        return statSync(resolveSessionFile(home, taskUri, 'ops')).size > 0;
     } catch {
         return false;
     }

@@ -139,13 +139,18 @@ function parseArt(value: unknown, path: string): Art {
     noUnknown(value, ['raw', 'renderer', 'plugin', 'note'], path);
     const renderer = value.renderer;
     if (typeof renderer !== 'string' || !(RENDERERS as readonly string[]).includes(renderer)) {
-        throw new FlowError(CODE, `未知 renderer ${JSON.stringify(renderer)}（合法：${RENDERERS.join(' | ')}）`, `${path}.renderer`);
+        throw new FlowError(
+            CODE,
+            `未知 renderer ${JSON.stringify(renderer)}（合法：${RENDERERS.join(' | ')}）`,
+            `${path}.renderer`,
+        );
     }
     const art: { raw: string; renderer: Renderer; plugin?: string | null; note?: string } = {
         raw: takeString(value.raw, `${path}.raw`, true),
         renderer: renderer as Renderer,
     };
-    if (value.plugin !== undefined) art.plugin = value.plugin === null ? null : takeString(value.plugin, `${path}.plugin`);
+    if (value.plugin !== undefined)
+        art.plugin = value.plugin === null ? null : takeString(value.plugin, `${path}.plugin`);
     if (value.note !== undefined) art.note = takeString(value.note, `${path}.note`, true);
     return art;
 }
@@ -155,7 +160,11 @@ function parseNode<Id extends string>(value: unknown, path: string): NodeDef<Id>
     noUnknown(value, ['id', 'name', 'actor', 'guard', 'hint', 'art', 'params'], path);
     const actor = value.actor;
     if (typeof actor !== 'string' || !(ACTORS as readonly string[]).includes(actor)) {
-        throw new FlowError(CODE, `未知 actor ${JSON.stringify(actor)}（合法：${ACTORS.join(' | ')}）`, `${path}.actor`);
+        throw new FlowError(
+            CODE,
+            `未知 actor ${JSON.stringify(actor)}（合法：${ACTORS.join(' | ')}）`,
+            `${path}.actor`,
+        );
     }
     const node: {
         id: Id;
@@ -182,7 +191,11 @@ function parseEdge<Id extends string>(value: unknown, path: string): EdgeDef<Id>
     noUnknown(value, ['from', 'to', 'when', 'kind'], path);
     const kind = value.kind;
     if (typeof kind !== 'string' || !(EDGE_KINDS as readonly string[]).includes(kind)) {
-        throw new FlowError(CODE, `未知边种类 ${JSON.stringify(kind)}（合法：${EDGE_KINDS.join(' | ')}）`, `${path}.kind`);
+        throw new FlowError(
+            CODE,
+            `未知边种类 ${JSON.stringify(kind)}（合法：${EDGE_KINDS.join(' | ')}）`,
+            `${path}.kind`,
+        );
     }
     const edge: { from: Id; to: Id; when?: string; kind: EdgeKind } = {
         from: takeString(value.from, `${path}.from`) as Id,
@@ -247,7 +260,8 @@ export function parseWorkflow<Id extends string = string>(value: unknown, path =
 
     const ids = new Set<string>();
     nodes.forEach((n, i) => {
-        if (ids.has(n.id)) throw new FlowError('duplicate-node', `节点 id 重复 ${JSON.stringify(n.id)}`, `${path}.nodes[${i}].id`);
+        if (ids.has(n.id))
+            throw new FlowError('duplicate-node', `节点 id 重复 ${JSON.stringify(n.id)}`, `${path}.nodes[${i}].id`);
         ids.add(n.id);
     });
 
@@ -255,7 +269,11 @@ export function parseWorkflow<Id extends string = string>(value: unknown, path =
     // 否则 `${a.b.c}` 的归属无法判定（含混而不是报错，正是本包最反对的失败形态）。
     nodes.forEach((node, i) => {
         if ((node.params?.length ?? 0) > 0 && node.id.includes('.')) {
-            throw new FlowError(CODE, `节点 id 含 '.' 却又声明了参数：点号是参数路径的限定符（${JSON.stringify(node.id)}）`, `${path}.nodes[${i}].id`);
+            throw new FlowError(
+                CODE,
+                `节点 id 含 '.' 却又声明了参数：点号是参数路径的限定符（${JSON.stringify(node.id)}）`,
+                `${path}.nodes[${i}].id`,
+            );
         }
     });
 
@@ -266,14 +284,26 @@ export function parseWorkflow<Id extends string = string>(value: unknown, path =
     const pairs = new Set<string>();
     edges.forEach((e, i) => {
         if (!ids.has(e.from)) {
-            throw new FlowError('dangling-edge', `边起点 ${JSON.stringify(e.from)} 不是节点 id（禁止指向泳道）`, `${path}.edges[${i}].from`);
+            throw new FlowError(
+                'dangling-edge',
+                `边起点 ${JSON.stringify(e.from)} 不是节点 id（禁止指向泳道）`,
+                `${path}.edges[${i}].from`,
+            );
         }
         if (!ids.has(e.to)) {
-            throw new FlowError('dangling-edge', `边终点 ${JSON.stringify(e.to)} 不是节点 id（禁止指向泳道）`, `${path}.edges[${i}].to`);
+            throw new FlowError(
+                'dangling-edge',
+                `边终点 ${JSON.stringify(e.to)} 不是节点 id（禁止指向泳道）`,
+                `${path}.edges[${i}].to`,
+            );
         }
         const key = `${e.from}\u0000${e.to}`;
         if (pairs.has(key)) {
-            throw new FlowError('duplicate-edge', `同一条 (${e.from} → ${e.to}) 出现多条边（「走哪条」必须唯一：消歧只看 kind + when）`, `${path}.edges[${i}]`);
+            throw new FlowError(
+                'duplicate-edge',
+                `同一条 (${e.from} → ${e.to}) 出现多条边（「走哪条」必须唯一：消歧只看 kind + when）`,
+                `${path}.edges[${i}]`,
+            );
         }
         pairs.add(key);
     });
@@ -288,7 +318,11 @@ export function parseWorkflow<Id extends string = string>(value: unknown, path =
         const roots = nodes.filter((n) => !targets.has(n.id));
         if (roots.length === 0) throw new FlowError('no-entry', '找不到入口（没有任何边指向的节点）', `${path}.nodes`);
         if (roots.length > 1) {
-            throw new FlowError('multiple-entry', `入口不唯一：${roots.map((n) => n.id).join(' / ')}（请显式给 entry）`, `${path}.nodes`);
+            throw new FlowError(
+                'multiple-entry',
+                `入口不唯一：${roots.map((n) => n.id).join(' / ')}（请显式给 entry）`,
+                `${path}.nodes`,
+            );
         }
         entry = roots[0].id;
     }

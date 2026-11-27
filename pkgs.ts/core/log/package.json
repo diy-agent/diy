@@ -1,33 +1,33 @@
 {
-  "name": "@diy-agent/log",
-  "version": "0.1.0",
-  "private": true,
-  "description": "应用日志文件导出器：OTel LogRecord → jsonl（按天切 + 按大小轮转 + trace 关联）；不自研日志 API",
-  "files": [
-    "src/"
-  ],
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./src/index.ts",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./dist/index.js"
+    "name": "@diy-agent/log",
+    "version": "0.1.0",
+    "private": true,
+    "description": "应用日志文件导出器：OTel LogRecord → jsonl（按天切 + 按大小轮转 + trace 关联）；不自研日志 API",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {
+        "@diy-agent/time": "*",
+        "@opentelemetry/api": "^1.10.0",
+        "@opentelemetry/api-logs": "^0.223.0"
+    },
+    "devDependencies": {
+        "@opentelemetry/sdk-logs": "^3.0.0",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
     }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  },
-  "devDependencies": {
-    "@opentelemetry/sdk-logs": "^3.0.0",
-    "oxfmt": "^0.57.0",
-    "oxlint": "^1.72.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  },
-  "dependencies": {
-    "@diy-agent/time": "*",
-    "@opentelemetry/api": "^1.10.0",
-    "@opentelemetry/api-logs": "^0.223.0"
-  }
 }

@@ -37,6 +37,8 @@ export interface ModelCatalogEntry {
      * toggle / budget_tokens / 空数组 / 无字段 → 缺省（不推理或不能选 effort）。
      */
     readonly reasoning?: ModelCatalogReasoning;
+    /** 输入模态（models.dev `modalities.input`）—— `canSeeImages` 与 UI 的「收不收图」都读它 */
+    readonly input?: readonly ModelInputModality[];
     /** 能力标记（表格「能力」列）；缺省 = 上游没声明，不是「不支持」 */
     readonly capabilities?: ModelCatalogCapabilities;
 }
@@ -73,6 +75,9 @@ export interface ModelCatalogReasoning {
     readonly defaultEffort: string;
 }
 
+/** 输入模态（与 models.dev 的 `modalities.input` 同一套词；多出来的丢） */
+export type ModelInputModality = 'text' | 'image' | 'audio' | 'video' | 'pdf';
+
 /** 目录里的价目（camelCase；与 model.yaml 的 snake_case 解耦） */
 export interface ModelCatalogCost {
     readonly input: number;
@@ -84,7 +89,7 @@ export interface ModelCatalogCost {
 /** 一个 provider 的账号名清单 —— **只有名字**，绝不含 value */
 export interface ProviderAccounts {
     readonly providerId: string;
-    readonly kind: "std" | "custom";
+    readonly kind: 'std' | 'custom';
     readonly names: readonly string[];
 }
 

@@ -13,15 +13,15 @@
 //
 // 约定：本文件只放纯函数，禁止 import node:*（renderer 会打进包）。
 
-import { PLACE_CANDIDATES } from "./delivery.js";
-import { getValue, removePath, setValue } from "./tree.js";
-import type { ContextPath, ContextTreeState } from "./types.js";
+import { PLACE_CANDIDATES } from './delivery.js';
+import { getValue, removePath, setValue } from './tree.js';
+import type { ContextPath, ContextTreeState } from './types.js';
 
 /** 一次变更的种类 */
-export type CtxChangeKind = "add" | "update" | "remove";
+export type CtxChangeKind = 'add' | 'update' | 'remove';
 
 /** 记录类型：首条（整棵树）/ 之后有变的每条 */
-export type CtxLogType = "baseline" | "changed";
+export type CtxLogType = 'baseline' | 'changed';
 
 /** 实体横向关联一律用 ref（turnId / stepId / 该轮第几步） */
 export interface CtxLogRef {
@@ -88,22 +88,22 @@ export interface CtxSnapshot {
 const SUMMARY_MAX = 72;
 const ITEM_MAX = 24;
 
-const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
+const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim();
 
 /** 单个元素的一行标签（数组 / 对象里用，取自业务字段而非通用 JSON） */
 function labelOf(v: unknown): string {
-    if (v === null) return "null";
-    if (typeof v === "string") {
+    if (v === null) return 'null';
+    if (typeof v === 'string') {
         const t = oneLine(v);
         return t.length <= ITEM_MAX ? t : `${t.slice(0, ITEM_MAX)}…`;
     }
-    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
     if (Array.isArray(v)) return `[${v.length} 项]`;
-    if (typeof v === "object") {
+    if (typeof v === 'object') {
         const o = v as Record<string, unknown>;
         // AGENTS.md 链元素有 path（`~/git/AGENTS.md` 比 `{3 键}` 有用得多）
-        if (typeof o["path"] === "string") return (o["path"] as string).replace(/^\/Users\/[^/]+/, "~");
-        if (typeof o["name"] === "string") return o["name"] as string;
+        if (typeof o['path'] === 'string') return (o['path'] as string).replace(/^\/Users\/[^/]+/, '~');
+        if (typeof o['name'] === 'string') return o['name'] as string;
         return `{${Object.keys(o).length} 键}`;
     }
     return String(v);
@@ -114,25 +114,25 @@ function labelOf(v: unknown): string {
  * `truncated` = "这不是全文"（全文在 steps.jsonl 的快照里）。
  */
 export function summarizeValue(v: unknown): { text: string; truncated: boolean } {
-    if (v === undefined) return { text: "", truncated: false };
-    if (v === null) return { text: "null", truncated: false };
-    if (typeof v === "string") {
+    if (v === undefined) return { text: '', truncated: false };
+    if (v === null) return { text: 'null', truncated: false };
+    if (typeof v === 'string') {
         const t = oneLine(v);
         return t.length <= SUMMARY_MAX
             ? { text: t, truncated: false }
             : { text: `${t.slice(0, SUMMARY_MAX)}…`, truncated: true };
     }
-    if (typeof v === "number" || typeof v === "boolean") return { text: String(v), truncated: false };
+    if (typeof v === 'number' || typeof v === 'boolean') return { text: String(v), truncated: false };
     if (Array.isArray(v)) {
         const labels = v.slice(0, 4).map(labelOf);
-        const more = v.length > 4 ? ` · +${v.length - 4}` : "";
-        return { text: `[${v.length} 项] ${labels.join(" · ")}${more}`, truncated: true };
+        const more = v.length > 4 ? ` · +${v.length - 4}` : '';
+        return { text: `[${v.length} 项] ${labels.join(' · ')}${more}`, truncated: true };
     }
     const o = v as Record<string, unknown>;
     const keys = Object.keys(o);
     const labels = keys.slice(0, 4).map((k) => `${k}: ${labelOf(o[k])}`);
-    const more = keys.length > 4 ? ` · +${keys.length - 4}` : "";
-    return { text: `{${keys.length} 键} ${labels.join(" · ")}${more}`, truncated: true };
+    const more = keys.length > 4 ? ` · +${keys.length - 4}` : '';
+    return { text: `{${keys.length} 键} ${labels.join(' · ')}${more}`, truncated: true };
 }
 
 /**
@@ -150,7 +150,7 @@ export function changesOf(
         const a = prev.valueHashes[p];
         const b = next.valueHashes[p];
         if (a === b) continue; // 两边都没有 / 值没变 → 不是变更
-        const type: CtxChangeKind = a === undefined ? "add" : b === undefined ? "remove" : "update";
+        const type: CtxChangeKind = a === undefined ? 'add' : b === undefined ? 'remove' : 'update';
         const before = a === undefined ? null : summarizeValue(getValue(prev.tree, p));
         const after = b === undefined ? null : summarizeValue(getValue(next.tree, p));
         out.push({
@@ -207,7 +207,7 @@ export interface CtxChangeRow {
 
 /** 判别一条读入记录是不是二版（有 `type` 就是） */
 export function isV2Entry(rec: unknown): rec is CtxLogEntry {
-    return !!rec && typeof rec === "object" && typeof (rec as { type?: unknown }).type === "string";
+    return !!rec && typeof rec === 'object' && typeof (rec as { type?: unknown }).type === 'string';
 }
 
 /** @deprecated 一版：两份 hash 表 → 事件（老任务的降级折算仍用它） */
@@ -222,8 +222,8 @@ export function opsFromHashes(
         const a = prev?.[p];
         const b = next[p];
         if (a === b) continue;
-        const kind: CtxChangeKind = a === undefined ? "add" : b === undefined ? "remove" : "update";
-        out.push({ kind, path: p, preview: kind === "remove" ? null : (previewFor?.(p) ?? null) });
+        const kind: CtxChangeKind = a === undefined ? 'add' : b === undefined ? 'remove' : 'update';
+        out.push({ kind, path: p, preview: kind === 'remove' ? null : (previewFor?.(p) ?? null) });
     }
     return out;
 }
@@ -234,9 +234,9 @@ export function foldCtxLog(records: readonly CtxLogRecord[]): CtxTurnHistory[] {
     return records.map((r, i) => {
         const changes: CtxChangeRow[] = r.ops.map((op) => {
             const before = values.has(op.path) ? values.get(op.path)! : null;
-            if (op.kind === "remove") values.delete(op.path);
+            if (op.kind === 'remove') values.delete(op.path);
             else values.set(op.path, op.preview);
-            return { kind: op.kind, path: op.path, before, after: op.kind === "remove" ? null : op.preview };
+            return { kind: op.kind, path: op.path, before, after: op.kind === 'remove' ? null : op.preview };
         });
         return {
             index: i + 1,
@@ -252,7 +252,7 @@ export function foldCtxLog(records: readonly CtxLogRecord[]): CtxTurnHistory[] {
 
 /** 一条二版记录 → 折叠行（UI 统一渲染用；baseline 无 changes） */
 export function entryToRows(entry: CtxLogEntry): CtxChangeRow[] {
-    if (entry.type === "baseline") return [];
+    if (entry.type === 'baseline') return [];
     return (entry.data as { changes: CtxChangeItem[] }).changes.map((c) => ({
         kind: c.type,
         path: c.path,
@@ -279,15 +279,15 @@ export function entryToRows(entry: CtxLogEntry): CtxChangeRow[] {
  * （少报），而不是拿当前值冒充旧值（错报）。
  */
 export function foldCtxTree(records: readonly CtxLogEntry[]): ContextTreeState | null {
-    const lastBaseline = records.map((r) => r.type).lastIndexOf("baseline");
+    const lastBaseline = records.map((r) => r.type).lastIndexOf('baseline');
     if (lastBaseline < 0) return null;
     const base = records[lastBaseline]!;
     let tree = (base.data as { tree: ContextTreeState }).tree;
     for (const rec of records.slice(lastBaseline + 1)) {
-        if (rec.type !== "changed") continue;
+        if (rec.type !== 'changed') continue;
         for (const c of (rec.data as { changes: CtxChangeItem[] }).changes) {
             // `remove` = 该单元此刻不存在；其余（add/update）写回 after 摘要串。
-            tree = c.type === "remove" ? removePath(tree, c.path) : setValue(tree, c.path, c.data.after ?? null);
+            tree = c.type === 'remove' ? removePath(tree, c.path) : setValue(tree, c.path, c.data.after ?? null);
         }
     }
     return tree;
@@ -312,10 +312,7 @@ export function nodeHitByChange(nodePath: string, changePath: string): boolean {
 }
 
 /** 某节点命中的**最具体**那条变更（同路径优先，其次最近的祖先单元）；都没有 = null */
-export function changeForNode<T extends { path: string }>(
-    nodePath: string,
-    changes: readonly T[],
-): T | null {
+export function changeForNode<T extends { path: string }>(nodePath: string, changes: readonly T[]): T | null {
     let best: T | null = null;
     for (const c of changes) {
         if (!nodeHitByChange(nodePath, c.path)) continue;

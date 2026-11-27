@@ -6,12 +6,12 @@
 // 所以不需要 ai-sdk 的 `streamText`，直接把 SessionDelta 里的文本片段转成 Agent 的字符串流即可 ——
 // 少一个依赖、少一层错误面。
 
-import type { LlmPort } from "@diy-agent/session";
-import { createOpenAiCompatible, resolveProviderConfig, type TrafficPort } from "@diy-agent/llm-provider";
-import { listAccountStates, loadCatalog, readAccountValue } from "@diy-agent/model-catalog";
-import { splitModelKey } from "./chat.js";
-import type { AgentPorts } from "./aggregate.js";
-import type { ModelChoice } from "./protocol.js";
+import type { LlmPort } from '@diy-agent/session';
+import { createOpenAiCompatible, resolveProviderConfig, type TrafficPort } from '@diy-agent/llm-provider';
+import { listAccountStates, loadCatalog, readAccountValue } from '@diy-agent/model-catalog';
+import { splitModelKey } from './chat.js';
+import type { AgentPorts } from './aggregate.js';
+import type { ModelChoice } from './protocol.js';
 
 /**
  * 把 LlmPort 包成 Agent 的 port：只取文本增量。
@@ -22,10 +22,10 @@ export function llmPorts(provider: LlmPort, opts: { sessionId?: string } = {}): 
     return {
         async *complete(messages, completeOpts) {
             const wire = messages.map((m) => ({
-                role: (m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user") as
-                    | "user"
-                    | "assistant"
-                    | "system",
+                role: (m.role === 'assistant' ? 'assistant' : m.role === 'system' ? 'system' : 'user') as
+                    | 'user'
+                    | 'assistant'
+                    | 'system',
                 text: m.content,
             }));
             // ⚠️ 必须带 sessionId：provider 的 `$SESSION` 模板 header（如 opencode-go 的会话亲和键）
@@ -46,12 +46,14 @@ export function llmPorts(provider: LlmPort, opts: { sessionId?: string } = {}): 
                       }),
             };
             for await (const delta of provider.chat(wire, Object.keys(chatOpts).length === 0 ? undefined : chatOpts)) {
-                if (delta.type === "text") yield delta.text;
-                else if (delta.type === "tool-call") yield { type: "tool-call", id: delta.id, name: delta.name, input: delta.input };
-                else if (delta.type === "tool-result") yield { type: "tool-result", id: delta.id, content: delta.content };
-                else if (delta.type === "usage")
+                if (delta.type === 'text') yield delta.text;
+                else if (delta.type === 'tool-call')
+                    yield { type: 'tool-call', id: delta.id, name: delta.name, input: delta.input };
+                else if (delta.type === 'tool-result')
+                    yield { type: 'tool-result', id: delta.id, content: delta.content };
+                else if (delta.type === 'usage')
                     yield {
-                        type: "usage",
+                        type: 'usage',
                         inputTokens: delta.inputTokens,
                         outputTokens: delta.outputTokens,
                         ...(delta.cacheReadTokens === undefined ? {} : { cacheReadTokens: delta.cacheReadTokens }),
@@ -69,7 +71,7 @@ export function llmPorts(provider: LlmPort, opts: { sessionId?: string } = {}): 
  */
 export function resolveProvider(home: string, modelKey: string, traffic?: TrafficPort): LlmPort {
     const { account, providerId, modelId } = splitModelKey(modelKey);
-    if (providerId === "" || modelId === "") {
+    if (providerId === '' || modelId === '') {
         throw new Error(`模型标识不合法：${modelKey}（应形如 account@provider/model）`);
     }
     const apiKey = readAccountValue(home, providerId, account);
@@ -110,21 +112,21 @@ export function resolveProvider(home: string, modelKey: string, traffic?: Traffi
 export function modelChoices(home: string): ModelChoice[] {
     const accountsByProvider = new Map(
         listAccountStates(home).map((p) => [p.providerId, p.accounts.filter((a) => a.configured).map((a) => a.name)]),
-    )
-    const out: ModelChoice[] = []
+    );
+    const out: ModelChoice[] = [];
     for (const entry of loadCatalog(home)) {
         const base = {
             providerId: entry.providerId,
             modelId: entry.modelId,
             ...(entry.cost === undefined ? {} : { cost: entry.cost }),
             ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
-        }
-        const accounts = accountsByProvider.get(entry.providerId) ?? []
+        };
+        const accounts = accountsByProvider.get(entry.providerId) ?? [];
         if (accounts.length === 0) {
-            out.push({ ...base, name: entry.name })
-            continue
+            out.push({ ...base, name: entry.name });
+            continue;
         }
-        for (const account of accounts) out.push({ ...base, account, name: entry.name })
+        for (const account of accounts) out.push({ ...base, account, name: entry.name });
     }
-    return out
+    return out;
 }

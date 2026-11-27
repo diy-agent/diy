@@ -11,9 +11,9 @@
 //   · 菜单树只有一份：DOM 里每个页面就一个 .wb-nav-item（分组标题在窄态隐藏、宽态出现）
 // 选一个页面 ⇒ 直接切页，不收起（收不收由鼠标 / ☰ 决定，切页不该附带别的动作）。
 
-import { WorkbenchUiError } from "./errors.js";
-import { getPage } from "./registry.js";
-import type { PageContext, PageInfo, WorkbenchFrame, WorkbenchGateway } from "./contract.js";
+import { WorkbenchUiError } from './errors.js';
+import { getPage } from './registry.js';
+import type { PageContext, PageInfo, WorkbenchFrame, WorkbenchGateway } from './contract.js';
 
 export interface MountOptions {
     /** 侧栏品牌名 / 窗口标题旁的字 */
@@ -22,7 +22,7 @@ export interface MountOptions {
     readonly initialPageId?: string;
 }
 
-const STYLE_ID = "wb-frame-style";
+const STYLE_ID = 'wb-frame-style';
 /** 窄态宽 / 宽态宽（px）：窄态与聊天页 bot 侧栏同宽，切换时主区跟着让位 */
 const NARROW_WIDTH = 52;
 const WIDE_WIDTH = 232;
@@ -65,38 +65,38 @@ export async function mountWorkbench(
     gateway: WorkbenchGateway,
     options: MountOptions = {},
 ): Promise<WorkbenchFrame> {
-    if (!root) throw new WorkbenchUiError("ui-workbench/bad-root", "挂载点为空");
+    if (!root) throw new WorkbenchUiError('ui-workbench/bad-root', '挂载点为空');
     const pages = await gateway.listPages();
-    if (pages.length === 0) throw new WorkbenchUiError("ui-workbench/no-pages", "主进程没有交付任何页面");
+    if (pages.length === 0) throw new WorkbenchUiError('ui-workbench/no-pages', '主进程没有交付任何页面');
 
     ensureStyle(root.ownerDocument);
     const doc = root.ownerDocument;
 
     root.replaceChildren();
-    const shell = el(doc, "div", "wb-root");
+    const shell = el(doc, 'div', 'wb-root');
 
     // ── 侧栏（只有一份菜单） ─────────────────────────
-    const side = el(doc, "aside", "wb-side");
-    side.dataset["open"] = "false";
+    const side = el(doc, 'aside', 'wb-side');
+    side.dataset['open'] = 'false';
 
-    const toggle = el<HTMLButtonElement>(doc, "button", "wb-side-toggle");
-    toggle.type = "button";
-    toggle.title = "展开菜单";
-    toggle.setAttribute("aria-label", "展开菜单");
-    toggle.setAttribute("aria-expanded", "false");
-    toggle.textContent = "☰";
+    const toggle = el<HTMLButtonElement>(doc, 'button', 'wb-side-toggle');
+    toggle.type = 'button';
+    toggle.title = '展开菜单';
+    toggle.setAttribute('aria-label', '展开菜单');
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.textContent = '☰';
     side.append(toggle);
 
-    const brand = el(doc, "h1", "wb-brand");
-    brand.textContent = options.title ?? "Workbench";
+    const brand = el(doc, 'h1', 'wb-brand');
+    brand.textContent = options.title ?? 'Workbench';
     side.append(brand);
 
-    const nav = el(doc, "nav", "wb-nav");
+    const nav = el(doc, 'nav', 'wb-nav');
     side.append(nav);
 
-    const main = el(doc, "main", "wb-main");
-    const header = el(doc, "header", "wb-header");
-    const body = el(doc, "section", "wb-page");
+    const main = el(doc, 'main', 'wb-main');
+    const header = el(doc, 'header', 'wb-header');
+    const body = el(doc, 'section', 'wb-page');
     main.append(header, body);
     shell.append(side, main);
     root.append(shell);
@@ -106,7 +106,7 @@ export async function mountWorkbench(
     /** 分组 → 页面（没写 group 的落「未分组」；顺序 = 清单里首次出现的顺序） */
     const groups = new Map<string, PageInfo[]>();
     for (const info of pages) {
-        const name = info.group ?? "";
+        const name = info.group ?? '';
         const list = groups.get(name);
         if (list === undefined) groups.set(name, [info]);
         else list.push(info);
@@ -114,34 +114,34 @@ export async function mountWorkbench(
 
     let firstGroup = true;
     for (const [groupName, items] of groups) {
-        if (!firstGroup) nav.append(el(doc, "div", "wb-sep"));
+        if (!firstGroup) nav.append(el(doc, 'div', 'wb-sep'));
         firstGroup = false;
 
-        const group = el(doc, "div", "wb-group");
-        group.dataset["collapsed"] = "false";
-        if (groupName !== "") {
-            const head = el<HTMLButtonElement>(doc, "button", "wb-group-head");
-            head.type = "button";
-            head.append(el(doc, "span", "wb-group-chevron", "▾"), el(doc, "span", "", groupName));
-            head.addEventListener("click", () => {
-                group.dataset["collapsed"] = group.dataset["collapsed"] === "true" ? "false" : "true";
+        const group = el(doc, 'div', 'wb-group');
+        group.dataset['collapsed'] = 'false';
+        if (groupName !== '') {
+            const head = el<HTMLButtonElement>(doc, 'button', 'wb-group-head');
+            head.type = 'button';
+            head.append(el(doc, 'span', 'wb-group-chevron', '▾'), el(doc, 'span', '', groupName));
+            head.addEventListener('click', () => {
+                group.dataset['collapsed'] = group.dataset['collapsed'] === 'true' ? 'false' : 'true';
             });
             group.append(head);
         }
-        const list = el(doc, "div", "wb-group-items");
+        const list = el(doc, 'div', 'wb-group-items');
         group.append(list);
         nav.append(group);
 
         for (const info of items) {
-            const icon = info.icon ?? [...info.title][0] ?? "•";
+            const icon = info.icon ?? [...info.title][0] ?? '•';
 
             // 每个页面**只有一个**按钮：窄态只见图标，宽态图标旁淡入标题
-            const button = el<HTMLButtonElement>(doc, "button", "wb-nav-item");
-            button.type = "button";
+            const button = el<HTMLButtonElement>(doc, 'button', 'wb-nav-item');
+            button.type = 'button';
             button.title = info.title;
-            button.dataset["pageId"] = info.id;
-            button.append(el(doc, "span", "wb-nav-icon", icon), el(doc, "span", "wb-nav-label", info.title));
-            button.addEventListener("click", () => show(info.id));
+            button.dataset['pageId'] = info.id;
+            button.append(el(doc, 'span', 'wb-nav-icon', icon), el(doc, 'span', 'wb-nav-label', info.title));
+            button.addEventListener('click', () => show(info.id));
             list.append(button);
             buttons.set(info.id, button);
         }
@@ -149,43 +149,43 @@ export async function mountWorkbench(
 
     /** 展开/收起：`open` = 钉住；不钉住时靠悬停（纯 CSS），点 ☰ 才把它留在打开态 */
     const setOpen = (open: boolean): void => {
-        side.dataset["open"] = open ? "true" : "false";
-        toggle.setAttribute("aria-expanded", open ? "true" : "false");
-        toggle.textContent = open ? "✕" : "☰";
-        toggle.title = open ? "收起菜单" : "展开菜单";
+        side.dataset['open'] = open ? 'true' : 'false';
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.textContent = open ? '✕' : '☰';
+        toggle.title = open ? '收起菜单' : '展开菜单';
     };
-    toggle.addEventListener("click", () => setOpen(side.dataset["open"] !== "true"));
+    toggle.addEventListener('click', () => setOpen(side.dataset['open'] !== 'true'));
 
     const onKeyDown = (event: KeyboardEvent): void => {
-        if (event.key === "Escape" && side.dataset["open"] === "true") setOpen(false);
+        if (event.key === 'Escape' && side.dataset['open'] === 'true') setOpen(false);
     };
-    doc.addEventListener("keydown", onKeyDown);
+    doc.addEventListener('keydown', onKeyDown);
 
     let cleanup: (() => void) | undefined;
 
     const show = (pageId: string): void => {
         const info = pages.find((page) => page.id === pageId);
-        if (!info) throw new WorkbenchUiError("ui-workbench/unknown-page", `主进程没交付页面 ${pageId}`);
+        if (!info) throw new WorkbenchUiError('ui-workbench/unknown-page', `主进程没交付页面 ${pageId}`);
         cleanup?.();
         cleanup = undefined;
         header.textContent = info.title;
         for (const [id, button] of buttons) {
-            if (id === pageId) button.setAttribute("aria-current", "page");
-            else button.removeAttribute("aria-current");
+            if (id === pageId) button.setAttribute('aria-current', 'page');
+            else button.removeAttribute('aria-current');
         }
         const view = getPage(pageId);
         if (!view) {
             body.replaceChildren();
-            const missing = el(doc, "div", "wb-missing");
+            const missing = el(doc, 'div', 'wb-missing');
             missing.textContent = `页面「${info.title}」（${pageId}）没有在 renderer 注册实现`;
             body.append(missing);
             return;
         }
         const ctx: PageContext = {
-            invoke: <T,>(method: string, args?: unknown) => gateway.invoke(pageId, method, args) as Promise<T>,
+            invoke: <T>(method: string, args?: unknown) => gateway.invoke(pageId, method, args) as Promise<T>,
         };
         const result = view.render(body, ctx);
-        if (typeof result === "function") cleanup = result;
+        if (typeof result === 'function') cleanup = result;
     };
 
     show(options.initialPageId ?? pages[0]!.id);
@@ -196,7 +196,7 @@ export async function mountWorkbench(
         dispose: () => {
             cleanup?.();
             cleanup = undefined;
-            doc.removeEventListener("keydown", onKeyDown);
+            doc.removeEventListener('keydown', onKeyDown);
             root.replaceChildren();
         },
     };
@@ -211,7 +211,7 @@ function el<T extends HTMLElement = HTMLElement>(doc: Document, tag: string, cla
 
 function ensureStyle(doc: Document): void {
     if (doc.getElementById(STYLE_ID)) return;
-    const style = doc.createElement("style");
+    const style = doc.createElement('style');
     style.id = STYLE_ID;
     style.textContent = STYLE;
     doc.head.append(style);

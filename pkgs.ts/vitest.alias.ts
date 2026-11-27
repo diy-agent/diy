@@ -8,67 +8,68 @@
 // 用法（每个会 import 能力包的 vitest 配置里）：
 //   import { workspaceAliases } from "../vitest.alias";
 //   resolve: { alias: [...workspaceAliases] }
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const PKGS = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const REPO = resolve(PKGS, "..");
+const PKGS = resolve(fileURLToPath(new URL('.', import.meta.url)));
+const REPO = resolve(PKGS, '..');
 
 /**
  * 包名 → 目录与**类型入口**（新增能力包 = 这里加一行）。
  * 路径相对仓根：`pkgs.ts/*` 的源码在 `src/`；`apps/*` 是 profile（摊在目录根，##458）。
  */
 const LOCATIONS: Record<string, { dir: string; entry: string }> = {
-    "@diy-agent/time": { dir: "pkgs.ts/core/time", entry: "src/index.ts" },
-    "@diy-agent/actor": { dir: "pkgs.ts/core/actor", entry: "src/index.ts" },
-    "@diy-agent/log": { dir: "pkgs.ts/core/log", entry: "src/index.ts" },
-    "@diy-agent/session": { dir: "pkgs.ts/agent/session", entry: "src/index.ts" },
-    "@diy-agent/session-store-jsonl": { dir: "pkgs.ts/agent/store-jsonl", entry: "src/index.ts" },
-    "@diy-agent/session-store-memory": { dir: "pkgs.ts/agent/store-memory", entry: "src/index.ts" },
-    "@diy-agent/store-contract": { dir: "pkgs.ts/agent/store-contract", entry: "src/index.ts" },
-    "@diy-agent/compaction": { dir: "pkgs.ts/agent/compaction", entry: "src/index.ts" },
-    "@diy-agent/tools": { dir: "pkgs.ts/agent/tools", entry: "src/index.ts" },
-    "@diy-agent/jobs": { dir: "pkgs.ts/agent/jobs", entry: "src/index.ts" },
-    "@diy-agent/context": { dir: "pkgs.ts/agent/context", entry: "src/index.ts" },
-    "@diy-agent/facts": { dir: "pkgs.ts/core/facts", entry: "src/index.ts" },
-    "@diy-agent/flow": { dir: "pkgs.ts/flow", entry: "src/index.ts" },
-    "@diy-agent/llm-provider": { dir: "pkgs.ts/model/provider", entry: "src/index.ts" },
-    "@diy-agent/persistence": { dir: "pkgs.ts/core/persistence", entry: "src/index.ts" },
-    "@diy-agent/migration": { dir: "pkgs.ts/core/migration", entry: "src/index.ts" },
-    "@diy-agent/bot": { dir: "pkgs.ts/agent/bot", entry: "src/index.ts" },
-    "@diy-agent/room": { dir: "pkgs.ts/room", entry: "src/index.ts" },
-    "@diy-agent/talk": { dir: "pkgs.ts/agent/talk", entry: "src/index.ts" },
-    "@diy-agent/template": { dir: "pkgs.ts/core/template", entry: "src/index.ts" },
-    "@diy-agent/ui-kit": { dir: "pkgs.ts/ui/kit", entry: "src/index.ts" },
-    "@diy-agent/rpc": { dir: "pkgs.ts/core/rpc", entry: "src/index.ts" },
-    "@diy-agent/remote": { dir: "pkgs.ts/remote/link", entry: "src/index.ts" },
-    "@diy-agent/ui": { dir: "pkgs.ts/ui/core", entry: "src/index.ts" },
-    "@diy-agent/workbench-plugin": { dir: "pkgs.ts/ui/workbench-plugin", entry: "src/index.ts" },
-    "@diy-agent/workbench": { dir: "pkgs.ts/ui/workbench", entry: "src/index.ts" },
-    "@diy-agent/workbench-ui": { dir: "pkgs.ts/ui/workbench-ui", entry: "src/index.ts" },
-    "@diy-agent/ui-testing": { dir: "pkgs.ts/ui/testing", entry: "src/index.ts" },
-    "@diy-agent/model-catalog": { dir: "pkgs.ts/model/catalog", entry: "src/index.ts" },
-    "@diy-agent/model-config-page": { dir: "pkgs.ts/ui/model-config", entry: "src/index.ts" },
-    "@diy-agent/bot-config-page": { dir: "pkgs.ts/ui/bot-config", entry: "src/index.ts" },
+    '@diy-agent/time': { dir: 'pkgs.ts/core/time', entry: 'src/index.ts' },
+    '@diy-agent/actor': { dir: 'pkgs.ts/core/actor', entry: 'src/index.ts' },
+    '@diy-agent/log': { dir: 'pkgs.ts/core/log', entry: 'src/index.ts' },
+    '@diy-agent/session': { dir: 'pkgs.ts/agent/session', entry: 'src/index.ts' },
+    '@diy-agent/session-store-jsonl': { dir: 'pkgs.ts/agent/store-jsonl', entry: 'src/index.ts' },
+    '@diy-agent/session-store-memory': { dir: 'pkgs.ts/agent/store-memory', entry: 'src/index.ts' },
+    '@diy-agent/store-contract': { dir: 'pkgs.ts/agent/store-contract', entry: 'src/index.ts' },
+    '@diy-agent/compaction': { dir: 'pkgs.ts/agent/compaction', entry: 'src/index.ts' },
+    '@diy-agent/tools': { dir: 'pkgs.ts/agent/tools', entry: 'src/index.ts' },
+    '@diy-agent/jobs': { dir: 'pkgs.ts/agent/jobs', entry: 'src/index.ts' },
+    '@diy-agent/context': { dir: 'pkgs.ts/agent/context', entry: 'src/index.ts' },
+    '@diy-agent/facts': { dir: 'pkgs.ts/core/facts', entry: 'src/index.ts' },
+    '@diy-agent/flow': { dir: 'pkgs.ts/flow', entry: 'src/index.ts' },
+    '@diy-agent/llm-provider': { dir: 'pkgs.ts/model/provider', entry: 'src/index.ts' },
+    '@diy-agent/persistence': { dir: 'pkgs.ts/core/persistence', entry: 'src/index.ts' },
+    '@diy-agent/bot': { dir: 'pkgs.ts/agent/bot', entry: 'src/index.ts' },
+    '@diy-agent/talk': { dir: 'pkgs.ts/agent/talk', entry: 'src/index.ts' },
+    '@diy-agent/template': { dir: 'pkgs.ts/core/template', entry: 'src/index.ts' },
+    '@diy-agent/ui-kit': { dir: 'pkgs.ts/ui/kit', entry: 'src/index.ts' },
+    '@diy-agent/rpc': { dir: 'pkgs.ts/core/rpc', entry: 'src/index.ts' },
+    '@diy-agent/remote': { dir: 'pkgs.ts/remote/link', entry: 'src/index.ts' },
+    '@diy-agent/ui': { dir: 'pkgs.ts/ui/core', entry: 'src/index.ts' },
+    '@diy-agent/workbench-plugin': { dir: 'pkgs.ts/ui/workbench-plugin', entry: 'src/index.ts' },
+    '@diy-agent/workbench': { dir: 'pkgs.ts/ui/workbench', entry: 'src/index.ts' },
+    '@diy-agent/workbench-ui': { dir: 'pkgs.ts/ui/workbench-ui', entry: 'src/index.ts' },
+    '@diy-agent/ui-testing': { dir: 'pkgs.ts/ui/testing', entry: 'src/index.ts' },
+    '@diy-agent/migration': { dir: 'pkgs.ts/core/migration', entry: 'src/index.ts' },
+    '@diy-agent/model-catalog': { dir: 'pkgs.ts/model/catalog', entry: 'src/index.ts' },
+    '@diy-agent/model-config-page': { dir: 'pkgs.ts/ui/model-config', entry: 'src/index.ts' },
+    '@diy-agent/bot-config-page': { dir: 'pkgs.ts/ui/bot-config', entry: 'src/index.ts' },
     // 补齐：这些包以前不在单测导入链上，RPC 切换后链路经 agent/protocol 走到它们；不在表里就只能按
     // package.json 的 exports 解析到 lib/*.js（未构建）→ 加载期 `Failed to resolve entry`。
-    "@diy-agent/os": { dir: "pkgs.ts/core/os", entry: "src/index.ts" },
-    "@diy-agent/traffic": { dir: "pkgs.ts/core/traffic", entry: "src/index.ts" },
-    "@diy-agent/kb": { dir: "pkgs.ts/core/kb", entry: "src/index.ts" },
-    "@diy-agent/serial-queue": { dir: "pkgs.ts/core/serial-queue", entry: "src/index.ts" },
-    "@diy-agent/dev-paths": { dir: "pkgs.ts/core/dev-paths", entry: "src/index.ts" },
-    "@diy-agent/protocol": { dir: "pkgs.ts/agent/protocol", entry: "src/index.ts" },
-    "@diy-agent/entity-runtime": { dir: "pkgs.ts/agent/entity-runtime", entry: "src/index.ts" },
-    "@diy-agent/agents-chain": { dir: "pkgs.ts/agent/agents-chain", entry: "src/index.ts" },
-    "@diy-agent/skills": { dir: "pkgs.ts/agent/skills", entry: "src/index.ts" },
-    "@diy-agent/hub": { dir: "pkgs.ts/remote/hub", entry: "src/index.ts" },
-    "@diy-agent/test-llm": { dir: "pkgs.ts/test/llm", entry: "src/index.ts" },
-    "@diy-agent/chat-core": { dir: "pkgs.ts/ui/chat-core", entry: "src/index.ts" },
-    "@diy-agent/chat-transport-rpc": { dir: "pkgs.ts/ui/chat-transport-rpc", entry: "src/index.ts" },
-    "@diy-agent/entity-chat": { dir: "pkgs.ts/ui/entity-chat", entry: "src/index.ts" },
-    "@diy-agent/devtools-traffic": { dir: "pkgs.ts/ui/devtools-traffic", entry: "src/index.ts" },
-    "@diy-agent/workbench-dock": { dir: "pkgs.ts/ui/workbench-dock", entry: "src/index.ts" },
+    '@diy-agent/os': { dir: 'pkgs.ts/core/os', entry: 'src/index.ts' },
+    '@diy-agent/traffic': { dir: 'pkgs.ts/core/traffic', entry: 'src/index.ts' },
+    '@diy-agent/kb': { dir: 'pkgs.ts/core/kb', entry: 'src/index.ts' },
+    '@diy-agent/serial-queue': { dir: 'pkgs.ts/core/serial-queue', entry: 'src/index.ts' },
+    '@diy-agent/dev-paths': { dir: 'pkgs.ts/core/dev-paths', entry: 'src/index.ts' },
+    '@diy-agent/protocol': { dir: 'pkgs.ts/agent/protocol', entry: 'src/index.ts' },
+    '@diy-agent/attachment': { dir: 'pkgs.ts/agent/attachment', entry: 'src/index.ts' },
+    '@diy-agent/entity-runtime': { dir: 'pkgs.ts/agent/entity-runtime', entry: 'src/index.ts' },
+    '@diy-agent/agents-chain': { dir: 'pkgs.ts/agent/agents-chain', entry: 'src/index.ts' },
+    '@diy-agent/skills': { dir: 'pkgs.ts/agent/skills', entry: 'src/index.ts' },
+    '@diy-agent/code-runtime': { dir: 'pkgs.ts/agent/code-runtime', entry: 'src/index.ts' },
+    '@diy-agent/hub': { dir: 'pkgs.ts/remote/hub', entry: 'src/index.ts' },
+    '@diy-agent/test-llm': { dir: 'pkgs.ts/test/llm', entry: 'src/index.ts' },
+    '@diy-agent/chat-core': { dir: 'pkgs.ts/ui/chat-core', entry: 'src/index.ts' },
+    '@diy-agent/chat-transport-rpc': { dir: 'pkgs.ts/ui/chat-transport-rpc', entry: 'src/index.ts' },
+    '@diy-agent/entity-chat': { dir: 'pkgs.ts/ui/entity-chat', entry: 'src/index.ts' },
+    '@diy-agent/devtools-traffic': { dir: 'pkgs.ts/ui/devtools-traffic', entry: 'src/index.ts' },
+    '@diy-agent/workbench-dock': { dir: 'pkgs.ts/ui/workbench-dock', entry: 'src/index.ts' },
 };
 
 /**
@@ -80,15 +81,17 @@ const LOCATIONS: Record<string, { dir: string; entry: string }> = {
  * （vite 报 `Cannot find package '@diy-agent/rpc/http'`）。新增这类包 = 这里加一行。
  */
 const SUBPATH_SOURCES: Record<string, string> = {
-    "@diy-agent/rpc/http": "pkgs.ts/core/rpc/src/transport/http/index.ts",
-    "@diy-agent/rpc/ws": "pkgs.ts/core/rpc/src/transport/ws/index.ts",
-    "@diy-agent/rpc/electron/main": "pkgs.ts/core/rpc/src/transport/electron/main.ts",
-    "@diy-agent/rpc/electron/renderer": "pkgs.ts/core/rpc/src/transport/electron/renderer.ts",
-    "@diy-agent/rpc/cli": "pkgs.ts/core/rpc/src/cli/index.ts",
-    "@diy-agent/remote/node": "pkgs.ts/remote/link/src/node/index.ts",
+    // 纯类型入口：给 `types: []` 的包（protocol）留一条不碰 node 的路径
+    '@diy-agent/attachment/types': 'pkgs.ts/agent/attachment/src/types.ts',
+    '@diy-agent/rpc/http': 'pkgs.ts/core/rpc/src/transport/http/index.ts',
+    '@diy-agent/rpc/ws': 'pkgs.ts/core/rpc/src/transport/ws/index.ts',
+    '@diy-agent/rpc/electron/main': 'pkgs.ts/core/rpc/src/transport/electron/main.ts',
+    '@diy-agent/rpc/electron/renderer': 'pkgs.ts/core/rpc/src/transport/electron/renderer.ts',
+    '@diy-agent/rpc/cli': 'pkgs.ts/core/rpc/src/cli/index.ts',
+    '@diy-agent/remote/node': 'pkgs.ts/remote/link/src/node/index.ts',
 };
 
-const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * 子路径别名优先取 package.json 的 `exports["types"]`：
@@ -99,22 +102,26 @@ function exportAliases(name: string, dir: string): Array<{ find: RegExp; replace
     const abs = resolve(REPO, dir);
     let exports: Record<string, unknown> = {};
     try {
-        exports = (JSON.parse(readFileSync(resolve(abs, "package.json"), "utf8")) as { exports?: Record<string, unknown> })
-            .exports ?? {};
+        exports =
+            (JSON.parse(readFileSync(resolve(abs, 'package.json'), 'utf8')) as { exports?: Record<string, unknown> })
+                .exports ?? {};
     } catch {
         return [];
     }
     const out: Array<{ find: RegExp; replacement: string }> = [];
     for (const [key, value] of Object.entries(exports)) {
-        if (key === ".") continue;
-        const target = typeof value === "string" ? value : (value as { types?: unknown } | null)?.types;
-        if (typeof target !== "string" || !target.endsWith(".ts")) continue;
-        const rel = target.replace(/^\.\//, "");
-        if (key.includes("*")) {
+        if (key === '.') continue;
+        const target = typeof value === 'string' ? value : (value as { types?: unknown } | null)?.types;
+        if (typeof target !== 'string' || !target.endsWith('.ts')) continue;
+        const rel = target.replace(/^\.\//, '');
+        if (key.includes('*')) {
             // `./*` → `./src/*.ts`：把 `*` 换成正则捕获 `$1`
-            out.push({ find: new RegExp(`^${esc(name)}/(.*)$`), replacement: resolve(abs, rel).replace(/\*/g, "$1") });
+            out.push({ find: new RegExp(`^${esc(name)}/(.*)$`), replacement: resolve(abs, rel).replace(/\*/g, '$1') });
         } else {
-            out.push({ find: new RegExp(`^${esc(name)}/${esc(key.replace(/^\.\//, ""))}$`), replacement: resolve(abs, rel) });
+            out.push({
+                find: new RegExp(`^${esc(name)}/${esc(key.replace(/^\.\//, ''))}$`),
+                replacement: resolve(abs, rel),
+            });
         }
     }
     return out;
@@ -135,11 +142,11 @@ export const workspaceAliases = [
         replacement: resolve(REPO, file),
     })),
     ...Object.entries(LOCATIONS).flatMap(([name, { dir, entry }]) => {
-    const abs = resolve(REPO, dir);
-    return [
-        { find: new RegExp(`^${esc(name)}$`), replacement: resolve(abs, entry) },
-        ...exportAliases(name, dir),
-        { find: new RegExp(`^${esc(name)}/(.*)$`), replacement: `${resolve(abs, dirname(entry))}/$1` },
-    ];
+        const abs = resolve(REPO, dir);
+        return [
+            { find: new RegExp(`^${esc(name)}$`), replacement: resolve(abs, entry) },
+            ...exportAliases(name, dir),
+            { find: new RegExp(`^${esc(name)}/(.*)$`), replacement: `${resolve(abs, dirname(entry))}/$1` },
+        ];
     }),
 ];

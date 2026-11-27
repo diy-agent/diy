@@ -39,14 +39,14 @@
 //   （`<cut …/>` 在**走 markdown 渲染**的视图里同样有被当成 HTML 吞掉的风险 ⇒ `fence: true`
 //     会包一层行内代码，让它照常可见。）
 
-import { invariant } from "./invariant.js";
+import { invariant } from './invariant.js';
 
 /** 三种截断语义（见头注的判据表）。非法值必抛 —— 这是本模块存在的理由。 */
-export const CUT_SCOPES = ["wire", "view", "archive"] as const;
+export const CUT_SCOPES = ['wire', 'view', 'archive'] as const;
 export type CutScope = (typeof CUT_SCOPES)[number];
 
 /** 计量单位（与 `total` / `kept` 同一量纲；缺省 = lines） */
-export const CUT_UNITS = ["lines", "chars", "bytes"] as const;
+export const CUT_UNITS = ['lines', 'chars', 'bytes'] as const;
 export type CutUnit = (typeof CUT_UNITS)[number];
 
 export interface CutMarkerSpec {
@@ -82,18 +82,22 @@ export interface CutMarker extends CutMarkerSpec {
 
 /** 属性值转义：`&` 先转，避免把转义出来的 `&quot;` 再转一遍 */
 function esc(v: string): string {
-    return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function unesc(v: string): string {
-    return v.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    return v
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
 }
 
 // 构造期的硬校验一律走 `invariant`（`rule.err-triage`：新增 throw 必须带 code；
 // 写错 spec 是**我方缺陷**，不是用户输入，所以归 `agent/invariant-*`）：
 //   · scope 非法 / total < kept 静默放过 ⇒ 一个「看起来正常但语义反了」的标记就进了历史，事后没法查。
 function assertCount(name: string, n: number): void {
-    invariant(Number.isFinite(n) && Number.isInteger(n) && n >= 0, "agent/invariant-cut-count", `${name}=${String(n)}`);
+    invariant(Number.isFinite(n) && Number.isInteger(n) && n >= 0, 'agent/invariant-cut-count', `${name}=${String(n)}`);
 }
 
 /**
@@ -106,24 +110,28 @@ function assertCount(name: string, n: number): void {
  */
 export function cutMarker(spec: CutMarkerSpec): string {
     const { by, scope, why, total, kept, unit, resume, lowerBound, fence } = spec;
-    invariant(!!by, "agent/invariant-cut-by", "by 必填（谁截的）");
-    invariant(!!why, "agent/invariant-cut-why", "why 必填（为什么截）");
+    invariant(!!by, 'agent/invariant-cut-by', 'by 必填（谁截的）');
+    invariant(!!why, 'agent/invariant-cut-why', 'why 必填（为什么截）');
     invariant(
         CUT_SCOPES.includes(scope),
-        "agent/invariant-cut-scope",
-        `scope=${String(scope)}（须 ${CUT_SCOPES.join(" | ")}）`,
+        'agent/invariant-cut-scope',
+        `scope=${String(scope)}（须 ${CUT_SCOPES.join(' | ')}）`,
     );
-    invariant(unit === undefined || CUT_UNITS.includes(unit), "agent/invariant-cut-unit", `unit=${String(unit)}（须 ${CUT_UNITS.join(" | ")}）`);
-    assertCount("total", total);
-    assertCount("kept", kept);
-    invariant(total >= kept, "agent/invariant-cut-total", `total(${total}) < kept(${kept})`);
+    invariant(
+        unit === undefined || CUT_UNITS.includes(unit),
+        'agent/invariant-cut-unit',
+        `unit=${String(unit)}（须 ${CUT_UNITS.join(' | ')}）`,
+    );
+    assertCount('total', total);
+    assertCount('kept', kept);
+    invariant(total >= kept, 'agent/invariant-cut-total', `total(${total}) < kept(${kept})`);
 
     const parts = [`by="${esc(by)}"`, `scope="${scope}"`, `why="${esc(why)}"`];
-    if (unit && unit !== "lines") parts.push(`unit="${unit}"`); // lines 是缺省，不写
+    if (unit && unit !== 'lines') parts.push(`unit="${unit}"`); // lines 是缺省，不写
     if (lowerBound) parts.push(`bound="lower"`);
     parts.push(`total="${total}"`, `kept="${kept}"`);
     if (resume) parts.push(`resume="${esc(resume)}"`);
-    const tag = `<cut ${parts.join(" ")}/>`;
+    const tag = `<cut ${parts.join(' ')}/>`;
     return fence ? `\`${tag}\`` : tag;
 }
 
@@ -155,35 +163,35 @@ function collectTags(text: string, out: CutMarker[]): void {
         const attrs: Record<string, string> = {};
         ATTR_RE.lastIndex = 0;
         for (;;) {
-            const a = ATTR_RE.exec(m[1] ?? "");
+            const a = ATTR_RE.exec(m[1] ?? '');
             if (!a) break;
-            attrs[a[1]!] = unesc(a[2] ?? "");
+            attrs[a[1]!] = unesc(a[2] ?? '');
         }
-        const scope = attrs["scope"] as CutScope | undefined;
-        const total = Number(attrs["total"]);
-        const kept = Number(attrs["kept"]);
+        const scope = attrs['scope'] as CutScope | undefined;
+        const total = Number(attrs['total']);
+        const kept = Number(attrs['kept']);
         // 形状不对的标签不是「我认得的 marker」：跳过，不猜（猜出来的值比没有更危险）
         if (!scope || !CUT_SCOPES.includes(scope)) continue;
         if (!Number.isFinite(total) || !Number.isFinite(kept)) continue;
-        const unit = (attrs["unit"] ?? "lines") as CutUnit;
+        const unit = (attrs['unit'] ?? 'lines') as CutUnit;
         const rec: CutMarker = {
-            by: attrs["by"] ?? "unknown",
+            by: attrs['by'] ?? 'unknown',
             scope,
-            why: attrs["why"] ?? "unknown",
+            why: attrs['why'] ?? 'unknown',
             total,
             kept,
-            unit: CUT_UNITS.includes(unit) ? unit : "lines",
+            unit: CUT_UNITS.includes(unit) ? unit : 'lines',
             index: m.index,
             raw: m[0],
         };
-        if (attrs["resume"]) rec.resume = attrs["resume"];
-        if (attrs["bound"] === "lower") rec.lowerBound = true;
+        if (attrs['resume']) rec.resume = attrs['resume'];
+        if (attrs['bound'] === 'lower') rec.lowerBound = true;
         out.push(rec);
     }
 }
 
 /** 千分位数字（旧格式里 `1,024` 这种写法全部按十进制解析） */
-const num = (s: string | undefined): number => Number((s ?? "").replace(/,/g, "")) || 0;
+const num = (s: string | undefined): number => Number((s ?? '').replace(/,/g, '')) || 0;
 
 /**
  * 旧格式 → 同构记录（只读兼容）。每条都按**当时的真实语义**给 `scope`：
@@ -193,15 +201,15 @@ const num = (s: string | undefined): number => Number((s ?? "").replace(/,/g, ""
  *   · 行内预览 `… 省略 N 行 …` / `⋯ 已折叠 N 行 …` → `view`。
  * 顺序 = 匹配到的先后，由调用方统一按 `index` 排序。
  */
-const LEGACY: { re: RegExp; make: (m: RegExpExecArray) => Omit<CutMarker, "index" | "raw" | "legacy"> }[] = [
+const LEGACY: { re: RegExp; make: (m: RegExpExecArray) => Omit<CutMarker, 'index' | 'raw' | 'legacy'> }[] = [
     {
         // [... 中间省略 8400 行 / 210.0 KB，完整输出见 /abs/path ...]
         re: /\[\.\.\. 中间省略 (\d+) 行 \/ [^，\]]*，完整输出见 ([^\]]+?) \.\.\.\]/g,
         make: (m) => ({
-            by: "tool-output",
-            scope: "wire",
-            why: "budget",
-            unit: "lines",
+            by: 'tool-output',
+            scope: 'wire',
+            why: 'budget',
+            unit: 'lines',
             total: num(m[1]),
             kept: 0, // 旧格式只记省略量，没记保留量 —— 0 是「未知」的显式写法，别编
             resume: m[2],
@@ -210,16 +218,16 @@ const LEGACY: { re: RegExp; make: (m: RegExpExecArray) => Omit<CutMarker, "index
     {
         // [... 中间省略 8400 行 / 210.0 KB，完整输出已省略 ...]
         re: /\[\.\.\. 中间省略 (\d+) 行 \/ [^，\]]*，完整输出已省略 \.\.\.\]/g,
-        make: (m) => ({ by: "tool-output", scope: "wire", why: "budget", unit: "lines", total: num(m[1]), kept: 0 }),
+        make: (m) => ({ by: 'tool-output', scope: 'wire', why: 'budget', unit: 'lines', total: num(m[1]), kept: 0 }),
     },
     {
         // [输出已省略（只留调用）：8400 行 / 210.0 KB，完整输出见 /abs/path]
         re: /\[输出已省略（只留调用）：(\d+) 行 \/ [^，\]]*，完整输出见 ([^\]]+?)\]/g,
         make: (m) => ({
-            by: "tool-result-callpath",
-            scope: "wire",
-            why: "budget",
-            unit: "lines",
+            by: 'tool-result-callpath',
+            scope: 'wire',
+            why: 'budget',
+            unit: 'lines',
             total: num(m[1]),
             kept: 0,
             resume: m[2],
@@ -228,16 +236,16 @@ const LEGACY: { re: RegExp; make: (m: RegExpExecArray) => Omit<CutMarker, "index
     {
         // [… 推理省略 12000 字符 …]
         re: /\[… 推理省略 (\d+) 字符 …\]/g,
-        make: (m) => ({ by: "reasoning-clip", scope: "wire", why: "budget", unit: "chars", total: num(m[1]), kept: 0 }),
+        make: (m) => ({ by: 'reasoning-clip', scope: 'wire', why: 'budget', unit: 'chars', total: num(m[1]), kept: 0 }),
     },
     {
         // <中间省略 401174 字节（正文共 425750 字节）>  —— 流量存档（最危险的那一类）
         re: /<中间省略 (\d+) 字节（正文共 (\d+) 字节）>/g,
         make: (m) => ({
-            by: "traffic-log",
-            scope: "archive",
-            why: "capture-off",
-            unit: "bytes",
+            by: 'traffic-log',
+            scope: 'archive',
+            why: 'capture-off',
+            unit: 'bytes',
             total: num(m[2]),
             kept: Math.max(0, num(m[2]) - num(m[1])),
         }),
@@ -246,23 +254,23 @@ const LEGACY: { re: RegExp; make: (m: RegExpExecArray) => Omit<CutMarker, "index
         // ……已省略 292890 字符（全文 425750 字符；界面只保留头尾两段）……
         re: /……已省略 ([\d,]+) 字符（全文 ([\d,]+) 字符；界面只保留头尾两段）……/g,
         make: (m) => ({
-            by: "renderer-text-cap",
-            scope: "view",
-            why: "render",
-            unit: "chars",
+            by: 'renderer-text-cap',
+            scope: 'view',
+            why: 'render',
+            unit: 'chars',
             total: num(m[2]),
             kept: Math.max(0, num(m[2]) - num(m[1])),
-            resume: "ui:载入全文",
+            resume: 'ui:载入全文',
         }),
     },
     {
         // … 省略 120 行 … / … 至少省略 120 行 …
         re: /… (至少)?省略 (\d+) 行 …/g,
         make: (m) => ({
-            by: "chat-preview",
-            scope: "view",
-            why: "window",
-            unit: "lines",
+            by: 'chat-preview',
+            scope: 'view',
+            why: 'window',
+            unit: 'lines',
             total: num(m[2]),
             kept: 0,
             ...(m[1] ? { lowerBound: true } : {}),
@@ -272,10 +280,10 @@ const LEGACY: { re: RegExp; make: (m: RegExpExecArray) => Omit<CutMarker, "index
         // ⋯ 已折叠 120 行 · 点击展开全部正文（`≥` = 下界）
         re: /⋯ 已折叠 (≥)?([\d,]+) 行 · 点击展开全部正文/g,
         make: (m) => ({
-            by: "chat-fold",
-            scope: "view",
-            why: "render",
-            unit: "lines",
+            by: 'chat-fold',
+            scope: 'view',
+            why: 'render',
+            unit: 'lines',
             total: num(m[2]),
             kept: 0,
             ...(m[1] ? { lowerBound: true } : {}),
@@ -291,7 +299,7 @@ function collectLegacy(text: string, out: CutMarker[]): void {
             if (!m) break;
             const rec = make(m);
             out.push({ ...rec, index: m.index, raw: m[0], legacy: true });
-            if (m[0] === "") re.lastIndex++; // 零长匹配防死循环（防御性：现有模式都不会零长）
+            if (m[0] === '') re.lastIndex++; // 零长匹配防死循环（防御性：现有模式都不会零长）
         }
     }
 }

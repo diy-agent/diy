@@ -190,9 +190,7 @@ describe('@diy-agent/log（OTel + 文件导出器）', () => {
         const { exporter } = makeProvider(dir, { maxBytes, maxFiles: 2, maxDays: 0 });
         const padding = 'x'.repeat(60);
         for (let index = 0; index < 30; index += 1) {
-            await exportResult(exporter, [
-                recordAt(TODAY, `line-${index}`, { attributes: { padding } }),
-            ]);
+            await exportResult(exporter, [recordAt(TODAY, `line-${index}`, { attributes: { padding } })]);
         }
 
         const base = `${today}.log`;
@@ -315,7 +313,12 @@ describe('@diy-agent/log（OTel + 文件导出器）', () => {
         const spanContext = trace.setSpan(context.active(), fakeSpan);
         const log = child('main:test', provider);
 
-        log.emit({ severityNumber: SeverityNumber.INFO, severityText: 'info', body: 'with-span', context: spanContext });
+        log.emit({
+            severityNumber: SeverityNumber.INFO,
+            severityText: 'info',
+            body: 'with-span',
+            context: spanContext,
+        });
         log.info('without-span');
         await flush(provider, exporter);
 

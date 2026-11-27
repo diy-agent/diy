@@ -51,6 +51,17 @@ AGENTS.md 链**上界到 `$HOME` 为止**（不进 `/`、`/Users`）；不在 `$
 
 （见 ed3aab82:pkgs.ts/diy-app/src/main/services/run-registry.ts:1）
 
+## job-when
+
+**什么时候才 background（记进 job 账本）—— 判据一句话：「本轮下一步要不要用它的输出？」**：要 → **前台同步等**；不要、且它会一直活着 → 才 `background: true`。
+
+- **前台 = 轮次内的工具步骤**：`./sha.sh check` / `test` / `tsc` / `build` / `npm ci` / `git push` / `gh pr …`。下一步就依赖它的结果（绿了才提交、推了才开 PR），后台化只会让 job 结束通知刷屏、状态分散到 `job status` —— **而你反正要等**。
+- **background = 真长活**：起服务给人开窗口看（`./sha.sh lab` / `staging` / `dev`）、用户会离开的超长跑、跨轮次才收口的活。
+
+反面数据（2026-11-26 查）：job runs **每日 138 个**（11-24~26；11-23 才 26），样本里绝大多数是 check / tsc / vitest / build —— 因为提示词原文写「后台长活（构建 / **测试** / 装依赖）用 background」，把测试列进了该 job 的例子。**例子会过时，判据不会**：先给判据，例子只当注脚。
+
+（见 78fd1f40:pkgs.ts/agent/entity-runtime/src/room.ts 的 jobHint）
+
 ## log-vs-config
 
 **落盘日志**（会话目录 `local/<uri 路径>/<key>/*.jsonl`；旧平铺 `<key>.*.jsonl` 读侧兜底）读侧宽松（初版紧凑/扩展松散/缺必填即**异常数据**，见 `log-schema.ts`）；**配置真源**（`context.yaml` / `auto-compact.yaml`）读侧出声回落默认、写侧归一 + 原子写，且**不进 localStorage**（有损 + 两进程各持一份）

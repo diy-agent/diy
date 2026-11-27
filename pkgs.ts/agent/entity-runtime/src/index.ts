@@ -55,10 +55,15 @@ export {
     type UnitStatus,
 } from './db';
 export {
+    SOURCE_QUOTE_MAX_CHARS,
+    sourceQuoteOf,
+    sourceQuotesOf,
     unitBoard,
     unitTreeLines,
     unitsContextValue,
     unitsContextText,
+    withSourceQuotes,
+    type SourceQuote,
     type UnitBoard,
     type UnitBoardRow,
     type UnitFacts,
@@ -83,6 +88,7 @@ export {
 export { adviceOf, endItems, endReasonOf, publishable, type EndFacts, type EndItemContext } from './end-reason';
 export {
     botLastTurnOf,
+    createCachedTurnLookup,
     createTurnLookup,
     needsHuman,
     outcomeOfFact,
@@ -93,7 +99,7 @@ export {
 } from './bot-status';
 export { Projector, nextId } from './projection';
 export { RoomActor, type RoomActorDeps, type SessionInfo as RoomSessionInfo } from './room';
-export { buildRoomTools, type RoomJobs, type RoomToolsOptions } from './tools/index';
+export { buildRoomTools, type RoomJobs, type RoomToolsOptions, type RunCodeHost } from './tools/index';
 export { createJobRegistry, jobOwnerOf, parseJobOwner, type JobOwner, type RoomJobsHost } from './jobs';
 export { RoomLog, toMessage, type RoomEntry, type RoomEntryInput } from './room-log';
 export {
@@ -120,5 +126,19 @@ export {
     type ProviderView,
 } from './providers';
 export { factsOf, replay, STOP_SCENARIOS, type StopReplay, type StopScenario } from './stop-scenarios';
-export type { AgentEvent, Author, Bot, BotProfile, Delivery, Room, RoomMember, RoomEvent, InboxMode, Item } from './types';
+export type {
+    AgentEvent,
+    Author,
+    Bot,
+    BotOutcome,
+    BotProfile,
+    BotRow,
+    BotState,
+    Delivery,
+    Room,
+    RoomMember,
+    RoomEvent,
+    MessageKind,
+    Item,
+} from './types';
 export { dayOf, renderTaskDoc, taskDirOf } from './task-dir';

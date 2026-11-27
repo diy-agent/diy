@@ -173,10 +173,17 @@ function cell(item: ProjectItem, shape: 'auto' | 'always-object'): unknown {
     };
 }
 
-function render(algorithm: ProjectionAlgorithm, items: readonly ProjectItem[], shape: 'auto' | 'always-object'): string {
+function render(
+    algorithm: ProjectionAlgorithm,
+    items: readonly ProjectItem[],
+    shape: 'auto' | 'always-object',
+): string {
     if (algorithm === 'md-list') {
         const lines = items.map((i) => {
-            const tag = i.variants === 1 && i.resolvedBy === '' ? '' : `  (${i.resolvedBy === '' ? 'global' : i.resolvedBy}${i.variants > 1 ? `, ${i.variants} 变体` : ''})`;
+            const tag =
+                i.variants === 1 && i.resolvedBy === ''
+                    ? ''
+                    : `  (${i.resolvedBy === '' ? 'global' : i.resolvedBy}${i.variants > 1 ? `, ${i.variants} 变体` : ''})`;
             return `- \`${i.gid}\` — ${i.value}${tag}`;
         });
         return lines.join('\n');

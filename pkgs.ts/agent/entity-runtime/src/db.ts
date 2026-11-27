@@ -23,7 +23,19 @@ import type { MigrationReporter, MigrationRuntime } from '@diy-agent/migration';
 // 迁移体系对外的出口（实现全在 @diy-agent/migration，这里只转手）
 export { appliedCount, MIGRATION_STEPS } from '@diy-agent/migration';
 export type { MigrationReporter, MigrationStepEvent } from '@diy-agent/migration';
-import type { AskAnswer, AskRequest, Bot, BotProfile, Delivery, InboxMode, Item, BotProfileDefaults, Room, RoomMember } from './types';
+import type {
+    AskAnswer,
+    AskRequest,
+    Bot,
+    BotProfile,
+    Delivery,
+    InboxMode,
+    Item,
+    BotProfileDefaults,
+    MessageKind,
+    Room,
+    RoomMember,
+} from './types';
 
 /** 一个 bot 在某个房间里的对话快照（持久化单位） */
 export interface SessionSnapshot {
@@ -153,8 +165,26 @@ export interface UnitRecord {
     taskId: string;
     id: string;
     title: string;
-    /** 这一步做什么 + 验收口径（不是任务方案全文：方案在 task.body） */
+    /** 这条需求要解决什么（背景 / 范围）。**验收口径不写这里** —— 它有自己的字段 `accept` */
     body: string;
+    /**
+     * 「怎么算做完」——一句话能判断完/未完的判据。
+     *
+     * 为什么单独一个字段（2026-11-26 用户裁）：原先验收口径埋在 `body` 里，模型经常忘，
+     * 人也没法快速核对（body 里既有背景又有口径，还得找出哪句是判据）。
+     * 做成字段之后：缺了能看得见（界面标「未写验收」）、提示词也有一条明确的填空要求。
+     * 空串 = 还没写（不假装有）。
+     */
+    accept: string;
+    /**
+     * 这条需求来自**哪句人话**（`entity_items.id`，形如 `u-mwwtvgiy-1`）；空串 = 不知道
+     * （老数据 / 非人类触发）。
+     *
+     * 为什么要它（2026-11-26 用户）：人核对账本时第一个问题永远是「这是我要的吗」，
+     * 而现在只能翻聊天记录去猜。由宿主在**本轮触发消息**上自动盖章 —— 不靠模型填
+     * （模型根本看不到消息 id，让它编只会编错）。
+     */
+    source: string;
     status: UnitStatus;
     /**
      * 树上的父（功能域 / 母项）id；`null` = 根。
@@ -170,8 +200,18 @@ export interface UnitRecord {
 }
 
 /** 写 unit：`id` / `seq` / 时间戳缺省由 store 补（新 unit 的 id 走 counters，永不回收） */
-export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt'> & {
+export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt' | 'accept' | 'source'> & {
     id?: string;
+    /**
+     * 「怎么算做完」。缺省 = 沿用库里已有的（更新时）；新建缺省就是空串 = 还没写。
+     * **不做成必填**：老代码 / 老数据里没有这一栏，逼着所有调用点补一遍只会让人随手写个占位串。
+     */
+    accept?: string;
+    /**
+     * 来自哪句人话（`entity_items.id`）。缺省沿用库里已有的；新建缺省空串。
+     * 同样**不设成必填**：宿主盖章是锦上添花，缺了不该让写入失败。
+     */
+    source?: string;
     /** 父（功能域）；缺省 = 沿用库里已有的，库里也没有就是根 */
     parent?: string | null;
     createdAt?: number;
@@ -209,7 +249,8 @@ export interface LinkSets {
 
 /** 投递时的入队信息：崩溃后据此重新投递 */
 export interface DeliveryInput extends Omit<Delivery, 'updatedAt'> {
-    mode?: InboxMode;
+    /** 谁发的（db 列名沿用 `mode`，但值已从 `next-step/next-turn` 改成 `human/system`） */
+    mode?: MessageKind;
     turn?: number;
     turnId?: string;
 }
@@ -298,13 +339,7 @@ export interface Store {
      * unit 变更走这里（`task.unit.added` 等）而**不走 journal**：journal 五种 kind 的服务对象是
      * 人，且最近 24 条要进 system 上下文 —— unit 变频率高，塞进去会把真决策挤出去。
      */
-    appendEvent(input: {
-        event: string;
-        subject: string;
-        actor?: string | null;
-        data?: unknown;
-        at?: number;
-    }): number;
+    appendEvent(input: { event: string; subject: string; actor?: string | null; data?: unknown; at?: number }): number;
     /** 某个实体的事件（新→旧）；`prefix` 非空时只取该前缀（如 `task.unit.`） */
     eventsOf(
         subject: string,
@@ -320,6 +355,14 @@ export interface Store {
     listDeliveries(roomId: string): Delivery[];
     /** 崩溃恢复：还没送达的投递（queued / delivering） */
     pendingDeliveries(roomId: string): Array<DeliveryInput & { messageId: string }>;
+    /**
+     * 每个容器中「最新一条投递失败」的成员数（侧栏「未送达」标记）。0 不占键。
+     *
+     * 必须按**成员收敛到最新一条消息**，不能数历史 failed 行：旧消息插话失败、后来新消息
+     * 正常送达时，房间不该永远挂着「未送达」。排队的投递由 `queuedByBot` 另算，也不该
+     * 在这里重复报 failed；只有最新一条确实是 failed 才算。
+     */
+    failedByRoom(): Record<string, number>;
     /** 房间还没处理完的消息正文（按 messageId） */
     textOf(roomId: string, messageId: string): string | undefined;
     saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void;
@@ -345,6 +388,27 @@ export interface Store {
     appendRoomEntry(roomId: string, entry: RoomEntry): void;
     roomEntries(roomId: string): RoomEntry[];
     itemsOf(roomId: string, afterSeq?: number): Item[];
+    /**
+     * 按**条目 id** 取若干条（`unit.source_message_id` 指向它）。找不到的 id 静默缺席 ——
+     * 消息可能已被剪 / 老数据没有来源，调用方按「不知道」处理，不要报错。
+     *
+     * 为什么不复用 `itemsOf(roomId)` 再过滤：那是把整个房间的消息全 `JSON.parse` 一遍
+     * 就为拿 N 条原话；而这张表随历史线性涨（界面上 5 秒轮询一次）。一次 `IN` 查询只读命中的行。
+     */
+    itemsByIds(ids: readonly string[]): Item[];
+    /**
+     * 某个房间**最后 n 条**（仍按 seq 升序返回）。
+     *
+     * 为什么要有（2026-11-26 实测）：`chat.history` 一次回包 **5.7 MB** —— 6000+ 条 items
+     * 全量发给浏览器，JSON.parse + 渲染就是那 2~5 秒的长任务（用户「切任务很慢」）。
+     * 展示层只需要「最近的」；更早的历史由用户主动要（`limit<=0` 时仍走 `itemsOf` 全量）。
+     *
+     * 走 `items_entity(entity_id, seq)` 倒序取 n 行，只 JSON.parse 这 n 条 —— 服务端也省掉
+     * 了把几千条解析出来的开销。
+     */
+    lastItemsOf(roomId: string, n: number): Item[];
+    /** 条目总数（分页时要告诉界面“上面还有多少条”，别为了数它把全量都解析一遍） */
+    countItemsOf(roomId: string): number;
     seqOf(roomId: string): number;
     /** 某个容器的全部草稿（composer / ask:<id> …） */
     listDrafts(roomId: string): Draft[];
@@ -459,6 +523,17 @@ function isEmptyDraft(value: unknown): boolean {
     if (typeof value === 'object')
         return Object.values(value as Record<string, unknown>).every((item) => isEmptyDraft(item));
     return false;
+}
+
+/** 同一 (房间, bot) 的两条投递，后者是不是更新的一条（轮次 → 消息 seq → 状态更新时刻） */
+function isLaterDelivery(
+    a: { turn: number; seq: number; at: number; messageId: string },
+    b: { turn: number; seq: number; at: number; messageId: string },
+): boolean {
+    if (a.turn !== b.turn) return a.turn > b.turn;
+    if (a.seq !== b.seq) return a.seq > b.seq;
+    if (a.at !== b.at) return a.at > b.at;
+    return a.messageId > b.messageId;
 }
 
 // ── Room（旧线上形状）↔ 域记录 ─────────────────────────────────────
@@ -635,6 +710,17 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             seq
         ) WHERE json_extract(item, '$.author.id') IS NULL
             AND json_extract(item, '$.type') IN ('notice', 'error');
+        -- 未读计数（unreadByRoom）：按 (entity_id, type, role) 筛出 chat 再 GROUP BY。
+        -- 没有这条索引 = 全表 3.5 万行逐行 json_extract（**实测 926ms**），而 rooms.list
+        -- 首屏必经、每 30s 一次 —— 用户 2026-11-26 报“页面很慢”就是它。建完走覆盖索引
+        -- **2.2ms**（420 倍）。部分索引只收 chat 行（体积小）；
+        -- WHERE 必须与查询里的 json_extract(i.item, '$.type') = 'chat' 逐字一致才命中。
+        CREATE INDEX IF NOT EXISTS items_chat_role ON entity_items(
+            entity_id,
+            json_extract(item, '$.type'),
+            json_extract(item, '$.author.role'),
+            seq
+        ) WHERE json_extract(item, '$.type') = 'chat';
         -- 「这一轮报过中断吗」与「续跑时要撤掉哪条」都按 (kind, turnId, botId) 定位。
         -- 表里 kind='interrupted' 的行通常只有个位数，部分索引因此极小；
         -- WHERE 必须与 deleteInterruptedFacts 的过滤条件逐字一致才命中。
@@ -728,6 +814,10 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             id         TEXT NOT NULL,
             title      TEXT NOT NULL,
             body       TEXT NOT NULL DEFAULT '',
+            -- 「怎么算做完」：空串 = 还没写（界面会标出来）
+            accept     TEXT NOT NULL DEFAULT '',
+            -- 来自哪句人话（entity_items.id）：宿主按「本轮触发的那条消息」自动盖章
+            source_message_id TEXT NOT NULL DEFAULT '',
             status     TEXT NOT NULL DEFAULT 'open',
             -- 树上的父（母项）。NULL = 根
             parent_id  TEXT,
@@ -941,6 +1031,11 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         id: String(row['id']),
         title: String(row['title']),
         body: String(row['body']),
+        accept: row['accept'] === null || row['accept'] === undefined ? '' : String(row['accept']),
+        source:
+            row['source_message_id'] === null || row['source_message_id'] === undefined
+                ? ''
+                : String(row['source_message_id']),
         status: String(row['status']) as UnitStatus,
         parent: row['parent_id'] === null || row['parent_id'] === undefined ? null : String(row['parent_id']),
         seq: Number(row['seq']),
@@ -985,15 +1080,20 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             if (unit.id.trim() === '') throw new Error('unit 的 id 不能为空');
         }
         const now = Date.now();
-        const nextSeq =
-            (db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM task_units WHERE task_id = ?').get(unit.taskId) as {
+        const nextSeq = (
+            db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM task_units WHERE task_id = ?').get(unit.taskId) as {
                 n: number;
-            }).n;
+            }
+        ).n;
         const record: UnitRecord = {
             taskId: unit.taskId,
             id: previous?.id ?? unit.id ?? allocateUnitId(unit.taskId),
             title,
             body: unit.body,
+            // 缺省沿用（改标题不该把已写好的验收口径抹掉）
+            accept: unit.accept ?? previous?.accept ?? '',
+            // 来源同理：只在显式给的时候覆盖（重跑一遍 unit_add 不会把来源抹成空）
+            source: unit.source ?? previous?.source ?? '',
             status: unit.status,
             // 缺省沿用（改 title 不该顺手把挂点抹掉）；新节点缺省 = 根
             parent: unit.parent === undefined ? (previous?.parent ?? null) : unit.parent,
@@ -1003,14 +1103,16 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         };
         if (record.parent === record.id) throw new Error(`unit 不能是自己的父：${record.id}`);
         db.prepare(
-            'INSERT INTO task_units (task_id, id, title, body, status, parent_id, seq, created_at, updated_at) ' +
-                'VALUES (?,?,?,?,?,?,?,?,?) ' +
-                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, status=?, parent_id=?, updated_at=?',
+            'INSERT INTO task_units (task_id, id, title, body, accept, source_message_id, status, parent_id, seq, created_at, updated_at) ' +
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?) ' +
+                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, accept=?, source_message_id=?, status=?, parent_id=?, updated_at=?',
         ).run(
             record.taskId,
             record.id,
             record.title,
             record.body,
+            record.accept,
+            record.source,
             record.status,
             record.parent,
             record.seq,
@@ -1018,6 +1120,8 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             record.updatedAt,
             record.title,
             record.body,
+            record.accept,
+            record.source,
             record.status,
             record.parent,
             record.updatedAt,
@@ -1489,7 +1593,9 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             const rows = (
                 prefix === ''
                     ? db
-                          .prepare('SELECT seq, at, event, data FROM events WHERE subject = ? ORDER BY seq DESC LIMIT ?')
+                          .prepare(
+                              'SELECT seq, at, event, data FROM events WHERE subject = ? ORDER BY seq DESC LIMIT ?',
+                          )
                           .all(subject, limit)
                     : db
                           .prepare(
@@ -1783,7 +1889,9 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         pendingDeliveries(roomId: string): Array<DeliveryInput & { messageId: string }> {
             const rows = db
                 .prepare(
-                    "SELECT * FROM deliveries WHERE entity_id = ? AND state IN ('queued','delivering') ORDER BY updated_at ASC",
+                    // 未完成的两种都算：`pending` 还没轮到，`working` 是「上次跑时正在处理」——
+                    // 进程重启后它是孤儿，`recover()` 要把它重投一遍。
+                    "SELECT * FROM deliveries WHERE entity_id = ? AND state IN ('pending','working') ORDER BY updated_at ASC",
                 )
                 .all(roomId) as Array<Record<string, unknown>>;
             return rows.map((row) => ({
@@ -1791,10 +1899,62 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 messageId: String(row['message_id']),
                 botId: String(row['bot_id']),
                 state: row['state'] as Delivery['state'],
-                ...(row['mode'] === null ? {} : { mode: row['mode'] as InboxMode }),
+                ...(row['mode'] === null ? {} : { mode: row['mode'] as MessageKind }),
                 ...(row['turn'] === null ? {} : { turn: Number(row['turn']) }),
                 ...(row['turn_id'] === null ? {} : { turnId: String(row['turn_id']) }),
             }));
+        },
+        failedByRoom(): Record<string, number> {
+            // 一个 bot 在同一房间可能有多条历史 failed（旧插话没送进去、崩溃重投失败…）。
+            // 只有「它最新那条消息」的投递状态才代表现在：先按轮次，再按消息在本房间
+            // 时间线上的落盘 seq，最后才用状态更新时刻兜底（老消息没有 turn 字段）。
+            // 这里刻意不把 queued / delivering 当失败：那些由 `queuedByBot` 单独画排队。
+            //
+            // 不在 SQL 里按 message_id 连 entity_items：实测那条路在本机真库上要 11s
+            // （json_extract 连接找不到可用索引），而这个是 `rooms.list` 的 30s 轮询的一部分。
+            // 改用 room_entries 的 say 条目取消息序号 —— 投递的 messageId 本来就是它落的，
+            // 而且这张表只有条目流的一小部分（真库实测 2.1k vs entity_items 36.9k）。
+            const seqOfMessage = new Map<string, number>();
+            for (const row of db
+                .prepare(
+                    "SELECT entity_id, seq, json_extract(entry, '$.messageId') AS message_id FROM room_entries " +
+                        "WHERE json_extract(entry, '$.kind') = 'say'",
+                )
+                .all() as Array<{ entity_id: string; seq: number; message_id: string | null }>) {
+                if (row.message_id === null) continue;
+                seqOfMessage.set(`${String(row.entity_id)}\u0000${String(row.message_id)}`, Number(row.seq));
+            }
+
+            type Latest = { state: string; note?: string; turn: number; seq: number; at: number; messageId: string };
+            const latest = new Map<string, Latest>();
+            const rows = db
+                .prepare('SELECT entity_id, bot_id, message_id, state, note, turn, updated_at FROM deliveries')
+                .all() as Array<Record<string, unknown>>;
+            for (const row of rows) {
+                const roomId = String(row['entity_id']);
+                const botId = String(row['bot_id']);
+                const messageId = String(row['message_id']);
+                const candidate: Latest = {
+                    state: String(row['state']),
+                    note: row['note'] === null ? undefined : String(row['note']),
+                    turn: row['turn'] === null ? -1 : Number(row['turn']),
+                    seq: seqOfMessage.get(`${roomId}\u0000${messageId}`) ?? -1,
+                    at: Number(row['updated_at']),
+                    messageId,
+                };
+                const key = `${roomId}\u0000${botId}`;
+                const current = latest.get(key);
+                if (current === undefined || isLaterDelivery(candidate, current)) latest.set(key, candidate);
+            }
+
+            const failed: Record<string, number> = {};
+            for (const [key, row] of latest) {
+                // 失败不再是独立状态：`done + note='failed'`（2026-11-27 收敛到 3 个状态）
+                if (row.state !== 'done' || row.note !== 'failed') continue;
+                const roomId = key.slice(0, key.indexOf('\u0000'));
+                failed[roomId] = (failed[roomId] ?? 0) + 1;
+            }
+            return failed;
         },
         textOf(roomId: string, messageId: string): string | undefined {
             const row = db
@@ -1846,16 +2006,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             db.prepare(
                 'INSERT INTO turn_open (entity_id, bot_id, turn, turn_id, at) VALUES (?,?,?,?,?) ' +
                     'ON CONFLICT(entity_id, bot_id) DO UPDATE SET turn=?, turn_id=?, at=?',
-            ).run(
-                roomId,
-                record.botId,
-                record.turn,
-                record.turnId,
-                record.at,
-                record.turn,
-                record.turnId,
-                record.at,
-            );
+            ).run(roomId, record.botId, record.turn, record.turnId, record.at, record.turn, record.turnId, record.at);
         },
         closeTurn(roomId: string, botId: string): void {
             db.prepare('DELETE FROM turn_open WHERE entity_id = ? AND bot_id = ?').run(roomId, botId);
@@ -1874,7 +2025,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         deleteInterruptedFacts(roomId: string, turnId: string, botId: string): number {
             const result = db
                 .prepare(
-                    "DELETE FROM entity_items WHERE entity_id = ? " +
+                    'DELETE FROM entity_items WHERE entity_id = ? ' +
                         "AND json_extract(item, '$.data.kind') = 'interrupted' " +
                         "AND json_extract(item, '$.turnId') = ? " +
                         "AND json_extract(item, '$.data.botId') = ?",
@@ -1901,6 +2052,44 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 .prepare('SELECT seq, item FROM entity_items WHERE entity_id = ? AND seq > ? ORDER BY seq ASC')
                 .all(roomId, afterSeq) as Record<string, unknown>[];
             return rows.map((row) => ({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) }));
+        },
+        itemsByIds(ids: readonly string[]): Item[] {
+            const wanted = [...new Set(ids.filter((id) => id !== ''))];
+            if (wanted.length === 0) return [];
+            // 房间不限定：`entity_items` 的 id 是全局唯一的（`u-…`），而来源可能指向别的房间
+            // （bot 在 A 房间被叫到、需求落在自己家任务上）。这里只按 id 取，不要多加 `entity_id = ?`
+            // 那种「看起来更安全」的条件 —— 它会把跨房间的来源静默变成「不知道」。
+            const rows = db
+                .prepare(
+                    `SELECT seq, item FROM entity_items WHERE json_extract(item, '$.id') IN (${wanted
+                        .map(() => '?')
+                        .join(',')})`,
+                )
+                .all(...wanted) as Record<string, unknown>[];
+            const items: Item[] = [];
+            for (const row of rows) {
+                try {
+                    items.push({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) });
+                } catch {
+                    continue; // 坏行不该让整批来源都读不出来（与 lastItemPerBot 同策）
+                }
+            }
+            return items;
+        },
+        lastItemsOf(roomId: string, n: number): Item[] {
+            const rows = db
+                .prepare('SELECT seq, item FROM entity_items WHERE entity_id = ? ORDER BY seq DESC LIMIT ?')
+                .all(roomId, n) as Record<string, unknown>[];
+            // 倒序取完再翻回来：调用方要的是时间线顺序
+            return rows
+                .map((row) => ({ ...(JSON.parse(String(row['item'])) as Item), seq: Number(row['seq']) }))
+                .reverse();
+        },
+        countItemsOf(roomId: string): number {
+            const row = db.prepare('SELECT COUNT(*) AS n FROM entity_items WHERE entity_id = ?').get(roomId) as
+                | { n: number }
+                | undefined;
+            return row?.n ?? 0;
         },
         seqOf(roomId: string): number {
             const row = db.prepare('SELECT MAX(seq) AS max FROM entity_items WHERE entity_id = ?').get(roomId) as

@@ -183,7 +183,6 @@ export function stallMessage(info: StallInfo): string {
             : info.phase === 'tool'
               ? `工具 ${info.toolName ?? '（未知）'} 执行一直没有结束`
               : '上一个数据块之后一直没有新的数据';
-    const human =
-        info.waitedMs >= 1000 ? `${Math.round(info.waitedMs / 1000)}s` : `${info.waitedMs}ms`;
+    const human = info.waitedMs >= 1000 ? `${Math.round(info.waitedMs / 1000)}s` : `${info.waitedMs}ms`;
     return `上游停摆：${phase}（已等 ${human}），本轮已中止 —— 这是超时判定，不是你的操作问题；重发一次即可，反复出现请换模型或检查网关。`;
 }

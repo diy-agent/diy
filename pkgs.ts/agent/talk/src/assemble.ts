@@ -73,14 +73,21 @@ export function parseSource(value: unknown, path = 'source'): Source {
     rejectUnknown(obj, SOURCE_KEYS, path, CODE);
     const type = takeString(obj.type, `${path}.type`, CODE);
     if (!(SOURCE_TYPES as readonly string[]).includes(type)) {
-        throw new TalkError(CODE, `未知来源类型 ${JSON.stringify(type)}（合法：${SOURCE_TYPES.join(' | ')}）`, `${path}.type`);
+        throw new TalkError(
+            CODE,
+            `未知来源类型 ${JSON.stringify(type)}（合法：${SOURCE_TYPES.join(' | ')}）`,
+            `${path}.type`,
+        );
     }
     const data = takeObject(obj.data, `${path}.data`, CODE);
     rejectUnknown(data, SOURCE_DATA_KEYS[type as SourceType], `${path}.data`, CODE);
     if (type === 'reactions') {
         const raw = data.reactions;
         if (!Array.isArray(raw)) throw new TalkError(CODE, '应为发言数组', `${path}.data.reactions`);
-        return { type: 'reactions', data: { reactions: raw.map((r, i) => parseReaction(r, `${path}.data.reactions[${i}]`)) } };
+        return {
+            type: 'reactions',
+            data: { reactions: raw.map((r, i) => parseReaction(r, `${path}.data.reactions[${i}]`)) },
+        };
     }
     const raw = data.events;
     if (!Array.isArray(raw)) throw new TalkError(CODE, '应为事件数组', `${path}.data.events`);
@@ -184,11 +191,20 @@ export function resolveStrategy(strategy: StrategyName | AssemblyStrategy): Asse
     if (typeof strategy === 'string') {
         const found = STRATEGIES[strategy];
         if (found === undefined) {
-            throw new TalkError(CODE, `未知装配策略 ${JSON.stringify(strategy)}（内置：${STRATEGY_NAMES.join(' | ')}）`, 'strategy');
+            throw new TalkError(
+                CODE,
+                `未知装配策略 ${JSON.stringify(strategy)}（内置：${STRATEGY_NAMES.join(' | ')}）`,
+                'strategy',
+            );
         }
         return found;
     }
-    if (typeof strategy !== 'object' || strategy === null || typeof strategy.name !== 'string' || strategy.name === '') {
+    if (
+        typeof strategy !== 'object' ||
+        strategy === null ||
+        typeof strategy.name !== 'string' ||
+        strategy.name === ''
+    ) {
         throw new TalkError(CODE, 'strategy 应为内置策略名，或带 name 的装配策略对象', 'strategy');
     }
     for (const key of ['selectSource', 'selectItem', 'render'] as const) {

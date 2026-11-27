@@ -232,11 +232,6 @@ function Host() {
                             setJobsOpen(true);
                         },
                     },
-                ],
-            },
-            {
-                id: 'app',
-                tools: [
                     {
                         id: 'settings',
                         // 同一颗按钮来回切：设置页里它显示为按下态，再点一下回对话。

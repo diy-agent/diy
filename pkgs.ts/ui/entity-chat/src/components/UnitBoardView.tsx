@@ -19,6 +19,7 @@ import { roomTitle, type Room } from '../model';
 import { useUnitBoard } from '../useUnitBoard';
 import { useUnitText } from '../useUnitText';
 import type { UnitItem } from '@diy-agent/chat-transport-rpc';
+import { jumpToMessage } from '../askJump';
 
 /** 与服务端同一口径的粗略估算（中文 + 结构下约 0.78 tok / 字符，见 ContextPanel） */
 const TOKENS_PER_CHAR = 0.78;
@@ -87,7 +88,11 @@ export function UnitBoardView({ room }: { room: Room }) {
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 p-2 text-xs">
                     <div className="flex flex-wrap items-baseline gap-x-2 text-[10px] text-muted-foreground">
                         <span>注入 system 的 units 节原文</span>
-                        {textView !== null && <span>{textView.chars} 字 · ≈{tokens} tok</span>}
+                        {textView !== null && (
+                            <span>
+                                {textView.chars} 字 · ≈{tokens} tok
+                            </span>
+                        )}
                         {textView?.mode === 'full' && <span>{textView.treeLines} 行树</span>}
                         {textView?.mode === 'summary' && (
                             <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1 text-amber-600">
@@ -124,7 +129,19 @@ export function UnitBoardView({ room }: { room: Room }) {
                                 // 不显示 id：u9a 这种短名在树上只是噪音，需要时看 tooltip / 源码
                                 <div
                                     key={unit.id}
-                                    title={`${unit.id}${unit.body.trim() === '' ? '' : `\n${unit.body}`}`}
+                                    title={[
+                                        unit.id,
+                                        unit.title,
+                                        (unit.body ?? '').trim() === '' ? '' : `背景：${unit.body}`,
+                                        (unit.accept ?? '').trim() === ''
+                                            ? '还没写「怎么算做完」'
+                                            : `验收：${unit.accept}`,
+                                        (unit.source ?? '') === ''
+                                            ? ''
+                                            : `来自：${unit.sourceQuote === undefined ? unit.source : `${unit.sourceQuote.author || '不知是谁'}「${unit.sourceQuote.text}」`}`,
+                                    ]
+                                        .filter((part) => part !== '')
+                                        .join('\n')}
                                     className={`flex items-baseline gap-1.5 whitespace-nowrap ${rowClass(unit, ready)}`}
                                     style={{ paddingLeft: `${unit.depth * 14}px` }}
                                 >
@@ -139,6 +156,43 @@ export function UnitBoardView({ room }: { room: Room }) {
                                     >
                                         {unit.title}
                                     </span>
+                                    {/* 缺「怎么算做完」= 这条没法被验收：标出来，别让人以为它是完整的
+                                        （用户 2026-11-26：「需求是可以验收的，步骤很难验收」）。
+                                        母项不标 —— 它的验收由子派生。 */}
+                                    {/* 有来源就点一个小圆点：说明这条需求是**某句人话**提出来的
+                                        （不是 bot 自己编的）。旁边直接写「谁 + 原话开头」——
+                                        光给一个消息 id，人还是要再点一下才知道是不是自己要的那句。 */}
+                                    {(unit.source ?? '') !== '' && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => jumpToMessage(unit.source)}
+                                                className="shrink-0 cursor-pointer rounded-full bg-sky-500/40 px-1 text-[9px] leading-4 text-sky-700 hover:bg-sky-500/60 dark:text-sky-300"
+                                                title={`跳到那条消息（${unit.source}）`}
+                                            >
+                                                ↩
+                                            </button>
+                                            {unit.sourceQuote !== undefined && (
+                                                <span
+                                                    className="shrink-0 max-w-[22rem] truncate text-[10px] text-muted-foreground"
+                                                    title={`${unit.sourceQuote.author === '' ? '不知是谁' : unit.sourceQuote.author}：${unit.sourceQuote.text}`}
+                                                >
+                                                    {unit.sourceQuote.author === ''
+                                                        ? ''
+                                                        : `${unit.sourceQuote.author}：`}
+                                                    {unit.sourceQuote.text}
+                                                </span>
+                                            )}
+                                        </>
+                                    )}
+                                    {!unit.group && (unit.accept ?? '').trim() === '' && (
+                                        <span
+                                            className="shrink-0 rounded border border-amber-500/30 px-1 text-[10px] text-amber-600"
+                                            title="这条还没写「怎么算做完」：一句话能判断完/未完的判据"
+                                        >
+                                            未写验收
+                                        </span>
+                                    )}
                                 </div>
                             ))}
                         </div>

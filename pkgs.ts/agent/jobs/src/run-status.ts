@@ -9,10 +9,14 @@
 //   · **不做日志管理**：输出只落该进程自己的 `out.log`（它是进程的产物，不是系统主数据）。
 //   · 判据仍然只有一条：**能在任何时候回答「它是死是活」**。
 
-import type { NotifyItem } from "@diy-agent/context/envelope";
+import type { NotifyItem } from '@diy-agent/context/envelope';
+
+// 走子路径：`@diy-agent/tools` 的 barrel 会把 node:fs / child_process 那半边带进 renderer 依赖图
+// （错误判据见 apps/diy-app/tests 的 renderer 边界护栏）；`limits` 是纯常量，没有 Node 依赖。
+import { TOOL_OUTPUT_MAX_BYTES } from '@diy-agent/tools/limits';
 
 /** 进程四态。**不设 `lost`**：没有恢复就没有"不知道"——重启后表是空的，不是 lost。 */
-export type RunState = "running" | "exited" | "killed" | "failed";
+export type RunState = 'running' | 'exited' | 'killed' | 'failed';
 
 /**
  * **怎么结束的**（与 `RunState` 正交：状态说"结束了没有"，它说"结束得像不像正常收场"）。
@@ -20,9 +24,9 @@ export type RunState = "running" | "exited" | "killed" | "failed";
  * 从 v1 的 `spawned-job.ts` 迁来（那个账本已删，用户 2026-10-24「清理废弃的实现」）——
  * `runBash` 的结局判据要用它，而它本身与"账本"无关。
  */
-export type RunOutcome = "ok" | "fail" | "canceled" | "timeout";
+export type RunOutcome = 'ok' | 'fail' | 'canceled' | 'timeout';
 
-export const RUN_TERMINAL_STATES: readonly RunState[] = ["exited", "killed", "failed"];
+export const RUN_TERMINAL_STATES: readonly RunState[] = ['exited', 'killed', 'failed'];
 
 /** 终态 = 不会自己再变。`running` 之外都是终态（三态都是"结束了，只是方式不同"）。 */
 export function isTerminal(state: RunState): boolean {
@@ -35,24 +39,24 @@ export function isTerminal(state: RunState): boolean {
  */
 export function stateLabel(state: RunState): string {
     switch (state) {
-        case "running":
-            return "运行中";
-        case "exited":
-            return "已结束";
-        case "killed":
-            return "已被杀";
-        case "failed":
-            return "启动失败";
+        case 'running':
+            return '运行中';
+        case 'exited':
+            return '已结束';
+        case 'killed':
+            return '已被杀';
+        case 'failed':
+            return '启动失败';
     }
 }
 
 /** 时长：<1s 给毫秒，<60s 给一位小数秒，其余 `XmYYs`。传 `undefined`（还在跑且没起算点）给 `—`。 */
 export function formatDuration(ms: number | undefined): string {
-    if (ms === undefined || Number.isNaN(ms) || ms < 0) return "—";
+    if (ms === undefined || Number.isNaN(ms) || ms < 0) return '—';
     if (ms < 1000) return `${Math.round(ms)}ms`;
     if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
     const total = Math.round(ms / 1000);
-    return `${Math.floor(total / 60)}m${String(total % 60).padStart(2, "0")}s`;
+    return `${Math.floor(total / 60)}m${String(total % 60).padStart(2, '0')}s`;
 }
 
 /**
@@ -61,10 +65,22 @@ export function formatDuration(ms: number | undefined): string {
  * ⚠️ 只报"截了行"不够：进程输出常常是**超长单行**（进度条、`\r` 刷屏），按行切根本切不动，
  *    所以这里同时有字节上限（`MAX_TAIL_BYTES`），两道上限都要如实回报，否则模型会把
  *    「被截断的一段」当成完整输出。
+ *
+ * 字节上限 = 工具输出的**唯一预算**（64KB，见 `@diy-agent/tools` 的 `limits.ts`）：
+ * `job output` 也是工具，凭什么比 read / bash 更小。曾是 16KB —— 那是「比谁都小」的第四套口径。
  */
-export const MAX_TAIL_BYTES = 16 * 1024;
+export const MAX_TAIL_BYTES = TOOL_OUTPUT_MAX_BYTES;
 
-/** ANSI 色码（`\u001b[38;5;66;1m` 这类） */
+/**
+ * 结束通知里那段尾巴的字节上限（**不是** `MAX_TAIL_BYTES`）。
+ *
+ * 通知是「插话」，进的是 LLM 上下文：一次任务结束就贴 64KB 等于拿上下文换个通知。
+ * 这里只管尾巴几行，要全文它自己 `job output`。
+ */
+export const NOTIFY_TAIL_BYTES = 4 * 1024;
+
+/** ANSI 色码（`\u001b[38;5;66;1m` 这类）—— 要匹配的就是 ESC 字符本身 */
+// oxlint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
 
 /**
@@ -76,7 +92,7 @@ const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
  * 文件本身不动：真要颜色就去读 `out.log`。
  */
 export function stripAnsi(text: string): string {
-    return text.replace(ANSI, "");
+    return text.replace(ANSI, '');
 }
 
 export interface TailResult {
@@ -91,31 +107,31 @@ export function tailOf(raw: string, wantLines: number, maxBytes: number = MAX_TA
     const cap = maxBytes > 0 ? maxBytes : MAX_TAIL_BYTES;
     let text = raw;
     let droppedBytes = 0;
-    if (Buffer.byteLength(text, "utf8") > cap) {
+    if (Buffer.byteLength(text, 'utf8') > cap) {
         // 从尾部按字节往回取，再跳过可能落在字符中间的游离续字节（"输出里不许出现 U+FFFD"）
-        const buf = Buffer.from(text, "utf8");
+        const buf = Buffer.from(text, 'utf8');
         const cut = buf.subarray(buf.length - cap);
         let start = 0;
         while (start < cut.length && (cut[start]! & 0xc0) === 0x80) start += 1;
         droppedBytes = buf.length - (cut.length - start);
-        text = cut.subarray(start).toString("utf8");
+        text = cut.subarray(start).toString('utf8');
     }
     const want = wantLines > 0 ? wantLines : 40;
-    const rows = text.split("\n");
+    const rows = text.split('\n');
     // 末尾空串是"文本以换行结尾"的产物，不该算一行，也不该占掉一行配额
-    if (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
+    if (rows.length > 0 && rows[rows.length - 1] === '') rows.pop();
     if (rows.length > want) {
         const kept = rows.slice(rows.length - want);
-        return { text: stripAnsi(kept.join("\n")), lines: kept.length, droppedBytes };
+        return { text: stripAnsi(kept.join('\n')), lines: kept.length, droppedBytes };
     }
-    return { text: stripAnsi(rows.join("\n")), lines: rows.length, droppedBytes };
+    return { text: stripAnsi(rows.join('\n')), lines: rows.length, droppedBytes };
 }
 
 /** 退出情况的**唯一**表述：`退出码 0` / `退出码 7` / `信号 SIGKILL` / `（未结束）`。 */
 export function exitText(state: RunState, exitCode?: number | null, signal?: string | null): string {
-    if (state === "running") return "（未结束）";
+    if (state === 'running') return '（未结束）';
     if (signal) return `信号 ${signal}`;
-    if (exitCode === null || exitCode === undefined) return "无退出码";
+    if (exitCode === null || exitCode === undefined) return '无退出码';
     return `退出码 ${exitCode}`;
 }
 
@@ -134,9 +150,9 @@ export interface RunLike {
 /** 一行花名册（`job list` 的每行）：状态 · id · 时长 · 命令首行 · 来源。 */
 export function runLine(p: RunLike, now: number): string {
     const dur = formatDuration((p.endedAt ?? now) - p.startedAt);
-    const head = p.command.split("\n")[0] ?? "";
+    const head = p.command.split('\n')[0] ?? '';
     const cmd = head.length > 60 ? `${head.slice(0, 57)}…` : head;
-    const from = p.origin?.taskUri ? ` ← ${p.origin.taskUri}` : "";
+    const from = p.origin?.taskUri ? ` ← ${p.origin.taskUri}` : '';
     return `${stateLabel(p.state)} · ${p.id} · ${dur} · ${cmd}${from}`;
 }
 
@@ -150,24 +166,24 @@ export function notifyText(p: RunLike, tail: TailResult, maxLines = 20): string 
     const dur = formatDuration((p.endedAt ?? p.startedAt) - p.startedAt);
     const head = [
         `[后台进程结束] ${p.id} · ${stateLabel(p.state)} · ${exitText(p.state, p.exitCode, p.signal)} · ${dur}`,
-        `命令：${p.command.split("\n")[0] ?? ""}`,
+        `命令：${p.command.split('\n')[0] ?? ''}`,
     ];
     if (tail.lines === 0) {
-        head.push("（无输出）");
-        return head.join("\n");
+        head.push('（无输出）');
+        return head.join('\n');
     }
-    const rows = tail.text.split("\n");
+    const rows = tail.text.split('\n');
     const shown = rows.length > maxLines ? rows.slice(rows.length - maxLines) : rows;
     head.push(
-        `输出尾部${shown.length < rows.length ? `（最后 ${shown.length} 行）` : ""}${
-            tail.droppedBytes > 0 ? `（前 ${tail.droppedBytes} 字节已截断）` : ""
+        `输出尾部${shown.length < rows.length ? `（最后 ${shown.length} 行）` : ''}${
+            tail.droppedBytes > 0 ? `（前 ${tail.droppedBytes} 字节已截断）` : ''
         }：`,
-        "```",
-        shown.join("\n"),
-        "```",
-        "完整输出用 `job output " + p.id + "`。",
+        '```',
+        shown.join('\n'),
+        '```',
+        '完整输出用 `job output ' + p.id + '`。',
     );
-    return head.join("\n");
+    return head.join('\n');
 }
 
 /**
@@ -177,18 +193,18 @@ export function notifyText(p: RunLike, tail: TailResult, maxLines = 20): string 
  * **不拍平**的排障事实（run id / 退出码 / 命令 / 尾部输出）；要全文仍用 `job output <id>`。
  */
 export function jobDoneNotify(p: RunLike, tail: TailResult, maxLines = 20): NotifyItem {
-    const rows = tail.lines === 0 ? [] : tail.text.split("\n");
+    const rows = tail.lines === 0 ? [] : tail.text.split('\n');
     const shown = rows.length > maxLines ? rows.slice(rows.length - maxLines) : rows;
     return {
-        kind: "job-done",
+        kind: 'job-done',
         text: notifyText(p, tail, maxLines),
         run: p.id,
         state: p.state,
         exitCode: p.exitCode ?? null,
         signal: p.signal ?? null,
         durationMs: (p.endedAt ?? p.startedAt) - p.startedAt,
-        command: p.command.split("\n")[0] ?? "",
-        ...(shown.length > 0 ? { tail: shown.join("\n") } : {}),
+        command: p.command.split('\n')[0] ?? '',
+        ...(shown.length > 0 ? { tail: shown.join('\n') } : {}),
         ...(tail.droppedBytes > 0 ? { truncatedBytes: tail.droppedBytes } : {}),
     };
 }

@@ -8,6 +8,15 @@ import type { AnsweredAsk, AskRequest, CompactionProgress, Delivery, Item, Strea
 
 export interface ConversationState {
     items: Item[];
+    /**
+     * 服务端只给了**最近一截**（上面还有更早的没加载）：界面据此显示「加载更早的 N 条」。
+     *
+     * 背景（2026-11-26 实测）：6000+ 条的房间里全量 `chat.history` 回包 5.7 MB，
+     * JSON.parse + 渲染就是 2~5 秒的长任务；现在默认只发最近 400 条。
+     */
+    truncated?: boolean;
+    /** 这个房间一共有多少条 item（配合 `truncated` 说“上面还有多少”） */
+    totalItems?: number;
     deliveries: Delivery[];
     /** 正在等用户回答的提问 */
     asks: AskRequest[];
@@ -222,6 +231,10 @@ export function fromSnapshot(snapshot: {
     answeredAsks?: AnsweredAsk[];
     speaking?: string[];
     runningTurns?: Array<{ botId: string; turnId: string; startedAt: number }>;
+    /** 这个房间一共多少条（分页提示用；缺省 = 老服务端 / 已全量） */
+    totalItems?: number;
+    /** 服务端只给了最近一截（`items` 不是从第一条开始） */
+    truncated?: boolean;
 }): ConversationState {
     // 同 id 只留最新一条（append-only 更新：重跑的 item 会以新 seq 再写一遍）
     const latest = new Map<string, Item>();
@@ -235,11 +248,16 @@ export function fromSnapshot(snapshot: {
     // 为什么不再只靠倒推：一轮卡在等上游首个字时没有任何流式条目 —— 刷新后倒推出
     // 空列表，于是没有「正在说话…」、也没有停止按钮，用户看不出它在跑、更停不掉
     // （2026-11-23 实测）。倒推只留给老服务端（快照不带 speaking）当兜底。
-    const speaking = snapshot.speaking ?? [
-        ...new Set(items.filter((item) => item.status === 'streaming').map((item) => item.author?.id ?? '')),
-    ].filter((id) => id !== '');
+    const speaking =
+        snapshot.speaking ??
+        [...new Set(items.filter((item) => item.status === 'streaming').map((item) => item.author?.id ?? ''))].filter(
+            (id) => id !== '',
+        );
     return {
         items,
+        // 分页元信息：界面靠它说“上面还有更早的”，用户点一下才全量拉（`reload(0)`）
+        ...(snapshot.totalItems === undefined ? {} : { totalItems: snapshot.totalItems }),
+        ...(snapshot.truncated === true ? { truncated: true } : {}),
         deliveries: snapshot.deliveries,
         // 快照里的卡片可能是旧形状（一批问题之前是"一个问题"）：不归一则刷新后渲不出来，
         // 而它们正是用户回头核对"当时我选了哪个"的唯一线索

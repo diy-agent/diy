@@ -3,10 +3,12 @@ import { z } from 'zod';
 import { RpcSchema } from '../src/index';
 import { HttpServerBinding } from '../src/transport/http/http-server-binding';
 
-const api = RpcSchema.group({ children: {
-  unary: RpcSchema.unary({ input: {}, output: z.unknown() }),
-  collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.number() }),
-} });
+const api = RpcSchema.group({
+  children: {
+    unary: RpcSchema.unary({ input: {}, output: z.unknown() }),
+    collect: RpcSchema.clientStream({ input: {}, chunkIn: z.number(), output: z.number() }),
+  },
+});
 
 function request(
   session: http2.ClientHttp2Session,
@@ -18,7 +20,9 @@ function request(
     const stream = session.request({ ':method': 'POST', ':path': path, ...headers });
     const chunks: Buffer[] = [];
     let status = 0;
-    stream.on('response', (h) => { status = Number(h[':status'] ?? 0); });
+    stream.on('response', (h) => {
+      status = Number(h[':status'] ?? 0);
+    });
     stream.on('data', (chunk: Buffer) => chunks.push(chunk));
     stream.on('end', () => resolve({ status, body: Buffer.concat(chunks).toString() }));
     stream.on('error', reject);
@@ -28,15 +32,17 @@ function request(
 
 async function main() {
   const binding = new HttpServerBinding();
-  binding._on("unary", api.unary, async ({ input }) => input);
-  binding._on("collect", api.collect, async ({ stream }) => {
+  binding._on('unary', api.unary, async ({ input }) => input);
+  binding._on('collect', api.collect, async ({ stream }) => {
     let count = 0;
     for await (const _ of stream) count++;
     return count;
   });
 
   const server = http2.createServer();
-  server._on('stream', (stream, headers) => { void binding.handleStream(stream, headers); });
+  server._on('stream', (stream, headers) => {
+    void binding.handleStream(stream, headers);
+  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const session = http2.connect(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
   await new Promise<void>((resolve, reject) => {
@@ -45,7 +51,12 @@ async function main() {
   });
 
   try {
-    const unary = await request(session, '/unary', { 'content-type': 'application/json' }, '{not-json');
+    const unary = await request(
+      session,
+      '/unary',
+      { 'content-type': 'application/json' },
+      '{not-json',
+    );
     const badParams = await request(
       session,
       '/collect',
@@ -55,7 +66,10 @@ async function main() {
     const badChunk = await request(
       session,
       '/collect',
-      { 'content-type': 'application/x-ndjson', 'x-diy-params': JSON.stringify({ input: {}, meta: {} }) },
+      {
+        'content-type': 'application/x-ndjson',
+        'x-diy-params': JSON.stringify({ input: {}, meta: {} }),
+      },
       'not-json\n',
     );
     console.log('[http-malformed-input]', { unary, badParams, badChunk });

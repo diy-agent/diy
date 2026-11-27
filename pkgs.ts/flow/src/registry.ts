@@ -28,7 +28,12 @@ export function createRegistry(): PluginRegistry {
 
     function take(slot: Slot): Map<string, unknown> {
         const table = tables.get(slot);
-        if (!table) throw new FlowError('invalid-plugin', `未知插件槽位 ${JSON.stringify(slot)}（合法：${SLOTS.join(' | ')}）`, 'slot');
+        if (!table)
+            throw new FlowError(
+                'invalid-plugin',
+                `未知插件槽位 ${JSON.stringify(slot)}（合法：${SLOTS.join(' | ')}）`,
+                'slot',
+            );
         return table;
     }
 
@@ -52,7 +57,11 @@ export function createRegistry(): PluginRegistry {
         const plugin = table.get(name);
         if (!plugin) {
             const known = [...table.keys()].join(', ');
-            throw new FlowError('unknown-plugin', `未注册的插件 ${slot}:${name}（该槽已注册：${known === '' ? '（无）' : known}）`, `${slot}:${name}`);
+            throw new FlowError(
+                'unknown-plugin',
+                `未注册的插件 ${slot}:${name}（该槽已注册：${known === '' ? '（无）' : known}）`,
+                `${slot}:${name}`,
+            );
         }
         return plugin as SlotPlugins[K];
     }

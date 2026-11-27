@@ -9,10 +9,10 @@
 // 宿主不传 `runtime` 时用包内兜底（POSIX 杀进程组 / Windows 只杀直接子进程）：
 // diy-app 传自己的 `os` 策略（`killOwned` 能整树 `taskkill /T`），bot 用兜底即可。
 
-import { spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
-import { buildInvocation, FALLBACK_SHELL, noShellHint, type ShellSpec } from "./spec.js";
-import { BASH_MAX_BUFFER_BYTES, fmtBytes, renderBashHead, type BashRun } from "./result.js";
+import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { buildInvocation, FALLBACK_SHELL, noShellHint, type ShellSpec } from './spec.js';
+import { BASH_MAX_BUFFER_BYTES, fmtBytes, renderBashHead, type BashRun } from './result.js';
 
 /** 执行器只认这一个预算字段（宿主的完整 limits 结构不进来） */
 export interface ShellLimits {
@@ -34,7 +34,7 @@ export interface ShellRuntime {
 
 /** 包内兜底：POSIX 杀进程组，Windows 只能杀直接子进程（宿主应传更完整的实现）。 */
 export const defaultShellRuntime: ShellRuntime = (() => {
-    const processGroups = process.platform !== "win32";
+    const processGroups = process.platform !== 'win32';
     return {
         processGroups,
         killGroup(child: ChildProcess): void {
@@ -44,7 +44,7 @@ export const defaultShellRuntime: ShellRuntime = (() => {
             if (child.exitCode !== null || child.signalCode !== null) return;
             try {
                 // POSIX：组 id = 子进程 pid（detached 起的）；Windows：没有组概念，降级成直接子进程
-                process.kill(processGroups ? -child.pid : child.pid, "SIGKILL");
+                process.kill(processGroups ? -child.pid : child.pid, 'SIGKILL');
             } catch {
                 // ESRCH（组已空）/ EPERM 都无害 —— 想杀的都已经不在了
             }
@@ -196,9 +196,9 @@ export function runBash(
                         stdout_bytes: 0,
                         stderr_bytes: 0,
                         cwd,
-                    }) + "[已取消]",
+                    }) + '[已取消]',
                 failed: false,
-                outcome: "canceled",
+                outcome: 'canceled',
             });
             return;
         }
@@ -219,7 +219,7 @@ export function runBash(
                         cwd,
                     }) + `[命令未能启动] ${noShellHint([shell])}（工作目录：${cwd}）`,
                 failed: true,
-                outcome: "fail",
+                outcome: 'fail',
             });
             return;
         }
@@ -244,7 +244,7 @@ export function runBash(
         // 输出按**块**攒（不逐块拼字符串）：上限判据只要长度计数，逐块 `byteLength` 是 O(n²)
         const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
         const len = { out: 0, err: 0 };
-        const dump = (side: "out" | "err"): string => Buffer.concat(chunks[side], len[side]).toString("utf8");
+        const dump = (side: 'out' | 'err'): string => Buffer.concat(chunks[side], len[side]).toString('utf8');
         /** 结局是否已落（Promise 本身只认第一次，这里只是别再做无用功 / 别多杀） */
         let done = false;
         /** 我们主动杀的（超时 / 取消 / 输出溢出）—— 对应 execFile 的 `killed` */
@@ -283,7 +283,7 @@ export function runBash(
             // 一次泄 2 个 fd。`done` 闸门已挡住后续数据，destroy 只影响"谁还握着写端"。
             destroyPipes?.();
             destroyPipes = undefined;
-            const joined = [stdout, stderr].filter(Boolean).join("\n");
+            const joined = [stdout, stderr].filter(Boolean).join('\n');
             // 断管说明**只进正文、不进 dump**：head 之后第一眼就是它（模型据此知道「这不是干净收尾」）
             const out = orphanNote === undefined ? joined : joined ? `${orphanNote}\n${joined}` : orphanNote;
             /** 结果头（##419）：字段名 / 顺序由 BASH_RESULT_HEAD_SCHEMA 派生，正文一律原文 */
@@ -307,15 +307,15 @@ export function runBash(
             //    投递层现算（##127）—— 在 execute 里裁 = 落进 ops 的原文当场丢。
             //
             // `outcome` 只给 job 账本（##408 刀 5），**不参与** ✓/✗ 判定（`failed` 的判据见文件头）
-            if (err?.name === "AbortError")
-                resolve({ text: head({ ok: false }) + "[已取消]", failed: false, outcome: "canceled" });
-            else if (err?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || err?.code === "ENOBUFS")
+            if (err?.name === 'AbortError')
+                resolve({ text: head({ ok: false }) + '[已取消]', failed: false, outcome: 'canceled' });
+            else if (err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || err?.code === 'ENOBUFS')
                 resolve({
                     text:
                         head({ ok: false }) +
                         `[输出超过 ${fmtBytes(BASH_MAX_BUFFER_BYTES)} 上限，命令已终止；以下是已收到的部分]\n${out}`,
                     failed: false,
-                    outcome: "fail",
+                    outcome: 'fail',
                 });
             else if (err?.killed)
                 // 带上时长与出路：模型看到「30s 被杀」才会去 nohup / 分批，只写「超时」它会原样重试
@@ -324,17 +324,17 @@ export function runBash(
                         head({ ok: false, signal: sig }) +
                         `[命令超时被杀]（超过 ${fmtTimeout(effectiveTimeoutMs)}，由本步显式给 timeout 指定；缺省是不设超时。长任务请后台跑 + 取增量日志）\n${out}`,
                     failed: false,
-                    outcome: "timeout",
+                    outcome: 'timeout',
                     ...(sig ? { signal: sig } : {}),
                 });
-            else if (typeof err?.code === "number")
+            else if (typeof err?.code === 'number')
                 // 命令级非零退出（##353）：有 stderr = 失败，无 stderr = 查询未命中（数据）
                 resolve({
                     text:
                         head({ ok: err.code === 0, exitCode: err.code, signal: sig }) +
-                        `[退出码 ${err.code}]\n${out || "(无输出)"}`,
+                        `[退出码 ${err.code}]\n${out || '(无输出)'}`,
                     failed: stderr.trim().length > 0,
-                    outcome: err.code === 0 ? "ok" : "fail",
+                    outcome: err.code === 0 ? 'ok' : 'fail',
                     exitCode: err.code,
                     ...(sig ? { signal: sig } : {}),
                 });
@@ -343,15 +343,15 @@ export function runBash(
                 resolve({
                     text:
                         head({ ok: false }) +
-                        `[命令未能启动 ${typeof err.code === "string" ? err.code : "?"}] ${err.message ?? ""}（工作目录：${cwd}）${out ? `\n${out}` : ""}`,
+                        `[命令未能启动 ${typeof err.code === 'string' ? err.code : '?'}] ${err.message ?? ''}（工作目录：${cwd}）${out ? `\n${out}` : ''}`,
                     failed: true,
-                    outcome: "fail",
+                    outcome: 'fail',
                 });
             else
                 resolve({
-                    text: head({ ok: true, exitCode: 0 }) + (out || "(无输出)"),
+                    text: head({ ok: true, exitCode: 0 }) + (out || '(无输出)'),
                     failed: false,
-                    outcome: "ok",
+                    outcome: 'ok',
                     exitCode: 0,
                 });
         };
@@ -376,7 +376,7 @@ export function runBash(
                 // Windows 的 detached（CREATE_NEW_PROCESS_GROUP）会让 PowerShell 5.1 丢 stdout 管道；
                 // 那边杀树走 taskkill /T，不依赖进程组 ⇒ 按能力位决定，不做平台名分支。
                 detached: runtime.processGroups,
-                stdio: ["ignore", "pipe", "pipe"],
+                stdio: ['ignore', 'pipe', 'pipe'],
                 windowsHide: true,
             });
             // 管道释放句柄交给 settle（它跨 try 作用域，不能直接碰 child）
@@ -405,7 +405,7 @@ export function runBash(
              */
             let logSink: ((b: Buffer) => void) | undefined;
             /** 攒输出 + 上限（与 execFile 同口径：stdout / stderr **各算各的**，超了即杀、留已收到的部分） */
-            const onData = (chunk: Buffer, side: "out" | "err"): void => {
+            const onData = (chunk: Buffer, side: 'out' | 'err'): void => {
                 if (logSink) {
                     logSink(chunk);
                     return;
@@ -420,23 +420,23 @@ export function runBash(
                 if (len[side] < BASH_MAX_BUFFER_BYTES) return;
                 killed = true;
                 runtime.killGroup(child); // 溢出也杀整组（原先 execFile 只杀直接子进程）
-                finish({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", killed: true }, dump("out"), dump("err"));
+                finish({ code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', killed: true }, dump('out'), dump('err'));
             };
-            child.stdout?.on("data", (c: Buffer) => onData(c, "out"));
-            child.stderr?.on("data", (c: Buffer) => onData(c, "err"));
+            child.stdout?.on('data', (c: Buffer) => onData(c, 'out'));
+            child.stderr?.on('data', (c: Buffer) => onData(c, 'err'));
             // spawn 层失败（ENOENT / EACCES…）：execFile 把它转成 callback 的 err，这里接 'error' 事件。
             // 同步抛（cwd 是普通文件 ⇒ ENOTDIR）两条路都到不了这里，由外层 catch 接（见下）。
-            child.on("error", (e: NodeJS.ErrnoException) =>
-                finish({ code: e.code, message: e.message }, dump("out"), dump("err")),
+            child.on('error', (e: NodeJS.ErrnoException) =>
+                finish({ code: e.code, message: e.message }, dump('out'), dump('err')),
             );
             // 收尾唯一入口：'close'（stdio 全关之后）——与 execFile 同一事件，输出不会截尾。
-            child.on("close", (code) => {
-                if (code === 0) finish(null, dump("out"), dump("err"));
+            child.on('close', (code) => {
+                if (code === 0) finish(null, dump('out'), dump('err'));
                 else
                     finish(
                         { code, killed, message: `Command failed: ${shell.label} ${command}` },
-                        dump("out"),
-                        dump("err"),
+                        dump('out'),
+                        dump('err'),
                     );
             });
             // ── 退出宽限（##454）：命令**已经结束**但 'close' 可能永远不来 ──
@@ -449,7 +449,7 @@ export function runBash(
             const EXIT_GRACE_MS = 200;
             /** 孤儿断管宽限：命令已退、孙进程仍握着写端 ⇒ 最多再等这么久就断开读端（见下方） */
             const ORPHAN_GRACE_MS = 1500;
-            child.on("exit", (code, exitSignal) => {
+            child.on('exit', (code, exitSignal) => {
                 if (logSink) return; // 已转后台：输出归 logSink，**不截断**
                 // ⚠️ **命令退出 ≠ 命令完成**（2026-11-04 修）：`cmd &` / setsid 起的孙进程继承了
                 // stdout/stderr 写端，bash 自己退出了它们还活着。这时按 code 收尾会把
@@ -459,8 +459,7 @@ export function runBash(
                 // 判据：exit 时 stdio 是否**已经**全关。没关 ⇒ 不走宽限，让它落到
                 // 'close'（孙进程放手）或超时（定时器，outcome=timeout）—— 两者都比谎报 ok 诚实。
                 // 已经关了 ⇒ 这就是正常的「命令跑完」，宽限照旧（处理 exit 早于 close 的一瞬）。
-                const stdioStillOpen =
-                    child.stdout?.readableEnded === false || child.stderr?.readableEnded === false;
+                const stdioStillOpen = child.stdout?.readableEnded === false || child.stderr?.readableEnded === false;
                 if (stdioStillOpen) {
                     // ── 孤儿断管宽限（##560）：这里**不能像以前那样直接 return** ──
                     // 老写法把结局全押在 'close'（孙进程放手）或超时定时器上，而 `timeout: 0`
@@ -478,15 +477,13 @@ export function runBash(
                         orphanId = undefined;
                         if (done || logSink) return; // 'close' 先到 / 已转后台：这轮 no-op
                         orphanNote =
-                            `[已断开后代进程的输出] 命令已退出（退出码 ${code ?? "null"}），但仍有后代进程握着 stdout/stderr，` +
+                            `[已断开后代进程的输出] 命令已退出（退出码 ${code ?? 'null'}），但仍有后代进程握着 stdout/stderr，` +
                             `已关闭读端 —— 它们**其后**的输出不会出现在这里（它们没死，只是不接了）。` +
                             `需要那些输出就去看命令自己重定向的日志文件。`;
                         finish(
-                            code === 0
-                                ? null
-                                : { code, killed, message: `Command failed: ${shell.label} ${command}` },
-                            dump("out"),
-                            dump("err"),
+                            code === 0 ? null : { code, killed, message: `Command failed: ${shell.label} ${command}` },
+                            dump('out'),
+                            dump('err'),
                             false,
                             exitSignal ?? undefined,
                         );
@@ -497,12 +494,12 @@ export function runBash(
                 }
                 const grace = setTimeout(() => {
                     if (done || logSink) return;
-                    if (code === 0) finish(null, dump("out"), dump("err"));
+                    if (code === 0) finish(null, dump('out'), dump('err'));
                     else
                         finish(
                             { code, killed, message: `Command failed: ${shell.label} ${command}` },
-                            dump("out"),
-                            dump("err"),
+                            dump('out'),
+                            dump('err'),
                             false,
                             exitSignal ?? undefined,
                         );
@@ -522,7 +519,7 @@ export function runBash(
             if (effectiveTimeoutMs > 0) {
                 timeoutId = setTimeout(() => {
                     killed = true;
-                    finish({ code: null, message: "timeout", killed: true }, dump("out"), dump("err"), true, "SIGKILL");
+                    finish({ code: null, message: 'timeout', killed: true }, dump('out'), dump('err'), true, 'SIGKILL');
                     runtime.killGroup(child);
                 }, effectiveTimeoutMs);
             }
@@ -533,14 +530,14 @@ export function runBash(
                 const onAbort = (): void => {
                     killed = true; // 头里 killed 如实置位（紧接着就发 SIGKILL，与超时同构）
                     finish(
-                        { name: "AbortError", code: "ABORT_ERR", message: "The operation was aborted" },
-                        dump("out"),
-                        dump("err"),
+                        { name: 'AbortError', code: 'ABORT_ERR', message: 'The operation was aborted' },
+                        dump('out'),
+                        dump('err'),
                     );
                     runtime.killGroup(child);
                 };
-                signal.addEventListener("abort", onAbort, { once: true });
-                offAbort = () => signal.removeEventListener("abort", onAbort);
+                signal.addEventListener('abort', onAbort, { once: true });
+                offAbort = () => signal.removeEventListener('abort', onAbort);
             }
             // ── 转后台句柄（##408 刀 19）──
             // 放在三条"撤火路径"（超时 / abort / 溢出）都挂完之后：句柄一给出，调用方随时可能
@@ -553,10 +550,10 @@ export function runBash(
                     startedAt: launchedAt || startedAt,
                     ended: () => done || child.exitCode !== null || child.signalCode !== null,
                     handoff: (write) => {
-                        if (logSink) throw new DetachError({ code: "agent/job-already-detached", message: "已转后台" });
+                        if (logSink) throw new DetachError({ code: 'agent/job-already-detached', message: '已转后台' });
                         // 结束的进程没有"转"这回事：如实拒绝，别假装转成功再补一条"其实早结束了"
                         if (done || child.exitCode !== null || child.signalCode !== null)
-                            throw new DetachError({ code: "agent/job-already-ended", message: "命令已结束" });
+                            throw new DetachError({ code: 'agent/job-already-ended', message: '命令已结束' });
                         // ① 本函数不再落 settle（收口唯一归 run 表；否则双写终态、双发通知）
                         done = true;
                         // ② 超时定时器：不撤 ⇒ 5 分钟后把刚转后台的活杀掉（人以为它在跑）
@@ -580,8 +577,8 @@ export function runBash(
                     finishAsDetached: (text) => {
                         // 没交接就收尾 = 调用方顺序错了（那时 `done` 还是假，说明它想让本函数
                         // "当没发生过" —— 那会把真正的结局吞掉，不如直接报错）
-                        if (!logSink) throw new DetachError({ code: "agent/job-not-detached", message: "尚未转后台" });
-                        resolve({ text, failed: false, outcome: "ok" });
+                        if (!logSink) throw new DetachError({ code: 'agent/job-not-detached', message: '尚未转后台' });
+                        resolve({ text, failed: false, outcome: 'ok' });
                     },
                 });
             }
@@ -590,8 +587,7 @@ export function runBash(
             //    `throw new ErrnoException(err, "spawn")`（code=ENOTDIR），**不走 callback**（实测 node 24）。
             //    漏接这条 catch 的后果不是"错误被吞"（executor 抛 = Promise reject，结果同向也是 ✗），
             //    而是文案只剩裸 `spawn ENOTDIR`、落不进本函数的统一口径（带 cwd 的失败文案）。
-            settle(e as BashExecError, "", "");
+            settle(e as BashExecError, '', '');
         }
     });
 }
-

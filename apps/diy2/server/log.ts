@@ -60,7 +60,7 @@ class TerminalLogRecordExporter {
 }
 
 function clip(value: unknown): string {
-    const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
+    const text = typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value));
     return text.length <= 120 ? text : `${text.slice(0, 117)}…`;
 }
 

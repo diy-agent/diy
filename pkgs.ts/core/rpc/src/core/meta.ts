@@ -13,12 +13,23 @@ import type { StreamHandle } from './types.js';
 import { toRpcError } from './error.js';
 
 /** 从 ProcedureMeta 的类型参数推导 handler 签名（四模式统一带 signal：调用级协作取消，任务 185） */
-type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> =
-  TMode extends 'unary'   ? (opts: { input: TIn; signal: AbortSignal }) => TOut | Promise<TOut> :
-  TMode extends 'server'  ? (opts: { input: TIn; signal: AbortSignal }) => AsyncGenerator<TOut> :
-  TMode extends 'client'  ? (opts: { input: TIn; stream: StreamHandle<TChIn>; signal: AbortSignal }) => TOut | Promise<TOut> :
-  TMode extends 'bidi'    ? (opts: { input: TIn; stream: StreamHandle<TChIn>; signal: AbortSignal }) => AsyncGenerator<TChOut> :
-  never;
+type HandlerFor<TIn, TOut, TChIn, TChOut, TMode> = TMode extends 'unary'
+  ? (opts: { input: TIn; signal: AbortSignal }) => TOut | Promise<TOut>
+  : TMode extends 'server'
+    ? (opts: { input: TIn; signal: AbortSignal }) => AsyncGenerator<TOut>
+    : TMode extends 'client'
+      ? (opts: {
+          input: TIn;
+          stream: StreamHandle<TChIn>;
+          signal: AbortSignal;
+        }) => TOut | Promise<TOut>
+      : TMode extends 'bidi'
+        ? (opts: {
+            input: TIn;
+            stream: StreamHandle<TChIn>;
+            signal: AbortSignal;
+          }) => AsyncGenerator<TChOut>
+        : never;
 
 /** 从 ProcedureMeta 类型参数推导 handler 签名（供 on() / onForward 使用） */
 /** @internal */
@@ -77,7 +88,9 @@ export interface ProcedureMeta<
 export type _AnyProcedureMeta = ProcedureMeta<any, any, any, any, any>;
 
 /** @internal */
-export interface _Router { [key: string]: _AnyProcedureMeta | _Router; }
+export interface _Router {
+  [key: string]: _AnyProcedureMeta | _Router;
+}
 
 // ═══════════════════════════════════════════════════
 //  zod 校验

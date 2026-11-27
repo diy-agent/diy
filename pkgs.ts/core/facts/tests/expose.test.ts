@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FULL_BUDGET, bytesOf, checkExpose, checkExposeLeveled, defaultExposeOf, exposeOf, weightsOf } from '../src/expose';
+import {
+    DEFAULT_FULL_BUDGET,
+    bytesOf,
+    checkExpose,
+    checkExposeLeveled,
+    defaultExposeOf,
+    exposeOf,
+    weightsOf,
+} from '../src/expose';
 import type { Fact } from '../src/types';
 
 const base = { review: 'accepted', lifecycle: 'active', evidence: { source: 'code' } } as const;
@@ -94,7 +102,12 @@ describe('checkExposeLeveled', () => {
     });
 
     it('不可用（superseded / proposed）的事实不占预算', () => {
-        const items = [{ fact: { ...fact('a', 'rule', 'x'.repeat(500)), lifecycle: 'superseded' as const }, level: 'full' as const }];
+        const items = [
+            {
+                fact: { ...fact('a', 'rule', 'x'.repeat(500)), lifecycle: 'superseded' as const },
+                level: 'full' as const,
+            },
+        ];
         expect(checkExposeLeveled(items, { budget: 100 })).toEqual([]);
     });
 });

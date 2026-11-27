@@ -16,10 +16,17 @@
             "default": "./src/renderer-react.js"
         }
     },
-    "scripts": { "test": "vitest run" },
+    "scripts": {
+        "test": "vitest run"
+    },
     "dependencies": {
         "@diy-agent/workbench-ui": "file:../workbench-ui"
     },
-    "peerDependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },
-    "devDependencies": { "vitest": "^4.1.10" }
+    "devDependencies": {
+        "vitest": "^4.1.10"
+    },
+    "peerDependencies": {
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0"
+    }
 }

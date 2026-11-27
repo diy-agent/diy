@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { botLastTurnOf, createTurnLookup, needsHuman, outcomeOfFact, outcomeText, withTurnFact } from '../src/bot-status';
+import { describe, expect, it, vi } from 'vitest';
+import {
+    botLastTurnOf,
+    createCachedTurnLookup,
+    createTurnLookup,
+    needsHuman,
+    outcomeOfFact,
+    outcomeText,
+    withTurnFact,
+} from '../src/bot-status';
 import { endItems } from '../src/end-reason';
 import { openStore } from '../src/db';
 import type { Item } from '../src/types';
@@ -21,11 +29,9 @@ function item(partial: Partial<Item> & { type: Item['type']; data: unknown }, au
     } as Item;
 }
 
-const chat = (author?: string, turnId = 'turn-1'): Item =>
-    item({ type: 'chat', data: { text: 'hi' }, turnId }, author);
+const chat = (author?: string, turnId = 'turn-1'): Item => item({ type: 'chat', data: { text: 'hi' }, turnId }, author);
 const notice = (kind: string, author?: string): Item => item({ type: 'notice', data: { text: kind, kind } }, author);
-const errorItem = (message: string, author?: string): Item =>
-    item({ type: 'error', data: { message } }, author);
+const errorItem = (message: string, author?: string): Item => item({ type: 'error', data: { message } }, author);
 
 describe('lastItemPerBot', () => {
     it('每个 bot 各取最后一条，不串房间', () => {
@@ -125,12 +131,18 @@ describe('outcomeOfFact / withTurnFact', () => {
     });
 
     it('error 事实把原文带到 message', () => {
-        const turn = withTurnFact(botLastTurnOf('r1', chat('a'))!, item({ type: 'error', data: { message: '网关 500' } }));
+        const turn = withTurnFact(
+            botLastTurnOf('r1', chat('a'))!,
+            item({ type: 'error', data: { message: '网关 500' } }),
+        );
         expect(turn).toMatchObject({ outcome: 'failed', message: '网关 500' });
     });
 
     it('endItems 落的结局带 botId（归属不丢，UI 仍独立成条）', () => {
-        const [fact] = endItems({ type: 'max-tokens', maxOutputTokens: 100 }, { turn: 1, turnId: 'turn-1', botId: 'bot:a' });
+        const [fact] = endItems(
+            { type: 'max-tokens', maxOutputTokens: 100 },
+            { turn: 1, turnId: 'turn-1', botId: 'bot:a' },
+        );
         expect(fact?.type).toBe('notice');
         // 不带 author：UI 据此让它独立成条（timeline 的分组看 author 在不在）
         expect(fact?.author).toBeUndefined();
@@ -192,7 +204,14 @@ describe('lastFactPerTurn', () => {
 describe('needsHuman / outcomeText', () => {
     it('只有 done 不需要人动手', () => {
         expect(needsHuman('done')).toBe(false);
-        for (const outcome of ['truncated', 'max-steps', 'filtered', 'tool-mismatch', 'interrupted', 'failed'] as const) {
+        for (const outcome of [
+            'truncated',
+            'max-steps',
+            'filtered',
+            'tool-mismatch',
+            'interrupted',
+            'failed',
+        ] as const) {
             expect(needsHuman(outcome)).toBe(true);
         }
     });
@@ -215,10 +234,7 @@ describe('createTurnLookup —— 事实必须属于当前这一轮', () => {
         // 因为 `lastFactPerTurn` 按 owner（COALESCE(botId, turnId)）分组，
         // 一个 bot 在它那里只留一条，那条是旧轮的。
         const store = openStore(':memory:');
-        store.appendItem(
-            room,
-            item({ type: 'chat', data: { text: '结论' }, turnId: 'turn-new', turn: 95 }, bot),
-        );
+        store.appendItem(room, item({ type: 'chat', data: { text: '结论' }, turnId: 'turn-new', turn: 95 }, bot));
         store.appendItem(
             room,
             item({
@@ -253,5 +269,153 @@ describe('createTurnLookup —— 事实必须属于当前这一轮', () => {
 
         const lookup = createTurnLookup(store);
         expect(lookup(room, bot)?.outcome).toBe('interrupted');
+    });
+
+    it('同一轮的 job-done 不许把 interrupted 遮住（“一个红一个不红”的真因）', () => {
+        // 2026-11-26 实数据（任务 #29 任务分解 dag）：一轮里跑了后台作业，于是同轮落过
+        // 一条 `job-done`（不带 botId → 落在 turnId 键上，seq 更大），而这一轮真正的结局
+        // 是进程被杀后补写的 `interrupted`（带 botId → 落在 botId 键上）。
+        // 旧实现先命中 `job-done`、`withTurnFact` 因为「不是结局」原样返回 done ——
+        // 时间线上明明写着「上一轮没跑完」，导航图标却什么事都没有。
+        const store = openStore(':memory:');
+        store.appendItem(room, item({ type: 'chat', data: { text: '开工' }, turnId: 'turn-7', turn: 7 }, bot));
+        store.appendItem(
+            room,
+            item({ type: 'notice', data: { text: '后台进程结束', kind: 'job-done' }, turnId: 'turn-7', turn: 7 }),
+        );
+        store.appendItem(
+            room,
+            item({
+                type: 'notice',
+                data: { text: '没跑完', kind: 'interrupted', botId: bot },
+                turnId: 'turn-7',
+                turn: 7,
+            }),
+        );
+
+        expect(createTurnLookup(store)(room, bot)?.outcome).toBe('interrupted');
+    });
+
+    it('被杀的那一轮 bot 一个条目都没产出时，仍然认得出中断', () => {
+        // 进程死在 bot 还什么都没写的时候：那一轮在磁盘上只有 `turn_open` 补的
+        // `interrupted`（turn 8），bot 自己最后一条还停在 turn 7 ——
+        // 旧实现要求 `fact.turnId === own.turnId`，永远对不上，导航条就一直当成「正常」。
+        const store = openStore(':memory:');
+        store.appendItem(room, item({ type: 'chat', data: { text: '上一轮' }, turnId: 'turn-7', turn: 7 }, bot));
+        store.appendItem(
+            room,
+            item({
+                type: 'notice',
+                data: { text: '没跑完', kind: 'interrupted', botId: bot },
+                turnId: 'turn-8',
+                turn: 8,
+            }),
+        );
+
+        const turn = createTurnLookup(store)(room, bot);
+        expect(turn?.outcome).toBe('interrupted');
+        expect(turn?.turn).toBe(8);
+    });
+
+    it('从没说过话的 bot：只靠轮级事实也能标出“上一轮没跑完”', () => {
+        // 新任务的第一轮就挂掉：没有 chat / 没有 tool，`lastItemPerBot` 里根本没有这个 bot
+        const store = openStore(':memory:');
+        store.appendItem(
+            room,
+            item({
+                type: 'notice',
+                data: { text: '没跑完', kind: 'interrupted', botId: bot },
+                turnId: 'turn-1',
+                turn: 1,
+            }),
+        );
+
+        const turn = createTurnLookup(store)(room, bot);
+        expect(turn?.outcome).toBe('interrupted');
+        expect(turn?.botId).toBe(bot);
+    });
+
+    it('末轮正常结束的 bot：不因为有旧 interrupted 事实就变红', () => {
+        // 反面：轮次更早的 interrupted 一律不许盖到后面正常结束的轮上
+        const store = openStore(':memory:');
+        store.appendItem(
+            room,
+            item({
+                type: 'notice',
+                data: { text: '没跑完', kind: 'interrupted', botId: bot },
+                turnId: 'turn-3',
+                turn: 3,
+            }),
+        );
+        store.appendItem(room, item({ type: 'chat', data: { text: '收工' }, turnId: 'turn-9', turn: 9 }, bot));
+
+        expect(createTurnLookup(store)(room, bot)?.outcome).toBe('done');
+    });
+});
+
+describe('createCachedTurnLookup —— TTL 内共用一次全表计算', () => {
+    // 2026-11-26：`bots.rows` 每 1.5~2.5s 拉一次，每次都重建 turn lookup = 529ms+39ms 的全表
+    // json 分组；三个 agent 在跑时它们几乎不停地在跑，同连接的其它请求只能排队。
+    // 缓存正是为这个：**同一次窗口内只算一次**。
+    it('TTL 内重复查只算一次；过期后重算', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', {
+            id: 'i1',
+            seq: 0,
+            turn: 1,
+            turnId: 't1',
+            at: 1,
+            status: 'done',
+            author: { id: 'bot:1', name: 'b', color: '#fff', role: 'bot' },
+            type: 'chat',
+            data: { text: 'hi' },
+        });
+        const spy = vi.spyOn(store, 'lastItemPerBot');
+        let now = 1_000_000;
+        const lookup = createCachedTurnLookup(store, 5000, () => now);
+
+        lookup('r1', 'bot:1');
+        lookup('r1', 'bot:1');
+        lookup('r2', 'bot:9'); // 别的房间也共用这一份（缓存是**全实例**的）
+        expect(spy).toHaveBeenCalledTimes(1);
+
+        now += 5001;
+        lookup('r1', 'bot:1');
+        expect(spy).toHaveBeenCalledTimes(2);
+        spy.mockRestore();
+    });
+
+    it('过期后能看到新落盘的数据', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', {
+            id: 'i1',
+            seq: 0,
+            turn: 1,
+            turnId: 't1',
+            at: 1,
+            status: 'done',
+            author: { id: 'bot:1', name: 'b', color: '#fff', role: 'bot' },
+            type: 'chat',
+            data: { text: 'old' },
+        });
+        let now = 1_000_000;
+        const lookup = createCachedTurnLookup(store, 5000, () => now);
+        expect(lookup('r1', 'bot:1')?.turnId).toBe('t1');
+
+        store.appendItem('r1', {
+            id: 'i2',
+            seq: 0,
+            turn: 2,
+            turnId: 't2',
+            at: 2,
+            status: 'done',
+            author: { id: 'bot:1', name: 'b', color: '#fff', role: 'bot' },
+            type: 'chat',
+            data: { text: 'new' },
+        });
+        // 还在 TTL 内：看到的是上一份计算（这是**有意**的取舍，见 createCachedTurnLookup 的注释）
+        expect(lookup('r1', 'bot:1')?.turnId).toBe('t1');
+        now += 5001;
+        expect(lookup('r1', 'bot:1')?.turnId).toBe('t2');
     });
 });

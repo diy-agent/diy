@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { ScopeNode, ScopeConfig, type ContextManager } from "../src/scope.js";
+import { ScopeNode, type ContextManager } from "../src/scope.js";
 
 // ── 模拟 App 的 contextStack 实现 ────────────────────────
 
