@@ -11,6 +11,7 @@ export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
     'deliveries-columns': '20fc1ee68ead9a32', /* 005-deliveries-columns.ts */
     'drop-legacy-room-model': 'ef9574bee9dfa08e', /* 016-drop-legacy-room-model.ts */
     'drop-unit-deps': 'a97cc4421d67ad3e', /* 012-drop-unit-deps.ts */
+    'drop-unit-step': '383e1b26dabdd330', /* 019-drop-unit-step.ts */
     'entity-bots': 'a9227911adc43f70', /* 004-entity-bots.ts */
     'fold-bots': 'c2da4d530e84a40c', /* 014-fold-bots.ts */
     'legacy-journal': '7d3603fb5ed0f719', /* 015-legacy-journal.ts */
