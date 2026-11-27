@@ -13,6 +13,7 @@ import type { JournalLineView, UnitDetailView, UnitRawView } from '@diy-agent/ch
 import { jumpToMessage } from '../askJump';
 import { useUnitDetail } from '../useUnitDetail';
 import { useUnitRaw } from '../useUnitRaw';
+import { unitStatusMeta } from './unitStatus';
 
 function fmtTime(at: number): string {
     const date = new Date(at);
@@ -110,13 +111,8 @@ export function UnitNeedDetail({
                     <div className="text-[10px] text-muted-foreground">
                         {/* 顶层条目是「目标」，挂在它下面的才是「需求」—— 账本只有这两层 */}
                         {need === null || need.parent === null ? '目标' : '需求'} ·{' '}
-                        {need === null
-                            ? '读取中…'
-                            : need.status === 'done'
-                              ? '已完成'
-                              : need.status === 'doing'
-                                ? '在做'
-                                : '未开始'}
+                        {/* 词表只有一份（unitStatus.ts）：这里不再自己写「在做 / 已完成」 */}
+                        {need === null ? '读取中…' : unitStatusMeta(need.status).label}
                     </div>
                     <div className="text-[13px] leading-snug font-medium text-foreground">
                         {need?.title ?? unitId}
@@ -196,13 +192,7 @@ export function UnitNeedDetail({
                                                 className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-muted"
                                             >
                                                 <span
-                                                    className={`size-1.5 shrink-0 rounded-full ${
-                                                        child.status === 'done'
-                                                            ? 'bg-emerald-500'
-                                                            : child.status === 'doing'
-                                                              ? 'bg-sky-500'
-                                                              : 'bg-muted-foreground/40'
-                                                    }`}
+                                                    className={`size-1.5 shrink-0 rounded-full ${unitStatusMeta(child.status).dot}`}
                                                 />
                                                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                                                     <span

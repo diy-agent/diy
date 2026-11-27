@@ -17,6 +17,7 @@ import * as React from 'react';
 import type { UnitItem } from '@diy-agent/chat-transport-rpc';
 import { roomTitle, type Room } from '../model';
 import { ListRow } from './ListRow';
+import { unitStatusMeta } from './unitStatus';
 import { UnitNeedDetail } from './UnitNeedDetail';
 import { useUnitBoard } from '../useUnitBoard';
 import { useUnitText } from '../useUnitText';
@@ -24,23 +25,21 @@ import { useUnitText } from '../useUnitText';
 /** 与服务端同一口径的粗略估算（中文 + 结构下约 0.78 tok / 字符，见 ContextPanel） */
 const TOKENS_PER_CHAR = 0.78;
 
-/** 需求行的状态点：done 绿、doing 蓝（带光晕）、open 灰（能挑的偏绿） */
-function dotClass(unit: UnitItem, ready: Set<string>): string {
-    if (unit.status === 'done') return 'bg-emerald-500';
-    if (unit.status === 'doing') return 'bg-sky-500 shadow-[0_0_0_3px] shadow-sky-500/20';
-    return ready.has(unit.id) ? 'bg-emerald-500/70' : 'bg-muted-foreground/40';
-}
-
 /**
- * 需求清单（左栏的主体）—— **拍平的**，不画缩进树。
+ * 清单（左栏的主体）：**目标 → 需求** 两级，目标那行可折叠。
  *
- * 2026-11-27 用户：「需求是否可以扁平化？不要有父子关系是否简单点？外面是目标，里面是小目标」。
- * 我们只把**表现**拍平：左栏只列根需求，小目标 / 步骤点开才看到（数据仍留一层 parent，
- * 否则「这条属于哪个目标」无处可放）。理由：之前的病不是「有父子」，是父子被画成缩进树 +
- * 步骤挤进需求层 —— 一屏 125 条，扫不出「现在在做哪几件」。
+ * 2026-11-27 晚 用户改口（这条覆盖前一版的「左栏只列根 + 子项只在详情里」）：
+ * 「需求应该显示在左侧目标下面，形成层级、可折叠结构，不然点起来很麻烦；需求和目标都是
+ * 人关注的核心，因为已完成目标已经折叠，条目理论上不会过多。」
  *
- * 当前 / 历史分开也是同一刀：默认只看 open / doing，done 收进一行「历史 N」，
- * 展开后一条不少（历史是证据，不是噪音）。
+ * 两版要解决的问题不一样，所以两条都留着：
+ *   · **拍平**那一刀解决的是「缩进树 + 步骤挤进来 → 一屏 125 条扫不出重点」；
+ *   · **层级**这一刀解决的是「看一个目标得挨个点开才知道它下面有什么」。
+ * 于是：只画两层（账本也只有两层）、默认展开、done 的目标仍收进「历史 N」——
+ * 折叠的是**历史**，不是层级。
+ *
+ * 来源引用（↩ 某人：原话）**不在这一栏出现**（用户：「把引用从左边目标树里去掉，放到内部」）：
+ * 左栏要能一眼扫完标题 + 状态，引用属于详情。
  */
 function NeedsList({
     needs,
@@ -53,25 +52,37 @@ function NeedsList({
     selected: string | null;
     onSelect: (unit: UnitItem) => void;
 }): React.JSX.Element {
-    // 只列目标（根）：它下面的需求在目标详情里出现，不铺在左栏
+    const byId = new Map(needs.map((unit) => [unit.id, unit]));
     const roots = needs.filter((unit) => unit.parent === null);
-    // 目标的进度由需求派生（账本只有两层，没有「步骤」这类可计数的叶子细节）
-    const statusOf = new Map(needs.map((unit) => [unit.id, unit.status]));
     const current = roots.filter((unit) => unit.status !== 'done');
     const history = roots.filter((unit) => unit.status === 'done');
     const [historyOpen, setHistoryOpen] = React.useState(false);
+    // 记**收起的**而不是展开的：默认全展开（新目标一出现就能看见它的需求），
+    // 这样后加的目标不会因为「不在展开集合里」而默认藏起来。
+    const [collapsed, setCollapsed] = React.useState<ReadonlySet<string>>(new Set());
+    const toggle = (id: string): void =>
+        setCollapsed((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
 
-    const row = (unit: UnitItem): React.JSX.Element => {
-        const total = unit.children.length;
-        const done = unit.children.filter((child) => statusOf.get(child) === 'done').length;
+    const row = (unit: UnitItem, indent: number): React.JSX.Element => {
+        const children = unit.children.map((id) => byId.get(id)).filter((child) => child !== undefined);
+        const total = children.length;
+        const done = children.filter((child) => child.status === 'done').length;
         const pct = total === 0 ? 0 : Math.round((100 * done) / total);
+        const expanded = total > 0 && !collapsed.has(unit.id);
         return (
             <ListRow
                 key={unit.id}
-                leading={<span className={`size-2 rounded-full ${dotClass(unit, ready)}`} />}
+                indent={indent}
+                leading={<span className={`size-2 rounded-full ${unitStatusMeta(unit.status).dot}`} />}
                 title={unit.title}
                 active={unit.id === selected}
                 onSelect={() => onSelect(unit)}
+                {...(total === 0 ? {} : { expanded, onToggle: () => toggle(unit.id) })}
                 trailing={
                     total === 0 ? undefined : (
                         <span className="flex items-center gap-1">
@@ -89,14 +100,10 @@ function NeedsList({
                 }
                 meta={
                     <>
-                        {!unit.group && unit.accept.trim() === '' && (
+                        {/* 目标行收起时点一句「下面有几条」，展开时那些行就在眼前，不再重复 */}
+                        {total > 0 && !expanded && <span>{total} 条需求</span>}
+                        {total === 0 && unit.accept.trim() === '' && (
                             <span className="rounded border border-amber-500/30 px-1 text-amber-600">未写验收</span>
-                        )}
-                        {unit.group && <span>{unit.children.length} 条需求</span>}
-                        {unit.sourceQuote !== undefined && (
-                            <span className="min-w-0 truncate">
-                                ↩ {unit.sourceQuote.author || '有人'}：{unit.sourceQuote.text}
-                            </span>
                         )}
                     </>
                 }
@@ -104,9 +111,21 @@ function NeedsList({
         );
     };
 
+    /** 一个目标 + 它展开时的需求行（需求不再往下嵌套：账本只有两层） */
+    const block = (unit: UnitItem): React.JSX.Element => (
+        <React.Fragment key={unit.id}>
+            {row(unit, 0)}
+            {!collapsed.has(unit.id) &&
+                unit.children
+                    .map((id) => byId.get(id))
+                    .filter((child) => child !== undefined)
+                    .map((child) => row(child, 1))}
+        </React.Fragment>
+    );
+
     return (
         <>
-            {current.map(row)}
+            {current.map(block)}
             {history.length > 0 && (
                 <>
                     <button
@@ -118,7 +137,7 @@ function NeedsList({
                         <span className={`transition-transform ${historyOpen ? 'rotate-90' : ''}`}>▶</span>
                         历史 {history.length}
                     </button>
-                    {historyOpen && history.map(row)}
+                    {historyOpen && history.map(block)}
                 </>
             )}
         </>

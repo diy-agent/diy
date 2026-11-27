@@ -32,6 +32,15 @@ export interface ListRowProps {
     onSelect?: () => void;
     /** 标题的悬停全文（长标题被 truncate 时的兜底） */
     titleText?: string;
+    /**
+     * 层级缩进的级数（1 = 目标的下一层）。只改左内边距，其余刻度不动 ——
+     * 缩进太狠会让 14px 的宽度吃掉半行标题。
+     */
+    indent?: number;
+    /** 有子行时的折叠状态（`undefined` = 这一行没有子行，不画箭头） */
+    expanded?: boolean;
+    /** 折叠箭头的点击（与 `onSelect` 分开：折叠是「看不看得到」，选中是「看哪一条」） */
+    onToggle?: () => void;
 }
 
 export function ListRow({
@@ -42,9 +51,37 @@ export function ListRow({
     active = false,
     onSelect,
     titleText,
+    indent = 0,
+    expanded,
+    onToggle,
 }: ListRowProps): React.JSX.Element {
+    // 折叠箭头：只用 `role="button"` 的 span，不用嵌套 <button>（行本身已经是 button）。
+    // 点击必须 stopPropagation —— 否则「收起」会先被行选中的 handler 吃掉，变成开详情。
+    const chevron =
+        onToggle === undefined ? null : (
+            <span
+                role="button"
+                tabIndex={0}
+                aria-expanded={expanded === true}
+                aria-label={expanded === true ? '收起子项' : '展开子项'}
+                onClick={(event) => {
+                    event.stopPropagation();
+                    onToggle();
+                }}
+                onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.stopPropagation();
+                    event.preventDefault();
+                    onToggle();
+                }}
+                className="flex w-3 shrink-0 cursor-pointer justify-center text-[9px] text-muted-foreground hover:text-foreground"
+            >
+                <span className={`transition-transform ${expanded === true ? 'rotate-90' : ''}`}>▶</span>
+            </span>
+        );
     const body = (
         <>
+            {chevron}
             {leading !== undefined && <span className="flex w-3 shrink-0 justify-center">{leading}</span>}
             <span className="flex min-w-0 flex-1 flex-col">
                 <span className={LIST_ROW_TITLE} title={titleText ?? title}>
@@ -56,13 +93,20 @@ export function ListRow({
         </>
     );
 
-    if (onSelect === undefined) return <div className={LIST_ROW_BASE}>{body}</div>;
+    const padding = indent === 0 ? undefined : { paddingLeft: `${8 + indent * 14}px` };
+    if (onSelect === undefined)
+        return (
+            <div className={LIST_ROW_BASE} style={padding}>
+                {body}
+            </div>
+        );
     return (
         <button
             type="button"
             onClick={onSelect}
             aria-selected={active}
             className={`${LIST_ROW_BASE} hover:bg-muted ${active ? 'bg-sky-500/10 ring-1 ring-sky-500/30' : ''}`}
+            style={padding}
         >
             {body}
         </button>
