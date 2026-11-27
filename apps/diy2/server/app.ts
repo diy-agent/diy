@@ -265,7 +265,8 @@ function actorOf(spec: Room): RoomActor {
             home: config.home,
             // 设备库住生产根（`~/.diy2/knowledge`），不跟着 lab 的实例根漂
             deviceHome: config.deviceHome,
-            ...(codeHost === undefined ? {} : { code: codeHost }),
+            // 传 thunk 不传值：`seed()` 建 actor 时 `codeHost` 还没赋值（见 `RoomActorDeps.code`）
+            code: () => codeHost,
             shell: config.tools !== 'files',
             jobs: { registry: jobs },
             ...(config.maxSteps === undefined ? {} : { maxSteps: config.maxSteps }),
@@ -1055,7 +1056,9 @@ export async function createDiy2App(opts: {
                     // 附件在 zod 层已验过形状；这里再走一遍真源校验（防“zod 宽了、ref 却不对”）
                     // —— 网络边界上是最后一道，宁可炸在发消息时，也不要存进 db 后才发现。
                     const attachments =
-                        input.attachments === undefined ? [] : parseAttachmentRefs(input.attachments, 'chat.attachments');
+                        input.attachments === undefined
+                            ? []
+                            : parseAttachmentRefs(input.attachments, 'chat.attachments');
                     if (text === '' && attachments.length === 0) throw new Error('text or attachments required');
                     void actor.say({ text, author: HUMAN, attachments }).catch((error: unknown) => {
                         broadcast(input.id, {
