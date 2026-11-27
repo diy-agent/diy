@@ -20,19 +20,33 @@ import type { ApiHelpItem } from './globals.js';
  */
 export function apiHelpOf(
     tree: _Router | _AnyProcedureMeta,
-    opts: { prefix?: string | undefined } = {},
+    opts: {
+        prefix?: string | undefined;
+        /**
+         * 方法用途的外部说明（`meta.desc` 没写时兜底）。`path` 是**剥过 prefix 的**，
+         * 也就是模型看到的那一个 —— 这样宿主那张表和清单用的是同一套名字。
+         */
+        descOf?: ((path: string) => string | undefined) | undefined;
+        /** 只取一个域（`chat`）；不传 = 全部。模型通常只想知道「这个域有什么」 */
+        group?: string | undefined;
+    } = {},
 ): ApiHelpItem[] {
     const strip = opts.prefix === undefined || opts.prefix === '' ? '' : `${opts.prefix}.`;
     return (
         Object.entries(_flattenRouter(tree))
             .map(([rawPath, meta]) => {
                 const path = strip !== '' && rawPath.startsWith(strip) ? rawPath.slice(strip.length) : rawPath;
+                const desc =
+                    meta.desc === undefined ? opts.descOf?.(path) : (meta.desc.split('\n')[0]?.trim() ?? meta.desc);
                 return {
                     path,
-                    ...(meta.desc === undefined ? {} : { desc: meta.desc.split('\n')[0]?.trim() ?? meta.desc }),
+                    ...(desc === undefined ? {} : { desc }),
                     mode: meta._streamMode,
                 };
             })
+            .filter((item) =>
+                opts.group === undefined ? true : item.path === opts.group || item.path.startsWith(`${opts.group}.`),
+            )
             // 不再 filter group：`_flattenRouter` 用 `_routeLeaves`，父命令本来就进不来。
             // 多一层「防御」实际是第二份真相 —— flatten 将来变了会静默对不上。
             .sort((a, b) => a.path.localeCompare(b.path))
