@@ -327,7 +327,16 @@ function showResult(p){
     elRows.appendChild(row);
   });
 
-  // 主按钮换成「打开主界面」，开始按钮降为次要的「重新迁移」（迁移可重复跑）
+  // 「打开主界面」只在**校验全过**时才给 —— 没迁干净的库打开只会报错，
+  // 那时候该做的是重跑或看哪一项没过，不是去开主界面。
+  if(!doneOk){
+    resetButton();
+    elOpen.hidden = true;
+    elHint.textContent = '迁移没完全成功，先别打开主界面 —— 展开「执行步骤」看哪一项没过。';
+    return;
+  }
+
+  // 全部通过：主按钮换成「打开主界面」，开始按钮降为次要的「重新迁移」（迁移可重复跑）
   elGo.className = 'btn secondary'; elGo.textContent = '重新迁移'; elGo.disabled = false;
   if(APP_URL){
     elOpen.hidden = false; elOpen.href = APP_URL;
