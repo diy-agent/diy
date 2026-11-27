@@ -87,7 +87,23 @@ export function makeGlobals(opts: GlobalsOptions): Record<string, unknown> {
 /** 把清单渲染成给模型看的一段文本（塞进工具描述或让模型自己调 `apiHelp()`） */
 export function formatApiHelp(items: readonly ApiHelpItem[]): string {
     if (items.length === 0) return '（这个会话没有挂任何 RPC）';
-    return items
-        .map((item) => (item.desc === undefined ? `- ${item.path}` : `- ${item.path} — ${item.desc}`))
-        .join('\n');
+    // 按域分组：38 条逐行写全路径会把域名重复 38 遍，模型扫一遍全是 `chat.chat`、`chat.cancel`、
+    // `chat.wait` 开头的噪声；分组后「这个域有什么」一眼看得清，一行也短了。
+    const groups = new Map<string, ApiHelpItem[]>();
+    for (const item of items) {
+        const dot = item.path.indexOf('.');
+        const group = dot === -1 ? '' : item.path.slice(0, dot);
+        const list = groups.get(group);
+        if (list === undefined) groups.set(group, [item]);
+        else list.push(item);
+    }
+    const lines: string[] = [];
+    for (const [group, list] of groups) {
+        if (group !== '') lines.push(`${group}:`);
+        for (const item of list) {
+            const name = group === '' ? item.path : item.path.slice(group.length + 1);
+            lines.push(`  ${name}${item.desc === undefined ? '' : ` — ${item.desc}`}`);
+        }
+    }
+    return lines.join('\n');
 }

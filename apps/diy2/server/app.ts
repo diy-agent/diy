@@ -49,7 +49,7 @@ import {
 } from '@diy-agent/rpc';
 import { createBlobStore, parseAttachmentRef, parseAttachmentRefs } from '@diy-agent/attachment';
 import { apiHelpOf, defaultCodeRuntime } from '@diy-agent/code-runtime';
-import { diy2Api } from '@diy-agent/protocol';
+import { METHOD_DESC, diy2Api } from '@diy-agent/protocol';
 import type {
     ActivityFrame,
     AskAnswer,
@@ -1239,7 +1239,9 @@ export async function createDiy2App(opts: {
             runtime: defaultCodeRuntime,
             api: createTypedClient(new ChannelClientBinding(mem.clientTx), diy2Api, { prefix: 'diy2' }),
             // 前缀 `diy2` 会从 path 里剥掉：模型看到的是 `api.bots.list`，照抄才对得上
-            apiHelp: apiHelpOf(diy2Api, { prefix: 'diy2' }),
+            // descOf：每个方法的用途在 protocol 包那张表里（38 条并排才看得出撞车/可合并），
+            // 不写在各处 `RpcSchema.unary({desc})` —— 模型读 apiHelp 是为了判断该不该用
+            apiHelp: apiHelpOf(diy2Api, { prefix: 'diy2', descOf: (path) => METHOD_DESC[path] }),
         };
     }
 

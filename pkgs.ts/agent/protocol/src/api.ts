@@ -333,6 +333,66 @@ export const attachmentApi = RpcSchema.group({
     },
 });
 
+/**
+ * 每个方法「什么时候用」—— `apiHelp()` 的说明来源。
+ *
+ * 为什么不写在各处 `RpcSchema.unary({ desc })`：38 条并排才看得出「名字是不是撞车了」
+ * 「哪几个其实该合并」，而改方法时翻 340 行找定义很容易漏。这张表就是给人看的同一份东西。
+ *
+ * 写用途不写动作：`rooms.list` 不是「列出房间」，而是「侧栏要什么就一次拿全」。
+ * 模型读 apiHelp 是为了判断「该不该用这个」，不是想知道它内部干了什么。
+ */
+export const METHOD_DESC: Readonly<Record<string, string>> = {
+    // —— 房间 ——
+    'rooms.list': '侧栏要的一切：名字 / 未读 / 在跑 / 等回答 / 坏没坏 / 最后活动时间',
+    'rooms.create': '新建项目或任务房间；任务房间的 data 里放 title / body / dir',
+    'rooms.update': '改房间名、换模型、写 data（任务 body 也走这里）',
+    'rooms.remove': '删房间；删项目会连带它的任务，返回 deleted 列表',
+    'rooms.addMember': '把已有 bot 拉进这个房间（借用别处的 bot）',
+    'rooms.markRead': '告诉服务端「我看到第几条了」；只前进不后退',
+    // —— bot ——
+    'bots.list': '所有 bot 的定义（名字 / 人格 / 模型 / 归属房间）',
+    'bots.rows': '每个 bot 一行状态：在跑 / 等回答 / 上一轮出错 / 空闲',
+    'bots.create': '造一个新 bot',
+    'bots.update': '改 bot 的名字 / 颜色 / 人格 / 模型 / 归属',
+    'bots.remove': '删 bot',
+    'bots.retry': '给选中的 (房间, bot) 各发一条「继续」；已在跑的跳过',
+    // —— 对话 ——
+    'chat.history': '打开房间的三件套：条目 / 投递 / 待答提问；limit 控返回条数',
+    'chat.wait': '等新条目（长轮询）。想在代码里「盯」一件事就用它，别 sleep 轮询',
+    'chat.chat': '发一条消息（受理即返，事件从 room 流回来）；text 可空仅当带附件',
+    'chat.cancel': '中止某轮（botId 指定谁）；keepQueue=false 连排队的一起清',
+    'chat.sessions': '房间内每个 bot 的会话摘要（轮次 / 用量 / 压缩状态）',
+    'chat.compact': '手动压缩这个房间的会话；keepTurns 控保留几轮',
+    'chat.cancelCompact': '取消正在进行的压缩',
+    // —— 提问 ——
+    'asks.list': '这个房间待回答的提问 + 已答过的',
+    'asks.answer': '回答问题（选项 / 表单值）',
+    'asks.cancel': '撤掉一条提问',
+    // —— 附件 ——
+    'attachment.put': '把文件内容存进去，拿一个 ref（贴图 / 传日志用）',
+    'attachment.get': '按 ref 取回内容',
+    // —— 草稿 ——
+    'drafts.list': '某个 owner 的输入框草稿',
+    'drafts.put': '存草稿（打字时防丢）',
+    'drafts.remove': '删草稿',
+    // —— 账本 ——
+    'journal.list': '这个房间的日志（决策 / 踩坑 / 评审 / 进度）',
+    'units.list': '任务账本树（哪些做完、哪些现在能做）',
+    'units.text': '账本的纯文本渲染（进提示词用）',
+    // —— 引用 ——
+    'links.list': '一条记录的引用关系',
+    'links.add': '加一条引用',
+    'links.remove': '删一条引用',
+    // —— 作业 ——
+    'jobs.list': '后台作业账本（在跑 / 已结束）',
+    'jobs.tail': '取某个作业的输出尾部',
+    'jobs.kill': '停掉某个作业（整组）',
+    // —— 其它 ——
+    'models.list': '可选模型目录（按 provider 分组，带能力位）',
+    info: '这个实例是谁：端口 / 数据根 / 版本',
+};
+
 export const diy2Api = RpcSchema.group({
     desc: 'diy2 的全部浏览器 API（命令走 unary，房间事件走 /rpc 的 room 流）',
     children: {
