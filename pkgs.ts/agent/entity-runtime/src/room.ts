@@ -178,8 +178,6 @@ export class RoomActor {
     private readonly contexts = new Map<string, ContextSession>();
     /** 系统自己的身份：「你的提问被挤掉了」这类通知的作者（不能冒充用户） */
     private static readonly SYSTEM: Author = { id: 'system:ask', name: '系统', color: '#9ca3af', role: 'system' };
-    /** 每个成员一份工具集：只有 ask 的归属不同（按成员停止时要能分辨） */
-    private readonly toolsByBot = new Map<string, ToolSet | undefined>();
     /** 正在跑一轮的成员（UI 的"谁在说话"用它，不由前端猜） */
     private readonly speaking = new Set<string>();
     /**
@@ -876,9 +874,15 @@ export class RoomActor {
         this.turnSeq = Math.max(this.turnSeq, snapshot.turn);
     }
 
-    /** 工具集：房间目录 + 审批闸门（每个成员一份，ask 带 owner） */
+    /**
+     * 工具集：房间目录 + 审批闸门（每个成员一份，ask 带 owner）。
+     *
+     * **不缓存**（2026-11-27）：工具的有无不只由「房间」决定 —— `code` 那种宿主能力
+     * 晚于 actor 就绪（进程内 RPC client 建完才有）。一旦缓存，先算出的那份会永久生效：
+     * 实测重启后所有存量房间都拿不到 `run_code`，只有重启后新建的房间有。
+     * 每轮重建一次 ToolSet 只是几个对象字面量，比“静默拿到降级能力”便宜得多。
+     */
     private toolsFor(botId: string): ToolSet | undefined {
-        if (this.toolsByBot.has(botId)) return this.toolsByBot.get(botId);
         const cwd = this.deps.cwd;
         const tools =
             cwd === undefined
@@ -918,7 +922,6 @@ export class RoomActor {
                           return host === undefined ? {} : { code: host };
                       })(),
                   });
-        this.toolsByBot.set(botId, tools);
         return tools;
     }
 
@@ -1094,7 +1097,12 @@ export class RoomActor {
     /** 取/建某个成员的 session；新建时回放公共日志（后加入的成员也能读到此前结论） */
     private sessionOf(bot: Bot): BotSession {
         let session = this.sessions.get(bot.id);
-        if (session !== undefined) return session;
+        if (session !== undefined) {
+            // 工具不是「构造那一刻的事实」（`run_code` 的 client 晚于 actor 就绪）：
+            // 每次取 session 都对齐一次，别让先算出的那份定格
+            session.setTools(this.toolsFor(bot.id));
+            return session;
+        }
 
         const saved = this.deps.store.loadSession(this.id, bot.id);
         const context = this.deps.cwd === undefined ? null : this.contextSessionOf(bot);

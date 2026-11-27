@@ -267,6 +267,18 @@ export class BotSession {
     }
 
     /** 房间换模型：下一轮生效（已建好的 session 不会重建） */
+    /**
+     * 换掉工具集。
+     *
+     * 为什么需要：工具里有一部分是**宿主能力**，它可能比 session 晚就绪 ——
+     * `run_code` 依赖的进程内 RPC client 在建完 handlers 之后才有。session 通常在
+     * `RoomActor` 构造时就建好（上下文 / 统计不等第一条消息），那一刻拿到的工具集
+     * 可能是「降级版」。留着这个入口让房间在每轮取 session 时对齐一次。
+     */
+    setTools(tools: ToolSet | undefined): void {
+        this.deps.tools = tools;
+    }
+
     setModelKey(modelKey: string): void {
         this.modelKey = modelKey;
     }
