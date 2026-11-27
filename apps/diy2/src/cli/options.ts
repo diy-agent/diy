@@ -56,10 +56,6 @@ export const configShape = {
         placeholder: 'dir',
         desc: 'UI 产物目录（缺省 <buildRoot>/web；调试用）',
     }),
-    modelConfig: z.string().optional().cliOption({
-        placeholder: 'file',
-        desc: 'model.yaml 路径（缺省：<home>/model.yaml；测试实例不读生产那档）',
-    }),
 } as const;
 
 /** 完整配置对象（CLI 各命令把它并进自己的 input） */
@@ -94,7 +90,6 @@ export function toOverrides(input: Partial<ConfigOptions>): ConfigOverrides {
         bashTimeoutMs: input.bashTimeoutMs,
         allowProdHome: input.allowProdHome === true ? true : undefined,
         webDir: input.webDir,
-        modelConfig: input.modelConfig,
     };
 }
 
@@ -118,7 +113,6 @@ export function toArgv(overrides: ConfigOverrides): string[] {
     push('--max-steps', overrides.maxSteps);
     push('--bash-timeout-ms', overrides.bashTimeoutMs);
     push('--web-dir', overrides.webDir);
-    push('--model-config', overrides.modelConfig);
     if (overrides.allowProdHome === true) out.push('--allow-prod-home');
     return out;
 }

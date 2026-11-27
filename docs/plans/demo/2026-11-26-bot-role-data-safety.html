@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>机器人固定为类型模板后：数据结构与生产迁移安全 · 解释页</title>
+<style>
+:root{
+  --bg:#fff;--fg:#18181b;--card:#fff;--muted:#f4f4f5;--muted2:#fafafa;
+  --mf:#71717a;--border:#e4e4e7;--primary:#18181b;--pf:#fafafa;
+  --amber:#f59e0b;--sky:#38bdf8;--emerald:#10b981;--violet:#8b5cf6;--rose:#f43f5e;--blue:#2563eb;
+}
+*{box-sizing:border-box}
+body{font:13.5px/1.65 -apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC",system-ui,sans-serif;
+  color:var(--fg);background:var(--muted2);margin:0;padding:28px 30px 70px}
+.wrap{max-width:1040px;margin:0 auto}
+h1{font-size:21px;margin:0 0 6px}
+h2{font-size:15px;margin:26px 0 10px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+.lead{color:var(--mf);font-size:12.5px;margin-bottom:6px}
+code{background:var(--muted);padding:1px 5px;border-radius:4px;font:12px ui-monospace,Menlo,monospace}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;box-shadow:0 1px 2px rgba(0,0,0,.03);margin:12px 0}
+pre{background:#0d1117;color:#c9d1d9;border-radius:9px;padding:11px 13px;font:12px/1.55 ui-monospace,Menlo,monospace;
+  overflow:auto;margin:8px 0;white-space:pre;line-height:1.5}
+pre .k{color:#79c0ff}pre .s{color:#a5d6ff}pre .n{color:#ffa657}pre .c{color:#6e7681}pre .t{color:#7ee787}
+/* 前后对比两栏 */
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.two > div{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:#fff}
+.two .old{border-color:#fca5a5;background:#fef2f2}
+.two .new{border-color:#86efac;background:#f0fdf4}
+.badge{display:inline-block;font-size:10px;font-weight:700;padding:1px 8px;border-radius:999px;margin-bottom:8px}
+.badge.old{background:#fee2e2;color:#b91c1c}
+.badge.new{background:#dcfce7;color:#15803d}
+table{border-collapse:collapse;width:100%;font-size:12.5px;margin:8px 0}
+th,td{border:1px solid var(--border);padding:6px 9px;text-align:left;vertical-align:top}
+th{background:var(--muted);font-weight:600;font-size:11.5px}
+td.num{font-variant-numeric:tabular-nums;text-align:right;font-family:ui-monospace,Menlo,monospace}
+.good{color:var(--emerald);font-weight:700}
+.same{color:var(--blue);font-weight:700}
+.flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;margin:10px 0}
+.flow .box{border:1px solid var(--border);border-radius:8px;padding:7px 11px;background:#fff}
+.flow .arw{color:var(--mf)}
+.note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 13px;font-size:12.5px;margin:10px 0}
+.note b{color:var(--blue)}
+.warn{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 13px;font-size:12.5px;margin:10px 0}
+.warn b{color:#b45309}
+ul{margin:6px 0;padding-left:22px}
+li{margin:3px 0}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px;margin:8px 0}
+.kv dt{color:var(--mf);font-family:ui-monospace,Menlo,monospace}
+.kv dd{margin:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>机器人固定为「类型模板」后：数据结构 &amp; 生产迁移安全</h1>
+<p class="lead">回答两个问题：① 机器人改成类型级模板后数据长什么样；② 换到这套结构时，生产库的会话 / 历史会不会丢。下面所有数字来自 <code>~/.diy2/diy2.db</code>（你正在用的生产库，191MB）的副本实测。</p>
+
+<!-- ══════════ 1. 为什么改 ══════════ -->
+<h2>1. 为什么改：从「每房间一个 bot」到「每类型一个角色」</h2>
+<div class="two">
+  <div class="old">
+    <span class="badge old">旧：bots 表（每房间私有）</span>
+    <p style="font-size:12px;margin:0 0 6px">每个房间（项目 / 任务）各建一个 bot，<code>home_entity_id</code> 指向它归属的房间。同一个任务类型在 N 个房间里就有 N 个 bot，配置各改各的。</p>
+    <pre><span class="c">-- 旧表 bots</span>
+id            TEXT PK
+name          TEXT
+color         TEXT
+persona       TEXT
+home_entity_id TEXT   <span class="c">← 归属房间</span>
+home_dir      TEXT
+model_key     TEXT</pre>
+  </div>
+  <div class="new">
+    <span class="badge new">新：bot_roles 表（每类型固定席位）</span>
+    <p style="font-size:12px;margin:0 0 6px">按<strong>类型</strong>（项目 / 任务）固定几个预制角色，所有该类房间共用。改一处，全类型生效。</p>
+    <pre><span class="c">-- 新表 bot_roles</span>
+id              TEXT PK
+type            TEXT   <span class="c">← project / task</span>
+name            TEXT
+color           TEXT
+instructions    TEXT   <span class="c">← 人格（原 persona）</span>
+primary_flag    INTEGER <span class="c">← 每类型至多 1</span>
+model_key       TEXT
+reasoning_effort TEXT  <span class="c">← 新增：推理强度</span>
+created_at      INTEGER
+updated_at      INTEGER</pre>
+  </div>
+</div>
+<div class="note"><b>关键约束：</b><code>CREATE UNIQUE INDEX bot_roles_primary ON bot_roles(type) WHERE primary_flag = 1</code> —— 「每类型至多一个 primary（默认应答）」由数据库保证，不靠应用层自觉。</div>
+
+<!-- ══════════ 2. 会话怎么挂 ══════════ -->
+<h2>2. 会话 / 历史怎么挂：与 bot 解耦，所以换 bot 不影响历史</h2>
+<div class="card">
+  <p style="margin:0 0 8px">三张表各管一件事，<strong>只有会话表引用角色，历史表按房间存、与 bot 无关</strong>：</p>
+  <dl class="kv">
+    <dt>session_state</dt><dd>会话键 = <strong>（容器 entity_id, 角色 bot_role_id）</strong>。一个房间 × 一个角色 = 一份会话快照（turn / entries / usage）。</dd>
+    <dt>room_entries</dt><dd>房间的消息历史，按 <strong>entity_id + seq</strong> 存。<strong>不含 bot 字段</strong> —— 换谁应答都读同一份历史。</dd>
+    <dt>room_members</dt><dd>房间 → 成员（角色 id）的对应，由角色按类型派生（membersOfType）。</dd>
+  </dl>
+  <pre><span class="c">-- session_state（会话键 = 容器 + 角色）</span>
+PRIMARY KEY (entity_id, bot_role_id)   <span class="c">← 2026-11-24 从 bot_id 改名</span>
+
+<span class="c">-- room_entries（消息历史，与 bot 无关）</span>
+(entity_id, seq, at, entry)  <span class="c">← 按房间+序号，无 bot 字段</span></pre>
+  <div class="note"><b>这回答了「换机器人会不会破坏历史」：</b>历史（room_entries）按房间存，跟 bot 是谁没关系；会话（session_state）按「房间 × 角色」存。所以「所有任务共用一个角色」= 每个任务房间各有一份「本房间 × 该任务角色」的会话，<strong>互不干扰，也不会因为合并角色而丢</strong>。</div>
+</div>
+
+<!-- ══════════ 3. 迁移做什么 ══════════ -->
+<h2>3. 生产迁移做了什么（打开新代码自动跑一次，幂等）</h2>
+<div class="flow">
+  <span class="box">旧库有 bots 表</span><span class="arw">→</span>
+  <span class="box">按 type + persona 分组折叠</span><span class="arw">→</span>
+  <span class="box">写 bot_roles</span><span class="arw">→</span>
+  <span class="box">会话/投递 old→new id 重写</span><span class="arw">→</span>
+  <span class="box">bots 改名 bots_v0 留档</span>
+</div>
+<div class="card">
+  <ul>
+    <li><b>分组键</b> = <code>type + persona</code>：同类型、同人格的 bot 折成一个角色（<code>id</code> 取组内第一个）。</li>
+    <li><b>primary</b>：组内在 room_members 当过 primary 次数最多的那组，平手取最早。</li>
+    <li><b>会话重写</b>：<code>UPDATE session_state SET bot_role_id = ? WHERE bot_role_id = ?</code>，old bot id → new 角色 id。</li>
+    <li><b>历史消息作者重写</b>（关键）：<code>entity_items</code> 里消息的 <code>author.id</code> 也按 old→new 改。界面按「消息 author.id ∈ 当前成员」决定显示，不重写就会被合并掉的旧 bot 的消息整段消失（<b>数据在库里、只是看不见</b>）—— 2026-11-26 实测踩到并已修，同批还重写了 <code>asks.owner</code>。</li>
+    <li><b>撞键处理</b>：同一容器里两个 bot 合并成同一角色时，只留 <code>turn</code> 大的那份快照，丢的份数<strong>打日志</strong>（<code>[bot-role] 合并会话：…</code>）。</li>
+    <li><b>旧表不删</b>：<code>bots</code> 改名 <code>bots_v0</code> 原样留档（同 <code>rooms_v0</code> 的路数）。</li>
+    <li><b>幂等</b>：<code>migrateBots</code> 开头检查 <code>bots</code> 表是否存在，已迁移（只剩 bots_v0）就直接返回，不会重跑。</li>
+  </ul>
+</div>
+
+<!-- ══════════ 4. 实测 ══════════ -->
+<h2>4. 实测：拿你的生产库副本跑一遍迁移</h2>
+<p class="lead">用当前代码 <code>openStore()</code> 打开 <code>~/.diy2/diy2.db</code> 的副本，触发迁移，对比前后：</p>
+<table>
+  <thead><tr><th>指标</th><th>迁移前（老结构）</th><th>迁移后</th><th>结论</th></tr></thead>
+  <tbody>
+    <tr><td>bot</td><td class="num">41（project 6 / task 35）</td><td class="num">7 角色（project 4 / task 3）</td><td>折叠，旧 41 行进 <code>bots_v0</code> 留档</td></tr>
+    <tr><td>bots_v0 留档</td><td class="num">—</td><td class="num">41 行</td><td class="good">原 bot 一行不少</td></tr>
+    <tr><td>session_state 份数</td><td class="num">39</td><td class="num">39</td><td class="same">完全不变</td></tr>
+    <tr><td>session 总字节</td><td class="num">6,573,575</td><td class="num">6,573,575</td><td class="same">一字节没少</td></tr>
+    <tr><td>room_entries 历史</td><td class="num">1964 条</td><td class="num">1964 条</td><td class="same">原样保留</td></tr>
+    <tr><td>孤儿会话（引用不存在的角色）</td><td class="num">—</td><td class="num">0</td><td class="good">零丢失、零悬空</td></tr>
+  </tbody>
+</table>
+<div class="note"><b>结论：不会丢数据。</b>会话份数 / 字节数、历史条数三项在迁移前后完全一致，旧 bot 全量留档在 bots_v0。折叠只发生在「同类型同人格的重复 bot」上，而会话按角色 id 重写后仍指向有效角色（零孤儿）。</div>
+
+<!-- ══════════ 5. 担心点 ══════════ -->
+<h2>5. 你可能担心的几点</h2>
+<div class="warn"><b>Q：合并角色会不会把两个任务的会话混在一起？</b><br>
+不会。会话键是「房间 × 角色」，同一角色在不同房间各有一份独立会话。合并的是「同类型的多个 bot 定义」，不是「不同房间的会话」——每个房间的会话仍按自己的 entity_id 独立存在。</div>
+<div class="warn"><b>Q：撞键丢的会话是哪些？</b><br>
+只有「同一个房间、两个旧 bot 都被折进同一个角色」时才会撞键（同房间同角色只能有一份快照）。这种情况留 turn 大的（聊得多的那份），并打日志。真库实测<strong>没有触发</strong>（39 份会话零丢弃）。</div>
+<div class="warn"><b>Q：想回退怎么办？</b><br>
+<code>bots_v0</code> 原样保留 41 行旧定义，<code>session_state</code> 只是改列值、没删行。真要回退，从 bots_v0 可重建。迁移本身在事务里跑（<code>BEGIN IMMEDIATE … COMMIT</code>），中途失败整体 ROLLBACK。</div>
+<div class="note"><b>一句话：</b>机器人从「每房间私有」变成「每类型模板」，是<b>定义层</b>的折叠；<b>数据层</b>（会话、历史）按「房间 × 角色」存。折叠时要连<b>历史消息里的作者 id</b>一起改（否则数据在、界面看不见）—— 这个隐患实测发现并已修，修后新会话打开历史消息正常显示。</div>
+
+</div>
+</body>
+</html>

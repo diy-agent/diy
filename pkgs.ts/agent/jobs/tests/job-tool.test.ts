@@ -12,7 +12,9 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { RunRegistry, WAIT_MAX_MS, makeJobTool, runDetail } from '../src/node.js';
+import { detailBody, detailHeader, detailTailBudget, RunRegistry, WAIT_MAX_MS, makeJobTool, runDetail } from '../src/node.js';
+import { MAX_TAIL_BYTES, tailOf } from '../src/run-status.js';
+import type { RunInfo } from '../src/run-registry.js';
 
 type Executable = {
     execute: (input: Record<string, unknown>) => Promise<unknown>;
@@ -168,6 +170,30 @@ describe('makeJobTool（抽包后的工具面，##515 3a）', () => {
         expect(text).toContain('命令：ls');
         expect(text).toContain('输出：/tmp/r-1/out.log');
         expect(text).toContain('hi');
+    });
+
+    it('⑧ 满窗尾巴 + 多行长命令：头 + 尾巴仍在同一份预算内（不靠投递层再裁）', () => {
+        // 头里有「命令 / 目录 / 输出路径」三行：一条多行命令随便就能占几 KB。
+        // 不扣头的话，`job output` 每次都会越过 64KB → 投递层再裁一次（丢尾巴中段 + 多落一份原文）。
+        const info: RunInfo = {
+            id: 'r-frame',
+            command: `echo ${'y'.repeat(4000)}\n${'z'.repeat(2000)}`,
+            cwd: `/${'deep-dir/'.repeat(30)}`,
+            state: 'running',
+            startedAt: 0,
+            logPath: `/${'deep-dir/'.repeat(30)}out.log`,
+        };
+        const header = detailHeader(info, 1000);
+        const tail = tailOf('some line\n'.repeat(20000), 100_000, detailTailBudget(header));
+        const text = [header, detailBody(tail)].join('\n');
+
+        expect(Buffer.byteLength(header, 'utf8')).toBeGreaterThan(4096);
+        expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(MAX_TAIL_BYTES);
+        expect(tail.lines).toBeGreaterThan(0);
+    });
+
+    it('⑨ 头长得离谱时，尾巴至少留 1KB（不把输出压没）', () => {
+        expect(detailTailBudget('x'.repeat(MAX_TAIL_BYTES))).toBe(1024);
     });
 
     it('⑦ 收尾：等进程真的死透（fork/exec 的生命周期不留残渣）', async () => {

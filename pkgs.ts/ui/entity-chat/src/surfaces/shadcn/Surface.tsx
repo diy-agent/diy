@@ -93,7 +93,7 @@ import { Markdown } from '../../components/Markdown';
 import { TurnFooter } from '../../components/TurnFooter';
 import { useDraft } from '../../drafts';
 import { useMentionCandidates } from '../../mentions';
-import { actions, conversationOf, useProviders, useQueuedOf, useRooms, useStore } from '../../store';
+import { actions, conversationOf, useBotProfiles, useProviders, useQueuedOf, useRooms, useStore } from '../../store';
 import { plainTextOf, runsOf, toolTargetOf, type Run } from '../shared';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
@@ -392,7 +392,7 @@ function EntryView({
 
     if (entry.kind === 'user') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
-        const failed = entry.deliveries.filter((delivery) => delivery.state === 'failed');
+        const failed = entry.deliveries.filter((delivery) => delivery.state === 'done' && delivery.note === 'failed');
         return (
             <Message align="end" className="my-3">
                 <MessageContent>
@@ -620,9 +620,13 @@ function Composer({
     // 贴了图、但当前模型不收图 —— 发之前就说清楚，别等上游 400（服务端也会兜一层）
     const rooms = useRooms();
     const providers = useProviders();
-    const noVision =
-        attachments.items.length > 0 &&
-        !acceptsImages(providers, rooms.find((room) => room.id === roomId)?.modelKey ?? '');
+    // 模型键在**角色**上（房间级 modelKey 已于 2026-11-27 退役）：
+    // 取这个房间主成员对应的机器人配置，没有就空串（= 跟随默认模型）
+    const botProfiles = useBotProfiles();
+    const room = rooms.find((item) => item.id === roomId);
+    const modelKeyOfRoom =
+        botProfiles.find((profile) => profile.id === room?.members[0]?.botId)?.modelKey ?? '';
+    const noVision = attachments.items.length > 0 && !acceptsImages(providers, modelKeyOfRoom);
 
     /**
      * @ 补全的规则全在 chat-core（`mentionQuery` / `filterMentionCandidates` / `completeMention` /
@@ -755,6 +759,8 @@ function Composer({
                             }
                         }}
                         onKeyDown={(event) => {
+                            // IME 组合态：这里的回车 / Tab / 方向键都是输入法自己的，先让它上屏 / 选词
+                            if (event.nativeEvent.isComposing) return;
                             // 浮层开着时：上下选、Enter/Tab 确认、Esc 关。这几键不能落到「发送」上。
                             if (menuOpen) {
                                 if (event.key === 'Escape') {

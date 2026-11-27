@@ -1,6 +1,7 @@
 // store.tsx —— React 适配层：room / 选择（本包）+ 会话状态（chat-core 的 ConversationStore）。
 //
-// 词表：Room = 容器（项目/任务/股票…），Bot = 身份，BotSession = bot 在某个 room 里的对话（后端概念）。
+// 词表：Room = 容器（项目/任务/股票…），BotRole = 类型的固定席位（全局表），
+// Bot = 角色在某个房间里的化身（`botOfRole` 派生），BotSession = 它在那个房间里的对话。
 
 import {
     ConversationStore,
@@ -12,6 +13,7 @@ import {
     type SessionInfo,
 } from '@diy-agent/chat-core';
 import { RpcChatClient } from '@diy-agent/chat-transport-rpc';
+import { botOfProfile, type BotProfile, type BotProfileDefaults } from '@diy-agent/protocol';
 import * as React from 'react';
 
 import {
@@ -28,7 +30,7 @@ import {
 import type { NavAddress } from './address';
 import { drafts, type DraftsTransport } from './drafts';
 import { isClosed, type TaskStatus } from './model';
-import { firstUsableModelKey, type Provider } from './models';
+import { firstUsableModelKey, type ModelCatalogPayload, type ModelSetup, type Provider } from './models';
 import { mergePendingAsks } from './pendingAsk';
 
 // ─── 会话（chat-core）─────────────────────────────────────────────
@@ -89,6 +91,11 @@ export function conversationOf(roomId: string): ConversationStore {
 
 interface ShellState {
     rooms: Room[];
+    /** 机器人配置表（真源 `bot_profiles`）：成员由它与房间类型派生，界面上「谁在这个房间」靠它 */
+    botProfiles: BotProfile[];
+    /** 类型默认设置（`bot_profile_defaults`）：机器人的 modelKey 走 override ?? 类型默认 */
+    botProfileDefaults: BotProfileDefaults[];
+    /** 角色 id → 房间里的化身。派生的投影，让老代码（按 bot 查名字/颜色）不用改 */
     bots: Record<string, Bot>;
     /**
      * 「在看哪儿」的真相 —— 一个能写进地址栏的位置（`/room/task/t-001`）。
@@ -111,6 +118,12 @@ interface ShellState {
      * 选模型器 / 上下文窗口 / 模型名全部从这里取，界面只认形状。
      */
     providers: Provider[];
+    /**
+     * 这份目录是从**什么状态**的配置里读出来的（没 model.yaml / 缺快照 / 正常）。
+     *
+     * 与 `providers` 分开的原因见 `models.ts` 的 `ModelSetup`：空目录有三种成因，出路不同。
+     */
+    modelSetup: ModelSetup;
     loaded: boolean;
     /** 各房间的上下文概况（每个 bot 的会话 + 最近压缩事件） */
     sessions: Record<string, SessionInfo[]>;
@@ -175,6 +188,8 @@ interface ShellState {
 
 let state: ShellState = {
     rooms: [],
+    botProfiles: [],
+    botProfileDefaults: [],
     bots: {},
     // id 为空 = 「还没定」，首屏由 resolveAddress 从地址栏或第一个房间补上
     address: addressOf(DEFAULT_PAGE, ''),
@@ -182,6 +197,8 @@ let state: ShellState = {
     // 空串 = 「还不知道」：首屏 refresh 会从服务端（model.yaml）补上
     defaultModelKey: loadDefaultModelOverride() ?? '',
     providers: [],
+    // 首屏之前不指控：没问过服务端就说「你没配置」会在每次刷新时闪一下横幅
+    modelSetup: { configured: true, modelConfigPath: '', snapshotMissing: false },
     loaded: false,
     sessions: {},
     lastActivity: {},
@@ -254,6 +271,24 @@ export function useRooms(): Room[] {
     );
 }
 
+/** 只订阅机器人配置表（设置页「机器人」那一段用）。成员名单由它与房间类型派生。 */
+export function useBotProfiles(): BotProfile[] {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.botProfiles,
+        () => state.botProfiles,
+    );
+}
+
+/** 只订阅类型默认设置（`bot_profile_defaults`）。 */
+export function useBotProfileDefaults(): BotProfileDefaults[] {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.botProfileDefaults,
+        () => state.botProfileDefaults,
+    );
+}
+
 /** 只订阅 bot 表（头部成员胶囊用）。同理：别的字段变了，引用不变。 */
 export function useBots(): Record<string, Bot> {
     return React.useSyncExternalStore(
@@ -300,6 +335,19 @@ export function useDefaultModelKey(): string {
         subscribeShell,
         () => state.defaultModelKey,
         () => state.defaultModelKey,
+    );
+}
+
+/**
+ * 模型配置的状态（没 model.yaml / 缺目录快照）。
+ *
+ * 宿主拿它画横幅：没配置是个**要看见**的状态，不是「目录恰好空着」的副作用。
+ */
+export function useModelSetup(): ModelSetup {
+    return React.useSyncExternalStore(
+        subscribeShell,
+        () => state.modelSetup,
+        () => state.modelSetup,
     );
 }
 
@@ -729,6 +777,49 @@ function watchActivity(roomId: string): void {
     });
 }
 
+/**
+ * 重拉**模型面**（配置页写完调）：`providers`（选模型器）+ `modelSetup`（横幅）+ 缺省模型。
+ *
+ * 刻意不重拉 rooms、不动地址：写完一次配置不该把用户看的位置挪走。缺省模型的算法与
+ * `refresh()` 同一口径（本端覆盖 > model.yaml > 目录里第一个可用的），别在这里另写一份。
+ */
+export async function refreshCatalog(): Promise<void> {
+    const catalog = await client.models.list();
+    const defaultModelKey =
+        loadDefaultModelOverride() ?? (catalog.defaultModelKey || firstUsableModelKey(catalog.providers) || '');
+    emit({
+        ...state,
+        providers: catalog.providers,
+        modelSetup: {
+            configured: catalog.configured,
+            modelConfigPath: catalog.modelConfigPath,
+            snapshotMissing: catalog.snapshotMissing,
+        },
+        ...(defaultModelKey === '' ? {} : { defaultModelKey }),
+    });
+}
+
+/**
+ * 重拉**角色表**（角色页写完调）：`roles` + 派生出来的 `bots` 一起换。
+ *
+ * 与 `refreshCatalog` 一个路数：不重拉 rooms、不动地址。房间头的成员胶囊读的是
+ * `bots`，所以两个字段必须同一笔 emit —— 分开写会有一帧「角色新了、名字还是旧的」。
+ */
+export async function refreshBotProfiles(): Promise<void> {
+    const botProfiles = await client.botProfiles.list();
+    // 类型默认设置：老客户端 / 测试的假客户端可能没有这个通道，容错成空
+    const botProfileDefaults: BotProfileDefaults[] = (await client.botProfiles.config?.list?.()) ?? [];
+    const defaultsOf = (type: string) => botProfileDefaults.find((config) => config.type === type);
+    emit({
+        ...state,
+        botProfiles,
+        botProfileDefaults,
+        bots: Object.fromEntries(
+            botProfiles.map((profile) => [profile.id, botOfProfile(profile, defaultsOf(profile.type))]),
+        ),
+    });
+}
+
 /** 活动流已经报过帧（含首帧）⇒ 此后 `running` 以它为准，不再看 `rooms.list` 的初值 */
 let activityLive = false;
 let activityFeedUnsub: (() => void) | undefined;
@@ -766,7 +857,13 @@ function watchActivityFeed(): void {
 async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     // 模型目录跟着同一趟回来（真源 model.yaml；界面不再自带 provider 表）：
     // 走 `diy2.models.list`，与 rooms / bots 共用同一条 RPC 连接
-    const [rooms, bots, catalog] = await Promise.all([client.rooms.list(), client.bots.list(), client.models.list()]);
+    const [rooms, botProfiles, catalog] = await Promise.all([
+        client.rooms.list(),
+        client.botProfiles.list(),
+        client.models.list(),
+    ]);
+    // 类型默认配置：老客户端 / 测试的假客户端可能没有这个通道，容错成空（role_config 空时行为不变）
+    const botProfileDefaults: BotProfileDefaults[] = (await client.botProfiles.config?.list?.()) ?? [];
     // 侧栏 ✎ 的初始值：不用打开过房间；本端改过的 owner 由 drafts 自己说了算
     drafts.seed(rooms);
     // 「最后活动」跟着同一次列表请求回来，不逐房间查（那会是 N+1）
@@ -835,6 +932,11 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     emit({
         ...state,
         providers: catalog.providers,
+        modelSetup: {
+            configured: catalog.configured,
+            modelConfigPath: catalog.modelConfigPath,
+            snapshotMissing: catalog.snapshotMissing,
+        },
         ...(defaultModelKey === '' ? {} : { defaultModelKey }),
         rooms,
         lastActivity,
@@ -845,7 +947,15 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         unread,
         broken,
         failed,
-        bots: Object.fromEntries(bots.map((bot) => [bot.id, bot])),
+        botProfiles,
+        botProfileDefaults,
+        // 化身从配置派生（名字 / 颜色 / 指令 / 模型唯一的转换点）：成员名单仍然按房间的 spec 过滤
+        bots: Object.fromEntries(
+            botProfiles.map((profile) => [
+                profile.id,
+                botOfProfile(profile, botProfileDefaults.find((c) => c.type === profile.type)),
+            ]),
+        ),
         loaded: true,
         // 地址没变就沿用旧引用：`useAddress()` 的快照就是它，同值换新对象等于给整张侧栏
         // 发一次「变了」的信号。`pickAddress` 多数分支会给旧对象，但 fallback / 首屏那条
@@ -1167,15 +1277,6 @@ export const actions = {
             });
     },
 
-    addBot(roomId: string, name: string): void {
-        if (name.trim() === '') return;
-        void client.bots
-            .create({ name: name.trim(), homeRoomId: roomId, ...modelArg(state.defaultModelKey) })
-            .then((bot) => client.rooms.addMember(roomId, bot.id))
-            .then(() => refresh())
-            .catch(() => undefined);
-    },
-
     /** 拉一次某个房间的上下文概况（面板打开 / 定时刷新时用） */
     refreshSessions(roomId: string): void {
         if (client.sessions === undefined) return;
@@ -1204,13 +1305,6 @@ export const actions = {
     cancelCompact(roomId: string, compactId: string): Promise<boolean> {
         if (client.cancelCompact === undefined) return Promise.resolve(false);
         return client.cancelCompact(roomId, compactId).catch(() => false);
-    },
-
-    addExistingBot(roomId: string, botId: string): void {
-        void client.rooms
-            .addMember(roomId, botId)
-            .then(() => refresh())
-            .catch(() => undefined);
     },
 };
 

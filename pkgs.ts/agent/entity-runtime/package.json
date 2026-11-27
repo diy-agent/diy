@@ -37,6 +37,7 @@
         "@diy-agent/jobs": "*",
         "@diy-agent/kb": "*",
         "@diy-agent/llm-provider": "*",
+        "@diy-agent/migration": "*",
         "@diy-agent/model-catalog": "*",
         "@diy-agent/protocol": "*",
         "@diy-agent/skills": "*",

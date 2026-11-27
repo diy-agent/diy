@@ -166,7 +166,7 @@ export function makeShellTool(spec: ShellSpec, host: ShellToolHost) {
                 : {}),
         }),
         // ##127：单条工具输出的截断**只落投递层** —— `toModelOutput` 改写「发给模型的那一份」
-        // （超 2000 行 / 50KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
+        // （超 2000 行 / 64KB 时头尾 + marker + 原文落盘可 read 回取），`execute` 的返回值
         // 仍是全文（落进 ops 的原文永不动）。截断实现归宿主（见 services/tool-output.ts）。
         toModelOutput: async ({ toolCallId, output }) => {
             const text = String(output);

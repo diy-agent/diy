@@ -1,4 +1,7 @@
-// useRoomDialogs.tsx —— 「新建项目 / 新建任务 / 加成员 / 设置 / 删房间 / 换模型」这一组弹窗。
+// useRoomDialogs.tsx —— 「新建项目 / 新建任务 / 设置 / 删房间 / 换模型」这一组弹窗。
+//
+// 「加成员」不在这里了（2026-11-24 角色改成类型级）：成员是派生的，没有「拉一个人进这间房」，
+// 那是设置页「角色」那一段的事（房间头的「角色」按钮导航过去，见 App.tsx 的 onManageRoles）。
 //
 // 为什么抽成 hook：这些弹窗**挂在哪由宿主决定**。整页 App 挂在根上，工作台挂在骨架
 // 外面 —— 两边的状态与动作都只来自 store（`rooms` / `selected` /
@@ -14,20 +17,17 @@
 import * as React from 'react';
 
 import {
-    AddMemberDialog,
     ConfirmDeleteDialog,
     CreateProjectDialog,
     CreateTaskDialog,
-    ModelDialog,
     SettingsDialog,
 } from './components/Dialogs';
-import { roomTitle, type Room } from './model';
-import { actions, useDefaultModelKey, useRooms, useSelectedRoom } from './store';
+import type { Room } from './model';
+import { actions, useDefaultModelKey, useRooms } from './store';
 
 type Dialog =
     | null
     | { kind: 'project' }
-    | { kind: 'member' }
     | { kind: 'settings' }
     | { kind: 'task'; projectId: string }
     | { kind: 'delete'; roomId: string };
@@ -38,12 +38,8 @@ export interface RoomDialogs {
     openProject: () => void;
     /** 在指定项目下建任务（侧栏项目行的「+」用它） */
     openTask: (projectId: string) => void;
-    /** 给当前房间加成员 */
-    openMember: () => void;
     openSettings: () => void;
     requestDelete: (room: Room) => void;
-    /** 换某个房间的模型（房间头 ModelChip 用它） */
-    openModel: (roomId: string) => void;
 }
 
 /**
@@ -52,21 +48,16 @@ export interface RoomDialogs {
  */
 export function useRoomDialogs(): RoomDialogs {
     const rooms = useRooms();
-    const room = useSelectedRoom();
     const defaultModelKey = useDefaultModelKey();
     const [dialog, setDialog] = React.useState<Dialog>(null);
-    const [modelTarget, setModelTarget] = React.useState<string | null>(null);
 
     const openProject = React.useCallback(() => setDialog({ kind: 'project' }), []);
     const openTask = React.useCallback((projectId: string) => setDialog({ kind: 'task', projectId }), []);
-    const openMember = React.useCallback(() => setDialog({ kind: 'member' }), []);
     const openSettings = React.useCallback(() => setDialog({ kind: 'settings' }), []);
     const requestDelete = React.useCallback((target: Room) => setDialog({ kind: 'delete', roomId: target.id }), []);
-    const openModel = React.useCallback((roomId: string) => setModelTarget(roomId), []);
 
     const taskProject = dialog?.kind === 'task' ? rooms.find((item) => item.id === dialog.projectId) : undefined;
     const deleteTarget = dialog?.kind === 'delete' ? rooms.find((item) => item.id === dialog.roomId) : undefined;
-    const modelRoom = modelTarget === null ? undefined : rooms.find((item) => item.id === modelTarget);
 
     const element = (
         <>
@@ -95,14 +86,6 @@ export function useRoomDialogs(): RoomDialogs {
                     onConfirm={() => void actions.deleteRoom(dialog.roomId)}
                 />
             )}
-            {dialog?.kind === 'member' && room !== undefined && (
-                <AddMemberDialog
-                    room={room}
-                    onClose={() => setDialog(null)}
-                    onPickExisting={(botId) => actions.addExistingBot(room.id, botId)}
-                    onCreateNew={(name) => actions.addBot(room.id, name)}
-                />
-            )}
             {dialog?.kind === 'settings' && (
                 <SettingsDialog
                     defaultModelKey={defaultModelKey}
@@ -110,20 +93,10 @@ export function useRoomDialogs(): RoomDialogs {
                     onClose={() => setDialog(null)}
                 />
             )}
-            {modelTarget !== null && (
-                <ModelDialog
-                    title={`「${modelRoom === null || modelRoom === undefined ? '' : roomTitle(modelRoom)}」的模型`}
-                    value={modelRoom?.modelKey ?? defaultModelKey}
-                    onChange={(key) => {
-                        if (modelTarget !== null) actions.setRoomModel(modelTarget, key);
-                    }}
-                    onClose={() => setModelTarget(null)}
-                />
-            )}
         </>
     );
 
-    return { element, openProject, openTask, openMember, openSettings, requestDelete, openModel };
+    return { element, openProject, openTask, openSettings, requestDelete };
 }
 
 /**

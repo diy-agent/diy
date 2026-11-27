@@ -55,7 +55,8 @@ export function RoomMenu({
     onOpenSettings,
 }: {
     room: Room;
-    onAddMember: () => void;
+    /** BotRole 下成员从角色派生，没有「加成员」动作 —— 不传就不画那一项 */
+    onAddMember?: (() => void) | undefined;
     onOpenSettings: () => void;
 }) {
     const openTask = room.type !== 'project' && taskStatusOf(room) === 'open';
@@ -63,13 +64,10 @@ export function RoomMenu({
         <MenuButton
             title="房间操作"
             items={[
-                { key: 'member', label: '加成员', icon: <Plus className="size-3.5" />, onClick: onAddMember },
-                {
-                    key: 'settings',
-                    label: '房间设置',
-                    icon: <Settings className="size-3.5" />,
-                    onClick: onOpenSettings,
-                },
+                ...(onAddMember === undefined
+                    ? []
+                    : [{ key: 'member', label: '加成员', icon: <Plus className="size-3.5" />, onClick: onAddMember }]),
+                { key: 'settings', label: '房间设置', icon: <Settings className="size-3.5" />, onClick: onOpenSettings },
                 ...(openTask
                     ? [
                           {

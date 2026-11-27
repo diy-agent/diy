@@ -221,6 +221,8 @@ export function TaskPanel({ room, onClose }: { room: Room; onClose?: () => void 
                         value={title}
                         onChange={(event) => setTitle(event.target.value)}
                         onKeyDown={(event) => {
+                            // 组合态回车 = 输入法选词，别当「保存标题」
+                            if (event.nativeEvent.isComposing) return;
                             if (event.key === 'Enter') void save();
                         }}
                         placeholder="任务名；侧栏与项目树显示的就是这一句"

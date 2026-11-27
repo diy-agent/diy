@@ -59,9 +59,6 @@
       "path": "pkgs.ts/agent/code-runtime"
     },
     {
-      "path": "pkgs.ts/room"
-    },
-    {
       "path": "pkgs.ts/ui/workbench"
     },
     {
@@ -102,6 +99,9 @@
     },
     {
       "path": "apps/diy2"
+    },
+    {
+      "path": "pkgs.ts/core/migration"
     }
   ]
 }

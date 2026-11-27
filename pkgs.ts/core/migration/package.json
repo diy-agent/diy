@@ -1,0 +1,21 @@
+{
+    "name": "@diy-agent/migration",
+    "version": "0.1.0",
+    "private": true,
+    "description": "数据库迁移机制与 diy2 库的全部迁移：一个迁移一个文件 + schema_migrations 版本表 + 只读计划。零领域依赖，能力由宿主通过 MigrationRuntime 提供",
+    "type": "module",
+    "main": "./src/index.ts",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./src/index.ts"
+        }
+    },
+    "dependencies": {},
+    "devDependencies": {
+        "@types/node": "^26.1.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
+    }
+}

@@ -88,13 +88,17 @@ describe('makeGlobals', () => {
 });
 
 describe('formatApiHelp', () => {
-    it('有 desc 的带说明，没 desc 的只给路径', () => {
+    it('按域分组：域名只写一次，叶子写短名', () => {
         expect(
             formatApiHelp([
-                { path: 'diy2.bots.list', desc: '列 bot', mode: 'unary' },
-                { path: 'diy2.bots.update', mode: 'unary' },
+                { path: 'bots.list', desc: '列 bot', mode: 'unary' },
+                { path: 'bots.update', mode: 'unary' },
             ]),
-        ).toBe('- diy2.bots.list — 列 bot\n- diy2.bots.update');
+        ).toBe('bots:\n  list — 列 bot\n  update');
+    });
+
+    it('没有域的条目（如 info）直接写原名', () => {
+        expect(formatApiHelp([{ path: 'info', desc: '实例信息', mode: 'unary' }])).toBe('  info — 实例信息');
     });
 
     it('空清单给一句明确的话（不是空字符串）', () => {

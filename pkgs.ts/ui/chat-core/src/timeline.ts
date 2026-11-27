@@ -88,6 +88,8 @@ export interface TimelineDelivery {
     name: string;
     color: string;
     state: DeliveryState;
+    /** `'failed'` = 没送进去（状态收敛成 3 个后的失败标记） */
+    note?: string;
 }
 
 export interface TimelineEntry {
@@ -155,6 +157,7 @@ function chipsOf(deliveries: readonly Delivery[], bots: Record<string, Bot>, mes
                 name: bot?.name ?? delivery.botId,
                 color: bot?.color ?? '#9ca3af',
                 state: delivery.state,
+                ...(delivery.note === undefined ? {} : { note: delivery.note }),
             };
         });
 }

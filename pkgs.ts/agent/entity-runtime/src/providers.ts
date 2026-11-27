@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { bodyTransformFor, headersFor } from '@diy-agent/llm-provider/strategies';
 import {
+    availableProviders,
     canSeeImages,
     effectiveMaxOutputTokens,
     listAccountStates,
@@ -90,6 +91,14 @@ export function modelHome(env: NodeJS.ProcessEnv = process.env): string | undefi
     const path = modelConfigPath(env);
     return path === undefined ? undefined : dirname(path);
 }
+
+/**
+ * 目录快照的位置（`<home>/data/models.dev.json`）。
+ *
+ * 给「缺没缺快照」一个唯一口径：缺快照 = 标准 provider 全部没有规格，而这要从界面看得见
+ * （静默回落到别的目录才是错的）。
+ */
+export { snapshotPath } from '@diy-agent/model-catalog';
 
 /** 「本实例没有模型配置」的统一话术（`undefined` 数据根的三个出口共用） */
 const NO_MODEL_HOME = '本实例没有模型配置：需要 DIY_HOME（数据根，含 model.yaml）或 DIY_MODEL_CONFIG';
@@ -204,9 +213,18 @@ export interface ModelOptions {
  */
 export function modelOf(modelKey: string, options: ModelOptions = {}): LanguageModel {
     const env = options.env ?? process.env;
-    const key = parseModelKey(modelKey);
     const home = modelHome(env);
     if (home === undefined) throw new Error(`${NO_MODEL_HOME}；${NO_MODEL_HOME_HINT}`);
+    // 空 key = 「用这个数据根的默认模型」。**解析放在这里、而不是写在行里**：房间 / bot 的行
+    // 比配置活得久（配置常是后补的，行是先建的），把默认值抄进行里 =「配好了还得逐个房间改」。
+    const resolved = modelKey.trim() === '' ? defaultModelKeyOf(env) : modelKey;
+    if (resolved === undefined) {
+        throw new Error(
+            `没有指定模型，且 ${home}/model.yaml 里没有 defaultModel（不会去别处找）` +
+                `，也没配账号 —— 填充：./scripts/seed-run-home.sh ${home}`,
+        );
+    }
+    const key = parseModelKey(resolved);
     const entry = catalogEntry(key, env);
     if (entry === undefined) {
         throw new Error(
@@ -258,29 +276,31 @@ export function modelProviders(env: NodeJS.ProcessEnv = process.env): ProviderVi
     if (home === undefined) return [];
     const accountsByProvider = new Map(listAccountStates(home).map((item) => [item.providerId, item.accounts]));
     const grouped = new Map<string, ProviderView>();
-    for (const entry of loadCatalog(home, { env })) {
-        let view = grouped.get(entry.providerId);
-        if (view === undefined) {
-            view = {
-                id: entry.providerId,
-                name: entry.providerId,
-                api: entry.baseURL,
-                ...(entry.npm === undefined ? {} : { npm: entry.npm }),
-                accounts: (accountsByProvider.get(entry.providerId) ?? []).map((account) => ({
-                    name: account.name,
-                    configured: account.configured,
-                })),
-                models: [],
-            };
-            grouped.set(entry.providerId, view);
-        }
-        view.models.push({
-            id: entry.modelId,
-            name: entry.name,
-            ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
-            ...(entry.maxOutputTokens === undefined ? {} : { maxOutputTokens: entry.maxOutputTokens }),
-            ...(entry.cost === undefined ? {} : { cost: entry.cost }),
-            ...(entry.input === undefined ? {} : { input: entry.input }),
+    /**
+     * 用 `availableProviders`（**含被 filter 关掉的**）而不是 `loadCatalog`（只含启用的）：
+     * 模型面板要给每一行画「启用」开关 —— 关掉的模型必须还看得见，否则关完就再也打不开了。
+     */
+    for (const provider of availableProviders(home, { env })) {
+        // 与能不能真发请求同一判据：没 baseURL 或没配账号就不进「现在能选什么」
+        if (provider.api === undefined) continue;
+        const accounts = accountsByProvider.get(provider.providerId) ?? [];
+        if (accounts.length === 0) continue;
+        grouped.set(provider.providerId, {
+            id: provider.providerId,
+            name: provider.name,
+            api: provider.api,
+            ...(provider.npm === undefined ? {} : { npm: provider.npm }),
+            accounts: accounts.map((account) => ({ name: account.name, configured: account.configured })),
+            models: provider.models.map((model) => ({
+                id: model.id,
+                name: model.name,
+                ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+                ...(model.maxOutputTokens === undefined ? {} : { maxOutputTokens: model.maxOutputTokens }),
+                ...(model.cost === undefined ? {} : { cost: model.cost }),
+                ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
+                ...(model.capabilities === undefined ? {} : { capabilities: model.capabilities }),
+                enabled: model.enabled,
+            })),
         });
     }
     return [...grouped.values()].sort((a, b) => a.id.localeCompare(b.id));

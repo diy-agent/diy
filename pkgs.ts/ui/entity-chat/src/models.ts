@@ -23,6 +23,18 @@ export type ProviderAccount = ModelCatalogProvider['accounts'][number];
 /** `diy2.models.list` 的回包（与协议的 `ModelCatalogSnapshot` 同一个形状） */
 export type ModelCatalogPayload = ModelCatalogSnapshot;
 
+/**
+ * 实例的模型配置**状态**（从回包里抽出来的三件；与 `providers` 分开传）。
+ *
+ * 为什么要有它：`providers.length === 0` 说不了「为什么空」—— 没写 model.yaml、缺目录快照、
+ * 或是账号全空 key，三种情况的出路完全不同。而「没配置」这件事必须在界面上看得见。
+ */
+export interface ModelSetup {
+    configured: boolean;
+    modelConfigPath: string;
+    snapshotMissing: boolean;
+}
+
 /** 三段式：`account@provider/model` */
 export interface ModelKey {
     provider: string;
@@ -59,6 +71,13 @@ export function modelOfKey(providers: readonly Provider[], value: string): Model
 }
 
 /**
+ * 「模型名 · 账号@provider」；目录里没有这个模型 ⇒ 原样显示 key（不编造名字）。
+ *
+ * 空串 = 「这个房间没选过模型，跟随 model.yaml 的 defaultModel」—— 不能显示成空白，
+ * 更不该拿一个占位 key 冒充模型名（曾经写成 `none@none/none`，界面上看起来像真配好了）。
+ */
+
+/**
  * 这个模型**收不收图**（能不能把 image part 送到它眼前）。
  *
  * 判据与服务端完全一致（entity-runtime 的 `acceptsImagesOf`）：目录里没标能力位 ⇒ **不收**。
@@ -87,6 +106,7 @@ export function firstVisionModelKey(providers: readonly Provider[]): string | un
 
 /** 「模型名 · 账号@provider」；目录里没有这个模型 ⇒ 原样显示 key（不编造名字） */
 export function modelLabel(providers: readonly Provider[], value: string): string {
+    if (value.trim() === '') return '未设置模型';
     const key = parseModelKey(value);
     if (key === undefined) return value;
     const info = modelOfKey(providers, value);

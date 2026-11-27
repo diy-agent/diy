@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dump as dumpYaml, load as loadYaml } from 'js-yaml';
 import { writeFileAtomic } from './atomic.js';
-import { CatalogError } from './errors.js';
+import { CatalogError, isEmptyDocument } from './errors.js';
 import type { ModelCatalogCost } from './types.js';
 
 type Rec = Record<string, unknown>;
@@ -43,6 +43,16 @@ export interface SaveProviderInput {
     readonly models?: Readonly<Record<string, ProviderModelPatch>>;
     /** 要删掉的模型覆盖（只删 model.yaml 的覆盖；spec 里有的模型仍在目录里） */
     readonly removeModels?: readonly string[];
+    /**
+     * 模型开关（`filter.include` / `filter.exclude`）：`undefined` = 不动，`null` = 删掉这个键。
+     *
+     * 两者语义不同、不能互相替代：`include` 非空时**只**认列出的那几个（白名单），
+     * 空 / 不写 = 全要；`exclude` 是黑名单（同时写时 exclude 优先）。
+     */
+    readonly filter?: {
+        readonly include?: readonly string[] | null;
+        readonly exclude?: readonly string[] | null;
+    };
 }
 
 /** `saveAccount` 的入参：value 是唯一会流进来的 key */
@@ -50,6 +60,11 @@ export interface SaveAccountInput {
     readonly providerId: string;
     readonly name: string;
     readonly value: string;
+    /**
+     * 不在 `model.yaml` 里时先建这一段（界面的「连接」：目录里有、配置里还没有）。
+     * 不传 = 保持原行为（未知 provider 直接报错）——调用方必须显式说明它在新建。
+     */
+    readonly kind?: 'std' | 'custom';
 }
 
 /** `saveAccount` 的返回值 —— **只有长度**，没有 value */
@@ -105,6 +120,14 @@ export function saveProvider(home: string, input: SaveProviderInput): void {
             provider['models'] = models;
         }
     }
+    if (input.filter !== undefined) {
+        const filter = asRecord(provider['filter']) ?? {};
+        applyFilter(filter, 'include', input.filter.include, providerId);
+        applyFilter(filter, 'exclude', input.filter.exclude, providerId);
+        // 两个键都删干净就不留一个空 `filter: {}`（那是噪音，不是配置）
+        if (Object.keys(filter).length === 0) delete provider['filter'];
+        else provider['filter'] = filter;
+    }
     group[providerId] = provider;
     writeDoc(modelPath, modelDoc);
 }
@@ -154,10 +177,11 @@ export function saveAccount(home: string, input: SaveAccountInput): SavedAccount
 
     const path = join(home, 'model.yaml');
     const doc = readDoc(path);
-    const kind = existingKind(doc, providerId);
-    if (kind === null) {
+    const declared = existingKind(doc, providerId);
+    if (declared === null && input.kind === undefined) {
         throw new CatalogError('catalog/unknown-provider', `model.yaml 里没有 provider "${providerId}"`, providerId);
     }
+    const kind = declared ?? input.kind!;
     const group = ensureGroup(doc, kind);
     const provider = asRecord(group[providerId]) ?? {};
     const accounts = Array.isArray(provider['accounts']) ? (provider['accounts'] as unknown[]) : [];
@@ -178,6 +202,67 @@ export function saveAccount(home: string, input: SaveAccountInput): SavedAccount
     writeDoc(path, doc);
 
     return { providerId, name, chars: input.value.length };
+}
+
+/** 删掉一个账号（连同它的 key）。未命中就报错 —— 「删了但还留着」最难排 */
+export function removeAccount(home: string, providerId: string, name: string): void {
+    const id = requireProviderId(providerId);
+    const path = join(home, 'model.yaml');
+    const doc = readDoc(path);
+    const kind = existingKind(doc, id);
+    if (kind === null) {
+        throw new CatalogError('catalog/unknown-provider', `model.yaml 里没有 provider "${id}"`, id);
+    }
+    const group = ensureGroup(doc, kind);
+    const provider = asRecord(group[id]) ?? {};
+    const accounts = Array.isArray(provider['accounts']) ? (provider['accounts'] as unknown[]) : [];
+    const kept = accounts
+        .map((item) => asRecord(item) ?? {})
+        .filter((account, index) => accountNameOf(account, index) !== name);
+    if (kept.length === accounts.length) {
+        throw new CatalogError('catalog/unknown-account', `provider "${id}" 没有账号 "${name}"`, id);
+    }
+    if (kept.length === 0) {
+        // 删掉最后一个账号 = 这家再没有任何可发的东西：整段摘掉，别留 `accounts: []`
+        // （留着的后果是它继续挂在「已接入」里，而它一个能用的 key 都没有，发出去必失败）
+        delete provider['accounts'];
+        if (Object.keys(provider).length === 0) delete group[id];
+        else group[id] = provider;
+    } else {
+        provider['accounts'] = kept;
+        group[id] = provider;
+    }
+    writeDoc(path, doc);
+}
+
+/** 账号改名（key 一并不动、也不经过返回值：整个改名都在文件里完成） */
+export function renameAccount(home: string, providerId: string, from: string, to: string): void {
+    const id = requireProviderId(providerId);
+    const next = to.trim();
+    if (next === '') throw new CatalogError('catalog/invalid-options', '新账号名不能为空', id);
+    const path = join(home, 'model.yaml');
+    const doc = readDoc(path);
+    const kind = existingKind(doc, id);
+    if (kind === null) {
+        throw new CatalogError('catalog/unknown-provider', `model.yaml 里没有 provider "${id}"`, id);
+    }
+    const group = ensureGroup(doc, kind);
+    const provider = asRecord(group[id]) ?? {};
+    const accounts = Array.isArray(provider['accounts']) ? (provider['accounts'] as unknown[]) : [];
+    const rows = accounts.map((item) => asRecord(item) ?? {});
+    const index = rows.findIndex((account, i) => accountNameOf(account, i) === from);
+    if (index < 0) {
+        throw new CatalogError('catalog/unknown-account', `provider "${id}" 没有账号 "${from}"`, id);
+    }
+    if (rows.some((account, i) => i !== index && accountNameOf(account, i) === next)) {
+        throw new CatalogError('catalog/invalid-options', `provider "${id}" 已有账号 "${next}"`, id);
+    }
+    const account = rows[index]!;
+    account['name'] = next;
+    rows[index] = account;
+    provider['accounts'] = rows;
+    group[id] = provider;
+    writeDoc(path, doc);
 }
 
 /** 读 `model.yaml` 顶层的默认模型（`provider/model`）；没设 = null */
@@ -246,6 +331,29 @@ function mergeModelPatch(target: Rec, patch: ProviderModelPatch): Rec {
     return out;
 }
 
+/** 写一个 filter 键：`undefined` 不动、`null` 删、数组写。**只认字符串数组**（写脏了比报错难排） */
+function applyFilter(
+    filter: Rec,
+    key: 'include' | 'exclude',
+    value: readonly string[] | null | undefined,
+    providerId: string,
+): void {
+    if (value === undefined) return;
+    if (value === null) {
+        delete filter[key];
+        return;
+    }
+    const ids = value.map((item) => (typeof item === 'string' ? item.trim() : '')).filter((item) => item !== '');
+    if (ids.length !== value.length) {
+        throw new CatalogError('catalog/invalid-options', `filter.${key} 里有空项（provider "${providerId}"）`, providerId);
+    }
+    if (ids.length === 0) {
+        delete filter[key];
+        return;
+    }
+    filter[key] = [...new Set(ids)];
+}
+
 function accountNameOf(account: Rec, index: number): string {
     return typeof account['name'] === 'string' ? account['name'] : String(index);
 }
@@ -257,6 +365,9 @@ function readDoc(path: string): Rec {
         raw = loadYaml(readFileSync(path, 'utf-8'));
     } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
+        // 空文档（0 字节 / 只有注释）当 `{}`：配置页要能往一个刚建出来的空文件里写东西，
+        // 而 js-yaml 把它当错误抛。读写两侧同一口径（见 catalog.ts 的同名判断）。
+        if (isEmptyDocument(message)) return {};
         throw new CatalogError('catalog/invalid-config', `${path} 解析失败：${message}`, path);
     }
     if (raw === null || raw === undefined) return {};

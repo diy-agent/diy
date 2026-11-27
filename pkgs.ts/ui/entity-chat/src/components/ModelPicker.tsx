@@ -10,15 +10,18 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@diy-agent/ui-shadcn';
 
 import { findProvider, formatModelKey, parseModelKey } from '../models';
-import { useProviders } from '../store';
+import { useDefaultModelKey, useProviders } from '../store';
 
 export function ModelPicker({ value, onChange }: { value: string; onChange: (key: string) => void }) {
     const providers = useProviders();
+    const defaultKey = useDefaultModelKey();
     if (providers.length === 0) {
         return <p className="text-xs text-muted-foreground">模型目录还没加载（看 model.yaml 能不能读到）</p>;
     }
 
-    const key = parseModelKey(value);
+    // 空串 = 没显式选过 ⇒ 显示「会用什么」= 目录的 defaultModel；下拉改一下就变成显式选择。
+    const inherited = value.trim() === '';
+    const key = parseModelKey(inherited ? (defaultKey ?? '') : value);
     // 当前值可能指向一个已经不存在的 provider / 账号 / 模型（改了 model.yaml、换了机器）：
     // 一律退到目录里的第一个可用项显示，但**不自动改写**上游的值 —— 要不要改由人决定。
     const provider = (key === undefined ? undefined : findProvider(providers, key.provider)) ?? providers[0]!;
@@ -99,24 +102,7 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (key
                     </Select>
                 </label>
             </div>
-            <p className="text-xs text-muted-foreground">
-                {model === undefined
-                    ? '目录里没有模型'
-                    : [
-                          model.contextWindow === undefined
-                              ? '窗口未知'
-                              : `${Math.round(model.contextWindow / 1024)}k 上下文`,
-                          model.input === undefined
-                              ? '输入模态未知'
-                              : model.input.includes('image')
-                                ? '收图'
-                                : '只收文字',
-                          model.cost === undefined ? null : `$${model.cost.input}/$${model.cost.output} 每百万 token`,
-                          `${provider.api}`,
-                      ]
-                          .filter((part): part is string => part !== null)
-                          .join(' · ')}
-            </p>
+
         </div>
     );
 }

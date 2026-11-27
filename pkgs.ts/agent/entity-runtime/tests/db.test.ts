@@ -7,7 +7,6 @@ const room: Room = {
     type: 'task',
     data: { title: '新任务 2', status: 'open', projectId: 'proj:diy', dir: '~/git/diy/diy' },
     members: [{ botId: 'b1', primary: true }, { botId: 'b2' }],
-    modelKey: 'm',
 };
 
 /** 任务输入的最小合法形状（number / createdAt 交给 store 补） */
@@ -21,7 +20,6 @@ function taskInput(id: string, extra: Partial<TaskInput> = {}): TaskInput {
         workspace: null,
         status: 'open',
         closedAt: null,
-        modelKey: 'm',
         ...extra,
     };
 }
@@ -37,13 +35,13 @@ describe('rooms 持久化', () => {
         expect(saved?.data['number']).toBe(1);
     });
 
-    it('改名 / 换模型是 upsert，不会多出一行', () => {
+    it('改名是 upsert，不会多出一行', () => {
         const store = openStore(':memory:');
         store.saveRoom(room);
-        store.saveRoom({ ...room, data: { ...room.data, title: '改名后' }, modelKey: 'm2' });
+        store.saveRoom({ ...room, data: { ...room.data, title: '改名后' } });
         const rooms = store.listRooms();
         expect(rooms).toHaveLength(1);
-        expect(rooms[0]).toMatchObject({ data: { title: '改名后' }, modelKey: 'm2' });
+        expect(rooms[0]).toMatchObject({ data: { title: '改名后' } });
     });
 
     it('Room.data 里的未知键不再被存回去（core 已无开放袋子）', () => {
@@ -72,7 +70,7 @@ describe('删除容器', () => {
         });
         store.appendRoomEntry(room.id, { seq: 1, at: Date.now(), kind: 'notice', text: '结论' });
         store.saveSession(room.id, 'b1', { turn: 1, collapsed: 0, entries: [] });
-        store.setDelivery({ roomId: room.id, messageId: 'msg-1', botId: 'b1', state: 'delivered' });
+        store.setDelivery({ roomId: room.id, messageId: 'msg-1', botId: 'b1', state: 'done' });
 
         store.deleteRoom(room.id);
 
@@ -84,14 +82,33 @@ describe('删除容器', () => {
         expect(store.listDeliveries(room.id)).toEqual([]);
     });
 
-    it('deleteBot 只删那一个身份', () => {
+    it('deleteBotProfile 只删那一个角色，并带走它的会话', () => {
         const store = openStore(':memory:');
-        store.upsertBot({ id: 'b1', name: 'a', color: '#000', persona: 'p', homeRoomId: 'r', modelKey: 'm' });
-        store.upsertBot({ id: 'b2', name: 'b', color: '#111', persona: 'p', homeRoomId: 'r', modelKey: 'm' });
-        store.deleteBot('b1');
-        expect(store.listBots().map((bot) => bot.id)).toEqual(['b2']);
+        store.upsertBotProfile(role('b1', 'project', 'a'));
+        store.upsertBotProfile(role('b2', 'project', 'b'));
+        store.saveSession('r', 'b1', { turn: 1, collapsed: 0, entries: [] });
+        store.deleteBotProfile('b1');
+        expect(store.listBotProfiles().map((entry) => entry.id)).toEqual(['b2']);
+        // 成员是派生的，房间表不用清；但挂着这个 id 的会话必须是孤儿行 → 一起删
+        expect(store.loadSession('r', 'b1')).toBeUndefined();
     });
 });
+
+/** 角色 fixture：只写和断言有关的字段，别的一律缺省（时间戳给 0 = 最早） */
+function role(id: string, type: string, name: string, primary = false) {
+    return {
+        id,
+        type,
+        name,
+        color: '#000',
+        instructions: 'p',
+        primary,
+        modelKey: 'm' as string | null,
+        reasoningEffort: null,
+        createdAt: 0,
+        updatedAt: 0,
+    };
+}
 
 describe('草稿', () => {
     it('putDraft → listDrafts 原样读回，重复写是覆盖不是新增', () => {
@@ -308,12 +325,25 @@ describe('实体 + 域表', () => {
         expect(store.projectOf('p')?.workspace).toBe('~/b');
     });
 
-    it('bot 也是实体：upsertBot 写身份行，deleteBot 带走', () => {
+    it('角色不是实体：写角色不产生 entities 行（角色只在 bot_profiles 里）', () => {
         const store = openStore(':memory:');
-        store.upsertBot({ id: 'b1', name: 'a', color: '#000', persona: 'p', homeRoomId: 'r', modelKey: 'm' });
-        expect(store.entityOf('b1')).toMatchObject({ type: 'bot' });
-        store.deleteBot('b1');
+        store.upsertBotProfile(role('b1', 'project', 'a'));
         expect(store.entityOf('b1')).toBeUndefined();
+    });
+
+    it('每类型至多一个 primary：写第二个就把第一个身上的旗撤掉（不同类型互不影响）', () => {
+        const store = openStore(':memory:');
+        store.upsertBotProfile(role('b1', 'project', 'a', true));
+        store.upsertBotProfile(role('b2', 'project', 'b', true));
+        expect(store.listBotProfiles().filter((entry) => entry.primary).map((entry) => entry.id)).toEqual(['b2']);
+        store.upsertBotProfile(role('t1', 'task', 'x', true));
+        expect(
+            store
+                .listBotProfiles()
+                .filter((entry) => entry.primary)
+                .map((entry) => entry.id)
+                .sort(),
+        ).toEqual(['b2', 't1']);
     });
 
     it('updated_at 只在内容变了才动（启动时的重复保存不算）', () => {
@@ -685,7 +715,7 @@ describe('未送达投影（failedByRoom）', () => {
         roomId: string,
         messageId: string,
         botId: string,
-        state: 'failed' | 'delivered' | 'queued',
+        state: 'failed' | 'done' | 'pending',
         turn: number,
     ): void => {
         store.appendItem(roomId, msg(messageId, turn));
@@ -701,7 +731,12 @@ describe('未送达投影（failedByRoom）', () => {
             turn,
             turnId: `t${turn}`,
         });
-        store.setDelivery({ roomId, messageId, botId, state, turn });
+        // 状态收成 3 个之后，失败 = `done + note='failed'`（helper 保留旧调用写法，少改测试）
+        store.setDelivery(
+            state === 'failed'
+                ? { roomId, messageId, botId, state: 'done', note: 'failed', turn }
+                : { roomId, messageId, botId, state, turn },
+        );
     };
 
     it('按成员算最新一条投递：旧 failed 被后来的 delivered 覆盖后不再报', () => {
@@ -709,7 +744,7 @@ describe('未送达投影（failedByRoom）', () => {
         deliver(store, room.id, 'm-old', 'b1', 'failed', 1);
         expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
 
-        deliver(store, room.id, 'm-new', 'b1', 'delivered', 2);
+        deliver(store, room.id, 'm-new', 'b1', 'done', 2);
         expect(store.failedByRoom()).toEqual({});
     });
 
@@ -724,28 +759,28 @@ describe('未送达投影（failedByRoom）', () => {
         const store = openStore(':memory:');
         deliver(store, room.id, 'm1', 'b1', 'failed', 1);
         deliver(store, room.id, 'm2', 'b2', 'failed', 1);
-        deliver(store, room.id, 'm3', 'b2', 'delivered', 2);
+        deliver(store, room.id, 'm3', 'b2', 'done', 2);
         expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
     });
 
     it('最新一条重新排队（恢复待续跑）不算未送达，只算排队', () => {
         const store = openStore(':memory:');
         deliver(store, room.id, 'm1', 'b1', 'failed', 1);
-        deliver(store, room.id, 'm2', 'b1', 'queued', 2);
+        deliver(store, room.id, 'm2', 'b1', 'pending', 2);
         expect(store.failedByRoom()).toEqual({});
     });
 
     it('同一轮多条消息靠时间线 seq 分先后（turn 相同也不能误判）', () => {
         const store = openStore(':memory:');
         deliver(store, room.id, 'm1', 'b1', 'failed', 1);
-        deliver(store, room.id, 'm2', 'b1', 'delivered', 1);
+        deliver(store, room.id, 'm2', 'b1', 'done', 1);
         expect(store.failedByRoom()).toEqual({});
     });
 
     it('不串房间：0 的房间不占键', () => {
         const store = openStore(':memory:');
         deliver(store, room.id, 'm1', 'b1', 'failed', 1);
-        deliver(store, 'task:other', 'm1', 'b1', 'delivered', 1);
+        deliver(store, 'task:other', 'm1', 'b1', 'done', 1);
         expect(store.failedByRoom()).toEqual({ [room.id]: 1 });
     });
 });

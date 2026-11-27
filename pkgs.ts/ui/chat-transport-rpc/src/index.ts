@@ -10,7 +10,6 @@
 
 import type {
     AskAnswer,
-    Bot,
     ChatClient,
     Command,
     CompactOutcome,
@@ -24,16 +23,19 @@ import type {
 
 import type {
     ActivityFrame,
+    BotProfile,
+    BotProfileDefaults,
     AttachmentRef,
     BotRow,
     JobRunRow,
     ModelCatalogModel,
     ModelCatalogProvider,
     ModelCatalogSnapshot,
+    ModelConfigSnapshot,
     ModelCostView,
 } from '@diy-agent/protocol';
 
-export type { BotRow, JobRunRow };
+export type { JobRunRow };
 
 import { StreamHub } from './hub';
 
@@ -51,6 +53,21 @@ export interface RpcChatClientOptions {
 
 /** 房间 → 话题名（与 server 的 `room:<id>` 一一对应） */
 const topicOf = (entityId: string): string => `room:${entityId}`;
+
+/**
+ * `roles.create` / `roles.update` 的可选字段（与 protocol 的 `rolesApi` 入参对齐）。
+ *
+ * `modelKey: null` 与 `''` 同义 = 清空 → 继续继承（房间 → 全局默认）。
+ */
+export interface RoleInput {
+    /** create 必填；update 缺省 = 不改名 */
+    name?: string;
+    color?: string;
+    instructions?: string;
+    modelKey?: string | null;
+    reasoningEffort?: string | null;
+    primary?: boolean;
+}
 
 /**
  * 需求账本树上的一个节点（与 `@diy-agent/entity-runtime` 的 `UnitBoardRow` 同形）。
@@ -231,7 +248,6 @@ export class RpcChatClient implements ChatClient {
             data?: Record<string, unknown>;
         }): Promise<Room> => this.call('rooms.update', input),
         remove: (id: string): Promise<{ deleted?: string[] }> => this.call('rooms.remove', { id }),
-        addMember: (id: string, botId: string): Promise<Room> => this.call('rooms.addMember', { id, botId }),
         /**
          * 上报未读水位（房间打开且页面可见时由 UI 调）。
          * 服务端只前进不后退，所以重复 / 迟到的上报都安全。
@@ -240,30 +256,26 @@ export class RpcChatClient implements ChatClient {
             this.call('rooms.markRead', seq === undefined ? { id } : { id, seq }),
     };
 
-    readonly bots = {
-        list: (): Promise<Bot[]> => this.call('bots.list', {}),
-        /**
-         * 每 bot 一行状态（在跑 / 等回答 / 上一轮出错 / 空闲）—— 二级弹层与三级表格同源。
-         */
-        rows: (): Promise<{ rows: BotRow[] }> => this.call('bots.rows', {}),
-        /** 批量「继续」：已在跑的会被服务端跳过（回包里报原因） */
-        retry: (
-            targets: Array<{ roomId: string; botId: string }>,
-        ): Promise<{
-            started: Array<{ roomId: string; botIds: string[] }>;
-            skipped: Array<{ roomId: string; botId: string; reason: string }>;
-        }> => this.call('bots.retry', { targets }),
-        create: (input: { name: string; homeRoomId?: string; modelKey?: string }): Promise<Bot> =>
-            this.call('bots.create', input),
-        update: (input: {
-            id: string;
-            name?: string;
-            color?: string;
-            persona?: string;
-            modelKey?: string;
-            homeRoomId?: string;
-        }): Promise<Bot> => this.call('bots.update', input),
-        remove: (id: string): Promise<unknown> => this.call('bots.remove', { id }),
+    /**
+     * 角色（原来叫 bots）。
+     *
+     * 语义：成员是**从角色表派生**的（2026-11-24）—— 没有再“拉一个 bot 进房间”这个动作，
+     * 所以这里没有 addMember —— 改角色 = 该类型所有房间同时变。
+     */
+    readonly botProfiles = {
+        list: (): Promise<BotProfile[]> => this.call('botProfiles.list', {}),
+        create: (input: RoleInput & { type: string; name: string }): Promise<BotProfile> =>
+            this.call('botProfiles.create', input),
+        update: (input: RoleInput & { id: string }): Promise<BotProfile> => this.call('botProfiles.update', input),
+        remove: (id: string): Promise<unknown> => this.call('botProfiles.remove', { id }),
+        config: {
+            list: (): Promise<BotProfileDefaults[]> => this.call('botProfiles.config.list', {}),
+            set: (input: {
+                type: string;
+                modelKey?: string | null;
+                reasoningEffort?: string | null;
+            }): Promise<BotProfileDefaults> => this.call('botProfiles.config.set', input),
+        },
     };
 
     readonly drafts = {
@@ -278,9 +290,40 @@ export class RpcChatClient implements ChatClient {
             this.call('journal.list', { id, ...(limit === undefined ? {} : { limit }) }),
     };
 
-    /** 模型目录（选模型器 / 新建房间的缺省值）；服务端保证不含 key 值 */
+    /**
+     * 模型面。`list` 给选模型器（只要「现在能选什么」）；`config` 起是配置页（写侧）。
+     *
+     * 写方法的回包一律是**重算后的整页快照** —— 界面拿到就直接替换，不再自己拼状态。
+     * `saveAccount` 多一层 `{ config, saved }`：`saved.chars` 是 key 的长度，原值永远不回来。
+     */
     readonly models = {
         list: (): Promise<ModelCatalogSnapshot> => this.call('models.list', {}),
+        config: (): Promise<ModelConfigSnapshot> => this.call('models.config', {}),
+        saveProvider: (input: {
+            providerId: string;
+            kind?: 'std' | 'custom';
+            spec?: { id?: string; npm?: string; api?: string };
+            models?: Record<string, { name?: string; contextWindow?: number; cost?: ModelCostView }>;
+            filter?: { include?: string[] | null; exclude?: string[] | null };
+        }): Promise<ModelConfigSnapshot> => this.call('models.saveProvider', input),
+        removeProvider: (providerId: string): Promise<ModelConfigSnapshot> =>
+            this.call('models.removeProvider', { providerId }),
+        saveAccount: (input: {
+            providerId: string;
+            name: string;
+            value: string;
+            kind?: 'std' | 'custom';
+        }): Promise<{ config: ModelConfigSnapshot; saved: { providerId: string; name: string; chars: number } }> =>
+            this.call('models.saveAccount', input),
+        renameAccount: (input: {
+            providerId: string;
+            from: string;
+            to: string;
+        }): Promise<ModelConfigSnapshot> => this.call('models.renameAccount', input),
+        removeAccount: (input: { providerId: string; name: string }): Promise<ModelConfigSnapshot> =>
+            this.call('models.removeAccount', input),
+        saveDefaultModel: (modelKey: string | null): Promise<ModelConfigSnapshot> =>
+            this.call('models.saveDefaultModel', { modelKey }),
     };
 
     /**
@@ -447,4 +490,13 @@ function toBase64(bytes: Uint8Array): string {
 
 export { StreamHub, topicOfRoom, type StreamHubOptions } from './hub';
 /** 目录视图形状在 protocol（服务端与界面共用一份），这里顺手透出，界面不用多装一个依赖 */
-export type { ModelCatalogModel, ModelCatalogProvider, ModelCatalogSnapshot, ModelCostView };
+export type {
+    ModelCatalogModel,
+    ModelCatalogProvider,
+    ModelCatalogSnapshot,
+    ModelConfigAccount,
+    ModelConfigModel,
+    ModelConfigProvider,
+    ModelConfigSnapshot,
+    ModelCostView,
+} from '@diy-agent/protocol';

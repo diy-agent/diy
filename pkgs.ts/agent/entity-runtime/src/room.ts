@@ -55,7 +55,7 @@ import type {
     Author,
     Bot,
     Delivery,
-    InboxMode,
+    MessageKind,
     Item,
     Room,
     RoomEvent,
@@ -247,9 +247,9 @@ export class RoomActor {
      * 上次没收尾的轮（进程崩溃 / 被杀）→ 补一条轮级事实，然后销标记。
      *
      * 为什么必须补：`turn.end` 在 session 的 finally 里发，进程死在那一步之前就什么都没落，
-     * 磁盘上那一轮与「正常说完」完全同形（见 bot-status.ts 的局限说明）。
+     * 磁盘上那一轮与「正常说完」完全同形。
      * 补成 `notice(kind: 'interrupted')` 是最省的那条路：走的是已有的轮级事实通道，
-     * 结局判据与 UI 都不用特殊化（只在 `NOTICE_OUTCOMES` 里加了一行）。
+     * 直接以一条 notice 落盘，不需要新造事件类型。
      *
      * 没有开着的轮时**一次查询就走**（不读 items）—— 正常重启不该为此付 ensureInit 的钱。
      *
@@ -298,7 +298,7 @@ export class RoomActor {
                 at: Date.now(),
                 status: 'done',
                 type: 'notice',
-                // 不带 author：轮级事实（见 bot-status.ts 的论证），UI 据此让它独立成条；
+                // 不带 author：轮级事实，UI 据此让它独立成条；
                 // 归属记在 data.botId（turnId 是房间级的，@all 时认不出是谁）
                 data: {
                     text: `${bot.name} 的上一轮没跑完（进程中断），结论可能不完整`,
@@ -382,7 +382,8 @@ export class RoomActor {
         text: string;
         author: Author;
         recipients?: string[];
-        mode?: InboxMode;
+        /** 谁发的：缺省 `human`（人的话，能并进当前轮就并）；系统消息传 `system` */
+        kind?: MessageKind;
         quiet?: boolean;
         /**
          * 随消息带的附件（已落 blobs 的 ref）。
@@ -445,8 +446,9 @@ export class RoomActor {
                 roomId: this.id,
                 messageId: saved.id,
                 botId: bot.id,
-                state: 'queued',
-                mode: input.mode ?? 'next-step',
+                state: 'pending',
+                // db 列名还是 `mode`，值已从 next-step/next-turn 改成 human/system
+                mode: input.kind ?? 'human',
                 turn: turn.turn,
                 turnId: turn.turnId,
             });
@@ -463,7 +465,7 @@ export class RoomActor {
                     await this.sessionOf(bot).post({
                         messageId: saved.id,
                         text,
-                        mode: input.mode ?? 'next-step',
+                        kind: input.kind ?? 'human',
                         turn,
                         entry,
                     });
@@ -496,8 +498,8 @@ export class RoomActor {
                     roomId: this.id,
                     messageId: delivery.messageId,
                     botId: delivery.botId,
-                    state: 'failed',
-                    note: '恢复时找不到原文',
+                    state: 'done',
+                    note: 'failed',
                 });
                 continue;
             }
@@ -531,7 +533,8 @@ export class RoomActor {
             await this.sessionOf(bot).post({
                 messageId: delivery.messageId,
                 text,
-                mode: delivery.mode ?? 'next-step',
+                // db 列名还是 `mode`，值已从 next-step/next-turn 改成 human/system
+                kind: delivery.mode ?? 'human',
                 // 不写 alreadyInContext：由 session 按序号自己判断（回放带了就带上它，
                 // 水位跳过了就当普通消息补上）。原先无条件写 true 就是把消息凭空抹掉的那一刀。
                 ...(entry === undefined ? {} : { entry }),
@@ -582,28 +585,18 @@ export class RoomActor {
     }
 
     /**
-     * 还没开始跑的投递（`queued` / `delivering`），按成员计数。
+     * 「还没被开始处理」的投递，按成员计数（UI 的「N 条消息等着」）。
      *
-     * 「排队中」是**系统状态**而不是「要你动手」：重启后的待续跑（`recover()` 那条路）、
-     * 连发几条还没轮到它，都落在这里。以前 UI 完全看不见这一段 —— 房间看起来
-     * 「什么都没发生」，其实它排着队；反过来「红 N」里也混不进它们。
+     * 以前这里要数 `queued + delivering` 再**减一**（「在跑那位手上那条不算」）——
+     * 那个减法依赖「一次只取一条」的假设，而 `pump()` 其实一次取空队列，于是连发
+     * 3 条时界面报「2 条排队」（那 2 条正在跑）。状态收到三个之后这条启发式不需要了：
+     * `pending` 就是「还没轮到」，`working` 就是「正在处理」，一一对应。
      */
     queuedByBot(): Map<string, number> {
-        // 「排队」= 还没轮到它。**正在跑的那个成员手上握着一条投递**（`queued` 或 `delivering`
-        // 都实测见过），那条是它此刻这一轮，不是排队 —— 不排除它，界面就会出现
-        // 「在跑却写排队中」（用户 2026-11-26 报的就是这个）。
-        // 判据只看「在不在跑」，不看投递状态：状态机里 `delivering` 只在部分路径打，
-        // 靠它区分会把在跑的那条当成排队。
         const counts = new Map<string, number>();
         for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
+            if (delivery.state !== 'pending') continue;
             counts.set(delivery.botId, (counts.get(delivery.botId) ?? 0) + 1);
-        }
-        // 在跑的成员减一（它手上那条）：剩多少条才是真排着的
-        for (const botId of this.runningBots()) {
-            const n = counts.get(botId);
-            if (n === undefined) continue;
-            if (n <= 1) counts.delete(botId);
-            else counts.set(botId, n - 1);
         }
         return counts;
     }
@@ -821,44 +814,36 @@ export class RoomActor {
     }
 
     /**
+     * 角色改了（名字 / 人格 / 模型），**成员名单没变**：已经建好的 session 把旧快照换代。
+     *
+     * 与 `setMembers` 分工：那个管「谁在房间里」，这个管「这些人还是不是原来那个他」。
+     * 不推的话，角色页改完人格，房间要重启才生效 —— 而用户刚看到「已保存」。
+     */
+    refreshIdentities(): void {
+        for (const bot of this.members()) this.sessions.get(bot.id)?.setIdentity(bot);
+    }
+
+    /**
      * 改容器元数据：默认模型 / data（名字、任务状态、描述…）。
      * data 是**浅合并**（`null` = 删掉这个键）：任务状态这类字段后端不懂语义，
      * 只按调用方给的值落库 —— 在这里写枚举就是让新类型（股票/日历）每次都要改 runtime。
      *
-     * 容器的名字也在 data 里（task 的 `title` / project 的 `name`），所以改名不再有
-     * 独立入参；改名后顺手把主 bot 的显示名同步过去（助手名缺省跟随容器名）。
+     * 容器的名字也在 data 里（task 的 `title` / `project` 的 `name`），所以改名不再有
+     * 独立入参。
+     *
+     * ⚠ 改名**不再**同步角色名（2026-11-24 角色改成类型级之后）：一个角色服务该类型的
+     * 所有房间，跟着某一间房改名字就等于把别的房里的助手一起改了。反过来说，任务标题
+     * 和助手名字现在是两个独立概念 —— 这也是角色页存在的意义。
      */
-    update(patch: { modelKey?: string; data?: Record<string, unknown> }): void {
-        if (patch.modelKey !== undefined) {
-            this.deps.spec.modelKey = patch.modelKey;
-            // 已经建好的 session 记着自己的 modelKey：不推下去，UI 上换模型就是死开关
-            for (const bot of this.members()) {
-                this.sessions.get(bot.id)?.setModelKey(effectiveModelOf(this.deps.spec, bot));
-            }
-        }
+    update(patch: { data?: Record<string, unknown> }): void {
         if (patch.data !== undefined) {
             for (const [key, value] of Object.entries(patch.data)) {
                 if (value === null) delete this.deps.spec.data[key];
                 else this.deps.spec.data[key] = value;
             }
-            const renamed = patch.data['title'] ?? patch.data['name'];
-            if (typeof renamed === 'string' && renamed.trim() !== '') this.syncPrimaryName(renamed.trim());
         }
-        // 改名 / 换模型 / 改 data 都要落库，否则重启后回到旧值
+        // 改名 / 改 data 都要落库，否则重启后回到旧值
         this.deps.store.saveRoom(this.deps.spec);
-    }
-
-    /**
-     * 容器改名 → 主 bot 跟着叫。bot 的名字是它自己的身份，这里同步的是显示名：
-     * 不同步的话，改完任务标题，助手在消息里还自称旧名。
-     */
-    private syncPrimaryName(next: string): void {
-        const primary = this.primary();
-        const identity = primary === undefined ? undefined : this.deps.bots().find((bot) => bot.id === primary.id);
-        // 标题没真变时也会走到这里（保存正文同一笔 data）：名同就不写 bots 表
-        if (identity !== undefined && identity.name !== next) this.deps.store.upsertBot({ ...identity, name: next });
-        // 已建好的 session 自己持有一份 bot 快照：不推下去，改名后它继续说旧名
-        for (const session of this.sessions.values()) session.setBotName(next);
     }
 
     // ── 内部 ───────────────────────────────────────────────────
@@ -910,7 +895,7 @@ export class RoomActor {
                           : { jobs: { registry: this.deps.jobs.registry, owner: jobOwnerOf(this.id, botId) } }),
                       ask: this.gate,
                       askOwner: botId,
-                      // 投递层截断：单条工具输出超 2000 行 / 50KB ⇒ 头尾 + marker，原文落
+                      // 投递层截断：单条工具输出超 2000 行 / 64KB ⇒ 头尾 + marker，原文落
                       // `<home>/toolout/`（模型不够自己 read 回取）。不接这一层 = 大输出的
                       // 原文直接进这一轮请求，压缩（只管轮首）拦不住。
                       toModelOutput: createToolOutputCapper(
@@ -1000,6 +985,17 @@ export class RoomActor {
             '\n**看图用 view_image，不要自己调模型 API**：要分析图片（截图 / 照片 / 图表）就把路径交给它 —— ' +
             '「自己截图自己看」就是 `screencapture -x /tmp/x.png` 之后 `view_image({path:"/tmp/x.png"})`。' +
             '绝不可以用 bash + curl 去请求模型端点看图：那条路绕开对话上下文，既白花 token，人也不知道你看了什么。';
+        // 代码能力同样必须**明写**：不给这段，模型会一直用 bash 拼 CLI / 读源码猜形状
+        // （2026-11-27 实测 task-mwjddcy0：400 条历史里 251 次 bash、`run_code` 只 1 次，
+        //  而那 1 次成功了它也没再用）。`view_image` 有专门一段，`run_code` 当时一个字没有。
+        const codeHint =
+            this.deps.code?.() === undefined
+                ? ''
+                : '\n**要拿结构化数据、批量查改时用 `run_code`，不要用 bash 拼 CLI**：' +
+                  '代码里直接调后台接口，如 `const rs = await api.rooms.list({}); return rs.length;` —— ' +
+                  '返回值是对象不是文本，不用解析、不用猜格式。不确定有哪些方法就 `return apiHelp()`。' +
+                  '典型场景：批量读/筛选/聚合、一次改多条、等某个事件（`await api.chat.wait({id, sinceSeq, timeoutMs})`）。' +
+                  '**跑构建 / 测试 / 装依赖仍然用 bash** —— 那些是 shell 的活，别绕道代码里跑子进程。';
         return (
             '可以用 read / write / edit 读写文件、用 bash 执行命令；' +
             `工作目录是 ${this.deps.cwd ?? '未设置'}，相对路径按它解析。` +
@@ -1010,16 +1006,13 @@ export class RoomActor {
             'ask 不会停下来等：调用后当轮直接结束，用户作答会作为一条新消息回来。' +
             unitHint +
             jobHint +
-            imageHint
+            imageHint +
+            codeHint
         );
     }
 
     private inRoom(bot: Bot): Bot {
-        return {
-            ...bot,
-            persona: effectivePersonaOf(this.deps.spec, bot),
-            modelKey: effectiveModelOf(this.deps.spec, bot),
-        };
+        return { ...bot, persona: effectivePersonaOf(this.deps.spec, bot) };
     }
 
     /**
@@ -1178,6 +1171,7 @@ export class RoomActor {
                     messageId: event.messageId,
                     botId: bot.id,
                     state: event.state,
+                    ...(event.note === undefined ? {} : { note: event.note }),
                 });
                 this.deps.emit({ kind: 'delivery', delivery });
                 return;
@@ -1271,7 +1265,7 @@ export class RoomActor {
         if (result.failed || result.text === '' || !publishable(result.endReason)) return;
 
         // 名字取**当前**的（deps.bots 实时读）：传进来的 bot 是 session 建好时的快照，
-        // 改名后它会一直以旧名署名（容器改名 = 专属 bot 改名）。
+        // 角色改名后它会一直以旧名署名。
         const name = this.member(bot.id)?.name ?? bot.name;
         const entry = this.appendEntry({
             kind: 'conclusion',
@@ -1315,7 +1309,7 @@ export class RoomActor {
         void this.sessionOf(target).post({
             messageId: notice.id,
             text: `[${name} 的结论] ${result.text}`,
-            mode: 'next-turn',
+            kind: 'system',
             turn: { turn: result.turn, turnId: result.turnId },
         });
     }
@@ -1350,7 +1344,7 @@ export class RoomActor {
         void this.sessionOf(bot).post({
             messageId: notice.id,
             turn,
-            mode: 'next-turn',
+            kind: 'system',
             text: `[后台作业结束] ${event.text}`,
         });
         return true;

@@ -36,7 +36,7 @@ export const BASH_RESULT_HEAD_SCHEMA = z.object({
     timeout_ms: z.number().describe('本次生效的超时（毫秒）；0 = 不设超时（缺省，##454）'),
     timed_out: z.boolean().describe('是否因超时被终止'),
     killed: z.boolean().describe('是否被我们主动杀掉（超时 / 取消 / 输出溢出）'),
-    truncated: z.boolean().describe('投递层是否截断了正文（超 2000 行 / 50KB）；原文可 read 回取'),
+    truncated: z.boolean().describe('投递层是否截断了正文（超 2000 行 / 64KB）；原文可 read 回取'),
     stdout_bytes: z.number().describe('stdout 原始字节数（截断前）'),
     stderr_bytes: z.number().describe('stderr 原始字节数（截断前）'),
     cwd: z.string().describe('命令的工作目录（相对路径的基准）'),

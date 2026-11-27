@@ -14,7 +14,7 @@ import type { CompactEventInfo, CompactionProgress, Room, SessionInfo } from '@d
 import { Button, Input, Popover, PopoverContent, PopoverTrigger } from '@diy-agent/ui-shadcn';
 
 import { contextWindowOf } from '../models';
-import { actions, conversationOf, useProviders, useStore } from '../store';
+import { actions, conversationOf, useBotProfiles, useProviders, useStore } from '../store';
 import { CopyButton } from './CopyButton';
 import { PendingTable } from './PendingTable';
 
@@ -165,7 +165,13 @@ export function ContextPanel({ room, side = 'up' }: { room: Room; side?: 'up' | 
     const serverBudget = sessions[0]?.stats.budget;
     const keep = keepTurns ?? serverBudget?.keepTurns ?? 2;
 
-    const windowTokens = contextWindowOf(providers, room.modelKey);
+    // 模型真源 = 人设（角色）：上下文窗口按该类型 primary 角色的模型算
+    const roles = useBotProfiles();
+    const roleModelKey =
+        roles.find((item) => item.type === room.type && item.primary)?.modelKey ??
+        roles.find((item) => item.type === room.type)?.modelKey ??
+        '';
+    const windowTokens = contextWindowOf(providers, roleModelKey);
     const used = sessions.reduce((sum, session) => sum + session.stats.tokens, 0);
     const ratio = windowTokens === undefined || windowTokens === 0 ? undefined : used / windowTokens;
 

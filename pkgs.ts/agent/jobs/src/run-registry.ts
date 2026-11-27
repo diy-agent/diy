@@ -47,7 +47,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { jobDoneNotify, MAX_TAIL_BYTES, tailOf, type RunLike, type TailResult } from './run-status.js';
+import { jobDoneNotify, MAX_TAIL_BYTES, NOTIFY_TAIL_BYTES, tailOf, type RunLike, type TailResult } from './run-status.js';
 import type { NotifyItem } from '@diy-agent/context/envelope';
 import { buildInvocation, detectShells, noShellHint, type ShellSpec } from '@diy-agent/tools';
 import { localISOString } from '@diy-agent/time';
@@ -643,11 +643,16 @@ export class RunRegistry {
         return this.runs.get(id);
     }
 
-    /** 读输出尾部；未登记 ⇒ `undefined`（调用方自己决定怎么说）。 */
-    async tail(id: string, lines = 40): Promise<TailResult | undefined> {
+    /**
+     * 读输出尾部；未登记 ⇒ `undefined`（调用方自己决定怎么说）。
+     *
+     * `maxBytes` 让调用方按「整份预算扣掉自己的框架字节」来缩减 —— 名单里的默认值是
+     * 「一条工具输出」的整份预算，但 `job output` 的文案还带一段头（命令 / 目录 / 路径）。
+     */
+    async tail(id: string, lines = 40, maxBytes?: number): Promise<TailResult | undefined> {
         const info = this.runs.get(id);
         if (!info) return undefined;
-        return tailOf(await this.readLogTail(info.logPath), lines);
+        return tailOf(await this.readLogTail(info.logPath), lines, maxBytes);
     }
 
     /** 输出文件当前字节数（表格里"输出"列；在跑时它一直在长）。读不到给 `undefined`。 */
@@ -1112,7 +1117,11 @@ export class RunRegistry {
         if (pending) await pending.catch(() => undefined);
         info.notified = true;
         try {
-            const notify = jobDoneNotify(info, tailOf(await this.readLogTail(info.logPath), 20));
+            // 通知是插话，不是取全文：字节上限单独一份（`NOTIFY_TAIL_BYTES`），别跟着工具预算涨
+            const notify = jobDoneNotify(
+                info,
+                tailOf(await this.readLogTail(info.logPath), 20, NOTIFY_TAIL_BYTES),
+            );
             // 宿主说 false = 没人接（房间已删 / 成员已退）：落成 `delivered:false`，界面据此标出来
             info.delivered = this.notifier({ taskUri, text: notify.text ?? '', notify, run: { ...info } }) !== false;
             if (!info.delivered) console.warn('[run] 结束通知无人接收', info.id, taskUri);

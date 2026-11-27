@@ -17,9 +17,10 @@
 
 import { clipToolResult, type ToolResultPolicy } from '@diy-agent/compaction/compaction';
 
-/** 单条工具输出的预算（**与 read 的行窗口同一对常量**：三路径一个策略） */
-export const TOOL_OUTPUT_MAX_LINES = 2000;
-export const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
+import { TOOL_OUTPUT_MAX_BYTES, TOOL_OUTPUT_MAX_LINE_CHARS, TOOL_OUTPUT_MAX_LINES } from '../limits.js';
+
+// 预算的定义在 `../limits.ts`（唯一真源）；这里只做转发，兼容老 import 路径。
+export { TOOL_OUTPUT_MAX_BYTES, TOOL_OUTPUT_MAX_LINES };
 
 /** 头尾保留行数（##127「头尾各半」；触发阈值 = head + tail = 单条预算的行数） */
 export const TOOL_OUTPUT_HEAD_LINES = TOOL_OUTPUT_MAX_LINES / 2;
@@ -34,7 +35,24 @@ export const TOOL_OUTPUT_POLICY: ToolResultPolicy = {
     renderData: {
         head: TOOL_OUTPUT_HEAD_LINES,
         tail: TOOL_OUTPUT_TAIL_LINES,
-        maxLineChars: 2000,
+        maxLineChars: TOOL_OUTPUT_MAX_LINE_CHARS,
+        maxKeepBytes: TOOL_OUTPUT_MAX_BYTES,
+    },
+};
+
+/**
+ * 同预算、但**不裁单行**的策略变体（给「自己已经有行窗口」的工具用，今天只有 read）。
+ *
+ * 为什么需要：`maxLineChars` 是给「一行就是一整份 minified 产物」准备的；而 read 的输出由
+ * 行窗口框住，砍它半行的后半段**没有任何入口取回** —— offset 按行计，同一行再读还是同一段
+ * （`file-read.ts` 头注的同一条设计）。字节上限仍生效，那是兜底。
+ */
+export const TOOL_OUTPUT_POLICY_KEEP_LINES: ToolResultPolicy = {
+    render: 'headtail',
+    renderData: {
+        head: TOOL_OUTPUT_HEAD_LINES,
+        tail: TOOL_OUTPUT_TAIL_LINES,
+        maxLineChars: Number.POSITIVE_INFINITY,
         maxKeepBytes: TOOL_OUTPUT_MAX_BYTES,
     },
 };
@@ -64,7 +82,7 @@ export interface CapToolOutputOptions {
 /**
  * 单条工具输出 → **发给模型的那一份**（##127）。
  *
- * 超限（> 2000 行 / > 50KB / 有超长行）时：头尾保留 + marker；原文落盘（位置进 marker 的
+ * 超限（> 2000 行 / > 64KB / 有超长行）时：头尾保留 + marker；原文落盘（位置进 marker 的
  * `resume`）。落盘失败不假装成功：退化成不带 `resume` 的 marker。
  */
 export function capToolOutput(text: string, options: CapToolOutputOptions = {}): CappedToolOutput {

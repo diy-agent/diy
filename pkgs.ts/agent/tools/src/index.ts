@@ -17,3 +17,5 @@ export * from './file-edit.js';
 export * from './unified-diff.js';
 
 export * from './shell/cap-output.js';
+// 工具输出的唯一预算（64KB / 2000 行 / 单行 2000 字符）：read、投递层、job tail、run_code 都从这里取
+export * from './limits.js';

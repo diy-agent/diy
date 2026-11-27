@@ -31,6 +31,11 @@ const agentLog = logs.getLogger('entity-runtime:agent');
 export interface RunOptions {
     bot: Bot;
     modelKey: string;
+    /**
+     * 每步读一次当前模型键（缺省 = 用 `modelKey` 的固定值）。
+     * 给 session 用：用户切模型后，**当前这一轮的下一次 LLM 请求**就换过去（不等下一轮）。
+     */
+    getModelKey?: () => string;
     /** 这一轮开始时的完整上下文（session 自己拼：公共条目 + 自己的私有过程） */
     messages: ModelMessage[];
     signal: AbortSignal;
@@ -63,6 +68,8 @@ export interface RunOptions {
     commitDelta?: () => void;
     /** 测试注入模型（缺省按 modelKey 解析） */
     model?: LanguageModel;
+    /** 测试注入：modelKey → 模型实例（缺省走目录 `modelOf`；per-step 换模型也走它） */
+    resolveModel?: (modelKey: string) => LanguageModel;
     /**
      * 每一步结束时回传"本步新增的消息"，按 step 顺序拼接就是这一轮的完整增量：
      *   本步被插入的 steering 用户消息 + 模型产出的 assistant / tool 消息。
@@ -200,8 +207,13 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
      */
     const systemTokens = estimateMessagesTokens([{ role: 'system', content: instructions }]);
 
+    // 当前生效的模型键：prepareStep 每步读一次 `getModelKey`，变了就换模型实例
+    let currentModelKey = options.modelKey;
+    const resolveModel =
+        options.resolveModel ??
+        ((key: string) => modelOf(key, { sessionId: options.sessionId ?? turnId }));
     const result = streamText({
-        model: options.model ?? modelOf(options.modelKey, { sessionId: options.sessionId ?? turnId }),
+        model: options.model ?? resolveModel(currentModelKey),
         abortSignal: stall.signal,
         maxOutputTokens,
         instructions,
@@ -218,6 +230,15 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
          * （幂等），不会把变化吞掉。
          */
         prepareStep: ({ messages, stepNumber }) => {
+            const patch: { model?: LanguageModel; messages?: ModelMessage[] } = {};
+            // 换模型：每步读一次当前键（用户刚在界面上切了模型）——
+            // 变了就在**本步**换模型实例，而不是等下一轮。
+            const nextKey = options.getModelKey?.() ?? options.modelKey;
+            if (nextKey !== currentModelKey) {
+                currentModelKey = nextKey;
+                // 测试注入的 `model` 是固定实例，不跟 modelKey 走
+                if (options.model === undefined) patch.model = resolveModel(nextKey);
+            }
             /**
              * ① 轮内水位（每一步都看）：把最早的工具输出折掉，免得 200 步的轮次把请求堆过窗口。
              *    第 0 步不折 —— 那时一条工具结果都还没产生，折的只可能是历史（那是压缩的活）。
@@ -229,8 +250,9 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
             const base = guarded === null ? messages : guarded.messages;
             // ② 变量增量（不折它：它是本步的新信息，而且很小）
             const delta = options.takeDelta?.() ?? '';
-            if (delta === '') return guarded === null ? {} : { messages: base };
-            return { messages: [...base, { role: 'user', content: delta }] };
+            if (delta !== '') patch.messages = [...base, { role: 'user', content: delta }];
+            else if (guarded !== null) patch.messages = base;
+            return patch;
         },
         /**
          * **这一层不重试**（2026-11-25 用户裁决）：SDK 内部重试把三次失败揉成一个
@@ -250,7 +272,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                 body: 'LLM 请求失败（不重试）',
                 attributes: {
                     turnId,
-                    modelKey: options.modelKey,
+                    modelKey: currentModelKey,
                     botId: options.bot.id,
                     reason: friendlyError(error),
                     ...(statusOf(error) === undefined ? {} : { status: statusOf(error) }),

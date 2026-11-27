@@ -170,16 +170,16 @@ const conclusion = (bot: Bot, seq: number, text: string): RoomEntry => ({
 });
 
 describe('BotSession', () => {
-    it('空闲时投 next-step：开一轮，消息在第一 step 送达', async () => {
+    it('空闲时投一条人的话：开一轮，消息在第一 step 送达', async () => {
         const h = makeSession();
         await h.session.post({ messageId: 'm1', text: '你好' });
 
         expect(h.runs).toEqual(['turn-1']);
-        expect(h.deliveries).toEqual(['m1:delivering', 'm1:delivered']);
+        expect(h.deliveries).toEqual(['m1:working', 'm1:done']);
         expect(h.items.some((item) => item.type === 'chat' && item.status === 'done')).toBe(true);
     });
 
-    it('运行中投 next-step：不新开 turn（插进当前步边界）', async () => {
+    it('运行中投一个人的话：不新开 turn（插进当前步边界）', async () => {
         const h = makeSession();
         const first = h.session.post({ messageId: 'm1', text: '第一句' });
         await sleep(2);
@@ -188,14 +188,14 @@ describe('BotSession', () => {
         await Promise.all([first, second]);
 
         expect(h.runs).toEqual(['turn-1']);
-        expect(h.deliveries).toContain('m2:delivering');
+        expect(h.deliveries).toContain('m2:working');
     });
 
-    it('运行中投 next-turn：等这一轮结束再开新一轮', async () => {
+    it('运行中投系统消息：等这一轮结束再开新一轮', async () => {
         const h = makeSession();
         const first = h.session.post({ messageId: 'm1', text: '第一句' });
         await sleep(2);
-        const later = h.session.post({ messageId: 'm2', text: '下一轮说', mode: 'next-turn' });
+        const later = h.session.post({ messageId: 'm2', text: '下一轮说', kind: 'system' });
 
         await Promise.all([first, later]);
 
@@ -206,13 +206,13 @@ describe('BotSession', () => {
         const h = makeSession({ hangOnAbort: true });
         const running = h.session.post({ messageId: 'm1', text: '会被取消' });
         await sleep(2);
-        const queued = h.session.post({ messageId: 'm2', text: '排队也没了', mode: 'next-turn' });
+        const queued = h.session.post({ messageId: 'm2', text: '排队也没了', kind: 'system' });
 
         h.session.cancel();
 
         await Promise.all([running, queued]);
         expect(h.runs).toEqual(['turn-1']);
-        expect(h.deliveries).toContain('m1:delivered');
+        expect(h.deliveries).toContain('m1:done');
         expect(h.deliveries).not.toContain('m1:failed');
     });
 
@@ -279,12 +279,12 @@ describe('BotSession', () => {
         expect(h.ends[0]?.endReason.type).toBe('interrupted');
     });
 
-    it('cancel keepQueue：排队的 next-turn 不丢，取消这一轮后继续跑', async () => {
+    it('cancel keepQueue：排队的消息不丢，取消这一轮后继续跑', async () => {
         const h = makeSession({ hangOnAbort: true });
         const running = h.session.post({ messageId: 'm1', text: '会被取消' });
         await sleep(2);
-        const a = h.session.post({ messageId: 'm2', text: '留到下一轮 A', mode: 'next-turn' });
-        const b = h.session.post({ messageId: 'm3', text: '留到下一轮 B', mode: 'next-turn' });
+        const a = h.session.post({ messageId: 'm2', text: '留到下一轮 A', kind: 'system' });
+        const b = h.session.post({ messageId: 'm3', text: '留到下一轮 B', kind: 'system' });
 
         h.session.cancel({ keepQueue: true });
         await Promise.all([running, a, b]);
