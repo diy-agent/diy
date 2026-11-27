@@ -843,12 +843,15 @@ export async function createDiy2App(opts: {
                     // 529ms、其余几十 ms），卡住时日志里必须看得见是谁（./loop-lag）
                     const draftOwners = store.draftOwnersByKind();
                     const withInputDraft = new Set(draftOwners.input);
-                    const lastItemAt = timed('rooms.list.lastItemAtByRoom', () => store.lastItemAtByRoom());
-                    // 未读：一次算完全实例（一条 GROUP BY），不逐房间问
+                    // 后两条都**逐房间 seek**（2026-11-28）：房间列表我们手里就有，传进去省掉
+                    // store 自己推断一遍（`entities` ∪ items 里的房间）——那等于又扫一遍全表。
+                    const roomIds = [...rooms.keys()];
+                    const lastItemAt = timed('rooms.list.lastItemAtByRoom', () => store.lastItemAtByRoom(roomIds));
+                    // 未读：只对有水位记录的房间逐个 count（没读过 = 0，见 store.unreadByRoom）
                     const unread = timed('rooms.list.unreadByRoom', () => store.unreadByRoom());
-                    // 未送达：同样一次算完全实例。按 (房间, bot) 收敛到各自最新一条投递，
+                    // 未送达：按 (房间, bot) 收敛到各自最新一条投递，
                     // 历史 failed 不永久占位（旧消息失败、后来新消息送达就算过去了）。
-                    const failedByRoom = timed('rooms.list.failedByRoom', () => store.failedByRoom());
+                    const failedByRoom = timed('rooms.list.failedByRoom', () => store.failedByRoom(roomIds));
                     // 「上一轮出错的成员」：侧栏图标要变红（用户 2026-11-26：表格说「出错」而侧栏
                     // 图标没变，两处不一致）。数据与 `bots.rows` 同源（`turnLookupOf`），不各算一份。
                     // 打点包住**取数**那一下：命中缓存时是个 Map 查（<1ms），未命中才是 529ms

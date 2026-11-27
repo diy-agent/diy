@@ -9,7 +9,7 @@
 //
 // 插件实体只在 entities 里有一行身份，payload 在插件自己的存储里 —— 我们不碰。
 
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
 import { dirname, resolve } from 'node:path';
 
@@ -421,8 +421,11 @@ export interface Store {
      * 必须按**成员收敛到最新一条消息**，不能数历史 failed 行：旧消息插话失败、后来新消息
      * 正常送达时，房间不该永远挂着「未送达」。排队的投递由 `queuedByBot` 另算，也不该
      * 在这里重复报 failed；只有最新一条确实是 failed 才算。
+     *
+     * `roomIds` = 要统计哪几个房间（调用方手里有列表就给，省掉自己推断一遍）；
+     * 不给 = `entities` ∪ `entity_items` 里出现过的房间（见 `roomIdsOf`）。
      */
-    failedByRoom(): Record<string, number>;
+    failedByRoom(roomIds?: readonly string[]): Record<string, number>;
     /** 房间还没处理完的消息正文（按 messageId） */
     textOf(roomId: string, messageId: string): string | undefined;
     saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void;
@@ -506,10 +509,14 @@ export interface Store {
      * 加成员 / 发消息四个写点都记得盖章才不会漂。这里的 smell 就一条：只反映「聊过」，
      * 改个名字不算活动（见 ## 讨论）。没有 item 的容器不出现在结果里（由调用方显示「—」）。
      *
-     * 实现是一条 `GROUP BY entity_id` 取 `MAX(at)`：靠 `items_entity_at` 覆盖索引才是
-     * 索引扫描而不是全表扫（实测差 20 倍，见建表处）。那条索引是这条查询的一部分，别删。
+     * 实现是**逐房间** `ORDER BY at DESC LIMIT 1`（2026-11-28）：走 `items_entity_at` 的 seek，
+     * 只读命中那一行。以前是 `GROUP BY entity_id` 取 `MAX(at)` —— 那条要扫完整条索引，
+     * 随历史线性涨（真库 4 万条时 9ms 起步、生产日志里到过 162ms）。那条索引仍是 seek
+     * 的前提，别删。
+     *
+     * `roomIds` = 要统计哪几个房间；不给 = `entities` ∪ `entity_items` 里出现过的房间。
      */
-    lastItemAtByRoom(): Record<string, number>;
+    lastItemAtByRoom(roomIds?: readonly string[]): Record<string, number>;
     /**
      * 记下「这个房间我读到 seq 了」—— 只前进不后退（同一房间被旧客户端的迟到上报
      * 拉回去就永远有未读了）。
@@ -562,6 +569,17 @@ export interface Store {
      */
     lastFactPerTurn(roomIds?: readonly string[]): Array<{ roomId: string; owner: string; item: Item }>;
     /**
+     * 某个 (房间, bot) 的最后一条带 author 的条目 —— `lastItemPerBot` 的**点查版**。
+     *
+     * 为什么要它（2026-11-28）：投影版的分组键是两个 json 表达式，SQLite 只能**全索引扫**
+     * （`SCAN ... USING INDEX`，真库 4.3 万条时一次 272ms），而 `rooms.list` 每隔几秒就要问一遍
+     * 「每个成员上一轮的结局」。这里 `ORDER BY seq DESC LIMIT 1` 走 `items_author_seq` 的 seek，
+     * 单次约 26µs（同样的 109 个查询：272ms → 2.8ms）。两者语义相同，**热路径用这个**。
+     */
+    lastItemOfBot(roomId: string, botId: string): Item | undefined;
+    /** 某个房间里某个归属（`data.botId`，老数据退回 `turnId`）的最后一条轮级事实 —— 点查版 */
+    lastFactOfOwner(roomId: string, owner: string): Item | undefined;
+    /**
      * 清掉「已经没有结局可言」的 ask 草稿：`ask:<id>` 不在 keepAskIds 里（时间线上不再等回答）
      * 且早于 olderThan。返回清掉的条数。
      *
@@ -594,17 +612,6 @@ function isEmptyDraft(value: unknown): boolean {
     if (typeof value === 'object')
         return Object.values(value as Record<string, unknown>).every((item) => isEmptyDraft(item));
     return false;
-}
-
-/** 同一 (房间, bot) 的两条投递，后者是不是更新的一条（轮次 → 消息 seq → 状态更新时刻） */
-function isLaterDelivery(
-    a: { turn: number; seq: number; at: number; messageId: string },
-    b: { turn: number; seq: number; at: number; messageId: string },
-): boolean {
-    if (a.turn !== b.turn) return a.turn > b.turn;
-    if (a.seq !== b.seq) return a.seq > b.seq;
-    if (a.at !== b.at) return a.at > b.at;
-    return a.messageId > b.messageId;
 }
 
 // ── Room（旧线上形状）↔ 域记录 ─────────────────────────────────────
@@ -676,6 +683,47 @@ export interface OpenStoreOptions {
 
 export function openStore(file: string, options: OpenStoreOptions = {}): Store {
     const db = new DatabaseSync(file === ':memory:' ? ':memory:' : file);
+    /**
+     * 懒预编译的点查语句（见 `lastItemOfBot` / `lastFactOfOwner`）。
+     * `db.prepare` 每次都会重新编译 SQL，而这两条在 `rooms.list` 里每次上百次 —— 留个句柄复用。
+     */
+    const stmts: {
+        lastItemOfBot?: StatementSync;
+        lastFactOfOwner?: StatementSync;
+        entityIds?: StatementSync;
+        itemRoomIds?: StatementSync;
+        lastAtOfRoom?: StatementSync;
+        unreadOfRoom?: StatementSync;
+        deliveriesOfRoom?: StatementSync;
+        saySeqOfRoom?: StatementSync;
+    } = {};
+    /**
+     * 「要统计哪几个房间」——逐房间点查的循环源（见 `lastItemAtByRoom` / `failedByRoom`）。
+     *
+     * 优先用调用方给的（`rooms.list` 手里就有），没有才自己找：
+     * **`entities` 身份 ∪ `entity_items` 里出现过的房间**。为什么不能只用 entities：
+     * 历史上有 items 却没有身份行的房间（迁移自检的 `orphan-entity-items` 就是这个），
+     * 只按 entities 循环会把它们静默漏掉。
+     */
+    const roomIdsOf = (hint?: readonly string[]): string[] => {
+        if (hint !== undefined) return [...hint];
+        stmts.entityIds ??= db.prepare('SELECT id FROM entities');
+        stmts.itemRoomIds ??= db.prepare('SELECT DISTINCT entity_id FROM entity_items');
+        const ids = new Set<string>();
+        for (const row of stmts.entityIds.all() as Array<{ id: string }>) ids.add(String(row.id));
+        for (const row of stmts.itemRoomIds.all() as Array<{ entity_id: string }>) ids.add(String(row.entity_id));
+        return [...ids];
+    };
+    /** 一行 `{ seq, item }` → `Item`（坏行当没有：与 `itemsOf` / `lastItemPerBot` 同策） */
+    const itemOfRow = (row: unknown): Item | undefined => {
+        if (row === undefined) return undefined;
+        const record = row as Record<string, unknown>;
+        try {
+            return { ...(JSON.parse(String(record['item'])) as Item), seq: Number(record['seq']) };
+        } catch {
+            return undefined;
+        }
+    };
     // 数据根 = 数据库所在目录（`<home>/diy2.db` → `<home>/tasks/...`）；内存库没有磁盘产物
     const dataRoot = file === ':memory:' ? undefined : dirname(resolve(file));
     /**
@@ -2041,7 +2089,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 ...(row['turn_id'] === null ? {} : { turnId: String(row['turn_id']) }),
             }));
         },
-        failedByRoom(): Record<string, number> {
+        failedByRoom(roomIds?: readonly string[]): Record<string, number> {
             // 一个 bot 在同一房间可能有多条历史 failed（旧插话没送进去、崩溃重投失败…）。
             // 只有「它最新那条消息」的投递状态才代表现在：先按轮次，再按消息在本房间
             // 时间线上的落盘 seq，最后才用状态更新时刻兜底（老消息没有 turn 字段）。
@@ -2051,45 +2099,69 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             // （json_extract 连接找不到可用索引），而这个是 `rooms.list` 的 30s 轮询的一部分。
             // 改用 room_entries 的 say 条目取消息序号 —— 投递的 messageId 本来就是它落的，
             // 而且这张表只有条目流的一小部分（真库实测 2.1k vs entity_items 36.9k）。
-            const seqOfMessage = new Map<string, number>();
-            for (const row of db
-                .prepare(
-                    "SELECT entity_id, seq, json_extract(entry, '$.messageId') AS message_id FROM room_entries " +
-                        "WHERE json_extract(entry, '$.kind') = 'say'",
-                )
-                .all() as Array<{ entity_id: string; seq: number; message_id: string | null }>) {
-                if (row.message_id === null) continue;
-                seqOfMessage.set(`${String(row.entity_id)}\u0000${String(row.message_id)}`, Number(row.seq));
-            }
+            //
+            // **逐房间问**（2026-11-28）：原来一次算全实例，光那次「扫全部 say 条目取序号」
+            // 就要把 2.5k 行 / 2MB entry 的 json 摸一遍（副本实测 58ms、生产热库 176ms），
+            // 而这里面绝大多数房间一条投递都没有。按房间问就只摸该房间那几行；
+            // 且 seq 只在**两条候选的轮次相等（含都缺 turn 的老数据）**时才真去读 ——
+            // 新数据的比较走到 turn 那一级就分出来了。
+            stmts.deliveriesOfRoom ??= db.prepare(
+                'SELECT bot_id, message_id, state, note, turn, updated_at FROM deliveries WHERE entity_id = ? ORDER BY updated_at ASC',
+            );
+            stmts.saySeqOfRoom ??= db.prepare(
+                "SELECT seq, json_extract(entry, '$.messageId') AS message_id FROM room_entries " +
+                    "WHERE entity_id = ? AND json_extract(entry, '$.kind') = 'say'",
+            );
 
-            type Latest = { state: string; note?: string; turn: number; seq: number; at: number; messageId: string };
-            const latest = new Map<string, Latest>();
-            const rows = db
-                .prepare('SELECT entity_id, bot_id, message_id, state, note, turn, updated_at FROM deliveries')
-                .all() as Array<Record<string, unknown>>;
-            for (const row of rows) {
-                const roomId = String(row['entity_id']);
-                const botId = String(row['bot_id']);
-                const messageId = String(row['message_id']);
-                const candidate: Latest = {
-                    state: String(row['state']),
-                    note: row['note'] === null ? undefined : String(row['note']),
-                    turn: row['turn'] === null ? -1 : Number(row['turn']),
-                    seq: seqOfMessage.get(`${roomId}\u0000${messageId}`) ?? -1,
-                    at: Number(row['updated_at']),
-                    messageId,
-                };
-                const key = `${roomId}\u0000${botId}`;
-                const current = latest.get(key);
-                if (current === undefined || isLaterDelivery(candidate, current)) latest.set(key, candidate);
-            }
-
+            type Latest = { state: string; note?: string; turn: number; seq?: number; at: number; messageId: string };
             const failed: Record<string, number> = {};
-            for (const [key, row] of latest) {
-                // 失败不再是独立状态：`done + note='failed'`（2026-11-27 收敛到 3 个状态）
-                if (row.state !== 'done' || row.note !== 'failed') continue;
-                const roomId = key.slice(0, key.indexOf('\u0000'));
-                failed[roomId] = (failed[roomId] ?? 0) + 1;
+            for (const roomId of roomIdsOf(roomIds)) {
+                const rows = stmts.deliveriesOfRoom.all(roomId) as Array<Record<string, unknown>>;
+                if (rows.length === 0) continue;
+
+                /** 懒建：该房间的「消息 id → 落盘 seq」（只有轮次相等时才真的会调它） */
+                let seqOf: Map<string, number> | undefined;
+                const seqOfMessage = (messageId: string): number => {
+                    seqOf ??= new Map(
+                        (stmts.saySeqOfRoom!.all(roomId) as Array<{ seq: number; message_id: string | null }>).flatMap(
+                            (row) =>
+                                row.message_id === null
+                                    ? []
+                                    : [[String(row.message_id), Number(row.seq)] as [string, number]],
+                        ),
+                    );
+                    return seqOf.get(messageId) ?? -1;
+                };
+                /** `a` 是否比 `b` 更新（轮次 → 消息 seq → 状态时刻，判据同 isLaterDelivery） */
+                const laterThan = (a: Latest, b: Latest): boolean => {
+                    if (a.turn !== b.turn) return a.turn > b.turn;
+                    a.seq ??= seqOfMessage(a.messageId);
+                    b.seq ??= seqOfMessage(b.messageId);
+                    if (a.seq !== b.seq) return a.seq > b.seq;
+                    if (a.at !== b.at) return a.at > b.at;
+                    return a.messageId > b.messageId;
+                };
+
+                const latest = new Map<string, Latest>();
+                for (const row of rows) {
+                    const candidate: Latest = {
+                        state: String(row['state']),
+                        note: row['note'] === null ? undefined : String(row['note']),
+                        turn: row['turn'] === null ? -1 : Number(row['turn']),
+                        at: Number(row['updated_at']),
+                        messageId: String(row['message_id']),
+                    };
+                    const botId = String(row['bot_id']);
+                    const current = latest.get(botId);
+                    if (current === undefined || laterThan(candidate, current)) latest.set(botId, candidate);
+                }
+
+                let count = 0;
+                for (const row of latest.values()) {
+                    // 失败不再是独立状态：`done + note='failed'`（2026-11-27 收敛到 3 个状态）
+                    if (row.state === 'done' && row.note === 'failed') count += 1;
+                }
+                if (count > 0) failed[roomId] = count;
             }
             return failed;
         },
@@ -2304,14 +2376,19 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         deleteDraft(roomId: string, field: string): void {
             db.prepare('DELETE FROM drafts WHERE owner_id = ? AND field = ?').run(roomId, field);
         },
-        lastItemAtByRoom(): Record<string, number> {
-            const rows = db
-                .prepare('SELECT entity_id, MAX(at) AS last FROM entity_items GROUP BY entity_id')
-                .all() as Array<Record<string, unknown>>;
+        lastItemAtByRoom(roomIds?: readonly string[]): Record<string, number> {
+            // 逐房间 seek（2026-11-28）：`GROUP BY entity_id` 要扫完整条 `(entity_id, at)` 索引，
+            // 真库 4 万条时 9ms 起步且随历史线性涨；而每个房间只要最后一条的时刻，
+            // `ORDER BY at DESC LIMIT 1` 天然是 items_entity_at 的 seek（40 个房间 0.7ms）。
+            stmts.lastAtOfRoom ??= db.prepare(
+                'SELECT at FROM entity_items WHERE entity_id = ? ORDER BY at DESC LIMIT 1',
+            );
             const out: Record<string, number> = {};
-            for (const row of rows) {
-                const at = Number(row['last']);
-                if (Number.isFinite(at) && at > 0) out[String(row['entity_id'])] = at;
+            for (const roomId of roomIdsOf(roomIds)) {
+                const row = stmts.lastAtOfRoom.get(roomId) as { at: number } | undefined;
+                if (row === undefined) continue;
+                const at = Number(row.at);
+                if (Number.isFinite(at) && at > 0) out[roomId] = at;
             }
             return out;
         },
@@ -2351,29 +2428,31 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             return Number.isFinite(seq) ? seq : undefined;
         },
         unreadByRoom(): Record<string, number> {
-            // 一条 GROUP BY 算完（侧栏一次就够，别逐房间问）。
             // **只数 `chat`**：tool / notice / error 都是“过程”，按它们计数会炸成几千
             // （用户 2026-11-26 报的）；`author.role <> 'human'` 排掉我自己刚打的。
-            // 量级：2.7 万条 items 实测几十 ms，且只有 rooms.list（30s 一次）会调它。
-            const rows = db
-                .prepare(
-                    `SELECT i.entity_id AS entity_id, COUNT(*) AS n
-                       FROM entity_items i
-                       LEFT JOIN room_read r ON r.entity_id = i.entity_id
-                      WHERE i.seq > COALESCE(
-                                r.last_read_seq,
-                                -- 没读过 = 从现在开始算（历史不算未读）：取该房间当前最后一条
-                                (SELECT MAX(seq) FROM entity_items WHERE entity_id = i.entity_id)
-                            )
-                        AND json_extract(i.item, '$.type') = 'chat'
-                        AND COALESCE(json_extract(i.item, '$.author.role'), '') <> 'human'
-                      GROUP BY i.entity_id`,
-                )
-                .all() as Array<Record<string, unknown>>;
+            // 没水位记录的房间算 0（历史不算未读，见接口注释）。
+            //
+            // 逐房间 seek（2026-11-28）：原来的全实例 GROUP BY 要扫全部 chat 行并逐行比对
+            // 水位，真库 4 万条时到过 199ms（生产日志）。而侧栏要的只是「每个房间还有几条」，
+            // 每个房间 `(entity_id, type='chat', role, seq)` 走 items_chat_role 的 seek，
+            // 只扫该房间 chat 行、且只扫水位之后那一小段（40 个房间实测 6.4ms → 0.7ms）。
+            stmts.unreadOfRoom ??= db.prepare(
+                `SELECT COUNT(*) AS n FROM entity_items
+                  WHERE entity_id = ? AND seq > ?
+                    AND json_extract(item, '$.type') = 'chat'
+                    AND COALESCE(json_extract(item, '$.author.role'), '') <> 'human'`,
+            );
+            const reads = new Map<string, number>();
+            for (const row of db.prepare('SELECT entity_id, last_read_seq FROM room_read').all() as Array<
+                Record<string, unknown>
+            >) {
+                reads.set(String(row['entity_id']), Number(row['last_read_seq']));
+            }
             const out: Record<string, number> = {};
-            for (const row of rows) {
-                const n = Number(row['n']);
-                if (Number.isFinite(n) && n > 0) out[String(row['entity_id'])] = n;
+            for (const [roomId, water] of reads) {
+                const row = stmts.unreadOfRoom.get(roomId, water) as { n: number } | undefined;
+                const n = row === undefined ? 0 : Number(row.n);
+                if (Number.isFinite(n) && n > 0) out[roomId] = n;
             }
             return out;
         },
@@ -2426,6 +2505,26 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 }
             }
             return out;
+        },
+        lastItemOfBot(roomId: string, botId: string): Item | undefined {
+            // 预编译一次、用一辈子：这条每几秒被问上百次，每次 `db.prepare` 都要重新编译 SQL。
+            stmts.lastItemOfBot ??= db.prepare(
+                "SELECT seq, item FROM entity_items " +
+                    "WHERE entity_id = ? AND json_extract(item, '$.author.id') = ? " +
+                    'ORDER BY seq DESC LIMIT 1',
+            );
+            return itemOfRow(stmts.lastItemOfBot.get(roomId, botId));
+        },
+        lastFactOfOwner(roomId: string, owner: string): Item | undefined {
+            stmts.lastFactOfOwner ??= db.prepare(
+                "SELECT seq, item FROM entity_items " +
+                    'WHERE entity_id = ? ' +
+                    "AND COALESCE(json_extract(item, '$.data.botId'), json_extract(item, '$.turnId')) = ? " +
+                    "AND json_extract(item, '$.author.id') IS NULL " +
+                    "AND json_extract(item, '$.type') IN ('notice','error') " +
+                    'ORDER BY seq DESC LIMIT 1',
+            );
+            return itemOfRow(stmts.lastFactOfOwner.get(roomId, owner));
         },
         draftOwnersByKind(): { input: string[]; ask: string[] } {
             const rows = db.prepare('SELECT owner_id, field, value FROM drafts').all() as Array<

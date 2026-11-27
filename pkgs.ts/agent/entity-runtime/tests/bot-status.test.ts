@@ -150,6 +150,38 @@ describe('outcomeOfFact / withTurnFact', () => {
     });
 });
 
+describe('lastItemOfBot / lastFactOfOwner —— 点查版（2026-11-28 性能修复）', () => {
+    // 为什么单独钉：`createTurnLookup` 现在是「逐 (房间, bot) 一条 seek」，
+    // 判据全压在这两个方法身上 —— 它们一旦串房间 / 串 bot，红图标整个就错了。
+    it('只取这一个 bot 的最后一条：不串房间、不串 bot', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', chat('a'));
+        store.appendItem('r1', chat('b'));
+        const lastA = store.appendItem('r1', chat('a'));
+        store.appendItem('r2', chat('a'));
+
+        expect(store.lastItemOfBot('r1', 'a')?.id).toBe(lastA.id);
+        expect(store.lastItemOfBot('r1', 'b')?.author?.id).toBe('b');
+        expect(store.lastItemOfBot('r2', 'b')).toBeUndefined();
+        // 与投影版同源：同一个 (房间, bot) 取到的必须是同一条
+        const projected = store.lastItemPerBot(['r1']).find((row) => row.item.author?.id === 'a');
+        expect(store.lastItemOfBot('r1', 'a')?.id).toBe(projected?.item.id);
+    });
+
+    it('轮级事实按 owner 点查：botId 与老数据的 turnId 都命中，且只在该房间', () => {
+        const store = openStore(':memory:');
+        store.appendItem('r1', item({ type: 'notice', data: { text: 'A 截断', kind: 'max-tokens', botId: 'a' } }));
+        store.appendItem('r1', notice('max-steps')); // 老数据：没有 botId，owner = turn-1
+
+        expect(store.lastFactOfOwner('r1', 'a')?.data).toEqual({ text: 'A 截断', kind: 'max-tokens', botId: 'a' });
+        expect(store.lastFactOfOwner('r1', 'turn-1')?.data).toEqual({ text: 'max-steps', kind: 'max-steps' });
+        expect(store.lastFactOfOwner('r2', 'a')).toBeUndefined();
+        // 带 author 的 notice 不是轮级事实（与投影版同一条判据）
+        store.appendItem('r1', notice('interrupted', 'a'));
+        expect(store.lastFactOfOwner('r1', 'a')?.data).toMatchObject({ kind: 'max-tokens' });
+    });
+});
+
 describe('lastFactPerTurn', () => {
     // 轮级事实（endItems 落的 notice / error）不带 author —— 这正是它进不了
     // `lastItemPerBot` 的原因，也是这里必须按 turnId 单独查一圈的原因。
@@ -353,11 +385,11 @@ describe('createTurnLookup —— 事实必须属于当前这一轮', () => {
     });
 });
 
-describe('createCachedTurnLookup —— TTL 内共用一次全表计算', () => {
-    // 2026-11-26：`bots.rows` 每 1.5~2.5s 拉一次，每次都重建 turn lookup = 529ms+39ms 的全表
-    // json 分组；三个 agent 在跑时它们几乎不停地在跑，同连接的其它请求只能排队。
-    // 缓存正是为这个：**同一次窗口内只算一次**。
-    it('TTL 内重复查只算一次；过期后重算', () => {
+describe('createCachedTurnLookup —— 单个 (房间, bot) 的 TTL 缓存', () => {
+    // 2026-11-26：`bots.rows` 每 1.5~2.5s 拉一次，每次都重建 turn lookup = 两条全表 json 分组；
+    // 三个 agent 在跑时它们几乎不停地在跑，同连接的其它请求只能排队。
+    // 2026-11-28：底层已换成点查（一条 seek，26µs），缓存也跟着从「整张投影」缩到「单点结果」。
+    it('TTL 内同一个 (房间, bot) 只查一次；过期后重查', () => {
         const store = openStore(':memory:');
         store.appendItem('r1', {
             id: 'i1',
@@ -370,18 +402,20 @@ describe('createCachedTurnLookup —— TTL 内共用一次全表计算', () => 
             type: 'chat',
             data: { text: 'hi' },
         });
-        const spy = vi.spyOn(store, 'lastItemPerBot');
+        const spy = vi.spyOn(store, 'lastItemOfBot');
         let now = 1_000_000;
         const lookup = createCachedTurnLookup(store, 5000, () => now);
 
         lookup('r1', 'bot:1');
-        lookup('r1', 'bot:1');
-        lookup('r2', 'bot:9'); // 别的房间也共用这一份（缓存是**全实例**的）
+        lookup('r1', 'bot:1'); // 同一个键：TTL 内不再查库
         expect(spy).toHaveBeenCalledTimes(1);
+
+        lookup('r2', 'bot:9'); // 另一个键：点缓存不共用，得真查
+        expect(spy).toHaveBeenCalledTimes(2);
 
         now += 5001;
         lookup('r1', 'bot:1');
-        expect(spy).toHaveBeenCalledTimes(2);
+        expect(spy).toHaveBeenCalledTimes(3);
         spy.mockRestore();
     });
 
