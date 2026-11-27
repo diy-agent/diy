@@ -759,6 +759,8 @@ function Composer({
                             }
                         }}
                         onKeyDown={(event) => {
+                            // IME 组合态：这里的回车 / Tab / 方向键都是输入法自己的，先让它上屏 / 选词
+                            if (event.nativeEvent.isComposing) return;
                             // 浮层开着时：上下选、Enter/Tab 确认、Esc 关。这几键不能落到「发送」上。
                             if (menuOpen) {
                                 if (event.key === 'Escape') {
