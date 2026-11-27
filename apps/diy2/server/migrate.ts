@@ -20,7 +20,7 @@ import {
     migrationVersion,
     type MigrationPlanItem,
     type MigrationVersion,
-} from '@diy-agent/entity-runtime';
+} from '@diy-agent/migration';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** 仓库根的 node_modules/.bin/tsx（HERE 是 apps/diy2/server，要往上**三层**到仓根） */

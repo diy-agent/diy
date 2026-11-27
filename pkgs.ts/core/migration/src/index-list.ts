@@ -1,3 +1,8 @@
+// index-list.ts —— 全部迁移的**有序注册表**。
+//
+// 文件名不叫 index.ts：那个名给了包的公开出口（`./index.js`），
+// 这里只是「有哪些迁移、什么顺序」这一件事。
+
 import { migration as m01 } from './001-rename-bot-roles.js';
 import { migration as m02 } from './002-rename-role-config.js';
 import { migration as m03 } from './003-create-tables.js';

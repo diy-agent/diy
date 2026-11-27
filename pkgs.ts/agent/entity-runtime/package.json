@@ -27,11 +27,12 @@
     "dependencies": {
         "@ai-sdk/openai-compatible": "^3.0.92",
         "@diy-agent/agents-chain": "*",
-        "@diy-agent/context": "*",
         "@diy-agent/compaction": "*",
+        "@diy-agent/context": "*",
         "@diy-agent/jobs": "*",
         "@diy-agent/kb": "*",
         "@diy-agent/llm-provider": "*",
+        "@diy-agent/migration": "*",
         "@diy-agent/model-catalog": "*",
         "@diy-agent/protocol": "*",
         "@diy-agent/skills": "*",

@@ -2,11 +2,17 @@
 
 export { runAgent, type RunOptions } from './agent';
 
-// 迁移体系（实现全在 ./migrations/，一个迁移一个文件）
-export { migrations } from './migrations/index';
-export { migrationPlan, migrationVersion, type MigrationPlanItem, type MigrationVersion } from './migrations/plan';
-export { appliedCount } from './migrations/run';
-export type { Migration, MigrationRuntime } from './migrations/types';
+// 迁移体系（实现全在 @diy-agent/migration；这里转手是为了老调用方不用改 import）
+export {
+    migrations,
+    migrationPlan,
+    migrationVersion,
+    appliedCount,
+    type MigrationPlanItem,
+    type MigrationVersion,
+    type Migration,
+    type MigrationRuntime,
+} from '@diy-agent/migration';
 export {
     DEFAULT_BUDGET,
     estimateChars,

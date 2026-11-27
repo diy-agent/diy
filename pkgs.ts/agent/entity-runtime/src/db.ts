@@ -17,14 +17,12 @@ import type { TranscriptEntry, TokenUsage } from './compaction';
 import { isLinkKind } from './id';
 import type { RoomEntry } from './room-log';
 import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc } from './task-dir';
-import { PLACEHOLDER_MODEL_KEY } from './model-key.js';
-import { applyMigrations } from './migrations/run.js';
-import type { MigrationReporter, MigrationRuntime } from './migrations/types.js';
+import { PLACEHOLDER_MODEL_KEY, applyMigrations } from '@diy-agent/migration';
+import type { MigrationReporter, MigrationRuntime } from '@diy-agent/migration';
 
-// 迁移体系对外的出口（实现全在 ./migrations/）
-export { appliedCount } from './migrations/run.js';
-export { MIGRATION_STEPS } from './migrations/index.js';
-export type { MigrationReporter, MigrationStepEvent } from './migrations/types.js';
+// 迁移体系对外的出口（实现全在 @diy-agent/migration，这里只转手）
+export { appliedCount, MIGRATION_STEPS } from '@diy-agent/migration';
+export type { MigrationReporter, MigrationStepEvent } from '@diy-agent/migration';
 import type { AskAnswer, AskRequest, Bot, BotProfile, Delivery, InboxMode, Item, BotProfileDefaults, Room, RoomMember } from './types';
 
 /** 一个 bot 在某个房间里的对话快照（持久化单位） */

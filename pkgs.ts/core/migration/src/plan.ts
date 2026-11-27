@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-import { migrations } from './index.js';
+import { migrations } from './index-list.js';
 import type { MigrationRuntime } from './types.js';
 
 /** 库现在是什么版本：已记账多少条 / 一共多少条迁移 */

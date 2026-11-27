@@ -1,4 +1,4 @@
-import { PLACEHOLDER_MODEL_KEY } from '../model-key.js';
+import { PLACEHOLDER_MODEL_KEY } from './model-key.js';
 import type { Migration } from './types.js';
 
 /**

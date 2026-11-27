@@ -1,4 +1,4 @@
-import { migrations } from './index.js';
+import { migrations } from './index-list.js';
 import type { MigrationReporter, MigrationRuntime } from './types.js';
 
 /**
