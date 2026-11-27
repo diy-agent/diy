@@ -66,10 +66,18 @@ describe('guardMessages', () => {
 
     it('越早的工具输出越先被折（后面的步骤还在用最近的）', () => {
         const messages: ModelMessage[] = [...toolPair('t1', 300_000), ...toolPair('t2', 300_000)];
-        const guard = guardMessages(messages, { windowTokens: 100_000, targetRatio: 0.45 });
+        const guard = guardMessages(messages, { windowTokens: 100_000 });
         expect(guard).not.toBeNull();
         const first = (guard!.messages[1] as { content: Array<{ output: { value: string } }> }).content[0]!;
         expect(first.output.value).toContain('已折叠');
+    });
+
+    it('system + tools 也算进水位（diy1 预检的三段之和）', () => {
+        const messages: ModelMessage[] = [{ role: 'user', content: '开始' }, ...toolPair('t1', 20_000)];
+        // 只看 messages 时在线下（2 万字符 ≈ 5k token，窗口 10 万的触发线是 8.4 万）
+        expect(guardMessages(messages, { windowTokens: 100_000 })).toBeNull();
+        // 把 8 万的 system 算进来就超线了
+        expect(guardMessages(messages, { windowTokens: 100_000, fixedTokens: 80_000 })).not.toBeNull();
     });
 
     it('小输出不折（折了只是噪音）', () => {

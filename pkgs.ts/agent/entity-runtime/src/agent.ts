@@ -16,7 +16,7 @@ import { logs, SeverityNumber } from '@opentelemetry/api-logs';
 import { z } from 'zod';
 
 import { friendlyError, isContextOverflow } from './errors';
-import { guardMessages } from './context-guard';
+import { estimateMessagesTokens, guardMessages } from './context-guard';
 import { scrubMedia } from './media-scrub';
 import { maxOutputTokensOf, modelOf } from './providers';
 import { StallWatchdog, stallMessage, stallTimeoutsFromEnv, type StallInfo } from './stall-watchdog';
@@ -182,16 +182,25 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     });
     watchdog.start();
 
+    const instructions = instructionsOf({
+        botName: options.bot.name,
+        persona: options.bot.persona,
+        ...(options.systemContext === undefined ? {} : { systemContext: options.systemContext }),
+        ...(options.toolsHint === undefined ? {} : { toolsHint: options.toolsHint }),
+    });
+    /**
+     * system 占掉的量：水位不能只量 messages。
+     *
+     * 真发出去的是「system + tools + messages」三段之和（diy1 的预检 `estimateRequest` 就是这么量的）；
+     * 只量历史会让「system 本身就很大」的房间永远在报告"没超"。
+     */
+    const systemTokens = estimateMessagesTokens([{ role: 'system', content: instructions }]);
+
     const result = streamText({
         model: options.model ?? modelOf(options.modelKey, { sessionId: options.sessionId ?? turnId }),
         abortSignal: stall.signal,
         maxOutputTokens,
-        instructions: instructionsOf({
-            botName: options.bot.name,
-            persona: options.bot.persona,
-            ...(options.systemContext === undefined ? {} : { systemContext: options.systemContext }),
-            ...(options.toolsHint === undefined ? {} : { toolsHint: options.toolsHint }),
-        }),
+        instructions,
         messages: options.messages,
         tools: options.tools ?? defaultTools,
         // 步数上限：到顶就停（`stopWhen` 缺省是 1 步，必须显式覆盖；**不能**写成 `() => false`
@@ -212,7 +221,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
             const guarded =
                 options.windowTokens === undefined || stepNumber === 0
                     ? null
-                    : guardMessages(messages, { windowTokens: options.windowTokens });
+                    : guardMessages(messages, { windowTokens: options.windowTokens, fixedTokens: systemTokens });
             const base = guarded === null ? messages : guarded.messages;
             // ② 变量增量（不折它：它是本步的新信息，而且很小）
             const delta = options.takeDelta?.() ?? '';

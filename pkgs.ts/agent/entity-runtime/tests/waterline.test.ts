@@ -94,8 +94,8 @@ describe('runAgent：轮内水位', () => {
             messages,
             signal: new AbortController().signal,
             tools,
-            // 窗口 10 万 ⇒ 触发线 7 万，历史 7.5 万已经在线上了
-            windowTokens: 100_000,
+            // 窗口 8 万 ⇒ 触发线 8万 − max(8k,16k) = 6.4 万，历史 7.5 万已经在线上了
+            windowTokens: 80_000,
         })) {
             /* 吃完 */
         }

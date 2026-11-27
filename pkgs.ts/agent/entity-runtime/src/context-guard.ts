@@ -8,8 +8,8 @@
 //   于是那样一轮跑到中途被网关回 `context_length_exceeded`，整轮作废；
 //   更糟的是失败前每一步都已落 transcript ⇒ 下一轮起步即爆。
 //
-// 所以闸门要装在**每一步**上：本轮请求的估算超过窗口的 `triggerRatio` 就把**最早的工具输出**
-// 换成一行说明（结构 / toolCallId / 配对关系全部保留），降到 `targetRatio` 为止。
+// 所以闸门要装在**每一步**上：本轮请求的估算超过**压缩那把尺子**的触发线，就把**最早的工具输出**
+// 换成一行说明（结构 / toolCallId / 配对关系全部保留），降到**压缩的保留量**为止。
 //
 // 三条边界，别越过：
 //   · **只影响这一次请求**（返回值只传给 `streamText`）：transcript、界面、下一轮全都不变 ——
@@ -19,20 +19,31 @@
 
 import type { ModelMessage } from 'ai';
 
-import { estimateTokensOf } from '@diy-agent/compaction';
+import { estimateTokensOf, retainTokensOf, triggerTokensOf } from '@diy-agent/compaction';
 
-/** 触发折叠的水位（占窗口比例）：留出四成给本轮剩下的步骤 */
-const DEFAULT_TRIGGER_RATIO = 0.7;
-/** 折叠到的水位：与触发线之间留 25% 窗口的余量，避免每步都折一次（每折一次都砸前缀缓存） */
-const DEFAULT_TARGET_RATIO = 0.45;
+/**
+ * 两个阀值**不是新旋钮**，全部来自 `@diy-agent/compaction`：
+ *   · 触发线 = `triggerTokensOf(W)` = `W − max(10%W, 16k)`（与压缩同一个函数）
+ *   · 折到 = `retainTokensOf(W)` = `W × 0.16`（dsh `compaction-basic` 的 retainRatio）
+ *
+ * 参照：dsh 在 `agent/pre-step` 每步用 tokenMeter 对比 `W × thresholdRatio(0.8)`；
+ * diy1（Electron）在发请求前用 `PREFLIGHT_RATIO = 0.8` 预检 system+tools+messages。
+ * diy2 的 entity-runtime 两样都没搬过来（2026-11-27 实证的漏网），本文件补的就是这一段。
+ */
+
 /** 太小的工具输出折了没意义，反而多一行噪音 */
 const MIN_COLLAPSIBLE_CHARS = 2_000;
 
 export interface WatermarkOptions {
     /** 模型窗口（token）；未知就别调本函数 */
     windowTokens: number;
-    triggerRatio?: number;
-    targetRatio?: number;
+    /**
+     * 除 messages 之外已经占掉的量（system + 工具定义）。
+     *
+     * 压缩判据只看 transcript，但**真发出去的是三段之和** —— diy1 的预检就是这么量的
+     *（`estimateRequest`: system + tools + messages）。不给 = 0（只看 messages）。
+     */
+    fixedTokens?: number;
 }
 
 export interface WatermarkResult {
@@ -67,10 +78,14 @@ export function guardMessages(
 ): WatermarkResult | null {
     const window = options.windowTokens;
     if (!(window > 0)) return null;
-    const trigger = Math.floor(window * (options.triggerRatio ?? DEFAULT_TRIGGER_RATIO));
-    const target = Math.floor(window * (options.targetRatio ?? DEFAULT_TARGET_RATIO));
+    const fixed = Math.max(0, options.fixedTokens ?? 0);
+    // 与压缩同一把尺子（见函数头：这两个数不许自己拍）
+    const trigger = triggerTokensOf(window);
+    const target = Math.max(0, retainTokensOf(window) - fixed);
+    if (!(trigger > 0)) return null;
 
-    const before = estimateMessagesTokens(messages);
+    // 量的是**真发出去的量**：system + tools + messages，不是只有 transcript
+    const before = fixed + estimateMessagesTokens(messages);
     if (before < trigger) return null;
 
     let total = before;
