@@ -148,6 +148,11 @@ export interface SourceQuoteView {
  */
 export interface UnitDetailView {
     need: UnitItem;
+    /**
+     * 小目标（子需求）：左栏拍平后只在点开这条时出现（2026-11-27「外面是目标，里面是小目标」）。
+     * 步骤在 `need.steps` 里；这里只放仍是 need 的子条目。
+     */
+    children: Array<{ id: string; title: string; status: 'open' | 'doing' | 'done'; accept: string }>;
     /** 决策（journal 里 kind=decision 且挂在这条需求上的）：谁定的、为什么 */
     decisions: JournalLineView[];
     /** 其它日志（progress / pitfall / review / learn）—— 当成「过程记录」 */

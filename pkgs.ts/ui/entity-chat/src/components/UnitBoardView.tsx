@@ -16,6 +16,7 @@ import * as React from 'react';
 
 import type { UnitItem } from '@diy-agent/chat-transport-rpc';
 import { roomTitle, type Room } from '../model';
+import { ListRow } from './ListRow';
 import { UnitNeedDetail } from './UnitNeedDetail';
 import { useUnitBoard } from '../useUnitBoard';
 import { useUnitText } from '../useUnitText';
@@ -28,6 +29,97 @@ function dotClass(unit: UnitItem, ready: Set<string>): string {
     if (unit.status === 'done') return 'bg-emerald-500';
     if (unit.status === 'doing') return 'bg-sky-500 shadow-[0_0_0_3px] shadow-sky-500/20';
     return ready.has(unit.id) ? 'bg-emerald-500/70' : 'bg-muted-foreground/40';
+}
+
+/**
+ * 需求清单（左栏的主体）—— **拍平的**，不画缩进树。
+ *
+ * 2026-11-27 用户：「需求是否可以扁平化？不要有父子关系是否简单点？外面是目标，里面是小目标」。
+ * 我们只把**表现**拍平：左栏只列根需求，小目标 / 步骤点开才看到（数据仍留一层 parent，
+ * 否则「这条属于哪个目标」无处可放）。理由：之前的病不是「有父子」，是父子被画成缩进树 +
+ * 步骤挤进需求层 —— 一屏 125 条，扫不出「现在在做哪几件」。
+ *
+ * 当前 / 历史分开也是同一刀：默认只看 open / doing，done 收进一行「历史 N」，
+ * 展开后一条不少（历史是证据，不是噪音）。
+ */
+function NeedsList({
+    needs,
+    ready,
+    selected,
+    onSelect,
+}: {
+    needs: readonly UnitItem[];
+    ready: Set<string>;
+    selected: string | null;
+    onSelect: (unit: UnitItem) => void;
+}): React.JSX.Element {
+    // 只列根需求：子项（小目标）在详情里出现，不铺在左栏
+    const roots = needs.filter((unit) => unit.parent === null);
+    const current = roots.filter((unit) => unit.status !== 'done');
+    const history = roots.filter((unit) => unit.status === 'done');
+    const [historyOpen, setHistoryOpen] = React.useState(false);
+
+    const row = (unit: UnitItem): React.JSX.Element => {
+        const progress = unit.progress;
+        const pct = progress === undefined ? 0 : Math.round((100 * progress.done) / progress.total);
+        return (
+            <ListRow
+                key={unit.id}
+                leading={<span className={`size-2 rounded-full ${dotClass(unit, ready)}`} />}
+                title={unit.title}
+                active={unit.id === selected}
+                onSelect={() => onSelect(unit)}
+                trailing={
+                    progress === undefined ? undefined : (
+                        <span className="flex items-center gap-1">
+                            <span className="h-[3px] w-10 overflow-hidden rounded bg-border">
+                                <span
+                                    className={`block h-full ${unit.status === 'done' ? 'bg-emerald-500' : 'bg-sky-500'}`}
+                                    style={{ width: `${pct}%` }}
+                                />
+                            </span>
+                            <span className="text-[10px] tabular-nums text-muted-foreground">
+                                {progress.done}/{progress.total}
+                            </span>
+                        </span>
+                    )
+                }
+                meta={
+                    <>
+                        {!unit.group && unit.accept.trim() === '' && (
+                            <span className="rounded border border-amber-500/30 px-1 text-amber-600">未写验收</span>
+                        )}
+                        {unit.group && <span>{unit.children.length} 个小目标</span>}
+                        {unit.sourceQuote !== undefined && (
+                            <span className="min-w-0 truncate">
+                                ↩ {unit.sourceQuote.author || '有人'}：{unit.sourceQuote.text}
+                            </span>
+                        )}
+                    </>
+                }
+            />
+        );
+    };
+
+    return (
+        <>
+            {current.map(row)}
+            {history.length > 0 && (
+                <>
+                    <button
+                        type="button"
+                        onClick={() => setHistoryOpen((prev) => !prev)}
+                        aria-expanded={historyOpen}
+                        className="mt-1 flex w-full items-center gap-1 rounded-lg px-2 py-1 text-left text-[10px] text-muted-foreground hover:bg-muted"
+                    >
+                        <span className={`transition-transform ${historyOpen ? 'rotate-90' : ''}`}>▶</span>
+                        历史 {history.length}
+                    </button>
+                    {historyOpen && history.map(row)}
+                </>
+            )}
+        </>
+    );
 }
 
 export function UnitBoardView({
@@ -146,74 +238,5 @@ export function UnitBoardView({
 
             {error !== null && <div className="px-3 py-1 text-[11px] text-red-500">{error}</div>}
         </div>
-    );
-}
-
-/** 需求清单（左栏的主体）：点一条就交给调用方决定「就地展开」还是「开 tab」 */
-function NeedsList({
-    needs,
-    ready,
-    selected,
-    onSelect,
-}: {
-    needs: readonly UnitItem[];
-    ready: Set<string>;
-    selected: string | null;
-    onSelect: (unit: UnitItem) => void;
-}): React.JSX.Element {
-    return (
-        <>
-            {needs.map((unit) => {
-                const progress = unit.progress;
-                const pct = progress === undefined ? 0 : Math.round((100 * progress.done) / progress.total);
-                return (
-                    <button
-                        key={unit.id}
-                        type="button"
-                        onClick={() => onSelect(unit)}
-                        aria-selected={unit.id === selected}
-                        className={`w-full rounded px-1.5 py-1 text-left hover:bg-muted ${
-                            unit.id === selected ? 'bg-sky-500/10 ring-1 ring-sky-500/30' : ''
-                        }`}
-                        style={{ paddingLeft: `${6 + unit.depth * 12}px` }}
-                    >
-                        <span className="flex items-baseline gap-1.5">
-                            <span className={`mt-1.5 size-2 shrink-0 rounded-full ${dotClass(unit, ready)}`} />
-                            <span
-                                className={`min-w-0 flex-1 truncate text-[12px] ${
-                                    unit.status === 'done' ? 'text-muted-foreground' : 'text-foreground'
-                                } ${unit.group ? 'font-medium' : ''}`}
-                                title={unit.title}
-                            >
-                                {unit.title}
-                            </span>
-                        </span>
-                        <span className="mt-0.5 flex items-center gap-1.5 pl-3.5 text-[10px] text-muted-foreground">
-                            {progress !== undefined && (
-                                <>
-                                    <span className="h-[3px] w-14 overflow-hidden rounded bg-border">
-                                        <span
-                                            className={`block h-full ${unit.status === 'done' ? 'bg-emerald-500' : 'bg-sky-500'}`}
-                                            style={{ width: `${pct}%` }}
-                                        />
-                                    </span>
-                                    <span>
-                                        {progress.done}/{progress.total} 步
-                                    </span>
-                                </>
-                            )}
-                            {!unit.group && unit.accept.trim() === '' && (
-                                <span className="rounded border border-amber-500/30 px-1 text-amber-600">未写验收</span>
-                            )}
-                            {unit.sourceQuote !== undefined && (
-                                <span className="min-w-0 truncate">
-                                    ↩ {unit.sourceQuote.author || '有人'}：{unit.sourceQuote.text}
-                                </span>
-                            )}
-                        </span>
-                    </button>
-                );
-            })}
-        </>
     );
 }

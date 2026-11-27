@@ -49,6 +49,7 @@ import { isPlainLeftClick } from './link';
  * 3. **系统状态不抢「要你动手」的位置**：红只留给出错。
  */
 
+import { LIST_ROW_BASE } from './ListRow';
 import { MenuButton } from './Menu';
 import { EditableName, StatusGlyph } from './RoomName';
 
@@ -62,6 +63,9 @@ import { EditableName, StatusGlyph } from './RoomName';
 // `group-hover:inline-flex`（display 切换），静置时宽度才真正还给标题。
 // 代价是 hover 那一刻标题会收窄几个字（truncate 重新计算），用户接受了这个抖动。
 // 键盘可达性靠 `focus-visible` / `focus-within` 兜住（Tab 到它时一样会显形）。
+
+// 行的外框刻度（px-2 py-1 / rounded-lg / gap-2）与「目标」列表共用 `ListRow` 的常量 ——
+// 用户 2026-11-27：「目标与外部任务的显示形式是否需要同构」。这一行不再自己写一份刻度。
 
 export interface RoomRowProps {
     room: Room;
@@ -221,7 +225,7 @@ export function RoomRowView({
 
     return (
         <div
-            className={`group relative flex w-full items-center gap-2 rounded-lg px-2 py-1 text-xs ${
+            className={`group relative ${LIST_ROW_BASE} text-xs ${
                 // 底色只表「当前在看哪一行」。**运行态不碰底色**（2026-11-25 用户报「选中状态错乱」：
                 // 两行共用 bg-accent，一列里看着都像选中）—— 运行只画在状态图标那颗呼吸点上。
                 active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'

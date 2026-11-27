@@ -101,11 +101,17 @@ export function UnitNeedDetail({
     roomId,
     unitId,
     initialSource = false,
+    onOpenUnit,
 }: {
     roomId: string;
     unitId: string;
     /** 打开时直接看源码（tab 形态默认看内容；这一条留给「我想核对库里的值」的场景） */
     initialSource?: boolean;
+    /**
+     * 点「小目标」时换一个 tab 看它 —— 拍平之后，子条目只能从父条目里点进去，
+     * 没有这一条就只能是死文本（用户 2026-11-27：外面是目标，里面是小目标）。
+     */
+    onOpenUnit?: (unitId: string, title: string) => void;
 }): React.JSX.Element {
     const [source, setSource] = React.useState(initialSource);
     const { detail, error } = useUnitDetail(roomId, unitId);
@@ -189,6 +195,48 @@ export function UnitNeedDetail({
                                 </ul>
                             )}
                         </Block>
+
+                        {detail.children.length > 0 && (
+                            <Block title="小目标" right={`${detail.children.length} 条 · 点开看`}>
+                                <ul className="flex flex-col">
+                                    {detail.children.map((child) => (
+                                        <li key={child.id}>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    onOpenUnit === undefined
+                                                        ? undefined
+                                                        : onOpenUnit(child.id, child.title)
+                                                }
+                                                className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-muted"
+                                            >
+                                                <span
+                                                    className={`size-1.5 shrink-0 rounded-full ${
+                                                        child.status === 'done'
+                                                            ? 'bg-emerald-500'
+                                                            : child.status === 'doing'
+                                                              ? 'bg-sky-500'
+                                                              : 'bg-muted-foreground/40'
+                                                    }`}
+                                                />
+                                                <span
+                                                    className={`min-w-0 flex-1 truncate text-[11px] ${
+                                                        child.status === 'done'
+                                                            ? 'text-muted-foreground'
+                                                            : 'text-foreground'
+                                                    }`}
+                                                >
+                                                    {child.title}
+                                                </span>
+                                                {child.accept.trim() === '' && (
+                                                    <span className="shrink-0 text-[10px] text-amber-600">缺验收</span>
+                                                )}
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </Block>
+                        )}
 
                         <Block title="任务分解与进度" right="怎么做 · 不进需求层">
                             {need.steps.length === 0 ? (
