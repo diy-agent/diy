@@ -177,6 +177,40 @@ describe('RoomActor', () => {
         h.room.cancel();
     });
 
+    it('连发 3 条合并成一轮：排队数只会是 0 或 3+，不会停在「2 条排队」', async () => {
+        // 用户 2026-11-27 报的现象：连发几条、bot 正在跑，面板写「2 条消息排队中」，
+        // 其实那 2 条就在这一轮里跑 —— 因为 pump 一次取空队列（3 条合成一轮），
+        // 而旧的 `queuedByBot()` 把 working 也算上、又只给在跑的减 1。
+        //
+        // 状态收成 3 个（pending / working / done）后，只有 pending 计入 —— 合并进本轮的
+        // 那几条是 working，结构上不会落进这个数。这里用采样锁住它：
+        // **中间态不允许出现 1 或 2**（那是「3 减 1」的旧算法痕迹）。
+        const slow = async function* (input: RunOptions): AsyncIterable<AgentEvent> {
+            const turnId = input.turnId ?? 'turn';
+            yield { seq: 1, type: 'run.started', turnId, messageId: 'm-slow' };
+            await sleep(120);
+            yield { seq: 2, type: 'run.finished', turnId, finishReason: 'stop', steps: 1, maxOutputTokens: 0 };
+            yield { seq: 3, type: 'run.completed', turnId };
+        };
+        const h = makeRoom({ run: slow });
+        // 第一条：让它先跑起来
+        void h.room.say({ text: '第一条', author: HUMAN });
+        await waitFor(() => h.room.runningBots().length > 0);
+        const bot = h.room.runningBots()[0]!;
+
+        const samples: number[] = [];
+        const timer = setInterval(() => samples.push(h.room.queuedByBot().get(bot) ?? 0), 15);
+        void h.room.say({ text: 'a', author: HUMAN });
+        void h.room.say({ text: 'b', author: HUMAN });
+        void h.room.say({ text: 'c', author: HUMAN });
+        await waitFor(() => h.room.runningBots().length === 0 && h.room.queuedByBot().size === 0, 5000);
+        clearInterval(timer);
+
+        expect(samples.filter((n) => n === 1 || n === 2)).toEqual([]);
+        // 而且确实看到过「3 条在等」——否否则上面那条断言就成了空转
+        expect(samples.some((n) => n >= 3)).toBe(true);
+    });
+
     it('崩溃恢复：未送达的投递重新投一遍', async () => {
         const store = openStore(':memory:');
         const bots = [BOT_A, BOT_B];
