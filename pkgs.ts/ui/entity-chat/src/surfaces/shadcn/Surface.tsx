@@ -19,6 +19,7 @@
 import {
     AlertTriangle,
     ChevronDown,
+    Hourglass,
     Loader2,
     Paperclip,
     Send,
@@ -92,7 +93,7 @@ import { Markdown } from '../../components/Markdown';
 import { TurnFooter } from '../../components/TurnFooter';
 import { useDraft } from '../../drafts';
 import { useMentionCandidates } from '../../mentions';
-import { actions, conversationOf, useProviders, useRooms, useStore } from '../../store';
+import { actions, conversationOf, useProviders, useQueuedOf, useRooms, useStore } from '../../store';
 import { plainTextOf, runsOf, toolTargetOf, type Run } from '../shared';
 
 const TOOL_STATUS = { running: 'running', ok: 'ok', error: 'error' } as const;
@@ -844,6 +845,10 @@ function Composer({
 
 export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; composerExtras?: React.ReactNode }) {
     const shell = useStore();
+    // 这个房间自己的排队数（`queued` / `delivering`）。聊天窗口是**事实的来源**：
+    // 侧栏那颗沙漏、标题栏那颗 queued 胶囊都是它的投影 —— 所以这里也得有，
+    // 否则用户看得见「别处在排队」却在自己正在看的窗口里找不到原因（用户 2026-11-27）。
+    const queued = useQueuedOf(targetId);
     const conversation = conversationOf(targetId);
     const state = React.useSyncExternalStore(conversation.subscribe, conversation.get, conversation.get);
 
@@ -918,6 +923,16 @@ export function ShadcnSurface({ targetId, composerExtras }: { targetId: string; 
                     <MessageScrollerButton className="rounded-full" />
                 </MessageScroller>
             </MessageScrollerProvider>
+            {/* 排队提示：只在真有投递排队时出现，一条细行，不折叠也不弹窗 ——
+                它不是「要你动手」，是个「稍等」的说明（判据与侧栏那颗沙漏同源）。 */}
+            {queued > 0 && (
+                <div className="flex items-center gap-1.5 px-6 pb-1 text-xs text-muted-foreground">
+                    <Hourglass className="size-3 shrink-0" />
+                    <span>
+                        <span className="tabular-nums">{queued}</span> 条消息排队中，等 bot 接收
+                    </span>
+                </div>
+            )}
             <Composer conversation={conversation} roomId={targetId} running={state.running} extras={composerExtras} />
         </div>
     );
