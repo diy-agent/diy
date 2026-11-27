@@ -192,25 +192,38 @@ function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool'
         const tool = tools[0]!;
         return <ToolRow tool={tool} live={live === true} />;
     }
+    // 官方 ai-elements 的 Chain of Thought 形状：`TraceCollapsible` 的 trigger 是一行摘要
+    // （"Researched in 3 steps"），展开体是同样用 `Trace` 排的一串 `TraceLine`。
+    // 我们原先自己写了个 Button + ChevronDown + div —— 同一个东西，但 aria-expanded /
+    // 键盘 / 动画都要各维护一份（2026-11-27 用户提「ai 组件利用不足」）。
+    const running = live ? tools.filter((tool) => TOOL_STATUS[tool.state] === 'running').length : 0;
+    const failed = tools.filter((tool) => TOOL_STATUS[tool.state] === 'error').length;
+    const summary =
+        running > 0
+            ? `正在执行 ${tools.length} 次工具调用`
+            : failed > 0
+              ? `${tools.length} 次工具调用（${failed} 次失败）`
+              : `${tools.length} 次工具调用`;
     return (
-        <div className="my-1">
-            <Button
-                variant="ghost"
-                size="xs"
-                className="text-xs text-muted-foreground"
-                onClick={() => setOpen((value) => !value)}
-            >
-                <ChevronDown className={`size-3 transition-transform ${open ? '' : '-rotate-90'}`} />
-                工具调用 <span className="tabular-nums">({tools.length})</span>
-            </Button>
-            {open && (
-                <div className="mt-1 border-l border-border pl-3">
-                    {tools.map((tool) => (
-                        <ToolRow key={tool.id} tool={tool} live={live === true} />
-                    ))}
-                </div>
-            )}
-        </div>
+        <Trace className="my-1">
+            <TraceCollapsible open={open} onOpenChange={setOpen}>
+                <TraceCollapsibleTrigger>
+                    <TraceLine status={running > 0 ? 'running' : failed > 0 ? 'error' : undefined}>
+                        <TraceIcon>
+                            <ChevronDown className={`size-3 transition-transform ${open ? '' : '-rotate-90'}`} />
+                        </TraceIcon>
+                        <TraceTitle>{summary}</TraceTitle>
+                    </TraceLine>
+                </TraceCollapsibleTrigger>
+                <TraceCollapsibleContent>
+                    <div className="mt-1 border-l border-border pl-3">
+                        {tools.map((tool) => (
+                            <ToolRow key={tool.id} tool={tool} live={live === true} />
+                        ))}
+                    </div>
+                </TraceCollapsibleContent>
+            </TraceCollapsible>
+        </Trace>
     );
 }
 
