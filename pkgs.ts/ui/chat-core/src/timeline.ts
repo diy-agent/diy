@@ -518,7 +518,18 @@ function attachTurns(entries: TimelineEntry[], turns?: Record<string, TurnFacts>
             if (exact !== undefined) return exact;
         }
         // 老形状（只按 turnId 存）：兼容快照 / 外部构造的 turns
-        return turns[turnId];
+        const legacy = turns[turnId];
+        if (legacy !== undefined) return legacy;
+        // 这一轮有账、但没人来接：`turns` 的键是 `turnId\u0000botId`，而失败轮
+        // 一个字都没说时最后那条 error / notice 没有 author，拿不到 botId ——
+        // 只认老形状的话这一轮的身份就永远画不出来（2026-11-27 实测：模型配置报错
+        // 的那一轮，磁盘上有 turn_facts 一行、界面上却什么都没有）。
+        // 退到「该轮名下的那一条」：fail 的轮基本只有一个 bot 参与。
+        const prefix = `${turnId}\u0000`;
+        for (const [key, facts] of Object.entries(turns)) {
+            if (key.startsWith(prefix)) return facts;
+        }
+        return undefined;
     };
     for (const [key, index] of lastBot) {
         const [turnId = '', botId] = key.split('\u0000');
