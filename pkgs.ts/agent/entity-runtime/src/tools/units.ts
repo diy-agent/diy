@@ -114,7 +114,8 @@ export function unitTools(host: UnitHost): ToolSet {
                 '',
                 '**一条 unit = 一件能被验收的产出**（叶子）或**一个母项**（有子、本身不执行）：',
                 '· 叶子判据：做完之后能拿什么东西给人看（新行为 / 新接口 / 改好的数据 / 一份能引用的结论）。',
-                '· 反例（**别进树**）：读某文件、改某文件、跑测试、全量质检、扫尾翻新 —— 那些是执行步骤，自己排就行。',
+                '· 反例（**别进需求层**）：读某文件、改某文件、跑测试、全量质检、扫尾翻新 —— ' +
+                    '那些是**步骤**，用 `kind: "step"` + `parent` 挂在对应需求下面（只有三档状态，不写 accept）。',
                 '· 正例：「deleteRoom 事务化（中途失败不留半个删）」「unit 取消后下游不再引用它，且给得出原因」。',
                 '',
                 '粒度参考：一个母项下 2~5 条叶子；超过 7 条说明该再分一层。',
@@ -133,6 +134,13 @@ export function unitTools(host: UnitHost): ToolSet {
                                 .regex(KEY_PATTERN, 'key 只能是小写字母开头的小写英文 / 数字 / - _，≤24 字符')
                                 .describe(
                                     '这条 unit 的 id（自起的短名，如 state / cancel-tool）；后面的项与以后的操作都用它引用',
+                                ),
+                            kind: z
+                                .enum(['need', 'step'])
+                                .optional()
+                                .describe(
+                                    'need（缺省）= 要做什么，人要能验收、进需求树；' +
+                                        'step = 怎么做，挂在某条需求下面的一步（不写 accept、不进需求层，只在点开那条需求时出现）',
                                 ),
                             title: z
                                 .string()
@@ -173,6 +181,10 @@ export function unitTools(host: UnitHost): ToolSet {
                         throw new Error(`key 已被占用：${item.key}（已在树上，用 unit_update 改它，或换个 key）`);
                     }
                     if (item.parent === item.key) throw new Error(`unit 不能是自己的母项：${item.key}`);
+                    // 步骤必须挂在某条需求下：没父的 step 在界面上没有归属（会被当垃圾数据丢掉）
+                    if (item.kind === 'step' && item.parent === undefined) {
+                        throw new Error(`步骤要挂在一条需求下面：${item.key} 缺 parent`);
+                    }
                 }
                 // 先全部建节点（带 parent）：这样 parent 可以引用同批任意项（含后面那些）
                 for (const item of items) {
@@ -180,6 +192,7 @@ export function unitTools(host: UnitHost): ToolSet {
                         taskId: host.taskId,
                         id: item.key,
                         allowNewId: true,
+                        kind: item.kind ?? 'need',
                         title: item.title,
                         body: item.body ?? '',
                         accept: item.accept ?? '',
@@ -224,6 +237,7 @@ export function unitTools(host: UnitHost): ToolSet {
                 '未知字段不要瞎猜，先 unit_get 看它现在是什么。',
             inputSchema: z.object({
                 id: z.string(),
+                kind: z.enum(['need', 'step']).optional().describe('改成步骤 / 改回需求（一般不用动）'),
                 title: z.string().min(1).optional(),
                 body: z
                     .string()
@@ -233,7 +247,7 @@ export function unitTools(host: UnitHost): ToolSet {
                 parent: z.string().nullable().optional().describe('换挂点：给母项的 key；传 null = 提到顶层'),
                 status: z.enum(UNIT_STATUSES).optional().describe('open / doing / done（只有叶子能改）'),
             }),
-            execute: async ({ id, title, body, accept, parent, status }) => {
+            execute: async ({ id, kind, title, body, accept, parent, status }) => {
                 const current = need(host, id);
                 if (status !== undefined) {
                     const row = boardOf(host).rows.find((item) => item.id === id);
@@ -258,6 +272,7 @@ export function unitTools(host: UnitHost): ToolSet {
                 const next = host.store.saveUnit({
                     taskId: host.taskId,
                     id,
+                    kind: kind ?? current.kind,
                     title: title ?? current.title,
                     body: body ?? current.body,
                     accept: accept ?? current.accept,

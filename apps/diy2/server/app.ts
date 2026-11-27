@@ -1255,6 +1255,27 @@ export async function createDiy2App(opts: {
              * 界面是旁观者的窗口 —— 想改就在聊天里说。推导在 `unitBoard`（同一份纯函数）。
              */
             units: {
+                /**
+                 * 一条需求的**全貌**：需求本身 + 步骤 + 挂在它上面的决策/其它日志。
+                 *
+                 * 为什么按需取而不是 list 一次给全（2026-11-27）：目标页首屏只要需求层，
+                 * 步骤与决策只在点开某条时才看 —— 一次全给等于每 5 秒轮询几百条详情。
+                 */
+                get: async ({ input }) => {
+                    const units = store.listUnits(input.id);
+                    const board = unitBoard(units);
+                    const row = board.rows.find((item) => item.id === input.unit);
+                    if (row === undefined) throw new Error(`没有这条需求：${input.unit}`);
+                    const quotes = sourceQuotesOf(store.itemsByIds([row.source]));
+                    const [withQuote] = withSourceQuotes({ ...board, rows: [row] }, quotes).rows;
+                    // 决策 / 其它日志：journal 上是 append-only 的，按 unit 过滤就是这条需求的决策清单
+                    const journal = store.journalOf(input.id, 400).filter((entry) => entry.unit === input.unit);
+                    return {
+                        need: withQuote ?? row,
+                        decisions: journal.filter((entry) => entry.kind === 'decision'),
+                        notes: journal.filter((entry) => entry.kind !== 'decision'),
+                    };
+                },
                 list: async ({ input }) => {
                     const board = unitBoard(store.listUnits(input.id));
                     // 「来自哪句话」要能当场核对：光有 message id，人还得自己点进去看是谁说的。

@@ -82,6 +82,14 @@ export interface JournalEntry {
     at: number;
     kind: JournalKind;
     text: string;
+    /**
+     * 这条日志讲的是**哪条账本条目**（`task_units.id`）；空/缺省 = 任务级。
+     *
+     * 为什么要它（2026-11-27 用户）：「决策」不该是第二本账 —— 一条决策天然属于某条需求，
+     * 记在 journal 上再按 unit 过滤，就是那条需求的「决策」列表；而 journal 本身还是 append-only，
+     * 不需要维护「这条决策还有效吗」。
+     */
+    unit?: string;
 }
 
 /**
@@ -147,6 +155,23 @@ export type TaskInput = Omit<TaskRecord, 'number' | 'createdAt' | 'updatedAt'> &
 export const UNIT_STATUSES = ['open', 'doing', 'done'] as const;
 export type UnitStatus = (typeof UNIT_STATUSES)[number];
 
+/**
+ * 账本里两种条目（2026-11-27 用户裁）：
+ *
+ * - `need`：**要做什么**。人要能验收的单位（`accept`），也是人唯一要对齐的层。
+ * - `step`：**怎么做**。挂在某条 need 下面的执行步骤，只有三档状态、不要求 `accept`，
+ *   不进 `units` 上下文、不进 UI 主列表 —— 只在「点开那条需求」时出现。
+ *
+ * 为什么合成一张表而不是新开 `task_unit_steps`：它们的关系、状态、排序、级联删除全都一样，
+ * 差别只有「谁进需求层」；分成两张表要写两遍读写与迁移，而收益只是省一个字段。
+ */
+export const UNIT_KINDS = ['need', 'step'] as const;
+export type UnitKind = (typeof UNIT_KINDS)[number];
+
+function isUnitKind(value: string): value is UnitKind {
+    return (UNIT_KINDS as readonly string[]).includes(value);
+}
+
 function isUnitStatus(value: string): value is UnitStatus {
     return (UNIT_STATUSES as readonly string[]).includes(value);
 }
@@ -164,6 +189,8 @@ function isUnitStatus(value: string): value is UnitStatus {
 export interface UnitRecord {
     taskId: string;
     id: string;
+    /** `need` = 要做什么（人对齐、要验收）；`step` = 怎么做（挂在 need 下，只给执行用） */
+    kind: UnitKind;
     title: string;
     /** 这条需求要解决什么（背景 / 范围）。**验收口径不写这里** —— 它有自己的字段 `accept` */
     body: string;
@@ -200,8 +227,10 @@ export interface UnitRecord {
 }
 
 /** 写 unit：`id` / `seq` / 时间戳缺省由 store 补（新 unit 的 id 走 counters，永不回收） */
-export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt' | 'accept' | 'source'> & {
+export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt' | 'accept' | 'source' | 'kind'> & {
     id?: string;
+    /** 缺省 = 沿用库里已有的（更新时）；新建缺省 `need`（绝大多数条目是需求） */
+    kind?: UnitKind;
     /**
      * 「怎么算做完」。缺省 = 沿用库里已有的（更新时）；新建缺省就是空串 = 还没写。
      * **不做成必填**：老代码 / 老数据里没有这一栏，逼着所有调用点补一遍只会让人随手写个占位串。
@@ -333,7 +362,7 @@ export interface Store {
     deleteBotProfile(roleId: string): void;
     appendItem(roomId: string, item: Item): Item;
     /** 追加一条任务日志（append-only；回放用 `journalOf`） */
-    appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number }): JournalEntry;
+    appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number; unit?: string }): JournalEntry;
     /**
      * 追加一条领域事件（通用）。命名约定同 journal：`<type>.<verb>`（实体类型做前缀）。
      * unit 变更走这里（`task.unit.added` 等）而**不走 journal**：journal 五种 kind 的服务对象是
@@ -812,6 +841,8 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         CREATE TABLE IF NOT EXISTS task_units (
             task_id    TEXT NOT NULL,
             id         TEXT NOT NULL,
+            -- need = 要做什么（要验收）；step = 怎么做（挂在 need 下）
+            kind       TEXT NOT NULL DEFAULT 'need',
             title      TEXT NOT NULL,
             body       TEXT NOT NULL DEFAULT '',
             -- 「怎么算做完」：空串 = 还没写（界面会标出来）
@@ -1029,6 +1060,8 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
     const readUnitRow = (row: Record<string, unknown>): UnitRecord => ({
         taskId: String(row['task_id']),
         id: String(row['id']),
+        // 老行没有 kind 列的值时按需求处理（历史条目都是需求）
+        kind: isUnitKind(String(row['kind'] ?? 'need')) ? (String(row['kind']) as UnitKind) : 'need',
         title: String(row['title']),
         body: String(row['body']),
         accept: row['accept'] === null || row['accept'] === undefined ? '' : String(row['accept']),
@@ -1088,6 +1121,8 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         const record: UnitRecord = {
             taskId: unit.taskId,
             id: previous?.id ?? unit.id ?? allocateUnitId(unit.taskId),
+            // 缺省沿用（把 need 改成 step 是显式动作，不该因为没传就翻面）
+            kind: unit.kind ?? previous?.kind ?? 'need',
             title,
             body: unit.body,
             // 缺省沿用（改标题不该把已写好的验收口径抹掉）
@@ -1103,12 +1138,13 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         };
         if (record.parent === record.id) throw new Error(`unit 不能是自己的父：${record.id}`);
         db.prepare(
-            'INSERT INTO task_units (task_id, id, title, body, accept, source_message_id, status, parent_id, seq, created_at, updated_at) ' +
-                'VALUES (?,?,?,?,?,?,?,?,?,?,?) ' +
-                'ON CONFLICT(task_id, id) DO UPDATE SET title=?, body=?, accept=?, source_message_id=?, status=?, parent_id=?, updated_at=?',
+            'INSERT INTO task_units (task_id, id, kind, title, body, accept, source_message_id, status, parent_id, seq, created_at, updated_at) ' +
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ' +
+                'ON CONFLICT(task_id, id) DO UPDATE SET kind=?, title=?, body=?, accept=?, source_message_id=?, status=?, parent_id=?, updated_at=?',
         ).run(
             record.taskId,
             record.id,
+            record.kind,
             record.title,
             record.body,
             record.accept,
@@ -1118,6 +1154,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             record.seq,
             record.createdAt,
             record.updatedAt,
+            record.kind,
             record.title,
             record.body,
             record.accept,
@@ -1554,16 +1591,23 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 .run(roomId, JSON.stringify(item), item.at);
             return { ...item, seq: Number(result.lastInsertRowid) };
         },
-        appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number }): JournalEntry {
+        appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number; unit?: string }): JournalEntry {
             const at = input.at ?? Date.now();
+            const unit = input.unit === undefined || input.unit === '' ? undefined : input.unit;
             const result = db
                 .prepare('INSERT INTO events (at, event, subject, data) VALUES (?,?,?,?)')
-                .run(at, journalEventOf(roomId), roomId, JSON.stringify({ kind: input.kind, text: input.text }));
+                .run(
+                    at,
+                    journalEventOf(roomId),
+                    roomId,
+                    JSON.stringify({ kind: input.kind, text: input.text, ...(unit === undefined ? {} : { unit }) }),
+                );
             const entry: JournalEntry = {
                 seq: Number(result.lastInsertRowid),
                 at,
                 kind: input.kind,
                 text: input.text,
+                ...(unit === undefined ? {} : { unit }),
             };
             // 任务的日志同时追加到 <任务目录>/journal.jsonl（append-only 的天然形状）
             const task = dataRoot === undefined ? undefined : readTask(roomId);
@@ -1620,7 +1664,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 .all(roomId, journalEventOf(roomId), limit) as Array<Record<string, unknown>>;
             return rows
                 .map((row) => {
-                    let data: { kind?: unknown; text?: unknown } = {};
+                    let data: { kind?: unknown; text?: unknown; unit?: unknown } = {};
                     try {
                         const parsed: unknown = JSON.parse(String(row['data']));
                         if (typeof parsed === 'object' && parsed !== null) data = parsed as typeof data;
@@ -1632,6 +1676,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                         at: Number(row['at']),
                         kind: (typeof data.kind === 'string' ? data.kind : 'progress') as JournalKind,
                         text: typeof data.text === 'string' ? data.text : '',
+                        ...(typeof data.unit === 'string' && data.unit !== '' ? { unit: data.unit } : {}),
                     };
                 })
                 .reverse();

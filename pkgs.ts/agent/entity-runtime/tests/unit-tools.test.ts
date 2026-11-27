@@ -128,6 +128,9 @@ describe('unit 工具', () => {
             'accept',
             'body',
             'id',
+            // kind：need ↔ step 的显式转换（2026-11-27 分层后加的）—— 它不是「进展」字段，
+            // 改的是这条条目的**种类**，所以不违反上面那条约束
+            'kind',
             'parent',
             'status',
             'title',

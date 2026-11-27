@@ -258,6 +258,13 @@ export const unitsApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: { id: Id }, output: Any }),
         /**
+         * 一条需求的全貌：需求本身 + 它的步骤 + 挂在它上面的决策与其它日志。
+         *
+         * 为什么单开一个方法而不是 list 一次给全：步骤与决策只在**点开某条需求**时要，
+         * 「目标」页首屏只需要需求层（12 个任务 125 条，一次全给等于每 5 秒轮询几百条详情）。
+         */
+        get: RpcSchema.unary({ input: { id: Id, unit: Id }, output: Any }),
+        /**
          * 模型实际读到的那段文本（`units` 节的 YAML）。
          *
          * 为什么要开这个口子：界面能画树、能画图，但「模型到底读到了什么」此前只能靠 demo 推断。
