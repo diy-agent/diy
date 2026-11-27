@@ -203,18 +203,29 @@ export function UnitNeedDetail({
                                                               : 'bg-muted-foreground/40'
                                                     }`}
                                                 />
-                                                <span
-                                                    className={`min-w-0 flex-1 truncate text-[11px] ${
-                                                        child.status === 'done'
-                                                            ? 'text-muted-foreground'
-                                                            : 'text-foreground'
-                                                    }`}
-                                                >
-                                                    {child.title}
+                                                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                                    <span
+                                                        className={`min-w-0 truncate text-[11px] ${
+                                                            child.status === 'done'
+                                                                ? 'text-muted-foreground'
+                                                                : 'text-foreground'
+                                                        }`}
+                                                    >
+                                                        {child.title}
+                                                    </span>
+                                                    {/* 验收口径就摆在行内：这是「怎么算做完」的唯一出处，
+                                                        藏进详情等于让人逐条点开才敢判（体检：48% 的条目根本没写）。 */}
+                                                    <span
+                                                        className={`min-w-0 truncate text-[10px] ${
+                                                            child.accept.trim() === ''
+                                                                ? 'text-amber-600'
+                                                                : 'text-muted-foreground'
+                                                        }`}
+                                                        title={child.accept.trim() === '' ? undefined : child.accept}
+                                                    >
+                                                        {child.accept.trim() === '' ? '缺验收' : child.accept}
+                                                    </span>
                                                 </span>
-                                                {child.accept.trim() === '' && (
-                                                    <span className="shrink-0 text-[10px] text-amber-600">缺验收</span>
-                                                )}
                                             </button>
                                         </li>
                                     ))}
