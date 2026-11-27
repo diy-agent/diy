@@ -615,6 +615,16 @@ export class RoomActor {
         return out;
     }
 
+    /**
+     * 这个房间所有轮的结算事实（落盘那份，快照下发）。
+     *
+     * 与 `runningTurns` 分工：那个回答「现在谁在跑、什么时候开始的」，
+     * 这个回答「跑过的每一轮花了多久 / 多少 token / 几步」—— 刷新后结算行靠它。
+     */
+    turnFacts(): ReturnType<typeof this.deps.store.turnFacts> {
+        return this.deps.store.turnFacts(this.id);
+    }
+
     /** 用户的回答（整批一次提交）；返回结局（命中 / 已失效 / 答不全） */
     answerAsk(askId: string, answer: AskAnswer): AnswerOutcome {
         return this.gate.answer(askId, answer);
@@ -1228,6 +1238,20 @@ export class RoomActor {
                     ...(turnCalls === undefined ? {} : { toolCalls: turnCalls }),
                 });
                 this.persistSession(bot.id);
+                // 结算事实**落盘**：`turn.end` 只是广播，刷新后就没了 —— 不存这一行的话
+                // 历史轮次底下那条结算行（耗时 / tokens / 步数 / 工具次数）永远画不出来。
+                // `endedAt` 理论上一定有（session 在 finally 里补）；真没有就用现在 + 让
+                // `startedAt` 缺省 —— 宁可少一个数，不要拿假时刻冒充。
+                this.deps.store.saveTurnFact(this.id, {
+                    botId: bot.id,
+                    turnId: result.turnId,
+                    turn: result.turn,
+                    ...(result.startedAt === undefined ? {} : { startedAt: result.startedAt }),
+                    endedAt: result.endedAt ?? Date.now(),
+                    ...(result.usage === undefined ? {} : { usage: result.usage }),
+                    ...(result.endReason.toolCalls === undefined ? {} : { toolCalls: result.endReason.toolCalls }),
+                    reason: result.endReason,
+                });
                 // 快照落了才算收尾：销掉「开了没收尾」的标记再发结论
                 this.deps.store.closeTurn(this.id, bot.id);
                 // 这一轮带着「中断」事实却跑到收尾了 = 那条事实是重启时的误报（重启后按原 turn 号

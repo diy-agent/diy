@@ -1053,6 +1053,9 @@ export async function createDiy2App(opts: {
                         // 在跑的那几轮从何时开始：刷新后消息头 / 「已用 Ns」靠它，
                         // 不能由客户端拿条目时刻去估（收轮时会跟 turn.end 给的 startedAt 跳一下）
                         runningTurns: actor.runningTurns(),
+                        // 跑过的每一轮的结算事实（落盘那份）：刷新后结算行靠它。
+                        // 与上面那个分工：`runningTurns` 只含在跑的，这个是历史全量。
+                        turnFacts: actor.turnFacts(),
                     };
                 },
                 wait: async ({ input }) => {
