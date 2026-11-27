@@ -66,7 +66,7 @@ describe('rooms → entities + tasks / projects', () => {
         const store = openStore(file);
         try {
             expect(store.listProjects()).toEqual([
-                { id: 'proj:x', name: 'x', workspace: '~/git/x', modelKey: 'm1', createdAt: 1_000 },
+                { id: 'proj:x', name: 'x', workspace: '~/git/x', createdAt: 1_000 },
             ]);
 
             const [a, b] = store.listTasks();
@@ -180,7 +180,7 @@ describe('rooms → entities + tasks / projects', () => {
         try {
             // 单行组：id / 名字原样，类型取归属容器的类型（task-a 是任务 → task），
             // persona 落进 instructions，model_key 落成角色自己的模型
-            expect(store.listRoles()).toEqual([
+            expect(store.listBotProfiles()).toEqual([
                 expect.objectContaining({
                     id: 'bot-1',
                     type: 'task',
@@ -262,7 +262,7 @@ describe('rooms → entities + tasks / projects', () => {
 
         const store = openStore(file);
         try {
-            const roles = store.listRoles();
+            const roles = store.listBotProfiles();
             expect(roles).toHaveLength(1);
             // id 复用组内最早那行（会话键因此能原地改过去），名字用类型名
             expect(roles[0]).toMatchObject({
@@ -283,7 +283,7 @@ describe('rooms → entities + tasks / projects', () => {
             const columns = (store.db.prepare('PRAGMA table_info(session_state)').all() as Array<{ name: string }>).map(
                 (row) => row.name,
             );
-            expect(columns).toContain('bot_role_id');
+            expect(columns).toContain('bot_profile_id');
             expect(columns).not.toContain('bot_id');
             const names = tableNames(store);
             expect(names).toContain('bots_v0');
@@ -296,21 +296,29 @@ describe('rooms → entities + tasks / projects', () => {
 
 describe('占位模型键 none@none/none', () => {
     // 当年拿它表示「没配模型」，却被写进了库：界面上会拼成「none · none@none」看着像配好了，
-    // 发出去必失败。存量行要在打开库时清成空串，读的时候也要当空串（= 继续继承）。
-    it('存量行被清成空串，读出来也是空串', () => {
+    // 发出去必失败。房间级 model_key 已退役（2026-11-27），现在只清角色级的存量。
+    it('角色级存量行被清成 null', () => {
         const first = openStore(file);
-        first.saveRoom({ id: 'proj:x', type: 'project', data: { name: 'x' }, members: [], modelKey: 'none@none/none' });
-        // 直接写进库（绕过任何上层归一），模拟当年那段代码留下的行
-        first.db.prepare("UPDATE projects SET model_key = 'none@none/none' WHERE id = 'proj:x'").run();
+        first.upsertBotProfile({
+            id: 'bot-x',
+            type: 'project',
+            name: 'x',
+            color: '#000',
+            instructions: '',
+            primary: true,
+            modelKey: 'none@none/none',
+            reasoningEffort: null,
+            createdAt: 1,
+            updatedAt: 1,
+        });
         first.db.close();
 
         const second = openStore(file);
         try {
-            const row = second.db.prepare("SELECT model_key FROM projects WHERE id = 'proj:x'").get() as {
-                model_key: string;
+            const row = second.db.prepare("SELECT model_key FROM bot_profiles WHERE id = 'bot-x'").get() as {
+                model_key: string | null;
             };
-            expect(row.model_key).toBe('');
-            expect(second.listRooms().find((room) => room.id === 'proj:x')?.modelKey).toBe('');
+            expect(row.model_key).toBeNull();
         } finally {
             second.db.close();
         }

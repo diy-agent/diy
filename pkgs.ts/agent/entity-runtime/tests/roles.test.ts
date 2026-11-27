@@ -7,12 +7,12 @@
 //   2. 其余按建得早的在前，**同 createdAt 也不能抖动**（用 id 兜底，别依赖 Map/DB 顺序）
 //   3. 只出本类型的角色（project 房间不该看见 task 的席位）
 
-import { botOfRole, membersOfType } from '@diy-agent/protocol';
+import { botOfProfile, membersOfType } from '@diy-agent/protocol';
 import { describe, expect, it } from 'vitest';
 
-import type { BotRole, RoleConfig } from '../src/types';
+import type { BotProfile, BotProfileDefaults } from '../src/types';
 
-function role(overrides: Partial<BotRole> & { id: string }): BotRole {
+function role(overrides: Partial<BotProfile> & { id: string }): BotProfile {
     return {
         type: 'project',
         name: overrides.id,
@@ -54,19 +54,19 @@ describe('membersOfType（角色 → 成员名单）', () => {
     });
 });
 
-describe('botOfRole（角色 → 房间里的化身）', () => {
+describe('botOfProfile（角色 → 房间里的化身）', () => {
     it('人格取 instructions、模型 null 落成空串（房间侧靠 || 继续继承）', () => {
-        const bot = botOfRole(role({ id: 'r1', name: '主程', color: '#123', instructions: '工程视角' }));
+        const bot = botOfProfile(role({ id: 'r1', name: '主程', color: '#123', instructions: '工程视角' }));
         expect(bot).toMatchObject({ id: 'r1', name: '主程', color: '#123', persona: '工程视角', modelKey: '' });
     });
 
     it('角色自己选了模型就带出去（优先级：房间 > 角色 > 全局默认）', () => {
-        expect(botOfRole(role({ id: 'r1', modelKey: 'acc@p/m' })).modelKey).toBe('acc@p/m');
+        expect(botOfProfile(role({ id: 'r1', modelKey: 'acc@p/m' })).modelKey).toBe('acc@p/m');
     });
 });
 
-describe('botOfRole 的模型解析：override ?? 类型默认（2026-11-26 role_config）', () => {
-    const config: RoleConfig = {
+describe('botOfProfile 的模型解析：override ?? 类型默认（2026-11-26 role_config）', () => {
+    const config: BotProfileDefaults = {
         type: 'project',
         modelKey: 'acc@prov/type-default',
         reasoningEffort: 'low',
@@ -74,16 +74,16 @@ describe('botOfRole 的模型解析：override ?? 类型默认（2026-11-26 role
     };
 
     it('角色 modelKey 为 null 时走类型默认（几百个任务共享一套）', () => {
-        expect(botOfRole(role({ id: 'r1', modelKey: null }), config).modelKey).toBe('acc@prov/type-default');
+        expect(botOfProfile(role({ id: 'r1', modelKey: null }), config).modelKey).toBe('acc@prov/type-default');
     });
 
     it('角色填了 override 就覆盖类型默认', () => {
-        expect(botOfRole(role({ id: 'r1', modelKey: 'acc@prov/override' }), config).modelKey).toBe(
+        expect(botOfProfile(role({ id: 'r1', modelKey: 'acc@prov/override' }), config).modelKey).toBe(
             'acc@prov/override',
         );
     });
 
     it('没有类型默认时保持空串（继续继承房间 → 全局默认）', () => {
-        expect(botOfRole(role({ id: 'r1', modelKey: null })).modelKey).toBe('');
+        expect(botOfProfile(role({ id: 'r1', modelKey: null })).modelKey).toBe('');
     });
 });

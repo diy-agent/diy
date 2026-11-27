@@ -31,7 +31,7 @@ describe('标题栏活动指示器', () => {
         setDiy2Client({
             rooms: { list: async () => rooms },
             bots: { list: async () => [] },
-            roles: { list: async () => [] },
+            botProfiles: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
             subscribeActivity: (onFrame: (frame: never) => void) => {
                 listener = onFrame;

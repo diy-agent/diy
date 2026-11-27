@@ -30,8 +30,8 @@ import { useWb } from './AreaHost';
 import { ConversationAreaBar } from './ConversationAreaBar';
 import { ModelConfigView } from './ModelConfigView';
 import { area, definePage, defineView, type PageDef } from './model';
-import { RolesView } from './RolesView';
-import { rolesAddressOf, rolesTypeOf, SETTINGS_PAGE, SETTINGS_SECTIONS, sectionOf } from './settings';
+import { BotProfilesView } from './BotProfilesView';
+import { botTypeOf, botsAddressOf, SETTINGS_PAGE, SETTINGS_SECTIONS, sectionOf } from './settings';
 
 // ── 页模板：位置写死，尺寸可拖 ───────────────────────────────────────────────────
 //
@@ -132,12 +132,12 @@ export function pageFor(type: string): PageDef {
 /**
  * 对话：只留主区。导航 / 详情 / 资产各归自己的区域 —— 一个布局只该有一个真源。
  *
- * 房间头模型胶囊 /「角色」按钮点开的是二级配置面板（实体聊天包内），面板最后一步
- * 「全部设置 →」需要一个「去角色页」的动作：实体聊天包不认识设置页的地址，
+ * 房间头模型胶囊 /「机器人」按钮点开的是二级配置面板（实体聊天包内），面板最后一步
+ * 「全部设置 →」需要一个「去机器人页」的动作：实体聊天包不认识设置页的地址，
  * 所以由宿主（这一层）给 —— 这也让 `entity-chat` 保持「不知道自己被装在哪」。
  *
- * 深链带**房间类型**（`/settings/roles/task`）：从任务房间的面板点进去就落在那类角色上，
- * 项目房间落 `project`，其余类型由 `rolesAddressOf` 回落整表。
+ * 深链带**房间类型**（`/settings/bots/task`）：从任务房间的面板点进去就落在那类机器人上，
+ * 项目房间落 `project`，其余类型由 `botsAddressOf` 回落整表。
  */
 function ChatBody() {
     const room = useSelectedRoom();
@@ -147,14 +147,14 @@ function ChatBody() {
                 sidebar={false}
                 taskPanel={false}
                 bar="host"
-                onManageRoles={() => navigate(rolesAddressOf(room?.type ?? ''))}
+                onManageRoles={() => navigate(botsAddressOf(room?.type ?? ''))}
             />
         </div>
     );
 }
 
 /**
- * 设置页的内容：按地址第二段换（`/settings/model` ↔ `/settings/roles`）。
+ * 设置页的内容：按地址第二段换（`/settings/model` ↔ `/settings/bots`）。
  *
  * 段在**地址**上而不是组件状态里：切段 = 导航，于是后退 / 刷新 / 贴链接全都不用额外写。
  * 顶上那排是段的入口（两个 tab），不是新壳 —— 骨架仍然是设置页那一个中心区域。
@@ -180,11 +180,11 @@ function SettingsBody() {
 
             </div>
             <div className="min-h-0 flex-1">
-                {section === 'roles' ? (
-                    // `key` 按地址重置：从任务房间（`roles:task`）切到项目房间（`roles:project`）
-                    // 时组件类型不变、state 会留下 —— 不加 key 就会「进了 project 还选着 task 的角色」。
+                {section === 'bots' ? (
+                    // `key` 按地址重置：从任务房间（`bots:task`）切到项目房间（`bots:project`）
+                    // 时组件类型不变、state 会留下 —— 不加 key 就会「进了 project 还选着 task 的机器人」。
                     // 同一地址（用户自己在左栏点选）不重挂载，选中不被地址抢回去。
-                    <RolesView key={address.id} initialType={rolesTypeOf(address.id)} />
+                    <BotProfilesView key={address.id} initialType={botTypeOf(address.id)} />
                 ) : (
                     <ModelConfigView />
                 )}

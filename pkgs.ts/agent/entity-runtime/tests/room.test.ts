@@ -23,7 +23,6 @@ function taskSpec(): Room {
         name: '任务',
         data: { status: 'open' },
         members: [],
-        modelKey: 'm-room',
     };
 }
 
@@ -81,7 +80,7 @@ describe('RoomActor', () => {
         expect(new Set(turns).size).toBe(1);
     });
 
-    it('成员覆盖：模型和人格按 成员 > 房间 > bot 解析', () => {
+    it('人格按 成员 > bot 覆盖；模型恒等于 bot 自己的（2026-11-27 裁：模型真源 = 人设）', () => {
         const h = makeRoom({
             members: [
                 { botId: BOT_A.id, primary: true, modelKey: 'm-member', persona: '借用视角' },
@@ -89,22 +88,20 @@ describe('RoomActor', () => {
             ],
         });
 
-        expect(h.room.member(BOT_A.id)?.modelKey).toBe('m-member');
+        // 成员/房间的 modelKey 已退役：模型只认角色（bot）自己的
+        expect(h.room.member(BOT_A.id)?.modelKey).toBe('m-default');
         expect(h.room.member(BOT_A.id)?.persona).toBe('借用视角');
-        // B 没有成员覆盖 → 用房间默认
-        expect(h.room.member(BOT_B.id)?.modelKey).toBe('m-room');
+        expect(h.room.member(BOT_B.id)?.modelKey).toBe('m-default');
         expect(h.room.member(BOT_B.id)?.persona).toBe('产品视角');
     });
 
-    it("空的 modelKey（''）不算覆盖 —— 继续往下继承，不拿空串去发请求", () => {
-        // `??` 只跳过 null/undefined：一行 `modelKey: ''` 会把后面的真实值挡掉。
-        // 而空串是**会落库**的（「这个成员没选过模型」），所以必须按「没填」处理。
+    it("空的 modelKey（''）不再有继承链 —— 模型恒等于 bot 自己的", () => {
         const h = makeRoom({
             modelKey: 'm-room',
             members: [{ botId: BOT_A.id, primary: true, modelKey: '' }],
         });
 
-        expect(h.room.member(BOT_A.id)?.modelKey).toBe('m-room');
+        expect(h.room.member(BOT_A.id)?.modelKey).toBe('m-default');
     });
 
     it('cancel：在跑的会话被中止，投递仍算已送达（失败体现在 bot 的回复上）', async () => {
@@ -144,7 +141,7 @@ describe('RoomActor', () => {
         // 重启后的待续跑尤其 —— 房间看着没事，其实排着队
         const store = openStore(':memory:');
         for (const [index, bot] of [BOT_A, BOT_B].entries()) {
-            store.upsertRole({
+            store.upsertBotProfile({
                 id: bot.id,
                 type: 'project',
                 name: bot.name,
@@ -203,7 +200,7 @@ describe('RoomActor', () => {
     it('崩溃恢复：未送达的投递重新投一遍', async () => {
         const store = openStore(':memory:');
         for (const [index, bot] of [BOT_A, BOT_B].entries()) {
-            store.upsertRole({
+            store.upsertBotProfile({
                 id: bot.id,
                 type: 'project',
                 name: bot.name,
@@ -251,7 +248,7 @@ describe('RoomActor', () => {
         // 会在第一个还没收尾时就 push 进 started，这一条就红了（2026-11-25 的那次一屏 429）。
         const store = openStore(':memory:');
         for (const [index, bot] of [BOT_A, BOT_B].entries()) {
-            store.upsertRole({
+            store.upsertBotProfile({
                 id: bot.id,
                 type: 'project',
                 name: bot.name,

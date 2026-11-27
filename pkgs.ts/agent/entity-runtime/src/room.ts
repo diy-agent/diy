@@ -18,7 +18,7 @@
 
 import type { ModelMessage, ToolSet } from 'ai';
 
-import { effectiveModelOf, effectivePersonaOf, mentionsOf, primaryMemberOf } from '@diy-agent/protocol';
+import { effectivePersonaOf, mentionsOf, primaryMemberOf } from '@diy-agent/protocol';
 import type { ContextSession } from '@diy-agent/context';
 
 import { AskGate, askAnswerHeading, describeAnswer, type AnswerOutcome, type AskResult } from './ask';
@@ -752,21 +752,14 @@ export class RoomActor {
      * 所有房间，跟着某一间房改名字就等于把别的房里的助手一起改了。反过来说，任务标题
      * 和助手名字现在是两个独立概念 —— 这也是角色页存在的意义。
      */
-    update(patch: { modelKey?: string; data?: Record<string, unknown> }): void {
-        if (patch.modelKey !== undefined) {
-            this.deps.spec.modelKey = patch.modelKey;
-            // 已经建好的 session 记着自己的 modelKey：不推下去，UI 上换模型就是死开关
-            for (const bot of this.members()) {
-                this.sessions.get(bot.id)?.setModelKey(effectiveModelOf(this.deps.spec, bot));
-            }
-        }
+    update(patch: { data?: Record<string, unknown> }): void {
         if (patch.data !== undefined) {
             for (const [key, value] of Object.entries(patch.data)) {
                 if (value === null) delete this.deps.spec.data[key];
                 else this.deps.spec.data[key] = value;
             }
         }
-        // 改名 / 换模型 / 改 data 都要落库，否则重启后回到旧值
+        // 改名 / 改 data 都要落库，否则重启后回到旧值
         this.deps.store.saveRoom(this.deps.spec);
     }
 
@@ -868,11 +861,7 @@ export class RoomActor {
     }
 
     private inRoom(bot: Bot): Bot {
-        return {
-            ...bot,
-            persona: effectivePersonaOf(this.deps.spec, bot),
-            modelKey: effectiveModelOf(this.deps.spec, bot),
-        };
+        return { ...bot, persona: effectivePersonaOf(this.deps.spec, bot) };
     }
 
     /**

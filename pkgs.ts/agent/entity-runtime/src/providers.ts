@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { bodyTransformFor, headersFor } from '@diy-agent/llm-provider/strategies';
 import {
+    availableProviders,
     effectiveMaxOutputTokens,
     listAccountStates,
     loadCatalog,
@@ -265,29 +266,31 @@ export function modelProviders(env: NodeJS.ProcessEnv = process.env): ProviderVi
     if (home === undefined) return [];
     const accountsByProvider = new Map(listAccountStates(home).map((item) => [item.providerId, item.accounts]));
     const grouped = new Map<string, ProviderView>();
-    for (const entry of loadCatalog(home, { env })) {
-        let view = grouped.get(entry.providerId);
-        if (view === undefined) {
-            view = {
-                id: entry.providerId,
-                name: entry.providerId,
-                api: entry.baseURL,
-                ...(entry.npm === undefined ? {} : { npm: entry.npm }),
-                accounts: (accountsByProvider.get(entry.providerId) ?? []).map((account) => ({
-                    name: account.name,
-                    configured: account.configured,
-                })),
-                models: [],
-            };
-            grouped.set(entry.providerId, view);
-        }
-        view.models.push({
-            id: entry.modelId,
-            name: entry.name,
-            ...(entry.contextWindow === undefined ? {} : { contextWindow: entry.contextWindow }),
-            ...(entry.maxOutputTokens === undefined ? {} : { maxOutputTokens: entry.maxOutputTokens }),
-            ...(entry.cost === undefined ? {} : { cost: entry.cost }),
-            ...(entry.reasoning === undefined ? {} : { reasoning: entry.reasoning }),
+    /**
+     * 用 `availableProviders`（**含被 filter 关掉的**）而不是 `loadCatalog`（只含启用的）：
+     * 模型面板要给每一行画「启用」开关 —— 关掉的模型必须还看得见，否则关完就再也打不开了。
+     */
+    for (const provider of availableProviders(home, { env })) {
+        // 与能不能真发请求同一判据：没 baseURL 或没配账号就不进「现在能选什么」
+        if (provider.api === undefined) continue;
+        const accounts = accountsByProvider.get(provider.providerId) ?? [];
+        if (accounts.length === 0) continue;
+        grouped.set(provider.providerId, {
+            id: provider.providerId,
+            name: provider.name,
+            api: provider.api,
+            ...(provider.npm === undefined ? {} : { npm: provider.npm }),
+            accounts: accounts.map((account) => ({ name: account.name, configured: account.configured })),
+            models: provider.models.map((model) => ({
+                id: model.id,
+                name: model.name,
+                ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+                ...(model.maxOutputTokens === undefined ? {} : { maxOutputTokens: model.maxOutputTokens }),
+                ...(model.cost === undefined ? {} : { cost: model.cost }),
+                ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
+                ...(model.capabilities === undefined ? {} : { capabilities: model.capabilities }),
+                enabled: model.enabled,
+            })),
         });
     }
     return [...grouped.values()].sort((a, b) => a.id.localeCompare(b.id));

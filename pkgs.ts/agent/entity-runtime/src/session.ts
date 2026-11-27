@@ -636,6 +636,8 @@ export class BotSession {
             for await (const event of run({
                 bot: this.deps.bot,
                 modelKey: this.modelKey,
+                // 每步读一次：切模型后当前轮的下一次 LLM 请求就生效（不等下一轮）
+                getModelKey: () => this.modelKey,
                 messages,
                 turnId: turn.turnId,
                 // provider 的会话亲和键 = **bot**（不是轮次）：同一实体跨轮复用同一会话，

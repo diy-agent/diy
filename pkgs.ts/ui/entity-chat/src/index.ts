@@ -74,11 +74,11 @@ export type { RoomDialogs } from './useRoomDialogs';
 export { modelConfig } from './modelConfig';
 
 /**
- * 角色的写面（设置页「角色」那一段专用）—— 与 `modelConfig` 同一个理由：
- * 成员是**从角色表派生**的，改角色 = 该类型所有房间同时变，它也需要一个写入口。
+ * 机器人配置的写面（设置页「机器人」那一段专用）—— 与 `modelConfig` 同一个理由：
+ * 成员是**从配置表派生**的，改配置 = 该类型所有房间同时变，它也需要一个写入口。
  */
-export { roles } from './roles';
-export type { BotRole, RoleInput } from './roles';
+export { botProfiles } from './botProfiles';
+export type { BotProfile, BotProfileInput } from './botProfiles';
 export type {
     ModelConfigAccount,
     ModelConfigModel,
@@ -101,7 +101,8 @@ export {
     useModelSetup,
     usePendingAskOf,
     useProviders,
-    useRoles,
+    useBotProfileDefaults,
+    useBotProfiles,
     useRooms,
     useSelectedRoom,
 } from './store';

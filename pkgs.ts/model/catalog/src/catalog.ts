@@ -15,6 +15,7 @@ import { isEmptyDocument } from "./errors.js";
 import { CatalogError } from "./errors.js";
 import type {
     CatalogOptions,
+    ModelCatalogCapabilities,
     ModelCatalogCost,
     ModelCatalogEntry,
     ModelCatalogReasoning,
@@ -45,6 +46,16 @@ interface RawModelOverride {
     readonly limit?: { readonly context?: number; readonly output?: number };
     readonly cost?: RawCost;
     readonly reasoning_options?: readonly RawReasoningOption[];
+    /** 能力覆盖（与 spec 层同名字段；缺省 = 不覆盖） */
+    readonly attachment?: boolean;
+    readonly reasoning?: boolean;
+    readonly tool_call?: boolean;
+    readonly structured_output?: boolean;
+    readonly temperature?: boolean;
+    readonly open_weights?: boolean;
+    readonly release_date?: string;
+    readonly last_updated?: string;
+    readonly modalities?: { readonly input?: readonly string[]; readonly output?: readonly string[] };
 }
 
 interface RawProviderConfig {
@@ -69,6 +80,16 @@ interface RawSpecModel {
     readonly limit?: { readonly context?: number; readonly output?: number };
     readonly cost?: RawCost;
     readonly reasoning_options?: readonly RawReasoningOption[];
+    /** 能力标记（models.dev 同名字段；缺省 = 上游没声明，不等于「不支持」） */
+    readonly attachment?: boolean;
+    readonly reasoning?: boolean;
+    readonly tool_call?: boolean;
+    readonly structured_output?: boolean;
+    readonly temperature?: boolean;
+    readonly open_weights?: boolean;
+    readonly release_date?: string;
+    readonly last_updated?: string;
+    readonly modalities?: { readonly input?: readonly string[]; readonly output?: readonly string[] };
 }
 
 interface RawSpecProvider {
@@ -228,6 +249,8 @@ export interface AvailableModel {
     readonly maxOutputTokens?: number;
     readonly cost?: ModelCatalogCost;
     readonly reasoning?: ModelCatalogReasoning;
+    /** 能力标记（视觉 / 工具 / 推理 / 附件 / 结构化输出）；缺省 = 上游没声明 */
+    readonly capabilities?: ModelCatalogCapabilities;
     /** 过了 filter 就会真进目录；false = 在 spec 里但被关掉了 */
     readonly enabled: boolean;
 }
@@ -422,11 +445,62 @@ function reasoningOf(pair: ModelPair): ModelCatalogReasoning | undefined {
     return undefined;
 }
 
+/**
+ * 能力标记：models.dev 的布尔字段原样搬；vision 从 `modalities.input` 推。
+ * 五项全没声明 → 缺省（未知），**别把 undefined 变 false 冒充「不支持」**。
+ * override 层可覆盖 spec 层（与 limit / cost 同一语义）。
+ */
+function capabilitiesOf(pair: ModelPair): ModelCatalogCapabilities | undefined {
+    const spec = pair.spec;
+    const override = pair.override;
+    if (spec === undefined && override === undefined) return undefined;
+    const pick = (
+        key: "attachment" | "reasoning" | "tool_call" | "structured_output" | "temperature" | "open_weights",
+    ): boolean | undefined => {
+        const raw = override?.[key] ?? spec?.[key];
+        return typeof raw === "boolean" ? raw : undefined;
+    };
+    const str = (a: string | undefined, b: string | undefined): string | undefined =>
+        typeof a === "string" && a !== "" ? a : typeof b === "string" && b !== "" ? b : undefined;
+    const inputs = override?.modalities?.input ?? spec?.modalities?.input;
+    const outputs = override?.modalities?.output ?? spec?.modalities?.output;
+    const vision = Array.isArray(inputs) ? inputs.includes("image") : undefined;
+    const values = {
+        vision,
+        toolCall: pick("tool_call"),
+        reasoning: pick("reasoning"),
+        attachment: pick("attachment"),
+        structuredOutput: pick("structured_output"),
+        temperature: pick("temperature"),
+        openWeights: pick("open_weights"),
+        inputs: Array.isArray(inputs) ? inputs : undefined,
+        outputs: Array.isArray(outputs) ? outputs : undefined,
+        releaseDate: str(override?.release_date, spec?.release_date),
+        lastUpdated: str(override?.last_updated, spec?.last_updated),
+    };
+    // 全未知 ⇒ 不产 capabilities（区别于「全是 false / 空数组」）
+    if (Object.values(values).every((value) => value === undefined)) return undefined;
+    return {
+        vision: values.vision ?? false,
+        toolCall: values.toolCall ?? false,
+        reasoning: values.reasoning ?? false,
+        attachment: values.attachment ?? false,
+        structuredOutput: values.structuredOutput ?? false,
+        temperature: values.temperature ?? false,
+        openWeights: values.openWeights ?? false,
+        inputs: values.inputs ?? [],
+        outputs: values.outputs ?? [],
+        ...(values.releaseDate === undefined ? {} : { releaseDate: values.releaseDate }),
+        ...(values.lastUpdated === undefined ? {} : { lastUpdated: values.lastUpdated }),
+    };
+}
+
 function modelViewOf(pair: ModelPair): Omit<AvailableModel, "enabled"> {
     const contextWindow = pair.override?.limit?.context ?? pair.spec?.limit?.context;
     const maxOutput = pair.override?.limit?.output ?? pair.spec?.limit?.output;
     const cost = pair.override?.cost !== undefined ? costOf(pair.override.cost) : costOf(pair.spec?.cost);
     const reasoning = reasoningOf(pair);
+    const capabilities = capabilitiesOf(pair);
     return {
         id: pair.modelId,
         name: pair.override?.name ?? pair.spec?.name ?? pair.modelId,
@@ -434,6 +508,7 @@ function modelViewOf(pair: ModelPair): Omit<AvailableModel, "enabled"> {
         ...(typeof maxOutput === "number" ? { maxOutputTokens: maxOutput } : {}),
         ...(cost === undefined ? {} : { cost }),
         ...(reasoning === undefined ? {} : { reasoning }),
+        ...(capabilities === undefined ? {} : { capabilities }),
     };
 }
 
@@ -453,6 +528,7 @@ function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined
             ...(view.maxOutputTokens === undefined ? {} : { maxOutputTokens: view.maxOutputTokens }),
             ...(view.cost === undefined ? {} : { cost: view.cost }),
             ...(view.reasoning === undefined ? {} : { reasoning: view.reasoning }),
+            ...(view.capabilities === undefined ? {} : { capabilities: view.capabilities }),
         });
     }
     return out;

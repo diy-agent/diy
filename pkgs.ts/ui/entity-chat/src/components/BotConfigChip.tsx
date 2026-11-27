@@ -12,8 +12,8 @@ import * as React from 'react';
 
 import type { Room } from '../model';
 import { modelOfKey } from '../models';
-import { roles } from '../roles';
-import { useDefaultModelKey, useProviders, useRoles } from '../store';
+import { botProfiles } from '../botProfiles';
+import { useBotProfiles, useDefaultModelKey, useProviders } from '../store';
 import { EffortButtons, useEffortOptions } from './EffortButtons';
 import { Modal } from './Dialogs';
 import { ModelSelectPanel } from './ModelSelectPanel';
@@ -23,7 +23,7 @@ function typeLabel(type: string): string {
 }
 
 export function BotConfigChip({ room, onManageRoles }: { room: Room; onManageRoles?: () => void }) {
-    const allRoles = useRoles();
+    const allRoles = useBotProfiles();
     const defaultKey = useDefaultModelKey();
     // 该类型 primary 优先的角色 —— chip 改的是「这类 bot 的全局」，不是某个房间私有 bot
     const role = allRoles.find((item) => item.type === room.type && item.primary) ?? allRoles.find((item) => item.type === room.type);
@@ -44,7 +44,7 @@ export function BotConfigChip({ room, onManageRoles }: { room: Room; onManageRol
             setBusy(true);
             setError(undefined);
             try {
-                await roles.update({ id: role.id, ...patch });
+                await botProfiles.update({ id: role.id, ...patch });
             } catch (cause) {
                 setError(cause instanceof Error ? cause.message : String(cause));
             } finally {

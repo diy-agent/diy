@@ -46,8 +46,6 @@ export interface Room {
     data: Record<string, unknown>;
     /** 成员：身份 + 本房间的覆盖 */
     members: RoomMember[];
-    /** 房间默认模型（成员没覆盖时用它） */
-    modelKey: string;
 }
 
 /**
@@ -57,7 +55,7 @@ export interface Room {
  * personas 全同 —— 那个「全局身份」既没被复用、又要每建一个容器复制一份。角色是类型级
  * 的，新建任务自动出现在新任务房间里，一个房间一份会话（键 `(entity_id, 角色 id)`）。
  */
-export interface BotRole {
+export interface BotProfile {
     id: string;
     /** 归属的工作对象类型：project / task / 任意自定义（与 Room.type 同一个词表） */
     type: string;
@@ -88,8 +86,8 @@ export interface BotRole {
  * bot_roles 上的 model_key / reasoning_effort 只在个别 bot 需要 override 时才填。
  * 实际值 = bot 的 override ?? 类型默认 ?? 房间 ?? 全局默认。
  */
-export interface RoleConfig {
-    /** 工作对象类型：project / task / 任意自定义（与 BotRole.type 同一个词表） */
+export interface BotProfileDefaults {
+    /** 工作对象类型：project / task / 任意自定义（与 BotProfile.type 同一个词表） */
     type: string;
     /** 模型限定名 `providerId/modelId`；null = 没配，继续继承房间 → 全局默认 */
     modelKey: string | null;
@@ -705,6 +703,22 @@ export interface ModelReasoningView {
     defaultEffort: string;
 }
 
+/** 模型能力标记（表格「能力」列）；缺省 = 上游没声明，不是「不支持」 */
+export interface ModelCapabilitiesView {
+    vision: boolean;
+    toolCall: boolean;
+    reasoning: boolean;
+    attachment: boolean;
+    structuredOutput: boolean;
+    temperature: boolean;
+    openWeights: boolean;
+    /** 支持的输入 / 输出模态（text / image / audio / video / pdf …） */
+    inputs: readonly string[];
+    outputs: readonly string[];
+    releaseDate?: string;
+    lastUpdated?: string;
+}
+
 /** 目录里的一个模型 */
 export interface ModelCatalogModel {
     id: string;
@@ -714,6 +728,9 @@ export interface ModelCatalogModel {
     maxOutputTokens?: number;
     cost?: ModelCostView;
     reasoning?: ModelReasoningView;
+    capabilities?: ModelCapabilitiesView;
+    /** 在目录里启用了吗（`model.yaml` 的 filter 结果）；缺省 = 是 */
+    enabled?: boolean;
 }
 
 /** 一个 provider 的视图（**永不含 key 值**：账号只有名字与「填没填」） */

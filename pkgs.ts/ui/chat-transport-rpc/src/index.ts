@@ -23,8 +23,8 @@ import type {
 
 import type {
     ActivityFrame,
-    BotRole,
-    RoleConfig,
+    BotProfile,
+    BotProfileDefaults,
     JobRunRow,
     ModelCatalogModel,
     ModelCatalogProvider,
@@ -217,19 +217,19 @@ export class RpcChatClient implements ChatClient {
      * 语义：成员是**从角色表派生**的（2026-11-24）—— 没有再“拉一个 bot 进房间”这个动作，
      * 所以这里没有 addMember —— 改角色 = 该类型所有房间同时变。
      */
-    readonly roles = {
-        list: (): Promise<BotRole[]> => this.call('roles.list', {}),
-        create: (input: RoleInput & { type: string; name: string }): Promise<BotRole> =>
-            this.call('roles.create', input),
-        update: (input: RoleInput & { id: string }): Promise<BotRole> => this.call('roles.update', input),
-        remove: (id: string): Promise<unknown> => this.call('roles.remove', { id }),
+    readonly botProfiles = {
+        list: (): Promise<BotProfile[]> => this.call('botProfiles.list', {}),
+        create: (input: RoleInput & { type: string; name: string }): Promise<BotProfile> =>
+            this.call('botProfiles.create', input),
+        update: (input: RoleInput & { id: string }): Promise<BotProfile> => this.call('botProfiles.update', input),
+        remove: (id: string): Promise<unknown> => this.call('botProfiles.remove', { id }),
         config: {
-            list: (): Promise<RoleConfig[]> => this.call('roles.config.list', {}),
+            list: (): Promise<BotProfileDefaults[]> => this.call('botProfiles.config.list', {}),
             set: (input: {
                 type: string;
                 modelKey?: string | null;
                 reasoningEffort?: string | null;
-            }): Promise<RoleConfig> => this.call('roles.config.set', input),
+            }): Promise<BotProfileDefaults> => this.call('botProfiles.config.set', input),
         },
     };
 

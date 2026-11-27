@@ -103,5 +103,5 @@ export {
     type ProviderView,
 } from './providers';
 export { factsOf, replay, STOP_SCENARIOS, type StopReplay, type StopScenario } from './stop-scenarios';
-export type { AgentEvent, Author, Bot, BotRole, Delivery, Room, RoomMember, RoomEvent, InboxMode, Item } from './types';
+export type { AgentEvent, Author, Bot, BotProfile, Delivery, Room, RoomMember, RoomEvent, InboxMode, Item } from './types';
 export { dayOf, renderTaskDoc, taskDirOf } from './task-dir';

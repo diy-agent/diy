@@ -40,15 +40,15 @@ import {
 import type { CompactEvent, RoomEvent } from '@diy-agent/entity-runtime';
 import { ChannelServerBinding, type HandlersOf } from '@diy-agent/rpc';
 import { diy2Api } from '@diy-agent/protocol';
-import { botOfRole, membersOfType } from '@diy-agent/protocol';
+import { botOfProfile, membersOfType } from '@diy-agent/protocol';
 import type {
     ActivityFrame,
     AskAnswer,
     AskQuestionAnswer,
     Author,
     Bot,
-    BotRole,
-    RoleConfig,
+    BotProfile,
+    BotProfileDefaults,
     JobRunRow,
     ModelConfigSnapshot,
     Room,
@@ -116,6 +116,7 @@ function modelConfigView(): ModelConfigSnapshot {
                 ...(model.maxOutputTokens === undefined ? {} : { maxOutputTokens: model.maxOutputTokens }),
                 ...(model.cost === undefined ? {} : { cost: model.cost }),
                 ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
+                ...(model.capabilities === undefined ? {} : { capabilities: model.capabilities }),
                 enabled: model.enabled,
             })),
         })),
@@ -304,7 +305,7 @@ function actorOf(spec: Room): RoomActor {
             spec,
             store,
             // 房间向所有角色要身份：成员名单里只有该类型的角色，多给无害（members 按 spec 过滤）
-            bots: () => store.listRoles().map((role) => botOfRole(role, store.getRoleConfig(role.type))),
+            bots: () => store.listBotProfiles().map((role) => botOfProfile(role, store.getBotProfileDefaults(role.type))),
             emit: (event) => {
                 broadcast(spec.id, event);
                 // turn 起停 = 全实例「谁在跑」的开销点：标题栏那颗图标与侧栏每一行都靠这个
@@ -410,7 +411,7 @@ function roomTitleOf(room: Room): string {
  * 老库的 35 个 bot 已由 db.ts 的 migrateBots 折成角色，不会走到这里。
  */
 function seed(): void {
-    if (store.listRoles().length === 0) {
+    if (store.listBotProfiles().length === 0) {
         newRole({
             type: 'project',
             name: '主程',
@@ -430,21 +431,18 @@ function seed(): void {
             type: 'project',
             data: { name: 'diy', dir: '~/git/diy/diy' },
             members: membersOf('project'),
-            modelKey: persistedDefaultModelKey(),
         },
         {
             id: 'proj:cops',
             type: 'project',
             data: { name: 'cops', dir: '~/git/cops' },
             members: membersOf('project'),
-            modelKey: persistedDefaultModelKey(),
         },
         {
             id: 'task:t-001',
             type: 'task',
             data: { title: '任务树与多会话', dir: '~/git/diy/diy', projectId: 'proj:diy', status: 'open' },
             members: membersOf('task'),
-            modelKey: persistedDefaultModelKey(),
         },
     ];
 
@@ -559,11 +557,11 @@ function newRole(input: {
     modelKey?: string | null;
     reasoningEffort?: string | null;
     primary?: boolean;
-}): BotRole {
-    const roles = store.listRoles();
+}): BotProfile {
+    const roles = store.listBotProfiles();
     const existing = roles.filter((role) => role.type === input.type);
     const now = Date.now();
-    const role: BotRole = {
+    const role: BotProfile = {
         id: newEntityId(),
         type: input.type,
         name: input.name,
@@ -577,13 +575,13 @@ function newRole(input: {
         createdAt: now,
         updatedAt: now,
     };
-    store.upsertRole(role);
+    store.upsertBotProfile(role);
     return role;
 }
 
 /** 一类房间的成员名单：**派生的**，不看 room_members（见 protocol 的 membersOfType） */
 function membersOf(type: string): RoomMember[] {
-    return membersOfType(store.listRoles(), type);
+    return membersOfType(store.listBotProfiles(), type);
 }
 
 /**
@@ -799,8 +797,6 @@ export async function createDiy2App(opts: {
                     if (type === 'task' && (typeof projectId !== 'string' || roomOf(projectId) === undefined)) {
                         throw new Error('task 需要有效的 data.projectId');
                     }
-                    // `??` 挡不住空串（界面上的"没选"可能就是 ''）：空串按没填处理
-                    const modelKey = input.modelKey || persistedDefaultModelKey();
                     const id = newEntityId();
                     // 成员是从角色表**派生**的：新任务建出来就自动有「任务助手」这类角色。
                     // 类型是开放字符串，第一次见到某个类型时补一个默认角色 —— 否则新房间
@@ -815,7 +811,6 @@ export async function createDiy2App(opts: {
                                 ? { status: 'open', title: input.name, ...input.data }
                                 : { name: input.name, ...input.data },
                         members: membersOf(type),
-                        modelKey,
                     };
                     store.setMembers(id, spec.members);
                     actorOf(spec);
@@ -827,7 +822,6 @@ export async function createDiy2App(opts: {
                     const namePatch =
                         input.name === undefined ? {} : { [actor.spec.type === 'task' ? 'title' : 'name']: input.name };
                     actor.update({
-                        ...(input.modelKey === undefined ? {} : { modelKey: input.modelKey }),
                         ...(input.name === undefined && input.data === undefined
                             ? {}
                             : { data: { ...namePatch, ...input.data } }),
@@ -862,15 +856,15 @@ export async function createDiy2App(opts: {
                     return { ok: true, seq: store.readSeqOf(input.id) ?? input.seq };
                 },
             },
-            roles: {
-                list: async () => store.listRoles(),
+            botProfiles: {
+                list: async () => store.listBotProfiles(),
                 create: async ({ input }) => {
                     const type = input.type.trim();
                     const name = input.name.trim();
                     if (type === '') throw new Error('type required');
                     if (name === '') throw new Error('name required');
                     // 同类型重名 = 界面上的两行分不清（@ 补全按名字选人）
-                    if (store.listRoles().some((role) => role.type === type && role.name === name)) {
+                    if (store.listBotProfiles().some((role) => role.type === type && role.name === name)) {
                         throw new Error(`「${type}」已经有叫「${name}」的角色`);
                     }
                     const role = newRole({ ...input, type, name });
@@ -878,11 +872,11 @@ export async function createDiy2App(opts: {
                     return role;
                 },
                 update: async ({ input }) => {
-                    const role = store.listRoles().find((entry) => entry.id === input.id);
+                    const role = store.listBotProfiles().find((entry) => entry.id === input.id);
                     if (role === undefined) throw new Error(`角色不存在：${input.id}`);
                     const name = input.name === undefined ? role.name : input.name.trim();
                     if (name === '') throw new Error('name required');
-                    const next: BotRole = {
+                    const next: BotProfile = {
                         ...role,
                         name,
                         ...(input.color === undefined ? {} : { color: input.color }),
@@ -897,26 +891,26 @@ export async function createDiy2App(opts: {
                         ...(input.primary === undefined ? {} : { primary: input.primary }),
                         updatedAt: Date.now(),
                     };
-                    store.upsertRole(next);
+                    store.upsertBotProfile(next);
                     refreshRoomsOf(next.type);
                     return next;
                 },
                 remove: async ({ input }) => {
-                    const role = store.listRoles().find((entry) => entry.id === input.id);
+                    const role = store.listBotProfiles().find((entry) => entry.id === input.id);
                     if (role === undefined) return { ok: true };
                     // 每类至少留一个：成员是派生的，没有「再加入房间」这回事，
                     // 删光了那类房间就永远没人应答（只能去角色页重建 + 重启才能回到房间）
-                    if (store.listRoles().filter((entry) => entry.type === role.type).length <= 1) {
+                    if (store.listBotProfiles().filter((entry) => entry.type === role.type).length <= 1) {
                         throw new Error(`「${role.type}」只剩这一个角色，删了那类房间就没人应答`);
                     }
-                    store.deleteRole(role.id);
+                    store.deleteBotProfile(role.id);
                     refreshRoomsOf(role.type);
                     return { ok: true };
                 },
                 config: {
-                    list: async () => store.listRoleConfigs(),
+                    list: async () => store.listBotProfileDefaults(),
                     set: async ({ input }) => {
-                        const config: RoleConfig = {
+                        const config: BotProfileDefaults = {
                             type: input.type.trim(),
                             modelKey: input.modelKey === undefined || input.modelKey === '' ? null : input.modelKey,
                             reasoningEffort:
@@ -925,7 +919,7 @@ export async function createDiy2App(opts: {
                                     : input.reasoningEffort,
                             updatedAt: Date.now(),
                         };
-                        store.setRoleConfig(config);
+                        store.setBotProfileDefaults(config);
                         refreshRoomsOf(config.type);
                         return config;
                     },

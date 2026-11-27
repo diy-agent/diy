@@ -20,10 +20,9 @@ import {
     ConfirmDeleteDialog,
     CreateProjectDialog,
     CreateTaskDialog,
-    ModelDialog,
     SettingsDialog,
 } from './components/Dialogs';
-import { roomTitle, type Room } from './model';
+import type { Room } from './model';
 import { actions, useDefaultModelKey, useRooms } from './store';
 
 type Dialog =
@@ -41,8 +40,6 @@ export interface RoomDialogs {
     openTask: (projectId: string) => void;
     openSettings: () => void;
     requestDelete: (room: Room) => void;
-    /** 换某个房间的模型（房间级覆盖）。房间头胶囊改成开只读配置面板后 UI 暂不触发，能力保留给宿主 */
-    openModel: (roomId: string) => void;
 }
 
 /**
@@ -53,17 +50,14 @@ export function useRoomDialogs(): RoomDialogs {
     const rooms = useRooms();
     const defaultModelKey = useDefaultModelKey();
     const [dialog, setDialog] = React.useState<Dialog>(null);
-    const [modelTarget, setModelTarget] = React.useState<string | null>(null);
 
     const openProject = React.useCallback(() => setDialog({ kind: 'project' }), []);
     const openTask = React.useCallback((projectId: string) => setDialog({ kind: 'task', projectId }), []);
     const openSettings = React.useCallback(() => setDialog({ kind: 'settings' }), []);
     const requestDelete = React.useCallback((target: Room) => setDialog({ kind: 'delete', roomId: target.id }), []);
-    const openModel = React.useCallback((roomId: string) => setModelTarget(roomId), []);
 
     const taskProject = dialog?.kind === 'task' ? rooms.find((item) => item.id === dialog.projectId) : undefined;
     const deleteTarget = dialog?.kind === 'delete' ? rooms.find((item) => item.id === dialog.roomId) : undefined;
-    const modelRoom = modelTarget === null ? undefined : rooms.find((item) => item.id === modelTarget);
 
     const element = (
         <>
@@ -99,20 +93,10 @@ export function useRoomDialogs(): RoomDialogs {
                     onClose={() => setDialog(null)}
                 />
             )}
-            {modelTarget !== null && (
-                <ModelDialog
-                    title={`「${modelRoom === null || modelRoom === undefined ? '' : roomTitle(modelRoom)}」的模型`}
-                    value={modelRoom?.modelKey ?? defaultModelKey}
-                    onChange={(key) => {
-                        if (modelTarget !== null) actions.setRoomModel(modelTarget, key);
-                    }}
-                    onClose={() => setModelTarget(null)}
-                />
-            )}
         </>
     );
 
-    return { element, openProject, openTask, openSettings, requestDelete, openModel };
+    return { element, openProject, openTask, openSettings, requestDelete };
 }
 
 /**

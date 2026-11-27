@@ -53,9 +53,9 @@ async function bootstrap(): Promise<typeof import('../src/store')> {
             },
             update: async () => ({}),
         },
-        roles: {
+        botProfiles: {
             list: async () => {
-                calls.push('/roles');
+                calls.push('/botProfiles');
                 return [];
             },
         },
@@ -126,7 +126,7 @@ describe('房间列表轮询', () => {
                     throw new Error('boom');
                 },
             },
-            roles: { list: async () => [], update: async () => ({}) },
+            botProfiles: { list: async () => [], update: async () => ({}) },
             models: { list: async () => EMPTY_CATALOG },
             drafts: {
                 list: async () => ({ drafts: [] }),
@@ -172,9 +172,9 @@ describe('房间列表轮询', () => {
                 },
                 update: async () => ({}),
             },
-            roles: {
+            botProfiles: {
                 list: async () => {
-                    calls.push('/roles');
+                    calls.push('/botProfiles');
                     return [];
                 },
             },

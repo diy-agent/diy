@@ -37,6 +37,31 @@ export interface ModelCatalogEntry {
      * toggle / budget_tokens / 空数组 / 无字段 → 缺省（不推理或不能选 effort）。
      */
     readonly reasoning?: ModelCatalogReasoning;
+    /** 能力标记（表格「能力」列）；缺省 = 上游没声明，不是「不支持」 */
+    readonly capabilities?: ModelCatalogCapabilities;
+}
+
+/**
+ * 能力标记（归一自 models.dev 的 attachment / reasoning / tool_call / structured_output / modalities）。
+ * 五项独立；全未知时上层不产出本对象。
+ */
+export interface ModelCatalogCapabilities {
+    /** 能读图（modalities.input 含 image） */
+    readonly vision: boolean;
+    readonly toolCall: boolean;
+    readonly reasoning: boolean;
+    readonly attachment: boolean;
+    readonly structuredOutput: boolean;
+    /** 可调温度（models.dev `temperature`） */
+    readonly temperature: boolean;
+    /** 开放权重 */
+    readonly openWeights: boolean;
+    /** 支持的输入模态（text / image / audio / video / pdf …；原样来自 modalities.input） */
+    readonly inputs: readonly string[];
+    readonly outputs: readonly string[];
+    /** 发布 / 更新日期（`YYYY-MM-DD`，上游原样） */
+    readonly releaseDate?: string;
+    readonly lastUpdated?: string;
 }
 
 /**

@@ -67,7 +67,7 @@ export const roomsApi = RpcSchema.group({
  * 改一个角色 ⇒ 该类型的所有房间同时变（成员是派生的，没有「加入/退出房间」这回事）。
  * `modelKey` / `reasoningEffort` 传 null 表示「清空 → 继续继承」。
  */
-export const rolesApi = RpcSchema.group({
+export const botProfilesApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: {}, output: Any }),
         create: RpcSchema.unary({
@@ -299,7 +299,7 @@ export const diy2Api = RpcSchema.group({
     children: {
         info: RpcSchema.unary({ input: {}, output: Any }),
         rooms: roomsApi,
-        roles: rolesApi,
+        botProfiles: botProfilesApi,
         chat: chatApi,
         asks: asksApi,
         drafts: draftsApi,

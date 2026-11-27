@@ -20,20 +20,26 @@ import {
     JobsPanel,
     RoomDialogsProvider,
     Sidebar,
+    navigate,
+    roomAddressOf,
+    useAddress,
     useLoaded,
+    useModelSetup,
     useRoomDialogs,
     useRoomDialogsContext,
+    useRooms,
     useSelectedRoom,
 } from '@diy-agent/entity-chat';
 import { Menu, Settings } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import '../index.css';
 import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
 import { type PageDef } from './model';
-import { pageFor, wbViews } from './pages';
+import { pageFor, settingsPage, wbViews } from './pages';
+import { SETTINGS_ADDRESS, SETTINGS_PAGE } from './settings';
 import { useChrome, Window, type WindowContribution } from './window';
 
 // ── 全局层：导航 ───────────────────────────────────────────────────────────────
@@ -61,6 +67,38 @@ function loadNavOpen(): boolean {
  * `widthMode` 用缺省的 `own`：宽度与右缘手柄归 Sidebar 自己（键 `entity-chat:sidebar-width`），
  * 收起态是 56px 图标列。它**不参与**页层的骨架 —— 见文件头。
  */
+// ── 模型配置的横幅 ─────────────────────────────────────────────────
+
+/** 顶部横幅：这个实例的模型配置**不全**（没 model.yaml / 缺目录快照）。 */
+function ModelConfigBanner({ onConfigure }: { onConfigure?: () => void }) {
+    const setup = useModelSetup();
+    // 首屏之前 store 里是「正常」（见 store 的初始值）：没问过服务端就不指控
+    if (setup.configured && !setup.snapshotMissing) return null;
+    return (
+        <div className="wb-banner" role="status">
+            <span className="wb-banner-title">模型配置不全</span>
+            {setup.configured ? null : (
+                <span>
+                    没有 model.yaml（<code>{setup.modelConfigPath}</code>）—— 不会去别处找
+                </span>
+            )}
+            {setup.snapshotMissing ? (
+                <span>
+                    缺目录快照 <code>data/models.dev.json</code>（标准 provider 全没有规格）
+                </span>
+            ) : null}
+            <span className="wb-banner-hint">
+                填充：仓根跑 <code>./scripts/seed-run-home.sh &lt;数据根&gt;</code>
+            </span>
+            {onConfigure === undefined ? null : (
+                <button className="wb-banner-action" onClick={onConfigure}>
+                    去配置 →
+                </button>
+            )}
+        </div>
+    );
+}
+
 function NavRail({ nav }: { nav: NavState }) {
     const dialogs = useRoomDialogsContext();
 
@@ -115,9 +153,27 @@ function PageShell({
 }
 
 function Host() {
+    const address = useAddress();
     const room = useSelectedRoom();
+    const rooms = useRooms();
     const loaded = useLoaded();
     const dialogs = useRoomDialogs();
+
+    /**
+     * 看的是设置页还是某个房间 —— **从地址推**，不另存一份状态。
+     *
+     * 模型配置是「这个实例能不能开工」的前置，它必须在**没有房间**时也能进
+     * （全新数据根、model.yaml 还没写），所以它是页、不是房间的附属物。
+     */
+    const isSettings = address.page === SETTINGS_PAGE;
+
+    /** 在设置页时 `useSelectedRoom()` 是空的 —— 齿轮要「返回对话」就得知道回到哪一间 */
+    const lastRoomId = useRef<string>('');
+    const roomId = room?.id;
+    useEffect(() => {
+        if (roomId !== undefined) lastRoomId.current = roomId;
+    }, [roomId]);
+    const backTo = rooms.find((item) => item.id === lastRoomId.current) ?? rooms[0];
 
     // 导航的开关提到了壳这一层：标题栏左端要放它的按钮，而标题栏是整宽的一条
     const [open, setOpen] = useState(loadNavOpen);
@@ -183,10 +239,16 @@ function Host() {
                 tools: [
                     {
                         id: 'settings',
-                        label: '设置',
+                        // 同一颗按钮来回切：设置页里它显示为按下态，再点一下回对话。
+                        label: isSettings ? '返回对话' : '设置',
                         glyph: <Settings className="wb-glyph" />,
+                        on: isSettings,
                         onClick: () => {
-                            dialogs.openSettings();
+                            if (isSettings) {
+                                if (backTo !== undefined) navigate(roomAddressOf(backTo));
+                                return;
+                            }
+                            navigate(SETTINGS_ADDRESS);
                         },
                     },
                 ],
@@ -194,14 +256,40 @@ function Host() {
         ],
         // `jumpToFirstRunning*` 是模块级命令（不依赖 props），所以不必进依赖表；
         // `setJobsOpen` 是 setState（引用恒定），同理。
-        [open, toggle, dialogs],
+        [open, toggle, dialogs, isSettings, backTo],
     );
+
+    /** 去设置（横幅上的「去配置」）—— 同一件导航，不是另一条路 */
+    const openSettings = useCallback(() => {
+        navigate(SETTINGS_ADDRESS);
+    }, []);
+
+    // 设置页：**没有房间也能进**（这正是「没配置 → 去配置」那条路）
+    if (isSettings) {
+        return (
+            <RoomDialogsProvider value={dialogs}>
+                <div className="wb-shell">
+                    <ModelConfigBanner />
+                    <PageShell
+                        key={settingsPage.type}
+                        page={settingsPage}
+                        nav={nav}
+                        global={global}
+                        chrome={chrome}
+                        onChromeChange={setChrome}
+                    />
+                </div>
+                {dialogs.element}
+            </RoomDialogsProvider>
+        );
+    }
 
     // 没有房间时**也要**有导航：新建第一个房间的入口就在左栏，把它藏起来等于没法开工
     if (!room) {
         return (
             <RoomDialogsProvider value={dialogs}>
                 <div className="wb-shell">
+                    <ModelConfigBanner onConfigure={openSettings} />
                     <Window contributions={global} chrome={chrome} onChromeChange={setChrome} />
                     <div className="wb-body">
                         <NavRail nav={nav} />
@@ -221,6 +309,7 @@ function Host() {
     return (
         <RoomDialogsProvider value={dialogs}>
             <div className="wb-shell">
+                <ModelConfigBanner onConfigure={openSettings} />
                 <PageShell
                     key={page.type}
                     page={page}

@@ -120,7 +120,15 @@ describe('diy2.models.list', () => {
             { name: 'spare', configured: false },
         ]);
         expect(acme.models).toEqual([
-            { id: 'fast', name: 'Acme Fast', contextWindow: 128000, maxOutputTokens: 4096, cost: { input: 1, output: 2 } },
+            {
+                id: 'fast',
+                name: 'Acme Fast',
+                contextWindow: 128000,
+                maxOutputTokens: 4096,
+                cost: { input: 1, output: 2 },
+                // 选模型表每行要画「启用」开关：关掉的模型也得出现在这份里，所以带 enabled
+                enabled: true,
+            },
         ]);
     });
 
@@ -245,9 +253,13 @@ describe('diy2.models.config', () => {
             ['fast', true],
             ['slow', false],
         ]);
-        // 选模型器看的那份（models.list）里没有 slow
+        // 选模型器看的那份（models.list）里也保留 slow，但标 enabled: false ——
+        // 否则关掉的行从面板消失，就再也打不开（2026-11-27 每行启用开关）
         const catalog = await list();
-        expect(catalog.providers[0]!.models.map((model) => model.id)).toEqual(['fast']);
+        expect(catalog.providers[0]!.models.map((model) => [model.id, model.enabled])).toEqual([
+            ['fast', true],
+            ['slow', false],
+        ]);
     });
 
     it('saveDefaultModel 能设能清（null = 回到「没设」，不猜一个）', async () => {

@@ -17,7 +17,7 @@ import type { TranscriptEntry, TokenUsage } from './compaction';
 import { isLinkKind } from './id';
 import type { RoomEntry } from './room-log';
 import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc } from './task-dir';
-import type { AskAnswer, AskRequest, Bot, BotRole, Delivery, InboxMode, Item, RoleConfig, Room, RoomMember } from './types';
+import type { AskAnswer, AskRequest, Bot, BotProfile, Delivery, InboxMode, Item, BotProfileDefaults, Room, RoomMember } from './types';
 
 /** 一个 bot 在某个房间里的对话快照（持久化单位） */
 export interface SessionSnapshot {
@@ -113,7 +113,6 @@ export interface TaskRecord {
     workspace: string | null;
     status: string;
     closedAt: number | null;
-    modelKey: string;
     createdAt: number;
     /** 最后一次**内容变化**的时刻（启动时的重复保存不算） */
     updatedAt: number;
@@ -184,7 +183,6 @@ export interface ProjectRecord {
     name: string;
     /** 项目的默认工作目录；任务新建时可继承，但不是外键关系 */
     workspace: string | null;
-    modelKey: string;
     createdAt: number;
 }
 
@@ -213,16 +211,16 @@ export interface DeliveryInput extends Omit<Delivery, 'updatedAt'> {
 export interface Store {
     readonly db: DatabaseSync;
     /** 全部角色（按 type、建得早排序；房间成员由它们派生，见 protocol 的 membersOfType） */
-    listRoles(): BotRole[];
-    upsertRole(role: BotRole): void;
+    listBotProfiles(): BotProfile[];
+    upsertBotProfile(role: BotProfile): void;
 
-    // ── 类型默认配置（role_config，2026-11-26）────────────────────
+    // ── 类型默认配置（bot_profile_defaults，2026-11-26）────────────────────
     /** 全部类型默认配置 */
-    listRoleConfigs(): RoleConfig[];
+    listBotProfileDefaults(): BotProfileDefaults[];
     /** 某类型的默认配置；没配过返回 undefined */
-    getRoleConfig(type: string): RoleConfig | undefined;
+    getBotProfileDefaults(type: string): BotProfileDefaults | undefined;
     /** 写某类型的默认配置（upsert） */
-    setRoleConfig(config: RoleConfig): void;
+    setBotProfileDefaults(config: BotProfileDefaults): void;
 
     // ── 提问（ask 不阻塞，待答状态必须落库）──────────────────
     /** 写一条提问：新建 pending / 收尾时改成 answered | cancelled（幂等） */
@@ -285,7 +283,7 @@ export interface Store {
      */
     deleteRoom(roomId: string): void;
     /** 删角色 + 它的会话/投递（成员是派生的，房间表不用清；每类最后一个角色的护栏在 server） */
-    deleteRole(roleId: string): void;
+    deleteBotProfile(roleId: string): void;
     appendItem(roomId: string, item: Item): Item;
     /** 追加一条任务日志（append-only；回放用 `journalOf`） */
     appendJournal(roomId: string, input: { kind: JournalKind; text: string; at?: number }): JournalEntry;
@@ -479,7 +477,6 @@ function roomToTask(room: Room): TaskInput {
         workspace: dataText(room, 'dir') || null,
         status: dataText(room, 'status') || 'open',
         closedAt: typeof closedAt === 'number' ? closedAt : null,
-        modelKey: room.modelKey,
     };
 }
 
@@ -488,7 +485,6 @@ function roomToProject(room: Room): ProjectInput {
         id: room.id,
         name: dataText(room, 'name'),
         workspace: dataText(room, 'dir') || null,
-        modelKey: room.modelKey,
     };
 }
 
@@ -503,13 +499,13 @@ function taskToRoom(task: TaskRecord, members: RoomMember[], taskDir?: string): 
     data['title'] = task.title;
     // 只读：产物目录由创建日派生（不落库、不参与保存）
     if (taskDir !== undefined) data['taskDir'] = taskDir;
-    return { id: task.id, type: 'task', data, members, modelKey: task.modelKey };
+    return { id: task.id, type: 'task', data, members };
 }
 
 function projectToRoom(project: ProjectRecord, members: RoomMember[]): Room {
     const data: Record<string, unknown> = { name: project.name };
     if (project.workspace !== null) data['dir'] = project.workspace;
-    return { id: project.id, type: 'project', data, members, modelKey: project.modelKey };
+    return { id: project.id, type: 'project', data, members };
 }
 
 /**
@@ -544,11 +540,30 @@ export function openStore(file: string): Store {
     };
     // 域表用 ON DELETE CASCADE 挂在 entities 上；不打开这个 pragma 就只是注释
     db.exec('PRAGMA foreign_keys = ON');
+    /**
+     * 表名改名（2026-11-27）：bot_roles → bot_profiles、role_config → bot_profile_defaults。
+     *
+     * 必须在下面的 `CREATE TABLE IF NOT EXISTS` 之前跑 —— 否则新表先被建出来，
+     * 老表就再也改不了名（旧数据会变成孤儿）。索引不能改名，直接丢掉重建。
+     */
+    const tableNames = new Set(
+        (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<Record<string, unknown>>).map(
+            (row) => String(row['name']),
+        ),
+    );
+    if (!tableNames.has('bot_profiles') && tableNames.has('bot_roles')) {
+        db.exec('ALTER TABLE bot_roles RENAME TO bot_profiles');
+        db.exec('DROP INDEX IF EXISTS bot_roles_primary');
+        db.exec('DROP INDEX IF EXISTS bot_roles_type');
+    }
+    if (!tableNames.has('bot_profile_defaults') && tableNames.has('role_config')) {
+        db.exec('ALTER TABLE role_config RENAME TO bot_profile_defaults');
+    }
     db.exec(`
         -- 角色：一种工作对象类型上的固定席位（见 docs/plans/2026-11-24-bot-role.md）。
         -- 旧的 bots 表按「每个容器一个同名 bot」建，35 行里 27 行 persona 一模一样；
         -- 角色改成类型级：新建任务自动出现在任务房间里，一个房间一份会话。
-        CREATE TABLE IF NOT EXISTS bot_roles (
+        CREATE TABLE IF NOT EXISTS bot_profiles (
             id TEXT PRIMARY KEY,
             type TEXT NOT NULL,
             name TEXT NOT NULL,
@@ -566,11 +581,11 @@ export function openStore(file: string): Store {
             persona_ref TEXT
         );
         -- 「每类型至多一个 primary」不靠应用层自觉：应用层漏一次就是一段时间的双应答
-        CREATE UNIQUE INDEX IF NOT EXISTS bot_roles_primary ON bot_roles(type) WHERE primary_flag = 1;
-        CREATE INDEX IF NOT EXISTS bot_roles_type ON bot_roles(type, created_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS bot_profiles_primary ON bot_profiles(type) WHERE primary_flag = 1;
+        CREATE INDEX IF NOT EXISTS bot_profiles_type ON bot_profiles(type, created_at);
         -- 类型默认配置（2026-11-26）：几百个任务 bot 共享一套 model / effort，
-        -- 只有个别 bot 需要 override 时才在 bot_roles 上填（model_key / reasoning_effort 为 null = 走类型默认）。
-        CREATE TABLE IF NOT EXISTS role_config (
+        -- 只有个别 bot 需要 override 时才在 bot_profiles 上填（model_key / reasoning_effort 为 null = 走类型默认）。
+        CREATE TABLE IF NOT EXISTS bot_profile_defaults (
             type TEXT PRIMARY KEY,
             model_key TEXT,
             reasoning_effort TEXT,
@@ -637,18 +652,18 @@ export function openStore(file: string): Store {
             at INTEGER NOT NULL,
             PRIMARY KEY (entity_id, bot_id)
         );
-        -- 会话键 =（容器, 角色）。列名 2026-11-24 从 bot_id 改为 bot_role_id：
+        -- 会话键 =（容器, 角色）。列名 2026-11-24 从 bot_id 改为 bot_profile_id：
         -- 同名的旧列会被 ALTER TABLE ... RENAME COLUMN 改过来（见老库补列）
         CREATE TABLE IF NOT EXISTS session_state (
             entity_id TEXT NOT NULL,
-            bot_role_id TEXT NOT NULL,
+            bot_profile_id TEXT NOT NULL,
             turn INTEGER NOT NULL,
             collapsed INTEGER NOT NULL,
             entries TEXT NOT NULL,
             usage TEXT,
             log_seq INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL,
-            PRIMARY KEY (entity_id, bot_role_id)
+            PRIMARY KEY (entity_id, bot_profile_id)
         );
         -- 身份：一切可被引用的东西一行。不做存储，只有「是谁」。
         CREATE TABLE IF NOT EXISTS entities (
@@ -662,7 +677,6 @@ export function openStore(file: string): Store {
             id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             workspace TEXT,
-            model_key TEXT NOT NULL,
             created_at INTEGER NOT NULL
         );
         -- 任务域（1:1 挂在 entities 上）。项目是**字段**不是父目录，所以不做外键
@@ -676,7 +690,6 @@ export function openStore(file: string): Store {
             workspace TEXT,
             status TEXT NOT NULL DEFAULT 'open',
             closed_at INTEGER,
-            model_key TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL DEFAULT 0
         );
@@ -709,7 +722,6 @@ export function openStore(file: string): Store {
             bot_id TEXT NOT NULL,
             position INTEGER NOT NULL,
             primary_flag INTEGER NOT NULL DEFAULT 0,
-            model_key TEXT,
             persona TEXT,
             PRIMARY KEY (entity_id, bot_id)
         );
@@ -805,26 +817,29 @@ export function openStore(file: string): Store {
     );
     if (!sessionColumns.has('log_seq'))
         db.exec('ALTER TABLE session_state ADD COLUMN log_seq INTEGER NOT NULL DEFAULT 0');
-    // 会话键的列名 2026-11-24 从 bot_id 改成 bot_role_id（表里装的是角色 id）
-    if (!sessionColumns.has('bot_role_id') && sessionColumns.has('bot_id')) {
-        db.exec('ALTER TABLE session_state RENAME COLUMN bot_id TO bot_role_id');
+    // 会话键的列名改过两次：`bot_id`（旧）→ `bot_role_id`（2026-11-24）→ `bot_profile_id`（2026-11-27）。
+    // 两个旧名都要能改过来 —— 只认一手老库会让中间那一代库启动就“no such column”。
+    if (!sessionColumns.has('bot_profile_id')) {
+        if (sessionColumns.has('bot_role_id')) {
+            db.exec('ALTER TABLE session_state RENAME COLUMN bot_role_id TO bot_profile_id');
+        } else if (sessionColumns.has('bot_id')) {
+            db.exec('ALTER TABLE session_state RENAME COLUMN bot_id TO bot_profile_id');
+        }
     }
 
-    // 老库补列：bot_roles 的 per-task 归属（2026-11-26）。老行 domain 全为 null = type 级角色（模板）
+    // 老库补列：bot_profiles 的 per-task 归属（2026-11-26）。老行 domain 全为 null = type 级角色（模板）
     const botColumns = new Set(
-        (db.prepare('PRAGMA table_info(bot_roles)').all() as Array<Record<string, unknown>>).map((row) =>
+        (db.prepare('PRAGMA table_info(bot_profiles)').all() as Array<Record<string, unknown>>).map((row) =>
             String(row['name']),
         ),
     );
     for (const column of ['domain_type', 'domain_id', 'persona_ref']) {
-        if (!botColumns.has(column)) db.exec(`ALTER TABLE bot_roles ADD COLUMN ${column}`);
+        if (!botColumns.has(column)) db.exec(`ALTER TABLE bot_profiles ADD COLUMN ${column}`);
     }
 
-    // 占位模型键不是「选了模型」：老库的房间行里还留着 `none@none/none`，房间头会显示成
-    // `none`，发送时又会被当成一个有效 key 而失败。读的时候已经当空串，这里把存量行改掉。
-    for (const table of ['tasks', 'projects']) {
-        db.prepare(`UPDATE ${table} SET model_key = '' WHERE model_key = ?`).run(PLACEHOLDER_MODEL_KEY);
-    }
+    // 占位模型键不是「选了模型」：老库里还留着 `none@none/none`。
+    // 房间级 model_key 已退役（2026-11-27，见 dropLegacyRoomModel），这里只清角色级的存量。
+    db.prepare('UPDATE bot_profiles SET model_key = NULL WHERE model_key = ?').run(PLACEHOLDER_MODEL_KEY);
 
     // 老库补列：tasks.updated_at（P2 加的）。历史行没有「最后改动」概念，用 created_at 兜
     const taskColumns = new Set(
@@ -861,7 +876,6 @@ export function openStore(file: string): Store {
             const member: RoomMember = {
                 botId: String(row['bot_id']),
                 ...(row['primary_flag'] === 1 ? { primary: true } : {}),
-                ...(row['model_key'] === null ? {} : { modelKey: String(row['model_key']) }),
                 ...(row['persona'] === null ? {} : { persona: String(row['persona']) }),
             };
             (out[id] ??= []).push(member);
@@ -869,7 +883,7 @@ export function openStore(file: string): Store {
         return out;
     };
 
-    const toRole = (row: Record<string, unknown>): BotRole => ({
+    const toRole = (row: Record<string, unknown>): BotProfile => ({
         id: String(row['id']),
         type: String(row['type']),
         name: String(row['name']),
@@ -885,7 +899,7 @@ export function openStore(file: string): Store {
         personaRef: row['persona_ref'] === null ? null : String(row['persona_ref']),
     });
 
-    const toRoleConfig = (row: Record<string, unknown>): RoleConfig => ({
+    const toBotProfileDefaults = (row: Record<string, unknown>): BotProfileDefaults => ({
         type: String(row['type']),
         modelKey: row['model_key'] === null ? null : String(row['model_key']),
         reasoningEffort: row['reasoning_effort'] === null ? null : String(row['reasoning_effort']),
@@ -970,7 +984,6 @@ export function openStore(file: string): Store {
         workspace: row['workspace'] === null ? null : String(row['workspace']),
         status: String(row['status']),
         closedAt: row['closed_at'] === null ? null : Number(row['closed_at']),
-        modelKey: cleanModelKey(row['model_key']),
         createdAt: Number(row['created_at']),
         updatedAt: Number(row['updated_at'] ?? 0),
     });
@@ -979,7 +992,6 @@ export function openStore(file: string): Store {
         id: String(row['id']),
         name: String(row['name']),
         workspace: row['workspace'] === null ? null : String(row['workspace']),
-        modelKey: cleanModelKey(row['model_key']),
         createdAt: Number(row['created_at']),
     });
 
@@ -1104,8 +1116,7 @@ export function openStore(file: string): Store {
         a.projectId === b.projectId &&
         a.workspace === b.workspace &&
         a.status === b.status &&
-        a.closedAt === b.closedAt &&
-        a.modelKey === b.modelKey;
+        a.closedAt === b.closedAt;
 
     const writeTask = (task: TaskInput): TaskRecord => {
         const previous = readTask(task.id);
@@ -1127,11 +1138,11 @@ export function openStore(file: string): Store {
         try {
             writeEntity(task.id, 'task', createdAt);
             db.prepare(
-                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, model_key, created_at, updated_at) ' +
-                    'VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
+                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, created_at, updated_at) ' +
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
                     'title=excluded.title, summary=excluded.summary, body=excluded.body, project_id=excluded.project_id, ' +
                     'workspace=excluded.workspace, status=excluded.status, closed_at=excluded.closed_at, ' +
-                    'model_key=excluded.model_key, updated_at=excluded.updated_at',
+                    'updated_at=excluded.updated_at',
             ).run(
                 task.id,
                 number,
@@ -1142,7 +1153,6 @@ export function openStore(file: string): Store {
                 task.workspace ?? null,
                 task.status,
                 task.closedAt ?? null,
-                task.modelKey,
                 createdAt,
                 updatedAt,
             );
@@ -1166,9 +1176,9 @@ export function openStore(file: string): Store {
         try {
             writeEntity(project.id, 'project', createdAt);
             db.prepare(
-                'INSERT INTO projects (id, name, workspace, model_key, created_at) VALUES (?,?,?,?,?) ' +
-                    'ON CONFLICT(id) DO UPDATE SET name=excluded.name, workspace=excluded.workspace, model_key=excluded.model_key',
-            ).run(project.id, project.name, project.workspace ?? null, project.modelKey, createdAt);
+                'INSERT INTO projects (id, name, workspace, created_at) VALUES (?,?,?,?) ' +
+                    'ON CONFLICT(id) DO UPDATE SET name=excluded.name, workspace=excluded.workspace',
+            ).run(project.id, project.name, project.workspace ?? null, createdAt);
             db.exec('COMMIT');
         } catch (error) {
             db.exec('ROLLBACK');
@@ -1212,7 +1222,6 @@ export function openStore(file: string): Store {
                     workspace: text('dir') || null,
                     status: legacyStatus[rawStatus] ?? (rawStatus === '' ? 'open' : rawStatus),
                     closedAt: typeof data['closedAt'] === 'number' ? data['closedAt'] : null,
-                    modelKey: String(row['model_key']),
                     createdAt,
                     // 历史任务没有「最后改动」概念：用创建时刻兜，别让迁移当天变成全员更新
                     updatedAt: createdAt,
@@ -1222,7 +1231,6 @@ export function openStore(file: string): Store {
                     id,
                     name: String(row['name']),
                     workspace: text('dir') || null,
-                    modelKey: String(row['model_key']),
                     createdAt,
                 });
             } else {
@@ -1277,7 +1285,7 @@ export function openStore(file: string): Store {
     };
 
     /**
-     * 老库迁移：`bots`（每个容器一个同名 bot）→ `bot_roles`（类型级角色）。
+     * 老库迁移：`bots`（每个容器一个同名 bot）→ `bot_profiles`（类型级角色）。
      *
      * 合并规则 = `(type, persona)` 相同即同一个角色：
      *   · type 取 bot 归属容器的实体类型（project / task / …）；归属容器已不在时按 task 处理
@@ -1339,7 +1347,7 @@ export function openStore(file: string): Store {
 
         const remap = new Map<string, string>();
         const insert = db.prepare(
-            'INSERT OR REPLACE INTO bot_roles (id, type, name, color, instructions, primary_flag, model_key, reasoning_effort, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            'INSERT OR REPLACE INTO bot_profiles (id, type, name, color, instructions, primary_flag, model_key, reasoning_effort, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
         );
         // primary 每类型一个：先按组算胜出者
         const primaryOf = new Map<string, Group>();
@@ -1379,13 +1387,13 @@ export function openStore(file: string): Store {
                 // 撞键：同一容器里两个 bot 合并成一个角色 ⇒ 留 turn 大的那份会话
                 const dropped = db
                     .prepare(
-                        'DELETE FROM session_state WHERE bot_role_id = ? AND entity_id IN (SELECT entity_id FROM session_state WHERE bot_role_id = ?)',
+                        'DELETE FROM session_state WHERE bot_profile_id = ? AND entity_id IN (SELECT entity_id FROM session_state WHERE bot_profile_id = ?)',
                     )
                     .run(from, to).changes;
                 if (Number(dropped) > 0) {
                     console.error(`[bot-role] 合并会话：${from} → ${to}，丢掉 ${String(dropped)} 份旧快照（同容器重复）`);
                 }
-                db.prepare('UPDATE session_state SET bot_role_id = ? WHERE bot_role_id = ?').run(to, from);
+                db.prepare('UPDATE session_state SET bot_profile_id = ? WHERE bot_profile_id = ?').run(to, from);
                 db.prepare(
                     'DELETE FROM deliveries WHERE bot_id = ? AND entity_id IN (SELECT entity_id FROM deliveries WHERE bot_id = ?)',
                 ).run(from, to);
@@ -1409,33 +1417,55 @@ export function openStore(file: string): Store {
         }
     };
 
+    /**
+     * 退役：房间级 `model_key`（2026-11-27 用户裁「模型真源 = 人设」）。
+     *
+     * `tasks` / `projects` 的 model_key 曾是「建容器时把默认模型写死一份」，于是角色级改动
+     * 永远被它盖住（UI 显示角色级、执行读房间级）。这里把列直接删掉（SQLite ≥ 3.35）；
+     * 删不动（老版本 / 被索引引用）就清空 —— 代码已经不再读写它，留着只是噪音。
+     */
+    const dropLegacyRoomModel = (): void => {
+        for (const table of ['tasks', 'projects', 'rooms_v0', 'room_members']) {
+            const exists = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?").get(table);
+            if (exists === undefined) continue;
+            const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+            if (!columns.some((column) => column.name === 'model_key')) continue;
+            try {
+                db.exec(`ALTER TABLE ${table} DROP COLUMN model_key`);
+            } catch {
+                db.exec(`UPDATE ${table} SET model_key = ${table === 'room_members' ? 'NULL' : "''"}`);
+            }
+        }
+    };
+
     const hasLegacyRooms =
         db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='rooms'").get() !== undefined;
     // 顺序有意义：先搬房间（journal 的 subject 要能解析到实体），再把 bots 折成角色，最后折日志
     if (hasLegacyRooms) migrateLegacyRooms();
     migrateBots();
     migrateJournal();
+    dropLegacyRoomModel();
 
     return {
         db,
-        listRoles(): BotRole[] {
+        listBotProfiles(): BotProfile[] {
             const rows = db
-                .prepare('SELECT * FROM bot_roles ORDER BY type ASC, primary_flag DESC, created_at ASC, rowid ASC')
+                .prepare('SELECT * FROM bot_profiles ORDER BY type ASC, primary_flag DESC, created_at ASC, rowid ASC')
                 .all() as Record<string, unknown>[];
             return rows.map(toRole);
         },
-        upsertRole(role: BotRole): void {
+        upsertBotProfile(role: BotProfile): void {
             // 「每类型至多一个 primary」由唯一索引兜底：先撤掉同类型别人身上的旗，再写自己
             db.exec('BEGIN IMMEDIATE');
             try {
                 if (role.primary) {
-                    db.prepare('UPDATE bot_roles SET primary_flag = 0 WHERE type = ? AND id <> ?').run(
+                    db.prepare('UPDATE bot_profiles SET primary_flag = 0 WHERE type = ? AND id <> ?').run(
                         role.type,
                         role.id,
                     );
                 }
                 db.prepare(
-                    'INSERT INTO bot_roles (id, type, name, color, instructions, primary_flag, model_key, reasoning_effort, created_at, updated_at, domain_type, domain_id, persona_ref) ' +
+                    'INSERT INTO bot_profiles (id, type, name, color, instructions, primary_flag, model_key, reasoning_effort, created_at, updated_at, domain_type, domain_id, persona_ref) ' +
                         'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
                         'name=excluded.name, color=excluded.color, instructions=excluded.instructions, ' +
                         'primary_flag=excluded.primary_flag, model_key=excluded.model_key, ' +
@@ -1462,19 +1492,19 @@ export function openStore(file: string): Store {
                 throw error;
             }
         },
-        listRoleConfigs(): RoleConfig[] {
-            const rows = db.prepare('SELECT * FROM role_config ORDER BY type ASC').all() as Record<string, unknown>[];
-            return rows.map(toRoleConfig);
+        listBotProfileDefaults(): BotProfileDefaults[] {
+            const rows = db.prepare('SELECT * FROM bot_profile_defaults ORDER BY type ASC').all() as Record<string, unknown>[];
+            return rows.map(toBotProfileDefaults);
         },
-        getRoleConfig(type: string): RoleConfig | undefined {
-            const row = db.prepare('SELECT * FROM role_config WHERE type = ?').get(type) as
+        getBotProfileDefaults(type: string): BotProfileDefaults | undefined {
+            const row = db.prepare('SELECT * FROM bot_profile_defaults WHERE type = ?').get(type) as
                 | Record<string, unknown>
                 | undefined;
-            return row === undefined ? undefined : toRoleConfig(row);
+            return row === undefined ? undefined : toBotProfileDefaults(row);
         },
-        setRoleConfig(config: RoleConfig): void {
+        setBotProfileDefaults(config: BotProfileDefaults): void {
             db.prepare(
-                'INSERT INTO role_config (type, model_key, reasoning_effort, updated_at) VALUES (?,?,?,?) ' +
+                'INSERT INTO bot_profile_defaults (type, model_key, reasoning_effort, updated_at) VALUES (?,?,?,?) ' +
                     'ON CONFLICT(type) DO UPDATE SET model_key=excluded.model_key, reasoning_effort=excluded.reasoning_effort, updated_at=excluded.updated_at',
             ).run(config.type, config.modelKey, config.reasoningEffort, config.updatedAt);
         },
@@ -1607,17 +1637,10 @@ export function openStore(file: string): Store {
         setMembers(roomId: string, members: readonly RoomMember[]): void {
             db.prepare('DELETE FROM room_members WHERE entity_id = ?').run(roomId);
             const insert = db.prepare(
-                'INSERT INTO room_members (entity_id, bot_id, position, primary_flag, model_key, persona) VALUES (?,?,?,?,?,?)',
+                'INSERT INTO room_members (entity_id, bot_id, position, primary_flag, persona) VALUES (?,?,?,?,?)',
             );
             members.forEach((member, index) => {
-                insert.run(
-                    roomId,
-                    member.botId,
-                    index,
-                    member.primary === true ? 1 : 0,
-                    member.modelKey ?? null,
-                    member.persona ?? null,
-                );
+                insert.run(roomId, member.botId, index, member.primary === true ? 1 : 0, member.persona ?? null);
             });
         },
         deleteRoom(roomId: string): void {
@@ -1645,12 +1668,12 @@ export function openStore(file: string): Store {
             // 产物目录不删，挪进 _trash（截图 / 日志是排查材料，删任务通常只是不想再看到它）
             if (dataRoot !== undefined && task !== undefined) mirror(() => trashTaskDir(dataRoot, task));
         },
-        deleteRole(roleId: string): void {
+        deleteBotProfile(roleId: string): void {
             // 成员是从角色表派生的：删了角色，各房间的成员名单下一次派生时就少一个，
             // 但那间房的会话/投递还挂着这个 id，不清就是永久孤儿行
-            db.prepare('DELETE FROM session_state WHERE bot_role_id = ?').run(roleId);
+            db.prepare('DELETE FROM session_state WHERE bot_profile_id = ?').run(roleId);
             db.prepare('DELETE FROM deliveries WHERE bot_id = ?').run(roleId);
-            db.prepare('DELETE FROM bot_roles WHERE id = ?').run(roleId);
+            db.prepare('DELETE FROM bot_profiles WHERE id = ?').run(roleId);
             // 老库里 bot 都是实体：身份行只在确实属于 bot 时删（防 id 撞到房间）
             db.prepare("DELETE FROM entities WHERE id = ? AND type = 'bot'").run(roleId);
         },
@@ -1849,8 +1872,8 @@ export function openStore(file: string): Store {
         },
         saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void {
             db.prepare(
-                'INSERT INTO session_state (entity_id, bot_role_id, turn, collapsed, entries, usage, log_seq, updated_at) VALUES (?,?,?,?,?,?,?,?) ' +
-                    'ON CONFLICT(entity_id, bot_role_id) DO UPDATE SET turn=?, collapsed=?, entries=?, usage=?, log_seq=?, updated_at=?',
+                'INSERT INTO session_state (entity_id, bot_profile_id, turn, collapsed, entries, usage, log_seq, updated_at) VALUES (?,?,?,?,?,?,?,?) ' +
+                    'ON CONFLICT(entity_id, bot_profile_id) DO UPDATE SET turn=?, collapsed=?, entries=?, usage=?, log_seq=?, updated_at=?',
             ).run(
                 roomId,
                 botId,
@@ -1870,7 +1893,7 @@ export function openStore(file: string): Store {
         },
         loadSession(roomId: string, botId: string): SessionSnapshot | undefined {
             const row = db
-                .prepare('SELECT * FROM session_state WHERE entity_id = ? AND bot_role_id = ?')
+                .prepare('SELECT * FROM session_state WHERE entity_id = ? AND bot_profile_id = ?')
                 .get(roomId, botId) as Record<string, unknown> | undefined;
             if (row === undefined) return undefined;
             return {

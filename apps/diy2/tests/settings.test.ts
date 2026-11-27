@@ -10,7 +10,7 @@
 import { formatAddress, knownPage, parseAddress, sameAddress } from '@diy-agent/entity-chat';
 import { describe, expect, it } from 'vitest';
 
-import { ROLES_ADDRESS, rolesAddressOf, rolesTypeOf, sectionOf, SETTINGS_ADDRESS, SETTINGS_PAGE } from '../src/workbench/settings';
+import { BOTS_ADDRESS, botsAddressOf, botTypeOf, sectionOf, SETTINGS_ADDRESS, SETTINGS_PAGE } from '../src/workbench/settings';
 
 describe('设置页地址', () => {
     it('页类型已注册（注册是 settings.ts 的模块级副作用）', () => {
@@ -31,39 +31,39 @@ describe('设置页地址', () => {
         expect(parseAddress('/settings')).toBeUndefined();
     });
 
-    it('「看哪一段」是地址的一部分：/settings/roles 与 /settings/model 不是同一处', () => {
-        expect(sameAddress(parseAddress('/settings/roles'), SETTINGS_ADDRESS)).toBe(false);
+    it('「看哪一段」是地址的一部分：/settings/bots 与 /settings/model 不是同一处', () => {
+        expect(sameAddress(parseAddress('/settings/bots'), SETTINGS_ADDRESS)).toBe(false);
     });
 
-    it('角色段也是一个能贴的地址：/settings/roles', () => {
-        expect(formatAddress(ROLES_ADDRESS)).toBe('/settings/roles');
-        expect(sameAddress(parseAddress('/settings/roles'), ROLES_ADDRESS)).toBe(true);
+    it('机器人段也是一个能贴的地址：/settings/bots', () => {
+        expect(formatAddress(BOTS_ADDRESS)).toBe('/settings/bots');
+        expect(sameAddress(parseAddress('/settings/bots'), BOTS_ADDRESS)).toBe(true);
     });
 
     it('不认识的段落到缺省段（手改地址 / 旧链接不炸）', () => {
         expect(sectionOf('model')).toBe('model');
-        expect(sectionOf('roles')).toBe('roles');
+        expect(sectionOf('bots')).toBe('bots');
         expect(sectionOf('随便写的')).toBe('model');
         expect(sectionOf('')).toBe('model');
     });
 
-    it('角色深链：/settings/roles/task 是一个能贴的地址，且落到角色段', () => {
-        const address = rolesAddressOf('task');
-        expect(formatAddress(address)).toBe('/settings/roles/task');
-        const parsed = parseAddress('/settings/roles/task');
+    it('机器人深链：/settings/bots/task 是一个能贴的地址，且落到机器人段', () => {
+        const address = botsAddressOf('task');
+        expect(formatAddress(address)).toBe('/settings/bots/task');
+        const parsed = parseAddress('/settings/bots/task');
         expect(sameAddress(parsed, address)).toBe(true);
-        // 贴进来 / 刷新都靠这两行：段还得是角色段，类型还得认得出来
-        expect(sectionOf(parsed!.id)).toBe('roles');
-        expect(rolesTypeOf(parsed!.id)).toBe('task');
-        expect(rolesTypeOf('roles:project')).toBe('project');
+        // 贴进来 / 刷新都靠这两行：段还得是机器人段，类型还得认得出来
+        expect(sectionOf(parsed!.id)).toBe('bots');
+        expect(botTypeOf(parsed!.id)).toBe('task');
+        expect(botTypeOf('bots:project')).toBe('project');
     });
 
     it('深链只做 task / project：其余类型回落整张列表', () => {
-        expect(formatAddress(rolesAddressOf('stock'))).toBe('/settings/roles');
-        expect(rolesTypeOf('roles')).toBeUndefined();
-        expect(rolesTypeOf('roles:stock')).toBeUndefined();
-        expect(rolesTypeOf('roles:task:extra')).toBeUndefined();
-        // 即便类型不认识，段依旧是角色段（不静默掉到模型段）
-        expect(sectionOf('roles:stock')).toBe('roles');
+        expect(formatAddress(botsAddressOf('stock'))).toBe('/settings/bots');
+        expect(botTypeOf('bots')).toBeUndefined();
+        expect(botTypeOf('bots:stock')).toBeUndefined();
+        expect(botTypeOf('bots:task:extra')).toBeUndefined();
+        // 即便类型不认识，段依旧是机器人段（不静默掉到模型段）
+        expect(sectionOf('bots:stock')).toBe('bots');
     });
 });

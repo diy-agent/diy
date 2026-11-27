@@ -53,4 +53,10 @@ export type {
 } from "./catalog.js";
 export type { ProviderModelPatch, SaveAccountInput, SaveProviderInput, SavedAccount } from "./write.js";
 export { effectiveMaxOutputTokens } from "./catalog.js";
-export type { CatalogOptions, ModelCatalogCost, ModelCatalogEntry, ProviderAccounts } from "./types.js";
+export type {
+    CatalogOptions,
+    ModelCatalogCapabilities,
+    ModelCatalogCost,
+    ModelCatalogEntry,
+    ProviderAccounts,
+} from "./types.js";
