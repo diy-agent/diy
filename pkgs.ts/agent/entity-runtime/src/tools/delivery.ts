@@ -9,15 +9,34 @@
 // 现在只有一条规矩：**装配完 ToolSet 后统一遍历注入**，不再逐个工厂传参 —— 工厂漏传一个
 //   （历史上就是漏了三个）不会有人发现，遍历注入则「新加工具自动继承」。
 //
-// 两条不能踩的边界：
+// 三条不能踩的边界：
 //   1. **已有 `toModelOutput` 的工具（bash）不被顶掉** —— 先跑它，再裁它给出的文本。
 //   2. **带非文本内容的工具（view_image 的图片）不许变成 JSON** —— 图片一旦变成字符串，
 //      模型就再也看不见它了。所以这里按「文本 / 内容块」分流：只裁文本，媒体块原样过。
+//   3. **自己已经有行窗口的工具（read）不裁单行** —— 见 `KEEP_LONG_LINES`。
 
 import type { ToolSet } from 'ai';
 
-/** 投递层截断器（`createToolOutputCapper` 的产物；只改「发给模型的那一份」） */
-export type DeliveryCap = (text: string, toolCallId: string) => string | Promise<string>;
+/**
+ * 投递层截断器（`createToolOutputCapper` 的产物；只改「发给模型的那一份」）。
+ *
+ * 第三个参数按**工具**微调策略，今天是唯一一档：`keepLongLines`（不裁单行）。
+ */
+export type DeliveryCap = (
+    text: string,
+    toolCallId: string,
+    options?: { readonly keepLongLines?: boolean },
+) => string | Promise<string>;
+
+/**
+ * 自己已经有行窗口的工具：投递层只做**字节**兜底，不裁单行。
+ *
+ * 为什么：`maxLineChars` 是给「一行就是一整份 minified 产物」准备的；read 的续读入口是
+ * `offset`（按行计），砍掉半行的后半段**再读也读不回来**（`@diy-agent/tools` 的
+ * `file-read.ts` 头注同一条设计）。而它的输出已经被自己的行窗口框在预算内，不存在
+ * 「一行撑爆上下文」的风险。
+ */
+const KEEP_LONG_LINES: ReadonlySet<string> = new Set(['read']);
 
 /** 一次工具结果的形状（AI SDK 只给这么多，别指望拿到 execute 的原始对象以外的东西） */
 interface ToolResultLike {
@@ -70,8 +89,11 @@ export function renderToolOutput(output: unknown): ModelOut {
  * 一个工具里有多个文本块时，每个块单独落盘（`<toolCallId>.txt` / `<toolCallId>-t1.txt`），
  * 不互相覆盖 —— 否则 marker 里的 `resume` 会指向别人。
  */
-async function capModelOut(out: ModelOut, cap: DeliveryCap, toolCallId: string): Promise<ModelOut> {
-    if (out.type === 'text') return { type: 'text', value: await cap(out.value, toolCallId) };
+async function capModelOut(out: ModelOut, cap: DeliveryCap, toolCallId: string, toolName: string): Promise<ModelOut> {
+    const keepLongLines = KEEP_LONG_LINES.has(toolName);
+    if (out.type === 'text') {
+        return { type: 'text', value: await cap(out.value, toolCallId, { keepLongLines }) };
+    }
 
     const parts: unknown[] = [];
     let index = 0;
@@ -83,7 +105,7 @@ async function capModelOut(out: ModelOut, cap: DeliveryCap, toolCallId: string):
         // 第一个文本块用原样的 toolCallId（marker 里的常年形态），后面的加 `-t<n>` 分开落盘
         const id = index === 0 ? toolCallId : `${toolCallId}-t${String(index)}`;
         index += 1;
-        parts.push({ ...part, text: await cap(part.text, id) });
+        parts.push({ ...part, text: await cap(part.text, id, { keepLongLines }) });
     }
     return { type: 'content', value: parts };
 }
@@ -102,7 +124,7 @@ export function capEveryTool(tools: ToolSet, cap: DeliveryCap): ToolSet {
             ...def,
             toModelOutput: async (opts: ToolResultLike): Promise<ModelOut> => {
                 const raw = own === undefined ? opts.output : await own(opts);
-                return capModelOut(renderToolOutput(raw), cap, opts.toolCallId);
+                return capModelOut(renderToolOutput(raw), cap, opts.toolCallId, name);
             },
         } as ToolSet[string];
     }

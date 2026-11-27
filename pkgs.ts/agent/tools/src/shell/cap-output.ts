@@ -40,6 +40,23 @@ export const TOOL_OUTPUT_POLICY: ToolResultPolicy = {
     },
 };
 
+/**
+ * 同预算、但**不裁单行**的策略变体（给「自己已经有行窗口」的工具用，今天只有 read）。
+ *
+ * 为什么需要：`maxLineChars` 是给「一行就是一整份 minified 产物」准备的；而 read 的输出由
+ * 行窗口框住，砍它半行的后半段**没有任何入口取回** —— offset 按行计，同一行再读还是同一段
+ * （`file-read.ts` 头注的同一条设计）。字节上限仍生效，那是兜底。
+ */
+export const TOOL_OUTPUT_POLICY_KEEP_LINES: ToolResultPolicy = {
+    render: 'headtail',
+    renderData: {
+        head: TOOL_OUTPUT_HEAD_LINES,
+        tail: TOOL_OUTPUT_TAIL_LINES,
+        maxLineChars: Number.POSITIVE_INFINITY,
+        maxKeepBytes: TOOL_OUTPUT_MAX_BYTES,
+    },
+};
+
 export interface CappedToolOutput {
     /** 发给模型的文本（未超限时与原文**逐字符相同**） */
     text: string;

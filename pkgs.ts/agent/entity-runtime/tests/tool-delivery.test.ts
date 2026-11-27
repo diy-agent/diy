@@ -7,7 +7,7 @@
 //   ② 图片这类非文本内容**不许变成 JSON**（变成字符串 = 模型再也看不见它）；
 //   ③ 一份预算常量跨包同值（tools / jobs / code-runtime 不再各报各的数）。
 
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -151,6 +151,41 @@ describe('一份预算常量（跨包同值）', () => {
 
     it('job 的 tail 字节上限 = 同一预算', () => {
         expect(MAX_TAIL_BYTES).toBe(TOOL_OUTPUT_MAX_BYTES);
+    });
+});
+
+describe('read 的输出不会被投递层裁第二遍', () => {
+    const readOf = async (cwd: string, file: string): Promise<string> => {
+        const tools = buildRoomTools({ cwd, toModelOutput: createToolOutputCapper({ home: cwd }) });
+        return (await (tools['read'] as unknown as {
+            execute: (input: { path: string }, opts: object) => Promise<string>;
+        }).execute({ path: file }, {})) as string;
+    };
+
+    it('读满一窗：投递层逐字符原样（没有 marker、也不会多落一份 toolout 原文）', async () => {
+        const cwd = await homeOf();
+        // 60 字符正文 + 行号前缀：只数正文时「读满」一定超预算，就得靠这条钉住
+        const body = Array.from({ length: 5000 }, (_, i) => `${i + 1}:${'x'.repeat(60)}`).join('\n');
+        await writeFile(path.join(cwd, 'fill.txt'), body, 'utf8');
+
+        const raw = await readOf(cwd, 'fill.txt');
+        expect(raw).toMatch(/续读：offset=\d+/);
+        expect(raw).not.toContain('<cut');
+
+        const tools = buildRoomTools({ cwd, toModelOutput: createToolOutputCapper({ home: cwd }) });
+        expect(await modelOutput(tools, 'read', raw, 'call_read')).toEqual({ type: 'text', value: raw });
+    });
+
+    it('一行 5000 字符（jsonl 一条记录）：投递层不裁单行（offset 取不回后半段）', async () => {
+        const cwd = await homeOf();
+        const line = JSON.stringify({ payload: 'p'.repeat(5000) });
+        await writeFile(path.join(cwd, 'one.jsonl'), `${line}\n`, 'utf8');
+
+        const raw = await readOf(cwd, 'one.jsonl');
+        expect(raw).toContain(line); // 整行都在，没被切成 `…`
+
+        const tools = buildRoomTools({ cwd, toModelOutput: createToolOutputCapper({ home: cwd }) });
+        expect(await modelOutput(tools, 'read', raw, 'call_long')).toEqual({ type: 'text', value: raw });
     });
 });
 

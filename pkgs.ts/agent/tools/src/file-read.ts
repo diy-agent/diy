@@ -9,7 +9,9 @@
 //
 // 对齐 dsh / pi / opencode 三家共有的设计：
 //   - 行窗口（offset/limit）而非整文件：可以精确跳到没读过的部分
-//   - 行数 / 字节双限，谁先到算谁（同一份预算，不叠乘）
+//   - 行数 / 字节双限，谁先到算谁（同一份预算，不叠乘）；
+//     字节按**渲染后**算（`1234: ` 行号前缀 + 预留的续读提示）—— 只数正文的话，
+//     「刚好读满预算」的输出一定因为前缀/尾巴超预算，被投递层再裁一刀（2026-11-27 修）
 //   - 尾部续读提示，把「下一步取哪一段」直接写进输出
 //   - 扫完整个文件数行数：续读提示里的「共 N 行」必须是真值，否则会以为读到头了
 //
@@ -36,6 +38,15 @@ export const READ_MAX_LINES = TOOL_OUTPUT_MAX_LINES;
 export const READ_MAX_BYTES = TOOL_OUTPUT_MAX_BYTES;
 /** 二进制探测的采样字节数（对齐 opencode 的 4KB 采样） */
 const BINARY_PROBE_BYTES = 4096;
+
+/**
+ * 渲染尾巴的预留字节（`formatReadOutput` 末尾那句「已显示 a-b 行…续读：offset=N」）。
+ *
+ * 窗口预算必须给它留位置：留少了，读满一窗的输出会带着尾巴越过投递层预算，多出一个
+ * `<cut …/>` marker + 一份 toolout/ 原文 —— 而这正是本单要消灭的「裁两遍」。
+ * 更槽的是尾巴就是「下一步取哪段」，被裁掉等于把续读入口也裁了。
+ */
+const TRAILER_RESERVE_BYTES = 256;
 
 export interface ReadWindowOptions {
     /** 1-based 起始行（缺省 1） */
@@ -101,6 +112,8 @@ export async function readFileWindow(
     const offset = opts.offset ?? 1;
     const limit = opts.limit ?? READ_MAX_LINES;
     const maxBytes = opts.maxBytes ?? READ_MAX_BYTES;
+    /** 累积预算（= 整份预算扣掉渲染尾巴；行号前缀按行另计，见 `flush`） */
+    const budget = Math.max(1, maxBytes - TRAILER_RESERVE_BYTES);
 
     const lines: ReadLine[] = [];
     let totalLines = 0;
@@ -111,6 +124,8 @@ export async function readFileWindow(
     // 单行缓冲上限 = 字节预算：超过它这一行无论如何都装不进输出，继续累积只是白占内存。
     // 按**字符数**近似（中文 1 字符 3 字节，会略超预算）—— 只是内存保护，不影响正确性：
     // 真正的字节预算检查在收行时做（见 below）。
+    // 刻意**不**扣 `TRAILER_RESERVE_BYTES`：单行场景没有续读尾巴要留位置，扣了反而会让
+    // 一条「刚好吃满预算」的长行（jsonl 一条记录）从「能显示前一段」变成「什么都不显示」。
     const lineCap = maxBytes;
 
     const stream = createReadStream(absPath, { encoding: 'utf-8', highWaterMark: 64 * 1024 });
@@ -125,8 +140,13 @@ export async function readFileWindow(
         if (totalLines < offset) return;
         if (lines.length >= limit) return;
         const text = stripCr(pending);
-        const size = Buffer.byteLength(text, 'utf-8') + (lines.length > 0 ? 1 : 0); // +1 = 换行
-        if (bytes + size > maxBytes) {
+        // 预算按**渲染后**算：投递层看到的是 `${number}: ${text}`，前缀不数进去，读满必超。
+        // 起始行例外（不数前缀、按整份预算）：「一条 jsonl 记录刚好吃满预算」应该能看见前一段，
+        // 为几个字节的行号前缀让它变成「无法整行显示」不值。
+        const size =
+            Buffer.byteLength(text, 'utf-8') + (lines.length === 0 ? 0 : `${totalLines}: `.length + 1); // +1 = 换行
+        const cap = lines.length === 0 ? maxBytes : budget;
+        if (bytes + size > cap) {
             truncatedByBytes = true;
             return;
         }

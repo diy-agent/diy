@@ -16,7 +16,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { capToolOutput, markBashTruncated } from '@diy-agent/tools';
+import { capToolOutput, markBashTruncated, TOOL_OUTPUT_POLICY, TOOL_OUTPUT_POLICY_KEEP_LINES } from '@diy-agent/tools';
 
 /** 原文落盘目录（`<home>/toolout`）；home 未知时返回 undefined ⇒ 只裁、不给 resume */
 export function toolOutDir(home: string | undefined): string | undefined {
@@ -35,13 +35,18 @@ function safeName(id: string): string {
  * bash 结果头里的 `truncated: false` 在真截断时改写成 true（`markBashTruncated`，
  * 别的工具的输出没有那个头，原样返回）。
  */
-export function createToolOutputCapper(
-    options: { readonly home?: string } = {},
-): (text: string, toolCallId: string) => Promise<string> {
+export function createToolOutputCapper(options: { readonly home?: string } = {}): (
+    text: string,
+    toolCallId: string,
+    /** 按工具微调策略（今天唯一一档：不裁单行，见 `TOOL_OUTPUT_POLICY_KEEP_LINES`） */
+    perCall?: { readonly keepLongLines?: boolean },
+) => Promise<string> {
     const dir = toolOutDir(options.home);
-    return async (text, toolCallId) => {
+    return async (text, toolCallId, perCall) => {
+        // 单行上限只防「一行就是一整份产物」；已有行窗口的工具（read）不适用，见策略的注释
+        const policy = perCall?.keepLongLines === true ? TOOL_OUTPUT_POLICY_KEEP_LINES : TOOL_OUTPUT_POLICY;
         // 先探一次（只在真要裁的时候才写盘，免得给每条小输出建文件）
-        const probe = capToolOutput(text);
+        const probe = capToolOutput(text, { policy });
         if (!probe.clipped) return text;
         if (dir === undefined) return markBashTruncated(probe.text);
 
@@ -52,6 +57,6 @@ export function createToolOutputCapper(
         } catch {
             return markBashTruncated(probe.text);
         }
-        return markBashTruncated(capToolOutput(text, { writeOriginal: () => file }).text);
+        return markBashTruncated(capToolOutput(text, { policy, writeOriginal: () => file }).text);
     };
 }
