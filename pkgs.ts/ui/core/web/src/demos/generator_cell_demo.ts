@@ -23,7 +23,17 @@ export function generatorCellDemo(el: HTMLElement): void {
   });
 
   app.row(() => {
-    app.button({ name: "-1", onClick: () => { count.value = Math.max(0, count.value - 1); } });
-    app.button({ name: "+1", onClick: () => { count.value++; } });
+    app.button({
+      name: "-1",
+      onClick: () => {
+        count.value = Math.max(0, count.value - 1);
+      },
+    });
+    app.button({
+      name: "+1",
+      onClick: () => {
+        count.value++;
+      },
+    });
   });
 }

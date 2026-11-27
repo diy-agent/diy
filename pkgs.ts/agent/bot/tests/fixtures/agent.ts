@@ -8,10 +8,10 @@
  *
  * 只放两样：最小 provider 集、可编排的假 LLM（唯一允许的替身）。
  */
-import { openMemorySessionStore } from "@diy-agent/session";
-import type { LlmPort, SessionDelta } from "@diy-agent/session";
-import type { ContextProvider } from "@diy-agent/context";
-import { createBotAgent, type BotAgent } from "../../src/agent.js";
+import { openMemorySessionStore } from '@diy-agent/session';
+import type { LlmPort, SessionDelta } from '@diy-agent/session';
+import type { ContextProvider } from '@diy-agent/context';
+import { createBotAgent, type BotAgent } from '../../src/agent.js';
 
 /**
  * 上下文树要的**最小合法** provider 集。
@@ -21,8 +21,8 @@ import { createBotAgent, type BotAgent } from "../../src/agent.js";
  */
 export function baseProviders(overrides: Partial<Record<string, () => unknown>> = {}): ContextProvider[] {
     const base: Record<string, () => unknown> = {
-        diy: () => ({ cli: "diy", home: "/tmp/diy-home" }),
-        cwd: () => ({ path: "/tmp/ws", note: "", isFallback: false, isTaskDir: false, isAppDir: false }),
+        diy: () => ({ cli: 'diy', home: '/tmp/diy-home' }),
+        cwd: () => ({ path: '/tmp/ws', note: '', isFallback: false, isTaskDir: false, isAppDir: false }),
         chain: () => [],
         skills: () => [],
     };
@@ -40,7 +40,9 @@ export interface ScriptedLlm extends LlmPort {
  * 可编排的假 LLM：`script(callIndex)` 返回该次调用要吐的 delta 序列。
  * 抛错即模拟上游失败 —— 「失败之后还能不能继续」这条就是靠它测的。
  */
-export function scriptedLlm(script: (call: number, messages: readonly { role?: string; text?: string }[]) => SessionDelta[]): ScriptedLlm {
+export function scriptedLlm(
+    script: (call: number, messages: readonly { role?: string; text?: string }[]) => SessionDelta[],
+): ScriptedLlm {
     const seen: { role?: string; text?: string }[][] = [];
     const port = {
         get calls(): number {
@@ -58,10 +60,10 @@ export function scriptedLlm(script: (call: number, messages: readonly { role?: s
 }
 
 /** 固定回一句话的 LLM（最常见的场景） */
-export function replyingLlm(text = "好"): ScriptedLlm {
+export function replyingLlm(text = '好'): ScriptedLlm {
     return scriptedLlm(() => [
-        { type: "text", text } as SessionDelta,
-        { type: "done", stopReason: "stop" } as SessionDelta,
+        { type: 'text', text } as SessionDelta,
+        { type: 'done', stopReason: 'stop' } as SessionDelta,
     ]);
 }
 
@@ -69,16 +71,16 @@ export function replyingLlm(text = "好"): ScriptedLlm {
 export function makeAgent(opts: {
     llm: LlmPort;
     providers?: readonly ContextProvider[];
-    initialMessages?: Parameters<typeof createBotAgent>[0]["initialMessages"];
+    initialMessages?: Parameters<typeof createBotAgent>[0]['initialMessages'];
     id?: string;
 }): BotAgent {
     return createBotAgent({
-        id: opts.id ?? "s-fixture",
+        id: opts.id ?? 's-fixture',
         llm: opts.llm,
         store: openMemorySessionStore(),
-        model: "test/model",
+        model: 'test/model',
         providers: opts.providers ?? baseProviders(),
-        instructions: "",
+        instructions: '',
         initialSnapshot: null,
         ...(opts.initialMessages === undefined ? {} : { initialMessages: opts.initialMessages }),
     });

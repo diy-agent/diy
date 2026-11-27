@@ -154,7 +154,11 @@ describe('房间列表轮询', () => {
             },
             bots: { list: async () => [] },
             models: { list: async () => ({ providers: [] }) },
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
 
         await vi.advanceTimersByTimeAsync(60_000);
@@ -181,7 +185,11 @@ describe('房间列表轮询', () => {
                     return { providers: [] };
                 },
             },
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
         await vi.advanceTimersByTimeAsync(30_000);
         expect(calls).toHaveLength(3);

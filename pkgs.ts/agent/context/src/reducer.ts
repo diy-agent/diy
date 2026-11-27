@@ -7,8 +7,8 @@
 //   2. **变化只由最终值决定**：applyFact 只改状态；「算不算变化」由 step 前后比 hash 得出
 //      （见 stepDelta）。中途改十次、最后改回原值 = 没变。
 
-import { hashText, hashValue } from "./hash.js";
-import { isValidPath } from "./path.js";
+import { hashText, hashValue } from './hash.js';
+import { isValidPath } from './path.js';
 import {
     emptyState,
     getValue,
@@ -18,15 +18,9 @@ import {
     setValue,
     validatePlaces,
     valueHashOf,
-} from "./tree.js";
-import { WIRE_VERSION } from "./wire.js";
-import type {
-    ContextApplyResult,
-    ContextFact,
-    ContextPath,
-    ContextStepDelta,
-    ContextTreeState,
-} from "./types.js";
+} from './tree.js';
+import { WIRE_VERSION } from './wire.js';
+import type { ContextApplyResult, ContextFact, ContextPath, ContextStepDelta, ContextTreeState } from './types.js';
 
 /** 新树（空） */
 export function createTree(wireVersion: string = WIRE_VERSION): ContextTreeState {
@@ -36,13 +30,13 @@ export function createTree(wireVersion: string = WIRE_VERSION): ContextTreeState
 /** 应用一个事实 */
 export function applyFact(state: ContextTreeState, fact: ContextFact): ContextApplyResult {
     switch (fact.type) {
-        case "snapshot":
+        case 'snapshot':
             return applySnapshot(fact.state);
-        case "replace":
+        case 'replace':
             return applyReplace(state, fact);
-        case "patch":
+        case 'patch':
             return applyPatch(state, fact);
-        case "remove":
+        case 'remove':
             return applyRemove(state, fact);
     }
 }
@@ -50,7 +44,7 @@ export function applyFact(state: ContextTreeState, fact: ContextFact): ContextAp
 /** 应用一串事实（前一个的 rejected 不阻断后续；needRebaseline 取或） */
 export function applyFacts(state: ContextTreeState, facts: readonly ContextFact[]): ContextApplyResult {
     let cur = state;
-    let rejected: ContextApplyResult["rejected"];
+    let rejected: ContextApplyResult['rejected'];
     let needRebaseline = false;
     for (const f of facts) {
         const r = applyFact(cur, f);
@@ -70,63 +64,54 @@ function applySnapshot(next: ContextTreeState): ContextApplyResult {
     // patch 仍会与新状态混在一起（144 结论）。
     return {
         state,
-        rejected: check.ok ? undefined : "invalid-path",
+        rejected: check.ok ? undefined : 'invalid-path',
         needRebaseline: true,
     };
 }
 
-function applyReplace(
-    state: ContextTreeState,
-    fact: Extract<ContextFact, { type: "replace" }>,
-): ContextApplyResult {
-    if (!isValidPath(fact.path)) return { state, rejected: "invalid-path", needRebaseline: false };
+function applyReplace(state: ContextTreeState, fact: Extract<ContextFact, { type: 'replace' }>): ContextApplyResult {
+    if (!isValidPath(fact.path)) return { state, rejected: 'invalid-path', needRebaseline: false };
     if (fact.baseHash !== undefined && valueHashOf(state, fact.path) !== fact.baseHash) {
-        return { state, rejected: "base-hash-mismatch", needRebaseline: true };
+        return { state, rejected: 'base-hash-mismatch', needRebaseline: true };
     }
     // 两种内容格式，两种落法（各自自洽，不引 YAML 解析器）：
     //   template-text —— content 是模板源码 → 换渲染方式，值树不动
     //   yaml          —— content 是该节点**已渲染文本**（yaml 只标明来源格式）→ 原样存值
     const next =
-        fact.contentFormat === "template-text"
-            ? setRenderer(state, fact.path, { renderer: "template", source: fact.content })
-            : setRenderer(setValue(state, fact.path, fact.content), fact.path, { renderer: "text" });
+        fact.contentFormat === 'template-text'
+            ? setRenderer(state, fact.path, { renderer: 'template', source: fact.content })
+            : setRenderer(setValue(state, fact.path, fact.content), fact.path, { renderer: 'text' });
     // 发送方声明的 hash 与实际不符 = adapter 转错（探针，不静默接受）
     if (fact.valueHash !== undefined && valueHashOf(next, fact.path) !== fact.valueHash) {
-        return { state, rejected: "hash-mismatch", needRebaseline: true };
+        return { state, rejected: 'hash-mismatch', needRebaseline: true };
     }
     if (
-        fact.contentFormat !== "template-text" &&
+        fact.contentFormat !== 'template-text' &&
         fact.renderedHash !== undefined &&
         hashText(fact.content) !== fact.renderedHash
     ) {
-        return { state, rejected: "hash-mismatch", needRebaseline: true };
+        return { state, rejected: 'hash-mismatch', needRebaseline: true };
     }
     return { state: next, needRebaseline: false };
 }
 
-function applyPatch(
-    state: ContextTreeState,
-    fact: Extract<ContextFact, { type: "patch" }>,
-): ContextApplyResult {
-    if (!isValidPath(fact.path)) return { state, rejected: "invalid-path", needRebaseline: false };
-    if (fact.op === "remove") return applyRemove(state, { type: "remove", path: fact.path });
+function applyPatch(state: ContextTreeState, fact: Extract<ContextFact, { type: 'patch' }>): ContextApplyResult {
+    if (!isValidPath(fact.path)) return { state, rejected: 'invalid-path', needRebaseline: false };
+    if (fact.op === 'remove') return applyRemove(state, { type: 'remove', path: fact.path });
 
     if (fact.baseHash !== undefined && valueHashOf(state, fact.path) !== fact.baseHash) {
-        return { state, rejected: "base-hash-mismatch", needRebaseline: true };
+        return { state, rejected: 'base-hash-mismatch', needRebaseline: true };
     }
-    if (fact.op === "replace" && getValue(state, fact.path) === undefined) {
-        return { state, rejected: "not-found", needRebaseline: false };
+    if (fact.op === 'replace' && getValue(state, fact.path) === undefined) {
+        return { state, rejected: 'not-found', needRebaseline: false };
     }
     return { state: setValue(state, fact.path, fact.value), needRebaseline: false };
 }
 
-function applyRemove(
-    state: ContextTreeState,
-    fact: Extract<ContextFact, { type: "remove" }>,
-): ContextApplyResult {
-    if (!isValidPath(fact.path)) return { state, rejected: "invalid-path", needRebaseline: false };
+function applyRemove(state: ContextTreeState, fact: Extract<ContextFact, { type: 'remove' }>): ContextApplyResult {
+    if (!isValidPath(fact.path)) return { state, rejected: 'invalid-path', needRebaseline: false };
     if (!hasAnythingAt(state, fact.path)) {
-        return { state, rejected: "not-found", needRebaseline: false };
+        return { state, rejected: 'not-found', needRebaseline: false };
     }
     return { state: removePath(state, fact.path), needRebaseline: false };
 }
@@ -150,9 +135,9 @@ export function valueHashes(state: ContextTreeState): Record<ContextPath, string
         if (!isPlainObject(node)) return;
         for (const [k, v] of Object.entries(node)) walk(v, base ? `${base}.${k}` : k);
     };
-    walk(state.values, "");
+    walk(state.values, '');
     for (const [p, spec] of Object.entries(state.renderers)) {
-        if (spec.renderer === "template") out[p] = hashValue(spec.source);
+        if (spec.renderer === 'template') out[p] = hashValue(spec.source);
     }
     return out;
 }
@@ -164,9 +149,7 @@ export function valueHashes(state: ContextTreeState): Record<ContextPath, string
 export function stepDelta(before: ContextTreeState, after: ContextTreeState): ContextStepDelta {
     const a = valueHashes(before);
     const b = valueHashes(after);
-    const changed = [...new Set([...Object.keys(a), ...Object.keys(b)])]
-        .filter((p) => a[p] !== b[p])
-        .sort();
+    const changed = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((p) => a[p] !== b[p]).sort();
     const counts: Record<ContextPath, number> = {};
     for (const p of changed) counts[p] = 1;
     return { changed, counts };

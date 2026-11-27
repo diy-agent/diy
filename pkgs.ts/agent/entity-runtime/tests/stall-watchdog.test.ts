@@ -35,7 +35,9 @@ function fakeClock() {
         advance(ms: number) {
             const target = now + ms;
             for (;;) {
-                const due = [...timers.entries()].filter(([, timer]) => timer.at <= target).sort((a, b) => a[1].at - b[1].at);
+                const due = [...timers.entries()]
+                    .filter(([, timer]) => timer.at <= target)
+                    .sort((a, b) => a[1].at - b[1].at);
                 const first = due[0];
                 if (first === undefined) break;
                 timers.delete(first[0]);

@@ -37,10 +37,15 @@ export function assemblyRole(input: RoleInput): AssemblyRole {
     const { kind, author, self } = input;
     // 先校验判别键：非法 kind 绝不能静默走 speech 分支（那会让「他人 trace」漏网）
     if (!(SOURCE_KINDS as readonly string[]).includes(kind)) {
-        throw new TalkError('role-violation', `未知来源类别 ${JSON.stringify(kind)}（合法：${SOURCE_KINDS.join(' | ')}）`, 'kind');
+        throw new TalkError(
+            'role-violation',
+            `未知来源类别 ${JSON.stringify(kind)}（合法：${SOURCE_KINDS.join(' | ')}）`,
+            'kind',
+        );
     }
     if (author === '') throw new TalkError('role-violation', 'author 不能为空', 'author');
-    if (self === '') throw new TalkError('role-violation', 'self（装配对象）不能为空：没有「我」就无从判断哪条是自己的', 'self');
+    if (self === '')
+        throw new TalkError('role-violation', 'self（装配对象）不能为空：没有「我」就无从判断哪条是自己的', 'self');
     if (kind === 'trace' && author !== self) {
         throw new TalkError(
             'role-violation',
@@ -71,6 +76,10 @@ export function assertRoleAssignments(assignments: readonly RoleAssignment[]): v
                 `[${i}].role`,
             );
         }
-        throw new TalkError('role-violation', `role 与来源不符：期望 ${expected}，实得 ${assignment.role}`, `[${i}].role`);
+        throw new TalkError(
+            'role-violation',
+            `role 与来源不符：期望 ${expected}，实得 ${assignment.role}`,
+            `[${i}].role`,
+        );
     });
 }

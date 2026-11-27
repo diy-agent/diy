@@ -10,13 +10,13 @@ node --import tsx pkgs.ts/core/actor/examples/06-rpc-bridge/
 
 ## 五个文件，各管一件事
 
-| 文件 | 行数 | 管什么 | 跨进程吗 |
-|---|---|---|---|
-| `room.ts` | 51 | 业务本体：私有状态 + 方法表 | **完全无关** |
-| `api.ts` | 36 | 有哪些方法、入参/出参什么形状 | 契约，两端共享 |
-| `ipc.ts` | 60 | node IPC → rpc 的 `EnvelopeTransport` | 只有这里 |
-| `server.ts` | 40 | 方法表 → api（一行一个转手） | 桥 |
-| `index.ts` | 110 | 起子进程、调远端、演示四件事 | 客户端 |
+| 文件        | 行数 | 管什么                                | 跨进程吗       |
+| ----------- | ---- | ------------------------------------- | -------------- |
+| `room.ts`   | 51   | 业务本体：私有状态 + 方法表           | **完全无关**   |
+| `api.ts`    | 36   | 有哪些方法、入参/出参什么形状         | 契约，两端共享 |
+| `ipc.ts`    | 60   | node IPC → rpc 的 `EnvelopeTransport` | 只有这里       |
+| `server.ts` | 40   | 方法表 → api（一行一个转手）          | 桥             |
+| `index.ts`  | 110  | 起子进程、调远端、演示四件事          | 客户端         |
 
 `room.ts` 一个字都不改就能跑 —— 它和第 02 节那个 room 是同一类东西。这是本范例要证明的第一件事。
 
@@ -31,7 +31,7 @@ const room = createScopedClient({
     prefix: 'room',
 });
 
-await room.say({ args: ['你', '一'] });   // 跑在子进程里
+await room.say({ args: ['你', '一'] }); // 跑在子进程里
 ```
 
 ### 二、串行是指 actor 的串行
@@ -70,14 +70,14 @@ slow: ({ input, signal }) => room.$call('slow', [input.args[0] as number], { sig
 
 写过一版 `src/net.ts`（192 行，`serve` / `connect` + Proxy 自动转发），删了。理由是它等于**第五种 transport** —— 和 rpc 的 `ws` / `http` / `electron` / `mem` 平行但不兼容，于是：
 
-| | rpc 的 transport | 自建 net 层 |
-|---|---|---|
-| 复用现有管子 | ws / http / electron 任选 | 每种新连接都要自己写 |
-| 超时 | `{ timeout }` 已实现 | 无 |
-| 错误码 | `RpcError{ code, details }` | 只有 message 字符串 |
-| 断线 | destroy → 全部 abort | 无 |
-| 双向调用 | 一条管子 client+server 各挂一个 | 要自己再建反方向 |
-| CLI 入口 | 841 行命令树现成 | 无 |
+|              | rpc 的 transport                | 自建 net 层          |
+| ------------ | ------------------------------- | -------------------- |
+| 复用现有管子 | ws / http / electron 任选       | 每种新连接都要自己写 |
+| 超时         | `{ timeout }` 已实现            | 无                   |
+| 错误码       | `RpcError{ code, details }`     | 只有 message 字符串  |
+| 断线         | destroy → 全部 abort            | 无                   |
+| 双向调用     | 一条管子 client+server 各挂一个 | 要自己再建反方向     |
+| CLI 入口     | 841 行命令树现成                | 无                   |
 
 自建那版唯一真优势是**方法表零声明**（`connect<Room>(link)` 从类型推出来，不用写 `api.ts`）。为了这一点丢掉上表全部内容不划算 —— 而「零声明」如果真需要，是给 rpc 加一个类型到 stub 的转换器的事，不是另起一套协议。
 

@@ -9,8 +9,10 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import {
-  RpcSchema, createTypedClient,
-  ChannelClientBinding, ChannelServerBinding,
+  RpcSchema,
+  createTypedClient,
+  ChannelClientBinding,
+  ChannelServerBinding,
 } from '../../src/index';
 import type { EnvelopeTransport } from '../../src/core/types';
 import type { ServerBinding } from '../../src/core/server-binding';
@@ -18,35 +20,49 @@ import { createMemTransportPair } from '../helpers';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const apiDef = RpcSchema.group({ children: {
-  math: { add: RpcSchema.unary({ input: { a: z.number(), b: z.number() }, output: z.number() }) },
-  greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
-  slow: RpcSchema.unary({ input: { delay: z.number(), id: z.number() }, output: z.object({ id: z.number() }) }),
-  count: RpcSchema.serverStream({ input: { n: z.number() }, output: z.number() }),
-  upload: RpcSchema.clientStream({
-    input: { tag: z.string() }, chunkIn: z.number(), output: z.object({ tag: z.string(), sum: z.number() }),
-  }),
-  chat: RpcSchema.bidiStream({ input: { room: z.string() }, chunkIn: z.string(), chunkOut: z.string() }),
-} });
+const apiDef = RpcSchema.group({
+  children: {
+    math: { add: RpcSchema.unary({ input: { a: z.number(), b: z.number() }, output: z.number() }) },
+    greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
+    slow: RpcSchema.unary({
+      input: { delay: z.number(), id: z.number() },
+      output: z.object({ id: z.number() }),
+    }),
+    count: RpcSchema.serverStream({ input: { n: z.number() }, output: z.number() }),
+    upload: RpcSchema.clientStream({
+      input: { tag: z.string() },
+      chunkIn: z.number(),
+      output: z.object({ tag: z.string(), sum: z.number() }),
+    }),
+    chat: RpcSchema.bidiStream({
+      input: { room: z.string() },
+      chunkIn: z.string(),
+      chunkOut: z.string(),
+    }),
+  },
+});
 
 function startBinding(txSrv: EnvelopeTransport): ServerBinding {
   const binding = new ChannelServerBinding(txSrv);
   // meta/handle 分离：RpcSchema 纯定义，handler 逐个 binding.on 挂载
-  binding._on("math.add", apiDef.math.add, async ({ input }) => input.a + input.b);
-  binding._on("greet", apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);
-  binding._on("slow", apiDef.slow, async ({ input }) => {
+  binding._on('math.add', apiDef.math.add, async ({ input }) => input.a + input.b);
+  binding._on('greet', apiDef.greet, async ({ input }) => `Hello, ${input.name}!`);
+  binding._on('slow', apiDef.slow, async ({ input }) => {
     await sleep(input.delay);
     return { id: input.id };
   });
-  binding._on("count", apiDef.count, async function* ({ input }) {
-    for (let i = 0; i < input.n; i++) { await sleep(1); yield i; }
+  binding._on('count', apiDef.count, async function* ({ input }) {
+    for (let i = 0; i < input.n; i++) {
+      await sleep(1);
+      yield i;
+    }
   });
-  binding._on("upload", apiDef.upload, async ({ input, stream }) => {
+  binding._on('upload', apiDef.upload, async ({ input, stream }) => {
     let sum = 0;
     for await (const v of stream) sum += v;
     return { tag: input.tag, sum };
   });
-  binding._on("chat", apiDef.chat, async function* ({ input, stream }) {
+  binding._on('chat', apiDef.chat, async function* ({ input, stream }) {
     for await (const msg of stream) yield `[${input.room}] ${msg}`;
   });
   return binding;
@@ -75,7 +91,10 @@ describe('meta/handle 分离 + createTypedClient', () => {
     for await (const v of h) nums.push(v);
     expect(nums).toEqual([0, 1, 2]);
 
-    async function* chatGen() { yield 'a'; yield 'b'; }
+    async function* chatGen() {
+      yield 'a';
+      yield 'b';
+    }
     const replies = await cli.chat({ room: 'r' }, chatGen());
     const chats: string[] = [];
     for await (const c of replies) chats.push(c);
@@ -89,10 +108,17 @@ describe('meta/handle 分离 + createTypedClient', () => {
     const binding = startBinding(txSrv);
     const cli = createTypedClient(new ChannelClientBinding(txCli), apiDef);
 
-    async function* gen() { yield 10; yield 20; yield 30; }
+    async function* gen() {
+      yield 10;
+      yield 20;
+      yield 30;
+    }
     expect(await cli.upload({ tag: 'x' }, gen())).toEqual({ tag: 'x', sum: 60 });
 
-    async function* genFn() { yield 1; yield 2; }
+    async function* genFn() {
+      yield 1;
+      yield 2;
+    }
     expect(await cli.upload({ tag: 'fn' }, () => genFn())).toEqual({ tag: 'fn', sum: 3 });
 
     binding.destroy();
@@ -120,7 +146,7 @@ describe('meta/handle 分离 + createTypedClient', () => {
     // 同步派发多次）。
     // 此前客户端要等 `await` ack 之后才登记 streams，首个 data 落在登记之前
     // → `streams.get(...)?.push()` 静默丢弃（实测：ws 下 count(3) 偶发只收到 [2,3]）。
-    binding._on("count", apiDef.count, async function* ({ input }) {
+    binding._on('count', apiDef.count, async function* ({ input }) {
       for (let i = 0; i < input.n; i++) yield i;
     });
     const cli = createTypedClient(new ChannelClientBinding(txCli), apiDef);
@@ -140,7 +166,9 @@ describe('meta/handle 分离 + createTypedClient', () => {
     const ac = new AbortController();
     ac.abort();
     // 规范终态：abort → CANCELLED（不再 ABORTED；message 取自 signal.reason，任务 185）
-    await expect(cli.slow({ delay: 1000, id: 1 }, { signal: ac.signal })).rejects.toMatchObject({ code: 'CANCELLED' });
+    await expect(cli.slow({ delay: 1000, id: 1 }, { signal: ac.signal })).rejects.toMatchObject({
+      code: 'CANCELLED',
+    });
 
     binding.destroy();
   });
@@ -150,7 +178,9 @@ describe('meta/handle 分离 + createTypedClient', () => {
     const binding = startBinding(txSrv);
     const cli = createTypedClient(new ChannelClientBinding(txCli), apiDef);
 
-    await expect(cli.slow({ delay: 1000, id: 1 }, { timeout: 30 })).rejects.toMatchObject({ code: 'TIMEOUT' });
+    await expect(cli.slow({ delay: 1000, id: 1 }, { timeout: 30 })).rejects.toMatchObject({
+      code: 'TIMEOUT',
+    });
 
     binding.destroy();
   });

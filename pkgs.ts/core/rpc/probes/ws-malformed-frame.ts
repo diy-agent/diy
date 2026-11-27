@@ -12,12 +12,20 @@ async function main() {
   let closed = false;
   let received = 0;
   let errorEvents = 0;
-  transport.onClose(() => { closed = true; });
-  transport.on(() => { received++; });
-  socket.on('error', () => { errorEvents++; });
+  transport.onClose(() => {
+    closed = true;
+  });
+  transport.on(() => {
+    received++;
+  });
+  socket.on('error', () => {
+    errorEvents++;
+  });
 
   let uncaught = '';
-  const onUncaught = (error: unknown) => { uncaught = String((error as any)?.message ?? error); };
+  const onUncaught = (error: unknown) => {
+    uncaught = String((error as any)?.message ?? error);
+  };
   process.once('uncaughtException', onUncaught);
 
   let settled: unknown = 'none';
@@ -43,4 +51,7 @@ async function main() {
   }
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

@@ -125,7 +125,13 @@ function move(to: string, opts: { id?: string; at?: string } = {}): Event {
 
 /** 一串「折线」：clarify → design → implement → review → implement（打回） */
 function walked(): { state: FlowState<string>; events: Event[] } {
-    const events = [move('clarify', { id: 'EVT-A' }), move('design', { id: 'EVT-B' }), move('implement', { id: 'EVT-C' }), move('review', { id: 'EVT-D' }), move('implement', { id: 'EVT-E', at: AT2 })];
+    const events = [
+        move('clarify', { id: 'EVT-A' }),
+        move('design', { id: 'EVT-B' }),
+        move('implement', { id: 'EVT-C' }),
+        move('review', { id: 'EVT-D' }),
+        move('implement', { id: 'EVT-E', at: AT2 }),
+    ];
     let state = initialState<IdOf<typeof devDef>>();
     for (const event of events) state = apply(devDef, state, event);
     return { state, events };
@@ -190,8 +196,12 @@ describe('R1 领域态自足：不吃日志也能推进，且态里不含日志 
     });
 
     it('非法推进照旧大声报（码与旧版一致）：未知节点 / 未进入却没进入口 / 没有边', () => {
-        expect(caught(() => advance(devDef, initialState<IdOf<typeof devDef>>(), { to: 'nope', at: AT })).code).toBe('unknown-node');
-        expect(caught(() => advance(devDef, initialState<IdOf<typeof devDef>>(), { to: 'design', at: AT })).code).toBe('invalid-entry');
+        expect(caught(() => advance(devDef, initialState<IdOf<typeof devDef>>(), { to: 'nope', at: AT })).code).toBe(
+            'unknown-node',
+        );
+        expect(caught(() => advance(devDef, initialState<IdOf<typeof devDef>>(), { to: 'design', at: AT })).code).toBe(
+            'invalid-entry',
+        );
         const { state } = walked();
         expect(caught(() => advance(devDef, state, { to: 'clarify', at: AT3 })).code).toBe('no-edge');
     });
@@ -238,9 +248,13 @@ describe('R2 落盘 / 读回可信（serialize）', () => {
         const { state } = walked();
         expect(caught(() => parseFlowState({ ...state, 多余: 1 })).code).toBe('invalid-state');
         expect(caught(() => parseFlowState({ path: state.path })).code).toBe('invalid-state');
-        expect(caught(() => parseFlowState({ position: 'design', path: [{ ...state.path[0], at: 'now' }] })).code).toBe('invalid-state');
+        expect(caught(() => parseFlowState({ position: 'design', path: [{ ...state.path[0], at: 'now' }] })).code).toBe(
+            'invalid-state',
+        );
         expect(caught(() => parseFlowState({ ...state, done: 'yes' })).code).toBe('invalid-state');
-        expect(caught(() => parseFlowState({ position: 'design', path: [{ ...state.path[0], kind: 'sideways' }] })).code).toBe('invalid-state');
+        expect(
+            caught(() => parseFlowState({ position: 'design', path: [{ ...state.path[0], kind: 'sideways' }] })).code,
+        ).toBe('invalid-state');
     });
 
     it('**语义自相矛盾**的状态也拦下：位置与折线末端不一致 / 位置空却有折线 / `seq` 不单调', () => {
@@ -248,7 +262,9 @@ describe('R2 落盘 / 读回可信（serialize）', () => {
         const last = state.path[state.path.length - 1];
         expect(caught(() => parseFlowState({ position: 'design', path: state.path })).code).toBe('invalid-state');
         expect(caught(() => parseFlowState({ position: null, path: state.path })).code).toBe('invalid-state');
-        expect(caught(() => parseFlowState({ position: 'design', path: [{ ...last, seq: 3 }] })).code).toBe('invalid-state');
+        expect(caught(() => parseFlowState({ position: 'design', path: [{ ...last, seq: 3 }] })).code).toBe(
+            'invalid-state',
+        );
         expect(parseFlowState({ position: null, path: [] })).toEqual({ position: null, path: [] }); // 空态是合法的
     });
 
@@ -281,12 +297,18 @@ describe('R2 落盘 / 读回可信（serialize）', () => {
 
     it('写侧同样严格：拿一个「形状像但字段非法」的对象去序列化，当场报错（不静默抹掉）', () => {
         const { state } = walked();
-        expect(caught(() => flowStateToJson({ ...state, path: [{ ...state.path[0], seq: 0 }] })).code).toBe('invalid-state');
+        expect(caught(() => flowStateToJson({ ...state, path: [{ ...state.path[0], seq: 0 }] })).code).toBe(
+            'invalid-state',
+        );
     });
 
     it('语义自洽：`done === true` 却从未进入工作流 ⇒ `invalid-state`（「跑完」的前提是先进入）', () => {
         expect(caught(() => parseFlowState({ position: null, path: [], done: true })).code).toBe('invalid-state');
-        expect(parseFlowState({ position: null, path: [], done: false })).toEqual({ position: null, path: [], done: false });
+        expect(parseFlowState({ position: null, path: [], done: false })).toEqual({
+            position: null,
+            path: [],
+            done: false,
+        });
     });
 
     it('立场：`params` 只兜**纯 JSON 性**、不兜**值语义** —— 脏值读得进来，但进不了运行态', () => {
@@ -304,12 +326,22 @@ describe('R3 审计入口是薄适配：`apply` / `project` 语义不变', () =>
     it('`apply(event)` ≡ `advance({ to, at })`：同一条日志走出来的态与领域正路一模一样', () => {
         const { state, events } = walked();
         let replayed: FlowState<string> = initialState<string>();
-        for (const event of events) replayed = advance<string>(devDef, replayed, { to: event.anchor.type === 'node' ? event.anchor.data.nodeId : '', at: event.at }).state;
+        for (const event of events)
+            replayed = advance<string>(devDef, replayed, {
+                to: event.anchor.type === 'node' ? event.anchor.data.nodeId : '',
+                at: event.at,
+            }).state;
         expect(replayed).toEqual(state);
     });
 
     it('报错码与定位路径与旧版逐条一致（锚点类型 / 未知节点 / 未进入口 / 没有边）', () => {
-        const notNode = createEvent({ id: 'x1', author: 'a', anchor: { type: 'task-field', data: { field: 'title' } }, content: '', at: AT });
+        const notNode = createEvent({
+            id: 'x1',
+            author: 'a',
+            anchor: { type: 'task-field', data: { field: 'title' } },
+            content: '',
+            at: AT,
+        });
         expect(caught(() => apply(devDef, initialState<IdOf<typeof devDef>>(), notNode)).code).toBe('invalid-event');
         const unknown = caught(() => apply(devDef, initialState<IdOf<typeof devDef>>(), move('nope')));
         expect(unknown.code).toBe('unknown-node');
@@ -346,7 +378,13 @@ describe('R4 内核不编人类文本：转移给结构化语义', () => {
         if (entered.status !== 'moved') throw new Error('unreachable');
         expect(entered.transition.move).toEqual({ kind: 'entry', from: null, to: 'clarify' });
 
-        const declared = rt.declare(entered.transition.state, { id: 'e2', at: AT2, author: 'human', to: 'design', content: '需求清楚了' });
+        const declared = rt.declare(entered.transition.state, {
+            id: 'e2',
+            at: AT2,
+            author: 'human',
+            to: 'design',
+            content: '需求清楚了',
+        });
         expect(declared.move).toEqual({ kind: 'next', from: 'clarify', to: 'design' });
         expect(declared.reason).toBe('');
     });
@@ -398,24 +436,41 @@ describe('R5 关联靠显式 ref（内核只透传不解释）', () => {
     it('`step` 的 `seed.ref` 落到 `Visit.ref`；`advance` 的 `ref` 同样', () => {
         const { registry } = fakes();
         const rt = createRuntime(devDef, { registry });
-        const entered = rt.step(initialState<IdOf<typeof devDef>>(), { at: AT, id: 'e1', ref: { taskUri: 'projects/4/tasks/333', turnId: 't7' } });
+        const entered = rt.step(initialState<IdOf<typeof devDef>>(), {
+            at: AT,
+            id: 'e1',
+            ref: { taskUri: 'projects/4/tasks/333', turnId: 't7' },
+        });
         if (entered.status !== 'moved') throw new Error('unreachable');
         expect(entered.transition.state.path[0].ref).toEqual({ taskUri: 'projects/4/tasks/333', turnId: 't7' });
 
-        const direct = advance(devDef, initialState<IdOf<typeof devDef>>(), { to: 'clarify', at: AT, ref: { stepId: 's1' } });
+        const direct = advance(devDef, initialState<IdOf<typeof devDef>>(), {
+            to: 'clarify',
+            at: AT,
+            ref: { stepId: 's1' },
+        });
         expect(direct.state.path[0].ref).toEqual({ stepId: 's1' });
     });
 
     it('ref 是**开放袋**（键不封闭）但值必须是字符串：值错了大声报', () => {
         const { registry } = fakes();
         const rt = createRuntime(devDef, { registry });
-        const bad = caught(() => rt.step(initialState<IdOf<typeof devDef>>(), { at: AT, ref: { turnId: 7 } as unknown as Record<string, string> }));
+        const bad = caught(() =>
+            rt.step(initialState<IdOf<typeof devDef>>(), {
+                at: AT,
+                ref: { turnId: 7 } as unknown as Record<string, string>,
+            }),
+        );
         expect(bad.code).toBe('invalid-option');
         expect(bad.path).toBe('seed.ref.turnId');
     });
 
     it('ref 随状态一起落盘读回（关联是领域记录的一部分，不是日志的一部分）', () => {
-        const state = advance(devDef, initialState<IdOf<typeof devDef>>(), { to: 'clarify', at: AT, ref: { taskUri: 'projects/4/tasks/333' } }).state;
+        const state = advance(devDef, initialState<IdOf<typeof devDef>>(), {
+            to: 'clarify',
+            at: AT,
+            ref: { taskUri: 'projects/4/tasks/333' },
+        }).state;
         expect(flowStateFromJson(flowStateToJson(state))).toEqual(state);
     });
 
@@ -457,7 +512,13 @@ describe('R6 终态记账：跑完是领域事实，重复 `step` 不重跑 `act
             id: 'ship',
             name: '发布',
             nodes: [
-                { id: 'build', name: '构建', actor: 'system', guard: ['pred:build_ok', 'action:ship'], hint: '构建并发布' },
+                {
+                    id: 'build',
+                    name: '构建',
+                    actor: 'system',
+                    guard: ['pred:build_ok', 'action:ship'],
+                    hint: '构建并发布',
+                },
                 { id: 'end', name: '收尾', actor: 'system', guard: [], hint: '收尾' },
             ],
             edges: [{ from: 'build', to: 'end', kind: 'next' }],
@@ -625,8 +686,12 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
     it('快照里的参数值必须是纯 JSON：`NaN` / 函数 / 环形结构一律 `invalid-state`', () => {
         const cyclic: Record<string, unknown> = { a: {} };
         (cyclic.a as Record<string, unknown>).self = cyclic;
-        expect(caught(() => parseFlowState({ position: null, path: [], params: { a: { n: Number.NaN } } })).code).toBe('invalid-state');
-        expect(caught(() => parseFlowState({ position: null, path: [], params: { a: { f: () => 1 } } })).code).toBe('invalid-state');
+        expect(caught(() => parseFlowState({ position: null, path: [], params: { a: { n: Number.NaN } } })).code).toBe(
+            'invalid-state',
+        );
+        expect(caught(() => parseFlowState({ position: null, path: [], params: { a: { f: () => 1 } } })).code).toBe(
+            'invalid-state',
+        );
         expect(caught(() => parseFlowState({ position: null, path: [], params: cyclic })).code).toBe('invalid-state');
         expect(parseFlowState({ position: null, path: [], params: { a: { list: [1, 'x', true] } } })).toEqual({
             position: null,
@@ -637,7 +702,10 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
 
     it('未声明参数的工作流：宿主给的袋也随状态走；没给袋就不带 `params`（状态保持干净）', () => {
         const { registry } = fakes();
-        const solo = defineWorkflow({ nodes: [{ id: 'solo', name: '单', actor: 'system', guard: [], hint: '' }], edges: [] });
+        const solo = defineWorkflow({
+            nodes: [{ id: 'solo', name: '单', actor: 'system', guard: [], hint: '' }],
+            edges: [],
+        });
         const bag = createRuntime(solo, { registry, params: { whatever: { deep: [1, 2] } } });
         const entered = bag.step(initialState<IdOf<typeof solo>>(), { at: AT, id: 'e1' });
         if (entered.status !== 'moved') throw new Error('unreachable');
@@ -668,13 +736,18 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
         const { registry } = spy();
         const rt = createRuntime(ciDef, { registry, params: { ci: { command: 'pnpm test' } } });
         // 外来态：位置非空（已进入）却没记参数值 —— 它丢了自己的运行配置，不是「缺省」
-        const stray: FlowState<IdOf<typeof ciDef>> = { position: 'ci', path: [{ node: 'ci', seq: 1, kind: 'next', at: AT }] };
+        const stray: FlowState<IdOf<typeof ciDef>> = {
+            position: 'ci',
+            path: [{ node: 'ci', seq: 1, kind: 'next', at: AT }],
+        };
         const e = caught(() => rt.step(stray, { at: AT2, id: 'e2' }));
         expect(e.code).toBe('invalid-param');
         expect(e.path).toBe('state.params');
         expect(e.message).toContain('另起一次运行');
         // `declare` 同一条闸门
-        expect(caught(() => rt.declare(stray, { author: 'agent', to: 'merge', content: '推', at: AT2, id: 'e3' })).code).toBe('invalid-param');
+        expect(
+            caught(() => rt.declare(stray, { author: 'agent', to: 'merge', content: '推', at: AT2, id: 'e3' })).code,
+        ).toBe('invalid-param');
     });
 
     it('「缺省」与「丢了」分开：尚未进入（新一次运行）照旧跑；没声明参数的工作流没有配置可丢', () => {
@@ -683,9 +756,15 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
         expect(rt.step(initialState<IdOf<typeof ciDef>>(), { at: AT, id: 'e1' }).status).toBe('moved');
 
         const { registry: plain } = fakes();
-        const solo = defineWorkflow({ nodes: [{ id: 'solo', name: '单', actor: 'system', guard: [], hint: '' }], edges: [] });
+        const solo = defineWorkflow({
+            nodes: [{ id: 'solo', name: '单', actor: 'system', guard: [], hint: '' }],
+            edges: [],
+        });
         const bare = createRuntime(solo, { registry: plain });
-        const stray: FlowState<IdOf<typeof solo>> = { position: 'solo', path: [{ node: 'solo', seq: 1, kind: 'next', at: AT }] };
+        const stray: FlowState<IdOf<typeof solo>> = {
+            position: 'solo',
+            path: [{ node: 'solo', seq: 1, kind: 'next', at: AT }],
+        };
         expect(bare.step(stray, { at: AT2 }).status).toBe('done'); // 没声明参数 ⇒ 无配置可丢
     });
 
@@ -710,7 +789,11 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
     it('**【P1】`advance` 正路产出的就是完整真源**：走完 → 落盘 → 读回 → 喂回 `runtime.step` 照样跑得下去', () => {
         const { registry } = spy();
         // 宿主只用领域操作推进（连 runtime 都不建）—— 这条正路必须产出「读回后跑得回原样」的状态
-        let state = advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT, params: { ci: { command: 'pnpm test' } } }).state;
+        let state = advance(ciDef, initialState<IdOf<typeof ciDef>>(), {
+            to: 'ci',
+            at: AT,
+            params: { ci: { command: 'pnpm test' } },
+        }).state;
         state = advance(ciDef, state, { to: 'merge', at: AT2 }).state;
         expect(state.params).toEqual({ ci: { command: 'pnpm test' } });
 
@@ -721,30 +804,52 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
     });
 
     it('`advance` 携带参数值：给了就用本次的、没给就继承入参那份；形状错照旧大声报', () => {
-        const entered = advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT, params: { ci: { command: 'pnpm test' } } }).state;
+        const entered = advance(ciDef, initialState<IdOf<typeof ciDef>>(), {
+            to: 'ci',
+            at: AT,
+            params: { ci: { command: 'pnpm test' } },
+        }).state;
         expect(entered.params).toEqual({ ci: { command: 'pnpm test' } });
-        expect(advance(ciDef, entered, { to: 'merge', at: AT2 }).state.params).toEqual({ ci: { command: 'pnpm test' } });
+        expect(advance(ciDef, entered, { to: 'merge', at: AT2 }).state.params).toEqual({
+            ci: { command: 'pnpm test' },
+        });
 
-        const e = caught(() => advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT, params: 'nope' as unknown as Record<string, unknown> }));
+        const e = caught(() =>
+            advance(ciDef, initialState<IdOf<typeof ciDef>>(), {
+                to: 'ci',
+                at: AT,
+                params: 'nope' as unknown as Record<string, unknown>,
+            }),
+        );
         expect(e.code).toBe('invalid-option');
         expect(e.path).toBe('request.params');
     });
 
     it('**【P2-1】正路不许静默换配置**：状态里已有的参数值与本次携带的不同 ⇒ 拒（换配置 = 另起一次运行）', () => {
-        const entered = advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT, params: { ci: { command: 'npm test' } } }).state;
+        const entered = advance(ciDef, initialState<IdOf<typeof ciDef>>(), {
+            to: 'ci',
+            at: AT,
+            params: { ci: { command: 'npm test' } },
+        }).state;
 
         // 同值（含键序不同的同内容）照样放行 —— 那不是换配置
-        expect(advance(ciDef, entered, { to: 'merge', at: AT2, params: { ci: { command: 'npm test' } } }).state.params).toEqual({ ci: { command: 'npm test' } });
+        expect(
+            advance(ciDef, entered, { to: 'merge', at: AT2, params: { ci: { command: 'npm test' } } }).state.params,
+        ).toEqual({ ci: { command: 'npm test' } });
 
         // 换一份不同的值：折线上 `ci` 那次是拿旧配置跑的 ⇒ 混配状态，事后无从发现
-        const e = caught(() => advance(ciDef, entered, { to: 'merge', at: AT2, params: { ci: { command: 'pnpm test' } } }));
+        const e = caught(() =>
+            advance(ciDef, entered, { to: 'merge', at: AT2, params: { ci: { command: 'pnpm test' } } }),
+        );
         expect(e.code).toBe('invalid-param');
         expect(e.path).toBe('request.params');
         expect(e.message).toContain('另起一次运行');
 
         // 容器是同一条正路的视图 ⇒ 一并拒（不留第二条口径）
         const c = createContainer(ciDef).advance({ to: 'ci', at: AT, params: { ci: { command: 'npm test' } } });
-        expect(caught(() => c.advance({ to: 'merge', at: AT2, params: { ci: { command: 'pnpm test' } } })).code).toBe('invalid-param');
+        expect(caught(() => c.advance({ to: 'merge', at: AT2, params: { ci: { command: 'pnpm test' } } })).code).toBe(
+            'invalid-param',
+        );
 
         // 对照 runtime 那条路：同一个换配置意图，报的是同一件事（口径一致，不是两套）
         const { registry } = spy();
@@ -752,7 +857,11 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
         expect(caught(() => rt.step(entered, { at: AT2, id: 'e9' })).code).toBe('invalid-param');
 
         // 真「另起一次运行」的正路：从 `initialState()` 起、带新配置 ⇒ 照旧跑
-        const fresh = advance(ciDef, initialState<IdOf<typeof ciDef>>(), { to: 'ci', at: AT3, params: { ci: { command: 'pnpm test' } } }).state;
+        const fresh = advance(ciDef, initialState<IdOf<typeof ciDef>>(), {
+            to: 'ci',
+            at: AT3,
+            params: { ci: { command: 'pnpm test' } },
+        }).state;
         expect(fresh.params).toEqual({ ci: { command: 'pnpm test' } });
     });
 
@@ -769,7 +878,10 @@ describe('R7 `params` 值纳入状态（状态文件为一等真源）', () => {
         expect(Object.isFrozen(declared.params)).toBe(true);
         expect(Object.isFrozen(declared.params.ci)).toBe(true);
 
-        const solo = defineWorkflow({ nodes: [{ id: 'solo', name: '单', actor: 'system', guard: [], hint: '' }], edges: [] });
+        const solo = defineWorkflow({
+            nodes: [{ id: 'solo', name: '单', actor: 'system', guard: [], hint: '' }],
+            edges: [],
+        });
         const bagged = createRuntime(solo, { registry, params: { whatever: { deep: [1, 2] } } });
         expect(Object.isFrozen(bagged.params)).toBe(true); // 顶层冻
         expect(Object.isFrozen(bagged.params.whatever)).toBe(false); // 内层照旧是宿主那份（不越权管不认识的形状）

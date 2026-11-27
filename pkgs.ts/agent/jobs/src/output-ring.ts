@@ -38,7 +38,7 @@ export const LIVE_RING_BYTES = 256 * 1024;
 export const SETTLE_RING_BYTES = 16 * 1024;
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder("utf-8", { fatal: false });
+const decoder = new TextDecoder('utf-8', { fatal: false });
 
 // ═══════════════════════════════════════════════
 //  UTF-8 码点边界（本文件的「合法切点」判据）
@@ -168,7 +168,7 @@ export function tailOfRing(ring: OutputRing, keepBytes: number): OutputRing {
 //  cursor（双 cursor 各自独立）
 // ═══════════════════════════════════════════════
 
-export type OutputCursorKind = "live" | "settle";
+export type OutputCursorKind = 'live' | 'settle';
 
 export interface OutputCursor {
     /** 稳定标识：`<kind>:<runId>` —— 两种 kind 永不共用一个游标 */

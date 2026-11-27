@@ -70,9 +70,7 @@ export function parseMessage(value: unknown, path = 'message'): ChatMessage {
             ? undefined
             : parseMentions(obj.mentions, `${path}.mentions`, 'session/invalid-message');
     const data =
-        obj.data === undefined
-            ? undefined
-            : takeSerializable(obj.data, `${path}.data`, 'session/invalid-message');
+        obj.data === undefined ? undefined : takeSerializable(obj.data, `${path}.data`, 'session/invalid-message');
 
     // 本包自己产出的 tool-call 分支带私有载荷 `data.tool`；读回时按原强度校验它
     // （`data` 其余内容仍不解释）

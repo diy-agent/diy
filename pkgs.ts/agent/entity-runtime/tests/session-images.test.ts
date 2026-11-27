@@ -91,12 +91,9 @@ describe('messageWithAttachments', () => {
         const noReader = await messageWithAttachments(entry([SHOT]), undefined);
         expect(JSON.stringify(noReader.content)).toMatch(/附图未送达/);
 
-        const broken = await messageWithAttachments(
-            entry([SHOT]),
-            async () => {
-                throw new Error('文件没了');
-            },
-        );
+        const broken = await messageWithAttachments(entry([SHOT]), async () => {
+            throw new Error('文件没了');
+        });
         expect(JSON.stringify(broken.content)).toMatch(/附图未送达/);
     });
 

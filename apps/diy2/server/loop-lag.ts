@@ -96,10 +96,7 @@ export function startLoopLag(options: LoopLagOptions = {}): LoopLagMonitor {
         last = now;
         samples.push(lag);
         if (lag >= warnMs) {
-            log(
-                `[diy2:lag] 事件循环卡了 ${Math.round(lag)}ms（tick=${tickMs}ms）` +
-                    ` —— 这段时间里所有请求都在排队`,
-            );
+            log(`[diy2:lag] 事件循环卡了 ${Math.round(lag)}ms（tick=${tickMs}ms）` + ` —— 这段时间里所有请求都在排队`);
         }
         if (samples.length >= ticksPerWindow) {
             snapshot = summarize(samples, windowMs);

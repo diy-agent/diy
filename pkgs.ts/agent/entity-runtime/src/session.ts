@@ -690,7 +690,8 @@ export class BotSession {
                 ...(this.deps.commitDelta === undefined ? {} : { commitDelta: this.deps.commitDelta }),
                 onStepTranscript: (added) => {
                     // transcript 会进快照落 db：媒体字节在模型那侧已经用过了，这里只留说明
-                    for (const message of added) produced.push({ message: scrubMedia(message), origin: 'self', turn: turn.turn });
+                    for (const message of added)
+                        produced.push({ message: scrubMedia(message), origin: 'self', turn: turn.turn });
                 },
                 onUsage: (usage) => {
                     this.lastUsage = usage;

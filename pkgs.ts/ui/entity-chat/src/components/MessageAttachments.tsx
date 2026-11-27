@@ -126,11 +126,7 @@ export interface MessageAttachmentsProps {
 }
 
 /** 一条消息的附件区；没有附件时返回 null（不占任何空间） */
-export function MessageAttachments({
-    refs,
-    read,
-    onOpenImage,
-}: MessageAttachmentsProps): React.ReactElement | null {
+export function MessageAttachments({ refs, read, onOpenImage }: MessageAttachmentsProps): React.ReactElement | null {
     if (refs === undefined || refs.length === 0) return null;
     return (
         <div className="mb-1 flex flex-wrap gap-1.5">

@@ -22,13 +22,19 @@ async function main() {
   const client = new ChannelClientBinding(new WsTransport(socket as any));
 
   let uncaught = '';
-  const onUncaught = (e: unknown) => { uncaught = String((e as any)?.message ?? e); };
+  const onUncaught = (e: unknown) => {
+    uncaught = String((e as any)?.message ?? e);
+  };
   process.once('uncaughtException', onUncaught);
 
   let settled: unknown = 'HUNG';
   const call = client.invoke('diy.x.y', {}, { timeout: 5000 }).then(
-    () => { settled = 'resolved'; },
-    (e: any) => { settled = `rejected:${e?.code}`; },
+    () => {
+      settled = 'resolved';
+    },
+    (e: any) => {
+      settled = `rejected:${e?.code}`;
+    },
   );
 
   await new Promise((resolve) => setTimeout(resolve, 30));
@@ -53,4 +59,7 @@ async function main() {
   await Promise.race([call, new Promise((r) => setTimeout(r, 100))]);
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

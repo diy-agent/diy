@@ -7,7 +7,7 @@
 //   · 执行失败**不抛**：转成一条失败结果（模型看得见原因才能改），与 diy-app 的
 //     「工具错误也是数据」同口径 —— 抛会把整轮对话变红，而模型还有机会自我修正。
 
-import type { ToolResultInput } from "@diy-agent/session";
+import type { ToolResultInput } from '@diy-agent/session';
 
 /** 工具执行入参（ai-sdk `ToolCallOptions` 的结构子集：多传的字段它自己会忽略） */
 export interface BotToolOptions {
@@ -65,9 +65,9 @@ export async function runToolCalls(
 async function runOne(call: PendingToolCall, tools: BotToolSet, abortSignal: AbortSignal | undefined): Promise<string> {
     const tool = tools[call.name];
     if (tool === undefined) {
-        return `[没有这个工具] ${call.name}（可用：${Object.keys(tools).join(" / ") || "（无）"}）`;
+        return `[没有这个工具] ${call.name}（可用：${Object.keys(tools).join(' / ') || '（无）'}）`;
     }
-    if (typeof tool.execute !== "function") {
+    if (typeof tool.execute !== 'function') {
         return `[工具不可执行] ${call.name}（这个工具只声明了 schema，没有 execute）`;
     }
     try {
@@ -84,11 +84,11 @@ async function runOne(call: PendingToolCall, tools: BotToolSet, abortSignal: Abo
 
 /** 任意执行结果 → 文本（字符串原样；其余 JSON —— Session/协议最后都只要一段文本） */
 function textOf(value: unknown): string {
-    if (typeof value === "string") return value;
-    if (value === undefined) return "";
+    if (typeof value === 'string') return value;
+    if (value === undefined) return '';
     try {
         const text = JSON.stringify(value);
-        return typeof text === "string" ? text : String(value);
+        return typeof text === 'string' ? text : String(value);
     } catch {
         return String(value);
     }

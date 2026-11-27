@@ -349,8 +349,7 @@ export async function resolveConfig(opts?: {
     const mode: Diy2Env = opts?.mode ?? 'production';
     const overrides = opts?.overrides ?? {};
     const moduleDir = opts?.moduleDir ?? process.cwd();
-    const appRoot =
-        (await findAppRoot(moduleDir)) ?? (await findAppRoot(join(moduleDir, '..'))) ?? resolve(moduleDir);
+    const appRoot = (await findAppRoot(moduleDir)) ?? (await findAppRoot(join(moduleDir, '..'))) ?? resolve(moduleDir);
     const repoRoot = (await findRepoRoot(appRoot)) ?? null;
 
     const notes: string[] = [];

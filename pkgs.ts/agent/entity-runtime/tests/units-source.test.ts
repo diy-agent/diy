@@ -11,13 +11,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Item } from '../src/types';
-import {
-    SOURCE_QUOTE_MAX_CHARS,
-    sourceQuoteOf,
-    sourceQuotesOf,
-    unitBoard,
-    withSourceQuotes,
-} from '../src/units';
+import { SOURCE_QUOTE_MAX_CHARS, sourceQuoteOf, sourceQuotesOf, unitBoard, withSourceQuotes } from '../src/units';
 
 function item(overrides: Partial<Item> & { id: string; type: Item['type'] }): Item {
     return {
@@ -37,7 +31,9 @@ const bot = { id: 'bot-1', name: '任务分解dag', color: '#a3e635', role: 'bot
 
 describe('sourceQuoteOf：把一条消息解成「谁 + 原话」', () => {
     it('chat：取 data.text；带上发言人名字与身份', () => {
-        const quote = sourceQuoteOf(item({ id: 'u-1', type: 'chat', author: human, data: { text: '需要解决自动拆解' } }));
+        const quote = sourceQuoteOf(
+            item({ id: 'u-1', type: 'chat', author: human, data: { text: '需要解决自动拆解' } }),
+        );
         expect(quote).toEqual({ author: '我', role: 'human', text: '需要解决自动拆解' });
     });
 
@@ -86,9 +82,7 @@ describe('sourceQuotesOf / withSourceQuotes：贴到树上', () => {
         ]);
 
     it('只给能解开的行贴；解不开 / 没来源的行保持原样（不编造）', () => {
-        const quotes = sourceQuotesOf([
-            item({ id: 'u-1', type: 'chat', author: human, data: { text: '要有导出' } }),
-        ]);
+        const quotes = sourceQuotesOf([item({ id: 'u-1', type: 'chat', author: human, data: { text: '要有导出' } })]);
         const attached = withSourceQuotes(board(), quotes);
         const byId = new Map(attached.rows.map((row) => [row.id, row] as const));
         expect(byId.get('has')?.sourceQuote).toEqual({ author: '我', role: 'human', text: '要有导出' });

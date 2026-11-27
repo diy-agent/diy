@@ -15,10 +15,10 @@
     "scripts": {
         "test": "vitest run"
     },
-    "devDependencies": {
-        "vitest": "^4.1.10"
-    },
     "dependencies": {
         "@diy-agent/protocol": "*"
+    },
+    "devDependencies": {
+        "vitest": "^4.1.10"
     }
 }

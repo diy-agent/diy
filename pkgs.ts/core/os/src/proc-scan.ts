@@ -46,7 +46,7 @@ export interface PsRow {
 }
 
 /** 认领依据（决定「能不能杀」：lineage 只凭父链，必须额外过创建时间窗）。 */
-export type ProcClaim = "pgid" | "run-root" | "descendant" | "lineage";
+export type ProcClaim = 'pgid' | 'run-root' | 'descendant' | 'lineage';
 
 /** 归我们管的进程：ps 行 + 认领依据。 */
 export interface OwnedProc extends PsRow {
@@ -127,8 +127,7 @@ export function selectOwnedProcs(rows: readonly PsRow[], opts: SelectOptions): O
 
     /** 认领锚点 = 我们记过的 run 根 pid ∪ 组名册里的组号（POSIX 是 pgid，Windows 是根 pid）。 */
     const anchors = new Set<number>([...opts.runPids.keys(), ...opts.groups.keys()]);
-    const anchorRunId = (pid: number): string | undefined =>
-        opts.runPids.get(pid) ?? opts.groups.get(pid)?.runId;
+    const anchorRunId = (pid: number): string | undefined => opts.runPids.get(pid) ?? opts.groups.get(pid)?.runId;
     /**
      * 锚点身份判据（**不是时间年龄**）：
      *   · 锚点不在本轮快照里 ⇒ 这个 pid 没被复用 ⇒ 锚点有效（继续给孤儿当依据）；
@@ -169,8 +168,7 @@ export function selectOwnedProcs(rows: readonly PsRow[], opts: SelectOptions): O
         return null;
     };
 
-    const isDescendantOfSelf = (row: PsRow): boolean =>
-        walkTo(row, (ppid) => ppid === opts.selfPid) !== null;
+    const isDescendantOfSelf = (row: PsRow): boolean => walkTo(row, (ppid) => ppid === opts.selfPid) !== null;
 
     /** `lineage` 认领：父链命中锚点（锚点本身可以已经退出）。 */
     const lineageOf = (row: PsRow): { anchorPid: number; runId?: string } | null => {
@@ -197,8 +195,7 @@ export function selectOwnedProcs(rows: readonly PsRow[], opts: SelectOptions): O
         if (isAppHelperProc(row.command)) continue;
         if (opts.isObserver?.(row.command)) continue;
         const groupOwner = row.pgid === null ? undefined : opts.groups.get(row.pgid);
-        const pgidOwned =
-            row.pgid !== null && (groupOwner !== undefined || opts.runPids.has(row.pgid));
+        const pgidOwned = row.pgid !== null && (groupOwner !== undefined || opts.runPids.has(row.pgid));
         const runRoot = opts.runPids.has(row.pid) && anchorValid(row.pid);
         const lineage = lineageOf(row);
         const descendant = isDescendantOfSelf(row);
@@ -222,13 +219,7 @@ export function selectOwnedProcs(rows: readonly PsRow[], opts: SelectOptions): O
         // 锚点一退，留下的是孤儿 ⇒ 立刻列出（这正是要抓的那类）。
         const lineageOwner = lineage ? opts.groups.get(lineage.anchorPid) : undefined;
         if (lineage && runId === null && lineageOwner !== undefined && byPid.has(lineage.anchorPid)) continue;
-        const claim: ProcClaim = runRoot
-            ? "run-root"
-            : pgidOwned
-              ? "pgid"
-              : descendant
-                ? "descendant"
-                : "lineage";
+        const claim: ProcClaim = runRoot ? 'run-root' : pgidOwned ? 'pgid' : descendant ? 'descendant' : 'lineage';
         out.push({
             ...row,
             runId,

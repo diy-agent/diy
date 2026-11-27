@@ -1,28 +1,28 @@
 {
-  "name": "@diy-agent/talk",
-  "version": "0.1.0",
-  "private": true,
-  "description": "diy 对话容器内核：事件 / 锚点 / 反应原语 + role 翻译铁律 + 装配器（零依赖纯内核，不做存储）",
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./src/index.ts",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./dist/index.js"
+    "name": "@diy-agent/talk",
+    "version": "0.1.0",
+    "private": true,
+    "description": "diy 对话容器内核：事件 / 锚点 / 反应原语 + role 翻译铁律 + 装配器（零依赖纯内核，不做存储）",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {},
+    "devDependencies": {
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
     }
-  },
-  "files": [
-    "src/"
-  ],
-  "dependencies": {},
-  "devDependencies": {
-    "oxfmt": "^0.57.0",
-    "oxlint": "^1.72.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  }
 }

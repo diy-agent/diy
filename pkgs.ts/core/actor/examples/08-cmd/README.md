@@ -12,11 +12,11 @@ node --import tsx pkgs.ts/core/actor/examples/08-cmd/
 
 ## 三个文件
 
-| 文件      | 谁 import                   | 内容                                                            |
-| --------- | --------------------------- | --------------------------------------------------------------- |
-| `api.ts`  | 客户端 + 服务端             | `cmd({ input, output })`，零实现                                |
-| `impl.ts` | **只有服务端**              | `implement(roomApi, setup, handlers)`，状态和无副作用的实现都在这 |
-| `index.ts`| —                           | 演示                                                            |
+| 文件       | 谁 import       | 内容                                                              |
+| ---------- | --------------- | ----------------------------------------------------------------- |
+| `api.ts`   | 客户端 + 服务端 | `cmd({ input, output })`，零实现                                  |
+| `impl.ts`  | **只有服务端**  | `implement(roomApi, setup, handlers)`，状态和无副作用的实现都在这 |
+| `index.ts` | —               | 演示                                                              |
 
 ```ts
 // api.ts —— 客户端只能 import 这个
@@ -27,9 +27,10 @@ export const roomApi = {
 // impl.ts —— 只有服务端 import 这个
 export const makeRoom = implement(
     roomApi,
-    () => ({ seq: 0, lines: [] as string[] }),          // setup：一次生命周期一次
+    () => ({ seq: 0, lines: [] as string[] }), // setup：一次生命周期一次
     {
-        say: ({ who, text }, { state }) => {            // who / text / 返回值类型全是推的
+        say: ({ who, text }, { state }) => {
+            // who / text / 返回值类型全是推的
             state.seq++;
             state.lines.push(`${state.seq}. ${who}: ${text}`);
             return state.seq;
@@ -38,11 +39,11 @@ export const makeRoom = implement(
 );
 ```
 
-| 用途   | 一行                                                    | 拿到什么                                 |
-| ------ | ------------------------------------------------------- | ---------------------------------------- |
-| 本地   | `actorOf(makeRoom)`                                     | `room.say({who,text}) → Promise<number>` |
-| 服务端 | `serveActor(room, server, 'room')`                      | 挂到管子上                               |
-| 客户端 | `createActorClient({ api: roomApi, client, prefix })`   | 同一个 `Promise<number>`                 |
+| 用途   | 一行                                                  | 拿到什么                                 |
+| ------ | ----------------------------------------------------- | ---------------------------------------- |
+| 本地   | `actorOf(makeRoom)`                                   | `room.say({who,text}) → Promise<number>` |
+| 服务端 | `serveActor(room, server, 'room')`                    | 挂到管子上                               |
+| 客户端 | `createActorClient({ api: roomApi, client, prefix })` | 同一个 `Promise<number>`                 |
 
 **类型只有一份真源。** 客户端拿到的 `Promise<number>` 是从 `output: z.number()` 推出来的，不是手写 cast，也不是 `unknown`。改 `api.ts` 的出参，两端同时改。
 
@@ -74,23 +75,23 @@ setup 跑了 2 次（本地 actor + 远端 actor，客户端 0 次）
 
 `impl.ts` 里写错了不用等运行时（这四条是实测的编译错误）：
 
-| 写错什么             | 报错                                                     |
-| -------------------- | -------------------------------------------------------- |
-| 少实现一个方法       | `TS2739: missing the following properties ... : lines, slow, boom` |
-| 参数名写错           | `TS2339: Property 'wrong' does not exist on type '{ who: string; text: string }'` |
-| 返回类型错           | `TS2322: Type 'string' is not assignable to type 'number \| Promise<number>'` |
-| `state` 上访问不存在的字段 | `TS2339: Property 'nope' does not exist on type '{ seq: number }'` |
+| 写错什么                   | 报错                                                                              |
+| -------------------------- | --------------------------------------------------------------------------------- |
+| 少实现一个方法             | `TS2739: missing the following properties ... : lines, slow, boom`                |
+| 参数名写错                 | `TS2339: Property 'wrong' does not exist on type '{ who: string; text: string }'` |
+| 返回类型错                 | `TS2322: Type 'string' is not assignable to type 'number \| Promise<number>'`     |
+| `state` 上访问不存在的字段 | `TS2339: Property 'nope' does not exist on type '{ seq: number }'`                |
 
 ## 比 06 省在哪
 
 只比「契约 + 实现 + 转手」这三块（不含演示代码和 transport 装配）：
 
-|            | 06 手写桥                    | 08 cmd                |
-| ---------- | ---------------------------- | --------------------- |
-| 契约       | `api.ts` 36 行，手写类型     | `api.ts` 19 行        |
-| 实现       | `room.ts` 51 行              | `impl.ts` 43 行       |
-| 服务端转手 | `server.ts` 40 行（4 处 cast） | `serveActor` 一行   |
-| 合计       | **127 行**                   | **62 行 + 一行装配**  |
+|            | 06 手写桥                      | 08 cmd               |
+| ---------- | ------------------------------ | -------------------- |
+| 契约       | `api.ts` 36 行，手写类型       | `api.ts` 19 行       |
+| 实现       | `room.ts` 51 行                | `impl.ts` 43 行      |
+| 服务端转手 | `server.ts` 40 行（4 处 cast） | `serveActor` 一行    |
+| 合计       | **127 行**                     | **62 行 + 一行装配** |
 
 省的是**手写类型和转手代码**，不是传输代码。
 

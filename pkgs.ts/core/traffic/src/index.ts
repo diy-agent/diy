@@ -131,7 +131,8 @@ export class TrafficStore {
 
     /** 内存窗口里最近的一批（同步、µs 级）。返回的是**副本**，调用方改不到内部状态。 */
     recent(query: RecentQuery = {}): TrafficEntry[] {
-        const kinds = query.kind === undefined ? null : new Set(typeof query.kind === 'string' ? [query.kind] : query.kind);
+        const kinds =
+            query.kind === undefined ? null : new Set(typeof query.kind === 'string' ? [query.kind] : query.kind);
         const out: TrafficEntry[] = [];
         for (const e of this.ring) {
             if (kinds !== null && !kinds.has(e.kind)) continue;
@@ -164,7 +165,8 @@ export class TrafficStore {
     query(query: RecentQuery = {}): TrafficEntry[] {
         if (!this.persist || this.dir === undefined) return [];
         const limit = query.n ?? 200;
-        const kinds = query.kind === undefined ? null : new Set(typeof query.kind === 'string' ? [query.kind] : query.kind);
+        const kinds =
+            query.kind === undefined ? null : new Set(typeof query.kind === 'string' ? [query.kind] : query.kind);
         const out: TrafficEntry[] = [];
 
         let files: string[];
@@ -180,7 +182,9 @@ export class TrafficStore {
         for (const file of files) {
             let lines: string[];
             try {
-                lines = readFileSync(join(this.dir, file), 'utf-8').split('\n').filter((l) => l !== '');
+                lines = readFileSync(join(this.dir, file), 'utf-8')
+                    .split('\n')
+                    .filter((l) => l !== '');
             } catch {
                 continue;
             }

@@ -15,13 +15,7 @@
 // 渲染一个非任务房间 —— 那一按保存就写 `title`、清 `desc`，把别的容器的数据改脏。
 // 未知类型只配一个只读信息卡。
 
-import {
-    EntityChatApp,
-    TaskPanel,
-    UnitBoardView,
-    useSelectedRoom,
-    type Room,
-} from '@diy-agent/entity-chat';
+import { EntityChatApp, TaskPanel, UnitBoardView, useSelectedRoom, type Room } from '@diy-agent/entity-chat';
 
 import { useWb } from './AreaHost';
 import { ConversationAreaBar } from './ConversationAreaBar';

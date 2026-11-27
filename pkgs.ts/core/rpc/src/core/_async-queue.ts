@@ -21,15 +21,27 @@ export class _AsyncQueue<T> {
    * 用于资源清理（移除 AbortSignal listener 等，任务 185）。注册时已终态则立即回调。
    */
   onSettle(cb: () => void): void {
-    if (this._ended) { cb(); return; }
+    if (this._ended) {
+      cb();
+      return;
+    }
     const prev = this._onSettle;
-    this._onSettle = prev ? () => { prev(); cb(); } : cb;
+    this._onSettle = prev
+      ? () => {
+          prev();
+          cb();
+        }
+      : cb;
   }
 
   private _fireSettle(): void {
     const cb = this._onSettle;
     this._onSettle = null;
-    try { cb?.(); } catch { /* 清理失败不应影响队列语义 */ }
+    try {
+      cb?.();
+    } catch {
+      /* 清理失败不应影响队列语义 */
+    }
   }
 
   /**
@@ -91,7 +103,9 @@ export class _AsyncQueue<T> {
     }
   }
 
-  get ended(): boolean { return this._ended; }
+  get ended(): boolean {
+    return this._ended;
+  }
 
   [Symbol.asyncIterator](): AsyncIterator<T> {
     return {
@@ -102,12 +116,18 @@ export class _AsyncQueue<T> {
             resolve({ value: this._queue.shift()!, done: false });
             return;
           }
-          if (this._err) { reject(this._err); return; }
+          if (this._err) {
+            reject(this._err);
+            return;
+          }
           if (this._queue.length > 0) {
             resolve({ value: this._queue.shift()!, done: false });
             return;
           }
-          if (this._ended) { resolve({ value: undefined, done: true }); return; }
+          if (this._ended) {
+            resolve({ value: undefined, done: true });
+            return;
+          }
           this._resolveWait = resolve;
           this._rejectWait = reject;
         }),

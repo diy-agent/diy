@@ -8,8 +8,8 @@
 // ##458：插件引用从「字符串包名 + 运行时 dynamic import」改成**宿主直接 import**。
 // 判据：profile 里把包名写错一个字母 ⇒ tsc 立刻报 TS2307，不必等到起窗口。
 
-import { WorkbenchError } from "./errors.js";
-import type { PageContribution, PageMethod } from "./page.js";
+import { WorkbenchError } from './errors.js';
+import type { PageContribution, PageMethod } from './page.js';
 
 /**
  * 装配单元（判别联合，判别键 `type`，规范见 `knowledge/facts/rule.yaml`
@@ -29,13 +29,13 @@ export interface PluginEntryBase {
  * 可以是模块命名空间 / 页面对象数组 / 单个页面对象 / 工厂函数；包名写错 ⇒ tsc 报错。
  */
 export interface ModulePluginEntry extends PluginEntryBase {
-    readonly type: "module";
+    readonly type: 'module';
     readonly data: { readonly module: unknown };
 }
 
 /** `load` 式：懒加载等价物（返回模块本体，形状同上） */
 export interface LoadPluginEntry extends PluginEntryBase {
-    readonly type: "load";
+    readonly type: 'load';
     readonly data: { readonly load: () => unknown | Promise<unknown> };
 }
 
@@ -46,7 +46,7 @@ export function orderPlugins(entries: readonly PluginEntry[]): PluginEntry[] {
     const byId = new Map<string, PluginEntry>();
     for (const entry of entries) {
         if (byId.has(entry.id)) {
-            throw new WorkbenchError("workbench/duplicate-plugin", `装配单元 id 重复：${entry.id}`);
+            throw new WorkbenchError('workbench/duplicate-plugin', `装配单元 id 重复：${entry.id}`);
         }
         byId.set(entry.id, entry);
     }
@@ -54,7 +54,7 @@ export function orderPlugins(entries: readonly PluginEntry[]): PluginEntry[] {
         for (const dep of entry.inject ?? []) {
             if (!byId.has(dep)) {
                 throw new WorkbenchError(
-                    "workbench/missing-plugin",
+                    'workbench/missing-plugin',
                     `${entry.id} 依赖 ${dep}，但插件清单里没有 ${dep}`,
                 );
             }
@@ -62,25 +62,22 @@ export function orderPlugins(entries: readonly PluginEntry[]): PluginEntry[] {
     }
 
     const ordered: PluginEntry[] = [];
-    const state = new Map<string, "visiting" | "done">();
+    const state = new Map<string, 'visiting' | 'done'>();
     const stack: string[] = [];
 
     const visit = (id: string): void => {
         const current = state.get(id);
-        if (current === "done") return;
-        if (current === "visiting") {
-            throw new WorkbenchError(
-                "workbench/plugin-cycle",
-                `插件依赖成环：${[...stack, id].join(" → ")}`,
-            );
+        if (current === 'done') return;
+        if (current === 'visiting') {
+            throw new WorkbenchError('workbench/plugin-cycle', `插件依赖成环：${[...stack, id].join(' → ')}`);
         }
-        state.set(id, "visiting");
+        state.set(id, 'visiting');
         stack.push(id);
         const entry = byId.get(id);
-        if (!entry) throw new WorkbenchError("workbench/missing-plugin", `没有这个装配单元：${id}`);
+        if (!entry) throw new WorkbenchError('workbench/missing-plugin', `没有这个装配单元：${id}`);
         for (const dep of entry.inject ?? []) visit(dep);
         stack.pop();
-        state.set(id, "done");
+        state.set(id, 'done');
         ordered.push(entry);
     };
 
@@ -106,14 +103,14 @@ export async function loadPages(entries: readonly PluginEntry[]): Promise<PageCo
             mod = await resolveModule(entry);
         } catch (cause) {
             throw new WorkbenchError(
-                "workbench/plugin-load",
+                'workbench/plugin-load',
                 `加载插件 ${entry.id} 失败：${cause instanceof Error ? cause.message : String(cause)}`,
             );
         }
         for (const page of pagesOf(mod, entry)) {
             if (seen.has(page.id)) {
                 throw new WorkbenchError(
-                    "workbench/duplicate-page",
+                    'workbench/duplicate-page',
                     `页面 id 重复：${page.id}（${entry.id} 与先前插件冲突）`,
                 );
             }
@@ -125,22 +122,23 @@ export async function loadPages(entries: readonly PluginEntry[]): Promise<PageCo
 }
 
 async function resolveModule(entry: PluginEntry): Promise<unknown> {
-    if (entry.type === "module") return entry.data.module;
+    if (entry.type === 'module') return entry.data.module;
     return await entry.data.load();
 }
 
 function pagesOf(mod: unknown, entry: PluginEntry): PageContribution[] {
     const candidate = pickCandidate(mod);
-    const value = typeof candidate === "function" ? (candidate as (config: unknown) => unknown)(entry.config) : candidate;
+    const value =
+        typeof candidate === 'function' ? (candidate as (config: unknown) => unknown)(entry.config) : candidate;
     const list = Array.isArray(value) ? value : [value];
     return list.map((raw) => parsePage(raw, entry));
 }
 
 function pickCandidate(mod: unknown): unknown {
     if (Array.isArray(mod)) return mod;
-    if (mod && typeof mod === "object") {
+    if (mod && typeof mod === 'object') {
         const record = mod as Record<string, unknown>;
-        for (const key of ["pages", "default", "apply"] as const) {
+        for (const key of ['pages', 'default', 'apply'] as const) {
             if (record[key] !== undefined) return record[key];
         }
     }
@@ -148,9 +146,9 @@ function pickCandidate(mod: unknown): unknown {
 }
 
 function parsePage(raw: unknown, entry: PluginEntry): PageContribution {
-    if (!raw || typeof raw !== "object") {
+    if (!raw || typeof raw !== 'object') {
         throw new WorkbenchError(
-            "workbench/plugin-shape",
+            'workbench/plugin-shape',
             `插件 ${entry.id} 没有产出页面对象（应为 { id, title, methods? }）`,
         );
     }
@@ -161,27 +159,27 @@ function parsePage(raw: unknown, entry: PluginEntry): PageContribution {
         group?: unknown;
         methods?: unknown;
     };
-    if (typeof id !== "string" || id.length === 0) {
-        throw new WorkbenchError("workbench/plugin-shape", `插件 ${entry.id} 的页面缺 id`);
+    if (typeof id !== 'string' || id.length === 0) {
+        throw new WorkbenchError('workbench/plugin-shape', `插件 ${entry.id} 的页面缺 id`);
     }
-    if (typeof title !== "string" || title.length === 0) {
-        throw new WorkbenchError("workbench/plugin-shape", `页面 ${id} 缺 title`);
+    if (typeof title !== 'string' || title.length === 0) {
+        throw new WorkbenchError('workbench/plugin-shape', `页面 ${id} 缺 title`);
     }
     if (methods !== undefined) {
-        if (!methods || typeof methods !== "object") {
-            throw new WorkbenchError("workbench/plugin-shape", `页面 ${id} 的 methods 必须是对象`);
+        if (!methods || typeof methods !== 'object') {
+            throw new WorkbenchError('workbench/plugin-shape', `页面 ${id} 的 methods 必须是对象`);
         }
         for (const [name, fn] of Object.entries(methods)) {
-            if (typeof fn !== "function") {
-                throw new WorkbenchError("workbench/plugin-shape", `页面 ${id} 的方法 ${name} 不是函数`);
+            if (typeof fn !== 'function') {
+                throw new WorkbenchError('workbench/plugin-shape', `页面 ${id} 的方法 ${name} 不是函数`);
             }
         }
     }
     return {
         id,
         title,
-        ...(typeof icon === "string" && icon !== "" ? { icon } : {}),
-        ...(typeof group === "string" && group !== "" ? { group } : {}),
+        ...(typeof icon === 'string' && icon !== '' ? { icon } : {}),
+        ...(typeof group === 'string' && group !== '' ? { group } : {}),
         methods: methods as Record<string, PageMethod> | undefined,
     };
 }

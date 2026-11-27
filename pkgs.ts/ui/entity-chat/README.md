@@ -9,17 +9,17 @@
 
 ## 组成
 
-| 目录 | 作用 |
-|---|---|
-| `src/store.tsx` | 壳层：房间列表 / 选择 / 重试连接（挂 `ConversationStore`） |
-| `src/address.ts` | 「现在在看哪儿」：纯函数，`/room/task/t-001` ↔ `{page,id}` |
-| `src/nav.ts` + `src/nav/` | 侧栏插槽：壳只铺注册表，内建三块（项目/历史/未归属）也是注册项 |
-| `src/surfaces/registry.tsx` | 表面注册表：壳层只认这个数组，不写 `if (tab === …)` |
-| `src/surfaces/astryx` | Astryx 表面（默认，`ChatVirtualizer` 虚拟化） |
-| `src/surfaces/shadcn` | 裸 Tailwind 表面（无 chat 库；窗口化 + `content-visibility`） |
-| `src/surfaces/shared.ts` | 两面共用的纯映射：工具行 target / parts 分组 / 可复制正文 |
-| `src/surfaces/mention-complete.ts` | @ 补全的纯文本逻辑（判定 + 替换 + 过滤，可单测） |
-| `src/components` | 两面共用：`Markdown` / 代码高亮 / `BotAvatar` / `AskCard` / `RunningIndicator` |
+| 目录                               | 作用                                                                           |
+| ---------------------------------- | ------------------------------------------------------------------------------ |
+| `src/store.tsx`                    | 壳层：房间列表 / 选择 / 重试连接（挂 `ConversationStore`）                     |
+| `src/address.ts`                   | 「现在在看哪儿」：纯函数，`/room/task/t-001` ↔ `{page,id}`                     |
+| `src/nav.ts` + `src/nav/`          | 侧栏插槽：壳只铺注册表，内建三块（项目/历史/未归属）也是注册项                 |
+| `src/surfaces/registry.tsx`        | 表面注册表：壳层只认这个数组，不写 `if (tab === …)`                            |
+| `src/surfaces/astryx`              | Astryx 表面（默认，`ChatVirtualizer` 虚拟化）                                  |
+| `src/surfaces/shadcn`              | 裸 Tailwind 表面（无 chat 库；窗口化 + `content-visibility`）                  |
+| `src/surfaces/shared.ts`           | 两面共用的纯映射：工具行 target / parts 分组 / 可复制正文                      |
+| `src/surfaces/mention-complete.ts` | @ 补全的纯文本逻辑（判定 + 替换 + 过滤，可单测）                               |
+| `src/components`                   | 两面共用：`Markdown` / 代码高亮 / `BotAvatar` / `AskCard` / `RunningIndicator` |
 
 分组语义只有一份（`@diy-agent/chat-core` 的 `buildTimeline`），状态只有一份
 （`ConversationStore`）。surface 之间**不互相 import**，壳层按注册表切换。

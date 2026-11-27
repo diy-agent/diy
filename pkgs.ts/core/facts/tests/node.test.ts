@@ -105,7 +105,15 @@ describe('submit（整批事务）', () => {
         const dir = makeRepo();
         writeFileSync(path.join(dir, '..', 'K.ts'), 'a\nb\nc\n');
         const { report } = submit(dir, {
-            facts: [fact({ id: 'port.1', subject: 'app.port', aspect: 'default', value: '18888', evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' } })],
+            facts: [
+                fact({
+                    id: 'port.1',
+                    subject: 'app.port',
+                    aspect: 'default',
+                    value: '18888',
+                    evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' },
+                }),
+            ],
         });
         expect(report.added).toEqual(['port.1']);
         const back = loadRepo(dir).facts;
@@ -147,7 +155,13 @@ describe('submit（整批事务）', () => {
     it('改同一条 = 覆盖（审计锚点稳定），重复提交同一份 = unchanged', () => {
         const dir = makeRepo();
         writeFileSync(path.join(dir, '..', 'K.ts'), 'a\nb\nc\n');
-        const one = fact({ id: 'port.1', subject: 'app.port', aspect: 'default', value: '18888', evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' } });
+        const one = fact({
+            id: 'port.1',
+            subject: 'app.port',
+            aspect: 'default',
+            value: '18888',
+            evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' },
+        });
         submit(dir, { facts: [one] });
         const again = submit(dir, { facts: [one] });
         expect(again.report.unchanged).toEqual(['port.1']);
@@ -159,10 +173,26 @@ describe('submit（整批事务）', () => {
     it('候选集有冲突 → 整批拒（磁盘不动）', () => {
         const dir = makeRepo();
         writeFileSync(path.join(dir, '..', 'K.ts'), 'a\nb\nc\n');
-        const a = fact({ id: 'port.a', subject: 'app.port', aspect: 'default', value: '18888', evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' } });
+        const a = fact({
+            id: 'port.a',
+            subject: 'app.port',
+            aspect: 'default',
+            value: '18888',
+            evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' },
+        });
         submit(dir, { facts: [a] });
         const before = readFileSync(path.join(dir, 'facts', 'app.yaml'), 'utf8');
-        const bad = submit(dir, { facts: [fact({ id: 'port.b', subject: 'app.port', aspect: 'default', value: '4000', evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' } })] });
+        const bad = submit(dir, {
+            facts: [
+                fact({
+                    id: 'port.b',
+                    subject: 'app.port',
+                    aspect: 'default',
+                    value: '4000',
+                    evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' },
+                }),
+            ],
+        });
         expect(bad.problems.map((p) => p.code)).toContain('facts/scope-conflict');
         expect(readFileSync(path.join(dir, 'facts', 'app.yaml'), 'utf8')).toBe(before);
     });
@@ -172,7 +202,15 @@ describe('submit（整批事务）', () => {
         writeFileSync(path.join(dir, '..', 'K.ts'), 'a\nb\nc\n');
         const r = submit(dir, {
             dryRun: true,
-            facts: [fact({ id: 'port.1', subject: 'app.port', aspect: 'default', value: '18888', evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' } })],
+            facts: [
+                fact({
+                    id: 'port.1',
+                    subject: 'app.port',
+                    aspect: 'default',
+                    value: '18888',
+                    evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' },
+                }),
+            ],
         });
         expect(r.report.added).toEqual(['port.1']);
         expect(loadRepo(dir).facts).toEqual([]);
@@ -182,7 +220,15 @@ describe('submit（整批事务）', () => {
         const dir = makeRepo();
         writeFileSync(path.join(dir, '..', 'K.ts'), 'a\nb\nc\n');
         const r = submit(dir, {
-            facts: [fact({ id: 'n.1', subject: 'new.thing', aspect: 'v', value: 'x', evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' } })],
+            facts: [
+                fact({
+                    id: 'n.1',
+                    subject: 'new.thing',
+                    aspect: 'v',
+                    value: 'x',
+                    evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' },
+                }),
+            ],
             subjects: [{ key: 'new.thing', description: '新对象' }],
         });
         expect(r.problems.filter((p) => p.level === 'error')).toEqual([]);
@@ -295,8 +341,18 @@ describe('renderDoc', () => {
         const dir = makeRepo();
         writeFileSync(path.join(dir, '..', 'K.ts'), 'a\nb\nc\n');
         const mk = (id: string, subject: string, aspect: string): Fact =>
-            fact({ id, subject, aspect, value: 'v', evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' } });
-        const text = renderDoc({ domain: 'app', note: 'n', facts: [mk('b', 'app.port', 'resolution'), mk('a', 'app.port', 'default'), mk('c', 'app.env', 'values')] });
+            fact({
+                id,
+                subject,
+                aspect,
+                value: 'v',
+                evidence: { source: 'code', at: 'K.ts:2', verifiedAt: '2026-10-21' },
+            });
+        const text = renderDoc({
+            domain: 'app',
+            note: 'n',
+            facts: [mk('b', 'app.port', 'resolution'), mk('a', 'app.port', 'default'), mk('c', 'app.env', 'values')],
+        });
         // 期望顺序：app.env#values(c) → app.port#default(a) → app.port#resolution(b)
         const [pc, pa, pb] = [text.indexOf('id: c'), text.indexOf('id: a'), text.indexOf('id: b')];
         expect(pc).toBeGreaterThanOrEqual(0);
@@ -309,7 +365,11 @@ describe('evidence.at 钉版本（<rev>:<path>:<line>）', () => {
     // 场景来源：##5 第 9 轮实测 —— 源文件瘦身后行号必然越界，`at` 整批删 = 迁移类事实
     // 永久失去"它原来写在哪"。这里用真 git 仓（不是 mock）：`git show` 的判据必须真跑。
     function git(root: string, ...args: string[]): void {
-        execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@t', '-C', root, ...args], { stdio: 'ignore' });
+        execFileSync(
+            'git',
+            ['-c', 'commit.gpgsign=false', '-c', 'user.name=t', '-c', 'user.email=t@t', '-C', root, ...args],
+            { stdio: 'ignore' },
+        );
     }
     /** 建一个真仓：SRC.md 有 3 行，提交后瘦身成 1 行 —— rev 里的第 3 行仍然有效 */
     function makeGitRepo(evidenceAt: string): { dir: string; rev: string } {
@@ -356,7 +416,10 @@ describe('evidence.at 钉版本（<rev>:<path>:<line>）', () => {
 
     it('行号超出 rev 里的行数 → evidence-line（钉版本不等于免检）', () => {
         const { dir, rev } = makeGitRepo('__REV__:SRC.md:9');
-        writeFileSync(path.join(dir, 'facts', 'app.yaml'), readFileSync(path.join(dir, 'facts', 'app.yaml'), 'utf8').replace('__REV__', rev));
+        writeFileSync(
+            path.join(dir, 'facts', 'app.yaml'),
+            readFileSync(path.join(dir, 'facts', 'app.yaml'), 'utf8').replace('__REV__', rev),
+        );
         expect(checkRepo(dir).problems.map((p) => p.code)).toContain('facts/evidence-line');
     });
 });
@@ -396,7 +459,9 @@ describe('submit · drop 把一篇文章删空 ⇒ 文件消失', () => {
         const dir = makeRepo();
         writeFileSync(path.join(dir, '..', 'K.ts'), 'a\n');
         const ev = { source: 'code' as const, at: 'K.ts:1', verifiedAt: '2026-10-22' };
-        submit(dir, { facts: [fact({ id: 'p1', subject: 'app.port', aspect: 'default', value: '18888', evidence: ev })] });
+        submit(dir, {
+            facts: [fact({ id: 'p1', subject: 'app.port', aspect: 'default', value: '18888', evidence: ev })],
+        });
         const r = submit(dir, { facts: [], drop: ['p1'], dryRun: true });
         expect(r.report.files[0]?.after).toBe(0);
         expect(existsSync(path.join(dir, 'facts', 'app.yaml'))).toBe(true);
@@ -462,7 +527,15 @@ describe('submit · 词表删除（dropSubjects）', () => {
         const dir = makeRepo();
         writeFileSync(path.join(dir, '..', 'K.ts'), 'a\nb\n');
         submit(dir, {
-            facts: [fact({ id: 'p1', subject: 'app.port', aspect: 'default', value: '1', evidence: { source: 'code', at: 'K.ts:1' } })],
+            facts: [
+                fact({
+                    id: 'p1',
+                    subject: 'app.port',
+                    aspect: 'default',
+                    value: '1',
+                    evidence: { source: 'code', at: 'K.ts:1' },
+                }),
+            ],
         });
         const before = readFileSync(path.join(dir, 'subjects.yaml'), 'utf8');
         const r = submit(dir, { facts: [], dropSubjects: ['app.port'] });

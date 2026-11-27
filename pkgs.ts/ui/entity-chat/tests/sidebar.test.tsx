@@ -102,7 +102,11 @@ describe('侧栏按注册表渲染', () => {
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
         actions.bootstrap();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -132,7 +136,11 @@ describe('侧栏按注册表渲染', () => {
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
         actions.bootstrap();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -156,7 +164,11 @@ describe('侧栏按注册表渲染', () => {
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
         actions.bootstrap();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -180,7 +192,11 @@ describe('侧栏按注册表渲染', () => {
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
         actions.bootstrap();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -203,7 +219,11 @@ describe('侧栏按注册表渲染', () => {
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
         actions.bootstrap();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -228,7 +248,11 @@ describe('侧栏按注册表渲染', () => {
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
         actions.bootstrap();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -254,7 +278,11 @@ describe('侧栏按注册表渲染', () => {
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
         actions.bootstrap();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -278,7 +306,11 @@ describe('侧栏按注册表渲染', () => {
             models: { list: async () => ({ providers: [] }) },
             load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
             watch: () => () => undefined,
-            drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
         } as never);
         actions.bootstrap();
         await new Promise((resolve) => setTimeout(resolve, 0));

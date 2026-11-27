@@ -35,7 +35,10 @@ afterEach(() => {
 });
 
 /** 起一个子进程跑给定 TS 源（源写在临时文件里，import 绝对路径指向本包 src）。 */
-function runScript(script: string, args: readonly string[]): Promise<{ code: number | null; stderr: string; pid?: number }> {
+function runScript(
+    script: string,
+    args: readonly string[],
+): Promise<{ code: number | null; stderr: string; pid?: number }> {
     const dir = tempDir('facts-child-');
     const file = path.join(dir, 'child.ts');
     writeFileSync(file, script);

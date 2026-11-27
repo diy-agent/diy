@@ -8,18 +8,18 @@
 //
 // ⚠️ 账号的 `data.value`（key）**只被 readAccountValue 读取**，目录与列表里永远只有名字。
 
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { load as loadYaml } from "js-yaml";
-import { CatalogError } from "./errors.js";
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { load as loadYaml } from 'js-yaml';
+import { CatalogError } from './errors.js';
 import type {
     CatalogOptions,
     ModelCatalogCost,
     ModelCatalogEntry,
     ModelInputModality,
     ProviderAccounts,
-} from "./types.js";
+} from './types.js';
 
 // ── 宽松的原始形状（配置是人在编辑的 YAML：不认识就报错，缺字段给缺省） ──
 
@@ -80,7 +80,7 @@ interface RawSpecProvider {
 /** 一个已解析的 provider（spec ⊕ config），内部用 */
 interface ProviderInput {
     readonly providerId: string;
-    readonly kind: "std" | "custom";
+    readonly kind: 'std' | 'custom';
     readonly spec: RawSpecProvider | null;
     readonly config: RawProviderConfig;
 }
@@ -97,8 +97,8 @@ export function loadCatalog(home: string, options?: CatalogOptions): ModelCatalo
     for (const input of inputs) {
         const baseURL = input.spec?.api;
         // 没有 baseURL 就发不出请求 —— 该 provider 的模型不进目录（配置层覆盖单独列模型也救不了）
-        if (typeof baseURL !== "string" || baseURL.trim() === "") continue;
-        const npm = typeof input.spec?.npm === "string" ? input.spec.npm : undefined;
+        if (typeof baseURL !== 'string' || baseURL.trim() === '') continue;
+        const npm = typeof input.spec?.npm === 'string' ? input.spec.npm : undefined;
         for (const entry of modelsOf(input, baseURL, npm)) entries.push(entry);
     }
     entries.sort(
@@ -113,7 +113,7 @@ export function loadCatalog(home: string, options?: CatalogOptions): ModelCatalo
 /** 一个 provider 的只读摘要（provider 列表页用；不含任何 key） */
 export interface ProviderSummary {
     readonly providerId: string;
-    readonly kind: "std" | "custom";
+    readonly kind: 'std' | 'custom';
     /** upstream baseURL；spec 没写 = 缺省（这类 provider 的模型不进目录） */
     readonly api?: string;
     /** ai-sdk 包名 */
@@ -129,8 +129,8 @@ export interface ProviderSummary {
 export function listProviders(home: string, options?: CatalogOptions): ProviderSummary[] {
     const out: ProviderSummary[] = [];
     for (const input of providerInputs(home, options)) {
-        const api = typeof input.spec?.api === "string" && input.spec.api.trim() !== "" ? input.spec.api : undefined;
-        const npm = typeof input.spec?.npm === "string" ? input.spec.npm : undefined;
+        const api = typeof input.spec?.api === 'string' && input.spec.api.trim() !== '' ? input.spec.api : undefined;
+        const npm = typeof input.spec?.npm === 'string' ? input.spec.npm : undefined;
         out.push({
             providerId: input.providerId,
             kind: input.kind,
@@ -150,8 +150,8 @@ export function listAccounts(home: string): ProviderAccounts[] {
     const config = loadModelYaml(home);
     const out: ProviderAccounts[] = [];
     for (const [kind, group] of [
-        ["std", config.stdProviders ?? {}],
-        ["custom", config.customProviders ?? {}],
+        ['std', config.stdProviders ?? {}],
+        ['custom', config.customProviders ?? {}],
     ] as const) {
         for (const [providerId, provider] of Object.entries(group)) {
             out.push({
@@ -178,7 +178,7 @@ export interface AccountState {
 /** 一个 provider 的账号状态清单（不含 key） */
 export interface ProviderAccountStates {
     readonly providerId: string;
-    readonly kind: "std" | "custom";
+    readonly kind: 'std' | 'custom';
     readonly accounts: readonly AccountState[];
 }
 
@@ -192,8 +192,8 @@ export function listAccountStates(home: string): ProviderAccountStates[] {
     const config = loadModelYaml(home);
     const out: ProviderAccountStates[] = [];
     for (const [kind, group] of [
-        ["std", config.stdProviders ?? {}],
-        ["custom", config.customProviders ?? {}],
+        ['std', config.stdProviders ?? {}],
+        ['custom', config.customProviders ?? {}],
     ] as const) {
         for (const [providerId, provider] of Object.entries(group)) {
             out.push({
@@ -201,8 +201,8 @@ export function listAccountStates(home: string): ProviderAccountStates[] {
                 kind,
                 accounts: (provider.accounts ?? []).map((account, index) => {
                     const name = account.name ?? String(index);
-                    const value = account.data?.value ?? "";
-                    if (value.trim() === "") return { name, configured: false, env: false };
+                    const value = account.data?.value ?? '';
+                    if (value.trim() === '') return { name, configured: false, env: false };
                     if (/\$\{?[A-Za-z_]/.test(value)) return { name, configured: true, env: true };
                     return { name, configured: true, env: false, chars: value.length };
                 }),
@@ -227,33 +227,33 @@ export function readAccountValue(
     const config = loadModelYaml(home);
     const group = findProviderGroup(config, providerId);
     if (group === null) {
-        throw new CatalogError("catalog/unknown-provider", `model.yaml 里没有 provider "${providerId}"`, providerId);
+        throw new CatalogError('catalog/unknown-provider', `model.yaml 里没有 provider "${providerId}"`, providerId);
     }
     const accounts = group.accounts ?? [];
     if (accounts.length === 0) {
-        throw new CatalogError("catalog/account-empty", `provider "${providerId}" 没有任何账号`, providerId);
+        throw new CatalogError('catalog/account-empty', `provider "${providerId}" 没有任何账号`, providerId);
     }
     const env = options?.env ?? process.env;
     const named = accounts
-        .map((account, index) => ({ name: account.name ?? String(index), value: account.data?.value ?? "" }))
+        .map((account, index) => ({ name: account.name ?? String(index), value: account.data?.value ?? '' }))
         .filter((account) => accountName === undefined || account.name === accountName);
     if (named.length === 0) {
         throw new CatalogError(
-            "catalog/unknown-account",
-            `provider "${providerId}" 没有账号 "${accountName ?? ""}"（有：${accountNames(accounts).join(", ")}）`,
+            'catalog/unknown-account',
+            `provider "${providerId}" 没有账号 "${accountName ?? ''}"（有：${accountNames(accounts).join(', ')}）`,
             providerId,
         );
     }
     let fallback = named[0]!;
     for (const account of named) {
-        if (account.value.trim() === "") continue;
+        if (account.value.trim() === '') continue;
         const expanded = expandEnv(account.value, env, providerId);
         if (expanded !== null) return expanded;
         fallback = account;
     }
-    if (fallback.value.trim() === "") {
+    if (fallback.value.trim() === '') {
         throw new CatalogError(
-            "catalog/account-empty",
+            'catalog/account-empty',
             `provider "${providerId}" 的账号 "${fallback.name}" 没有填 key`,
             providerId,
         );
@@ -269,10 +269,10 @@ function providerInputs(home: string, options?: CatalogOptions): ProviderInput[]
     const snapshot = loadSnapshot(home, options);
     const out: ProviderInput[] = [];
     for (const [providerId, providerConfig] of Object.entries(config.stdProviders ?? {})) {
-        out.push({ providerId, kind: "std", spec: snapshot?.[providerId] ?? null, config: providerConfig });
+        out.push({ providerId, kind: 'std', spec: snapshot?.[providerId] ?? null, config: providerConfig });
     }
     for (const [providerId, providerConfig] of Object.entries(config.customProviders ?? {})) {
-        out.push({ providerId, kind: "custom", spec: customSpecs[providerId] ?? null, config: providerConfig });
+        out.push({ providerId, kind: 'custom', spec: customSpecs[providerId] ?? null, config: providerConfig });
     }
     return out;
 }
@@ -302,8 +302,8 @@ function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined
             name: override?.name ?? spec?.name ?? modelId,
             baseURL,
             ...(npm === undefined ? {} : { npm }),
-            ...(typeof contextWindow === "number" ? { contextWindow } : {}),
-            ...(typeof maxOutput === "number" ? { maxOutputTokens: maxOutput } : {}),
+            ...(typeof contextWindow === 'number' ? { contextWindow } : {}),
+            ...(typeof maxOutput === 'number' ? { maxOutputTokens: maxOutput } : {}),
             ...(cost === undefined ? {} : { cost }),
             ...(inputModalities === undefined ? {} : { input: inputModalities }),
         });
@@ -312,7 +312,7 @@ function modelsOf(input: ProviderInput, baseURL: string, npm: string | undefined
 }
 
 /** 认识的输入模态（其余字符串丢掉，不报错：快照是外部数据，多一种模态不该让整个目录炸） */
-const INPUT_MODALITIES: readonly ModelInputModality[] = ["text", "image", "audio", "video", "pdf"];
+const INPUT_MODALITIES: readonly ModelInputModality[] = ['text', 'image', 'audio', 'video', 'pdf'];
 
 /**
  * 一个模型的输入模态 —— 两份来源按优先顺序：
@@ -329,15 +329,13 @@ function inputOf(
     if (declared !== undefined) return normalizeModalities(declared);
     const attachment = override?.attachment ?? spec?.attachment;
     if (attachment === undefined) return undefined;
-    return attachment ? ["text", "image"] : ["text"];
+    return attachment ? ['text', 'image'] : ['text'];
 }
 
 function normalizeModalities(raw: readonly string[]): readonly ModelInputModality[] {
-    const out = raw.filter((item): item is ModelInputModality =>
-        INPUT_MODALITIES.includes(item as ModelInputModality),
-    );
+    const out = raw.filter((item): item is ModelInputModality => INPUT_MODALITIES.includes(item as ModelInputModality));
     // 上游偶尔只写 ["image"]：任何模型都收文字，补齐后再返回（否则 UI 会以为它不吃人类的话）
-    return out.includes("text") ? out : ["text", ...out];
+    return out.includes('text') ? out : ['text', ...out];
 }
 
 /**
@@ -354,20 +352,20 @@ function normalizeModalities(raw: readonly string[]): readonly ModelInputModalit
  *   >= 1       = 正常
  */
 export function effectiveMaxOutputTokens(
-    entry: Pick<ModelCatalogEntry, "maxOutputTokens"> | undefined,
+    entry: Pick<ModelCatalogEntry, 'maxOutputTokens'> | undefined,
     fallback: number,
 ): number {
     const n = entry?.maxOutputTokens;
-    return typeof n === "number" && Number.isFinite(n) && n >= 1 ? Math.floor(n) : Math.floor(Math.max(1, fallback));
+    return typeof n === 'number' && Number.isFinite(n) && n >= 1 ? Math.floor(n) : Math.floor(Math.max(1, fallback));
 }
 
 function costOf(raw: RawCost | undefined): ModelCatalogCost | undefined {
-    if (raw === undefined || typeof raw.input !== "number" || typeof raw.output !== "number") return undefined;
+    if (raw === undefined || typeof raw.input !== 'number' || typeof raw.output !== 'number') return undefined;
     return {
         input: raw.input,
         output: raw.output,
-        ...(typeof raw.cache_read === "number" ? { cacheRead: raw.cache_read } : {}),
-        ...(typeof raw.cache_write === "number" ? { cacheWrite: raw.cache_write } : {}),
+        ...(typeof raw.cache_read === 'number' ? { cacheRead: raw.cache_read } : {}),
+        ...(typeof raw.cache_write === 'number' ? { cacheWrite: raw.cache_write } : {}),
     };
 }
 
@@ -388,18 +386,18 @@ function findProviderGroup(
 }
 
 function loadModelYaml(home: string): RawModelYaml {
-    const path = join(home, "model.yaml");
+    const path = join(home, 'model.yaml');
     const raw = readYaml(path);
     if (raw === null) return {};
-    if (!isRecord(raw)) throw new CatalogError("catalog/invalid-config", `${path} 顶层必须是映射`, path);
+    if (!isRecord(raw)) throw new CatalogError('catalog/invalid-config', `${path} 顶层必须是映射`, path);
     return raw as RawModelYaml;
 }
 
 function loadCustomSpecs(home: string): Record<string, RawSpecProvider> {
-    const path = join(home, "providers.custom.yaml");
+    const path = join(home, 'providers.custom.yaml');
     const raw = readYaml(path);
     if (raw === null) return {};
-    if (!isRecord(raw)) throw new CatalogError("catalog/invalid-config", `${path} 顶层必须是映射`, path);
+    if (!isRecord(raw)) throw new CatalogError('catalog/invalid-config', `${path} 顶层必须是映射`, path);
     return raw as Record<string, RawSpecProvider>;
 }
 
@@ -407,18 +405,18 @@ function loadCustomSpecs(home: string): Record<string, RawSpecProvider> {
 function loadSnapshot(home: string, options?: CatalogOptions): Record<string, RawSpecProvider> | null {
     const candidates = [
         options?.snapshotPath,
-        join(home, "data", "models.dev.json"),
+        join(home, 'data', 'models.dev.json'),
         // ##512：catalog 在 pkgs.ts/model/catalog/、app 在仓库根的 apps/ ⇒ **四级**上跳。
         // 别按 src/ 或 lib/ 分别算 —— 两者都在 catalog 下同级，都要跳到仓库根才有 apps/。
         // 三级会落到 pkgs.ts/apps/（不存在），于是 snapshot 静默为 null、模型目录空，
         // 而 model.yaml 里配的 provider 全部被 loadCatalog 跳过（没有 spec.api 就发不出请求）。
-        resolve(dirname(fileURLToPath(import.meta.url)), "../../../../apps/diy-app/src/main/data/models.dev.json"),
+        resolve(dirname(fileURLToPath(import.meta.url)), '../../../../apps/diy-app/src/main/data/models.dev.json'),
     ];
     for (const candidate of candidates) {
         if (candidate === undefined || !existsSync(candidate)) continue;
         const raw = readYaml(candidate);
         if (raw === null) continue;
-        if (!isRecord(raw)) throw new CatalogError("catalog/invalid-config", `${candidate} 顶层必须是映射`, candidate);
+        if (!isRecord(raw)) throw new CatalogError('catalog/invalid-config', `${candidate} 顶层必须是映射`, candidate);
         return raw as Record<string, RawSpecProvider>;
     }
     return null;
@@ -443,17 +441,17 @@ function readYaml(path: string): unknown {
     const hit = yamlCache.get(path);
     if (hit !== undefined && hit.stamp === stamp) return hit.value;
     try {
-        const value = loadYaml(readFileSync(path, "utf-8"));
+        const value = loadYaml(readFileSync(path, 'utf-8'));
         yamlCache.set(path, { stamp, value });
         return value;
     } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
-        throw new CatalogError("catalog/invalid-config", `${path} 解析失败：${message}`, path);
+        throw new CatalogError('catalog/invalid-config', `${path} 解析失败：${message}`, path);
     }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** `$VAR` / `${VAR}` 展开（只认环境变量；未定义 = fail-fast）。`null` = 展开失败 */
@@ -463,22 +461,22 @@ function expandEnv(
     providerId: string,
     throwOnError = false,
 ): string | null {
-    if (!value.includes("$")) return value;
+    if (!value.includes('$')) return value;
     const missing: string[] = [];
     const out = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_m, braced, bare) => {
         const name: string = braced ?? bare;
         const resolved = env[name];
         if (resolved === undefined) {
             missing.push(name);
-            return "";
+            return '';
         }
         return resolved;
     });
     if (missing.length > 0) {
         if (!throwOnError) return null;
         throw new CatalogError(
-            "catalog/account-unresolved",
-            `provider "${providerId}" 的 key 引用了未定义的环境变量 ${missing.map((n) => `$${n}`).join(", ")}`,
+            'catalog/account-unresolved',
+            `provider "${providerId}" 的 key 引用了未定义的环境变量 ${missing.map((n) => `$${n}`).join(', ')}`,
             providerId,
         );
     }
@@ -492,6 +490,6 @@ function expandEnv(
  * 而当「不收」处理 —— 往一个不收图的上游塞 image part 换回来的是 400，
  * 与其赌一把不如先按文字发（UI 该在贴图前就拿这个判据挡住，见 vision-guard）。
  */
-export function canSeeImages(entry: Pick<ModelCatalogEntry, "input"> | undefined): boolean {
-    return entry?.input?.includes("image") === true;
+export function canSeeImages(entry: Pick<ModelCatalogEntry, 'input'> | undefined): boolean {
+    return entry?.input?.includes('image') === true;
 }

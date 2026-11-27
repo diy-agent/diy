@@ -153,13 +153,13 @@ describe('判据 C：带控制属性的标签即容器（其余标签一概是�
     });
 
     it('不带控制属性的标签（哪怕配对）也是文本', () => {
-        expect(render('<b>bold</b> 与 <pid> 与 a<b 与 vector<T>', {})).toBe(
-            '<b>bold</b> 与 <pid> 与 a<b 与 vector<T>',
-        );
+        expect(render('<b>bold</b> 与 <pid> 与 a<b 与 vector<T>', {})).toBe('<b>bold</b> 与 <pid> 与 a<b 与 vector<T>');
     });
 
     it('只剥控制属性，标签头其余字符逐字节保留（不重新格式化）', () => {
-        expect(render(`<pi path='x'  flag :if={{on}}>y</pi>`, { globals: { on: true } })).toBe(`<pi path='x'  flag>y</pi>`);
+        expect(render(`<pi path='x'  flag :if={{on}}>y</pi>`, { globals: { on: true } })).toBe(
+            `<pi path='x'  flag>y</pi>`,
+        );
     });
 
     it('带控制属性但没闭合 → 响亮报错（而不是静默当文本）', () => {

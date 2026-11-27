@@ -10,7 +10,7 @@
 // 插件可以自造 kind，UI 主代码一行不改；不认识的 kind 由 renderer 的 fallback 兜底。
 // core 事件 → Block 的归一化在**主进程**（本文件），renderer 不认识任何 core 事件名。
 
-import type { ChatMessage } from "@diy-agent/session";
+import type { ChatMessage } from '@diy-agent/session';
 
 export interface Block {
     /** 类型标签。**string 不是字面量枚举** —— 插件可以自造 */
@@ -22,7 +22,7 @@ export interface Block {
 }
 
 /** 内置 kind：UI 自带这三个渲染器，其余走注册表 / fallback */
-export const BUILTIN_BLOCK_KINDS = ["text", "think", "tool"] as const;
+export const BUILTIN_BLOCK_KINDS = ['text', 'think', 'tool'] as const;
 
 // ── 内置三个 kind 的 data 形状（UI 认识这三个） ──
 
@@ -42,7 +42,7 @@ export interface ToolBlockData {
     readonly name: string;
     /** 已格式化的参数摘要 */
     readonly args: string;
-    readonly state: "running" | "ok" | "error";
+    readonly state: 'running' | 'ok' | 'error';
     /** 一行结果摘要 */
     readonly summary?: string;
     /** 完整输出（折叠区里放） */
@@ -51,13 +51,13 @@ export interface ToolBlockData {
 
 /** 一条展示用的消息（只有生成侧关心的字段；seq / at 等内部字段不过桥） */
 export interface WireMessage {
-    readonly role: "user" | "assistant";
+    readonly role: 'user' | 'assistant';
     readonly blocks: readonly Block[];
 }
 
 /** 一条只有文本块的消息（本地占位：错误提示 / 乐观显示用） */
-export function textMessage(role: "user" | "assistant", text: string): WireMessage {
-    return { role, blocks: [{ kind: "text", id: "text-0", data: { text } }] };
+export function textMessage(role: 'user' | 'assistant', text: string): WireMessage {
+    return { role, blocks: [{ kind: 'text', id: 'text-0', data: { text } }] };
 }
 
 /** `send` 方法的返回值：整条会话的当前消息线 */
@@ -268,73 +268,73 @@ export function toBlocks(events: readonly AgentEvent[]): Block[] {
     for (const event of events) {
         const last = blocks.at(-1);
         switch (event.type) {
-            case "text-delta": {
-                const text = str(event["text"]);
-                if (text === "") break;
-                if (last !== undefined && last.kind === "text") {
-                    const prev = str(last.data["text"]);
-                    (last.data as Record<string, unknown>)["text"] = prev + text;
+            case 'text-delta': {
+                const text = str(event['text']);
+                if (text === '') break;
+                if (last !== undefined && last.kind === 'text') {
+                    const prev = str(last.data['text']);
+                    (last.data as Record<string, unknown>)['text'] = prev + text;
                 } else {
-                    blocks.push({ kind: "text", id: `b${seq++}`, data: { text } });
+                    blocks.push({ kind: 'text', id: `b${seq++}`, data: { text } });
                 }
                 break;
             }
-            case "reasoning-delta": {
-                const text = str(event["text"]);
-                if (text === "") break;
-                if (last !== undefined && last.kind === "think") {
-                    const prev = str(last.data["text"]);
-                    (last.data as Record<string, unknown>)["text"] = prev + text;
+            case 'reasoning-delta': {
+                const text = str(event['text']);
+                if (text === '') break;
+                if (last !== undefined && last.kind === 'think') {
+                    const prev = str(last.data['text']);
+                    (last.data as Record<string, unknown>)['text'] = prev + text;
                 } else {
-                    blocks.push({ kind: "think", id: `b${seq++}`, data: { text, done: false } });
+                    blocks.push({ kind: 'think', id: `b${seq++}`, data: { text, done: false } });
                 }
                 break;
             }
-            case "tool-call": {
-                const id = str(event["id"]);
+            case 'tool-call': {
+                const id = str(event['id']);
                 blocks.push({
-                    kind: "tool",
+                    kind: 'tool',
                     id: `b${seq++}`,
                     data: {
                         toolId: id,
-                        name: str(event["name"]),
-                        args: argsText(event["args"]),
-                        state: "running",
+                        name: str(event['name']),
+                        args: argsText(event['args']),
+                        state: 'running',
                     },
                 });
                 break;
             }
-            case "tool-result": {
-                const id = str(event["id"]);
+            case 'tool-result': {
+                const id = str(event['id']);
                 const target = findTool(blocks, id) ?? lastTool(blocks);
-                const content = str(event["content"]);
+                const content = str(event['content']);
                 if (target === undefined) {
                     // 没有对应调用（孤儿结果）：仍给一个 tool 块，别把信息吞掉
                     blocks.push({
-                        kind: "tool",
+                        kind: 'tool',
                         id: `b${seq++}`,
                         data: {
                             toolId: id,
-                            name: "",
-                            args: "",
-                            state: event["isError"] === true ? "error" : "ok",
+                            name: '',
+                            args: '',
+                            state: event['isError'] === true ? 'error' : 'ok',
                             summary: oneLine(content),
                             output: content,
                         },
                     });
                     break;
                 }
-                target.data["state"] = event["isError"] === true ? "error" : "ok";
-                target.data["summary"] = oneLine(content);
-                target.data["output"] = content;
+                target.data['state'] = event['isError'] === true ? 'error' : 'ok';
+                target.data['summary'] = oneLine(content);
+                target.data['output'] = content;
                 break;
             }
-            case "error": {
-                const message = str(event["message"]);
+            case 'error': {
+                const message = str(event['message']);
                 blocks.push({
-                    kind: "tool",
+                    kind: 'tool',
                     id: `b${seq++}`,
-                    data: { name: "error", args: "", state: "error", summary: oneLine(message), output: message },
+                    data: { name: 'error', args: '', state: 'error', summary: oneLine(message), output: message },
                 });
                 break;
             }
@@ -347,8 +347,8 @@ export function toBlocks(events: readonly AgentEvent[]): Block[] {
     }
     // 收尾：还开着的 think 标 done
     for (const block of blocks) {
-        if (block.kind === "think" && block.data["done"] !== true) {
-            (block.data as Record<string, unknown>)["done"] = true;
+        if (block.kind === 'think' && block.data['done'] !== true) {
+            (block.data as Record<string, unknown>)['done'] = true;
         }
     }
     return blocks;
@@ -364,18 +364,22 @@ export function wireOf(messages: readonly ChatMessage[]): WireMessage[] {
     const out: WireMessage[] = [];
     let lastToolBlock: Block | null = null;
     for (const message of messages) {
-        if (message.role === "system") continue;
-        if (message.type === "tool-result") {
-            const text = message.text ?? "";
+        if (message.role === 'system') continue;
+        if (message.type === 'tool-result') {
+            const text = message.text ?? '';
             if (lastToolBlock !== null) {
-                lastToolBlock.data["state"] = "ok";
-                lastToolBlock.data["summary"] = oneLine(text);
-                lastToolBlock.data["output"] = text;
+                lastToolBlock.data['state'] = 'ok';
+                lastToolBlock.data['summary'] = oneLine(text);
+                lastToolBlock.data['output'] = text;
             } else {
                 out.push({
-                    role: "assistant",
+                    role: 'assistant',
                     blocks: [
-                        { kind: "tool", id: "tool-0", data: { name: "", args: "", state: "ok", summary: oneLine(text), output: text } },
+                        {
+                            kind: 'tool',
+                            id: 'tool-0',
+                            data: { name: '', args: '', state: 'ok', summary: oneLine(text), output: text },
+                        },
                     ],
                 });
             }
@@ -383,7 +387,7 @@ export function wireOf(messages: readonly ChatMessage[]): WireMessage[] {
         }
         const blocks = toBlocks(eventsOfMessage(message));
         if (blocks.length === 0) continue;
-        out.push({ role: message.role === "user" ? "user" : "assistant", blocks });
+        out.push({ role: message.role === 'user' ? 'user' : 'assistant', blocks });
         const tool = lastTool(blocks);
         if (tool !== undefined) lastToolBlock = tool;
     }
@@ -392,34 +396,34 @@ export function wireOf(messages: readonly ChatMessage[]): WireMessage[] {
 
 /** 一条 session 消息 → core 事件（wireOf 的输入；消息类型在本文件里解释） */
 export function eventsOfMessage(message: ChatMessage): AgentEvent[] {
-    if (message.type === "tool-call") {
+    if (message.type === 'tool-call') {
         const tool = toolOf(message.data);
         if (tool === null) return [];
-        return [{ type: "tool-call", id: tool.id, name: tool.name, args: tool.args }];
+        return [{ type: 'tool-call', id: tool.id, name: tool.name, args: tool.args }];
     }
-    const text = message.text ?? "";
-    if (text === "") return [];
+    const text = message.text ?? '';
+    if (text === '') return [];
     // 语义分类 → 事件：tool-result 在外面单独处理；其余正文一律是文本
-    return [{ type: "text-delta", text }];
+    return [{ type: 'text-delta', text }];
 }
 
 function toolOf(data: unknown): { id: string; name: string; args: unknown } | null {
-    if (data === null || typeof data !== "object") return null;
+    if (data === null || typeof data !== 'object') return null;
     const tool = (data as { tool?: unknown }).tool;
-    if (tool === null || typeof tool !== "object") return null;
+    if (tool === null || typeof tool !== 'object') return null;
     const record = tool as Record<string, unknown>;
     return {
-        id: typeof record["id"] === "string" ? record["id"] : "",
-        name: typeof record["name"] === "string" ? record["name"] : "",
-        args: record["args"],
+        id: typeof record['id'] === 'string' ? record['id'] : '',
+        name: typeof record['name'] === 'string' ? record['name'] : '',
+        args: record['args'],
     };
 }
 
 function findTool(blocks: readonly Block[], id: string): Block | undefined {
-    if (id === "") return undefined;
+    if (id === '') return undefined;
     for (let i = blocks.length - 1; i >= 0; i--) {
         const block = blocks[i]!;
-        if (block.kind === "tool" && block.data["toolId"] === id) return block;
+        if (block.kind === 'tool' && block.data['toolId'] === id) return block;
     }
     return undefined;
 }
@@ -427,24 +431,24 @@ function findTool(blocks: readonly Block[], id: string): Block | undefined {
 function lastTool(blocks: readonly Block[]): Block | undefined {
     for (let i = blocks.length - 1; i >= 0; i--) {
         const block = blocks[i]!;
-        if (block.kind === "tool") return block;
+        if (block.kind === 'tool') return block;
     }
     return undefined;
 }
 
 /** 参数 → 一行摘要（对象走 JSON，过长截断；已有字符串原样） */
 function argsText(value: unknown): string {
-    if (value === undefined || value === null) return "";
-    if (typeof value === "string") return clip(value);
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string') return clip(value);
     try {
         return clip(JSON.stringify(value));
     } catch {
-        return "";
+        return '';
     }
 }
 
 function oneLine(text: string): string {
-    return clip(text.replace(/\s+/g, " ").trim());
+    return clip(text.replace(/\s+/g, ' ').trim());
 }
 
 function clip(text: string): string {
@@ -452,5 +456,5 @@ function clip(text: string): string {
 }
 
 function str(value: unknown): string {
-    return typeof value === "string" ? value : "";
+    return typeof value === 'string' ? value : '';
 }

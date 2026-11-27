@@ -15,7 +15,7 @@
 //   旧行为是报错裁 6000、成功裸 return，唯一兜底是 execFile 的 maxBuffer 静默截断
 //   （ENOBUFS，模型与用户都拿不到信号）—— 风险正好反了：真正撑爆上下文的是成功的大输出。
 
-import { clipToolResult, type ToolResultPolicy } from "@diy-agent/compaction/compaction";
+import { clipToolResult, type ToolResultPolicy } from '@diy-agent/compaction/compaction';
 
 /** 单条工具输出的预算（**与 read 的行窗口同一对常量**：三路径一个策略） */
 export const TOOL_OUTPUT_MAX_LINES = 2000;
@@ -30,7 +30,7 @@ export const TOOL_OUTPUT_TAIL_LINES = TOOL_OUTPUT_MAX_LINES / 2;
  * 只有参数不同（这里是「一条输出」的预算，那里是用户拧的 `toolResult.render`）。
  */
 export const TOOL_OUTPUT_POLICY: ToolResultPolicy = {
-    render: "headtail",
+    render: 'headtail',
     renderData: {
         head: TOOL_OUTPUT_HEAD_LINES,
         tail: TOOL_OUTPUT_TAIL_LINES,

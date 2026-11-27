@@ -87,7 +87,8 @@ export class GenNode {
   removeSelf(): void {
     const p = this.parent();
     if (p?.keyedChildren) {
-      for (const [k, e] of p.keyedChildren) if (e.el === this.el) p.keyedChildren.delete(k);
+      for (const [k, e] of p.keyedChildren)
+        if (e.el === this.el) p.keyedChildren.delete(k);
     }
     if (this.ownScope) disposeAll(this.ownScope);
     this.el.remove();
@@ -106,9 +107,15 @@ export class GenNode {
   }
 
   /** 往本节点插一个子 Spec。带 `key` 时进本节点 key 表（同 key 同 rev → 复用）。 */
-  insert(spec: Spec, opts: { key?: unknown; rev?: unknown; at?: number } = {}): GenNode {
+  insert(
+    spec: Spec,
+    opts: { key?: unknown; rev?: unknown; at?: number } = {},
+  ): GenNode {
     const key = opts.key ?? spec.key;
-    const table = (this.keyedChildren ??= new Map<unknown, KeyedChild<GenNode>>());
+    const table = (this.keyedChildren ??= new Map<
+      unknown,
+      KeyedChild<GenNode>
+    >());
     const rev = opts.rev ?? spec.rev ?? key ?? {};
     if (key !== undefined) {
       const old = table.get(key);
@@ -121,7 +128,12 @@ export class GenNode {
       disposeAll(old.scope);
       old.el.remove();
     }
-    table.set(slotKey, { el: child.el, handle: child, rev, scope: child.ownScope ?? [] });
+    table.set(slotKey, {
+      el: child.el,
+      handle: child,
+      rev,
+      scope: child.ownScope ?? [],
+    });
     if (opts.at !== undefined) {
       const els = [...table.values()].map((e) => e.el);
       const ref = els[opts.at + 1] ?? null;
@@ -220,14 +232,40 @@ export const html: {
   hr: Tag;
 } = (() => {
   const tags = [
-    "div", "span", "p", "a", "button", "input", "textarea", "label", "img",
-    "ul", "ol", "li", "h1", "h2", "h3", "h4", "section", "header", "footer",
-    "main", "pre", "code", "strong", "em", "small", "br", "hr",
+    "div",
+    "span",
+    "p",
+    "a",
+    "button",
+    "input",
+    "textarea",
+    "label",
+    "img",
+    "ul",
+    "ol",
+    "li",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "section",
+    "header",
+    "footer",
+    "main",
+    "pre",
+    "code",
+    "strong",
+    "em",
+    "small",
+    "br",
+    "hr",
   ];
   const out: Record<string, unknown> = {
-    tag: (name: string, props?: Props, children?: ChildGen) => spec(name, props, children),
+    tag: (name: string, props?: Props, children?: ChildGen) =>
+      spec(name, props, children),
   };
-  for (const t of tags) out[t] = (props?: Props, children?: ChildGen) => spec(t, props, children);
+  for (const t of tags)
+    out[t] = (props?: Props, children?: ChildGen) => spec(t, props, children);
   return out as never;
 })();
 
@@ -262,7 +300,12 @@ export class GenApp {
   }
 
   /** rerun 计数分布（dev 排查异常 rerun）。 */
-  rerunStats(): { nodes: number; rerun: number; max: number; histogram: Record<string, number> } {
+  rerunStats(): {
+    nodes: number;
+    rerun: number;
+    max: number;
+    histogram: Record<string, number>;
+  } {
     return computeRerunStats();
   }
 }
@@ -339,7 +382,12 @@ function attachGen(node: GenNode, gen: ChildGen): void {
 }
 
 /** 一个 yield 出来的子节点：keyed 的按 key 复用，否则新建（无 key = 每轮唯一 token）。 */
-function reconcileChild(spec: Spec, parent: GenNode, rec: Reconciler<GenNode>): void {  const hasKey = spec.key !== undefined;
+function reconcileChild(
+  spec: Spec,
+  parent: GenNode,
+  rec: Reconciler<GenNode>,
+): void {
+  const hasKey = spec.key !== undefined;
   const key = hasKey ? spec.key : {};
   const rev = spec.rev !== undefined ? spec.rev : key;
   if (hasKey) {
@@ -404,12 +452,18 @@ export function mountStream<T>(
         if (ac.signal.aborted) break;
         if (r.done) break;
         const item = r.value;
-        node.insert(render(item, i), { key: opts.key?.(item, i), rev: opts.rev?.(item, i) });
+        node.insert(render(item, i), {
+          key: opts.key?.(item, i),
+          rev: opts.rev?.(item, i),
+        });
         i++;
       }
     } catch (e) {
       if (!ac.signal.aborted) {
-        (opts.onError ?? ((err: unknown) => console.error("[mountStream]", err)))(e);
+        (
+          opts.onError ??
+          ((err: unknown) => console.error("[mountStream]", err))
+        )(e);
       }
     } finally {
       ac.signal.removeEventListener("abort", onAbort);

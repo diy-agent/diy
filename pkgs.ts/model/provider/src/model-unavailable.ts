@@ -23,10 +23,10 @@
  * （tests/core/model-unavailable.test.ts）。
  */
 
-import { z } from "zod";
+import { z } from 'zod';
 
 /** 判据命中的四类（顺序即优先级，见文件头） */
-export const ModelUnavailableKindSchema = z.enum(["coming-soon", "unknown-model", "auth", "quota"]);
+export const ModelUnavailableKindSchema = z.enum(['coming-soon', 'unknown-model', 'auth', 'quota']);
 export type ModelUnavailableKind = z.infer<typeof ModelUnavailableKindSchema>;
 
 /**
@@ -34,10 +34,10 @@ export type ModelUnavailableKind = z.infer<typeof ModelUnavailableKindSchema>;
  * 放 shared 而不是各组件里：顶栏 bar 与模型配置页的回看列表要**同一套词**（##407）。
  */
 export const MODEL_UNAVAILABLE_KIND_LABEL: Record<ModelUnavailableKind, string> = {
-    "coming-soon": "模型未上架",
-    "unknown-model": "模型 id 不认识",
-    auth: "认证失败",
-    quota: "配额或限流",
+    'coming-soon': '模型未上架',
+    'unknown-model': '模型 id 不认识',
+    auth: '认证失败',
+    quota: '配额或限流',
 };
 
 /** 探测到的错误事实（各字段都可缺：上游可能只回 body、SDK 可能只填 message） */
@@ -72,13 +72,13 @@ export const MAX_UPSTREAM_CHARS = 300;
 
 /** 把错误事实拍成一段可搜索文本（body 优先，message 兜底 —— 两者都可能各带一半原文） */
 function searchText(p: ModelErrorProbe): string {
-    return [p.responseBody, p.message].filter((s): s is string => typeof s === "string" && s.length > 0).join("\n");
+    return [p.responseBody, p.message].filter((s): s is string => typeof s === 'string' && s.length > 0).join('\n');
 }
 
 /** 上游原文：优先 body，其次 message；压缩空白 + 截断（`maxLength` 之外的用省略号收口） */
 export function upstreamText(p: ModelErrorProbe, maxLength = MAX_UPSTREAM_CHARS): string {
-    const raw = p.responseBody ?? p.message ?? "";
-    const flat = raw.replace(/\s+/g, " ").trim();
+    const raw = p.responseBody ?? p.message ?? '';
+    const flat = raw.replace(/\s+/g, ' ').trim();
     return flat.length > maxLength ? `${flat.slice(0, maxLength)}…` : flat;
 }
 
@@ -92,26 +92,26 @@ const RULES: ReadonlyArray<{
     test: (p: ModelErrorProbe, text: string) => boolean;
 }> = [
     {
-        kind: "coming-soon",
-        reason: "上游声明该模型尚未上架（model_coming_soon）",
+        kind: 'coming-soon',
+        reason: '上游声明该模型尚未上架（model_coming_soon）',
         // 不看状态码：上游把它放在 400/404 的 body 里（实测过的形态）
         test: (_p, text) => /model_coming_soon|model coming soon/i.test(text),
     },
     {
-        kind: "unknown-model",
-        reason: "上游不认识该模型 id（404 / unknown model）",
+        kind: 'unknown-model',
+        reason: '上游不认识该模型 id（404 / unknown model）',
         test: (p, text) =>
             p.statusCode === 404 ||
             /unknown model|model not found|no such model|unsupported model|model[^.\n]{0,40}does not exist/i.test(text),
     },
     {
-        kind: "auth",
-        reason: "认证失败（401 / 403：key 未配、配错或被吊销）",
+        kind: 'auth',
+        reason: '认证失败（401 / 403：key 未配、配错或被吊销）',
         test: (p) => p.statusCode === 401 || p.statusCode === 403,
     },
     {
-        kind: "quota",
-        reason: "配额或限流（429）",
+        kind: 'quota',
+        reason: '配额或限流（429）',
         test: (p) => p.statusCode === 429,
     },
 ];
@@ -133,7 +133,7 @@ export function classifyModelUnavailable(p: ModelErrorProbe): ModelUnavailableVe
     if (p.statusCode != null) {
         return { hit: false, reason: `HTTP ${p.statusCode}：不在「模型不可用」判据内` };
     }
-    return { hit: false, reason: "没有 HTTP 状态码：网络错误 / 超时（另一类问题，不是模型不可用）" };
+    return { hit: false, reason: '没有 HTTP 状态码：网络错误 / 超时（另一类问题，不是模型不可用）' };
 }
 
 // ─── 从抛出来的异常里取事实 ──────────────────────────
@@ -142,15 +142,15 @@ export function classifyModelUnavailable(p: ModelErrorProbe): ModelUnavailableVe
 const MAX_PROBE_DEPTH = 3;
 
 function asRecord(v: unknown): Record<string, unknown> | null {
-    return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null;
+    return typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : null;
 }
 
 function asText(v: unknown): string | null {
-    return typeof v === "string" && v.length > 0 ? v : null;
+    return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
 function asNumber(v: unknown): number | null {
-    return typeof v === "number" && Number.isFinite(v) ? v : null;
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
 /**

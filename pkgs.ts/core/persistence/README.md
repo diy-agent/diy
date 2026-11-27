@@ -44,12 +44,12 @@
 ## 用法
 
 ```ts
-import { createOpsAppender, appendTurnRecord, readBoundary } from "@diy-agent/persistence";
+import { createOpsAppender, appendTurnRecord, readBoundary } from '@diy-agent/persistence';
 
 const appender = createOpsAppender(home, taskUri);
-const ref = appender.append(op);            // null = 写失败（不阻断流，但调用方不许广播）
+const ref = appender.append(op); // null = 写失败（不阻断流，但调用方不许广播）
 if (ref) {
-    appendTurnRecord(home, taskUri, { turnId, at, state: "ok", user, texts: [], refFirstOp: ref });
+    appendTurnRecord(home, taskUri, { turnId, at, state: 'ok', user, texts: [], refFirstOp: ref });
 }
 const boundary = readBoundary(home, taskUri); // 最近一条压缩边界（null = 从未压缩）
 ```

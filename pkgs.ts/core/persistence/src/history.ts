@@ -9,10 +9,10 @@
 //   · 正常：`{ from, lineBase, kind, note }` —— core 用 `readOpsFrom(home, uri, from)` 拿 op 数组；
 //   · 降级（ops 缺失 / 空 / 断代）：`{ ops, degraded }` —— 已由 turns 折好的只读文本历史。
 
-import { existsSync } from "node:fs";
-import { countFileLines, fileSize, isTurnStartAt, readOpsFrom, readOpsRange } from "./ops-io.js";
-import { llmFile, opsFile, resolveSessionFile } from "./paths.js";
-import { checkOpsRef, readBoundary, readTurnRecords, synthesizeTurnOps, type TurnOp } from "./turns.js";
+import { existsSync } from 'node:fs';
+import { countFileLines, fileSize, isTurnStartAt, readOpsFrom, readOpsRange } from './ops-io.js';
+import { llmFile, opsFile, resolveSessionFile } from './paths.js';
+import { checkOpsRef, readBoundary, readTurnRecords, synthesizeTurnOps, type TurnOp } from './turns.js';
 
 /** 重放起点（core 用它决定从 ops 的哪个字节开始读） */
 export interface ReplayInfo {
@@ -26,12 +26,12 @@ export interface ReplayInfo {
      * schema-break  边界格式断代 ⇒ 起点 EOF（旧段只作审计）
      * truncated     文件比压缩时还短（被截断 / 换了一份）⇒ 起点作废
      */
-    kind: "full" | "offset" | "schema-break" | "truncated";
+    kind: 'full' | 'offset' | 'schema-break' | 'truncated';
     /** 断代的**可见标记**（不许静默空白） */
     note?: string;
 }
 
-export type DegradedCause = "missing" | "empty" | "schema-break" | "truncated";
+export type DegradedCause = 'missing' | 'empty' | 'schema-break' | 'truncated';
 
 export interface DegradedHistory {
     cause: DegradedCause;
@@ -52,7 +52,7 @@ export interface DegradedHistory {
  *   ④ 边界没有 ops 锚点（压缩时定位失败）→ 全量。
  */
 export function resolveReplay(home: string, taskUri: string): ReplayInfo {
-    const full: ReplayInfo = { from: 0, lineBase: 0, kind: "full" };
+    const full: ReplayInfo = { from: 0, lineBase: 0, kind: 'full' };
     const boundary = readBoundary(home, taskUri);
     if (!boundary) return full;
     const fp = opsFile(home, taskUri);
@@ -64,7 +64,7 @@ export function resolveReplay(home: string, taskUri: string): ReplayInfo {
             return {
                 from: size,
                 lineBase: countFileLines(llmFile(home, taskUri)),
-                kind: "truncated",
+                kind: 'truncated',
                 note: `起点作废：ops 现有 ${size}B < 压缩时记录的 ${anchor.offset}B（被截断/替换）→ 断代，不回退从 0 读`,
             };
         }
@@ -72,7 +72,7 @@ export function resolveReplay(home: string, taskUri: string): ReplayInfo {
             // 锚点不是轮首行（手改 / 旧文件）→ 老实全读（宁可慢，不可错位）
             return full;
         }
-        return { from: anchor.offset, lineBase, kind: "offset" };
+        return { from: anchor.offset, lineBase, kind: 'offset' };
     }
     return full;
 }
@@ -83,31 +83,31 @@ export function loadDegradedHistory(
     taskUri: string,
     replay: ReplayInfo,
 ): { ops: TurnOp[]; degraded: DegradedHistory } | null {
-    const fp = resolveSessionFile(home, taskUri, "ops");
+    const fp = resolveSessionFile(home, taskUri, 'ops');
     // sync-io-ok: 「在不在」与「多大」要分开答（missing / empty 是两种降级原因），冷路径
     const present = existsSync(fp);
     const size = fileSize(fp);
     let cause: DegradedCause | null = null;
-    let note = "";
+    let note = '';
     if (!present) {
-        cause = "missing";
-        note = "会话 ops 日志不存在（被清理 / 换了数据根 / 从未写出）";
+        cause = 'missing';
+        note = '会话 ops 日志不存在（被清理 / 换了数据根 / 从未写出）';
     } else if (size <= 0) {
-        cause = "empty";
-        note = "会话 ops 日志为空";
-    } else if (replay.kind === "schema-break") {
-        cause = "schema-break";
-        note = replay.note ?? "ops 格式断代";
-    } else if (replay.kind === "truncated") {
-        cause = "truncated";
-        note = replay.note ?? "ops 被截断 / 换了一份";
+        cause = 'empty';
+        note = '会话 ops 日志为空';
+    } else if (replay.kind === 'schema-break') {
+        cause = 'schema-break';
+        note = replay.note ?? 'ops 格式断代';
+    } else if (replay.kind === 'truncated') {
+        cause = 'truncated';
+        note = replay.note ?? 'ops 被截断 / 换了一份';
     }
     if (cause === null) return null;
 
     const records = readTurnRecords(home, taskUri);
     const surviving: TurnOp[] = present ? readOpsFrom<TurnOp>(fp, replay.from) : [];
     const aliveTurns = new Set<string>();
-    for (const op of surviving) if (op.op === "start" && op.kind === "turn") aliveTurns.add(op.id);
+    for (const op of surviving) if (op.op === 'start' && op.kind === 'turn') aliveTurns.add(op.id);
     const ops: TurnOp[] = [];
     let turns = 0;
     let dangling = 0;

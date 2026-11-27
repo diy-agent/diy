@@ -13,11 +13,7 @@
  */
 
 export { Signal } from "./signal.js";
-export {
-  ScopeNode,
-  type ScopeConfig,
-  type ContextManager,
-} from "./scope.js";
+export { ScopeNode, type ScopeConfig, type ContextManager } from "./scope.js";
 export { CellHost, type CellCapable } from "./cell.js";
 export {
   GenApp,

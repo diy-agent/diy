@@ -29,7 +29,7 @@
 //
 // 铁律（不许破）：**只加 providerOptions，不加 part、不加消息** —— 消息条数与下标
 // 必须继续等于 llm.jsonl 行号（##371 定下的对齐语义，压缩注记 / 预览 / 记账全靠它）。
-import type { ModelMessage } from "ai";
+import type { ModelMessage } from 'ai';
 
 /** 归一的开关判据（两个都为 true 才动手） */
 export interface ReasoningReplayOpts {
@@ -57,13 +57,13 @@ export interface WireIdentity {
  * 被判非法（有的上游要求 reasoning_content 为 null 或干脆不收）。
  */
 export function isDeepSeekWire(w: WireIdentity): boolean {
-    return [w.provider, w.model, w.baseUrl].some((v) => typeof v === "string" && v.toLowerCase().includes("deepseek"));
+    return [w.provider, w.model, w.baseUrl].some((v) => typeof v === 'string' && v.toLowerCase().includes('deepseek'));
 }
 
 /** assistant 消息是否已经带真推理（有就绝不覆盖） */
-function hasReasoningPart(m: Extract<ModelMessage, { role: "assistant" }>): boolean {
+function hasReasoningPart(m: Extract<ModelMessage, { role: 'assistant' }>): boolean {
     const parts = m.content;
-    return typeof parts === "string" ? false : parts.some((p) => p.type === "reasoning");
+    return typeof parts === 'string' ? false : parts.some((p) => p.type === 'reasoning');
 }
 
 /**
@@ -73,9 +73,9 @@ function hasReasoningPart(m: Extract<ModelMessage, { role: "assistant" }>): bool
  * 当成"还没补"再补一遍 ⇒ 每次返回新数组 ⇒ SDK 视为 messages 被替换。内容虽相同，
  * 但「无变化就返回同一引用」这条契约会被打破（幂等是调用方判「要不要覆盖」的唯一依据）。
  */
-function hasReplayMarker(m: Extract<ModelMessage, { role: "assistant" }>): boolean {
-    const compat = (m.providerOptions as Record<string, Record<string, unknown>> | undefined)?.["openaiCompatible"];
-    return typeof compat?.["reasoning_content"] === "string";
+function hasReplayMarker(m: Extract<ModelMessage, { role: 'assistant' }>): boolean {
+    const compat = (m.providerOptions as Record<string, Record<string, unknown>> | undefined)?.['openaiCompatible'];
+    return typeof compat?.['reasoning_content'] === 'string';
 }
 
 /**
@@ -93,15 +93,15 @@ export function ensureReasoningReplay(msgs: readonly ModelMessage[], opts: Reaso
     if (!opts.thinking || !opts.deepseek) return src;
     let patched = false;
     const out = src.map((m) => {
-        if (m.role !== "assistant") return m;
+        if (m.role !== 'assistant') return m;
         if (hasReasoningPart(m) || hasReplayMarker(m)) return m;
         patched = true;
         const prev = (m.providerOptions ?? {}) as Record<string, Record<string, unknown>>;
-        const prevCompat = (prev["openaiCompatible"] ?? {}) as Record<string, unknown>;
+        const prevCompat = (prev['openaiCompatible'] ?? {}) as Record<string, unknown>;
         return {
             ...m,
             // 只动 openaiCompatible 这一个命名空间，其它 provider 的选项原样保留
-            providerOptions: { ...prev, openaiCompatible: { ...prevCompat, reasoning_content: "" } },
+            providerOptions: { ...prev, openaiCompatible: { ...prevCompat, reasoning_content: '' } },
         } as ModelMessage;
     });
     return patched ? out : src;

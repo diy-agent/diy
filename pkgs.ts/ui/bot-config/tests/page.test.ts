@@ -175,9 +175,7 @@ describe('bot-config 页面（主进程侧）', () => {
         expect(bot.updatedAt).toBe(localISOString(new Date('2026-10-30T11:00:00Z')));
 
         // ##497：model 必填 —— 置空不再「删键」，而是拒绝
-        await expect(actions.save({ id: 'bot-1', name: '改名了', model: '' })).rejects.toThrow(
-            /必须先选一个模型/,
-        );
+        await expect(actions.save({ id: 'bot-1', name: '改名了', model: '' })).rejects.toThrow(/必须先选一个模型/);
     });
 
     it('T4b：模型不在目录里 ⇒ 拒绝（不写坏数据）', async () => {

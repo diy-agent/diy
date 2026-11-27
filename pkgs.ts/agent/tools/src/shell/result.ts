@@ -6,12 +6,11 @@
 //     （renderFieldDocs）都由它派生，加字段只改这里；
 //   · ✓/✗ 语义 = `BashRun.failed`（判据见 run.ts::runBash 头注）。
 
-import { z } from "zod";
-import { fieldNames } from "@diy-agent/context/schema/schema-doc";
+import { z } from 'zod';
+import { fieldNames } from '@diy-agent/context/schema/schema-doc';
 
 /** 结局档（与宿主 `RunOutcome` 四值一一对应：ok / fail / canceled / timeout） */
-export type BashRunOutcome = "ok" | "fail" | "canceled" | "timeout";
-
+export type BashRunOutcome = 'ok' | 'fail' | 'canceled' | 'timeout';
 
 /**
  * bash 输出缓冲上限（**内存护栏，不是截断策略**）。
@@ -31,24 +30,24 @@ export const BASH_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
  * 以前这些信息散在正文的自然语言里，而「永挂」那几条（##419）连自然语言都没有。
  */
 export const BASH_RESULT_HEAD_SCHEMA = z.object({
-    ok: z.boolean().describe("是否正常结束（退出码 0，且没超时 / 没被杀 / 没因输出溢出被终止）"),
-    exit_code: z.number().optional().describe("退出码；超时 / 取消 / 命令没跑起来时整行缺席"),
-    duration_ms: z.number().describe("墙钟耗时（毫秒）：从 spawn 前到收尾"),
-    timeout_ms: z.number().describe("本次生效的超时（毫秒）；0 = 不设超时（缺省，##454）"),
-    timed_out: z.boolean().describe("是否因超时被终止"),
-    killed: z.boolean().describe("是否被我们主动杀掉（超时 / 取消 / 输出溢出）"),
-    truncated: z.boolean().describe("投递层是否截断了正文（超 2000 行 / 50KB）；原文可 read 回取"),
-    stdout_bytes: z.number().describe("stdout 原始字节数（截断前）"),
-    stderr_bytes: z.number().describe("stderr 原始字节数（截断前）"),
-    cwd: z.string().describe("命令的工作目录（相对路径的基准）"),
-    signal: z.string().optional().describe("子进程收到的信号名（SIGKILL / SIGTERM…），没有则整行缺席"),
+    ok: z.boolean().describe('是否正常结束（退出码 0，且没超时 / 没被杀 / 没因输出溢出被终止）'),
+    exit_code: z.number().optional().describe('退出码；超时 / 取消 / 命令没跑起来时整行缺席'),
+    duration_ms: z.number().describe('墙钟耗时（毫秒）：从 spawn 前到收尾'),
+    timeout_ms: z.number().describe('本次生效的超时（毫秒）；0 = 不设超时（缺省，##454）'),
+    timed_out: z.boolean().describe('是否因超时被终止'),
+    killed: z.boolean().describe('是否被我们主动杀掉（超时 / 取消 / 输出溢出）'),
+    truncated: z.boolean().describe('投递层是否截断了正文（超 2000 行 / 50KB）；原文可 read 回取'),
+    stdout_bytes: z.number().describe('stdout 原始字节数（截断前）'),
+    stderr_bytes: z.number().describe('stderr 原始字节数（截断前）'),
+    cwd: z.string().describe('命令的工作目录（相对路径的基准）'),
+    signal: z.string().optional().describe('子进程收到的信号名（SIGKILL / SIGTERM…），没有则整行缺席'),
 });
 
 export type BashHead = z.infer<typeof BASH_RESULT_HEAD_SCHEMA>;
 
 /** YAML 标量：能裸写就裸写（人读友好），否则 JSON 引号转义（cwd 里的空格 / 引号 / 冒号） */
 function yamlScalar(v: string | number | boolean): string {
-    if (typeof v !== "string") return String(v);
+    if (typeof v !== 'string') return String(v);
     return /^[A-Za-z0-9_./~+=@-]+$/.test(v) ? v : JSON.stringify(v);
 }
 
@@ -57,14 +56,14 @@ function yamlScalar(v: string | number | boolean): string {
  * （模型 / 日志引用同一段文字，`read` 也能原样回取）。值为 undefined 的键**整行省略**。
  */
 export function renderBashHead(h: Partial<BashHead>): string {
-    const lines = ["---"];
+    const lines = ['---'];
     for (const name of fieldNames(BASH_RESULT_HEAD_SCHEMA)) {
         const v = h[name as keyof BashHead];
         if (v === undefined) continue;
         lines.push(`${name}: ${yamlScalar(v)}`);
     }
-    lines.push("---");
-    return `${lines.join("\n")}\n`;
+    lines.push('---');
+    return `${lines.join('\n')}\n`;
 }
 
 /**
@@ -74,9 +73,9 @@ export function renderBashHead(h: Partial<BashHead>): string {
  * ops 的那一份是原文，它本来就是完整的。所以这个位只能投递时现算；只改**头部那一行**，正文不碰。
  */
 export function markBashTruncated(text: string): string {
-    const end = text.indexOf("\n---\n", 4);
+    const end = text.indexOf('\n---\n', 4);
     if (end < 0) return text; // 没有头（不该发生）→ 原样返回，绝不改正文
-    return text.slice(0, end).replace(/^truncated: false$/m, "truncated: true") + text.slice(end);
+    return text.slice(0, end).replace(/^truncated: false$/m, 'truncated: true') + text.slice(end);
 }
 /**
  * bash 执行结果的**语义档**（##353：工具行 ✓/✗ 的口径真源）。

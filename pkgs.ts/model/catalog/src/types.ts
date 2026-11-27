@@ -56,7 +56,7 @@ export interface ModelCatalogCost {
 /** 一个 provider 的账号名清单 —— **只有名字**，绝不含 value */
 export interface ProviderAccounts {
     readonly providerId: string;
-    readonly kind: "std" | "custom";
+    readonly kind: 'std' | 'custom';
     readonly names: readonly string[];
 }
 

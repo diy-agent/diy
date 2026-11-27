@@ -171,11 +171,7 @@ export function checkExposeLeveled(items: readonly LeveledFact[], opts: { budget
  * "配置与预算脱节"的证据 —— 配额从"先到先得"换成"声明式 + 硬校验"后，
  * 超限必须有人在写的时候改主意，而不是等到某轮发现知识没带上。
  */
-export function checkExpose(
-    facts: readonly Fact[],
-    map: ExposeMap,
-    opts: { budget?: number } = {},
-): ExposeProblem[] {
+export function checkExpose(facts: readonly Fact[], map: ExposeMap, opts: { budget?: number } = {}): ExposeProblem[] {
     const budget = opts.budget ?? DEFAULT_FULL_BUDGET;
     const weights = weightsOf(facts);
     const unknown = Object.keys(map).filter((s) => EXPOSE_LEVELS.every((l) => map[s] !== l));

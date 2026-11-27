@@ -11,5 +11,5 @@
 //
 // 判据：一个入口能不能被 renderer 引，只看它自己的依赖图里有没有 node:* / electron。
 
-export * from "./run-registry.js";
-export * from "./job-tool.js";
+export * from './run-registry.js';
+export * from './job-tool.js';

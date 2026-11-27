@@ -34,11 +34,11 @@
 
 三段分工：
 
-| 段 | 谁定义 | 注册表 |
-| --- | --- | --- |
-| `name` / `version` | npm（分发与身份） | 读 |
-| `diy` | 本契约（apiVersion / entityTypes / engines） | **校验** |
-| `contributes` | 宿主自解释（页面、视图、菜单…） | **只透传** |
+| 段                 | 谁定义                                       | 注册表     |
+| ------------------ | -------------------------------------------- | ---------- |
+| `name` / `version` | npm（分发与身份）                            | 读         |
+| `diy`              | 本契约（apiVersion / entityTypes / engines） | **校验**   |
+| `contributes`      | 宿主自解释（页面、视图、菜单…）              | **只透传** |
 
 - `diy.apiVersion` 不被宿主支持 → 整份拒绝（不静默降级）。
 - `entityTypes[].name` 是**局部名**（`^[a-z][a-z0-9_-]*$`），全名由宿主拼成
@@ -52,11 +52,11 @@
 import { createPluginRegistry } from '@diy-agent/workbench-plugin/registry';
 
 const registry = createPluginRegistry([pkg1, pkg2]); // 解析后的 package.json 对象
-registry.plugins();                 // 按 id 排序
+registry.plugins(); // 按 id 排序
 registry.plugin('@acme/github');
-registry.entityTypes();             // 全名已拼好，按 type 排序
+registry.entityTypes(); // 全名已拼好，按 type 排序
 registry.entityType('@acme/github/issue');
-registry.pluginOfType('@acme/github/issue');  // core 类型返回 undefined
+registry.pluginOfType('@acme/github/issue'); // core 类型返回 undefined
 ```
 
 **不是数据库表**：注册表回答「这次运行加载了什么」，随进程生灭；`entities` 里的身份行

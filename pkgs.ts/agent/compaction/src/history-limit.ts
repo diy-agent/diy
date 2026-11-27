@@ -15,32 +15,32 @@
 //
 // 纯函数：禁止 import node:*。
 
-import { z } from "zod";
+import { z } from 'zod';
 
-import { retainTokensOf, selectKeptBoundary, triggerTokensOf, type BoundaryMessage } from "./select-kept-boundary.js";
+import { retainTokensOf, selectKeptBoundary, triggerTokensOf, type BoundaryMessage } from './select-kept-boundary.js';
 
 /** 摘要模式：`model` = 压缩时生成摘要；`self` = 只给 source，让模型自己查 */
 export const SummaryModeSchema = z
-    .enum(["model", "self"])
+    .enum(['model', 'self'])
     .describe(
-        "压缩后如何承接被压掉的内容：`model` = 压缩时先让模型读被压段产出摘要；" +
-            "`self` = 不生成摘要，只给 llm 原文路径，让模型自己查。",
+        '压缩后如何承接被压掉的内容：`model` = 压缩时先让模型读被压段产出摘要；' +
+            '`self` = 不生成摘要，只给 llm 原文路径，让模型自己查。',
     );
 
 /** 配置面 = 摘要模式（唯一一项） */
 export const HistoryLimitSchema = z.object({
-    summary: z.object({ mode: SummaryModeSchema }).describe("压缩后的承接方式"),
+    summary: z.object({ mode: SummaryModeSchema }).describe('压缩后的承接方式'),
     /**
      * 模型窗口上限的**显式覆盖**（token）；只给「模型目录里没有 contextLimit」的自建/测试模型用。
      * 不填 = 取模型目录；两边都没有 ⇒ 不压（不猜数）。它不是保留量/触发线旋钮。
      */
-    windowTokens: z.number().optional().describe("模型窗口上限（token）；不填则取模型目录"),
+    windowTokens: z.number().optional().describe('模型窗口上限（token）；不填则取模型目录'),
 });
 
 export type HistoryLimit = z.infer<typeof HistoryLimitSchema>;
 export type SummaryMode = z.infer<typeof SummaryModeSchema>;
 
-export const DEFAULT_HISTORY_LIMIT: HistoryLimit = { summary: { mode: "model" } };
+export const DEFAULT_HISTORY_LIMIT: HistoryLimit = { summary: { mode: 'model' } };
 
 /**
  * 宽松归一：读 `summary.mode`；旧字段（`limitTokens` / `summary.enabled`）一律忽略。
@@ -48,20 +48,20 @@ export const DEFAULT_HISTORY_LIMIT: HistoryLimit = { summary: { mode: "model" } 
  */
 export function normalizeHistoryLimit(raw: unknown): HistoryLimit {
     const src = (raw ?? {}) as Record<string, unknown>;
-    const sum = src["summary"] as Record<string, unknown> | undefined;
-    const mode = sum?.["mode"];
-    const w = src["windowTokens"];
+    const sum = src['summary'] as Record<string, unknown> | undefined;
+    const mode = sum?.['mode'];
+    const w = src['windowTokens'];
     return {
-        summary: { mode: mode === "self" ? "self" : "model" },
-        ...(typeof w === "number" && Number.isFinite(w) && w > 0 ? { windowTokens: Math.floor(w) } : {}),
+        summary: { mode: mode === 'self' ? 'self' : 'model' },
+        ...(typeof w === 'number' && Number.isFinite(w) && w > 0 ? { windowTokens: Math.floor(w) } : {}),
     };
 }
 
 /** 配置是否完整（只用来出声；不完整照样能用） */
 export function isCompleteHistoryLimit(raw: unknown): boolean {
     const src = (raw ?? {}) as Record<string, unknown>;
-    const sum = src["summary"] as Record<string, unknown> | undefined;
-    return sum?.["mode"] === "model" || sum?.["mode"] === "self";
+    const sum = src['summary'] as Record<string, unknown> | undefined;
+    return sum?.['mode'] === 'model' || sum?.['mode'] === 'self';
 }
 
 /**
@@ -162,16 +162,16 @@ export function selectCompactableRange(
     const { windowTokens, force = false, minCut = 0 } = opts;
     const retainTokens = opts.retainTokens ?? retainTokensOf(windowTokens);
     if (all.length === 0 || !(retainTokens > 0)) return null;
-    const cost = opts.costOf ?? ((m: CompactableMessage) => estimateTokensOf(JSON.stringify(m.content ?? "")));
+    const cost = opts.costOf ?? ((m: CompactableMessage) => estimateTokensOf(JSON.stringify(m.content ?? '')));
     const msgs: BoundaryMessage[] = all.map((m, i) => ({
         tokens: cost(m, i),
-        user: m.role === "user",
+        user: m.role === 'user',
         ...(m.turn ? { turn: m.turn } : {}),
     }));
     const triggerTokens = triggerTokensOf(windowTokens);
 
     const boundary = selectKeptBoundary(msgs, retainTokens, triggerTokens, { force });
-    let cut = boundary.kind === "drop" ? boundary.cut : 0;
+    let cut = boundary.kind === 'drop' ? boundary.cut : 0;
 
     if (force && cut <= minCut) {
         const next = firstTurnStartAfter(msgs, Math.max(cut, minCut));

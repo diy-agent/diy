@@ -197,7 +197,12 @@ class Parser {
                 const end = this.src.indexOf('</raw>', this.pos + 5);
                 if (end === -1) this.err('syntax', '逃生舱 <raw> 未闭合', start);
                 const rawEnd = end + '</raw>'.length;
-                out.push({ type: 'text', value: this.src.slice(this.pos + 5, end), loc: this.locAt(start), end: rawEnd });
+                out.push({
+                    type: 'text',
+                    value: this.src.slice(this.pos + 5, end),
+                    loc: this.locAt(start),
+                    end: rawEnd,
+                });
                 this.pos = rawEnd;
                 textStart = this.pos;
                 continue;
@@ -324,7 +329,12 @@ class Parser {
             const attrStart = this.pos;
             const am = /^([A-Za-z_:@#][A-Za-z0-9_:.-]*)/.exec(this.src.slice(this.pos));
             if (!am) {
-                this.err('syntax', `标签 <${name}> 的属性名非法`, this.pos, '值里如果有空格，请用引号包起来，如 title="共 {{n}} 项"');
+                this.err(
+                    'syntax',
+                    `标签 <${name}> 的属性名非法`,
+                    this.pos,
+                    '值里如果有空格，请用引号包起来，如 title="共 {{n}} 项"',
+                );
             }
             const attrName = am![1]!;
             this.pos += am![0].length;
@@ -382,7 +392,15 @@ class Parser {
                     this.pos -= 1;
                 }
             }
-            attrs.push({ name: attrName, value, loc: this.locAt(attrStart), valueOffset, hasValue: true, quoted, endOffset: this.pos });
+            attrs.push({
+                name: attrName,
+                value,
+                loc: this.locAt(attrStart),
+                valueOffset,
+                hasValue: true,
+                quoted,
+                endOffset: this.pos,
+            });
         }
     }
 
@@ -448,7 +466,12 @@ class Parser {
                 );
             }
             flush();
-            parts.push({ type: 'interp', path: inner, loc: this.locAt(a.valueOffset + open), end: a.valueOffset + close + 2 });
+            parts.push({
+                type: 'interp',
+                path: inner,
+                loc: this.locAt(a.valueOffset + open),
+                end: a.valueOffset + close + 2,
+            });
             interps += 1;
         }
         flush();
@@ -509,7 +532,13 @@ class Parser {
 
     // ── 控制节点 <template> ───────────────────────────────────────────
 
-    private readTemplateTag(): { nodes: Node[]; openStandalone: boolean; openEnd: number; closeStart?: number; closeEnd?: number } {
+    private readTemplateTag(): {
+        nodes: Node[];
+        openStandalone: boolean;
+        openEnd: number;
+        closeStart?: number;
+        closeEnd?: number;
+    } {
         const tag = this.readTag();
         // 开标签独占一行 → 它那一行的行尾换行不产出（必须在解析 children 之前消费，
         // 否则这个换行会落进子节点文本里）
@@ -542,7 +571,12 @@ class Parser {
             }
             if (!(CONTROL_ATTRS as readonly string[]).includes(key)) {
                 if (!hasInclude) {
-                    this.err('syntax', `未知控制属性 ${a.name}`, a.loc.offset, `已知：${CONTROL_ATTRS.map((c) => ':' + c).join('、')}`);
+                    this.err(
+                        'syntax',
+                        `未知控制属性 ${a.name}`,
+                        a.loc.offset,
+                        `已知：${CONTROL_ATTRS.map((c) => ':' + c).join('、')}`,
+                    );
                 }
                 // <template :include> 上：未知 `:xxx` 视为参数名（剥掉前导冒号）
                 others.push({ ...a, name: key });
@@ -566,10 +600,20 @@ class Parser {
                 this.err('syntax', `include 路径必须是字面量，不能是插值：${relpath}`, includeAttr.valueOffset);
             }
             if (!relpath.startsWith('./') || relpath.includes('..')) {
-                this.err('include', `include 路径必须是以 ./ 开头且不含 .. 的相对路径：${relpath}`, includeAttr.loc.offset);
+                this.err(
+                    'include',
+                    `include 路径必须是以 ./ 开头且不含 .. 的相对路径：${relpath}`,
+                    includeAttr.loc.offset,
+                );
             }
             const args = others.map((a) => ({ name: a.name, value: this.attrShape(a), loc: a.loc }));
-            const node: Node = { type: 'include', relpath, args, loc: tag.loc, end: tag.selfClosing ? tag.end : this.pos };
+            const node: Node = {
+                type: 'include',
+                relpath,
+                args,
+                loc: tag.loc,
+                end: tag.selfClosing ? tag.end : this.pos,
+            };
             const nodes = this.wrapControl(forAttr, asAttr, ifAttr, ifNotAttr, [node], tag.loc.offset);
             if (tag.selfClosing) return { nodes, openStandalone, openEnd: tag.end };
             const closeStart = this.pos;
@@ -581,7 +625,12 @@ class Parser {
         }
 
         if (others.length > 0) {
-            this.err('syntax', `未知控制属性 :${others[0]!.name}`, others[0]!.loc.offset, `已知：${CONTROL_ATTRS.map((c) => ':' + c).join('、')}`);
+            this.err(
+                'syntax',
+                `未知控制属性 :${others[0]!.name}`,
+                others[0]!.loc.offset,
+                `已知：${CONTROL_ATTRS.map((c) => ':' + c).join('、')}`,
+            );
         }
         if (tag.selfClosing) return { nodes: [], openStandalone, openEnd: tag.end };
         const closeStart = this.pos;
@@ -663,5 +712,4 @@ class Parser {
     }
 
     // ── 输出元素 ──────────────────────────────────────────────────────
-
 }

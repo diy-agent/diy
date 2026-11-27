@@ -183,10 +183,7 @@ export interface UnitRecord {
 }
 
 /** 写 unit：`id` / `seq` / 时间戳缺省由 store 补（新 unit 的 id 走 counters，永不回收） */
-export type UnitInput = Omit<
-    UnitRecord,
-    'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt' | 'accept' | 'source'
-> & {
+export type UnitInput = Omit<UnitRecord, 'id' | 'parent' | 'seq' | 'createdAt' | 'updatedAt' | 'accept' | 'source'> & {
     id?: string;
     /**
      * 「怎么算做完」。缺省 = 沿用库里已有的（更新时）；新建缺省就是空串 = 还没写。
@@ -316,13 +313,7 @@ export interface Store {
      * unit 变更走这里（`task.unit.added` 等）而**不走 journal**：journal 五种 kind 的服务对象是
      * 人，且最近 24 条要进 system 上下文 —— unit 变频率高，塞进去会把真决策挤出去。
      */
-    appendEvent(input: {
-        event: string;
-        subject: string;
-        actor?: string | null;
-        data?: unknown;
-        at?: number;
-    }): number;
+    appendEvent(input: { event: string; subject: string; actor?: string | null; data?: unknown; at?: number }): number;
     /** 某个实体的事件（新→旧）；`prefix` 非空时只取该前缀（如 `task.unit.`） */
     eventsOf(
         subject: string,
@@ -1010,7 +1001,10 @@ export function openStore(file: string): Store {
         title: String(row['title']),
         body: String(row['body']),
         accept: row['accept'] === null || row['accept'] === undefined ? '' : String(row['accept']),
-        source: row['source_message_id'] === null || row['source_message_id'] === undefined ? '' : String(row['source_message_id']),
+        source:
+            row['source_message_id'] === null || row['source_message_id'] === undefined
+                ? ''
+                : String(row['source_message_id']),
         status: String(row['status']) as UnitStatus,
         parent: row['parent_id'] === null || row['parent_id'] === undefined ? null : String(row['parent_id']),
         seq: Number(row['seq']),
@@ -1055,10 +1049,11 @@ export function openStore(file: string): Store {
             if (unit.id.trim() === '') throw new Error('unit 的 id 不能为空');
         }
         const now = Date.now();
-        const nextSeq =
-            (db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM task_units WHERE task_id = ?').get(unit.taskId) as {
+        const nextSeq = (
+            db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM task_units WHERE task_id = ?').get(unit.taskId) as {
                 n: number;
-            }).n;
+            }
+        ).n;
         const record: UnitRecord = {
             taskId: unit.taskId,
             id: previous?.id ?? unit.id ?? allocateUnitId(unit.taskId),
@@ -1383,7 +1378,9 @@ export function openStore(file: string): Store {
             const rows = (
                 prefix === ''
                     ? db
-                          .prepare('SELECT seq, at, event, data FROM events WHERE subject = ? ORDER BY seq DESC LIMIT ?')
+                          .prepare(
+                              'SELECT seq, at, event, data FROM events WHERE subject = ? ORDER BY seq DESC LIMIT ?',
+                          )
                           .all(subject, limit)
                     : db
                           .prepare(
@@ -1793,16 +1790,7 @@ export function openStore(file: string): Store {
             db.prepare(
                 'INSERT INTO turn_open (entity_id, bot_id, turn, turn_id, at) VALUES (?,?,?,?,?) ' +
                     'ON CONFLICT(entity_id, bot_id) DO UPDATE SET turn=?, turn_id=?, at=?',
-            ).run(
-                roomId,
-                record.botId,
-                record.turn,
-                record.turnId,
-                record.at,
-                record.turn,
-                record.turnId,
-                record.at,
-            );
+            ).run(roomId, record.botId, record.turn, record.turnId, record.at, record.turn, record.turnId, record.at);
         },
         closeTurn(roomId: string, botId: string): void {
             db.prepare('DELETE FROM turn_open WHERE entity_id = ? AND bot_id = ?').run(roomId, botId);
@@ -1821,7 +1809,7 @@ export function openStore(file: string): Store {
         deleteInterruptedFacts(roomId: string, turnId: string, botId: string): number {
             const result = db
                 .prepare(
-                    "DELETE FROM entity_items WHERE entity_id = ? " +
+                    'DELETE FROM entity_items WHERE entity_id = ? ' +
                         "AND json_extract(item, '$.data.kind') = 'interrupted' " +
                         "AND json_extract(item, '$.turnId') = ? " +
                         "AND json_extract(item, '$.data.botId') = ?",

@@ -106,7 +106,14 @@ describe('unitTreeLines：模型读到的缩进树', () => {
 
     it('withBody 时把 body 接在行尾（不进上下文，只给需要看的人）', () => {
         const board = unitBoard([
-            { id: 'a', title: 'A', status: 'open', seq: 1, body: '背景：用户报的导出缺失', accept: '导出点一下真落文件' },
+            {
+                id: 'a',
+                title: 'A',
+                status: 'open',
+                seq: 1,
+                body: '背景：用户报的导出缺失',
+                accept: '导出点一下真落文件',
+            },
         ]);
         expect(unitTreeLines(board, { withBody: true })).toEqual(['- [>] A (a)  body: 背景：用户报的导出缺失']);
     });

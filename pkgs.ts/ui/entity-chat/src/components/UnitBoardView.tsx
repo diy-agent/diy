@@ -88,7 +88,11 @@ export function UnitBoardView({ room }: { room: Room }) {
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 p-2 text-xs">
                     <div className="flex flex-wrap items-baseline gap-x-2 text-[10px] text-muted-foreground">
                         <span>注入 system 的 units 节原文</span>
-                        {textView !== null && <span>{textView.chars} 字 · ≈{tokens} tok</span>}
+                        {textView !== null && (
+                            <span>
+                                {textView.chars} 字 · ≈{tokens} tok
+                            </span>
+                        )}
                         {textView?.mode === 'full' && <span>{textView.treeLines} 行树</span>}
                         {textView?.mode === 'summary' && (
                             <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1 text-amber-600">
@@ -129,7 +133,9 @@ export function UnitBoardView({ room }: { room: Room }) {
                                         unit.id,
                                         unit.title,
                                         (unit.body ?? '').trim() === '' ? '' : `背景：${unit.body}`,
-                                        (unit.accept ?? '').trim() === '' ? '还没写「怎么算做完」' : `验收：${unit.accept}`,
+                                        (unit.accept ?? '').trim() === ''
+                                            ? '还没写「怎么算做完」'
+                                            : `验收：${unit.accept}`,
                                         (unit.source ?? '') === ''
                                             ? ''
                                             : `来自：${unit.sourceQuote === undefined ? unit.source : `${unit.sourceQuote.author || '不知是谁'}「${unit.sourceQuote.text}」`}`,
@@ -171,7 +177,9 @@ export function UnitBoardView({ room }: { room: Room }) {
                                                     className="shrink-0 max-w-[22rem] truncate text-[10px] text-muted-foreground"
                                                     title={`${unit.sourceQuote.author === '' ? '不知是谁' : unit.sourceQuote.author}：${unit.sourceQuote.text}`}
                                                 >
-                                                    {unit.sourceQuote.author === '' ? '' : `${unit.sourceQuote.author}：`}
+                                                    {unit.sourceQuote.author === ''
+                                                        ? ''
+                                                        : `${unit.sourceQuote.author}：`}
                                                     {unit.sourceQuote.text}
                                                 </span>
                                             )}

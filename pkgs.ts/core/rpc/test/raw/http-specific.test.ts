@@ -18,24 +18,30 @@ import { HttpClientBinding } from '../../src/transport/http/http-client-binding'
 const exec = promisify(execCb);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const api = RpcSchema.group({ children: {
-  diy: RpcSchema.group({
-    desc: "diy 命名空间",
-    children: {
-      app: RpcSchema.group({
-        desc: "Main 进程域",
-        children: {
-          greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
-          fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
-          invalid: RpcSchema.unary({ input: {}, output: z.unknown() }),
-          count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),
-          slow: RpcSchema.serverStream({ input: {}, output: z.number() }),
-          recv: RpcSchema.clientStream({ input: {}, chunkIn: z.unknown(), output: z.object({ errCode: z.unknown() }) }),
-        },
-      }),
-    },
-  }),
-} });
+const api = RpcSchema.group({
+  children: {
+    diy: RpcSchema.group({
+      desc: 'diy 命名空间',
+      children: {
+        app: RpcSchema.group({
+          desc: 'Main 进程域',
+          children: {
+            greet: RpcSchema.unary({ input: { name: z.string() }, output: z.string() }),
+            fail: RpcSchema.unary({ input: {}, output: z.unknown() }),
+            invalid: RpcSchema.unary({ input: {}, output: z.unknown() }),
+            count: RpcSchema.serverStream({ input: { to: z.number() }, output: z.number() }),
+            slow: RpcSchema.serverStream({ input: {}, output: z.number() }),
+            recv: RpcSchema.clientStream({
+              input: {},
+              chunkIn: z.unknown(),
+              output: z.object({ errCode: z.unknown() }),
+            }),
+          },
+        }),
+      },
+    }),
+  },
+});
 
 describe('http-server-binding 协议特有', () => {
   it('curl unary + server-stream（NDJSON）+ 错误映射 + 取消', async () => {
@@ -44,26 +50,42 @@ describe('http-server-binding 协议特有', () => {
     let csCancelled: string | null = null;
 
     const server = httpRaw;
-    server._on("diy.app.greet", api.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
-    server._on("diy.app.fail", api.diy.app.fail, async () => { throw new RpcError('PERMISSION_DENIED', 'no access'); });
-    server._on("diy.app.invalid", api.diy.app.invalid, async () => {
-      throw new RpcError('INVALID_ARGUMENT', 'Invalid input', { details: [{ path: ['name'], message: 'bad' }] });
+    server._on('diy.app.greet', api.diy.app.greet, async ({ input }) => `Hello, ${input.name}!`);
+    server._on('diy.app.fail', api.diy.app.fail, async () => {
+      throw new RpcError('PERMISSION_DENIED', 'no access');
     });
-    server._on("diy.app.count", api.diy.app.count, async function* ({ input }) {
+    server._on('diy.app.invalid', api.diy.app.invalid, async () => {
+      throw new RpcError('INVALID_ARGUMENT', 'Invalid input', {
+        details: [{ path: ['name'], message: 'bad' }],
+      });
+    });
+    server._on('diy.app.count', api.diy.app.count, async function* ({ input }) {
       for (let i = 1; i <= input.to; i++) yield i;
     });
-    server._on("diy.app.slow", api.diy.app.slow, async function* () {
-      try { for (let i = 0; ; i++) { yield i; await sleep(1); } }
-      finally { slowCleanup = true; }
+    server._on('diy.app.slow', api.diy.app.slow, async function* () {
+      try {
+        for (let i = 0; ; i++) {
+          yield i;
+          await sleep(1);
+        }
+      } finally {
+        slowCleanup = true;
+      }
     });
-    server._on("diy.app.recv", api.diy.app.recv, async ({ stream }) => {
-      try { for await (const _ of stream) {} }
-      catch (e: unknown) { csCancelled = (e as RpcError).code ?? null; }
+    server._on('diy.app.recv', api.diy.app.recv, async ({ stream }) => {
+      try {
+        for await (const _ of stream) {
+        }
+      } catch (e: unknown) {
+        csCancelled = (e as RpcError).code ?? null;
+      }
       return { errCode: csCancelled };
     });
 
     const srv = http2.createServer();
-    srv.on('stream', (stream, headers) => { void httpRaw.handleStream(stream as http2.ServerHttp2Stream, headers); });
+    srv.on('stream', (stream, headers) => {
+      void httpRaw.handleStream(stream as http2.ServerHttp2Stream, headers);
+    });
     await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
     const port = (srv.address() as { port: number }).port;
     const base = `http://127.0.0.1:${port}`;
@@ -74,14 +96,14 @@ describe('http-server-binding 协议特有', () => {
       // ── 1. curl unary（motivating case）──
       const { stdout: curlOut } = await exec(
         `curl -s --http2-prior-knowledge -m 8 -X POST ${base}/diy.app.greet ` +
-        `-H 'Content-Type: application/json' -d '{"input":{"name":"Curl"},"meta":{}}'`,
+          `-H 'Content-Type: application/json' -d '{"input":{"name":"Curl"},"meta":{}}'`,
       );
       expect(JSON.parse(curlOut).result).toBe('Hello, Curl!');
 
       // ── 2. curl server-stream（NDJSON）──
       const { stdout: curlSrv } = await exec(
         `curl -s --http2-prior-knowledge -m 8 -N -X POST ${base}/diy.app.count ` +
-        `-H 'Content-Type: application/json' -d '{"input":{"to":3},"meta":{}}'`,
+          `-H 'Content-Type: application/json' -d '{"input":{"to":3},"meta":{}}'`,
       );
       expect(curlSrv).toContain('{"v":1}');
       expect(curlSrv).toContain('{"v":3}');
@@ -120,7 +142,11 @@ describe('http-server-binding 协议特有', () => {
 
       // ── 6. server-stream 取消：RST_STREAM → 生成器 finally 必跑 ──
       const ac = new AbortController();
-      const sh = await cli.serverStream('diy.app.slow', { input: {}, meta: {} }, { signal: ac.signal });
+      const sh = await cli.serverStream(
+        'diy.app.slow',
+        { input: {}, meta: {} },
+        { signal: ac.signal },
+      );
       const it = sh[Symbol.asyncIterator]();
       const first = await it.next();
       expect(first.done).toBe(false);
@@ -130,10 +156,21 @@ describe('http-server-binding 协议特有', () => {
 
       // ── 7. client-stream 取消：incoming 以 CANCELLED 收尾 ──
       const ac2 = new AbortController();
-      async function* infiniteChunks() { for (let i = 0; ; i++) { await sleep(1); yield i; } }
-      const cp = cli.clientStream('diy.app.recv', { input: {}, meta: {} }, infiniteChunks(), { signal: ac2.signal });
+      async function* infiniteChunks() {
+        for (let i = 0; ; i++) {
+          await sleep(1);
+          yield i;
+        }
+      }
+      const cp = cli.clientStream('diy.app.recv', { input: {}, meta: {} }, infiniteChunks(), {
+        signal: ac2.signal,
+      });
       setTimeout(() => ac2.abort(), 30);
-      try { await cp; } catch { /* abort 后响应不可靠，忽略 */ }
+      try {
+        await cp;
+      } catch {
+        /* abort 后响应不可靠，忽略 */
+      }
       await sleep(80);
       expect(csCancelled).toBe('CANCELLED');
     } finally {
@@ -145,19 +182,23 @@ describe('http-server-binding 协议特有', () => {
 
   it('非法 wire 输入拒绝：bad body / bad params / 非法 NDJSON chunk → 报错（R19 P1-3）', async () => {
     const httpRaw = new HttpServerBinding();
-    const rapi = RpcSchema.group({ children: {
-      uni: RpcSchema.unary({ input: {}, output: z.unknown() }),
-      strict: RpcSchema.clientStream({ input: {}, chunkIn: z.unknown(), output: z.number() }),
-    } });
-    httpRaw._on("uni", rapi.uni, async ({ input }) => input);
+    const rapi = RpcSchema.group({
+      children: {
+        uni: RpcSchema.unary({ input: {}, output: z.unknown() }),
+        strict: RpcSchema.clientStream({ input: {}, chunkIn: z.unknown(), output: z.number() }),
+      },
+    });
+    httpRaw._on('uni', rapi.uni, async ({ input }) => input);
     // 不吞输入错误的 consumer：非法 chunk 必须让 handler 以错误落定（伪成功防线）
-    httpRaw._on("strict", rapi.strict, async ({ stream }) => {
+    httpRaw._on('strict', rapi.strict, async ({ stream }) => {
       let n = 0;
       for await (const _ of stream) n++;
       return n;
     });
     const srv = http2.createServer();
-    srv.on('stream', (s, h) => { void httpRaw.handleStream(s as http2.ServerHttp2Stream, h); });
+    srv.on('stream', (s, h) => {
+      void httpRaw.handleStream(s as http2.ServerHttp2Stream, h);
+    });
     await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
     const session = http2.connect(`http://127.0.0.1:${(srv.address() as { port: number }).port}`);
     await new Promise<void>((r) => session.once('connect', () => r()));
@@ -166,7 +207,9 @@ describe('http-server-binding 协议特有', () => {
         const s = session.request({ ':method': 'POST', ':path': path, ...headers });
         const chunks: Buffer[] = [];
         let status = 0;
-        s.on('response', (h) => { status = Number(h[':status'] ?? 0); });
+        s.on('response', (h) => {
+          status = Number(h[':status'] ?? 0);
+        });
         s.on('data', (c: Buffer) => chunks.push(c));
         s.on('end', () => res({ status, body: Buffer.concat(chunks).toString() }));
         s.on('error', rej);
@@ -181,7 +224,10 @@ describe('http-server-binding 协议特有', () => {
       );
       const badChunk = await raw(
         '/strict',
-        { 'content-type': 'application/x-ndjson', 'x-diy-params': JSON.stringify({ input: {}, meta: {} }) },
+        {
+          'content-type': 'application/x-ndjson',
+          'x-diy-params': JSON.stringify({ input: {}, meta: {} }),
+        },
         'not-json\n',
       );
       expect(unaryBad.status, '非法 JSON body 必须报错').toBe(400);

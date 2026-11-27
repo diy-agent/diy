@@ -102,13 +102,15 @@ export type Plugin = SlotPlugins[Slot];
 // （多带不该失败），但**必填字段类型不对一律抛**。
 
 function takeBool(obj: Record<string, unknown>, key: string, path: string, what: string): boolean {
-    if (typeof obj[key] !== 'boolean') throw new FlowError('invalid-plugin-result', `${what} 的 ${key} 应为 boolean`, `${path}.${key}`);
+    if (typeof obj[key] !== 'boolean')
+        throw new FlowError('invalid-plugin-result', `${what} 的 ${key} 应为 boolean`, `${path}.${key}`);
     return obj[key];
 }
 
 function takeOptionalString(obj: Record<string, unknown>, key: string, path: string, what: string): string | undefined {
     if (obj[key] === undefined) return undefined;
-    if (typeof obj[key] !== 'string') throw new FlowError('invalid-plugin-result', `${what} 的 ${key} 应为 string`, `${path}.${key}`);
+    if (typeof obj[key] !== 'string')
+        throw new FlowError('invalid-plugin-result', `${what} 的 ${key} 应为 string`, `${path}.${key}`);
     return obj[key];
 }
 
@@ -127,21 +129,33 @@ export function parseActionResult(value: unknown, path = 'result'): ActionResult
 }
 
 export function parseView(value: unknown, path = 'result'): View {
-    if (!isObject(value)) throw new FlowError('invalid-plugin-result', 'render 插件应返回 { renderer, payload, note? }', path);
+    if (!isObject(value))
+        throw new FlowError('invalid-plugin-result', 'render 插件应返回 { renderer, payload, note? }', path);
     const renderer = value.renderer;
     if (typeof renderer !== 'string' || !(RENDERERS as readonly string[]).includes(renderer)) {
-        throw new FlowError('invalid-plugin-result', `render 插件返回了未知 renderer ${JSON.stringify(renderer)}（合法：${RENDERERS.join(' | ')}）`, `${path}.renderer`);
+        throw new FlowError(
+            'invalid-plugin-result',
+            `render 插件返回了未知 renderer ${JSON.stringify(renderer)}（合法：${RENDERERS.join(' | ')}）`,
+            `${path}.renderer`,
+        );
     }
-    if (!('payload' in value)) throw new FlowError('invalid-plugin-result', 'render 插件返回值缺少 payload', `${path}.payload`);
+    if (!('payload' in value))
+        throw new FlowError('invalid-plugin-result', 'render 插件返回值缺少 payload', `${path}.payload`);
     const note = takeOptionalString(value, 'note', path, 'render 插件返回值');
-    return note === undefined ? { renderer: renderer as Renderer, payload: value.payload } : { renderer: renderer as Renderer, payload: value.payload, note };
+    return note === undefined
+        ? { renderer: renderer as Renderer, payload: value.payload }
+        : { renderer: renderer as Renderer, payload: value.payload, note };
 }
 
 export function parseReceipt(value: unknown, path = 'result'): Receipt {
     if (!isObject(value)) throw new FlowError('invalid-plugin-result', 'notify 插件应返回 { delivered, note? }', path);
     const delivered = value.delivered;
     if (!Array.isArray(delivered) || delivered.some((x) => typeof x !== 'string')) {
-        throw new FlowError('invalid-plugin-result', 'notify 插件返回值的 delivered 应为 string 数组', `${path}.delivered`);
+        throw new FlowError(
+            'invalid-plugin-result',
+            'notify 插件返回值的 delivered 应为 string 数组',
+            `${path}.delivered`,
+        );
     }
     const note = takeOptionalString(value, 'note', path, 'notify 插件返回值');
     return note === undefined ? { delivered: delivered as string[] } : { delivered: delivered as string[], note };

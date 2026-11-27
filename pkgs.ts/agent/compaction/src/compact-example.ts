@@ -15,16 +15,16 @@
 //
 // 纯函数：禁止 import node:*。
 
-import { RETAIN_RATIO, selectKeptBoundary, triggerTokensOf } from "./select-kept-boundary.js";
+import { RETAIN_RATIO, selectKeptBoundary, triggerTokensOf } from './select-kept-boundary.js';
 
 /** 合成样例里的一条消息（`bytes` 按 UTF-8 字节；token 见 `bytesToTokens` 的口径说明） */
 export interface ExampleMessage {
     id: string;
     /** 哪一轮（`t1`…；与界面上的轮次对齐，纯展示） */
     turn: string;
-    role: "user" | "assistant" | "tool";
+    role: 'user' | 'assistant' | 'tool';
     /** `user` 任务/插话 · `text` 助手正文 · `call` 工具调用 · `result` 工具结果 */
-    kind: "user" | "text" | "call" | "result";
+    kind: 'user' | 'text' | 'call' | 'result';
     /** 人读一句话（样例里写的是能被认出来的假内容，不是 lorem） */
     label: string;
     bytes: number;
@@ -49,76 +49,76 @@ export const bytesToTokens = (bytes: number): number => Math.round(bytes / 3);
  */
 export const EXAMPLE_MESSAGES: readonly ExampleMessage[] = [
     {
-        id: "m1",
-        turn: "t1",
-        role: "user",
-        kind: "user",
-        label: "「把 login 的 401 修掉，别动鉴权中间件」",
+        id: 'm1',
+        turn: 't1',
+        role: 'user',
+        kind: 'user',
+        label: '「把 login 的 401 修掉，别动鉴权中间件」',
         bytes: 1600,
     },
-    { id: "m2", turn: "t1", role: "assistant", kind: "text", label: "先定位：401 来自 token 过期判断…", bytes: 3200 },
-    { id: "m3", turn: "t1", role: "assistant", kind: "call", label: "rg -n '401' src/auth", bytes: 800, callId: "c1" },
+    { id: 'm2', turn: 't1', role: 'assistant', kind: 'text', label: '先定位：401 来自 token 过期判断…', bytes: 3200 },
+    { id: 'm3', turn: 't1', role: 'assistant', kind: 'call', label: "rg -n '401' src/auth", bytes: 800, callId: 'c1' },
     {
-        id: "m4",
-        turn: "t1",
-        role: "tool",
-        kind: "result",
-        label: "37 处命中（含 3 个测试文件）",
+        id: 'm4',
+        turn: 't1',
+        role: 'tool',
+        kind: 'result',
+        label: '37 处命中（含 3 个测试文件）',
         bytes: 12000,
-        callId: "c1",
+        callId: 'c1',
     },
-    { id: "m5", turn: "t2", role: "user", kind: "user", label: "「顺便看看刷新逻辑」", bytes: 600 },
-    { id: "m6", turn: "t2", role: "assistant", kind: "text", label: "refreshToken 的时钟漂移会导致误判…", bytes: 4000 },
+    { id: 'm5', turn: 't2', role: 'user', kind: 'user', label: '「顺便看看刷新逻辑」', bytes: 600 },
+    { id: 'm6', turn: 't2', role: 'assistant', kind: 'text', label: 'refreshToken 的时钟漂移会导致误判…', bytes: 4000 },
     {
-        id: "m7",
-        turn: "t2",
-        role: "assistant",
-        kind: "call",
+        id: 'm7',
+        turn: 't2',
+        role: 'assistant',
+        kind: 'call',
         label: "sed -n '1,120p' src/auth/refresh.ts",
         bytes: 700,
-        callId: "c2",
+        callId: 'c2',
     },
-    { id: "m8", turn: "t2", role: "tool", kind: "result", label: "120 行源码（含注释）", bytes: 16000, callId: "c2" },
-    { id: "m9", turn: "t3", role: "user", kind: "user", label: "「写个测试覆盖时钟漂移」", bytes: 500 },
+    { id: 'm8', turn: 't2', role: 'tool', kind: 'result', label: '120 行源码（含注释）', bytes: 16000, callId: 'c2' },
+    { id: 'm9', turn: 't3', role: 'user', kind: 'user', label: '「写个测试覆盖时钟漂移」', bytes: 500 },
     {
-        id: "m10",
-        turn: "t3",
-        role: "assistant",
-        kind: "text",
-        label: "测试要覆盖：now > exp 与 now < exp 两侧…",
+        id: 'm10',
+        turn: 't3',
+        role: 'assistant',
+        kind: 'text',
+        label: '测试要覆盖：now > exp 与 now < exp 两侧…',
         bytes: 3600,
     },
-    { id: "m11", turn: "t3", role: "assistant", kind: "call", label: "npm test -- refresh", bytes: 600, callId: "c3" },
+    { id: 'm11', turn: 't3', role: 'assistant', kind: 'call', label: 'npm test -- refresh', bytes: 600, callId: 'c3' },
     {
-        id: "m12",
-        turn: "t3",
-        role: "tool",
-        kind: "result",
-        label: "42 passed / 0 failed（含日志）",
+        id: 'm12',
+        turn: 't3',
+        role: 'tool',
+        kind: 'result',
+        label: '42 passed / 0 failed（含日志）',
         bytes: 14000,
-        callId: "c3",
+        callId: 'c3',
     },
-    { id: "m13", turn: "t4", role: "user", kind: "user", label: "「把失败原因写进注释」", bytes: 700 },
-    { id: "m14", turn: "t4", role: "assistant", kind: "text", label: "三处注释改写（判据 + 反例）…", bytes: 5200 },
-    { id: "m15", turn: "t4", role: "assistant", kind: "call", label: "git diff --stat", bytes: 600, callId: "c4" },
+    { id: 'm13', turn: 't4', role: 'user', kind: 'user', label: '「把失败原因写进注释」', bytes: 700 },
+    { id: 'm14', turn: 't4', role: 'assistant', kind: 'text', label: '三处注释改写（判据 + 反例）…', bytes: 5200 },
+    { id: 'm15', turn: 't4', role: 'assistant', kind: 'call', label: 'git diff --stat', bytes: 600, callId: 'c4' },
     {
-        id: "m16",
-        turn: "t4",
-        role: "tool",
-        kind: "result",
-        label: "5 files changed, 82 insertions(+)",
+        id: 'm16',
+        turn: 't4',
+        role: 'tool',
+        kind: 'result',
+        label: '5 files changed, 82 insertions(+)',
         bytes: 9000,
-        callId: "c4",
+        callId: 'c4',
     },
-    { id: "m17", turn: "t5", role: "user", kind: "user", label: "「跑一遍 check」", bytes: 400 },
-    { id: "m18", turn: "t5", role: "assistant", kind: "text", label: "check 通过（0 error）…", bytes: 2600 },
-    { id: "m19", turn: "t6", role: "user", kind: "user", label: "「开 PR」", bytes: 900 },
+    { id: 'm17', turn: 't5', role: 'user', kind: 'user', label: '「跑一遍 check」', bytes: 400 },
+    { id: 'm18', turn: 't5', role: 'assistant', kind: 'text', label: 'check 通过（0 error）…', bytes: 2600 },
+    { id: 'm19', turn: 't6', role: 'user', kind: 'user', label: '「开 PR」', bytes: 900 },
     {
-        id: "m20",
-        turn: "t6",
-        role: "assistant",
-        kind: "text",
-        label: "PR #999 已开（GPG 已签，未 merge）…",
+        id: 'm20',
+        turn: 't6',
+        role: 'assistant',
+        kind: 'text',
+        label: 'PR #999 已开（GPG 已签，未 merge）…',
         bytes: 1800,
     },
 ];
@@ -159,15 +159,15 @@ export function buildCompactExample(
     const { cut } =
         budgetTokens > 0
             ? selectKeptBoundary(
-                  messages.map((m) => ({ tokens: bytesToTokens(m.bytes), user: m.role === "user" })),
+                  messages.map((m) => ({ tokens: bytesToTokens(m.bytes), user: m.role === 'user' })),
                   budgetTokens,
                   triggerTokensOf(window),
               )
             : { cut: messages.length };
 
     const rows: ExampleRow[] = messages.map((m, i) => {
-        if (i >= cut) return rowOf(m, true, "在本次请求里（从尾往前装够保留量，切点落在 user）");
-        return rowOf(m, false, "超出保留量 ⇒ 不进本次请求（历史仍在，可查可撤销）");
+        if (i >= cut) return rowOf(m, true, '在本次请求里（从尾往前装够保留量，切点落在 user）');
+        return rowOf(m, false, '超出保留量 ⇒ 不进本次请求（历史仍在，可查可撤销）');
     });
 
     const keptRows = rows.filter((r) => r.kept);

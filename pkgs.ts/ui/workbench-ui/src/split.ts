@@ -50,24 +50,24 @@ export function createSplitPane(pane: HTMLElement, options: SplitPaneOptions): S
     const doc = pane.ownerDocument;
     const { min, max } = options;
     const store = options.storageKey === undefined ? null : storageOf(doc);
-    const remembered = store?.getItem(options.storageKey ?? "") ?? null;
+    const remembered = store?.getItem(options.storageKey ?? '') ?? null;
     const initial = remembered === null ? (options.initial ?? min) : Number(remembered);
 
-    const handle = doc.createElement("div");
-    handle.className = "wb-split-handle";
-    handle.setAttribute("role", "separator");
-    handle.setAttribute("aria-orientation", "vertical");
-    handle.setAttribute("aria-valuemin", String(Math.min(min, max)));
-    handle.setAttribute("aria-valuemax", String(Math.max(min, max)));
-    handle.style.flex = "none";
-    handle.style.width = "5px";
-    handle.style.cursor = "col-resize";
-    handle.style.touchAction = "none";
+    const handle = doc.createElement('div');
+    handle.className = 'wb-split-handle';
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-orientation', 'vertical');
+    handle.setAttribute('aria-valuemin', String(Math.min(min, max)));
+    handle.setAttribute('aria-valuemax', String(Math.max(min, max)));
+    handle.style.flex = 'none';
+    handle.style.width = '5px';
+    handle.style.cursor = 'col-resize';
+    handle.style.touchAction = 'none';
 
     const apply = (px: number): number => {
         const next = clampPaneWidth(px, min, max);
         pane.style.width = `${next}px`;
-        handle.setAttribute("aria-valuenow", String(next));
+        handle.setAttribute('aria-valuenow', String(next));
         return next;
     };
 
@@ -81,7 +81,7 @@ export function createSplitPane(pane: HTMLElement, options: SplitPaneOptions): S
     const onUp = (): void => {
         if (!dragging) return;
         dragging = false;
-        handle.style.background = "";
+        handle.style.background = '';
         if (store && options.storageKey !== undefined) {
             try {
                 store.setItem(options.storageKey, String(current));
@@ -89,18 +89,18 @@ export function createSplitPane(pane: HTMLElement, options: SplitPaneOptions): S
                 /* 配额满了也不影响本次拖动 */
             }
         }
-        doc.removeEventListener("mousemove", onMove);
-        doc.removeEventListener("mouseup", onUp);
+        doc.removeEventListener('mousemove', onMove);
+        doc.removeEventListener('mouseup', onUp);
     };
     const onDown = (event: MouseEvent): void => {
         dragging = true;
-        handle.style.background = "#3b6fd4";
-        doc.addEventListener("mousemove", onMove);
-        doc.addEventListener("mouseup", onUp);
+        handle.style.background = '#3b6fd4';
+        doc.addEventListener('mousemove', onMove);
+        doc.addEventListener('mouseup', onUp);
         event.preventDefault();
     };
 
-    handle.addEventListener("mousedown", onDown);
+    handle.addEventListener('mousedown', onDown);
 
     return {
         handle,
@@ -110,7 +110,7 @@ export function createSplitPane(pane: HTMLElement, options: SplitPaneOptions): S
         },
         dispose: () => {
             onUp();
-            handle.removeEventListener("mousedown", onDown);
+            handle.removeEventListener('mousedown', onDown);
             handle.remove();
         },
     };

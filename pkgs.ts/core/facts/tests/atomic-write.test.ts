@@ -77,9 +77,15 @@ describe('writeFilesAtomic', () => {
                 realFs.writeFileSync(p, data, enc as BufferEncoding);
             },
         };
-        expect(() => writeFilesAtomic([{ file: a, text: 'new-a' }, { file: path.join(dir, 'b.yaml'), text: 'new-b' }], { fs })).toThrow(
-            /ENOSPC/,
-        );
+        expect(() =>
+            writeFilesAtomic(
+                [
+                    { file: a, text: 'new-a' },
+                    { file: path.join(dir, 'b.yaml'), text: 'new-b' },
+                ],
+                { fs },
+            ),
+        ).toThrow(/ENOSPC/);
         expect(readFileSync(a, 'utf8')).toBe('old-a');
         expect(readdirSync(dir).filter((n) => n.includes('.tmp-'))).toEqual([]);
     });
@@ -114,8 +120,24 @@ describe('submit 的落盘面', () => {
         writeFileSync(path.join(root, 'k.ts'), '// 证据锚点\n');
         const rr = submit(dir, {
             facts: [
-                { id: 'app.port.default', subject: 'app.port', aspect: 'default', value: '8080', review: 'accepted', lifecycle: 'active', evidence: { source: 'code', at: 'k.ts:1', verifiedAt: '2026-10-22' } },
-                { id: 'app.port.host', subject: 'app.port', aspect: 'host', value: 'localhost', review: 'accepted', lifecycle: 'active', evidence: { source: 'code', at: 'k.ts:1', verifiedAt: '2026-10-22' } },
+                {
+                    id: 'app.port.default',
+                    subject: 'app.port',
+                    aspect: 'default',
+                    value: '8080',
+                    review: 'accepted',
+                    lifecycle: 'active',
+                    evidence: { source: 'code', at: 'k.ts:1', verifiedAt: '2026-10-22' },
+                },
+                {
+                    id: 'app.port.host',
+                    subject: 'app.port',
+                    aspect: 'host',
+                    value: 'localhost',
+                    review: 'accepted',
+                    lifecycle: 'active',
+                    evidence: { source: 'code', at: 'k.ts:1', verifiedAt: '2026-10-22' },
+                },
             ],
             subjects: [{ key: 'app.port', description: '应用监听端口' }],
         });

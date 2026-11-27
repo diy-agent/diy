@@ -9,8 +9,18 @@ export function counterDemo(el: HTMLElement): void {
     app.label("# 🧪 diy-ui web · Counter");
 
     app.row(() => {
-      app.button({ name: "-1", onClick: () => { count.value--; } });
-      app.button({ name: "+1", onClick: () => { count.value++; } });
+      app.button({
+        name: "-1",
+        onClick: () => {
+          count.value--;
+        },
+      });
+      app.button({
+        name: "+1",
+        onClick: () => {
+          count.value++;
+        },
+      });
     });
 
     // Cell：count 变化时自动 rerun（清空重建这一列）

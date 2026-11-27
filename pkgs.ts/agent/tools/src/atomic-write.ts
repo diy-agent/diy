@@ -26,9 +26,19 @@
 // services/local-agent.ts 的 llm 日志重建）已收敛到这里 —— 各写一遍必然分叉，分叉就是「有的写点
 // 原子、有的不原子」，而**不原子的那些正是会毁正文的**。
 
-import { randomBytes } from "node:crypto";
-import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { randomBytes } from 'node:crypto';
+import {
+    chmodSync,
+    closeSync,
+    fsyncSync,
+    mkdirSync,
+    openSync,
+    renameSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 /**
  * 本原语用到的文件系统面（**依赖注入口**，##402）。
@@ -107,7 +117,7 @@ export function writeFileAtomic(path: string, content: string, opts: WriteFileAt
         // mkdir 也放进 try：它同样可能因 ENOSPC 失败（父目录项要落盘），
         // 而"磁盘满"这个事实必须无论在哪一步失败都能被观测到（##384）。
         fs.mkdirSync(dirname(path), { recursive: true });
-        fs.writeFileSync(tmp, content, "utf-8");
+        fs.writeFileSync(tmp, content, 'utf-8');
         inheritMode(fs, path, tmp);
         if (opts.fsync) syncFile(fs, tmp);
         // 覆盖目标：POSIX rename 是原子的。读者要么看到旧内容、要么看到新内容，绝无半截。
@@ -145,7 +155,7 @@ function inheritMode(fs: FsLike, target: string, tmp: string): void {
 
 /** 把 tmp 的内容刷到盘上（耐久开关，见头注）；目录项不刷。 */
 function syncFile(fs: FsLike, p: string): void {
-    const fd = fs.openSync(p, "r+");
+    const fd = fs.openSync(p, 'r+');
     try {
         fs.fsyncSync(fd);
     } finally {
@@ -155,5 +165,5 @@ function syncFile(fs: FsLike, p: string): void {
 
 /** 目标文件的临时兄弟：**同目录** + pid + 随机后缀（见头注「为什么不用固定 .tmp」）。 */
 function tempPathFor(path: string): string {
-    return join(dirname(path), `${basename(path)}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`);
+    return join(dirname(path), `${basename(path)}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`);
 }

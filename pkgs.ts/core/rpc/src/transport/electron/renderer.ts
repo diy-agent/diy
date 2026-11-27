@@ -44,7 +44,9 @@ function makeRenderer(channel = 'rpc'): EnvelopeTransport {
     if (pending.length >= MAX_EARLY_PENDING) {
       dropped++;
       if (dropped === 1 || dropped % 50 === 0) {
-        console.warn(`[rpc] renderer 未就绪，已丢弃 ${dropped} 条早期消息（上限 ${MAX_EARLY_PENDING}）`);
+        console.warn(
+          `[rpc] renderer 未就绪，已丢弃 ${dropped} 条早期消息（上限 ${MAX_EARLY_PENDING}）`,
+        );
       }
       return;
     }
@@ -60,7 +62,9 @@ function makeRenderer(channel = 'rpc'): EnvelopeTransport {
         const early = pending.splice(0, pending.length);
         for (const msg of early) h(msg);
       }
-      return () => { handlers.delete(h); };
+      return () => {
+        handlers.delete(h);
+      };
     },
     onClose: (cb) => {
       window.addEventListener('beforeunload', cb);

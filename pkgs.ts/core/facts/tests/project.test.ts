@@ -57,21 +57,36 @@ describe('projectItems', () => {
     });
 
     it('同 ns 内最近验证的排在前（预算从尾部裁，所以顺序 = 保留优先级）', () => {
-        const old = { ns: { kind: 'project' } as const, fact: f({ id: 'a.old', subject: 'dev.a', aspect: 'old', value: '1', verifiedAt: '2026-01-01' }) };
-        const fresh = { ns: { kind: 'project' } as const, fact: f({ id: 'z.fresh', subject: 'dev.z', aspect: 'fresh', value: '2', verifiedAt: '2026-10-22' }) };
+        const old = {
+            ns: { kind: 'project' } as const,
+            fact: f({ id: 'a.old', subject: 'dev.a', aspect: 'old', value: '1', verifiedAt: '2026-01-01' }),
+        };
+        const fresh = {
+            ns: { kind: 'project' } as const,
+            fact: f({ id: 'z.fresh', subject: 'dev.z', aspect: 'fresh', value: '2', verifiedAt: '2026-10-22' }),
+        };
         const { items } = projectItems({ entries: [old, fresh], ctx: { env: 'production' } });
         expect(items.map((i) => i.gid)).toEqual(['project:dev.z#fresh', 'project:dev.a#old']);
     });
 
     it('都没记 verifiedAt 时退化成 gid 字母序（老行为不变）', () => {
-        const a = { ns: { kind: 'project' } as const, fact: f({ id: 'x', subject: 'dev.zzz', aspect: 'a', value: '1' }) };
-        const b = { ns: { kind: 'project' } as const, fact: f({ id: 'y', subject: 'dev.aaa', aspect: 'b', value: '2' }) };
+        const a = {
+            ns: { kind: 'project' } as const,
+            fact: f({ id: 'x', subject: 'dev.zzz', aspect: 'a', value: '1' }),
+        };
+        const b = {
+            ns: { kind: 'project' } as const,
+            fact: f({ id: 'y', subject: 'dev.aaa', aspect: 'b', value: '2' }),
+        };
         const { items } = projectItems({ entries: [a, b], ctx: { env: 'production' } });
         expect(items.map((i) => i.gid)).toEqual(['project:dev.aaa#b', 'project:dev.zzz#a']);
     });
 
     it('没记 verifiedAt 的按空串算最旧（有日期的先留）', () => {
-        const dated = { ns: { kind: 'project' } as const, fact: f({ id: 'd', subject: 'dev.dated', value: '1', verifiedAt: '2026-01-01' }) };
+        const dated = {
+            ns: { kind: 'project' } as const,
+            fact: f({ id: 'd', subject: 'dev.dated', value: '1', verifiedAt: '2026-01-01' }),
+        };
         const undated = { ns: { kind: 'project' } as const, fact: f({ id: 'u', subject: 'dev.undated', value: '2' }) };
         const { items } = projectItems({ entries: [undated, dated], ctx: { env: 'production' } });
         expect(items.map((i) => i.gid)).toEqual(['project:dev.dated#default', 'project:dev.undated#default']);
@@ -93,7 +108,10 @@ describe('projectItems', () => {
     it('冲突 / 悬空不静默：进 problems', () => {
         const dup = [
             { ns: { kind: 'project' } as const, fact: PROD },
-            { ns: { kind: 'project' } as const, fact: f({ id: 'port.production2', subject: 'app.port', value: '1234', env: 'production' }) },
+            {
+                ns: { kind: 'project' } as const,
+                fact: f({ id: 'port.production2', subject: 'app.port', value: '1234', env: 'production' }),
+            },
         ];
         const { items, problems } = projectItems({ entries: dup, ctx: { env: 'production' } });
         expect(items).toHaveLength(0);

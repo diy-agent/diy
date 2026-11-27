@@ -14,11 +14,11 @@
 //
 // 判据：如果一条逻辑换个宿主（Web / CLI / 测试）还要重写，它就不在页面里。
 
-import { loadCatalog, readDefaultModel, type ModelCatalogEntry } from "@diy-agent/model-catalog";
-import { localISOString } from "@diy-agent/time";
-import { BotError } from "./errors.js";
-import { nextBotId } from "./uri.js";
-import type { BotConfig, BotStore } from "./types.js";
+import { loadCatalog, readDefaultModel, type ModelCatalogEntry } from '@diy-agent/model-catalog';
+import { localISOString } from '@diy-agent/time';
+import { BotError } from './errors.js';
+import { nextBotId } from './uri.js';
+import type { BotConfig, BotStore } from './types.js';
 
 /** 一行列表数据：身份 + 会话数（页面只做展示转换） */
 export interface BotAdminRow {
@@ -71,11 +71,11 @@ export function createBotAdmin(options: BotAdminOptions): BotAdmin {
 
     /** ##497：model 必填（没有「跟随宿主缺省」这条路） */
     const checkModel = (model: string | null | undefined): string => {
-        if (model === null || model === undefined || model.trim() === "") {
-            throw new BotError("bot/no-model", "必须先选一个模型");
+        if (model === null || model === undefined || model.trim() === '') {
+            throw new BotError('bot/no-model', '必须先选一个模型');
         }
         const found = catalog().some((entry) => `${entry.providerId}/${entry.modelId}` === model);
-        if (!found) throw new BotError("bot/unknown-model", `模型目录里没有 ${model}`);
+        if (!found) throw new BotError('bot/unknown-model', `模型目录里没有 ${model}`);
         return model;
     };
 
@@ -90,17 +90,17 @@ export function createBotAdmin(options: BotAdminOptions): BotAdmin {
         const existing = await store.list();
         if (existing.some((config) => config.name === draft.name)) {
             // 名字只是标签，允许重名会让人分不清谁是谁；id 才是引用键
-            throw new BotError("bot/name-taken", `已经有同名 bot「${draft.name}」`);
+            throw new BotError('bot/name-taken', `已经有同名 bot「${draft.name}」`);
         }
         const id = draft.id ?? nextBotId(existing.map((config) => config.id));
         if (existing.some((config) => config.id === id)) {
-            throw new BotError("bot/id-taken", `bot id 已存在：${id}`);
+            throw new BotError('bot/id-taken', `bot id 已存在：${id}`);
         }
         const at = localISOString(now());
         const config: BotConfig = {
             id,
             name: draft.name,
-            instructions: draft.instructions ?? "",
+            instructions: draft.instructions ?? '',
             // ##497：model **必填**（没有「跟随宿主缺省」这条路）
             model: checkModel(draft.model),
             createdAt: at,
@@ -112,7 +112,7 @@ export function createBotAdmin(options: BotAdminOptions): BotAdmin {
 
     const save = async (id: string, patch: Partial<BotAdminDraft>): Promise<BotConfig> => {
         const current = await store.load(id);
-        if (current === null) throw new BotError("bot/not-found", `没有 bot ${id}`);
+        if (current === null) throw new BotError('bot/not-found', `没有 bot ${id}`);
         // 未给的字段沿用当前值；给了就必须过校验（model 仍是必填）
         const model = patch.model === undefined ? current.model : checkModel(patch.model);
         const next: BotConfig = {

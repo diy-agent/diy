@@ -29,11 +29,9 @@ function item(partial: Partial<Item> & { type: Item['type']; data: unknown }, au
     } as Item;
 }
 
-const chat = (author?: string, turnId = 'turn-1'): Item =>
-    item({ type: 'chat', data: { text: 'hi' }, turnId }, author);
+const chat = (author?: string, turnId = 'turn-1'): Item => item({ type: 'chat', data: { text: 'hi' }, turnId }, author);
 const notice = (kind: string, author?: string): Item => item({ type: 'notice', data: { text: kind, kind } }, author);
-const errorItem = (message: string, author?: string): Item =>
-    item({ type: 'error', data: { message } }, author);
+const errorItem = (message: string, author?: string): Item => item({ type: 'error', data: { message } }, author);
 
 describe('lastItemPerBot', () => {
     it('每个 bot 各取最后一条，不串房间', () => {
@@ -133,12 +131,18 @@ describe('outcomeOfFact / withTurnFact', () => {
     });
 
     it('error 事实把原文带到 message', () => {
-        const turn = withTurnFact(botLastTurnOf('r1', chat('a'))!, item({ type: 'error', data: { message: '网关 500' } }));
+        const turn = withTurnFact(
+            botLastTurnOf('r1', chat('a'))!,
+            item({ type: 'error', data: { message: '网关 500' } }),
+        );
         expect(turn).toMatchObject({ outcome: 'failed', message: '网关 500' });
     });
 
     it('endItems 落的结局带 botId（归属不丢，UI 仍独立成条）', () => {
-        const [fact] = endItems({ type: 'max-tokens', maxOutputTokens: 100 }, { turn: 1, turnId: 'turn-1', botId: 'bot:a' });
+        const [fact] = endItems(
+            { type: 'max-tokens', maxOutputTokens: 100 },
+            { turn: 1, turnId: 'turn-1', botId: 'bot:a' },
+        );
         expect(fact?.type).toBe('notice');
         // 不带 author：UI 据此让它独立成条（timeline 的分组看 author 在不在）
         expect(fact?.author).toBeUndefined();
@@ -200,7 +204,14 @@ describe('lastFactPerTurn', () => {
 describe('needsHuman / outcomeText', () => {
     it('只有 done 不需要人动手', () => {
         expect(needsHuman('done')).toBe(false);
-        for (const outcome of ['truncated', 'max-steps', 'filtered', 'tool-mismatch', 'interrupted', 'failed'] as const) {
+        for (const outcome of [
+            'truncated',
+            'max-steps',
+            'filtered',
+            'tool-mismatch',
+            'interrupted',
+            'failed',
+        ] as const) {
             expect(needsHuman(outcome)).toBe(true);
         }
     });
@@ -223,10 +234,7 @@ describe('createTurnLookup —— 事实必须属于当前这一轮', () => {
         // 因为 `lastFactPerTurn` 按 owner（COALESCE(botId, turnId)）分组，
         // 一个 bot 在它那里只留一条，那条是旧轮的。
         const store = openStore(':memory:');
-        store.appendItem(
-            room,
-            item({ type: 'chat', data: { text: '结论' }, turnId: 'turn-new', turn: 95 }, bot),
-        );
+        store.appendItem(room, item({ type: 'chat', data: { text: '结论' }, turnId: 'turn-new', turn: 95 }, bot));
         store.appendItem(
             room,
             item({

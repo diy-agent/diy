@@ -31,27 +31,17 @@ export function DynamicBar(props: {
         // 将来别的动态菜单条换别的色系即可互相区隔
         <div class="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/15 px-2 py-0.5 text-body">
             <span class="join join-horizontal">
-                <button
-                    class="btn btn-xs join-item"
-                    title="上一个"
-                    disabled={props.count === 0}
-                    onClick={props.onPrev}
-                >
+                <button class="btn btn-xs join-item" title="上一个" disabled={props.count === 0} onClick={props.onPrev}>
                     ↑
                 </button>
-                <button
-                    class="btn btn-xs join-item"
-                    title="下一个"
-                    disabled={props.count === 0}
-                    onClick={props.onNext}
-                >
+                <button class="btn btn-xs join-item" title="下一个" disabled={props.count === 0} onClick={props.onNext}>
                     ↓
                 </button>
             </span>
             <span class="badge badge-xs badge-ghost font-mono" title="第几个 / 共几个">
                 {/* 空集显示 0/0：`index + 1` 在没候选项时会渲染成「1/0」，
                     读起来像"有一个但总数是零"。0 与「第几个」无关，是另一种状态。 */}
-                {props.count === 0 ? "0/0" : `${props.index + 1}/${props.count}`}
+                {props.count === 0 ? '0/0' : `${props.index + 1}/${props.count}`}
             </span>
             <span class="truncate font-mono opacity-70" title={props.label}>
                 {props.label}
@@ -62,4 +52,3 @@ export function DynamicBar(props: {
         </div>
     );
 }
-

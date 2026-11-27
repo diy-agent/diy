@@ -19,8 +19,8 @@
  * （review ##253 RV-4：同一行的动作不该有两个 tab 停靠点）。行头**没有**开关的行（正文行）
  * 传 `sole` —— 那时条才是全行唯一的键盘入口。
  */
-import { Show } from "solid-js";
-import { IconChevron, IconDot } from "./icons.js";
+import { Show } from 'solid-js';
+import { IconChevron, IconDot } from './icons.js';
 
 export function RowGutter(props: {
     /** 这一行**点开会不会多出东西**（false = 静态点，不承诺可展开） */
@@ -38,7 +38,7 @@ export function RowGutter(props: {
     const can = () => props.can !== false;
     /** 条能否进 tab 序 / 带 button 语义：能展开 **且** 行头没别的开关 */
     const focusable = () => can() && !!props.sole;
-    const tip = () => props.label ?? (props.open ? "收起" : "展开");
+    const tip = () => props.label ?? (props.open ? '收起' : '展开');
     /** 点击**必须** `stopPropagation`：条挂在块里、行头也是开合开关 —— 不拦就"一次点击翻转两下"
      *  （净效果 = 没反应；源码 R17 / 草图 R24⑥ 踩过两次的坑）。 */
     const fire = (e: Event) => {
@@ -57,25 +57,25 @@ export function RowGutter(props: {
         // `sole` 给"行头不是控件"的行（正文行）开一个口子 —— 那时条就是全行唯一的键盘入口。
         <span
             class="diy-row-band"
-            data-row-band={can() ? "1" : "static"}
+            data-row-band={can() ? '1' : 'static'}
             title={can() ? tip() : undefined}
-            role={focusable() ? "button" : undefined}
+            role={focusable() ? 'button' : undefined}
             tabindex={focusable() ? 0 : undefined}
             aria-label={focusable() ? tip() : undefined}
             aria-expanded={focusable() ? !!props.open : undefined}
-            aria-hidden={focusable() ? undefined : "true"}
+            aria-hidden={focusable() ? undefined : 'true'}
             onClick={can() ? fire : undefined}
             onKeyDown={
                 focusable()
                     ? (e) => {
-                          if (e.key !== "Enter" && e.key !== " ") return;
+                          if (e.key !== 'Enter' && e.key !== ' ') return;
                           e.preventDefault();
                           fire(e);
                       }
                     : undefined
             }
         >
-            <span class="diy-row-handle" data-row-handle={can() ? "1" : "static"} aria-hidden="true">
+            <span class="diy-row-handle" data-row-handle={can() ? '1' : 'static'} aria-hidden="true">
                 <Show when={can()} fallback={<IconDot class="h-3.5 w-3.5 opacity-20" />}>
                     <IconChevron open={!!props.open} class="h-3.5 w-3.5 opacity-40" />
                 </Show>

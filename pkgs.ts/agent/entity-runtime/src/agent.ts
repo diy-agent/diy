@@ -176,9 +176,7 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     watchdog.start();
 
     const result = streamText({
-        model:
-            options.model ??
-            modelOf(options.modelKey, { sessionId: options.sessionId ?? turnId }),
+        model: options.model ?? modelOf(options.modelKey, { sessionId: options.sessionId ?? turnId }),
         abortSignal: stall.signal,
         maxOutputTokens,
         instructions: instructionsOf({

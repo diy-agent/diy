@@ -15,20 +15,19 @@ import { z } from 'zod';
 import { RpcSchema } from '../../../../src/index';
 
 export const calcRoutes = RpcSchema.group({
-    desc: '计算器示例',
-    children: {
-        math: RpcSchema.group({
-            desc: '数学运算',
-            children: {
-                add: RpcSchema.unary({
-                    input: { a: z.number(), b: z.number() },
-                    output: z.number(),
-                    desc: '两数相加',
-                }),
-                /** 空 input 也要声明成 `{}`（调用时传 `{}`） */
-                version: RpcSchema.unary({ input: {}, output: z.string(), desc: '版本号' }),
-            },
+  desc: '计算器示例',
+  children: {
+    math: RpcSchema.group({
+      desc: '数学运算',
+      children: {
+        add: RpcSchema.unary({
+          input: { a: z.number(), b: z.number() },
+          output: z.number(),
+          desc: '两数相加',
         }),
-    },
+        /** 空 input 也要声明成 `{}`（调用时传 `{}`） */
+        version: RpcSchema.unary({ input: {}, output: z.string(), desc: '版本号' }),
+      },
+    }),
+  },
 });
-

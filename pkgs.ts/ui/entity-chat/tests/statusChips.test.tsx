@@ -29,7 +29,9 @@ const base: StatusChipsProps = {
 function ask(overrides: Partial<AskRequest> = {}): AskRequest {
     return {
         askId: 'ask-1',
-        questions: [{ id: 'q1', question: '作业历史要不要回填？', kind: 'choice', options: [{ value: 'a', label: 'A' }] }],
+        questions: [
+            { id: 'q1', question: '作业历史要不要回填？', kind: 'choice', options: [{ value: 'a', label: 'A' }] },
+        ],
         owner: 'b1',
         at: 1_000_000 - 27 * 60_000,
         ...overrides,

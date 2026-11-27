@@ -31,7 +31,12 @@ export function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** 拒绝未知字段：形状封闭，多一个键就报错（带点路径指向该键） */
-export function rejectUnknown(obj: Record<string, unknown>, known: readonly string[], path: string, code: FlowErrorCode): void {
+export function rejectUnknown(
+    obj: Record<string, unknown>,
+    known: readonly string[],
+    path: string,
+    code: FlowErrorCode,
+): void {
     for (const key of Object.keys(obj)) {
         if (!known.includes(key)) {
             throw new FlowError(code, `未知字段 ${JSON.stringify(key)}（形状封闭）`, `${path}.${key}`);

@@ -23,7 +23,9 @@ async function main() {
   const client = new ChannelClientBinding(clientTx);
 
   let uncaught = '';
-  const onUncaught = (e: unknown) => { uncaught = String((e as any)?.message ?? e); };
+  const onUncaught = (e: unknown) => {
+    uncaught = String((e as any)?.message ?? e);
+  };
   process.once('uncaughtException', onUncaught);
 
   let outcome = 'ignored';
@@ -34,7 +36,13 @@ async function main() {
     outcome = `threw:${e?.message}`;
   }
 
-  console.log('[notify-matrix]', { documentedNotify, notifyInUnion, cancelInUnion, outcome, uncaught });
+  console.log('[notify-matrix]', {
+    documentedNotify,
+    notifyInUnion,
+    cancelInUnion,
+    outcome,
+    uncaught,
+  });
 
   if (documentedNotify && !notifyInUnion) {
     console.error('FAIL: protocol doc claims `notify` but envelope union has no notify member');
@@ -50,4 +58,7 @@ async function main() {
   client.dispose();
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

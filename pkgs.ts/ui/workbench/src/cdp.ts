@@ -14,14 +14,14 @@
  *   3. 需要固定端口时用 `DIY_CDP_PORT` 显式覆盖（测试 / 需要稳定 attach 的场景）。
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /** `app.commandLine.appendSwitch` 需要的值：`0`（自动）或显式端口 */
 export function cdpSwitchValue(env: NodeJS.ProcessEnv = process.env): string {
-    const raw = env["DIY_CDP_PORT"];
+    const raw = env['DIY_CDP_PORT'];
     if (raw !== undefined && /^\d+$/.test(raw)) return raw;
-    return "0";
+    return '0';
 }
 
 /**
@@ -32,10 +32,10 @@ export function cdpSwitchValue(env: NodeJS.ProcessEnv = process.env): string {
  */
 export function readDevToolsUrl(userDataDir: string): string | null {
     try {
-        const [port, path] = readFileSync(join(userDataDir, "DevToolsActivePort"), "utf-8")
-            .split("\n")
+        const [port, path] = readFileSync(join(userDataDir, 'DevToolsActivePort'), 'utf-8')
+            .split('\n')
             .map((line) => line.trim());
-        if (port === undefined || path === undefined || port === "" || path === "") return null;
+        if (port === undefined || path === undefined || port === '' || path === '') return null;
         return `ws://127.0.0.1:${port}${path}`;
     } catch {
         return null;

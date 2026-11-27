@@ -5,14 +5,14 @@
 // 判据在 `shared/process-health.ts`（纯函数）。
 // POSIX 的 probe 复用 ps/top/lsof；Windows 的 connections 由 `caps.tcpConnections=false` 明说未采集。
 
-import { os as defaultOs } from "./os-instance.js";
-import type { OsStrategy } from "./types.js";
-import type { ProcessSample } from "./process-health.js";
+import { os as defaultOs } from './os-instance.js';
+import type { OsStrategy } from './types.js';
+import type { ProcessSample } from './process-health.js';
 
 /** 采集依赖（注入以便单测：真跑系统命令太慢，测试不能等）。 */
 export interface SamplerDeps {
     /** 观测快照（缺省单例；注入假对象即可在任意平台单测组装逻辑） */
-    os: Pick<OsStrategy, "probe">;
+    os: Pick<OsStrategy, 'probe'>;
     now(): number;
 }
 

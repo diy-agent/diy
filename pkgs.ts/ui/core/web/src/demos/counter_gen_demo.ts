@@ -30,7 +30,10 @@ export function counterGenDemo(el: HTMLElement): void {
           },
         });
       });
-      yield html.div({ class: "panel-out", text: () => `Count: ${count.value}` });
+      yield html.div({
+        class: "panel-out",
+        text: () => `Count: ${count.value}`,
+      });
     }),
   );
 }

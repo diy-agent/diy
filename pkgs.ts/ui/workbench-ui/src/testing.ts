@@ -9,7 +9,7 @@
 // 生产环境零开销：只有 E2E/意图测试进程会调 `installTestHooks()`。
 
 interface TestCommand {
-    type: "fill" | "click" | "waitState" | "readState";
+    type: 'fill' | 'click' | 'waitState' | 'readState';
     selector?: string;
     value?: unknown;
     path?: string;
@@ -24,7 +24,7 @@ function readPath(path: string): unknown {
     const root = (window as unknown as { __diyTestState?: Record<string, unknown> }).__diyTestState;
     if (root === undefined) return undefined;
     let cur: unknown = root;
-    for (const seg of path.split(".")) {
+    for (const seg of path.split('.')) {
         if (cur === null || cur === undefined) return undefined;
         cur = (cur as Record<string, unknown>)[seg];
     }
@@ -39,19 +39,19 @@ function el(selector: string): HTMLElement {
 
 async function run(cmd: TestCommand): Promise<unknown> {
     switch (cmd.type) {
-        case "fill": {
+        case 'fill': {
             const node = el(cmd.selector!);
             const input = node as HTMLInputElement | HTMLTextAreaElement;
-            input.value = String(cmd.value ?? "");
-            input.dispatchEvent(new Event("input", { bubbles: true }));
-            input.dispatchEvent(new Event("change", { bubbles: true }));
+            input.value = String(cmd.value ?? '');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
             return undefined;
         }
-        case "click": {
-            el(cmd.selector!).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        case 'click': {
+            el(cmd.selector!).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             return undefined;
         }
-        case "waitState": {
+        case 'waitState': {
             const deadline = Date.now() + (cmd.timeoutMs ?? 5000);
             while (Date.now() < deadline) {
                 if (JSON.stringify(readPath(cmd.path!)) === JSON.stringify(cmd.equals)) return undefined;
@@ -61,7 +61,7 @@ async function run(cmd: TestCommand): Promise<unknown> {
                 `[意图测试] 等 ${cmd.path} === ${JSON.stringify(cmd.equals)} 超时（实际 ${JSON.stringify(readPath(cmd.path!))}）`,
             );
         }
-        case "readState":
+        case 'readState':
             return readPath(cmd.path!);
     }
 }
@@ -77,8 +77,9 @@ async function run(cmd: TestCommand): Promise<unknown> {
  */
 export function installTestHooks(): void {
     // ① 走 rpc（main → preload → 这里）：进程内测试 / 将来的 CLI 驱动用
-    const hooks = (window as unknown as { __diyTestHooks?: { setHandler(h: (cmd: unknown) => Promise<unknown>): void } })
-        .__diyTestHooks;
+    const hooks = (
+        window as unknown as { __diyTestHooks?: { setHandler(h: (cmd: unknown) => Promise<unknown>): void } }
+    ).__diyTestHooks;
     hooks?.setHandler((cmd) => run(cmd as TestCommand));
 
     // ② 直接挂 window（CDP `Runtime.evaluate` 调）：

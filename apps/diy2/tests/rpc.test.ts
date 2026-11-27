@@ -270,13 +270,33 @@ function pngBytes(width = 6, height = 4): Buffer {
         value & 0xff,
     ];
     return Buffer.from([
-        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-        0, 0, 0, 0x0d,
-        0x49, 0x48, 0x44, 0x52,
+        0x89,
+        0x50,
+        0x4e,
+        0x47,
+        0x0d,
+        0x0a,
+        0x1a,
+        0x0a,
+        0,
+        0,
+        0,
+        0x0d,
+        0x49,
+        0x48,
+        0x44,
+        0x52,
         ...be32(width),
         ...be32(height),
-        8, 6, 0, 0, 0,
-        0, 0, 0, 0,
+        8,
+        6,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
     ]);
 }
 
@@ -288,7 +308,13 @@ describe('附件：字节进 / 字节出', () => {
             const bytes = pngBytes(1440, 900);
             const ref = await binding.invoke<
                 unknown,
-                { type: string; relPath: string; mime: string; bytes: number; image?: { width: number; height: number } }
+                {
+                    type: string;
+                    relPath: string;
+                    mime: string;
+                    bytes: number;
+                    image?: { width: number; height: number };
+                }
             >('diy2.attachment.put', {
                 // 名字故意说谎：内容才是真的
                 input: { base64: bytes.toString('base64'), name: 'liar.jpg', source: 'paste' },

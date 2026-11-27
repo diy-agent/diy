@@ -41,7 +41,12 @@ export interface CreatedInvitation {
 
 export async function createInvitation(
     store: HubStore,
-    opts: InvitationOptions & { domainId?: DomainId; hubNodeId: NodeId; autoApprove?: boolean; protocol?: 'code' | 'pinned-key' },
+    opts: InvitationOptions & {
+        domainId?: DomainId;
+        hubNodeId: NodeId;
+        autoApprove?: boolean;
+        protocol?: 'code' | 'pinned-key';
+    },
 ): Promise<CreatedInvitation> {
     const now = opts.now?.() ?? new Date();
     const ttl = opts.ttlMs ?? INVITE_TTL_MS;

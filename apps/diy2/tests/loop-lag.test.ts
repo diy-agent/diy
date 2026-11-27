@@ -19,12 +19,16 @@ describe('timed / timedAsync', () => {
         try {
             timed('fast', () => 1, 50);
             expect(lines).toEqual([]); // 快的不许留痕
-            timed('slow', () => {
-                const until = Date.now() + 60;
-                while (Date.now() < until) {
-                    /* 占住 60ms，越过阈值 */
-                }
-            }, 50);
+            timed(
+                'slow',
+                () => {
+                    const until = Date.now() + 60;
+                    while (Date.now() < until) {
+                        /* 占住 60ms，越过阈值 */
+                    }
+                },
+                50,
+            );
             expect(lines).toHaveLength(1);
             expect(lines[0]).toContain('slow');
             expect(lines[0]).toContain('ms');
@@ -38,13 +42,17 @@ describe('timed / timedAsync', () => {
         configureSlowLog((line) => lines.push(line));
         try {
             expect(() =>
-                timed('boom', () => {
-                    const until = Date.now() + 60;
-                    while (Date.now() < until) {
-                        /* */
-                    }
-                    throw new Error('x');
-                }, 50),
+                timed(
+                    'boom',
+                    () => {
+                        const until = Date.now() + 60;
+                        while (Date.now() < until) {
+                            /* */
+                        }
+                        throw new Error('x');
+                    },
+                    50,
+                ),
             ).toThrow('x');
             expect(lines[0]).toContain('boom');
         } finally {
@@ -91,7 +99,12 @@ describe('startLoopLag', () => {
 
     it('stop 之后不再采样', async () => {
         const seen: number[] = [];
-        const monitor = startLoopLag({ tickMs: 30, ticksPerWindow: 1, onSample: (s) => seen.push(s.max), log: () => undefined });
+        const monitor = startLoopLag({
+            tickMs: 30,
+            ticksPerWindow: 1,
+            onSample: (s) => seen.push(s.max),
+            log: () => undefined,
+        });
         monitor.stop();
         await sleep(90);
         expect(seen).toEqual([]);

@@ -1,29 +1,29 @@
 {
-  "name": "@diy-agent/workbench-ui",
-  "version": "0.1.1",
-  "private": true,
-  "description": "工作台布局骨架（renderer）：侧栏 + 主区 + 顶栏 + 页面注册表（不认识任何具体页面）",
-  "files": [
-    "src/"
-  ],
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./src/index.ts",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./dist/index.js"
+    "name": "@diy-agent/workbench-ui",
+    "version": "0.1.1",
+    "private": true,
+    "description": "工作台布局骨架（renderer）：侧栏 + 主区 + 顶栏 + 页面注册表（不认识任何具体页面）",
+    "files": [
+        "src/"
+    ],
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./src/index.ts",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json"
+    },
+    "dependencies": {},
+    "devDependencies": {
+        "happy-dom": "^20.0.0",
+        "oxfmt": "^0.57.0",
+        "oxlint": "^1.72.0",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10"
     }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json"
-  },
-  "dependencies": {},
-  "devDependencies": {
-    "happy-dom": "^20.0.0",
-    "oxfmt": "^0.57.0",
-    "oxlint": "^1.72.0",
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
-  }
 }

@@ -81,7 +81,14 @@ export type {
     WindowHook,
 } from './assemble.js';
 
-export { eventFromJson, eventToJson, reactionFromJson, reactionToJson, threadFromJson, threadToJson } from './serialize.js';
+export {
+    eventFromJson,
+    eventToJson,
+    reactionFromJson,
+    reactionToJson,
+    threadFromJson,
+    threadToJson,
+} from './serialize.js';
 export type { SerializeOptions } from './serialize.js';
 
 export type { ParseOptions } from './validate.js';

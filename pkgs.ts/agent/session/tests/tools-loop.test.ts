@@ -94,7 +94,10 @@ describe('continueWithToolResults（##514 第 3 步）', () => {
 
     it('空结果 / 缺 id ⇒ session/invalid-tool-results（空继续 = 让模型重调一次工具）', async () => {
         const s = scripted([
-            [{ type: 'tool-call', id: 'c1', name: 'read', input: '{}' }, { type: 'done', stopReason: 'tool-calls' }],
+            [
+                { type: 'tool-call', id: 'c1', name: 'read', input: '{}' },
+                { type: 'done', stopReason: 'tool-calls' },
+            ],
         ]);
         const session = createSession({ id: 's3', llm: s.llm });
         for await (const _delta of session.send('x')) {

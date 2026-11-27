@@ -24,7 +24,9 @@ import { toolOk, toolMultiStep, textOnly } from '@diy-agent/test-llm/fixtures';
 const wire = { provider: 'test', model: 'test-model', baseUrl: 'https://example.test/v1' };
 
 /** 消息线的正文在 `blocks` 里（不是 message.text）—— 和 chat.test.ts 同一套提取方式 */
-function textsOf(messages: readonly { blocks: readonly { kind: string; data: Record<string, unknown> }[] }[]): string[] {
+function textsOf(
+    messages: readonly { blocks: readonly { kind: string; data: Record<string, unknown> }[] }[],
+): string[] {
     return messages.map((m) =>
         m.blocks.map((b) => (b.kind === 'text' ? String(b.data['text']) : `[${b.kind}]`)).join(''),
     );
@@ -116,8 +118,18 @@ describe('真实录制流驱动 bot 对话', () => {
             home: makeHome(),
             llmFor: () => goldenLlm(toolMultiStep),
             toolsFor: () => ({
-                read: { execute: async () => { calls += 1; return 'ok'; } },
-                write: { execute: async () => { calls += 1; return 'ok'; } },
+                read: {
+                    execute: async () => {
+                        calls += 1;
+                        return 'ok';
+                    },
+                },
+                write: {
+                    execute: async () => {
+                        calls += 1;
+                        return 'ok';
+                    },
+                },
             }),
         });
         await host.createBot({ name: '多步 bot', model: 'test/echo-1' });

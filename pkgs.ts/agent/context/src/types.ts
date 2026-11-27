@@ -28,16 +28,16 @@ export type ContextPath = string;
  * 缺省 yaml —— 未声明的路径按结构化值 dump。
  */
 export type ContextRendererSpec =
-    | { renderer: "yaml" }
-    | { renderer: "text" }
+    | { renderer: 'yaml' }
+    | { renderer: 'text' }
     /** 模板节点：source 是 @diy-agent/template 源码，渲染作用域 = 整棵值树 */
-    | { renderer: "template"; source: string };
+    | { renderer: 'template'; source: string };
 
 // ─── 事实（ContextFact）─────────────────────────────────
 
 /** 全量快照：替换整棵树状态（唯一版本兼容点，投影时声明 supersedes=all） */
 export interface ContextSnapshotFact {
-    type: "snapshot";
+    type: 'snapshot';
     /** 快照作用域（审计用；树是唯一状态，第一版按整树恢复） */
     scope: string;
     state: ContextTreeState;
@@ -48,11 +48,11 @@ export interface ContextSnapshotFact {
  * 与 patch 的分工：replace 换整节点（含渲染方式），patch 改值树里的字段。
  */
 export interface ContextReplaceFact {
-    type: "replace";
+    type: 'replace';
     path: ContextPath;
     /** contentFormat=yaml 时是 YAML 文本；=template-text 时是模板源码 */
     content: string;
-    contentFormat: "yaml" | "template-text";
+    contentFormat: 'yaml' | 'template-text';
     /** 发送方声明的值 hash（可选）：提供则与实际结果比对，不符即拒绝（adapter 转错的探针） */
     valueHash?: string;
     /** 发送方声明的渲染 hash（可选）：同上 */
@@ -63,9 +63,9 @@ export interface ContextReplaceFact {
 
 /** 路径级增量修改：按稳定路径改值树里的一个字段（place 边界与 patch 边界是两回事） */
 export interface ContextPatchFact {
-    type: "patch";
+    type: 'patch';
     path: ContextPath;
-    op: "set" | "replace" | "remove";
+    op: 'set' | 'replace' | 'remove';
     value?: unknown;
     /** 期望的旧值 hash（可选）：不匹配则拒绝静默合并 */
     baseHash?: string;
@@ -73,15 +73,11 @@ export interface ContextPatchFact {
 
 /** 删除一个 path（连同其整棵子树，以及子树上的渲染声明） */
 export interface ContextRemoveFact {
-    type: "remove";
+    type: 'remove';
     path: ContextPath;
 }
 
-export type ContextFact =
-    | ContextSnapshotFact
-    | ContextReplaceFact
-    | ContextPatchFact
-    | ContextRemoveFact;
+export type ContextFact = ContextSnapshotFact | ContextReplaceFact | ContextPatchFact | ContextRemoveFact;
 
 // ─── 状态（ContextTree）─────────────────────────────────
 
@@ -98,12 +94,7 @@ export interface ContextTreeState {
 }
 
 /** 事实被拒绝的原因（一律不静默合并） */
-export type ContextRejectReason =
-    | "invalid-path"
-    | "base-hash-mismatch"
-    | "hash-mismatch"
-    | "not-found"
-    | "bad-content";
+export type ContextRejectReason = 'invalid-path' | 'base-hash-mismatch' | 'hash-mismatch' | 'not-found' | 'bad-content';
 
 /** applyFact 的结果（纯函数：返回新状态，不改入参） */
 export interface ContextApplyResult {
@@ -117,9 +108,7 @@ export interface ContextApplyResult {
 // ─── 投影（模型 wire）─────────────────────────────────
 
 /** 单元级增量动作 */
-export type DeltaOp =
-    | { op: "set"; path: ContextPath; content: string }
-    | { op: "remove"; path: ContextPath };
+export type DeltaOp = { op: 'set'; path: ContextPath; content: string } | { op: 'remove'; path: ContextPath };
 
 /**
  * 自上次投递以来的增量。
@@ -129,10 +118,10 @@ export type DeltaOp =
  *   clear    —— 单元全部消失，必须**显式**清空（用例 5），不能只是「什么都不发」
  */
 export type DeltaDelivery =
-    | { kind: "none" }
-    | { kind: "patch"; ops: DeltaOp[] }
-    | { kind: "snapshot"; text: string; supersedes: "all" }
-    | { kind: "clear" };
+    | { kind: 'none' }
+    | { kind: 'patch'; ops: DeltaOp[] }
+    | { kind: 'snapshot'; text: string; supersedes: 'all' }
+    | { kind: 'clear' };
 
 /** 上一次投递的水位（增量判据；第一版放内存，108 后由事件回放重建） */
 export interface DeliveryCursor {

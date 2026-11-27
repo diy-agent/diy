@@ -41,10 +41,7 @@ export function AttentionCapsules({ counts, onPick, onOpen }: AttentionCapsulesP
     // 每颗 = 色点 + 数字 + **单字**（`6错` `3等`）：全称太长（四类共 278px 会把右边
     // 按钮挤没），光数字又看不懂（实测那屏是 `🤖 6 3`，像一串乱数）。单字既省宽又能读。
     return (
-        <span
-            onClick={onOpen}
-            className="flex items-center gap-1"
-        >
+        <span onClick={onOpen} className="flex items-center gap-1">
             {live.map((kind) => (
                 <button
                     key={kind}
