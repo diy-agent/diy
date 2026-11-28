@@ -181,10 +181,10 @@
         </tr>
         <tr>
           <td><i class="dot fail"></i> 未送达</td>
-          <td>这个房间<b>最新一条</b>消息没送进去（<code>done</code> + note=failed）。历史失败不算 —— 后来送达了就翻篇</td>
-          <td>你（重发或查配置）</td>
-          <td><code>deliveries</code> 按 (房间, 成员) 收敛到最新一条</td>
-          <td>要你动手。<b>不会自己消失</b>（下一条正常送达才覆盖）</td>
+          <td>这个房间<b>最新一条</b>消息<b>没交到成员手里</b>：<code>deliveries</code> 那行落成 <code>state=done, note='failed'</code>。历史失败不算 —— 后来的新消息送达了就翻篇</td>
+          <td>你（重发那条 / 看是不是数据被清）</td>
+          <td><code>deliveries</code> 表按 (房间, 成员) 收敛到<b>最新一条</b>（轮次 → 消息 seq → 时间 → messageId 依次比）</td>
+          <td>要你动手。<b>不会自己消失</b>（下一条正常送达才盖掉）</td>
         </tr>
         <tr>
           <td><i class="dot idle"></i> 空闲</td>
@@ -211,6 +211,32 @@
         <li><b>「只有排队、没人跑」才值得看</b>：正常情况下一秒就变成在跑；如果它停在那儿不动，说明<b>没人接</b>（进程刚重启、成员被堵、投递反复失败）—— 这时候它是琥珀色警告，不是绿色呼吸。</li>
       </ol>
     </div>
+    <div class="note">
+      <b>「未送达」是「投递层」的失败，不是模型失败 —— 代码里只有两处会写它</b>
+      <table style="margin-top:8px">
+        <thead><tr><th style="width:26%">失败在哪层</th><th>真源</th><th>典型来路</th><th>会自己消失吗</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><i class="dot fail"></i> <b>未送达</b>（投递层）</td>
+            <td><code>deliveries</code> 里那条 <code>done + note='failed'</code></td>
+            <td>① <code>recover()</code> 时这条 pending 投递的<b>消息正文在库里找不到</b>了（被剪 / 被删）→ 无从投递；<br>② 想用 steer 插进正在跑的那一轮，<b>插不进去</b>且不允许降级成下一轮</td>
+            <td>下一条消息正常送达就翻篇（按成员取最新一条）</td>
+          </tr>
+          <tr>
+            <td><i class="dot att"></i> <b>上一轮出错</b>（轮次层）</td>
+            <td>轮级事实 + <code>turnLookup</code> 的 <code>outcome</code></td>
+            <td>模型报错 / 被打断 / 步数上限 / 工具失败 / 被拦截 —— <b>消息它拿到了、也确实跑了</b></td>
+            <td>下一轮正常结束才覆盖</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin:8px 0 0">
+        反过来说：<b>模型调用报错不算未送达</b> —— 那条消息已经进了 bot 的上下文，只是这一轮结局是 <code>failed</code>；
+        它落在「上一轮出错」那一档（<code>postOrWarn</code> 的 catch 只记一行日志，不改投递状态）。
+        而投递失败才是「你说了话、没人读到」：所以它单独一颗红叉 <code>✕</code>，不混进「排队」（那条是「马上要动」）。
+      </p>
+    </div>
+
     <div class="note warn">
       <b>所以标题栏的口径</b>：值得<b>催你</b>的只有三档 —— <span class="rose">上一轮出错</span> / <span class="sky">等你回答</span> / <span class="amber">排队却没人接</span>；
       <span class="em">在跑</span>是「它自己会好」，<span class="blue">未读</span>是「你自己会去看」。后两者不该在标题栏争位置（也不该进红点）。
@@ -403,7 +429,7 @@ function primary(r){
   if (r.asking) return 'asking';
   if (r.running) return 'running';
   if (r.queued > 0) return 'queued';   // 只有排队、没人接 → 这才是值得一看的那档
-  if (r.failed > 0) return 'attention';
+  // 「未送达」不进主状态：真实现里 BotRow 没有这个字段，它只是 rooms.list 的一个徽标
   return 'idle';
 }
 const DOT = {running:'run', asking:'ask', attention:'att', queued:'que', unread:'unr', idle:'idle'};
@@ -444,10 +470,11 @@ function renderS1(rooms){
   const tiers = TIERS.map(t => ({...t, rooms: rooms.filter(r => primary(r) === t.key)})).filter(t => t.rooms.length > 0);
   const weakQueued = rooms.reduce((sum, r) => sum + (primary(r) === 'queued' ? 0 : r.queued), 0);
   const weakUnread = rooms.reduce((sum, r) => sum + r.unread, 0);
+  const weakFailed = rooms.reduce((sum, r) => sum + r.failed, 0);
   host.innerHTML = (tiers.map(t =>
     `<button class="btn tier ${t.cls}" data-tier="${t.key}">${dot(t.rooms[0], t.key === 'running' ? 'pulse' : '')}${t.label}<span class="num">${t.rooms.length}</span></button>`
   ).join('') || `<span class="btn muted">都闲着</span>`)
-  + (weakQueued || weakUnread ? `<span class="btn muted weak" title="附带信息：它们不催你">${weakQueued ? `⧗${weakQueued}` : ''}${weakQueued && weakUnread ? ' · ' : ''}${weakUnread ? `●${weakUnread}` : ''}</span>` : '');
+  + (weakQueued || weakUnread || weakFailed ? `<span class="btn muted weak" title="附带标记：未送达属于投递层，不是模型失败">${weakQueued ? `⧗${weakQueued}` : ''}${weakQueued && weakUnread ? ' · ' : ''}${weakUnread ? `●${weakUnread}` : ''}${weakFailed ? `${weakQueued || weakUnread ? ' · ' : ''}✕${weakFailed}` : ''}</span>` : '');
   list.innerHTML = '';
   host.querySelectorAll('[data-tier]').forEach(btn => {
     btn.addEventListener('click', () => {
