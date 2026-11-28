@@ -2062,8 +2062,9 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         },
         setDelivery(delivery: DeliveryInput): Delivery {
             const updatedAt = Date.now();
-            // `note` 列暂且留着不写（2026-11-28 起状态自己说结局：delivered / failed / cancelled）。
-            // 删列留给迁移 021 —— 老库里有历史行，DROP COLUMN 要跟值域迁移一起做。
+            // `note` 列已由迁移 021 删掉：状态自己说结局（delivered / failed / cancelled）。
+            // `text=COALESCE(?, text)`：后续状态推进（claim / complete）不传正文，不能把已存的
+            // 正文冲成 NULL —— 那等于随机丢一句话的原文。
             db.prepare(
                 'INSERT INTO deliveries (entity_id, message_id, bot_id, state, text, updated_at, mode, turn, turn_id) ' +
                     'VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(entity_id, message_id, bot_id) DO UPDATE SET ' +
