@@ -16,12 +16,15 @@ import { type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 
 import { createStaticHandler, type StaticHandler } from './static';
 import { createRpcSocket, type RpcStreamInfo } from './rpc';
 import { configureSlowLog, startLoopLag, timed, type LoopLagMonitor } from './loop-lag';
+import { startCpuProfileWatch, type CpuProfileWatch } from './profile-watch';
+import { httpRouteOf, recordHttpRequest, renderPrometheus } from './prom-metrics';
 import { APP_ID, type Diy2Config } from './config';
 import { openLog } from './log';
 
@@ -177,6 +180,8 @@ let serveStatic: StaticHandler | undefined;
 let info: () => Diy2AppInfo;
 /** 事件循环延迟监控（./loop-lag）：`/api/metrics` 读它，close 时停 */
 let lagMonitor: LoopLagMonitor | undefined;
+/** 卡顿期间的 CPU profile（./profile-watch）：只在有 lag 时落盘，close 时停 */
+let cpuProfileWatch: CpuProfileWatch | undefined;
 
 // ─── 房间装配 ─────────────────────────────────────────────────────
 
@@ -666,6 +671,10 @@ const HISTORY_LIMIT = 400;
 
 const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
+    // 请求耗时只按白名单路由记（httpRouteOf），原始 path 带 roomId / botId，绝不进指标。
+    // 用 finish 而不是 try/finally：SSE 是长连接，只有 finish 才是「真的答完了」。
+    const started = performance.now();
+    res.once('finish', () => recordHttpRequest(httpRouteOf(url.pathname), res.statusCode, (performance.now() - started) / 1000));
 
     try {
         // GET /api/info —— 实例自报身份（探活判据：`app` + `home`）。端口/pid 都是缓存，
@@ -688,6 +697,22 @@ const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> 
         // 而 lag 是排障用的低频读，混进去只会让探活回包变大。
         if (req.method === 'GET' && url.pathname === '/api/metrics') {
             json(res, 200, { lag: lagMonitor?.snapshot() ?? null });
+            return;
+        }
+
+        // GET /metrics —— Prometheus 文本（VictoriaMetrics / promtop / 外部监控读它）。
+        // 与 /api/metrics 同源，但多给累计 counter 与进程/机器水位；UI 人读仍用 /api/metrics。
+        if (req.method === 'GET' && url.pathname === '/metrics') {
+            const text = renderPrometheus(lagMonitor, {
+                home: config.home,
+                launch: config.launch,
+                env: config.env,
+            });
+            res.writeHead(200, {
+                'content-type': 'text/plain; version=0.0.4; charset=utf-8',
+                'cache-control': 'no-store',
+            });
+            res.end(text);
             return;
         }
 
@@ -767,7 +792,20 @@ export async function createDiy2App(opts: {
     // 重复装配（测试 / dev 重建）先把上一个停掉，不然会留两个采样器。
     // 日志出口走 appLog（本进程不直接碰 console，见 ./log）。
     lagMonitor?.stop();
-    lagMonitor = startLoopLag({ log: (line) => log.warn(line) });
+    void cpuProfileWatch?.stop();
+    // 卡顿归因（./profile-watch）：低采样 profiler 常开，只有 loop-lag 报过卡才把这一段
+    // 落成 `.cpuprofile`。`DIY2_CPU_PROFILE=0` 可关（例如省 CPU 的压测）。
+    cpuProfileWatch =
+        process.env['DIY2_CPU_PROFILE'] === '0'
+            ? undefined
+            : startCpuProfileWatch({
+                  dir: join(config.home, 'log', 'profile'),
+                  log: (line) => log.warn(line),
+              });
+    lagMonitor = startLoopLag({
+        log: (line) => log.warn(line),
+        onLag: (lagMs, meta) => cpuProfileWatch?.markLag(lagMs, meta.cpuRatio),
+    });
     configureSlowLog((line) => log.warn(line));
     rooms = new Map();
     subscribers = new Map();
@@ -1418,6 +1456,8 @@ export async function createDiy2App(opts: {
     const close = (): void => {
         lagMonitor?.stop();
         lagMonitor = undefined;
+        void cpuProfileWatch?.stop();
+        cpuProfileWatch = undefined;
         rpc.close();
         subscribers.clear();
         activitySinks.clear();

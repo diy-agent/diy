@@ -132,7 +132,9 @@ const vite = await createViteServer({
 
 httpServer.on('request', (req, res) => {
     const pathname = (req.url ?? '/').split('?')[0] ?? '/';
-    if (pathname === '/api' || pathname.startsWith('/api/')) {
+    // `/metrics` 是给外部监控读的机器面，不属于 vite 的页面路由；必须走 app 的 handle。
+    // 少了这条，dev 下 `/metrics` 会拿到 SPA 的 index.html（VictoriaMetrics 报「不是 Prometheus 文本」）。
+    if (pathname === '/api' || pathname.startsWith('/api/') || pathname === '/metrics') {
         // 迁移态只有迁移那几个接口能用，其余 /api 由它自己回 503
         void (app ?? migrator)!.handle(req, res);
         return;
