@@ -257,63 +257,27 @@
       </ol>
     </div>
     <div class="note">
-      <b>先直觉理解：它是「这句永远没人读到」的墓碑</b>
-      <p style="margin:6px 0 0">
-        一条消息发出去，系统会在 <code>deliveries</code> 里给它记账（每个成员一行）。正常路径是
-        <code>pending</code>（排队）→ <code>working</code>（有人接了）→ <code>done</code>（读完了）。
-        「未送达」= 这条账走到头了，但不是被读完结束的，而是<b>放弃了</b>：<code>done + note='failed'</code>。
-        所以它跟「跑失败了」不是一件事 —— 那是「读到了、跑了、结果不好」，这是「根本没读到」。
-      </p>
-      <p style="margin:6px 0 0"><b>一次真实的「未送达」长这样：</b></p>
-      <ol style="margin:4px 0 0;padding-left:20px">
-        <li>你发了一条消息 → 房间里 3 个成员各一行 <code>pending</code></li>
-        <li>两个成员秒接 → <code>working → done</code>；第三个还没轮到，还是 <code>pending</code></li>
-        <li>这时进程被 kill / 机器重启</li>
-        <li>重启后 <code>room.recover()</code> 逐条重投：拿出第三条 pending，去库里取它的<b>正文</b>（<code>store.textOf()</code>）</li>
-        <li>取不到（正文被裁剪 / 已不在最近那批条目里）→ 无从投递 → 直接写 <code>done + note='failed'</code></li>
-        <li>结果：时间线上有你这句话，但<b>永远不会有第三个成员回复</b>；侧栏那一行挂一颗红叉</li>
-      </ol>
-      <p style="margin:6px 0 0">
-        另一条路更少见：想用 steer 把话<b>插进</b>正在跑的那一轮，插不进去、且配置不允许顺延到下一轮 ——
-        这句既没进这一轮、也没进下一轮，同样标成「未送达」。
-      </p>
-      <p style="margin:6px 0 0">
-        <b>为什么它不会自己好</b>：系统没有「正文丢了还能重发」的能力（丢的就是正文），
-        所以它只能记账 + 亮红叉，把决定权交回给你：<b>把那句重发一遍</b>（或去查为什么会被裁掉）。
-        也正因为不会自己好，它和「排队」（会自己消失）必须分开显示。
-      </p>
-      <p style="margin:6px 0 0;color:var(--amber)">
-        <b>⚠ 已知脆弱点（诚实标注）</b>：<code>textOf()</code> 只扫「最近 200 条条目」。
-        如果那条 pending 投递对应的消息已经被挤出这 200 条（同房间后来产出很多），
-        恢复时同样会「取不到正文」→ 被标成未送达 —— 但正文其实还在库里。
-        也就是说当前实现里「未送达」混了两件事：<b>真的没送到</b>（steer 插不进）和
-        <b>只是没查到</b>（200 条窗口）。后者属于 bug，不该叫这个名字。
-      </p>
-    </div>
-
-    <div class="note">
-      <b>「未送达」是「投递层」的失败，不是模型失败 —— 代码里只有两处会写它</b>
+      <b>投递状态：只该有 4 个 —— 发送中 / 成功 / 失败 / 取消</b>
       <table style="margin-top:8px">
-        <thead><tr><th style="width:26%">失败在哪层</th><th>真源</th><th>典型来路</th><th>会自己消失吗</th></tr></thead>
+        <thead><tr><th style="width:18%">用户看到</th><th style="width:24%">内部状态</th><th>含义</th></tr></thead>
         <tbody>
-          <tr>
-            <td><i class="dot fail"></i> <b>未送达</b>（投递层）</td>
-            <td><code>deliveries</code> 里那条 <code>done + note='failed'</code></td>
-            <td>① <code>recover()</code> 时这条 pending 投递的<b>消息正文在库里找不到</b>了（被剪 / 被删）→ 无从投递；<br>② 想用 steer 插进正在跑的那一轮，<b>插不进去</b>且不允许降级成下一轮</td>
-            <td>下一条消息正常送达就翻篇（按成员取最新一条）</td>
-          </tr>
-          <tr>
-            <td><i class="dot att"></i> <b>上一轮出错</b>（轮次层）</td>
-            <td>轮级事实 + <code>turnLookup</code> 的 <code>outcome</code></td>
-            <td>模型报错 / 被打断 / 步数上限 / 工具失败 / 被拦截 —— <b>消息它拿到了、也确实跑了</b></td>
-            <td>下一轮正常结束才覆盖</td>
-          </tr>
+          <tr><td>发送中</td><td><code>pending</code> + <code>working</code></td><td>还没轮到 / 正在被读 —— 这两个对用户是同一件事</td></tr>
+          <tr><td>成功</td><td><code>delivered</code></td><td>被读到了、这一轮跑完</td></tr>
+          <tr><td>失败</td><td><code>failed</code></td><td>真的没送到。注意：<b>目前几乎为空集</b>（见下）</td></tr>
+          <tr><td>取消</td><td><code>cancelled</code></td><td>你自己按了「停止」，队列被清 —— <b>不算失败</b></td></tr>
         </tbody>
       </table>
-      <p style="margin:8px 0 0">
-        反过来说：<b>模型调用报错不算未送达</b> —— 那条消息已经进了 bot 的上下文，只是这一轮结局是 <code>failed</code>；
-        它落在「上一轮出错」那一档（<code>postOrWarn</code> 的 catch 只记一行日志，不改投递状态）。
-        而投递失败才是「你说了话、没人读到」：所以它单独一颗红叉 <code>✕</code>，不混进「排队」（那条是「马上要动」）。
+      <p style="margin:8px 0 0"><b>现在叫「未送达」的，其实混了三件完全不同的事：</b></p>
+      <ol style="margin:4px 0 0;padding-left:20px">
+        <li><b>steer 没插进正在跑的那轮</b>：本该顺延到下一轮，现在被直接丢弃并标失败。更糟的是「顺延」那条分支
+            靠 <code>keepOnCancel</code>，而它只在 <code>keepQueue=true</code> 时为真 ——
+            <b>UI 里没有任何入口传这个参数</b>，所以那条分支在产品里是死代码，所有 steer 失败都落到丢弃。</li>
+        <li><b>恢复时取不到正文</b>：<code>textOf()</code> 只扫最近 200 条 items，正文被挤出窗口就判失败（正文其实还在）—— 纯查询 bug。</li>
+        <li><b>你按了「停止」</b>：队列被清，这是「取消」，却和上面两种共用同一个名字。</li>
+      </ol>
+      <p style="margin:6px 0 0">
+        <b>所以「真的丢失」目前是空集</b> —— 这正好解释它为什么让人费解：它把一个几乎不存在的情况，做成了你必须理解的一个状态。
+        正确的做法：状态砍成 4 个，取消不算失败，steer 失败退回队列，正文随投递一起记（不再去 items 里找）。
       </p>
     </div>
 
