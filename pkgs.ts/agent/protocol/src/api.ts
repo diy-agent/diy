@@ -212,7 +212,7 @@ export const chatApi = RpcSchema.group({
          */
         chat: RpcSchema.unary({ input: { id: Id, text: z.string(), attachments: Attachments }, output: Any }),
         cancel: RpcSchema.unary({
-            input: { id: Id, keepQueue: z.boolean().optional(), botId: z.string().optional() },
+            input: { id: Id, botId: z.string().optional() },
             output: Any,
         }),
         sessions: RpcSchema.unary({ input: { id: Id }, output: Any }),
@@ -465,7 +465,7 @@ export const METHOD_DESC: Readonly<Record<string, string>> = {
     'chat.history': '打开房间的三件套：条目 / 投递 / 待答提问；limit 控返回条数',
     'chat.wait': '等新条目（长轮询）。想在代码里「盯」一件事就用它，别 sleep 轮询',
     'chat.chat': '发一条消息（受理即返，事件从 room 流回来）；text 可空仅当带附件',
-    'chat.cancel': '中止某轮（botId 指定谁）；keepQueue=false 连排队的一起清',
+    'chat.cancel': '中止某轮（botId 指定谁）；队列里没被处理的一律标「已取消」',
     'chat.sessions': '房间内每个 bot 的会话摘要（轮次 / 用量 / 压缩状态）',
     'chat.compact': '手动压缩这个房间的会话；keepTurns 控保留几轮',
     'chat.cancelCompact': '取消正在进行的压缩',

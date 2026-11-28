@@ -3,7 +3,7 @@
 // 职责（只有这些）：
 //   · 串行：同一 session 同时只跑一个 turn
 //   · 两个投递时机：next-step（step 边界插入，用 SDK 的 steering） / next-turn（等这轮结束）
-//   · cancel：abort + 清空队列；keepQueue 时降级为 next-turn
+//   · cancel：abort + 队列里没被处理的标 cancelled；steer 失败退回队列（不是失败）
 //   · 自己的上下文自己攒：公共条目由房间 ingest 进来，私有过程来自本轮的模型产出
 //   · 压缩：交给可替换的 Compactor，**只压自己**
 //
@@ -230,8 +230,6 @@ export class BotSession {
     private activeTurn: { turnId: string; startedAt: number } | null = null;
     private steering: Experimental_Steering | null = null;
     private abort: AbortController | null = null;
-    /** cancel({keepQueue:true}) 期间被 abort 的 next-step 要降级为下一轮，不能丢 */
-    private keepOnCancel = false;
     /** 已被压缩掉的早期消息条数 */
     private collapsed = 0;
     /** 压缩事件（最近 N 条，调试用） */
@@ -476,30 +474,27 @@ export class BotSession {
         // 降成入队 —— 下一轮带着图一起跑，代价是晚一点回答，换来的是图不丢。
         if (this.running && kind === 'human' && this.steering !== null && attachments === undefined) {
             this.emit({ type: 'delivery', messageId: input.messageId, state: 'working' });
-            // 插话没成功（含 steer 自己抛错）的兜底：能降级就降成下一轮，否则至少把公共条目
-            // 留在上下文里，并 resolve。不 resolve 会把 room.say 的 Promise.all 一起挂死
-            // （/chat 的 SSE 永远不收尾），unhandled rejection 还可能带走进程。
+            // 插话没成功（含 steer 自己抛错）的兜底：**退回队列，等下一轮**（状态图里的
+            // `working --requeue--> pending`）。
+            //
+            // 2026-11-28 之前的写法是「只有 keepOnCancel 才顺延，否则丢弃 + done+failed」，
+            // 而 keepOnCancel 只在 `cancel({keepQueue:true})` 时为真 —— UI 根本没有任何入口
+            // 传那个参数，所以「顺延」那条分支是死代码，**所有 steer 失败都在丢消息**。
+            // 一条消息只尝试一次 steer（退回队列后由 pump 当普通消息取走），不会死循环。
             const fallback = (): void => {
-                if (this.keepOnCancel) {
-                    // 被 cancel 打断：降级为下一轮
-                    this.queue.push({
-                        messageId: input.messageId,
-                        text: input.text,
-                        kind,
-                        turn: input.turn,
-                        entry: input.entry,
-                        alreadyInContext,
-                        resolve,
-                    });
-                    // 这条路径只在 runTurn 退出之后才可能走到，pump 已经停了：
-                    // 不叫一次 pump 的话消息会一直卡在 delivering（要等用户再发一条才动）
-                    void this.pump();
-                    return;
-                }
-                // 没送进这一轮：至少让公共条目留在自己的上下文里，别静默丢失
-                if (input.entry !== undefined) this.ingest(input.entry);
-                this.emit({ type: 'delivery', messageId: input.messageId, state: 'done', note: 'failed' });
-                resolve();
+                this.queue.push({
+                    messageId: input.messageId,
+                    text: input.text,
+                    kind,
+                    turn: input.turn,
+                    entry: input.entry,
+                    alreadyInContext,
+                    resolve,
+                });
+                this.emit({ type: 'delivery', messageId: input.messageId, state: 'pending' });
+                // 这条路径只在 runTurn 退出之后才可能走到，pump 已经停了：
+                // 不叫一次 pump 的话消息会一直停在 pending（要等用户再发一条才动）
+                void this.pump();
             };
             void this.steering
                 .steer(input.text, { id: input.messageId })
@@ -508,7 +503,7 @@ export class BotSession {
                         // 注意**不推水位**：它插进的是 SDK 在跑的那轮上下文，没进 transcript、
                         // 也不在任何快照里 —— 此刻推水位，重启后回放就不会补它，模型下一次
                         // 只看到自己的回复而看不到这条插话。宁可重启后重复一回，也不能少。
-                        this.emit({ type: 'delivery', messageId: input.messageId, state: 'done' });
+                        this.emit({ type: 'delivery', messageId: input.messageId, state: 'delivered' });
                         return;
                     }
                     fallback();
@@ -532,17 +527,21 @@ export class BotSession {
         return promise;
     }
 
-    /** 停止当前 turn：默认丢弃未消费的消息；keepQueue 时降级为下一轮 */
-    cancel(options: { keepQueue?: boolean } = {}): void {
-        this.keepOnCancel = options.keepQueue === true;
+    /**
+     * 停止当前这一轮。
+     *
+     * 队列里还没被处理的消息**标 `cancelled` 并 resolve**（用户 2026-11-28：取消不是失败，
+     * 也不该让它永远停在 pending/working）。以前这里只是 `item.resolve()` —— 状态没人写，
+     * 那些投递就永久挂在 `working`，UI 上表现为房间一直有东西在跑。
+     *
+     * `keepQueue` 那个参数已删（2026-11-28）：UI 从来没有入口传它，恒为 false，
+     * 留着只会让「顺延下一轮」看起来像个可选项，实际是死代码。
+     */
+    cancel(): void {
         const rest = this.queue.splice(0, this.queue.length);
         for (const item of rest) {
-            if (options.keepQueue === true) {
-                // 来源不变（还是一条人的话）—— 只是这一轮被停了，下一轮再跑
-                this.queue.push(item);
-            } else {
-                item.resolve();
-            }
+            this.emit({ type: 'delivery', messageId: item.messageId, state: 'cancelled' });
+            item.resolve();
         }
         this.abort?.abort();
     }
@@ -912,11 +911,10 @@ export class BotSession {
 
             // 这一轮已经消费了这些消息 ⇒ 投递成功；跑失败是 bot 的问题（会有 error 条目），
             // 不该在用户消息上标"未送达"（那是传输层的事）。
-            for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'done' });
+            for (const item of items) this.emit({ type: 'delivery', messageId: item.messageId, state: 'delivered' });
             for (const item of items) item.resolve();
             this.steering = null;
             this.abort = null;
-            this.keepOnCancel = false;
             this.activeTurn = null;
             // 插话的 post() 到这一轮收尾才算处理完（不是“整个队列清空”）
             const steerResolvers = this.pendingResolvers.splice(0, this.pendingResolvers.length);

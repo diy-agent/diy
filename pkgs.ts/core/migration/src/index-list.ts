@@ -23,6 +23,7 @@ import { migration as m17 } from './017-prune-room-members.js';
 import { migration as m18 } from './018-task-units-kind.js';
 import { migration as m19 } from './019-drop-unit-step.js';
 import { migration as m20 } from './020-turn-facts.js';
+import { migration as m21 } from './021-delivery-states.js';
 import type { Migration } from './types.js';
 
 /**
@@ -53,6 +54,7 @@ export const migrations: readonly Migration[] = [
     m18,
     m19,
     m20,
+    m21,
 ];
 
 /** 迁移步骤清单（给迁移页画总进度条用：分母得先知道） */

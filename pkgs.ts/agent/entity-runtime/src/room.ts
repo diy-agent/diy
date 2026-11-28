@@ -491,15 +491,25 @@ export class RoomActor {
     async recover(): Promise<void> {
         for (const delivery of this.deps.store.pendingDeliveries(this.id)) {
             const bot = this.member(delivery.botId);
-            if (bot === undefined) continue;
-            const text = this.deps.store.textOf(this.id, delivery.messageId);
-            if (text === undefined) {
+            if (bot === undefined) {
+                // 成员被删了：这条投递**没人可投**。以前这里是 `continue` —— 既不投也不标，
+                // 于是它永远停在 pending，房间的「排队 N」永不消失（2026-11-28 核出）。
                 this.deps.store.setDelivery({
                     roomId: this.id,
                     messageId: delivery.messageId,
                     botId: delivery.botId,
-                    state: 'done',
-                    note: 'failed',
+                    state: 'cancelled',
+                });
+                continue;
+            }
+            const text = this.deps.store.textOf(this.id, delivery.messageId);
+            if (text === undefined) {
+                // 正文真的没了（被剪 / 被删）→ 无从投递，标「发送失败」而不是「done + note」
+                this.deps.store.setDelivery({
+                    roomId: this.id,
+                    messageId: delivery.messageId,
+                    botId: delivery.botId,
+                    state: 'failed',
                 });
                 continue;
             }
@@ -551,14 +561,14 @@ export class RoomActor {
      * 停止：不给 botId 就停整个房间；给了只停那个成员。
      * 开会时"谁在说"是分开的，停一个人不该把别人也停掉。
      */
-    cancel(options: { botId?: string; keepQueue?: boolean } = {}): void {
+    cancel(options: { botId?: string } = {}): void {
         // 注意：不动待回答的提问。ask 不阻塞，点「停止」时那一轮早就跑完了，
         // 卡片还得留在界面上等用户作答（回答会另开一轮）。
         if (options.botId === undefined) {
-            for (const session of this.sessions.values()) session.cancel(options);
+            for (const session of this.sessions.values()) session.cancel();
             return;
         }
-        this.sessions.get(options.botId)?.cancel(options);
+        this.sessions.get(options.botId)?.cancel();
     }
 
     /**

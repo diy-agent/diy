@@ -82,7 +82,7 @@ describe('P0 回归', () => {
         const h = makeRoom({ hang: true });
         void h.room.say({ text: '挂着别动', author: HUMAN });
         await waitFor(() => h.room.busy());
-        h.room.cancel({ keepQueue: false });
+        h.room.cancel();
         await waitFor(() => !h.room.busy());
 
         // 让投递回到"没送达"的现场，再模拟重启恢复

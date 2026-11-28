@@ -59,7 +59,7 @@ describe.each(transports)('ChatClient 端口 / %s', (_name, makeClient) => {
         await running;
 
         const snapshot = await client.load();
-        expect(snapshot.deliveries[0]?.state).toBe('done');
+        expect(snapshot.deliveries[0]?.state).toBe('delivered');
     });
 
     it('sessions / compact：通过端口可读、可压（只影响自己）', async () => {

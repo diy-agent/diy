@@ -413,7 +413,7 @@ function EntryView({
 
     if (entry.kind === 'user') {
         const text = entry.parts.map((part) => (part.kind === 'text' ? part.text : '')).join('');
-        const failed = entry.deliveries.filter((delivery) => delivery.state === 'done' && delivery.note === 'failed');
+        const failed = entry.deliveries.filter((delivery) => delivery.state === 'failed');
         return (
             <Message align="end" className="my-3">
                 <MessageContent>

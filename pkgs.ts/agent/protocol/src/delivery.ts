@@ -1,12 +1,11 @@
 // delivery.ts —— 「一条消息交给某个成员」的状态图（##43，2026-11-28）。
 //
-// **这是目标模型，尚未接线**。现在生效的是 `types.ts` 的 `DeliveryState`（3 个值
-// `pending | working | done` + 一个 `note: 'failed'`），那是 2026-11-27 把 5 个状态压成
-// 3 个时的权宜：`done` 于是同时表示「读完了」和「没送到就结束了」，两个字段互相打架。
+// 历史：2026-11-27 曾把 5 个状态压成 3 个（`pending | working | done`）外加一个
+// `note: 'failed'`。于是 `done` 同时表示「读完了」和「没送到就结束了」，两个字段打架。
 // 用户 2026-11-28 的原话：「done 应该是发送成功了，而不是读完了吧，还有个 note，
 // 这不是就是在解决状态不足的临时方案吗」—— 对，这就是。
 //
-// 目标：一张状态图说清全部，没有第二维。
+// 现在：一张状态图说清全部，没有第二维；取消与失败是两个不同的终态。
 //
 //                       claim                    complete
 //   ┌─────────┐ ──────────────▶ ┌─────────┐ ──────────────▶ ┌───────────┐
@@ -27,13 +26,17 @@
 // 为什么放 protocol 而不是 entity-runtime：转移规则是**前后端共用的契约**（UI 要按同一套
 // 判「这条算成功还是取消」），而这个文件是纯函数、无 IO，符合本包的依赖规则。
 
+import type { DeliveryState } from './types';
+
 /**
- * 一条投递此刻处于哪一步。
+ * 一条投递此刻处于哪一步 —— 就是 `types.ts` 的 `DeliveryState`，这里只给个更好读的名字。
+ *
+ * **不另立一套枚举**：两套名字迟早走散（这正是本文件要消灭的那类问题）。
  *
  * `pending` 与 `working` 对**用户**是同一件事（都叫「发送中」），但在系统里必须分开：
  * 前者还没被谁取走，后者已经有一个成员在处理它 —— 「排队」与「在跑」的区别就在这。
  */
-export type DeliveryPhase = 'pending' | 'working' | 'delivered' | 'failed' | 'cancelled';
+export type DeliveryPhase = DeliveryState;
 
 /** 推动投递往前走的事件 */
 export type DeliveryEvent =

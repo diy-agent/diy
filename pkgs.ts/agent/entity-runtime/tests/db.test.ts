@@ -75,7 +75,7 @@ describe('删除容器', () => {
         });
         store.appendRoomEntry(room.id, { seq: 1, at: Date.now(), kind: 'notice', text: '结论' });
         store.saveSession(room.id, 'b1', { turn: 1, collapsed: 0, entries: [] });
-        store.setDelivery({ roomId: room.id, messageId: 'msg-1', botId: 'b1', state: 'done' });
+        store.setDelivery({ roomId: room.id, messageId: 'msg-1', botId: 'b1', state: 'delivered' });
 
         store.deleteRoom(room.id);
 
@@ -798,7 +798,7 @@ describe('未送达投影（failedByRoom）', () => {
         // 状态收成 3 个之后，失败 = `done + note='failed'`（helper 保留旧调用写法，少改测试）
         store.setDelivery(
             state === 'failed'
-                ? { roomId, messageId, botId, state: 'done', note: 'failed', turn }
+                ? { roomId, messageId, botId, state: 'failed', turn }
                 : { roomId, messageId, botId, state, turn },
         );
     };

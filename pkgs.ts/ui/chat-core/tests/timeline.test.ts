@@ -117,13 +117,12 @@ describe('buildTimeline', () => {
 
     it('把投递状态挂到用户消息上（失败也要显示）', () => {
         const deliveries: Delivery[] = [
-            { entityId: 'proj:x', messageId: 'i1', botId: OWNER.id, state: 'done', updatedAt: 1 },
+            { entityId: 'proj:x', messageId: 'i1', botId: OWNER.id, state: 'delivered', updatedAt: 1 },
             {
                 entityId: 'proj:x',
                 messageId: 'i1',
                 botId: HELPER.id,
-                state: 'done',
-                note: 'failed',
+                state: 'failed',
                 updatedAt: 1,
             },
         ];
@@ -132,8 +131,8 @@ describe('buildTimeline', () => {
         const [entry] = buildTimeline(items, deliveries, BOTS);
 
         expect(entry?.deliveries).toEqual([
-            { botId: OWNER.id, name: 'diy', color: '#111', state: 'done' },
-            { botId: HELPER.id, name: '小满', color: '#222', state: 'done', note: 'failed' },
+            { botId: OWNER.id, name: 'diy', color: '#111', state: 'delivered' },
+            { botId: HELPER.id, name: '小满', color: '#222', state: 'failed' },
         ]);
     });
 

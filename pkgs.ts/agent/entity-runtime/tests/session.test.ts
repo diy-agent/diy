@@ -175,7 +175,7 @@ describe('BotSession', () => {
         await h.session.post({ messageId: 'm1', text: '你好' });
 
         expect(h.runs).toEqual(['turn-1']);
-        expect(h.deliveries).toEqual(['m1:working', 'm1:done']);
+        expect(h.deliveries).toEqual(['m1:working', 'm1:delivered']);
         expect(h.items.some((item) => item.type === 'chat' && item.status === 'done')).toBe(true);
     });
 
@@ -212,7 +212,7 @@ describe('BotSession', () => {
 
         await Promise.all([running, queued]);
         expect(h.runs).toEqual(['turn-1']);
-        expect(h.deliveries).toContain('m1:done');
+        expect(h.deliveries).toContain('m1:delivered');
         expect(h.deliveries).not.toContain('m1:failed');
     });
 
@@ -279,17 +279,22 @@ describe('BotSession', () => {
         expect(h.ends[0]?.endReason.type).toBe('interrupted');
     });
 
-    it('cancel keepQueue：排队的消息不丢，取消这一轮后继续跑', async () => {
+    // 2026-11-28 改：`keepQueue` 参数已删（UI 从来没有入口传它，是死代码）。
+    // 现在 cancel 的语义是「停止 + 队列里没被处理的一律标 cancelled」，不再继续跑。
+    it('cancel：队列里没被处理的消息标 cancelled，不再开新的一轮', async () => {
         const h = makeSession({ hangOnAbort: true });
         const running = h.session.post({ messageId: 'm1', text: '会被取消' });
         await sleep(2);
-        const a = h.session.post({ messageId: 'm2', text: '留到下一轮 A', kind: 'system' });
-        const b = h.session.post({ messageId: 'm3', text: '留到下一轮 B', kind: 'system' });
+        const a = h.session.post({ messageId: 'm2', text: '排队 A', kind: 'system' });
+        const b = h.session.post({ messageId: 'm3', text: '排队 B', kind: 'system' });
 
-        h.session.cancel({ keepQueue: true });
+        h.session.cancel();
         await Promise.all([running, a, b]);
 
-        expect(h.runs.length).toBe(2);
+        // 只有 m1 那一轮真的跑过：排队的两条被取消，不会自己开第二轮
+        expect(h.runs.length).toBe(1);
+        expect(h.deliveries).toContain('m2:cancelled');
+        expect(h.deliveries).toContain('m3:cancelled');
     });
 
     it('自己的产出原样入账（assistant 带完整消息）', async () => {

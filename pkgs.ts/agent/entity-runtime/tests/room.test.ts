@@ -33,7 +33,7 @@ describe('RoomActor', () => {
 
         expect(h.runs).toEqual(['diy']);
         expect(h.room.deliveries().map((d) => d.botId)).toEqual([BOT_A.id]);
-        expect(h.room.deliveries()[0]?.state).toBe('done');
+        expect(h.room.deliveries()[0]?.state).toBe('delivered');
     });
 
     it('@名字：命中者回复，默认应答不动', async () => {
@@ -113,7 +113,7 @@ describe('RoomActor', () => {
 
         expect(h.room.busy()).toBe(false);
         // 消息确实送到了 bot 手里；被取消的是"它的回复"，不是投递
-        expect(h.room.deliveries()[0]?.state).toBe('done');
+        expect(h.room.deliveries()[0]?.state).toBe('delivered');
     });
 
     it('显式 recipients = 开会：不解析 @', async () => {
@@ -175,13 +175,13 @@ describe('RoomActor', () => {
         store.setDelivery({ roomId: 'room:1', messageId: 'u-3', botId: BOT_B.id, state: 'pending' });
         // 已处理完的不算排队
         store.appendItem('room:1', item('u-4', 4));
-        store.setDelivery({ roomId: 'room:1', messageId: 'u-4', botId: BOT_B.id, state: 'done' });
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-4', botId: BOT_B.id, state: 'delivered' });
 
         const h = makeRoom({ store });
         expect(Object.fromEntries(h.room.queuedByBot())).toEqual({ [BOT_A.id]: 2, [BOT_B.id]: 1 });
 
         // 跑完一条就少一条（UI 的灰旋转跟着灭）
-        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'done' });
+        store.setDelivery({ roomId: 'room:1', messageId: 'u-1', botId: BOT_A.id, state: 'delivered' });
         expect(Object.fromEntries(h.room.queuedByBot())).toEqual({ [BOT_A.id]: 1, [BOT_B.id]: 1 });
     });
 
@@ -274,7 +274,7 @@ describe('RoomActor', () => {
         const h = makeRoom({ store });
         expect(h.runs).toEqual([]);
         void h.room.recover();
-        await waitFor(() => h.room.deliveries()[0]?.state === 'done');
+        await waitFor(() => h.room.deliveries()[0]?.state === 'delivered');
         expect(h.runs).toEqual(['diy']);
     });
 
@@ -691,7 +691,7 @@ describe('中断的轮次', () => {
 
         const restarted = h.rebuild();
         void restarted.room.recover();
-        await waitFor(() => restarted.room.deliveries().every((d) => d.state === 'done'));
+        await waitFor(() => restarted.room.deliveries().every((d) => d.state === 'delivered'));
 
         expect(interruptedOf(restarted)).toHaveLength(0);
         expect(restarted.store.openTurns(h.spec.id)).toEqual([]);

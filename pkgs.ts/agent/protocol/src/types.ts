@@ -265,24 +265,26 @@ export type Item =
 // ── 投递（消息 → bot 的到达状态）────────────────────────────────
 
 /**
- * 一条消息对某个 bot 的投递只有三个阶段（2026-11-27 收敛：原来 5 个值）。
+ * 一条消息交给某个成员的投递状态。**转移规则见 `delivery.ts` 的状态图**（唯一真源）。
  *
- *   pending —— 在库里，bot 还没开始处理它（UI 的「N 条等着」只数这个）
- *   working —— bot 正在处理它（无论是并进当前轮，还是作为本轮的第一条）
- *   done    —— 处理完了；`note === 'failed'` 表示没送进去
+ *   pending   —— 在库里，成员还没开始处理它（UI 的「排队 N」只数这个）
+ *   working   —— 成员正在处理它
+ *   delivered —— 处理完了（终态）
+ *   failed    —— 真的没送到（终态；例如成员被删、恢复时正文彻底丢失）
+ *   cancelled —— 用户主动「停止」，队列里的被一起清掉（终态）
  *
- * **为什么砍**：原来的 `delivering` 同时表示「正在插进当前轮」和「已被取出正在跑」，
- * UI 于是必须拿另一个状态的副本去修正（"在跑减一"），一处不同步就报假数。
+ * **2026-11-28 修**：之前是 `pending | working | done` + `note: 'failed'` 这种
+ * 两个字段打架的写法（`done` 同时表示「读完了」和「没送到」）。用户原话：
+ * 「done 应该是发送成功了……还有个 note，这不是就是在解决状态不足的临时方案吗」。
+ * 现在没有第二维：取消与失败是两个不同的终态，用户看到只有四档（`deliveryViewOf`）。
  */
-export type DeliveryState = 'pending' | 'working' | 'done';
+export type DeliveryState = 'pending' | 'working' | 'delivered' | 'failed' | 'cancelled';
 
 export interface Delivery {
     roomId: string;
     messageId: string;
     botId: string;
     state: DeliveryState;
-    /** 结局说明：`'failed'` = 没送进去（`skipped` 等旧值迁移时也归一到这里） */
-    note?: string;
     updatedAt: number;
 }
 
@@ -291,8 +293,8 @@ export interface Delivery {
 export type Command =
     /** `attachments`：随这条消息一起发出去的附件（已落 blobs / 已 adopt 的 ref，不是原始字节） */
     | { kind: 'send'; text: string; attachments?: readonly AttachmentRef[] }
-    /** 不传 botId = 停整个房间；传了只停那个成员 */
-    | { kind: 'cancel'; botId?: string; keepQueue?: boolean };
+    /** 不传 botId = 停整个房间；传了只停那个成员。停 = 队列里还没被处理的一并标 `cancelled` */
+    | { kind: 'cancel'; botId?: string };
 
 // ── 向用户提问（模型需要人做决定时）────────────────────────────
 

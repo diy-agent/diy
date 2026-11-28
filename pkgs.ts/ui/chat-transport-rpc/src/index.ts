@@ -484,7 +484,6 @@ export class RpcChatClient implements ChatClient {
         if (command.kind === 'cancel') {
             await this.call('chat.cancel', {
                 id: entityId,
-                keepQueue: command.keepQueue === true,
                 ...(command.botId === undefined ? {} : { botId: command.botId }),
             });
             onEvent({ kind: 'done' });

@@ -2035,22 +2035,22 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         },
         setDelivery(delivery: DeliveryInput): Delivery {
             const updatedAt = Date.now();
+            // `note` 列暂且留着不写（2026-11-28 起状态自己说结局：delivered / failed / cancelled）。
+            // 删列留给迁移 021 —— 老库里有历史行，DROP COLUMN 要跟值域迁移一起做。
             db.prepare(
-                'INSERT INTO deliveries (entity_id, message_id, bot_id, state, note, updated_at, mode, turn, turn_id) ' +
-                    'VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(entity_id, message_id, bot_id) DO UPDATE SET ' +
-                    'state=?, note=?, updated_at=?, mode=COALESCE(?, mode), turn=COALESCE(?, turn), turn_id=COALESCE(?, turn_id)',
+                'INSERT INTO deliveries (entity_id, message_id, bot_id, state, updated_at, mode, turn, turn_id) ' +
+                    'VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(entity_id, message_id, bot_id) DO UPDATE SET ' +
+                    'state=?, updated_at=?, mode=COALESCE(?, mode), turn=COALESCE(?, turn), turn_id=COALESCE(?, turn_id)',
             ).run(
                 delivery.roomId,
                 delivery.messageId,
                 delivery.botId,
                 delivery.state,
-                delivery.note ?? null,
                 updatedAt,
                 delivery.mode ?? null,
                 delivery.turn ?? null,
                 delivery.turnId ?? null,
                 delivery.state,
-                delivery.note ?? null,
                 updatedAt,
                 delivery.mode ?? null,
                 delivery.turn ?? null,
@@ -2067,7 +2067,6 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 messageId: String(row['message_id']),
                 botId: String(row['bot_id']),
                 state: row['state'] as Delivery['state'],
-                note: row['note'] === null ? undefined : String(row['note']),
                 updatedAt: Number(row['updated_at']),
             }));
         },
@@ -2106,14 +2105,14 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             // 且 seq 只在**两条候选的轮次相等（含都缺 turn 的老数据）**时才真去读 ——
             // 新数据的比较走到 turn 那一级就分出来了。
             stmts.deliveriesOfRoom ??= db.prepare(
-                'SELECT bot_id, message_id, state, note, turn, updated_at FROM deliveries WHERE entity_id = ? ORDER BY updated_at ASC',
+                'SELECT bot_id, message_id, state, turn, updated_at FROM deliveries WHERE entity_id = ? ORDER BY updated_at ASC',
             );
             stmts.saySeqOfRoom ??= db.prepare(
                 "SELECT seq, json_extract(entry, '$.messageId') AS message_id FROM room_entries " +
                     "WHERE entity_id = ? AND json_extract(entry, '$.kind') = 'say'",
             );
 
-            type Latest = { state: string; note?: string; turn: number; seq?: number; at: number; messageId: string };
+            type Latest = { state: string; turn: number; seq?: number; at: number; messageId: string };
             const failed: Record<string, number> = {};
             for (const roomId of roomIdsOf(roomIds)) {
                 const rows = stmts.deliveriesOfRoom.all(roomId) as Array<Record<string, unknown>>;
@@ -2146,7 +2145,6 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 for (const row of rows) {
                     const candidate: Latest = {
                         state: String(row['state']),
-                        note: row['note'] === null ? undefined : String(row['note']),
                         turn: row['turn'] === null ? -1 : Number(row['turn']),
                         at: Number(row['updated_at']),
                         messageId: String(row['message_id']),
@@ -2158,17 +2156,23 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
 
                 let count = 0;
                 for (const row of latest.values()) {
-                    // 失败不再是独立状态：`done + note='failed'`（2026-11-27 收敛到 3 个状态）
-                    if (row.state === 'done' && row.note === 'failed') count += 1;
+                    // 2026-11-28 起「失败」是独立终态（以前是 done + note='failed' 那种两字段打架的写法）
+                    if (row.state === 'failed') count += 1;
                 }
                 if (count > 0) failed[roomId] = count;
             }
             return failed;
         },
         textOf(roomId: string, messageId: string): string | undefined {
+            // **按 id 精确查**（2026-11-28 修）：原来是「取该房间最近 200 条再线性找」——
+            // 那条 pending 投递对应的消息一旦被挤出这 200 条，恢复时就判「取不到正文」，
+            // 把一条好消息记成发送失败（正文其实还在库里）。恢复是启动期一次性动作，
+            // 按 id 查慢一点无所谓；错误地判失败才是真代价。
             const row = db
-                .prepare('SELECT item FROM entity_items WHERE entity_id = ? ORDER BY seq DESC LIMIT 200')
-                .all(roomId) as Array<Record<string, unknown>>;
+                .prepare(
+                    "SELECT item FROM entity_items WHERE entity_id = ? AND json_extract(item, '$.id') = ? LIMIT 1",
+                )
+                .all(roomId, messageId) as Array<Record<string, unknown>>;
             for (const rowItem of row) {
                 const item = JSON.parse(String(rowItem['item'])) as Item;
                 if (item.id === messageId && item.type === 'chat') return item.data.text;

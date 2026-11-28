@@ -179,7 +179,6 @@ function chipsOf(deliveries: readonly Delivery[], bots: Record<string, Bot>, mes
                 name: bot?.name ?? delivery.botId,
                 color: bot?.color ?? '#9ca3af',
                 state: delivery.state,
-                ...(delivery.note === undefined ? {} : { note: delivery.note }),
             };
         });
 }

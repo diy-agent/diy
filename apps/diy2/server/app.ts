@@ -1210,8 +1210,8 @@ export async function createDiy2App(opts: {
                     return { ok: true };
                 },
                 cancel: async ({ input }) => {
+                    // `keepQueue` 已删（2026-11-28）：队列里没被处理的一律标 cancelled。
                     requireRoom(input.id).cancel({
-                        keepQueue: input.keepQueue === true,
                         ...(input.botId === undefined ? {} : { botId: input.botId }),
                     });
                     return { ok: true };
