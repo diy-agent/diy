@@ -25,7 +25,7 @@ import { createRpcSocket, type RpcStreamInfo } from './rpc';
 import { configureSlowLog, startLoopLag, timed, type LoopLagMonitor } from './loop-lag';
 import { startCpuProfileWatch, type CpuProfileWatch } from './profile-watch';
 import { httpRouteOf, recordHttpRequest, renderPrometheus } from './prom-metrics';
-import { wrapHandlers } from './metrics-registry';
+import { recordDuration, wrapHandlers } from './metrics-registry';
 import { APP_ID, type Diy2Config } from './config';
 import { openLog } from './log';
 
@@ -445,8 +445,8 @@ function roomTitleOf(room: Room): string {
  * 角色是类型级的，所以这里只建「每类默认席位」，不建「每容器一个 bot」——
  * 老库的 35 个 bot 已由 db.ts 的 migrateBots 折成角色，不会走到这里。
  */
-function seed(): void {
-    if (store.listBotProfiles().length === 0) {
+async function seed(): Promise<void> {
+    if (timed('seed.listProfiles', () => store.listBotProfiles(), 20).length === 0) {
         newRole({
             type: 'project',
             name: '主程',
@@ -488,7 +488,7 @@ function seed(): void {
     }
 
     // 1) 落库的容器优先：运行时新建的项目/任务，重启后原样回来
-    for (const room of store.listRooms()) {
+    for (const room of timed('seed.listRooms', () => store.listRooms(), 20)) {
         // 成员是派生的，库里的 room_members 只是历史（实体级覆盖留到以后）
         const derived = membersOf(room.type);
         const index = specs.findIndex((spec) => spec.id === room.id);
@@ -506,11 +506,28 @@ function seed(): void {
     }
 
     for (const spec of specs) {
-        store.saveRoom(spec);
-        // room_members 不是成员真源（成员是派生的），但它会被读：老库里留着「每个容器一个
-        // bot」的陈旧行，指向已被合并掉的 id。启动时用派生结果盖写一遍，让这张表与派生一致。
-        store.setMembers(spec.id, spec.members);
+        // 分段打点（账本 lag-boot）：真库实测这里是启动卡顿的全部来源，必须能按房间看耗时。
+        // 房间数有限（十几个），label 带 id 不会造成高基数。
+        timed(`seed.room[${spec.id}]`, () => {
+            store.saveRoom(spec);
+            // room_members 不是成员真源（成员是派生的），但它会被读：老库里留着「每个容器一个
+            // bot」的陈旧行，指向已被合并掉的 id。启动时用派生结果盖写一遍，让这张表与派生一致。
+            store.setMembers(spec.id, spec.members);
+            // 构造 RoomActor：建 RoomLog 并读该房间历史，是每个房间的主要开销
+            actorOf(spec);
+        }, 20);
+        // 续跑不 await：它在 listen 之后才该真正干活，这里只是把待投递排上（见 resume()）
         actorOf(spec).recover();
+        // 每个房间之间让出一次事件循环（2026-11-28，账本 lag-boot）。
+        //
+        // 同一真库副本（46024 条 / 150MB）、同一台机器上的 before/after：
+        //   · 改之前：一次 `[diy2:lag] 事件循环卡了 2605ms（cpuRatio=76%）` —— 这 2.6 秒里
+        //     探活 / 监控 / 所有定时器一起停摆，而且日志答不出是哪一段。
+        //   · 改之后：**没有 lag 行**；装配汇总说清 `seed=3896ms` 占 99%，各房间块都 < 500ms。
+        // 总耗时没变小（每个房间的历史都得读），变的是**最长一次连续阻塞**。
+        // 此刻还没 listen，没有请求会撞进半装配状态，让出是安全的。
+        // 注：若单个房间的 RoomActor 构造本身就超阈值，要再切得动 entity-runtime 的构造路径，另算。
+        await new Promise<void>((resolve) => setImmediate(resolve));
     }
 }
 
@@ -792,7 +809,40 @@ export async function createDiy2App(opts: {
     // null 与 undefined 是两件事：null = 「我明确不要静态服务」（dev 的页面来自 vite），
     // undefined = 「按配置来」（生产）。写成 `??` 会让 dev 在 build/prod/web 存在时**悄悄**
     // 拿到上一轮的旧壳子 —— 那种 bug 只能靠肉眼分辨「为什么改了 UI 没变」。
-    serveStatic = await createStaticHandler(opts.webDir === null ? undefined : (opts.webDir ?? config.webDir));
+    /**
+     * 装配分段计时（启动只发生一次，所以**每段都记**，不像 `timed` 只记超阈值的）。
+     *
+     * 为什么需要它（2026-11-28，账本 lag-boot）：用户报的 5875ms 卡顿，日志里
+     * `[diy2:lag]` 行早于 `[diy2:boot]` 行 —— 卡在装配期，但装配里同步重活有好几处
+     * （openStore 的迁移+全库自检、seed 的全房间重写），光看 lag 行只能证明「卡了」，
+     * 答不出「哪一段卡的」。这里逐段计时，装配结束打一行汇总，同时进 op 指标
+     * （`op="boot.<阶段>"`），vmui 上能看历史趋势。
+     */
+    const bootTimings: Array<{ stage: string; ms: number }> = [];
+    const bootStage = <T>(stage: string, fn: () => T): T => {
+        const started = performance.now();
+        try {
+            return fn();
+        } finally {
+            const ms = performance.now() - started;
+            bootTimings.push({ stage, ms });
+            recordDuration('diy2_op_duration_seconds', [`boot.${stage}`], ms / 1000);
+        }
+    };
+    const bootStageAsync = async <T>(stage: string, fn: () => Promise<T>): Promise<T> => {
+        const started = performance.now();
+        try {
+            return await fn();
+        } finally {
+            const ms = performance.now() - started;
+            bootTimings.push({ stage, ms });
+            recordDuration('diy2_op_duration_seconds', [`boot.${stage}`], ms / 1000);
+        }
+    };
+
+    serveStatic = await bootStageAsync('static', () =>
+        createStaticHandler(opts.webDir === null ? undefined : (opts.webDir ?? config.webDir)),
+    );
     // 事件循环延迟监控（./loop-lag）：从装配开始记，`/api/metrics` 读快照。
     // 重复装配（测试 / dev 重建）先把上一个停掉，不然会留两个采样器。
     // 日志出口走 appLog（本进程不直接碰 console，见 ./log）。
@@ -821,7 +871,7 @@ export async function createDiy2App(opts: {
     lastActivityKey = '';
 
     await mkdir(config.home, { recursive: true });
-    store = openStore(config.dbPath);
+    store = bootStage('openStore', () => openStore(config.dbPath));
     /**
      * 「某个成员上一轮的结局」查询器 —— **全进程一份、带 5s 缓存**（2026-11-26）。
      *
@@ -836,7 +886,7 @@ export async function createDiy2App(opts: {
 
     // 作业账本要在 `seed()` / 首个房间之前建好：`actorOf` 装配工具时要用它。
     // 根目录 `<home>/log/job/runs`：与其余运行产物同根，清 home 就清干净。
-    jobs = createJobRegistry({
+    jobs = bootStage('jobs', () => createJobRegistry({
         rootDir: join(config.home, 'log', 'job', 'runs'),
         // 作业起停也要推活动：作业不属于任何房间流，标题栏那颗「作业 N」靠它亮
         onChange: () => broadcastActivity(),
@@ -851,13 +901,13 @@ export async function createDiy2App(opts: {
             }
             return actor.notifyJobDone(owner, event);
         },
-    });
+    }));
 
-    seed();
+    await bootStageAsync('seed', seed);
 
     // 对话框草稿的 owner 是 synthetic scope（`dlg:<用途>:<roomId>`）：删项目时已级联，
     // 剩下的（用户再也不打开那个对话框 / 房间 id 早就换掉）靠 TTL 收，别让库只增不减。
-    const prunedDialogs = store.pruneDraftOwners('dlg:', Date.now() - DIALOG_DRAFT_TTL);
+    const prunedDialogs = bootStage('pruneDrafts', () => store.pruneDraftOwners('dlg:', Date.now() - DIALOG_DRAFT_TTL));
     if (prunedDialogs > 0) log.info('清掉过期对话框草稿', { count: prunedDialogs });
 
     /**
@@ -1479,6 +1529,15 @@ export async function createDiy2App(opts: {
         subscribers.clear();
         activitySinks.clear();
     };
+
+    // 装配汇总：一行说清各段耗时（以及总计）。卡顿排查第一眼就看这行。
+    const totalMs = bootTimings.reduce((sum, item) => sum + item.ms, 0);
+    const detail = bootTimings.map((item) => `${item.stage}=${Math.round(item.ms)}ms`).join(' ');
+    log.warn(`[diy2:boot] 装配完成 total=${Math.round(totalMs)}ms | ${detail}`);
+    const slowest = bootTimings.reduce((a, b) => (a.ms >= b.ms ? a : b), { stage: 'none', ms: 0 });
+    if (slowest.ms >= 500) {
+        log.warn(`[diy2:boot] 启动卡顿主因：${slowest.stage}（${Math.round(slowest.ms)}ms）`);
+    }
 
     return { handle, resume, handleUpgrade: rpc.handleUpgrade, rpcStreams: rpc.streams, info, close };
 }
