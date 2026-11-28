@@ -125,6 +125,30 @@ describe('DraftStore', () => {
         expect(store.textOf('proj:a', 'composer')).toBe('');
     });
 
+    it('发送后在途的旧 GET 不能把已清的草稿灌回来（竞态：偶尔没清空）', async () => {
+        // 复现用户 2026-11-28「发送后输入框偶尔没清空」：
+        // 打开房间发起 ensure()（GET 在途），期间用户把草稿发出去并 clear（DELETE 成功），
+        // 此时 GET 才带着发送前的旧草稿返回 —— 旧值不能被灌回，否则输入框又冒出刚发的那条。
+        let release: ((value: Response) => void) | undefined;
+        const gate = new Promise<Response>((resolve) => {
+            release = resolve;
+        });
+        const { store } = makeStore((call) => (call.method === 'GET' ? gate : jsonResponse({ ok: true })));
+
+        // ensure 发出 GET 但故意不返回
+        const loading = store.ensure('proj:a');
+        // GET 在途期间，用户有内容并发送成功 → clear
+        store.setText('proj:a', 'composer', '发出去这句');
+        store.clearIfMatches('proj:a', 'composer', '发出去这句');
+        expect(store.textOf('proj:a', 'composer')).toBe('');
+
+        // GET 这时才返回发送前的旧草稿
+        release?.(jsonResponse({ drafts: [{ field: 'composer', value: { text: '发出去这句' }, updatedAt: 1 }] }));
+        await loading;
+
+        expect(store.textOf('proj:a', 'composer')).toBe('');
+    });
+
     it('写失败保留内容并退避重试，成功后状态回到 saved', async () => {
         vi.useFakeTimers();
         let puts = 0;
