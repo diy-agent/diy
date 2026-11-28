@@ -35,6 +35,13 @@ describe('priceMultiplierOf（DeepSeek 峰谷）', () => {
         expect(priceMultiplierOf(DS, new Date('2026-10-01T02:00:00Z')).factor).toBe(1);
     });
 
+    it('假日表随 chinese-days 更新（2027-10-01 周五也是假日）', () => {
+        // 生成物覆盖到 2027；这条锁「不是只写死 2025–2026」
+        expect(priceMultiplierOf(DS, new Date('2027-10-01T02:00:00Z')).factor).toBe(1);
+        // 同一天但不在假日表覆盖内？2027-10-08 周五、非假日 ⇒ 峰段
+        expect(priceMultiplierOf(DS, new Date('2027-10-08T02:00:00Z')).factor).toBe(2);
+    });
+
     it('非 DeepSeek 模型不套峰谷（原价）', () => {
         expect(
             priceMultiplierOf({ providerId: 'goat', modelId: 'gpt-6-sol' }, new Date('2026-11-24T02:00:00Z')),
