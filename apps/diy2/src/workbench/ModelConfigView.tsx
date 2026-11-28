@@ -137,6 +137,7 @@ function validNpm(npm: string): string | undefined {
 export function ModelConfigView() {
     const [snapshot, setSnapshot] = React.useState<ModelConfigSnapshot>();
     const [error, setError] = React.useState<string>();
+    const [refreshNote, setRefreshNote] = React.useState<string>();
     const [busy, setBusy] = React.useState(false);
     const [query, setQuery] = React.useState('');
     const [selected, setSelected] = React.useState('');
@@ -154,6 +155,33 @@ export function ModelConfigView() {
     }, []);
 
     React.useEffect(load, [load]);
+
+    /** 手动拉取目录快照：回包带这次的结果（更新 / 无变化 / 失败原因），就地显示 */
+    const pullSnapshot = React.useCallback(() => {
+        setBusy(true);
+        setError(undefined);
+        setRefreshNote(undefined);
+        modelConfig
+            .refreshSnapshot()
+            .then((next) => {
+                setSnapshot(next);
+                const refresh = (
+                    next as ModelConfigSnapshot & {
+                        refresh?: { state: string; providers?: number; error?: string };
+                    }
+                ).refresh;
+                if (refresh === undefined) return;
+                setRefreshNote(
+                    refresh.state === 'updated'
+                        ? `已更新（${String(refresh.providers ?? 0)} 家）`
+                        : refresh.state === 'unchanged'
+                          ? '服务端无更新'
+                          : `拉取失败：${refresh.error ?? '未知原因'}`,
+                );
+            })
+            .catch((cause: unknown) => setError(messageOf(cause)))
+            .finally(() => setBusy(false));
+    }, []);
 
     /**
      * 所有写操作走这里：统一 busy / 错误 / 用回包替换整页状态。
@@ -208,6 +236,18 @@ export function ModelConfigView() {
                         placeholder={`搜索服务商（${String(providers.length)} 家）`}
                         className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-xs outline-none focus:border-ring"
                     />
+                    <button
+                        type="button"
+                        disabled={busy}
+                        onClick={pullSnapshot}
+                        title="从 models.dev 拉最新目录（ETag 条件请求，没变化就不下载）"
+                        className="w-full rounded-lg border border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+                    >
+                        拉取最新目录
+                    </button>
+                    {refreshNote === undefined ? null : (
+                        <p className="px-1 text-[11px] text-muted-foreground">{refreshNote}</p>
+                    )}
                 </div>
                 <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
                     {connected.length > 0 ? (
@@ -234,10 +274,8 @@ export function ModelConfigView() {
                     </Group>
                     {providers.length === 0 ? (
                         <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
-                            目录里一家都没有 —— 缺 <code className="text-foreground">data/models.dev.json</code>
-                            （标准 provider 的规格全在它里面）。在仓库根跑{' '}
-                            <code className="text-foreground">./scripts/seed-run-home.sh &lt;数据根&gt;</code>
-                            ，或点下面的「添加自定义服务商」手写一家。
+                            目录里一家都没有 —— 包内快照和数据根都没有规格。点上面的
+                            「拉取最新目录」从 models.dev 拉一份，或点下面的「添加自定义服务商」手写一家。
                         </p>
                     ) : null}
                 </div>

@@ -1,2 +1,2 @@
-# 快照由 scripts/gen.ts 生成，不进 git（发布时 prepack 生成进 tarball）
-data/
+# dist/ 是打包产物：源码与脚本进 git，编译结果和快照都不进（发布时 gen/prepack 生成）
+dist/

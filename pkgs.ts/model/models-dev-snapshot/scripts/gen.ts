@@ -13,9 +13,9 @@ import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSyn
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-const dataDir = fileURLToPath(new URL('../data/', import.meta.url));
-const target = join(dataDir, 'models.dev.json');
-const etagFile = join(dataDir, 'etag.txt');
+const distDir = fileURLToPath(new URL('../dist/', import.meta.url));
+const target = join(distDir, 'models.dev.json');
+const etagFile = join(distDir, 'etag.txt');
 const url = process.env['MODELS_DEV_URL'] ?? 'https://models.dev/api.json';
 const strict = process.env['MODELS_DEV_STRICT'] === '1';
 const freshMs = 24 * 60 * 60 * 1000;
@@ -49,7 +49,7 @@ if (fresh()) {
             const text = await response.text();
             const parsed: unknown = JSON.parse(text); // 坏了就别落盘
             if (typeof parsed !== 'object' || parsed === null) throw new Error('快照不是对象');
-            mkdirSync(dataDir, { recursive: true });
+            mkdirSync(distDir, { recursive: true });
             writeFileSync(target, text);
             const etag = response.headers.get('etag');
             if (etag !== null) writeFileSync(etagFile, etag);

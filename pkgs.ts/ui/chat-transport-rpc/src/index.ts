@@ -337,6 +337,7 @@ export class RpcChatClient implements ChatClient {
     readonly models = {
         list: (): Promise<ModelCatalogSnapshot> => this.call('models.list', {}),
         config: (): Promise<ModelConfigSnapshot> => this.call('models.config', {}),
+        refreshSnapshot: (): Promise<ModelConfigSnapshot> => this.call('models.refreshSnapshot', {}),
         saveProvider: (input: {
             providerId: string;
             kind?: 'std' | 'custom';

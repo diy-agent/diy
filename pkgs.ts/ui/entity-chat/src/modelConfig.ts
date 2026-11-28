@@ -38,6 +38,13 @@ export const modelConfig = {
         return diy2.models.config();
     },
 
+    /** 手动拉一次 models.dev 目录快照（服务端带 ETag 条件请求），回整页配置 */
+    async refreshSnapshot(): Promise<ModelConfigSnapshot> {
+        const next = await diy2.models.refreshSnapshot();
+        await refreshCatalog();
+        return next as ModelConfigSnapshot;
+    },
+
     async saveProvider(input: ProviderPatchInput): Promise<ModelConfigSnapshot> {
         const next = await diy2.models.saveProvider(input);
         await refreshCatalog();

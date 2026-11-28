@@ -322,6 +322,8 @@ export const modelsApi = RpcSchema.group({
          * 这里要「目录里还有什么、哪些被关掉了」，只在打开配置页 / 写完时拉。
          */
         config: RpcSchema.unary({ input: {}, output: Any }),
+        /** 手动拉一次 models.dev 目录快照；回包是带 refresh 结果的整页配置 */
+        refreshSnapshot: RpcSchema.unary({ input: {}, output: Any }),
         // 写方法的回包一律是**重算后的整页快照**（`saveAccount` 多一个 `{ saved }`）：
         // 界面不必自己拼第二份状态，也就不会出现「服务端改了、界面还是老的」。
         saveProvider: RpcSchema.unary({
@@ -482,6 +484,7 @@ export const METHOD_DESC: Readonly<Record<string, string>> = {
     'jobs.kill': '停掉某个作业（整组）',
     // —— 其它 ——
     'models.list': '可选模型目录（按 provider 分组，带能力位）',
+    'models.refreshSnapshot': '拉一次 models.dev 目录快照（ETag 条件请求，回整页配置）',
     info: '这个实例是谁：端口 / 数据根 / 版本',
 };
 

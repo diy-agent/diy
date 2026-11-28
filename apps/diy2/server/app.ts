@@ -52,6 +52,7 @@ import {
 import { createBlobStore, parseAttachmentRef, parseAttachmentRefs } from '@diy-agent/attachment';
 import { apiHelpOf, defaultCodeRuntime } from '@diy-agent/code-runtime';
 import { METHOD_DESC, diy2Api } from '@diy-agent/protocol';
+import { refreshSnapshot as pullModelsSnapshot, runtimeSnapshotAge, startSnapshotRefresh } from '@diy-agent/models-dev-snapshot';
 import { botOfProfile, membersOfType } from '@diy-agent/protocol';
 import type {
     ActivityFrame,
@@ -177,6 +178,7 @@ let serveStatic: StaticHandler | undefined;
 let info: () => Diy2AppInfo;
 /** 事件循环延迟监控（./loop-lag）：`/api/metrics` 读它，close 时停 */
 let lagMonitor: LoopLagMonitor | undefined;
+let stopSnapshotRefresh: (() => void) | undefined;
 
 // ─── 房间装配 ─────────────────────────────────────────────────────
 
@@ -768,6 +770,9 @@ export async function createDiy2App(opts: {
     // 日志出口走 appLog（本进程不直接碰 console，见 ./log）。
     lagMonitor?.stop();
     lagMonitor = startLoopLag({ log: (line) => log.warn(line) });
+    // 目录快照定时刷新：启动先拉一次（ETag 命中很便宜），之后每 6 小时；关服时停
+    stopSnapshotRefresh?.();
+    stopSnapshotRefresh = startSnapshotRefresh(config.home);
     configureSlowLog((line) => log.warn(line));
     rooms = new Map();
     subscribers = new Map();
@@ -1175,6 +1180,12 @@ export async function createDiy2App(opts: {
              * 服务端发不出去」就是这么来的。回包永不含 key 值（账号只有名字与填没填）。
              */
             models: {
+                // 配置页的「拉取最新目录」按钮：拉完回整页配置 + 这次的结果，界面一次刷新到位
+                refreshSnapshot: async () => ({
+                    ...modelConfigView(),
+                    refresh: await pullModelsSnapshot(config.home),
+                    snapshotAge: runtimeSnapshotAge(config.home),
+                }),
                 // `configured` / `snapshotMissing` 不是兼容字段，是**状态**：没有 model.yaml 的
                 // 实例是一个明确形态（模型面不可用），界面顶部据此挂横幅 —— 不靠「目录恰好是空的」去猜。
                 list: async () => ({
@@ -1416,6 +1427,8 @@ export async function createDiy2App(opts: {
     });
 
     const close = (): void => {
+        stopSnapshotRefresh?.();
+        stopSnapshotRefresh = undefined;
         lagMonitor?.stop();
         lagMonitor = undefined;
         rpc.close();
