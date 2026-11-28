@@ -30,6 +30,8 @@
 
 import { cpus, loadavg } from 'node:os';
 
+import { recordDuration } from './metrics-registry';
+
 /** 采样时刻的机器状态（回答「是不是本进程的锅」） */
 export interface SystemSnapshot {
     load1: number;
@@ -235,13 +237,18 @@ export function configureSlowLog(sink: (line: string) => void): void {
     slowLog = sink;
 }
 
-/** 单点打点：超过 `slowMs` 才落一行（默认 100ms，见文件头的阈值取舍） */
+/**
+ * 单点打点：超过 `slowMs` 才落一行慢日志（默认 100ms，见文件头的阈值取舍）。
+ * 但**全量**记进 op histogram —— 直方图要全样本才能算 p50/p99，慢日志只负责「哪一次、多慢」。
+ * 两者互补（规格见 observability 计划 §4.5）。
+ */
 export function timed<T>(label: string, fn: () => T, slowMs = 100): T {
     const started = performance.now();
     try {
         return fn();
     } finally {
         const ms = performance.now() - started;
+        recordDuration('diy2_op_duration_seconds', [label], ms / 1000);
         if (ms >= slowMs) slowLog(`[diy2:slow] ${label} ${Math.round(ms)}ms`);
     }
 }
@@ -253,6 +260,7 @@ export async function timedAsync<T>(label: string, fn: () => Promise<T>, slowMs 
         return await fn();
     } finally {
         const ms = performance.now() - started;
+        recordDuration('diy2_op_duration_seconds', [label], ms / 1000);
         if (ms >= slowMs) slowLog(`[diy2:slow] ${label} ${Math.round(ms)}ms`);
     }
 }

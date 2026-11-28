@@ -25,6 +25,7 @@ import { createRpcSocket, type RpcStreamInfo } from './rpc';
 import { configureSlowLog, startLoopLag, timed, type LoopLagMonitor } from './loop-lag';
 import { startCpuProfileWatch, type CpuProfileWatch } from './profile-watch';
 import { httpRouteOf, recordHttpRequest, renderPrometheus } from './prom-metrics';
+import { wrapHandlers } from './metrics-registry';
 import { APP_ID, type Diy2Config } from './config';
 import { openLog } from './log';
 
@@ -707,6 +708,7 @@ const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> 
                 home: config.home,
                 launch: config.launch,
                 env: config.env,
+                dbPath: config.dbPath,
             });
             res.writeHead(200, {
                 'content-type': 'text/plain; version=0.0.4; charset=utf-8',
@@ -1411,7 +1413,8 @@ export async function createDiy2App(opts: {
                 },
             },
         };
-        server.use({ prefix: 'diy2', api: diy2Api, handlers });
+        // 包一层耗时记录（RPC 方法 p99）；方法名来自路径，不含 roomId / botId（无高基数）
+        server.use({ prefix: 'diy2', api: diy2Api, handlers: wrapHandlers(handlers) });
     };
 
     // ── 进程内的第二份命令面：给 `run_code` 用 ──

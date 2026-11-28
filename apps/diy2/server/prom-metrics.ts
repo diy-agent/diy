@@ -13,13 +13,17 @@
 
 import { performance } from 'node:perf_hooks';
 import { cpus, loadavg, freemem, totalmem } from 'node:os';
+import { statSync } from 'node:fs';
 
 import type { LoopLagCounters, LoopLagMonitor, LoopLagSnapshot } from './loop-lag';
+import { renderMetricsRegistry } from './metrics-registry';
 
 export interface MetricsInfo {
     readonly home: string;
     readonly launch: string;
     readonly env: string;
+    /** 数据库文件路径；给了就出 diy2_db_size_bytes（main / wal / shm） */
+    readonly dbPath?: string;
 }
 
 /** Prometheus 文本格式的标签值转义 */
@@ -74,6 +78,24 @@ function counterLines(counters: LoopLagCounters): string[] {
             verdict: 'starved',
         }),
     ];
+}
+
+/** 库文件大小（只在 /metrics 被抓时 stat 一次，低频）；读不到就跳过，不让监控带崩 app */
+function dbSizeLines(dbPath: string | undefined): string[] {
+    if (dbPath === undefined) return [];
+    const lines: string[] = [];
+    for (const [file, path] of [
+        ['main', dbPath],
+        ['wal', `${dbPath}-wal`],
+        ['shm', `${dbPath}-shm`],
+    ] as const) {
+        try {
+            lines.push(gauge('diy2_db_size_bytes', '数据库文件大小（字节）', statSync(path).size, { db_file: file }));
+        } catch {
+            // wal / shm 可能不存在（WAL 未启用或已 checkpoint），跳过即可
+        }
+    }
+    return lines;
 }
 
 function processLines(): string[] {
@@ -185,6 +207,10 @@ export function renderPrometheus(monitor: LoopLagMonitor | undefined, info: Metr
     for (const chunk of lagLines(snapshot)) push(chunk);
     if (counters !== undefined) for (const chunk of counterLines(counters)) push(chunk);
     for (const chunk of processLines()) push(chunk);
+    for (const chunk of dbSizeLines(info.dbPath)) push(chunk);
     for (const chunk of httpLines()) push(chunk);
+    // registry（op / rpc histogram）自带 HELP/TYPE，直接接上
+    const registry = renderMetricsRegistry();
+    if (registry !== '') push(registry);
     return `${lines.join('\n')}\n`;
 }
