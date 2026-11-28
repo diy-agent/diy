@@ -8,3 +8,4 @@ export * from './types';
 export * from './room';
 export * from './ask';
 export * from './api';
+export * from './delivery';
