@@ -17,7 +17,7 @@
 //     为什么用库而不是手搓 `useState<string | undefined>`×5：四个表单加起来十几根输入，
 //     手搓就得自己管 touched / 提交时全量校验 / 失败后不清空输入，这些正是库白送的那部分。
 
-import { Modal, ModelSelectButton, modelConfig, type ModelConfigProvider, type ModelConfigSnapshot } from '@diy-agent/entity-chat';
+import { Modal, modelConfig, type ModelConfigProvider, type ModelConfigSnapshot } from '@diy-agent/entity-chat';
 import { useForm } from '@tanstack/react-form';
 import * as React from 'react';
 
@@ -137,6 +137,7 @@ function validNpm(npm: string): string | undefined {
 export function ModelConfigView() {
     const [snapshot, setSnapshot] = React.useState<ModelConfigSnapshot>();
     const [error, setError] = React.useState<string>();
+    const [refreshNote, setRefreshNote] = React.useState<string>();
     const [busy, setBusy] = React.useState(false);
     const [query, setQuery] = React.useState('');
     const [selected, setSelected] = React.useState('');
@@ -154,6 +155,33 @@ export function ModelConfigView() {
     }, []);
 
     React.useEffect(load, [load]);
+
+    /** 手动拉取目录快照：回包带这次的结果（更新 / 无变化 / 失败原因），就地显示 */
+    const pullSnapshot = React.useCallback(() => {
+        setBusy(true);
+        setError(undefined);
+        setRefreshNote(undefined);
+        modelConfig
+            .refreshSnapshot()
+            .then((next) => {
+                setSnapshot(next);
+                const refresh = (
+                    next as ModelConfigSnapshot & {
+                        refresh?: { state: string; providers?: number; error?: string };
+                    }
+                ).refresh;
+                if (refresh === undefined) return;
+                setRefreshNote(
+                    refresh.state === 'updated'
+                        ? `已更新（${String(refresh.providers ?? 0)} 家）`
+                        : refresh.state === 'unchanged'
+                          ? '服务端无更新'
+                          : `拉取失败：${refresh.error ?? '未知原因'}`,
+                );
+            })
+            .catch((cause: unknown) => setError(messageOf(cause)))
+            .finally(() => setBusy(false));
+    }, []);
 
     /**
      * 所有写操作走这里：统一 busy / 错误 / 用回包替换整页状态。
@@ -197,17 +225,24 @@ export function ModelConfigView() {
         <div className="grid h-full min-h-0 grid-cols-[minmax(232px,288px)_1fr] bg-background text-foreground">
             <aside className="flex min-h-0 flex-col border-r border-border">
                 <div className="space-y-2.5 border-b border-border p-3">
-                    <DefaultModelCard
-                        snapshot={snapshot}
-                        busy={busy}
-                        onPick={(modelKey) => void run(() => modelConfig.saveDefaultModel(modelKey))}
-                    />
                     <input
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
                         placeholder={`搜索服务商（${String(providers.length)} 家）`}
                         className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-xs outline-none focus:border-ring"
                     />
+                    <button
+                        type="button"
+                        disabled={busy}
+                        onClick={pullSnapshot}
+                        title="从 models.dev 拉最新目录（ETag 条件请求，没变化就不下载）"
+                        className="w-full rounded-lg border border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+                    >
+                        更新模型数据
+                    </button>
+                    {refreshNote === undefined ? null : (
+                        <p className="px-1 text-[11px] text-muted-foreground">{refreshNote}</p>
+                    )}
                 </div>
                 <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
                     {connected.length > 0 ? (
@@ -234,10 +269,8 @@ export function ModelConfigView() {
                     </Group>
                     {providers.length === 0 ? (
                         <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
-                            目录里一家都没有 —— 缺 <code className="text-foreground">data/models.dev.json</code>
-                            （标准 provider 的规格全在它里面）。在仓库根跑{' '}
-                            <code className="text-foreground">./scripts/seed-run-home.sh &lt;数据根&gt;</code>
-                            ，或点下面的「添加自定义服务商」手写一家。
+                            目录里一家都没有 —— 包内快照和数据根都没有规格。点上面的
+                            「更新模型数据」从 models.dev 拉一份，或点下面的「添加自定义服务商」手写一家。
                         </p>
                     ) : null}
                 </div>
@@ -314,46 +347,6 @@ function ProviderRow({
                 {accounts > 0 ? `${String(accounts)} 账号` : `${String(provider.models.length)} 模型`}
             </span>
         </button>
-    );
-}
-
-// ── 默认模型 ──────────────────────────────────────────────────────────────────
-
-/**
- * 默认模型卡：新建任务 / 项目 / bot 都继承它（`model.yaml` 顶层 `defaultModel`）。
- *
- * 只列「真能发出去」的组合：provider 有填了 key 的账号、模型是勾选过的。
- * 列这些东西本身就是在告诉人「现在这个实例能用什么」——所以没配置时它是空态，不是一个空下拉。
- */
-function DefaultModelCard({
-    snapshot,
-    busy,
-    onPick,
-}: {
-    snapshot: ModelConfigSnapshot;
-    busy: boolean;
-    onPick: (modelKey: string | null) => void;
-}) {
-    const value = snapshot.defaultModelKey ?? '';
-
-    return (
-        <div className="rounded-lg border border-border border-l-2 border-l-ring bg-card px-2.5 py-2">
-            <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">默认模型</span>
-                {value === '' ? null : (
-                    <button
-                        onClick={() => onPick(null)}
-                        disabled={busy}
-                        className="text-[11px] text-muted-foreground hover:text-foreground"
-                    >
-                        清空
-                    </button>
-                )}
-            </div>
-            <div className="mt-1" title={value}>
-                <ModelSelectButton value={value} onPick={(key) => onPick(key)} emptyText="（未设置 · 点开选择）" />
-            </div>
-        </div>
     );
 }
 

@@ -98,7 +98,7 @@ export function modelHome(env: NodeJS.ProcessEnv = process.env): string | undefi
  * 给「缺没缺快照」一个唯一口径：缺快照 = 标准 provider 全部没有规格，而这要从界面看得见
  * （静默回落到别的目录才是错的）。
  */
-export { snapshotPath } from '@diy-agent/model-catalog';
+export { snapshotAvailable, snapshotPath } from '@diy-agent/model-catalog';
 
 /** 「本实例没有模型配置」的统一话术（`undefined` 数据根的三个出口共用） */
 const NO_MODEL_HOME = '本实例没有模型配置：需要 DIY_HOME（数据根，含 model.yaml）或 DIY_MODEL_CONFIG';

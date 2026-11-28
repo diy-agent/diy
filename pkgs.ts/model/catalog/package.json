@@ -20,6 +20,7 @@
         "gen:holidays": "./sha.sh gen"
     },
     "dependencies": {
+        "@diy-agent/models-dev-snapshot": "*",
         "js-yaml": "^5.5.0"
     },
     "devDependencies": {
