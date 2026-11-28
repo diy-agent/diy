@@ -955,10 +955,7 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         bots: Object.fromEntries(
             botProfiles.map((profile) => [
                 profile.id,
-                botOfProfile(
-                    profile,
-                    botProfileDefaults.find((c) => c.type === profile.type),
-                ),
+                botOfProfile(profile, botProfileDefaults.find((c) => c.type === profile.type)),
             ]),
         ),
         loaded: true,

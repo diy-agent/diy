@@ -23,7 +23,7 @@ const buttonVariants = cva(
                 sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
                 lg: 'h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2',
                 icon: 'size-8',
-                // 行内密集动作（侧栏行尾 hover 那一排）：24px 那档并排四颗会占掉太多标题宽度。
+                // 行内密集动作（侧栏行尾 hover 那一排）：24px 那档并排三四颗会占掉太多标题宽度。
                 // 20px 是我们能接受的**最小热区**（比 24px 的 icon-xs 再紧一档，只用于行内辅助动作，
                 // 不用于表单控件 —— 控件高度仍走 `h-8` 一族，见 DESIGN.md §4）。
                 'icon-2xs': "size-5 rounded-[min(var(--radius-md),8px)] [&_svg:not([class*='size-'])]:size-3.5",

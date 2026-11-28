@@ -71,9 +71,7 @@ beforeEach(async () => {
         rooms: { list: async () => rooms },
         botProfiles: { list: async () => [] },
         // 模型目录回包里的 `configured` / `snapshotMissing` 是真状态字段（横幅据此画），不是兼容字段
-        models: {
-            list: async () => ({ providers: [], configured: true, modelConfigPath: '', snapshotMissing: false }),
-        },
+        models: { list: async () => ({ providers: [], configured: true, modelConfigPath: '', snapshotMissing: false }) },
         load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
         watch: () => () => undefined,
         drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },

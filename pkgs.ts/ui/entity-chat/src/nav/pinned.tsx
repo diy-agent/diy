@@ -30,7 +30,8 @@ function loadPinnedOpen(): boolean {
 function PinnedBlock({ context }: { context: NavContext }) {
     // 只订阅列表：别的房间来了消息（`lastActivity` 变了）不该让这块重铺 —— 行自己订阅了。
     const rooms = useRooms();
-    const pinned = pinnedTasksOf(rooms);
+    // `rooms` 引用稳定（只在列表真变时换），所以这份排序只在列表变化时重算
+    const pinned = React.useMemo(() => pinnedTasksOf(rooms), [rooms]);
     const [pinnedOpen, setPinnedOpen] = React.useState(loadPinnedOpen);
     const togglePinned = React.useCallback(() => {
         setPinnedOpen((current) => {

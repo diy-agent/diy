@@ -1248,12 +1248,10 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         // 各自再排一次。原来全局一把号，新需求会把「目标列表」和「某目标下的需求列表」串成
         // 一条看不到边界的计数。
         const nextSeq = (
-            db
-                .prepare(
-                    'SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM task_units ' +
-                        'WHERE task_id = ? AND ((? IS NULL AND parent_id IS NULL) OR parent_id = ?)',
-                )
-                .get(unit.taskId, nextParent, nextParent) as {
+            db.prepare(
+                'SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM task_units ' +
+                    'WHERE task_id = ? AND ((? IS NULL AND parent_id IS NULL) OR parent_id = ?)',
+            ).get(unit.taskId, nextParent, nextParent) as {
                 n: number;
             }
         ).n;
@@ -2579,7 +2577,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         lastItemOfBot(roomId: string, botId: string): Item | undefined {
             // 预编译一次、用一辈子：这条每几秒被问上百次，每次 `db.prepare` 都要重新编译 SQL。
             stmts.lastItemOfBot ??= db.prepare(
-                'SELECT seq, item FROM entity_items ' +
+                "SELECT seq, item FROM entity_items " +
                     "WHERE entity_id = ? AND json_extract(item, '$.author.id') = ? " +
                     'ORDER BY seq DESC LIMIT 1',
             );
@@ -2587,7 +2585,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         },
         lastFactOfOwner(roomId: string, owner: string): Item | undefined {
             stmts.lastFactOfOwner ??= db.prepare(
-                'SELECT seq, item FROM entity_items ' +
+                "SELECT seq, item FROM entity_items " +
                     'WHERE entity_id = ? ' +
                     "AND COALESCE(json_extract(item, '$.data.botId'), json_extract(item, '$.turnId')) = ? " +
                     "AND json_extract(item, '$.author.id') IS NULL " +

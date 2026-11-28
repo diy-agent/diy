@@ -166,7 +166,7 @@ export function RoomRowView({
     const [renaming, setRenaming] = React.useState(false);
     /** 任务当前是 open（行尾显「关闭」还是「打开」—— 状态只有这一个判据） */
     const openTask = !isProject && taskStatusOf(room) === 'open';
-    /** 置顶中（`data.pinnedAt` 有效）：⋮ 里那一项据此显示「置顶」还是「取消置顶」 */
+    /** 置顶中（`data.pinnedAt` 有效）：行尾那颗按钮据此显示 📌 / 📌̸（`Pin` / `PinOff`） */
     const pinned = isPinned(room);
     /** 任务编号（非 task / 没编号 = undefined）。提出来是为了 narrow 后直接用 */
     const number = taskNumberOf(room);

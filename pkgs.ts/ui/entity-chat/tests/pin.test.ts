@@ -1,7 +1,7 @@
 // pin.test.ts —— 置顶的判据与排布（`data.pinnedAt`）。
 //
 // 置顶这件事有三处读同一份真相：侧栏顶部那块（`pinnedTasksOf`）、项目树的过滤
-// （`visibleInProjectTree`）、行菜单的文案（`isPinned`）。三条口径在这里锁住：
+// （`visibleInProjectTree`）、行尾那颗按钮的图标与文案（`isPinned`）。三条口径在这里锁住：
 //   · 值 = 时刻（不是布尔），后 pin 的在最上面；
 //   · 只收任务，已关闭的不算（关掉 = 取消置顶，见 `setRoomStatus`）；
 //   · 置顶的任务从项目树 / 未归属里**挪走**（去重），归属改由行上的项目 tag 认。

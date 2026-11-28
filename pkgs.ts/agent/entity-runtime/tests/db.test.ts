@@ -365,12 +365,7 @@ describe('实体 + 域表', () => {
         const store = openStore(':memory:');
         store.upsertBotProfile(role('b1', 'project', 'a', true));
         store.upsertBotProfile(role('b2', 'project', 'b', true));
-        expect(
-            store
-                .listBotProfiles()
-                .filter((entry) => entry.primary)
-                .map((entry) => entry.id),
-        ).toEqual(['b2']);
+        expect(store.listBotProfiles().filter((entry) => entry.primary).map((entry) => entry.id)).toEqual(['b2']);
         store.upsertBotProfile(role('t1', 'task', 'x', true));
         expect(
             store
@@ -547,16 +542,7 @@ describe('unit（需求账本树的节点）', () => {
         );
         probe.close();
         expect(columns).toContain('kind');
-        store.saveUnit({
-            taskId: 'task-x',
-            id: 'u1',
-            allowNewId: true,
-            title: '老库补列后能写',
-            body: '',
-            accept: '',
-            status: 'open',
-            parent: null,
-        });
+        store.saveUnit({ taskId: 'task-x', id: 'u1', allowNewId: true, title: '老库补列后能写', body: '', accept: '', status: 'open', parent: null });
         expect(store.unitOf('task-x', 'u1')?.title).toBe('老库补列后能写');
     });
 
@@ -567,24 +553,8 @@ describe('unit（需求账本树的节点）', () => {
         store.saveRoom(room);
         store.saveUnit({ taskId: room.id, id: 'g1', allowNewId: true, title: '目标一', body: '', status: 'open' });
         store.saveUnit({ taskId: room.id, id: 'g2', allowNewId: true, title: '目标二', body: '', status: 'open' });
-        store.saveUnit({
-            taskId: room.id,
-            id: 'r1',
-            allowNewId: true,
-            title: '需求一',
-            body: '',
-            status: 'open',
-            parent: 'g1',
-        });
-        store.saveUnit({
-            taskId: room.id,
-            id: 'r2',
-            allowNewId: true,
-            title: '需求二',
-            body: '',
-            status: 'open',
-            parent: 'g2',
-        });
+        store.saveUnit({ taskId: room.id, id: 'r1', allowNewId: true, title: '需求一', body: '', status: 'open', parent: 'g1' });
+        store.saveUnit({ taskId: room.id, id: 'r2', allowNewId: true, title: '需求二', body: '', status: 'open', parent: 'g2' });
         const seqOf = (id: string): number | undefined => store.unitOf(room.id, id)?.seq;
         expect([seqOf('g1'), seqOf('g2')]).toEqual([1, 2]);
         expect([seqOf('r1'), seqOf('r2')]).toEqual([1, 1]);
