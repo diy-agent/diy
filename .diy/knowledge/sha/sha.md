@@ -1,6 +1,6 @@
 ---
 desc: 项目构建脚本 sha.sh 的机制、改法与 vendor/sha 同步
-updated: 2026-11-05
+updated: 2026-11-28
 ---
 
 ## entry
@@ -19,7 +19,16 @@ updated: 2026-11-05
 
 ## vendor
 
-`vendor/sha/` 是上游 `~/git/sha` 的整目录拷贝（submodule）。**本仓已升到 `bed317f`（412 行版）**：有 `#:` 注释帮助、`sha.def`/`sha.parse`、父子命令、`-hh` 全树、bash 4.3 门禁；`sha_opt.bash` 是新增的独立文件（老版本没有）。同步方式：`git -C vendor/sha fetch && git -C vendor/sha checkout -f <rev>`，再在仓库根 `git add vendor/sha` 提交指针（两处都要；worktree 与主 checkout 各自 checkout 一次）。本机连不上 github 时，可从另一个已更新的 checkout `rsync -a --exclude .git` 过去再强 checkout。
+`vendor/sha/` 是上游 `~/git/sha`（`git@github.com:diy-agent/sha.git`）的整目录拷贝，**2026-11-28 起是 git subtree（不再是 submodule，##44）**。**本仓已升到 `bed317f`（412 行版）**：有 `#:` 注释帮助、`sha.def`/`sha.parse`、父子命令、`-hh` 全树、bash 4.3 门禁；`sha_opt.bash` 是新增的独立文件（老版本没有）。
+
+为什么换：submodule 每次新 worktree 都要 `git submodule update --init` 走一遍网络（弱网下挂几十秒到失败），而内容本就该随 checkout 一起下来。换 subtree 后实测 `git worktree add` 4.1s 完成、零网络动作、无 `.gitmodules`、无指针要更新（`sha.common.sh` 也不再自动 init，缺了直接报怎么补）。
+
+维护方式：
+- **升级上游**：`./sha.sh vendor pull`（= `git subtree pull --prefix=vendor/sha git@github.com:diy-agent/sha.git main --squash`）—— 只在想升级时跑，需要网络
+- **改 vendor 代码**：当普通文件改 → 随本仓提交；要回推上游才用 `git subtree push --prefix=vendor/sha <url> main`
+- **首次导入（留档）**：`git subtree add --prefix=vendor/sha git@github.com:diy-agent/sha.git main --squash`
+- `vendor/` 不进本仓的 `check-exec-bit.sh`：上游自己就有 644 的 `.bash`（`sha.bash` / `examples/*`，被 source 或显式 bash 跑），已加例外
+- 弱网想从另一份 checkout 补：直接 `rsync -a --exclude .git` 覆盖 `vendor/sha/` 再正常提交
 
 ## where
 
