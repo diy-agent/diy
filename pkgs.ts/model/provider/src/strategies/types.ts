@@ -31,4 +31,14 @@ export interface ProviderStrategy {
     transformBody?(body: Record<string, unknown>, ctx: StrategyContext): Record<string, unknown>;
     /** 请求头变换（**不改原对象**；返回新对象；不改 = 不实现） */
     transformHeaders?(headers: Record<string, string>, ctx: StrategyContext): Record<string, string>;
+    /**
+     * 该端点收不收「tool 结果里的多段内容」（文本 + 图片混排）。
+     *
+     * **必须实测过才置 true**（与 transformBody 同一条纪律）：ai-sdk 的 openai-compatible
+     * 缺省按 false 处理 —— 遇到 content 输出（例如 view_image 的图片）会把它 `JSON.stringify`
+     * 成文本，`Uint8Array` 序列化出来是 `{"0":137,...}`，一张 5.9 MB 的图直接变 ~59 MB 请求体
+     * （2026-11-28 实测：opencode-go 413「Request bodies must be at most 64 MiB」，同时事件循环
+     * 卡 7s）。置 true 后按 `image_url` 数组发出（同一份图 base64 后约 8 MB）。
+     */
+    readonly multiPartToolContent?: boolean;
 }

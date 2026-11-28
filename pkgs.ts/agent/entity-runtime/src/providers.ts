@@ -18,7 +18,7 @@ import { setDefaultAutoSelectFamily } from 'node:net';
 import { dirname, join } from 'node:path';
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { bodyTransformFor, headersFor } from '@diy-agent/llm-provider/strategies';
+import { bodyTransformFor, headersFor, multiPartToolContentFor } from '@diy-agent/llm-provider/strategies';
 import {
     availableProviders,
     canSeeImages,
@@ -248,6 +248,8 @@ export function modelOf(modelKey: string, options: ModelOptions = {}): LanguageM
         apiKey,
         ...(Object.keys(headers).length === 0 ? {} : { headers }),
         ...(transformBody === undefined ? {} : { transformRequestBody: transformBody }),
+        // tool 结果里的图片：缺省 false 时 ai-sdk 会把字节 JSON 化成几十 MB 文本（413 实测）
+        ...(multiPartToolContentFor(entry.baseURL) ? { supportsMultiPartToolContent: true } : {}),
     });
     return provider(key.model) as unknown as LanguageModel;
 }

@@ -64,6 +64,16 @@ export function headersFor(
 }
 
 /**
+ * 该端点收不收 tool 结果里的多段内容（文本 + 图片）。
+ *
+ * 直接喂给 ai-sdk `createOpenAICompatible({ supportsMultiPartToolContent })`；
+ * 没实测过的端点 = false（缺省口径），别猜。
+ */
+export function multiPartToolContentFor(baseUrl: string, registry: readonly ProviderStrategy[] = STRATEGIES): boolean {
+    return strategyFor(baseUrl, registry).multiPartToolContent === true;
+}
+
+/**
  * 该端点要补的请求体变换（`undefined` = 不补，别挂一个恒等函数 —— 白复制一次对象）。
  *
  * 直接喂给 ai-sdk 的 `transformRequestBody`：`...(...)`

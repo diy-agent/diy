@@ -21,6 +21,7 @@ import {
     bodyTransformFor,
     headersFor,
     isOpencodeEndpoint,
+    multiPartToolContentFor,
     opencodeStrategy,
     passthroughStrategy,
     strategyFor,
@@ -162,6 +163,24 @@ describe('应用层只认这两个函数（bodyTransformFor / headersFor）', ()
 
     it('opencode 的默认表头与策略同源（不重抄字面量）', () => {
         expect(OPENCODE_HEADERS).toEqual({ [SESSION_HEADER]: SESSION_PLACEHOLDER });
+    });
+});
+
+describe('multiPartToolContentFor（tool 结果里的图片）', () => {
+    it('opencode 两种端点都开（实测 2026-11-28：text + image_url 数组 ⇒ 200）', () => {
+        expect(multiPartToolContentFor(OPENCODE_ZEN)).toBe(true);
+        expect(multiPartToolContentFor(OPENCODE_GO)).toBe(true);
+    });
+
+    it('没实测过的端点保持 false —— 缺省会把图片字节 JSON 化成几十 MB 文本', () => {
+        expect(multiPartToolContentFor('https://api.deepseek.com')).toBe(false);
+        expect(multiPartToolContentFor('not a url')).toBe(false);
+    });
+
+    it('登记表里只有 opencode 声明了这一项', () => {
+        expect(STRATEGIES.filter((strategy) => strategy.multiPartToolContent === true).map((s) => s.name)).toEqual([
+            'opencode',
+        ]);
     });
 });
 

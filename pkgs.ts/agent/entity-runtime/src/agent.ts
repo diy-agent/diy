@@ -6,6 +6,7 @@
 import {
     stepCountIs,
     streamText,
+    type LanguageModelUsage,
     tool,
     type Experimental_Steering,
     type LanguageModel,
@@ -75,8 +76,20 @@ export interface RunOptions {
      *   本步被插入的 steering 用户消息 + 模型产出的 assistant / tool 消息。
      */
     onStepTranscript?: (messages: ModelMessage[]) => void;
-    /** 本轮真实用量（token），用于校准压缩预算 */
+    /**
+     * 本轮**全部步**的真实用量（token）—— 计费口径（多步时是各步之和）。
+     * 不要拿它当上下文水位：40 步 × 20 万会把「20 万上下文」报成 800 万，
+     * 压缩判据会因此误触发（2026-11-28 实证：turn=102 一启动就压）。
+     */
     onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+    /**
+     * 本轮**结束时的上下文占用**（最后一步的 inputTokens）—— 压缩水位的唯一来源。
+     *
+     * 为什么不能用 `onUsage`：AI SDK 的 `result.usage` / `totalUsage` 都是**各步之和**
+     * （官方注释：sum of all step usages）；一步就把整份上下文重发一遍，求和自然到几百万。
+     * 只有 `step.usage`（每一步各自的）回答「这一次请求有多大」。
+     */
+    onContextUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
     /**
      * 本轮的**输出上限**（`max_tokens`）。不传 = 按 modelKey 推（provider 硬上限 / 场景缺省）。
      * **不要省成 undefined 再指望服务端缺省**：那会让长回答被静默截断（见 `maxOutputTokensOf`）。
@@ -282,6 +295,9 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         },
         ...(options.steering === undefined ? {} : { experimental_steering: options.steering }),
         onStepFinish: (step) => {
+            // 最后一步的用量 = 这一轮结束时的上下文占用（压缩水位）。多步之和是计费口径，
+            // 见 RunOptions.onContextUsage —— 两者不能混。
+            lastStepUsage = step.usage;
             // 这一步成功收尾 ⇒ 快照前移（失败 / 重试不进这里，下一轮会重新算同一份增量）
             options.commitDelta?.();
             if (options.onStepTranscript === undefined) return;
@@ -294,6 +310,11 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
     /** 收尾事实：截断 / 工具悬空 / 正常说完，全靠这三个值分辨（见 docs 里的 `##429`） */
     let finishReason = 'unknown';
     let steps = 0;
+    /**
+     * 最后一步的用量（每一步各自的大小）。`result.usage` 是**各步之和**，不能用它判断
+     * 「当前上下文多大」—— 那是计费口径，会随步数线性膨胀。
+     */
+    let lastStepUsage: LanguageModelUsage | undefined;
     /** 是否撞到步数上限（只在「还想继续调工具」时改写收尾原因，见循环后那段） */
     let hitStepCap = false;
 
@@ -406,6 +427,13 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
         options.onUsage?.({ inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 });
     } catch {
         // 用量拿不到不影响这一轮
+    }
+    // 上下文水位单独报：只认最后一步，不认多步求和（见 RunOptions.onContextUsage 的注释）
+    if (lastStepUsage !== undefined) {
+        options.onContextUsage?.({
+            inputTokens: lastStepUsage.inputTokens ?? 0,
+            outputTokens: lastStepUsage.outputTokens ?? 0,
+        });
     }
 
     // 撞到步数上限：只有「上游还想继续调工具」（finish=tool-calls）才算"是被上限掐停的"。
