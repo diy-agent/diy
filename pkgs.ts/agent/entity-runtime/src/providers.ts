@@ -18,7 +18,7 @@ import { setDefaultAutoSelectFamily } from 'node:net';
 import { dirname, join } from 'node:path';
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { bodyTransformFor, headersFor, multiPartToolContentFor } from '@diy-agent/llm-provider/strategies';
+import { openAiCompatibleSettingsFor } from '@diy-agent/llm-provider/strategies';
 import {
     availableProviders,
     canSeeImages,
@@ -233,23 +233,19 @@ export function modelOf(modelKey: string, options: ModelOptions = {}): LanguageM
         );
     }
     const apiKey = accountKey(home, key, env);
-    // 端点 / 私有 header 全按 entry.baseURL 的 host 认领（opencode 的 `x-opencode-session` 就是
-    // 这么来的：以前在这里写死成 `'x-opencode-session': \`diy2-${Date.now()}\``，等于把网关
-    // 约定抄进应用层，加第二个网关就得再抄一遍）
-    const headers = options.sessionId === undefined ? {} : headersFor(entry.baseURL, { sessionId: options.sessionId });
-    // 请求体变换（该端点要补的字段）：opencode 网关的 `prompt_cache_retention` 就是从这里进去的。
-    // 缺了它自动前缀缓存只活 ~5 分钟，跨轮（间隔常 >5min）整段重算 —— 实测 120k prompt
-    // 差 119,936 命中 tokens。`undefined` = 该端点没验证过这些字段 ⇒ 什么都不补
-    // （**不挂恒等函数**，白复制一次 body）。
-    const transformBody = bodyTransformFor(entry.baseURL);
+    // 端点 / 私有 header / 请求体补字段 / tool 结果多段内容**全按 host 认领**
+    // （真源在 `@diy-agent/llm-provider/strategies`：opencode 的 `x-opencode-session`、
+    // `prompt_cache_retention`、`supportsMultiPartToolContent` 都在那里）。
+    // 这里只 spread 策略给的设置，不认识任何具体字段 —— 加网关不改这个文件。
+    const settings = openAiCompatibleSettingsFor(
+        entry.baseURL,
+        options.sessionId === undefined ? {} : { sessionId: options.sessionId },
+    );
     const provider = createOpenAICompatible({
         name: key.provider,
         baseURL: entry.baseURL,
         apiKey,
-        ...(Object.keys(headers).length === 0 ? {} : { headers }),
-        ...(transformBody === undefined ? {} : { transformRequestBody: transformBody }),
-        // tool 结果里的图片：缺省 false 时 ai-sdk 会把字节 JSON 化成几十 MB 文本（413 实测）
-        ...(multiPartToolContentFor(entry.baseURL) ? { supportsMultiPartToolContent: true } : {}),
+        ...settings,
     });
     return provider(key.model) as unknown as LanguageModel;
 }

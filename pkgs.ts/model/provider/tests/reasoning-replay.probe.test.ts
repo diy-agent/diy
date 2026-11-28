@@ -33,7 +33,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { streamText, type ModelMessage } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { ensureReasoningReplay } from '../src/reasoning-replay.js';
+import { ensureReasoningReplay } from '../src/strategies/models/deepseek/reasoning-replay.js';
 
 /** 真实会话里的两种 assistant 形态（取自 projects_4_tasks_402） */
 const withReasoning = (id: string): ModelMessage => ({

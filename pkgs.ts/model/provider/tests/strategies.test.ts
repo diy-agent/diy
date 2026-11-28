@@ -22,6 +22,7 @@ import {
     headersFor,
     isOpencodeEndpoint,
     multiPartToolContentFor,
+    openAiCompatibleSettingsFor,
     opencodeStrategy,
     passthroughStrategy,
     strategyFor,
@@ -166,6 +167,21 @@ describe('应用层只认这两个函数（bodyTransformFor / headersFor）', ()
     });
 });
 
+describe('openAiCompatibleSettingsFor（common code 只 spread 一个对象）', () => {
+    it('opencode：headers / transformRequestBody / multiPartToolContent 一次给齐', () => {
+        const settings = openAiCompatibleSettingsFor(OPENCODE_GO, { sessionId: 's1' });
+        expect(settings.headers).toEqual({ [SESSION_HEADER]: 's1' });
+        expect(settings.transformRequestBody?.({ model: 'm' })).toMatchObject({
+            prompt_cache_retention: PROMPT_CACHE_RETENTION,
+        });
+        expect(settings.supportsMultiPartToolContent).toBe(true);
+    });
+
+    it('直连上游：空对象 —— 该端点没有约定，就一个键都不多', () => {
+        expect(openAiCompatibleSettingsFor('https://api.deepseek.com', { sessionId: 's1' })).toEqual({});
+    });
+});
+
 describe('multiPartToolContentFor（tool 结果里的图片）', () => {
     it('opencode 两种端点都开（实测 2026-11-28：text + image_url 数组 ⇒ 200）', () => {
         expect(multiPartToolContentFor(OPENCODE_ZEN)).toBe(true);
@@ -185,9 +201,18 @@ describe('multiPartToolContentFor（tool 结果里的图片）', () => {
 });
 
 describe('判据 2：策略里不许出现 if (provider === ...)（静态扫描）', () => {
-    const sources = import.meta.glob('../src/strategies/*.ts', { query: '?raw', import: 'default', eager: true });
+    // 只扫 provider 网关策略（providers/）与注册表：models/ 下的差异按模型身份认领，
+    // 文件头注释里出现 `provider === "deepseek"` 是允许的。
+    const sources = {
+        ...import.meta.glob('../src/strategies/*.ts', { query: '?raw', import: 'default', eager: true }),
+        ...import.meta.glob('../src/strategies/providers/*/index.ts', {
+            query: '?raw',
+            import: 'default',
+            eager: true,
+        }),
+    };
 
-    it('每个策略文件都无 provider 名分支', () => {
+    it('每个 provider 策略文件都无 provider 名分支', () => {
         const files = Object.keys(sources);
         expect(files.length).toBeGreaterThanOrEqual(5); // types / index / opencode / venice / passthrough
         for (const [file, source] of Object.entries(sources)) {

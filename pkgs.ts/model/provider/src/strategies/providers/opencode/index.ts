@@ -1,4 +1,4 @@
-// strategies/opencode.ts — opencode 网关（zen / go）的私有约定（##491，从 diy-app 搬来）
+// strategies/providers/opencode/index.ts — opencode 网关（zen / go）的私有约定（##491，从 diy-app 搬来）
 //
 // 两件都是网关自己的规矩，直连上游没有：
 //   ① 会话路由 header `x-opencode-session`（缺了直接 400 MissingSessionID）
@@ -15,7 +15,7 @@
 //
 // 纯函数，禁止 import node:*（renderer 会打进包）。
 
-import type { ProviderStrategy, StrategyContext } from './types.js';
+import type { ProviderStrategy, StrategyContext } from '../../types.js';
 
 /** 网关要求的会话路由 header（缺了直接 400 `MissingSessionID`） */
 export const SESSION_HEADER = 'x-opencode-session';

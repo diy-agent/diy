@@ -1,4 +1,4 @@
-// strategies/venice.ts — venice 占位（##491，**故意什么都不做**）
+// strategies/providers/venice/index.ts — venice 占位（##491，**故意什么都不做**）
 //
 // 事实：opencode 侧源码的 `packages/ai/src/protocols/venice-chat.ts` 里也有 `prompt_cache_retention`。
 // 但我们**没在 venice 上实测过**（字段名 / 取值 / 会不会 400 都不知道）。
@@ -10,7 +10,7 @@
 // 为什么不留空文件：注册表要能读到它（`index.ts` 里已经登记），否则「加新 provider 只需新增文件 +
 // 注册一行」这条判据就没有第二个实例可对照。
 
-import type { ProviderStrategy } from './types.js';
+import type { ProviderStrategy } from '../../types.js';
 
 export const veniceStrategy: ProviderStrategy = {
     name: 'venice',

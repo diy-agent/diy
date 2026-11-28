@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ModelMessage } from 'ai';
-import { ensureReasoningReplay, isDeepSeekWire } from '../src/reasoning-replay.js';
+import { ensureReasoningReplay, isDeepSeekWire } from '../src/strategies/models/deepseek/reasoning-replay.js';
 
 const assistantToolCall = (id: string): ModelMessage => ({
     role: 'assistant',

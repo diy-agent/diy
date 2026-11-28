@@ -9,11 +9,17 @@
 // const headers = headersFor(baseUrl, { sessionId });   // 该端点要补的头；{} = 不补
 // ```
 //
-// 加新 provider = **新增一个策略文件 + 在 STRATEGIES 里加一行**（顺序即优先级）。
+// 目录约定：
+//   · providers/<name>/index.ts —— 一个网关一行：按 **host** 认领的私有约定
+//    （会话 header / 网关专属请求字段 / tool 结果多段内容）
+//   · models/<family>/…          —— 模型族差异：按 **模型身份** 认领（如 deepseek 的
+//     reasoning_content 补空串）
+//
+// 加新 provider = **新增一个目录 + 在 STRATEGIES 里加一行**（顺序即优先级）。
 
-import { opencodeStrategy } from './opencode.js';
-import { passthroughStrategy } from './passthrough.js';
-import { veniceStrategy } from './venice.js';
+import { opencodeStrategy } from './providers/opencode/index.js';
+import { passthroughStrategy } from './providers/passthrough/index.js';
+import { veniceStrategy } from './providers/venice/index.js';
 import type { ProviderStrategy, StrategyContext } from './types.js';
 
 export type { ProviderStrategy, StrategyContext } from './types.js';
@@ -26,9 +32,9 @@ export {
     opencodeStrategy,
     withPromptCacheRetention,
     withSessionHeader,
-} from './opencode.js';
-export { passthroughStrategy } from './passthrough.js';
-export { veniceStrategy } from './venice.js';
+} from './providers/opencode/index.js';
+export { passthroughStrategy } from './providers/passthrough/index.js';
+export { veniceStrategy } from './providers/venice/index.js';
 
 /**
  * 注册表：**按顺序匹配，第一个命中的生效**；都没命中用 passthrough。
@@ -87,4 +93,37 @@ export function bodyTransformFor(
     const transform = strategy.transformBody;
     if (transform === undefined) return undefined;
     return (body: Record<string, unknown>) => transform(body, ctx);
+}
+
+/**
+ * 喂给 `@ai-sdk/openai-compatible` 的**非通用设置**（该端点才有的约定）。
+ *
+ * 存在的理由：`supportsMultiPartToolContent` / `prompt_cache_retention` 这类字段是
+ * **某个 provider 的协议差异**，不是应用层的事。调用方只 spread 这一个对象，
+ * common code 里不出现任何具体字段名，也不出现按 provider 名写死的 if / switch。
+ *
+ * 形状照 `createOpenAICompatible` 的入参：缺省的键**不出现**（exactOptionalPropertyTypes）。
+ */
+export interface OpenAiCompatibleSettings {
+    /** 该端点要求的额外 header（已按 ctx 填好 `$SESSION` 那类占位符） */
+    readonly headers?: Record<string, string>;
+    /** 该端点要补的请求体字段（不改原对象） */
+    readonly transformRequestBody?: (body: Record<string, unknown>) => Record<string, unknown>;
+    /** 该端点收 tool 结果里的多段内容（文本 + 图片） */
+    readonly supportsMultiPartToolContent?: true;
+}
+
+export function openAiCompatibleSettingsFor(
+    baseUrl: string,
+    ctx: StrategyContext = {},
+    registry: readonly ProviderStrategy[] = STRATEGIES,
+): OpenAiCompatibleSettings {
+    const headers = headersFor(baseUrl, ctx, registry);
+    const transformRequestBody = bodyTransformFor(baseUrl, ctx, registry);
+    const multiPart = multiPartToolContentFor(baseUrl, registry);
+    return {
+        ...(Object.keys(headers).length === 0 ? {} : { headers }),
+        ...(transformRequestBody === undefined ? {} : { transformRequestBody }),
+        ...(multiPart ? { supportsMultiPartToolContent: true as const } : {}),
+    };
 }
