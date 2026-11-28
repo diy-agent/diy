@@ -100,14 +100,22 @@ function pruneBackups(dbPath: string): void {
     }
 }
 
-/** 迁移后校验：没有漏搬的条目；每条引用的文件真的在、字节数与条目一致 */
-function verifyOffload(store: ReturnType<typeof openStore>, dbPath: string): string {
+/**
+ * 迁移后校验：没有漏搬的条目；每条引用的文件在、字节数与条目一致。
+ *
+ * 两类问题分开处置：
+ *   · **还有 >64KB 的正文没搬** ⇒ 硬失败（迁移本身没做完，不能假装迁过）；
+ *   · **引用文件缺失 / 字节对不上** ⇒ 只报警告（历史文件可能是在副本上演练时没拷过来，
+ *     或早就被人删了 —— 它不改变「迁移已完成」这个事实，没有理由把人拦在迁移页）。
+ */
+function verifyOffload(store: ReturnType<typeof openStore>, dbPath: string): { ok: string; missing: string[] } {
     const left = toolOutputOffloadPlan(store.db);
     if (left.rows > 0) throw new Error(`外置校验失败：还有 ${String(left.rows)} 条 >64KB 的正文没搬走`);
     const rows = store.db
         .prepare("SELECT item FROM entity_items WHERE item LIKE '%\"output\":{\"ref\"%'")
         .all() as Array<{ item: string }>;
     let checked = 0;
+    const missing: string[] = [];
     for (const row of rows) {
         let ref: { ref?: unknown; bytes?: unknown } | undefined;
         try {
@@ -117,14 +125,18 @@ function verifyOffload(store: ReturnType<typeof openStore>, dbPath: string): str
         }
         if (ref === undefined || typeof ref.ref !== 'string') continue;
         const file = join(dirname(dbPath), ref.ref);
-        if (!existsSync(file)) throw new Error(`外置校验失败：文件不见了 ${ref.ref}`);
+        if (!existsSync(file)) {
+            missing.push(ref.ref);
+            continue;
+        }
         const size = statSync(file).size;
-        if (typeof ref.bytes === 'number' && size !== ref.bytes) {
-            throw new Error(`外置校验失败：${ref.ref} 大小 ${String(size)} ≠ 记录 ${String(ref.bytes)}`);
+        if (typeof ref.bytes === 'number' && size !== Number(ref.bytes)) {
+            missing.push(`${ref.ref}（大小 ${String(size)} ≠ 记录 ${String(ref.bytes)}）`);
+            continue;
         }
         checked += 1;
     }
-    return checked === 0 ? '无外置条目' : `${String(checked)} 条外置引用可读、字节数一致`;
+    return { ok: checked === 0 ? '无外置条目' : `${String(checked)} 条外置引用可读、字节数一致`, missing };
 }
 
 /** VACUUM 回收空闲页（必须独占库、且不在事务里 —— 调用时 store 已关） */
@@ -174,7 +186,17 @@ export function runMigrationWorker(dbPath: string | undefined): void {
         });
 
         // ③ 校验：迁移步骤 done ≠ 数据是对的
-        const offloadCheck = verifyOffload(store, dbPath);
+        const verify = verifyOffload(store, dbPath);
+        if (verify.missing.length > 0) {
+            log(
+                `外置校验：${String(verify.missing.length)} 个引用文件缺失/大小不符（不拦启动，界面会显示预览）` +
+                    `：${verify.missing.slice(0, 3).join('、')}${verify.missing.length > 3 ? ' …' : ''}`,
+            );
+        }
+        const offloadCheck =
+            verify.missing.length === 0
+                ? verify.ok
+                : `${verify.ok}；${String(verify.missing.length)} 个文件缺失`;
 
         // 迁移后才有的结论：行数与孤儿检查（迁移页的「结果」那张表就是它）
         const summary = {

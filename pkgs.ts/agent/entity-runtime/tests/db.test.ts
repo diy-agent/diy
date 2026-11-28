@@ -579,6 +579,21 @@ describe('unit（需求账本树的节点）', () => {
         expect(store.itemsByIds(['', ''])).toEqual([]);
     });
 
+    it('itemsByIds 走表达式索引，不是全表扫（真库 4.4 万行：0.9s → 0.01s）', () => {
+        const store = openStore(':memory:');
+        // 判据只看查询计划：`SEARCH ... USING INDEX items_item_id` = 索引寻址；
+        // `SCAN entity_items` = 又退回全表扫（这条断言就是防回退）。
+        const plan = (
+            store.db
+                .prepare("EXPLAIN QUERY PLAN SELECT seq, item FROM entity_items WHERE json_extract(item, '$.id') IN (?)")
+                .all('u-1') as Array<{ detail: string }>
+        )
+            .map((row) => row.detail)
+            .join('\n');
+        expect(plan).toContain('items_item_id');
+        expect(plan).not.toMatch(/^SCAN entity_items$/m);
+    });
+
     it('accept（怎么算做完）落库、能改、改 title 不会把它抹掉', () => {
         const store = openStore(':memory:');
         const unit = store.saveUnit({

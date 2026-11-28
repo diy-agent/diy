@@ -850,6 +850,14 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             json_extract(item, '$.turnId'),
             json_extract(item, '$.data.botId')
         ) WHERE json_extract(item, '$.data.kind') = 'interrupted';
+        -- 按条目 id 批量取（itemsByIds：WHERE json_extract(item,'$.id') IN (…)）。
+        -- 需求板每次轮询都要把 source（「来自哪句人话」）解回原话，而 item 的 id 只在 json 里 ——
+        -- 没有这条索引就是**全表扫 43,933 行 / 150MB**：真库实测 50 个 id 0.86~1.18s，
+        -- 建完 0.01s（~100 倍）。部分索引只收有 id 的行（全表都是），体积 ~1.5MB。
+        -- WHERE 必须与 itemsByIds 的过滤条件一致；查询不加 entity_id 条件（来源可能跨房间）。
+        CREATE INDEX IF NOT EXISTS items_item_id ON entity_items(
+            json_extract(item, '$.id')
+        ) WHERE json_extract(item, '$.id') IS NOT NULL;
         CREATE TABLE IF NOT EXISTS room_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_id TEXT NOT NULL,

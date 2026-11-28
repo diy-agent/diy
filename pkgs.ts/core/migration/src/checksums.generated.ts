@@ -14,6 +14,7 @@ export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
     'drop-unit-step': '383e1b26dabdd330', /* 019-drop-unit-step.ts */
     'entity-bots': 'a9227911adc43f70', /* 004-entity-bots.ts */
     'fold-bots': 'c2da4d530e84a40c', /* 014-fold-bots.ts */
+    'item-id-index': '292d6b8b220832dc', /* 022-item-id-index.ts */
     'legacy-journal': '7d3603fb5ed0f719', /* 015-legacy-journal.ts */
     'legacy-rooms': 'ee709fb164247179', /* 013-legacy-rooms.ts */
     'offload-tool-outputs': '351bacd7c29e61ca', /* 021-offload-tool-outputs.ts */
