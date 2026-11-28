@@ -45,26 +45,18 @@ export function TurnFooter({
     const settle = turnSettleOf(entry.turn);
     const startedAt = entry.turn?.startedAt ?? entry.at;
     const now = useNow(live);
-    // 原始数据（用户 2026-11-27：「轮次状态栏需要 copy 操作按钮，可以复制原始数据文本，
-    // 再加一个源代码按钮可以看原始文本」）—— 就是这一轮在会话状态里的那几样事实：
-    // 轮次账 + 这一条的 parts。不查服务端：界面画的本来就是这些，脱开界面另拼一份会两处不一致。
-    const raw = React.useMemo(
+    // 这一轮的**结论正文**（用户 2026-11-28 澄清：「源代码按钮不是显示轮次源代码，
+    // 只是需要当前结论的内容，用来做沟通交流用的」）—— 就是把本轮 bot 说的话拼起来，
+    // 不带 tool 调用、不带 usage / turnId 那些元数据：它要能直接粘给别人看。
+    const conclusion = React.useMemo(
         () =>
-            JSON.stringify(
-                {
-                    turnId: entry.turnId,
-                    at: entry.at,
-                    author: entry.author,
-                    turn: entry.turn,
-                    parts: entry.parts,
-                    deliveries: entry.deliveries,
-                },
-                null,
-                2,
-            ),
+            entry.parts
+                .filter((part): part is Extract<typeof part, { kind: 'text' }> => part.kind === 'text')
+                .map((part) => part.text)
+                .join('\n\n'),
         [entry],
     );
-    const [showRaw, setShowRaw] = React.useState(false);
+    const [showConclusion, setShowConclusion] = React.useState(false);
 
     // 既没在跑、也没有结算事实（老数据 / 快照重放）：这一行不出现 —— 空行比假数据更吵
     if (!live && settle === undefined) return null;
@@ -112,8 +104,30 @@ export function TurnFooter({
                     </>
                 )}
             </div>
-            <div className="flex shrink-0 items-center gap-0.5">
-                <span className="tabular-nums text-muted-foreground" title={endTitleOf(entry)}>
+            {/* 操作在**左**、统计在**右**（用户 2026-11-28：按钮放最左边，统计信息放右侧）——
+                按钮是可点的东西，贴着这一轮的正文左缘更容易找到；数字是阅读信息，靠右不挡眼。 */}
+            {!live && conclusion !== '' && (
+                <div className="flex shrink-0 items-center gap-0.5">
+                    <CopyButton
+                        text={conclusion}
+                        title="复制这一轮的结论正文"
+                        className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    />
+                    <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => setShowConclusion((value) => !value)}
+                        title={showConclusion ? '收起结论' : '看这一轮的结论正文'}
+                        aria-label="看这一轮的结论正文"
+                        aria-expanded={showConclusion}
+                        className="text-muted-foreground"
+                    >
+                        <Code className="size-3" />
+                    </Button>
+                </div>
+            )}
+            <div className="ml-auto flex shrink-0 items-center gap-0.5 tabular-nums text-muted-foreground">
+                <span title={endTitleOf(entry)}>
                     {live
                         ? `已用 ${elapsedText(Math.max(0, now - startedAt))}`
                         : entry.turn?.endedAt === undefined
@@ -123,33 +137,12 @@ export function TurnFooter({
                             // 本该写「22:20」的写成「11-24 22:20」。
                             `结束于 ${formatClock(entry.turn.endedAt, entry.turn.endedAt)}`}
                 </span>
-                {/* 原始数据与源码：收尾后才给（跑着的轮没有定论，复制下来只会是半截） */}
-                {!live && (
-                    <>
-                        <CopyButton
-                            text={raw}
-                            title="复制这一轮的原始数据（JSON）"
-                            className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                        />
-                        <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() => setShowRaw((value) => !value)}
-                            title={showRaw ? '收起原始文本' : '看原始文本（源代码）'}
-                            aria-label="看原始文本"
-                            aria-expanded={showRaw}
-                            className="text-muted-foreground"
-                        >
-                            <Code className="size-3" />
-                        </Button>
-                    </>
-                )}
             </div>
         </div>
-        {showRaw && (
-            <pre className="mt-1 max-h-72 overflow-auto rounded border border-border bg-muted/40 p-2 text-xs leading-4 whitespace-pre-wrap break-all">
-                {raw}
-            </pre>
+        {showConclusion && (
+            <div className="mt-1 max-h-72 overflow-auto rounded border border-border bg-muted/40 p-2 text-xs leading-5 whitespace-pre-wrap break-words select-text">
+                {conclusion}
+            </div>
         )}
         </>
     );
