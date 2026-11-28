@@ -4,7 +4,6 @@
     "workspaces": [
         "pkgs.ts/*/*",
         "pkgs.ts/flow",
-        "pkgs.ts/room",
         "apps/*"
     ],
     "devDependencies": {
