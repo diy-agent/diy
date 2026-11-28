@@ -413,6 +413,10 @@ _check_full_body() {
   # 异常码护栏（##394）：新增 `throw new` 必须带 code（<域>/<kebab-case>）；存量按 LEGACY_THROW_BASELINE 比例递减
   #（实现见 scripts/check-error-code.sh，判据见 rule.err-triage；**别改成整文件豁免** —— 那会让新代码永远不被拦）
   run bash scripts/check-error-code.sh
+  # 文档状态机 + 数字出处护栏（2026-11-28）：状态行必须有（存量棘轮）、
+  # 「唯一口径」这类权威话术只许出现在定稿、stats 块要与库一致、手抄库表数字不许新增。
+  # 实现见 scripts/check-docs.mjs；状态写 `> 状态：草稿 | 候选 | 定稿`
+  run node scripts/check-docs.mjs
   # 包可见性白名单：对外发布只有 @diy-agent/rpc 与 @diy-agent/ui（不许 private），其余必须 private；
   # 且对外包不许依赖 @diy-agent/* 内部包（否则使用时 registry 找不到）。实现见 scripts/check-pkg-visibility.mjs
   run node scripts/check-pkg-visibility.mjs
@@ -453,6 +457,15 @@ _check_full_body() {
   run npx tsx scripts/check-specs.mts
 }
 # 全仓唯一自动修复入口：格式化 + lint 可修项，能修的全修
+sha.def "doc-stats" \
+  --desc "重写文档里的 stats 块（库表数字 + 表名 + 查询 + 时刻）；--list 看有哪些查询"
+
+# 文档里的库表数字一律**生成**，不手写（2026-11-28 事故：确认稿把 41/46/34 三个来自不同表、
+# 不同时刻的数字当事实，迁移按它排会漏 10 个房）。判据与用法见 scripts/doc-stats.mjs 头注。
+doc-stats() {
+    run node scripts/doc-stats.mjs "$@"
+}
+
 sha.def "fix" \
   --desc "格式化 + lint 自动修（oxfmt / oxlint --fix）"
 
