@@ -248,7 +248,13 @@ export type Item =
           data: {
               name: string;
               args?: unknown;
+              /**
+               * 结果**正文**。超阈值（64KB）时不再放在这里 —— 正文落库外、条目只留 `output`。
+               * 两条判据：有 `result` = 正文在条目里（小输出 / 老数据）；有 `output` = 正文在文件里。
+               */
               result?: unknown;
+              /** 库外原文引用（见 `ToolOutputRef`）；与 `result` 互斥 */
+              output?: ToolOutputRef;
               state: 'running' | 'ok' | 'error';
               /**
                * 失败原因（`tool.completed` 的 `error`，已截断）。
@@ -261,6 +267,26 @@ export type Item =
           };
       })
     | (ItemBase & { type: 'error'; data: { message: string; botId?: string } });
+
+// ── 工具输出的库外引用（2026-11-28）──────────────────────────
+
+/**
+ * 工具输出原文落在库外时的引用。
+ *
+ * 为什么要有它：`entity_items` 里 `tool` 条目独占 145MB（真库，5 条 ≥4MB 吃 60MB），
+ * 而这些东西没有查询价值 —— 界面要「跑了什么、成没成、头尾几行」，模型要「需要时自己 read 回取」。
+ * 目录：`<数据根>/runs/tool/<YYYY-MM-DD>/<roomId>/<toolCallId>.txt`（按日分区，GC 就是删老目录）。
+ */
+export interface ToolOutputRef {
+    /** 相对**数据根**的路径（数据根搬走后引用仍有效） */
+    ref: string;
+    bytes: number;
+    lines: number;
+    /** 超阈值才外置，所以有 ref 时恒为 true（留着让 UI 不必自己算） */
+    truncated: boolean;
+    /** 头尾各 40 行，UI 直接能画；全文按 ref 去取 */
+    preview: { head: string; tail: string };
+}
 
 // ── 投递（消息 → bot 的到达状态）────────────────────────────────
 

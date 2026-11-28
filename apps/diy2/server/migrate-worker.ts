@@ -11,16 +11,38 @@
 //   - 生产：产物只有 index.mjs 一个文件，所以复用入口 —— `node index.mjs --migrate-worker <db>`
 //     （见 ./index.ts 顶部的标志分支）。以前这里假设生产也能 spawn tsx + .ts，
 //     结果发布产物里两者都不存在，迁移页永远起不了子进程（2026-11-27 实测）。
+//
+// 2026-11-28 起它不只跑 schema 迁移：几条**数据迁移**（工具输出外置）也在这里跑，所以
+// 这个进程同时负责迁移前**自动备份**、迁移后**校验**与 **VACUUM** —— 三者都必须独占库，
+// 而且任何一步失败都要停在原地（页面看得见），不能带着半迁移的库启动。
 
-import { MIGRATION_STEPS, openStore, type MigrationStepEvent } from '@diy-agent/entity-runtime';
+import { copyFileSync, existsSync, readdirSync, statSync, statfsSync, unlinkSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+import { basename, dirname, join } from 'node:path';
+
+import {
+    MIGRATION_STEPS,
+    openStore,
+    toolOutputOffloadPlan,
+    type MigrationStepEvent,
+} from '@diy-agent/entity-runtime';
 
 const MARK = '@@';
 
 /** index.mjs 复用入口时的标志：命中就当迁移子进程跑，不再正常启动 */
 export const MIGRATE_WORKER_FLAG = '--migrate-worker';
 
+/** 自动备份保留几份（只删本进程起的 `bak-migrate-*`，不碰历史手工备份） */
+const KEEP_BACKUPS = 3;
+/** 空闲页超过这个量才 VACUUM（小库、刚建库不值得停一下做全量重写） */
+const VACUUM_MIN_BYTES = 8 * 1024 * 1024;
+
 function emit(payload: unknown): void {
     process.stdout.write(`${MARK}${JSON.stringify(payload)}\n`);
+}
+
+function log(text: string): void {
+    emit({ kind: 'log', text });
 }
 
 function countOf(store: ReturnType<typeof openStore>, table: string): number {
@@ -29,6 +51,102 @@ function countOf(store: ReturnType<typeof openStore>, table: string): number {
     } catch {
         return -1;
     }
+}
+
+/** 迁移前备份：`<db>.bak-migrate-<YYYYMMDD-HHMMSS>`；空间不够就不开始（宁可不动库） */
+function backupBeforeMigrate(dbPath: string): string | undefined {
+    if (!existsSync(dbPath)) return undefined; // 新库：没有可备份的东西
+    const bytes = statSync(dbPath).size;
+    try {
+        const stat = statfsSync(dirname(dbPath));
+        const free = Number(stat.bavail) * Number(stat.bsize);
+        // 备份 + VACUUM 的临时文件，最坏要再放下一整份库
+        if (free < bytes * 2.1) {
+            throw new Error(
+                `磁盘不足：需要约 ${String(Math.ceil((bytes * 2.1) / 1048576))}MB，剩余 ${String(
+                    Math.floor(free / 1048576),
+                )}MB`,
+            );
+        }
+    } catch (error) {
+        if (error instanceof Error && error.message.startsWith('磁盘不足')) throw error;
+        // statfs 不可用不拦（保守放行：备份失败会自己报错）
+    }
+    const d = new Date();
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    // 本地时间（备份文件名是给人看的；UTC 会让人对不上「我刚才什么时候点的」）
+    const stamp =
+        `${String(d.getFullYear())}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+        `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    const target = `${dbPath}.bak-migrate-${stamp}`;
+    copyFileSync(dbPath, target);
+    log(`已备份：${basename(target)}（${(bytes / 1048576).toFixed(1)}MB）`);
+    pruneBackups(dbPath);
+    return target;
+}
+
+function pruneBackups(dbPath: string): void {
+    try {
+        const dir = dirname(dbPath);
+        const prefix = `${basename(dbPath)}.bak-migrate-`;
+        const old = readdirSync(dir)
+            .filter((name) => name.startsWith(prefix))
+            .sort()
+            .reverse()
+            .slice(KEEP_BACKUPS);
+        for (const name of old) unlinkSync(join(dir, name));
+    } catch {
+        /* 备份清理是旁路，失败不影响迁移 */
+    }
+}
+
+/** 迁移后校验：没有漏搬的条目；每条引用的文件真的在、字节数与条目一致 */
+function verifyOffload(store: ReturnType<typeof openStore>, dbPath: string): string {
+    const left = toolOutputOffloadPlan(store.db);
+    if (left.rows > 0) throw new Error(`外置校验失败：还有 ${String(left.rows)} 条 >64KB 的正文没搬走`);
+    const rows = store.db
+        .prepare("SELECT item FROM entity_items WHERE item LIKE '%\"output\":{\"ref\"%'")
+        .all() as Array<{ item: string }>;
+    let checked = 0;
+    for (const row of rows) {
+        let ref: { ref?: unknown; bytes?: unknown } | undefined;
+        try {
+            ref = (JSON.parse(row.item) as { data?: { output?: { ref?: unknown; bytes?: unknown } } }).data?.output;
+        } catch {
+            continue;
+        }
+        if (ref === undefined || typeof ref.ref !== 'string') continue;
+        const file = join(dirname(dbPath), ref.ref);
+        if (!existsSync(file)) throw new Error(`外置校验失败：文件不见了 ${ref.ref}`);
+        const size = statSync(file).size;
+        if (typeof ref.bytes === 'number' && size !== ref.bytes) {
+            throw new Error(`外置校验失败：${ref.ref} 大小 ${String(size)} ≠ 记录 ${String(ref.bytes)}`);
+        }
+        checked += 1;
+    }
+    return checked === 0 ? '无外置条目' : `${String(checked)} 条外置引用可读、字节数一致`;
+}
+
+/** VACUUM 回收空闲页（必须独占库、且不在事务里 —— 调用时 store 已关） */
+function vacuum(dbPath: string): { before: number; after: number } | undefined {
+    const before = statSync(dbPath).size;
+    const db = new DatabaseSync(dbPath);
+    try {
+        const pageSize = Number((db.prepare('PRAGMA page_size').get() as { page_size: number }).page_size);
+        const free = Number((db.prepare('PRAGMA freelist_count').get() as { freelist_count: number }).freelist_count);
+        const freeBytes = pageSize * free;
+        if (freeBytes < VACUUM_MIN_BYTES) {
+            log(`空闲页只有 ${(freeBytes / 1048576).toFixed(1)}MB，跳过 VACUUM`);
+            return undefined;
+        }
+        log(`VACUUM：回收约 ${(freeBytes / 1048576).toFixed(1)}MB 空闲页（需几秒）…`);
+        db.exec('VACUUM');
+    } finally {
+        db.close();
+    }
+    const after = statSync(dbPath).size;
+    log(`VACUUM 完成：${(before / 1048576).toFixed(1)}MB → ${(after / 1048576).toFixed(1)}MB`);
+    return { before, after };
 }
 
 /** 真干活的那部分；同步跑完（失败时置 exitCode=1 并把栈写 stderr） */
@@ -43,11 +161,20 @@ export function runMigrationWorker(dbPath: string | undefined): void {
 
     const started = Date.now();
     let failed: string | undefined;
+    let store: ReturnType<typeof openStore> | undefined;
 
     try {
-        const store = openStore(dbPath, {
+        // ① 备份：数据迁移会改写历史条目，没有退路就不开始
+        const backup = backupBeforeMigrate(dbPath);
+        const dbBytesBefore = existsSync(dbPath) ? statSync(dbPath).size : 0;
+
+        // ② 迁移（同步；含数据迁移，进度经 onMigrationStep 逐条报出去）
+        store = openStore(dbPath, {
             onMigrationStep: (event: MigrationStepEvent) => emit({ kind: 'step', event }),
         });
+
+        // ③ 校验：迁移步骤 done ≠ 数据是对的
+        const offloadCheck = verifyOffload(store, dbPath);
 
         // 迁移后才有的结论：行数与孤儿检查（迁移页的「结果」那张表就是它）
         const summary = {
@@ -75,12 +202,37 @@ export function runMigrationWorker(dbPath: string | undefined): void {
             }
         })();
 
-        emit({ kind: 'summary', summary, orphanSessions, durationMs: Date.now() - started });
+        // ④ 关库后才能 VACUUM（独占 + 不能有事务）；失败只降级成日志，不回滚已完成的迁移
         store.db.close();
+        store = undefined;
+        let vacuumed: { before: number; after: number } | undefined;
+        try {
+            vacuumed = vacuum(dbPath);
+        } catch (error) {
+            log(`VACUUM 失败（迁移已完成，空间暂未回收）：${error instanceof Error ? error.message : String(error)}`);
+        }
+
+        emit({
+            kind: 'summary',
+            summary,
+            orphanSessions,
+            offloadCheck,
+            backup,
+            dbBytesBefore,
+            dbBytesAfter: existsSync(dbPath) ? statSync(dbPath).size : dbBytesBefore,
+            vacuumed,
+            durationMs: Date.now() - started,
+        });
     } catch (error) {
         failed = error instanceof Error ? (error.stack ?? error.message) : String(error);
         emit({ kind: 'error', message: error instanceof Error ? error.message : String(error) });
         process.exitCode = 1;
+    } finally {
+        try {
+            store?.db.close();
+        } catch {
+            /* 已关 */
+        }
     }
 
     if (failed !== undefined) process.stderr.write(`${failed}\n`);

@@ -8,6 +8,7 @@
 //     而不是把所有文本并成一块、永远排在工具前面。
 
 import type { AgentEvent, Author, Item } from './types';
+import type { createOutputStore } from './output-store';
 
 let counter = 0;
 export const nextId = (prefix: string): string => `${prefix}-${++counter}`;
@@ -43,7 +44,13 @@ export class Projector {
          * 「用的是哪个模型」只在 `log/app/*.log` 里有 —— 而换模型排查时那正是第一需要的字段
          *（同一条消息可能配 3 层 modelKey）。
          */
-        private readonly meta: { modelKey?: string } = {},
+        private readonly meta: {
+            modelKey?: string;
+            /** 工具输出外置用：这个房间的 id（分目录）与投递层同一个阈值 64KB */
+            roomId?: string;
+            /** 不传 = 一切留在条目里（测试 / 无数据根的宿主） */
+            output?: ReturnType<typeof createOutputStore>;
+        } = {},
     ) {}
 
     /**
@@ -206,6 +213,12 @@ export class Projector {
                 const current = this.items.get(id);
                 if (current === undefined || current.type !== 'tool') return [];
                 const failed = event.error !== undefined;
+                // 结果正文超阈值 → 落库外，条目只留引用 + 头尾预览（2026-11-28）。
+                // 只在成功、且原文是**字符串**时外置：结构化结果（图片 / 对象）本来就小，搬走只会更麻烦。
+                const offloaded =
+                    !failed && typeof event.result === 'string' && this.meta.output !== undefined && this.meta.roomId !== undefined
+                        ? this.meta.output.put(this.meta.roomId, Date.now(), event.toolCallId, event.result)
+                        : undefined;
                 const next: Item = {
                     ...current,
                     seq,
@@ -215,7 +228,8 @@ export class Projector {
                         args: current.data.args,
                         // 失败时**不留** result：坏入参解析失败时它本来就是空的，
                         // 留个空壳只会让人以为「跑过了、没输出」
-                        ...(failed ? {} : { result: event.result }),
+                        ...(failed || offloaded !== undefined ? {} : { result: event.result }),
+                        ...(offloaded === undefined ? {} : { output: offloaded }),
                         state: failed ? 'error' : 'ok',
                         ...(failed ? { error: { message: clipError(event.error ?? '') } } : {}),
                     },

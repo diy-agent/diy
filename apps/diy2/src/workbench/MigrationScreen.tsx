@@ -18,6 +18,8 @@ interface PlanItem {
     to: string;
     note: string;
     rows: number;
+    /** 动态说明（如「会搬 31 条 / 58.7MB」）；没有就不显示 */
+    detail?: string;
     /** 数据体检：旧资源还在不在（只用于展示，**不是**「待迁移」判据） */
     done: boolean;
     /** 版本表里有没有它 —— 这才是「迁没迁」的真源 */
@@ -47,6 +49,15 @@ interface MigrateState {
 
 type Phase = 'idle' | 'running' | 'failed' | 'done';
 
+/** 迁移进程跑完后的结果（服务端的 `summary` 事件） */
+interface Summary {
+    offloadCheck?: string;
+    backup?: string;
+    dbBytesBefore?: number;
+    dbBytesAfter?: number;
+    durationMs?: number;
+}
+
 const STATE_LABEL: Record<StepEvent['state'], string> = {
     running: '进行中',
     done: '完成',
@@ -59,6 +70,7 @@ export function MigrationScreen(): React.JSX.Element {
     const [phase, setPhase] = useState<Phase>('idle');
     const [events, setEvents] = useState<StepEvent[]>([]);
     const [log, setLog] = useState<string[]>([]);
+    const [summary, setSummary] = useState<Summary | null>(null);
     const [openPlan, setOpenPlan] = useState(false);
     const source = useRef<EventSource | null>(null);
 
@@ -100,6 +112,7 @@ export function MigrationScreen(): React.JSX.Element {
         setPhase('running');
         setEvents([]);
         setLog([]);
+        setSummary(null);
         const stream = new EventSource('/api/migrate/events');
         source.current = stream;
         // 必须等流真的连上再让服务端起跑：子进程起不来时服务端会**立即**广播 error，
@@ -119,6 +132,8 @@ export function MigrationScreen(): React.JSX.Element {
                 });
             } else if (kind === 'log' || kind === 'stderr') {
                 setLog((previous) => [...previous.slice(-200), String(payload['text'] ?? '')]);
+            } else if (kind === 'summary') {
+                setSummary(payload as unknown as Summary);
             } else if (kind === 'error') {
                 setLog((previous) => [...previous, String(payload['message'] ?? '')]);
                 setPhase('failed');
@@ -244,6 +259,16 @@ export function MigrationScreen(): React.JSX.Element {
                                     {STATE_LABEL[event.state]}
                                 </Badge>
                                 <span className="flex-1 truncate">{event.title}</span>
+                                {event.progress === undefined ? null : (
+                                    <span className="text-muted-foreground">
+                                        {event.progress.done} / {event.progress.total}
+                                    </span>
+                                )}
+                                {event.durationMs === undefined ? null : (
+                                    <span className="text-muted-foreground">
+                                        {Math.max(1, Math.round(event.durationMs / 1000))}s
+                                    </span>
+                                )}
                                 {event.note === undefined ? null : (
                                     <span className="max-w-60 truncate text-muted-foreground">{event.note}</span>
                                 )}
@@ -251,6 +276,29 @@ export function MigrationScreen(): React.JSX.Element {
                         ))}
                     </Card>
                 ) : null}
+
+                {summary === null ? null : (
+                    <Card className="space-y-1 p-3 text-sm">
+                        <div className="font-medium">迁移结果</div>
+                        {summary.dbBytesBefore !== undefined && summary.dbBytesBefore > 0 ? (
+                            <div className="text-muted-foreground">
+                                库体积 {(summary.dbBytesBefore / 1048576).toFixed(1)}MB →{' '}
+                                {((summary.dbBytesAfter ?? summary.dbBytesBefore) / 1048576).toFixed(1)}MB
+                            </div>
+                        ) : null}
+                        {summary.offloadCheck === undefined ? null : (
+                            <div className="text-muted-foreground">外置校验：{summary.offloadCheck}</div>
+                        )}
+                        {summary.backup === undefined ? null : (
+                            <div className="truncate text-muted-foreground">备份：{summary.backup}</div>
+                        )}
+                        {summary.durationMs === undefined ? null : (
+                            <div className="text-muted-foreground">
+                                总耗时 {(summary.durationMs / 1000).toFixed(1)}s
+                            </div>
+                        )}
+                    </Card>
+                )}
 
                 <Card className="p-0">
                     <button
@@ -269,7 +317,16 @@ export function MigrationScreen(): React.JSX.Element {
                                 <div key={item.step} className="flex items-center gap-2 px-3 py-2 text-sm">
                                     <span className="w-40 shrink-0 truncate text-muted-foreground">{item.from}</span>
                                     <span className="text-muted-foreground">→</span>
-                                    <span className="flex-1 truncate">{item.to}</span>
+                                    <span className="flex-1 truncate" title={item.note}>
+                                        {item.to}
+                                    </span>
+                                    {item.detail === undefined ? (
+                                        item.rows >= 0 ? (
+                                            <span className="shrink-0 text-muted-foreground">{item.rows} 行</span>
+                                        ) : null
+                                    ) : (
+                                        <span className="shrink-0 text-muted-foreground">{item.detail}</span>
+                                    )}
                                     <Badge variant={item.recorded ? 'secondary' : 'default'}>
                                         {item.recorded ? '已迁移' : '待迁移'}
                                     </Badge>

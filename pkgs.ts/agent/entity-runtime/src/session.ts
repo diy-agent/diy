@@ -34,6 +34,7 @@ import {
 } from './compaction';
 import { contextWindowOf, maxOutputTokensOf } from './providers';
 import { ProgressBroadcast, ProgressWatch, type ProgressPolicy } from './progress';
+import type { createOutputStore } from './output-store';
 import { nextId, Projector } from './projection';
 import { toMessage, type RoomEntry } from './room-log';
 import { AttachmentBytesCache, messageWithAttachments, type AttachmentReader } from './session-images';
@@ -190,6 +191,13 @@ export interface SessionDeps {
      * 判据在 entity-runtime 的 `providers.acceptsImagesOf`：目录里没标能力位 ⇒ 当**不收**。
      */
     acceptsImages?: (modelKey: string) => boolean;
+    /**
+     * 会话所在房间（工具输出外置按房间分目录）。不传 = 不外置，工具结果全留在条目里。
+     * 与 `output` 成对出现：只给一个不起作用。
+     */
+    roomId?: string;
+    /** 工具输出外置存储（房间按 `home` 造一个；测试 / 无数据根时不给） */
+    output?: ReturnType<typeof createOutputStore>;
 }
 
 interface QueueItem {
@@ -611,7 +619,11 @@ export class BotSession {
         // 先广播"这一轮开始了"：房间据此把上一个回合留下的未答提问判过期（ask.ts 的寿命规则）
         this.emit({ type: 'turn.start', turn, startedAt });
         // 错误条目带上本轮实际用的模型：403 / 无订阅这类失败，事后只能从 log 里翻
-        const projector = new Projector(this.authorOf(), turn.turn, { modelKey: this.modelKey });
+        const projector = new Projector(this.authorOf(), turn.turn, {
+            modelKey: this.modelKey,
+            ...(this.deps.roomId === undefined ? {} : { roomId: this.deps.roomId }),
+            ...(this.deps.output === undefined ? {} : { output: this.deps.output }),
+        });
         const abort = new AbortController();
         this.abort = abort;
 

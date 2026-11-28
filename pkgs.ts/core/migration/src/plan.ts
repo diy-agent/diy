@@ -71,6 +71,8 @@ export interface MigrationPlanItem {
     note: string;
     /** 源有多少行；-1 = 这个库里没有 */
     rows: number;
+    /** 动态说明（体积这类不好放进行数里的信息）；没有就不显示 */
+    detail?: string;
     /** 库里现在是不是已经完成（**数据体检**：给「旧资源还有多少」用，不是启动判据） */
     done: boolean;
     /** 版本表里有没有它（**这才是「迁没迁」的真源**） */
@@ -105,6 +107,7 @@ export function migrationPlan(db: DatabaseSync): MigrationPlanItem[] {
         legacyRooms: notForRead,
         foldBots: notForRead,
         journalToEvents: notForRead,
+        offloadToolOutputs: notForRead,
         log: (): void => undefined,
     };
 
@@ -115,6 +118,7 @@ export function migrationPlan(db: DatabaseSync): MigrationPlanItem[] {
         to: migration.plan.to,
         note: migration.plan.note,
         rows: migration.plan.rows?.(runtime) ?? -1,
+        detail: migration.plan.detail?.(runtime),
         done: migration.done(runtime),
         recorded: recorded.has(migration.id),
     }));

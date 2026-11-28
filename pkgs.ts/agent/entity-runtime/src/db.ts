@@ -16,9 +16,11 @@ import { dirname, resolve } from 'node:path';
 import type { TranscriptEntry, TokenUsage } from './compaction';
 import { isLinkKind } from './id';
 import type { RoomEntry } from './room-log';
+import { readSessionEntries, sessionFilePath, writeSessionEntries } from './session-file';
 import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc } from './task-dir';
 import { PLACEHOLDER_MODEL_KEY, applyMigrations } from '@diy-agent/migration';
 
+import { offloadExistingToolOutputs } from './offload-existing';
 import { describeFindings, verifyDatabase } from './verify-migrations';
 import type { MigrationReporter, MigrationRuntime } from '@diy-agent/migration';
 
@@ -1623,6 +1625,17 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         legacyRooms: (): void => migrateLegacyRooms(),
         foldBots: (): void => migrateBots(),
         journalToEvents: (): void => migrateJournal(),
+        // 存量工具输出外置：迁移器已开着事务（执行 + 记账同进同退），实现只复用它的写入路径。
+        // 内存库（`:memory:`）没有数据根 → 无处放文件，什么都不做（也就永远不会「迁完」）。
+        offloadToolOutputs: (report) => {
+            if (dataRoot === undefined) return { offloaded: 0, bytesMoved: 0, failed: 0 };
+            const stats = offloadExistingToolOutputs(db, {
+                dataRoot,
+                inTransaction: true,
+                ...(report === undefined ? {} : { onProgress: report }),
+            });
+            return { offloaded: stats.offloaded, bytesMoved: stats.bytesMoved, failed: stats.failed };
+        },
         log: (message: string): void => console.error(`[migrate] ${message}`),
     };
     const migrationRun = applyMigrations(runtime, report);
@@ -2176,6 +2189,20 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             return undefined;
         },
         saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void {
+            // 正文落库外（`sessions/<roomId>__<botId>.json`），表里只留元数据。
+            // 写盘失败退回「正文进表」：宁可库大一点，也不能丢上下文。
+            let entriesText = '';
+            const file = dataRoot === undefined ? undefined : sessionFilePath(dataRoot, roomId, botId);
+            if (file === undefined) {
+                entriesText = JSON.stringify(snapshot.entries);
+            } else {
+                try {
+                    writeSessionEntries(file, snapshot.entries);
+                } catch (error) {
+                    console.error(`[session-file] 写盘失败，回退进库：${(error as Error).message}`);
+                    entriesText = JSON.stringify(snapshot.entries);
+                }
+            }
             db.prepare(
                 'INSERT INTO session_state (entity_id, bot_profile_id, turn, collapsed, entries, usage, log_seq, updated_at) VALUES (?,?,?,?,?,?,?,?) ' +
                     'ON CONFLICT(entity_id, bot_profile_id) DO UPDATE SET turn=?, collapsed=?, entries=?, usage=?, log_seq=?, updated_at=?',
@@ -2184,13 +2211,13 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 botId,
                 snapshot.turn,
                 snapshot.collapsed,
-                JSON.stringify(snapshot.entries),
+                entriesText,
                 snapshot.usage === undefined ? null : JSON.stringify(snapshot.usage),
                 snapshot.logSeq ?? 0,
                 Date.now(),
                 snapshot.turn,
                 snapshot.collapsed,
-                JSON.stringify(snapshot.entries),
+                entriesText,
                 snapshot.usage === undefined ? null : JSON.stringify(snapshot.usage),
                 snapshot.logSeq ?? 0,
                 Date.now(),
@@ -2201,10 +2228,20 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 .prepare('SELECT * FROM session_state WHERE entity_id = ? AND bot_profile_id = ?')
                 .get(roomId, botId) as Record<string, unknown> | undefined;
             if (row === undefined) return undefined;
+            // 两条判据：表里有正文 ⇒ 老数据 / 写盘失败的回退；是空串 ⇒ 正文在文件里。
+            // 文件丢了（被手动删 / 坏了）当「没有快照」→ 全量回放，退化但不丢消息。
+            const raw = String(row['entries'] ?? '');
+            const entries =
+                raw === ''
+                    ? dataRoot === undefined
+                        ? undefined
+                        : readSessionEntries(sessionFilePath(dataRoot, roomId, botId))
+                    : (JSON.parse(raw) as TranscriptEntry[]);
+            if (entries === undefined) return undefined;
             return {
                 turn: Number(row['turn']),
                 collapsed: Number(row['collapsed']),
-                entries: JSON.parse(String(row['entries'])) as TranscriptEntry[],
+                entries,
                 ...(row['usage'] === null ? {} : { usage: JSON.parse(String(row['usage'])) as TokenUsage }),
                 ...(row['log_seq'] === null || row['log_seq'] === undefined || Number(row['log_seq']) <= 0
                     ? {}

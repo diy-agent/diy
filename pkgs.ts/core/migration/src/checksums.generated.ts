@@ -16,6 +16,7 @@ export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
     'fold-bots': 'c2da4d530e84a40c', /* 014-fold-bots.ts */
     'legacy-journal': '7d3603fb5ed0f719', /* 015-legacy-journal.ts */
     'legacy-rooms': 'ee709fb164247179', /* 013-legacy-rooms.ts */
+    'offload-tool-outputs': '351bacd7c29e61ca', /* 021-offload-tool-outputs.ts */
     'prune-room-members': '9437232aa7db0000', /* 017-prune-room-members.ts */
     'rename-bot-roles': '679c2b0890f189a3', /* 001-rename-bot-roles.ts */
     'rename-role-config': '47eff0e2027425ab', /* 002-rename-role-config.ts */

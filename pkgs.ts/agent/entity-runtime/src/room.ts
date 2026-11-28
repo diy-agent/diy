@@ -38,6 +38,7 @@ import { buildRoomTools, type RunCodeHost } from './tools/index';
 import { createToolOutputCapper } from './tool-output';
 import { unitBoard, type UnitBoard } from './units';
 import { jobNoticeOf, jobOwnerOf, type JobOwner } from './jobs';
+import { createOutputStore } from './output-store';
 import type { JobDoneEvent, RunRegistry } from '@diy-agent/jobs/node';
 import type { CompactEvent } from './compaction';
 import {
@@ -204,8 +205,16 @@ export class RoomActor {
     private readonly readAttachment: AttachmentReader | undefined;
     /** 「这个模型收不收图」—— 缺省查模型目录，注入时按注入的来 */
     private readonly acceptsImages: (modelKey: string) => boolean;
+    /**
+     * 工具输出外置（2026-11-28）：数据根 = `home`；没有 home（测试 / 无 app 宿主）⇒ 不外置，全留在条目里。
+     *
+     * 每个 actor 一份（不是每 session）：它只是路径拼装，无状态，但没必要重复构造。
+     */
+    private readonly output: ReturnType<typeof createOutputStore> | undefined;
 
     constructor(private readonly deps: RoomActorDeps) {
+        // 字段初始化早于参数属性赋值 ⇒ 只能放构造里（放字段上会读到 undefined 的 deps）
+        this.output = deps.home === undefined ? undefined : createOutputStore({ dataRoot: deps.home });
         this.readAttachment = deps.readAttachment ?? defaultAttachmentReader(deps.home);
         this.acceptsImages = deps.acceptsImages ?? ((modelKey) => acceptsImagesOf(modelKey));
         // 公共日志从库里恢复（append-only，seq 接着走）
@@ -908,9 +917,11 @@ export class RoomActor {
                       // 投递层截断：单条工具输出超 2000 行 / 64KB ⇒ 头尾 + marker，原文落
                       // `<home>/toolout/`（模型不够自己 read 回取）。不接这一层 = 大输出的
                       // 原文直接进这一轮请求，压缩（只管轮首）拦不住。
-                      toModelOutput: createToolOutputCapper(
-                          this.deps.home === undefined ? {} : { home: this.deps.home },
-                      ),
+                      toModelOutput: createToolOutputCapper({
+                          ...(this.deps.home === undefined ? {} : { home: this.deps.home }),
+                          // 跟投影层同一个落位（`runs/tool/…`）：否则同一份原文写两遍
+                          roomId: this.id,
+                      }),
                       onJournal: (input) => {
                           this.deps.store.appendJournal(this.id, input);
                       },
@@ -1134,6 +1145,7 @@ export class RoomActor {
             ...(systemContext === '' ? {} : { systemContext }),
             ...(context === null ? {} : { takeDelta: () => context.step().user, commitDelta: () => context.commit() }),
             ...(this.readAttachment === undefined ? {} : { readAttachment: this.readAttachment }),
+            ...(this.output === undefined ? {} : { roomId: this.id, output: this.output }),
             acceptsImages: this.acceptsImages,
         });
         // 房间订阅 session 的输出：编号、落库、广播都在这一侧
