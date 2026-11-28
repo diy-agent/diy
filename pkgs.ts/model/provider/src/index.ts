@@ -13,7 +13,7 @@ export {
     type ResolveProviderOptions,
 } from './provider-defaults.js';
 // ##491：opencode 的会话占位符 / 会话 header 真源在策略层，入口照旧导出（`$SESSION` 机制是通用的）。
-export { SESSION_PLACEHOLDER } from './strategies/opencode.js';
+export { SESSION_PLACEHOLDER } from './strategies/providers/opencode/index.js';
 export {
     classifyModelUnavailable,
     probeModelError,
@@ -34,5 +34,5 @@ export {
     isDeepSeekWire,
     type ReasoningReplayOpts,
     type WireIdentity,
-} from './reasoning-replay.js';
+} from './strategies/models/deepseek/reasoning-replay.js';
 export type { ModelCost, ModelInfo, ProviderConfig, TrafficPort, UsageDetail } from './types.js';

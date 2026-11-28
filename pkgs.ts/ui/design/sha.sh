@@ -32,6 +32,9 @@ sync() { :; }
 gen() {
   run npx esbuild scripts/gen.mts --bundle --platform=node --format=esm --outfile=build/gen.mjs
   run node build/gen.mjs
+  # 产物按仓内格式落地：脚本拼的是 4 空格，committed 的是 oxfmt 格式；不格式化会让每次
+  # gen 都产生一份**纯空白 diff**（check 按字节比，也会误报生成物过期）。
+  run npx oxfmt src/gen
 }
 
 #: 生成物是否与脚本一致（生成到临时目录再逐字节比；不一致 ⇒ 退出码 1）

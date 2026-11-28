@@ -122,6 +122,7 @@ export {
     modelOf,
     modelProviders,
     parseModelKey,
+    snapshotAvailable,
     snapshotPath,
     type ModelView,
     type ProviderView,

@@ -22,9 +22,13 @@ import type { TrafficPort } from './types.js';
 /** `AssistantContent` 是 `string | parts[]` 的联合；要 push 就必须用数组那一半 */
 type AssistantContentParts = Exclude<AssistantContent, string>;
 import type { ChatMessage, ChatOptions, LlmPort, SessionDelta } from '@diy-agent/session';
-import { ensureReasoningReplay, isDeepSeekWire, type WireIdentity } from './reasoning-replay.js';
+import {
+    ensureReasoningReplay,
+    isDeepSeekWire,
+    type WireIdentity,
+} from './strategies/models/deepseek/reasoning-replay.js';
 import { classifyError } from './errors.js';
-import { SESSION_PLACEHOLDER } from './strategies/opencode.js';
+import { SESSION_PLACEHOLDER } from './strategies/providers/opencode/index.js';
 import type { ProviderConfig, UsageDetail } from './types.js';
 
 /** 带缓存桶的 `usage` 增量（结构上是合法 `SessionDelta`，多带两个可选字段） */

@@ -1,4 +1,4 @@
-// src/main/services/reasoning-replay.ts
+// src/strategies/models/deepseek/reasoning-replay.ts
 // 🎯 投递前归一：thinking 模式下回放的 assistant 消息**必须带 `reasoning_content`**（##398）
 //
 // 上游铁律（DeepSeek thinking 模式，luminal 端点必校验）：

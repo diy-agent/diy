@@ -41,20 +41,25 @@ for await (const delta of session.send('你好')) {
 不写在应用层，也不写成「按 provider 名分支」（##491）。
 
 ```ts
-import { bodyTransformFor, headersFor } from '@diy-agent/llm-provider/strategies';
+import { openAiCompatibleSettingsFor } from '@diy-agent/llm-provider/strategies';
 
-const transformBody = bodyTransformFor(baseUrl); // undefined = 不补（别挂恒等函数）
-const headers = headersFor(baseUrl, { sessionId }); // {} = 不补
+// 一次拿齐该端点的私有约定（header / 请求体补字段 / tool 结果多段内容）；
+// 不认识的端点 = {}（未验证的字段不发）
+const settings = openAiCompatibleSettingsFor(baseUrl, { sessionId });
 ```
 
-| 文件                        | 认领                   | 做什么                                       |
-| --------------------------- | ---------------------- | -------------------------------------------- |
-| `strategies/opencode.ts`    | `host === opencode.ai` | 补 `prompt_cache_retention=24h` + 会话路由头 |
-| `strategies/venice.ts`      | 无（占位）             | 什么都不做：字段未实测 ⇒ 不发（##486 原则）  |
-| `strategies/passthrough.ts` | 一切（注册表末尾）     | 什么都不做：安全默认值                       |
+| 文件                                        | 认领                   | 做什么                                       |
+| ------------------------------------------- | ---------------------- | -------------------------------------------- |
+| `strategies/providers/opencode/index.ts`    | `host === opencode.ai` | 补 `prompt_cache_retention=24h` + 会话路由头 |
+| `strategies/providers/venice/index.ts`      | 无（占位）             | 什么都不做：字段未实测 ⇒ 不发（##486 原则）  |
+| `strategies/providers/passthrough/index.ts` | 一切（注册表末尾）     | 什么都不做：安全默认值                       |
 
-注册表 `STRATEGIES` **按顺序匹配，第一个命中的生效**。加新 provider = **新增一个文件 + 在
-`index.ts` 里加一行**；不认识的端点一律走 passthrough（未验证的字段不发）。
+注册表 `STRATEGIES` **按顺序匹配，第一个命中的生效**。加新 provider = **新增一个目录
+（`strategies/providers/<name>/index.ts`）+ 在 `index.ts` 里加一行**；不认识的端点一律走
+passthrough（未验证的字段不发）。
+
+模型族的差异（如 deepseek 的 `reasoning_content` 补空串）放 `strategies/models/<family>/`，
+与 provider 网关约定分家：前者按模型认，后者按 host 认。
 
 ## 失败
 

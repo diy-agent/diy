@@ -11,7 +11,7 @@
 //         + ~/git-ref/pi/packages/ai/scripts/generate-models.ts:2235-2271（basePath → `${basePath}/v1`）
 
 // ##491：opencode 的会话 header（含 `$SESSION` 占位符）真源在策略文件里，这里只引用、不重抄字面量。
-import { OPENCODE_HEADERS } from './strategies/opencode.js';
+import { OPENCODE_HEADERS } from './strategies/providers/opencode/index.js';
 import type { ProviderConfig, TrafficPort } from './types.js';
 
 /** 一个 provider 的默认值：用哪个 ai-sdk 包（决定协议面）、默认 endpoint、附带 header */
@@ -22,7 +22,7 @@ export interface ProviderDefaults {
     readonly api?: string;
     /**
      * 该 provider 要求的额外 header。
-     * 值是字面量，或含 `$SESSION` 占位符（真源见 `strategies/opencode.ts`）—— 后者由
+     * 值是字面量，或含 `$SESSION` 占位符（真源见 `strategies/providers/opencode/index.ts`）—— 后者由
      * `createOpenAiCompatible` 在**每次调用**时替换成 `ChatOptions.sessionId`；
      * 会话 id 缺席则整条 header 不传（不是空串）。
      */
@@ -39,7 +39,7 @@ export interface ProviderDefaults {
 export const PROVIDER_DEFAULTS: Readonly<Record<string, ProviderDefaults>> = {
     // ── OpenCode：openai 兼容面 + 会话 header（pi providers/opencode-headers.ts）──
     // `/go/openai/v1` 是 ##463 实测 200 的端点；`/inference/v1` 来自 pi generate-models.ts:2252-2269
-    // header 的**真源**是 `strategies/opencode.ts`（##491：provider 私有约定归策略）
+    // header 的**真源**是 `strategies/providers/opencode/index.ts`（##491：provider 私有约定归策略）
     'opencode-go': {
         npm: '@ai-sdk/openai-compatible',
         api: 'https://opencode.ai/inference/go/openai/v1',

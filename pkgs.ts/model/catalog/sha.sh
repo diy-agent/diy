@@ -22,6 +22,11 @@ sync() { :; }
 test() { run npx vitest run "$@"; }
 test-unit() { run npx vitest run "$@"; }
 
+#: 从 chinese-days 重新生成假日表（src/strategies/models/deepseek/holidays.generated.ts）
+#: 需要联网或传本地文件：./sha.sh gen [源]
+#: 生成物是**提交的**派生物（运行时零依赖），排班更新后跑一次并提交
+gen() { run npx tsx scripts/gen-holidays.mts "$@"; }
+
 build() { run npx tsc -p tsconfig.build.json; }
 typecheck() { run npx tsc --noEmit; }
 lint() { run npx oxlint src/ tests/; }

@@ -47,6 +47,14 @@ function makeSession(
         progressTickMs?: SessionDeps['progressTickMs'];
         /** 模型窗口（token）：不注入时 modelKey 'm' 查不到目录 ⇒ 自动压缩不触发 */
         windowTokens?: number;
+        /**
+         * 假 run 回传的用量。`total` = 整轮各步之和（计费口径），`context` = 最后一步
+         * （压缩水位）。两者分开注入，才能锁住 session 用的是哪一个。
+         */
+        usage?: {
+            total: { inputTokens: number; outputTokens: number };
+            context: { inputTokens: number; outputTokens: number };
+        };
     } = {},
 ): Harness {
     const bot = options.bot ?? BOT_A;
@@ -88,6 +96,10 @@ function makeSession(
         yield { seq: 2, type: 'text.delta', messageId: `msg-${runs.length}`, delta: `reply-${runs.length}` };
         // 模拟 SDK：模型产出（assistant）回传给 session 记账
         input.onStepTranscript?.([{ role: 'assistant', content: [{ type: 'text', text: `reply-${runs.length}` }] }]);
+        if (options.usage !== undefined) {
+            input.onUsage?.(options.usage.total);
+            input.onContextUsage?.(options.usage.context);
+        }
         // 收尾事实：与真 agent 对齐（不给的话这一轮会被判成 unknown / no-finish）
         yield {
             seq: 3,
@@ -574,5 +586,27 @@ describe('BotSession', () => {
         expect(stats.chars).toBeGreaterThan(0);
         expect(stats.compactions).toBe(0);
         expect(stats.strategy).toBe('summary-fold-drop');
+    });
+
+    it('压缩水位取最后一步的上下文占用，不取整轮各步之和', async () => {
+        // 造一场「40 步累计 8.5M、真实上下文 20 万」的多步轮次（2026-11-28 的真实数字）。
+        // 窗口 1M ⇒ 触发线 900k：用 lastUsage=8.5M 会误压；用 lastUsage=200k 不压。
+        const h = makeSession({
+            windowTokens: 1_000_000,
+            usage: {
+                total: { inputTokens: 8_500_000, outputTokens: 18_000 },
+                context: { inputTokens: 200_000, outputTokens: 900 },
+            },
+        });
+        await h.session.post({ messageId: 'm1', text: '你好' });
+        // 水位已被纠正为最后一步的 20 万（不是 850 万）
+        expect(h.session.stats().usage).toEqual({ inputTokens: 200_000, outputTokens: 900 });
+        // 本轮总用量仍按计费口径进结算行
+        expect(h.ends.at(-1)?.usage).toEqual({ inputTokens: 8_500_000, outputTokens: 18_000 });
+
+        // 下一轮开头不该再压（旧口径会在这里误触发一次）
+        await h.session.post({ messageId: 'm2', text: '继续' });
+        expect(h.session.stats().compactions).toBe(0);
+        expect(h.events.some((event) => event.type === 'compact')).toBe(false);
     });
 });

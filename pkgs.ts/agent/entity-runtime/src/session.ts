@@ -62,7 +62,10 @@ export interface TurnResult extends Turn {
     text: string;
     failed: boolean;
     /**
-     * 本轮实测用量（真实 token，可用于校准预算）。
+     * 本轮实测用量（整轮各步之和，**计费口径**）。
+     *
+     * **不是压缩水位**：多步时它随步数线性膨胀（40 步 × 20 万 = 800 万）。压缩判据读的是
+     * session 内部的 `lastUsage`（最后一步的 inputTokens，见 `RunOptions.onContextUsage`）。
      *
      * **是本轮的**，不是上一轮的：`lastUsage`（压缩判据用）在失败轮不会被刷新，直接用
      * 它会把这轮的结算行写成上一轮的数字（失败轮最常见的就是拿不到 usage）。
@@ -136,7 +139,7 @@ export interface SessionSeed {
     entries: TranscriptEntry[];
     /** 已折叠掉的条数（占位说明用） */
     collapsed?: number;
-    /** 上一轮实测用量（压缩判据用） */
+    /** 上一轮结束时的上下文占用（最后一步 inputTokens；压缩判据用，不是计费口径） */
     usage?: TokenUsage;
     /**
      * 已读到的公共日志水位（房间最后一条「这条 session 真的看过」的 seq）。
@@ -244,9 +247,9 @@ export class BotSession {
     private collapsed = 0;
     /** 压缩事件（最近 N 条，调试用） */
     private readonly events: CompactEvent[] = [];
-    /** 上一轮实测用量：给策略做真实 token 判据 */
+    /** 上一轮**结束时的上下文占用**（最后一步 inputTokens）：给策略做真实 token 判据 */
     private lastUsage: TokenUsage | undefined;
-    /** **本轮**实测用量：结算行（tokens）只用它，与本轮生命周期同起同落 */
+    /** **本轮**实测用量（各步之和，计费口径）：结算行（tokens）只用它，与本轮生命周期同起同落 */
     private turnUsage: TokenUsage | undefined;
     /** 最近一次运行的轮次号（手动压缩时用它，不额外消耗轮次） */
     private turnNow = 0;
@@ -782,8 +785,12 @@ export class BotSession {
                         produced.push({ message: scrubMedia(message), origin: 'self', turn: turn.turn });
                 },
                 onUsage: (usage) => {
-                    this.lastUsage = usage;
+                    // 结算 / 计费口径：整轮各步之和
                     this.turnUsage = usage;
+                },
+                onContextUsage: (usage) => {
+                    // 压缩水位口径：最后一步的上下文占用（不是整轮之和）
+                    this.lastUsage = usage;
                 },
             })) {
                 // 超窗**不进 Projector**：这一轮马上要重跑，错误条目得扣住 ——

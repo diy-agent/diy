@@ -23,6 +23,7 @@
         "@diy-agent/entity-runtime": "*",
         "@diy-agent/log": "*",
         "@diy-agent/migration": "*",
+        "@diy-agent/models-dev-snapshot": "*",
         "@diy-agent/model-catalog": "*",
         "@diy-agent/protocol": "*",
         "@diy-agent/rpc": "*",

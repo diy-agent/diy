@@ -37,7 +37,7 @@ import {
     modelProviders,
     newEntityId,
     openStore,
-    snapshotPath,
+    snapshotAvailable,
     sourceQuotesOf,
     unitBoard,
     unitsContextText,
@@ -56,6 +56,7 @@ import {
 import { createBlobStore, parseAttachmentRef, parseAttachmentRefs } from '@diy-agent/attachment';
 import { apiHelpOf, defaultCodeRuntime } from '@diy-agent/code-runtime';
 import { METHOD_DESC, diy2Api } from '@diy-agent/protocol';
+import { refreshSnapshot as pullModelsSnapshot, runtimeSnapshotAge, startSnapshotRefresh } from '@diy-agent/models-dev-snapshot';
 import { botOfProfile, membersOfType } from '@diy-agent/protocol';
 import type {
     ActivityFrame,
@@ -110,7 +111,7 @@ function modelConfigView(): ModelConfigSnapshot {
     return {
         home: config.home,
         modelConfigPath: config.modelConfigPath,
-        snapshotMissing: !existsSync(snapshotPath(config.home)), // sync-io-ok: 同步自报「快照在不在」，只判文件存在与否
+        snapshotMissing: !snapshotAvailable(config.home), // sync-io-ok: 用户文件或包内快照，任一在就算有
         ...(defaultModelKey === undefined ? {} : { defaultModelKey }),
         providers: availableProviders(config.home).map((provider) => ({
             id: provider.providerId,
@@ -183,6 +184,8 @@ let info: () => Diy2AppInfo;
 let lagMonitor: LoopLagMonitor | undefined;
 /** 卡顿期间的 CPU profile（./profile-watch）：只在有 lag 时落盘，close 时停 */
 let cpuProfileWatch: CpuProfileWatch | undefined;
+/** 目录快照定时刷新（./models-dev）：关服时停 */
+let stopSnapshotRefresh: (() => void) | undefined;
 
 // ─── 房间装配 ─────────────────────────────────────────────────────
 
@@ -808,6 +811,9 @@ export async function createDiy2App(opts: {
         log: (line) => log.warn(line),
         onLag: (lagMs, meta) => cpuProfileWatch?.markLag(lagMs, meta.cpuRatio),
     });
+    // 目录快照定时刷新：启动先拉一次（ETag 命中很便宜），之后每 6 小时；关服时停
+    stopSnapshotRefresh?.();
+    stopSnapshotRefresh = startSnapshotRefresh(config.home);
     configureSlowLog((line) => log.warn(line));
     rooms = new Map();
     subscribers = new Map();
@@ -1215,6 +1221,12 @@ export async function createDiy2App(opts: {
              * 服务端发不出去」就是这么来的。回包永不含 key 值（账号只有名字与填没填）。
              */
             models: {
+                // 配置页的「拉取最新目录」按钮：拉完回整页配置 + 这次的结果，界面一次刷新到位
+                refreshSnapshot: async () => ({
+                    ...modelConfigView(),
+                    refresh: await pullModelsSnapshot(config.home),
+                    snapshotAge: runtimeSnapshotAge(config.home),
+                }),
                 // `configured` / `snapshotMissing` 不是兼容字段，是**状态**：没有 model.yaml 的
                 // 实例是一个明确形态（模型面不可用），界面顶部据此挂横幅 —— 不靠「目录恰好是空的」去猜。
                 list: async () => ({
@@ -1222,7 +1234,7 @@ export async function createDiy2App(opts: {
                     defaultModelKey: defaultModelKeyOf(),
                     configured: existsSync(config.modelConfigPath), // sync-io-ok: 模型配置状态自报，只判文件存在与否；与启动期 modelConfigHint 同源
                     modelConfigPath: config.modelConfigPath,
-                    snapshotMissing: !existsSync(snapshotPath(config.home)), // sync-io-ok: 同上，判断目录快照在不在
+                    snapshotMissing: !snapshotAvailable(config.home), // sync-io-ok: 同上，用户文件或包内快照任一在
                 }),
                 // ── 配置页（写侧）──────────────────────────────────────────
                 //
@@ -1457,6 +1469,8 @@ export async function createDiy2App(opts: {
     });
 
     const close = (): void => {
+        stopSnapshotRefresh?.();
+        stopSnapshotRefresh = undefined;
         lagMonitor?.stop();
         lagMonitor = undefined;
         void cpuProfileWatch?.stop();

@@ -97,3 +97,60 @@ describe('请求体里的 provider 私有字段', () => {
         expect(withoutSession.body['prompt_cache_retention']).toBe('24h');
     });
 });
+
+/** 一条「工具结果里带图片」的请求（view_image 的真实形状） */
+async function sendToolImage(modelKey: string): Promise<Captured> {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await generateText({
+        model: modelOf(modelKey),
+        maxOutputTokens: 8,
+        messages: [
+            { role: 'user', content: 'call peek' },
+            { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'peek', input: {} }] },
+            {
+                role: 'tool',
+                content: [
+                    {
+                        type: 'tool-result',
+                        toolCallId: 'c1',
+                        toolName: 'peek',
+                        output: {
+                            type: 'content',
+                            value: [
+                                { type: 'text', text: 'look' },
+                                {
+                                    type: 'file',
+                                    mediaType: 'image/png',
+                                    data: { type: 'data', data: png },
+                                    filename: 'x.png',
+                                },
+                            ],
+                        },
+                    },
+                ],
+            },
+        ],
+    });
+    expect(captured).toHaveLength(1);
+    return captured[0]!;
+}
+
+describe('tool 结果里的图片（view_image 那条链）', () => {
+    it('opencode ⇒ 按 image_url 发；不 JSON 化成字节数组', async () => {
+        const request = await sendToolImage('main@gateway/fast');
+        const messages = request.body['messages'] as Array<{ role: string; content: unknown }>;
+        const tool = messages.find((message) => message.role === 'tool');
+        expect(Array.isArray(tool?.content)).toBe(true);
+        const parts = tool!.content as Array<{ type: string; image_url?: { url: string } }>;
+        const image = parts.find((part) => part.type === 'image_url');
+        // 缺这个开关时 ai-sdk 会把 Uint8Array 走 JSON.stringify，body 是 {"0":137,...}（5.9MB 图 → ~59MB）
+        expect(image?.image_url?.url.startsWith('data:image/png;base64,')).toBe(true);
+    });
+
+    it('没声明能力的端点 ⇒ 仍是文本兜底（不在未验证端点上发明 image_url）', async () => {
+        const request = await sendToolImage('main@acme/fast');
+        const messages = request.body['messages'] as Array<{ role: string; content: unknown }>;
+        const tool = messages.find((message) => message.role === 'tool');
+        expect(typeof tool?.content).toBe('string');
+    });
+});

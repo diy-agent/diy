@@ -140,8 +140,8 @@ describe('diy2.models.list', () => {
         const full = await list();
         expect(full.configured).toBe(true);
         expect(full.modelConfigPath).toBe(join(home, 'model.yaml'));
-        // 测试数据根没有 data/models.dev.json：规格全来自 providers.custom.yaml
-        expect(full.snapshotMissing).toBe(true);
+        // 测试数据根没有 data/models.dev.json，但包内有兜底快照 —— 「有没有规格来源」为 true
+        expect(full.snapshotMissing).toBe(false);
 
         // 拿掉 model.yaml = 这个实例**没配模型**（不是「配了但没 key」）
         rmSync(join(home, 'model.yaml'));
@@ -193,7 +193,7 @@ describe('diy2.models.config', () => {
         const snapshot = await config();
         expect(snapshot.home).toBe(home);
         expect(snapshot.modelConfigPath).toBe(join(home, 'model.yaml'));
-        expect(snapshot.snapshotMissing).toBe(true);
+        expect(snapshot.snapshotMissing).toBe(false); // 包内兜底快照算「有」
         expect(snapshot.defaultModelKey).toBe('main@acme/fast');
         const acme = snapshot.providers.find((provider) => provider.id === 'acme')!;
         expect(acme.kind).toBe('custom');

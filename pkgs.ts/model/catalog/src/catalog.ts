@@ -1,15 +1,21 @@
 // catalog.ts — 读配置 → 目录。唯一的 IO 都在这一个文件里（node:fs + js-yaml）。
 //
 // 数据流（谁也不覆盖谁，按 id 关联）：
-//   spec 层  = providers.custom.yaml（custom provider 的模型规格）
+//   spec 层  = providers.custom.yaml（**已废弃**；自定义 provider 的模型规格，见下）
 //             + models.dev 快照（std provider 的模型规格，可选）
 //   配置层   = model.yaml（accounts / filter / models 覆盖）
 //   目录     = spec ⊕ override ＋ filter 判定
+//
+// ⚠️ 价目唯一来源 = **models.dev 的谷价**。providers.custom.yaml 里的 `cost` / `tiers`
+//    是旧设计（第二份价目，改一处漏一处），2026-11-28 起废弃并清空；峰时段翻倍是模型策略
+//    （`src/strategies/models/deepseek/pricing.ts`），不要往配置里抄峰价。
+//    该文件若仍存在，只用于真正的自定义 provider spec（endpoint / 模型列表）。
 //
 // ⚠️ 账号的 `data.value`（key）**只被 readAccountValue 读取**，目录与列表里永远只有名字。
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { bundledSnapshotPath, hasBundledSnapshot } from "@diy-agent/models-dev-snapshot";
 import { load as loadYaml } from "js-yaml";
 import { isEmptyDocument } from "./errors.js";
 import { CatalogError } from "./errors.js";
@@ -684,15 +690,23 @@ export function snapshotPath(home: string): string {
 }
 
 /**
+ * 目录有没有规格来源：用户数据根那份，或包内快照（包里的由 gen 脚本生成）。
+ * UI 报「缺快照」只能读这个 —— 否则用户装了包却还被告知没快照。
+ */
+export function snapshotAvailable(home: string): boolean {
+    return existsSync(snapshotPath(home)) || hasBundledSnapshot();
+}
+
+/**
  * 快照（std provider 的 spec）：显式路径 > `$DIY_HOME/data/`。
  *
- * 曾经还有第三档：「四级上跳读**本仓** `apps/diy-app/src/main/data/models.dev.json`」。删于
- * 2026-11-24：那是 diy-app 的产物快照（199 家 / 11-03），发布形态下这个相对路径指向不存在的
- * 位置、monorepo 下又让另一个 app 的旧数据给本 app 的目录定义规格 —— 两种形态都不对。
- * 现在**没有快照就是没有**：std provider 全部缺席，调用方据 `snapshotPath()` 报「缺快照」。
+ * 第三档：包内快照 `@diy-agent/models-dev-snapshot`（2026-11-27）。与 11-24 删掉的那一档
+ * 不同：那次是四级上跳读**本仓另一个 app** 的产物快照，发布形态下路径不存在；这次是显式
+ * 依赖一个包，快照由它的 gen 脚本生成、打包时写进 tarball，不进我们的 git。只在用户文件
+ * 和运行时缓存都没有时才用到，优先级最低。
  */
 function loadSnapshot(home: string, options?: CatalogOptions): Record<string, RawSpecProvider> | null {
-    const candidates = [options?.snapshotPath, snapshotPath(home)];
+    const candidates = [options?.snapshotPath, snapshotPath(home), bundledSnapshotPath()];
     for (const candidate of candidates) {
         if (candidate === undefined || !existsSync(candidate)) continue;
         const raw = readYaml(candidate);

@@ -52,6 +52,22 @@ build / check / test / lab 入口先跑只读快检：workspace 链接缺失或�
 - **发行 CLI 不走惰性下载**（##478）：`diy2` 用 `scripts/electron-bootstrap.mjs` 自己收口 —— 每个阶段先打印、镜像**并发探测**（各 3s 超时，逐个 ✓/✗ + 毫秒）、选**最快**的源、下载带百分比/速度/ETA、sha256 校验、解压心跳（静默 ≤ 2s）。`scripts/ensure-electron.mjs` 与它共用同一份探测/下载实现。
 - 开关 / store 位置详见脚本头注。
 
+## dist — 发布打包（根入口）
+
+`./sha.sh dist [--app <name>] [--skip-gen] [-- <app dist 参数>]`
+
+一次性做完发布前打包，顺序固定：
+
+1. **gen**：机器发现——所有 `sha.sh` 里声明了 `gen()` 的 workspace 都重算
+   （当前：`pkgs.ts/model/catalog` 的假日表、`pkgs.ts/ui/design` 的主题 CSS）。
+   生成物有更新会提示一起提交；离线可用 `--skip-gen`。
+2. **build-pkgs**：先编能力包 `dist/`（apps 的 build 读它）。
+3. **app dist**：`apps/*` 里声明了 `dist()` 的跑 `sha.sh dist`（diy-app = electron-builder，
+   产物在 `apps/diy-app/release/`）；没有 `dist()` 但声明了 `build()` 的至少 build（diy2 =
+   `build/prod/`）。`--app` 可只打一个；`--` 之后的参数原样透传（如 electron-builder `--mac`）。
+
+它只打包、不上传；上传仍走 `./sha.sh publish` / app 的 `npm-publish-app.mjs`。
+
 ## publish — npm（`@diy-agent` scope）
 
 - 根 `./sha.sh publish [--dry-run]` → 清单 **`scripts/publish-targets.mjs`**（唯一来源；`release` 工具共用）：`diy-rpc` / `diy-ui` / session / session-store-jsonl / workbench / workbench-ui / model-catalog / model-config-page / llm-provider / bot / workbench-plugin / dev-paths（应用不在这个清单里，见下面 app publish）。
