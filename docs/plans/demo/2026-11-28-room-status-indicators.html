@@ -130,6 +130,51 @@
     </div>
   </div>
 
+  <!-- ── 结论先摆出来 ─────────────────────────────────── -->
+  <section class="card" style="border-color:rgba(52,211,153,.35)">
+    <div class="head"><span class="no" style="color:var(--emerald);border-color:rgba(52,211,153,.4)">结论</span><h2>是复杂了 —— 但复杂在「事实」，不在「标题栏」</h2></div>
+    <p class="lead" style="margin-bottom:8px">
+      下面的词典列了 8 行，那是 <b>数据层</b>：这些事实确实不同，不能合并存储（合并了就分不清「消息没送到」和「跑了但报错」）。
+      真正的病是<b>让每个事实都在标题栏露一次脸</b>：3 个层次（房间 / 席位 / 轮次）× 7 个事实 × 3 处露面 = 21 格，人一个都记不住。
+    </p>
+    <p class="lead" style="margin-bottom:8px">
+      <b>一条判据压到底</b>：它出现时，<u>我会停下手里的事吗</u>？
+    </p>
+    <table style="margin-bottom:8px">
+      <thead><tr><th style="width:22%">会不会停手</th><th style="width:30%">那些事实</th><th>标题栏怎么放</th></tr></thead>
+      <tbody>
+        <tr><td><b>会</b></td><td>等你回答 / 上一轮出错 / 未送达</td><td>一个数：<b>要你 N</b>（点开分组，组内再分「要回答」和「出错了」）</td></tr>
+        <tr><td><b>不会，但想知道</b></td><td>在跑 / 排队</td><td>一个数：<b>在动 M</b>（这两个本来就会互相转换，没必要分开）</td></tr>
+        <tr><td><b>连知道都不必</b></td><td>未读 / 空闲</td><td>不进标题栏（未读本来就在侧栏那一行有蓝点）</td></tr>
+      </tbody>
+    </table>
+    <p class="lead" style="margin:0">
+      所以：<b>数据保留 7 个事实，标题栏只留 2 个数</b>。下面第一个方案（S0）就是这个形态，其余五个是「再多给一点表现力」的可选项。
+    </p>
+  </section>
+
+  <!-- ── S0 ───────────────────────────────────────────── -->
+  <section class="card" style="border-color:rgba(52,211,153,.28)">
+    <div class="head">
+      <span class="no" style="color:var(--emerald);border-color:rgba(52,211,153,.4)">S0</span>
+      <h2>极简两数：要你 N ／ 在动 M</h2>
+      <span class="q">推荐先做到这个 · 其余全进点开的列表</span>
+    </div>
+    <div class="tbar">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s0"></div>
+    </div>
+    <div class="list" id="s0list" style="margin-top:8px"></div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「要不要停下手里的事」—— 一个数字就能回答</p></div>
+      <div><b>适用量级</b><p>任意。两个数字永远不会爆版，也不随房间数增长</p></div>
+      <div><b>代价</b><p>丢掉「在跑 vs 排队」「出错 vs 未送达」这些细分 —— 想看就点开（那才是详情该待的地方）</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">
+      现实对照：现在 #636 里的「状态 N」把<b>在跑也算进 needsYou</b>，于是数字=在跑+等你+出错 —— 把「要我管」和「它在忙」混成一个数，这正是复杂感的源头。
+    </p>
+  </section>
+
   <!-- ── 状态词典 ─────────────────────────────────────── -->
   <section class="card">
     <div class="head"><span class="no">词典</span><h2>一个 room 可能"是什么状态"，每个状态对你说什么</h2></div>
@@ -366,6 +411,7 @@
     <table>
       <thead><tr><th style="width:32%">你的判断</th><th>选它</th><th>理由</th></tr></thead>
       <tbody>
+        <tr><td><b>先问「要不要停下来」—— 任何量级都适用</b></td><td><b>S0</b></td><td>两个数；细分全进点开的面板。先把这层做对，再谈表现力</td></tr>
         <tr><td>房间长期 &gt; 20 个，标题栏只想看「有没有事」</td><td><b>S1 + S5</b></td><td>计数不随房间数膨胀；底边条给构成感</td></tr>
         <tr><td>同时压着的事通常 ≤ 3 件，人只关心「先做哪个」</td><td><b>S3</b></td><td>少即是多：把唯一该动手的摆出来，其余折叠</td></tr>
         <tr><td>要「一眼看到是哪个任务在等我」</td><td><b>S4</b></td><td>只有它在标题栏里放得下名字</td></tr>
@@ -435,7 +481,11 @@ function primary(r){
 const DOT = {running:'run', asking:'ask', attention:'att', queued:'que', unread:'unr', idle:'idle'};
 const RANK = {attention:0, asking:1, running:2, queued:3, idle:4};
 const byUrgency = (a, b) => RANK[primary(a)] - RANK[primary(b)];
-const dot = (r, cls='') => `<i class="dot ${DOT[primary(r)]} ${cls}"></i>`;
+const dot = (r, cls='') => `<i class="dot ${r.failed > 0 && primary(r) === 'idle' ? 'fail' : DOT[primary(r)]} ${cls}"></i>`;
+
+/** S0 的两个口径：会不会让我停手 / 系统在不在动 */
+const stopsMe = (r) => r.broken || r.asking || r.failed > 0;
+const inMotion = (r) => r.running || r.queued > 0;
 
 /** 一句话：这个房间现在最要紧的那件事 */
 function line(r){
@@ -455,6 +505,29 @@ function badges(r){
   if (r.unread > 0) out.push(`<span class="tag blue" title="有结果、你还没看">${r.unread}</span>`);
   if (r.failed > 0) out.push(`<span class="tag rose" title="最新一条没送进去">✕</span>`);
   return out.join('');
+}
+
+// ── S0 极简两数 ───────────────────────────────────────────────
+function renderS0(rooms){
+  const host = document.getElementById('s0');
+  const list = document.getElementById('s0list');
+  const need = rooms.filter(stopsMe);
+  const motion = rooms.filter(r => !stopsMe(r) && inMotion(r));
+  host.innerHTML =
+    `<button class="btn ${need.length ? 'rose' : 'muted'}" data-s0="need">● 要你 <span class="num">${need.length}</span></button>` +
+    `<button class="btn ${motion.length ? 'em' : 'muted'}" data-s0="motion">◐ 在动 <span class="num">${motion.length}</span></button>`;
+  list.innerHTML = '';
+  host.querySelectorAll('[data-s0]').forEach(btn => btn.addEventListener('click', () => {
+    const key = btn.dataset.s0;
+    const active = btn.classList.contains('on');
+    host.querySelectorAll('[data-s0]').forEach(b => b.classList.remove('on'));
+    if (active){ list.innerHTML = ''; return; }
+    btn.classList.add('on');
+    const items = key === 'need' ? need : motion;
+    list.innerHTML = `<div style="border:1px solid var(--border);border-radius:9px;padding:6px">${items.map(r =>
+      `<div class="row">${dot(r)}<span class="nm">${r.name}</span><span class="muted" style="font-size:11px">${line(r)}</span></div>`
+    ).join('')}</div>`;
+  }));
 }
 
 // ── S1 分档：只列「值得催你」的三档 + 两个弱提示 ────────────────────
@@ -579,7 +652,7 @@ function renderS6(rooms){
 // ── 渲染全部 ──────────────────────────────────────────────────────
 function render(){
   const rooms = makeRooms(COUNT);
-  renderS1(rooms); renderS2(rooms); renderS3(rooms); renderS4(rooms); renderS5(rooms); renderS6(rooms);
+  renderS0(rooms); renderS1(rooms); renderS2(rooms); renderS3(rooms); renderS4(rooms); renderS5(rooms); renderS6(rooms);
 }
 
 document.getElementById('segCount').addEventListener('click', (e) => {
