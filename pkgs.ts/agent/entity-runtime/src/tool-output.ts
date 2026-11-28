@@ -18,14 +18,11 @@ import path from 'node:path';
 
 import { capToolOutput, markBashTruncated, TOOL_OUTPUT_POLICY, TOOL_OUTPUT_POLICY_KEEP_LINES } from '@diy-agent/tools';
 
-/** 原文落盘目录（`<home>/toolout`）；home 未知时返回 undefined ⇒ 只裁、不给 resume */
+import { safeName, toolOutputRelPath } from './output-store';
+
+/** 旧目录（`<home>/toolout`）：没有房间上下文时的兜底；新落位统一走 `runs/tool/…` */
 export function toolOutDir(home: string | undefined): string | undefined {
     return home === undefined ? undefined : path.join(home, 'toolout');
-}
-
-/** 工具 id 里的非法文件名字符归一（`call_abc` / `t1759_s1_r1` 一般无需动） */
-function safeName(id: string): string {
-    return id.replace(/[^\w.-]+/g, '_');
 }
 
 /**
@@ -35,12 +32,13 @@ function safeName(id: string): string {
  * bash 结果头里的 `truncated: false` 在真截断时改写成 true（`markBashTruncated`，
  * 别的工具的输出没有那个头，原样返回）。
  */
-export function createToolOutputCapper(options: { readonly home?: string } = {}): (
+export function createToolOutputCapper(options: { readonly home?: string; readonly roomId?: string } = {}): (
     text: string,
     toolCallId: string,
     /** 按工具微调策略（今天唯一一档：不裁单行，见 `TOOL_OUTPUT_POLICY_KEEP_LINES`） */
     perCall?: { readonly keepLongLines?: boolean },
 ) => Promise<string> {
+    const root = options.home;
     const dir = toolOutDir(options.home);
     return async (text, toolCallId, perCall) => {
         // 单行上限只防「一行就是一整份产物」；已有行窗口的工具（read）不适用，见策略的注释
@@ -50,9 +48,15 @@ export function createToolOutputCapper(options: { readonly home?: string } = {})
         if (!probe.clipped) return text;
         if (dir === undefined) return markBashTruncated(probe.text);
 
-        const file = path.join(dir, `${safeName(toolCallId)}.txt`);
+        // **与投影层同一个路径函数**（`runs/tool/<日>/<房间>/<id>.txt`）：
+        // 两边各算各的会把同一份原文写两份 —— 投影层先写、投递层再覆盖同内容，等于白写一次。
+        // 没有房间上下文（老调用方）⇒ 退回 `<home>/toolout/`，只当兼容。
+        const file =
+            options.roomId === undefined || root === undefined
+                ? path.join(dir!, `${safeName(toolCallId)}.txt`)
+                : path.join(root, ...toolOutputRelPath(options.roomId, Date.now(), toolCallId).split('/'));
         try {
-            await mkdir(dir, { recursive: true });
+            await mkdir(path.dirname(file), { recursive: true });
             await writeFile(file, text, 'utf8');
         } catch {
             return markBashTruncated(probe.text);
