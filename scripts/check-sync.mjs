@@ -8,7 +8,7 @@
 // 由 sha.common.sh 的 ensure_sync 在**根与包级**的 build/check/test/lab 入口前置调用
 // （闸门实现只有一份，见 sha.common.sh；以前根与各包各写一份 → 策略/文案两边不同）。
 //
-// 判据（三条，全部只读、毫秒级）：
+// 判据（两条，全部只读、毫秒级）：
 //   1. workspace 链接：`package-lock.json` 里 `link: true` 的条目必须在 node_modules 下存在、
 //      且指向对应 workspace 目录；反向也查 —— node_modules 里**任何**指进 workspace 目录的
 //      软链接都必须是 lock 认可的（多出来的 = 改名残留，如 `node_modules/@diy-agent/rpc`）
@@ -16,7 +16,9 @@
 //      package.json 的 sha256，`sync-deps` 成功时写入）与当前哈希不符 → lock/manifest 变了
 //      但没 sync。**不用**「lock vs node_modules/.package-lock.json 比对」：npm 不装其它平台的
 //      可选依赖（实测 101 条假阳，如 `@esbuild/darwin-x64`）
-//   3. submodule：`git submodule status` 首字符 `-` = 未 init（sync 会补）
+// 曾有判据 3「submodule 未 init」：2026-11-28 vendor/sha 改 git subtree（##44）后删掉 ——
+// subtree 的内容在本仓历史里，缺失（浅克隆 / 手工删）由 sha.common.sh 的入口硬门直接拦，
+// 不再是「sync 能补的东西」，留在这里只会让 sync 白跑一遍还不一致。
 // 另有几条**只提示、不判定**（不影响 build/check，故不计入退出码）：
 //   node_modules/electron/{dist,path.txt} 缺失 / dist 是实目录（未共享）—— electron 无
 //   postinstall，缺了 `require('electron')` 会落进**无超时下载**（实测静默卡死 3m40s）。
@@ -206,22 +208,6 @@ function checkStamp() {
   return { issues: [], hash: want };
 }
 
-/** 判据 3：submodule 是否已 init */
-function checkSubmodules() {
-  let out;
-  try {
-    out = execFileSync('git', ['submodule', 'status', '--recursive'], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
-    return []; // 非 git 检出 / 无子模块配置：不作为判据
-  }
-  const issues = [];
-  for (const line of out.split('\n')) {
-    if (!line.trim()) continue;
-    if (line.startsWith('-')) issues.push({ kind: 'submodule-uninit', detail: line.slice(1).trim().split(' ').slice(1).join(' ') });
-  }
-  return issues;
-}
-
 /**
  * 只提示项：electron 二进制布局（修它的唯一入口是 scripts/ensure-electron.mjs，见文件头）。
  * dist 在软链上 = 已收进全机 store；实目录 = 每个 worktree 各占一份（~300MB），可去重。
@@ -264,7 +250,6 @@ const wsAbsPaths = new Set(wsDirs.map((d) => abs(d)));
 const issues = [...checkLinks(lock, wsRealPaths, wsAbsPaths)];
 const stamp = checkStamp();
 issues.push(...stamp.issues);
-issues.push(...checkSubmodules());
 const warnings = collectWarnings();
 const synced = issues.length === 0;
 
@@ -301,8 +286,6 @@ const describe = (i) => {
     case 'stamp-missing':
     case 'stamp-stale':
       return `同步印记过期：${i.detail}`;
-    case 'submodule-uninit':
-      return `submodule 未 init：${i.detail}`;
     default:
       return `${i.kind}: ${JSON.stringify(i)}`;
   }

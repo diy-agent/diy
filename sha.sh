@@ -82,7 +82,7 @@ sync-deps() {
     # npm i 只补缺失、**不清改名残留**（实测留着旧的 `node_modules/@diy-agent/rpc`）——
     # 残留会让包级构建护栏继续报「未同步」，故精准清一道（只删 lock 不认可的 workspace 软链接）
     run node scripts/check-sync.mjs --fix
-    run git submodule update --init --recursive
+    # vendor/sha 是 git subtree：内容随 checkout 下来，这里不再需要任何 submodule init。
 
     _ws_run command ./sha.sh sync;
 
@@ -546,33 +546,26 @@ test-unit() {
 }
 
 _vendors_run() {
-  for submodule in "${_vendors[@]}"; do
+  for v in "${_vendors[@]}"; do
     (
-      cd "$submodule"
+      cd "$v"
       run "$@"
     )
   done
 }
 
-# 直接改submoulde代码推荐流程：
-#  ```bash
-#    # 1. 进入子模块，先切到分支
-#    cd vendor/sha
-#    git checkout main
-
-#    # 2. 正常改代码、提交、推送
-#    git add .
-#    git commit -m "feat: xxx"
-#    git push origin main
-
-#    # 3. 回到父仓库，更新子模块指针
-#    cd ../..
-#    git add vendor/sha
-#    git commit -m "chore: update vendor/sha"
-#  ```
-vendor.exec()    { _vendors_run command "$@"; }
-vendor.status()  { _vendors_run git status; }
-vendor.update() {  run git submodule update --init --recursive --remote --merge; }
+# vendor/* 是 **git subtree**（2026-11-28 从 submodule 改来，##44）：内容是本仓历史的一部分，
+# 没有独立的 .git、没有指针要更新 —— 新 worktree checkout 完就躺在盘上，**不需要联网**。
+#   升级上游：./sha.sh vendor pull   （git subtree pull --squash；只在想升级时跑，需要网络）
+#   改 vendor 代码：直接改 → 当普通文件提交（想回推上游才用 git subtree push）
+# 为什么换：submodule 每次新 worktree 都要 `submodule update --init` 走一遍网络，弱网下
+# 挂几十秒到失败，而内容其实本可以随 checkout 一起下来。
+vendor.exec()   { _vendors_run command "$@"; }
+vendor.status() { _vendors_run git status; }
+# 注册在文件下方的命令区（`vendor.pull`），这里只放实现。
+vendor.pull() {
+  run git subtree pull --prefix=vendor/sha git@github.com:diy-agent/sha.git main --squash
+}
 
 ####################################################
 # Python 包发布
@@ -593,19 +586,10 @@ vendor.update() {  run git submodule update --init --recursive --remote --merge;
 sha.def "build-pkgs" \
   --desc "只编能力包（pkgs.ts/*）的 dist/ —— 改包后单独跑它最快"
 
-#: 子模块同步：把 vendor/（sha 脚本框架等）对齐到仓库记录的提交
-#: 用法: ./sha.sh submodule update [--remote]
-#: 缺省只对到「当前记录」的提交；--remote 跟到该 submodule 的上游分支最新。
-sha.def "submodule.update" --opt "--remote:bool:跟到上游分支最新" --desc "更新子模块"
-submodule.update() {
-  local remote
-  sha.parse "$@" || return $?
-  case "${remote:-}" in
-    1 | true | yes) run git submodule update --init --recursive --remote ;;
-    *) run git submodule update --init --recursive ;;
-  esac
-  run git submodule status
-}
+#: vendor/sha（git subtree）升级：把上游拉到当前
+#: 用法: ./sha.sh vendor pull
+#: 只在想升级框架时跑（需要网络）；新 worktree 建出来就有内容，不跑这个。
+sha.def "vendor.pull" --desc "把 vendor/sha 上游拉到当前（git subtree --squash，需要网络）"
 
 build-pkgs() {
     run node scripts/gen-tsconfig-build-all.mjs

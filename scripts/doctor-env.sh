@@ -114,9 +114,9 @@ else
 fi
 
 if [[ -d vendor/sha ]]; then
-  pass "vendor/sha 子模块存在"
+  pass "vendor/sha 存在（git subtree）"
 else
-  fail "vendor/sha 子模块未检出 — 运行 git submodule update --init"
+  fail "vendor/sha 缺失 — 它是 git subtree，内容在本仓历史里：git checkout HEAD -- vendor/sha"
 fi
 
 # ================================================================

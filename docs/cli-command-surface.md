@@ -28,7 +28,7 @@
 | `sync` | `deps` / `dev-home` / `status` | `ensure-sync` / `sync-deps` / `sync-status` |
 | `release` | `status` / `bump` / `publish` | `publish` |
 | `run` | `<variant>` | `lab` / `preview` |
-| `exec` · `fix` · `clean` · `ci` | — | `link` / `unlink` / `submodule` / `vendor` / `github-actions-cicd`（低频，收进 `exec` 或删） |
+| `exec` · `fix` · `clean` · `ci` | — | `link` / `unlink` / `vendor` / `github-actions-cicd`（低频，收进 `exec` 或删） |
 
 ### `apps/diy-app`（35 → 8）
 
