@@ -67,11 +67,13 @@ function useAttachmentUrl(
 }
 
 function ImageAttachment({
-    ref: attachment,
+    // prop 名不能叫 `ref`：React Compiler 会把它当 React ref，于是 render 里读它的字段就报
+    // `Cannot access refs during render`（实测 4 处全出在这个名字上）。它就是个普通数据对象。
+    attachment,
     read,
     onOpen,
 }: {
-    ref: AttachmentRef;
+    attachment: AttachmentRef;
     read?: (ref: AttachmentRef) => Promise<{ base64: string; mime: string }>;
     onOpen?: (url: string) => void;
 }): React.ReactElement {
@@ -103,7 +105,7 @@ function Box({ children, title }: { children: React.ReactNode; title: string }):
 }
 
 /** 非图片：一条能看出「是什么、多大」的文件条（点开才知道内容，点不了就只显示） */
-function FileChip({ ref: attachment }: { ref: AttachmentRef }): React.ReactElement {
+function FileChip({ attachment }: { attachment: AttachmentRef }): React.ReactElement {
     const kb = attachment.bytes / 1024;
     const size = kb < 1024 ? `${Math.max(1, Math.round(kb))} KB` : `${(kb / 1024).toFixed(1)} MB`;
     const label =
@@ -134,12 +136,12 @@ export function MessageAttachments({ refs, read, onOpenImage }: MessageAttachmen
                 attachment.kind === 'image' ? (
                     <ImageAttachment
                         key={attachment.id}
-                        ref={attachment}
+                        attachment={attachment}
                         {...(read === undefined ? {} : { read })}
                         {...(onOpenImage === undefined ? {} : { onOpen: onOpenImage })}
                     />
                 ) : (
-                    <FileChip key={attachment.id} ref={attachment} />
+                    <FileChip key={attachment.id} attachment={attachment} />
                 ),
             )}
         </div>
