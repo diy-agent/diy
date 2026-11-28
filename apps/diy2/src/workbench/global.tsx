@@ -15,14 +15,14 @@
 // 两个数字口径不同（房间里的轮次 vs 实例级进程），合并成一个数之后「为什么亮」说不清，
 // 点进去也不知道该看哪儿。两颗哪怕都是 0 也常显（否则人分不清「没在跑」和「坏了」）。
 
-import { ActiveJobsGlyph, ActiveSessionsGlyph, navigate, roomAddressOf } from '@diy-agent/entity-chat';
+import { ActiveJobsGlyph, ActiveSessionsGlyph, BotStatusChip, navigate, roomAddressOf } from '@diy-agent/entity-chat';
 import { Menu, Settings } from 'lucide-react';
 
 import { SETTINGS_ADDRESS } from './settings';
 import type { WindowContribution } from './window';
 
 /** 活动区**必须**有的入口（顺序 = 显示顺序）。测试按这份清单钉住，别只改一处。 */
-export const GLOBAL_ACTIVITY_IDS = ['bot', 'jobs', 'settings'] as const;
+export const GLOBAL_ACTIVITY_IDS = ['bot', 'bot-status', 'jobs', 'settings'] as const;
 
 export interface GlobalChrome {
     /** 导航开关：左端那颗（标题栏是整宽的一条，导航自己不再挂收起按钮） */
@@ -58,6 +58,15 @@ export function globalContributions(input: GlobalChrome): WindowContribution[] {
                     // 再套一层 button 会变成 button 里嵌 button，点击语义就打架了
                     label: 'Bot 活动：查看正在运行的 Bot 列表',
                     glyph: <ActiveSessionsGlyph />,
+                    standalone: true,
+                },
+                {
+                    id: 'bot-status',
+                    // 与上面那颗**各答一件事**（用户 2026-11-28 裁）：那颗数「谁在动」，
+                    // 这颗说「我该推谁一把」（在跑 / 等你回答 / 上一轮出错）。
+                    // 11-25 删过一次是因为两颗答案重合，不是因为是两颗。
+                    label: 'Bot 状态：每个席位在跑 / 等你回答 / 上一轮出错 / 空闲',
+                    glyph: <BotStatusChip />,
                     standalone: true,
                 },
                 {

@@ -55,6 +55,10 @@ export { UnitNeedDetail } from './components/UnitNeedDetail';
 // 标题栏右端的两颗活动图标（会话 N / 作业 M）：壳只负责把它们摆进 tools，
 // 数字由组件自己订阅（全实例活动流）—— 宿主不会为「有人开跑」重渲一遍。
 export { ActiveJobsGlyph, ActiveSessionsGlyph } from './components/ActiveGlyphs';
+// 标题栏那颗「状态」：每个席位现在什么状态（在跑 / 等你回答 / 上一轮出错 / 空闲）。
+// 与「Bot N」**各答一件事**：那颗数谁在动，这颗说该推谁一把（用户 2026-11-28 裁）。
+export { BotStatusChip } from './components/BotStatusChip';
+export { needsYou, outcomeTextOf, sortRows, STATE_TEXT, useBotRows } from './bots';
 // 全局作业面板：房间内入口是输入框底栏的 `JobsChip`（抽屉），而「结局无人接」发生在
 // 房间被删之后 —— 那时没有会话面，只能从标题栏那颗「作业 N」打开这一份。
 export { JobsPanel } from './components/JobsChip';

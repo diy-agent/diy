@@ -61,6 +61,8 @@ import type {
     Author,
     Bot,
     BotProfile,
+    BotRow,
+    BotState,
     Item,
     BotProfileDefaults,
     JobRunRow,
@@ -966,6 +968,116 @@ export async function createDiy2App(opts: {
             },
             botProfiles: {
                 list: async () => store.listBotProfiles(),
+                /**
+                 * 每个席位一行状态：二级浮层（只要人动手的）与三级全量表**同一份**。
+                 *
+                 * 一行 = 房间 × 角色（成员由类型派生）。四态是**互斥单值**，优先级
+                 * running > asking > needs-attention > idle —— 在跑时哪怕上一轮是错的也不催你
+                 * （它自己会接着干）。
+                 *
+                 * 三路真源全部现成，这里**不另算一套**：在跑 = `runningBots()`、等回答 =
+                 * `pendingAskRequests()` 里带 owner 的那张、上一轮结局 = `turnOf()`（与侧栏红
+                 * 图标同源）。各算一份的话，「表格说出错、侧栏没事」那种对不上迟早出现。
+                 */
+                rows: async () => {
+                    const roles = new Map(store.listBotProfiles().map((role) => [role.id, role]));
+                    const rows: BotRow[] = [];
+                    for (const actor of rooms.values()) {
+                        const spec = actor.spec;
+                        const running = new Set(actor.runningBots());
+                        // 提问的 `owner` 才是「谁在等回答」；老数据 / 非成员发起的归不到人，不进表
+                        const asking = new Map<string, AskRequest>();
+                        for (const request of actor.pendingAskRequests()) {
+                            if (request.owner !== undefined && !asking.has(request.owner)) {
+                                asking.set(request.owner, request);
+                            }
+                        }
+                        const queued = actor.queuedByBot();
+                        for (const member of spec.members) {
+                            const role = roles.get(member.botId);
+                            const turn = turnOf(spec.id, member.botId);
+                            const ask = asking.get(member.botId);
+                            const state: BotState = running.has(member.botId)
+                                ? 'running'
+                                : ask !== undefined
+                                  ? 'asking'
+                                  : turn !== undefined && turn.outcome !== 'done'
+                                    ? 'needs-attention'
+                                    : 'idle';
+                            const waiting = queued.get(member.botId) ?? 0;
+                            rows.push({
+                                roomId: spec.id,
+                                roomTitle: roomTitleOf(spec),
+                                roomType: spec.type === 'project' ? 'project' : 'task',
+                                botId: member.botId,
+                                botName: role?.name ?? member.botId,
+                                botColor: role?.color ?? '#8b8b8b',
+                                state,
+                                ...(turn === undefined
+                                    ? {}
+                                    : {
+                                          outcome: turn.outcome,
+                                          ...(turn.message === undefined ? {} : { outcomeMessage: turn.message }),
+                                          lastTurnAt: turn.at,
+                                      }),
+                                ...(ask === undefined
+                                    ? {}
+                                    : { askId: ask.askId, askTitle: ask.questions[0]?.question ?? '' }),
+                                ...(waiting === 0 ? {} : { queued: waiting }),
+                            });
+                        }
+                    }
+                    return { rows };
+                },
+                /**
+                 * 批量「继续」：给选中的 (房间, 席位) 各发一条「继续」（已在跑的跳过）。
+                 *
+                 * 这是**派活**不是重启进程 —— bot 没有 start/stop 状态机，它只是房间成员；
+                 * 「接着干」就是再给它一句话。所以走 `say` 的 recipients 定向，不新造一条
+                 * 控制面（否则「继续」和「发消息」会成为两套语义）。
+                 *
+                 * 同一房间选中的多个席位合成**一条**消息：时间线上只出现一次「继续」，
+                 * 各自的上下文各自接着跑。
+                 */
+                retry: async ({ input }) => {
+                    const byRoom = new Map<string, string[]>();
+                    for (const target of input.targets) {
+                        const list = byRoom.get(target.roomId) ?? [];
+                        if (!list.includes(target.botId)) list.push(target.botId);
+                        byRoom.set(target.roomId, list);
+                    }
+                    const started: Array<{ roomId: string; botIds: string[] }> = [];
+                    const skipped: Array<{ roomId: string; botId: string; reason: string }> = [];
+                    for (const [roomId, botIds] of byRoom) {
+                        const actor = roomOf(roomId);
+                        if (actor === undefined) {
+                            for (const botId of botIds) skipped.push({ roomId, botId, reason: '房间不存在' });
+                            continue;
+                        }
+                        const members = new Set(actor.spec.members.map((member) => member.botId));
+                        const running = new Set(actor.runningBots());
+                        const targets = botIds.filter((botId) => {
+                            if (!members.has(botId)) {
+                                skipped.push({ roomId, botId, reason: '不是这个房间的成员' });
+                                return false;
+                            }
+                            if (running.has(botId)) {
+                                skipped.push({ roomId, botId, reason: '正在跑' });
+                                return false;
+                            }
+                            return true;
+                        });
+                        if (targets.length === 0) continue;
+                        started.push({ roomId, botIds: targets });
+                        void actor.say({ text: RETRY_TEXT, author: HUMAN, recipients: targets }).catch((error: unknown) => {
+                            broadcast(roomId, {
+                                kind: 'error',
+                                message: error instanceof Error ? error.message : String(error),
+                            });
+                        });
+                    }
+                    return { started, skipped };
+                },
                 create: async ({ input }) => {
                     const type = input.type.trim();
                     const name = input.name.trim();

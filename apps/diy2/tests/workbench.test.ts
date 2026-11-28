@@ -74,19 +74,27 @@ describe('标题栏的活动入口', () => {
         }),
     );
 
-    it('Bot 与后台任务两颗都在、并列、顺序不变（一颗都不许被重写时顺手丢掉）', () => {
+    it('三颗活动入口都在、并列、顺序不变（一颗都不许被重写时顺手丢掉）', () => {
         expect(parts.activity.map((item) => item.id)).toEqual([...GLOBAL_ACTIVITY_IDS]);
-        // 这两颗是用户 2026-11-24 裁的「两种不同的活动」，删任一颗都要改这份断言
+        // 这三颗是用户 2026-11-24 / 2026-11-28 裁的入口，删任一颗都要改这份断言：
+        // bot = 谁在动；bot-status = 我该推谁一把（两个问题不同，所以是两颗）
         expect(GLOBAL_ACTIVITY_IDS).toContain('bot');
+        expect(GLOBAL_ACTIVITY_IDS).toContain('bot-status');
         expect(GLOBAL_ACTIVITY_IDS).toContain('jobs');
     });
 
-    it('Bot 那颗自带交互（standalone），后台任务那颗点得开面板', () => {
+    it('两颗 Bot 口径不同：活动那颗说「正在运行的列表」，状态那颗说「要你看的」', () => {
         const bot = parts.activity.find((item) => item.id === 'bot');
-        const jobs = parts.activity.find((item) => item.id === 'jobs');
-        // 带 Popover 的 glyph 不能再套一层 button（否则 button 里嵌 button）
+        const status = parts.activity.find((item) => item.id === 'bot-status');
+        expect(bot?.label).toContain('正在运行的 Bot 列表');
+        expect(status?.label).toContain('等你回答');
+        // 两颗都自带交互（Popover / Sheet），不能再套一层 button
         expect(bot?.standalone).toBe(true);
-        expect(bot?.label).toContain('Bot');
+        expect(status?.standalone).toBe(true);
+    });
+
+    it('后台任务那颗点得开面板', () => {
+        const jobs = parts.activity.find((item) => item.id === 'jobs');
         expect(typeof jobs?.onClick).toBe('function');
         expect(jobs?.label).toContain('后台任务');
     });

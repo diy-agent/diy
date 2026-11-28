@@ -181,11 +181,11 @@ textarea.tsx  min-h-16（多行不跟这条）
 | 东西 | ① 一眼 | ② 悬停 | ③ 现在 | ③ 该是 |
 |---|---|---|---|---|
 | 作业 | 输入框底栏 chip `◔ 作业 2` | HoverCard 简要卡 | Sheet 抽屉 | 独立 page（`/jobs`） |
-| Bot 状态 | 标题栏分类胶囊 | — | Sheet 抽屉 | 独立 page（`/bots`） |
+| Bot 状态 | 标题栏 `Bot 状态 N`（N = 要你看的席位条数） | Popover 只列要你看的（`BotStatusChip`） | Sheet 全量表（筛选 / 多选 / 批量继续） | 独立 page（`/bots`） |
 | 上下文 | chip `◔ 上下文 12k` | Popover | — | 独立 page（`/context`） |
 | 待答提问 | 消息里的 AskCard | — | — | 不进专页（有卡片就够） |
 
-**差距是「第三级还没成 page」**：`JobsDrawer` / `BotsOverlay` 现在都是 Sheet 模态，
+**差距是「第三级还没成 page」**：`JobsDrawer` / `BotStatusChip` 的全量表现在都是 Sheet 模态，
 按上面那条硬约束只够第二级。改成 page 需要：路由（URL）、page 主体（`workbench` 的
 `pageType`）、以及从第二级小 panel 右上角进入的入口 —— 属架构改造，单独排期。
 
@@ -193,11 +193,11 @@ textarea.tsx  min-h-16（多行不跟这条）
 
 | 事实（store 字段） | 含义 | ① 聊天窗口 | ② 侧栏 | ③ 标题栏 |
 |---|---|---|---|---|
-| `running` | 有成员正在干活 | `ActiveGlyphs` 的「Bot N」+ 轮次底行的「正在调用…」 | 状态图标绿点呼吸 | bots 的 `live` 胶囊 |
-| `queued` | 投递排队 / 投递中（含重启待续跑） | 输入框上方一行「N 条消息排队中，等 bot 接收」 | 灰**沙漏** | bots 的 `queued` 胶囊 |
-| `pendingAsks` | 提问等你回答 | `AskCard`（卡片本体） | 蓝色 `?` | bots 的 `blocked` 胶囊 |
+| `running` | 有成员正在干活 | `ActiveSessionsGlyph` 的「Bot N」（谁在动）+ 轮次底行的「正在调用…」 | 状态图标绿点呼吸 | 「状态 N」那颗（`BotStatusChip`，含在跑）+ 点开每行一眼状态 |
+| `queued` | 投递排队 / 投递中（含重启待续跑） | 输入框上方一行「N 条消息排队中，等 bot 接收」 | 灰**沙漏** | 「状态」浮层里该行写「在跑 · 还排着 N 条」 |
+| `pendingAsks` | 提问等你回答 | `AskCard`（卡片本体） | 蓝色 `?` | 「状态 N」浮层里那一行写题干 + 「去回答」 |
 | `unread` | 有未读结果 | —（你正看着，看一眼就是已读） | 图标角上的蓝徽标 | —（属于房间，不属于实例） |
-| `broken` | 上一轮出错（不含在跑的） | 消息流里的错误条 | 状态图标变红 | bots 的 `broken` 胶囊（红） |
+| `broken` | 上一轮出错（不含在跑的） | 消息流里的错误条 | 状态图标变红 | 「状态 N」浮层里那一行红字写结局 |
 | `hasDraft` | 有没提交的草稿 | 输入框里有字 | 琥珀笔 | —（同上，属于房间） |
 | `activeJobs` | 后台作业在跑 | 输入框底栏那颗（**本房间**） | —（作业不挂在任务行上） | jobs 那颗（**本实例全部**） |
 
