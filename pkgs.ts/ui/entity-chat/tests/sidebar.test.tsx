@@ -71,7 +71,9 @@ beforeEach(async () => {
         rooms: { list: async () => rooms },
         botProfiles: { list: async () => [] },
         // 模型目录回包里的 `configured` / `snapshotMissing` 是真状态字段（横幅据此画），不是兼容字段
-        models: { list: async () => ({ providers: [], configured: true, modelConfigPath: '', snapshotMissing: false }) },
+        models: {
+            list: async () => ({ providers: [], configured: true, modelConfigPath: '', snapshotMissing: false }),
+        },
         load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
         watch: () => () => undefined,
         drafts: { list: async () => ({ drafts: [] }), put: async () => ({ updatedAt: 0 }), remove: async () => ({}) },
@@ -357,5 +359,62 @@ describe('侧栏按注册表渲染', () => {
         expect(render()).toContain('插件贡献的分区');
         unregisterNavSource('test:plugin');
         expect(render()).not.toContain('插件贡献的分区');
+    });
+});
+
+// ── 置顶区（pin）────────────────────────────────────────────
+describe('侧栏顶部「置顶」区', () => {
+    /** 一个被 pin 的任务：与项目树里的任务同项目，用来验「挪走」而不是「复制一份」 */
+    const pinnedTask: Room = {
+        id: 'task:t-pin',
+        type: 'task',
+        modelKey: 'm',
+        data: { title: '天天要看的任务', projectId: 'proj:diy', status: 'open', pinnedAt: 2000 },
+        botIds: [],
+    };
+
+    /** 换一份房间列表再 bootstrap（beforeEach 那份没有 pin，两处都要能各自成立） */
+    async function bootWith(list: Room[]): Promise<void> {
+        setDiy2Client({
+            rooms: { list: async () => list },
+            botProfiles: { list: async () => [] },
+            models: {
+                list: async () => ({ providers: [], configured: true, modelConfigPath: '', snapshotMissing: false }),
+            },
+            load: async () => ({ items: [], deliveries: [], asks: [], answeredAsks: [] }),
+            watch: () => () => undefined,
+            drafts: {
+                list: async () => ({ drafts: [] }),
+                put: async () => ({ updatedAt: 0 }),
+                remove: async () => ({}),
+            },
+        } as never);
+        actions.bootstrap();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    it('被 pin 的任务在顶部单独一块，行上带项目名，项目树里不再有第二份', async () => {
+        await bootWith([...rooms, pinnedTask]);
+        const html = render();
+        // 位置：置顶块在项目树那一行**之前**（它是侧栏最上面那块）
+        const pinnedAt = html.indexOf('data-sidebar-pinned');
+        expect(pinnedAt).toBeGreaterThanOrEqual(0);
+        expect(pinnedAt).toBeLessThan(html.indexOf('href="/room/proj/diy"'));
+        // 内容：行 + 归属 tag（从这里挪出来之后，项目名是它唯一的归属线索）
+        expect(html).toContain('天天要看的任务');
+        expect(html).toContain('title="项目：diy"');
+        // 去重：整个侧栏里这个链接只出现一次（不在项目树下再重复一份）
+        expect(html.split('href="/room/task/t-pin"').length - 1).toBe(1);
+    });
+
+    it('没有 pin 的任务时整块不渲染（不留一个空分组头）', () => {
+        expect(render()).not.toContain('data-sidebar-pinned');
+    });
+
+    it('侧栏收起成 rail 时置顶的任务仍以图标可见（pin 的用处就是快切）', async () => {
+        await bootWith([...rooms, pinnedTask]);
+        const html = renderToStaticMarkup(<Sidebar {...HOST} open={false} />);
+        expect(html).toContain('data-sidebar-pinned');
+        expect(html).toContain('href="/room/task/t-pin"');
     });
 });

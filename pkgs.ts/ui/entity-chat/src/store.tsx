@@ -955,7 +955,10 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
         bots: Object.fromEntries(
             botProfiles.map((profile) => [
                 profile.id,
-                botOfProfile(profile, botProfileDefaults.find((c) => c.type === profile.type)),
+                botOfProfile(
+                    profile,
+                    botProfileDefaults.find((c) => c.type === profile.type),
+                ),
             ]),
         ),
         loaded: true,
@@ -1152,10 +1155,34 @@ export const actions = {
      */
     setRoomStatus(id: string, status: TaskStatus): Promise<void> {
         return client.rooms
-            .update({ id, data: { status, closedAt: status === 'closed' ? Date.now() : null } })
+            .update({
+                id,
+                // 关闭时顺手**取消置顶**（用户 2026-11-28 裁）：置顶区只列未关闭的任务，
+                // 留着一个看不见的 pin，重开时会突然又回到顶上 —— 那更不可预测。
+                data: {
+                    status,
+                    closedAt: status === 'closed' ? Date.now() : null,
+                    ...(status === 'closed' ? { pinnedAt: null } : {}),
+                },
+            })
             .then(() => refresh())
             .catch((error: unknown) => {
                 emit({ ...state, error: `改状态失败：${messageOf(error)}` });
+            });
+    },
+
+    /**
+     * 置顶 / 取消置顶（`data.pinnedAt`，见 `model.pinnedAtOf`）。
+     *
+     * 值写**时刻**而不是 true：置顶区按它倒序排（最后 pin 的在最上面）。
+     * 走的是 `rooms.update` 的 data 通道 —— 服务端不认识 pin，也不需要认识。
+     */
+    setPinned(id: string, pinned: boolean): Promise<void> {
+        return client.rooms
+            .update({ id, data: { pinnedAt: pinned ? Date.now() : null } })
+            .then(() => refresh())
+            .catch((error: unknown) => {
+                emit({ ...state, error: `${pinned ? '置顶' : '取消置顶'}失败：${messageOf(error)}` });
             });
     },
 

@@ -104,6 +104,23 @@ export function closedAtOf(room: Room): number | undefined {
 }
 
 /**
+ * 置顶时刻（`data.pinnedAt`）：有值 = 被 pin，值就是 pin 的那一刻。
+ *
+ * 为什么不是布尔：置顶区要按它排序（后 pin 的在最上面），布尔还得另开一个键放时刻；
+ * 取消置顶传 `null` 把键删掉 —— 与 `closedAt` 同一个范式，`RoomActor.update` 把 null 当删除。
+ * 时刻只由 UI 盖（`actions.setPinned`）：CLI / 手改 data 直接写 true 不算置顶。
+ */
+export function pinnedAtOf(room: Room): number | undefined {
+    const raw = room.data['pinnedAt'];
+    return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : undefined;
+}
+
+/** 这一行是不是被置顶了（只有任务有意义，见 `pinnedTasksOf`） */
+export function isPinned(room: Room): boolean {
+    return pinnedAtOf(room) !== undefined;
+}
+
+/**
  * 历史行的关闭时间：**相对**说法（「3 小时前」），不是时间戳。
  *
  * 侧栏只有 256px，一行里塞着名字 + 项目 tag，再放 `2026-11-17 06:14` 就把名字挤没了；
@@ -229,9 +246,35 @@ export function visibleInTree(room: Room): boolean {
 }
 
 /**
+ * 项目树 / 未归属里该不该出现这一行 = `visibleInTree` **再去掉置顶的**。
+ *
+ * 置顶的任务从原位挪走（用户 2026-11-28 裁「去重」）：同一任务在树上出现两次会双高亮、
+ * 两处 hover 动作各一份，而且「关掉它」这种动作两行都能点、看不出点的是哪个。
+ * 归属改由置顶行上的项目 tag 认（与历史区同一个做法）。
+ */
+export function visibleInProjectTree(room: Room): boolean {
+    return visibleInTree(room) && !isPinned(room);
+}
+
+/**
  * 导航底部「历史任务」区的行：所有已关闭的任务，按关闭时刻倒序（最近关的在最上面）。
  * 没有 `closedAt` 的老数据垫底（当 0）—— 不给它们抢最近的位置。
  */
 export function closedTasksOf(rooms: Room[]): Room[] {
     return rooms.filter(isClosed).sort((a, b) => (closedAtOf(b) ?? 0) - (closedAtOf(a) ?? 0));
+}
+
+/**
+ * 侧栏顶部「置顶」区的行：被 pin 的**任务**，按 pin 时刻倒序（最后 pin 的在最上面）。
+ *
+ * 三条口径：
+ *   · 只收 `type === 'task'` —— pin 是对「这一件事」的惦记，项目本来就在树顶（2026-11-28 裁）；
+ *   · 已关闭的**过滤掉**：关掉的任务归历史区。UI 这层过滤 + `setRoomStatus` 落库时清
+ *     `pinnedAt`，两处都做 —— 只靠落库那处，CLI 改状态就会留下一条看不见的 pin；
+ *   · 没有 `pinnedAt` 的老数据自然不在里面（不需要迁移）。
+ */
+export function pinnedTasksOf(rooms: Room[]): Room[] {
+    return rooms
+        .filter((room) => room.type === 'task' && !isClosed(room) && isPinned(room))
+        .sort((a, b) => (pinnedAtOf(b) ?? 0) - (pinnedAtOf(a) ?? 0));
 }

@@ -4,7 +4,7 @@
 // 会让它们直接消失 —— 数据还在却永远进不去。
 
 import { RoomRow } from '../components/RoomRow';
-import { visibleInTree } from '../model';
+import { visibleInProjectTree } from '../model';
 import type { NavContext, NavSource } from '../nav';
 import { useRooms } from '../store';
 
@@ -15,7 +15,9 @@ function OrphansBlock({ context }: { context: NavContext }) {
     const projectIds = new Set(rooms.filter((room) => room.type === 'project').map((project) => project.id));
     const orphans = rooms.filter(
         (room) =>
-            room.type !== 'project' && visibleInTree(room) && !projectIds.has(String(room.data['projectId'] ?? '')),
+            room.type !== 'project' &&
+            visibleInProjectTree(room) &&
+            !projectIds.has(String(room.data['projectId'] ?? '')),
     );
     if (orphans.length === 0) return null;
 
