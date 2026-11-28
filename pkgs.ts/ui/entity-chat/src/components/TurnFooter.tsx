@@ -45,23 +45,16 @@ export function TurnFooter({
     const settle = turnSettleOf(entry.turn);
     const startedAt = entry.turn?.startedAt ?? entry.at;
     const now = useNow(live);
-    // 原始数据（用户 2026-11-27：「轮次状态栏需要 copy 操作按钮，可以复制原始数据文本，
-    // 再加一个源代码按钮可以看原始文本」）—— 就是这一轮在会话状态里的那几样事实：
-    // 轮次账 + 这一条的 parts。不查服务端：界面画的本来就是这些，脱开界面另拼一份会两处不一致。
-    const raw = React.useMemo(
+    // 这一轮的**结论正文**（用户 2026-11-27：「源代码按钮不是显示轮次源代码，只是需要当前结论的
+    // 内容，用来做沟通交流」）—— 所以给的是 bot 说的话本身，不是 JSON：复制它是为了贴给别人看，
+    // `parts` / `deliveries` 那层结构对读的人没有意义。
+    const conclusion = React.useMemo(
         () =>
-            JSON.stringify(
-                {
-                    turnId: entry.turnId,
-                    at: entry.at,
-                    author: entry.author,
-                    turn: entry.turn,
-                    parts: entry.parts,
-                    deliveries: entry.deliveries,
-                },
-                null,
-                2,
-            ),
+            entry.parts
+                .filter((part) => part.kind === 'text')
+                .map((part) => part.text)
+                .join('\n\n')
+                .trim(),
         [entry],
     );
     const [showRaw, setShowRaw] = React.useState(false);
@@ -77,6 +70,29 @@ export function TurnFooter({
             <div
                 className={`flex min-w-0 items-center gap-1.5 ${live ? 'text-muted-foreground' : TONE_CLASS[settle?.tone ?? 'muted']}`}
             >
+                {/* 操作在**左**、统计在**右**（用户 2026-11-27）：动作是「我要对它做点什么」，
+                    跟状态结论一样是从左往右读的第一眼；时间那类数字是旁注，靠右。
+                    收尾后才给：跑着的轮没有定论，复制下来只是半截。 */}
+                {!live && conclusion !== '' && (
+                    <>
+                        <CopyButton
+                            text={conclusion}
+                            title="复制本轮结论正文"
+                            className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        />
+                        <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => setShowRaw((value) => !value)}
+                            title={showRaw ? '收起本轮结论' : '看本轮结论正文'}
+                            aria-label="看本轮结论正文"
+                            aria-expanded={showRaw}
+                            className="shrink-0 text-muted-foreground"
+                        >
+                            <Code className="size-3" />
+                        </Button>
+                    </>
+                )}
                 {live ? (
                     <>
                         {onStopBot !== undefined && entry.author !== undefined && (
@@ -123,33 +139,12 @@ export function TurnFooter({
                             // 本该写「22:20」的写成「11-24 22:20」。
                             `结束于 ${formatClock(entry.turn.endedAt, entry.turn.endedAt)}`}
                 </span>
-                {/* 原始数据与源码：收尾后才给（跑着的轮没有定论，复制下来只会是半截） */}
-                {!live && (
-                    <>
-                        <CopyButton
-                            text={raw}
-                            title="复制这一轮的原始数据（JSON）"
-                            className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                        />
-                        <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={() => setShowRaw((value) => !value)}
-                            title={showRaw ? '收起原始文本' : '看原始文本（源代码）'}
-                            aria-label="看原始文本"
-                            aria-expanded={showRaw}
-                            className="text-muted-foreground"
-                        >
-                            <Code className="size-3" />
-                        </Button>
-                    </>
-                )}
             </div>
         </div>
         {showRaw && (
-            <pre className="mt-1 max-h-72 overflow-auto rounded border border-border bg-muted/40 p-2 text-xs leading-4 whitespace-pre-wrap break-all">
-                {raw}
-            </pre>
+            <div className="mt-1 max-h-72 overflow-auto rounded border border-border bg-muted/40 p-2 text-xs leading-5 whitespace-pre-wrap break-words select-text">
+                {conclusion === '' ? <span className="text-muted-foreground">这一轮没有正文</span> : conclusion}
+            </div>
         )}
         </>
     );
