@@ -426,10 +426,19 @@ function EntryView({
                             Promise.reject(new Error('当前后端不支持附件'))
                         }
                     />
+                    {/*
+                      * 人说的话走 `default`（`bg-primary` 实心）：
+                            2026-11-27 用户报「翻历史很难一眼看出哪些是我说的」。
+                            实测语义变量的亮度台阶 —— background 1.0 / muted·secondary·accent 0.967 /
+                            border 0.92 / tinted 0.93，彼此只差 0.03~0.07，白底上几乎同色，
+                            怎么调都「看不出」；只有 primary（0.21，暗色主题下 0.92）是真正的反差档。
+                            所以这里不再走浅色低档，直接实心（与 iMessage / WhatsApp 的用户气泡同理）。
+                      * 发送失败仍走 destructive（failed 才算；queued/delivering 不算：
+                      * 那时 bot 正在执行，界面上已经有执行中指示器，再标一次会重复）。
+                      * 全程语义 token，无 hex / 任意值。
+                      */}
                     {text !== '' && (
-                        // 投递失败时整条气泡走 destructive（failed 才算；queued/delivering 不算：
-                        // 那时 bot 正在执行，界面上已经有执行中指示器，再标一次会重复）
-                        <Bubble align="end" variant={failed.length > 0 ? 'destructive' : 'muted'}>
+                        <Bubble align="end" variant={failed.length > 0 ? 'destructive' : 'default'}>
                             <BubbleContent className="whitespace-pre-wrap break-words">{text}</BubbleContent>
                         </Bubble>
                     )}
