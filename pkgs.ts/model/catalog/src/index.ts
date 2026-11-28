@@ -37,6 +37,7 @@ export {
     listProviders,
     loadCatalog,
     readAccountValue,
+    snapshotAvailable,
     snapshotPath,
 } from "./catalog.js";
 export {

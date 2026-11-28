@@ -1,0 +1,2 @@
+# 快照由 scripts/gen.ts 生成，不进 git（发布时 prepack 生成进 tarball）
+data/

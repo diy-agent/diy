@@ -15,6 +15,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { bundledSnapshotPath, hasBundledSnapshot } from "@diy-agent/models-dev-snapshot";
 import { load as loadYaml } from "js-yaml";
 import { isEmptyDocument } from "./errors.js";
 import { CatalogError } from "./errors.js";
@@ -689,15 +690,23 @@ export function snapshotPath(home: string): string {
 }
 
 /**
+ * 目录有没有规格来源：用户数据根那份，或包内快照（包里的由 gen 脚本生成）。
+ * UI 报「缺快照」只能读这个 —— 否则用户装了包却还被告知没快照。
+ */
+export function snapshotAvailable(home: string): boolean {
+    return existsSync(snapshotPath(home)) || hasBundledSnapshot();
+}
+
+/**
  * 快照（std provider 的 spec）：显式路径 > `$DIY_HOME/data/`。
  *
- * 曾经还有第三档：「四级上跳读**本仓** `apps/diy-app/src/main/data/models.dev.json`」。删于
- * 2026-11-24：那是 diy-app 的产物快照（199 家 / 11-03），发布形态下这个相对路径指向不存在的
- * 位置、monorepo 下又让另一个 app 的旧数据给本 app 的目录定义规格 —— 两种形态都不对。
- * 现在**没有快照就是没有**：std provider 全部缺席，调用方据 `snapshotPath()` 报「缺快照」。
+ * 第三档：包内快照 `@diy-agent/models-dev-snapshot`（2026-11-27）。与 11-24 删掉的那一档
+ * 不同：那次是四级上跳读**本仓另一个 app** 的产物快照，发布形态下路径不存在；这次是显式
+ * 依赖一个包，快照由它的 gen 脚本生成、打包时写进 tarball，不进我们的 git。只在用户文件
+ * 和运行时缓存都没有时才用到，优先级最低。
  */
 function loadSnapshot(home: string, options?: CatalogOptions): Record<string, RawSpecProvider> | null {
-    const candidates = [options?.snapshotPath, snapshotPath(home)];
+    const candidates = [options?.snapshotPath, snapshotPath(home), bundledSnapshotPath()];
     for (const candidate of candidates) {
         if (candidate === undefined || !existsSync(candidate)) continue;
         const raw = readYaml(candidate);

@@ -20,4 +20,8 @@
     },
     "include": ["src/**/*"],
     "exclude": ["tests/**/*"]
+,
+  "references": [
+    { "path": "../models-dev-snapshot/tsconfig.build.json" }
+  ]
 }

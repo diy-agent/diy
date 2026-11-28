@@ -33,7 +33,7 @@ import {
     modelProviders,
     newEntityId,
     openStore,
-    snapshotPath,
+    snapshotAvailable,
     sourceQuotesOf,
     unitBoard,
     unitsContextText,
@@ -106,7 +106,7 @@ function modelConfigView(): ModelConfigSnapshot {
     return {
         home: config.home,
         modelConfigPath: config.modelConfigPath,
-        snapshotMissing: !existsSync(snapshotPath(config.home)), // sync-io-ok: 同步自报「快照在不在」，只判文件存在与否
+        snapshotMissing: !snapshotAvailable(config.home), // sync-io-ok: 用户文件或包内快照，任一在就算有
         ...(defaultModelKey === undefined ? {} : { defaultModelKey }),
         providers: availableProviders(config.home).map((provider) => ({
             id: provider.providerId,
@@ -1182,7 +1182,7 @@ export async function createDiy2App(opts: {
                     defaultModelKey: defaultModelKeyOf(),
                     configured: existsSync(config.modelConfigPath), // sync-io-ok: 模型配置状态自报，只判文件存在与否；与启动期 modelConfigHint 同源
                     modelConfigPath: config.modelConfigPath,
-                    snapshotMissing: !existsSync(snapshotPath(config.home)), // sync-io-ok: 同上，判断目录快照在不在
+                    snapshotMissing: !snapshotAvailable(config.home), // sync-io-ok: 同上，用户文件或包内快照任一在
                 }),
                 // ── 配置页（写侧）──────────────────────────────────────────
                 //
