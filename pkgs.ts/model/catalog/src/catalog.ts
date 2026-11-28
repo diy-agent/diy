@@ -1,10 +1,15 @@
 // catalog.ts — 读配置 → 目录。唯一的 IO 都在这一个文件里（node:fs + js-yaml）。
 //
 // 数据流（谁也不覆盖谁，按 id 关联）：
-//   spec 层  = providers.custom.yaml（custom provider 的模型规格）
+//   spec 层  = providers.custom.yaml（**已废弃**；自定义 provider 的模型规格，见下）
 //             + models.dev 快照（std provider 的模型规格，可选）
 //   配置层   = model.yaml（accounts / filter / models 覆盖）
 //   目录     = spec ⊕ override ＋ filter 判定
+//
+// ⚠️ 价目唯一来源 = **models.dev 的谷价**。providers.custom.yaml 里的 `cost` / `tiers`
+//    是旧设计（第二份价目，改一处漏一处），2026-11-28 起废弃并清空；峰时段翻倍是模型策略
+//    （`src/strategies/models/deepseek/pricing.ts`），不要往配置里抄峰价。
+//    该文件若仍存在，只用于真正的自定义 provider spec（endpoint / 模型列表）。
 //
 // ⚠️ 账号的 `data.value`（key）**只被 readAccountValue 读取**，目录与列表里永远只有名字。
 

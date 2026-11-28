@@ -11,6 +11,7 @@
 //   · 压缩是 agent 的命令（`compact(strategy)`），不是外部算的边界。
 
 import { join } from 'node:path';
+import { costOf } from '@diy-agent/model-catalog';
 import type { TrafficPort } from '@diy-agent/llm-provider';
 import type { Agent, AgentPorts, HistoryEntry } from './aggregate.js';
 import { createAgent } from './aggregate.js';
@@ -143,6 +144,9 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
      */
     interface ModelFacts {
         readonly windowTokens: number | null;
+        /** 模型身份（算价要用：峰谷策略按 model id 认领） */
+        readonly providerId?: string;
+        readonly modelId?: string;
         readonly cost?: ModelChoice['cost'];
     }
     const facts = new Map<BotId, ModelFacts>();
@@ -153,6 +157,7 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
         const choice = choiceOfIn(models, bot);
         const value: ModelFacts = {
             windowTokens: windowOfIn(models, bot),
+            ...(choice === undefined ? {} : { providerId: choice.providerId, modelId: choice.modelId }),
             ...(choice?.cost === undefined ? {} : { cost: choice.cost }),
         };
         facts.set(bot.id, value);
@@ -213,12 +218,11 @@ export function createAgentHost(opts: AgentHostOptions): BotChatHost {
         const fact = factsFor(bot);
         const w = fact.windowTokens;
         // 本轮花费（USD）：按模型目录的价目算；目录没价目 ⇒ 缺席（**不写 0**，那会被当成"免费"）。
-        // 口径与 diy-app 一致：input 含缓存读（模型只有 input/output 两档价目时就这么算，偏保守）。
-        const rates = fact.cost;
+        // 峰谷（DeepSeek）×2 由 model-catalog 的模型策略负责，这里只把模型身份传进去。
         const cost =
-            rates === undefined || st.usage === undefined
+            st.usage === undefined || fact.providerId === undefined || fact.modelId === undefined
                 ? undefined
-                : (st.usage.inputTokens / 1e6) * rates.input + (st.usage.outputTokens / 1e6) * rates.output;
+                : costOf(fact.cost, st.usage, { providerId: fact.providerId, modelId: fact.modelId });
         const metrics: ChatMetrics = {
             turns: st.turns,
             ...(st.usage === undefined

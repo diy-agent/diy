@@ -608,7 +608,10 @@ export function createBotChat(options: BotChatOptions): BotChatHost {
     const metricsOf = (config: BotConfig, sessionId: string, usage: TokenUsage): ChatMetrics => {
         const last = lastStep.get(sessionId);
         const entry = catalog().find((item) => keyOf(item) === config.model) ?? null;
-        const cost = last === undefined ? undefined : costOf(entry?.cost, last);
+        const cost =
+            last === undefined || entry === null
+                ? undefined
+                : costOf(entry.cost, last, { providerId: entry.providerId, modelId: entry.modelId });
         return {
             ...(last === undefined ? {} : { inputTokens: last.inputTokens, outputTokens: last.outputTokens }),
             ...(last?.cacheReadTokens === undefined ? {} : { cacheReadTokens: last.cacheReadTokens }),

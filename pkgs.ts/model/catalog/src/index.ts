@@ -24,7 +24,11 @@ export type { CatalogErrorCode } from './errors.js';
 
 // 价目 × 用量 = 金额（纯函数；价目表在本包，算价跟它住一起）
 export { costOf } from './cost.js';
-export type { CostUsage } from './cost.js';
+export type { CostPricingContext, CostUsage } from './cost.js';
+
+// 模型策略（峰谷计价等）：按模型身份认领，价目仍只有 models.dev 一份
+export { MODEL_PRICING_STRATEGIES, deepseekPricing, priceMultiplierOf } from './strategies/index.js';
+export type { ModelPricingStrategy, PricingMultiplier } from './strategies/types.js';
 
 export {
     availableProviders,
