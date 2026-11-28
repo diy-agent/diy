@@ -31,7 +31,7 @@ import {
     useSelectedRoom,
 } from '@diy-agent/entity-chat';
 import { Menu, Settings } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import '../index.css';
 import './workbench.css';
@@ -168,12 +168,15 @@ function Host() {
     const isSettings = address.page === SETTINGS_PAGE;
 
     /** 在设置页时 `useSelectedRoom()` 是空的 —— 齿轮要「返回对话」就得知道回到哪一间 */
-    const lastRoomId = useRef<string>('');
+    // 必须是 state 而不是 ref：`backTo` 要参与渲染（菜单项的目标房间），在 render 期读 `ref.current`
+    // 正是 React Compiler 报的 `Cannot access refs during render` —— 而且 ref 变了不触发重渲染，
+    // 「进设置页 → 齿轮返回」会拿到上一次渲染时的旧房间。state 的这次额外渲染只在切房间时发生。
+    const [lastRoomId, setLastRoomId] = useState<string>('');
     const roomId = room?.id;
     useEffect(() => {
-        if (roomId !== undefined) lastRoomId.current = roomId;
+        if (roomId !== undefined) setLastRoomId(roomId);
     }, [roomId]);
-    const backTo = rooms.find((item) => item.id === lastRoomId.current) ?? rooms[0];
+    const backTo = rooms.find((item) => item.id === lastRoomId) ?? rooms[0];
 
     // 导航的开关提到了壳这一层：标题栏左端要放它的按钮，而标题栏是整宽的一条
     const [open, setOpen] = useState(loadNavOpen);
@@ -250,8 +253,9 @@ function Host() {
             },
         ],
         // `jumpToFirstRunning*` 是模块级命令（不依赖 props），所以不必进依赖表；
-        // `setJobsOpen` 是 setState（引用恒定），同理。
-        [open, toggle, dialogs, isSettings, backTo],
+        // `setJobsOpen` 是 setState（引用恒定）；`dialogs` 只在 JSX 里用、这份贡献里没读它 ——
+        // React Compiler 也把「多余的依赖」报了出来（MemoDependencies），一并删掉。
+        [open, toggle, isSettings, backTo],
     );
 
     /** 去设置（横幅上的「去配置」）—— 同一件导航，不是另一条路 */
