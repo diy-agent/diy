@@ -253,11 +253,17 @@ export function createSession(options: CreateSessionOptions): AgentSession {
                         yield delta;
                     } else if (delta.type === 'tool-result') {
                         // 宿主/provider 自己回收的结果也按同一形状落（带 tool_call_id，供投递侧配对）
+                        // `delta.data`（分支私有载荷，如 attachments）原样并进 ChatMessage.data：
+                        // 图走这里而非 `content`（字符串会被落库/打日志）
+                        const extra = delta.data;
                         appendMessage({
                             role: 'tool',
                             type: 'tool-result',
                             text: delta.content,
-                            data: { tool: { id: delta.id } },
+                            data:
+                                extra === undefined
+                                    ? { tool: { id: delta.id } }
+                                    : { tool: { id: delta.id }, ...(extra as Record<string, unknown>) },
                         });
                         toolResults += 1;
                         yield delta;

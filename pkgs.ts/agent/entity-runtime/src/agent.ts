@@ -16,6 +16,8 @@ import {
 import { logs, SeverityNumber } from '@opentelemetry/api-logs';
 import { z } from 'zod';
 
+import type { AttachmentRef } from '@diy-agent/attachment/types';
+
 import { friendlyError, isContextOverflow } from './errors';
 import { estimateMessagesTokens, guardMessages } from './context-guard';
 import { scrubMedia } from './media-scrub';
@@ -74,8 +76,15 @@ export interface RunOptions {
     /**
      * 每一步结束时回传"本步新增的消息"，按 step 顺序拼接就是这一轮的完整增量：
      *   本步被插入的 steering 用户消息 + 模型产出的 assistant / tool 消息。
+     *
+     * `toolAttachments`（2026-11-28）：`toolCallId → 附件 ref`。工具产出的图（`view_image`）
+     * 的**字节**不能进 transcript（会把 db 撑爆），而 ref 必须跟着那条 tool 消息走，
+     * 下一轮重建 messages 时才读得回来（见 `session-images.ts` 的 tool 分支）。
      */
-    onStepTranscript?: (messages: ModelMessage[]) => void;
+    onStepTranscript?: (
+        messages: ModelMessage[],
+        toolAttachments?: ReadonlyMap<string, readonly AttachmentRef[]>,
+    ) => void;
     /**
      * 本轮**全部步**的真实用量（token）—— 计费口径（多步时是各步之和）。
      * 不要拿它当上下文水位：40 步 × 20 万会把「20 万上下文」报成 800 万，
@@ -172,6 +181,14 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
      * 增量共用一个号不会丢信息：一个条目的文本是**累加**的，不需要一个号来区分哪一片。
      */
     let seq = 0;
+    /**
+     * 本轮已出现的「工具产出附件」：`toolCallId → ref`。
+     *
+     * 为什么要攒到 onStepFinish 才交出去：`step.response.messages` 里的 tool 消息对应哪些
+     * ref，只能从 tool-result part 的 output 上认；而 onStepFinish 拿得到整步的 messages，
+     * 两边按 toolCallId 一配就行。**攒整轮不清**：跨步的 toolCallId 唯一，且重试要能重放。
+     */
+    const stepAttachments = new Map<string, readonly AttachmentRef[]>();
     const turnId = options.turnId ?? `turn-${Date.now().toString(36)}`;
     const messageId = `msg-${Date.now().toString(36)}`;
 
@@ -303,7 +320,10 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
             if (options.onStepTranscript === undefined) return;
             // 工具输出已在**投递层**截过（`toModelOutput` → `tool-output.ts`）：这里拿到的
             // `step.response.messages` 就是模型实际收到的版本，不需要再裁开。
-            options.onStepTranscript([...(step.experimental_steeringMessages ?? []), ...step.response.messages]);
+            options.onStepTranscript(
+                [...(step.experimental_steeringMessages ?? []), ...step.response.messages],
+                stepAttachments,
+            );
         },
     });
 
@@ -359,7 +379,10 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                     // 让 UI 能画出来。它只是几百字节的 ref，没有字节 —— 字节仍已从 result 里剥掉。
                     const output = part.output as { attachments?: unknown } | undefined;
                     const raw = output?.attachments;
-                    const refs = Array.isArray(raw) ? (raw as import('@diy-agent/attachment/types').AttachmentRef[]) : undefined;
+                    const refs = Array.isArray(raw) ? (raw as AttachmentRef[]) : undefined;
+                    // 同一批 ref 还要跟着 transcript 走（跨轮看图）：字节已剥，ref 进 tool 消息，
+                    // 下一轮 `messageWithAttachments` 按它读回字节。
+                    if (refs !== undefined && refs.length > 0) stepAttachments.set(part.toolCallId, refs);
                     yield {
                         seq: ++seq,
                         type: 'tool.completed',
