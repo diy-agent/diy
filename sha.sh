@@ -56,6 +56,27 @@ _ws_run() {
   done
 }
 
+# 各包的 `./sha.sh sync`：**只跑真有实现的包**。
+#
+# 为什么：49 个包里 48 个的 sync() 是空实现（`sync() { :; }`，模板自带的占位），
+# 逐个起一个 bash + sha 引擎只为跑一个 `:` —— 实测 49 个子进程合计 2.67s，几乎全是启动开销。
+# 静态看一眼包级 sha.sh 就能筛掉；有实现的（如 pkgs.ts/ui/core）照旧跑。
+# 判据写成「精确匹配空实现」而不是「猜有没有逻辑」：匹配不上就走子进程，宁可多跑不漏跑。
+_ws_run_sync() {
+  local ws
+  for ws in "${_workspaces[@]}"; do
+    [[ -f "$ws/sha.sh" ]] || continue
+    if grep -qE '^[[:space:]]*sync\(\)[[:space:]]*\{[[:space:]]*:[[:space:]]*;?[[:space:]]*\}' "$ws/sha.sh"; then
+      continue
+    fi
+    (
+      cd "$ws"
+      echo "${inverse_surface}info: workspace: Running './sha.sh sync' in '$ws'${reset}"
+      run command ./sha.sh sync
+    )
+  done
+}
+
 # mono所有workspaced项目上执行一条命令
 exec()  {  _ws_run command "$@"; }
 # build() {  _ws_run command ./sha.sh build; }
@@ -92,7 +113,7 @@ sync-deps() {
     run node scripts/check-sync.mjs --fix
     # vendor/sha 是 git subtree：内容随 checkout 下来，这里不再需要任何 submodule init。
 
-    _ws_run command ./sha.sh sync;
+    _ws_run_sync;
 
     # electron 二进制：全机一份 store + 本 worktree 只留软链（细节见 scripts/ensure-electron.mjs
     # 头注）。这里**不联网**（--no-download）：构建/检查用不到二进制，缺就一行提示；
@@ -768,12 +789,22 @@ dist() {
 # profile 构建：只挑 apps/* 里声明了 build() 的（= 有产物要建）。
 # apps/chat|minimal|web 是历史残留（git 无跟踪、无 package.json / sha.sh），自然跳过。
 _build_apps() {
-    local a
+    # 各 app 的 build **并行**：两个 app 都是各自独立的 vite 打包（互不读对方产物），
+    # 串着跑 = 白白相加。实测热态：diy-app ~12s + diy2 ~12s，串行 24s → 并行 ~13s。
+    # 输出会交错，但每行都带 app 路径前缀（run 打印的命令），出错时看 `✗` 行定位。
+    local a p rc=0
+    local -a pids=()
     for a in apps/*/; do
         [[ -f "${a}sha.sh" ]] || continue
         grep -qE '^build\(\)' "${a}sha.sh" || continue
-        run "${a}sha.sh" build
+        ( run "${a}sha.sh" build ) &
+        pids+=("$!")
     done
+    for p in "${pids[@]:-}"; do
+        [[ -n "$p" ]] || continue
+        wait "$p" || rc=1
+    done
+    return "$rc"
 }
 
 ci() {
