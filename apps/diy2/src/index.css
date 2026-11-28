@@ -14,6 +14,10 @@
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
 @import '@diy-agent/entity-chat/styles.css';
+/* 12 套主题（shadcn 官方 themes.css，已把 HSL 三段值转成 hsl(...) 完整值）：
+   切换方式是给 <html> 挂 .theme-xxx（见 workbench/ThemePicker.tsx），
+   不挂时走 styles.css 的 :root 基准色 */
+@import '@diy-agent/ui-shadcn/themes.css';
 
 @source '../../../pkgs.ts/ui/entity-chat/src';
 @source '../../../pkgs.ts/ui/shadcn/src';
