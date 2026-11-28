@@ -1377,12 +1377,19 @@ export class RoomActor {
             data: { text: event.text, kind: 'job-done', job: jobNoticeOf(event.notify) },
         };
         this.deps.emit({ kind: 'item', item: this.deps.store.appendItem(this.id, notice) });
-        void this.sessionOf(bot).post({
-            messageId: notice.id,
-            turn,
-            kind: 'system',
-            text: `[后台作业结束] ${event.text}`,
-        });
+        // 投递失败必须出声（2026-11-28 实证）：这里原来是裸 `void`，机器过载（load1=187、
+        // 事件循环 lag 18s）时 session 层抛错被吞掉 —— notice 落库了、界面看得见「作业结束」，
+        // 但那条通知永远没进到 bot 的那一轮，且**零日志**（用户报的「最后一个 job 没激发 bot」）。
+        void this.sessionOf(bot)
+            .post({
+                messageId: notice.id,
+                turn,
+                kind: 'system',
+                text: `[后台作业结束] ${event.text}`,
+            })
+            .catch((e: unknown) => {
+                console.warn(`[job] 结束通知投递失败 run=${event.run.id} turn=${turn.turnId}:`, e);
+            });
         return true;
     }
 }

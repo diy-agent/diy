@@ -259,6 +259,25 @@ describe('RunRegistry（抽包后的行为，##515 3a）', () => {
         }
     });
 
+    // ⑪c 没挂 notifier = 静默模式（agent 自己的 `job` 工具、或宿主不关心结局）：压根没有通知这回事，
+    //     `delivered` 只能是 undefined。原来 `delivered !== false` 把它也写成 true，
+    //     2026-11-28 用户就看着这个 true 去查「为什么没激发 bot」（而真问题是投递静默失败）。
+    it('⑪c 没有 notifier ⇒ done.json 不写 notified:true（未通知 ≠ 有人收）', async () => {
+        const rootDir = tmpRoot('silent');
+        const reg = new RunRegistry({ rootDir });
+        try {
+            const info = await reg.spawn({ command: 'echo quiet', cwd: process.cwd(), origin: { taskUri: 't/11c' } });
+            const done = await reg.wait(info.id, 10_000);
+            await sleep(150);
+            expect(done?.delivered).toBeUndefined();
+            const doneJson = JSON.parse(readFileSync(join(done!.dir, 'done.json'), 'utf8')) as Record<string, unknown>;
+            expect(doneJson['notified']).toBe(false);
+        } finally {
+            reg.clear();
+            rmSync(rootDir, { recursive: true, force: true });
+        }
+    });
+
     it('⑪b 正常投递 ⇒ delivered:true，done.json 的 notified:true', async () => {
         const rootDir = tmpRoot('delivered');
         const reg = new RunRegistry({ rootDir, notifier: () => true });
