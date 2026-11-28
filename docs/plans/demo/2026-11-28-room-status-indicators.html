@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>room 级状态指示器：6 个候选形态（##43 设计探索）</title>
+<style>
+  :root{
+    --bg:#08080a; --card:#111114; --card2:#16161a; --border:#26262b; --fg:#fafafa;
+    --mf:#a1a1aa; --mf2:#71717a;
+    --emerald:#34d399; --sky:#38bdf8; --rose:#fb7185; --amber:#fbbf24; --blue:#60a5fa;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:26px 28px 80px; background:var(--bg); color:var(--fg);
+    font:13.5px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",system-ui,sans-serif;
+  }
+  .wrap{max-width:1120px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px;font-weight:600}
+  .lead{color:var(--mf);font-size:12.5px;margin:0 0 18px}
+  .bar{
+    position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:10px 12px; margin:0 -12px 18px; background:rgba(8,8,10,.92);
+    backdrop-filter:blur(8px); border-bottom:1px solid var(--border);
+  }
+  .bar .lbl{color:var(--mf);font-size:12px}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .seg button{
+    all:unset; cursor:pointer; padding:4px 10px; font-size:12px; color:var(--mf);
+    border-right:1px solid var(--border);
+  }
+  .seg button:last-child{border-right:0}
+  .seg button[aria-pressed="true"]{background:#26262b;color:var(--fg)}
+  .legend{display:flex;gap:12px;margin-left:auto;flex-wrap:wrap}
+  .legend span{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--mf)}
+  .dot{width:7px;height:7px;border-radius:999px;display:inline-block}
+  .dot.run{background:var(--emerald)}
+  .dot.ask{background:var(--sky)}
+  .dot.att{background:var(--rose)}
+  .dot.que{background:var(--amber)}
+  .dot.unr{background:var(--blue)}
+  .dot.idle{background:#52525b}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px 18px 14px;margin:0 0 16px}
+  .head{display:flex;align-items:baseline;gap:9px;margin-bottom:10px}
+  .no{font:600 11px/1 ui-monospace,Menlo,monospace;color:var(--mf2);border:1px solid var(--border);border-radius:6px;padding:3px 6px}
+  .head h2{font-size:14.5px;margin:0;font-weight:600}
+  .head .q{color:var(--mf);font-size:12px}
+  .meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:11px}
+  .meta div{background:var(--card2);border:1px solid var(--border);border-radius:9px;padding:8px 10px}
+  .meta b{display:block;font-size:10.5px;color:var(--mf2);font-weight:600;letter-spacing:.04em;margin-bottom:3px}
+  .meta p{margin:0;font-size:12px;color:var(--mf)}
+  @media (max-width:760px){ .meta{grid-template-columns:1fr} }
+
+  /* 假标题栏：与真实 28px 一条对齐 */
+  .tbar{
+    display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;
+    background:#0a0a0c;border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative;
+  }
+  .tbar .brand{font-size:11px;color:var(--mf2);margin-right:auto}
+  .tbar .end{display:flex;align-items:center;gap:6px;min-width:0}
+  .btn{
+    all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 6px;
+    border-radius:7px;font-size:11.5px;color:var(--mf);white-space:nowrap;
+  }
+  .btn:hover{background:#1f1f24;color:var(--fg)}
+  .num{font-variant-numeric:tabular-nums}
+  .pulse{animation:pulse 1.6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .muted{color:var(--mf2)}
+  .rose{color:var(--rose)} .sky{color:var(--sky)} .em{color:var(--emerald)} .amber{color:var(--amber)} .blue{color:var(--blue)}
+
+  /* S1 分档胶囊 */
+  .tier{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px;border-radius:7px;font-size:11.5px}
+  .tier:hover{background:#1f1f24}
+  .tier.on{background:#1f1f24}
+
+  /* S2 点阵 */
+  .matrix{display:flex;align-items:center;gap:2px;flex-wrap:nowrap;overflow:hidden}
+  .cell{width:9px;height:14px;border-radius:2px;flex:none;cursor:default}
+  .cell.run{background:var(--emerald)}
+  .cell.ask{background:var(--sky)}
+  .cell.att{background:var(--rose)}
+  .cell.que{background:var(--amber)}
+  .cell.unr{background:var(--blue)}
+  .cell.idle{background:#3f3f46}
+
+  /* S3 最急一件 */
+  .focus{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:520px}
+  .focus .name{font-size:11.5px;color:var(--fg);max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .focus .say{font-size:11.5px;color:var(--mf);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pill{all:unset;cursor:pointer;height:20px;padding:0 7px;border-radius:6px;border:1px solid var(--border);font-size:11px;color:var(--fg);white-space:nowrap}
+  .pill:hover{background:#1f1f24}
+
+  /* S4 chip 带 */
+  .strip{display:flex;align-items:center;gap:5px;overflow-x:auto;scrollbar-width:none;min-width:0}
+  .strip::-webkit-scrollbar{display:none}
+  .chip{
+    display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:999px;
+    border:1px solid var(--border);font-size:11px;white-space:nowrap;flex:none;cursor:pointer;color:var(--fg);
+  }
+  .chip:hover{background:#1f1f24}
+
+  /* S5 状态条 */
+  .sbar{position:absolute;left:0;right:0;bottom:0;height:2px;display:flex}
+  .sbar i{height:100%;display:block}
+
+  /* S6 侧栏 */
+  .side{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px;max-width:340px}
+  .row{display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:7px;font-size:12px}
+  .row:hover{background:#1b1b20}
+  .row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tag{font-size:10.5px;color:var(--mf2);border:1px solid var(--border);border-radius:5px;padding:0 4px}
+  .row.cur{background:#1b1b20;box-shadow:inset 2px 0 0 var(--sky)}
+
+  table{border-collapse:collapse;width:100%;font-size:12px;margin-top:6px}
+  th,td{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}
+  th{background:var(--card2);font-weight:600;font-size:11px;color:var(--mf)}
+  .foot{color:var(--mf2);font-size:11.5px;margin-top:22px;line-height:1.7}
+  code{background:#1b1b20;padding:1px 5px;border-radius:4px;font:11.5px ui-monospace,Menlo,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>room 级状态指示器：6 个候选形态</h1>
+  <p class="lead">
+    现在的标题栏只有两串数字（<code>Bot N</code> / <code>状态 N</code>）—— 能说出「有几个」，说不出「是哪个、要我干什么」。
+    下面每个方案都是**同一份假数据**的渲染，切上面的房间数看它在 4 / 12 / 40 个房间下怎么退化。
+  </p>
+
+  <div class="bar">
+    <span class="lbl">房间数</span>
+    <div class="seg" id="segCount">
+      <button data-n="4" aria-pressed="true">4（少）</button>
+      <button data-n="12" aria-pressed="false">12（中）</button>
+      <button data-n="40" aria-pressed="false">40（多）</button>
+    </div>
+    <span class="lbl" style="margin-left:8px">最急优先：出错 → 等你回答 → 在跑 → 排队 → 未读 → 空闲</span>
+    <div class="legend">
+      <span><i class="dot att"></i>上一轮出错</span>
+      <span><i class="dot ask"></i>等你回答</span>
+      <span><i class="dot run"></i>在跑</span>
+      <span><i class="dot que"></i>排队</span>
+      <span><i class="dot unr"></i>未读</span>
+      <span><i class="dot idle"></i>空闲</span>
+    </div>
+  </div>
+
+  <!-- ── S1 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S1</span>
+      <h2>分档胶囊：按「最急状态」分组计数</h2>
+      <span class="q">有几件事要处理？· 点一档看是哪些房间</span>
+    </div>
+    <div class="tbar">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s1"></div>
+    </div>
+    <div class="list" id="s1list" style="margin-top:8px"></div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「现在总共压着几件事、分别是哪一档」</p></div>
+      <div><b>适用量级</b><p>任意。房间再多也只是一排数字，不会爆版</p></div>
+      <div><b>代价</b><p>只说类别不说名字 —— 想知道是哪个还得点开一次</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：VS Code 状态栏、GitHub Actions 概览、Slack 侧栏分组红点。</p>
+  </section>
+
+  <!-- ── S2 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S2</span>
+      <h2>状态点阵：一个房间一格</h2>
+      <span class="q">整台实例的「体温」· 悬停看是哪个房间</span>
+    </div>
+    <div class="tbar">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s2"></div>
+    </div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「整体忙不忙、有没有几个红的挤在一起」</p></div>
+      <div><b>适用量级</b><p>≤ 24 格清晰；再多要按状态聚合或分页（<code>+N</code>）</p></div>
+      <div><b>代价</b><p>格子太窄放不下名字；同色多格看不出谁是谁，必须悬停</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：GitHub 贡献图、Datadog 服务网格、CI 的 workflow 结果点阵、Linear 的 cycle 进度点。</p>
+  </section>
+
+  <!-- ── S3 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S3</span>
+      <h2>最急一件 + 队尾计数（attention first）</h2>
+      <span class="q">直接把该做的那件事摆出来 · ‹ › 换下一件</span>
+    </div>
+    <div class="tbar">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s3"></div>
+    </div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「现在最该我动手的是哪一件、它要什么」</p></div>
+      <div><b>适用量级</b><p>任意。房间越多越占优 —— 你不需要知道另外 37 个</p></div>
+      <div><b>代价</b><p>一次只推一件；总量靠「+N」暗示，看不清全局分布</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：Linear Inbox、Things 的 Today、PagerDuty「worst first」、iOS 通知摘要。</p>
+  </section>
+
+  <!-- ── S4 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S4</span>
+      <h2>横向 chip 带：带名字的流水</h2>
+      <span class="q">谁在等你，一眼读出房间名</span>
+    </div>
+    <div class="tbar">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s4"></div>
+    </div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「哪几个房间在等我，分别等什么」</p></div>
+      <div><b>适用量级</b><p>≤ 4 个正好；再多横向滚动（滚出视野 = 看不见）</p></div>
+      <div><b>代价</b><p>占标题栏宽度，与区域开关抢地方；名字长就截断</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：Slack 顶部未读条、Teams 活动、Discord 私信徽标、Jira「我的待办」。</p>
+  </section>
+
+  <!-- ── S5 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S5</span>
+      <h2>状态条：标题栏底边一条彩色分段</h2>
+      <span class="q">零宽度成本的全局条形图 · 悬停看段</span>
+    </div>
+    <div class="tbar" style="margin-bottom:6px">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s5text"></div>
+      <div class="sbar" id="s5"></div>
+    </div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「全局构成：多少比例是红的/蓝的/绿的」</p></div>
+      <div><b>适用量级</b><p>≤ 12 段可分辨；更多要按状态合并成几段</p></div>
+      <div><b>代价</b><p>2px 高，单段无法点中；只能当提示，不能当入口</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：VS Code 编辑器 tab 的脏标记、JetBrains 底部进度条、macOS Dock 徽标、浏览器 tab 的忙碌转圈。</p>
+  </section>
+
+  <!-- ── S6 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S6</span>
+      <h2>侧栏为主 + 标题栏只留一颗「最坏的」</h2>
+      <span class="q">room 级信息回到「能看见名字」的地方</span>
+    </div>
+    <div class="tbar" style="margin-bottom:10px">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s6bar"></div>
+    </div>
+    <div class="side" id="s6side"></div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「每个房间自己什么状态」—— 逐行看，不用去标题栏换算</p></div>
+      <div><b>适用量级</b><p>任意：侧栏本来就要滚动，状态跟着行走</p></div>
+      <div><b>代价</b><p>跨房间总览弱：要扫一遍列表才知道全貌（标题栏退化成一粒灯）</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：Slack（侧栏才是主战场）、Notion、VS Code 资源管理器的 git 色、Finder 侧栏徽标。</p>
+  </section>
+
+  <!-- ── 对照表 ───────────────────────────────────────── -->
+  <section class="card">
+    <div class="head"><span class="no">↔</span><h2>怎么选：三个问题定方案</h2></div>
+    <table>
+      <thead>
+        <tr><th style="width:32%">你的判断</th><th>选它</th><th>理由</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>房间长期 &gt; 20 个，标题栏只想看「有没有事」</td><td><b>S1 + S5</b></td><td>计数不随房间数膨胀；底边条给构成感</td></tr>
+        <tr><td>同时压着的事通常 ≤ 3 件，人只关心「先做哪个」</td><td><b>S3</b></td><td>少即是多：把唯一该动手的摆出来，其余折叠</td></tr>
+        <tr><td>要「一眼看到是哪个任务在等我」</td><td><b>S4</b></td><td>只有它在标题栏里放得下名字</td></tr>
+        <tr><td>房间少（&lt; 10）且互相独立，喜欢看整体节奏</td><td><b>S2</b></td><td>点阵的密度感最强，且天然支持「最近 N 天」</td></tr>
+        <tr><td>真正的战场是侧栏，标题栏只在有急事时出声</td><td><b>S6</b></td><td>不给标题栏加负担，靠行内徽标说话</td></tr>
+      </tbody>
+    </table>
+    <p class="lead" style="margin:12px 0 0">
+      可以组合，但别叠三层：<b>S3（主）+ S1（次）+ S5（底边）</b> 是密度与可读性最稳的一套；
+      <b>S4 + S6</b> 会重复（都在说「哪个房间」）。真正要避免的是现在这种——两个纯数字，既不说是谁，也不说该干什么。
+    </p>
+  </section>
+
+  <p class="foot">
+    假数据 · 无后端 · 单文件。状态口径沿用 <code>BotRow</code>：出错 &gt; 等你回答 &gt; 在跑 &gt; 排队 &gt; 未读 &gt; 空闲
+    （同一房间取最急的那一档）。颜色用 DESIGN.md 的语义四档 + 未读蓝。
+  </p>
+</div>
+
+<script>
+// ── 假数据 ────────────────────────────────────────────────────────
+const NAMES = [
+  '任务树与多会话','bot会话指示器丢失','cops','diy','上下文压缩','导出 md','turn 事实迁移',
+  '侧栏 272ms','job 面板','迁移规范','events 表','意图到需求','room 边界','两层账本',
+  '运行产物','slice 重构','shadcn 迁移','模型目录','审批流','日志分级','端口身份','数据根',
+  '压缩判据','工具截断','SSE 多路','角色席位','作业逃逸','单位 DAG','会话格式','断线重连',
+  '首帧快照','退避重试','IDE 桥','文件树','快捷键','多窗口','主题切换','诊断页','帮助页','导图'
+];
+const ASKS = ['要不要删掉旧表？','这个方案 A 还是 B？','迁移顺序先做哪一步？','要不要保留兼容层？'];
+const ERRS = ['上一轮被打断','上游超时','工具结果没回来','撞到步数上限'];
+
+let COUNT = 4;
+
+/** 造 N 个房间：状态按「越靠前越急」铺，保证少/中/多三种量级都能看出退化 */
+function makeRooms(n){
+  const rooms = [];
+  for (let i = 0; i < n; i++){
+    let state;
+    if (i === 0) state = 'attention';
+    else if (i === 1) state = 'asking';
+    else if (i % 7 === 3) state = 'running';
+    else if (i % 9 === 5) state = 'queued';
+    else if (i % 11 === 7) state = 'unread';
+    else state = i % 3 === 2 ? 'running' : 'idle';
+    rooms.push({
+      name: NAMES[i % NAMES.length],
+      state,
+      ask: state === 'asking' ? ASKS[i % ASKS.length] : '',
+      err: state === 'attention' ? ERRS[i % ERRS.length] : '',
+      queued: state === 'queued' ? 2 + (i % 3) : 0,
+      unread: state === 'unread' ? 1 + (i % 5) : 0,
+      idleFor: 12 + i * 7,
+      bots: 1 + (i % 4),
+    });
+  }
+  return rooms;
+}
+
+const DOT = {running:'run', asking:'ask', attention:'att', queued:'que', unread:'unr', idle:'idle'};
+const STATE_RANK = {attention:0, asking:1, running:2, queued:3, unread:4, idle:5};
+
+const byUrgency = (a, b) => STATE_RANK[a.state] - STATE_RANK[b.state];
+const dot = (state, cls='') => `<i class="dot ${DOT[state]} ${cls}"></i>`;
+
+/** 一句话摘要 */
+function line(r){
+  if (r.state === 'attention') return r.err;
+  if (r.state === 'asking') return '等你回答：' + r.ask;
+  if (r.state === 'running') return '在跑';
+  if (r.state === 'queued') return r.queued + ' 条排队';
+  if (r.state === 'unread') return r.unread + ' 条未读';
+  return r.idleFor + ' 分钟没动';
+}
+
+// ── S1 分档胶囊 ───────────────────────────────────────────────────
+const TIERS = [
+  {key:'attention', label:'出错', cls:'rose'},
+  {key:'asking', label:'等你', cls:'sky'},
+  {key:'running', label:'在跑', cls:'em'},
+  {key:'queued', label:'排队', cls:'amber'},
+];
+function renderS1(rooms){
+  const host = document.getElementById('s1');
+  const list = document.getElementById('s1list');
+  const tiers = TIERS.map(t => ({...t, rooms: rooms.filter(r => r.state === t.key)})).filter(t => t.rooms.length > 0);
+  host.innerHTML = tiers.map(t =>
+    `<button class="btn tier ${t.cls}" data-tier="${t.key}">${dot(t.key, t.key === 'running' ? 'pulse' : '')}${t.label}<span class="num">${t.rooms.length}</span></button>`
+  ).join('') || `<span class="btn muted">都闲着</span>`;
+  list.innerHTML = '';
+  host.querySelectorAll('[data-tier]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.tier;
+      const active = btn.classList.contains('on');
+      host.querySelectorAll('[data-tier]').forEach(b => b.classList.remove('on'));
+      if (active){ list.innerHTML = ''; return; }
+      btn.classList.add('on');
+      const items = rooms.filter(r => r.state === key);
+      list.innerHTML = `<div style="border:1px solid var(--border);border-radius:9px;padding:6px">${items.map(r =>
+        `<div class="row">${dot(r.state)}<span class="nm">${r.name}</span><span class="muted" style="font-size:11px">${line(r)}</span></div>`
+      ).join('')}</div>`;
+    });
+  });
+}
+
+// ── S2 点阵 ───────────────────────────────────────────────────────
+const MAX_CELLS = 24;
+function renderS2(rooms){
+  const host = document.getElementById('s2');
+  const sorted = [...rooms].sort(byUrgency);
+  const shown = sorted.slice(0, MAX_CELLS);
+  const rest = sorted.length - shown.length;
+  host.innerHTML = `<div class="matrix">${shown.map(r =>
+    `<span class="cell ${DOT[r.state]}" title="${r.name} · ${line(r)}"></span>`
+  ).join('')}</div>` + (rest > 0 ? `<span class="muted num" style="font-size:11px">+${rest}</span>` : '');
+}
+
+// ── S3 最急一件 ───────────────────────────────────────────────────
+let focusIndex = 0;
+function renderS3(rooms){
+  const host = document.getElementById('s3');
+  const urgent = [...rooms].sort(byUrgency).filter(r => r.state !== 'idle');
+  if (urgent.length === 0){
+    host.innerHTML = `<span class="btn muted">都闲着</span>`;
+    return;
+  }
+  focusIndex = Math.min(focusIndex, urgent.length - 1);
+  const r = urgent[focusIndex];
+  const action = r.state === 'asking' ? '去回答' : r.state === 'running' ? '去看看' : '继续';
+  host.innerHTML = `
+    <span class="focus">
+      ${dot(r.state, r.state === 'running' ? 'pulse' : '')}
+      <span class="name">${r.name}</span>
+      <span class="say">· ${line(r)}</span>
+      <button class="pill">${action}</button>
+    </span>
+    ${urgent.length > 1 ? `<span class="muted num" style="font-size:11px">${focusIndex + 1}/${urgent.length}</span>
+      <button class="btn" data-nav="-1" title="上一件">‹</button>
+      <button class="btn" data-nav="1" title="下一件">›</button>` : ''}
+  `;
+  host.querySelectorAll('[data-nav]').forEach(b => b.addEventListener('click', () => {
+    focusIndex = (focusIndex + Number(b.dataset.nav) + urgent.length) % urgent.length;
+    renderS3(rooms);
+  }));
+}
+
+// ── S4 chip 带 ────────────────────────────────────────────────────
+function renderS4(rooms){
+  const host = document.getElementById('s4');
+  const need = [...rooms].sort(byUrgency).filter(r => r.state !== 'idle');
+  host.innerHTML = need.length === 0
+    ? `<span class="btn muted">都闲着</span>`
+    : `<div class="strip">${need.map(r =>
+        `<span class="chip" title="${line(r)}">${dot(r.state)}${r.name}</span>`
+      ).join('')}</div>`;
+}
+
+// ── S5 状态条 ─────────────────────────────────────────────────────
+function renderS5(rooms){
+  const host = document.getElementById('s5');
+  const text = document.getElementById('s5text');
+  const need = rooms.filter(r => r.state !== 'idle');
+  host.innerHTML = need.map(r =>
+    `<i style="flex:${r.state === 'attention' ? 2 : 1};background:${{attention:'#fb7185',asking:'#38bdf8',running:'#34d399',queued:'#fbbf24',unread:'#60a5fa'}[r.state]}" title="${r.name} · ${line(r)}"></i>`
+  ).join('');
+  const counts = TIERS.map(t => ({...t, n: rooms.filter(r => r.state === t.key).length})).filter(t => t.n);
+  text.innerHTML = counts.map(t => `<span class="btn ${t.cls}" style="pointer-events:none">${dot(t.key)}<span class="num">${t.n}</span></span>`).join('')
+    || `<span class="btn muted">都闲着</span>`;
+}
+
+// ── S6 侧栏为主 ───────────────────────────────────────────────────
+function renderS6(rooms){
+  const bar = document.getElementById('s6bar');
+  const side = document.getElementById('s6side');
+  const worst = [...rooms].sort(byUrgency)[0];
+  const attention = rooms.filter(r => r.state === 'attention' || r.state === 'asking').length;
+  bar.innerHTML = attention > 0
+    ? `<button class="btn ${worst.state === 'attention' ? 'rose' : 'sky'}">${dot(worst.state, 'pulse')}${attention}</button>`
+    : `<button class="btn muted">${dot('idle')}0</button>`;
+  side.innerHTML = [...rooms].sort(byUrgency).map((r, i) => `
+    <div class="row ${i === 0 ? 'cur' : ''}">
+      ${dot(r.state, r.state === 'running' ? 'pulse' : '')}
+      <span class="nm">${r.name}</span>
+      ${r.unread ? `<span class="tag blue">${r.unread}</span>` : ''}
+      ${r.queued ? `<span class="tag amber">⧗${r.queued}</span>` : ''}
+      ${r.state === 'asking' ? `<span class="tag sky">?</span>` : ''}
+      ${r.state === 'attention' ? `<span class="tag rose">!</span>` : ''}
+      <span class="muted" style="font-size:10.5px">${r.state === 'idle' ? r.idleFor + 'm' : ''}</span>
+    </div>`).join('');
+}
+
+// ── 渲染全部 ──────────────────────────────────────────────────────
+function render(){
+  const rooms = makeRooms(COUNT);
+  renderS1(rooms); renderS2(rooms); renderS3(rooms); renderS4(rooms); renderS5(rooms); renderS6(rooms);
+}
+
+document.getElementById('segCount').addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  COUNT = Number(btn.dataset.n);
+  focusIndex = 0;
+  document.querySelectorAll('#segCount button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+  render();
+});
+
+render();
+</script>
+</body>
+</html>
