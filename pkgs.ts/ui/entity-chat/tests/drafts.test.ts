@@ -149,6 +149,24 @@ describe('DraftStore', () => {
         expect(store.textOf('proj:a', 'composer')).toBe('');
     });
 
+    it('连续 10 次「发送后立即输入」：已发的被清、新打的字都留着', () => {
+        // 用户验收口径：发送后立即再输入，输入框要保留用户新打的字（不是被清空、也不是旧字残留）。
+        const { store } = makeStore();
+        for (let i = 0; i < 10; i += 1) {
+            const sent = `发出去第${i}句`;
+            store.setText('proj:a', 'composer', sent);
+            // 模拟发送成功：clear 用 trim 后的 sent
+            store.clearIfMatches('proj:a', 'composer', sent.trim());
+            expect(store.textOf('proj:a', 'composer')).toBe('');
+            // 用户立刻打下一句（还没到下一次发送）
+            store.setText('proj:a', 'composer', `新打第${i}句`);
+            expect(store.textOf('proj:a', 'composer')).toBe(`新打第${i}句`);
+            // 若此时上一次的 clear 迟到，也不能误清新字
+            store.clearIfMatches('proj:a', 'composer', sent.trim());
+            expect(store.textOf('proj:a', 'composer')).toBe(`新打第${i}句`);
+        }
+    });
+
     it('写失败保留内容并退避重试，成功后状态回到 saved', async () => {
         vi.useFakeTimers();
         let puts = 0;
