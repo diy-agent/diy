@@ -435,6 +435,20 @@ export interface Store {
      */
     failedByRoom(roomIds?: readonly string[]): Record<string, number>;
     /**
+     * 所有还没处理掉的失败投递（带正文），给 UI 的「哪几条没送到 / 重发」用。
+     *
+     * 与 `failedByRoom` 的区别：那个是**按成员取最新一条**的计数（侧栏那颗粒子灯），
+     * 这个是把失败行**原样列出来**（正文 + 消息 id + 时间），能指着一条说「就是它」。
+     * 两处判据同源（都是 `state='failed'`），不会出现「说有 1 条却列不出来」。
+     */
+    failedDeliveries(): Array<{
+        roomId: string;
+        messageId: string;
+        botId: string;
+        text?: string;
+        updatedAt: number;
+    }>;
+    /**
      * 消息正文（按 messageId）。
      *
      * **只给老数据兜底**：2026-11-28 起投递自己带正文（`DeliveryInput.text`），恢复投递
@@ -2118,6 +2132,24 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 ...(row['mode'] === null ? {} : { mode: row['mode'] as MessageKind }),
                 ...(row['turn'] === null ? {} : { turn: Number(row['turn']) }),
                 ...(row['turn_id'] === null ? {} : { turnId: String(row['turn_id']) }),
+            }));
+        },
+        failedDeliveries(): Array<{
+            roomId: string;
+            messageId: string;
+            botId: string;
+            text?: string;
+            updatedAt: number;
+        }> {
+            const rows = db
+                .prepare("SELECT entity_id, message_id, bot_id, text, updated_at FROM deliveries WHERE state = 'failed' ORDER BY updated_at DESC")
+                .all() as Array<Record<string, unknown>>;
+            return rows.map((row) => ({
+                roomId: String(row['entity_id']),
+                messageId: String(row['message_id']),
+                botId: String(row['bot_id']),
+                ...(row['text'] === null || row['text'] === undefined ? {} : { text: String(row['text']) }),
+                updatedAt: Number(row['updated_at']),
             }));
         },
         pruneDeliveries(options: { clearTextBefore: number; dropBefore: number }): {

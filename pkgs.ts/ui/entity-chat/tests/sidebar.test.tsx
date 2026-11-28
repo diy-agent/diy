@@ -261,13 +261,13 @@ describe('侧栏按注册表渲染', () => {
         const html = render();
         const taskRow = rowOf(html, '/room/task/t-open');
         const projectRow = rowOf(html, '/room/proj/diy');
-        expect(taskRow).toContain('aria-label="有消息未送达"');
-        expect(taskRow).toContain('2 个成员的最新消息未送达');
+        // 展开态那一颗现在**可点开**（2026-11-28）：能指出是哪几条、能重发。
+        // 用户原话是「人也干不了啥吧」—— 所以只画一颗不能点的红叉是不够的。
+        expect(taskRow).toContain('aria-label="2 条消息没送到，点开处理"');
         expect(taskRow).toContain('aria-label="有消息在排队"');
-        expect(projectRow).toContain('aria-label="有消息未送达"');
-        // 没喂 broken 就别自己把图标染红：未送达 ≠ 上一轮跑坏
+        expect(projectRow).toContain('aria-label="1 条消息没送到，点开处理"');
+        // 没喂 broken 就别自己把图标染红：没送到 ≠ 上一轮跑坏
         expect(taskRow).not.toContain('上一轮出错');
-        expect(html.match(/aria-label="有消息未送达"/g) ?? []).toHaveLength(2);
     });
 
     it('rail 收起态也有未送达红叉（没有文字，靠形状 + 颜色读）', async () => {
@@ -289,9 +289,10 @@ describe('侧栏按注册表渲染', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         const html = renderToStaticMarkup(<Sidebar {...HOST} open={false} />);
-        expect(html).toContain('aria-label="有消息未送达"');
-        expect(html.match(/aria-label="有消息未送达"/g) ?? []).toHaveLength(1);
-        expect(html).toContain('个成员的消息未送达'); // 链接 title 在 rail 里承担说明
+        expect(html).toContain('aria-label="有消息没送到"');
+        expect(html.match(/aria-label="有消息没送到"/g) ?? []).toHaveLength(1);
+        // rail 整行是 <a>，里面不能嵌能点的按钮 —— 这里只画形状，说明靠 title
+        expect(html).toContain('条消息没送到，可点开重发');
     });
 
     it('最后活动用紧凑相对式（刚才 / 5m / 1d），绝对时刻进 tooltip', async () => {

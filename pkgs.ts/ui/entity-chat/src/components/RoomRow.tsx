@@ -23,6 +23,8 @@ import { useHasDraft } from '../drafts';
 import { formatActivityAgo, formatAtAbsolute, roomTitle, taskNumberOf, taskStatusOf, type Room } from '../model';
 import { Button } from '@diy-agent/ui-shadcn';
 
+import { FailedDeliveriesBadge } from './FailedDeliveries';
+
 import { pendingAskHintOf } from '../pendingAsk';
 import {
     actions,
@@ -165,7 +167,7 @@ export function RoomRowView({
                     event.preventDefault();
                     actions.select(room.id);
                 }}
-                title={`${room.type}：${roomTitle(room)}${broken > 0 ? `（${broken} 个成员上一轮出错）` : ''}${failed > 0 ? `（${failed} 个成员的消息未送达）` : ''}${running ? '（正在运行）' : ''}${queued > 0 ? `（排队 ${queued} 条）` : ''}${pendingAsk > 0 ? `（${askHint}）` : ''}${unread > 0 ? `（${unread} 条未读）` : ''}`}
+                title={`${room.type}：${roomTitle(room)}${broken > 0 ? `（${broken} 个成员上一轮出错）` : ''}${failed > 0 ? `（${failed} 条消息没送到，可点开重发）` : ''}${running ? '（正在运行）' : ''}${queued > 0 ? `（排队 ${queued} 条）` : ''}${pendingAsk > 0 ? `（${askHint}）` : ''}${unread > 0 ? `（${unread} 条未读）` : ''}`}
                 className={`relative flex w-full items-center justify-center rounded-lg py-2 ${
                     active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
                 }`}
@@ -187,12 +189,14 @@ export function RoomRowView({
                         <Hourglass className="size-2.5 text-zinc-400" />
                     </span>
                 )}
-                {/* 未送达：红叉挂在图标右下角（rail 里没有文字，形状 + 颜色必须能单独读懂）。
+                {/* 没送到：红叉挂在图标右下角（rail 里没有文字，形状 + 颜色必须能单独读懂）。
+                    rail 整行是 `<a>`，里面不能再嵌能点的按钮，所以这里只画形状；
+                    可点开的那一版在展开态（`FailedDeliveriesBadge`）。
                     它和「上一轮出错」的红图标是两件事：一个是没送到的话，一个是跑坏了的轮。 */}
                 {failed > 0 && (
                     <span
-                        title={`${failed} 个成员的最新消息未送达`}
-                        aria-label="有消息未送达"
+                        title={`${failed} 个成员的最新消息没送到`}
+                        aria-label="有消息没送到"
                         className="absolute -bottom-0.5 -right-0.5 inline-flex rounded-full bg-background text-rose-400"
                     >
                         <CircleX className="size-3" strokeWidth={2.5} />
@@ -275,18 +279,11 @@ export function RoomRowView({
                 </span>
             )}
 
-            {/* 未送达：红叉（与房内那条 destructive 气泡同色 —— 两处说的是同一件事）。
-                项目与任务都画：项目房间自己也有 bot，也会有投递失败。 */}
-            {failed > 0 && (
-                <span
-                    title={`${failed} 个成员的最新消息未送达`}
-                    aria-label="有消息未送达"
-                    className="flex shrink-0 items-center gap-0.5 text-rose-400"
-                >
-                    <CircleX className="size-3" strokeWidth={2.5} />
-                    {failed > 1 && <span className="text-xs tabular-nums">{failed}</span>}
-                </span>
-            )}
+            {/* 没送到：可点开的那一颗（与房内那条 destructive 气泡同色 —— 同一件事）。
+                项目与任务都画：项目房间自己有 bot，也会有一次话没送进他手里。 */}
+            {/* 没送到：可点开（用户 2026-11-28：「人也干不了啥吧」 —— 所以给出哪几条 + 重发）。
+                与房内那条 destructive 气泡同色：两处说的是同一件事。 */}
+            {failed > 0 && <FailedDeliveriesBadge roomId={room.id} count={failed} />}
 
             {/* 任务编号（#14）：紧跟在状态图标后面 —— 它是这一行除了标题之外唯一的**身份**。
                 用户要认「#14 那个任务」，标题可能重名 / 被改；编号不会。 */}

@@ -1296,6 +1296,45 @@ export async function createDiy2App(opts: {
                 list: async ({ input }) => ({ entries: store.journalOf(input.id, input.limit ?? 50) }),
             },
             /**
+             * 投递账本里「还没处理掉的失败」（##43，2026-11-28）。
+             *
+             * 用户原话：「人能干啥呢，也干不了啥吧」—— 以前的失败只有侧栏一颗红叉，
+             * 不知道是哪句话、也没法重发。这一组就是补上「指出是哪条」和「重发」。
+             */
+            deliveries: {
+                failed: async () => ({
+                    rows: store.failedDeliveries().map((row) => ({
+                        ...row,
+                        // 正文只给摘要：这一屏是「让你认出是哪句话」，不是阅读器
+                        ...(row.text === undefined ? {} : { preview: row.text.slice(0, 120) }),
+                        text: undefined,
+                    })),
+                }),
+                /**
+                 * 重发：把原话再发一遍（新的 messageId），不是把旧行改回 pending。
+                 *
+                 * 旧的失败是历史事实，不该抹掉；新一行是 pending，而侧栏那颗标记按
+                 * 「每个成员的最新一条」收敛（`failedByRoom`）—— 重发一成功，它自然消失。
+                 */
+                replay: async ({ input }) => {
+                    const actor = requireRoom(input.roomId);
+                    const row = store
+                        .failedDeliveries()
+                        .find(
+                            (item) =>
+                                item.roomId === input.roomId &&
+                                item.messageId === input.messageId &&
+                                item.botId === input.botId,
+                        );
+                    if (row === undefined) throw new Error('这条投递不在失败列表里（可能已被重发或清理）');
+                    if (row.text === undefined) {
+                        throw new Error('这条消息的正文已被清理（超过保留期），没法重发 —— 请重新写一遍');
+                    }
+                    await actor.say({ text: row.text, author: HUMAN, recipients: [input.botId] });
+                    return { ok: true };
+                },
+            },
+            /**
              * 模型目录（选模型器 / 新建房间的缺省值）。
              *
              * 真源是 `model.yaml`（`@diy-agent/model-catalog`），**不经过界面里的表**：界面原来自带

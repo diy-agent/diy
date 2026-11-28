@@ -256,6 +256,27 @@ export const draftsApi = RpcSchema.group({
     },
 });
 
+/**
+ * 投递账本（消息 → 成员的到达状态）。
+ *
+ * 为什么单独一组而不是塞进 `rooms.list`：失败行**很少见但需要能定位** —— 塞进列表投影就是
+ * 每 30 秒把所有失败行的正文也搬一遍；而「哪条没送到、要不要重发」是想处理时才问一次。
+ */
+export const deliveriesApi = RpcSchema.group({
+    children: {
+        /** 还没处理掉的失败行（带正文摘要）：UI 用它列出「哪几条没送到」 */
+        failed: RpcSchema.unary({ input: {}, output: Any }),
+        /**
+         * 重发一条失败的消息。
+         *
+         * 语义：把原话**再发一遍**（新的 messageId），而不是把旧行改回 pending ——
+         * 旧的失败是历史事实，不该抹掉；新的一行是 pending，按成员取「最新一条」的判据
+         * 一上去，侧栏那颗失败标记自然消失（`failedByRoom` 就是这么收敛的）。
+         */
+        replay: RpcSchema.unary({ input: { roomId: Id, messageId: Id, botId: Id }, output: Any }),
+    },
+});
+
 export const journalApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: { id: Id, limit: z.number().int().positive().optional() }, output: Any }),
@@ -462,6 +483,8 @@ export const METHOD_DESC: Readonly<Record<string, string>> = {
     'botProfiles.remove': '删角色（每类至少留一个）',
     'botProfiles.retry': '给选中的 (房间, bot) 各发一条「继续」；已在跑的跳过',
     // —— 对话 ——
+    'deliveries.failed': '还没处理掉的失败投递（哪条消息、给谁、正文摘要）',
+    'deliveries.replay': '把一条失败的消息重新发一遍（新 messageId；旧失败行留作历史）',
     'chat.history': '打开房间的三件套：条目 / 投递 / 待答提问；limit 控返回条数',
     'chat.wait': '等新条目（长轮询）。想在代码里「盯」一件事就用它，别 sleep 轮询',
     'chat.chat': '发一条消息（受理即返，事件从 room 流回来）；text 可空仅当带附件',
@@ -507,6 +530,7 @@ export const diy2Api = RpcSchema.group({
         asks: asksApi,
         drafts: draftsApi,
         journal: journalApi,
+        deliveries: deliveriesApi,
         models: modelsApi,
         units: unitsApi,
         links: linksApi,

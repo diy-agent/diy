@@ -333,6 +333,26 @@ export class RpcChatClient implements ChatClient {
         remove: (owner: string, field: string): Promise<unknown> => this.call('drafts.remove', { owner, field }),
     };
 
+    /**
+     * 投递账本：还没处理掉的失败（哪条消息没送到、给谁、能不能重发）。
+     *
+     * 与 `rooms.list` 的 `failed` 计数同源（都是 state='failed'），但那是「有几条」，
+     * 这里能**指着一条**说「就是它」—— 用户 2026-11-28 的抱怨正是只有计数时没法行动。
+     */
+    readonly deliveries = {
+        failed: (): Promise<{
+            rows: Array<{
+                roomId: string;
+                messageId: string;
+                botId: string;
+                preview?: string;
+                updatedAt: number;
+            }>;
+        }> => this.call('deliveries.failed', {}),
+        replay: (input: { roomId: string; messageId: string; botId: string }): Promise<{ ok: boolean }> =>
+            this.call('deliveries.replay', input),
+    };
+
     readonly journal = {
         list: (id: string, limit?: number): Promise<{ entries: unknown[] }> =>
             this.call('journal.list', { id, ...(limit === undefined ? {} : { limit }) }),
