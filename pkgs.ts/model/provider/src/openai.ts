@@ -28,6 +28,7 @@ import {
     type WireIdentity,
 } from './strategies/models/deepseek/reasoning-replay.js';
 import { classifyError } from './errors.js';
+import { openAiCompatibleSettingsFor } from './strategies/index.js';
 import { SESSION_PLACEHOLDER } from './strategies/providers/opencode/index.js';
 import type { ProviderConfig, UsageDetail } from './types.js';
 
@@ -125,12 +126,26 @@ export function createOpenAiCompatible(config: ProviderConfig): LlmProvider {
         return '';
     }
 
+    // 按端点取协议差异（strategy 的 settings）：**建 provider 时**只需那两项不依赖 sessionId 的。
+    // headers 走下面 `sessionHeaders` 的逐次路径（含 `$SESSION` 占位符），不在这里重复。
+    //
+    // ⚠️ 2026-11-28：这块之前**根本没接线** —— strategy 里 `multiPartToolContent: true` 写好了、
+    // “实测可用”的证据也贴在注释里，但 `openAiCompatibleSettingsFor` 没人调 ⇒ 不生效。后果：
+    // 工具结果里的图（`view_image`）被 ai-sdk 默认 `supportsMultiPartToolContent: false` 整段
+    // JSON 化成几十 MB 文本，模型以为“只收到了 PNG 原始字节”（用户实测报的“看不了图”）。
+    const strategySettings = openAiCompatibleSettingsFor(config.baseURL);
     const provider = createOpenAICompatible({
         name: config.name ?? 'diy-llm-provider',
         baseURL: config.baseURL,
         apiKey: config.apiKey,
         includeUsage: true, // 流里带上 usage（不写这行，多数兼容上游不给流式用量）
         ...(Object.keys(fixed).length === 0 ? {} : { headers: fixed }),
+        ...(strategySettings.supportsMultiPartToolContent === undefined
+            ? {}
+            : { supportsMultiPartToolContent: strategySettings.supportsMultiPartToolContent }),
+        ...(strategySettings.transformRequestBody === undefined
+            ? {}
+            : { transformRequestBody: strategySettings.transformRequestBody }),
         fetch:
             config.traffic === undefined
                 ? (config.fetch ?? globalThis.fetch)
