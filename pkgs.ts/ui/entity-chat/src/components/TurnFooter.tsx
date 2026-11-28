@@ -18,7 +18,9 @@ import * as React from 'react';
 
 import { Button } from '@diy-agent/ui-shadcn';
 
+import { Code } from 'lucide-react';
 import { formatAtAbsolute, formatClock } from '../model';
+import { CopyButton } from './CopyButton';
 import { RunningIndicator } from './RunningIndicator';
 import { useNow } from './useNow';
 
@@ -43,6 +45,26 @@ export function TurnFooter({
     const settle = turnSettleOf(entry.turn);
     const startedAt = entry.turn?.startedAt ?? entry.at;
     const now = useNow(live);
+    // 原始数据（用户 2026-11-27：「轮次状态栏需要 copy 操作按钮，可以复制原始数据文本，
+    // 再加一个源代码按钮可以看原始文本」）—— 就是这一轮在会话状态里的那几样事实：
+    // 轮次账 + 这一条的 parts。不查服务端：界面画的本来就是这些，脱开界面另拼一份会两处不一致。
+    const raw = React.useMemo(
+        () =>
+            JSON.stringify(
+                {
+                    turnId: entry.turnId,
+                    at: entry.at,
+                    author: entry.author,
+                    turn: entry.turn,
+                    parts: entry.parts,
+                    deliveries: entry.deliveries,
+                },
+                null,
+                2,
+            ),
+        [entry],
+    );
+    const [showRaw, setShowRaw] = React.useState(false);
 
     // 既没在跑、也没有结算事实（老数据 / 快照重放）：这一行不出现 —— 空行比假数据更吵
     if (!live && settle === undefined) return null;
@@ -50,6 +72,7 @@ export function TurnFooter({
     const facts = settleFactsOf(entry.turn);
 
     return (
+        <>
         <div className="mt-2 flex items-center justify-between gap-3 border-t border-dashed pt-1.5 text-xs leading-4">
             <div
                 className={`flex min-w-0 items-center gap-1.5 ${live ? 'text-muted-foreground' : TONE_CLASS[settle?.tone ?? 'muted']}`}
@@ -89,17 +112,46 @@ export function TurnFooter({
                     </>
                 )}
             </div>
-            <span className="shrink-0 tabular-nums text-muted-foreground" title={endTitleOf(entry)}>
-                {live
-                    ? `已用 ${elapsedText(Math.max(0, now - startedAt))}`
-                    : entry.turn?.endedAt === undefined
-                      ? ''
-                      : // 基准时间就用 `endedAt` 自己：`useNow(false)` 不起定时器、`now` 是
-                        // 「挂载那一刻」的值 —— 拿它判跨天，跨过零点后还在开着的页面会把
-                        // 本该写「22:20」的写成「11-24 22:20」。
-                        `结束于 ${formatClock(entry.turn.endedAt, entry.turn.endedAt)}`}
-            </span>
+            <div className="flex shrink-0 items-center gap-0.5">
+                <span className="tabular-nums text-muted-foreground" title={endTitleOf(entry)}>
+                    {live
+                        ? `已用 ${elapsedText(Math.max(0, now - startedAt))}`
+                        : entry.turn?.endedAt === undefined
+                          ? ''
+                          : // 基准时间就用 `endedAt` 自己：`useNow(false)` 不起定时器、`now` 是
+                            // 「挂载那一刻」的值 —— 拿它判跨天，跨过零点后还在开着的页面会把
+                            // 本该写「22:20」的写成「11-24 22:20」。
+                            `结束于 ${formatClock(entry.turn.endedAt, entry.turn.endedAt)}`}
+                </span>
+                {/* 原始数据与源码：收尾后才给（跑着的轮没有定论，复制下来只会是半截） */}
+                {!live && (
+                    <>
+                        <CopyButton
+                            text={raw}
+                            title="复制这一轮的原始数据（JSON）"
+                            className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        />
+                        <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => setShowRaw((value) => !value)}
+                            title={showRaw ? '收起原始文本' : '看原始文本（源代码）'}
+                            aria-label="看原始文本"
+                            aria-expanded={showRaw}
+                            className="text-muted-foreground"
+                        >
+                            <Code className="size-3" />
+                        </Button>
+                    </>
+                )}
+            </div>
         </div>
+        {showRaw && (
+            <pre className="mt-1 max-h-72 overflow-auto rounded border border-border bg-muted/40 p-2 text-xs leading-4 whitespace-pre-wrap break-all">
+                {raw}
+            </pre>
+        )}
+        </>
     );
 }
 

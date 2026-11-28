@@ -14,7 +14,8 @@
             "types": "./src/index.ts",
             "default": "./src/index.ts"
         },
-        "./styles.css": "./src/styles.css"
+        "./styles.css": "./src/styles.css",
+        "./themes.css": "./src/themes.css"
     },
     "dependencies": {
         "@base-ui/react": "^1.9.0",
