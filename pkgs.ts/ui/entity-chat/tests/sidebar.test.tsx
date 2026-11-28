@@ -411,6 +411,16 @@ describe('侧栏顶部「置顶」区', () => {
         expect(render()).not.toContain('data-sidebar-pinned');
     });
 
+    it('置顶按钮在行上，不在 ⋮ 菜单里（用户 2026-11-28：“放到外面，用的很频繁”）', async () => {
+        await bootWith([...rooms, pinnedTask]);
+        const html = render();
+        // 未置顶的行：#46 没有（fixture 里都不是 pin 的）→ 新一行带「置顶」
+        expect(rowOf(html, '/room/task/t-pin')).toContain('aria-label="取消置顶"');
+        expect(rowOf(html, '/room/task/t-open')).toContain('aria-label="置顶"');
+        // 同一个动作不“在菜单里再放一份”：侧栏 HTML 里每行只有一颗置顶按钮
+        expect(html.split('aria-label="取消置顶"').length - 1).toBe(1);
+    });
+
     it('侧栏收起成 rail 时置顶的任务仍以图标可见（pin 的用处就是快切）', async () => {
         await bootWith([...rooms, pinnedTask]);
         const html = renderToStaticMarkup(<Sidebar {...HOST} open={false} />);

@@ -408,6 +408,26 @@ export function RoomRowView({
                     </Button>
                 )}
 
+                {/* 置顶：**行上的显式按钮**，不藏在 ⋮ 里（用户 2026-11-28：“放到外面，用的很频繁”）。
+                    放在动作区最左（最靠近标题）：它是这颗行上最常点的一颗；关闭/打开是
+                    完成时才点一次的（低频），排在它右边。只对任务 —— 项目本来就在树顶。 */}
+                {!isProject && (
+                    <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            void actions.setPinned(room.id, !pinned);
+                        }}
+                        title={pinned ? '取消置顶（回到项目树里）' : '置顶到侧栏顶部'}
+                        aria-label={pinned ? '取消置顶' : '置顶'}
+                        aria-pressed={pinned}
+                        className="hidden shrink-0 text-muted-foreground group-hover:inline-flex focus-visible:inline-flex"
+                    >
+                        {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                    </Button>
+                )}
+
                 {!isProject && (
                     <Button
                         variant="ghost"
@@ -434,18 +454,8 @@ export function RoomRowView({
                             icon: <Pencil className="size-3.5" />,
                             onClick: () => setRenaming(true),
                         },
-                        // 置顶只对任务（2026-11-28 裁）：项目本来就在树顶，pin 过去收益小。
-                        // 形状随状态反过来（Pin / PinOff），文案也是 —— 两大动作各写一遍只是重复。
-                        ...(isProject
-                            ? []
-                            : [
-                                  {
-                                      key: 'pin',
-                                      label: pinned ? '取消置顶' : '置顶',
-                                      icon: pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />,
-                                      onClick: () => void actions.setPinned(room.id, !pinned),
-                                  },
-                              ]),
+                        // 「置顶」不在这里：它常用，已经提到行尾的显式按钮（同上）。菜单里再放一份
+                        // 就是同一个动作两个入口 —— 一处改了另一处忘了，用户还得猜点哪个。
                         {
                             key: 'delete',
                             label: isProject ? '删除项目' : '删除任务',
