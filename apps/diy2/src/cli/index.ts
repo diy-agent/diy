@@ -19,6 +19,7 @@ import { CliApp } from '@diy-agent/rpc/cli';
 import { findAppRoot } from '../../server/config';
 import { instanceApi, instanceHandlers } from './instance';
 import { factsApi, factsHandlers } from './facts';
+import { runsApi, runsHandlers } from './runs';
 
 /** 全局选项（只在 CLI 进程里消费；与 diy-app 的 `--json` 同形） */
 const globalOptions = z.object({
@@ -50,10 +51,11 @@ const cli = CliApp.inProcess({
     scopes: [
         { prefix: 'diy2', api: instanceApi, handlers: instanceHandlers({ moduleDir }) },
         { prefix: 'diy2', api: factsApi, handlers: factsHandlers() },
+        { prefix: 'diy2', api: runsApi, handlers: runsHandlers() },
     ],
     // `instance` 摊平（`diy2 list` / `diy2 web` / `diy2 stop`）；`facts` 保留域层（`diy2 facts brief`），
     // 免得 brief/get/find/status 与实例命令抢顶层、也免得和将来的域撞名
-    cliRootPath: ['instance', '!facts'],
+    cliRootPath: ['instance', '!facts', '!runs'],
     globalOptions,
     cwd: process.cwd(),
 });
