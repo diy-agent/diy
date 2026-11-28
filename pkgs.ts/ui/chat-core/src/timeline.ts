@@ -236,8 +236,13 @@ export function buildTimeline(
      * 条目出现的时刻 ⇒ 渲染成「人的第一条 → bot 回复 → 人的第二条」，看起来像 bot 抢在
      * 第二张图之前回了话。锚点改成「本轮最后一条人的消息」之后，顺序就是
      * 「人的两条 → bot 的整段回复」，与直觉一致；回复本身仍然**不切段**（切段才会碎）。
+     *
+     * **键是 `entry.key` 不是对象身份**（2026-11-28 修）：`attachTurns` 在排序前会把拿到
+     * 轮次结账事实的条目换成新对象（`{ ...entry, turn }`），对象身份一变，按对象取锚点就
+     * 全是 `undefined` ⇒ 那些条目被当成"没有锚点"排到最后。症状正是用户报的「回复跳到最后 /
+     * 顺序乱」：只有**落过 turn_facts 的轮**（#631 之后）才会中招，越新的会话越明显。
      */
-    const anchors = new Map<TimelineEntry, number>();
+    const anchors = new Map<string, number>();
     // 每轮「目前遍历到的最新一条人的消息」的 order。**运行时维护，不是预扫描最后一条**：
     // 切段之后，每一段的锚点应该是「这一段的起始人话」（seg k 由第 k 条插话触发），而不是
     // 本轮最后一条人话 —— 否则人插话把 bot 切成两段后，前一段也会被顶到插话之后，就白切了。
@@ -256,7 +261,7 @@ export function buildTimeline(
                 at: item.at,
                 ...(item.data.job === undefined ? {} : { job: item.data.job }),
             };
-            anchors.set(entry, item.order ?? item.seq);
+            anchors.set(entry.key, item.order ?? item.seq);
             entries.push(entry);
             continue;
         }
@@ -274,7 +279,7 @@ export function buildTimeline(
                 deliveries: [],
                 at: item.at,
             };
-            anchors.set(entry, item.order ?? item.seq);
+            anchors.set(entry.key, item.order ?? item.seq);
             entries.push(entry);
             continue;
         }
@@ -300,7 +305,7 @@ export function buildTimeline(
                     : {}),
                 at: item.at,
             };
-            anchors.set(entry, at);
+            anchors.set(entry.key, at);
             entries.push(entry);
             continue;
         }
@@ -331,7 +336,7 @@ export function buildTimeline(
             // 「人话 → 前半段 → 插话 → 后半段」自然成立，不需要额外的位置魔法。
             const own = item.order ?? item.seq;
             const lastHuman = currentHumanOrder.get(item.turnId) ?? 0;
-            anchors.set(entry, lastHuman > own ? lastHuman + 0.5 : own);
+            anchors.set(entry.key, lastHuman > own ? lastHuman + 0.5 : own);
             entries.push(entry);
         }
         botSeen.add(item.turnId);
@@ -354,6 +359,17 @@ export function buildTimeline(
     //  1. 按 `turnId` + `owner` 找那条回复 —— 那一轮还在窗口里就挂对地方；
     //  2. 还是不行（老数据没有 `turnId` / 那一轮整个也不在窗口里）：待回答的借最后一条
     //     assistant（工具行可能还没落库），已结局的造一张独立卡片。
+    //
+    // 窗口起点（2026-11-28）：服务端分页只给最近一窗（默认 400 条），但已结局的提问是
+    // **整个房间的历史**（最近 200 条）。那些比窗口还早的卡片在 `entries` 里找不到自己的
+    // 位置（`findIndex(at > x)` 落到 0），于是被塞到**时间线最顶上** —— 用户看到七八条
+    // 很久以前的问题卡浮在开头。更糟的是它们把"第一个子节点"钉死在窗口之外，前插历史时
+    // 滚动层以为"首条没动"，于是把视口拉到最后一条用户消息（实测：加载更早直接跳到末尾）。
+    // 所以：比窗口最早的条目还早的独立卡片，这一窗里不画。
+    const windowStartAt =
+        arrival.length === 0
+            ? Number.NEGATIVE_INFINITY
+            : arrival.reduce((min, item) => Math.min(min, item.at), Number.POSITIVE_INFINITY);
     const attachAsk = (
         part: TimelinePart,
         request: AskRequest,
@@ -401,6 +417,9 @@ export function buildTimeline(
             return;
         }
 
+        // 比这一窗还早：没有位置可挂，宁可不画（见上面 `windowStartAt` 的注释）
+        if ((at ?? request.at) < windowStartAt) return;
+
         const bot = request.owner === undefined ? undefined : bots[request.owner];
         // 这条提问属于哪一轮：由提问方在创建时盖上去（`AskRequest.turnId`）。
         // 没有它（老数据）只能是 `''` 哨兵 —— 那种卡片既不参加"执行中"的匹配，
@@ -421,7 +440,8 @@ export function buildTimeline(
         const slot = position < 0 ? entries.length : position;
         // 独立卡片也参加锚点排序：取「插入位置前驱的锚点 + 0.5」，
         // 这样它既在原位（夹在前驱与后继之间），又不会被后面才算出锚点的回复挤到前面
-        anchors.set(standalone, (slot > 0 ? anchors.get(entries[slot - 1] as TimelineEntry) ?? 0 : 0) + 0.5);
+        const previous = slot > 0 ? entries[slot - 1] : undefined;
+        anchors.set(standalone.key, (previous === undefined ? 0 : anchors.get(previous.key) ?? 0) + 0.5);
         entries.splice(slot, 0, standalone);
     };
 
@@ -487,12 +507,12 @@ export function buildTimeline(
 
     attachTurns(entries, options.turns);
     // 按锚点稳定排序（同锚点保持插入顺序：JS 的 sort 自 ES2019 起是稳定的）
-    const index = new Map(entries.map((entry, at) => [entry, at]));
+    const index = new Map(entries.map((entry, at) => [entry.key, at]));
     entries.sort((left, right) => {
         // 没给锚点的是「遍历之后才补的」条目（如「正在输入…」）：它们本来就该落在末尾
         const diff =
-            (anchors.get(left) ?? Number.POSITIVE_INFINITY) - (anchors.get(right) ?? Number.POSITIVE_INFINITY);
-        return diff !== 0 ? diff : (index.get(left) ?? 0) - (index.get(right) ?? 0);
+            (anchors.get(left.key) ?? Number.POSITIVE_INFINITY) - (anchors.get(right.key) ?? Number.POSITIVE_INFINITY);
+        return diff !== 0 ? diff : (index.get(left.key) ?? 0) - (index.get(right.key) ?? 0);
     });
     return entries;
 }
