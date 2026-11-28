@@ -964,3 +964,63 @@ describe('lastItemsOf / countItemsOf —— 历史分页', () => {
         expect(store.lastItemsOf(room.id, 50).length).toBe(2);
     });
 });
+
+describe('投递自带正文 + 保留策略（2026-11-28）', () => {
+    it('正文跟着投递走：pendingDeliveries 拿得到，不必回 items 查', () => {
+        const store = openStore(':memory:');
+        store.setDelivery({
+            roomId: 'r1',
+            messageId: 'm1',
+            botId: 'b1',
+            state: 'pending',
+            text: '这句要送到',
+        });
+        // 库里**不放任何 item**：正文必须来自投递行本身
+        expect(store.itemsOf('r1')).toEqual([]);
+        expect(store.pendingDeliveries('r1')[0]?.text).toBe('这句要送到');
+    });
+
+    it('老行兜底不覆盖新正文：第二次写不带 text 时保留原来的', () => {
+        const store = openStore(':memory:');
+        store.setDelivery({ roomId: 'r1', messageId: 'm1', botId: 'b1', state: 'pending', text: '原文' });
+        store.setDelivery({ roomId: 'r1', messageId: 'm1', botId: 'b1', state: 'working' });
+        expect(store.pendingDeliveries('r1')[0]?.text).toBe('原文');
+    });
+
+    it('清理只动终态：过期的清正文留元数据，更早的整行删，待投递一条不动', () => {
+        const store = openStore(':memory:');
+        const now = Date.now();
+        const day = 24 * 60 * 60 * 1000;
+        const put = (messageId: string, state: 'pending' | 'working' | 'delivered' | 'failed' | 'cancelled') =>
+            store.setDelivery({ roomId: 'r1', messageId, botId: 'b1', state, text: `${messageId} 的正文` });
+        put('old-delivered', 'delivered');
+        put('old-cancelled', 'cancelled');
+        put('old-pending', 'pending');
+        put('old-working', 'working');
+
+        // 把两条终态行的时间往前拨 10 天（清正文档），pending/working 也拨（必须不受影响）
+        const raw = (store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } } }).db;
+        raw.prepare('UPDATE deliveries SET updated_at = ? WHERE state IN (\'delivered\',\'cancelled\',\'pending\',\'working\')').run(
+            now - 10 * day,
+        );
+
+        const { cleared, dropped } = store.pruneDeliveries({
+            clearTextBefore: now - 7 * day,
+            dropBefore: now - 30 * day,
+        });
+        expect(cleared).toBe(2);
+        expect(dropped).toBe(0);
+
+        const rows = store.listDeliveries('r1');
+        // 终态行还在（元数据保留），只是正文被清
+        expect(rows.filter((row) => row.state === 'delivered' || row.state === 'cancelled')).toHaveLength(2);
+        expect(store.pendingDeliveries('r1').map((row) => row.text)).toEqual(['old-pending 的正文', 'old-working 的正文']);
+
+        // 再往前拨到 40 天：整行删
+        raw.prepare('UPDATE deliveries SET updated_at = ? WHERE state IN (\'delivered\',\'cancelled\')').run(now - 40 * day);
+        const second = store.pruneDeliveries({ clearTextBefore: now - 7 * day, dropBefore: now - 30 * day });
+        expect(second.dropped).toBe(2);
+        // 未完成的还在
+        expect(store.pendingDeliveries('r1')).toHaveLength(2);
+    });
+});

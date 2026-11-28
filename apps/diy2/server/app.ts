@@ -522,7 +522,23 @@ function seed(): void {
  *
  * 单个房间抛错不阻断后面：`recover()` 内部已经逐条兜住，这里再兜一层房间级的。
  */
+/** 已完结投递的保留期：正文留 7 天，整行留 30 天（`pruneDeliveries`） */
+const DELIVERY_TEXT_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+const DELIVERY_ROW_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+
 async function resume(): Promise<void> {
+    // 先收拾已完结的投递（2026-11-28）：deliveries 现在自带正文，不清就是每句都按成员数
+    // 永久留一份。只动终态（delivered / failed / cancelled），pending / working 一条不动。
+    // 放在续跑之前：续跑时表已经瘦一圈。
+    try {
+        const { cleared, dropped } = store.pruneDeliveries({
+            clearTextBefore: Date.now() - DELIVERY_TEXT_KEEP_MS,
+            dropBefore: Date.now() - DELIVERY_ROW_KEEP_MS,
+        });
+        if (cleared > 0 || dropped > 0) log.info('清理已完结投递', { cleared, dropped });
+    } catch (error) {
+        log.warn('清理投递失败（不影响启动）', { error: (error as Error).message });
+    }
     for (const [roomId, actor] of rooms) {
         try {
             await actor.recover();

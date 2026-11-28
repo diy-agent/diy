@@ -10,6 +10,7 @@ export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
     'create-tables': '3c5321fb86a9185e', /* 003-create-tables.ts */
     'deliveries-columns': '20fc1ee68ead9a32', /* 005-deliveries-columns.ts */
     'delivery-states': '5c039d23214a4bc9', /* 021-delivery-states.ts */
+    'delivery-text': '77230b31282b2984', /* 022-delivery-text.ts */
     'drop-legacy-room-model': 'ef9574bee9dfa08e', /* 016-drop-legacy-room-model.ts */
     'drop-unit-deps': 'a97cc4421d67ad3e', /* 012-drop-unit-deps.ts */
     'drop-unit-step': '383e1b26dabdd330', /* 019-drop-unit-step.ts */

@@ -301,6 +301,14 @@ export interface LinkSets {
 
 /** 投递时的入队信息：崩溃后据此重新投递 */
 export interface DeliveryInput extends Omit<Delivery, 'updatedAt'> {
+    /**
+     * 这条投递要送出去的正文（2026-11-28）。
+     *
+     * 为什么记在这里：恢复投递时若还要回 `entity_items` 找正文，就存在「找不到 → 判失败」
+     * 这条伪路径（曾经的 LIMIT 200 窗口让它真的误报过）。投递日志自己带着要投的东西，
+     * 就不需要外部世界配合。
+     */
+    text?: string;
     /** 谁发的（db 列名沿用 `mode`，但值已从 `next-step/next-turn` 改成 `human/system`） */
     mode?: MessageKind;
     turn?: number;
@@ -426,8 +434,25 @@ export interface Store {
      * 不给 = `entities` ∪ `entity_items` 里出现过的房间（见 `roomIdsOf`）。
      */
     failedByRoom(roomIds?: readonly string[]): Record<string, number>;
-    /** 房间还没处理完的消息正文（按 messageId） */
+    /**
+     * 消息正文（按 messageId）。
+     *
+     * **只给老数据兜底**：2026-11-28 起投递自己带正文（`DeliveryInput.text`），恢复投递
+     * 不再需要外部世界配合。这里留给迁移前写下的历史行（它们的 `text` 是 NULL）。
+     */
     textOf(roomId: string, messageId: string): string | undefined;
+    /**
+     * 清理已完结的投递（2026-11-28）。**未完成的永不删**。
+     *
+     * 两档：
+     *   · 早于 `clearTextBefore` 的终态行 → 只清 `text`（保留 message_id / bot_id / state / 时间，
+     *     排查仍然查得到「哪条、给谁、什么结局」）
+     *   · 早于 `dropBefore` 的终态行 → 整行删
+     */
+    pruneDeliveries(options: { clearTextBefore: number; dropBefore: number }): {
+        cleared: number;
+        dropped: number;
+    };
     saveSession(roomId: string, botId: string, snapshot: SessionSnapshot): void;
     loadSession(roomId: string, botId: string): SessionSnapshot | undefined;
     /** 记下「这个成员开始了第 turn 轮、还没收尾」（轮开始时写，收尾时删） */
@@ -977,7 +1002,9 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             message_id TEXT NOT NULL,
             bot_id TEXT NOT NULL,
             state TEXT NOT NULL,
-            note TEXT,
+            -- 正文随投递一起存（2026-11-28）：恢复时不再回 items 里找。
+            -- 老库由迁移 022 补列，历史行为 NULL（recover 会回落一次并写回）。
+            text TEXT,
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (entity_id, message_id, bot_id)
         );
@@ -2038,19 +2065,22 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             // `note` 列暂且留着不写（2026-11-28 起状态自己说结局：delivered / failed / cancelled）。
             // 删列留给迁移 021 —— 老库里有历史行，DROP COLUMN 要跟值域迁移一起做。
             db.prepare(
-                'INSERT INTO deliveries (entity_id, message_id, bot_id, state, updated_at, mode, turn, turn_id) ' +
-                    'VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(entity_id, message_id, bot_id) DO UPDATE SET ' +
-                    'state=?, updated_at=?, mode=COALESCE(?, mode), turn=COALESCE(?, turn), turn_id=COALESCE(?, turn_id)',
+                'INSERT INTO deliveries (entity_id, message_id, bot_id, state, text, updated_at, mode, turn, turn_id) ' +
+                    'VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(entity_id, message_id, bot_id) DO UPDATE SET ' +
+                    'state=?, text=COALESCE(?, text), updated_at=?, mode=COALESCE(?, mode), ' +
+                    'turn=COALESCE(?, turn), turn_id=COALESCE(?, turn_id)',
             ).run(
                 delivery.roomId,
                 delivery.messageId,
                 delivery.botId,
                 delivery.state,
+                delivery.text ?? null,
                 updatedAt,
                 delivery.mode ?? null,
                 delivery.turn ?? null,
                 delivery.turnId ?? null,
                 delivery.state,
+                delivery.text ?? null,
                 updatedAt,
                 delivery.mode ?? null,
                 delivery.turn ?? null,
@@ -2083,10 +2113,25 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 messageId: String(row['message_id']),
                 botId: String(row['bot_id']),
                 state: row['state'] as Delivery['state'],
+                ...(row['text'] === null ? {} : { text: String(row['text']) }),
                 ...(row['mode'] === null ? {} : { mode: row['mode'] as MessageKind }),
                 ...(row['turn'] === null ? {} : { turn: Number(row['turn']) }),
                 ...(row['turn_id'] === null ? {} : { turnId: String(row['turn_id']) }),
             }));
+        },
+        pruneDeliveries(options: { clearTextBefore: number; dropBefore: number }): {
+            cleared: number;
+            dropped: number;
+        } {
+            // 只动终态：`pending` / `working` 还没投到，删了就是丢消息（那是不可恢复的）。
+            const terminal = "state IN ('delivered', 'failed', 'cancelled')";
+            const cleared = db
+                .prepare(`UPDATE deliveries SET text = NULL WHERE ${terminal} AND text IS NOT NULL AND updated_at < ?`)
+                .run(options.clearTextBefore).changes;
+            const dropped = db
+                .prepare(`DELETE FROM deliveries WHERE ${terminal} AND updated_at < ?`)
+                .run(options.dropBefore).changes;
+            return { cleared: Number(cleared), dropped: Number(dropped) };
         },
         failedByRoom(roomIds?: readonly string[]): Record<string, number> {
             // 一个 bot 在同一房间可能有多条历史 failed（旧插话没送进去、崩溃重投失败…）。

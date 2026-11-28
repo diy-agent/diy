@@ -447,6 +447,8 @@ export class RoomActor {
                 messageId: saved.id,
                 botId: bot.id,
                 state: 'pending',
+                // 正文跟着投递走：恢复时直接用它，不必回 items 里找（2026-11-28）
+                text,
                 // db 列名还是 `mode`，值已从 next-step/next-turn 改成 human/system
                 mode: input.kind ?? 'human',
                 turn: turn.turn,
@@ -502,7 +504,24 @@ export class RoomActor {
                 });
                 continue;
             }
-            const text = this.deps.store.textOf(this.id, delivery.messageId);
+            // 优先用投递自带的正文；只有迁移前写下的老行（text 为 NULL）才回落一次，
+            // 拿到后写回，下次就不必再查。
+            let text = delivery.text;
+            if (text === undefined) {
+                text = this.deps.store.textOf(this.id, delivery.messageId);
+                if (text !== undefined) {
+                    this.deps.store.setDelivery({
+                        roomId: this.id,
+                        messageId: delivery.messageId,
+                        botId: delivery.botId,
+                        state: delivery.state,
+                        text,
+                        ...(delivery.mode === undefined ? {} : { mode: delivery.mode }),
+                        ...(delivery.turn === undefined ? {} : { turn: delivery.turn }),
+                        ...(delivery.turnId === undefined ? {} : { turnId: delivery.turnId }),
+                    });
+                }
+            }
             if (text === undefined) {
                 // 正文真的没了（被剪 / 被删）→ 无从投递，标「发送失败」而不是「done + note」
                 this.deps.store.setDelivery({

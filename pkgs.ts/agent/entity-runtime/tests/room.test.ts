@@ -278,6 +278,38 @@ describe('RoomActor', () => {
         expect(h.runs).toEqual(['diy']);
     });
 
+    it('崩溃恢复：投递自带正文时，不用回 items 也能重投（2026-11-28）', async () => {
+        const store = openStore(':memory:');
+        store.upsertBotProfile({
+            id: BOT_A.id,
+            type: 'project',
+            name: BOT_A.name,
+            color: BOT_A.color,
+            instructions: BOT_A.persona,
+            primary: true,
+            modelKey: BOT_A.modelKey,
+            reasoningEffort: null,
+            createdAt: 0,
+            updatedAt: 0,
+        });
+        // **故意不 appendItem**：正文只在投递行里。以前这条路必判「取不到正文」
+        store.setDelivery({
+            roomId: 'room:1',
+            messageId: 'u-self-contained',
+            botId: BOT_A.id,
+            state: 'pending',
+            text: '正文在投递里',
+            mode: 'human',
+            turn: 1,
+            turnId: 'turn-self',
+        });
+
+        const h = makeRoom({ store });
+        void h.room.recover();
+        await waitFor(() => h.room.deliveries()[0]?.state === 'delivered');
+        expect(h.runs).toEqual(['diy']);
+    });
+
     it('崩溃恢复是**串行**的：前一条跑到收尾，后一条才开始（不一起冲网关）', async () => {
         // 判据只能靠「第一个卡着时第二个有没有开始」：一起排出去的话，第二轮的 run
         // 会在第一个还没收尾时就 push 进 started，这一条就红了（2026-11-25 的那次一屏 429）。
