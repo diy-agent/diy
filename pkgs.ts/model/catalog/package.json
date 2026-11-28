@@ -17,7 +17,7 @@
     },
     "scripts": {
         "build": "tsc -p tsconfig.build.json",
-        "gen:holidays": "npx tsx scripts/gen-holidays.mts"
+        "gen:holidays": "./sha.sh gen"
     },
     "dependencies": {
         "js-yaml": "^5.5.0"
