@@ -35,7 +35,8 @@ import type {
     ModelCostView,
 } from '@diy-agent/protocol';
 
-export type { JobRunRow };
+export type { BotRow, JobRunRow };
+export type { BotOutcome } from '@diy-agent/protocol';
 
 import { StreamHub } from './hub';
 
@@ -302,6 +303,15 @@ export class RpcChatClient implements ChatClient {
      */
     readonly botProfiles = {
         list: (): Promise<BotProfile[]> => this.call('botProfiles.list', {}),
+        /** 每个席位一行状态（在跑 / 等你回答 / 上一轮出错 / 空闲）；L2 与 L3 读同一份 */
+        rows: (): Promise<{ rows: BotRow[] }> => this.call('botProfiles.rows', {}),
+        /** 批量「继续」：给选中的 (房间, 席位) 各发一条；已在跑的跳过 */
+        retry: (
+            targets: ReadonlyArray<{ roomId: string; botId: string }>,
+        ): Promise<{
+            started: Array<{ roomId: string; botIds: string[] }>;
+            skipped: Array<{ roomId: string; botId: string; reason: string }>;
+        }> => this.call('botProfiles.retry', { targets: [...targets] }),
         create: (input: RoleInput & { type: string; name: string }): Promise<BotProfile> =>
             this.call('botProfiles.create', input),
         update: (input: RoleInput & { id: string }): Promise<BotProfile> => this.call('botProfiles.update', input),

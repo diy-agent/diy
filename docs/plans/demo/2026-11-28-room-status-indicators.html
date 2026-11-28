@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>room 级状态指示器：状态词典 + 6 个候选形态（##43 设计探索）</title>
+<style>
+  :root{
+    --bg:#08080a; --card:#111114; --card2:#16161a; --border:#26262b; --fg:#fafafa;
+    --mf:#a1a1aa; --mf2:#71717a;
+    --emerald:#34d399; --sky:#38bdf8; --rose:#fb7185; --amber:#fbbf24; --blue:#60a5fa;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:26px 28px 80px; background:var(--bg); color:var(--fg);
+    font:13.5px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC",system-ui,sans-serif;
+  }
+  .wrap{max-width:1120px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px;font-weight:600}
+  h2{font-size:14.5px;margin:0;font-weight:600}
+  .lead{color:var(--mf);font-size:12.5px;margin:0 0 14px}
+  .bar{
+    position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:10px 12px; margin:0 -12px 18px; background:rgba(8,8,10,.92);
+    backdrop-filter:blur(8px); border-bottom:1px solid var(--border);
+  }
+  .bar .lbl{color:var(--mf);font-size:12px}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .seg button{all:unset;cursor:pointer;padding:4px 10px;font-size:12px;color:var(--mf);border-right:1px solid var(--border)}
+  .seg button:last-child{border-right:0}
+  .seg button[aria-pressed="true"]{background:#26262b;color:var(--fg)}
+  .legend{display:flex;gap:12px;margin-left:auto;flex-wrap:wrap}
+  .legend span{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--mf)}
+  .dot{width:7px;height:7px;border-radius:999px;display:inline-block;flex:none}
+  .dot.run{background:var(--emerald)} .dot.ask{background:var(--sky)} .dot.att{background:var(--rose)}
+  .dot.que{background:var(--amber)} .dot.unr{background:var(--blue)} .dot.idle{background:#52525b}
+  .dot.fail{background:var(--rose);box-shadow:0 0 0 2px rgba(251,113,133,.25)}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px 18px 14px;margin:0 0 16px}
+  .head{display:flex;align-items:baseline;gap:9px;margin-bottom:10px}
+  .no{font:600 11px/1 ui-monospace,Menlo,monospace;color:var(--mf2);border:1px solid var(--border);border-radius:6px;padding:3px 6px}
+  .head .q{color:var(--mf);font-size:12px}
+  .meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:11px}
+  .meta div{background:var(--card2);border:1px solid var(--border);border-radius:9px;padding:8px 10px}
+  .meta b{display:block;font-size:10.5px;color:var(--mf2);font-weight:600;letter-spacing:.04em;margin-bottom:3px}
+  .meta p{margin:0;font-size:12px;color:var(--mf)}
+  @media (max-width:780px){ .meta{grid-template-columns:1fr} }
+
+  /* 状态词典 */
+  .dict td:first-child{white-space:nowrap;font-weight:600}
+  table{border-collapse:collapse;width:100%;font-size:12px;margin-top:6px}
+  th,td{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}
+  th{background:var(--card2);font-weight:600;font-size:11px;color:var(--mf)}
+  .note{background:rgba(56,189,248,.07);border:1px solid rgba(56,189,248,.25);border-radius:9px;padding:10px 12px;margin:10px 0 0;font-size:12.5px}
+  .note b{color:var(--sky)}
+  .note.warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.28)}
+  .note.warn b{color:var(--amber)}
+
+  .tbar{display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;
+    background:#0a0a0c;border:1px solid var(--border);border-radius:8px;overflow:hidden;position:relative}
+  .tbar .brand{font-size:11px;color:var(--mf2);margin-right:auto}
+  .tbar .end{display:flex;align-items:center;gap:6px;min-width:0}
+  .btn{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 6px;
+    border-radius:7px;font-size:11.5px;color:var(--mf);white-space:nowrap}
+  .btn:hover{background:#1f1f24;color:var(--fg)}
+  .num{font-variant-numeric:tabular-nums}
+  .pulse{animation:pulse 1.6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .muted{color:var(--mf2)}
+  .rose{color:var(--rose)} .sky{color:var(--sky)} .em{color:var(--emerald)} .amber{color:var(--amber)} .blue{color:var(--blue)}
+  .weak{opacity:.72}
+
+  .tier{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px;border-radius:7px;font-size:11.5px}
+  .tier:hover{background:#1f1f24}
+  .tier.on{background:#1f1f24}
+
+  .matrix{display:flex;align-items:center;gap:2px;flex-wrap:nowrap;overflow:hidden}
+  .cell{width:9px;height:14px;border-radius:2px;flex:none;cursor:default}
+  .cell.run{background:var(--emerald)} .cell.ask{background:var(--sky)} .cell.att{background:var(--rose)}
+  .cell.que{background:var(--amber)} .cell.unr{background:var(--blue)} .cell.idle{background:#3f3f46}
+
+  .focus{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:520px}
+  .focus .name{font-size:11.5px;color:var(--fg);max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .focus .say{font-size:11.5px;color:var(--mf);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pill{all:unset;cursor:pointer;height:20px;padding:0 7px;border-radius:6px;border:1px solid var(--border);font-size:11px;color:var(--fg);white-space:nowrap}
+  .pill:hover{background:#1f1f24}
+
+  .strip{display:flex;align-items:center;gap:5px;overflow-x:auto;scrollbar-width:none;min-width:0}
+  .strip::-webkit-scrollbar{display:none}
+  .chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:999px;
+    border:1px solid var(--border);font-size:11px;white-space:nowrap;flex:none;cursor:pointer;color:var(--fg)}
+  .chip:hover{background:#1f1f24}
+
+  .sbar{position:absolute;left:0;right:0;bottom:0;height:2px;display:flex}
+  .sbar i{height:100%;display:block}
+
+  .side{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:6px;max-width:360px}
+  .row{display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:7px;font-size:12px}
+  .row:hover{background:#1b1b20}
+  .row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tag{font-size:10.5px;color:var(--mf2);border:1px solid var(--border);border-radius:5px;padding:0 4px}
+  .row.cur{background:#1b1b20;box-shadow:inset 2px 0 0 var(--sky)}
+
+  .foot{color:var(--mf2);font-size:11.5px;margin-top:22px;line-height:1.7}
+  code{background:#1b1b20;padding:1px 5px;border-radius:4px;font:11.5px ui-monospace,Menlo,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>room 级状态指示器：状态词典 + 6 个候选形态</h1>
+  <p class="lead">
+    下半页每个方案都是**同一份假数据**的渲染。上半页先把「一个 room 到底可能处于哪些状态、每个是什么意思」定死 ——
+    不确定词典，画什么形状都是猜。
+  </p>
+
+  <div class="bar">
+    <span class="lbl">房间数</span>
+    <div class="seg" id="segCount">
+      <button data-n="4" aria-pressed="true">4（少）</button>
+      <button data-n="12" aria-pressed="false">12（中）</button>
+      <button data-n="40" aria-pressed="false">40（多）</button>
+    </div>
+    <span class="lbl" style="margin-left:8px">主状态（互斥，取最急）：出错 → 等你回答 → 在跑 → 没人接 → 空闲</span>
+    <div class="legend">
+      <span><i class="dot att"></i>上一轮出错</span>
+      <span><i class="dot ask"></i>等你回答</span>
+      <span><i class="dot run"></i>在跑</span>
+      <span><i class="dot que"></i>排队没人接</span>
+      <span><i class="dot idle"></i>空闲</span>
+      <span><i class="dot unr"></i>未读（标记）</span>
+    </div>
+  </div>
+
+  <!-- ── 状态词典 ─────────────────────────────────────── -->
+  <section class="card">
+    <div class="head"><span class="no">词典</span><h2>一个 room 可能"是什么状态"，每个状态对你说什么</h2></div>
+    <table class="dict">
+      <thead>
+        <tr>
+          <th style="width:13%">状态</th>
+          <th style="width:29%">从 room 看，它是什么意思</th>
+          <th style="width:16%">谁在等</th>
+          <th style="width:22%">真源（唯一一份）</th>
+          <th>要你做什么 / 会自己消失吗</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><i class="dot att"></i> 上一轮出错</td>
+          <td>这个房间某个成员的<b>最后一轮</b>结局不是「正常结束」：被打断 / 上游超时 / 撞步数上限 / 工具结果没回来 / 被内容策略拦截 / 送不进去</td>
+          <td>你（判断要不要重来）</td>
+          <td>轮级事实 + <code>turnLookup</code>（与侧栏红图标同源）</td>
+          <td>要你动手：点进去看错误条，然后「继续」或改配置。<b>不会自己消失</b>（下一轮正常结束才覆盖）</td>
+        </tr>
+        <tr>
+          <td><i class="dot ask"></i> 等你回答</td>
+          <td>有张 <b>ask 卡片</b>挂着：模型问了个问题，选了才算完。<b>不阻塞</b> —— 它那一轮早就结束了</td>
+          <td>你（选一个选项）</td>
+          <td><code>asks</code> 表里 state=pending 的那几条</td>
+          <td>要你动手：答 / 撤回 / 等它过期。<b>不会自己消失</b></td>
+        </tr>
+        <tr>
+          <td><i class="dot run"></i> 在跑</td>
+          <td>这个房间有成员<b>正在处理</b>某条消息（属于 <code>working</code> 投递），或者正被 steer 注入下一段</td>
+          <td>没人等你 —— 它自己会接着干</td>
+          <td><code>session.busy</code>（内存态，全实例活动流推给你）</td>
+          <td>不用你管。<b>会自己消失</b>（这一轮跑完就灭）</td>
+        </tr>
+        <tr>
+          <td><i class="dot que"></i> 排队（没人接）</td>
+          <td><b>已发出、还没有任何成员开始处理</b>的投递条数。消息已经落库了，只是还没轮到它</td>
+          <td>消息在等（等你前面那轮跑完，或等进程把它捡起来）</td>
+          <td><code>deliveries</code> 里 state=<code>pending</code> 的行，按房间/成员计数</td>
+          <td>不用你动手，但可以什么都不做地看它走。<b>会自己消失</b>：成员取到它 → 这条变 <code>working</code>（此时该席位显示「在跑」，排队数 −1）</td>
+        </tr>
+        <tr>
+          <td><i class="dot unr"></i> 未读</td>
+          <td>已经有<b>新结果</b>、而你还没看（<code>seq</code> 超过已读水位，且不是我自己发的）</td>
+          <td>你（去看看吧）</td>
+          <td><code>room_read</code> 的已读水位</td>
+          <td>要你看一眼。打开房间即清（只前进不后退）</td>
+        </tr>
+        <tr>
+          <td><i class="dot fail"></i> 未送达</td>
+          <td>这个房间<b>最新一条</b>消息没送进去（<code>done</code> + note=failed）。历史失败不算 —— 后来送达了就翻篇</td>
+          <td>你（重发或查配置）</td>
+          <td><code>deliveries</code> 按 (房间, 成员) 收敛到最新一条</td>
+          <td>要你动手。<b>不会自己消失</b>（下一条正常送达才覆盖）</td>
+        </tr>
+        <tr>
+          <td><i class="dot idle"></i> 空闲</td>
+          <td>上面这些一个都没有：上次正常说完、现在没动</td>
+          <td>没人</td>
+          <td>以上皆为 0 / 空</td>
+          <td>不用你管</td>
+        </tr>
+        <tr>
+          <td style="color:var(--mf)">关闭（任务）</td>
+          <td>任务本身 <code>status=closed</code>。它和上面那些<b>正交</b>：关掉的任务也可能有未读、出错</td>
+          <td>—</td>
+          <td><code>room.data.status</code>（UI 的 <code>isClosed()</code> 唯一真源）</td>
+          <td>要你重开或忽略</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note">
+      <b>「排队」到底是什么 —— 三条别搞混</b>
+      <ol style="margin:6px 0 0;padding-left:20px">
+        <li><b>它不是「房间在一个队列里等名额」</b>：diy2 没有房间级队列、没有并发闸门。排队的是<b>消息</b>，单位是「这条消息还没被哪个成员接走」。</li>
+        <li><b>它和「在跑」可以同时存在</b>：同一个房间，成员 A 正在跑上一轮（<code>working</code>）→ 你刚发的两条还是 <code>pending</code>。所以 room 级的「排队 N」是<b>附带信息</b>，不是第 5 种互斥状态。</li>
+        <li><b>「只有排队、没人跑」才值得看</b>：正常情况下一秒就变成在跑；如果它停在那儿不动，说明<b>没人接</b>（进程刚重启、成员被堵、投递反复失败）—— 这时候它是琥珀色警告，不是绿色呼吸。</li>
+      </ol>
+    </div>
+    <div class="note warn">
+      <b>所以标题栏的口径</b>：值得<b>催你</b>的只有三档 —— <span class="rose">上一轮出错</span> / <span class="sky">等你回答</span> / <span class="amber">排队却没人接</span>；
+      <span class="em">在跑</span>是「它自己会好」，<span class="blue">未读</span>是「你自己会去看」。后两者不该在标题栏争位置（也不该进红点）。
+    </div>
+  </section>
+
+  <!-- ── S1 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S1</span>
+      <h2>分档胶囊：按最急状态分组计数</h2>
+      <span class="q">有几件事要处理？· 点一档看是哪些房间</span>
+    </div>
+    <div class="tbar">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s1"></div>
+    </div>
+    <div class="list" id="s1list" style="margin-top:8px"></div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「现在总共压着几件事、分别是哪一档」</p></div>
+      <div><b>适用量级</b><p>任意。房间再多也只是一排数字，不会爆版</p></div>
+      <div><b>代价</b><p>只说类别不说名字 —— 想知道是哪个还得点开一次。排在跑/未读只能当弱提示</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：VS Code 状态栏、GitHub Actions 概览、Slack 侧栏分组红点。</p>
+  </section>
+
+  <!-- ── S2 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S2</span>
+      <h2>状态点阵：一个房间一格</h2>
+      <span class="q">整台实例的「体温」· 悬停看是哪个房间</span>
+    </div>
+    <div class="tbar">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s2"></div>
+    </div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「整体忙不忙、有没有几个红的挤在一起」</p></div>
+      <div><b>适用量级</b><p>≤ 24 格清晰；再多要按状态聚合或分页（<code>+N</code>）</p></div>
+      <div><b>代价</b><p>格子太窄放不下名字；同色多格看不出谁是谁，必须悬停</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：GitHub 贡献图、Datadog 服务网格、CI 的 workflow 结果点阵、Linear 的 cycle 进度点。</p>
+  </section>
+
+  <!-- ── S3 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S3</span>
+      <h2>最急一件 + 队尾计数（attention first）</h2>
+      <span class="q">直接把该做的那件事摆出来 · ‹ › 换下一件</span>
+    </div>
+    <div class="tbar">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s3"></div>
+    </div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「现在最该我动手的是哪一件、它要什么」</p></div>
+      <div><b>适用量级</b><p>任意。房间越多越占优 —— 你不需要知道另外 37 个</p></div>
+      <div><b>代价</b><p>一次只推一件；总量靠「+N」暗示，看不清全局分布</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：Linear Inbox、Things 的 Today、PagerDuty「worst first」、iOS 通知摘要。</p>
+  </section>
+
+  <!-- ── S4 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S4</span>
+      <h2>横向 chip 带：带名字的流水</h2>
+      <span class="q">谁在等你，一眼读出房间名</span>
+    </div>
+    <div class="tbar">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s4"></div>
+    </div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「哪几个房间在等我，分别等什么」</p></div>
+      <div><b>适用量级</b><p>≤ 4 个正好；再多横向滚动（滚出视野 = 看不见）</p></div>
+      <div><b>代价</b><p>占标题栏宽度，与区域开关抢地方；名字长就截断</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：Slack 顶部未读条、Teams 活动、Discord 私信徽标、Jira「我的待办」。</p>
+  </section>
+
+  <!-- ── S5 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S5</span>
+      <h2>状态条：标题栏底边一条彩色分段</h2>
+      <span class="q">零宽度成本的全局条形图 · 悬停看段</span>
+    </div>
+    <div class="tbar" style="margin-bottom:6px">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s5text"></div>
+      <div class="sbar" id="s5"></div>
+    </div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「全局构成：多少比例是红的/蓝的/绿的」</p></div>
+      <div><b>适用量级</b><p>≤ 12 段可分辨；更多要按状态合并成几段</p></div>
+      <div><b>代价</b><p>2px 高，单段无法点中；只能当提示，不能当入口</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：VS Code 编辑器 tab 的脏标记、JetBrains 底部进度条、macOS Dock 徽标、浏览器 tab 的忙碌转圈。</p>
+  </section>
+
+  <!-- ── S6 ───────────────────────────────────────────── -->
+  <section class="card">
+    <div class="head">
+      <span class="no">S6</span>
+      <h2>侧栏为主 + 标题栏只留一颗「最坏的」</h2>
+      <span class="q">room 级信息回到「能看见名字」的地方（排队/未读都在这行上）</span>
+    </div>
+    <div class="tbar" style="margin-bottom:10px">
+      <span class="brand">diy2 · 切片</span>
+      <div class="end" id="s6bar"></div>
+    </div>
+    <div class="side" id="s6side"></div>
+    <div class="meta">
+      <div><b>回答什么问题</b><p>「每个房间自己什么状态」—— 逐行看，不用去标题栏换算</p></div>
+      <div><b>适用量级</b><p>任意：侧栏本来就要滚动，状态跟着行走</p></div>
+      <div><b>代价</b><p>跨房间总览弱：要扫一遍列表才知道全貌（标题栏退化成一粒灯）</p></div>
+    </div>
+    <p class="lead" style="margin:8px 0 0">业界：Slack（侧栏才是主战场）、Notion、VS Code 资源管理器的 git 色、Finder 侧栏徽标。</p>
+  </section>
+
+  <!-- ── 对照表 ───────────────────────────────────────── -->
+  <section class="card">
+    <div class="head"><span class="no">↔</span><h2>怎么选：三个问题定方案</h2></div>
+    <table>
+      <thead><tr><th style="width:32%">你的判断</th><th>选它</th><th>理由</th></tr></thead>
+      <tbody>
+        <tr><td>房间长期 &gt; 20 个，标题栏只想看「有没有事」</td><td><b>S1 + S5</b></td><td>计数不随房间数膨胀；底边条给构成感</td></tr>
+        <tr><td>同时压着的事通常 ≤ 3 件，人只关心「先做哪个」</td><td><b>S3</b></td><td>少即是多：把唯一该动手的摆出来，其余折叠</td></tr>
+        <tr><td>要「一眼看到是哪个任务在等我」</td><td><b>S4</b></td><td>只有它在标题栏里放得下名字</td></tr>
+        <tr><td>房间少（&lt; 10）且互相独立，喜欢看整体节奏</td><td><b>S2</b></td><td>点阵的密度感最强，且天然支持「最近 N 个」</td></tr>
+        <tr><td>真正的战场是侧栏，标题栏只在有急事时出声</td><td><b>S6</b></td><td>不给标题栏加负担，靠行内徽标说话</td></tr>
+      </tbody>
+    </table>
+    <p class="lead" style="margin:12px 0 0">
+      可以组合，但别叠三层：<b>S3（主）+ S1（次）+ S5（底边）</b> 是密度与可读性最稳的一套；
+      <b>S4 + S6</b> 会重复（都在说「哪个房间」）。真正要避免的是现在这种——两个纯数字，既不说是谁，也不说该干什么。
+    </p>
+  </section>
+
+  <p class="foot">
+    假数据 · 无后端 · 单文件。主状态取最急一档（同房间多件事并存时按 出错 &gt; 等你回答 &gt; 在跑 &gt; 没人接 &gt; 空闲）；
+    <code>排队</code> 与 <code>未读</code> 是附带标记，不参与排序 —— 它们能与「在跑」同时成立。
+  </p>
+</div>
+
+<script>
+// ── 假数据：一个房间 = 一组可以并存的事实（不是单一状态）────────────
+const NAMES = [
+  '任务树与多会话','bot会话指示器丢失','cops','diy','上下文压缩','导出 md','turn 事实迁移',
+  '侧栏 272ms','job 面板','迁移规范','events 表','意图到需求','room 边界','两层账本',
+  '运行产物','slice 重构','shadcn 迁移','模型目录','审批流','日志分级','端口身份','数据根',
+  '压缩判据','工具截断','SSE 多路','角色席位','作业逃逸','单位 DAG','会话格式','断线重连',
+  '首帧快照','退避重试','IDE 桥','文件树','快捷键','多窗口','主题切换','诊断页','帮助页','导图'
+];
+const ASKS = ['要不要删掉旧表？','这个方案 A 还是 B？','迁移顺序先做哪一步？','要不要保留兼容层？'];
+const ERRS = ['上一轮被打断','上游超时','工具结果没回来','撞到步数上限'];
+
+let COUNT = 4;
+
+function makeRooms(n){
+  const rooms = [];
+  for (let i = 0; i < n; i++){
+    const r = {
+      name: NAMES[i % NAMES.length],
+      running: false, asking: false, broken: false,
+      ask: '', err: '',
+      queued: 0, unread: 0, failed: 0,
+      idleFor: 12 + i * 7,
+      bots: 1 + (i % 4),
+    };
+    // 前两个房间固定给最急的两档，保证任何量级都能看到
+    if (i === 0) { r.broken = true; r.err = ERRS[0]; r.queued = 2; }
+    else if (i === 1) { r.asking = true; r.ask = ASKS[0]; }
+    else if (i % 7 === 3) { r.running = true; r.queued = i % 3 === 0 ? 1 : 0; }
+    else if (i % 9 === 5) { r.queued = 2 + (i % 3); }            // 只有排队 = 没人接（琥珀）
+    else if (i % 11 === 7) { r.unread = 1 + (i % 5); }
+    else if (i % 13 === 9) { r.failed = 1; }
+    else if (i % 3 === 2) { r.running = true; }
+    rooms.push(r);
+  }
+  return rooms;
+}
+
+/** 主状态（互斥，取最急）：它与「排队 / 未读 / 未送达」这些标记可以同时成立 */
+function primary(r){
+  if (r.broken) return 'attention';
+  if (r.asking) return 'asking';
+  if (r.running) return 'running';
+  if (r.queued > 0) return 'queued';   // 只有排队、没人接 → 这才是值得一看的那档
+  if (r.failed > 0) return 'attention';
+  return 'idle';
+}
+const DOT = {running:'run', asking:'ask', attention:'att', queued:'que', unread:'unr', idle:'idle'};
+const RANK = {attention:0, asking:1, running:2, queued:3, idle:4};
+const byUrgency = (a, b) => RANK[primary(a)] - RANK[primary(b)];
+const dot = (r, cls='') => `<i class="dot ${DOT[primary(r)]} ${cls}"></i>`;
+
+/** 一句话：这个房间现在最要紧的那件事 */
+function line(r){
+  if (r.broken) return r.err;
+  if (r.asking) return '等你回答：' + r.ask;
+  if (r.running) return r.queued > 0 ? `在跑 · 还排着 ${r.queued} 条` : '在跑';
+  if (r.queued > 0) return `${r.queued} 条消息还没人接`;
+  if (r.failed > 0) return '上一条没送到';
+  if (r.unread > 0) return `${r.unread} 条未读`;
+  return `${r.idleFor} 分钟没动`;
+}
+
+/** 附带标记（不参与主状态排序） */
+function badges(r){
+  const out = [];
+  if (primary(r) !== 'queued' && r.queued > 0) out.push(`<span class="tag amber" title="已发出、还没被成员接走">⧗${r.queued}</span>`);
+  if (r.unread > 0) out.push(`<span class="tag blue" title="有结果、你还没看">${r.unread}</span>`);
+  if (r.failed > 0) out.push(`<span class="tag rose" title="最新一条没送进去">✕</span>`);
+  return out.join('');
+}
+
+// ── S1 分档：只列「值得催你」的三档 + 两个弱提示 ────────────────────
+const TIERS = [
+  {key:'attention', label:'出错', cls:'rose'},
+  {key:'asking', label:'等你', cls:'sky'},
+  {key:'running', label:'在跑', cls:'em'},
+  {key:'queued', label:'没人接', cls:'amber'},
+];
+function renderS1(rooms){
+  const host = document.getElementById('s1');
+  const list = document.getElementById('s1list');
+  const tiers = TIERS.map(t => ({...t, rooms: rooms.filter(r => primary(r) === t.key)})).filter(t => t.rooms.length > 0);
+  const weakQueued = rooms.reduce((sum, r) => sum + (primary(r) === 'queued' ? 0 : r.queued), 0);
+  const weakUnread = rooms.reduce((sum, r) => sum + r.unread, 0);
+  host.innerHTML = (tiers.map(t =>
+    `<button class="btn tier ${t.cls}" data-tier="${t.key}">${dot(t.rooms[0], t.key === 'running' ? 'pulse' : '')}${t.label}<span class="num">${t.rooms.length}</span></button>`
+  ).join('') || `<span class="btn muted">都闲着</span>`)
+  + (weakQueued || weakUnread ? `<span class="btn muted weak" title="附带信息：它们不催你">${weakQueued ? `⧗${weakQueued}` : ''}${weakQueued && weakUnread ? ' · ' : ''}${weakUnread ? `●${weakUnread}` : ''}</span>` : '');
+  list.innerHTML = '';
+  host.querySelectorAll('[data-tier]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.tier;
+      const active = btn.classList.contains('on');
+      host.querySelectorAll('[data-tier]').forEach(b => b.classList.remove('on'));
+      if (active){ list.innerHTML = ''; return; }
+      btn.classList.add('on');
+      const items = rooms.filter(r => primary(r) === key);
+      list.innerHTML = `<div style="border:1px solid var(--border);border-radius:9px;padding:6px">${items.map(r =>
+        `<div class="row">${dot(r)}<span class="nm">${r.name}</span><span class="muted" style="font-size:11px">${line(r)}</span></div>`
+      ).join('')}</div>`;
+    });
+  });
+}
+
+// ── S2 点阵 ───────────────────────────────────────────────────────
+const MAX_CELLS = 24;
+function renderS2(rooms){
+  const host = document.getElementById('s2');
+  const sorted = [...rooms].sort(byUrgency);
+  const shown = sorted.slice(0, MAX_CELLS);
+  const rest = sorted.length - shown.length;
+  host.innerHTML = `<div class="matrix">${shown.map(r =>
+    `<span class="cell ${DOT[primary(r)]}" title="${r.name} · ${line(r)}${r.queued && primary(r) !== 'queued' ? `（另排着 ${r.queued} 条）` : ''}"></span>`
+  ).join('')}</div>` + (rest > 0 ? `<span class="muted num" style="font-size:11px">+${rest}</span>` : '');
+}
+
+// ── S3 最急一件 ───────────────────────────────────────────────────
+let focusIndex = 0;
+function renderS3(rooms){
+  const host = document.getElementById('s3');
+  const urgent = [...rooms].sort(byUrgency).filter(r => primary(r) !== 'idle');
+  if (urgent.length === 0){ host.innerHTML = `<span class="btn muted">都闲着</span>`; return; }
+  focusIndex = Math.min(focusIndex, urgent.length - 1);
+  const r = urgent[focusIndex];
+  const p = primary(r);
+  const action = p === 'asking' ? '去回答' : p === 'running' ? '去看看' : p === 'queued' ? '看看卡在哪' : '继续';
+  host.innerHTML = `
+    <span class="focus">
+      ${dot(r, p === 'running' ? 'pulse' : '')}
+      <span class="name">${r.name}</span>
+      <span class="say">· ${line(r)}</span>
+      <button class="pill">${action}</button>
+    </span>
+    ${urgent.length > 1 ? `<span class="muted num" style="font-size:11px">${focusIndex + 1}/${urgent.length}</span>
+      <button class="btn" data-nav="-1" title="上一件">‹</button>
+      <button class="btn" data-nav="1" title="下一件">›</button>` : ''}
+  `;
+  host.querySelectorAll('[data-nav]').forEach(b => b.addEventListener('click', () => {
+    focusIndex = (focusIndex + Number(b.dataset.nav) + urgent.length) % urgent.length;
+    renderS3(rooms);
+  }));
+}
+
+// ── S4 chip 带 ────────────────────────────────────────────────────
+function renderS4(rooms){
+  const host = document.getElementById('s4');
+  const need = [...rooms].sort(byUrgency).filter(r => primary(r) !== 'idle' && primary(r) !== 'running');
+  host.innerHTML = need.length === 0
+    ? `<span class="btn muted">都闲着（没有等你动手的）</span>`
+    : `<div class="strip">${need.map(r =>
+        `<span class="chip" title="${line(r)}">${dot(r)}${r.name}</span>`
+      ).join('')}</div>`;
+}
+
+// ── S5 状态条 ─────────────────────────────────────────────────────
+const SEG_COLOR = {attention:'#fb7185', asking:'#38bdf8', running:'#34d399', queued:'#fbbf24', idle:'#3f3f46'};
+function renderS5(rooms){
+  const host = document.getElementById('s5');
+  const text = document.getElementById('s5text');
+  host.innerHTML = rooms.map(r => {
+    const p = primary(r);
+    return `<i style="flex:${p === 'attention' ? 2 : 1};background:${SEG_COLOR[p]}" title="${r.name} · ${line(r)}"></i>`;
+  }).join('');
+  const counts = TIERS.map(t => ({...t, n: rooms.filter(r => primary(r) === t.key).length})).filter(t => t.n);
+  text.innerHTML = counts.map(t => `<span class="btn ${t.cls}" style="pointer-events:none">${dot(rooms.find(r => primary(r) === t.key))}<span class="num">${t.n}</span></span>`).join('')
+    || `<span class="btn muted">都闲着</span>`;
+}
+
+// ── S6 侧栏 ───────────────────────────────────────────────────────
+function renderS6(rooms){
+  const bar = document.getElementById('s6bar');
+  const side = document.getElementById('s6side');
+  const worst = [...rooms].sort(byUrgency)[0];
+  const attention = rooms.filter(r => ['attention','asking','queued'].includes(primary(r))).length;
+  const p = primary(worst);
+  bar.innerHTML = attention > 0
+    ? `<button class="btn ${p === 'attention' ? 'rose' : p === 'asking' ? 'sky' : 'amber'}">${dot(worst, p === 'running' ? 'pulse' : '')}${attention}</button>`
+    : `<button class="btn muted">${dot(worst)}0</button>`;
+  side.innerHTML = [...rooms].sort(byUrgency).map((r, i) => `
+    <div class="row ${i === 0 ? 'cur' : ''}">
+      ${dot(r, primary(r) === 'running' ? 'pulse' : '')}
+      <span class="nm">${r.name}</span>
+      ${badges(r)}
+      ${primary(r) === 'asking' ? `<span class="tag sky" title="等你回答">?</span>` : ''}
+      ${primary(r) === 'attention' ? `<span class="tag rose" title="${r.err || '上一轮出错'}">!</span>` : ''}
+      <span class="muted" style="font-size:10.5px">${primary(r) === 'idle' ? r.idleFor + 'm' : ''}</span>
+    </div>`).join('');
+}
+
+// ── 渲染全部 ──────────────────────────────────────────────────────
+function render(){
+  const rooms = makeRooms(COUNT);
+  renderS1(rooms); renderS2(rooms); renderS3(rooms); renderS4(rooms); renderS5(rooms); renderS6(rooms);
+}
+
+document.getElementById('segCount').addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  COUNT = Number(btn.dataset.n);
+  focusIndex = 0;
+  document.querySelectorAll('#segCount button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+  render();
+});
+
+render();
+</script>
+</body>
+</html>

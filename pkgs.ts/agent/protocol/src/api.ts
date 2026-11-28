@@ -116,6 +116,18 @@ export const roomsApi = RpcSchema.group({
 export const botProfilesApi = RpcSchema.group({
     children: {
         list: RpcSchema.unary({ input: {}, output: Any }),
+        /**
+         * 每个席位一行状态（`BotRow`）：在跑 / 等你回答 / 上一轮出错 / 空闲。
+         *
+         * 一行 = **房间 × 角色**（成员由类型派生，所以“谁是成员”不用问）。二级浮层与三级
+         * 全量表读同一份 —— 不在前端各算一遍，否则「弹层说有 3 个、表格说有 4 个」必然出现。
+         */
+        rows: RpcSchema.unary({ input: {}, output: Any }),
+        /** 批量重试：给选中的 (房间, bot) 各发一条「继续」（已在跑的跳过） */
+        retry: RpcSchema.unary({
+            input: { targets: z.array(z.object({ roomId: Id, botId: Id })).min(1) },
+            output: Any,
+        }),
         create: RpcSchema.unary({
             input: {
                 type: z.string().min(1),
@@ -444,13 +456,13 @@ export const METHOD_DESC: Readonly<Record<string, string>> = {
     'rooms.remove': '删房间；删项目会连带它的任务，返回 deleted 列表',
     'rooms.addMember': '把已有 bot 拉进这个房间（借用别处的 bot）',
     'rooms.markRead': '告诉服务端「我看到第几条了」；只前进不后退',
-    // —— bot ——
-    'bots.list': '所有 bot 的定义（名字 / 人格 / 模型 / 归属房间）',
-    'bots.rows': '每个 bot 一行状态：在跑 / 等回答 / 上一轮出错 / 空闲',
-    'bots.create': '造一个新 bot',
-    'bots.update': '改 bot 的名字 / 颜色 / 人格 / 模型 / 归属',
-    'bots.remove': '删 bot',
-    'bots.retry': '给选中的 (房间, bot) 各发一条「继续」；已在跑的跳过',
+    // —— 角色（原 bot）——
+    'botProfiles.list': '所有角色：名字 / 颜色 / 人格 / 模型 / 归哪类房间',
+    'botProfiles.rows': '每个席位一行状态：在跑 / 等回答 / 上一轮出错 / 空闲',
+    'botProfiles.create': '造一个角色（= 那类房间里多一个席位）',
+    'botProfiles.update': '改角色的名字 / 颜色 / 人格 / 模型 / 默认应答',
+    'botProfiles.remove': '删角色（每类至少留一个）',
+    'botProfiles.retry': '给选中的 (房间, bot) 各发一条「继续」；已在跑的跳过',
     // —— 对话 ——
     'chat.history': '打开房间的三件套：条目 / 投递 / 待答提问；limit 控返回条数',
     'chat.wait': '等新条目（长轮询）。想在代码里「盯」一件事就用它，别 sleep 轮询',
