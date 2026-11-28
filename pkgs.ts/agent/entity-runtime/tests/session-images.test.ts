@@ -131,4 +131,116 @@ describe('messageWithAttachments', () => {
         };
         expect(await messageWithAttachments(source, readerOf({ [SHOT.id]: PNG }))).toBe(source.message);
     });
+
+    // tool 消息的图（2026-11-28）：`view_image` 看过的图要进模型，否则同一轮内模型看不到
+    // 自己刚调的工具产出的图（实测症状：“只回传了 PNG 的原始字节”）。
+    it('tool 消息带图 ⇒ output 换成 content 型（text + file），不丢 toolCallId', async () => {
+        const source: TranscriptEntry = {
+            message: {
+                role: 'tool',
+                content: [
+                    {
+                        type: 'tool-result',
+                        toolCallId: 'call_v1',
+                        toolName: 'view_image',
+                        output: { type: 'text', value: '看一眼这张图：shot.png' },
+                    },
+                ],
+            } as never,
+            origin: 'self',
+            attachments: [SHOT],
+        };
+        const message = await messageWithAttachments(source, readerOf({ [SHOT.id]: PNG }));
+
+        expect(message.role).toBe('tool');
+        const part = (message.content as Array<Record<string, unknown>>)[0]!;
+        expect(part['toolCallId']).toBe('call_v1');
+        expect(part['toolName']).toBe('view_image');
+        expect(part['output']).toEqual({
+            type: 'content',
+            value: [
+                { type: 'text', text: '看一眼这张图：shot.png' },
+                { type: 'file', mediaType: 'image/png', data: { type: 'data', data: PNG }, filename: 'shot.png' },
+            ],
+        });
+    });
+
+    it('tool 消息 + 不收图的模型 ⇒ 图不塞（不换回 400），正文照旧', async () => {
+        const source: TranscriptEntry = {
+            message: {
+                role: 'tool',
+                content: [
+                    {
+                        type: 'tool-result',
+                        toolCallId: 'call_v2',
+                        toolName: 'view_image',
+                        output: { type: 'text', value: '看一眼' },
+                    },
+                ],
+            } as never,
+            origin: 'self',
+            attachments: [SHOT],
+        };
+        const message = await messageWithAttachments(source, readerOf({ [SHOT.id]: PNG }), new AttachmentBytesCache(), {
+            acceptsImages: false,
+        });
+        // 原样返回（一个 file part 都不塞）
+        expect(message).toBe(source.message);
+    });
+
+    it('tool 消息 + 图读不到 ⇒ 退回原形状，不抛', async () => {
+        const source: TranscriptEntry = {
+            message: {
+                role: 'tool',
+                content: [
+                    {
+                        type: 'tool-result',
+                        toolCallId: 'call_v3',
+                        toolName: 'view_image',
+                        output: { type: 'text', value: '看一眼' },
+                    },
+                ],
+            } as never,
+            origin: 'self',
+            attachments: [SHOT],
+        };
+        const message = await messageWithAttachments(source, readerOf({})); // 表里没这张图
+        expect(message).toBe(source.message);
+    });
+
+    // 跨轮的真实形状：transcript 里存的是 **scrub 之后**的 message —— 图已经被换成一行
+    // 「已交给模型看过」的说明。重建时必须把那个占位丢掉（图已经按 ref 回来了），
+    // 只留原来的正文，否则模型会看到「说明 + 图」废话两遍。
+    it('tool 消息（scrub 后的 content 型）⇒ 图重建、scrub 占位丢掉', async () => {
+        const source: TranscriptEntry = {
+            message: {
+                role: 'tool',
+                content: [
+                    {
+                        type: 'tool-result',
+                        toolCallId: 'call_v4',
+                        toolName: 'view_image',
+                        output: {
+                            type: 'content',
+                            value: [
+                                { type: 'text', text: '看一眼这张图：shot.png' },
+                                { type: 'text', text: '[shot.png（image/png）已交给模型看过；落库不留字节，要再看一次就重新调工具]' },
+                            ],
+                        },
+                    },
+                ],
+            } as never,
+            origin: 'self',
+            attachments: [SHOT],
+        };
+        const message = await messageWithAttachments(source, readerOf({ [SHOT.id]: PNG }));
+        const part = (message.content as Array<Record<string, unknown>>)[0]!;
+        expect(part['output']).toEqual({
+            type: 'content',
+            value: [
+                { type: 'text', text: '看一眼这张图：shot.png' },
+                { type: 'file', mediaType: 'image/png', data: { type: 'data', data: PNG }, filename: 'shot.png' },
+            ],
+        });
+    });
 });

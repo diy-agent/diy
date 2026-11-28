@@ -89,7 +89,20 @@ export interface ChatMessageInit {
 export type SessionDelta =
     | { readonly type: 'text'; readonly text: string }
     | { readonly type: 'tool-call'; readonly id: string; readonly name: string; readonly input?: string }
-    | { readonly type: 'tool-result'; readonly id: string; readonly content: string }
+    | {
+          readonly type: 'tool-result';
+          readonly id: string;
+          readonly content: string;
+          /**
+           * 分支私有载荷（原样进 ChatMessage.data）。会话内核不解释。
+           *
+           * 为什么需要（2026-11-28）：工具结果除了文本还可能是**多部分内容**（图 / 音频）。
+           * 图不能塞 `content`（那是字符串，塞 base64 会让它进库/进日志）——改放
+           * `data.tool.attachments`（AttachmentRef 列表，只存 ref，字节在 blobs）。
+           * 下游 `toModelMessages` 组装时再按 ref 读字节、造 file part。
+           */
+          readonly data?: unknown;
+      }
     | {
           readonly type: 'usage';
           readonly inputTokens: number;

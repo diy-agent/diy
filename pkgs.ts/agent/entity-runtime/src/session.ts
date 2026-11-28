@@ -770,11 +770,13 @@ export class BotSession {
             // 第一次尝试的文本 / 工具结果已经广播过、也落库了：重试不把它们撤回去，
             // 而是让模型**接着看**（下一轮的 prompt 里它们就是已发生的事实）。
             // 若清空重跑，时间线上会出现同一段话两遍、且白烧一遍推理。
+            console.log('[dbg] turn', turn.turn, 'acceptsImages', acceptsImages, 'readAttachment', this.deps.readAttachment !== undefined, 'toolEntries', [...this.transcript, ...userEntries, ...produced].filter((e) => e.message.role === 'tool').map((e) => ({ att: e.attachments?.length ?? 0 })));
             const messages: ModelMessage[] = await Promise.all(
                 [...this.transcript, ...userEntries, ...produced].map((entry) =>
                     messageWithAttachments(entry, this.deps.readAttachment, this.imageCache, { acceptsImages }),
                 ),
             );
+            console.log('[dbg] built tool messages outputs:', messages.filter((m) => m.role === 'tool').map((m) => (Array.isArray(m.content) ? m.content.map((p: any) => p.output?.type + ':' + (p.output?.value?.length ?? '')) : 'string')));
             const steering = experimental_createSteering();
             this.steering = steering;
             // 只回退**结局**（失败事实 / 收尾原因）；产出、文本、步数、工具次数是**本轮已经发生的**，
@@ -805,10 +807,19 @@ export class BotSession {
                 ...(this.deps.takeDelta === undefined ? {} : { takeDelta: this.deps.takeDelta }),
                 ...(windowTokens === undefined ? {} : { windowTokens }),
                 ...(this.deps.commitDelta === undefined ? {} : { commitDelta: this.deps.commitDelta }),
-                onStepTranscript: (added) => {
-                    // transcript 会进快照落 db：媒体字节在模型那侧已经用过了，这里只留说明
-                    for (const message of added)
-                        produced.push({ message: scrubMedia(message), origin: 'self', turn: turn.turn });
+                onStepTranscript: (added, toolAttachments) => {
+                    // transcript 会进快照落 db：媒体字节在模型那侧已经用过了，这里只留说明。
+                    // 但**工具的图要留 ref**（2026-11-28）：字节剥掉、ref 挂回那条 tool 消息，
+                    // 下一轮重建 messages 时按 ref 读回字节 —— 否则模型看不到自己调的工具产出的图。
+                    for (const message of added) {
+                        const refs = toolRefsOf(message, toolAttachments);
+                        produced.push({
+                            message: scrubMedia(message),
+                            origin: 'self',
+                            turn: turn.turn,
+                            ...(refs === undefined ? {} : { attachments: refs }),
+                        });
+                    }
                 },
                 onUsage: (usage) => {
                     // 结算 / 计费口径：整轮各步之和
@@ -1118,6 +1129,27 @@ function collapsedLabel(count: number): string {
 function errorText(error: unknown): string {
     const text = error instanceof Error ? error.message : String(error);
     return text.trim() === '' ? '压缩失败' : text.split('\n')[0]!;
+}
+
+/**
+ * 一条刚产出的 message 对应哪些工具附件 ref。
+ *
+ * 只有 `role: 'tool'` 的消息才有：从 content 里的 `toolCallId` 查 agent 攒的那张表。
+ * 命中就挂到 TranscriptEntry.attachments 上，下一轮 `messageWithAttachments` 会把它
+ * 重新展开成 file part（字节按 ref 读回来）。
+ */
+function toolRefsOf(
+    message: ModelMessage,
+    toolAttachments: ReadonlyMap<string, readonly AttachmentRef[]> | undefined,
+): readonly AttachmentRef[] | undefined {
+    if (toolAttachments === undefined || message.role !== 'tool' || !Array.isArray(message.content)) return undefined;
+    const refs: AttachmentRef[] = [];
+    for (const part of message.content) {
+        if (part.type !== 'tool-result') continue;
+        const found = toolAttachments.get(part.toolCallId);
+        if (found !== undefined) refs.push(...found);
+    }
+    return refs.length === 0 ? undefined : refs;
 }
 
 function withResolve(): { promise: Promise<void>; resolve: () => void } {
