@@ -19,6 +19,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { ARTIFACT_DOC_STATUS, ARTIFACT_REPORT } from './artifact-report';
+
 /** 三档开关（各自独立） */
 export interface RemindMode {
     /** A：常驻提示词 */
@@ -120,7 +122,11 @@ export function promptReminder(mode: RemindMode): string {
         '\n' +
         LEDGER_SHAPE +
         '\n**每轮从账本里挑活**：上下文 units 节的 ready 就是现在能挑的（不必先 unit_list），挑 1~3 条做；' +
-        '开做标 doing、做完标 done，需求变了就让树跟着变（unit_update / unit_drop）。'
+        '开做标 doing、做完标 done，需求变了就让树跟着变（unit_update / unit_drop）。' +
+        '\n' +
+        ARTIFACT_REPORT +
+        '\n' +
+        ARTIFACT_DOC_STATUS
     );
 }
 

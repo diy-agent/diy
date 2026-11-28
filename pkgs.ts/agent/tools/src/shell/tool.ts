@@ -125,6 +125,7 @@ export function makeShellTool(spec: ShellSpec, host: ShellToolHost) {
                   ...(supportsBackground
                       ? [
                             '`background: true` 把长任务转到后台并**立即返回**作业 id —— 结束时会插话通知你，**不要轮询**（sleep 再查属于轮询），期间可以放心结束本轮去做别的事。查状态 / 取输出 / 停止用 `job` 工具。',
+                            '后台起的是**服务**（lab / dev server）时，本轮回复必须给全四样：地址（带端口、能点）+ 用途 + 怎么停 + 什么时候失效 —— 只说「已启动」等于没说（人还得回来问「链接呢」）。',
                         ]
                       : []),
                   '长任务写法：`nohup <命令> > /tmp/x.log 2>&1 < /dev/null & disown` 立刻返回，然后用**另一条**命令 `tail /tmp/x.log` 取增量；不要在同一条命令里 sleep 等它跑完。',
