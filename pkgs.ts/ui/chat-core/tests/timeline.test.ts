@@ -115,6 +115,32 @@ describe('buildTimeline', () => {
         expect(entries[2]?.parts).toEqual([{ kind: 'text', text: '说两个字' }]);
     });
 
+    it('挂轮次结账事实**不改变位置**（回归：turn_facts 让回复跳到列表末尾）', () => {
+        // 2026-11-28 用户报「消息顺序不对 / 回复跑到最下面」。真因不在排序键，而在
+        // `attachTurns` 排序前把条目换成了新对象（`{ ...entry, turn }`），而锚点是按**对象身份**
+        // 存的 —— 换过对象的条目取不到锚点，被当成"没有锚点"排到最后。
+        // 所以这里两轮都带 turn 事实，顺序必须仍是「人 → 回复 → 人 → 回复」。
+        const items: Item[] = [
+            item(1, { type: 'chat', turnId: 't1', author: HUMAN, data: { text: '第一问' } }),
+            item(2, { type: 'chat', turnId: 't1', author: owner, data: { text: '第一答' } }),
+            item(3, { type: 'chat', turnId: 't2', author: HUMAN, data: { text: '第二问' } }),
+            item(4, { type: 'chat', turnId: 't2', author: owner, data: { text: '第二答' } }),
+        ];
+
+        const entries = buildTimeline(items, [], BOTS, {
+            turns: {
+                't1\u0000bot:owner': { endedAt: 10 },
+                't2\u0000bot:owner': { endedAt: 20 },
+            },
+        });
+
+        expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'user', 'assistant']);
+        expect(entries.map((entry) => entry.key)).toEqual(['i1', 't1:bot:owner', 'i3', 't2:bot:owner']);
+        // 结账事实仍然挂在各自那条回复上
+        expect(entries[1]?.turn?.endedAt).toBe(10);
+        expect(entries[3]?.turn?.endedAt).toBe(20);
+    });
+
     it('把投递状态挂到用户消息上（失败也要显示）', () => {
         const deliveries: Delivery[] = [
             { entityId: 'proj:x', messageId: 'i1', botId: OWNER.id, state: 'done', updatedAt: 1 },
@@ -302,6 +328,31 @@ describe('提问卡片', () => {
         });
         expect(entries).toHaveLength(2);
         expect(entries.at(-1)?.parts.at(-1)).toEqual({ kind: 'ask', request, answer: { values: ['b'] } });
+    });
+
+    it('比这一窗还早的已答卡片不画（否则会浮在时间线最顶上）', () => {
+        // 服务端只给最近一窗条目，但已答提问是整个房间的历史（最近 200 条）。
+        // 比窗口还早的卡片在 entries 里找不到位置 → 以前会被塞到最顶上，七八条老问题卡
+        // 浮在会话开头；而且它们把"第一个子节点"钉在窗口外，前插历史时滚动层判不出
+        // "首条被推下去了"，于是把视口拉到末尾（用户报的"加载更早跳走"）。
+        const windowItems: Item[] = [
+            item(1, { type: 'chat', turnId: 't9', author: HUMAN, data: { text: '最近的' } }),
+        ];
+        const old = { ...request, turnId: 't-old' };
+        const entries = buildTimeline(windowItems, [], BOTS, {
+            answered: [{ request: old, answer: { values: ['b'] }, at: 1 }],
+        });
+
+        expect(entries.map((entry) => entry.key)).toEqual(['i1']);
+    });
+
+    it('窗口里还有位置时，已答卡片照旧按时间插在中间', () => {
+        const old = { ...request, turnId: 't9' };
+        const entries = buildTimeline(items, [], BOTS, {
+            answered: [{ request: old, answer: { values: ['b'] }, at: 1_700_000_000_100 }],
+        });
+
+        expect(entries.some((entry) => entry.key === 'ask:ask-1')).toBe(true);
     });
 
     it('已失效：带上 cancelled + 原因（同样独立成卡）', () => {

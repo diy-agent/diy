@@ -548,12 +548,8 @@ const MessageList = React.memo(function MessageList({
             {entries.map((entry) => (
                 // 最后一条用户消息当锚点：新问题落在顶部、回复在它下面流式长出
                 <MessageScrollerItem key={entry.key} messageId={entry.key} scrollAnchor={entry.key === lastUserKey}>
-                    {/* content-visibility：离开视口的条目跳过布局/绘制 */}
                     {/* data-message-id：账本条目上的「来自哪句话」靠它滚过来（见 askJump.ts::jumpToMessage） */}
-                    <div
-                        data-message-id={entry.key}
-                        style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
-                    >
+                    <div data-message-id={entry.key}>
                         <EntryView entry={entry} roomId={roomId} {...(onStopBot === undefined ? {} : { onStopBot })} />
                     </div>
                 </MessageScrollerItem>
