@@ -58,6 +58,15 @@ async function main(): Promise<void> {
         '',
     ].join('\n');
 
+    // 幂等：只更新 timestamp 不算变化（否则每次 gen 都让工作树脏一格，发布前误以为有新数据）
+    const stripTimestamp = (text: string): string =>
+        text.replace(/^export const HOLIDAYS_GENERATED_AT = '.*' as const;$/m, '');
+    const previous = await readFile(DEST, 'utf-8').catch(() => null);
+    if (previous !== null && stripTimestamp(previous) === stripTimestamp(body)) {
+        console.log(`holidays: 无变化（${dates.length} 天，coverage=${dates[0]}→${dates[dates.length - 1]}）`);
+        return;
+    }
+
     await writeFile(DEST, body, 'utf-8');
     console.log(
         `holidays: ${SOURCE_NAME} · ${dates.length} 天 · coverage=${dates[0]}→${dates[dates.length - 1]} → ${DEST}`,

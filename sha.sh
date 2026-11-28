@@ -658,6 +658,86 @@ build() {
     _build_apps
 }
 
+# ── 发布打包（dist）───────────────────────────────────────────────────────────
+#
+# 为什么需要一个**根** dist：发布物不止「编译一下」——
+#   ① 生成物（假日表 / 主题 CSS …）必须先重算，否则打进去的是旧数据；
+#   ② 能力包 dist 必须先编（apps 的 build 读 pkgs 的 dist）；
+#   ③ 各 app 的打包姿势不同（diy-app 是 electron-builder，diy2 是 build/prod）。
+# 这些步骤靠人记一定会漏；机器发现（哪个 workspace 声明了 gen() / dist() 就跑哪个）不会。
+#
+# 用法：./sha.sh dist [--app <name>] [--skip-gen] [-- <app dist 参数>]
+#   --app     只打某个 app（缺省：所有声明了 dist() 或 build() 的 apps）
+#   --skip-gen 跳过 gen（离线 / 已确认生成物新鲜时用）
+#   -- 之后原样透传给 app 的 dist（例如 electron-builder 的 --mac --dir）
+sha.def "dist" \
+  --opt "--app:string:只打某个 app（缺省全部）" \
+  --opt "--skip-gen:bool:跳过生成物重算（离线）" \
+  --desc "发布打包：重算生成物（gen）→ 能力包 dist → 各 app 的打包产物"
+
+# 所有声明了 gen() 的 workspace 都重算一遍（顺序 = _workspaces 的顺序）
+_run_gens() {
+    local ws
+    for ws in "${_workspaces[@]}"; do
+        [[ -f "${ws}sha.sh" ]] || continue
+        grep -qE '^gen\(\)' "${ws}sha.sh" || continue
+        echo "${info}gen（发布前重算生成物）：${ws}${reset}"
+        run "${ws}sha.sh" gen
+    done
+}
+
+# 各 app 的打包：有 dist() 用 dist()，否则至少 build()（没有可选）
+_dist_apps() {
+    local only="$1"
+    shift
+    local a name
+    for a in apps/*/; do
+        [[ -f "${a}sha.sh" ]] || continue
+        name="$(basename "$a")"
+        [[ -z "$only" || "$only" == "$name" ]] || continue
+        if grep -qE '^dist\(\)' "${a}sha.sh"; then
+            echo "${info}dist：${name}${reset}"
+            run "${a}sha.sh" dist "$@"
+        elif grep -qE '^build\(\)' "${a}sha.sh"; then
+            echo "${info}dist：${name}（无 dist()，只 build）${reset}"
+            run "${a}sha.sh" build
+        fi
+    done
+}
+
+dist() {
+    local app="" skip_gen=0
+    local -a rest=()
+    while (($#)); do
+        case "$1" in
+            --app)
+                [[ -n "${2:-}" ]] || { echo "${error}用法：./sha.sh dist --app <name>${reset}" >&2; return 2; }
+                app="$2"
+                shift 2
+                ;;
+            --app=*) app="${1#--app=}"; shift ;;
+            --skip-gen) skip_gen=1; shift ;;
+            --) shift; rest+=("$@"); break ;;
+            *) rest+=("$1"); shift ;;
+        esac
+    done
+
+    ensure-sync
+    if (( !skip_gen )); then
+        _run_gens
+        echo "${info}gen 完成：若生成物有更新，发布前记得一起提交（git status）${reset}"
+    else
+        echo "${warning}跳过 gen（--skip-gen）${reset}"
+    fi
+    # ① 能力包先编：apps 的 build 会读 pkgs 的 dist/
+    build-pkgs
+    # ② 各 app：dist() 自带 build；没有 dist() 的只 build
+    _dist_apps "$app" "${rest[@]}"
+
+    echo "${info}发布打包完成${reset}"
+    [[ -d apps/diy-app/release ]] && run ls -lh apps/diy-app/release
+}
+
 # profile 构建：只挑 apps/* 里声明了 build() 的（= 有产物要建）。
 # apps/chat|minimal|web 是历史残留（git 无跟踪、无 package.json / sha.sh），自然跳过。
 _build_apps() {
