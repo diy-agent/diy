@@ -164,6 +164,17 @@ function outputOf(result: unknown): { label: string; text: string; failed: boole
     if (typeof result === 'string') return result === '' ? undefined : { label: '输出', text: result, failed: false };
     if (typeof result !== 'object') return { label: '输出', text: String(result), failed: false };
     const record = result as Record<string, unknown>;
+    // ai-sdk 的 content 结果（`{type:'content', value:[text, file…]}`）：只把 text part 拼成
+    // 可读正文。文件 part 已被 scrub 成一行说明、附件另由工具卡片画出来 —— 整段 JSON 没有
+    // 信息量（用户 2026-11-27 报「tool 显示的是一坨 json」）。
+    if (record.type === 'content' && Array.isArray(record.value)) {
+        const text = (record.value as Array<{ type?: string; text?: unknown }>)
+            .filter((part) => part.type === 'text' && typeof part.text === 'string')
+            .map((part) => String(part.text))
+            .join('\n')
+            .trim();
+        return text === '' ? undefined : { label: '输出', text, failed: false };
+    }
     const stdout = typeof record.stdout === 'string' ? record.stdout : undefined;
     const stderr = typeof record.stderr === 'string' ? record.stderr : undefined;
     const error = typeof record.error === 'string' ? record.error : undefined;
@@ -204,11 +215,11 @@ function stringify(value: unknown): string {
     }
 }
 
-function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool' }>; live?: boolean }) {
+function ToolGroup({ tools, live, roomId }: { tools: Array<TimelinePart & { kind: 'tool' }>; live?: boolean; roomId?: string }) {
     const [open, setOpen] = React.useState(false);
     if (tools.length === 1) {
         const tool = tools[0]!;
-        return <ToolRow tool={tool} live={live === true} />;
+        return <ToolRow tool={tool} live={live === true} roomId={roomId} />;
     }
     // 官方 ai-elements 的 Chain of Thought 形状：`TraceCollapsible` 的 trigger 是一行摘要
     // （"Researched in 3 steps"），展开体是同样用 `Trace` 排的一串 `TraceLine`。
@@ -236,7 +247,7 @@ function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool'
                 <TraceCollapsibleContent>
                     <div className="mt-1 border-l border-border pl-3">
                         {tools.map((tool) => (
-                            <ToolRow key={tool.id} tool={tool} live={live === true} />
+                            <ToolRow key={tool.id} tool={tool} live={live === true} roomId={roomId} />
                         ))}
                     </div>
                 </TraceCollapsibleContent>
@@ -245,7 +256,7 @@ function ToolGroup({ tools, live }: { tools: Array<TimelinePart & { kind: 'tool'
     );
 }
 
-function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: boolean }) {
+function ToolRow({ tool, live, roomId }: { tool: TimelinePart & { kind: 'tool' }; live: boolean; roomId?: string }) {
     // 后台作业（job / bash background）单独成卡：普通工具行只剩 name + target，而用户要看的
     // 是 run id / 状态 / 退出码 / 输出（判据在 chat-core 的 `jobOf`）
     const job = jobOf(tool);
@@ -254,6 +265,11 @@ function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: 
     const target = toolTargetOf(tool);
     const status = TOOL_STATUS[tool.state];
     const failed = status === 'error';
+    // 工具产出的图（view_image 看过的）：像人贴的图那样画出来，让人看得见 bot 看的是什么。
+    // 有图时默认展开，否则藏在折叠里跟没显示一样。
+    const refs = tool.attachments;
+    const hasAttachments = refs !== undefined && refs.length > 0;
+    const readAttachment = roomId === undefined ? undefined : conversationOf(roomId).readAttachment;
     // 入参 / 输出按**工具的已知形状**渲染，而不是一律 `JSON.stringify`：
     // 用户 2026-11-27：「tool 显示的是纯 json，有更好的显示组件吗」。`{"command":"pwd"}`
     // 这层括号是数据结构的痕迹，不是他关心的东西 —— 他要看的是「跑了什么、输出了什么」。
@@ -282,15 +298,21 @@ function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: 
 
     // 没有 args / result 就没什么可展开的 —— 保持纯一行（官方也是这个规则：
     // 「a plain TraceLine while it runs, a TraceCollapsible once its output arrives」）
-    if (input === undefined && output === undefined) {
+    if (input === undefined && output === undefined && !hasAttachments) {
         return <Trace className={`my-1 ${failed ? 'text-destructive' : ''}`}>{head}</Trace>;
     }
 
     return (
         <Trace className={`my-1 ${failed ? 'text-destructive' : ''}`}>
-            <TraceCollapsible defaultOpen={failed}>
+            <TraceCollapsible defaultOpen={failed || hasAttachments}>
                 <TraceCollapsibleTrigger>{head}</TraceCollapsibleTrigger>
                 <TraceCollapsibleContent>
+                    {hasAttachments && (
+                        <MessageAttachments
+                            refs={refs}
+                            {...(readAttachment === undefined ? {} : { read: readAttachment })}
+                        />
+                    )}
                     {input !== undefined && (
                         <CodeBlock size="sm" className="mb-1.5">
                             <CodeBlockHeader>
@@ -372,7 +394,7 @@ function RunsView({ runs, roomId, live }: { runs: Run[]; roomId: string; live?: 
                     );
                 if (run.kind === 'text')
                     return <Markdown key={`t${index}`} text={run.text} onLinkClick={openLinkInNewWindow} />;
-                return <ToolGroup key={`c${index}`} tools={run.tools} live={live === true} />;
+                return <ToolGroup key={`c${index}`} tools={run.tools} live={live === true} roomId={roomId} />;
             })}
         </>
     );

@@ -232,6 +232,8 @@ export class BotSession {
     /** 已 ingest、还没并进 transcript 的公共条目（运行中到达的要排在本轮产出之后） */
     private pending: TranscriptEntry[] = [];
     private running = false;
+    /** `pump` 因异常提前退出后，自动重试消费 `queue` 的次数（见 `reschedulePump`） */
+    private pumpRetries = 0;
     /**
      * 本轮的身份（turnId + 开始时刻）。`null` = 没在跑。
      *
@@ -608,7 +610,31 @@ export class BotSession {
             this.running = false;
             this.steering = null;
             this.emit({ type: 'busy', busy: false });
+            this.reschedulePump();
         }
+    }
+
+    /**
+     * `pump` 的 while 正常退出时 `queue` 必为空（循环条件），所以**还剩消息就一定是异常路径**。
+     *
+     * 2026-11-28 实证：job 结束通知在 queue 里躺了 65 分钟没人消费 —— 界面显示「作业结束」，
+     * bot 什么都没收到，而全日志 error 级 0 条（异常被 `void this.pump()` 吞了）。
+     * 这里重新起一轮；连试 3 次还不行就出声停下 —— 静默重试等于把问题藏得更深。
+     */
+    private reschedulePump(): void {
+        if (this.queue.length === 0) {
+            this.pumpRetries = 0;
+            return;
+        }
+        if (this.pumpRetries >= 3) {
+            console.warn(
+                `[session] 队列连续 ${this.pumpRetries} 次没消费掉，停止自动重试（bot=${this.deps.bot.id}，余 ${this.queue.length} 条）`,
+            );
+            return;
+        }
+        this.pumpRetries += 1;
+        // setTimeout 而非 microtask：持续抛错时也得让事件循环喘口气，否则会热循环
+        setTimeout(() => void this.pump(), 100);
     }
 
     private async runTurn(items: QueueItem[]): Promise<void> {

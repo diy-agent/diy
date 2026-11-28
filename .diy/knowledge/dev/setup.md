@@ -1,13 +1,23 @@
 ---
 desc: 开工前的环境准备（worktree / 依赖 / 任务文件写入规矩）
-updated: 2026-10-21
+updated: 2026-11-29
 ---
 
 ## sync
 
-新 worktree 先 ./sha.sh sync（npm i --workspaces --include-workspace-root + 子模块 + 各包 sync）；只跑 --workspaces 会漏装根依赖，干净 worktree 上必现 build 解析失败
+新 worktree 先 `./sha.sh sync`（= `bun install` + 各包 sync + electron 二进制收成共享软链；没装 bun 的机器回落 `npm i --workspaces --include-workspace-root`）。`vendor/sha` 是 git subtree，内容随 checkout 下来——**没有子模块要 init，不碰网络**。
 
-（见 docs/toolchain.md:32）
+新 worktree 从零到能验证（2026-11-29 本机实测）：
+
+    git worktree add ../<仓目录名>.worktrees/<标识> <base>   # ~4s，vendor/sha 已随 checkout 落地
+    cd <worktree> && ./sha.sh check                          # 首次 ~190s：bun install 15s + 54 个包 sync + tsc 冷编译 + 全部护栏
+    ./sha.sh build-pkgs                                      # 若 check 报「dist 落后于源码」（新 worktree 还没建过 dist）
+
+重复跑很便宜：`./sha.sh sync` 幂等短路 ~1.2s（stamp 命中就不装），`./sha.sh check` 热态 ~17s。
+
+装依赖的量级（同机同提交、先 `rm -rf node_modules`）：bun 9–15s / 幂等 0.34s / 磁盘 575M；npm 45s / 5.9s / 722M。两份 lock 并存：`bun.lock` 主用、`package-lock.json` 留给 npm 兜底（stamp 哈希两份都算）。
+
+（见 docs/toolchain.md 的 sync 节）
 
 ## hooks-path
 

@@ -81,6 +81,11 @@ export type TimelinePart =
            * 「失败 unit_update」—— 到底为什么失败，人得去翻 session_state。
            */
           error?: { message: string };
+          /**
+           * 工具产出的附件 ref（`view_image` 看过的图）—— UI 在工具卡片里画出来，
+           * 让人看得见 bot 看过的图（2026-11-28）。只存 ref，不存字节。
+           */
+          attachments?: readonly AttachmentRef[];
       }
     /**
      * 这个 bot 自己这一轮的运行失败了（`run.failed`）。它是**回复的一部分**，不是一条独立消息：
@@ -171,6 +176,7 @@ function partOf(item: Item): TimelinePart | undefined {
             state: item.data.state,
             ...(item.data.output === undefined ? {} : { output: item.data.output }),
             ...(item.data.error === undefined ? {} : { error: item.data.error }),
+            ...(item.data.attachments === undefined ? {} : { attachments: item.data.attachments }),
         };
     }
     return undefined;

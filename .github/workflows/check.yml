@@ -1,0 +1,56 @@
+name: check
+
+# 唯一门禁：`./sha.sh check`（tsc 全量 + 全仓 lint + 一串护栏，清单见 sha.sh 的 _check_full_body）。
+# 为什么 runs-on 用 macOS：本仓的脚本与护栏大量按 macOS 开发机写（stat -f 系、可执行位、
+# Electron store 路径、seed 脚本），Linux 上会引入与本次改动无关的噪音；将来要换 ubuntu
+# 需先逐条收拾这些脚本，不是改一行 runs-on 的事。
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # 装依赖走 bun（sync-deps 内部 `bun install`；没有 bun 时它会回落 npm）。
+      # 这就是「CI 也装 bun」的落点 —— 不装的话每个 PR 的装依赖会退回 45s 量级。
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # macOS runner 自带的 /bin/bash 是 3.2 —— 本仓脚本用 `shopt -s globstar`，而 vendor/sha 的硬
+      # 门禁也要求 Bash 4.3+（nameref），3.2 直接 `shopt: globstar: invalid shell option name` 就退出了。
+      # 把 brew 的 bash 5 提到 PATH 前面（镜像通常已预装，没有就现装一次）。
+      - name: 备好 bash 5（macOS 自带的 3.2 不够用）
+        run: |
+          if [ -x /opt/homebrew/bin/bash ]; then BASH5=/opt/homebrew/bin/bash
+          elif [ -x /usr/local/bin/bash ]; then BASH5=/usr/local/bin/bash
+          else brew install bash && BASH5="$(brew --prefix)/bin/bash"; fi
+          "$BASH5" --version | head -1
+          echo "$(dirname "$BASH5")" >> "$GITHUB_PATH"
+
+      # 只装依赖，不建 dev 数据根（那一步会往 run/<app>/lab 填配置，CI 用不到）
+      - name: 装依赖（sync-deps → bun install）
+        run: ./sha.sh sync-deps
+
+      # check 里的 check-dist-fresh 要看 pkgs.ts 的 dist；新 checkout 里没有，先编出来
+      - name: 编译能力包 dist
+        run: ./sha.sh build-pkgs
+
+      - name: 全量检查
+        run: ./sha.sh check

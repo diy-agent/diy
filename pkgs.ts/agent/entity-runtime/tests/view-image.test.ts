@@ -9,7 +9,9 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+
+import type { AttachmentRef } from '@diy-agent/attachment/types';
 
 import { buildRoomTools } from '../src/tools/index';
 import { viewImageTool } from '../src/tools/view-image';
@@ -86,6 +88,44 @@ describe('view_image', () => {
         await writeFile(text, 'hello');
         await expect(execute({ path: text })).rejects.toThrow(/不是图片/);
         await expect(execute({ path: join(dir, 'missing.png') })).rejects.toThrow(/没有这个文件/);
+    });
+
+    it('给了 adopt ⇒ 结果带 ref，人也能看见这张图', async () => {
+        const path = join(dir, 'adopted.png');
+        await writeFile(path, pngBytes());
+        const ref: AttachmentRef = {
+            type: 'stored',
+            id: 'ref-adopt-test',
+            kind: 'image',
+            mime: 'image/png',
+            bytes: 100,
+            displayName: 'adopted.png',
+            source: 'tool',
+            createdAt: 1,
+            relPath: '2026-11-28/120000-a1b2c3d4/01-adopted.png',
+        };
+        const call = vi.fn(async () => ref);
+        const withAdopt = viewImageTool(call).execute as unknown as (input: { path: string }) => Promise<{
+            attachments?: AttachmentRef[];
+        }>;
+        const out = await withAdopt({ path });
+        expect(call).toHaveBeenCalledOnce();
+        expect(call.mock.calls[0]?.[0]).toMatchObject({ name: 'adopted.png', mime: 'image/png' });
+        expect(out.attachments).toEqual([ref]);
+    });
+
+    it('adopt 失败不连累模型看图（图字节本来就在手里）', async () => {
+        const path = join(dir, 'no-adopt.png');
+        await writeFile(path, pngBytes());
+        const failing = viewImageTool(async () => {
+            throw new Error('blobs 写失败');
+        }).execute as unknown as (input: { path: string }) => Promise<{
+            type: string;
+            attachments?: AttachmentRef[];
+        }>;
+        const out = await failing({ path });
+        expect(out.type).toBe('content');
+        expect(out.attachments).toBeUndefined();
     });
 });
 

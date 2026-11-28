@@ -864,7 +864,12 @@ export class RunRegistry {
             ...(info.exitCode === undefined ? {} : { exitCode: info.exitCode }),
             ...(info.signal === undefined ? {} : { signal: info.signal }),
             endedAt: localISOString(new Date(info.endedAt ?? this.now())),
-            notified: info.delivered !== false,
+            // 语义是「**有人收**」，不是「尝试过」——所以只认确定的 true。
+            // 原来是 `delivered !== false`，把「压根没通知」（静默模式：没有 taskUri 或宿主没挂
+            // notifier，delivered 只能是 undefined）也写成了 true（2026-11-28 实证：用户看着
+            // `notified:true` 排了半天「为什么没激发 bot」，而真问题是投递静默失败）。
+            // 内存里的 `info.notified`（「已尝试过」）是另一件事，不受影响。
+            notified: info.delivered === true,
             ...(info.error === undefined ? {} : { error: info.error }),
         };
         try {

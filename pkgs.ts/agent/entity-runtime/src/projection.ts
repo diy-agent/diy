@@ -232,6 +232,10 @@ export class Projector {
                         ...(offloaded === undefined ? {} : { output: offloaded }),
                         state: failed ? 'error' : 'ok',
                         ...(failed ? { error: { message: clipError(event.error ?? '') } } : {}),
+                        // 工具产出的附件 ref（view_image 看过的图）：只存 ref，UI 据此画出来
+                        ...(failed || event.attachments === undefined || event.attachments.length === 0
+                            ? {}
+                            : { attachments: event.attachments }),
                     },
                 };
                 this.items.set(id, next);

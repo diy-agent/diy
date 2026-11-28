@@ -1,4 +1,0 @@
-[submodule "vendor/sha"]
-	path = vendor/sha
-	url = git@github.com:diy-agent/sha.git
-	branch = main

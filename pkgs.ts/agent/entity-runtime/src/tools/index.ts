@@ -24,8 +24,9 @@ import { capEveryTool } from './delivery';
 import { journalTool } from './journal';
 import { runCodeTool, type RunCodeHost } from './run-code';
 import { unitTools, type UnitHost } from './units';
-import { viewImageTool } from './view-image';
+import { viewImageTool, type AdoptImage } from './view-image';
 
+export type { AdoptImage } from './view-image';
 export type { UnitHost } from './units';
 export type { RunCodeHost } from './run-code';
 export { DEFAULT_RUN_CODE_TIMEOUT_MS } from './run-code';
@@ -71,6 +72,11 @@ export interface RoomToolsOptions {
      * 引擎实现由调用方给（进程内 vm / worker / 子进程），本文件只负责把它包成工具。
      */
     code?: RunCodeHost;
+    /**
+     * `view_image` 看过的图拷进 blobs 的入口（不传 = 图只给模型看，人看不到）。
+     * 由 room 用 `<home>/blobs` 的约定注入。
+     */
+    adoptImage?: AdoptImage;
     /**
      * 投递层截断（只改"发给模型的那一份"，execute 的返回值仍是全文）；可返回 Promise。
      *
@@ -142,7 +148,7 @@ export function buildRoomTools(options: RoomToolsOptions): ToolSet {
     if (options.units !== undefined) Object.assign(extra, unitTools(options.units));
     if (options.code !== undefined) extra['run_code'] = runCodeTool(options.code);
     // 「自己截图自己看」：不给它这个入口，它会去 bash+curl 拼 raw API（实测过）
-    extra['view_image'] = viewImageTool();
+    extra['view_image'] = viewImageTool(options.adoptImage);
 
     const tools = buildTools({ cwd, extraTools: extra });
     // 投递层的唯一接线点：每个工具都挂同一个截断器（未超限时逐字符原样，不碰缓存）
