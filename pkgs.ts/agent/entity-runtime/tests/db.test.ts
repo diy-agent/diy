@@ -25,11 +25,36 @@ function taskInput(id: string, extra: Partial<TaskInput> = {}): TaskInput {
         workspace: null,
         status: 'open',
         closedAt: null,
+        pinnedAt: null,
         ...extra,
     };
 }
 
 describe('rooms 持久化', () => {
+    it('置顶时刻进库、能回来（任 = `tasks.pinned_at`，`data.pinnedAt` 只是它的投影）', () => {
+        const store = openStore(':memory:');
+        store.saveTask(taskInput('t', { pinnedAt: 1_700_000_000_000 }));
+        const pinned = store.listRooms().find((item) => item.id === 't');
+        expect(pinned?.data['pinnedAt']).toBe(1_700_000_000_000);
+        expect(store.taskOf('t')?.pinnedAt).toBe(1_700_000_000_000);
+    });
+
+    it('取消置顶清成 NULL（不是留个 0），重存后 `data.pinnedAt` 整个消失', () => {
+        const store = openStore(':memory:');
+        store.saveTask(taskInput('t', { pinnedAt: 1_700_000_000_000 }));
+        store.saveTask(taskInput('t', { pinnedAt: null }));
+        expect(store.taskOf('t')?.pinnedAt).toBeNull();
+        expect(store.listRooms().find((item) => item.id === 't')?.data['pinnedAt']).toBeUndefined();
+    });
+
+    it('saveRoom（Room.data 那条路）也带得动置顶 —— UI 走的正是它', () => {
+        const store = openStore(':memory:');
+        store.saveRoom({ ...room, data: { ...room.data, pinnedAt: 1_700_000_000_500 } });
+        expect(store.taskOf('task-abc')?.pinnedAt).toBe(1_700_000_000_500);
+        store.saveRoom({ ...room, data: { ...room.data, pinnedAt: null } });
+        expect(store.taskOf('task-abc')?.pinnedAt).toBeNull();
+    });
+
     it('saveRoom → listRooms 回到同样的元数据（含成员）', () => {
         const store = openStore(':memory:');
         store.setMembers(room.id, room.members);
@@ -585,7 +610,9 @@ describe('unit（需求账本树的节点）', () => {
         // `SCAN entity_items` = 又退回全表扫（这条断言就是防回退）。
         const plan = (
             store.db
-                .prepare("EXPLAIN QUERY PLAN SELECT seq, item FROM entity_items WHERE json_extract(item, '$.id') IN (?)")
+                .prepare(
+                    "EXPLAIN QUERY PLAN SELECT seq, item FROM entity_items WHERE json_extract(item, '$.id') IN (?)",
+                )
                 .all('u-1') as Array<{ detail: string }>
         )
             .map((row) => row.detail)

@@ -25,6 +25,7 @@ import { migration as m19 } from './019-drop-unit-step.js';
 import { migration as m20 } from './020-turn-facts.js';
 import { migration as m21 } from './021-offload-tool-outputs.js';
 import { migration as m22 } from './022-item-id-index.js';
+import { migration as m23 } from './023-tasks-pinned-at.js';
 import type { Migration } from './types.js';
 
 /**
@@ -57,6 +58,7 @@ export const migrations: readonly Migration[] = [
     m20,
     m21,
     m22,
+    m23,
 ];
 
 /** 迁移步骤清单（给迁移页画总进度条用：分母得先知道） */

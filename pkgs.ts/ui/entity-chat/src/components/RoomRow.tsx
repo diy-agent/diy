@@ -13,6 +13,8 @@ import {
     ListPlus,
     Pencil,
     PenLine,
+    Pin,
+    PinOff,
     RotateCcw,
     Trash2,
 } from 'lucide-react';
@@ -20,7 +22,15 @@ import * as React from 'react';
 
 import { formatAddress, roomAddressOf } from '../address';
 import { useHasDraft } from '../drafts';
-import { formatActivityAgo, formatAtAbsolute, roomTitle, taskNumberOf, taskStatusOf, type Room } from '../model';
+import {
+    formatActivityAgo,
+    formatAtAbsolute,
+    isPinned,
+    roomTitle,
+    taskNumberOf,
+    taskStatusOf,
+    type Room,
+} from '../model';
 import { Button } from '@diy-agent/ui-shadcn';
 
 import { pendingAskHintOf } from '../pendingAsk';
@@ -76,6 +86,13 @@ export interface RoomRowProps {
     onToggleCollapse?: () => void;
     onCreateTask?: () => void;
     onRequestDelete: (room: Room) => void;
+    /**
+     * 行上附带的一小段归属文字（现在只有「置顶」区传项目名）。
+     *
+     * 置顶的任务从项目树里**挪了出来**（去重），跨项目列表里两个项目下都叫「修个 bug」
+     * 的任务光看名字分不清 —— 归属只能写在行上。与历史区的项目 tag 同一个样式、同一个理由。
+     */
+    tag?: string;
 }
 
 /**
@@ -93,6 +110,7 @@ export function RoomRowView({
     onToggleCollapse,
     onCreateTask,
     onRequestDelete,
+    tag,
 }: RoomRowProps) {
     // 细粒度订阅：这一行只关心「是不是当前那一行」「自己的草稿 / 待答提问 / 最后活动」。
     // 用 `useStore()` 拿整份快照的话，别的房间来了消息、一条错误冒出来，整张侧栏都重渲。
@@ -148,6 +166,8 @@ export function RoomRowView({
     const [renaming, setRenaming] = React.useState(false);
     /** 任务当前是 open（行尾显「关闭」还是「打开」—— 状态只有这一个判据） */
     const openTask = !isProject && taskStatusOf(room) === 'open';
+    /** 置顶中（`data.pinnedAt` 有效）：行尾那颗按钮据此显示 📌 / 📌̸（`Pin` / `PinOff`） */
+    const pinned = isPinned(room);
     /** 任务编号（非 task / 没编号 = undefined）。提出来是为了 narrow 后直接用 */
     const number = taskNumberOf(room);
     // 真地址：中键新标签页 / 右键复制链接由浏览器提供，别再拿 onClick 假装
@@ -304,6 +324,18 @@ export function RoomRowView({
                 onCommit={(next) => void actions.renameRoom(room.id, next)}
             />
 
+            {/* 归属 tag（现在只有置顶区传）：任务从项目树挪进置顶区之后，项目名是它唯一定位不了的
+                信息 —— 跨项目列表里两个项目下都叫「修个 bug」的任务光看名字分不清。
+                与历史行同一套刻度；不传就不渲染（其他区不多一个空格子）。 */}
+            {tag !== undefined && (
+                <span
+                    title={`项目：${tag}`}
+                    className="max-w-[45%] shrink-0 truncate rounded border px-1.5 text-[10px] text-muted-foreground/80"
+                >
+                    {tag}
+                </span>
+            )}
+
             {isProject && collapsed && (openTaskCount ?? 0) > 0 && (
                 <span
                     title={`${openTaskCount} 个未关闭任务`}
@@ -359,58 +391,82 @@ export function RoomRowView({
              * 绝对定位同时满足两件：**不参与布局**（标题永远拿到全宽、hover 前后行高行宽都不变），
              * 也不占常驻空间。代价只在 hover 时浮在标题尾部几个字上 —— 加一层左侧渐隐过渡。
              */}
-            <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center gap-0.5 rounded-r-lg bg-gradient-to-l from-background via-background pl-4 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
-            {isProject && onCreateTask !== undefined && (
-                <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        onCreateTask();
-                    }}
-                    title={`在「${roomTitle(room)}」下新建任务`}
-                    aria-label={`在「${roomTitle(room)}」下新建任务`}
-                    className="hidden shrink-0 text-muted-foreground group-hover:inline-flex focus-visible:inline-flex"
-                >
-                    <ListPlus className="size-3.5" />
-                </Button>
-            )}
+            <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center gap-0 rounded-r-lg bg-gradient-to-l from-background via-background pl-4 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+                {isProject && onCreateTask !== undefined && (
+                    <Button
+                        variant="ghost"
+                        size="icon-2xs"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onCreateTask();
+                        }}
+                        title={`在「${roomTitle(room)}」下新建任务`}
+                        aria-label={`在「${roomTitle(room)}」下新建任务`}
+                        className="hidden shrink-0 text-muted-foreground group-hover:inline-flex focus-visible:inline-flex"
+                    >
+                        <ListPlus className="size-3.5" />
+                    </Button>
+                )}
 
-            {!isProject && (
-                <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        void actions.setRoomStatus(room.id, openTask ? 'closed' : 'open');
-                    }}
-                    title={openTask ? '关闭这个任务（收进历史，不再挂在项目树下）' : '重新打开这个任务'}
-                    aria-label={openTask ? '关闭任务' : '打开任务'}
-                    className="hidden shrink-0 text-muted-foreground group-hover:inline-flex focus-visible:inline-flex"
-                >
-                    {openTask ? <CheckCircle2 className="size-3.5" /> : <RotateCcw className="size-3.5" />}
-                </Button>
-            )}
+                {/* 置顶：**行上的显式按钮**，不藏在 ⋮ 里（用户 2026-11-28：“放到外面，用的很频繁”）。
+                    放在动作区最左（最靠近标题）：它是这颗行上最常点的一颗；关闭/打开是
+                    完成时才点一次的（低频），排在它右边。只对任务 —— 项目本来就在树顶。 */}
+                {!isProject && (
+                    <Button
+                        variant="ghost"
+                        size="icon-2xs"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            void actions.setPinned(room.id, !pinned);
+                        }}
+                        title={pinned ? '取消置顶（回到项目树里）' : '置顶到侧栏顶部'}
+                        aria-label={pinned ? '取消置顶' : '置顶'}
+                        aria-pressed={pinned}
+                        className="hidden shrink-0 text-muted-foreground group-hover:inline-flex focus-visible:inline-flex"
+                    >
+                        {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                    </Button>
+                )}
 
-            <MenuButton
-                // 显隐由外层绝对定位容器统一管（见上），这里不再各自切 display
-                className="shrink-0 text-muted-foreground"
-                items={[
-                    {
-                        key: 'rename',
-                        label: '重命名',
-                        icon: <Pencil className="size-3.5" />,
-                        onClick: () => setRenaming(true),
-                    },
-                    {
-                        key: 'delete',
-                        label: isProject ? '删除项目' : '删除任务',
-                        icon: <Trash2 className="size-3.5" />,
-                        onClick: () => onRequestDelete(room),
-                        danger: true,
-                    },
-                ]}
-            />
+                {!isProject && (
+                    <Button
+                        variant="ghost"
+                        size="icon-2xs"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            void actions.setRoomStatus(room.id, openTask ? 'closed' : 'open');
+                        }}
+                        title={openTask ? '关闭这个任务（收进历史，不再挂在项目树下）' : '重新打开这个任务'}
+                        aria-label={openTask ? '关闭任务' : '打开任务'}
+                        className="hidden shrink-0 text-muted-foreground group-hover:inline-flex focus-visible:inline-flex"
+                    >
+                        {openTask ? <CheckCircle2 className="size-3.5" /> : <RotateCcw className="size-3.5" />}
+                    </Button>
+                )}
+
+                <MenuButton
+                    // 显隐由外层绝对定位容器统一管（见上），这里不再各自切 display
+                    className="shrink-0 text-muted-foreground"
+                    // 与旁边三颗行内动作同高（20px）：这一排是密集动作，24px 那档并排会过宽
+                    size="icon-2xs"
+                    items={[
+                        {
+                            key: 'rename',
+                            label: '重命名',
+                            icon: <Pencil className="size-3.5" />,
+                            onClick: () => setRenaming(true),
+                        },
+                        // 「置顶」不在这里：它常用，已经提到行尾的显式按钮（同上）。菜单里再放一份
+                        // 就是同一个动作两个入口 —— 一处改了另一处忘了，用户还得猜点哪个。
+                        {
+                            key: 'delete',
+                            label: isProject ? '删除项目' : '删除任务',
+                            icon: <Trash2 className="size-3.5" />,
+                            onClick: () => onRequestDelete(room),
+                            danger: true,
+                        },
+                    ]}
+                />
             </div>
         </div>
     );

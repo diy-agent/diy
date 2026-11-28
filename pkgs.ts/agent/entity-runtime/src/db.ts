@@ -172,6 +172,14 @@ export interface TaskRecord {
     workspace: string | null;
     status: string;
     closedAt: number | null;
+    /**
+     * 置顶时刻：有值 = 被 pin 到侧栏顶部「置顶」区，值就是 pin 的那一刻（侧栏按它倒序）。
+     *
+     * 与 `closedAt` 同一形状（时刻当状态，NULL = 没置顶），不是布尔 —— 侧栏要拿它排序。
+     * 关闭任务时由 UI 一并清掉（`setRoomStatus` 写 `pinnedAt: null`）：置顶区只列未关闭的，
+     * 留一个看不见的 pin 会让「重开后突然又回到顶上」。
+     */
+    pinnedAt: number | null;
     createdAt: number;
     /** 最后一次**内容变化**的时刻（启动时的重复保存不算） */
     updatedAt: number;
@@ -629,6 +637,7 @@ function dataText(room: Room, key: string): string {
 
 function roomToTask(room: Room): TaskInput {
     const closedAt = room.data['closedAt'];
+    const pinnedAt = room.data['pinnedAt'];
     return {
         id: room.id,
         title: dataText(room, 'title'),
@@ -638,6 +647,8 @@ function roomToTask(room: Room): TaskInput {
         workspace: dataText(room, 'dir') || null,
         status: dataText(room, 'status') || 'open',
         closedAt: typeof closedAt === 'number' ? closedAt : null,
+        // 非正数 / 非数一律当没置顶（与 UI 侧 `pinnedAtOf` 同一判据，手改库也不会多出脏行）
+        pinnedAt: typeof pinnedAt === 'number' && pinnedAt > 0 ? pinnedAt : null,
     };
 }
 
@@ -654,6 +665,7 @@ function taskToRoom(task: TaskRecord, members: RoomMember[], taskDir?: string): 
     if (task.projectId !== null) data['projectId'] = task.projectId;
     if (task.workspace !== null) data['dir'] = task.workspace;
     if (task.closedAt !== null) data['closedAt'] = task.closedAt;
+    if (task.pinnedAt !== null) data['pinnedAt'] = task.pinnedAt;
     if (task.summary !== '') data['desc'] = task.summary;
     if (task.body !== '') data['body'] = task.body;
     // 容器名跟着容器走：任务的标题就在 data.title（Room 本身没有 name）
@@ -940,6 +952,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             workspace TEXT,
             status TEXT NOT NULL DEFAULT 'open',
             closed_at INTEGER,
+            pinned_at INTEGER,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL DEFAULT 0
         );
@@ -1151,6 +1164,8 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         workspace: row['workspace'] === null ? null : String(row['workspace']),
         status: String(row['status']),
         closedAt: row['closed_at'] === null ? null : Number(row['closed_at']),
+        // 老库 / 刚迁移过的那一瞬可能没有这一列：`SELECT *` 里就没这个键
+        pinnedAt: typeof row['pinned_at'] === 'number' ? (row['pinned_at'] as number) : null,
         createdAt: Number(row['created_at']),
         updatedAt: Number(row['updated_at'] ?? 0),
     });
@@ -1305,7 +1320,10 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         a.projectId === b.projectId &&
         a.workspace === b.workspace &&
         a.status === b.status &&
-        a.closedAt === b.closedAt;
+        a.closedAt === b.closedAt &&
+        // 置顶也算内容：不改这里的话，pin 落库后 `updatedAt` 不动（看着像没生效），
+        // 而且启动重存时的「没变就不写」会把刚 pin 的那次静默跳过。
+        a.pinnedAt === b.pinnedAt;
 
     const writeTask = (task: TaskInput): TaskRecord => {
         const previous = readTask(task.id);
@@ -1316,6 +1334,9 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             ...task,
             number,
             createdAt,
+            // 归一成 `number | null`：调用方不给就是「没置顶」（undefined），
+            // 不归一的话 `sameTaskContent` 会把 undefined ≠ null 当成内容变化、白盖一次 updatedAt
+            pinnedAt: task.pinnedAt ?? null,
             updatedAt: task.updatedAt ?? Date.now(),
         };
         // 启动时会把所有任务重存一遍：内容没变就不该盖「最后更新」、也不该重写文件
@@ -1326,11 +1347,11 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         transaction(() => {
             writeEntity(task.id, 'task', createdAt);
             db.prepare(
-                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, created_at, updated_at) ' +
-                    'VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
+                'INSERT INTO tasks (id, number, title, summary, body, project_id, workspace, status, closed_at, pinned_at, created_at, updated_at) ' +
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ' +
                     'title=excluded.title, summary=excluded.summary, body=excluded.body, project_id=excluded.project_id, ' +
                     'workspace=excluded.workspace, status=excluded.status, closed_at=excluded.closed_at, ' +
-                    'updated_at=excluded.updated_at',
+                    'pinned_at=excluded.pinned_at, updated_at=excluded.updated_at',
             ).run(
                 task.id,
                 number,
@@ -1341,6 +1362,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                 task.workspace ?? null,
                 task.status,
                 task.closedAt ?? null,
+                task.pinnedAt ?? null,
                 createdAt,
                 updatedAt,
             );
@@ -1401,6 +1423,7 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
                     workspace: text('dir') || null,
                     status: legacyStatus[rawStatus] ?? (rawStatus === '' ? 'open' : rawStatus),
                     closedAt: typeof data['closedAt'] === 'number' ? data['closedAt'] : null,
+                    pinnedAt: typeof data['pinnedAt'] === 'number' ? data['pinnedAt'] : null,
                     createdAt,
                     // 历史任务没有「最后改动」概念：用创建时刻兜，别让迁移当天变成全员更新
                     updatedAt: createdAt,
