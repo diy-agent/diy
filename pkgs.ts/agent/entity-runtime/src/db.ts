@@ -21,6 +21,7 @@ import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc }
 import { PLACEHOLDER_MODEL_KEY, applyMigrations } from '@diy-agent/migration';
 
 import { offloadExistingToolOutputs } from './offload-existing';
+import { removeRoomOutputs } from './output-store';
 import { describeFindings, verifyDatabase } from './verify-migrations';
 import type { MigrationReporter, MigrationRuntime } from '@diy-agent/migration';
 
@@ -1932,6 +1933,10 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
             db.prepare('DELETE FROM entities WHERE id = ?').run(roomId);
             // 产物目录不删，挪进 _trash（截图 / 日志是排查材料，删任务通常只是不想再看到它）
             if (dataRoot !== undefined && task !== undefined) mirror(() => trashTaskDir(dataRoot, task));
+            // 外置的工具输出正文**真删**（不是挪 _trash）：它是可重建的中间产物，
+            // 而且按房间分目录，房间没了它就再没有入口能发现（账本 read-path 的验收之一）。
+            // 不用 mirror 包：removeRoomOutputs 自己吞掉所有失败（删不掉不让删房间失败）
+            if (dataRoot !== undefined) removeRoomOutputs(dataRoot, roomId);
         },
         deleteBotProfile(roleId: string): void {
             // 成员是从角色表派生的：删了角色，各房间的成员名单下一次派生时就少一个，

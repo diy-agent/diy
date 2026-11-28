@@ -15,7 +15,7 @@
 // 写盘失败**不假装成功**：返回 undefined，调用方退回把截断版存进 `data.result`（不带 ref），
 // 模型至少知道被裁了、这次取不回原文 —— 与 `tool-output.ts` 已有的失败处置一致。
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import type { ToolOutputRef } from '@diy-agent/protocol';
@@ -107,4 +107,36 @@ export function createOutputStore(options: { readonly dataRoot?: string }): {
             };
         },
     };
+}
+
+/**
+ * 删房间时清掉它的外置正文：`runs/tool/<每个日期>/<roomId>/`。
+ *
+ * 为什么要逐日遍历：目录是按**日**分区的（GC 友好），房间名埋在第二层 ——
+ * 直接删 `runs/tool/<roomId>` 路径根本不存在，会静默什么都不删（删房间看起来「成功」，
+ * 但盘上的 30MB 正文留着，而且再也没有入口能发现它）。
+ *
+ * 失败只当旁路：删不掉目录不该让「删房间」这个用户动作整个失败。
+ * 返回删掉的目录数（调试 / 单测看得见）。
+ */
+export function removeRoomOutputs(dataRoot: string, roomId: string): number {
+    const base = join(dataRoot, 'runs', 'tool');
+    let days: string[];
+    try {
+        days = readdirSync(base);
+    } catch {
+        return 0; // 还没有任何外置产物
+    }
+    let removed = 0;
+    for (const day of days) {
+        const dir = join(base, day, safeName(roomId));
+        if (!existsSync(dir)) continue;
+        try {
+            rmSync(dir, { recursive: true, force: true });
+            removed += 1;
+        } catch {
+            /* 旁路：删不掉就算了，下次 GC 还会再试 */
+        }
+    }
+    return removed;
 }
