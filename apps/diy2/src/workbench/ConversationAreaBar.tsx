@@ -10,6 +10,8 @@
 
 import { RoomMenu, SurfaceTabs, useRoomDialogsContext, useSelectedRoom } from '@diy-agent/entity-chat';
 
+import { ThemePicker } from './ThemePicker';
+
 export function ConversationAreaBar() {
     const room = useSelectedRoom();
     const dialogs = useRoomDialogsContext();
@@ -17,6 +19,7 @@ export function ConversationAreaBar() {
     return (
         <>
             <SurfaceTabs />
+            <ThemePicker />
             <RoomMenu room={room} onOpenSettings={dialogs.openSettings} />
         </>
     );

@@ -16,7 +16,7 @@ export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
     'fold-bots': 'c2da4d530e84a40c', /* 014-fold-bots.ts */
     'legacy-journal': '7d3603fb5ed0f719', /* 015-legacy-journal.ts */
     'legacy-rooms': 'ee709fb164247179', /* 013-legacy-rooms.ts */
-    'offload-tool-outputs': '351bacd7c29e61ca', /* 020-offload-tool-outputs.ts */
+    'offload-tool-outputs': '351bacd7c29e61ca', /* 021-offload-tool-outputs.ts */
     'prune-room-members': '9437232aa7db0000', /* 017-prune-room-members.ts */
     'rename-bot-roles': '679c2b0890f189a3', /* 001-rename-bot-roles.ts */
     'rename-role-config': '47eff0e2027425ab', /* 002-rename-role-config.ts */
@@ -25,4 +25,5 @@ export const MIGRATION_CHECKSUMS: Readonly<Record<string, string>> = {
     'task-units-kind': 'e697d0ea1d3cfc9d', /* 018-task-units-kind.ts */
     'task-units-parent': '81bbcde0e6a6c803', /* 011-task-units-parent.ts */
     'tasks-updated-at': 'e6175f278d22dfe8', /* 010-tasks-updated-at.ts */
+    'turn-facts': '5698b3a26142b33c', /* 020-turn-facts.ts */
 };
