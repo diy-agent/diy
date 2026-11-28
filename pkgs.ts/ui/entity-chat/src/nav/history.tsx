@@ -66,7 +66,7 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
     return (
         <div
             className={`group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
-                active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
+                active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60'
             }`}
         >
             <StatusGlyph room={room} iconClass="size-3.5" running={running} broken={broken > 0} />
@@ -78,14 +78,16 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
                     actions.select(room.id);
                 }}
                 title={`${projectName === undefined ? '' : `${projectName} / `}${roomTitle(room)}`}
-                className="min-w-0 flex-1 truncate text-left"
+                // 房间名是**列表主标题**，用主文本色（官方：muted-foreground 是辅助信息，不用于主标题）——
+                // 之前用 muted-foreground 白底只有 4.6:1 且小字，看着费劲（用户反馈对比度不够）。
+                className="min-w-0 flex-1 truncate text-left text-sidebar-accent-foreground"
             >
                 {roomTitle(room)}
             </a>
             {projectName !== undefined && (
                 <span
                     title={`项目：${projectName}`}
-                    className="max-w-[45%] shrink-0 truncate rounded border px-1.5 text-[10px] text-muted-foreground/80"
+                    className="max-w-[45%] shrink-0 truncate rounded border px-1.5 text-xs text-sidebar-foreground/70"
                 >
                     {projectName}
                 </span>
@@ -110,7 +112,7 @@ function HistoryRowView({ room, projectName }: { room: Room; projectName?: strin
                 没有 closedAt 的老数据是「—」。 */}
             <span
                 title={detail.length === 0 ? '没有关闭时刻（老数据）' : detail.join('\n')}
-                className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70"
+                className="shrink-0 text-xs tabular-nums text-sidebar-foreground/60"
             >
                 {formatClock(closedAt) ?? '—'}
             </span>
@@ -150,7 +152,11 @@ function HistoryBlock({ context }: { context: NavContext }) {
                     onClick={toggleHistory}
                     title={historyOpen ? '收起历史任务' : `展开历史任务（${closedTasks.length}）`}
                     aria-expanded={historyOpen}
-                    className="h-auto w-full justify-start gap-2 px-2 py-1 text-xs tracking-wide text-muted-foreground"
+                    // 分组折叠标题**不是选中项**：它默认就是展开的（方便回头看的默认值），
+                    // 而 ghost Button 自带 `aria-expanded:bg-muted aria-expanded:text-foreground`，
+                    // 于是它永久套着选中行底色 → 用户看到「历史任务默认就像选中态」（2026-11-28）。
+                    // 用 aria-expanded:bg-transparent 把底色盖掉：展开与否只驱动箭头方向，不驱动底色。
+                    className="h-auto w-full justify-start gap-2 px-2 py-1 text-xs tracking-wide text-sidebar-foreground/70 aria-expanded:bg-transparent aria-expanded:text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
                 >
                     {historyOpen ? (
                         <ChevronDown className="size-3 shrink-0" />
@@ -159,7 +165,7 @@ function HistoryBlock({ context }: { context: NavContext }) {
                     )}
                     <Archive className="size-3.5 shrink-0" />
                     历史任务
-                    <span className="ml-auto rounded-full border px-1.5 text-[10px] tabular-nums">
+                    <span className="ml-auto rounded-full border px-1.5 text-xs tabular-nums">
                         {closedTasks.length}
                     </span>
                 </Button>

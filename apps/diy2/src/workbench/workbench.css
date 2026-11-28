@@ -93,16 +93,17 @@ body {
 /* 横幅上的动作（去配置）：横幅本身是「状态」，这颗是它唯一的**出路** —— 所以做得像按钮 */
 .wb-banner-action {
     padding: 1px 8px;
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--wb-fg);
-    background: rgba(247, 178, 103, 0.18);
-    border: 1px solid rgba(247, 178, 103, 0.45);
+    /* 警告横幅的动作：由状态色派生叠色，不再写死琥珀 rgba（主题无关但也不留魔法值） */
+    background: color-mix(in oklch, var(--color-amber-500, #f59e0b) 18%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-amber-500, #f59e0b) 45%, transparent);
     border-radius: 6px;
     cursor: pointer;
 }
 .wb-banner-action:hover {
-    background: rgba(247, 178, 103, 0.3);
+    background: color-mix(in oklch, var(--color-amber-500, #f59e0b) 30%, transparent);
 }
 
 .wb-body {
@@ -870,6 +871,6 @@ body.wb-resizing-y * {
     line-height: 1;
 }
 .wb-tabs button .wb-tab-close:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--wb-tint);
     color: var(--wb-fg);
 }
