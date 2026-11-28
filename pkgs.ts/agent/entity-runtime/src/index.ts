@@ -145,5 +145,5 @@ export type {
 export { dayOf, renderTaskDoc, taskDirOf } from './task-dir';
 export { createOutputStore, toolOutputRelPath, OUTPUT_OFFLOAD_BYTES } from './output-store';
 export type { ToolOutputRef } from '@diy-agent/protocol';
-export { offloadExistingToolOutputs, type OffloadStats } from './offload-existing';
+export { offloadExistingToolOutputs, toolOutputOffloadPlan, type OffloadStats } from './offload-existing';
 export { sessionFilePath, readSessionEntries, writeSessionEntries } from './session-file';

@@ -33,6 +33,17 @@ export interface MigrationRuntime {
     log(message: string): void;
     /** 长步骤上报子进度（迁移器在每次 up 前挂上，跑完摘掉） */
     progress?(done: number, total: number): void;
+    /**
+     * 把超阈值的工具输出正文搬出库（改写条目为 `data.output` 引用）。
+     *
+     * **调用时已在外层事务里**（applyMigrations 包着），实现不得自己 BEGIN —— 嵌套事务会被
+     * SQLite 拒。写盘失败的单条保持原样（`failed` 计数），整条迁移不因此失败。
+     */
+    offloadToolOutputs(report?: (done: number, total: number) => void): {
+        offloaded: number;
+        bytesMoved: number;
+        failed: number;
+    };
 }
 
 /** 一条迁移在「迁移计划」里的样子（迁移页据此渲染「旧 → 新」对照表） */
@@ -45,6 +56,13 @@ export interface MigrationPlanLine {
     note: string;
     /** 旧资源有多少行；返回 -1 = 这个库里没有它 */
     rows?(runtime: MigrationRuntime): number;
+    /**
+     * 给页面看的一句**动态**说明（如「31 条 / 58.7MB」）。
+     *
+     * `note` 是静态文案，`rows` 只有行数；数据迁移真正让人担心的是**体积与后果**，
+     * 所以留一个能读库的钩子。只读，不许有副作用。
+     */
+    detail?(runtime: MigrationRuntime): string;
 }
 
 export interface Migration {

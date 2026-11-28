@@ -28,5 +28,6 @@ export type {
     StreamEvent,
     TurnEndReason,
     TurnUsage,
+    ToolOutputRef,
 } from '@diy-agent/protocol';
 export { DEFAULT_CAPABILITIES } from '@diy-agent/protocol';

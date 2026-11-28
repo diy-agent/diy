@@ -38,6 +38,7 @@ import type {
     JobNotice,
     TurnEndReason,
     TurnUsage,
+    ToolOutputRef,
 } from './types';
 
 /**
@@ -66,6 +67,11 @@ export type TimelinePart =
           name: string;
           args?: unknown;
           result?: unknown;
+          /**
+           * 正文落在库外的引用（超 64KB 时）。有它就没有 `result` ——
+           * UI 用 `preview` 的头尾显示，全文按 `ref` 去服务端取。
+           */
+          output?: ToolOutputRef;
           state: 'running' | 'ok' | 'error';
           /**
            * 失败原因（`tool.completed` 的 error，投影时已压成一行、截断过）。
@@ -163,6 +169,7 @@ function partOf(item: Item): TimelinePart | undefined {
             args: item.data.args,
             result: item.data.result,
             state: item.data.state,
+            ...(item.data.output === undefined ? {} : { output: item.data.output }),
             ...(item.data.error === undefined ? {} : { error: item.data.error }),
         };
     }

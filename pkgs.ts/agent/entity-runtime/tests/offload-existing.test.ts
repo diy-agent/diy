@@ -7,7 +7,7 @@
 //   4. dryRun ⇒ 只统计，库里一个字不改。
 
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,7 +17,7 @@ import type { Item } from '@diy-agent/protocol';
 
 import { openStore } from '../src/db';
 import { OUTPUT_OFFLOAD_BYTES } from '../src/output-store';
-import { offloadExistingToolOutputs } from '../src/offload-existing';
+import { offloadExistingToolOutputs, toolOutputOffloadPlan } from '../src/offload-existing';
 
 let roots: string[] = [];
 
@@ -108,5 +108,49 @@ describe('offload-existing', () => {
 
         expect(stats.offloaded).toBe(1);
         expect((JSON.parse(row.item) as Extract<Item, { type: 'tool' }>).data.result).toBe(big);
+    });
+
+    it('迁移步骤：openStore 时搬走存量并记账；再开幂等', () => {
+        const root = tmpRoot();
+        const file = join(root, 'diy2.db');
+        // 第一次开库（空库）：迁移按基线记账，没有东西可搬
+        const store = openStore(file);
+        expect(toolOutputOffloadPlan(store.db).rows).toBe(0);
+        store.appendItem('task-a', toolItem('tool-call_big', big));
+        // 模拟「存量库」：条目在、迁移还没记账
+        store.db.prepare("DELETE FROM schema_migrations WHERE id = 'offload-tool-outputs'").run();
+        store.db.close();
+
+        // 第二次开库：迁移器看见这条没记账 → 在事务里把正文搬出去
+        const again = openStore(file);
+        try {
+            expect(toolOutputOffloadPlan(again.db).rows).toBe(0);
+            const recorded = again.db
+                .prepare("SELECT baseline FROM schema_migrations WHERE id = 'offload-tool-outputs'")
+                .get() as { baseline: number } | undefined;
+            expect(recorded?.baseline).toBe(0); // 真跑过，不是基线
+            const row = again.db
+                .prepare("SELECT item FROM entity_items WHERE json_extract(item, '$.type') = 'tool'")
+                .get() as { item: string };
+            const data = (JSON.parse(row.item) as Extract<Item, { type: 'tool' }>).data;
+            expect(data.result).toBeUndefined();
+            expect(typeof data.output?.ref).toBe('string');
+            // 正文真的落到了数据根下（ref 相对数据根）
+            expect(statSync(join(root, data.output!.ref)).size).toBe(Buffer.byteLength(big, 'utf8'));
+        } finally {
+            again.db.close();
+        }
+
+        // 再开一次：不重复搬（不新增文件、条目不动）
+        const third = openStore(file);
+        try {
+            expect(toolOutputOffloadPlan(third.db).rows).toBe(0);
+            const row = third.db
+                .prepare("SELECT item FROM entity_items WHERE json_extract(item, '$.type') = 'tool'")
+                .get() as { item: string };
+            expect((JSON.parse(row.item) as Extract<Item, { type: 'tool' }>).data.result).toBeUndefined();
+        } finally {
+            third.db.close();
+        }
     });
 });

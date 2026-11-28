@@ -16,9 +16,9 @@
 import type { DatabaseSync } from 'node:sqlite';
 
 import type { Item } from '@diy-agent/protocol';
+import { offloadBytesOf, toolOutputsToOffload } from '@diy-agent/migration';
 
-import { OUTPUT_OFFLOAD_BYTES, createOutputStore } from './output-store';
-
+import { createOutputStore } from './output-store';
 export interface OffloadStats {
     /** 扫过的 tool 条目 */
     scanned: number;
@@ -43,15 +43,25 @@ interface Row {
 
 const BATCH = 200;
 
+/** 体检入口的再导出（调用方从 entity-runtime 拿，不直接依赖迁移包） */
+export { toolOutputsToOffload as toolOutputOffloadPlan };
+
 /**
  * 把库里超阈值的工具输出正文搬到 `runs/tool/…`，并把条目改写为 `data.output` 引用。
  *
  * @param db      已打开的库（迁移脚本保证没有实例在写）
- * @param options `dataRoot` = 数据根（ref 相对它）；`dryRun` = 只统计不改
+ * @param options `dataRoot` = 数据根（ref 相对它）；`dryRun` = 只统计不改；
+ *                `inTransaction` = 调用方已经开了事务（迁移器会包一层），这里不再 BEGIN/COMMIT；
+ *                `onProgress` = 每处理一批报一次（迁移页画 n/m）
  */
 export function offloadExistingToolOutputs(
     db: DatabaseSync,
-    options: { readonly dataRoot: string; readonly dryRun?: boolean },
+    options: {
+        readonly dataRoot: string;
+        readonly dryRun?: boolean;
+        readonly inTransaction?: boolean;
+        readonly onProgress?: (done: number, total: number) => void;
+    },
 ): OffloadStats {
     const store = createOutputStore({ dataRoot: options.dataRoot });
     const stats: OffloadStats = {
@@ -72,13 +82,19 @@ export function offloadExistingToolOutputs(
     );
     const update = db.prepare('UPDATE entity_items SET item = ? WHERE seq = ?');
 
+    // 进度分母：这一批批扫的其实是整张 tool 表，但「真会被搬的」只有体检出来的那些。
+    // 分母给总数（体检一次，和页面看到的是同一个数），不然进度条是自己的扫描量、不是搬的量。
+    const total = options.onProgress === undefined ? 0 : toolOutputsToOffload(db).rows;
+
     let after = 0;
     for (;;) {
         const rows = select.all(after) as unknown as Row[];
         if (rows.length === 0) break;
         after = Number(rows[rows.length - 1]!.seq);
 
-        if (options.dryRun !== true) db.exec('BEGIN');
+        // 迁移器已经在事务里（执行 + 记账同进同退）；这时再 BEGIN 就是嵌套事务，SQLite 会拒。
+        const ownTransaction = options.dryRun !== true && options.inTransaction !== true;
+        if (ownTransaction) db.exec('BEGIN');
         try {
             for (const row of rows) {
                 stats.scanned += 1;
@@ -88,14 +104,16 @@ export function offloadExistingToolOutputs(
                     stats.alreadyOffloaded += 1;
                     continue;
                 }
+                // 判据与迁移页体检同一个函数（见 @diy-agent/migration 的 offloadBytesOf）
+                const size = offloadBytesOf(item);
                 const result = data.result;
-                if (typeof result !== 'string' || Buffer.byteLength(result, 'utf8') <= OUTPUT_OFFLOAD_BYTES) {
+                if (size === undefined || typeof result !== 'string') {
                     stats.stayed += 1;
                     continue;
                 }
                 // dryRun **不写盘**：只统计「会搬多少」，不往数据根丢文件
                 if (options.dryRun === true) {
-                    stats.bytesMoved += Buffer.byteLength(result, 'utf8');
+                    stats.bytesMoved += size;
                     stats.offloaded += 1;
                     continue;
                 }
@@ -108,15 +126,16 @@ export function offloadExistingToolOutputs(
                 }
                 delete data.result;
                 data.output = ref;
-                stats.bytesMoved += Buffer.byteLength(result, 'utf8');
+                stats.bytesMoved += size;
                 stats.offloaded += 1;
                 update.run(JSON.stringify(item), row.seq);
             }
-            if (options.dryRun !== true) db.exec('COMMIT');
+            if (ownTransaction) db.exec('COMMIT');
         } catch (error) {
-            if (options.dryRun !== true) db.exec('ROLLBACK');
+            if (ownTransaction) db.exec('ROLLBACK');
             throw error;
         }
+        options.onProgress?.(stats.offloaded, total);
     }
     return stats;
 }

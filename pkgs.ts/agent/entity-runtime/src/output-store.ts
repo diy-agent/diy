@@ -19,10 +19,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import type { ToolOutputRef } from '@diy-agent/protocol';
-import { TOOL_OUTPUT_MAX_BYTES } from '@diy-agent/tools';
+import { TOOL_OUTPUT_OFFLOAD_BYTES } from '@diy-agent/migration';
 
-/** 超过这个字节数才外置 —— 与投递层同一个阈值（`limits.ts` 的 64KB） */
-export const OUTPUT_OFFLOAD_BYTES = TOOL_OUTPUT_MAX_BYTES;
+/** 超过这个字节数才外置 —— 阈值与存量迁移共用一个源（`@diy-agent/migration`） */
+export const OUTPUT_OFFLOAD_BYTES = TOOL_OUTPUT_OFFLOAD_BYTES;
 
 /** 预览每段最多这么多字符（防「一行 2MB」把 preview 自己变成大字段） */
 const PREVIEW_MAX_CHARS = 8000;

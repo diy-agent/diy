@@ -58,4 +58,5 @@ export {
     type StreamEvent,
     type TurnEndReason,
     type TurnUsage,
+    type ToolOutputRef,
 } from './types';

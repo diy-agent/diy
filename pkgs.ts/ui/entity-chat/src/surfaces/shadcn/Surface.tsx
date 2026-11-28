@@ -40,6 +40,7 @@ import {
     type MentionCandidate,
     type TimelineEntry,
     type TimelinePart,
+    type ToolOutputRef,
 } from '@diy-agent/chat-core';
 
 import {
@@ -178,6 +179,23 @@ function outputOf(result: unknown): { label: string; text: string; failed: boole
     return { label: error !== undefined ? '错误' : '输出', text: parts.join('\n\n'), failed: error !== undefined };
 }
 
+/**
+ * 正文落在库外的输出：用头尾预览画，标题写清「有多长、在哪」——
+ * 不把 31MB 拉进浏览器，也不让用户以为「没输出」（2026-11-28）。
+ */
+function offloadedOf(output: ToolOutputRef | undefined): { label: string; text: string; failed: boolean } | undefined {
+    if (output === undefined) return undefined;
+    const size =
+        output.bytes >= 1024 * 1024
+            ? `${(output.bytes / 1048576).toFixed(1)}MB`
+            : `${Math.max(1, Math.round(output.bytes / 1024))}KB`;
+    const text =
+        output.preview.tail === ''
+            ? output.preview.head
+            : `${output.preview.head}\n\n……（中间省略）……\n\n${output.preview.tail}`;
+    return { label: `输出 · ${size} / ${output.lines.toLocaleString()} 行 · 全文在 ${output.ref}`, text, failed: false };
+}
+
 function stringify(value: unknown): string {
     try {
         return JSON.stringify(value, null, 2) ?? String(value);
@@ -243,7 +261,8 @@ function ToolRow({ tool, live }: { tool: TimelinePart & { kind: 'tool' }; live: 
     const input = inputOf(tool.args);
     // 失败原因排在输出前面：坏入参的工具**根本没有 result**，这时「为什么失败」就是全部正文
     const failure = tool.error === undefined ? undefined : { label: '错误', text: tool.error.message, failed: true };
-    const output = failure ?? outputOf(tool.result);
+    // 两条判据：`output` = 正文在库外（超 64KB）；否则用 `result`（小输出 / 老数据）
+    const output = failure ?? offloadedOf(tool.output) ?? outputOf(tool.result);
     // 官方 ai-elements 的 Tool 就是「Trace 里一行 + 有输出时套一层 Collapsible」：
     // 标题说清发生了什么（Running / Ran / Failed），展开体分 Input / Output 两块。
     const title =

@@ -8,6 +8,12 @@
 // 迁移文件永远不 import 宿主。
 
 export { PLACEHOLDER_MODEL_KEY } from './model-key.js';
+export {
+    TOOL_OUTPUT_OFFLOAD_BYTES,
+    offloadBytesOf,
+    toolOutputsToOffload,
+    type ToolOutputOffloadPlan,
+} from './tool-output.js';
 export { migrations, MIGRATION_STEPS } from './index-list.js';
 export { checksumDrift, checksumOf, type ChecksumDrift } from './checksums.js';
 export {

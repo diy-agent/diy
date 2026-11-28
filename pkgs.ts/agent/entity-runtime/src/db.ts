@@ -20,6 +20,7 @@ import { readSessionEntries, sessionFilePath, writeSessionEntries } from './sess
 import { appendJournalLine, taskDirOf as taskDirAt, trashTaskDir, writeTaskDoc } from './task-dir';
 import { PLACEHOLDER_MODEL_KEY, applyMigrations } from '@diy-agent/migration';
 
+import { offloadExistingToolOutputs } from './offload-existing';
 import { describeFindings, verifyDatabase } from './verify-migrations';
 import type { MigrationReporter, MigrationRuntime } from '@diy-agent/migration';
 
@@ -1624,6 +1625,17 @@ export function openStore(file: string, options: OpenStoreOptions = {}): Store {
         legacyRooms: (): void => migrateLegacyRooms(),
         foldBots: (): void => migrateBots(),
         journalToEvents: (): void => migrateJournal(),
+        // 存量工具输出外置：迁移器已开着事务（执行 + 记账同进同退），实现只复用它的写入路径。
+        // 内存库（`:memory:`）没有数据根 → 无处放文件，什么都不做（也就永远不会「迁完」）。
+        offloadToolOutputs: (report) => {
+            if (dataRoot === undefined) return { offloaded: 0, bytesMoved: 0, failed: 0 };
+            const stats = offloadExistingToolOutputs(db, {
+                dataRoot,
+                inTransaction: true,
+                ...(report === undefined ? {} : { onProgress: report }),
+            });
+            return { offloaded: stats.offloaded, bytesMoved: stats.bytesMoved, failed: stats.failed };
+        },
         log: (message: string): void => console.error(`[migrate] ${message}`),
     };
     const migrationRun = applyMigrations(runtime, report);
