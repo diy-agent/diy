@@ -110,7 +110,7 @@ header "2. 项目依赖"
 if [[ -d node_modules ]]; then
   pass "node_modules 存在"
 else
-  fail "node_modules 不存在 — 运行 npm install"
+  fail "node_modules 不存在 — 运行 ./sha.sh sync（内部 bun install；没装 bun 时回落 npm）"
 fi
 
 if [[ -d vendor/sha ]]; then

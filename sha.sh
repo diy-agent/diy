@@ -74,13 +74,21 @@ clean() {
 
 # mono所有workspaced的sync,包括uv sync、ln软链接到全局执行文件等
 sync-deps() {
-    # `--include-workspace-root` 不能省：`npm i --workspaces` 把安装范围限定在 workspace，
-    # **漏装只在根 package.json 声明的依赖**（remark-gfm / playwright-core 等）—— 干净
-    # worktree 上 100% 复现，症状是 renderer build 报 `Failed to resolve import "remark-gfm"`。
-    # 详见 ##255。
-    run npm i --workspaces --include-workspace-root
-    # npm i 只补缺失、**不清改名残留**（实测留着旧的 `node_modules/@diy-agent/rpc`）——
-    # 残留会让包级构建护栏继续报「未同步」，故精准清一道（只删 lock 不认可的 workspace 软链接）
+    # 装依赖用 **bun install**（2026-11-28 换掉 npm，##44 实测本机：清空 node_modules 重装
+    # 4.5s vs npm 45s、幂等 0.34s vs 5.9s；bun 的 hoisted 布局与 npm 一致，所以
+    # check-sync.mjs 那套「读 package-lock 的 link 条目」的判据原样可用）。
+    # 附带好处：bun 按 package.json 的 workspaces 装、**根依赖一起装** —— npm 那边必须加
+    # `--include-workspace-root`，漏了就漏装 remark-gfm / playwright-core（##255，干净
+    # worktree 上 100% 复现），这个坑在 bun 下不存在。
+    # 没装 bun 的机器回落 npm：功能等价，只是慢（多机 / CI 未铺 bun 时的逃生口）。
+    if command -v bun >/dev/null 2>&1; then
+        run bun install
+    else
+        echo "${warning}bun 未安装 → 回落 npm i --workspaces --include-workspace-root（慢但等价）${reset}" >&2
+        run npm i --workspaces --include-workspace-root
+    fi
+    # 装依赖只补缺失、**不清改名残留**（实测 npm 会留着旧的 `node_modules/@diy-agent/rpc`，bun 同理
+    # 不保证清）—— 残留会让包级构建护栏继续报「未同步」，故精准清一道（只删 lock 不认可的 workspace 软链接）
     run node scripts/check-sync.mjs --fix
     # vendor/sha 是 git subtree：内容随 checkout 下来，这里不再需要任何 submodule init。
 
@@ -101,10 +109,10 @@ sync-deps() {
 
 # mono所有workspaced的sync（= 依赖 + 测试数据根：建出 run/<app>/lab 并填真配置）
 #
-# ##452：**幂等短路**。原先每调一次就是 `npm i --workspaces` + 子模块 + electron 检查 +
+# ##452：**幂等短路**。原先每调一次就是依赖安装 + 子模块 + electron 检查 +
 # 各包 sync + 真配置投影 ≈ 45s，而 agent 每轮验前都会 sync 一次 —— 其中 99% 的调用
 # 什么都没变。现在先做一个毫秒级判断（`_sync_uptodate`）：
-#   stamp 存在 且 比 lock / 根与各包 package.json 都新 且 workspace 软链齐全 且子模块已 init
+#   stamp 存在 且 比 lock（bun.lock / package-lock.json）/ 根与各包 package.json 都新 且 workspace 软链齐全
 # ⇒ 直接返回（实测 ~30ms），不碰 node_modules 一下。
 # 判据故意**只用 mtime 与 exists**（不重算哈希）：宁可误判「不新鲜」走全量，
 # 也不许误判「新鲜」跳过真正的变更 —— 内容哈希那份权威判断在 check-sync.mjs 里，
@@ -142,7 +150,7 @@ gen-models()  {
 }
 
 sha.def "sync" \
-  --desc "依赖同步：npm i + workspace 链接 + 测试数据根（run/<app>/lab）建与真配置填充"
+  --desc "依赖同步：bun install + workspace 链接 + 测试数据根（run/<app>/lab）建与真配置填充"
 
 sync()  {
     # 真配置**填充**进 run/<app>/<label>（毫秒级、幂等；与 sync 的幂等短路无关，先跑）。
@@ -156,14 +164,14 @@ sync()  {
     case "${1:-}" in
         --force|-f) ;;
         "")        if _sync_uptodate; then
-                       echo "${info}依赖未变（stamp 命中、workspace 链接齐全）→ 跳过 npm i${reset}"
+                       echo "${info}依赖未变（stamp 命中、workspace 链接齐全）→ 跳过依赖安装${reset}"
                        return 0
                    fi ;;
         *) echo "${error}用法：./sha.sh sync [--force]${reset}" >&2; return 2 ;;
     esac
 
     sync-deps
-    # 装完依赖再补快照（fresh worktree 的 dist 是空的；npm install 的 prepare 通常会先拉一次）
+    # 装完依赖再补快照（fresh worktree 的 dist 是空的；bun 也会跑 workspace 的 prepare，但不能靠）
     gen-models
 }
 
@@ -175,7 +183,8 @@ _sync_uptodate() {
     # 永远补不上，新 worktree 的模型面板会一直空着
     [[ -f "pkgs.ts/model/models-dev-snapshot/dist/models.dev.json" ]] || return 1
     local f ws
-    for f in package.json package-lock.json; do
+    # 锁文件：bun.lock 是主用的，package-lock.json 留着给 npm 兜底，两个都看（有就比）
+    for f in package.json package-lock.json bun.lock; do
         [[ -e "$f" ]] || continue
         # stamp 必须比每个 manifest 都新（`-nt` = 严格更新；同秒也判「不新鲜」，保守）
         [[ "$stamp" -nt "$f" ]] || return 1
@@ -191,14 +200,8 @@ _sync_uptodate() {
         [[ -n "$name" ]] || return 1
         [[ -e "node_modules/$name" ]] || return 1
     done
-    # 子模块已 init：看每个 submodule 目录下的 `.git`（init 过的子模块是个 gitfile）
-    # 不用 `git submodule status`：实测 0.59s，光它就吃掉了整个预算
-    if [[ -f .gitmodules ]]; then
-        local sub
-        while IFS= read -r sub; do
-            [[ -e "$sub/.git" ]] || return 1
-        done < <(sed -n 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*//p' .gitmodules)
-    fi
+    # 曾经这里还查「子模块已 init」：vendor/sha 2026-11-28 改成 git subtree（##44）后
+    # 内容随 checkout 下来，没有子模块要 init，这段已删。
     return 0
 }
 

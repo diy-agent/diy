@@ -81,7 +81,11 @@ function expandWorkspaces(patterns = []) {
 
 /** 印记覆盖的文件：锁文件 + 根与各 workspace 的 manifest（任一变化都意味着要重装） */
 function manifestFiles() {
-  const files = ['package.json', 'package-lock.json'];
+  const files = ['package.json'];
+  // 锁文件可能两份并存：bun.lock 是主用的（2026-11-28 起 sync-deps 走 bun install），
+  // package-lock.json 留着给 npm 兜底。两个都纳入哈希 —— 任一变就意味着依赖要重装，
+  // 只盯一个会让另一条路径改了 lock 却“看起来很同步”。
+  for (const lock of ['bun.lock', 'package-lock.json']) if (existsSync(abs(lock))) files.push(lock);
   for (const ws of expandWorkspaces(readJson('package.json').workspaces)) {
     files.push(path.join(ws, 'package.json'));
   }
