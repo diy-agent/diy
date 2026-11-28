@@ -30,7 +30,7 @@ import {
 import type { NavAddress } from './address';
 import { drafts, type DraftsTransport } from './drafts';
 import { isClosed, type TaskStatus } from './model';
-import { firstUsableModelKey, type ModelCatalogPayload, type ModelSetup, type Provider } from './models';
+import type { ModelCatalogPayload, ModelSetup, Provider } from './models';
 import { mergePendingAsks } from './pendingAsk';
 
 // ─── 会话（chat-core）─────────────────────────────────────────────
@@ -785,8 +785,9 @@ function watchActivity(roomId: string): void {
  */
 export async function refreshCatalog(): Promise<void> {
     const catalog = await client.models.list();
-    const defaultModelKey =
-        loadDefaultModelOverride() ?? (catalog.defaultModelKey || firstUsableModelKey(catalog.providers) || '');
+    // 用户 2026-11-28 裁：**不兜底**。没设默认就是没有 —— 界面显示「未设置」，
+    // 建实体时不带模型，不再悄悄用「第一个可用模型」顶替（那会让配置页与 bot 处两个口径）。
+    const defaultModelKey = loadDefaultModelOverride() ?? catalog.defaultModelKey ?? '';
     emit({
         ...state,
         providers: catalog.providers,
@@ -927,8 +928,9 @@ async function refresh(opts: { keepError?: boolean } = {}): Promise<void> {
     if (liveRoomId !== '' && liveTitles !== undefined) pendingAskTitles[liveRoomId] = [...liveTitles];
     const address = resolveAddress(rooms);
     // 缺省模型：本端改过的（localStorage）永远优先 —— 那是人的显式选择
-    const defaultModelKey =
-        loadDefaultModelOverride() ?? (catalog.defaultModelKey || firstUsableModelKey(catalog.providers) || '');
+    // 用户 2026-11-28 裁：**不兜底**。没设默认就是没有 —— 界面显示「未设置」，
+    // 建实体时不带模型，不再悄悄用「第一个可用模型」顶替（那会让配置页与 bot 处两个口径）。
+    const defaultModelKey = loadDefaultModelOverride() ?? catalog.defaultModelKey ?? '';
     emit({
         ...state,
         providers: catalog.providers,

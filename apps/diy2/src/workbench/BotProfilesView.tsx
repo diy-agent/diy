@@ -22,6 +22,7 @@ import {
 } from '@diy-agent/entity-chat';
 import { useForm } from '@tanstack/react-form';
 import * as React from 'react';
+import { DefaultModelCard } from './DefaultModelCard';
 
 /** 服务端的话原样带出来（「只剩这一个角色」比「保存失败」有用得多） */
 function messageOf(error: unknown): string {
@@ -362,6 +363,11 @@ export function BotProfilesView({ initialType }: { initialType?: string | undefi
             <aside className="flex min-h-0 flex-col border-r border-border">
                 <div className="border-b border-border p-3">
                     <span className="text-sm font-medium">机器人</span>
+                </div>
+
+                {/* 默认模型（2026-11-28 从模型配置页搬来）：管的是「新建时继承哪个」 */}
+                <div className="border-b border-border p-2">
+                    <DefaultModelCard />
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto p-2">

@@ -17,7 +17,7 @@
 //     为什么用库而不是手搓 `useState<string | undefined>`×5：四个表单加起来十几根输入，
 //     手搓就得自己管 touched / 提交时全量校验 / 失败后不清空输入，这些正是库白送的那部分。
 
-import { Modal, ModelSelectButton, modelConfig, type ModelConfigProvider, type ModelConfigSnapshot } from '@diy-agent/entity-chat';
+import { Modal, modelConfig, type ModelConfigProvider, type ModelConfigSnapshot } from '@diy-agent/entity-chat';
 import { useForm } from '@tanstack/react-form';
 import * as React from 'react';
 
@@ -225,11 +225,6 @@ export function ModelConfigView() {
         <div className="grid h-full min-h-0 grid-cols-[minmax(232px,288px)_1fr] bg-background text-foreground">
             <aside className="flex min-h-0 flex-col border-r border-border">
                 <div className="space-y-2.5 border-b border-border p-3">
-                    <DefaultModelCard
-                        snapshot={snapshot}
-                        busy={busy}
-                        onPick={(modelKey) => void run(() => modelConfig.saveDefaultModel(modelKey))}
-                    />
                     <input
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
@@ -352,46 +347,6 @@ function ProviderRow({
                 {accounts > 0 ? `${String(accounts)} 账号` : `${String(provider.models.length)} 模型`}
             </span>
         </button>
-    );
-}
-
-// ── 默认模型 ──────────────────────────────────────────────────────────────────
-
-/**
- * 默认模型卡：新建任务 / 项目 / bot 都继承它（`model.yaml` 顶层 `defaultModel`）。
- *
- * 只列「真能发出去」的组合：provider 有填了 key 的账号、模型是勾选过的。
- * 列这些东西本身就是在告诉人「现在这个实例能用什么」——所以没配置时它是空态，不是一个空下拉。
- */
-function DefaultModelCard({
-    snapshot,
-    busy,
-    onPick,
-}: {
-    snapshot: ModelConfigSnapshot;
-    busy: boolean;
-    onPick: (modelKey: string | null) => void;
-}) {
-    const value = snapshot.defaultModelKey ?? '';
-
-    return (
-        <div className="rounded-lg border border-border border-l-2 border-l-ring bg-card px-2.5 py-2">
-            <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">默认模型</span>
-                {value === '' ? null : (
-                    <button
-                        onClick={() => onPick(null)}
-                        disabled={busy}
-                        className="text-[11px] text-muted-foreground hover:text-foreground"
-                    >
-                        清空
-                    </button>
-                )}
-            </div>
-            <div className="mt-1" title={value}>
-                <ModelSelectButton value={value} onPick={(key) => onPick(key)} emptyText="（未设置 · 点开选择）" />
-            </div>
-        </div>
     );
 }
 
