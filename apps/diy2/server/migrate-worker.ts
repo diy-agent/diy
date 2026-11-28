@@ -20,12 +20,7 @@ import { copyFileSync, existsSync, readdirSync, statSync, statfsSync, unlinkSync
 import { DatabaseSync } from 'node:sqlite';
 import { basename, dirname, join } from 'node:path';
 
-import {
-    MIGRATION_STEPS,
-    openStore,
-    toolOutputOffloadPlan,
-    type MigrationStepEvent,
-} from '@diy-agent/entity-runtime';
+import { MIGRATION_STEPS, openStore, toolOutputOffloadPlan, type MigrationStepEvent } from '@diy-agent/entity-runtime';
 
 const MARK = '@@';
 
@@ -55,7 +50,11 @@ function countOf(store: ReturnType<typeof openStore>, table: string): number {
 
 /** 迁移前备份：`<db>.bak-migrate-<YYYYMMDD-HHMMSS>`；空间不够就不开始（宁可不动库） */
 function backupBeforeMigrate(dbPath: string): string | undefined {
+    // 本文件整个跑在**独立子进程**里、按顺序执行迁移（父进程靠 stdout 的 `@@<json>` 看进度），
+    // 没有要护的事件循环 —— 这里同步反而正是设计要求（见文件头）。
+    // sync-io-ok: 迁移子进程独占库、顺序执行，无事件循环要护
     if (!existsSync(dbPath)) return undefined; // 新库：没有可备份的东西
+    // sync-io-ok: 迁移子进程独占库、顺序执行，无事件循环要护
     const bytes = statSync(dbPath).size;
     try {
         const stat = statfsSync(dirname(dbPath));
@@ -79,6 +78,7 @@ function backupBeforeMigrate(dbPath: string): string | undefined {
         `${String(d.getFullYear())}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
         `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
     const target = `${dbPath}.bak-migrate-${stamp}`;
+    // sync-io-ok: 同上（迁移子进程、顺序执行、独占库）
     copyFileSync(dbPath, target);
     log(`已备份：${basename(target)}（${(bytes / 1048576).toFixed(1)}MB）`);
     pruneBackups(dbPath);
@@ -89,11 +89,13 @@ function pruneBackups(dbPath: string): void {
     try {
         const dir = dirname(dbPath);
         const prefix = `${basename(dbPath)}.bak-migrate-`;
+        // sync-io-ok: 同上（迁移子进程的旁路清理）
         const old = readdirSync(dir)
             .filter((name) => name.startsWith(prefix))
             .sort()
             .reverse()
             .slice(KEEP_BACKUPS);
+        // sync-io-ok: 同上（迁移子进程的旁路清理）
         for (const name of old) unlinkSync(join(dir, name));
     } catch {
         /* 备份清理是旁路，失败不影响迁移 */
@@ -112,7 +114,7 @@ function verifyOffload(store: ReturnType<typeof openStore>, dbPath: string): { o
     const left = toolOutputOffloadPlan(store.db);
     if (left.rows > 0) throw new Error(`外置校验失败：还有 ${String(left.rows)} 条 >64KB 的正文没搬走`);
     const rows = store.db
-        .prepare("SELECT item FROM entity_items WHERE item LIKE '%\"output\":{\"ref\"%'")
+        .prepare('SELECT item FROM entity_items WHERE item LIKE \'%"output":{"ref"%\'')
         .all() as Array<{ item: string }>;
     let checked = 0;
     const missing: string[] = [];
@@ -125,10 +127,12 @@ function verifyOffload(store: ReturnType<typeof openStore>, dbPath: string): { o
         }
         if (ref === undefined || typeof ref.ref !== 'string') continue;
         const file = join(dirname(dbPath), ref.ref);
+        // sync-io-ok: 同上（迁移子进程，校验外置引用大小）
         if (!existsSync(file)) {
             missing.push(ref.ref);
             continue;
         }
+        // sync-io-ok: 同上
         const size = statSync(file).size;
         if (typeof ref.bytes === 'number' && size !== Number(ref.bytes)) {
             missing.push(`${ref.ref}（大小 ${String(size)} ≠ 记录 ${String(ref.bytes)}）`);
@@ -141,6 +145,7 @@ function verifyOffload(store: ReturnType<typeof openStore>, dbPath: string): { o
 
 /** VACUUM 回收空闲页（必须独占库、且不在事务里 —— 调用时 store 已关） */
 function vacuum(dbPath: string): { before: number; after: number } | undefined {
+    // sync-io-ok: 同上（VACUUM 前后量体积）
     const before = statSync(dbPath).size;
     const db = new DatabaseSync(dbPath);
     try {
@@ -156,6 +161,7 @@ function vacuum(dbPath: string): { before: number; after: number } | undefined {
     } finally {
         db.close();
     }
+    // sync-io-ok: 同上
     const after = statSync(dbPath).size;
     log(`VACUUM 完成：${(before / 1048576).toFixed(1)}MB → ${(after / 1048576).toFixed(1)}MB`);
     return { before, after };
@@ -178,6 +184,7 @@ export function runMigrationWorker(dbPath: string | undefined): void {
     try {
         // ① 备份：数据迁移会改写历史条目，没有退路就不开始
         const backup = backupBeforeMigrate(dbPath);
+        // sync-io-ok: 同上（统计迁移前后体积，报给迁移页）
         const dbBytesBefore = existsSync(dbPath) ? statSync(dbPath).size : 0;
 
         // ② 迁移（同步；含数据迁移，进度经 onMigrationStep 逐条报出去）
@@ -194,9 +201,7 @@ export function runMigrationWorker(dbPath: string | undefined): void {
             );
         }
         const offloadCheck =
-            verify.missing.length === 0
-                ? verify.ok
-                : `${verify.ok}；${String(verify.missing.length)} 个文件缺失`;
+            verify.missing.length === 0 ? verify.ok : `${verify.ok}；${String(verify.missing.length)} 个文件缺失`;
 
         // 迁移后才有的结论：行数与孤儿检查（迁移页的「结果」那张表就是它）
         const summary = {
@@ -241,6 +246,7 @@ export function runMigrationWorker(dbPath: string | undefined): void {
             offloadCheck,
             backup,
             dbBytesBefore,
+            // sync-io-ok: 同上
             dbBytesAfter: existsSync(dbPath) ? statSync(dbPath).size : dbBytesBefore,
             vacuumed,
             durationMs: Date.now() - started,

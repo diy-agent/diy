@@ -1,0 +1,45 @@
+name: check
+
+# 唯一门禁：`./sha.sh check`（tsc 全量 + 全仓 lint + 一串护栏，清单见 sha.sh 的 _check_full_body）。
+# 为什么 runs-on 用 macOS：本仓的脚本与护栏大量按 macOS 开发机写（stat -f 系、可执行位、
+# Electron store 路径、seed 脚本），Linux 上会引入与本次改动无关的噪音；将来要换 ubuntu
+# 需先逐条收拾这些脚本，不是改一行 runs-on 的事。
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # 装依赖走 bun（sync-deps 内部 `bun install`；没有 bun 时它会回落 npm）。
+      # 这就是「CI 也装 bun」的落点 —— 不装的话每个 PR 的装依赖会退回 45s 量级。
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # 只装依赖，不建 dev 数据根（那一步会往 run/<app>/lab 填配置，CI 用不到）
+      - name: 装依赖（sync-deps → bun install）
+        run: ./sha.sh sync-deps
+
+      # check 里的 check-dist-fresh 要看 pkgs.ts 的 dist；新 checkout 里没有，先编出来
+      - name: 编译能力包 dist
+        run: ./sha.sh build-pkgs
+
+      - name: 全量检查
+        run: ./sha.sh check
