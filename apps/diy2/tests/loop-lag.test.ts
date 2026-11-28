@@ -97,6 +97,37 @@ describe('startLoopLag', () => {
         }
     });
 
+    it('卡顿行带 cpuRatio / load1，快照带机器状态（回答「自己卡还是被饿死」）', async () => {
+        const lines: string[] = [];
+        let last: { cpuRatio: number; system: { cpus: number; load1: number } } | undefined;
+        const monitor = startLoopLag({
+            tickMs: 50,
+            ticksPerWindow: 1,
+            warnMs: 10,
+            onSample: (s) => {
+                last = { cpuRatio: s.cpuRatio, system: s.system };
+            },
+            log: (line) => lines.push(line),
+        });
+        try {
+            const until = Date.now() + 120;
+            while (Date.now() < until) {
+                /* 占住事件循环，并真的烧 CPU */
+            }
+            // 机器忙时定时器可能被饿一会儿，最多等 2s 拿那个「醒来」的 tick
+            for (let i = 0; i < 40 && last === undefined; i += 1) await sleep(50);
+            const lagLine = lines.find((line) => line.includes('[diy2:lag]'));
+            expect(lagLine).toContain('cpuRatio=');
+            expect(lagLine).toContain('load1=');
+            expect(lagLine).toContain('ncpu=');
+            expect(last?.cpuRatio).toBeGreaterThanOrEqual(0);
+            expect(last?.cpuRatio).toBeLessThanOrEqual(1);
+            expect(last?.system.cpus).toBeGreaterThanOrEqual(1);
+        } finally {
+            monitor.stop();
+        }
+    });
+
     it('stop 之后不再采样', async () => {
         const seen: number[] = [];
         const monitor = startLoopLag({

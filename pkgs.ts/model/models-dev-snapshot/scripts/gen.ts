@@ -18,6 +18,8 @@ const target = join(distDir, 'models.dev.json');
 const etagFile = join(distDir, 'etag.txt');
 const url = process.env['MODELS_DEV_URL'] ?? 'https://models.dev/api.json';
 const strict = process.env['MODELS_DEV_STRICT'] === '1';
+// `./sha.sh gen-models --force` 透传：绕过 24h 复用，强制重拉
+const force = process.env['MODELS_DEV_FORCE'] === '1';
 const freshMs = 24 * 60 * 60 * 1000;
 
 function touch(path: string): void {
@@ -29,7 +31,7 @@ function fresh(): boolean {
     return existsSync(target) && Date.now() - statSync(target).mtimeMs < freshMs;
 }
 
-if (fresh()) {
+if (!force && fresh()) {
     console.log('[models-dev] 快照在一天内，跳过');
 } else {
     const headers: Record<string, string> = {};

@@ -7,8 +7,11 @@ models.dev 规格快照的**独立包**。给 `@diy-agent/model-catalog` 当离�
 `data/` 在本包的 `.gitignore` 里。快照由脚本生成：
 
 ```bash
-npm run gen -w @diy-agent/models-dev-snapshot
+./sha.sh gen-models           # 平时用这个（sync / build 也会自动调，一天内跳过）
+./sha.sh gen-models --force   # 强制重拉
 ```
+
+底下的实现是 `npm run gen -w @diy-agent/models-dev-snapshot`。
 
 - 拉 `https://models.dev/api.json`（约 6.5 MB / 326 家 / 一万模型）
 - 带 `If-None-Match` 条件请求，接口回 304 就只续期本地文件

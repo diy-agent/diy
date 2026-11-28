@@ -109,6 +109,38 @@ sync-deps() {
 # 判据故意**只用 mtime 与 exists**（不重算哈希）：宁可误判「不新鲜」走全量，
 # 也不许误判「新鲜」跳过真正的变更 —— 内容哈希那份权威判断在 check-sync.mjs 里，
 # 全量路径仍会跑它；`--force` 强制无条件全量。
+sha.def "gen-models" \
+  --desc "拉取 models.dev 模型规格快照到包内 dist/（一天内自动跳过；新 worktree / 新机器靠它才有模型目录）"
+
+# 包内快照 = 目录的离线兜底（2026-11-27）：没有它，模型面板一家服务商都没有。
+# 快照不进 git，所以**每个新 worktree 都得由这一步生成**。sync 会自动调，
+# 平时想手动刷新就 ./sha.sh gen-models [--force]。
+gen-models()  {
+    local target="pkgs.ts/model/models-dev-snapshot/dist/models.dev.json"
+    local force=0
+    case "${1:-}" in
+        --force|-f) force=1 ;;
+        "") ;;
+        *) echo "${error}用法：./sha.sh gen-models [--force]${reset}" >&2; return 2 ;;
+    esac
+    if (( force == 0 )) && [[ -f "$target" ]]; then
+        # bash 层先挡一道：gen 里也有 24h 判断，但那是起一个 node 进程
+        local mtime age
+        mtime=$(stat -f %m "$target" 2>/dev/null || stat -c %Y "$target" 2>/dev/null || echo 0)
+        age=$(( $(date +%s) - mtime ))
+        if (( age < 86400 )); then
+            echo "${info}模型规格快照在一天内 → 跳过（要重拉加 --force）${reset}"
+            return 0
+        fi
+    fi
+    [[ -d node_modules ]] || { echo "${error}还没装依赖：先跑 ./sha.sh sync${reset}" >&2; return 2; }
+    if (( force == 1 )); then
+        run env MODELS_DEV_FORCE=1 npm run gen -w @diy-agent/models-dev-snapshot
+    else
+        run npm run gen -w @diy-agent/models-dev-snapshot
+    fi
+}
+
 sha.def "sync" \
   --desc "依赖同步：npm i + workspace 链接 + 测试数据根（run/<app>/lab）建与真配置填充"
 
@@ -131,12 +163,17 @@ sync()  {
     esac
 
     sync-deps
+    # 装完依赖再补快照（fresh worktree 的 dist 是空的；npm install 的 prepare 通常会先拉一次）
+    gen-models
 }
 
 # sync 的幂等快判：**只读、不写任何东西**，ms 级（sync 自己不能挂 ensure-sync，故这里自判）
 _sync_uptodate() {
     local stamp="node_modules/.diy-sync.stamp"
     [[ -f "$stamp" ]] || return 1
+    # 模型规格快照（包内兜底，不进 git）：没有它 sync 就不算新鲜 —— 否则 stamp 命中后
+    # 永远补不上，新 worktree 的模型面板会一直空着
+    [[ -f "pkgs.ts/model/models-dev-snapshot/dist/models.dev.json" ]] || return 1
     local f ws
     for f in package.json package-lock.json; do
         [[ -e "$f" ]] || continue
@@ -602,6 +639,9 @@ build-pkgs() {
     for _p in pkgs.ts/core/rpc pkgs.ts/ui/core pkgs.ts/ui/workbench-plugin pkgs.ts/core/dev-paths; do
         run node scripts/npm-publish.mjs "$_p" --prepare-only --out=dist
     done
+    # 模型规格快照也住在 dist/ 里：tsc 只写 .js/.d.ts，不会生成它。
+    # 缺了就是「编译成功、目录空着」这种最难查的状态，所以这里补一道（一天内自动跳过）。
+    gen-models
     # profile（apps/*）**不进** build-pkgs：它们是产物入口不是能力包，按需各自 ./sha.sh build
 }
 
