@@ -28,10 +28,16 @@ export function MenuButton({
     items,
     title = '更多操作',
     className = '',
+    size = 'icon-xs',
 }: {
     items: MenuItem[];
     title?: string;
     className?: string;
+    /**
+     * 触发器那颗 ⋮ 的尺寸。侧栏行尾那一排用 `icon-2xs`（与旁边的行内动作同高），
+     * 房间头 / 面板里保持 24px（`icon-xs`）—— 那里空间不紧，小一号只会显得碎。
+     */
+    size?: 'icon-2xs' | 'icon-xs';
 }) {
     return (
         // 侧栏整行是个可点区域：菜单里的任何一下都不该同时选中房间
@@ -41,7 +47,7 @@ export function MenuButton({
                     render={
                         <Button
                             variant="ghost"
-                            size="icon-xs"
+                            size={size}
                             title={title}
                             aria-label={title}
                             className="text-muted-foreground"

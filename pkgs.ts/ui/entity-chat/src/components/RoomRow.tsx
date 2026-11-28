@@ -391,11 +391,11 @@ export function RoomRowView({
              * 绝对定位同时满足两件：**不参与布局**（标题永远拿到全宽、hover 前后行高行宽都不变），
              * 也不占常驻空间。代价只在 hover 时浮在标题尾部几个字上 —— 加一层左侧渐隐过渡。
              */}
-            <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center gap-0.5 rounded-r-lg bg-gradient-to-l from-background via-background pl-4 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+            <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center gap-0 rounded-r-lg bg-gradient-to-l from-background via-background pl-4 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
                 {isProject && onCreateTask !== undefined && (
                     <Button
                         variant="ghost"
-                        size="icon-xs"
+                        size="icon-2xs"
                         onClick={(event) => {
                             event.stopPropagation();
                             onCreateTask();
@@ -414,7 +414,7 @@ export function RoomRowView({
                 {!isProject && (
                     <Button
                         variant="ghost"
-                        size="icon-xs"
+                        size="icon-2xs"
                         onClick={(event) => {
                             event.stopPropagation();
                             void actions.setPinned(room.id, !pinned);
@@ -431,7 +431,7 @@ export function RoomRowView({
                 {!isProject && (
                     <Button
                         variant="ghost"
-                        size="icon-xs"
+                        size="icon-2xs"
                         onClick={(event) => {
                             event.stopPropagation();
                             void actions.setRoomStatus(room.id, openTask ? 'closed' : 'open');
@@ -447,6 +447,8 @@ export function RoomRowView({
                 <MenuButton
                     // 显隐由外层绝对定位容器统一管（见上），这里不再各自切 display
                     className="shrink-0 text-muted-foreground"
+                    // 与旁边三颗行内动作同高（20px）：这一排是密集动作，24px 那档并排会过宽
+                    size="icon-2xs"
                     items={[
                         {
                             key: 'rename',
