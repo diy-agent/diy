@@ -34,7 +34,7 @@ import { RoomLog, type RoomEntry } from './room-log';
 import type { AttachmentReader } from './session-images';
 import { createRoomContext } from './system-context';
 import { envelopeHint, promptReminder, resolveRemindMode, type RemindMode } from './units-remind';
-import { buildRoomTools, type RunCodeHost } from './tools/index';
+import { buildRoomTools, type AdoptImage, type RunCodeHost } from './tools/index';
 import { createToolOutputCapper } from './tool-output';
 import { unitBoard, type UnitBoard } from './units';
 import { jobNoticeOf, jobOwnerOf, type JobOwner } from './jobs';
@@ -203,6 +203,11 @@ export class RoomActor {
      * 而不是默默把图吃掉（测试 / 无 app 宿主就是这个状态）。
      */
     private readonly readAttachment: AttachmentReader | undefined;
+    /**
+     * `view_image` 看过的图拷进 blobs 的入口（与 reader 共用同一个 `<home>/blobs`）。
+     * 没有 home ⇒ undefined（测试 / 无 app 宿主：图只给模型看，人不进图库）。
+     */
+    private readonly adoptImage: AdoptImage | undefined;
     /** 「这个模型收不收图」—— 缺省查模型目录，注入时按注入的来 */
     private readonly acceptsImages: (modelKey: string) => boolean;
     /**
@@ -216,6 +221,12 @@ export class RoomActor {
         // 字段初始化早于参数属性赋值 ⇒ 只能放构造里（放字段上会读到 undefined 的 deps）
         this.output = deps.home === undefined ? undefined : createOutputStore({ dataRoot: deps.home });
         this.readAttachment = deps.readAttachment ?? defaultAttachmentReader(deps.home);
+        const blobs = deps.home === undefined ? undefined : createBlobStore({ root: join(deps.home, 'blobs') });
+        this.adoptImage =
+            blobs === undefined
+                ? undefined
+                : async ({ bytes, name, mime }) =>
+                      blobs.putBytes({ bytes, name, mime, source: 'tool', kind: 'image' });
         this.acceptsImages = deps.acceptsImages ?? ((modelKey) => acceptsImagesOf(modelKey));
         // 公共日志从库里恢复（append-only，seq 接着走）
         this.log = new RoomLog(this.deps.store.roomEntries(this.id));
@@ -941,6 +952,7 @@ export class RoomActor {
                           const host = this.deps.code?.();
                           return host === undefined ? {} : { code: host };
                       })(),
+                      ...(this.adoptImage === undefined ? {} : { adoptImage: this.adoptImage }),
                   });
         return tools;
     }

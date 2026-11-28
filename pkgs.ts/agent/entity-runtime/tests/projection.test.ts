@@ -43,6 +43,35 @@ describe('Projector', () => {
         expect(ordered[2]?.status).toBe('done');
     });
 
+    it('工具产出的附件 ref 写进 item.data.attachments（view_image 的图给人看）', () => {
+        const ref = {
+            type: 'stored' as const,
+            id: 'ref-img-1',
+            kind: 'image' as const,
+            mime: 'image/png',
+            bytes: 100,
+            displayName: 'shot.png',
+            source: 'tool' as const,
+            createdAt: 1,
+            relPath: '2026-11-28/120000-a1b2c3d4/01-shot.png',
+        };
+        const items = run([
+            { seq: 1, type: 'run.started', turnId: 't1', messageId: 'm1' },
+            { seq: 2, type: 'tool.started', turnId: 't1', toolCallId: 'c1', name: 'view_image', args: { path: '/tmp/shot.png' } },
+            { seq: 3, type: 'tool.completed', turnId: 't1', toolCallId: 'c1', name: 'view_image', result: '看一眼', attachments: [ref] },
+        ]);
+        const tool = items.find((item) => item.type === 'tool');
+        expect(tool?.type).toBe('tool');
+        if (tool?.type !== 'tool') return;
+        expect(tool.data.attachments).toEqual([ref]);
+
+        // 一路透传到 timeline 的 tool part，UI 才画得出来
+        const timeline = buildTimeline(items);
+        const part = timeline[0]?.parts.find((p) => p.kind === 'tool');
+        expect(part?.kind).toBe('tool');
+        if (part?.kind === 'tool') expect(part.attachments).toEqual([ref]);
+    });
+
     it('时间线把三段还原成 text → tool → text（而不是文本全排在工具前）', () => {
         const items = run([
             { seq: 1, type: 'run.started', turnId: 't1', messageId: 'm1' },
