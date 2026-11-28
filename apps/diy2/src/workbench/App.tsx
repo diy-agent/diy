@@ -16,12 +16,10 @@
 // 导航自己的收起按钮已停用（`showToggle={false}`）：标题栏左端那颗做的是同一件事。
 
 import {
-    ActiveJobsGlyph,
     JobsPanel,
     RoomDialogsProvider,
     Sidebar,
     navigate,
-    roomAddressOf,
     useAddress,
     useLoaded,
     useModelSetup,
@@ -30,13 +28,13 @@ import {
     useRooms,
     useSelectedRoom,
 } from '@diy-agent/entity-chat';
-import { Menu, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import '../index.css';
 import './workbench.css';
 
 import { usePageWorkbench, Workbench } from './AreaHost';
+import { globalContributions } from './global';
 import { type PageDef } from './model';
 import { materializeView, pageFor, settingsPage, wbViews } from './pages';
 import { SETTINGS_ADDRESS, SETTINGS_PAGE } from './settings';
@@ -198,60 +196,19 @@ function Host() {
     // （应用刚删完房间、或没人接的作业还在跑，正是需要看它的时候）
     const [jobsOpen, setJobsOpen] = useState(false);
 
-    // 全局层向标题栏**注册**的按钮：导航开关 + 设置。
-    // 这两颗不属于任何一页，所以不该由页模板提供（那会让每页各写一份）。
+    // 全局层向标题栏**注册**的按钮：导航开关 + 活动区（Bot / 后台任务）+ 设置。
+    // 清单本身住在 `global.tsx`（有洞就填在那里，别在壳里各写一份）—— 测试钉住
+    // `GLOBAL_ACTIVITY_IDS`，所以「重写 App.tsx 时顺手丢了一颗」会直接红。
     const global = useMemo<WindowContribution[]>(
-        () => [
-            {
-                id: 'nav',
-                leading: [
-                    {
-                        id: 'nav',
-                        label: open ? '收起导航' : '展开导航',
-                        glyph: <Menu className="wb-glyph" />,
-                        on: open,
-                        onClick: toggle,
-                    },
-                ],
-            },
-            {
-                // 活动：这颗 = **有进程在跑**（后台作业）。数字由组件自己订阅（全实例活动流）——
-                // 宿主不跟着重渲，否则每有人开跑就要把整页的根走一遍。
-                //
-                // 2026-11-25 合 main 时的取舍：旧的分支在这里还挂了一颗 `sessions`（"会话 N" / 改成
-                // "Bot" 的活动图标），已去掉，只留作业这颗（Bot 状态浮层随 bot-overview 一起移除）。
-                id: 'activity',
-                activity: [
-                    {
-                        id: 'jobs',
-                        // 「后台任务」两个口径（用户 2026-11-24）：这颗 = **本实例全部**（跨房间）；
-                        // 房间内输入框底栏那颗 = 本房间。文案必须带上口径，否则两个数字对不上时没人解释得清。
-                        label: '后台任务（本实例全部）：有任务在跑时呼吸，点击打开面板',
-                        glyph: <ActiveJobsGlyph />,
-                        onClick: () => {
-                            setJobsOpen(true);
-                        },
-                    },
-                    {
-                        id: 'settings',
-                        // 同一颗按钮来回切：设置页里它显示为按下态，再点一下回对话。
-                        label: isSettings ? '返回对话' : '设置',
-                        glyph: <Settings className="wb-glyph" />,
-                        on: isSettings,
-                        onClick: () => {
-                            if (isSettings) {
-                                if (backTo !== undefined) navigate(roomAddressOf(backTo));
-                                return;
-                            }
-                            navigate(SETTINGS_ADDRESS);
-                        },
-                    },
-                ],
-            },
-        ],
-        // `jumpToFirstRunning*` 是模块级命令（不依赖 props），所以不必进依赖表；
-        // `setJobsOpen` 是 setState（引用恒定），同理。
-        [open, toggle, dialogs, isSettings, backTo],
+        () =>
+            globalContributions({
+                nav: { open, onToggle: toggle },
+                settings: { on: isSettings, backToRoomId: backTo?.id },
+                onOpenJobs: () => {
+                    setJobsOpen(true);
+                },
+            }),
+        [open, toggle, isSettings, backTo],
     );
 
     /** 去设置（横幅上的「去配置」）—— 同一件导航，不是另一条路 */

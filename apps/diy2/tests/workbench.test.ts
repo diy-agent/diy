@@ -22,6 +22,7 @@ import {
 } from '../src/workbench/model';
 import { genericPage, pageFor, wbViews } from '../src/workbench/pages';
 import { combineWindow } from '../src/workbench/window';
+import { GLOBAL_ACTIVITY_IDS, globalContributions } from '../src/workbench/global';
 
 /** 最小可用的假 Storage：能种数据、也能模拟「隐私模式 / 配额满」 */
 function fakeStorage(seed: Record<string, string> = {}, throwOn?: 'get' | 'set'): Storage {
@@ -61,19 +62,37 @@ const page = definePage({
 const view = (id: string, placement: Record<string, { area: string }>) =>
     defineView({ id, title: id, placement, render: () => null });
 
+// ##43：这里原来是「自造一份活动清单，断言 combineWindow 能拼」—— 降着，但壳里那颗 Bot
+// 已经丢了两回。自造的清单测不到 App.tsx 到底注册了什么，所以改测**真清单**：
+// `globalContributions` 就是壳交给标题栏的东西，它少了谁这里就红。
 describe('标题栏的活动入口', () => {
-    it('两种全局活动入口都存在且并列排列，避免退化成无标签图标', () => {
-        const parts = combineWindow([
-            {
-                id: 'global-activity',
-                activity: [
-                    { id: 'sessions', label: '会话活动', glyph: '会话 0', standalone: true, onClick: () => undefined },
-                    { id: 'jobs', label: '后台任务', glyph: '后台 0', onClick: () => undefined },
-                ],
-            },
-        ]);
-        expect(parts.activity.map((item) => item.id)).toEqual(['sessions', 'jobs']);
-        expect(parts.activity.map((item) => item.glyph)).toEqual(['会话 0', '后台 0']);
+    const parts = combineWindow(
+        globalContributions({
+            nav: { open: true, onToggle: () => undefined },
+            settings: { on: false },
+            onOpenJobs: () => undefined,
+        }),
+    );
+
+    it('Bot 与后台任务两颗都在、并列、顺序不变（一颗都不许被重写时顺手丢掉）', () => {
+        expect(parts.activity.map((item) => item.id)).toEqual([...GLOBAL_ACTIVITY_IDS]);
+        // 这两颗是用户 2026-11-24 裁的「两种不同的活动」，删任一颗都要改这份断言
+        expect(GLOBAL_ACTIVITY_IDS).toContain('bot');
+        expect(GLOBAL_ACTIVITY_IDS).toContain('jobs');
+    });
+
+    it('Bot 那颗自带交互（standalone），后台任务那颗点得开面板', () => {
+        const bot = parts.activity.find((item) => item.id === 'bot');
+        const jobs = parts.activity.find((item) => item.id === 'jobs');
+        // 带 Popover 的 glyph 不能再套一层 button（否则 button 里嵌 button）
+        expect(bot?.standalone).toBe(true);
+        expect(bot?.label).toContain('Bot');
+        expect(typeof jobs?.onClick).toBe('function');
+        expect(jobs?.label).toContain('后台任务');
+    });
+
+    it('每颗都带 glyph（缺 glyph = 标题栏里一个空按钮）', () => {
+        expect(parts.activity.every((item) => item.glyph !== undefined && item.glyph !== null)).toBe(true);
     });
 });
 
