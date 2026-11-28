@@ -1,0 +1,15 @@
+########################
+### common
+########################
+# macbook
+.DS_Store
+dist
+tmp
+
+# vendor 不保存到git
+vendor
+
+# IntelliJ IDEA
+.idea
+
+temp*
