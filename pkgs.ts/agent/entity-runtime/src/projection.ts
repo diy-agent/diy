@@ -115,7 +115,12 @@ export class Projector {
             seq,
             turn: this.turn,
             turnId: this.pending.turnId,
-            at: this.pending.at ?? now,
+            // 首段用「这一轮开始的时刻」（消息头要显示的就是它），**后续段落必须用 now**：
+            // 一轮被插话 / 工具切成多段时，#18 / #19 若都写轮开始时刻，而中间的工具行写的是
+            // 真实执行时刻（晚几分钟），时间轴上就出现「22:00 → 22:04 → 22:00」的倒退 ——
+            // 用户 2026-11-27 报「消息和消息顺序都乱套了」看的就是这个（DB 实测：同一轮里
+            // msg#18 / msg#19 的 at 完全相同且早于夹在中间的那条 tool）。
+            at: this.segment === 0 ? (this.pending.at ?? now) : now,
             status: 'streaming',
             author: this.author,
             type: 'chat',
