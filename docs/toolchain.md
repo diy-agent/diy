@@ -31,14 +31,16 @@
 
 ## sync — 新开 worktree 第一件事
 
-`./sha.sh sync` = `npm i --workspaces --include-workspace-root` + 子模块 + 各包 sync + electron 二进制收成共享软链。
+`./sha.sh sync` = `bun install` + 各包 sync + electron 二进制收成共享软链。
 
-- `--include-workspace-root` **不能省**：光 `npm i --workspaces` 只装 workspace、漏装根 `package.json` 依赖（`remark-gfm` 等），干净 worktree 上必现 build 解析失败。
+- **装依赖走 bun**（2026-11-28 起，##44）：本机实测清空 `node_modules` 重装 4.5s（npm 45s）、幂等重跑 0.34s（npm 5.9s），且 bun 的 hoisted 布局与 npm 一致，`scripts/check-sync.mjs` 那套读 `package-lock.json` 的判据不用改。没装 bun 的机器回落 `npm i --workspaces --include-workspace-root`。
+- 历史坑（npm 时代）：`--include-workspace-root` **不能省** —— 光 `npm i --workspaces` 只装 workspace、漏装根 `package.json` 依赖（`remark-gfm` 等），干净 worktree 上必现 build 解析失败。bun 按 workspaces 装且根依赖一起装，不存在这个问题。
+- 两份 lock 并存：`bun.lock`（主用）+ `package-lock.json`（npm 兜底）；stamp 哈希把两份都算进去，改哪份都会触发重装。
 - **不再投影真配置**（2026-11-23 起）：`~/.diy` 的 4 份（`model.yaml` / `context.yaml` / `personas.yaml` / `providers.custom.yaml`）是真源，各 app 直读。以前投影到 `build/<variant>/home/` 的副本已取消（N 份含 key 的副本 + 与产物树混住）。seed 只种示例数据。
 
 ## sync-gate — 入口自动过闸（`scripts/check-sync.mjs`）
 
-build / check / test / lab 入口先跑只读快检：workspace 链接缺失或过期 + sync 印记 `node_modules/.diy-sync.stamp` 落后 + submodule 未 init。命中即自动跑 `sync-deps`（= `sync` 去掉 dev 数据根投影）。electron `dist` / `path.txt` 只提示不判定（由 `sync-deps` 的 `ensure-electron` 补；`npm i` 只补缺失、清不了改名残留，故 `sync-deps` 里另跑 `--fix` 精准清）。
+build / check / test / lab 入口先跑只读快检：workspace 链接缺失或过期 + sync 印记 `node_modules/.diy-sync.stamp` 落后。（`vendor/sha` 2026-11-28 起是 git subtree，内容随 checkout 下来，不再有「submodule 未 init」这条判据；真缺了由 `sha.common.sh` 的入口硬门直接报。）命中即自动跑 `sync-deps`（= `sync` 去掉 dev 数据根投影）。electron `dist` / `path.txt` 只提示不判定（由 `sync-deps` 的 `ensure-electron` 补；`npm i` 只补缺失、清不了改名残留，故 `sync-deps` 里另跑 `--fix` 精准清）。
 
 `DIY_AUTO_SYNC=0` 关掉自动修（改为报错）；`./sha.sh sync-status` 只看状态。
 

@@ -138,8 +138,8 @@ const FULL_RE =
 // 「纯数据」= 改了它不可能让类型 / lint 有变化：文档、知识库事实、任务产物
 const DATA_RE = /^(knowledge\/|docs\/|gen\/)|(^|\/)[^/]*\.md$/;
 
-// 「中性」= 既不影响类型/lint，也不算「根级配置」：vendor 下的子模块 / 镜像代码由
-// 各自的仓管（`vendor/sha` 是 submodule），本仓的检查一枚都不读它。
+// 「中性」= 既不影响类型/lint，也不算「根级配置」：vendor 下的镜像代码（`vendor/sha`，
+// 2026-11-28 起是 git subtree）由各自的仓管，本仓的检查一枚都不读它。
 const NEUTRAL_RE = /^vendor\//;
 
 const fullReasons = fileList.filter((f) => !NEUTRAL_RE.test(f) && (FULL_RE.test(f) || f.startsWith('scripts/')));

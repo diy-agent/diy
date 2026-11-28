@@ -10,6 +10,10 @@
 # 判据：索引里首行 shebang 解释器是 bash/sh/zsh/dash/ksh 的文件，mode 必须 100755。
 #   按 shebang 判而非按 `.sh` 后缀 —— 顺带覆盖 `bin/diy` 这类无扩展名入口；也不会误伤 `#!/usr/bin/env node|python3|npx tsx` 的 `.ts/.mts/.py`
 #   （它们由解释器显式调用，不需要 exec 位）。
+# 例外：`vendor/`（vendor/sha = 上游 sha 仓的 git subtree 拷贝）不参与本判据 ——
+#   它的 file mode 由上游决定（上游自己就有 sha.bash / examples/*.bash 记 644，因为它们是被
+#   source / 用 bash 显式跑的），本仓既不该改也不该拦；拦了只会逼人对第三方文件做假修复。
+#   2026-11-28 起它随本仓 commit 一起进索引，才漏进这条判据（##44）。
 # 处置：`git update-index --chmod=+x <文件>`（**须在 Windows 之外的平台提交才生效**）。
 set -euo pipefail
 
@@ -20,7 +24,7 @@ while IFS= read -r path; do
   [ -n "$path" ] || continue
   mode=$(git ls-files -s -- "$path" | awk '{print $1}')
   [ "$mode" = 100755 ] || bad+=("${path}  (mode ${mode:-未跟踪})")
-done < <(git grep --cached -l -E '^#!.*(bash|sh|zsh|dash|ksh)' || true)
+done < <(git grep --cached -l -E '^#!.*(bash|sh|zsh|dash|ksh)' -- . ':(exclude)vendor/*' || true)
 
 if [ ${#bad[@]} -gt 0 ]; then
   echo "✗ shell 脚本在 git 索引里丢了可执行位：" >&2

@@ -103,7 +103,7 @@
 ### 5.4 构建链（esbuild + tailwind，不用 vite 也能跑）
 
 - JSX：`esbuild --jsx=automatic`（React 19 automatic runtime）。
-- 样式：`@tailwindcss/cli` 单独出 CSS —— esbuild 不认 `@import "tailwindcss"` / `@theme`。
+- 样式：走 `@tailwindcss/vite` 插件（两个 app 都是）；`@tailwindcss/cli` 已于 2026-11-28 移除 —— 全仓没有调用点（它从前服务于已删掉的 `apps/chat`），连带去掉原生依赖 `@parcel/watcher`。
 - TS 要 `declare module "*.css"`（副作用 import 否则报 TS2882），并把它加进 tsconfig 的 `include`。
 - `package.json` 的 `exports` 键必须以 `./` 开头 —— 少一个点，esbuild 直接报「无法解析」。
 
@@ -126,7 +126,7 @@
 | `diy-app`（44k 行 SolidJS） | 🔒 **冻结**，不重写；等自然大改时再谈 |
 | `diy2`（`apps/chat`） | ✅ ##526 已换 React 19 + shadcn 组件（`chat-page/src/renderer-react.tsx`，CDP 判据 1–6 全过） |
 | diy2 的 renderer 版本冗余 | ✅ 已删裸 DOM / diyui 两版；`@diy-agent/ui` 依赖一并去掉，三个宿主（chat / minimal / web）都指向 `renderer-react` |
-| diy2 的 tailwind 构建 | ✅ `apps/chat/sha.sh build-renderer` 里跑 `@tailwindcss/cli`（入口 `chat-page/src/react.css`） |
+| diy2 的 tailwind 构建 | ✅ 走 `@tailwindcss/vite`（`apps/diy2/vite.config.ts`），2026-11-28 删掉无调用点的 `@tailwindcss/cli` |
 | `@material/web` / Web Awesome 在 `dev` 的残留依赖 | ⏳ 组件替换后清理 |
 | `@diy-agent/ui`（diy-ui 运行时：Signal / GenApp / DOM DSL） | ⏳ **已无使用方**（##526 删掉 diyui 版后）。要么明确留作插件/终端渲染的公开包并写清用途，要么冻结下架 —— 别让它半活 |
 | dockview 分屏 POC | ⏳ 未做 |

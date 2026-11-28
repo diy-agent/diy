@@ -1,0 +1,22 @@
+name: Add issues to diy project
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add issue to diy project
+        env:
+          GH_TOKEN: ${{ secrets.DIY_PROJECT_EDIT_PAT }}
+        run: |
+          gh api graphql -f query='
+            mutation($project: ID!, $item: ID!) {
+              addProjectV2ItemById(input: {projectId: $project, contentId: $item}) {
+                item { id }
+              }
+            }
+          ' -f project="PVT_kwDOEOi5Hs4BYlOW" \
+            -f item="${{ github.event.issue.node_id }}"

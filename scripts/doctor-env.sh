@@ -110,13 +110,13 @@ header "2. 项目依赖"
 if [[ -d node_modules ]]; then
   pass "node_modules 存在"
 else
-  fail "node_modules 不存在 — 运行 npm install"
+  fail "node_modules 不存在 — 运行 ./sha.sh sync（内部 bun install；没装 bun 时回落 npm）"
 fi
 
 if [[ -d vendor/sha ]]; then
-  pass "vendor/sha 子模块存在"
+  pass "vendor/sha 存在（git subtree）"
 else
-  fail "vendor/sha 子模块未检出 — 运行 git submodule update --init"
+  fail "vendor/sha 缺失 — 它是 git subtree，内容在本仓历史里：git checkout HEAD -- vendor/sha"
 fi
 
 # ================================================================

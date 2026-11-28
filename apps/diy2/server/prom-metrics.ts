@@ -90,6 +90,8 @@ function dbSizeLines(dbPath: string | undefined): string[] {
         ['shm', `${dbPath}-shm`],
     ] as const) {
         try {
+            // /metrics 被外部抓取时才 stat（低频，不在事件流热路径上）；
+            // sync-io-ok: 低频抓取路径，改 async 会把 renderPrometheus 整条渲染链拖成 async
             lines.push(gauge('diy2_db_size_bytes', '数据库文件大小（字节）', statSync(path).size, { db_file: file }));
         } catch {
             // wal / shm 可能不存在（WAL 未启用或已 checkpoint），跳过即可

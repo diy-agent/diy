@@ -203,9 +203,16 @@ npx() {
 
 # run pwd
 # shellcheck source=../vendor/sha.bash
+# vendor/sha 是 **git subtree**（内容在本仓历史里，2026-11-28 从 submodule 改来，##44）：
+# checkout 完整就必然在，不再是「要不要联网拉一次」的事情。
+# 所以这里**不再自动 `git submodule update --init`** —— 那条命令在弱网下会挂几十秒甚至失败，
+# 而它修的是一份本该已经躺在盘上的目录（新 worktree 慢的主因之一）。
+# 缺失只可能是浅克隆 / sparse-checkout / 手工删：报清楚怎么补，不猜、不联网。
 if [ ! -d "$__SHA_COMMON_DIR/vendor/sha" ] || [ -z "$(ls -A "$__SHA_COMMON_DIR/vendor/sha" 2>/dev/null)" ]; then
-  echo "${info} vendor/sha等子模块初始化不存在, 开始初始化... ${reset}"
-  run git submodule update --init --recursive
+  echo "${error}vendor/sha 缺失（它是 git subtree，内容在本仓历史里，不是子模块）${reset}" >&2
+  echo "  · 浅克隆 / sparse-checkout 挡住：${info}git fetch --unshallow${reset}（或取消 sparse-checkout）" >&2
+  echo "  · 手工删掉了：${info}git checkout HEAD -- vendor/sha${reset}" >&2
+  exit 1
 fi
 source "$__SHA_COMMON_DIR/vendor/sha/sha.bash"
 # 选项/位置参数解析（sha.def / sha.parse）在新版里单独成文件；缺了它 `sha.parse` 就是 command not found
