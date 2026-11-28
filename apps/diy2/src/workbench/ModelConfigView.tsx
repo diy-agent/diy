@@ -243,7 +243,7 @@ export function ModelConfigView() {
                         title="从 models.dev 拉最新目录（ETag 条件请求，没变化就不下载）"
                         className="w-full rounded-lg border border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
                     >
-                        拉取最新目录
+                        更新模型数据
                     </button>
                     {refreshNote === undefined ? null : (
                         <p className="px-1 text-[11px] text-muted-foreground">{refreshNote}</p>
@@ -275,7 +275,7 @@ export function ModelConfigView() {
                     {providers.length === 0 ? (
                         <p className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
                             目录里一家都没有 —— 包内快照和数据根都没有规格。点上面的
-                            「拉取最新目录」从 models.dev 拉一份，或点下面的「添加自定义服务商」手写一家。
+                            「更新模型数据」从 models.dev 拉一份，或点下面的「添加自定义服务商」手写一家。
                         </p>
                     ) : null}
                 </div>
