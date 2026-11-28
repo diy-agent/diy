@@ -333,7 +333,12 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                         args: part.input,
                     };
                     break;
-                case 'tool-result':
+                case 'tool-result': {
+                    // 工具产出的附件 ref（如 view_image 看过的图）：单独提取、原样放进事件，
+                    // 让 UI 能画出来。它只是几百字节的 ref，没有字节 —— 字节仍已从 result 里剥掉。
+                    const output = part.output as { attachments?: unknown } | undefined;
+                    const raw = output?.attachments;
+                    const refs = Array.isArray(raw) ? (raw as import('@diy-agent/attachment/types').AttachmentRef[]) : undefined;
                     yield {
                         seq: ++seq,
                         type: 'tool.completed',
@@ -342,8 +347,10 @@ export async function* runAgent(options: RunOptions): AsyncIterable<AgentEvent> 
                         name: part.toolName,
                         // 图已经交给模型看过了，事件里只留一行说明（这个事件会进 db）
                         result: scrubMedia(part.output),
+                        ...(refs === undefined || refs.length === 0 ? {} : { attachments: refs }),
                     };
                     break;
+                }
                 case 'tool-error':
                     yield {
                         seq: ++seq,

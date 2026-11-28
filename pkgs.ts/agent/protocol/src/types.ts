@@ -264,6 +264,11 @@ export type Item =
                * 于是界面上只剩一行「失败 unit_update」，排查得去翻 session_state 里的原始事件。
                */
               error?: { message: string };
+              /**
+               * 工具产出的附件（如 `view_image` 看过的图）—— 只存 ref，不存字节。
+               * UI 在工具卡片里据此画出来，让人看得见 bot 看过的图（2026-11-28）。
+               */
+              attachments?: readonly AttachmentRef[];
           };
       })
     | (ItemBase & { type: 'error'; data: { message: string; botId?: string } });
@@ -822,6 +827,8 @@ export type AgentEvent =
           name: string;
           result?: unknown;
           error?: string;
+          /** 工具产出的附件 ref（透传到 item.data.attachments） */
+          attachments?: readonly AttachmentRef[];
       }
     | { seq: number; type: 'message.completed'; messageId: string }
     /** 流正常结束时的收尾事实（截断/工具悬空都从这里看出来；`run.failed` 则不给它） */

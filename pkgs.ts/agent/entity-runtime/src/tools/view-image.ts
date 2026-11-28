@@ -18,11 +18,25 @@ import { tool } from 'ai';
 import { z } from 'zod';
 
 import { sniffMime } from '@diy-agent/attachment';
+import type { AttachmentRef } from '@diy-agent/attachment/types';
 
 /** 单张图的上限：再大就该先缩图（模型端也会自己缩，但传输与 db 记录都吃不消） */
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
-export function viewImageTool() {
+/**
+ * 把看过的图拷进 blobs 的入口（由 room 注入）。
+ *
+ * 为什么工具自己不做：它不知道 home（blobs 根在哪），也不该直接碰盘 ——
+ * room 已经有 `defaultAttachmentReader` 那套 home → blobs 的约定，写侧跟着它走。
+ * 不传 = 图只给模型看，人不进图库（测试 / 无 app 宿主的降级）。
+ */
+export type AdoptImage = (input: {
+    bytes: Uint8Array;
+    name: string;
+    mime: string;
+}) => Promise<AttachmentRef>;
+
+export function viewImageTool(adopt?: AdoptImage) {
     return tool({
         description:
             '看一眼本地图片（截图 / 照片 / 图表）—— 把图片内容直接给模型看。' +
@@ -46,6 +60,11 @@ export function viewImageTool() {
                 // 视频 / pdf 不在这里装作能看：模型端多数不收，塞进去只会换来一个 400
                 throw new Error(`${path} 不是图片（嗅探到 ${mime}）—— 只支持图片`);
             }
+            // 拷一份进 blobs 拿 ref：**人也要看得见这张图**（工具卡片里画出来）。
+            // 失败不该连累模型看图 —— adopt 是「额外收益」，图字节本来就在手里。
+            const ref = adopt === undefined
+                ? undefined
+                : await adopt({ bytes, name: basename(path), mime }).catch(() => undefined);
             return {
                 type: 'content' as const,
                 value: [
@@ -60,6 +79,9 @@ export function viewImageTool() {
                         filename: basename(path),
                     },
                 ],
+                // ai-sdk 只把 `value` 转成模型 content，外层这个字段原样留在 `part.output`
+                // 供事件 / UI 取用 —— 不进模型 prompt。
+                ...(ref === undefined ? {} : { attachments: [ref] }),
             };
         },
     });
