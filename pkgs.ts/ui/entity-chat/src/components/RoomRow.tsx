@@ -187,7 +187,7 @@ export function RoomRowView({
                 }}
                 title={`${room.type}：${roomTitle(room)}${broken > 0 ? `（${broken} 个成员上一轮出错）` : ''}${failed > 0 ? `（${failed} 个成员的消息未送达）` : ''}${running ? '（正在运行）' : ''}${queued > 0 ? `（排队 ${queued} 条）` : ''}${pendingAsk > 0 ? `（${askHint}）` : ''}${unread > 0 ? `（${unread} 条未读）` : ''}`}
                 className={`relative flex w-full items-center justify-center rounded-lg py-2 ${
-                    active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
+                    active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60'
                 }`}
             >
                 <span className="relative inline-flex shrink-0">
@@ -248,7 +248,7 @@ export function RoomRowView({
             className={`group relative ${LIST_ROW_BASE} text-xs ${
                 // 底色只表「当前在看哪一行」。**运行态不碰底色**（2026-11-25 用户报「选中状态错乱」：
                 // 两行共用 bg-accent，一列里看着都像选中）—— 运行只画在状态图标那颗呼吸点上。
-                active ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60'
+                active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60'
             }`}
         >
             {/* 状态图标在**标题前**（用户：像 GitHub 的 open / closed）：行里唯一的前缀图标。
@@ -269,7 +269,7 @@ export function RoomRowView({
                     title={collapsed ? '展开这个项目的任务' : '收起这个项目的任务'}
                     aria-label={collapsed ? '展开' : '收起'}
                     aria-expanded={!collapsed}
-                    className="shrink-0 -ml-1 text-muted-foreground hover:bg-muted"
+                    className="shrink-0 -ml-1 text-muted-foreground hover:bg-sidebar-accent"
                 >
                     {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
                 </Button>
@@ -330,7 +330,7 @@ export function RoomRowView({
             {tag !== undefined && (
                 <span
                     title={`项目：${tag}`}
-                    className="max-w-[45%] shrink-0 truncate rounded border px-1.5 text-[10px] text-muted-foreground/80"
+                    className="max-w-[45%] shrink-0 truncate rounded border px-1.5 text-xs text-sidebar-foreground/70"
                 >
                     {tag}
                 </span>

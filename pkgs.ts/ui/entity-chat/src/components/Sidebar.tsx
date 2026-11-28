@@ -149,7 +149,7 @@ export function Sidebar({
             ref={asideRef}
             // `relative` 是给右缘手柄的定位锚（absolute inset-y-0 right-0）：
             // 手柄盖在 border 上，视觉上就是「这条线能拖」。
-            className={`relative flex flex-col overflow-hidden border-r ${own ? 'shrink-0' : 'min-w-0'} ${resizing ? '' : 'transition-[width] duration-200'}`}
+            className={`relative flex flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground ${own ? 'shrink-0' : 'min-w-0'} ${resizing ? '' : 'transition-[width] duration-200'}`}
             style={own ? { width: open ? width : SIDEBAR_RAIL_W } : undefined}
             data-sidebar-width={own ? (open ? width : SIDEBAR_RAIL_W) : undefined}
         >
@@ -157,7 +157,7 @@ export function Sidebar({
                 品牌名和副标题每轮都在、却从不提供任何信息；房间名在下面的树里已经高亮了。
                 新建项目从「项目」小标题那行搬到这 —— 它是侧栏级动作，不该长在某个分组里。 */}
             {(open || showToggle) && (
-                <div className={`flex items-center border-b py-2 ${open ? 'gap-2 px-3' : 'justify-center px-1'}`}>
+                <div className={`flex items-center border-b border-sidebar-border py-2 ${open ? 'gap-2 px-3' : 'justify-center px-1'}`}>
                     {open && (
                         <Button
                             variant="ghost"
@@ -192,7 +192,7 @@ export function Sidebar({
             {/* 底部那一行：展开时有说明文字，收起时只剩设置这颗。两者都没有就整行不渲染 ——
                 否则收起态会留下一条只有 border 的空条。 */}
             {(open || onOpenSettings !== undefined) && (
-                <div className={`flex items-center border-t py-2 ${open ? 'justify-end px-3' : 'justify-center'}`}>
+                <div className={`flex items-center border-t border-sidebar-border py-2 ${open ? 'justify-end px-3' : 'justify-center'}`}>
                     {onOpenSettings !== undefined && (
                         <Button
                             variant="ghost"

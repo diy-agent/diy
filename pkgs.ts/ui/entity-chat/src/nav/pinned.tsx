@@ -71,7 +71,10 @@ function PinnedBlock({ context }: { context: NavContext }) {
                 onClick={togglePinned}
                 title={pinnedOpen ? '收起置顶' : `展开置顶（${pinned.length}）`}
                 aria-expanded={pinnedOpen}
-                className="h-auto w-full justify-start gap-2 px-2 py-1 text-xs tracking-wide text-muted-foreground"
+                // 分组折叠标题**不是选中项**（与「历史任务」同款）：ghost Button 自带
+                // `aria-expanded:bg-muted`，默认展开就永久套选中底色 → 用 aria-expanded:bg-transparent 盖掉，
+                // 展开与否只驱动箭头方向。
+                className="h-auto w-full justify-start gap-2 px-2 py-1 text-xs tracking-wide text-sidebar-foreground/70 aria-expanded:bg-transparent aria-expanded:text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
             >
                 {pinnedOpen ? (
                     <ChevronDown className="size-3 shrink-0" />
@@ -80,7 +83,7 @@ function PinnedBlock({ context }: { context: NavContext }) {
                 )}
                 <Pin className="size-3.5 shrink-0" />
                 置顶
-                <span className="ml-auto rounded-full border px-1.5 text-[10px] tabular-nums">{pinned.length}</span>
+                <span className="ml-auto rounded-full border px-1.5 text-xs tabular-nums">{pinned.length}</span>
             </Button>
             {pinnedOpen && (
                 <div className="mt-0.5">
