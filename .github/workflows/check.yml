@@ -33,6 +33,17 @@ jobs:
         with:
           bun-version: latest
 
+      # macOS runner 自带的 /bin/bash 是 3.2 —— 本仓脚本用 `shopt -s globstar`，而 vendor/sha 的硬
+      # 门禁也要求 Bash 4.3+（nameref），3.2 直接 `shopt: globstar: invalid shell option name` 就退出了。
+      # 把 brew 的 bash 5 提到 PATH 前面（镜像通常已预装，没有就现装一次）。
+      - name: 备好 bash 5（macOS 自带的 3.2 不够用）
+        run: |
+          if [ -x /opt/homebrew/bin/bash ]; then BASH5=/opt/homebrew/bin/bash
+          elif [ -x /usr/local/bin/bash ]; then BASH5=/usr/local/bin/bash
+          else brew install bash && BASH5="$(brew --prefix)/bin/bash"; fi
+          "$BASH5" --version | head -1
+          echo "$(dirname "$BASH5")" >> "$GITHUB_PATH"
+
       # 只装依赖，不建 dev 数据根（那一步会往 run/<app>/lab 填配置，CI 用不到）
       - name: 装依赖（sync-deps → bun install）
         run: ./sha.sh sync-deps
