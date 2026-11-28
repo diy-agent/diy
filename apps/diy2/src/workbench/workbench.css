@@ -19,21 +19,36 @@
  * 看起来就像两套 CSS 打起来了（这个坑踩过一次）。
  */
 
-:root {
-    --wb-bg: #0d1117;
-    --wb-bg-2: #10151c;
-    --wb-line: #21262d;
-    --wb-line-2: #30363d;
-    --wb-fg: #e6edf3;
-    --wb-fg-2: #adbac7;
-    --wb-dim: #8b949e;
-    --wb-accent: #1f6feb;
-    --wb-accent-fg: #79c0ff;
-    /* 叠色层：hover / 选中 / 遮罩统一走这几个，避免到处散落 #ffffff0a 这类字面量 */
-    --wb-tint: #ffffff0a;
-    --wb-tint-strong: #ffffff14;
-    --wb-accent-soft: #1f6feb26;
-    --wb-accent-line: #1f6feb55;
+/*
+ * 挂在 `body` 而不是 `:root`：`--wb-bg: var(--background)` 这类引用是在**定义处**解析的，
+ * 而主题的覆盖（`.theme-orange`）挂在 body 上 —— 定义在 html 上就永远读到 html 那份默认值，
+ * 主题怎么切都不动（2026-11-28 实测：body 的 --primary 已是橙 hsl(24.6 95% 53.1%)，
+ * 而 --wb-bg 仍是 oklch(1 0 0)）。放到 body 上，解析时用到的就是被主题覆盖过的那份。
+ */
+body {
+    /*
+     * 2026-11-28：这一组**改成指向语义变量**，不再写死 GitHub dark 的字面色。
+     *
+     * 原来这里是 #0d1117 / #161b22 / #21262d …（从 diy1 搬过来的壳色），95 处引用都吃这套值——
+     * 于是主题选择器换什么都只改得动对话区，侧栏 / 标题栏 / 区域条仍是深色，用户看到的就是
+     * 「只有少量颜色变化」「明色下又有黑又有白」。壳色必须跟着语义层走，否则主题就是半张皮。
+     *
+     * 亮度层级：bg（最底）< bg-2（次层）< line（分隔）—— 对应 background < muted < border。
+     */
+    --wb-bg: var(--background);
+    --wb-bg-2: var(--muted);
+    --wb-line: var(--border);
+    --wb-line-2: var(--border);
+    --wb-fg: var(--foreground);
+    --wb-fg-2: var(--muted-foreground);
+    --wb-dim: var(--muted-foreground);
+    --wb-accent: var(--primary);
+    --wb-accent-fg: var(--primary);
+    /* 叠色层：由前景/主色算出来，跟着主题走（不是白/蓝的字面量） */
+    --wb-tint: color-mix(in oklch, var(--foreground) 4%, transparent);
+    --wb-tint-strong: color-mix(in oklch, var(--foreground) 8%, transparent);
+    --wb-accent-soft: color-mix(in oklch, var(--primary) 15%, transparent);
+    --wb-accent-line: color-mix(in oklch, var(--primary) 33%, transparent);
 }
 
 /* ── 壳 ───────────────────────────────────────────────────────────────────── */
@@ -60,9 +75,10 @@
     padding: 6px 12px;
     font-size: 12px;
     line-height: 1.6;
-    color: #f7b267;
-    background: rgba(247, 178, 103, 0.12);
-    border-bottom: 1px solid rgba(247, 178, 103, 0.3);
+    /* 迁移提示条：琥珀色语义不变，但由 currentColor 派生叠色，跟着主题的色相走 */
+    color: var(--color-amber-600, oklch(0.65 0.15 70));
+    background: color-mix(in oklch, currentColor 12%, transparent);
+    border-bottom: 1px solid color-mix(in oklch, currentColor 30%, transparent);
 }
 .wb-banner-title {
     font-weight: 600;
@@ -330,10 +346,10 @@ body.wb-resizing-y * {
     flex-direction: column;
     gap: 1px;
     padding: 4px;
-    background: #161b22;
+    background: var(--popover);
     border: 1px solid var(--wb-line-2);
     border-radius: 7px;
-    box-shadow: 0 8px 24px #00000066;
+    box-shadow: 0 8px 24px color-mix(in oklch, var(--foreground) 40%, transparent);
     font-size: 12px;
 }
 
@@ -395,7 +411,7 @@ body.wb-resizing-y * {
 
 .wb-fold-strip:hover {
     color: var(--wb-fg);
-    background: #182029;
+    background: var(--wb-tint-strong);
 }
 
 /* 竖条：文字竖排（中文字符自己就是竖的，不需要 text-orientation: upright）。
@@ -407,7 +423,7 @@ body.wb-resizing-y * {
 /* 按下的反馈：这条现在要区分单击 / 双击，得让人看出第一下被接住了
  * （展开本身延迟 180ms 才发生，没反馈会像“点了没反应”）*/
 .wb-fold-strip:active {
-    background: #1b232c;
+    background: var(--wb-tint-strong);
 }
 
 .wb-folded-x .wb-fold-name {
@@ -525,7 +541,7 @@ body.wb-resizing-y * {
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    background: #0f141a;
+    background: var(--wb-bg-2);
     border: 1px solid var(--wb-line);
     border-radius: 6px;
     overflow: hidden;
@@ -850,10 +866,10 @@ body.wb-resizing-y * {
     margin-left: 4px;
     padding: 0 2px;
     border-radius: 3px;
-    color: var(--wb-fg-dim, #71717a);
+    color: var(--wb-fg-dim);
     line-height: 1;
 }
 .wb-tabs button .wb-tab-close:hover {
     background: rgba(255, 255, 255, 0.08);
-    color: var(--wb-fg, #e4e4e7);
+    color: var(--wb-fg);
 }

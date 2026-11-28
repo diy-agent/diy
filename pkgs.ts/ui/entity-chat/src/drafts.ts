@@ -31,6 +31,16 @@ interface OwnerState {
     entries: Map<string, StoredDraft>;
     /** 需要写回服务端的字段（entries 里没有 = 删除） */
     dirty: Set<string>;
+    /**
+     * 本地主动清空过的字段（墓碑）：在途 load 不得用服务端旧值把它们灌回来。
+     *
+     * 竞态（2026-11-28「发送后输入框偶尔没清空」）：打开房间发起 load，GET 在途时
+     * 用户把草稿发出去 → clear() 删 entries + flush 成功后又从 dirty 删掉这个 field；
+     * 此时 GET 才带着发送前的旧草稿返回，而 load 的防线只有 dirtyAtLoad / dirty 两个集合，
+     * 两者都不含它了 → 旧值被 set 回 entries → emit → 输入框又冒出刚发的那条。
+     * 墓碑补上这条防线：本地清空过的字段，这次 load 一律跳过服务端值。
+     */
+    clearedFields: Set<string>;
     loaded: boolean;
     loading: boolean;
     loadPromise?: Promise<void>;
@@ -164,6 +174,7 @@ export class DraftStore {
             state = {
                 entries: new Map(),
                 dirty: new Set(),
+                clearedFields: new Set(),
                 loaded: false,
                 loading: false,
                 loadAttempt: 0,
@@ -206,10 +217,14 @@ export class DraftStore {
             for (const draft of data.drafts ?? []) {
                 // 本地正在编辑 / 改过且更新的，不被服务端旧值覆盖
                 if (dirtyAtLoad.has(draft.field) || state.dirty.has(draft.field)) continue;
+                // 本地主动清空过的（含这次 GET 在途期间清空的）：服务端这份是删前旧值，跳过。
+                if (state.clearedFields.has(draft.field)) continue;
                 const local = state.entries.get(draft.field);
                 if (local !== undefined && local.updatedAt > draft.updatedAt) continue;
                 state.entries.set(draft.field, { value: draft.value, updatedAt: draft.updatedAt });
             }
+            // 这次 load 已经消化完墓碑；之后本地重新输入会走 setValue 正常落盘。
+            state.clearedFields.clear();
             state.loaded = true;
             state.error = undefined;
             state.loadAttempt = 0;
@@ -308,6 +323,7 @@ export class DraftStore {
         const state = this.stateOf(owner);
         state.entries.delete(field);
         state.dirty.add(field);
+        state.clearedFields.add(field);
         this.touched.add(owner);
         this.refreshFlag(owner);
         this.emit();

@@ -63,14 +63,14 @@ function MessageScrollerItem({
     scrollAnchor = false,
     ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Item>) {
+    // 不要给条目上 `content-visibility: auto`（2026-11-28 实测）：它把离屏条目按估计高度
+    // 排、滚回视口时再用真实高度重排 —— 上方一长高，滚动位置就往下弹，用户看到的是
+    // 「向上翻阅时页面自己乱跳」。条目数受四位数消息分组后只有几十条，布局成本远小于这种跳动。
     return (
         <MessageScrollerPrimitive.Item
             data-slot="message-scroller-item"
             scrollAnchor={scrollAnchor}
-            className={cn(
-                'cn-message-scroller-item min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]',
-                className,
-            )}
+            className={cn('cn-message-scroller-item min-w-0 shrink-0', className)}
             {...props}
         />
     );
