@@ -54,14 +54,22 @@ function read(): Choice {
     return { theme: 'default', dark: false };
 }
 
-/** 把选择落到 `<html>` 上 —— 全仓唯一改主题 class 的地方 */
+/**
+ * 把选择落到 DOM 上 —— 全仓唯一改主题 class 的地方。
+ *
+ * **`dark` 挂 `<html>`、`theme-xxx` 挂 `<body>`**，两者不能同元素：
+ * themes.css 里暗色那一档写的是后代选择器 `.dark .theme-blue { … }`
+ * （官方示例是 `<html class="dark">` 包一层 `.theme-xxx`），
+ * 同一个元素上两个 class 不匹配后代选择器 —— 实测挂在同一个 html 上时
+ * `class="theme-blue dark"` 但 `--background` 仍是 `hsl(0 0% 100%)`（白）。
+ */
 function apply(choice: Choice): void {
-    const root = document.documentElement;
+    document.documentElement.classList.toggle('dark', choice.dark);
+    const body = document.body;
     for (const theme of THEMES) {
-        if (theme.id !== 'default') root.classList.remove(`theme-${theme.id}`);
+        if (theme.id !== 'default') body.classList.remove(`theme-${theme.id}`);
     }
-    if (choice.theme !== 'default') root.classList.add(`theme-${choice.theme}`);
-    root.classList.toggle('dark', choice.dark);
+    if (choice.theme !== 'default') body.classList.add(`theme-${choice.theme}`);
 }
 
 export function ThemePicker() {
