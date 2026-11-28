@@ -327,6 +327,19 @@ function ToolRow({ tool, live, roomId }: { tool: TimelinePart & { kind: 'tool' }
                         <CodeBlock size="sm" variant={failed || output.failed ? 'destructive' : 'default'}>
                             <CodeBlockHeader>
                                 <CodeBlockTitle>{output.label}</CodeBlockTitle>
+                                {/* 正文在库外时给一个直取原文的入口：31MB 不往 React state 里拉，
+                                    交给浏览器原生处理（端点支持 Range）。用 <a target=_blank> 而不是
+                                    fetch + 弹窗：不占内存、可复制、可下载（2026-11-28）。 */}
+                                {tool.output !== undefined && (
+                                    <a
+                                        className="ml-auto shrink-0 text-xs text-muted-foreground underline-offset-2 hover:underline"
+                                        href={`/api/tool-output?call=${encodeURIComponent(tool.id)}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        查看完整输出
+                                    </a>
+                                )}
                             </CodeBlockHeader>
                             <CodeBlockContent wrap className="max-h-64">
                                 {output.text}

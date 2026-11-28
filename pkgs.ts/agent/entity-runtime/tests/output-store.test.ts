@@ -5,13 +5,13 @@
 //   2. 超阈值 ⇒ 正文进文件、条目只留 ref + 头尾预览；
 //   3. 写盘失败 ⇒ 返回 undefined（调用方退回「正文留在条目里」），绝不假装成功。
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { OUTPUT_OFFLOAD_BYTES, createOutputStore, toolOutputRelPath } from '../src/output-store';
+import { OUTPUT_OFFLOAD_BYTES, createOutputStore, removeRoomOutputs, toolOutputRelPath } from '../src/output-store';
 
 let roots: string[] = [];
 
@@ -94,5 +94,30 @@ describe('output-store', () => {
         writeFileSync(blocker, 'x');
 
         expect(store.put('task-a', 1000, 'call_1', bigText(OUTPUT_OFFLOAD_BYTES + 10))).toBeUndefined();
+    });
+});
+
+describe('removeRoomOutputs（删房间联动）', () => {
+    it('删掉该房间在所有日期目录下的正文，其他房间不动', () => {
+        const root = tmpRoot();
+        const store = createOutputStore({ dataRoot: root });
+        const big = 'x'.repeat(OUTPUT_OFFLOAD_BYTES + 1);
+        const mine1 = store.put('task-a', Date.UTC(2026, 10, 28, 12), 'call-1', big);
+        const mine2 = store.put('task-a', Date.UTC(2026, 10, 29, 12), 'call-2', big);
+        const other = store.put('task-b', Date.UTC(2026, 10, 28, 12), 'call-3', big);
+        expect(mine1 !== undefined && mine2 !== undefined && other !== undefined).toBe(true);
+
+        const removed = removeRoomOutputs(root, 'task-a');
+
+        // 两个日期目录各删一次
+        expect(removed).toBe(2);
+        expect(existsSync(store.absolute(mine1!.ref)!)).toBe(false);
+        expect(existsSync(store.absolute(mine2!.ref)!)).toBe(false);
+        // 别人的正文必须还在
+        expect(existsSync(store.absolute(other!.ref)!)).toBe(true);
+    });
+
+    it('没有外置产物时返回 0，不抛', () => {
+        expect(removeRoomOutputs(tmpRoot(), 'task-none')).toBe(0);
     });
 });

@@ -25,6 +25,7 @@ import { createRpcSocket, type RpcStreamInfo } from './rpc';
 import { configureSlowLog, startLoopLag, timed, type LoopLagMonitor } from './loop-lag';
 import { startCpuProfileWatch, type CpuProfileWatch } from './profile-watch';
 import { httpRouteOf, recordHttpRequest, renderPrometheus } from './prom-metrics';
+import { serveToolOutput } from './tool-output-read';
 import { recordDuration, wrapHandlers } from './metrics-registry';
 import { APP_ID, type Diy2Config } from './config';
 import { openLog } from './log';
@@ -719,6 +720,26 @@ const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> 
         if (req.method === 'GET' && url.pathname === '/api/metrics') {
             json(res, 200, { lag: lagMonitor?.snapshot() ?? null });
             return;
+        }
+
+        // GET /api/tool-output?call=<itemId> —— 外置工具输出的**原文**。
+        //
+        // 为什么必须经过库：调用方只给条目 id（`tool-<toolCallId>`，全局唯一），路径从
+        // item 里的 `data.output.ref` 取 —— **绝不接受调用方传路径**，否则客户端能枚举
+        // `runs/tool/` 下任何文件（含别的房间的输出）。路径安全 + Range + HEAD 都在
+        // `./tool-output-read`；这里只做「id → ref」这一步。
+        if (req.method === 'GET' || req.method === 'HEAD') {
+            if (url.pathname === '/api/tool-output') {
+                const itemId = url.searchParams.get('call') ?? '';
+                const found =
+                    itemId === '' ? undefined : store.itemsByIds([itemId]).find((entry) => entry.type === 'tool');
+                if (found === undefined || found.type !== 'tool' || found.data.output === undefined) {
+                    json(res, 404, { error: '没有这条外置输出（或它不在库外）' });
+                    return;
+                }
+                await serveToolOutput({ home: config.home, req, res, ref: found.data.output.ref });
+                return;
+            }
         }
 
         // GET /metrics —— Prometheus 文本（VictoriaMetrics / promtop / 外部监控读它）。
