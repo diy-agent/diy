@@ -7,6 +7,7 @@
 //   · B 的触发条件：只在「账本空」或「上次账本变更之后有人发言」时出现
 import { describe, expect, it } from 'vitest';
 
+import { ARTIFACT_DOC_STATUS, ARTIFACT_REPORT } from '../src/artifact-report';
 import {
     LEDGER_SHAPE,
     envelopeHint,
@@ -49,6 +50,19 @@ describe('三档措辞', () => {
     it('A / C 都带上同一条判据（账本只有两层）', () => {
         expect(promptReminder(ALL)).toContain(LEDGER_SHAPE);
         expect(toolReminder(ALL)).toContain(LEDGER_SHAPE);
+    });
+
+    it('A 档带上「汇报四要素」（地址 / 用途 / 寿命 / 归属）+ 文档档位话术', () => {
+        // 起因：历史里 10.6% 的人类发言在问链接 / lab / 端口。汇报漏地址不是模型粗心，
+        // 是没人告诉过它「汇报的完整形状长什么样」。
+        const text = promptReminder(ALL);
+        expect(text).toContain(ARTIFACT_REPORT);
+        expect(text).toContain(ARTIFACT_DOC_STATUS);
+        for (const word of ['地址', '用途', '寿命', '归属']) expect(text).toContain(word);
+    });
+
+    it('关掉 A 档时汇报形状也一起消失（不留在 system 里当噪音）', () => {
+        expect(promptReminder({ prompt: false, envelope: true, tool: true })).not.toContain(ARTIFACT_REPORT);
     });
 
     it('关掉的档位产出空串（不是缺省文案 —— 否则「关」等于没关）', () => {
